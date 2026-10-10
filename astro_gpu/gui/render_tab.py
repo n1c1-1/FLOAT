@@ -51,7 +51,9 @@ class RenderWorker(QObject):
         try:
             from ..render.engine import RenderEngine
             self.engine = RenderEngine(self.prep_dir, device=self.device, calibrated_white=self.calibrated_white)
-            self.loaded.emit({"H": self.engine.H, "W": self.engine.W, "crop": self.engine.crop, "SC": self.engine.SC})
+            self.loaded.emit({"H": self.engine.H, "W": self.engine.W, "crop": self.engine.crop, "SC": self.engine.SC,
+                              "layered": self.engine.layered,
+                              "fine_colour": "chroma_fine" in getattr(self.engine, "_host", {})})
         except Exception as e:  # noqa: BLE001
             self.failed.emit(f"cannot load the rendering layers: {e}")
 
@@ -236,7 +238,8 @@ class RenderTab(QWidget):
         self.project = project
         self.advanced = advanced
         self._stop_worker()
-        self.values = dict(project.config.render.get("settings", {}))
+        self.values = RenderSettings.from_saved(project.config.render.get("settings", {})).model_dump(
+            exclude_defaults=True)
         self.history, self.future = [], []
         self.images = {}
         self.ref_img = None
@@ -277,6 +280,14 @@ class RenderTab(QWidget):
 
     def on_loaded(self, meta):
         self.meta = meta
+        if not meta.get("layered", True):
+            QMessageBox.information(self, "Rendering", "These rendering layers were prepared by an older version: "
+                                    "'Fine detail', 'Faint area smoothing', 'Fine colour', 'OIII tones' "
+                                    "and 'Blue / reflection tones' have no effect until the 'Rendering preparation' "
+                                    "stage is run again "
+                                    "(Processing tab, about a minute).")
+        elif not meta.get("fine_colour", True):
+            self.status.setText("'Fine colour' needs the 'Star removal and denoising' stage to be run again")
         self.render_preview()
 
     def on_failed(self, msg):

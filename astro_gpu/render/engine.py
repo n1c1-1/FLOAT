@@ -7,8 +7,10 @@ star layer and their screen blend as display-referred sRGB tensors in [0, 1].
 * ``scale < 1``: fast preview; the nebula is processed on a reduced image with every spatial parameter scaled,
   the stars are always drawn at full resolution and then reduced, so star sizes and brightness match the export.
 
-Intermediate results are cached by the settings they depend on: moving a star slider only redraws the stars,
-changing the saturation only redoes the last colour step.
+The nebula is the calibrated image at full resolution (star footprints guarded), mixed live with the optional layers
+of ``render_prep`` (fine detail, fine colour, OIII, reflection tones), so these are ordinary sliders. Intermediate
+results are cached by the settings they depend on: moving a star slider only redraws the stars, changing the
+saturation only redoes the last colour step.
 """
 from __future__ import annotations
 
@@ -27,7 +29,9 @@ XYZ_TO_SRGB = np.array([[3.2404542, -1.5371385, -0.4985314],
                         [-0.9692660, 1.8760108, 0.0415560],
                         [0.0556434, -0.2040259, 1.0572252]])
 
-NEB_LIN_KEYS = ("ha_boost", "ha_sigma", "glow_k", "glow_sigma", "g_glow", "speck_k", "white_temp", "tint")
+LAYER_KEYS = ("fine_k", "fine_lo_pct", "fine_hi_pct", "faint_smooth", "faint_lo_pct", "faint_hi_pct", "resid_boost",
+              "colour_detail", "oiii_boost", "oiii_threshold", "oiii_smooth")
+NEB_LIN_KEYS = LAYER_KEYS + ("ha_boost", "ha_sigma", "glow_k", "glow_sigma", "g_glow", "speck_k", "white_temp", "tint")
 NEB_KEYS = NEB_LIN_KEYS + ("chroma", "chroma_protect", "hue_target", "hue_shift", "chroma_sigma", "snr_lo", "snr_hi",
                            "sky_level", "dark_level", "toe", "sky_pct", "dark_pct", "white_mult", "hdr_strength",
                            "hdr_knee", "hdr_r", "hdr_eps", "lc_fine", "lc_medium", "lc_large", "neb_sharp",
@@ -55,12 +59,28 @@ class RenderEngine:
         self.SC = float(self.prep["drizzle_scale"])
         self.crop = self.prep["crop"]                        # x0, x1, y0, y1
         self.calibrated_white = calibrated_white
-        a = np.load(self.dir / "astro_prep.npy")
-        self.H, self.W = a.shape[1:]
-        self.astro = torch.from_numpy(a).to(self.dev)
+        # preparation layers stay in host memory; reduced versions are cached on the device, the full resolution is
+        # only uploaded while it is being mixed
+        self.layered = (self.dir / "N.npy").exists()
+        if self.layered:
+            names = ["N", "Eg0", "dY", "R"] + [n for n in ("chroma_fine",) if (self.dir / f"{n}.npy").exists()]
+            if (self.dir / "O.npy").exists() and self.prep.get("oiii_sigma"):
+                names.append("O")
+                self.o_vec = torch.tensor(self.prep.get("o_display", self.prep["o"]), dtype=torch.float32,
+                                          device=self.dev)
+            self._host = {n: torch.from_numpy(np.load(self.dir / f"{n}.npy")) for n in names}
+            self.w_cam = torch.tensor(self.prep["w_cam"], dtype=torch.float32, device=self.dev)
+            self.lum = torch.tensor(np.array([0.2126, 0.7152, 0.0722]) @ self.M, dtype=torch.float32, device=self.dev)
+        elif (self.dir / "astro_prep.npy").exists():         # preparation of version 1: one pre-mixed layer
+            self._host = {"astro": torch.from_numpy(np.load(self.dir / "astro_prep.npy"))}
+        else:
+            raise RuntimeError("these rendering layers were prepared by an older version: run the 'Rendering "
+                               "preparation' stage again (about a minute)")
+        self.H, self.W = next(iter(self._host.values())).shape[-2:]
         self.valid = torch.from_numpy(np.load(self.dir / "valid.npy")).to(self.dev)
         st = np.load(self.dir / "stars.npz")
-        self.X, self.Y, self.G = st["x"], st["y"], st["g"]
+        # magnitudes relative to the depth of the data (0 for a field where S/N = 10 is reached at G = 15.5)
+        self.X, self.Y, self.G = st["x"], st["y"], st["g"] - float(self.prep.get("depth_shift", 0.0))
         self.Fm, self.Fpred, self.Fglow = st["flux"].astype(np.float64), st["pred"].astype(np.float64), st["glow_flux"]
         pr = np.load(self.dir / "profile.npz")
         self.r_all, self.prof_raw = pr["r"], pr["prof"]
@@ -71,16 +91,62 @@ class RenderEngine:
         self.last_info: dict = {}
 
     # ------------------------------------------------------------------ helpers
-    def _view(self, f: int):
-        """Astro image and valid mask reduced by an integer factor f (1 = full resolution)."""
+    def _layer(self, name: str, f: int) -> torch.Tensor:
+        """One preparation layer on the device in float32, reduced by an integer factor f (1 = full resolution)."""
+        if (name, f) in self._proxy:
+            return self._proxy[name, f]
+        t = self._host[name].to(self.dev).float()
         if f == 1:
-            return self.astro, self.valid
-        if f not in self._proxy:
+            return t
+        h, w = self.H // f * f, self.W // f * f
+        r = F.avg_pool2d(t[..., :h, :w].reshape(-1, 1, h, w), f).reshape(*t.shape[:-2], h // f, w // f)
+        self._proxy[name, f] = r
+        return r
+
+    def _valid(self, f: int) -> torch.Tensor:
+        if f == 1:
+            return self.valid
+        if ("valid", f) not in self._proxy:
             h, w = self.H // f * f, self.W // f * f
-            a = F.avg_pool2d(self.astro[None, :, :h, :w], f)[0]
-            v = F.avg_pool2d(self.valid[None, None, :h, :w].float(), f)[0, 0] > 0.99
-            self._proxy[f] = (a, v)
-        return self._proxy[f]
+            self._proxy["valid", f] = F.avg_pool2d(self.valid[None, None, :h, :w].float(), f)[0, 0] > 0.99
+        return self._proxy["valid", f]
+
+    def _shape(self, f: int) -> tuple[int, int]:
+        return (self.H, self.W) if f == 1 else (self.H // f, self.W // f)
+
+    def _astro(self, s: RenderSettings, f: int) -> torch.Tensor:
+        """Calibrated nebula in camera space: the full-resolution layer plus the optional layers."""
+        if not self.layered:
+            return self._layer("astro", f)
+        valid = self._valid(f)
+        N = self._layer("N", f)
+        # 'Fine detail' = factor on the network's fine scales already in the base (newer preparations), or amount of
+        # network detail added to a Wiener base (older ones)
+        kf = s.fine_k - 1.0 if self.prep.get("fine_layer") == "scale" else s.fine_k
+        new = kf != 0 or s.faint_smooth > 0
+        if kf != 0:                          # Noise2Noise fine detail (brightness), above a brightness of the signal
+            Eg0 = self._layer("Eg0", f)
+            q1, q2 = ops.percentile(Eg0, [s.fine_lo_pct, s.fine_hi_pct], valid)
+            wf = ops.gaussian_blur(((Eg0 - q1) / max(q2 - q1, 1e-6)).clamp(0, 1), 6 / f)
+            del Eg0
+            N = N + kf * (wf * self._layer("dY", f))[None] * self.w_cam[:, None, None]
+            del wf
+        if s.faint_smooth > 0:               # faint areas: only the scales confirmed by the data
+            Eg = ops.gaussian_blur(torch.einsum("c,chw->hw", self.lum, N), 8 / f)
+            q1, q2 = ops.percentile(Eg, [s.faint_lo_pct, s.faint_hi_pct], valid)
+            wE = ops.gaussian_blur(((Eg - q1) / max(q2 - q1, 1e-6)).clamp(0, 1), 6 / f)[None]
+            del Eg
+            N = wE * N + (1 - wE) * ops.gaussian_blur(N, s.faint_smooth / f)
+            del wE
+        # cached / host layers are never modified in place: copy unless a step above already made a new tensor
+        astro = N if new else N.clone()
+        if s.resid_boost != 0:
+            astro += s.resid_boost * self._layer("R", f)
+        if s.colour_detail > 0 and "chroma_fine" in self._host:
+            astro += s.colour_detail * self._layer("chroma_fine", f)
+        if s.oiii_boost > 0 and "O" in self._host:        # OIII emission above the noise, in its own colour
+            astro += s.oiii_boost * self.o_vec[:, None, None] * self._oiii(s, f, valid)[None]
+        return astro
 
     def white_balance(self, s: RenderSettings) -> np.ndarray:
         """Diagonal in linear sRGB that makes a blackbody of ``white_temp`` neutral (identity at the calibration)."""
@@ -117,7 +183,7 @@ class RenderEngine:
         else:
             st = torch.zeros_like(neb)
         final = ops.screen(neb, st)
-        _, valid = self._view(f)
+        valid = self._valid(f)
         final[:, ~valid] = 0
         info.update(self.last_info)
         self.last_info = info
@@ -125,8 +191,10 @@ class RenderEngine:
 
     # ------------------------------------------------------------------ nebula
     def _nebula_linear(self, s: RenderSettings, f: int):
-        astro, valid = self._view(f)
-        astro = astro.clone()
+        valid = self._valid(f)
+        astro = self._astro(s, f)
+        if not self.layered:                               # cached / host tensor: never modified in place
+            astro = astro.clone()
         if s.ha_boost > 0:
             Hex = ops.gaussian_blur(astro[0] - self.alpha * astro[1], s.ha_sigma / f)
             astro = astro + s.ha_boost * Hex.clamp(min=0)[None] * self.vh[:, None, None]
@@ -141,8 +209,20 @@ class RenderEngine:
         lin[:, ~valid] = 0
         return lin
 
+    def _oiii(self, s: RenderSettings, f: int, valid: torch.Tensor) -> torch.Tensor:
+        """OIII map at the chosen smoothing, minus its sky level, soft-thresholded at the measured sky noise."""
+        O = self._layer("O", f)
+        extra = max(s.oiii_smooth ** 2 - float(self.prep.get("oiii_scale", 6.0)) ** 2, 0.0) ** 0.5
+        if extra > 0:
+            O = ops.gaussian_blur(O, extra / f)
+        Eg0 = self._layer("Eg0", f)
+        sky = valid & (Eg0 < ops.percentile(Eg0, 50, valid))
+        o0 = ops.percentile(O, 50, sky)
+        sig = 1.4826 * ops.percentile((O - o0).abs(), 50, sky)
+        return (O - o0 - s.oiii_threshold * sig).clamp(min=0)
+
     def _glow(self, s: RenderSettings, f: int) -> torch.Tensor:
-        h, w = self._view(f)[0].shape[1:]
+        h, w = self._shape(f)
         m = self.G >= s.g_glow
         xi = np.clip(np.round(self.X[m] / f - 0.5 * (f - 1) / f).astype(np.int64), 0, w - 1)
         yi = np.clip(np.round(self.Y[m] / f - 0.5 * (f - 1) / f).astype(np.int64), 0, h - 1)
@@ -155,7 +235,7 @@ class RenderEngine:
 
     def _nebula(self, s: RenderSettings, f: int, info: dict) -> torch.Tensor:
         lin = self._cached("neb_lin", NEB_LIN_KEYS, s, f, lambda: self._nebula_linear(s, f))
-        _, valid = self._view(f)
+        valid = self._valid(f)
         Yl_full = ops.luminance(lin)
         noise = ops.robust_noise(Yl_full, valid, sub=max(1, 7 // f))
         Ys = ops.gaussian_blur(Yl_full, 2 / f)

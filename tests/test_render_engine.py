@@ -37,6 +37,72 @@ def prep(tmp_path_factory):
     return d
 
 
+@pytest.fixture(scope="module")
+def prep_layers(prep, tmp_path_factory):
+    """The same scene as a layered preparation (render_prep version 7): full-resolution base N + optional layers."""
+    import shutil
+    d = tmp_path_factory.mktemp("render_prep_layers")
+    for n in ("valid.npy", "stars.npz", "profile.npz"):
+        shutil.copy(prep / n, d / n)
+    astro = np.load(prep / "astro_prep.npy")
+    rng = np.random.default_rng(5)
+    H, W = astro.shape[1:]
+    np.save(d / "N.npy", astro.astype(np.float32))
+    np.save(d / "R.npy", (0.2 * astro - 0.2 * astro.mean((1, 2), keepdims=True)).astype(np.float32))
+    O = np.zeros((H, W), np.float32)
+    O[20:60, 30:90] = 5.0
+    np.save(d / "O.npy", O + rng.normal(0, 0.05, (H, W)).astype(np.float32))
+    lum = np.array([0.2126, 0.7152, 0.0722])                 # M = identity in the fixture
+    np.save(d / "Eg0.npy", cv2.GaussianBlur(np.tensordot(lum, astro, 1), (0, 0), 8).astype(np.float32))
+    np.save(d / "dY.npy", rng.normal(0, 0.8, (H, W)).astype(np.float16))
+    np.save(d / "chroma_fine.npy", rng.normal(0, 0.5, (3, H, W)).astype(np.float16))
+    pj = json.loads((prep / "prep.json").read_text())
+    pj.update({"layers": 3, "w_cam": [1.0, 1.0, 1.0], "o": [0.0, 1.0, 0.75], "o_display": [0.0, 1.0, 0.75],
+               "oiii_sigma": 1.0, "oiii_scale": 4.0})
+    (d / "prep.json").write_text(json.dumps(pj))
+    return d
+
+
+def test_layers_mix_live(prep, prep_layers):
+    plain = RenderSettings(fine_k=0, faint_smooth=0)
+    old = RenderEngine(prep, device=DEV).render(plain, 1.0).final
+    eng = RenderEngine(prep_layers, device=DEV)
+    new = eng.render(plain, 1.0).final
+    assert float((old - new).abs().max()) < 2e-3            # the base layer alone = the calibrated image
+    base = eng._astro(plain, 1)
+    # each slider changes the image through its own layer only
+    d = eng._astro(RenderSettings(fine_k=1.5, fine_lo_pct=0, fine_hi_pct=1, faint_smooth=0), 1) - base
+    e = torch.from_numpy(np.load(prep_layers / "dY.npy").astype(np.float32)).to(eng.dev)[None].expand(3, -1, -1)
+    assert float((d - 1.5 * e).abs().mean()) < 0.03 * float((1.5 * e).abs().mean())
+    c = eng._astro(RenderSettings(fine_k=0, faint_smooth=0, colour_detail=1.0), 1) - base
+    assert float(c.abs().mean()) > 0.3
+    r = eng._astro(RenderSettings(fine_k=0, faint_smooth=0, resid_boost=1.0), 1) - base
+    R = torch.from_numpy(np.load(prep_layers / "R.npy")).to(eng.dev)
+    assert float((r - R).abs().max()) < 1e-3
+    # the base layer itself is never modified by the mixing (cached or host tensors)
+    assert float((eng._astro(plain, 1) - base).abs().max()) == 0
+    # OIII: added in its own colour above the threshold only
+    ob = eng._astro(RenderSettings(fine_k=0, faint_smooth=0, oiii_boost=2.0, oiii_smooth=4, oiii_threshold=3.0), 1) - base
+    assert abs(float(ob[1, 40, 60]) - 2.0 * 5.0) < 0.5 and abs(float(ob[2, 40, 60]) / float(ob[1, 40, 60]) - 0.75) < 1e-3
+    assert float(ob[0].abs().max()) < 1e-4 and float((ob[1, 120:] > 0).float().mean()) < 0.01   # noise below threshold
+    # faint-area smoothing removes small scales in faint areas only (decided on the whole signal)
+    sm = eng._astro(RenderSettings(fine_k=0, faint_smooth=32, faint_lo_pct=55, faint_hi_pct=85), 1)
+    hp = lambda a: (a[0] - torch.from_numpy(cv2.GaussianBlur(a.cpu().numpy()[0], (0, 0), 2)).to(eng.dev)).abs()  # noqa: E731
+    Eg = np.load(prep_layers / "Eg0.npy")
+    faint = torch.from_numpy(Eg < np.percentile(Eg, 30)).to(eng.dev)
+    bright = torch.from_numpy(Eg > np.percentile(Eg, 95)).to(eng.dev)
+    assert float(hp(sm)[faint].mean()) < 0.5 * float(hp(base)[faint].mean())
+    assert float(hp(sm)[bright].mean()) > 0.8 * float(hp(base)[bright].mean())
+    # previews mix the reduced layers
+    small = eng.render(RenderSettings(colour_detail=0.8, resid_boost=0.5), 0.5).final
+    assert small.shape == (3, 120, 180)
+
+
+def test_saved_settings_of_other_versions():
+    s = RenderSettings.from_saved({"cont_detail": 1.0, "chroma": 0.9, "unknown": 3})
+    assert s.chroma == 0.9
+
+
 def test_render_full_and_preview(prep):
     eng = RenderEngine(prep, device=DEV)
     s = RenderSettings()

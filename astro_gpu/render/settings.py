@@ -13,6 +13,11 @@ def S(default, *, section: str, **kw):
 
 
 class RenderSettings(StageParams):
+    @classmethod
+    def from_saved(cls, values: dict) -> RenderSettings:
+        """Settings saved by another version: unknown (removed) settings are ignored."""
+        return cls(**{k: v for k, v in (values or {}).items() if k in cls.model_fields})
+
     # ------------------------------------------------------------------ colour
     white_temp: float = S(5778.0, section="Colour", label="White balance", ge=3500, le=9000, step=50, unit="K",
                           help="Colour temperature rendered as neutral. The calibrated default (5778 K, the Sun) shows "
@@ -34,6 +39,31 @@ class RenderSettings(StageParams):
                         tip="0 = pure calibrated colour; 0.5-1 natural; 1.5+ emphasised emission.")
     ha_sigma: float = S(1.5, section="Colour", label="H-alpha boost smoothing", level=ADVANCED, ge=0, le=10,
                         step=0.1, unit="px", help="Smoothing of the extracted H-alpha before it is added.")
+    oiii_boost: float = S(0.0, section="Colour", label="OIII (teal) tones", ge=0.0, le=4.0, step=0.05,
+                          help="Amplifies the OIII emission (496/501 nm, teal), separated from H-alpha and starlight "
+                               "with the spectral response of your camera. In emission nebulae it fills the hot "
+                               "inner regions around the ionising stars; next to H-alpha it is easily drowned.",
+                          tip="0 = calibrated; 1 = OIII doubled; 2-3 = HOO-like rendering. Only OIII above the noise "
+                              "threshold is amplified. With a colour camera, blue reflection nebulae cannot be told "
+                              "from OIII: keep 0 on reflection nebulae (Iris, Pleiades) and galaxies.")
+    oiii_smooth: float = S(16.0, section="Colour", label="OIII smoothing", ge=2, le=60, step=1, unit="px",
+                           help="Scale of the OIII map. Its separation from H-alpha is noisy with a colour camera: "
+                                "large scales are reliable, fine ones turn into blotches.",
+                           tip="12-24 px for most data; lower only with very deep integrations.")
+    oiii_threshold: float = S(2.0, section="Colour", label="OIII noise threshold", level=ADVANCED, ge=0, le=6, step=0.1,
+                              unit="sigma", help="OIII below this many noise sigmas (measured live on the sky at the "
+                                                 "chosen smoothing) is not amplified, so that the background does not "
+                                                 "turn teal.")
+    resid_boost: float = S(0.0, section="Colour", label="Blue / reflection tones", ge=-1.0, le=3.0, step=0.05,
+                           help="Amplifies the colour component that is neither H-alpha nor starlight nor OIII: bluer "
+                                "than the stars (reflection nebulae, H-beta) or redder (dust). With a colour camera "
+                                "these tones are weak and easily drowned.",
+                           tip="0 = calibrated; 0.5-1.5 brings out blue reflection; it also amplifies the colour noise "
+                               "of these tones, watch faint areas.")
+    colour_detail: float = S(0.0, section="Colour", label="Fine colour", ge=0.0, le=1.5, step=0.05,
+                             help="Restores the colour variations finer than 8 px. They are kept aside by the "
+                                  "denoising and only where both half-stacks agree (real structure, not noise).",
+                             tip="0 = smooth colour (cleanest); 1 = all confirmed fine colour.")
     hue_target: float = S(33.0, section="Colour", label="H-alpha hue", level=ADVANCED, ge=0, le=60, step=1, unit="deg",
                           help="OKLab hue towards which red emission is pulled (33 = deep red, lower = magenta, "
                                "higher = orange-red).")
@@ -93,6 +123,24 @@ class RenderSettings(StageParams):
                               "near white.")
     sharp_white: float = S(1.0, section="Nebula", label="Sharpening limit", level=ADVANCED, ge=0.3, le=1.0, step=0.01,
                            help="Brightness above which sharpening fades out.")
+    fine_k: float = S(1.0, section="Nebula", label="Fine detail", ge=0.0, le=3.0, step=0.05,
+                      help="Strength of the finest scales of the denoised nebula (filaments, edges, measured by the "
+                           "Noise2Noise network on your data), above the brightness set by 'Fine detail start'.",
+                      tip="1 = as measured; above 1 = accentuated; 0 = smoothest.")
+    fine_lo_pct: float = S(80.0, section="Nebula", label="Fine detail start", ge=0, le=99, step=1, unit="percentile",
+                           help="Emission brightness (percentile of the field) where the detail injection starts. "
+                                "Lower it to bring the fine detail into fainter nebulosity.",
+                           tip="80 = bright emission only; 40-60 = most of the nebula, with more denoiser texture.")
+    fine_hi_pct: float = S(95.0, section="Nebula", label="Fine detail full", level=ADVANCED, ge=1, le=100, step=1,
+                           unit="percentile", help="Emission brightness where the detail injection is complete.")
+    faint_smooth: float = S(32.0, section="Nebula", label="Faint area smoothing", ge=0, le=100, step=1, unit="px",
+                            help="In faint areas, structures smaller than this are not confirmed by the data (noise "
+                                 "and star residuals) and are smoothed; bright nebulosity keeps full resolution.",
+                            tip="0 = no smoothing (sharpest, more mottle); 32 = clean faint background.")
+    faint_lo_pct: float = S(55.0, section="Nebula", label="Faint area limit", level=ADVANCED, ge=0, le=99, step=1,
+                            unit="percentile", help="Below this emission percentile the faint-area smoothing is complete.")
+    faint_hi_pct: float = S(85.0, section="Nebula", label="Bright area limit", level=ADVANCED, ge=1, le=100, step=1,
+                            unit="percentile", help="Above this emission percentile the image keeps full resolution.")
     # ------------------------------------------------------------------ highlights
     hl_knee: float = S(0.7, section="Highlights", label="Highlight knee", ge=0.3, le=0.95, step=0.01,
                        help="Brightness above which highlights are compressed by a logarithmic shoulder (with local "
@@ -146,4 +194,8 @@ PRESETS: dict[str, dict] = {
     "Prominent stars": {"g_lim": 14.0, "t_lim": 0.28, "d10": 5.4, "star_sat": 0.6, "d7": 11.5},
     "Dense Milky Way": {"g_glow": 17.0, "g_lim": 16.0, "t_lim": 0.18, "d10": 3.8, "d7": 8.0},
     "Starless": {"stars": False},
+    "Rich detail & colour": {"fine_k": 1.3, "fine_lo_pct": 50.0, "faint_smooth": 12.0,
+                             "colour_detail": 0.8, "resid_boost": 0.5, "chroma": 0.95},
+    "Emission nebula, OIII": {"fine_k": 1.3, "fine_lo_pct": 50.0, "faint_smooth": 12.0,
+                              "colour_detail": 0.8, "oiii_boost": 1.5, "chroma": 0.95},
 }
