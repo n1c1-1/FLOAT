@@ -50,7 +50,7 @@ class Stars(Stage):
                    "of the image, used to separate the stars from the nebula and to redraw them.")
     deps = ("optics", "catalogs")
     Params = StarsParams
-    version = "9"          # 2: empirical extended 2-D PSF; 3: radial halo with the flux; 4: capped amplitude; 9: physical
+    version = "11"         # 9: physical template; 11: per-channel amplitudes kept (one amplitude tried, worse)
 
     def run(self, ctx: Context, p: StarsParams) -> None:
         dev = ctx.device
@@ -565,7 +565,9 @@ def extended_psf(img, model, x, y, g, Fp, fluxes, dm, W, H, radius, log=print, r
         text[c] = nr + phys[rb1] * w_rad
     # amplitude per star and per channel, measured on ring medians beyond 50 px and capped: never more than the
     # instrument's halo (Gaia fluxes of very bright stars are unreliable; light in excess is nebula, kept; the
-    # colour of the scattered light may differ from the star's)
+    # colour of the scattered light may differ from the star's). (One amplitude for the three channels was tried:
+    # it leaves large coloured halos around the brightest stars, worse than the small coloured residual this leaves
+    # around medium ones.)
     rings = np.arange(50, min(Rt, 220), 6)
     ridx = [(rr_t >= r) & (rr_t < r + 6) for r in rings]
     t_r = np.array([[np.median(text[c][m]) for m in ridx] for c in range(3)])
