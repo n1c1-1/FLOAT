@@ -180,3 +180,95 @@ the project, per-frame per-tile deconvolution before stacking, has still not bee
 - Earlier work in progress stopped by the user (stacked repairs) is kept in `git stash` and not used.
 - Test bench and night scripts (outside the repository): `<user folder>\astro_gpu_scratch\bench\` and
   `<user folder>\astro_gpu_scratch\night\` (rebuild patches, judge script, logs).
+
+## 11. Iris against the user's own image (2026-10-11 afternoon)
+
+The user's full-size Iris processing (3749 x 2514) is registered as the project's reference image and aligned to the
+stack (1284 stars, 0.14 px). `judge_iris.py NAME` compares a render with it at 100 % on six zones, in the reference
+framing (`results/compare_reference/`). What the comparison showed, in order of impact:
+
+1. **Stale files.** The stage engine never deleted the outputs of an earlier version, and the render preparation
+   picks up optional files when they exist. The extended star template of a rejected night version was still in
+   `work/stars/` and classified the whole Iris nebula as "star light": the continuum was smoothed at 24 px over 53 %
+   of the field, the nebula included. Fixed in the runner (`_clear_outputs` at every fresh start of a stage); both
+   projects cleaned by hand. Every verdict of section 10 was made with those files present.
+2. **Reflection nebula = star light.** Even without stale files, "smooth the continuum where star light dominates"
+   is a rule made for emission nebulae: a reflection nebula is scattered star light. Deciding "dominates" against the
+   nebula brightness instead of the noise was tried and rejected (nothing gained on Iris, star-residual mottling
+   back on Heart). The rule stays as in version 16; step 1 alone brought the Iris core structure back
+   (smoothed area 53 % -> 25 %, core contrast 2.0 -> 2.6, user's image 4.7).
+3. **Halo of the bright blue star (G 6.9).** Its halo extends to 300 px; the removal (nominal radius from the
+   magnitude, a refractor scale) covered 130 px, partially. Measuring the extent on each star hollowed the Iris core
+   (seen from one star, a nebula centred on it is a halo). Kept rule: the instrument's typical halo is the median
+   profile of the eight brightest stars normalised by their catalogue flux (fitted and predicted fluxes both fail on
+   saturated stars); each of those eight loses min(its own profile, three times the typical halo), out to where the
+   typical halo falls into the scatter of the far background; every other star keeps the version-4 treatment. Applied
+   to all 1113 bright stars of the Heart field it brightened and yellowed the sky: rejected in that form.
+4. **Spikes.** The diffraction spikes of the two brightest Iris stars are not in the star model and stay in the
+   starless image. A detector (narrow peaks of the azimuthal profile at the same angles over several annuli) finds
+   them; masking and filling the wedges leaves a bright bar (the fill takes the halo's value). Parked: subtract a
+   measured spike profile instead of filling.
+5. **Not defects of the chain but of its design, to decide with the user**: the darkest 1 % of the field is rendered
+   at 10/255 (dark_level); on Iris the darkest region is plain sky in a field that has no empty sky, hence "black
+   patches" that the same policy renders as dark nebulae on Heart. Stars are drawn small and dim compared with the
+   user's image (settings `d10`, `d7`, `star_sat`). The faint dust is rendered yellow-olive where the user's is
+   neutral brown.
+6. **Star flat.** The correction derived from star photometry (-23 to +11 % on Iris, -6 to +24 % on Heart) makes the
+   sky *less* uniform on both data sets (lower envelope range x2.5): it measures aperture losses of the PSF across
+   the field, not a flat error. Present since the first version; to be gated on "makes the sky flatter" later.
+
+### 11.1 Halos around the stars on Iris (2026-10-11, late afternoon)
+
+The user found halos everywhere on Iris at 100 % (around stars in the nebula core, around faint field stars, on
+the spikes of the bright stars) that the zone judge had not caught. Rule since then: every result is inspected at
+100 % on faint stars, stars in the nebula, bright stars with spikes, on both data sets (`night/qc_sheet.py`),
+before being shown. Causes and fixes, all general (no instrument rule), each checked on Iris and Heart:
+
+| Cause | Fix | Commit |
+|---|---|---|
+| Bubbles around every star in the reflection nebula: the render preparation smoothed the continuum at 24 px in a disc around each star | smoothing only where the field is too dense to see the continuum between the stars, or where it is flat between them | 55737bf |
+| Rings / commas around every star: a Newtonian's star shape changes across the field faster than the fitted PSF | local star shape measured on the image (grid of cells) + per-star flux, position, width refinement | a0f9bfa |
+| Grey disc around the Iris central star: its real halo and the nebula counted as model error | a residual is a model error only below 60 % of the model | a0f9bfa |
+| Spikes of the Newton left in the nebula layer, or removed and lost | spikes measured strip by strip and moved to the star layer | a0f9bfa |
+| Bright saturated stars: nothing can model them (saturation, coma, spikes) | with spikes in the optics, saturated stars are shown by their real light (image minus nebula), nebula interpolated under them unless a structured nebula surrounds them; without spikes (refractor) every star is drawn as before - Heart identical | 55737bf |
+
+Rejected on the way (each made one star better and another worse): a 2-D halo-and-spike template for bright stars
+(black disc), disc rules for bright cores (three variants), the halo extent followed in the starless image (the
+footprint of the Iris central star grew and its nebula was erased), OpenCV inpainting (garbage on large holes).
+
+Remaining on Iris: about 14 stars of G 9.5-11 have a slight dark disc - their fitted flux is about twice the
+catalogue prediction (core near saturation) and their modelled wings are removed twice too strongly; thin straight
+spike traces cross the Iris core. The user wants to keep the spikes ("the charm of a Newtonian image").
+
+### 11.2 Dark grit on Heart, odd spikes on Iris (2026-10-11, evening)
+
+The user saw dark grit in the Heart nebula and odd spikes on some medium stars of Iris (the Iris nebula itself:
+"excellent").
+
+**Dark grit (Heart) - found and fixed.** The starless image was clean at those places (a slight bright bump on
+filled star cores, never a hole). The render preparation made the holes: on a star footprint the star guard gives
+the brightness it keeps a neutral colour, which is star-coloured light plus a negative emission (neutral light is
+bluer than the average star); the continuum smoothing that followed removed the star-coloured part and left the
+negative part, a dark, slightly coloured hole. Fix: the continuum is smoothed before the guard, on the true colours;
+the guard then fills whatever hole is left on the footprints. Dark specks of the faithful render 235 -> 133 (the
+morning image has 129), deep ones 22 -> 11; a compact bright knot that came out as a black hole is back as in the
+morning image. Iris: no visible change, same speck count within the run-to-run spread.
+
+Rejected on the way, each measured on both data sets: every star bounded by what the image holds (Heart specks
+249 -> 505); lifting the emission under positive star residuals over the whole field (more specks: the lifted
+spots make their surroundings look darker) or on footprints only (235 -> 371, same reason).
+
+**Odd spikes on Iris medium stars - diagnosed, not fixed.** In the user's image these stars are small diamonds (the
+inner part of the spikes merged into the star). Ours are a round drawn star plus a spike that starts about 10 px
+away: the inner part of the spike lies in the filled core of the starless image, and a drawn star is round, so
+neither layer holds it. Tried: a spike profile per colour channel (the widths are equal, 8.5/8/8 px), the direction
+of each spike measured on each star (stars fan by up to 4 degrees; remnants 40 -> 34 stars), the intensity along the
+spike following the data instead of a power law (remnants in the nebula layer 2-3 times weaker, no visible gain in
+the render, a bright stub at the start of some spikes), the stars with measured spikes shown by their real light
+(spike attached, but medium stars swell into soft discs, as saturated stars did on Heart). All removed. The real fix
+is to draw the stars with their measured local shape (the star stage already measures it, cell by cell): it would
+also give the corner stars their coma instead of a white blob with a dark crescent. Waiting for the user's decision.
+
+Noted: rerunning the star and star-removal stages with unchanged code changes the result slightly (Iris specks
+354 -> 379, render preparation almost unchanged): comparisons are made within one run of the upstream stages, never across
+reruns.
