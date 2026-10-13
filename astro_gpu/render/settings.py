@@ -174,8 +174,9 @@ class RenderSettings(StageParams):
                     help="Combine the star layer with the nebula (screen blend). Off = starless image.")
     real_stars: bool = S(True, section="Stars", label="Saturated stars as photographed",
                          help="Stars with a saturated core are shown with their real light - halo and diffraction "
-                              "spikes included - instead of being drawn; the measured spikes of the other stars are "
-                              "added. Off = every star drawn, no spikes.")
+                              "spikes included - instead of being drawn; every other star gets its measured shape "
+                              "(diamond, spikes) on top of its drawn round core. Off = every star drawn round, no "
+                              "spikes.")
     g_lim: float = S(15.0, section="Stars", label="Faintest drawn star", ge=8, le=20, step=0.25, unit="G mag",
                      help="Gaia magnitude of the faintest star drawn with a clearly visible peak.",
                      tip="Lower = fewer, more prominent stars; higher = denser star field.")
@@ -186,6 +187,11 @@ class RenderSettings(StageParams):
     d7: float = S(9.0, section="Stars", label="Size of a G=7 star", ge=2, le=40, step=0.1, unit="px",
                   help="Visible diameter of a magnitude-7 star; together with the G=10 size it sets how fast star "
                        "size grows with brightness.")
+    star_glow: float = S(0.3, section="Stars", label="Bright star glow", ge=0, le=1, step=0.05,
+                         help="The glare the optics spread around the stars (measured on the image and taken out of "
+                              "the nebula) is drawn back with the stars as a glow: the fraction of it shown.",
+                         tip="0 = stars on a clean sky; 1 = the whole glare, as photographed (around a very bright "
+                             "star it veils a large part of the field).")
     star_sat: float = S(0.7, section="Stars", label="Star colour", ge=0, le=2, step=0.05,
                         help="Saturation of star colours (measured, or from Gaia for saturated and faint stars).")
     sat_min: float = S(0.3, section="Stars", label="Faint star colour", level=ADVANCED, ge=0, le=1, step=0.05,

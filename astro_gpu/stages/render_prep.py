@@ -71,7 +71,8 @@ class RenderPrep(Stage):
                    "adjustment tab.")
     deps = ("background", "starless", "stars", "color", "optics", "stack")
     Params = RenderPrepParams
-    version = "22"         # 18: saturated stars by their real light; 22: continuum smoothed before the star guard
+    version = "26"         # 25: real star light without the far halo, the far halo as a layer of its own (glow);
+                           # 26: footprint of a saturated star at least its unreliable core
 
     def run(self, ctx: Context, p: RenderPrepParams) -> None:
         dm = float(ctx.metric_of("optics", "mag_offset", 0.0))
@@ -232,13 +233,31 @@ class RenderPrep(Stage):
         m13 = (gb > 11) & (gb < 13)
         for c in range(3):
             pr[c] /= np.median(fs["pred"][c][m13] / np.maximum(fs["flux"][c][m13], 1e-9))
-        # stars inside the footprint of a saturated star are shown by its real light, not drawn again; the measured
-        # diffraction spikes of the other stars join the star layer
+        # stars inside the footprint of a saturated star are shown by its real light, not drawn again
         real = (fp_all[np.clip(np.round(Y).astype(int), 0, H - 1), np.clip(np.round(X).astype(int), 0, W - 1)] > 0.5)             & (X >= 0) & (X < W) & (Y >= 0) & (Y < H)
-        spf = ctx.project.stage_dir("starless") / "spikes.npy"
-        if spf.exists():
-            Sreal += np.load(spf).astype(np.float32) / flat * (1 - fp_all)[None]
+        # every star gets the part of its shape that a round drawn star lacks (diamond, diffraction spikes), measured
+        # on the image by the star stage (flux x measured shape), outside the saturated stars' own light. A saturated
+        # star's spikes continue its real light; a drawn star's shape is a layer of its own, drawn by the rendering
+        # like the star's wings (same attenuation as the star size settings give them)
+        shp = ctx.project.stage_dir("stars") / "star_shape.npz"
+        if shp.exists() and ctx.metric_of("starless", "spike_directions", []):
+            from .star_shape import render as render_shape
+            sh = np.load(shp)
+            rf = real[:len(fs["x"])]
+            S_sh, n_r = render_shape(sh["E_render"], fs["x"], fs["y"], sh["flux"], H, W, float(sh["sig"]),
+                                     idx=np.where(rf)[0])
+            Sreal += S_sh / flat * (1 - fp_all)[None]
+            S_sh, n_d = render_shape(sh["E_render"], fs["x"], fs["y"], sh["flux"], H, W, float(sh["sig"]),
+                                     idx=np.where(~rf)[0])
+            ctx.save("Sshape.npy", (S_sh / flat * (1 - fp_all)[None]).astype(np.float16))
+            ctx.metric("stars_with_measured_shape", int(n_r + n_d))
+            del S_sh, sh
         ctx.save("Sreal.npy", Sreal.astype(np.float16))
+        hf = ctx.project.stage_dir("stars") / "stars_model_halo.npy"
+        if hf.exists():    # the far halo of the stars, taken out of the nebula: the rendering draws it as their glow
+            hal = np.load(hf, mmap_mode="r")
+            ctx.save("Shalo.npy", np.stack([np.asarray(hal[c], np.float32) / flat[c] for c in range(3)]).astype(np.float16))
+            del hal
         ctx.metric("stars_real_light", int(real.sum()))
         del Sreal
         np.savez(ctx.out("stars.npz"), x=X, y=Y, g=G, flux=F.astype(np.float32), pred=pr.astype(np.float32),
@@ -371,6 +390,11 @@ def saturated_star_light(ctx, fs, N, flat, lum, log=print, rmax=400):
         return N, fp_all, fp_fill, np.zeros_like(N)
     slf = np.stack([np.asarray(sl[c], np.float32) / flat[c] for c in range(3)])
     S = np.stack([np.asarray(full[c], np.float32) / flat[c] for c in range(3)]) - slf
+    hf = ctx.project.stage_dir("stars") / "stars_model_halo.npy"
+    if hf.exists():        # the far halo of the stars is not drawn back: their real light is core, spikes and rays
+        hal = np.load(hf, mmap_mode="r")
+        S -= np.stack([np.asarray(hal[c], np.float32) / flat[c] for c in range(3)])
+        del hal
     S = np.stack([cv2.GaussianBlur(S[c], (0, 0), 1.0) for c in range(3)])
     Ys = np.tensordot(lum, S, 1).astype(np.float32)
     YL = np.tensordot(lum, N, 1).astype(np.float32)
@@ -382,12 +406,20 @@ def saturated_star_light(ctx, fs, N, flat, lum, log=print, rmax=400):
     floor = float(np.percentile(cv2.GaussianBlur(bp2, (0, 0), 24), 5))
     N2 = N.copy()
     n_fill = 0
+    # with the far halo removed, the footprint must still cover the region where the star model cannot be trusted
+    # (the core the far halo continues flat, x 1.3): else the core residue spills out of it and makes its
+    # surroundings look structured, and the nebula is no longer interpolated under the star
+    from .far_halo import WING_OUT
+    from .starless import _filled_radius
+    smask = ctx.load("starless", "sl_mask.npy", mmap=True) if hf.exists() else None
     for i in idx_sat[np.argsort(fs["g"][idx_sat])]:
         R = 4
         for r_ in range(4, rmax, 2):
             if not _ring_median(Ys, xs[i], ys[i], r_) >= 2 * sig:
                 break
             R = r_
+        if smask is not None:
+            R = max(R, int(1.3 * max(WING_OUT, _filled_radius(np.asarray(smask), xs[i], ys[i], rmax=rmax) + 4)))
         R = int(R * 1.15) + 4
         x0_, x1_ = max(0, int(xs[i]) - R - 40), min(W, int(xs[i]) + R + 41)
         y0_, y1_ = max(0, int(ys[i]) - R - 40), min(H, int(ys[i]) + R + 41)

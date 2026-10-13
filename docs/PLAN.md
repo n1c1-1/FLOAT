@@ -272,3 +272,171 @@ also give the corner stars their coma instead of a white blob with a dark cresce
 Noted: rerunning the star and star-removal stages with unchanged code changes the result slightly (Iris specks
 354 -> 379, render preparation almost unchanged): comparisons are made within one run of the upstream stages, never across
 reruns.
+
+### 11.3 Spikes: one measured star shape instead of a spike model (2026-10-12)
+
+The user rejected the spike traces left on Iris after 11.2 ("step back, no tinkering"). Stepping back: a diffraction
+spike is not an object of its own; it is part of the shape the optics give every star (diamond core, four spikes,
+secondary rays of the mirror clips), the same for every star up to its flux. Every earlier attempt cut the star into
+pieces - a round drawn star, a spike fitted star by star on noisy data, a gap between the two - and the pieces did not
+meet. Measured facts that led to the design: the field rotates only 0.27 degree during the night (no fanning); the
+stacked shape of 63 isolated stars shows the diamond and the four spikes cleanly; the spike amplitude fitted star by
+star scatters by 30-70 % around the flux (nebula and neighbours), so no per-star spike fit can be clean; the
+photometry of a saturated star underestimates it (G 6.9 by 4x) and the catalogue is wrong for a very red star
+(G 4.6, BP-RP 5.7).
+
+Design (`stages/star_shape.py`, star stage v8, star removal v19, render preparation v24, engine):
+
+* the angular part of the star shape is measured once on the residual image around the stars brighter than G 11
+  (polar grid, each ring minus its median over the angle), per unit flux, weights flux^2 capped at the 5th brightest
+  star reaching each radius, smoothed along the radius in proportion to it and along the arc at the pixel scale;
+* the stars are split into two halves measured independently; the shape is where both halves show it above twice
+  their noise, the noise being the larger of the pixel noise and the difference between the halves; its value is the
+  mean of the halves; structure broader across than three spike widths is removed; one shape (green) for all colours;
+* cross-check: the shape of one half must be found in the stars of the other half at more than 5 standard errors.
+  Iris: 144 and 238. Heart (refractor): -65 - no shared shape, round stars only, nothing changes;
+* flux scale calibrated on the unsaturated stars; saturated stars get the flux measured on their own spikes;
+* every star's model is its flux times the shape (subtracted from the nebula; the unreliable-core mask ignores it, so
+  spikes are subtracted, never cut out); the strip spike model of the star removal is gone;
+* drawing: saturated stars keep their real light, their spikes continue it outside the footprint; a drawn star gets
+  its measured shape (core diamond from the local templates, spikes outside) attenuated like its wings, i.e. by the
+  same star-size reduction the rendering applies to the round part (at full strength it showed as a ring).
+
+Rejected on the way: a free shape without the halves test (nebula and dense-field neighbours passed as shape: Heart
+1.7 % of the light), one shape per colour channel (coloured streaks), the smaller of the two halves as value (thinned
+the faint spike ends, which stayed in the nebula), the energy explained as cross-check (noise-dominated, 1-6 % even on
+Iris), the shape at full strength on drawn stars (rings).
+
+Result on Iris: the horizontal spike traces of the medium stars are gone from the nebula layer and from the render; the
+messy double star in the corner is clean; dark specks 360 -> 332 (artistic), 232 -> 215 (faithful); zone figures
+against the user's image unchanged; bright stars keep their real spikes.
+
+Heart: the cross-check rejects the shape (-67 and -64 standard errors in two runs), the code path is the one of
+before. Two runs with identical code differ by as much as the new run differs from the previous final (12.5 % of the
+pixels by more than 3/255; dark specks 133 / 153 / 145): the star stage is not deterministic (its star model differs
+on 89 % of the pixels between two runs). Making it deterministic is needed before fine comparisons across reruns.
+
+### 11.4 Three objects of 28.12.2024 without flats (2026-10-13 night)
+
+Flaming Star (IC 405), Horsehead, Rosette: A7S + Newton 130/900, 15 s ISO 4000, darks found unsorted in the camera
+folder, no flats that night. Projects on E: (C: was nearly full). Darks: a first selection on level and absence of
+stars (557 of 722) was wrong - most of those frames hold a growing central light (dawn through the capped tube?) up to
+24 ADU; the master dark then had a +8 ADU disc, and with the Rosette's low sky noise 7 % of the sensor (a central
+disc) was flagged as hot: the stack covered the centre at 13 %, rendered black. Darks must also be spatially uniform
+(centre - corners <= 4 ADU, one quantisation step): 175 qualify, 100 used.
+
+* Flats: the star-derived flat (cubic) cannot carry the Newton's vignetting (down to 21 % in the corners): rings and
+  green corners. The flats of Iris (March 2025) and M33 (August 2025) have the same vignetting as this night's star
+  flat (correlation 0.96 / 0.95): calibrate option `flat_scale_px` (40 px) keeps only the large scales of borrowed
+  flats (vignetting, not their dust). Rejected: the star-flat degree chosen by cross-validation (degree 5: the
+  H-alpha fit flipped and the image went green).
+* Hot pixels: calibrate v2 also flags pixels that stand out in the lower quartile of 40 lights in sensor coordinates
+  (skipped if the sky moved less than 12 px): 1247 isolated pixels on the Flaming Star, 1054 on Iris. The green dotted
+  trail below IC 405 is NOT explained by it: it is in both half-stacks as dots along the drift path, but no sensor
+  pixel of the calibrated cache traces it (outliers in 10 % of frames or more, pixels marked saturated in 5 % or more,
+  checked against the frame-to-reference mapping on a star), and the stack's fixed-pattern estimate has nothing there
+  (recomputed: features only at the edges and at the brightest stars). It starts at a star. Cause found on
+  2026-10-13: one green sensor pixel, in the bad-pixel map, was marked saturated in most frames - the saturation mark
+  was applied after the bad-pixel exclusion and overwrote it, and the stack takes a saturated pixel for the core of
+  a bright star (drawn along the drift). Calibrate v3: a bad pixel stays excluded when it saturates; the three
+  dotted trails are gone.
+* Runner: adding flats to an existing project was ignored (the inventory did not rerun): the first stage now records
+  a fingerprint of the project's input lists.
+* Bright saturated stars in nebula (AE Aurigae): the whole-footprint interpolation smooths the nebula over ~200 px
+  around the star. Three variants were tried and rejected (interpolating only the unreliable core: Iris G 6.9 became
+  a blue disc; structure measured inside the footprint: star residues read as nebula; upper-quartile structure test +
+  core interpolation: holes, blooming streak and a starburst of rays around AE Aur and the G 4.1 star). The validated
+  rule is kept; the real fix is a better star removal around very bright saturated stars (blooming columns, rays).
+
+### 11.5 The far halo of the stars (2026-10-13)
+
+Horsehead was the worst of the three: a blue glare over a quarter of the frame, colour patches, an "eye" (dark disc in
+a bright ring) around sigma Orionis and other bright stars, sky fitted on 46 % of the field. Diagnosis:
+
+* Alnitak (V 1.74) is missing from Gaia DR3: not modelled, its glare stayed in the nebula. Catalogs v2 adds the
+  Hipparcos stars of the field with no Gaia counterpart, G and BP-RP from V and B-V through relations fitted on the
+  Hipparcos stars of the same field that Gaia has (Horsehead: Alnitak alone, 20 stars for the relations; Iris and
+  Heart: none).
+* The star flat (-33 %..+17 %) is real: aperture photometry of isolated stars gives the same map (-15 to -24 % on
+  the right edge). Not the cause.
+* The glare is part of each star, proportional to its flux. It was modelled out to 60 px only (stars stage) and then
+  cut star by star in the starless image with a local reference level and a taper (the eye). The far halo is now one
+  shape for the instrument, measured on all stars brighter than G 10.5 jointly with a smooth sky, robustly, on a
+  coarse grid: non-increasing in log r, falling at least as 1/r (a free shape levelled off and took the Iris dust
+  for glare), achromatic (the colour of each star; per-channel shapes took the red emission for glare), on an
+  elliptical radius whose axis ratio and angle come from the second angular harmonic of the fit (Horsehead 1.27 at
+  -3 deg). Inside the radius the star model holds (60 px or the saturated core), it is flat. A star whose halo is
+  measurable against its surroundings gets its own amplitude (0 to 1.5: T Cephei by the Iris, a Mira fainter than its
+  Gaia magnitude, would lose a dark disc); a star whose glare dominates them (Alnitak, sigma Ori) also its own
+  elongation, angle and radial slope (Alnitak: elongated at -30 deg, not like the instrument), the candidates being
+  compared on the same trimmed residual (a selection on the pixels kept by one candidate chose that candidate).
+* The halo is measured in the stars stage and saved apart (stars_model_halo.npy): the starless stage subtracts it
+  from the half-stacks with the star model, but not from the core model that decides what is filled and where
+  residuals are guarded (the glare would have been filled away with the Flame). The angular shape (spikes) and the
+  halo are measured in turn, each without the other: a long spike passed for an elongated glare, the glare for
+  star shape.
+* The angular shape was then rejected on Horsehead (cross-check 0.1 sigma for one half): the two companions of
+  sigma Ori, inside its core, carried its residual per unit of their own flux into their half. Stars within 60 px of
+  a star 1.5 mag brighter no longer enter the shape measurement (cross-check back to several hundred sigma).
+* Rendering: the real light of saturated stars no longer includes the far halo (it was drawn out to 400 px and cut);
+  the halo is a layer of its own drawn with the stars as a glow, attenuated like the wings of the drawn stars
+  (setting "Bright star glow", a fraction of the measured halo, 0.3 by default: the wing attenuation of the drawn
+  stars, 0.06 on Horsehead, made it invisible).
+* Open: the fine rays of Alnitak and sigma Ori (and their colour fringes) are star light that the shared angular
+  shape does not hold: they stay in the starless layer, which the render keeps under these stars (structured
+  surroundings), and are stretched as nebula. Tried and removed: attenuating the real light of saturated stars
+  beyond their core like the drawn wings, and taking its colour at 4 px - both act on the star layer, where the rays
+  are not. Next: the own radial structure of the stars whose glare dominates (sharp across the arc, smooth along
+  the radius), measured like the halo and moved to the star light - with care for the Flame next to Alnitak.
+* The background floor (no significant area below zero) was set by blocks the halo removal leaves uncertain: along
+  Alnitak's horizontal spike 90-140 px out (~30 ADU too much), 400 px south of it (~5 ADU, 10 % of the halo), and the
+  filled core of the corner star: +5 ADU, unequal in the three channels, a blue cast over the whole sky. Background
+  v4: the floor is set only by measured blocks (filled cores excluded) where 20 % of the removed halo (the precision
+  measured around Alnitak: -5 % at 90 px to +25 % at 300 px) cannot explain the deficit. Horsehead: floor 1.0-1.6
+  ADU (as before the halo model), IC 434 red again, the dust lane south of Alnitak black as in the user's own stack;
+  Iris and Heart unchanged (0.6-1.2 ADU).
+* Tried and not kept: the own rays of the dominant stars as angular structure that is the same over a factor 1.5-2
+  in radius (radial median in log r, per channel): fine rays reduced, but the broader dark and blue structure within
+  300 px of Alnitak stays.
+* Finals of the three objects (2026-10-13 13:20, archives of the previous ones in E:stro_gpurchive): Horsehead
+  without the glare and the colour patches, Flame and IC 434 clean; Flaming Star with the filaments around AE Aur (a
+  smoothed disc before) and no glow at the bottom; Rosette with its central cavity (filled by the glare of the cluster
+  before). At 100 %, around the two or three brightest stars of each field: fine rays and colour fringes (Alnitak,
+  sigma Ori, the G 4.1 star of the Flaming Star) and shallow dips of ~1 ADU that the stretch turns black (above the
+  G 4.9 star of the Flaming Star); the central star of the Rosette is a white disc in a dark ring. The Rosette's
+  angular shape is still rejected by the cross-check (3.0 and 37 sigma; -10.6 this morning).
+* Regression found on these finals and fixed (starless v21): the per-star cleaning of what is left around the bright
+  stars (bright_halos) is bounded by K x the typical halo of their brightness, measured on the brightest stars; after
+  the far halo that template was nearly zero, so nothing was cleaned any more near the cores of saturated stars (white
+  disc of the Rosette's central star, clustered cores of the Horsehead G 6.2 star). The template is measured with the
+  far halo (on the starless image plus the halo), the cleaning applies to what is left. Iris: the magenta arcs around
+  the blue G 6.9 star are gone too.
+* That fix brought back the old fault around AE Aurigae (a smooth pink disc where the filaments were): the per-star
+  cleaning acted out to its nominal radius (up to 320 px), where the far halo now holds the glare. Starless v22: it
+  acts only where the star model holds the star (1.3 x the radius inside which the far halo is flat, ~80 px). AE Aur
+  keeps its filaments; Horsehead and Iris keep the v21 gains. Still open: the white disc of the Rosette's central
+  star (its filled core), the clustered cores of the Flaming Star G 4.1 and G 5.3 stars, the dip above G 4.9.
+* The real-light footprints of the saturated stars shrank with the far halo out of their light (Horsehead: 5.1 % of
+  the field -> 1.2 %): the core residue spilled out, made the surroundings look structured, and the nebula was no
+  longer interpolated under 14 of 50 stars (clustered white cores, the Horsehead G 6.2 star). Render prep v26: a
+  footprint covers at least the unreliable core (1.3 x the radius inside which the far halo is flat). Horsehead: 3.5 %
+  of the field, interpolated under 40 of 50; G 6.2 and the corner star's companion clean again; the NGC 2023 star
+  keeps its clustered core (structured reflection nebula around).
+* Left for next time: three bright stars at the bottom of the Flaming Star (G 4.1, G 5.3) and the NGC 2023 star keep
+  their core residue in the starless layer: their surroundings are judged structured (nebula, the rays of G 4.1), so
+  the nebula is kept under their footprint. Their star layer is clean. Interpolating always within the unreliable
+  core and keeping the nebula only beyond it would remove the residue (tried before the far halo: Iris G 6.9 turned
+  into a blue disc - to be re-tested now that the glare is modelled).
+
+### 11.6 Against the user's own images (2026-10-13 night)
+
+The user's finished Horsehead, Flaming Star and Rosette (project reference folders, aligned by the reference stage -
+image features when star matching fails) are the guide; an independent agent judges every render on aligned 100 %
+crops (stars, star field, colour, structure, faint detail, artefacts) and must pass it before it is shown. The
+Horsehead finals of 14:21 failed on everything (1-3 / 5).
+
+* Diagonal streaks (walking noise): they were drawn by the fixed-pattern removal itself. On the star-free background
+  of the Rosette stack, without it the fine structure is isotropic (ratio along / across the drift 0.97); with it,
+  streaks along the drift (1.67). The pattern estimate (frames minus their smooth sky, averaged in sensor
+  coordinates) also holds the tracks of the faint stars that cross the sensor with the drift; subtracting it from
+  every frame redraws them as streaks. It had been neutral on Heart: stack v3 turns it off by default.

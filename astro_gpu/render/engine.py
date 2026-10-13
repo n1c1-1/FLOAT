@@ -88,7 +88,13 @@ class RenderEngine:
         self.real = st["real"] if "real" in st.files else np.zeros(len(self.X), bool)
         sr = self.dir / "Sreal.npy"
         self.Sreal = torch.from_numpy(np.load(sr)) if sr.exists() and "real" in st.files else None
-        self.Fm, self.Fpred, self.Fglow = st["flux"].astype(np.float64), st["pred"].astype(np.float64), st["glow_flux"]
+        # measured shape (diamond, spikes) of the drawn stars: drawn with them, attenuated like their wings
+        ss_ = self.dir / "Sshape.npy"
+        self.Sshape = torch.from_numpy(np.load(ss_)) if ss_.exists() and self.Sreal is not None else None
+        # far halo of the stars (glare of the optics), taken out of the nebula: drawn back as a glow
+        sh_ = self.dir / "Shalo.npy"
+        self.Shalo = torch.from_numpy(np.load(sh_)) if sh_.exists() else None
+        self.Fm,self.Fpred, self.Fglow = st["flux"].astype(np.float64), st["pred"].astype(np.float64), st["glow_flux"]
         pr = np.load(self.dir / "profile.npz")
         self.r_all, self.prof_raw = pr["r"], pr["prof"]
         self.alpha = float(self.prep["alpha"])
@@ -367,10 +373,19 @@ class RenderEngine:
                             self.W, self.dev)
         if use_real:
             sr = torch.tensordot(self.M_eff(s), self.Sreal.to(self.dev).float(), 1)
+            if self.Sshape is not None:
+                # a drawn star's measured shape is part of its light beyond the core: same attenuation as its wings
+                sr += fit["wing_scale"] * torch.tensordot(self.M_eff(s), self.Sshape.to(self.dev).float(), 1)
             lr = ops.luminance(sr)[None]
             st_lin += (lr + s.star_sat * (sr - lr)).clamp(min=0)
             info["stars"]["real_light"] = int((~dr).sum())
             del sr, lr
+        if self.Shalo is not None and s.star_glow > 0:
+            # the glare the optics spread around the stars, a fraction of it drawn back as their glow
+            sh = torch.tensordot(self.M_eff(s), self.Shalo.to(self.dev).float(), 1).clamp(min=0)
+            lh = ops.luminance(sh)[None]
+            st_lin += s.star_glow * (lh + s.star_sat * (sh - lh))
+            del sh, lh
         Ys_ = ops.luminance(st_lin)
         Ls = torch.asinh(fit["b"] * Ys_.clamp(min=0) / fit["w"]) / np.arcsinh(fit["b"])
         st_d = ops.color_preserving_stretch_ok(st_lin, Ls.clamp(0, 1))
