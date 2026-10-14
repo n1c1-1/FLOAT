@@ -252,6 +252,7 @@ def far_halo(sl, x, y, F, r_in, deg=3, nknots=20, log=print):
     h2, w2 = H // 2, W // 2
     Y2, X2 = (np.mgrid[0:h2, 0:w2] + 0.5) * 2 - 0.5
     out = np.zeros((3, h2, w2), np.float32)
+    dom = np.zeros((3, h2, w2), np.float32)          # the halo of the stars that dominate their surroundings
     for i in range(n):
         re = ell_r(i, X2, Y2, Q[i], PHI[i])
         prof = np.interp(np.log(re), lk, S, right=0.0).astype(np.float32) * pw(re)
@@ -259,14 +260,95 @@ def far_halo(sl, x, y, F, r_in, deg=3, nknots=20, log=print):
             prof *= ((re / RREF[i]) ** BETA[i]).astype(np.float32)
         for c in range(3):
             out[c] += prof * np.float32(kap[i] * F[c, i])
+            if i in strong:
+                dom[c] += prof * np.float32(kap[i] * F[c, i])
     full = np.stack([cv2.resize(out[c], (W, H), interpolation=cv2.INTER_LINEAR) for c in range(3)])
     info = {"far_halo_axis_ratio": round(q, 3), "far_halo_angle_deg": round(float(np.degrees(phi)), 1),
             "far_halo_profile": {str(int(round(rk[j]))): round(float(S[j] * pw(rk[j])), 5) for j in range(0, nr + 1, 2)},
             "far_halo_own": {str(i): [round(float(kap[i]), 2), round(float(Q[i]), 2), round(float(np.degrees(PHI[i]))),
                                       round(float(BETA[i]), 2)] for i in strong},
             "far_halo_own_amplitude": {str(i): round(float(kap[i]), 2) for i in measured},
-            "far_halo_kept_pct": round(100 * float(np.mean([mm.mean() for mm in m])), 1)}
+            "far_halo_kept_pct": round(100 * float(np.mean([mm.mean() for mm in m])), 1),
+            "_dominant": np.stack([cv2.resize(dom[c], (W, H), interpolation=cv2.INTER_LINEAR) for c in range(3)])
+            if strong else None}
     log(f"far halo of the stars: shape measured on {n} stars out to {rmax:.0f} px, elongation {q:.2f} at "
         f"{np.degrees(phi):.0f} deg; {len(strong)} stars dominating their surroundings with their own amplitude and "
         f"elongation, {len(measured)} with their own amplitude")
     return full, info
+
+
+def own_rays(res, x, y, r_in, halo, fac=2.0, across=12.0, rmax=1200, nt=1440):
+    """The fine rays of the stars whose glare dominates their surroundings: star light that neither the shared star
+    shape (spikes) nor the far halo holds, and that the star removal smeared into blotches stretched as nebula.
+
+    A ray is radial: around its star it keeps the same angle over a long range of radius, and it is narrow across.
+    So, on the residual image (stars and far halo out) around each such star, in polar coordinates: each ring minus
+    its median (what the halo leaves, broad), the running median along the radius over a factor ``fac`` (what keeps
+    its angle that long: structures of the nebula, the neighbouring stars do not), minus the running median along
+    the arc over +-``across`` px (what is broader across than a ray goes), per channel (the rays are chromatic).
+    What is not above twice its own noise is left out. Inside ``r_in`` (the star model) nothing is taken. The rays
+    are part of the star's light, so they follow its glare (``halo``, the far halo image): their typical contrast to
+    it is measured between r_in and 2 r_in, and farther out only what that contrast makes significant is kept, never
+    more than four times it (beyond, the structure of the nebula passed for rays: radial streaks far from the star).
+    Returns the rays (C, H, W), to be added to the far halo (removed from the nebula, drawn back as glare)."""
+    from scipy.ndimage import median_filter
+    C, H, W = res.shape
+    out = np.zeros((C, H, W), np.float32)
+    dth = 2 * np.pi / nt
+    hp = res[1, ::3, ::3] - cv2.GaussianBlur(res[1, ::3, ::3], (0, 0), 2)
+    sig = 1.4826 * float(np.nanmedian(np.abs(hp - np.nanmedian(hp))))
+    for i in range(len(x)):
+        R = int(rmax)
+        r0 = float(r_in[i])
+        if R <= 2 * r0:
+            continue
+        rg = np.arange(R, dtype=np.float32)[:, None]
+        th = (np.arange(nt) * dth).astype(np.float32)[None]
+        px, py = (x[i] + rg * np.cos(th)).astype(np.float32), (y[i] + rg * np.sin(th)).astype(np.float32)
+        lg = np.linspace(np.log(r0), np.log(R - 1), 400)
+        win = max(3, int(round(np.log(fac) / (lg[1] - lg[0]))) | 1)
+        r_lin = np.arange(R, dtype=np.float64)
+        E = np.zeros((C, R, nt), np.float32)
+        h_r = [np.nan_to_num(np.nanmedian(cv2.remap(np.ascontiguousarray(halo[c]), px, py, cv2.INTER_LINEAR,
+                                                    borderMode=cv2.BORDER_CONSTANT, borderValue=np.nan), 1))[:, None]
+               for c in range(C)]                             # the glare of the star along the radius
+        kappa = None
+        for c in (1, 0, 2):
+            v = cv2.remap(np.ascontiguousarray(res[c]), px, py, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
+                          borderValue=np.nan)
+            v = v - np.nanmedian(v, 1, keepdims=True)
+            v = np.nan_to_num(v)
+            A = np.stack([np.interp(lg, np.log(np.maximum(r_lin, 1)), v[:, j]) for j in range(nt)], 1)
+            A = median_filter(A, size=(win, 1), mode="nearest")
+            B = np.zeros((R, nt), np.float32)
+            k0 = int(np.ceil(r0))
+            B[k0:] = np.stack([np.interp(np.log(r_lin[k0:]), lg, A[:, j]) for j in range(nt)], 1)
+            for k in range(k0, R):                         # arc high-pass: narrower across than +-across px
+                nb = int(round(across / (k * dth)))
+                if nb < nt // 2:
+                    row = B[k]
+                    ext = np.concatenate([row[-nb:], row, row[:nb]])
+                    B[k] = row - median_filter(ext, size=2 * nb + 1, mode="nearest")[nb:nb + nt]
+            # noise of a median of the ``win`` samples of the radial window (one interpolated pixel each), and a smooth
+            # significance gate (a looser bound let the noise far from the star through: dark radial streaks)
+            s_e = 1.25 * sig / np.sqrt(win)
+            if kappa is None:                              # contrast of the rays to the glare, near the star (green)
+                near = slice(int(np.ceil(r0)), min(int(2 * r0), R))
+                kappa = float(np.median(np.abs(B[near]) / np.maximum(h_r[c][near], 1e-6)))
+            expect = kappa * h_r[c]
+            gate = np.clip((np.abs(B) / s_e - 2.0) / 2.0, 0, 1) * np.clip((expect / s_e - 2.0) / 2.0, 0, 1)
+            B = np.clip(B, -4 * expect, 4 * expect)
+            ramp = (np.clip((r_lin - r0) / 10.0, 0, 1) * np.clip((R - r_lin) / (0.2 * R), 0, 1))[:, None]
+            E[c] = B * gate * ramp
+        x0, x1 = max(0, int(x[i]) - R), min(W, int(x[i]) + R + 2)
+        y0, y1 = max(0, int(y[i]) - R), min(H, int(y[i]) + R + 2)
+        if x1 <= x0 or y1 <= y0:
+            continue
+        yy, xx = np.mgrid[y0:y1, x0:x1]
+        dx, dy = (xx - x[i]).astype(np.float32), (yy - y[i]).astype(np.float32)
+        r = np.hypot(dx, dy)
+        t = ((np.arctan2(dy, dx) % (2 * np.pi)) / dth).astype(np.float32)
+        w = (r < R - 1).astype(np.float32)
+        for c in range(C):
+            out[c, y0:y1, x0:x1] += w * cv2.remap(E[c], t, r, cv2.INTER_LINEAR, borderMode=cv2.BORDER_WRAP)
+    return out

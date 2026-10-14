@@ -440,3 +440,62 @@ Horsehead finals of 14:21 failed on everything (1-3 / 5).
   streaks along the drift (1.67). The pattern estimate (frames minus their smooth sky, averaged in sensor
   coordinates) also holds the tracks of the faint stars that cross the sensor with the drift; subtracting it from
   every frame redraws them as streaks. It had been neutral on Heart: stack v3 turns it off by default.
+* Saturated star cores rendered "as photographed" (nebula and star light together under the nebula curve, no
+  separation): the shards around Alnitak went, but the nebula curve made a large flat white disc of every bright
+  star and the undenoised stack under the footprints a grainy disc. Removed.
+* The glare of the stars (far halo, star_glow) is drawn with the nebula instead of the stars (engine): the residual
+  rays of the brightest stars stay in the nebula layer, and on a dark base (glare taken out, drawn back with the
+  gentle star curve) they stood out as multicoloured shards with black holes between them. On the glare, as in a
+  photograph, they are soft (Alnitak, sigma Ori, the G 4.9 star with no dark ellipse; Iris G 6.9 a larger glow).
+* Colours: the colour matrix is fitted on the stars and anchored on the camera's response to an HII spectrum,
+  reconstructed from the stars. That response is poorly determined at the lines: green / red at H-alpha 0.04 to 0.43
+  on five fields of the same camera. The emission actually recorded (colour of the band-pass structure of the
+  nebula, zero-point free) is R 1 : G 0.3-0.5 : B 0.17-0.34 on all of them; the Horsehead matrix sent it to blue-violet
+  with a negative luminance (IC 434 and the Horsehead nearly vanished, magenta wash). Render prep v27: the matrix is
+  changed only across the plane of the star colours (rank one), so that the measured emission gets the colour the
+  calibration gives the HII spectrum; the stars keep their colours exactly; not applied when the emission is within
+  the colours of the stars (Iris: unchanged). Horsehead: IC 434 red, Flame salmon, sky neutral; Heart: a slightly more
+  neutral sky. The independent judge ranks it clearly above the previous version (still a fail overall).
+* Reflection nebulae centred on their star (NGC 2023, IC 435) came out hollow with a bright ring: the per-star
+  cleaning of the starless stage removed, for every star but the eight brightest, everything above the level just
+  beyond its nominal radius, unbounded. Starless v23: bounded by K x the typical residual of these stars measured on
+  themselves (median per unit flux). NGC 2023 keeps its core (115 ADU at 15 px instead of 25 flat); IC 435 follows
+  the data (a plateau); no change elsewhere.
+* Render setting "Diffuse glow removed" (render prep layer Dglow: 3rd percentile of the nebula over a fifth of the
+  frame, smoothed): the level a gradient removal would take as background. The user's Horsehead treats the diffuse
+  H-alpha west of IC 434 as background (neutral grey where our data have R 4.9, G 2.1); subtracting it is also what
+  turns the dust east of IC 434 teal. 0 in Faithful.
+* Own rays of the dominant stars (stars v10-v11): radially coherent (running median along the radius over a factor 2),
+  narrow (+-12 px arc high-pass), per channel, significant against the noise of the median, bounded by the star's
+  glare (their contrast to it measured just outside the star model, at most four times it, tapered before 1200 px);
+  saved with the glare. The star below sigma Ori is clean again; a first version without the glare bound drew a
+  ring of dark radial streaks 600-1200 px out. Tried and not kept: +-30 px (no visible gain).
+* Render prep v29: the star guard also covers where star light dominates the noise: dark moats around the G 9.5-11.5
+  stars (their wings slightly over-subtracted 6-20 px out, outside the filled core) and black specks in the Flame.
+* Engine: the tone curve is set on the nebula without the glare (more glare made the whole image hazier and dimmer).
+* Render prep v30: the diffuse part of the glare goes with 'Diffuse glow removed' (the far glare of Alnitak veiled the
+  faint areas when the diffuse glow was removed).
+* Render prep / stars v31 / v12: only the glare of the stars whose glare dominates their surroundings is drawn back
+  (Horsehead: Alnitak, sigma Ori, G 4.9; Flaming Star: the four bright stars at the bottom; Rosette: none). Drawn back
+  for every star, the glare of the cluster filled the Rosette's central cavity. The measured emission colour also
+  separates emission, continuum and OIII (the green of the emission passed for OIII wherever there is H-alpha).
+* Artistic preset = the user's own slider settings on the Rosette (2026-10-13 22:33) + diffuse glow 0.6. New setting
+  'Neutral sky' (background neutralisation, 0 by default).
+* Tried and not kept: render settings fitted automatically on the user's references (OKLab band-pass and colour
+  distances; pixelwise comparisons favour flat grey images, contrast amplitudes still give grey desaturated ones);
+  the Noise2Noise network in the nebula base up to 32 px (the faint dust it shows is real, but star residues came
+  back around the bright stars); stronger OIII boost on the Rosette (our OIII map is not where the user's teal core is:
+  whitish patches in the ring, teal at the frame edges - the OSC separation is not reliable at this signal).
+* User feedback 2026-10-14 midday: the Heart covered with black spots; dark spots around the spikes of the bright
+  stars of the Rosette and the Flaming Star. Causes and fixes (render prep v32-v34):
+  - Heart: the star guard extended to wherever star light dominates the noise (v29, for the Horsehead's dark moats)
+    covers 98 % of a Milky Way field; the guard's interpolation then drew dark discs (60 spots, 36 before). Reverted.
+  - The real light of a saturated star was image minus the starless image plus the change made to the nebula; it
+    missed what the preparation changed in the starless image itself. Where the core fill of the starless image is
+    brighter than the image between the spikes (Rosette, no spike model), the star light was negative: dark notches
+    in a diamond. Now image minus the nebula rendered under the star: nebula + star light give the image back.
+  - Under a saturated star in structured nebula the nebula was kept as is, with the dark notches the symmetric star
+    model leaves between its rays (Flaming Star G 5.3, 5.9, 6.1, AE Aur). It is now kept at large scales only
+    (Gaussian of R/8 over the footprint) where the star model light exceeds the nebula (weight 0 at half of it, 1 at
+    twice it); the finer scales go to the star light. Smoothing everywhere under the footprint washed out the Iris
+    around its star (the nebula is 2-3 x the star model there; 5-40 x around the Flaming Star stars).

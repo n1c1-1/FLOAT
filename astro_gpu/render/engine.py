@@ -31,14 +31,15 @@ XYZ_TO_SRGB = np.array([[3.2404542, -1.5371385, -0.4985314],
 
 LAYER_KEYS = ("fine_k", "fine_lo_pct", "fine_hi_pct", "faint_smooth", "faint_lo_pct", "faint_hi_pct", "resid_boost",
               "colour_detail", "oiii_boost", "oiii_threshold", "oiii_smooth", "sharpen", "sharpen_lo_pct")
-NEB_LIN_KEYS = LAYER_KEYS + ("ha_boost", "ha_sigma", "glow_k", "glow_sigma", "g_glow", "speck_k", "white_temp", "tint")
+NEB_LIN_KEYS = LAYER_KEYS + ("ha_boost", "ha_sigma", "glow_k", "glow_sigma", "g_glow", "speck_k", "white_temp", "tint",
+                             "star_glow", "glare_nebula", "star_sat", "diffuse_cut", "sky_neutral", "sky_pct")
 NEB_KEYS = NEB_LIN_KEYS + ("chroma", "chroma_protect", "hue_target", "hue_shift", "chroma_sigma", "snr_lo", "snr_hi",
                            "sky_level", "dark_level", "toe", "sky_pct", "dark_pct", "white_mult", "hdr_strength",
                            "hdr_knee", "hdr_r", "hdr_eps", "lc_fine", "lc_medium", "lc_large", "neb_sharp",
                            "sharp_white", "hl_knee", "hl_max", "hl_detail", "hl_dmin", "hl_r1", "hl_r2", "hl_eps",
                            "hl_shoulder", "hl_keep_chroma", "bright_halo_desat")
 STAR_KEYS = ("stars", "g_glow", "g_lim", "t_lim", "d10", "d7", "star_sat", "sat_min", "core_white", "t9",
-             "white_temp", "tint", "real_stars")
+             "white_temp", "tint", "real_stars", "star_glow", "glare_nebula", "diffuse_cut")
 
 
 @dataclass
@@ -65,7 +66,7 @@ class RenderEngine:
         # may share a folder with leftover layer files, so prep.json decides
         self.layered = (self.dir / "N.npy").exists() and "w_cam" in self.prep
         if self.layered:
-            names = ["N", "Eg0", "dY", "R"] + [n for n in ("chroma_fine", "dS") if (self.dir / f"{n}.npy").exists()]
+            names = ["N", "Eg0", "dY", "R"] + [n for n in ("chroma_fine", "dS", "Dglow") if (self.dir / f"{n}.npy").exists()]
             if (self.dir / "O.npy").exists() and self.prep.get("oiii_sigma"):
                 names.append("O")
                 self.o_vec = torch.tensor(self.prep.get("o_display", self.prep["o"]), dtype=torch.float32,
@@ -93,7 +94,10 @@ class RenderEngine:
         self.Sshape = torch.from_numpy(np.load(ss_)) if ss_.exists() and self.Sreal is not None else None
         # far halo of the stars (glare of the optics), taken out of the nebula: drawn back as a glow
         sh_ = self.dir / "Shalo.npy"
-        self.Shalo = torch.from_numpy(np.load(sh_)) if sh_.exists() else None
+        if sh_.exists():
+            self._host["Shalo"] = torch.from_numpy(np.load(sh_))
+            if (self.dir / "ShaloL.npy").exists():
+                self._host["ShaloL"] = torch.from_numpy(np.load(self.dir / "ShaloL.npy"))
         self.Fm,self.Fpred, self.Fglow = st["flux"].astype(np.float64), st["pred"].astype(np.float64), st["glow_flux"]
         pr = np.load(self.dir / "profile.npz")
         self.r_all, self.prof_raw = pr["r"], pr["prof"]
@@ -216,19 +220,44 @@ class RenderEngine:
         astro = self._astro(s, f)
         if not self.layered:                               # cached / host tensor: never modified in place
             astro = astro.clone()
+        if s.diffuse_cut > 0 and "Dglow" in self._host:   # the diffuse glow of the field taken as background
+            astro = astro - s.diffuse_cut * self._layer("Dglow", f)
         if s.ha_boost > 0:
             Hex = ops.gaussian_blur(astro[0] - self.alpha * astro[1], s.ha_sigma / f)
             astro = astro + s.ha_boost * Hex.clamp(min=0)[None] * self.vh[:, None, None]
         if s.glow_k > 0:
             astro = astro + s.glow_k * self._glow(s, f)
+        if s.star_glow > 0 and "Shalo" in self._host:
+            # the glare of the optics around the stars, as photographed: under the nebula curve, like the residual
+            # rays of the brightest stars that stay in the nebula (with the stars, the rays stood out of a dark sky)
+            # it is star light: the saturation of the stars, not of the nebula (a saturated blue disc around Alnitak)
+            g = self._glare(s, f)
+            if self.layered:
+                yg = torch.einsum("c,chw->hw", self.lum, g)[None] * self.w_cam[:, None, None]
+                g = yg + s.star_sat * (g - yg)
+            astro = astro + s.star_glow * s.glare_nebula * g
         if s.speck_k > 0 and f == 1:
             for c in range(3):
                 a_ = astro[c]
                 sg_ = ops.robust_noise(a_, sub=7)
                 astro[c] = torch.maximum(a_, ops.median_filter(a_, 5) - s.speck_k * sg_)
         lin = torch.einsum("ij,jhw->ihw", self.M_eff(s), astro)
+        if s.sky_neutral > 0:
+            # background neutralisation: the typical sky (sky_pct, smoothed) made grey at the same brightness, by an
+            # offset per channel - the faint emission that fills a field stops tinting it, the bright stays coloured
+            sky = torch.tensor([float(ops.percentile(ops.gaussian_blur(lin[c], 8 / f), s.sky_pct, valid)) for c in range(3)],
+                               device=lin.device)
+            y = 0.2126 * sky[0] + 0.7152 * sky[1] + 0.0722 * sky[2]
+            lin = lin - s.sky_neutral * (sky - y)[:, None, None]
         lin[:, ~valid] = 0
         return lin
+
+    def _glare(self, s: RenderSettings, f: int) -> torch.Tensor:
+        """The glare of the stars (camera space), without the part taken as background with the diffuse glow."""
+        g = self._layer("Shalo", f)
+        if s.diffuse_cut > 0 and "ShaloL" in self._host:
+            g = g - s.diffuse_cut * self._layer("ShaloL", f)
+        return g.clamp(min=0)
 
     def _oiii(self, s: RenderSettings, f: int, valid: torch.Tensor) -> torch.Tensor:
         """OIII map at the chosen smoothing, minus its sky level, soft-thresholded at the measured sky noise."""
@@ -266,9 +295,16 @@ class RenderEngine:
         ratio = (w[None] * cs / ops.luminance(cs).clamp(min=1e-3 * noise)[None]
                  + (1 - w[None]) * cb / ops.luminance(cb).clamp(min=1e-3 * noise)[None]).clamp(-0.5, 4)
         del cb, cs, Ys
-        Yl = ops.gaussian_blur(Yl_full, 6 / f)
+        # the tone curve is set on the nebula: the glare of the stars drawn back into it (star_glow) is light added
+        # on top, it does not move the sky, the dark areas nor the white of the nebula
+        Yn = Yl_full
+        if s.star_glow > 0 and "Shalo" in self._host:
+            Yn = Yl_full - s.star_glow * s.glare_nebula * ops.luminance(
+                torch.einsum("ij,jhw->ihw", self.M_eff(s), self._glare(s, f)))
+        Yl = ops.gaussian_blur(Yn, 6 / f)
         p_dark, p_sky = ops.percentile(Yl, [s.dark_pct, s.sky_pct], valid)
-        hi = ops.percentile(Yl_full, 99.995, valid)
+        hi = ops.percentile(Yn, 99.995, valid)
+        del Yn
         lo, b, white = fit_tone_curve(p_dark, p_sky, hi * s.white_mult, s.dark_level / 255, s.sky_level / 255, s.toe)
         info["tone_curve"] = {"black": lo, "b": b, "white": white}
         L = tone_curve(Yl_full, lo, b, white, s.toe)
@@ -380,11 +416,11 @@ class RenderEngine:
             st_lin += (lr + s.star_sat * (sr - lr)).clamp(min=0)
             info["stars"]["real_light"] = int((~dr).sum())
             del sr, lr
-        if self.Shalo is not None and s.star_glow > 0:
-            # the glare the optics spread around the stars, a fraction of it drawn back as their glow
-            sh = torch.tensordot(self.M_eff(s), self.Shalo.to(self.dev).float(), 1).clamp(min=0)
+        if s.star_glow > 0 and s.glare_nebula < 1 and "Shalo" in self._host:
+            # the rest of the glare with the stars, under their gentler curve (fades out close to the star)
+            sh = torch.einsum("ij,jhw->ihw", self.M_eff(s), self._glare(s, 1))
             lh = ops.luminance(sh)[None]
-            st_lin += s.star_glow * (lh + s.star_sat * (sh - lh))
+            st_lin += s.star_glow * (1 - s.glare_nebula) * (lh + s.star_sat * (sh - lh))
             del sh, lh
         Ys_ = ops.luminance(st_lin)
         Ls = torch.asinh(fit["b"] * Ys_.clamp(min=0) / fit["w"]) / np.arcsinh(fit["b"])

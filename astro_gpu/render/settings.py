@@ -86,6 +86,21 @@ class RenderSettings(StageParams):
     toe: float = S(0.015, section="Sky background", label="Shadow softness", ge=0, le=0.08, step=0.001,
                    help="Below the black point the curve fades out smoothly instead of clipping, so the cores of dark "
                         "globules keep their gradation.", tip="0 = hard clip.")
+    glare_nebula: float = S(1.0, section="Stars", label="Glare with the nebula", level=ADVANCED, ge=0, le=1, step=0.05,
+                            help="Part of the bright stars' glare drawn with the nebula (its curve: wide, as "
+                                 "photographed; it covers what the star removal leaves around them) rather than with the "
+                                 "stars (their gentler curve: the glare fades out close to the star).")
+    diffuse_cut: float = S(0.0, section="Sky background", label="Diffuse glow removed", ge=0, le=1, step=0.05,
+                           help="The diffuse glow of the field (large-scale H-alpha, galactic light: the level on which "
+                                "the structures stand, measured over a fifth of the frame) taken as background, as a "
+                                "gradient removal does.",
+                           tip="0 = kept with its true brightness (faithful); 1 = removed: darker backgrounds, the "
+                               "nebula structures stand out.")
+    sky_neutral: float = S(0.0, section="Sky background", label="Neutral sky", ge=0, le=1, step=0.05,
+                           help="Makes the typical sky grey (same brightness) by an offset per colour, as a background "
+                                "neutralisation does: in a field filled with faint emission, only its brighter parts "
+                                "keep their colour.",
+                           tip="0 = the sky keeps its measured colour (faithful); 1 = neutral grey sky.")
     sky_pct: float = S(30.0, section="Sky background", label="Sky reference", level=ADVANCED, ge=5, le=80, unit="percentile",
                        help="Percentile of the (smoothed) image defining the 'typical sky'.")
     dark_pct: float = S(1.0, section="Sky background", label="Dark reference", level=ADVANCED, ge=0.01, le=20,
@@ -211,6 +226,8 @@ PRESETS: dict[str, dict] = {
     # defaults: the user's preferred rendering; measured colours without the H-alpha hue convention came out magenta
     # and were not what the data look like to the eye). Artistic = the same base with a stronger stretch, local
     # contrast and colour, judged by eye. Neither desaturates the halos (that produced grey discs around bright stars).
+    # (Tried 2026-10-14: the user's own slider settings on the Rosette as Artistic - the independent judge found dark
+    # rings around the stars, olive reflection nebulae and crushed faint dust on the Horsehead.)
     "Faithful": {},
     "Artistic": {"sharpen": 1.0, "sharpen_lo_pct": 60.0, "fine_k": 1.3, "fine_lo_pct": 60.0, "colour_detail": 1.0,
                  "resid_boost": 0.3, "chroma": 1.1, "neb_sharp": 1.2, "lc_fine": 1.15, "lc_medium": 1.4,
