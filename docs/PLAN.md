@@ -499,3 +499,70 @@ Horsehead finals of 14:21 failed on everything (1-3 / 5).
     (Gaussian of R/8 over the footprint) where the star model light exceeds the nebula (weight 0 at half of it, 1 at
     twice it); the finer scales go to the star light. Smoothing everywhere under the footprint washed out the Iris
     around its star (the nebula is 2-3 x the star model there; 5-40 x around the Flaming Star stars).
+
+### 11.7 Star artefacts: the leads (2026-10-14 evening)
+
+The user (Iris G 6.9 star, dark blobs along its spikes): step back and solve the star problem for good. Every star
+artefact so far (notches, rings, discs, blobs) comes from subtracting a model of each star and drawing it back: the
+model never matches each star exactly. Leads, to be sorted at the end (each in its own branch, each judged by an
+independent agent on aligned 100 % crops):
+
+| Lead | Branch / place | Idea | Status |
+|---|---|---|---|
+| 1b real stars | real-stars | stars brighter than G 12: spikes (and saturated cores, rays) shown as photographed = image minus the nebula under them, the nebula interpolated across the spikes; fainter star cores drawn as now | in test |
+| 2 A reference star-removal tool / nox | D:/astro_gpu_diag/starnet_test | off-the-shelf learned star removers on the problem stars | agent running |
+| 3 own network | star-net, D:/astro_gpu_diag/own_star_removal | a star remover trained on the project's own data (its real bright stars injected on clean nebula) | agent running |
+| 1c | real-stars (342f578) | 1b with spikes only where they stand 5 x the noise above the light beside them | tested |
+| 1d / 1e | real-stars-drawn (54f0d78, 408c3d2) | under a spike strip only the spike comes from the image (core model of every star subtracted, star cores left out), the stars along the strips drawn; 1d at 5 x noise, 1e at 2 x | 1e retained for QC |
+| 2b | a reference star-removal tool-hybrid (9543916, 86441cd) | a reference star-removal tool's starless image (minus our far halo and sky) under the footprints and strips | rejected |
+| 2c | a reference star-removal tool-texture (e0f1d94) | 1d plus a reference star-removal tool's texture below 8 px under footprints and strips, the level ours | rejected |
+
+Lead 1b, first findings on the Iris (G 6.9 star):
+* all stars G < 12 shown by their own light (discs + spikes): the medium stars came out large and soft (their
+  photographed wings escape the star size settings) - only their spikes are taken as real light now, their round
+  core stays drawn;
+* the spike strips were missed on saturated stars (the saturated core broke the spike length measurement at the
+  start): the length is now where less than 60 % of the last 15 px stand above twice the noise;
+* the fine detail, colour and sharpening layers come from the starless images where the shared spike model was
+  subtracted: off under the strips too;
+* the dark blobs left were the star's fine secondary rays beyond its footprint (measured with the ring median, which
+  narrow rays do not move): footprints of saturated stars now out to where the ring's 90th percentile falls below
+  twice the noise (Iris: 4 % -> 14 % of the field). G 6.9 clean, the Iris core unchanged - but on the Rosette and the
+  Flaming Star the footprints grew to 33-34 % of the field, interpolated (the ring's 90th percentile of the star light
+  stays above twice the noise wherever star residues fill a nebula): reverted to the ring median. The secondary rays
+  are left to the learned star removal (lead 2: A reference star-removal tool leaves only a faint fine-ray texture).
+
+Results 2026-10-14 23:00-23:50 (Rosette, Flaming Star, Horsehead, Iris; sheets D:/astro_gpu_diag/qc/leads):
+* 1b (spikes of every star G < 12 from twice the noise, measured against zero): the strips ran 400 px through the
+  nebula (a quarter of the field interpolated) - the spike is now what stands above the light beside it on both
+  sides (5 hw away). Then: bright stars as good or better (Iris G 6.9 clean, Flaming Star G 5.9 without its beaded
+  spike), but the medium stars G 10-12 became soft blobs and smears on all four objects: under a strip the star light
+  is the raw image minus the nebula, so the neighbours whose centre falls in a strip are shown by their raw light
+  (wider than drawn stars), those beside it twice (raw part + drawn), with the image noise.
+* 1c (5 x noise): fewer, shorter strips (Rosette 2034 -> 1856 spikes) - the blobs remain (same cause).
+* 2b (a reference star-removal tool starless as is under the footprints): dark discs around every saturated star, dark bands along the
+  strips: A reference star-removal tool removes part of the halo with the star, the far halo model removes it again.
+* 1d (only the spike from the image under the strips, every star there drawn): the medium stars as compact as now.
+  A first version left the cores of the neighbours (core model never close enough: a G 11 core came back at full
+  brightness over the drawn one) - the star cores (starless fill mask, dilated 2 px) are left out. At 5 x noise
+  the Iris G 6.9 spike got its dark blobs and beads back (the strip stopped before them).
+* 2c (1d + a reference star-removal tool texture below 8 px): coloured noise along every strip (a reference star-removal tool works on the noisy stack, our
+  nebula is denoised).
+* 1e (1d at 2 x noise): Iris G 6.9 spike clean (no blob, no bead), medium stars compact. Known defect: faint
+  coloured noise in the strips in dark sky (the star light under a strip is the raw image, only faded below 1.5-3.5
+  x noise), visible at x5. Strips: 10.75 % of the Iris field (the fine detail and colour layers off under them).
+
+Blind independent QC 2026-10-15 00:30 (versions shown as letters, key kept apart; sheets D:/astro_gpu_diag/qc/blind):
+current / 1b / 1c / 1e on the four objects. 1e first on all four (Rosette 1e > 1b > 1c > current; Flaming Star
+1e > current > 1b >= 1c; Horsehead 1e > 1b > 1c > current; Iris 1e > current > 1b > 1c). Current loses on the bright
+spikes (beads, shards, light bars along the spikes across the nebula, dark blobs), 1b / 1c on the medium stars (soft
+crosses, smeared neighbours). 1e remaining defect: faint brownish streaks along some faint spikes in dark sky (Iris).
+Shared by all: Iris G 4.6 spikes weak with a sea-urchin halo, a dark depression ~40 px around one star.
+* 1f: the light under a strip averaged along the spike direction over the strip width (normalised by the weights
+  that leave the star cores out): the blotches become smooth faint streaks of the star's colour.
+
+Second blind QC 2026-10-15 01:15 (current / 1e / 1f, sheets D:/astro_gpu_diag/qc/blind2): 1f first on all four
+objects, 1e second, current last on all four (its bright spikes: beads, white bars and slivers across the nebula,
+lumps at the spike ends, dark blobs). Remaining in 1e / 1f: the spikes of G 10-12 stars in dark sky appear as faint
+dashed fragments starting away from the core (fainter and greyer in 1f); current shows nothing there. Next: the
+same with real spikes only for stars brighter than G 10 (parameter real_g), for the user's choice.
