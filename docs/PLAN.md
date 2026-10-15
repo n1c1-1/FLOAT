@@ -605,6 +605,15 @@ trace of the masking circle around the Rosette G 5.6.
   Iris test with the network's star layer and our Wiener filter: G 6.9, G 4.6, G 7.3 removed without rings, discs or
   colour residue; the Iris core keeps its structure without the blue blotches; the dark disc in the dark lanes gone.
   Open: the own rays of dominant stars are subtracted before the network (the Flaming Star spokes may stay).
+* Stage 'Learned star removal network' (star_net, between 'stars' and 'starless', off by default): the own-data
+  network as a pipeline stage (recipe "run E" of experiments/own_star_removal, library stages/star_net_lib.py). Its
+  training target is the model-based starless image, computed inside the stage by the same function as 'starless'
+  (model_starless, shared; the refactor gives the same image within float rounding) with the default settings. It
+  writes star_layer.npy (stack units, far halo excluded), the model and a preview; resumable (target, measurements
+  and training state checkpointed). 'starless' takes that layer when its 'Learned star layer' is empty: the value is
+  proposed by Starless.auto() as '<path> (run <id>)', so a new layer re-runs 'starless' through its parameters and
+  nothing changes for projects without one (no formal dependency, which would have made every project stale). The
+  runner now plans again after each stage, so the layer is used in the same run.
 * Corrections to the diagnosis above (measured later the same morning):
   - Iris G 6.9 dark spots: in the raw stack before any star removal (raw minus star models: -1.0 and -0.5 noise
     sigma against their surroundings at 94 and 113 px from the star) and kept identically by the learned removal:
@@ -636,3 +645,118 @@ trace of the masking circle around the Rosette G 5.6.
   come from the training data: the bright stamps are the denoised stack minus sl_final, so a hole of sl_final under
   a unique bright star becomes extra star light the network learns to remove. Next: build the bright stamps against
   a background interpolated from the ring around the star, and retrain.
+* Learned network run G (agent, merged cfe3daf): bright stamps built as the star the input shows (light above the
+  higher of an interpolated background and the model starless image outside its filled cores, plus darkness
+  symmetric through the star). Alnitak holes 37 % -> 0, the dark discs at sigma Ori, G 4.1, G 5.3 gone, the
+  Horsehead's bright nebula no longer darkened, NGC 2023 kept; faint stars inside the glare point-like in the layer.
+  The layer is negative where it gives back light the far halo model over-subtracted: the significance threshold is
+  now two-sided (0e126bf). In the render Alnitak stays blown: inside a saturated footprint the glare the network
+  removed beyond the far halo model comes back as star light under the star curve.
+* Rejected (12:20): moving the smooth part of a saturated star's own light beyond its core to the glare layer (learned
+  preparation). Alnitak less blown, but a dark crescent at sigma Ori and a grey disc with beaded spikes at G 5.7.
+  Removed. Root: the far halo model is wrong around the dominant stars (over-subtracts around sigma Ori at all radii,
+  around Alnitak at 80-150 px) - to be fixed there, with the Horsehead's brightest stars (the user's separate topic).
+* Final blind QC of the artistic renders (blind6, last night's model against today's learned): learned delivered on
+  the Flaming Star, the Horsehead and the Iris; the Rosette's artistic regressed with the learned removal: smooth
+  grey-olive discs around saturated stars (G 5.6 north, about 140 px), an olive cast of the darkest sky. Mechanism:
+  the network also removes the stars' diffuse glare beyond the far halo model; the rendering shows that light again
+  only inside a saturated star's footprint and above its noise fade, elsewhere it is lost - a disc with an edge,
+  revealed by the artistic stretch (the same cause as Alnitak's blown glare). The Rosette's artistic deliverable is
+  rendered with the star model ('Learned star removal' off; its faithful keeps the learned removal, which won there).
+  Next: leave the diffuse glare with the nebula in the learned path, as the star model does (the decomposition
+  star / glare must be principled: two attempts today failed).
+* Rejected (13:15): the network's light beyond the star model, outside the cores, kept with the nebula (smoothed).
+  Only 1.4 % of the removed light; the Rosette G 5.6 north disc stayed, pink patches elsewhere. Exact mechanism: a
+  saturated star is not drawn from its model - the rendering shows its real light, inside its footprint only - so
+  everything the network removes beyond a saturated star's footprint is lost (the disc's edge). Third star / glare
+  decomposition tried today: stopped here (no stacked repairs).
+* Proposed design (next): the network removes only the compact light of the stars (core, spikes, rays within the
+  star's measured extent); the diffuse glare is left to the far halo model, which is fixed first for the dominant
+  stars (it over-subtracts around sigma Ori at all radii and around Alnitak at 80-150 px). Training stamps then
+  exclude the glare component (measured by the far halo model), and the rendering draws the glare back as now
+  ('Bright star glow'). Until then: 'Learned star removal' is an option per project and per preset.
+
+### 11.9 The founding idea tried: per-frame deconvolution before stacking (2026-10-15)
+
+Done as asked (branch `frame-deconv`, not merged; report D:/astro_gpu_diag/frame_deconv/REPORT.md): each of the 100
+bench Heart frames deconvolved tile by tile in the sensor frame, per colour plane, with the star shape measured on
+that frame (per tile, per colour), Richardson-Lucy with damping, then the usual drizzle. Off by default and
+bit-identical to main when off.
+
+Result: not better. Stack stars -1/-6/-5 % FWHM (R/G/B) towards a point, more even across the field, but dark rings
+on ~1/3 of the bright stars; the gain depends on brightness (faint stars unchanged, S/N 400 stars -8 %; without
+damping -12-15 % for all but noise +50-62 %); no new nebula detail (half-stack correlation unchanged). Downstream the
+brightness-dependent star shape breaks the star photometry (green flux scatter 8 % -> 44-49 %) and moves the colour
+matrix: faithful renders redder or greyer with blotches. Measured: the star shape barely changes over the night (green
+2.23-2.38 px per frame) but a lot across the field (1.81-3.19 px); a colour plane is too coarse (one photosite holds
+58-87 % of a star's colour light).
+Next if pursued: one sharp estimate per frame on the full sensor grid, seen through the colour mosaic (the four
+planes constraining it together; stars between photosites become representable, no rings), the same deconvolution
+for faint and bright stars, star photometry measured after it; then re-judge the field-evening effect.
+
+Version 2 (branch `frame-deconv-sensor`, not merged; report D:/astro_gpu_diag/frame_deconv/v2/REPORT.md): one sharp
+scene per frame and tile on the full sensor grid, seen through the colour mosaic, the same for faint and bright stars
+(no threshold), aim a 2.2 px Gaussian, each tile's star shrinks 15 % at most. It fixes version 1 (no rings: 4/0 of
+1,538 bright stars; flux kept; green -4.4 to -5.7 % in every brightness bin; star photometry back to normal) but does
+not beat an unsharp mask of the finished stack: same star widths (-2.2/-6.0/-5.9 % vs -2.4/-5.9/-5.8 %), noise
++10/+25/+24 % vs +7.5/+19/+25 %, fine nebula S/N 5.0 vs 10.6 (baseline 13.3), stack 9.6 min instead of 1.1. Its only
+advantage, a more even star size across the field (green spread 0.23 vs 0.33 px), should come as well from a per-tile
+deconvolution of the stack with the measured field-dependent shape. Kept off. The bench showed four weaknesses of the
+chain: spikes "detected" on the refractor bench (a one-sided leftover), the second check of the measured spike shape
+not enforced, the white point measured outside the crop (fixed, below), the colour matrix fit poorly constrained.
+
+White point measured on the shown frame (2026-10-15): the tone curve, white point, noise and detail-layer ranges were
+measured on every covered pixel, including the borders the crop removes. On the Heart a bright edge outside the crop
+(top, y < 30) raised the 99.995th percentile of the nebula by 44 % (38.1 vs 26.4), so the bright nebula was rendered
+dimmer than its data allow; on Rosette, Flaming Star, Horsehead and Iris the change is 0-2 %. The render now measures
+them on the covered part of the crop (`_shown`).
+
+### 11.10 The glare redesign (2026-10-15 evening)
+
+User's go: fix the far halo of the dominant stars, then a network that removes only the compact star light.
+Agent report: D:/astro_gpu_diag/halo2 (halo sheets, summary_old_new.md) and D:/astro_gpu_diag/own_star_removal/<project>/H.
+
+Far halo (stars 13, merged): the halos fitted on their own surroundings were least-squares fits with a free local
+level, so a nebula rising toward the star (IC 434 at sigma Ori, the Flame beside Alnitak) pulled the amplitude and
+the elongation up and the model exceeded the data on the dark side. They are now bounded per channel, radius and
+direction by the lower fifth of data / model around the star (3 radii x 55 deg windows, noise added back, at most 1,
+never rising outward), only where the halo stands 10 x above the background's dips. Lower quarter of data - model at
+80-250 px (noise sigmas, G): Alnitak -9.5 -> +3.1, sigma Ori -3.8 -> 0.0, Flaming Star bright stars -0.6..-0.9 ->
+-0.1..-0.3; Iris unchanged; ordinary stars unchanged. The dark disc around sigma Ori in the starless image is gone.
+
+Compact-only network (run H, rejected): the light lost around saturated stars barely moved (Horsehead 0.18 -> 0.17 %,
+Flaming Star 0.42 -> 0.39 %, Rosette 1.92 -> 1.28 %) and the split left ring glows around saturated stars (Horsehead
+5 -> 12 of 40). The loss is mostly the rendering's: 91 % of the Rosette G 5.6 star's lost light lies inside its own
+footprint, 12-84 px, where its light is 1.5-3.5 noise sigmas per pixel and the render fades it out.
+Run H2 (full stamps with the stamps' saturation flag fixed, a glow kept under half of the pasted bright stars): keeps
+NGC 2023's core (runs G and H took it for the light of HD 37903: the layer held 109 of the 117 sigmas at 10-30 px; H2
+48), fewest ring glows (Horsehead 3, Rosette 3), lost light as before; costs: more glare left in the nebula around the
+brightest stars (Alnitak 15 % vs 0.6 %), a 40 px round glow at the Iris's central star (Iris keeps run E).
+star_net 3 (merged): saturation flag as the rendering's, the glow as the setting 'Nebula peaked on its star'.
+
+Proposed by the agent and implemented on branch `learned-starlight` (render_prep_learned 42, not merged): in the
+saturated stars' footprints, where the measured light (image minus nebula) sinks into the noise, take the learned
+layer the starless image was cut by (noise-free) instead of fading the light out. To be judged on data.
+
+Integration and blind QC (2026-10-15 night; renders of each deliverable's saved settings, D:/astro_gpu_diag/glare_int,
+sheets D:/astro_gpu_diag/qc/glare, keys in qc/blind_keys/glare_*):
+- Horsehead (faithful; current vs bound + run H2 vs the same at the current white point): bound + H2 at the current
+  white point first, bound + H2 second, current last (grey cross with circles on NGC 2023 - the photographed-spike
+  strips of HD 37903 -, violet mottled veil around sigma Ori). All fail: the glare of Alnitak and sigma Ori stays the
+  first defect (fog, sigma Ori's elliptical disc with an edge).
+- Rosette (faithful: current vs bound + H2; artistic: current vs bound + H2 by the star model vs by the learned
+  removal): the current render won both. The glare the bound leaves in the nebula, per colour, came out as olive and
+  green discs in the cavity and the inner rim (bound + run E: a teal glow around a G 6 star; run H2 removes that one
+  but not the olive discs). The background's large-scale correction also moves with the halo (green sky at the
+  bottom).
+- So the bound is an option of the stars stage, off by default ('Far halo bounded by the data'); the Horsehead uses
+  it with run H2 (its blind QC winner).
+- The white point is the 99.995th percentile of the nebula: ~1,300 pixels. On the Horsehead with run H2 the core of
+  NGC 2023 (kept in the nebula now) is 2.5 x brighter than anything else and sets it: white 16 -> 41, the whole image
+  darker. Measured: outside the surroundings of the G < 9 stars the white comes back to 24.6 (26.4 before) - but the
+  same rule halves the Iris's white point (its nebula really peaks on its star): rejected, no statistic separates the
+  two. Measuring it where the nebula outshines the glare model made it worse (45): rejected (branch
+  rejected-whitepoint-glare). Open design question for the user: should a compact secondary object at the top of the
+  range set the white of the whole image (the highlight shoulder could take it instead)?
+- Learned star light in the saturated footprints (branch learned-starlight): 0.14-0.17 % of the pixels move by more
+  than 2 levels on the Horsehead and the Rosette, nothing visible at 100 %: not merged.
