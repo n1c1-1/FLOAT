@@ -37,6 +37,12 @@ class StarlessParams(StageParams):
     lift_gmax: float = P(17.5, label="Dip repair limit", level=ADVANCED, ge=10, le=21, step=0.5, unit="G mag",
                          help="Around stars brighter than this, the background is not allowed to dip below its "
                               "local surroundings (over-subtracted star = dark hole).")
+    learned_stars: str = P("", label="Learned star layer", level=ADVANCED,
+                           help="Optional: the star layer removed by a star-removal network trained on this project's "
+                                "own stack (.npy, 3 x H x W, stack units, the far halo of the stars excluded). It is "
+                                "subtracted from the two half-stacks instead of the star model, and the result goes "
+                                "through the same denoising: a second starless image, chosen at rendering ('Learned "
+                                "star removal'). Empty = the star model only.")
     halo_gmax: float = P(10.5, label="Optical halo limit", level=ADVANCED, ge=4, le=15, step=0.5, unit="G mag",
                          help="Stars brighter than this get their optical halo (blue defocus of the refractor, "
                               "filter reflections) measured and removed from the background, out to a radius growing "
@@ -55,7 +61,8 @@ class Starless(Stage):
     Params = StarlessParams
     version = "23"         # 21: the residual halo bound measured with the far halo; 22: residual cleaning only where
                            # the star model holds the star; 23: the fainter stars' cleaning bounded by their typical
-                           # residual (it erased reflection nebulae centred on their star)
+                           # residual (it erased reflection nebulae centred on their star). The optional learned star
+                           # layer (a second starless image) is a parameter: projects without one stay up to date
 
     def run(self, ctx: Context, p: StarlessParams) -> None:
         dm = float(ctx.metric_of("optics", "mag_offset", 0.0))
@@ -134,10 +141,79 @@ class Starless(Stage):
         n2n_c0, _ = clean(sl_n2n, x, y, g, fl, smooth=False, halos=False, lift_gmax=p.lift_gmax, log=ctx.log)
         n2n_final, _ = bright_halos(n2n_c0, x, y, g, fs["pred"], p.halo_gmax,
                                     ref=None if halo is None else n2n_c0 + halo, r_core=r_core)
-        del halo
         ctx.save("n2n_final.npy", n2n_final)
         from ..core.imgutil import asinh_preview
         ctx.preview("starless", asinh_preview(sl_final, M))
+        del A, B, delta, n2n_final, n2n_c0, sl_n2n
+        if p.learned_stars:
+            self._learned(ctx, p, M, model, halo, Wt)
+
+    @staticmethod
+    def _learned(ctx: Context, p: StarlessParams, M, model, halo, Wt) -> None:
+        """The second starless image: the learned star layer subtracted from the two half-stacks, then the same
+        Wiener filter and Noise2Noise detail layer. None of the star-model repairs (core fill, residual halos, dip
+        repair, bright halos): they correct the model's errors, which this layer does not have."""
+        from pathlib import Path
+        f = Path(p.learned_stars)
+        if not f.exists():
+            ctx.log(f"learned star layer not found: {f} - only the star model is used", "warning")
+            return
+        SL = np.load(f, mmap_mode="r")
+        if SL.shape != model.shape:
+            ctx.log(f"learned star layer ignored: shape {SL.shape} differs from {model.shape}", "warning")
+            return
+        ctx.progress(0.9, "learned star removal")
+        SL = np.array(SL, np.float32)                 # a writable copy of the memory-mapped layer
+        # only the significant star light: the layer the network removes holds a little of the stack's noise (16 % on
+        # the Iris), common to both half-stacks - the Wiener filter kept it as signal and the starless image came out
+        # twice as grainy as the model one. Below 3 x its own noise the layer is zeroed (98.6 % of the star light kept)
+        sb = cv2.GaussianBlur(SL.mean(0), (0, 0), 1.0)
+        s0 = 1.4826 * float(np.median(np.abs(sb[::4, ::4] - np.median(sb[::4, ::4]))))
+        w = np.clip((sb / max(s0, 1e-9) - 3.0) / 3.0, 0, 1)
+        w = cv2.GaussianBlur(cv2.dilate(w, np.ones((3, 3), np.uint8)), (0, 0), 1.0)
+        ctx.metric("learned_layer_kept_pct", round(100 * float((w > 0.5).mean()), 1))
+        SL *= w[None]
+        del sb, w
+        A = ctx.load("optics", "lat_A.npy").astype(np.float32) - SL
+        B = ctx.load("optics", "lat_B.npy").astype(np.float32) - SL
+        del SL
+        if halo is not None:
+            A -= halo
+            B -= halo
+        # saturated cores are missing data here too: the two half-stacks saturate differently (+-40 ADU at the core of
+        # the Iris G 6.9 star), which left a hole and a ring in the Noise2Noise layer. Filled from their surroundings,
+        # as the star model's path does
+        full = ctx.load("optics", "lat_full.npy", mmap=True)
+        sat = np.zeros(A.shape[1:], bool)
+        for c in range(3):
+            fc = np.asarray(full[c], np.float32)
+            sat |= fc > 0.7 * np.percentile(fc, 99.999)
+        del fc
+        sat = cv2.dilate(sat.astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))) > 0
+        rng = np.random.default_rng(1)
+        for X in (A, B):
+            for c in range(3):
+                hp = X[c] - cv2.GaussianBlur(X[c], (0, 0), 2)
+                sgx = 1.4826 * np.median(np.abs(hp[::7, ::7])) * 1.3
+                fh = fill_holes(X[c], sat)
+                X[c][sat] = fh[sat] + rng.normal(0, sgx, int(sat.sum())).astype(np.float32)
+        del hp, fh, full
+        wl = wiener(A, B, M, p, model, log=ctx.log)
+        ctx.save("sl_final_learned.npy", wl)
+        net, bk, sg = load_model(ctx)
+        _, _, nm = norm_params(ctx.load("stack", "drz_A.npy").astype(np.float32), Wt)
+        n2l = 0.5 * (apply_net(net, A, nm, bk, sg, ctx.device) + apply_net(net, B, nm, bk, sg, ctx.device))
+        del net
+        # the filled cores hold no detail: the network turned the fill's noise into a checkered pattern (the Wiener
+        # filter removes it, independent in the two halves) - the detail layer takes the Wiener result there
+        wsat = cv2.GaussianBlur(cv2.dilate(sat.astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
+                                .astype(np.float32), (0, 0), 2.0)
+        n2l += wsat[None] * (wl - n2l)
+        ctx.save("n2n_final_learned.npy", n2l)
+        del n2l, wl, wsat
+        if ctx.device.type == "cuda":
+            torch.cuda.empty_cache()
+        ctx.log(f"learned star removal: second starless image from {f.name} (chosen at rendering)")
 
 
 def core_mask(full, model, A, B, K):

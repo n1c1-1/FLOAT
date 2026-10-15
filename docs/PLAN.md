@@ -511,7 +511,7 @@ independent agent on aligned 100 % crops):
 |---|---|---|---|
 | 1b real stars | real-stars | stars brighter than G 12: spikes (and saturated cores, rays) shown as photographed = image minus the nebula under them, the nebula interpolated across the spikes; fainter star cores drawn as now | in test |
 | 2 A reference star-removal tool / nox | D:/astro_gpu_diag/starnet_test | off-the-shelf learned star removers on the problem stars | agent running |
-| 3 own network | star-net, D:/astro_gpu_diag/own_star_removal | a star remover trained on the project's own data (its real bright stars injected on clean nebula) | agent running |
+| 3 own network | star-net (fb150ed), D:/astro_gpu_diag/own_star_removal (REPORT.md) | a star remover trained on the project's own data (its real bright stars injected on clean nebula) | promising, not ready |
 | 1c | real-stars (342f578) | 1b with spikes only where they stand 5 x the noise above the light beside them | tested |
 | 1d / 1e | real-stars-drawn (54f0d78, 408c3d2) | under a spike strip only the spike comes from the image (core model of every star subtracted, star cores left out), the stars along the strips drawn; 1d at 5 x noise, 1e at 2 x | 1e retained for QC |
 | 2b | a reference star-removal tool-hybrid (9543916, 86441cd) | a reference star-removal tool's starless image (minus our far halo and sky) under the footprints and strips | rejected |
@@ -566,3 +566,73 @@ objects, 1e second, current last on all four (its bright spikes: beads, white ba
 lumps at the spike ends, dark blobs). Remaining in 1e / 1f: the spikes of G 10-12 stars in dark sky appear as faint
 dashed fragments starting away from the core (fainter and greyer in 1f); current shows nothing there. Next: the
 same with real spikes only for stars brighter than G 10 (parameter real_g), for the user's choice.
+
+Lead 3 (own network, Iris only, report D:/astro_gpu_diag/own_star_removal/REPORT.md): five trainings. As first specified
+it dug a crater in the Iris core (it never saw bright nebula: 0.003 % of the trained pixels > 10 sigma) and blurred
+(trained towards a denoised target). Best version: far halo removed first, target keeps the input noise, half the
+patches with their nebula amplified 1-40x, no loss on the real star cores: bright stars removed far cleaner than
+sl_final everywhere measured (spike light 3-5 sigma -> < 0.6, no rings, holes or discs; G 4.6 clean though brighter
+than any training star), Iris core kept. Not ready: its output keeps the image noise (to go through our denoising,
+untested), a physical guard is needed (the star layer may not exceed what the star model allows), trained on the Iris
+only (~35 min per project). It is the route to a star layer that is simply image minus nebula, nothing drawn.
+
+### 11.8 Every star option kept, chosen at rendering (2026-10-15)
+
+The user, after the triage page: keep all the options and leave the choice to the rendering - one solution will not
+cover every case. Noted on the page: dark spots around the Iris G 6.9 and the Flaming Star G 5.9 in every version, the
+trace of the masking circle around the Rosette G 5.6.
+
+* Photographed spikes at rendering (main 66e4156): the preparation keeps the drawn spikes in its base layers and writes
+  the photographed spikes in layers of their own (nebula interpolated across the strips as a change from the base,
+  strip weights, magnitude of the star of each strip, spike light averaged along the spike and raw). Settings
+  'Photographed spikes' (default 1), 'Photographed spikes down to' (G, default 12), 'Spike smoothing' (default 1).
+  At 0 the Iris rendering is identical to the previous one pixel for pixel; at the defaults it matches the version
+  that won both blind checks (0.09 % of the pixels differ by more than 2/255). Heart (no spikes): unchanged.
+* Artistic preset: the colour layers (residual / reflection colour, fine colour, OIII) were switched off under the
+  strips like the fine detail; boosted by the preset, the strips came out as grey bars across the Rosette's nebula.
+  They are now interpolated from the strips' edges at rendering (e068168); the fine detail stays off there.
+* The three spots: not holes. Iris G 6.9: the star's fine radial rays stay in the model starless image as light
+  streaks of 1.5-4 noise sigmas (on the spikes and around), the gaps between them read as dark blotches. Flaming Star
+  G 5.9 (AE Aur, in real filaments): dark spokes where the own-rays model of the dominant star subtracts too much.
+  Rosette G 5.6: under the saturated star the nebula is interpolated (membrane fill), a smooth disc in textured
+  nebula. Common cause: the star model; remedy: the learned star removal.
+* Learned star removal as a rendering choice (e068168 and before): 'Star removal and denoising' takes an optional
+  learned star layer (network trained on the project's own stack, far halo excluded), subtracts it from the two
+  half-stacks and runs the same Wiener filter and Noise2Noise layer (sl_final_learned, n2n_final_learned; none of the
+  model's repairs). The stage 'Rendering preparation, learned star removal' prepares the same layers from it (same
+  sky, large-scale corrections and colour matrix; no guard, no interpolation under saturated stars nor across
+  spikes). Setting 'Learned star removal' (default off until checked) chooses the preparation (StarRemovalEngines).
+  Iris test with the network's star layer and our Wiener filter: G 6.9, G 4.6, G 7.3 removed without rings, discs or
+  colour residue; the Iris core keeps its structure without the blue blotches; the dark disc in the dark lanes gone.
+  Open: the own rays of dominant stars are subtracted before the network (the Flaming Star spokes may stay).
+* Corrections to the diagnosis above (measured later the same morning):
+  - Iris G 6.9 dark spots: in the raw stack before any star removal (raw minus star models: -1.0 and -0.5 noise
+    sigma against their surroundings at 94 and 113 px from the star) and kept identically by the learned removal:
+    real small dark dust patches, many around the Iris.
+  - Flaming Star G 5.9 (AE Aur): the far halo model there is smooth (no fine rays); the dark radial streaks are in
+    the nebula, beyond the star's rays, and also in the user's own image, where his full glare veils them. Real dark
+    filaments; the 'Bright star glow' setting veils them like his image.
+  - Rosette G 5.6 circle: the membrane fill under the saturated star (smooth disc); gone with the learned removal.
+* Learned removal, integration details found on the Iris (each fixed before any judgement): the network's star layer
+  holds 16 % of the stack's noise, common to both halves, kept by the Wiener filter (starless image twice as grainy):
+  zeroed below 3 x its own noise; the two half-stacks saturate differently (+-40 ADU) and their cores must be filled
+  as missing data, as in the model's path; the Noise2Noise layer is unreliable around bright cores (12-64 in a nebula
+  of 36): the fine detail layers keep the model's masks; in the filled cores the detail layer takes the Wiener
+  result. (Also: 'astro-gpu render --set' takes several key=value after one --set; a second --set replaces the first.)
+* Blind QC (D:/astro_gpu_diag/qc/blind3): Rosette learned > learned + photographed stars > model (model: red-magenta
+  cast of the dark sky, weaker texture, a ridge erased next to G 5.6 north, red blobs at G 5.6); Iris learned > model >
+  photographed (model: dark and red discs, a leftover ray, a blotch at the Iris star). The whitish glow around the
+  Iris star in the learned version is in the user's own image too. Photographed stars: bloated and doubled at the
+  field edges (coma of the Newtonian): an option, not a default. Flaming Star with the learned removal: the coloured
+  shards around G 4.1 and G 5.3 are gone.
+* Horsehead blind QC (blind5): learned first (the only version without processing artefacts, IC 434 more vivid);
+  its defect: Alnitak and sigma Ori blown into a large white glare (the network removes more glare than the stars have
+  around these unique stars - the agent measured 37 % holes at Alnitak - and the excess comes back as star light).
+  The learned removal won on all four objects; on by default, deliverables re-rendered.
+* Rejected (2026-10-15 09:10): a physical guard capping the learned layer at 2 x the star model outside the saturated
+  cores. It brought back the star model's errors: the coloured shards around the Flaming Star G 4.1 and G 5.3,
+  beaded spikes on G 5.9, the Horsehead G 5.7 core broken into coloured clumps (the network was right where the
+  model is wrong). Removed, not tuned. The brightest stars' glare and the faint stars smeared into comets inside it
+  come from the training data: the bright stamps are the denoised stack minus sl_final, so a hole of sl_final under
+  a unique bright star becomes extra star light the network learns to remove. Next: build the bright stamps against
+  a background interpolated from the ring around the star, and retrain.

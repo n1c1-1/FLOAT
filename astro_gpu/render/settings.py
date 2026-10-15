@@ -192,6 +192,38 @@ class RenderSettings(StageParams):
                               "spikes included - instead of being drawn; every other star gets its measured shape "
                               "(diamond, spikes) on top of its drawn round core. Off = every star drawn round, no "
                               "spikes.")
+    learned_stars: bool = S(True, section="Stars", label="Learned star removal",
+                            help="The stars removed by the network trained on this project's own stack instead of the "
+                                 "star model: no rings, dark discs, residual rays or smooth discs around the bright "
+                                 "stars, and the nebula under them as photographed. Needs the preparation 'Rendering "
+                                 "preparation, learned star removal' (when the project has a learned star layer; "
+                                 "without one the star model is used). On by default: first in blind checks on the "
+                                 "Rosette, the Iris and the Flaming Star.",
+                            tip="Switching loads the other set of layers (a few seconds the first time).")
+    stars_photographed: float = S(0.0, section="Stars", label="Stars as photographed", ge=0, le=1, step=0.05,
+                                  help="With the learned star removal: every star shown by its own light (the image "
+                                       "minus the nebula), as photographed, instead of drawn from the catalogue. In "
+                                       "between, a blend. The star size settings then no longer apply.",
+                                  tip="Your stars as you shot them: real sizes, colours and spikes, with the softness "
+                                      "and noise of the data. Needs 'Learned star removal'.")
+    spike_photo: float = S(1.0, section="Stars", label="Photographed spikes", ge=0, le=1, step=0.05,
+                           help="Diffraction spikes of the bright stars: 0 = drawn with the spike shape measured once "
+                                "for all the stars; 1 = each star's own spikes, as photographed (measured on the image, "
+                                "the nebula interpolated across them; the stars along them stay drawn). In between, a "
+                                "blend. Needs a rendering preparation of version 41 or later.",
+                           tip="The shared shape never matches each star's own spikes: beads, light bars across the "
+                               "nebula and dark blobs along the spikes of the brightest stars. Photographed spikes "
+                               "avoid them; on very faint spikes they show as faint dashed fragments (see the next "
+                               "setting).")
+    spike_g_max: float = S(12.0, section="Stars", label="Photographed spikes down to", ge=4, le=12, step=0.25,
+                           unit="G mag", help="Only the stars brighter than this get their photographed spikes; the "
+                                              "fainter ones keep the drawn shape.",
+                           tip="12 = every spike the preparation measured; 10 = only the clearly visible ones (the "
+                               "spikes of G 10-12 stars are faint: photographed, they show as faint dashed fragments "
+                               "in a dark sky).")
+    spike_smooth: float = S(1.0, section="Stars", label="Spike smoothing", level=ADVANCED, ge=0, le=1, step=0.05,
+                            help="The light of the photographed spikes averaged along each spike (sharp across it): "
+                                 "takes the noise of the image out of the faint spikes. 0 = raw light.")
     g_lim: float = S(15.0, section="Stars", label="Faintest drawn star", ge=8, le=20, step=0.25, unit="G mag",
                      help="Gaia magnitude of the faintest star drawn with a clearly visible peak.",
                      tip="Lower = fewer, more prominent stars; higher = denser star field.")

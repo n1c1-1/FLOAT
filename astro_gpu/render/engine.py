@@ -30,7 +30,8 @@ XYZ_TO_SRGB = np.array([[3.2404542, -1.5371385, -0.4985314],
                         [0.0556434, -0.2040259, 1.0572252]])
 
 LAYER_KEYS = ("fine_k", "fine_lo_pct", "fine_hi_pct", "faint_smooth", "faint_lo_pct", "faint_hi_pct", "resid_boost",
-              "colour_detail", "oiii_boost", "oiii_threshold", "oiii_smooth", "sharpen", "sharpen_lo_pct")
+              "colour_detail", "oiii_boost", "oiii_threshold", "oiii_smooth", "sharpen", "sharpen_lo_pct",
+              "real_stars", "spike_photo", "spike_g_max")
 NEB_LIN_KEYS = LAYER_KEYS + ("ha_boost", "ha_sigma", "glow_k", "glow_sigma", "g_glow", "speck_k", "white_temp", "tint",
                              "star_glow", "glare_nebula", "star_sat", "diffuse_cut", "sky_neutral", "sky_pct")
 NEB_KEYS = NEB_LIN_KEYS + ("chroma", "chroma_protect", "hue_target", "hue_shift", "chroma_sigma", "snr_lo", "snr_hi",
@@ -39,7 +40,8 @@ NEB_KEYS = NEB_LIN_KEYS + ("chroma", "chroma_protect", "hue_target", "hue_shift"
                            "sharp_white", "hl_knee", "hl_max", "hl_detail", "hl_dmin", "hl_r1", "hl_r2", "hl_eps",
                            "hl_shoulder", "hl_keep_chroma", "bright_halo_desat")
 STAR_KEYS = ("stars", "g_glow", "g_lim", "t_lim", "d10", "d7", "star_sat", "sat_min", "core_white", "t9",
-             "white_temp", "tint", "real_stars", "star_glow", "glare_nebula", "diffuse_cut")
+             "white_temp", "tint", "real_stars", "star_glow", "glare_nebula", "diffuse_cut", "spike_photo",
+             "spike_g_max", "spike_smooth", "stars_photographed")
 
 
 @dataclass
@@ -98,6 +100,18 @@ class RenderEngine:
             self._host["Shalo"] = torch.from_numpy(np.load(sh_))
             if (self.dir / "ShaloL.npy").exists():
                 self._host["ShaloL"] = torch.from_numpy(np.load(self.dir / "ShaloL.npy"))
+        # photographed spikes (preparations of version 41 and later): the nebula interpolated across the spike strips
+        # (dNsp, change from the base), the strips' weight (Wsp; Wsl without the star cores), the magnitude of the star
+        # of each strip (Gsp) and the spikes' light averaged along them (Ssp) and raw (Ssp_raw)
+        # every star as photographed (learned preparations only)
+        sa_ = self.dir / "Sall.npy"
+        self.Sall = torch.from_numpy(np.load(sa_)) if sa_.exists() else None
+        self.Ssp = self.Ssp_raw = None
+        if self.layered and self.Sreal is not None and (self.dir / "Wsp.npy").exists():
+            for n in ("Wsp", "Wsl", "Gsp", "dNsp"):
+                self._host[n] = torch.from_numpy(np.load(self.dir / f"{n}.npy"))
+            self.Ssp = torch.from_numpy(np.load(self.dir / "Ssp.npy"))
+            self.Ssp_raw = torch.from_numpy(np.load(self.dir / "Ssp_raw.npy"))
         self.Fm,self.Fpred, self.Fglow = st["flux"].astype(np.float64), st["pred"].astype(np.float64), st["glow_flux"]
         pr = np.load(self.dir / "profile.npz")
         self.r_all, self.prof_raw = pr["r"], pr["prof"]
@@ -128,6 +142,21 @@ class RenderEngine:
             self._proxy["valid", f] = F.avg_pool2d(self.valid[None, None, :h, :w].float(), f)[0, 0] > 0.99
         return self._proxy["valid", f]
 
+    def _spike_w(self, s: RenderSettings, f: int):
+        """Weight of the photographed spikes against the drawn ones, per pixel of the strips: 'Photographed spikes'
+        times the stars brighter than 'Photographed spikes down to' (0.5 mag transition). None = all drawn."""
+        if self.Ssp is None or not s.real_stars or s.spike_photo <= 0:
+            return None
+
+        def make():
+            g = self._host["Gsp"].to(self.dev).float()
+            w = s.spike_photo * ((s.spike_g_max - g) / 0.5 + 0.5).clamp(0, 1)
+            if f == 1:
+                return w
+            h, w_ = self.H // f * f, self.W // f * f
+            return F.avg_pool2d(w[None, None, :h, :w_], f)[0, 0]
+        return self._cached(f"spike_w{f}", ("real_stars", "spike_photo", "spike_g_max"), s, f, make)
+
     def _shape(self, f: int) -> tuple[int, int]:
         return (self.H, self.W) if f == 1 else (self.H // f, self.W // f)
 
@@ -137,24 +166,33 @@ class RenderEngine:
             return self._layer("astro", f)
         valid = self._valid(f)
         N = self._layer("N", f)
+        # photographed spikes: the nebula interpolated across their strips; there the fine detail layers (taken from
+        # the starless images the shared spike shape was subtracted from) are off and the colour layers interpolated
+        # from the strips' edges (switched off, the boosted colours left grey bars across the nebula: Rosette)
+        wsp = self._spike_w(s, f)
+        keep, wk = 1.0, None
+        if wsp is not None:
+            N = N + wsp[None] * self._layer("dNsp", f)
+            wk = wsp * self._layer("Wsp", f)
+            keep = 1 - wk
         # 'Fine detail' = factor on the network's fine scales already in the base (newer preparations), or amount of
         # network detail added to a Wiener base (older ones)
         kf = s.fine_k - 1.0 if self.prep.get("fine_layer") == "scale" else s.fine_k
         sharpen = s.sharpen if "dS" in self._host else 0.0
-        new = kf != 0 or s.faint_smooth > 0 or sharpen != 0
+        new = kf != 0 or s.faint_smooth > 0 or sharpen != 0 or wsp is not None
         if kf != 0:                          # Noise2Noise fine detail (brightness), above a brightness of the signal
             Eg0 = self._layer("Eg0", f)
             q1, q2 = ops.percentile(Eg0, [s.fine_lo_pct, s.fine_hi_pct], valid)
             wf = ops.gaussian_blur(((Eg0 - q1) / max(q2 - q1, 1e-6)).clamp(0, 1), 6 / f)
             del Eg0
-            N = N + kf * (wf * self._layer("dY", f))[None] * self.w_cam[:, None, None]
+            N = N + kf * (keep * wf * self._layer("dY", f))[None] * self.w_cam[:, None, None]
             del wf
         if sharpen != 0:                     # measured-shape sharpening (brightness), above a brightness of the signal
             Eg0 = self._layer("Eg0", f)
             q1, q2 = ops.percentile(Eg0, [s.sharpen_lo_pct, s.fine_hi_pct], valid)
             ws = ops.gaussian_blur(((Eg0 - q1) / max(q2 - q1, 1e-6)).clamp(0, 1), 6 / f)
             del Eg0
-            N = N + sharpen * (ws * self._layer("dS", f))[None] * self.w_cam[:, None, None]
+            N = N + sharpen * (keep * ws * self._layer("dS", f))[None] * self.w_cam[:, None, None]
             del ws
         if s.faint_smooth > 0:               # faint areas: only the scales confirmed by the data
             Eg = ops.gaussian_blur(torch.einsum("c,chw->hw", self.lum, N), 8 / f)
@@ -166,11 +204,11 @@ class RenderEngine:
         # cached / host layers are never modified in place: copy unless a step above already made a new tensor
         astro = N if new else N.clone()
         if s.resid_boost != 0:
-            astro += s.resid_boost * self._layer("R", f)
+            astro += s.resid_boost * _fill_across(self._layer("R", f), wk, f)
         if s.colour_detail > 0 and "chroma_fine" in self._host:
-            astro += s.colour_detail * self._layer("chroma_fine", f)
+            astro += s.colour_detail * _fill_across(self._layer("chroma_fine", f), wk, f)
         if s.oiii_boost > 0 and "O" in self._host:        # OIII emission above the noise, in its own colour
-            astro += s.oiii_boost * self.o_vec[:, None, None] * self._oiii(s, f, valid)[None]
+            astro += s.oiii_boost * self.o_vec[:, None, None] * _fill_across(self._oiii(s, f, valid), wk, f)[None]
         return astro
 
     def white_balance(self, s: RenderSettings) -> np.ndarray:
@@ -409,13 +447,29 @@ class RenderEngine:
                             self.W, self.dev)
         if use_real:
             sr = torch.tensordot(self.M_eff(s), self.Sreal.to(self.dev).float(), 1)
+            wsp = self._spike_w(s, 1)
+            if wsp is not None:             # each star's own spikes, as photographed
+                raw = self.Ssp_raw.to(self.dev).float()
+                sp = raw + s.spike_smooth * (self.Ssp.to(self.dev).float() - raw)
+                sr += torch.tensordot(self.M_eff(s), wsp[None] * sp, 1)
+                del raw, sp
             if self.Sshape is not None:
                 # a drawn star's measured shape is part of its light beyond the core: same attenuation as its wings
-                sr += fit["wing_scale"] * torch.tensordot(self.M_eff(s), self.Sshape.to(self.dev).float(), 1)
+                # (off where its spikes are shown as photographed)
+                sh_ = self.Sshape.to(self.dev).float()
+                if wsp is not None:
+                    sh_ = sh_ * (1 - wsp * self._layer("Wsl", 1))[None]
+                sr += fit["wing_scale"] * torch.tensordot(self.M_eff(s), sh_, 1)
+                del sh_
             lr = ops.luminance(sr)[None]
             st_lin += (lr + s.star_sat * (sr - lr)).clamp(min=0)
             info["stars"]["real_light"] = int((~dr).sum())
             del sr, lr
+        if self.Sall is not None and s.stars_photographed > 0:
+            sa = torch.tensordot(self.M_eff(s), self.Sall.to(self.dev).float(), 1)
+            la = ops.luminance(sa)[None]
+            st_lin = (1 - s.stars_photographed) * st_lin + s.stars_photographed * (la + s.star_sat * (sa - la)).clamp(min=0)
+            del sa, la
         if s.star_glow > 0 and s.glare_nebula < 1 and "Shalo" in self._host:
             # the rest of the glare with the stars, under their gentler curve (fades out close to the star)
             sh = torch.einsum("ij,jhw->ihw", self.M_eff(s), self._glare(s, 1))
@@ -434,6 +488,46 @@ class RenderEngine:
             h, w = self.H // f * f, self.W // f * f
             st_d = F.avg_pool2d(st_d[None, :, :h, :w], f)[0]
         return st_d
+
+
+class StarRemovalEngines:
+    """The rendering engines of the two star removals: the star model (render_prep) and the learned one
+    (render_prep_learned, when prepared). The setting 'Learned star removal' chooses at each rendering; the learned
+    layers are loaded on first use. Attributes are those of the engine of the last rendering (the model one before)."""
+
+    def __init__(self, prep_dir: str | Path, device: str = "cuda:0", calibrated_white: float = 5778.0):
+        self.dirs = {False: Path(prep_dir), True: Path(prep_dir).parent / "render_prep_learned"}
+        self._args = (device, calibrated_white)
+        self._eng = {False: RenderEngine(prep_dir, device, calibrated_white)}
+        self._cur = self._eng[False]
+
+    @property
+    def has_learned(self) -> bool:
+        return (self.dirs[True] / "N.npy").exists() and (self.dirs[True] / "prep.json").exists()
+
+    def select(self, s: RenderSettings) -> RenderEngine:
+        key = bool(s.learned_stars) and self.has_learned
+        if key not in self._eng:
+            self._eng[key] = RenderEngine(self.dirs[key], *self._args)
+        self._cur = self._eng[key]
+        return self._cur
+
+    def render(self, s: RenderSettings, scale: float = 1.0) -> Layers:
+        return self.select(s).render(s, scale)
+
+    def __getattr__(self, name):
+        return getattr(self._cur, name)
+
+
+def _fill_across(L: torch.Tensor, w, f: int, sigma: float = 6.0) -> torch.Tensor:
+    """A layer interpolated across the strips of weight w (1 = inside) from their surroundings (normalised Gaussian
+    of the layer outside them); unchanged where w = 0. w None = no strips."""
+    if w is None:
+        return L
+    m = 1 - w
+    num = ops.gaussian_blur(L * m, sigma / f)
+    den = ops.gaussian_blur(m[None] if L.dim() == 3 else m, sigma / f).clamp(min=1e-3)
+    return L * m + w * (num / den)
 
 
 # ---------------------------------------------------------------------- tone curve
