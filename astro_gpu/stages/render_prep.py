@@ -85,7 +85,7 @@ class RenderPrep(Stage):
                    "adjustment tab.")
     deps = ("background", "starless", "stars", "color", "optics", "stack")
     Params = RenderPrepParams
-    version = "41"         # 29: the star guard wherever star light dominates (dark moats around G 9.5-11.5 stars);
+    version = "43"         # 29: the star guard wherever star light dominates (dark moats around G 9.5-11.5 stars);
                            # 30: the diffuse part of the star glare; 31: the glare of the dominant stars only, the
                            # measured emission colour also in the emission / continuum / OIII separation; 32: the
                            # star guard back to the footprints (its extension drew dark discs on the Heart); 33: the
@@ -95,7 +95,10 @@ class RenderPrep(Stage):
                            # 36: every star brighter than real_g shown as photographed, nebula interpolated across spikes;
                            # 38: under the spike strips only the spikes taken from the image, the stars there drawn;
                            # 40: their light averaged along the spike direction; 41: the spikes drawn in the base
-                           # layers, the photographed ones in layers of their own (chosen at rendering)
+                           # layers, the photographed ones in layers of their own (chosen at rendering); 42: the
+                           # learned preparation takes the sharpening layer of the learned starless image; 43: the
+                           # continuum under star light smoothed from the gaps between the stars only (a plain average
+                           # took the stars' residual light in: dark worms in the gaps, Wizard Nebula)
 
     learned = False        # RenderPrepLearned: the same layers from the learned starless image
 
@@ -200,7 +203,7 @@ class RenderPrep(Stage):
         # the negative part, so a bright residual came out as a dark, slightly coloured hole (the grit of Heart)
         if p.cont_smooth > 0:
             EC_N = np.tensordot(np.linalg.pinv(Am), N, 1)
-            Cs = cv2.GaussianBlur(EC_N[1].astype(np.float32), (0, 0), p.cont_smooth)
+            Cs = smooth_from_gaps(EC_N[1].astype(np.float32), wstar, p.cont_smooth)
             sm = (1 - wstar) * continuum_smoothing_allowed(EC_N[1].astype(np.float32), wstar)
             N = N - Am[:, 1][:, None, None] * ((EC_N[1] - Cs) * sm)[None]
             ctx.metric("continuum_smoothed_pct", round(100 * float((sm > 0.5).mean()), 1))
@@ -280,7 +283,8 @@ class RenderPrep(Stage):
         ctx.save("dY.npy", (np.tensordot(lum, det, 1) * wstar * (1 - fp_fill)).astype(np.float16))
         del det
         # sharpening increment: the sharpening network minus the plain one (brightness), off on star light
-        sp = ctx.project.stage_dir("starless") / "n2n_sharp_final.npy"
+        sp = ctx.project.stage_dir("starless") / ("n2n_sharp_final_learned.npy" if self.learned
+                                                  else "n2n_sharp_final.npy")
         if sp.exists():
             n2s = np.load(sp).astype(np.float32) / flat
             ctx.save("dS.npy", (np.tensordot(lum, n2s - n2, 1) * wstar * (1 - fp_fill)).astype(np.float16))
@@ -360,7 +364,8 @@ class RenderPrep(Stage):
         ctx.metric("star_depth_snr10", depth)
         ctx.metric("star_depth_shift", depth_shift)
         ctx.progress(0.85, "real star profile")
-        r_all, prof = star_profile(torch.load(ctx.input("optics", "psf_model.pt"), weights_only=False))
+        r_all, prof = star_profile(torch.load(ctx.input("optics", "psf_model.pt"), map_location=ctx.device,
+                                               weights_only=False))
         ctx.save_json("prep.json", {"crop": [int(x0), int(x1), int(y0), int(y1)], "alpha": alpha,
                                     "vh": vh.tolist(), "M": M.tolist(), "drizzle_scale": S, "width": W,
                                     "height": H, "mag_offset": dm, "e": e_.tolist(), "Am": Am.tolist(),
@@ -815,6 +820,20 @@ def continuum_smoothing_allowed(C, wstar) -> np.ndarray:
     dense = np.clip((0.4 - den) / 0.25, 0, 1)
     allow = cv2.GaussianBlur(np.maximum(flat, dense).astype(np.float32), (0, 0), 8)
     return cv2.resize(allow, (W, H), interpolation=cv2.INTER_LINEAR)
+
+
+def smooth_from_gaps(c: np.ndarray, w: np.ndarray, sigma: float) -> np.ndarray:
+    """The large-scale level of ``c`` at scale ``sigma``, measured where ``w`` is high (the gaps between the stars,
+    where the light of the stars is below the noise): a weighted average, so that the residual light of the stars does
+    not raise the level they are smoothed to. With a plain average, in a dense star field (the learned starless image
+    keeps faint residual stars) the smoothed zones came out brighter than the gaps left unsmoothed: dark worms in the
+    shape of the gaps (Wizard Nebula). Where no gap lies within reach, the plain average."""
+    w = np.clip(w, 0, 1).astype(np.float32)
+    num = cv2.GaussianBlur(c * w, (0, 0), sigma)
+    den = cv2.GaussianBlur(w, (0, 0), sigma)
+    plain = cv2.GaussianBlur(c, (0, 0), sigma)
+    a = np.clip(den / 0.05, 0, 1)                       # fewer than ~5 % of gap pixels within reach: plain average
+    return (a * num / np.maximum(den, 1e-6) + (1 - a) * plain).astype(np.float32)
 
 
 def star_light_weight(ctx, lum, shape) -> np.ndarray:
