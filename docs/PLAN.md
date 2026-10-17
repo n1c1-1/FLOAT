@@ -760,3 +760,84 @@ sheets D:/astro_gpu_diag/qc/glare, keys in qc/blind_keys/glare_*):
   range set the white of the whole image (the highlight shoulder could take it instead)?
 - Learned star light in the saturated footprints (branch learned-starlight): 0.14-0.17 % of the pixels move by more
   than 2 levels on the Horsehead and the Rosette, nothing visible at 100 %: not merged.
+- Second round after setting each project to its winner (chain re-run from the stars stage): the Horsehead with the
+  bound + H2 came out visibly different from the first run with the same settings (black point -0.39 -> +0.07, curve
+  strength 10 -> 19: the tone-curve fit jumped; the stars stage is not bit-stable either), but won again in faithful
+  and artistic: its deliverables re-rendered (previous ones in E:/astro_gpu/archive/deliverables_2026-10-16_glare).
+  Rosette, Flaming Star, Iris back to their previous state (differences of a run: star-level dots, invisible at 100 %).
+- The Heart (stars stage last run 2026-10-14) came out worse on re-run (blind QC: bloated soft stars, pink haze, a
+  nebula knot west of the Soul erased): the star removal 'detected' spikes at 67 and 153 deg on this refractor (a
+  one-sided leftover, 21 sigma summed over 617 stars; none on the previous run), so the rendering showed every
+  saturated star as photographed. Fixed: a spike direction counts only if its opposite stands out too (diffraction
+  spikes are point-symmetric; the Newton projects find four directions in opposite pairs, unchanged). Heart re-run
+  from the star removal. Lesson: re-judge a project after any chain re-run before delivering.
+
+### 11.11 Methods tab and variants (2026-10-16)
+
+User's request: choose the processing options intuitively in the interface; one processing will not suit every
+case. Chosen with the user: variants kept side by side (not recomputed in place), in a new 'Methods' tab.
+- Variant = parameter changes on top of 'main'; the stages it changes and every stage after them live in
+  variants/<slug>/<stage>, the earlier ones are shared (Project.stage_dir, the only way the code reaches a stage
+  folder). The active variant is the one runs, rendering and exports use. Make it main (former main kept as a
+  variant), delete. Disk: about 8.6 GB for a variant from the stars stage on, 2.5 GB for the rendering preparation.
+- core/methods.py: the decisions in plain words with their options, parameters and what was seen on real images
+  (blind comparisons). Render-time choices stay in Final adjustment.
+- Methods tab: processing shown, cost of a change (stages, time from this machine's history, disk), try as a new
+  variant or apply, compare the same zone of every computed processing at 100 % with the current rendering settings.
+- CLI: 'variant' (list/create/activate/delete/promote), --variant on run/status/params/set/render.
+- Tested end to end on the Iris (a temporary 'star flat off' variant: only background and the two rendering
+  preparations computed in their own folders, main's files untouched, comparison rendered; variant deleted).
+- Next: add the deconvolution choice when its test is done; per-variant rendering settings if needed.
+
+### 11.12 Views (2026-10-16 evening)
+
+User's direction: the choices are left to the user; the interface offers views of the image, to be combined later
+with masks between views - at least one good view per zone is needed first; all the computing is done at the start,
+navigation is between ready results (decided with him: a bar of views above the image).
+- A view = the processing (main or a variant) + rendering settings, saved under a name (project.json render.views).
+  Final adjustment shows them in rows, one per delivered rendering with its alternatives that cost no computing
+  (glare drawn with the stars, spikes drawn, the other star removal: render/views.py, created for the five projects).
+  Click = same zoom and place (another processing is loaded keeping them); Left / Right; B = back to the previous
+  view (flip); right click: update, rename, export, delete; Side by side at 100 %.
+- Computed by default (his choice): the main processing and the learned star-removal network trained on the image
+  (star_net on by default; the four Newton projects keep their own network layers, star_net off for them; the Heart
+  will train its network once the reproducibility fix is in). Other variants on demand (Methods tab), each gets a view.
+- Trigger: the Flaming Star's bottom blue stars sat in violet elliptical discs = 30 % of the modelled glare drawn under
+  the nebula curve (model shape: elliptical edge, flat plateau). Drawn with the stars they are clean, but the
+  brightest star there and Alnitak then show the star removal's debris: no global setting suits every star, hence
+  the views (Faithful / Artistic - glare with the stars).
+- Next: masks between views (painted or automatic, e.g. around the bright stars).
+
+### 11.13 Reproducible chain (2026-10-16 night)
+
+Report: D:/astro_gpu_diag/repro/REPORT.md (merged, commit bc0edef). Two full runs on the same data now give
+bit-identical results at every stage (final render 0 levels apart; before up to 212, mean 3.3). Causes: the optics
+star-shape fit had no single answer (background vs a flat pedestal of the model: star brightnesses scattered 8 % or
+29 % against the catalogue by run) - now a linear least-squares fit with one solution (optics version 2); GPU
+summation order (deterministic mode in runner and engine); network weights seeded after creation (now before); the
+tone curve's black point on a 200-step grid (now refined smoothly). The sky model's H-alpha colour only followed its
+inputs. The new fit is better by the data (Heart star photometry 5.4/5.6/6.2 % vs 7.0/7.9/62.7 % at best), drawn
+stars smaller and closer to the measured width, fewer coloured blobs in the faint dust (checked at 100 %).
+Remaining: the learned star network trains for a time budget (not reproducible across machines); the background's
+sky model stays sensitive to larger input changes. All five projects re-run from optics; renders judged blind against
+the current deliverables before any re-rendering.
+
+### 11.14 After the reproducible chain (2026-10-17 night)
+
+- Blind QC of the five projects re-run with the reproducible chain against their deliverables: Flaming Star better
+  (re-rendered); Rosette, Horsehead, Iris tied (kept); Heart worse by the star model (pink veil, flatter knots).
+- Heart veil (report D:/astro_gpu_diag/heart_full/REPORT.md): not the star wings (the removal model covers them) nor
+  new holes; the star flat of the background stage is built from star brightnesses measured with the star-shape
+  model, whose captured share varies by a few percent across the field and changed with the new fit; on the Heart's
+  150-250 ADU sky that is several ADU of false large-scale light, which moves the sky / nebula split and the stretch.
+- Redesign tried (report D:/astro_gpu_diag/flat_nonreg/REPORT.md): a star flat from aperture photometry, independent
+  of the model (two fits agree within 1 %, better on the stars of all five objects) and a steadier sky / nebula
+  split - both removed: applied to the sky and nebula they made four of five renders clearly worse (the stars'
+  brightness across the field is not the instrument's response to diffuse light).
+- Heart: variant 'Flat as calibrated' (background.star_flat off) computed; blind QC: it with the learned removal
+  first, the old deliverable second, it with the star model last -> promoted to main (former main kept as a variant),
+  deliverables re-rendered (previous in E:/astro_gpu/archive/deliverables_2026-10-17_heart_flat). Exports now record
+  the preparation used (star model or learned) so that 'as delivered' views keep it.
+- Defects seen by the judges in every version, to work on: Horsehead milky veil (white point set by NGC 2023's core),
+  grey bars beside medium stars, a salmon streak through the Iris central star, a colour mosaic in the Iris's faint
+  NE dust, the Heart's brown sky and single-colour knots, dark holes beside some stars (catalogue-predicted fluxes).
