@@ -62,3 +62,44 @@ M33 (A7S, 900 mm, 20 s at ISO 4000, no darks, no dithering, strong vignetting) e
 
 * The automatic transparency rule excluded 36 % of the M33 frames: refine the rule and flag large exclusions in
   the interface.
+
+## Generalisation: other sensors and instruments (test data downloaded 2026-10-28 night)
+
+Fifteen public raw sessions are in `D:\astro_donnees_test` (catalogue `CATALOGUE.md`, what the chain reads of
+them `LECTURE_PAR_LA_CHAINE.md`): Canon 6D / 40D (CR2), Canon EOS Ra (CR3), Nikon D810A, Fujifilm GFX 50R (Bayer),
+Pentax 645Z, ZWO ASI2600MC, two Stellina and two Seestar smart telescopes, ASI1600MM mono in LRGB / RGB+H-alpha /
+SHO, the LCO 0.4 m network (mono, B V r' H-alpha) and an Apogee CCD. Still missing: Fuji X-Trans, RASA, SCT.
+
+Found by reading one frame of each with `io/frames.py`:
+
+* compressed FITS (`.fits.fz`, `.fit.gz`) are not listed as frames;
+* CR3 and RAF: camera, exposure and ISO not read (exifread does not parse them);
+* Stellina writes EXPTIME in milliseconds (read as 10 000 s);
+* Pentax 645Z: black level 0, the background noise is clipped at zero in the raw file;
+* monochrome cameras: no colour pattern, not processed (one stack per filter, then colour combination: the largest
+  piece of work);
+* smart telescopes on alt-azimuth mounts: the field rotates during the night (registration and stacking to check).
+
+First pass on nine test sets, 2026-10-30 night (PLAN 11.18; sets in `F:\astro_essais`, `tools/qc/jeux.py`). Fixed:
+compressed FITS, CR3 / RAF metadata, ms exposures, turned fields, colour without a camera profile, star flat under
+coma, H-alpha amplitude collapse in emission fields, catalogue / name / survey services down. Still open:
+
+* stars with coma (Newtonian without corrector, Canon 6D) leave white / black blobs in the starless layer;
+* smart telescopes (Seestar, Stellina): star-model residual 23-55 % in red and blue (undersampled stars, FWHM
+  1.7 px) - stars left orange in the starless layer of IC 1318, its nebulosity lost; not the drizzle (without it
+  the residual is 31-36 %);
+* the H-alpha boost of the rendering (R - alpha G) takes a large-scale red excess of the sky for emission (Seestar
+  M31); telling a line from a red continuum needs the blue channel or the survey;
+* astrometry with an unknown scale queries Gaia once per trial scale (22 scales, ~1 min each while VizieR is down);
+  the local blind solver could give the scale first;
+* dense Milky Way fields (M8) and wide fields (135 mm lens: 234 catalogue cells): the catalogue stage is
+  impractical without VizieR; its depth (G 18.5 / 20.5) should follow the field and the exposure;
+* Stellina NGC 891 (frames already processed by the telescope, light-pollution filter): magenta sky, colour fit 8 %.
+
+## Reproducibility: the learned star removal is trained for a time, not a number of steps (found 2026-10-29)
+
+`star_net` trains for `minutes` (32 by default), so the number of training steps depends on what else uses the GPU:
+two runs of the Heart on identical inputs (same star model, bit for bit) made 11 181 and 11 408 steps and gave
+different star layers; the renders then differ by up to ~60 levels on ~2 % of the pixels (inside the nebulae, at
+star positions). Fix: train for a fixed number of steps (the time setting converted once), stage version raised -
+every project using the learned layer would then retrain once.

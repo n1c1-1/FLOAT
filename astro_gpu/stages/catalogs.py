@@ -134,9 +134,7 @@ def _cells(w, W, H, scale, cell_deg):
 
 
 def _query_cells(ctx, centres, radius, cols, gfilter, label, p0, p1):
-    import astropy.units as u
-    from astropy.coordinates import SkyCoord
-    from astroquery.vizier import Vizier
+    from ..core.gaia_archive import gaia_cone
 
     def one(c):
         key = hashlib.sha1(f"gaiadr3|{','.join(cols)}|{gfilter}|{c[0]:.5f}|{c[1]:.5f}|{radius:.4f}".encode()).hexdigest()
@@ -145,12 +143,7 @@ def _query_cells(ctx, centres, radius, cols, gfilter, label, p0, p1):
             return dict(np.load(cp))
         for attempt in range(5):
             try:
-                v = Vizier(columns=cols, column_filters={"Gmag": gfilter}, row_limit=-1, timeout=900)
-                r = v.query_region(SkyCoord(c[0], c[1], unit="deg"), radius=radius * u.deg, catalog="I/355/gaiadr3")
-                out = {k: (np.ma.filled(np.ma.asarray(r[0][k]).astype(np.float64), np.nan) if len(r) else np.zeros(0))
-                       for k in cols}
-                if "Source" in out and len(r):
-                    out["Source"] = np.asarray(r[0]["Source"]).astype(np.int64)
+                out = gaia_cone(c[0], c[1], radius, cols, gfilter)
                 cp.parent.mkdir(parents=True, exist_ok=True)
                 np.savez(cp, **out)
                 return out
@@ -178,10 +171,9 @@ def _bright_missing(ctx, w, W, H, scale, epoch, deep, vmax=9.0):
     Hipparcos stars of the field with no Gaia counterpart are added. Their Gaia magnitude and colour come from V and
     B-V through relations fitted on the Hipparcos stars of the same field that Gaia does have (no assumed
     photometric transformation). Returns the entries to append to the deep catalogue, or None."""
-    import astropy.units as u
-    from astropy.coordinates import SkyCoord
-    from astroquery.vizier import Vizier
     from scipy.spatial import cKDTree
+
+    from ..core.gaia_archive import hipparcos_cone
     centre = w.pixel_to_world(W / 2, H / 2)
     radius = 0.5 * np.hypot(W, H) * scale / 3600 * 1.05
     cols = ["HIP", "RAICRS", "DEICRS", "Vmag", "B-V", "pmRA", "pmDE"]
@@ -193,11 +185,8 @@ def _bright_missing(ctx, w, W, H, scale, epoch, deep, vmax=9.0):
         t = None
         for attempt in range(4):
             try:
-                v = Vizier(columns=cols, column_filters={"Vmag": f"<{vmax}"}, row_limit=-1, timeout=300)
-                r = v.query_region(SkyCoord(centre.ra.deg, centre.dec.deg, unit="deg"), radius=radius * u.deg,
-                                   catalog="I/239/hip_main")
-                t = {k: (np.ma.filled(np.ma.asarray(r[0][k]).astype(np.float64), np.nan) if len(r) else np.zeros(0))
-                     for k in cols}
+                t = hipparcos_cone(centre.ra.deg, centre.dec.deg, radius, cols, vmax)
+                t["HIP"] = np.asarray(t["HIP"], np.float64)
                 cp.parent.mkdir(parents=True, exist_ok=True)
                 np.savez(cp, **t)
                 break
@@ -267,36 +256,59 @@ def _isolated_xp(d, p, W, H, scale):
 
 
 def _xp_spectra(ctx, sources, p0, p1):
-    from astroquery.vizier import Vizier
+    from ..core import gaia_archive as ga
 
-    def fetch(sid):
+    def cached(sid):
         cp = CACHE / "xp" / f"{sid}.npy"
         if cp.exists():
             a = np.load(cp)
-            return (a[0], a[1]) if a.size else None
+            return True, ((a[0], a[1]) if a.size else None)
+        return False, None
+
+    def store(sid, out):
+        cp = CACHE / "xp" / f"{sid}.npy"
+        cp.parent.mkdir(parents=True, exist_ok=True)
+        np.save(cp, np.stack(out) if out is not None else np.zeros(0))
+
+    def fetch(sid):
+        hit, out = cached(sid)
+        if hit or ga.vizier_down():
+            return out
         for _ in range(3):
             try:
-                v = Vizier(columns=["Source", "lambda", "Flux"], row_limit=-1, timeout=120)
-                rr = v.query_constraints(catalog="I/355/xpsample", Source=f"={sid}")
-                cp.parent.mkdir(parents=True, exist_ok=True)
-                if len(rr) and len(rr[0]):
-                    lam = np.asarray(rr[0]["lambda"], float)
-                    o = np.argsort(lam)
-                    out = (lam[o], np.asarray(rr[0]["Flux"], float)[o])
-                    np.save(cp, np.stack(out))
-                    return out
-                np.save(cp, np.zeros(0))
-                return None
+                out = ga.xp_spectrum_vizier(sid)
+                store(sid, out)
+                return out
             except Exception:  # noqa: BLE001
                 time.sleep(2)
+        ga.mark_vizier_down()
         return None
 
+    ids = [int(s) for s in sources]
     rows = []
     with ThreadPoolExecutor(10) as ex:
-        for i, r in enumerate(ex.map(fetch, [int(s) for s in sources])):
+        for i, r in enumerate(ex.map(fetch, ids)):
             rows.append(r)
             ctx.progress(p0 + (p1 - p0) * (i + 1) / len(sources), f"XP spectra {i + 1}/{len(sources)}")
-    return rows
+    if ga.vizier_down():                    # the spectra VizieR did not give: from GAVO, else the ESA archive
+        todo = [k for k, sid in enumerate(ids) if rows[k] is None and not cached(sid)[0]]
+        for name, get in (("GAVO (Heidelberg)", ga.xp_spectra_gavo), ("the ESA Gaia archive", ga.xp_spectra_esa)):
+            if not todo:
+                break
+            ctx.log(f"VizieR does not answer: {len(todo)} XP spectra from {name}")
+            try:
+                got = get([ids[k] for k in todo])
+            except Exception as e:  # noqa: BLE001 - this service fails too: the next one
+                ctx.log(f"{name} failed: {str(e)[:200]}", "warning")
+                continue
+            for k in todo:
+                if ids[k] in got:
+                    rows[k] = got[ids[k]]
+                    store(ids[k], rows[k])
+            todo = [k for k in todo if rows[k] is None]
+    if len({len(r[0]) for r in rows if r is not None}) > 1:
+        ctx.log("XP spectra from services with different wavelength grids: all brought to 400-800 nm")
+    return ga.common_grid(rows)
 
 
 def _xyz(lam, flux):

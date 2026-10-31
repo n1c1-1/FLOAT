@@ -1,6 +1,6 @@
 # astro_GPU – processing plan
 
-*Revised 2026-10-11. A plain-language report with images, in French, explains where things stand and the decision
+*Revised 2026-10-11; step table and sections 11.15-11.16 updated 2026-10-28. A plain-language report with images, in French, explains where things stand and the decision
 in progress: `F:\photos\heart_nebula\rapport\rapport.md`.*
 
 ## 1. Goal
@@ -92,12 +92,12 @@ How a method is judged:
 |---|---|---|---|---|
 | 1 | Test bench | our chain, a reference star-removal tool, nox | the bench reproduces known numbers; table "who wins what" | done |
 | 2 | Star-shape measurement | one shape for the whole image, per place, per frame, per colour | predicts stars kept aside | done |
-| 3 | Sharpening (deconvolution) | on the stack (classic filter, existing tools, our network with the measured blur); from all frames together | sharper on fake objects, closer to the truth, nothing invented, faint signal kept | 5 attempts, none passes; decision pending |
-| 4 | Noise reduction | our network, a reference gradient tool, others | less noise, no loss of detail or faint signal, no over-brightening | to do |
-| 5 | Stars | our model of each star, a reference star-removal tool, nox, mixed | no ring and no hole around bright stars; faint nebula kept | to do |
-| 6 | Sky background | our physical model, separation by motion, a reference gradient tool | faint nebula kept, even background | to do |
-| 7 | Colour | our camera response from Gaia spectra, another processing program colour calibration | Gaia star colours recovered | to do |
-| 8 | Final image | best chain from steps 2-7 | 100 % crops of all bright stars and fixed zones; comparison with full.png and the Iris reference | to do |
+| 3 | Sharpening (deconvolution) | on the stack (classic filter, existing tools, our network with the measured blur); from all frames together | sharper on fake objects, closer to the truth, nothing invented, faint signal kept | in use: the sharpening network with the measured blur, a render setting (0 Faithful, 1 Artistic); per-frame deconvolution before stacking tried twice (11.9), no better; per-tile deconvolution of the stack proposed, not started |
+| 4 | Noise reduction | our network, a reference gradient tool, others | less noise, no loss of detail or faint signal, no over-brightening | in use: Noise2Noise network on the half-stacks, multi-scale Wiener step on the starless image |
+| 5 | Stars | our model of each star, a reference star-removal tool, nox, mixed | no ring and no hole around bright stars; faint nebula kept | in use: star model subtracted, or the learned removal (own network), chosen at rendering (11.7-11.10); open: glare of the brightest stars |
+| 6 | Sky background | our physical model, separation by motion, a reference gradient tool | faint nebula kept, even background | in use: star flat (optional) and sky anchored on the H-alpha survey and the unresolved starlight; open: a smooth object filling the frame (M31) |
+| 7 | Colour | our camera response from Gaia spectra, another processing program colour calibration | Gaia star colours recovered | in use: camera response from Gaia XP spectra with a physical check, matrix anchored on the measured emission colour |
+| 8 | Final image | best chain from steps 2-7 | 100 % crops of all bright stars and fixed zones; comparison with full.png and the Iris reference | in use: Faithful and Artistic renders of each project, judged blind; open defects in 11.14 |
 
 ## 7. What we have measured so far
 
@@ -852,3 +852,90 @@ the current deliverables before any re-rendering.
 - Defects seen by the judges in every version, to work on: Horsehead milky veil (white point set by NGC 2023's core),
   grey bars beside medium stars, a salmon streak through the Iris central star, a colour mosaic in the Iris's faint
   NE dust, the Heart's brown sky and single-colour knots, dark holes beside some stars (catalogue-predicted fluxes).
+
+### 11.15 ComfyUI (2026-10-17 to 2026-10-28)
+
+- 2026-10-17: this repository became the reference code base (the former astro_GPU repository, with all its trial
+  branches, is archived in `E:\astro_gpu\archive\code_astro_GPU`). First design: "project" nodes - a hidden project
+  on the wires, each stage node computing everything upstream, one render node with about 70 sliders, nine example
+  graphs. Proven from the raw frames on the Wizard nebula (NGC 7380) and on M31 (2023).
+- 2026-10-25: the user found it very confusing. Redesign as elementary blocks that pass data (frames, masters,
+  linear image, stars, masks, rendering): one block does one thing, branches make versions; two starting graphs.
+  Done on 2026-10-26 and run on 300 Iris frames through every block (1 h 30).
+- 2026-10-28, decision of the user: ComfyUI is not the target interface. Next: a heavy client with a completely
+  rethought ergonomics, using the processing blocks (`comfyui_astro/blocks.py`, `blocks_render.py`) outside ComfyUI.
+- Open from the Iris run: a dark disc around the G 4.6 red star = its far halo subtracted about 4 times too strongly
+  (model 2.7 ADU at 50 px, data about 0.6). The bound set by the data applies only to strong or measured halos;
+  proposed: apply it to every star.
+
+### 11.16 M31 with defocused stars and another camera (2026-10-28)
+
+- Data: 30 x 60 s FITS, 9 darks, no flats; 6000 x 4000 pixels, 14-bit colour sensor, Newton 150/750 (1.02"/px);
+  stars defocused into rings about 6 px in radius.
+- Changes in the code, driven by the data: the ESA Gaia archive when the CDS servers do not answer; the saturation
+  level read from the plateau of clipped pixels (FITS without DATAMAX); a local star-shape cell moving more than half
+  the star's flux and 3 times the typical cell takes the field's correction (stars 14); a star profile hollow at its
+  centre is drawn as a focused Moffat profile; low coverage inside the image is kept, only the regions reaching the
+  border are left out (render prep 44).
+- Delivered in `F:\astro-photo`. Remaining at 100 %: grain and dark specks in the faint disc, a slight green tint.
+- The two version numbers were raised on the night of 2026-10-28 (the code had changed without them), so the
+  existing projects now see these stages as out of date. The check of these changes on four reference projects is in
+  the report of that night.
+
+### 11.17 Night of 2026-10-28: the M31 changes checked, the far-halo bound for every star
+
+- The M31 changes (render prep 44, stars 14) were run on copies of the Heart, Iris, Rosette and Horsehead (tool
+  `tools/qc/nonreg.py`; the real projects untouched): Horsehead and Rosette identical to the eye, Iris and Heart
+  judged blind "nearly identical", the new version very slightly better on the Iris (sky less olive). The Heart's small
+  differences come mostly from its learned star removal, retrained and not reproducible: it trains for a time
+  (32 min), not a number of steps (11 181 and 11 408 steps on identical inputs; BACKLOG). The Heart's automatic framing moves by a few pixels (useful field recomputed).
+- Far-halo bound (option 'Far halo bounded by the data', stars 15): it now bounds every star's halo, also those
+  drawn at their catalogue flux, and a colour too faint to bound takes the factor of the measured ones. On the Iris
+  300-frame session the dark disc around T Cephei (a red variable fainter than its Gaia magnitude) is gone, and the
+  sky colour of the whole image is more neutral (the disc had been setting the background zero point). Horsehead
+  (bound on) preferred blind with the extension. Rosette with the bound turned on: the olive and green discs in the
+  cavity come back, so the option stays off by default.
+- Render setting 'Brightest area ignored' (white point reference, default 0.005 % = the former rule): on the
+  Horsehead, 0.05 to 0.2 % brightens the bright nebula (top fifth from 96 to 109-117 / 255) without moving the sky.
+- Test data for other sensors and instruments: `D:\astro_donnees_test` (BACKLOG, "Generalisation").
+
+### 11.18 Night of 2026-10-30: test sets of other cameras, first pass and fixes
+
+Nine test sets of 15-60 frames (`F:\astro_essais`, tool `tools/qc/jeux.py`, report card `tools/qc/bulletin.py`),
+processed as projects apart from the user's (ASTRO_GPU_HOME), learned star removal off, denoiser 6 000 steps.
+VizieR, SIMBAD and the CDS cut-out service were down all night, the ESA Gaia archive answered errors 500: the
+catalogues now come from GAVO (Heidelberg), object names from NED, the H-alpha survey from its own server.
+
+Prerequisites: star_net trains a number of steps (bit-identical on the GPU); ASTRO_GPU_HOME keeps test runs apart.
+Reading: CR3 / RAF metadata, Stellina exposures in ms, compressed FITS.
+
+What broke and was fixed (each change replayed read-only on the user's projects; none of their results moves
+except where written):
+
+| Set | Symptom | Cause | Fix |
+|---|---|---|---|
+| Seestar M31 | (none: aligned) | field turned 4.4 deg; translation-only start failed from 3 deg | rotation search when a translation matches < 30 % |
+| Stellina (both) | stack blurred, field not solved | the rotation search locked on chance pairs in a dense field | kept only with a small residual; far-off frames left out |
+| Canon 6D M51 | pink sky, red cast | no camera profile + unphysical fitted curves -> H-alpha signature 1 : 1.48 : 3.16 | typical colour sensor curves (A7S) scaled to the stars |
+| Canon 6D M51 | bright band on a third of the image | star flat from star models: coma at the edges read as -52 % sensitivity | wide apertures when the models scatter 2x more (background 5) |
+| Canon 40D Rosette | teal nebula, black centre | sky-fit rejection removed the nebula itself, H-alpha amplitude 0.019 -> 0.0021 | in emission fields (survey >= 200 R), rejection on green/blue when it collapses |
+| Stellina IC 1318 | optics stage crashed | lateral colour fit from a negative peak | patch skipped |
+| Stellina NGC 891 | astrometry failed | SIMBAD down, field too small for the blind solver | NED |
+| Heart (40 frames) | star stage never ended | angular shape found by chance on a refractor, flux scale x2196 | rejected outside 1/3-3 (user's projects: 0.96-1.28) |
+
+Open (diagnosed, not changed - they touch the user's renders or need their eye):
+
+- Canon 6D: stars with coma at the edges leave white / black blobs in the starless layer (local shape correction
+  stops at WING_R - 1.5 px for G < 11; the unreliable-core mask refuses residuals of a mis-shaped star).
+- Seestar M31: red blotches and black holes at rendering. The H-alpha boost (R - alpha G) takes a large-scale red
+  excess of the sky for emission (boost 0 removes them; a noise threshold did not).
+- Smart telescopes: star-model residual 23-26 % (Stellina) and 55 % (Seestar) in red and blue against 10-12 % on the
+  user's data, undersampled stars (FWHM 1.7 px). Stars left orange in the starless layer of IC 1318, and its
+  H-alpha nebulosity is not there. Without drizzle (x1.0 instead of x1.5 with 40 frames) the residual is worse
+  (31-36 %) and the stars turn to purple blobs: the drizzle is not the cause.
+- Stellina NGC 891 (frames pre-processed by the telescope): magenta sky, olive blobs.
+- ASI2600MC M8: catalogue stage impractical with GAVO only (dense Milky Way: 10 min per 1-degree cell).
+- Canon EOS Ra, 135 mm lens (16 x 11 deg): read correctly (CR3); with an unknown focal length the scale search
+  passed the right scale without a match and went on (stopped after 35 min); with 135 mm entered it solved
+  (0.11 px on 4 547 stars), but the catalogue asks 234 cells of G < 18.5 and the faint stars to G 20.5: hours
+  without VizieR, for stars far below what a 135 mm lens records. The catalogue depth does not follow the field.

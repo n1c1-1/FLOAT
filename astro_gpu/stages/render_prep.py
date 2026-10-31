@@ -85,7 +85,7 @@ class RenderPrep(Stage):
                    "adjustment tab.")
     deps = ("background", "starless", "stars", "color", "optics", "stack")
     Params = RenderPrepParams
-    version = "43"         # 29: the star guard wherever star light dominates (dark moats around G 9.5-11.5 stars);
+    version = "44"         # 29: the star guard wherever star light dominates (dark moats around G 9.5-11.5 stars);
                            # 30: the diffuse part of the star glare; 31: the glare of the dominant stars only, the
                            # measured emission colour also in the emission / continuum / OIII separation; 32: the
                            # star guard back to the footprints (its extension drew dark discs on the Heart); 33: the
@@ -98,7 +98,9 @@ class RenderPrep(Stage):
                            # layers, the photographed ones in layers of their own (chosen at rendering); 42: the
                            # learned preparation takes the sharpening layer of the learned starless image; 43: the
                            # continuum under star light smoothed from the gaps between the stars only (a plain average
-                           # took the stars' residual light in: dark worms in the gaps, Wizard Nebula)
+                           # took the stars' residual light in: dark worms in the gaps, Wizard Nebula); 44: low
+                           # coverage inside the image kept (only the regions reaching the border left out), a hollow
+                           # measured star profile (defocus) replaced by a focused one (M31 of 2026-09-12)
 
     learned = False        # RenderPrepLearned: the same layers from the learned starless image
 
@@ -113,6 +115,16 @@ class RenderPrep(Stage):
         wt = ctx.load("stack", "drz_weight.npy", mmap=True)
         cov = np.asarray(wt[1], np.float32)
         good = cov > p.cover_min * np.median(cov[cov > 0])
+        # low coverage inside the image is not an edge: pixels saturated in part of the frames (a galaxy's core, a
+        # bright star) or rejected in some (a satellite trail) are stacked from the others; only the low-coverage
+        # regions reaching the border of the stack (frame edges, dithering) are left out
+        from scipy import ndimage
+        lab, n_lab = ndimage.label(~good)
+        if n_lab:
+            border = np.unique(np.r_[lab[0], lab[-1], lab[:, 0], lab[:, -1]])
+            inner = (lab > 0) & ~np.isin(lab, border[border > 0]) & (cov > 0)
+            good |= inner
+            ctx.metric("inner_low_coverage_kept_px", int(inner.sum()))
         H, W = good.shape
         fp = ctx.project.stage_dir("calibrate") / "master_flat.npy"
         if p.min_exposure > 0 and fp.exists():
@@ -319,7 +331,8 @@ class RenderPrep(Stage):
         for c in range(3):
             pr[c] /= np.median(fs["pred"][c][m13] / np.maximum(fs["flux"][c][m13], 1e-9))
         # stars inside the footprint of a saturated star are shown by its real light, not drawn again
-        real = (fp_all[np.clip(np.round(Y).astype(int), 0, H - 1), np.clip(np.round(X).astype(int), 0, W - 1)] > 0.5)             & (X >= 0) & (X < W) & (Y >= 0) & (Y < H)
+        real = ((fp_all[np.clip(np.round(Y).astype(int), 0, H - 1), np.clip(np.round(X).astype(int), 0, W - 1)] > 0.5)
+                & (X >= 0) & (X < W) & (Y >= 0) & (Y < H))
         # every star gets the part of its shape that a round drawn star lacks (diamond, diffraction spikes), measured
         # on the image by the star stage (flux x measured shape), outside the saturated stars' own light. A saturated
         # star's spikes continue its real light; a drawn star's shape is a layer of its own, drawn by the rendering
@@ -366,6 +379,15 @@ class RenderPrep(Stage):
         ctx.progress(0.85, "real star profile")
         r_all, prof = star_profile(torch.load(ctx.input("optics", "psf_model.pt"), map_location=ctx.device,
                                                weights_only=False))
+        # a measured profile hollow at its centre is not the image of a star but that of the defocused pupil (the
+        # shadow of the central obstruction): the stars are then drawn with a focused profile, as sharp as the
+        # sharpening network makes the nebula (its target), so that the stars and the nebula share one resolution
+        if prof[0] < HOLLOW * prof.max():
+            fw = float(ctx.metric_of("starless", "sharpen_target_fwhm", 0) or 0) or 2.5 * S
+            prof = moffat_profile(r_all, fw)
+            ctx.metric("star_profile", f"focused, FWHM {fw:.2f} px (the measured stars are defocused rings)")
+            ctx.log(f"the measured star profile is hollow at its centre (defocus): stars drawn with a focused "
+                    f"profile of FWHM {fw:.2f} px")
         ctx.save_json("prep.json", {"crop": [int(x0), int(x1), int(y0), int(y1)], "alpha": alpha,
                                     "vh": vh.tolist(), "M": M.tolist(), "drizzle_scale": S, "width": W,
                                     "height": H, "mag_offset": dm, "e": e_.tolist(), "Am": Am.tolist(),
@@ -712,9 +734,10 @@ def _bright_stars_real(ctx, fs, N2, fp_all, fp_fill, Ys, sig, xs, ys, ok, idx_sa
     back; a star's own spikes differ from it (dark blobs along them where it was too strong, segments where it was
     weak). Along each spike direction, from the edge of the star's core out to where the light along the spike stops
     standing twice the noise above the light beside it on both sides (Ys: image minus starless; a nebula rises on both
-    alike - measured against zero, the strips ran 400 px through the Rosette), a strip: under it the nebula is interpolated across the strip
-    and the star light is image minus that nebula. The round core of a star that is not saturated stays drawn (compact,
-    its size set by the star settings: its own light, wings included, made the medium stars look large and soft).
+    alike - measured against zero, the strips ran 400 px through the Rosette), a strip: under it the nebula is
+    interpolated across the strip and the star light is image minus that nebula. The round core of a star that is not
+    saturated stays drawn (compact, its size set by the star settings: its own light, wings included, made the medium
+    stars look large and soft).
     N2, fp_all and fp_fill (interpolated: the fine detail and colour layers, taken from the starless images where the
     spike model was subtracted, are off there) are updated in place. Returns the indices of the stars given real spikes,
     the number of strips, their weight and, per spike direction, (direction, strips, strip width)."""
@@ -885,6 +908,16 @@ def guard_generic(astro, Yl, foot_w, lum, w_cam, guard_sigma):
     Yg = np.maximum(Yl, Ys - guard_sigma * sY)
     Nfp = As + (Yg - Ys)[None] * np.asarray(w_cam, np.float32)[:, None, None]   # brightness Yg, colour of As
     return (astro + foot_w[None] * (Nfp - astro)).astype(np.float32)
+
+
+HOLLOW = 0.7          # a star profile whose centre is below this fraction of its maximum is a defocused ring
+MOFFAT_BETA = 3.0     # wings of a focused, seeing-limited star (Trujillo et al. 2001: beta 2.5-4.5)
+
+
+def moffat_profile(r, fwhm, beta=MOFFAT_BETA):
+    """Moffat profile of a focused star with this FWHM (peak 1) at the radii r."""
+    alpha = fwhm / (2 * np.sqrt(2 ** (1 / beta) - 1))
+    return (1 + (np.asarray(r, float) / alpha) ** 2) ** -beta
 
 
 def star_profile(pm):
