@@ -36,6 +36,7 @@ from PySide6.QtGui import (
     QFontMetrics,
     QFontMetricsF,
     QKeySequence,
+    QLinearGradient,
     QPainter,
     QPainterPath,
     QPen,
@@ -58,9 +59,23 @@ from PySide6.QtWidgets import (
 
 from ..core import workflow as wfl
 from . import prefs
-from .blocks import COLUMNS, OPTIONAL, PHASES, STATE_WORD, TOOL_COLUMN, TOOLBOX, TOOLS, Graph, Node, block_title
+from .blocks import (
+    BREAK_COL,
+    COLUMNS,
+    OPTIONAL,
+    PAUSE_COL,
+    PHASES,
+    REVIEWED_COL,
+    STATE_WORD,
+    TOOL_COLUMN,
+    TOOLBOX,
+    TOOLS,
+    Graph,
+    Node,
+    block_title,
+)
 from .dialogs import NewWorkflowDialog, ask_name
-from .i18n import _, hm
+from .i18n import _, hm, plural
 from .model import TEMPLATES, NotInEngine
 from .panel import Panel
 from .widgets import ACCENT, BAD, NEW, OK, WARN, clear, label
@@ -71,8 +86,11 @@ COLW = BW + GAP             # column pitch
 LANE = 80                   # lane pitch
 TOP = 74                    # room for the phase labels
 MARGIN = 8                  # around the graph, left and right
-MIN_SCALE = 0.8             # below, the text cannot be read: the view scrolls instead (off Show all)
+MIN_SCALE = 0.6             # the smallest the default view goes to show the whole chain; below, the text cannot be read:
+#                             the view keeps this scale, shows the left end (Frames) and scrolls right. Show all goes lower
 TITLE_PAD = 22              # a block's title, its state stripe and its padding
+OUT_MAX = BW + 30           # the widest Output column: a longer workflow name fades out (whole in the tooltip)
+FADE = 18                   # the width over which a name too long for its block fades out
 STATE_COL = {"done": OK, "pending": "#5d6470", "stale": WARN, "running": ACCENT, "failed": BAD,
              "interrupted": WARN, "skipped": "#5d6470"}
 # the blocks whose output can go straight to the post: only where it gives an image no workflow already gives
@@ -85,12 +103,25 @@ def elide(text, font, width):
     return QFontMetrics(font).elidedText(text, Qt.ElideRight, int(width))
 
 
+def review_tip(bp) -> str:
+    """What the review point of a block says, for its tooltip: bp is Graph.breakpoint's (state, have, total)."""
+    state, have, total = bp
+    text = {"pending": _("Review point: the run stops here for your review."),
+            "paused": _("Paused: check this block (Inspect), then Continue from the Run window."),
+            "reviewed": _("Reviewed: the run goes through while these results stay as they are.")}[state]
+    if have < total:
+        text += " " + plural(have, "Pause set in {n} workflow of {total}.", "Pause set in {n} workflows of {total}.",
+                             total=total)
+    return text
+
+
 class BlockItem(QGraphicsItem):
-    def __init__(self, view, node: Node, title, summary, state, selected, dim, removable, w: float = BW):
+    def __init__(self, view, node: Node, title, summary, state, selected, dim, removable, w: float = BW, bp=None):
         super().__init__()
         self.view, self.node, self.w = view, node, w
         self.title, self.summary, self.state = title, summary, state
         self.selected, self.dim, self.removable = selected, dim, removable
+        self.bp = bp                           # None, or Graph.breakpoint: (state, workflows that pause here, of how many)
         self.hover = False
         self.target = False                    # the Post block, while an output is pulled over it
         self._wire = False
@@ -100,16 +131,48 @@ class BlockItem(QGraphicsItem):
         tip = f"{title}\n{summary}\n" + (_(STATE_WORD[state]) if node.key not in ("sources", "final") else "")
         if self.port:
             tip += "\n" + _("Output ●: drag it onto Post to make a layer")
+        if bp is not None:
+            tip += "\n" + review_tip(bp)
         self.setToolTip(tip.strip())
 
     def boundingRect(self):                                           # noqa: N802 - Qt's name
-        return QRectF(-2, -2, self.w + (10 if self.port else 4), BH + 4)
+        left = 12 if self.bp is not None else 2         # the review dot sits on the corner
+        return QRectF(-left, -left, self.w + left + (10 if self.port else 2), BH + left + 2)
 
     def _x_rect(self):
         return QRectF(self.w - 20, 4, 16, 16)
 
     def _on_port(self, pos):
         return self.port and (pos - QPointF(self.w, BH / 2)).manhattanLength() < 14
+
+    def paint_review(self, p: QPainter):
+        """The review point, on the block's top-left corner like a debugger's dot: red while the run will stop here,
+        yellow with the pause bars while it is stopped here for the user, a green tick once the user checked these
+        results. A ring instead of a disc when only some of the workflows going through the block have it."""
+        state, have, total = self.bp
+        c = QPointF(2, 2)
+        col = QColor({"pending": BREAK_COL, "paused": PAUSE_COL, "reviewed": REVIEWED_COL}[state])
+        r = 9.5 if state == "paused" else 8.0
+        disc = have == total and state != "reviewed"
+        dark = QColor("#15171c")
+        p.save()
+        p.setPen(QPen(dark, 2.4))                                      # a cut-out ring so it reads on any block
+        p.setBrush(col if disc else dark)
+        p.drawEllipse(c, r, r)
+        if not disc:
+            p.setPen(QPen(col, 2.0))
+            p.setBrush(Qt.NoBrush)
+            p.drawEllipse(c, r - 1.4, r - 1.4)
+        if state == "paused":                                          # the pause bars
+            p.setPen(Qt.NoPen)
+            p.setBrush(dark if disc else col)
+            p.drawRoundedRect(QRectF(c.x() - 4.4, c.y() - 4.6, 3.2, 9.2), 1.0, 1.0)
+            p.drawRoundedRect(QRectF(c.x() + 1.2, c.y() - 4.6, 3.2, 9.2), 1.0, 1.0)
+        elif state == "reviewed":                                      # the tick
+            p.setPen(QPen(col, 2.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            p.drawPolyline([QPointF(c.x() - 3.4, c.y() + 0.2), QPointF(c.x() - 1.0, c.y() + 2.8),
+                            QPointF(c.x() + 3.6, c.y() - 2.6)])
+        p.restore()
 
     def paint(self, p: QPainter, opt, widget=None):
         p.setRenderHint(QPainter.Antialiasing)
@@ -119,8 +182,9 @@ class BlockItem(QGraphicsItem):
         ghost = self.node.key == "sources" and self.state == "pending"
         fill = "#1d2129" if ghost else ("#2b3446" if self.selected or self.target else
                                         ("#272c36" if self.hover else "#22262e"))
-        pen = QPen(QColor(ACCENT if self.selected or self.target else "#3a4150"),
-                   2 if self.selected or self.target else 1, Qt.DashLine if ghost else Qt.SolidLine)
+        paused = self.bp is not None and self.bp[0] == "paused"
+        pen = QPen(QColor(ACCENT if self.selected or self.target else (PAUSE_COL if paused else "#3a4150")),
+                   2 if self.selected or self.target or paused else 1, Qt.DashLine if ghost else Qt.SolidLine)
         p.setPen(pen)
         p.setBrush(QColor(fill))
         p.drawRoundedRect(r, 7, 7)
@@ -137,7 +201,21 @@ class BlockItem(QGraphicsItem):
         p.setFont(f)
         p.setPen(QColor("#e8ebf0"))
         tw = w - 18 - (18 if self.removable and self.hover else 0)
-        p.drawText(QRectF(11, 6, tw, 20), Qt.AlignLeft | Qt.AlignVCenter, elide(self.title, f, tw))
+        if self.node.key == "post" and QFontMetricsF(f).horizontalAdvance(self.title) > tw:
+            # a workflow's name: it fades out at the edge of its block (the whole name is in the tooltip); "…" is
+            # kept for the engine's words, whose end matters less
+            p.save()
+            p.setClipRect(QRectF(11, 6, tw, 20))
+            p.drawText(QRectF(11, 6, tw + 400, 20), Qt.AlignLeft | Qt.AlignVCenter, self.title)
+            p.restore()
+            grad = QLinearGradient(11 + tw - FADE, 0, 11 + tw, 0)
+            c0 = QColor(fill)
+            c0.setAlpha(0)
+            grad.setColorAt(0.0, c0)
+            grad.setColorAt(1.0, QColor(fill))
+            p.fillRect(QRectF(11 + tw - FADE, 6, FADE, 20), QBrush(grad))
+        else:
+            p.drawText(QRectF(11, 6, tw, 20), Qt.AlignLeft | Qt.AlignVCenter, elide(self.title, f, tw))
         f2 = QFont("Segoe UI", 8.5)
         p.setFont(f2)
         p.setPen(QColor("#8b93a1"))
@@ -152,6 +230,8 @@ class BlockItem(QGraphicsItem):
             p.setPen(QPen(QColor(ACCENT if big else "#4a5263"), 1.5))
             p.setBrush(QColor("#15171c" if not big else ACCENT))
             p.drawEllipse(QPointF(w, BH / 2), 5.5 if big else 3.5, 5.5 if big else 3.5)
+        if self.bp is not None:
+            self.paint_review(p)
 
     def hoverEnterEvent(self, e):                                     # noqa: N802
         self.hover = True
@@ -262,6 +342,8 @@ class GraphView(QGraphicsView):
     removeTool = Signal(object, object)    # Node, list of pids or None (all the workflows of the block)
     workflowMenu = Signal(str, int)        # action, pid
     sendToPost = Signal(object)            # Node whose output was pulled to the Post block
+    pauseToggled = Signal(object)          # Node: "Pause here for review" was chosen (set it, or take it off)
+    reviewMarked = Signal(object)          # Node: "Mark as reviewed" was chosen
 
     def __init__(self, project, steps=None, parent=None):
         super().__init__(parent)
@@ -277,6 +359,7 @@ class GraphView(QGraphicsView):
         self.graph: Graph | None = None
         self._sel_item = None
         self.final_item = None
+        self._fitting = False
         self._next_x: dict[str, float] = {}
         self.toast = QLabel(self)
         self.toast.setStyleSheet("background: #262a33; border: 1px solid #3a4150; border-radius: 6px; "
@@ -303,14 +386,17 @@ class GraphView(QGraphicsView):
         return [c for c in COLUMNS if c not in OPTIONAL or c in used]
 
     @staticmethod
-    def column_width(key: str) -> float:
+    def column_width(key: str, names=()) -> float:
         """A column is as wide as a block, or wider when its title needs it in the language shown ("Post-traitement").
-        The outputs carry the workflows' names, which are shortened with "…" instead."""
-        if key == "post":
-            return BW
+        The outputs carry the workflows' names: their column widens to the longest name, up to OUT_MAX; a longer name
+        fades out at the edge of its block and is whole in the tooltip."""
         f = QFont("Segoe UI", 10)
         f.setBold(True)
-        return max(BW, min(BW + 40, QFontMetricsF(f).horizontalAdvance(block_title(None, key)) + TITLE_PAD))
+        fm = QFontMetricsF(f)
+        if key == "post":
+            need = max((fm.horizontalAdvance(n) for n in names), default=0.0) + TITLE_PAD
+            return max(BW, min(OUT_MAX, need))
+        return max(BW, min(BW + 40, fm.horizontalAdvance(block_title(None, key)) + TITLE_PAD))
 
     @staticmethod
     def lane_order(g: Graph) -> list[int]:
@@ -339,7 +425,7 @@ class GraphView(QGraphicsView):
         g = Graph(s, self.steps)
         self.graph = g
         cols = self.columns(g)
-        cw = {c: self.column_width(c) for c in cols}
+        cw = {c: self.column_width(c, [p.name for p in s.paths]) for c in cols}
         cx, x = {}, 0.0
         for c in cols:
             cx[c] = x
@@ -385,7 +471,7 @@ class GraphView(QGraphicsView):
             title = block_title(n.paths[0] if n.paths else None, n.key)
             removable = n.key in OPTIONAL_BLOCKS
             dim = cur is not None and n.key not in ("sources", "final") and cur not in n.paths
-            it = BlockItem(self, n, title, g.summary(n), g.state(n), n is sel, dim, removable, n.w)
+            it = BlockItem(self, n, title, g.summary(n), g.state(n), n is sel, dim, removable, n.w, g.breakpoint(n))
             it.setPos(n.col, n.y - BH / 2)
             it.setZValue(5)
             sc.addItem(it)
@@ -492,18 +578,32 @@ class GraphView(QGraphicsView):
         t.setZValue(3)
 
     def fit(self):
+        """The default view shows the whole chain, from Frames to Post, at any window width: the scale that fits (at most
+        1.3), lowered down to MIN_SCALE; when even that does not fit, the left end (Frames) is shown, top left, and the
+        user scrolls right (or down). It is done again whenever the view changes size (the window, the panel)."""
         r = self.scene().sceneRect()
-        if r.isEmpty():
+        if r.isEmpty() or self._fitting:
             return
-        k = min(1.3, (self.viewport().width() - 4) / r.width(), (self.viewport().height() - 10) / r.height())
-        if not self.b_all.isChecked():
-            k = max(k, MIN_SCALE)                      # below, the text cannot be read: scroll instead
-        self.resetTransform()
-        self.scale(k, k)
-        self.centerOn(r.center())
-        it = self._sel_item
-        if it is not None and it.scene() is self.scene():
-            self.ensureVisible(it, 80, 40)               # the chosen block stays in view when the graph scrolls
+        self._fitting = True
+        try:
+            vw, vh = self.viewport().width(), self.viewport().height()
+            k = min(1.3, (vw - 4) / r.width(), (vh - 10) / r.height())
+            if not self.b_all.isChecked():
+                k = max(k, MIN_SCALE)
+            self.resetTransform()
+            self.scale(k, k)
+            # the middle of the view, in the scene: the scene's own middle when it fits, else its left / top edge at the
+            # view's edge
+            x = r.center().x() if r.width() * k <= vw else r.left() + vw / (2 * k)
+            y = r.center().y() if r.height() * k <= vh else r.top() + vh / (2 * k)
+            self.centerOn(QPointF(x, y))
+            it = self._sel_item
+            if it is not None and it.scene() is self.scene() and r.height() * k > vh:
+                seen = self.mapToScene(self.viewport().rect()).boundingRect()
+                box = it.sceneBoundingRect()                    # the chosen lane stays in view when the graph scrolls down
+                self.ensureVisible(QRectF(seen.left(), box.top(), 1, box.height()), 0, 40)
+        finally:
+            self._fitting = False
 
     def resizeEvent(self, e):                                         # noqa: N802
         super().resizeEvent(e)
@@ -545,6 +645,15 @@ class GraphView(QGraphicsView):
             m.addAction(_("Inspect")).triggered.connect(lambda: self.blockOpened.emit(node))
             if node.key in EXITS:
                 m.addAction(_("Send the output to Post")).triggered.connect(lambda: self.sendToPost.emit(node))
+            m.addSeparator()
+            bp = self.graph.breakpoint(node) if self.graph is not None else None
+            a = m.addAction(_("Pause here for review"))
+            a.setCheckable(True)
+            a.setChecked(bp is not None and bp[1] == bp[2])
+            a.setToolTip(_("The run stops after this block, so that you can check it before it goes on."))
+            a.triggered.connect(lambda: self.pauseToggled.emit(node))
+            if bp is not None and bp[0] == "paused":
+                m.addAction(_("Mark as reviewed")).triggered.connect(lambda: self.reviewMarked.emit(node))
         if not m.isEmpty():
             m.exec(pos)
 
@@ -690,6 +799,8 @@ class GraphPage(QWidget):
         gv.removeTool.connect(self.remove_tool)
         gv.workflowMenu.connect(self.workflow_action)
         gv.sendToPost.connect(self.send_to_post)
+        gv.pauseToggled.connect(self.toggle_pause)
+        gv.reviewMarked.connect(self.mark_reviewed)
         pn = self.panel
         pn.changed.connect(self.request_refresh)
         pn.openTune.connect(self.openBlock.emit)
@@ -727,7 +838,7 @@ class GraphPage(QWidget):
             sec = s.total_seconds()
             last = self._last
             if last is not None and s.paths and len(s.paths) == last[1] and sec - last[0] >= 30:
-                self.toast(_("+ {t} to run").format(t=hm(sec - last[0])))
+                self.toast(_("+ {t} to run").format(t=("" if s.cost().measured else "≈ ") + hm(sec - last[0])))
             self._last = (sec, len(s.paths))
         self.changed.emit()
 
@@ -769,7 +880,8 @@ class GraphPage(QWidget):
                 state, text = "in", _("already there")
             else:
                 dt = s.tool_cost(p.opts, k)
-                state, text = "add", (f"+{hm(dt)}" if dt >= 30 else _("same duration"))
+                sure = s.opts_measured(s.with_tool(p.opts, k)[0]) if hasattr(s, "opts_measured") else True
+                state, text = "add", ((f"+{hm(dt)}" if sure else f"≈ +{hm(dt)}") if dt >= 30 else _("same duration"))
             card = ToolCard(self, k, state, text, new)
             card.setEnabled(p is not None and not new)
             self.tl.addWidget(card)
@@ -880,6 +992,36 @@ class GraphPage(QWidget):
         self.select(index=s.paths.index(q), step="post")
         self.toast(_('Layer "{name}": output of {block}, sent to Post').format(
             name=q.name, block=block_title(p, node.key)))
+
+    def toggle_pause(self, node):
+        """Pause here for review: set on every workflow going through the block, or taken off when they all have it."""
+        s = self.s
+        paths = list(node.paths)
+        if not paths or node.key in ("sources", "final"):
+            return
+        on = not all(s.has_breakpoint(q, node.key) for q in paths)
+        s.set_breakpoint(paths, node.key, on)
+        title = block_title(paths[0], node.key)
+        if on:
+            s.log("Pause set after {block}", block=title)
+            self.toast(_("The run will stop after {block} for your review").format(block=title) if len(paths) == 1
+                       else plural(len(paths), "The run will stop after {block} for your review in {n} workflow",
+                                   "The run will stop after {block} for your review in {n} workflows", block=title))
+        else:
+            s.log("Pause removed after {block}", block=title)
+            self.toast(_("No more pause after {block}").format(block=title))
+
+    def mark_reviewed(self, node):
+        """Mark as reviewed: the results are checked, the run will go through this block."""
+        s = self.s
+        pids = [q.pid for q in node.paths if s.review_state(q, node.key) == "paused"]
+        if not pids:
+            return
+        from .model import Pause
+        s.mark_reviewed(Pause(node.key, pids))
+        title = block_title(node.paths[0], node.key)
+        s.log("{block} marked as reviewed", block=title)
+        self.toast(_("{block} marked as reviewed").format(block=title))
 
     def variant_made(self, pid, orig):
         """The variant is shown at the same block, side by side with the workflow it comes from."""

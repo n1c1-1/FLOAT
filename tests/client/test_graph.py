@@ -9,6 +9,7 @@ file in every test; the user's settings file is checked untouched. ASTRO_GPU_SHO
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -372,7 +373,7 @@ def test_states_come_from_the_api(world, model, page):
     assert block_state(model, model.view(2), "fond") == "running"
     model._sync()
     assert block_state(model, model.view(2), "fond") == "pending"
-    assert g.summary(g.root).startswith("1 session(s)") and "40 lights" in g.summary(g.root)
+    assert g.summary(g.root).startswith("1 session · ") and "40 lights" in g.summary(g.root)
 
 
 def test_a_shared_stage_is_one_key(world, model):
@@ -423,7 +424,7 @@ def test_the_toolbar_cards_say_what_each_block_costs(world, model, page):
     cards = {c.key: c for c in page.findChildren(ToolCard)}
     assert cards["debruitage"].state == "add" and cards["etoiles"].state == "add"
     texts = [lb.text() for c in cards.values() for lb in c.findChildren(QLabel)]
-    assert any(t.startswith("+") and "h" in t or t.startswith("+") for t in texts)
+    assert any(t.lstrip("≈ ").startswith("+") for t in texts)                 # "+2 min", or "≈ +5 h 08" (an estimate)
     assert hm(model.tool_cost(model.path.opts, "etoiles")) in " ".join(texts) or "same duration" in " ".join(texts)
     assert page.findChildren(QLabel, "h2")[0].text() == "Add step"
 
@@ -547,6 +548,98 @@ def test_a_method_card_asks_the_same_question(world, model, page):
     assert q.name == "Full · polynomial"
 
 
+def test_a_method_card_says_the_duration_on_each_device_and_which_one_is_used(world, model, page):
+    """A card never quotes one figure for an unnamed device: "GPU ≈ 8 min · CPU ≈ 23 h", the device of this machine in
+    bold. A machine whose GPUs are hidden still shows what the GPU would take."""
+    from astro_gpu.client.panel import durations_text
+    w = world["w"]
+    page.select_node(node(page, "etoiles", 1))
+    settle(w, page)
+    try:
+        for gpu in (True, False):
+            model.set_machine(gpu)
+            settle(w, page)
+            here = "gpu" if gpu else "cpu"
+            cards = method_cards(page)
+            assert len(cards) >= 2
+            seen = 0
+            for c in cards:
+                lines = [lb.text() for lb in c.findChildren(QLabel) if "GPU" in lb.text() or "CPU" in lb.text()]
+                if not lines:
+                    continue
+                seen += 1
+                plain = re.sub(r"<[^>]+>", "", lines[0])
+                assert "CPU" in plain and re.search(r"(GPU|CPU) (≈ )?[\d≤]", plain), plain
+                if "GPU" in plain and "CPU" in plain:             # both: the used one is the bold one
+                    bold = re.findall(r"<b[^>]*>(.*?)</b>", lines[0])
+                    assert len(bold) == 1 and bold[0].startswith(here.upper()), (lines[0], here)
+            assert seen >= 2
+            # the figures are the engine's for each device, not the machine's twice
+            ok = [m for m in model_methods("etoiles") if m["runs"] != "cpu" and not m["new"]]
+            assert ok
+            t = model.method_times(model.path, "etoiles", ok[0]["key"])
+            assert set(t) == {"gpu", "cpu"} and t["gpu"][0] > 0 and t["cpu"][0] > t["gpu"][0] * 3, t
+            assert durations_text(t, here).count("<b") == 1
+        # the cards as the user sees them, on a machine whose GPUs are hidden (the case that quoted the CPU as the GPU)
+        d = Path(os.environ.get("ASTRO_GPU_SHOTS") or world["folder"].parent / "shots")
+        d.mkdir(parents=True, exist_ok=True)
+        model.set_machine(False)
+        for lang in ("en", "fr"):
+            appmod.apply_language(lang)
+            page.refresh()
+            settle(w, page)
+            assert not untranslated(texts_of(page.panel))
+            page.root.grab().save(str(d / f"graph_method_cards_{lang}.png"))
+    finally:
+        appmod.apply_language("en")
+        model.set_machine(True)
+        page.refresh()
+        settle(w, page)
+    assert durations_text(None, "gpu") == "…"
+    assert re.sub(r"<[^>]+>", "", durations_text({"cpu": (90.0, True)}, "gpu")) == "CPU " + hm(90.0)        # CPU only
+    assert "CPU ≈ " in durations_text({"cpu": (90.0, False)}, "cpu")
+
+
+def model_methods(block):
+    from astro_gpu.client.model import methods_of
+    return methods_of(block)
+
+
+def test_the_durations_of_the_cards_are_read_by_the_worker_and_the_panel_follows(qapp, monkeypatch):
+    """The GUI thread only reads the cache: a duration nobody has estimated yet is asked of the worker, the card shows
+    "…", and costChanged says when the figures are in."""
+    seen = []
+    orig = api.estimate
+
+    def watch(*a, **k):
+        seen.append(threading.current_thread() is threading.main_thread())
+        return orig(*a, **k)
+    monkeypatch.setattr(api, "estimate", watch)
+    p = _open_four()
+    w = ApiWorker()
+    m = ProjectModel(p, w, readonly=True)
+    assert w.wait(180) and m.ready, m.error
+    try:
+        v = m.path
+        key = next(x["key"] for x in model_methods("debruitage") if not x["new"] and x["runs"] != "cpu")
+        m._est.clear()                                              # as after an edit, before the worker has read
+        fired = []
+        m.costChanged.connect(lambda: fired.append(1))
+        seen.clear()
+        assert m.method_times(v, "debruitage", key) is None          # asks the worker, estimates nothing here
+        assert m.method_times(v, "debruitage", key) is None          # and only once
+        assert not any(seen)
+        assert w.wait(180)
+        assert fired and m.method_times(v, "debruitage", key) is not None
+        assert seen and not any(seen), "the estimates were made in the GUI thread"
+        # a ◇ method has the spec's figure for the device it is meant for, at once
+        new = next(x for x in model_methods("debruitage") if x["new"])
+        t = m.method_times(v, "debruitage", new["key"])
+        assert len(t) == 1 and not next(iter(t.values()))[1]
+    finally:
+        w.stop()
+
+
 def test_undo_and_redo_restore_the_workflows(world, model, page):
     n0 = len(model.paths)
     p = model.add_path("Extra", {"debruitage": False, "etoiles": "garder", "appris": False, "fond": "simple"})
@@ -610,6 +703,31 @@ def test_outputs_pulled_to_post_make_a_raw_stack_workflow(world, model, page):
     ok, why, need = model.slider_state(q, "stars_number")
     assert ok is False and "before the Stars block" in why and need is None             # nothing to add after the exit
     assert model.slider_state(model.view(1), "stars_number")[0] is True
+
+
+def test_the_mouse_over_and_on_every_block_works(world, model, page):
+    """Hovering a block and pressing it (on its body and on its output port) is what the user does first; a lost helper
+    method once broke it in the real client while no test moved the mouse."""
+    from PySide6.QtCore import QEvent
+    from PySide6.QtWidgets import QGraphicsSceneHoverEvent, QGraphicsSceneMouseEvent
+    items = [it for it in page.graph.scene().items() if isinstance(it, BlockItem)]
+    assert items
+    for it in items:
+        for pos in (QPointF(it.w / 2, BH / 2), QPointF(it.w, BH / 2)):           # the body, then the port's place
+            ev = QGraphicsSceneHoverEvent(QEvent.GraphicsSceneHoverMove)
+            ev.setPos(pos)
+            it.hoverMoveEvent(ev)
+            assert it.cursor().shape() == (Qt.CrossCursor if it.port and pos.x() == it.w else Qt.PointingHandCursor)
+        assert isinstance(it._x_rect(), QRectF)
+    stacking = next(it for it in items if it.port)
+    press = QGraphicsSceneMouseEvent(QEvent.GraphicsSceneMousePress)
+    press.setButton(Qt.LeftButton)
+    press.setPos(QPointF(stacking.w, BH / 2))
+    stacking.mousePressEvent(press)                                               # starts pulling the output
+    assert stacking._wire
+    page.graph.end_wire(QPointF(-1e4, -1e4))                                      # dropped on nothing
+    stacking._wire = False
+    settle(world["w"], page)
 
 
 def test_new_workflow_duplicate_rename_delete(world, model, page, monkeypatch):
@@ -1102,6 +1220,317 @@ def test_no_setting_of_the_engine_is_out_of_reach(world, model, page):
             got |= set(keys)
     page.panel.expert = False
     assert not (want - got), sorted(want - got)
+
+
+# ---------------------------------------------------------------------------------------------- breakpoints
+def block_items(page):
+    return [it for it in page.graph.scene().items() if isinstance(it, BlockItem)]
+
+
+def item_of(page, key, pid=None):
+    n = node(page, key, pid)
+    return next(it for it in block_items(page) if it.node is n)
+
+
+def menu_of(page, n, monkeypatch):
+    """The context menu of a block, as built (QMenu.exec is not run: it would wait for a click)."""
+    from PySide6.QtWidgets import QMenu
+
+    from astro_gpu.client import graph as graphmod
+    seen = []
+
+    class Menu(QMenu):
+        def exec(self, *a, **k):
+            seen.append(self)
+    monkeypatch.setattr(graphmod, "QMenu", Menu)
+    page.graph.block_menu(n, QPoint(0, 0))
+    return seen[-1] if seen else None
+
+
+def pixel_near(page, it, colour: str, radius: float = 9.0, tol: int = 36) -> bool:
+    """Whether the view draws something of this colour around the corner of a block (where its review dot sits)."""
+    from PySide6.QtGui import QColor
+    QApplication.processEvents()
+    img = page.graph.viewport().grab().toImage()
+    c = page.graph.mapFromScene(it.mapToScene(2, 2))
+    want = QColor(colour)
+    for dx in range(-int(radius), int(radius) + 1):
+        for dy in range(-int(radius), int(radius) + 1):
+            x, y = c.x() + dx, c.y() + dy
+            if 0 <= x < img.width() and 0 <= y < img.height() and dx * dx + dy * dy <= radius * radius:
+                got = img.pixelColor(x, y)
+                if abs(got.red() - want.red()) + abs(got.green() - want.green()) + abs(got.blue() - want.blue()) <= tol:
+                    return True
+    return False
+
+
+_API_STATES = api.states
+
+
+def pin(model, monkeypatch, *done):
+    """The engine's states with these blocks (of the views) computed and every other stage not, whatever is on the disk
+    (the keys stay the real ones: the settings of a stage are asked by them)."""
+    from astro_gpu.client.blocks import ENGINE_BLOCK
+
+    def states(p, update=True):
+        out = dict(_API_STATES(p, update=False))
+        block_of = {(w.id, st): ENGINE_BLOCK[b.block] for w in p.workflows for b in api.blocks(p, w.id) for st in b.stages}
+        for (wid, stage), st in out.items():
+            if block_of.get((wid, stage)) in done:
+                out[(wid, stage)] = api.StageState("done", "", st.key)
+            else:
+                out[(wid, stage)] = api.StageState("pending", "never computed", st.key)
+        return out
+    monkeypatch.setattr(api, "states", states)
+    model._sync(prefetch=False)
+    model.pathsChanged.emit()
+
+
+def test_every_block_has_pause_here_for_review_and_the_dot_shows(world, model, page, monkeypatch):
+    from astro_gpu.client.blocks import BREAK_COL
+    pin(model, monkeypatch)                                                     # nothing computed
+    settle(world["w"], page)
+    # no menu, no dot, on the Frames and Post blocks
+    assert menu_of(page, page.graph.graph.root, monkeypatch) is None
+    assert menu_of(page, page.graph.graph.final, monkeypatch) is None
+    assert all(it.bp is None for it in block_items(page))
+    keys = [n.key for n in page.graph.graph.nodes if n.key not in ("sources", "final")]
+    assert {"calibration", "alignement", "selection", "empilement", "astrometrie", "couleur", "debruitage", "etoiles",
+            "fond", "post"} <= set(keys)
+    for n in page.graph.graph.nodes:
+        if n.key in ("sources", "final"):
+            continue
+        m = menu_of(page, n, monkeypatch)
+        act = next(a for a in m.actions() if a.text() == "Pause here for review")
+        assert act.isCheckable() and not act.isChecked(), n.key
+        assert not any(a.text() == "Mark as reviewed" for a in m.actions())
+    # choose it on Calibration: every workflow going through the block gets the breakpoint (the block is shared)
+    cal = node(page, "calibration")
+    assert len(cal.paths) == len(model.paths) == 4
+    act = next(a for a in menu_of(page, cal, monkeypatch).actions() if a.text() == "Pause here for review")
+    act.trigger()
+    settle(world["w"], page)
+    assert [w.breakpoints for w in model.p.workflows] == [["calibration"]] * 4
+    it = item_of(page, "calibration")
+    assert it.bp == ("pending", 4, 4) and all(i.bp is None for i in block_items(page) if i is not it)
+    assert "Review point: the run stops here for your review." in it.toolTip()
+    assert pixel_near(page, it, BREAK_COL)                                      # a red dot, on the block's corner
+    assert any(h[1] == "Pause set after {block}" for h in model.history)
+    assert graph_faults(page) == []                                             # the dot hides nothing and cuts nothing
+    # the menu now shows it checked, and choosing it again takes it off
+    again = next(a for a in menu_of(page, cal, monkeypatch).actions() if a.text() == "Pause here for review")
+    assert again.isChecked()
+    again.trigger()
+    settle(world["w"], page)
+    assert [w.breakpoints for w in model.p.workflows] == [[]] * 4 and item_of(page, "calibration").bp is None
+    assert not pixel_near(page, item_of(page, "calibration"), BREAK_COL)
+    # on a block of one workflow only
+    leaf = node(page, "post", 2)
+    next(a for a in menu_of(page, leaf, monkeypatch).actions() if a.text() == "Pause here for review").trigger()
+    settle(world["w"], page)
+    assert [w.breakpoints for w in model.p.workflows] == [[], ["output"], [], []]
+    assert item_of(page, "post", 2).bp == ("pending", 1, 1)
+
+
+def test_the_dot_says_pending_paused_or_reviewed_and_the_graph_follows(world, model, page, monkeypatch):
+    from astro_gpu.client.blocks import BREAK_COL, PAUSE_COL, REVIEWED_COL
+    p = model.view(1)
+    pin(model, monkeypatch)
+    model.set_breakpoint([p], "calibration")
+    settle(world["w"], page)
+    assert model.review_state(p, "calibration") == "pending" and item_of(page, "calibration").bp[0] == "pending"
+    # the block is computed and nobody has checked it: paused (yellow, with a menu entry to say it was checked)
+    pin(model, monkeypatch, "calibration")
+    settle(world["w"], page)
+    assert model.review_state(p, "calibration") == "paused"
+    it = item_of(page, "calibration")
+    assert it.bp == ("paused", 1, 4)
+    assert pixel_near(page, it, PAUSE_COL) and not pixel_near(page, it, BREAK_COL, 5)
+    assert "Paused: check this block (Inspect), then Continue from the Run window." in it.toolTip()
+    assert "Pause set in 1 workflow of 4." in it.toolTip()                      # only one of the four workflows
+    m = menu_of(page, node(page, "calibration"), monkeypatch)
+    assert "Mark as reviewed" in [a.text() for a in m.actions()]
+    # a second breakpoint, further on, waits (red) until the first is checked
+    model.set_breakpoint([p], "empilement")
+    pin(model, monkeypatch, "calibration", "empilement")
+    settle(world["w"], page)
+    assert [model.review_state(p, k) for k in ("calibration", "empilement")] == ["paused", "pending"]
+    # Mark as reviewed: green, and the next one is the one the run will wait at
+    next(a for a in m.actions() if a.text() == "Mark as reviewed").trigger()
+    settle(world["w"], page)
+    assert [model.review_state(p, k) for k in ("calibration", "empilement")] == ["reviewed", "paused"]
+    assert item_of(page, "calibration").bp[0] == "reviewed" and pixel_near(page, item_of(page, "calibration"), REVIEWED_COL)
+    assert item_of(page, "empilement").bp[0] == "paused"
+    assert any(h[1] == "{block} marked as reviewed" for h in model.history)
+    state = json.loads((Path(world["folder"]) / "state.json").read_text(encoding="utf-8"))
+    assert state["reviewed"] == [model.review_key(p, "calibration")]
+    # a block that is not computed any more shows as waiting again (the run will go through it, and stop after it)
+    pin(model, monkeypatch)
+    assert [model.review_state(p, k) for k in ("calibration", "empilement")] == ["pending", "pending"]
+    model._reviewed.clear()
+    st = project2.read_state(world["folder"])
+    st.pop("reviewed", None)
+    project2.write_state(world["folder"], st)
+
+
+def test_the_pause_is_stored_per_workflow_undone_copied_and_leaves_with_its_block(world, model, page):
+    p, dn = model.view(1), model.view(3)
+    assert "denoise" in model.all_stages(dn)
+    model.set_breakpoint([p], "calibration")
+    model.set_breakpoint([dn], "debruitage")
+    model.set_breakpoint([dn], "empilement")
+    assert model.p.workflow(3).breakpoints == ["stacking", "denoise"]            # kept in the graph's order
+    assert model.breakpoints(dn) == ["empilement", "debruitage"] and model.breakpoints(model.view(2)) == []
+    model.flush()
+    saved = project2.load(world["folder"])
+    assert [w.breakpoints for w in saved.workflows] == [["calibration"], [], ["stacking", "denoise"], []]
+    # Undo takes a breakpoint back, as any edit
+    assert model.undo() and model.p.workflow(3).breakpoints == ["denoise"]
+    assert model.redo() and model.p.workflow(3).breakpoints == ["stacking", "denoise"]
+    # a copy keeps them
+    cp = model.duplicate(dn, "Copy of denoise")
+    settle(world["w"], page)
+    assert model.p.workflow(cp.pid).breakpoints == ["stacking", "denoise"]
+    # a block that leaves the workflow takes its breakpoint away; Undo brings both back
+    page.remove_tool(node(page, "debruitage", cp.pid), [cp.pid])
+    settle(world["w"], page)
+    assert "denoise" not in model.all_stages(cp) and model.p.workflow(cp.pid).breakpoints == ["stacking"]
+    assert model.p.workflow(3).breakpoints == ["stacking", "denoise"]            # the other workflow keeps its own
+    assert model.undo() and model.p.workflow(cp.pid).breakpoints == ["stacking", "denoise"]
+    assert "denoise" in model.all_stages(model.view(cp.pid))
+    # only blocks of the engine can hold one
+    with pytest.raises(ValueError):
+        model.set_breakpoint([p], "sources")
+
+
+def test_breakpoints_change_no_key_and_no_state(world, model, page):
+    """The same rule as the engine's: the keys the engine makes, and so the states it reads, are what they were."""
+    def snapshot():
+        return ({(w.id, s): api.stage_key(model.p, w.id, s) for w in model.p.workflows for s in api.chain(model.p, w.id)},
+                {k: (v.state, v.key, v.previous_key) for k, v in api.states(model.p, update=False).items()},
+                {w.id: [(b.block, b.key) for b in api.blocks(model.p, w.id)] for w in model.p.workflows},
+                [(j.key, j.stage) for j in model.plan_all().jobs])
+    before = snapshot()
+    model.set_breakpoint(model.paths, "calibration")
+    model.set_breakpoint(model.paths, "post")
+    model.set_breakpoint([model.view(1)], "selection")
+    assert any(w.breakpoints for w in model.p.workflows)
+    assert snapshot() == before
+    model.undo()
+    model.undo()
+    model.undo()
+    assert snapshot() == before and not any(w.breakpoints for w in model.p.workflows)
+
+
+def test_selection_is_reviewed_with_its_thresholds_and_runs_to_registration(world, model, page):
+    p = model.view(1)
+    model.set_breakpoint([p], "selection")
+    pause = model.pause_point()
+    assert pause.block == "selection" and pause.pids == [1]
+    plan, pause2 = model.plan_run()
+    assert pause2.block == "selection" and (not plan.jobs or plan.jobs[-1].stage == "register")
+    assert all(j.stage != "stack" for j in plan.jobs)                              # before stacking, as asked
+    k0 = model.review_key(p, "selection")
+    model.apply_change([p], {"kind": "params", "items": [("stack", "min_transparency", 0.73)]})
+    assert model.review_key(p, "selection") != k0                                  # other thresholds, other selection
+    model.apply_change([p], {"kind": "params", "items": [("stack", "min_transparency", None)]})
+    assert model.review_key(p, "selection") == k0
+    model.set_excluded([(1, "DSC00001.ARW")], True)
+    assert model.review_key(p, "selection") != k0                                  # a frame excluded by hand too
+    model.set_excluded([(1, "DSC00001.ARW")], False)
+    assert model.review_key(p, "selection") == k0
+
+
+def test_the_pause_in_french_on_the_graph(world, model, page, monkeypatch):
+    p = model.view(1)
+    appmod.apply_language("fr")
+    pin(model, monkeypatch)
+    model.set_breakpoint([p], "calibration")
+    page.refresh()
+    settle(world["w"], page)
+    it = item_of(page, "calibration")
+    assert "Point de vérification : l'exécution s'arrête ici pour votre vérification." in it.toolTip()
+    assert "Pause définie dans 1 workflow sur 4." in it.toolTip()
+    m = menu_of(page, node(page, "calibration"), monkeypatch)
+    names = [a.text() for a in m.actions()]
+    assert "Pause ici pour vérification" in names and "Pause here for review" not in names
+    next(a for a in m.actions() if a.text() == "Pause ici pour vérification").trigger()
+    assert page.graph.toast.text() == "L'exécution s'arrêtera après Calibration pour votre vérification dans 4 workflows"
+    for text in ("Pause here for review", "Mark as reviewed", "No more pause after {block}",
+                 "The run will stop after {block} for your review in {n} workflows", "{block} marked as reviewed",
+                 "Pause set after {block}", "Pause removed after {block}",
+                 "Paused: check this block (Inspect), then Continue from the Run window.",
+                 "Reviewed: the run goes through while these results stay as they are."):
+        assert text in i18n._cat and i18n._cat[text] != text, text
+    assert untranslated(texts_of(page)) == []
+    model.undo()
+    appmod.apply_language("en")
+    page.refresh()
+    settle(world["w"], page)
+
+
+def whole_chain_or_left(page, where: str):
+    """The default view's rule: every block in view and the scale at least MIN_SCALE; when the chain is wider than the view
+    at MIN_SCALE, the scale is MIN_SCALE, the left end (Frames) is in view, the view is scrolled to its left edge, and
+    only the right end (Post) is cut."""
+    gv = page.graph
+    k = gv.transform().m11()
+    assert k >= MIN_SCALE - 1e-6 and k <= 1.3 + 1e-6, (where, k)
+    vp = QRectF(gv.viewport().rect())
+    box = lambda it: QRectF(gv.mapFromScene(it.sceneBoundingRect()).boundingRect())          # noqa: E731
+    frames = next(it for it in block_items(page) if it.node.key == "sources")
+    post = page.graph.final_item
+    assert vp.contains(box(frames)), (where, "Frames is cut", box(frames), vp)
+    if gv.horizontalScrollBar().maximum() == 0:                                             # it fits: both ends in view
+        assert vp.contains(box(post)), (where, "Post is cut", box(post), vp)
+        assert all(vp.contains(box(it)) for it in block_items(page)), where
+    else:                                                                                   # it does not: left, scrolling right
+        bar = gv.horizontalScrollBar()
+        assert abs(k - MIN_SCALE) < 1e-6 and bar.value() == bar.minimum(), (where, k, bar.value())
+    return k, gv.horizontalScrollBar().maximum() == 0
+
+
+def test_the_default_view_shows_the_whole_chain_from_frames_to_post_at_any_width_and_in_both_languages(world, model, page):
+    from astro_gpu.client.graph import GraphView
+    shots = Path(os.environ.get("TEMP", ".")) / "b3_shots"
+    shots.mkdir(parents=True, exist_ok=True)
+    fits = {}
+    try:
+        for lang in ("en", "fr"):
+            appmod.apply_language(lang)
+            page.refresh()
+            for width in (1280, 1600, 1920):
+                page.root.resize(width, 934)
+                settle(world["w"], page)
+                fits[(lang, width)] = whole_chain_or_left(page, f"{lang} {width}")
+                assert page.graph.grab().save(str(shots / f"fit_{width}_{lang}.png"))
+                assert page.root.grab().save(str(shots / f"fit_{width}_{lang}_window.png"))
+            # the panel changes width (a wider one): the graph is fitted again to what is left of the window
+            page.root.resize(1600, 934)
+            settle(world["w"], page)
+            before = page.graph.viewport().width()
+            page.panel.setFixedWidth(520)
+            settle(world["w"], page)
+            assert page.graph.viewport().width() < before
+            whole_chain_or_left(page, f"{lang} 1600, panel 520")
+            page.panel.setFixedWidth(260)
+            settle(world["w"], page)
+            assert page.graph.viewport().width() > before
+            whole_chain_or_left(page, f"{lang} 1600, panel 260")
+            page.panel.setFixedWidth(390)
+            settle(world["w"], page)
+    finally:
+        appmod.apply_language("en")
+        page.panel.setFixedWidth(390)
+        page.refresh()
+    assert isinstance(page.graph, GraphView)
+    assert fits[("en", 1920)][1] and fits[("fr", 1920)][1]                          # a wide window shows all of it
+    # Show all goes below the floor, as before
+    page.graph.b_all.setChecked(True)
+    page.root.resize(1280, 934)
+    settle(world["w"], page)
+    assert page.graph.horizontalScrollBar().maximum() == 0 and page.graph.transform().m11() <= MIN_SCALE + 1e-6
+    page.graph.b_all.setChecked(False)
 
 
 # ---------------------------------------------------------------------------------------------- last

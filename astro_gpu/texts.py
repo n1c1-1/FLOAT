@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ast
 import json
+import math
 import numbers
 import re
 import string
@@ -116,7 +117,7 @@ class Metric(NamedTuple):
     key: str
     label: str          # short name (English)
     unit: str           # written after the value, "" for none
-    fmt: str            # format spec of a number ("d", ".2f", "g", ".1%"); "" for the default
+    fmt: str            # format spec of a number ("d", ".2f", "g", ".1%"); "" for the default (see also DISPLAY)
     meaning: str        # one line (English)
     sep: str = " / "    # between the numbers of a list
 
@@ -151,6 +152,8 @@ _METRIC_ROWS: list[tuple] = [
     ("hot_pixels_from_lights", "Hot pixels in the lights", "", "d",
      "Hot pixels found in the light frames that the darks missed."),
     ("bad_pixels_pct", "Excluded pixels", "%", ".2f", "Share of the sensor pixels left out (hot, cold, dusty)."),
+    ("bad_pixels_filled", "Pixels filled", "", "",
+     "Whether the excluded pixels were filled from their neighbours (the sky did not move on the sensor)."),
     ("sky_noise_adu", "Sky noise", "ADU", ".2f", "Noise of the sky background in one light frame."),
     ("cache_scale", "Cache scale", "", ".2f", "Size of the calibrated frames kept on disk (1 is full size)."),
     ("cache_gb", "Cache size", "GB", ".1f", "Disk space taken by the calibrated frames."),
@@ -163,12 +166,19 @@ _METRIC_ROWS: list[tuple] = [
     ("transparency_p10_p90", "Transparency range", "", ".2f",
      "Transparency of the worst and of the best frames (10 % and 90 %)."),
     ("drift_px", "Drift", "px", ".1f", "How far the field moved on the sensor during the session."),
+    ("photometry_aperture_px", "Photometry aperture", "px", "g",
+     "Diameter of the aperture the transparency of each frame is measured in."),
     # stack
     ("frames_used", "Frames stacked", "", "d", "Frames kept in the stack."),
     ("integration_used_h", "Stacked exposure", "h", ".2f", "Exposure time of the frames kept in the stack."),
     ("grid", "Stack size", "px", "d", "Width and height of the stacked image.", " × "),
     ("fixed_pattern", "Fixed pattern", "", "", "What was measured of the sensor's fixed pattern."),
     ("rejected_pct", "Rejected pixels", "%", ".3f", "Share of pixels rejected as outliers (satellites, cosmic rays)."),
+    ("channel_offsets", "Color offsets", "", "",
+     "Where the red and blue images of the stars fell relative to the green one (lateral chromatic aberration, "
+     "atmospheric dispersion), corrected in the stack."),
+    ("near_saturation_pct", "Near saturation", "%", ".4f",
+     "Share of the pixels of the stack with samples near saturation (star cores)."),
     # astrometry
     ("ra", "Centre RA", "deg", ".4f", "Right ascension of the image centre."),
     ("dec", "Centre Dec", "deg", ".4f", "Declination of the image centre."),
@@ -193,6 +203,9 @@ _METRIC_ROWS: list[tuple] = [
     ("survey", "Survey", "", "", "The H-alpha survey used as a reference."),
     ("coverage", "Survey coverage", "", ".1%", "Share of the field covered by the survey."),
     ("ha_p50_p99", "H-alpha level", "R", ".2f", "Median and 99th percentile of the survey over the field (rayleigh)."),
+    # render_simple
+    ("saturated_places", "Saturated places", "", "d",
+     "Star cores near saturation that take the color of their surroundings."),
     # color
     ("fit_agreement_pct", "Color fit error", "%", ".2f",
      "Gap between the measured star colors and those the fitted curves predict."),
@@ -315,6 +328,10 @@ _METRIC_ROWS: list[tuple] = [
 ]
 
 METRICS: dict[str, Metric] = {r[0]: Metric(*r) for r in _METRIC_ROWS}
+#: how some metrics read on screen, beyond their number format (display only: the stored values are unchanged):
+#: "hours" a duration given in hours, in minutes under one hour (0.17 -> "10 min", 3.02 -> "3.0 h"); "sig2" two
+#: significant digits (1.821 -> "1.8", 0.0123 -> "0.012")
+DISPLAY: dict[str, str] = {"integration_used_h": "hours", "rejected_pct": "sig2"}
 assert len(METRICS) == len(_METRIC_ROWS), "a metric key is listed twice"
 
 #: the fixed words some metrics hold: stored value -> English text shown (translated like any text)
@@ -336,6 +353,7 @@ VALUE_TEXTS: dict[str, str] = {
     "measured on the nebula": "measured on the nebula",
     "background_poly": "simple polynomial background",
     "channel medians": "median of each channel",
+    "camera-colour polynomial, made grey": "smooth sky of each channel, made grey",
 }
 #: texts of the interface the formatting needs
 UI_TEXTS = ("Yes", "No", "{n} values")
@@ -375,7 +393,36 @@ def metric_meaning(key: str, lang: str = "en") -> str:
     return translate(m.meaning, lang) if m else ""
 
 
+def _sig2(x: float) -> str:
+    """Two significant digits, without an exponent: 12.3 -> 12, 1.821 -> 1.8, 0.0123 -> 0.012."""
+    a = abs(float(x))
+    if a == 0 or a >= 10:
+        return f"{x:.0f}"
+    return f"{x:.{max(1, 1 - math.floor(math.log10(a)))}f}"
+
+
+def _grouped(s: str, lang: str) -> str:
+    """Thousands set apart in a whole number of five digits or more: "573,295" in English, "573 295" in French (a
+    narrow no-break space); four digits stay as they are ("4742")."""
+    body = s.lstrip("-")
+    if not body.isdigit() or len(body) < 5:
+        return s
+    sep = "\u202f" if lang in DECIMAL_COMMA else ","
+    out = f"{int(body):,}".replace(",", sep)
+    return ("-" if s.startswith("-") else "") + out
+
+
 def _plain_number(x: Any, spec: str, lang: str) -> str:
+    if spec == "sig2":
+        s = _sig2(x)
+        return s.replace(".", ",") if lang in DECIMAL_COMMA else s
+    if spec == "hours":
+        if abs(x) < 1:
+            return f"{max(1, round(x * 60)) if x > 0 else 0} min"
+        s = f"{x:.1f} h"
+        return s.replace(".", ",") if lang in DECIMAL_COMMA else s
+    if spec == "d" and isinstance(x, numbers.Integral) and not isinstance(x, bool):
+        return _grouped(format(x, "d"), lang)
     if spec.endswith("%"):
         s = format(x * 100, spec[:-1] + "f") + " %"
     else:
@@ -401,7 +448,7 @@ def _text_value(v: str, lang: str) -> str:
 
 
 def _show(v: Any, m: Metric | None, lang: str) -> str:
-    spec = m.fmt if m else ""
+    spec = (DISPLAY.get(m.key) or m.fmt) if m else ""
     sep = m.sep if m else " / "
     if v is None:
         return "–"
@@ -430,6 +477,8 @@ def format_metric(key: str, value: Any, lang: str = "en") -> str:
     m = METRICS.get(key)
     out = _show(value, m, lang)
     unit = metric_unit(key, lang)
+    if m is not None and DISPLAY.get(m.key) == "hours":
+        unit = ""                                     # the duration carries its own unit (min or h)
     if unit and value is not None and not isinstance(value, (bool, str, dict)):
         out += unit if unit.startswith("°") else " " + unit
     return out

@@ -3,15 +3,23 @@
 Ported from the mockup's ``postengine.py``. The images come from a ``Provider`` (the engine's layers, see
 ``services/render.py``), the composition is numpy and runs in the render worker, never in the GUI thread.
 
-Layers (a list, top first, as in a reference image editor):
+Layers (a list, top first, as in a reference image editor; saved as it is in ``project.post["layers"]``):
 
 * a workflow layer ``{id, kind: "workflow", pid, part, name, visible, opacity, mode, base, sliders, mask}``: the image of
   a workflow's output, rendered by the engine with its ``base`` (a named rendering of the project, a preset, or None
   for the suggestion) moved by its simplified ``sliders`` (positions 0-4, 2 = the base); ``part`` is None, "stars" or
   "starless";
+* an image layer ``{id, kind: "image", key, name, visible, opacity, mode, sliders, linked, mask}``: the linear image of
+  a stage result (a stack, a gradient-removed or a denoised image) sent from Inspect, stretched automatically and moved
+  by the Sky, Contrast and Saturation sliders; ``key`` names the stage result (the pixels are never saved);
 * a filter layer ``{id, kind: "filter", filter, name, visible, opacity, mode, params, mask, target}``: one of the 13
-  filters, applied to the one workflow layer it sits on (``target``, a clipping) or to everything below (``target`` is
+  filters, applied to the one pixel layer (workflow or image) ``target`` names, or to everything below (``target`` is
   None).
+
+The model is a reference image editor's: a filter that applies to one layer is that layer's child; a filter that applies to
+everything below is a layer of its own. In the list a layer's children sit just above it, top child first; the panel
+shows each pixel layer with its children indented under it (``rows``), and reading the panel from the bottom up is the
+order of the composition: a pixel layer, then its children from the lowest to the highest, then the next row up.
 
 Every layer may have a ``mask = {parts, feather, density, invert}`` of parts (stars, H-alpha, luminance, color, gradient,
 brush), each added, subtracted or intersected. Pixel sizes are full-resolution pixels: at a reduced resolution they are
@@ -153,7 +161,7 @@ def C(key, label, choices, default):
 def f_stretch(x, p, ctx):
     """An arcsinh stretch around the symmetry point (the transcendental on all cores, through torch)."""
     d, sp = p["strength"], p["symmetry"]
-    if d < 1e-3:
+    if d < 1e-3:                                       # the default: no stretch at all
         return x
     a0 = float(np.arcsinh(-d * sp))                    # python floats: a numpy scalar would promote the image to float64
     a1 = float(np.arcsinh(d * (1 - sp)))
@@ -164,6 +172,8 @@ def f_stretch(x, p, ctx):
 def f_curves(x, p, ctx):
     """The curve through (0, 0), (.25, .25 + shadows), (.5, .5 + midtones), (.75, .75 + highlights), (1, 1): the
     piecewise-linear interpolation as a sum of slopes (exact, and fast on all cores)."""
+    if not (p["shadows"] or p["midtones"] or p["highlights"]):          # the default: the identity
+        return x
     xs = [0.0, 0.25, 0.5, 0.75, 1.0]
     ys = np.clip([0, 0.25 + p["shadows"], 0.5 + p["midtones"], 0.75 + p["highlights"], 1], 0, 1)
     slope = [(ys[i + 1] - ys[i]) / (xs[i + 1] - xs[i]) for i in range(4)]
@@ -175,6 +185,8 @@ def f_curves(x, p, ctx):
 
 
 def f_levels(x, p, ctx):
+    if p["black"] <= 0 and p["white"] >= 1 and abs(p["gamma"] - 1) <= 1e-9:      # the default: the identity
+        return x
     t = (_torch(x) - p["black"]).mul_(1.0 / max(p["white"] - p["black"], 1e-3)).clamp_(0, 1)
     if abs(p["gamma"] - 1) > 1e-9:
         t = t.pow_(1.0 / p["gamma"])
@@ -182,8 +194,10 @@ def f_levels(x, p, ctx):
 
 
 def f_saturation(x, p, ctx):
-    L = lum(x)
     k = p["strength"] / 100
+    if k == 0:                                         # the default: no change
+        return x
+    L = lum(x)
     center = dict(HUES)[p["hues"]]
     if center is None:                                 # every hue alike: L + (x - L) * (1 + k) in one pass
         return _mix(x, 1 + k, _gray3(L), -k)
@@ -194,6 +208,8 @@ def f_saturation(x, p, ctx):
 
 
 def f_scnr(x, p, ctx):
+    if p["strength"] <= 0:                             # the default: no green removed
+        return x
     y = x.copy()
     g = np.minimum(x[..., 1], (x[..., 0] + x[..., 2]) / 2)
     y[..., 1] = x[..., 1] + p["strength"] * (g - x[..., 1])
@@ -202,20 +218,28 @@ def f_scnr(x, p, ctx):
 
 def f_balance(x, p, ctx):
     t, g = p["temperature"], p["tint"]
+    if not (t or g):                                   # the default: neutral
+        return x
     return x * np.array([1 + 0.15 * t, 1 + 0.1 * g, 1 - 0.15 * t], np.float32)
 
 
 def f_local_contrast(x, p, ctx):
     k = p["strength"]
+    if k == 0:                                         # the default: no change
+        return x
     return _mix(x, 1 + k, gauss(x, p["scale"] / ctx.f), -k)            # x + k * (x - blur)
 
 
 def f_sharpen(x, p, ctx):
     k = p["strength"]
+    if k == 0:                                         # the default: no change
+        return x
     return _mix(x, 1 + k, gauss(x, max(p["radius"] / ctx.f, 0.35)), -k)
 
 
 def f_denoise(x, p, ctx):
+    if not (p["luminance"] or p["color"]):             # the default: nothing smoothed
+        return x
     Y = lum(x)
     C_ = cv2.subtract(_f32(x), _gray3(Y))                              # the colour, what is left without the luminance
     a, b = p["luminance"], p["color"]
@@ -225,6 +249,8 @@ def f_denoise(x, p, ctx):
 
 
 def f_star_reduce(x, p, ctx):
+    if p["strength"] == 0:                             # the default: the stars as they are
+        return x
     m = ctx.stars()[..., None]
     size = max(2, int(round(5 / ctx.f)))
     er = erode(x, size)
@@ -232,6 +258,8 @@ def f_star_reduce(x, p, ctx):
 
 
 def f_halos(x, p, ctx):
+    if p["strength"] == 0:                             # the default: the halos as they are
+        return x
     m = ctx.stars()
     r = max(1, int(round(p["radius"] / ctx.f)))
     ring = np.clip(dilate(m, 2 * r + 1) - m, 0, 1)
@@ -241,6 +269,8 @@ def f_halos(x, p, ctx):
 
 
 def f_star_color(x, p, ctx):
+    if p["strength"] == 0:                             # the default: the star colours as they are
+        return x
     m = ctx.stars()
     w = _gray3(_f32(m) * float(p["strength"]))                         # k * m, in each channel
     L3 = _gray3(lum(x))
@@ -248,6 +278,8 @@ def f_star_color(x, p, ctx):
 
 
 def f_halpha(x, p, ctx):
+    if p["strength"] == 0:                             # the default: no red added
+        return x
     y = x.copy()
     y[..., 0] = x[..., 0] + p["strength"] * 0.35 * ctx.halpha() * (1 - x[..., 0])
     return y
@@ -255,41 +287,41 @@ def f_halpha(x, p, ctx):
 
 FILTERS = {
     "stretch": dict(name="Stretch (GHS)", family="Tone", fn=f_stretch,
-                    params=[P("strength", "Strength", 0, 12, 3, step=0.1),
+                    params=[P("strength", "Strength", 0, 12, 0, step=0.1),
                             P("symmetry", "Symmetry point", 0, 0.6, 0.08, step=0.01)]),
     "curves": dict(name="Curves", family="Tone", fn=f_curves,
                    params=[P("shadows", "Shadows", -0.2, 0.2, 0, step=0.01),
                            P("midtones", "Midtones", -0.2, 0.2, 0, step=0.01),
                            P("highlights", "Highlights", -0.2, 0.2, 0, step=0.01)]),
     "levels": dict(name="Levels", family="Tone", fn=f_levels,
-                   params=[P("black", "Black point", 0, 0.3, 0.02, step=0.005),
+                   params=[P("black", "Black point", 0, 0.3, 0, step=0.005),
                            P("white", "White point", 0.7, 1, 1, step=0.005),
                            P("gamma", "Gamma", 0.5, 2, 1, step=0.01)]),
     "saturation": dict(name="Saturation", family="Color", fn=f_saturation,
-                       params=[P("strength", "Strength", -100, 150, 30, "%", 1),
+                       params=[P("strength", "Strength", -100, 150, 0, "%", 1),
                                C("hues", "Hues", [h for h, _ in HUES], "All")]),
     "scnr": dict(name="SCNR (green removal)", family="Color", fn=f_scnr,
-                 params=[P("strength", "Strength", 0, 1, 0.8, step=0.01)]),
+                 params=[P("strength", "Strength", 0, 1, 0, step=0.01)]),
     "balance": dict(name="Color balance", family="Color", fn=f_balance,
                     params=[P("temperature", "Temperature", -1, 1, 0, step=0.01),
                             P("tint", "Green / magenta", -1, 1, 0, step=0.01)]),
     "local_contrast": dict(name="Local contrast", family="Detail", fn=f_local_contrast,
-                           params=[P("strength", "Strength", 0, 1.5, 0.4, step=0.01),
+                           params=[P("strength", "Strength", 0, 1.5, 0, step=0.01),
                                    P("scale", "Scale", 5, 120, 40, "px", 1)]),
     "sharpen": dict(name="Sharpen", family="Detail", fn=f_sharpen,
-                    params=[P("strength", "Strength", 0, 2, 0.6, step=0.01),
+                    params=[P("strength", "Strength", 0, 2, 0, step=0.01),
                             P("radius", "Radius", 0.5, 4, 1.2, "px", 0.1)]),
     "denoise": dict(name="Noise reduction", family="Detail", fn=f_denoise,
-                    params=[P("luminance", "Luminance", 0, 1, 0.4, step=0.01),
-                            P("color", "Color", 0, 1, 0.7, step=0.01)]),
+                    params=[P("luminance", "Luminance", 0, 1, 0, step=0.01),
+                            P("color", "Color", 0, 1, 0, step=0.01)]),
     "star_reduce": dict(name="Star reduction", family="Stars", fn=f_star_reduce, needs="stars",
-                        params=[P("strength", "Strength", 0, 1, 0.6, step=0.01)]),
+                        params=[P("strength", "Strength", 0, 1, 0, step=0.01)]),
     "halos": dict(name="Halo reduction", family="Stars", fn=f_halos, needs="stars",
-                  params=[P("strength", "Strength", 0, 1, 0.6, step=0.01), P("radius", "Radius", 4, 40, 14, "px", 1)]),
+                  params=[P("strength", "Strength", 0, 1, 0, step=0.01), P("radius", "Radius", 4, 40, 14, "px", 1)]),
     "star_color": dict(name="Star color", family="Stars", fn=f_star_color, needs="stars",
-                       params=[P("strength", "Strength", 0, 2, 0.6, step=0.01)]),
+                       params=[P("strength", "Strength", 0, 2, 0, step=0.01)]),
     "halpha_red": dict(name="H-alpha to red", family="Combine", fn=f_halpha, needs="halpha",
-                       params=[P("strength", "Strength", 0, 1, 0.5, step=0.01)]),
+                       params=[P("strength", "Strength", 0, 1, 0, step=0.01)]),
 }
 FAMILIES = ["Tone", "Color", "Detail", "Stars", "Combine"]
 
@@ -334,6 +366,28 @@ def new_workflow_layer(pid: int, name: str, visible=False, part=None, base=None)
             "opacity": 100.0, "mode": "Normal", "base": base, "sliders": {}, "mask": None}
 
 
+def new_image_layer(key: str, name: str, visible: bool = True) -> dict:
+    """A layer of a stage result's image (``key`` names it; the pixels come from the render worker's sources)."""
+    return {"id": new_id(), "kind": "image", "key": str(key), "name": name, "visible": visible, "opacity": 100.0,
+            "mode": "Normal", "sliders": {}, "linked": True, "mask": None}
+
+
+PIXEL = ("workflow", "image")
+#: the sliders of an image layer (its automatic stretch; the simple rendering's Sky, Contrast and Saturation, 0-4)
+IMAGE_SLIDERS = (("sky", "Sky", ("darker", "brighter")), ("contrast", "Contrast", ("softer", "stronger")),
+                 ("saturation", "Saturation", ("paler", "more vivid")))
+
+
+def is_pixel(lay: dict) -> bool:
+    """A layer with an image of its own (a workflow's or a stage result's), which filters can be nested in."""
+    return lay.get("kind") in PIXEL
+
+
+def source_id(lay: dict):
+    """What the composition asks the provider for: a workflow's id, or ("image", key)."""
+    return lay["pid"] if lay["kind"] == "workflow" else ("image", lay["key"])
+
+
 def new_filter_layer(key: str, target=None) -> dict:
     """A filter layer. target: the id of the one layer it applies to (it sits just above it, as a a reference image editor clipping
     mask); None: it applies to everything below it."""
@@ -346,7 +400,7 @@ def new_filter_layer(key: str, target=None) -> dict:
 def normalize(layers: list[dict]) -> list[dict]:
     """Each layer's own filters go just above it, in their order; a filter whose layer is gone applies to everything
     below. The list is top first."""
-    ids = {lay["id"] for lay in layers if lay["kind"] == "workflow"}
+    ids = {lay["id"] for lay in layers if is_pixel(lay)}
     for lay in layers:
         if lay["kind"] == "filter" and lay.get("target") not in ids:
             lay["target"] = None
@@ -354,9 +408,57 @@ def normalize(layers: list[dict]) -> list[dict]:
     for lay in layers:
         if lay["kind"] == "filter" and lay.get("target"):
             continue
-        if lay["kind"] == "workflow":
+        if is_pixel(lay):
             out += [f for f in layers if f["kind"] == "filter" and f.get("target") == lay["id"]]
         out.append(lay)
+    return out
+
+
+def children(layers: list[dict], lid: int) -> list[dict]:
+    """The filters nested in a pixel layer, top first (the top one is applied last)."""
+    return [f for f in layers if f["kind"] == "filter" and f.get("target") == lid]
+
+
+def tree(layers: list[dict]) -> list[tuple[dict, list[dict]]]:
+    """The panel's structure: the top-level rows, top first, each with its children (pixel layers only)."""
+    return [(lay, children(layers, lay["id"]) if is_pixel(lay) else []) for lay in normalize(list(layers))
+            if not (lay["kind"] == "filter" and lay.get("target"))]
+
+
+def rows(layers: list[dict], collapsed=()) -> list[tuple[dict, int]]:
+    """The rows of the panel, top first, with their depth: a pixel layer, then its children indented (unless it is
+    collapsed), then the next top-level row."""
+    out = []
+    for lay, kids in tree(layers):
+        out.append((lay, 0))
+        if lay["id"] not in collapsed:
+            out += [(k, 1) for k in kids]
+    return out
+
+
+def move(layers: list[dict], lid: int, parent: int | None, index: int) -> list[dict]:
+    """The layers with one moved, as a drop in the panel does. ``parent`` None: it becomes the top-level row at
+    ``index`` (0 = the top, counted without it; a filter then applies to everything below it); else it becomes the child
+    of that pixel layer at ``index`` among its children (0 = the top child). A pixel layer moves with its children and
+    stays top level."""
+    by_id = {x["id"]: x for x in layers}
+    lay = by_id[lid]
+    if parent is not None and (is_pixel(lay) or parent == lid or not is_pixel(by_id[parent])):
+        raise ValueError("only a filter is nested, and only in a pixel layer")
+    group = [lay] + (children(layers, lid) if is_pixel(lay) else [])
+    gid = {x["id"] for x in group}
+    top = [(x, [k for k in kids if k["id"] not in gid]) for x, kids in tree(layers) if x["id"] not in gid]
+    if parent is None:
+        if lay["kind"] == "filter":
+            lay["target"] = None
+        top.insert(max(0, min(index, len(top))), (lay, group[1:]))
+    else:
+        lay["target"] = parent
+        kids = next(k for x, k in top if x["id"] == parent)
+        kids.insert(max(0, min(index, len(kids))), lay)
+    out = []
+    for x, kids in top:
+        out += kids + [x]
     return out
 
 
@@ -430,6 +532,10 @@ def load_layers(raw, alive: set[int]) -> list[dict]:
             lay = new_workflow_layer(int(d["pid"]), str(d.get("name") or "?"), bool(d.get("visible")), d.get("part"),
                                      d.get("base"))
             lay["sliders"] = {k: _num(v, 2.0, 0, 4) for k, v in (d.get("sliders") or {}).items()}
+        elif d.get("kind") == "image" and isinstance(d.get("key"), str) and d["key"]:
+            lay = new_image_layer(d["key"], str(d.get("name") or "?"), bool(d.get("visible", True)))
+            lay["sliders"] = {k: _num(v, 2.0, 0, 4) for k, v in (d.get("sliders") or {}).items()}
+            lay["linked"] = bool(d.get("linked", True))
         elif d.get("kind") == "filter" and d.get("filter") in FILTERS:
             lay = new_filter_layer(d["filter"], d.get("target"))
             lay["name"] = str(d.get("name") or lay["name"])
@@ -477,20 +583,22 @@ class Canvas:
 class Provider:
     """What the composition needs from the engine. ``services/render.py`` implements it on the layers service."""
 
-    def version(self, pid: int) -> int:
-        """Changes when the result of this workflow changes on disk."""
+    def version(self, pid) -> int:
+        """Changes when the result of this workflow (or image, ``("image", key)``) changes."""
         return 0
 
-    def available(self, pid: int) -> bool:
+    def available(self, pid) -> bool:
         raise NotImplementedError
 
-    def canvas(self, pids: list[int]) -> Canvas:
-        """The canvas of these workflows (bottom first)."""
+    def canvas(self, pids: list) -> Canvas:
+        """The canvas of these workflows and images (bottom first, see ``source_id``)."""
         raise NotImplementedError
 
-    def layer(self, lay: dict, level: int, box: tuple[int, int, int, int]) -> np.ndarray:
-        """The workflow layer ``lay`` at the level, over the box (x0, y0, x1, y1) of the canvas at that level:
-        (h, w, 3) float32 in [0, 1]. Above level 0 the box is the whole canvas."""
+    def layer(self, lay: dict, level: int, box: tuple[int, int, int, int], draft: bool = False,
+              stop=None) -> np.ndarray:
+        """The pixel layer ``lay`` at the level, over the box (x0, y0, x1, y1) of the canvas at that level:
+        (h, w, 3) float32 in [0, 1]. Above level 0 the box is the whole canvas. ``draft``: a quick look is enough (a
+        slider moves); ``stop()``: True abandons the rendering (raise ``Superseded``)."""
         raise NotImplementedError
 
     def data_mask(self, name: str, level: int, box) -> np.ndarray | None:
@@ -615,8 +723,7 @@ class Composer:
 
     # ------------------------------------------------------------ geometry
     def canvas_of(self, layers: list[dict]) -> Canvas | None:
-        pids = [lay["pid"] for lay in reversed(layers) if lay["kind"] == "workflow"
-                and self.provider.available(lay["pid"])]
+        pids = [source_id(lay) for lay in reversed(layers) if is_pixel(lay) and self.provider.available(source_id(lay))]
         if not pids:
             return None
         key = (tuple(pids), tuple(self.provider.version(p) for p in pids))
@@ -634,26 +741,32 @@ class Composer:
         self._brush.clear()
 
     # ------------------------------------------------------------ one workflow layer
-    def _key(self, lay: dict, level: int, abox, canvas: Canvas) -> tuple:
-        """What an image of a workflow layer depends on: the same for a copy of the layer. The canvas is part of it: it
-        changes when another workflow's result comes in."""
-        return (lay["pid"], lay["part"], json.dumps(lay["sliders"], sort_keys=True),
-                json.dumps(lay.get("base"), sort_keys=True, default=str), self.provider.version(lay["pid"]), level,
-                None if level > 0 else abox, (canvas.W, canvas.H, canvas.origin))
+    def _key(self, lay: dict, level: int, abox, canvas: Canvas, draft: bool = False) -> tuple:
+        """What an image of a pixel layer depends on: the same for a copy of the layer. The canvas is part of it: it
+        changes when another workflow's result comes in. A draft (a quick look) is kept apart from the exact image."""
+        sid = source_id(lay)
+        return (sid, lay.get("part"), json.dumps(lay.get("sliders") or {}, sort_keys=True),
+                json.dumps(lay.get("base"), sort_keys=True, default=str), lay.get("linked"), self.provider.version(sid),
+                level, None if level > 0 else abox, (canvas.W, canvas.H, canvas.origin)) + (("draft",) if draft else ())
 
     def cached(self, lay: dict, level: int, canvas: Canvas) -> np.ndarray | None:
-        """The image of a workflow layer over the whole canvas at a level if it is in the cache (level > 0)."""
+        """The image of a pixel layer over the whole canvas at a level if it is in the cache (level > 0)."""
         return self.images.get(self._key(lay, level, None, canvas))
 
-    def layer_rgb(self, lay: dict, level: int, abox, canvas: Canvas, cache: bool = True) -> np.ndarray:
-        """The image of a workflow layer over the box at the level; cached by content (a copy of a layer shares it)."""
+    def layer_rgb(self, lay: dict, level: int, abox, canvas: Canvas, cache: bool = True, draft: bool = False,
+                  stop=None) -> np.ndarray:
+        """The image of a pixel layer over the box at the level; cached by content (a copy of a layer shares it). A
+        draft takes the exact image when it is cached, else a quick look."""
         W, H = canvas.size(level)
         whole = (0, 0, W, H)
         want = whole if level > 0 else abox
         key = self._key(lay, level, abox, canvas)
         a = self.images.get(key) if cache else None
+        if a is None and draft and level > 0:
+            key = self._key(lay, level, abox, canvas, True)
+            a = self.images.get(key) if cache else None
         if a is None:
-            a = self.provider.layer(lay, level, want)
+            a = self.provider.layer(lay, level, want, draft=draft and level > 0, stop=stop)
             self._drawn += 1
             if cache:
                 self.images.put(key, a, (lay["id"], level))
@@ -773,10 +886,11 @@ class Composer:
 
     # ------------------------------------------------------------ the whole image
     def compose(self, layers: list[dict], level: int, box=None, *, want=(), thumbs: bool = False, stop=None,
-                cache: bool = True) -> Composite | None:
+                cache: bool = True, draft: bool = False) -> Composite | None:
         """The composite (float 0..1) at a resolution, for a box of the canvas at that level (default: all of it).
         ``want``: ids of layers whose mask is returned (also those hidden). ``thumbs``: also a thumbnail of every mask
-        computed. ``stop``: called between the steps, True abandons the work (``Superseded``). None when no workflow
+        computed. ``stop``: called between the steps (and by the engine between its stages), True abandons the work
+        (``Superseded``). ``draft``: a quick look of the pixel layers whose exact image is not cached. None when no pixel
         layer has a result."""
         canvas = self.canvas_of(layers)
         if canvas is None:
@@ -818,10 +932,10 @@ class Composer:
                 if lay["id"] in want or (thumbs and lay["mask"] is not None):
                     keep_mask(lay, self.mask(lay, level, abox, comp, canvas, ctx))
                 continue
-            if lay["kind"] == "workflow":
-                if not self.provider.available(lay["pid"]):
+            if is_pixel(lay):
+                if not self.provider.available(source_id(lay)):
                     continue
-                src = self.layer_rgb(lay, level, abox, canvas, cache)
+                src = self.layer_rgb(lay, level, abox, canvas, cache, draft, check)
                 for fl in stack:                                          # this layer's own filters, bottom first
                     if fl["kind"] != "filter" or fl.get("target") != lay["id"]:
                         continue
@@ -881,7 +995,7 @@ class Composer:
 
 
 def only_layer(layers: list[dict], lid: int) -> list[dict]:
-    """A workflow layer alone with its own filters (visible, opaque, Normal, no mask): what 'each layer as a separate
+    """A pixel layer alone with its own filters (visible, opaque, Normal, no mask): what 'each layer as a separate
     file' writes."""
     base = next(lay for lay in layers if lay["id"] == lid)
     own = [dict(f, visible=f["visible"]) for f in layers if f["kind"] == "filter" and f.get("target") == lid]

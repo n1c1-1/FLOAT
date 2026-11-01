@@ -3,8 +3,8 @@
 The image is the whole composition of Post at full resolution (each layer rendered by the engine on the whole grid, as
 the previous version did), composed in the render worker. Files go into the folder of the File line and nowhere else
 (the layers and the masks into its subfolders ``layers`` and ``masks``); a folder inside the project's results is
-refused. What the engine does not have yet (XISF, other colour profiles, the linear outputs, the history in the header)
-is shown in Spec mode only, disabled, marked ◇.
+refused. The FITS file has the astrometric solution (WCS) and the processing history in its header. What the engine
+does not have yet (XISF, other colour profiles, the linear outputs) is shown in Spec mode only, disabled, marked ◇.
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import prefs
-from .i18n import _
+from .i18n import _, plural
 from .postengine import snapshot
 from .services.render import ExportJob
 from .widgets import WARN, label
@@ -118,7 +118,7 @@ class ExportDialog(QDialog):
         row(_("Size"), self.size_cb)
         self.dest = QLineEdit(self.default_file("tiff16"))
         self.browse = QPushButton("…")
-        self.browse.setFixedWidth(30)
+        self.browse.setFixedWidth(max(30, self.browse.sizeHint().width()))
         self.browse.setToolTip(_("Choose the folder"))
         row(_("File"), self.dest, self.browse)
         self.warn = label("", "warn")
@@ -126,12 +126,25 @@ class ExportDialog(QDialog):
         v.addWidget(self.warn)
         v.addWidget(label(_("Include"), "h2"))
         self.c_wcs = self._check(v, _("Astrometric solution (WCS) in the header"), True)
-        self.c_hist = self._check(v, _("Processing history (a file next to the image)"), True)
+        self.c_hist = self._check(v, _("Processing history (a file next to the image; in the header too for FITS)"),
+                                  True)
         self.c_layers = self._check(v, _("Each layer as a separate file"), False)
         self.c_masks = self._check(v, _("The masks"), False)
+        # the annotations of Post's view, drawn into the picture (PNG, JPEG, TIFF): handy to show what the image is
+        show = dict(getattr(view, "ann_show", None) or {})
+        ah = QHBoxLayout()
+        ah.addWidget(QLabel(_("Include annotations:")))
+        self.c_grid = QCheckBox(_("Sky grid"))
+        self.c_grid.setChecked(bool(show.get("grid")))
+        self.c_names = QCheckBox(_("Object names"))
+        self.c_names.setChecked(bool(show.get("objects")))
+        ah.addWidget(self.c_grid)
+        ah.addWidget(self.c_names)
+        ah.addStretch(1)
+        v.addLayout(ah)
         self.spec_boxes = []
         if spec:
-            for text in (_("Processing history in the header"), _("Each workflow's output, linear (FITS)")):
+            for text in (_("Each workflow's output, linear (FITS)"),):
                 c = self._check(v, text + "  ◇", False)
                 c.setEnabled(False)
                 c.setToolTip("◇ " + _("Not in the engine yet."))
@@ -190,6 +203,10 @@ class ExportDialog(QDialog):
         self.dest.setText(f"{folder}/{name}{SUFFIX[key]}" if folder else name + SUFFIX[key])
         self.c_wcs.setEnabled(key == "fits32f")
         self.c_wcs.setToolTip("" if key == "fits32f" else _("Only the FITS file has a header."))
+        for c in (self.c_grid, self.c_names):
+            c.setEnabled(key != "fits32f")
+            c.setToolTip(_("A FITS file stays clean: its header holds the astrometric solution.") if key == "fits32f"
+                         else _("Drawn into the picture, as Post shows them."))
         self._check_dest()
 
     def _browse(self):
@@ -222,7 +239,9 @@ class ExportDialog(QDialog):
         return ExportJob(layers=snapshot(self.view.layers), folder=folder, name=name, format=self.format_key(),
                          size=int(self.size_cb.currentData() or 0), wcs=self.c_wcs.isEnabled() and self.c_wcs.isChecked(),
                          history=self.c_hist.isChecked(), each_layer=self.c_layers.isChecked(),
-                         masks=self.c_masks.isChecked(), project_name=self.pname)
+                         masks=self.c_masks.isChecked(), project_name=self.pname,
+                         annotations={"grid": self.c_grid.isEnabled() and self.c_grid.isChecked(),
+                                      "objects": self.c_names.isEnabled() and self.c_names.isChecked()})
 
     def _export(self):
         if self.go.text() == _("Close"):
@@ -265,7 +284,8 @@ class ExportDialog(QDialog):
         self.files = files
         self.bar.setValue(100)
         folder, _name = split_file(self.dest.text())
-        self.status.setText(_("{n} file(s) written to {folder}").format(n=len(files), folder=folder))
+        self.status.setText(plural(len(files), "{n} file written to {folder}", "{n} files written to {folder}",
+                                   folder=folder))
         self.status.setStyleSheet("")
         self.go.setText(_("Close"))
         self.cancel.setEnabled(False)

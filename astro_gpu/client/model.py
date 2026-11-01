@@ -25,6 +25,8 @@ A change is a dict: ``{"kind": "param", "stage", "name", "value", "suggested"}``
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -35,9 +37,9 @@ from PySide6.QtCore import QObject, QTimer, Signal
 
 from .. import api
 from ..core import workflow as wfl
-from ..core.project2 import Workflow
+from ..core.project2 import Workflow, read_state, write_state
+from .blocks import COLUMNS, KEY_ENGINE_BLOCK, TOOLS, TRUNK, block_state  # noqa: F401  (TOOLS: the views import it from here)
 from .blocks import ENGINE_BLOCK as ENGINE_KEY
-from .blocks import KEY_ENGINE_BLOCK, TOOLS, TRUNK  # noqa: F401  (TOOLS: the views import it from here)
 from .i18n import _, hm  # noqa: F401  (hm: the views import it from here, as from the mockup's model)
 from .services.worker import ApiWorker
 
@@ -54,6 +56,7 @@ TEMPLATES = {
 }
 DN_SUMMARY = {"affine": "fine-tuned", "generique": "pretrained", "nlbayes": "NL-Bayes"}
 MACHINES = {True: "GPU", False: "CPU only (no GPU)"}
+CALIBRATION_KINDS = ("darks", "flats", "bias", "flat_darks")    # the session's lists a frame can be left out of
 #: seconds of the methods the engine does not have yet (the spec's estimates)
 EXTRA_SECONDS = {"denoise_ft": 180.0, "denoise_ai": 45.0, "denoise_cl": 300.0, "deconv": 150.0}
 NOT_IN_ENGINE = "Not in the engine yet."
@@ -145,6 +148,22 @@ class WorkflowView:
 
 
 @dataclass
+class Pause:
+    """A review a run stops at: the block of the views, the workflows that pause after it, and whether it is already
+    computed (then there is nothing to run before the review). ``later``: the blocks that will pause the run after
+    this one, in the graph's order."""
+
+    block: str
+    pids: list[int]
+    done: bool = False
+    later: list[str] = field(default_factory=list)
+
+
+#: the reviews kept in state.json (the newest): enough for any project, small for the file
+REVIEWED_KEPT = 400
+
+
+@dataclass
 class Facts:
     """What the done results say, read by the worker: the metrics of the stages the views quote."""
 
@@ -152,6 +171,7 @@ class Facts:
     register: dict = field(default_factory=dict)
     stack: dict = field(default_factory=dict)
     sessions: dict = field(default_factory=dict)         # session id -> {kind: file count}
+    reviewed: list = field(default_factory=list)         # the results the user marked as checked (state.json)
 
 
 # ---------------------------------------------------------------------------------------------- worker jobs
@@ -184,6 +204,8 @@ def _facts_job(p) -> Facts:
             except (OSError, ValueError):
                 counts[kind] = 0
         f.sessions[s.id] = counts
+    if p.root is not None:
+        f.reviewed = [str(x) for x in read_state(p.root).get("reviewed") or []]
     return f
 
 
@@ -241,12 +263,16 @@ class ProjectModel(QObject):
         self._states: dict = {}
         self._chains: dict[int, list[str]] = {}
         self._blocks: dict[int, list] = {}
-        self._cache: dict = {}                             # costs and durations, forgotten at each sync
+        self._cache: dict = {}                             # costs and plans, forgotten at each sync
+        self._est: dict = {}                               # durations by stage key (kept across edits; the worker
+        #                                                    fills it ahead: estimates read manifests)
+        self._est_wanted = False                           # a view asked for a duration the worker had not read yet
         self._pc: dict[tuple[int, str], dict] = {}         # the settings of a stage of a workflow (describe)
         self._reasons: dict[tuple[str, str], tuple] = {}   # the last reason an automatic value had
         self._sel: dict | None = None                      # the last selection preview
         self._sel_want = None                              # what the last preview was asked for
         self._epoch = 0                                    # bumped when results change on disk
+        self._reviewed: list[str] = []                     # "<block>:<fingerprint>" of the results marked as checked
         self._undo: list = []
         self._redo: list = []
         self._depth = 0
@@ -344,14 +370,24 @@ class ProjectModel(QObject):
         me = f":{id(self)}"
         if channel == "model.warm" + me:
             self._history_est, self._facts = result
+            self._take_reviewed(self._facts.reviewed)
             self.ready = True
             self.error = ""
-            self._sync()
-            self.readyChanged.emit()
-            self.sourcesChanged.emit()
-            self.pathsChanged.emit()
+            self._sync(prefetch=False)
+            # the durations the views quote are read by the worker before the views are told (no manifest read in
+            # the GUI thread when they draw)
+            self.worker.submit(f"model.estimates:{id(self)}", self._prefetch_estimates, True)
+        elif channel == "model.estimates" + me:
+            if result:                                       # the first one, after warm: now the views may ask
+                self.readyChanged.emit()
+                self.sourcesChanged.emit()
+                self.pathsChanged.emit()
+        elif channel == "model.wanted" + me:                 # durations a view was waiting for have arrived
+            self._est_wanted = False
+            self.costChanged.emit()
         elif channel == "model.facts" + me:
             self._facts = result
+            self._take_reviewed(result.reviewed)
             self._cache.clear()
             self.factsChanged.emit()
             self.costChanged.emit()
@@ -370,6 +406,10 @@ class ProjectModel(QObject):
         if channel == f"model.warm:{id(self)}":
             self.error = why
             self.readyChanged.emit()
+        elif channel == f"model.estimates:{id(self)}":
+            self.readyChanged.emit()                            # the durations will be read when asked
+            self.sourcesChanged.emit()
+            self.pathsChanged.emit()
         elif channel.startswith(f"model.describe:{id(self)}:"):
             _head, _id, pid, stage = channel.split(":", 3)
             v = self.view(int(pid))
@@ -384,10 +424,13 @@ class ProjectModel(QObject):
                 self.paramsChanged.emit(int(pid), stage)
 
     def reload_sources(self):
-        """The sessions or the frames changed (Import folder, a new session): scan again, then rebuild the keys.
-        Until the worker is done the model answers from what it knew (no disk access in the GUI thread)."""
+        """The sessions or the frames changed (Import folder, a new session): the definition is saved, the frames are
+        scanned again, then the keys rebuilt. Until the worker is done the model answers from what it knew (no disk
+        access in the GUI thread)."""
+        self.edited()
         api.refresh(self.p, scan=True)
         self._cache.clear()
+        self._est.clear()
         self._start_warm()
 
     def results_changed(self):
@@ -396,6 +439,7 @@ class ProjectModel(QObject):
         api.refresh(self.p)
         self._epoch += 1
         self._cache.clear()
+        self._est.clear()
         if self.ready:
             self._sync()
             self.worker.submit(f"model.facts:{id(self)}", _facts_job, self.p)
@@ -407,9 +451,12 @@ class ProjectModel(QObject):
 
     def set_machine(self, gpu: bool, device: str | None = None):
         """The machine the durations are for: with a GPU or without, and the device asked (cuda:N, cpu, None: auto)."""
+        changed = (gpu, device if device else (None if gpu else "cpu")) != (self.gpu, self.device)
         self.gpu = gpu
         self.device = device if device else (None if gpu else "cpu")
         self._cache.clear()
+        if self.ready and changed:
+            self.worker.submit(f"model.estimates:{id(self)}", self._prefetch_estimates, False)
         self.costChanged.emit()
         self.pathsChanged.emit()
 
@@ -435,13 +482,17 @@ class ProjectModel(QObject):
             api.save(self.p)
         self._dirty = False
 
-    def _touch(self):
+    def edited(self):
+        """The definition changed outside the workflows (the sessions, the frames excluded by hand, the Post
+        composition): it is saved 300 ms after the last change, as any edit."""
         self._dirty = True
         if not self.readonly:
             self._save_timer.start()
 
+    _touch = edited                                         # the earlier name
+
     # ------------------------------------------------------------ the sync: states, chains, blocks
-    def _sync(self):
+    def _sync(self, prefetch: bool = True):
         """The views, states, chains and block keys read again (GUI thread: caches and manifests only)."""
         self._rebuild_views()
         self._cache.clear()
@@ -468,6 +519,36 @@ class ProjectModel(QObject):
             for stage in PREFETCH:
                 if stage in self._chains.get(v.pid, []):
                     self.params(v, stage)
+        if prefetch:
+            self.worker.submit(f"model.estimates:{id(self)}", self._prefetch_estimates, False)
+
+    def _prefetch_estimates(self, first: bool) -> bool:
+        """Worker thread: the durations the views quote (each stage of each workflow, the method cards, the toolbar
+        cards, the New workflow dialog), into the estimates cache. Returns ``first``."""
+        from .blocks import TOOLBOX
+        for v in list(self.paths):
+            for stage in list(self._chains.get(v.pid, [])):
+                self.seconds(stage, v)
+            for block in ("debruitage", "etoiles", "fond"):
+                try:
+                    for m in methods_of(block):
+                        for dev in ("gpu", "cpu"):                 # the card says both: GPU and CPU
+                            self.method_seconds(v, block, m["key"], dev)
+                except (ValueError, KeyError):
+                    pass
+            for k in TOOLBOX:
+                if k != "deconv" and not self.has_tool(v.opts, k):
+                    try:
+                        self.tool_cost(v.opts, k)
+                    except (wfl.OptionRefused, ValueError):
+                        pass
+            trunk = {k: x for k, x in v.params.items() if k in TRUNK}
+            for opts in TEMPLATES.values():                 # the New workflow dialog, from this workflow
+                self.opts_seconds(opts, trunk)
+            self.opts_seconds(v.opts, v.params)             # a copy of it
+        for opts in TEMPLATES.values():
+            self.opts_seconds(opts)
+        return first
 
     @contextmanager
     def _edit(self):
@@ -475,22 +556,32 @@ class ProjectModel(QObject):
         keys and states again and says what changed."""
         top = self._depth == 0
         before = self._snapshot() if top else None
+        extra = self._extra() if top else None
         self._depth += 1
         try:
             yield
         finally:
             self._depth -= 1
             if top:
+                self._prune_breakpoints()
                 if self._snapshot() != before:
                     self._undo.append(before)
                     del self._undo[:-200]
                     self._redo.clear()
-                    self._touch()
+                    self.edited()
+                elif self._extra() != extra:
+                    self.edited()                           # not for Undo: the frames, not the workflows
                 self._sync()
                 self.pathsChanged.emit()
 
     def _snapshot(self):
         return (api.workflows(self.p), self.p.current, self.p.stack_mode)
+
+    def _extra(self):
+        """What an edit may change besides the workflows: the sessions and the frames excluded by hand."""
+        return (sorted(tuple(x) for x in self.p.excluded),
+                [(s.id, s.name, *(tuple(getattr(s, k)) for k in ("lights", "darks", "flats", "bias", "flat_darks")))
+                 for s in self.p.sessions])
 
     # ------------------------------------------------------------ undo and redo
     def can_undo(self) -> bool:
@@ -514,7 +605,7 @@ class ProjectModel(QObject):
         api.set_workflows(self.p, ws, current)
         self.p.stack_mode = mode
         self.pending_change = None
-        self._touch()
+        self.edited()
         self._sync()
         if self.paths:
             self.current = next((i for i, v in enumerate(self.paths) if v.pid == self.p.current), 0)
@@ -636,13 +727,15 @@ class ProjectModel(QObject):
         p = p or self.path
         if p is None or not self.ready:
             return 0.0
-        k = ("sec", p.pid, stage, self.stage_key(p, stage), self.device)
-        if k not in self._cache:
+        k = ("sec", stage, self.stage_key(p, stage), self.device, self._epoch)
+        got = self._est.get(k)
+        if got is None:
             try:
-                self._cache[k] = float(api.estimate(self.p, p.pid, stage, self.device).seconds)
+                got = float(api.estimate(self.p, p.pid, stage, self.device).seconds)
             except (ValueError, KeyError, OSError):
-                self._cache[k] = 0.0
-        return self._cache[k]
+                got = 0.0
+            self._est[k] = got
+        return got
 
     def path_seconds(self, p: WorkflowView) -> float:
         return sum(self.seconds(s, p) for s in self.all_stages(p))
@@ -653,44 +746,103 @@ class ProjectModel(QObject):
 
     def opts_seconds(self, opts: dict, params: dict | None = None) -> float:
         """A workflow with these options, from scratch (nothing reused): the sum of its stages' durations."""
+        return self._opts_estimate(opts, params)[0]
+
+    def opts_measured(self, opts: dict, params: dict | None = None) -> bool:
+        """Whether every duration of ``opts_seconds`` was measured on this machine (else it is shown with ≈)."""
+        return self._opts_estimate(opts, params)[1]
+
+    def _opts_estimate(self, opts: dict, params: dict | None = None) -> tuple[float, bool]:
         if not self.ready:
-            return 0.0
-        k = ("opts", repr(sorted(opts.items())), self.device)
-        if k not in self._cache:
+            return 0.0, False
+        k = ("opts", repr(sorted(opts.items())), repr(sorted((params or {}).items())), self.device, self._epoch,
+             self._sources_sig())
+        got = self._est.get(k)
+        if got is None:
             w = self._what_if(opts, params)
             try:
-                self._cache[k] = sum(float(api.estimate(self.p, w, s, self.device).seconds)
-                                     for s in api.chain(self.p, w))
+                est = [api.estimate(self.p, w, s, self.device) for s in api.chain(self.p, w)]
+                got = (sum(float(e.seconds) for e in est), all(e.measured for e in est))
             except (ValueError, KeyError, OSError):
-                self._cache[k] = 0.0
-        return self._cache[k]
+                got = (0.0, False)
+            self._est[k] = got
+        return got
 
-    def method_seconds(self, p: WorkflowView, block: str, method: str) -> tuple[float, bool]:
-        """(seconds, measured) of a block of the views computed with this method, on this machine: the stages of the
-        block in the workflow that has the method. The methods the engine does not have yet (◇) are the spec's
-        estimates."""
+    def _sources_sig(self) -> tuple:
+        """What the durations of a workflow from scratch depend on besides its options: the frames."""
+        return (tuple(sorted(tuple(x) for x in self.p.excluded)), tuple(len(s.lights) for s in self.p.sessions))
+
+    #: the device an estimate is for: the engine's names ("cuda:0" says a GPU computes, "cpu" that none does)
+    DEVICE_OF = {"gpu": "cuda:0", "cpu": "cpu"}
+
+    def _method_key(self, p: WorkflowView, block: str, method: str, device: str | None):
+        """(the cache key, the options the method needs) of a method's duration, or None when the engine refuses them.
+        ``device``: "gpu", "cpu", or None for the machine's."""
+        tool = {"fond": {"halpha": "halpha", "simple": "simple"}, "etoiles": {"psf": "etoiles", "psf_neural": "appris"},
+                "debruitage": {"appris": "debruitage"}}.get(block, {}).get(method)
+        try:
+            opts = self.with_tool(p.opts, tool)[0] if tool else dict(p.opts)      # the options the method needs
+        except wfl.OptionRefused:
+            return None
+        dev = self.DEVICE_OF[device or ("gpu" if self.gpu else "cpu")]      # the machine's own: the class it computes with
+        return ("method", block, repr(sorted(opts.items())), repr(sorted(p.params.items())), dev, self._epoch,
+                self._sources_sig()), opts
+
+    def method_seconds(self, p: WorkflowView, block: str, method: str,
+                       device: str | None = None) -> tuple[float, bool]:
+        """(seconds, measured) of a block of the views computed with this method: the stages of the block in the
+        workflow that has the method. ``device``: "gpu" or "cpu", else the machine's. The methods the engine does not
+        have yet (◇) are the spec's estimates. Reads manifests and the history: the worker's call, the views use
+        ``method_times``."""
         from .blocks import BY_KEY
         m = next((x for x in methods_of(block) if x["key"] == method), None)
         if m is not None and m["stage"] in EXTRA_SECONDS:
             return EXTRA_SECONDS[m["stage"]], False
         if not self.ready:
             return 0.0, False
-        tool = {"fond": {"halpha": "halpha", "simple": "simple"}, "etoiles": {"psf": "etoiles", "psf_neural": "appris"},
-                "debruitage": {"appris": "debruitage"}}.get(block, {}).get(method)
-        try:
-            opts = self.with_tool(p.opts, tool)[0] if tool else dict(p.opts)      # the options the method needs
-        except wfl.OptionRefused:
+        km = self._method_key(p, block, method, device)
+        if km is None:
             return 0.0, False
-        k = ("method", block, repr(sorted(opts.items())), self.device)
-        if k not in self._cache:
+        k, opts = km
+        got = self._est.get(k)
+        if got is None:
             w = self._what_if(opts, p.params)
             try:
                 chain = api.chain(self.p, w)
-                est = [api.estimate(self.p, w, s, self.device) for s in BY_KEY[block]["stages"] if s in chain]
-                self._cache[k] = (sum(e.seconds for e in est), all(e.measured for e in est))
+                dev = k[4]
+                est = [api.estimate(self.p, w, s, dev) for s in BY_KEY[block]["stages"] if s in chain]
+                got = (sum(e.seconds for e in est), all(e.measured for e in est))
             except (ValueError, KeyError, OSError):
-                self._cache[k] = (0.0, False)
-        return self._cache[k]
+                got = (0.0, False)
+            self._est[k] = got
+        return got
+
+    def method_times(self, p: WorkflowView, block: str, method: str) -> dict[str, tuple[float, bool]] | None:
+        """What a method takes on each device it runs on, for the card: {"gpu": (seconds, measured), "cpu": ...} (a
+        method that runs on the CPU only has just that one). The GUI thread only reads what the worker has already
+        estimated: None while it has not (the worker is asked, ``costChanged`` follows when the durations are in)."""
+        m = next((x for x in methods_of(block) if x["key"] == method), None)
+        if m is None:
+            return {}
+        devs = ("cpu",) if m["runs"] == "cpu" else ("gpu", "cpu")
+        if m["stage"] in EXTRA_SECONDS:                        # the spec's own figure, for the device it is meant for
+            return {devs[0]: (EXTRA_SECONDS[m["stage"]], False)}
+        if not self.ready:
+            return None
+        out = {}
+        for dev in devs:
+            km = self._method_key(p, block, method, dev)
+            if km is None:
+                out[dev] = (0.0, False)
+                continue
+            got = self._est.get(km[0])
+            if got is None:
+                if not self._est_wanted:                       # its own channel: never replaces the first prefetch
+                    self._est_wanted = True
+                    self.worker.submit(f"model.wanted:{id(self)}", self._prefetch_estimates, False)
+                return None
+            out[dev] = got
+        return out
 
     def cost_of(self, opts: dict, params: dict | None = None) -> tuple[float, list[str], list[str]]:
         """Cost of a workflow with these options: (seconds to compute, stages to compute, stages reused)."""
@@ -731,6 +883,160 @@ class ProjectModel(QObject):
         if not self.ready:
             return api.Plan()
         return api.plan_to_block(self.p, p.pid, KEY_ENGINE_BLOCK[key], self.device, self._history_est)
+
+    # ------------------------------------------------------------ breakpoints: pause for the user to check
+    # A breakpoint is a block of one workflow ("Pause here for review"): a run stops after it, and goes on only when
+    # the user says so (Continue). It lives in the definition (``Workflow.breakpoints``, engine names) and is no part of
+    # any key. What is reviewed is tied to the block's results: a fingerprint of its stage keys, kept in state.json.
+    def has_breakpoint(self, p: WorkflowView, key: str) -> bool:
+        """Whether this workflow pauses after this block (a block of the views)."""
+        eb = KEY_ENGINE_BLOCK.get(key)
+        return eb is not None and eb in self.p.workflow(p.pid).breakpoints
+
+    def breakpoints(self, p: WorkflowView) -> list[str]:
+        """The blocks (of the views) this workflow pauses after, in the graph's order; only those it has."""
+        have = {ENGINE_KEY[b] for b in self.p.workflow(p.pid).breakpoints if b in ENGINE_KEY}
+        return [k for k in self.block_keys(p) if k in have]
+
+    def set_breakpoint(self, paths, key: str, on: bool = True):
+        """Pause after this block in these workflows (or no longer). One change for Undo; saved with the project."""
+        eb = KEY_ENGINE_BLOCK.get(key)
+        if eb is None:
+            raise ValueError(f"no breakpoint on {key!r}: it is not a block of the engine")
+        order = list(wfl.BLOCKS)
+        with self._edit():
+            for q in paths:
+                w = self.p.workflow(q.pid)
+                have = set(w.breakpoints)
+                w.breakpoints = sorted(have | {eb} if on else have - {eb}, key=order.index)
+
+    def _prune_breakpoints(self):
+        """A block that left a workflow takes its breakpoint with it (it would otherwise come back with the block)."""
+        if not self.ready:
+            return
+        for w in self.p.workflows:
+            if not w.breakpoints:
+                continue
+            try:
+                inside = {b.block for b in api.blocks(self.p, w.id)}
+            except (ValueError, KeyError, OSError):
+                continue
+            if any(b not in inside for b in w.breakpoints):
+                w.breakpoints = [b for b in w.breakpoints if b in inside]
+
+    def review_key(self, p: WorkflowView, key: str) -> str:
+        """What a review is tied to: the block's results, that is the keys of its stages (the engine's ``blocks``);
+        for Selection, which has no stage, the Registration it follows, the thresholds and the frames excluded by hand."""
+        k = ("rk", p.pid, key)
+        if k not in self._cache:
+            def ref(view_key):
+                return next((b for b in self._blocks.get(p.pid, []) if ENGINE_KEY.get(b.block) == view_key), None)
+            b = ref(key)
+            parts: list = [KEY_ENGINE_BLOCK.get(key, key), list(b.key) if b is not None else []]
+            if key == "selection":
+                reg, st = ref("alignement"), p.params.get("stack") or {}
+                parts += [list(reg.key) if reg is not None else [], st.get("min_transparency"),
+                          st.get("max_fwhm_ratio"), sorted(list(x) for x in self.frames_excluded)]
+            raw = json.dumps(parts, sort_keys=True, default=str)
+            self._cache[k] = f"{KEY_ENGINE_BLOCK.get(key, key)}:{hashlib.sha1(raw.encode()).hexdigest()[:16]}"
+        return self._cache[k]
+
+    def is_reviewed(self, p: WorkflowView, key: str) -> bool:
+        """Whether the user marked the block's present results as checked."""
+        return self.review_key(p, key) in self._reviewed
+
+    def review_state(self, p: WorkflowView, key: str) -> str | None:
+        """None (no breakpoint here) | "pending" (the run will stop here) | "paused" (computed, waiting for the user:
+        the first review of the workflow) | "reviewed" (computed, checked: the run goes through)."""
+        if not self.has_breakpoint(p, key):
+            return None
+        if not self.ready or block_state(self, p, key) != "done":
+            return "pending"
+        if self.is_reviewed(p, key):
+            return "reviewed"
+        first = next((k for k in self.breakpoints(p) if not self.is_reviewed(p, k)), None)
+        return "paused" if key == first else "pending"
+
+    def pause_point(self, only: WorkflowView | None = None, upto: str | None = None) -> Pause | None:
+        """The review a run stops at: the first block, in the graph's order, that has a breakpoint whose results are
+        not reviewed, in any workflow (``only``: in this one, up to the block ``upto``). None when the run goes
+        through."""
+        if not self.ready:
+            return None
+        found: list[tuple[int, int, WorkflowView, str]] = []
+        later: set[str] = set()
+        for i, q in enumerate(self.paths if only is None else [only]):
+            keys = self.block_keys(q)
+            reach = keys[:keys.index(upto) + 1] if upto in keys else keys
+            todo = [k for k in self.breakpoints(q) if k in reach and not self.is_reviewed(q, k)]
+            if todo:
+                found.append((COLUMNS.index(todo[0]), i, q, todo[0]))
+                later |= set(todo[1:])
+        if not found:
+            return None
+        col, _i, _q, block = min(found, key=lambda t: t[:2])
+        pids = [q.pid for _c, _j, q, k in found if k == block]
+        later |= {k for _c, _j, _q, k in found if k != block}
+        mine = [q for q in self.paths if q.pid in pids]
+        return Pause(block, pids, all(block_state(self, q, block) == "done" for q in mine),
+                     sorted((k for k in later if COLUMNS.index(k) > col), key=COLUMNS.index))
+
+    def mark_reviewed(self, pause: Pause):
+        """Continue: the results the user has looked at are marked as checked. Only a block that is computed now is
+        marked, with the results it has now: if the user changed something that made it Outdated meanwhile, the
+        breakpoint applies again to the new results."""
+        for pid in pause.pids:
+            q = self.view(pid)
+            if q is not None and self.ready and block_state(self, q, pause.block) == "done":
+                k = self.review_key(q, pause.block)
+                if k not in self._reviewed:
+                    self._reviewed.append(k)
+        self._save_reviewed()
+        self._cache.clear()
+        self.pathsChanged.emit()
+
+    def _take_reviewed(self, kept):
+        """The reviews read from state.json (worker): added to what this session marked."""
+        new = [k for k in kept if k not in self._reviewed]
+        if new:
+            self._reviewed = [*new, *self._reviewed]
+            self._cache.clear()
+
+    def _save_reviewed(self):
+        del self._reviewed[:-REVIEWED_KEPT]
+        if self.readonly or self.root is None:
+            return
+        try:
+            state = read_state(self.root)
+            state["reviewed"] = list(self._reviewed)
+            write_state(self.root, state)
+        except OSError:
+            pass                                             # the review is kept for this session
+
+    def plan_run(self) -> tuple[api.Plan, Pause | None]:
+        """Run all, with the breakpoints: up to the first review not yet done (every workflow that pauses there), else
+        everything. Returns the plan and the pause it ends at (None: the whole project)."""
+        pause = self.pause_point()
+        return (self.plan_all(), None) if pause is None else (self._plan_pause(pause), pause)
+
+    def plan_run_to(self, p: WorkflowView, key: str) -> tuple[api.Plan, Pause | None]:
+        """Run to here, with the breakpoints: the block, or the first review of this workflow before it."""
+        pause = self.pause_point(only=p, upto=key)
+        return (self.plan_to_block(p, key), None) if pause is None else (self._plan_pause(pause), pause)
+
+    def _plan_pause(self, pause: Pause) -> api.Plan:
+        """The plans to the block of every workflow that pauses there, as one plan: a job two plans share is kept once
+        (the jobs of a plan come after those they read, so the concatenation stays in order)."""
+        plans = [self.plan_to_block(q, pause.block) for q in self.paths if q.pid in pause.pids]
+        jobs: dict = {}
+        for pl in plans:
+            for j in pl.jobs:
+                jobs.setdefault(j.key, j)
+        out = api.Plan(list(jobs.values()), [t for pl in plans for t in pl.targets], {},
+                       plans[0].rules if plans else None)
+        for pl in plans:
+            out.skipped.update(pl.skipped)
+        return out
 
     # ------------------------------------------------------------ the toolbox: options and their rules
     @staticmethod
@@ -801,6 +1107,7 @@ class ProjectModel(QObject):
         """A copy of a workflow: its options, settings and exit."""
         with self._edit():
             w = api.add_workflow(self.p, self.unique_name(name), None, None, copy_of=src.pid)
+            self.p.workflow(w.id).breakpoints = list(self.p.workflow(src.pid).breakpoints)
         return self.view(w.id)
 
     def rename(self, pid: int, name: str):
@@ -910,6 +1217,7 @@ class ProjectModel(QObject):
         cs = self._api_changes(ch)
         with self._edit():
             w = api.make_variant(self.p, p.pid, cs[0], self.unique_name(title))
+            self.p.workflow(w.id).breakpoints = list(self.p.workflow(p.pid).breakpoints)
             for c in cs[1:]:
                 api.apply_change(self.p, [w.id], c)
         return self.view(w.id)
@@ -1082,6 +1390,119 @@ class ProjectModel(QObject):
             api.set_excluded(self.p, pairs, excluded)
         self._sel, self._sel_want = None, None
         self.sourcesChanged.emit()
+
+    def set_calibration_excluded(self, session: int, kind: str, path: str, excluded: bool,
+                                 folder: list[tuple[str, bool]] | None = None) -> bool:
+        """Leave a calibration frame out of its master, or take it back (``kind``: darks, flats, bias or flat_darks).
+        The engine's lists take folders and files, so the session lists the frames of that frame's folder one by one,
+        without it; when every frame of the folder is in again, the folder itself is listed, as it was. ``folder``: the
+        frames of that folder and whether each is left out now, as the worker listed them
+        (``services/inspect.browse_group``); None: the folder is listed here (a directory listing in the GUI thread).
+        One change, saved, the frames scanned again; Calibration and what follows become Outdated. False when nothing is
+        done: the last frame of a folder stays (remove the folder instead), or the session is not known."""
+        import os
+        if kind not in CALIBRATION_KINDS:
+            raise ValueError(f"not a kind of calibration frame: {kind!r}")
+        p = self.p
+        try:
+            s = p.session(session)
+        except (KeyError, ValueError):
+            return False
+
+        def norm(x) -> str:
+            return os.path.normcase(os.path.normpath(str(x)))
+        me, here = norm(path), norm(Path(path).parent)
+        lst = list(getattr(s, kind))
+        if folder is None:
+            from ..core.project import list_frames
+            listed = {norm(p.abspath(e)) for e in lst}
+            folder = [(str(f), not (here in listed or norm(f) in listed)) for f in list_frames([str(Path(path).parent)])]
+        in_folder = [(x, left) for x, left in folder if norm(Path(x).parent) == here]
+        if not any(norm(x) == me for x, _left in in_folder):
+            in_folder.append((str(path), excluded))
+        keep = [x for x, left in in_folder if (norm(x) == me and not excluded) or (norm(x) != me and not left)]
+        if not keep:
+            return False
+        rest = [e for e in lst if norm(p.abspath(e)) != here and norm(Path(p.abspath(e)).parent) != here]
+        original = next((e for e in lst if norm(p.abspath(e)) == here), None)
+        whole = len(keep) == len(in_folder)
+        with self._edit():
+            setattr(s, kind, rest + ([original or str(Path(path).parent)] if whole else sorted(keep)))
+            p.validate()
+        self.reload_sources()
+        return True
+
+    def leave_out_calibration(self, frames: list[tuple[int, str, str]],
+                              listing: list[tuple[int, str, str, bool]]) -> dict:
+        """Leave several calibration frames out of their masters in one change (saved once): ``frames`` (session, kind,
+        path); ``listing`` the frames of their folders as the worker listed them (session, kind, path, left out now).
+        A folder whose every frame goes is taken out of the session, so a session can be left without any frame of a
+        kind (all its "darks" were frames of the sky): ``emptied`` says which. Returns {"done": n, "emptied":
+        [(session, kind)]}; nothing done: {"done": 0, "emptied": []}."""
+        import os
+
+        def norm(x) -> str:
+            return os.path.normcase(os.path.normpath(str(x)))
+        p = self.p
+        groups: dict[tuple[int, str, str], set[str]] = {}
+        for sid, kind, path in frames:
+            if kind not in CALIBRATION_KINDS:
+                raise ValueError(f"not a kind of calibration frame: {kind!r}")
+            groups.setdefault((int(sid), kind, norm(Path(path).parent)), set()).add(norm(path))
+        if not groups:
+            return {"done": 0, "emptied": []}
+        done, touched = 0, set()
+        with self._edit():
+            for (sid, kind, here), out in groups.items():
+                try:
+                    s = p.session(sid)
+                except (KeyError, ValueError):
+                    continue
+                lst = list(getattr(s, kind))
+                in_folder = [(x, left) for ss, kk, x, left in listing
+                             if ss == sid and kk == kind and norm(Path(x).parent) == here]
+                known = {norm(x) for x, _left in in_folder}
+                in_folder += [(x, False) for x in out if x not in known]
+                keep = [x for x, left in in_folder if not left and norm(x) not in out]
+                done += sum(1 for x, left in in_folder if not left and norm(x) in out)
+                rest = [e for e in lst if norm(p.abspath(e)) != here and norm(Path(p.abspath(e)).parent) != here]
+                original = next((e for e in lst if norm(p.abspath(e)) == here), None)
+                whole = len(keep) == len(in_folder)
+                setattr(s, kind, rest + (([original or str(Path(next(iter(out))).parent)] if whole else sorted(keep))
+                                         if keep else []))
+                touched.add((sid, kind))
+            p.validate()
+        emptied = sorted((sid, kind) for sid, kind in touched if not getattr(p.session(sid), kind))
+        self.reload_sources()
+        return {"done": done, "emptied": emptied}
+
+    def add_calibration_folder(self, session: int, kind: str, folder: str) -> bool:
+        """A folder of calibration frames (darks, flats, bias, flat darks) added to a session: saved, the frames read
+        again, Calibration and what follows Outdated. False when the session is not known or lists it already."""
+        import os
+        if kind not in CALIBRATION_KINDS:
+            raise ValueError(f"not a kind of calibration frame: {kind!r}")
+        try:
+            s = self.p.session(session)
+        except (KeyError, ValueError):
+            return False
+        lst = list(getattr(s, kind))
+        if any(os.path.normcase(os.path.normpath(self.p.abspath(e))) == os.path.normcase(os.path.normpath(folder))
+               for e in lst):
+            return False
+        with self._edit():
+            setattr(s, kind, lst + [Path(folder).as_posix()])
+            self.p.validate()
+        self.reload_sources()
+        return True
+
+    def references(self) -> list[dict]:
+        """The images from outside the project that every viewer offers in its Compare with list (a bench project:
+        Another processing program's results for the same frames): [{"name", "path", "kind": camera | linear | picture, "blocks": the
+        blocks it compares with first, "white": a picture's white level}]. They
+        live in the definition, in ``post["references"]`` (``tools/bench/references.py`` fills them)."""
+        refs = (getattr(self.p, "post", None) or {}).get("references") or []
+        return [dict(r) for r in refs if isinstance(r, dict) and r.get("path")]
 
     def request_selection(self, tmin: float | None = None, fmax: float | None = None):
         """Ask the worker how many frames these thresholds keep (answer: ``selectionChanged``, ``kept_frames``)."""

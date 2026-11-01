@@ -20,6 +20,8 @@ HII_LINES = {656.3: 1.0, 658.4: 0.30, 654.8: 0.10, 486.1: 1 / 7.0, 434.0: 1 / 7.
              500.7: 0.05, 495.9: 0.017}
 OIII_LINES = {500.7: 1.0, 495.9: 0.33, 486.1: 0.3}
 PROFILES = STATE / "camera_profiles"   # per-user state (core/project.py)
+#: the fit of every catalogue star, for the Inspect mode (``star_fit``; an extra file: an older result lacks it)
+STARS = "color_stars.npz"
 
 
 class ColorParams(StageParams):
@@ -62,7 +64,10 @@ class Color(Stage):
                    "nebulae are anchored on the true colour of an H-alpha + H-beta + [NII] + [SII] spectrum.")
     deps = ("catalogs", "stack", "register")
     Params = ColorParams
-    version = "2"          # 2: physical check, camera profiles, synthetic spectra in the matrix fit
+    # 2: physical check, camera profiles, synthetic spectra in the matrix fit; 3: a star is left out when a sample of
+    # its aperture was near saturation in a frame (the stack's map), not when its peak passes 45 % of the brightest
+    # pixel (on heart_a7s that left out 1121 of 4000 stars; on m8, half of them had no sample above 65 %)
+    version = "3"
 
     def auto(self, ctx: Context) -> dict[str, Auto]:
         try:
@@ -78,18 +83,14 @@ class Color(Stage):
         img = ctx.load("stack", "drz_full.npy").astype(np.float32)
         xp = np.load(ctx.input("catalogs", "gaia_xp.npz"))
         lam = xp["lam"]
-        Hh, Ww = img.shape[1:]
-        x, y = xp["x"], xp["y"]
-        m = (x > 50) & (x < Ww - 50) & (y > 50) & (y < Hh - 50)
-        flux, peak = star_photometry(img, np.c_[x[m], y[m]], p.aperture)
-        chmax = np.array([np.nanpercentile(img[c], 99.999) for c in range(3)])
-        ok = (flux > 0).all(1) & (peak < 0.45 * chmax).all(1) & np.isfinite(flux).all(1)
-        idx = np.where(m)[0][ok]
-        cam = flux[ok]
+        table, star_why = colour_star_table(img, xp["x"], xp["y"], p.aperture, saturation_map(ctx))
+        idx = np.where(star_why == "")[0]
+        cam = table[idx]
         if len(idx) < 50:
             raise StageError(f"only {len(idx)} colour stars could be measured (need 50)")
         ctx.progress(0.3, f"fitting the spectral response on {len(idx)} stars")
-        S, rel = fit_response(xp["flux"][idx], lam, cam)
+        kept: list = []
+        S, rel = fit_response(xp["flux"][idx], lam, cam, kept=kept)
         good, why = physical_response(lam, S)
         camera = str(ctx.metric_of("inventory", "camera", "") or "")
         prof = load_profile(camera, lam) if p.camera_profile and camera else None
@@ -165,6 +166,7 @@ class Color(Stage):
         Mtot = Mtot * white_cam.mean()
         ctx.save("M.npy", Mtot)
         np.savez(ctx.out("specresp.npz"), lam=lam, S=S, cam_hii=cam_hii, cam_oiii=cam_oiii)
+        np.savez(ctx.out(STARS), source_kind=source, **star_fit(xp, table, star_why, idx, kept, S, M))
         ctx.metric("stars", int(len(idx)))
         ctx.metric("fit_residual", [round(float(v), 4) for v in rel])
         ctx.metric("chromaticity_residual", round(float(np.median(rs)), 4))
@@ -177,6 +179,91 @@ class Color(Stage):
                     "warning")
         ctx.log(f"spectral response from {len(idx)} Gaia XP stars, chromaticity residual {np.median(rs):.4f}")
         ctx.preview("spectral_response", response_plot(lam, S, len(idx)))
+
+
+def saturation_map(ctx: Context, clipped: bool = False) -> np.ndarray | None:
+    """The stack's map of the pixels with samples near saturation (``stack.SATURATION``, layer 0), or with clipped
+    samples (``clipped``, layer 1); None for a stack made before it kept one."""
+    from .stack import SATURATION
+    try:
+        f = Path(ctx.input("stack", SATURATION))
+    except StageError:
+        return None
+    return np.load(f)[1 if clipped else 0] if f.is_file() else None
+
+
+def colour_stars(img, x, y, aperture, sat=None):
+    """The colour stars of a stack: the catalogue stars at (x, y) away from the edges, measured in the aperture,
+    positive in every channel and unsaturated (``colour_star_table``). Returns (their indices in x, their camera
+    fluxes (N, 3))."""
+    flux, why = colour_star_table(img, x, y, aperture, sat)
+    ok = why == ""
+    return np.where(ok)[0], flux[ok]
+
+
+#: why a catalogue star is not a colour star (``colour_star_table``)
+STAR_REASONS = {"edge": "within 50 px of the edge of the stack",
+                "not_finite": "no measure (empty pixels in its aperture)",
+                "not_positive": "no positive flux in every channel (faint or on a dark background)",
+                "saturated": "saturated or near saturation in at least one frame"}
+
+
+def colour_star_table(img, x, y, aperture, sat=None):
+    """Every catalogue star at (x, y) as ``colour_stars`` judges it: (camera fluxes (N, 3), NaN for the stars too close
+    to the edge to be measured; why each one is left out, '' for a colour star, else a key of STAR_REASONS).
+
+    Saturated: with the stack's map ``sat`` (``saturation_map``), a sample near saturation within the aperture (one
+    pixel more); without it (a stack made before it kept one), a peak above 45 % of the brightest pixels."""
+    Hh, Ww = img.shape[1:]
+    m = (x > 50) & (x < Ww - 50) & (y > 50) & (y < Hh - 50)
+    flux, peak = star_photometry(img, np.c_[x[m], y[m]], aperture)
+    if sat is not None and sat.shape == (Hh, Ww):
+        from scipy.ndimage import maximum_filter
+        r = int(np.ceil(aperture)) + 1
+        yy, xx = np.mgrid[-r:r + 1, -r:r + 1]
+        near = maximum_filter(np.asarray(sat) > 0, footprint=xx ** 2 + yy ** 2 <= r * r)
+        unsat = ~near[np.round(y[m]).astype(int), np.round(x[m]).astype(int)]
+    else:
+        chmax = np.array([np.nanpercentile(img[c], 99.999) for c in range(3)])
+        unsat = (peak < 0.45 * chmax).all(1)
+    ok = (flux > 0).all(1) & unsat & np.isfinite(flux).all(1)
+    why_m = np.where(~np.isfinite(flux).all(1), "not_finite",
+                     np.where(~(flux > 0).all(1), "not_positive", np.where(~ok, "saturated", "")))
+    out = np.full((len(x), 3), np.nan)
+    out[m] = flux
+    why = np.full(len(x), "edge", dtype=object)
+    why[m] = why_m
+    return out, why.astype(str)
+
+
+def star_fit(xp, table, why, idx, kept, S, M) -> dict[str, np.ndarray]:
+    """The fit of every catalogue star of ``xp`` (gaia_xp.npz), as the stage made it: position (stack pixels),
+    measured camera fluxes ``flux`` (NaN when not measured) and ``reason`` ('' for a colour star), ``used`` (the
+    colour stars ``idx``: the matrix is fitted on all of them), ``resp_keep`` (N, 3) the stars each channel of the
+    sensitivity-curve fit kept (``kept``), the CIE xy chromaticity of the star's spectrum (``cat_xy``, what the fit
+    aims at) and the one the fitted camera -> XYZ matrix ``M`` gives from the measured colour (``pred_xy``), their
+    distance ``resid``, and the camera fluxes the curves ``S`` predict from the spectrum (``cam_pred``)."""
+    x = np.asarray(xp["x"], float)
+    n = len(x)
+    used = np.zeros(n, bool)
+    used[idx] = True
+    resp_keep = np.ones((n, 3), bool)
+    for c, k in enumerate(kept):
+        resp_keep[idx, c] = k
+    xyz = np.asarray(xp["xyz"], float)
+    cat_xy = (xyz / xyz.sum(1, keepdims=True))[:, :2]
+    cam = np.asarray(table, float)[idx]
+    q = (cam / cam.sum(1, keepdims=True)) @ np.asarray(M, float).T
+    q = q / q.sum(1, keepdims=True)
+    pred_xy = np.full((n, 2), np.nan)
+    pred_xy[idx] = q[:, :2]
+    resid = np.full(n, np.nan)
+    resid[idx] = np.hypot(*(pred_xy[idx] - cat_xy[idx]).T)
+    return {"x": x, "y": np.asarray(xp["y"], float), "source": np.asarray(xp["source"]), "g": np.asarray(xp["g"]),
+            "flux": np.asarray(table, float), "reason": np.asarray(why, str), "used": used, "resp_keep": resp_keep,
+            "cat_xy": cat_xy, "pred_xy": pred_xy, "resid": resid,
+            "cam_pred": predict(np.asarray(xp["flux"], float), np.asarray(xp["lam"], float), S),
+            "M_xyz": np.asarray(M, float)}
 
 
 def synthetic_spectra(lam) -> np.ndarray:
@@ -285,8 +372,9 @@ def star_photometry(img, xy, r_ap):
     return np.stack(flux, 1), np.stack(peak, 1)
 
 
-def fit_response(spec, lam, cam, mu=3.0):
-    """cam (N,3) = integral spec(N,L) S_c(L) dl ; S_c = non-negative sum of smooth gaussians, regularised."""
+def fit_response(spec, lam, cam, mu=3.0, kept: list | None = None):
+    """cam (N,3) = integral spec(N,L) S_c(L) dl ; S_c = non-negative sum of smooth gaussians, regularised.
+    ``kept``: receives, per channel, which stars the last iteration kept (the others are outliers of the fit)."""
     centers = np.arange(380, 1001, 15.0)
     B = np.exp(-0.5 * ((lam[:, None] - centers[None]) / 12.0) ** 2)
     dl = np.gradient(lam)
@@ -312,6 +400,8 @@ def fit_response(spec, lam, cam, mu=3.0):
             keep = np.abs(r) < 4 * s
         curves.append(B @ (a / sc))
         rel.append(float(np.median(np.abs(r[keep]))))
+        if kept is not None:
+            kept.append(keep.copy())
     return np.stack(curves), rel
 
 

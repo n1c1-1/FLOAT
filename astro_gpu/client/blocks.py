@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .i18n import _, hm
+from .i18n import _, hm, plural
 
 # the columns of the graph, left to right; optional columns only appear when a workflow uses them
 COLUMNS = ["sources", "calibration", "alignement", "selection", "empilement", "astrometrie", "couleur", "deconv",
@@ -55,6 +55,12 @@ STATE_WORD = {"done": "Up to date", "pending": "Pending", "stale": "Outdated", "
               "failed": "Failed", "interrupted": "Interrupted", "skipped": "Skipped"}
 # worst first: a block is as bad as its worst stage in any of its workflows
 STATE_ORDER = ["running", "failed", "interrupted", "stale", "skipped", "pending", "done"]
+
+# the review points ("Pause here for review"): a dot like a debugger's, red while the run will stop there, yellow with
+# the pause bars while the run is stopped there for the user, green once the user has checked these results
+BREAK_COL, PAUSE_COL, REVIEWED_COL = "#e5484d", "#f5c542", "#5fbf7f"
+# the most urgent first: what a block shows when its workflows are not all in the same case
+REVIEW_ORDER = ["paused", "pending", "reviewed"]
 
 # the block table: key, phase, title, kind (fixed | tool | auto | slot), engine stages, what it does
 STEPS = [
@@ -122,6 +128,11 @@ def block_title(p, key: str) -> str:
     if key == "post" and p is not None:
         return p.name
     return _(TITLES.get(key) or BY_KEY[key]["title"])
+
+
+def review_title(key: str) -> str:
+    """The name of a block in the texts about a pause (the output of a workflow is just "Output" there)."""
+    return _("Output") if key == "post" else block_title(None, key)
 
 
 def chain(steps, p) -> list[str]:
@@ -238,6 +249,17 @@ class Graph:
         states = {block_state(self.s, p, node.key) for p in node.paths}
         return next((w for w in STATE_ORDER if w in states), "pending")
 
+    def breakpoint(self, node: Node) -> tuple[str, int, int] | None:
+        """The review point of a block: (state, how many of its workflows have it, how many go through it), the state
+        being the most urgent of theirs (paused, pending, reviewed); None when no workflow pauses after it."""
+        review = getattr(self.s, "review_state", None)
+        if review is None or node.key in ("sources", "final") or not node.paths:
+            return None
+        have = [st for st in (review(p, node.key) for p in node.paths) if st]
+        if not have:
+            return None
+        return next(w for w in REVIEW_ORDER if w in have), len(have), len(node.paths)
+
     def seconds(self, node: Node) -> float:
         if node.key in ("sources", "final") or not node.paths:
             return 0.0
@@ -248,9 +270,10 @@ class Graph:
         if node.key == "sources":
             if not s.sources_loaded:
                 return _("to add")
-            return _("{n} session(s) · {lights} lights").format(n=len(s.sessions), lights=s.n_lights())
+            return plural(len(s.sessions), "{n} session · {lights} lights", "{n} sessions · {lights} lights",
+                          lights=fmt_int(s.n_lights()))
         if node.key == "final":
-            return _("{n} layer(s)").format(n=len(s.paths))
+            return plural(len(s.paths), "{n} layer", "{n} layers")
         p = node.paths[0]
         k = node.key
         if k == "post":
@@ -306,4 +329,4 @@ class Graph:
 
 __all__ = ["COLUMNS", "OPTIONAL", "PHASES", "TOOL_COLUMN", "TITLES", "TOOLBOX", "STEPS", "BY_KEY", "TOOLS",
            "STATE_WORD", "STATE_ORDER", "ENGINE_BLOCK", "Graph", "Node", "block_title", "chain", "stages_of",
-           "run_stages", "block_state", "block_seconds", "hm"]
+           "run_stages", "block_state", "block_seconds", "hm", "BREAK_COL", "PAUSE_COL", "REVIEWED_COL", "review_title"]
