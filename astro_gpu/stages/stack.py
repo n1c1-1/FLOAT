@@ -1,6 +1,7 @@
 """Weighted Bayer drizzle on the GPU with predictive outlier rejection and two independent half-stacks."""
 from __future__ import annotations
 
+import os
 import time
 
 import numpy as np
@@ -12,6 +13,10 @@ from ..core.params import ADVANCED, Auto, P, StageParams
 from ..core.stage import Context, Stage, StageError
 from ..io.frames import cfa_channel_map
 from .calibrate import VALID_MAX, open_cache
+
+#: the level of a parameter the project sets itself: never shown in a settings form
+INTERNAL = "internal"
+EXCLUDED = "excluded by hand"
 
 
 class StackParams(StageParams):
@@ -62,6 +67,9 @@ class StackParams(StageParams):
     pattern_frames: int = P(48, label="Frames for the pattern reference", level=ADVANCED, ge=8, le=400,
                             help="Number of frames, evenly spread over the session, whose median is the first estimate "
                                  "of the fixed pattern; the final estimate uses all frames around it.")
+    exclude: list[str] = P([], label="Frames excluded by hand", level=INTERNAL,
+                           help="Light frames left out of the stack whatever their quality (their files). Set by the "
+                                "project from the frames the user excluded; not a setting of its own.")
 
 
 class Stack(Stage):
@@ -82,24 +90,27 @@ class Stack(Stage):
         reg = np.load(ctx.input("register", "reg.npz"))
         n = len(reg["fwhm"])
         hb = int(max(1, min(20, n // 4)))
-        a["half_block"] = Auto(hb, f"{n} frames: blocks of {hb} give two half-stacks of about {n // 2} frames"
-                               + ("" if hb == 20 else " (blocks of 20 need 80 frames)"))
+        a["half_block"] = Auto(hb, "{n} frames: blocks of {hb} give two half-stacks of about {half} frames" if hb == 20
+                               else "{n} frames: blocks of {hb} give two half-stacks of about {half} frames "
+                                    "(blocks of 20 need 80 frames)", {"n": n, "hb": hb, "half": n // 2})
         f = float(np.median(reg["fwhm"]))
         if f < 3.0 and n >= 150:
-            a["scale"] = Auto(2.0, f"small stars (FWHM {f:.1f} px) and {n} frames")
+            a["scale"] = Auto(2.0, "small stars (FWHM {fwhm:.1f} px) and {n} frames", {"fwhm": f, "n": n})
         elif f < 5.5 and n >= 40:
-            a["scale"] = Auto(1.5, f"FWHM {f:.1f} px with {n} frames: under-sampled, enough frames to drizzle")
+            a["scale"] = Auto(1.5, "FWHM {fwhm:.1f} px with {n} frames: under-sampled, enough frames to drizzle",
+                              {"fwhm": f, "n": n})
         else:
-            a["scale"] = Auto(1.0, f"FWHM {f:.1f} px / {n} frames: drizzling would add noise without detail")
+            a["scale"] = Auto(1.0, "FWHM {fwhm:.1f} px / {n} frames: drizzling would add noise without detail",
+                              {"fwhm": f, "n": n})
         ok = np.isfinite(reg["rms"])
         t = reg["transp"]
         frac = float(np.mean(t[ok] < 0.6 * np.percentile(t[ok], 90)))
         if frac > 0.5:
-            a["min_transparency"] = Auto(0.3, f"{100 * frac:.0f} % of frames are below 60 % transparency: only the "
-                                              "worst (below 30 %) are excluded")
+            a["min_transparency"] = Auto(0.3, "{pct:.0f} % of frames are below 60 % transparency: only the "
+                                              "worst (below 30 %) are excluded", {"pct": 100 * frac})
         elif frac > 0:
-            a["min_transparency"] = Auto(0.6, f"{100 * frac:.0f} % of frames lost more than 40 % of the signal "
-                                              "(clouds or haze): excluded")
+            a["min_transparency"] = Auto(0.6, "{pct:.0f} % of frames lost more than 40 % of the signal "
+                                              "(clouds or haze): excluded", {"pct": 100 * frac})
         else:
             a["min_transparency"] = Auto(0.6, "transparency is stable: no frame falls below 60 %")
         st = np.load(ctx.input("calibrate", "frame_stats.npy"))
@@ -133,21 +144,29 @@ class Stack(Stage):
         S, PIX = p.scale, p.pixfrac
         Ho, Wo = int(round(H * S)), int(round(W * S))
 
+        meta = ctx.load_json("inventory", "frames.json")["lights"]
+        excl = excluded_mask([f["path"] for f in meta], p.exclude)
+        if len(p.exclude) > int(excl.sum()):
+            ctx.log(f"{len(p.exclude) - int(excl.sum())} frame(s) excluded by hand are not among the light frames",
+                    "warning")
         sel_f = ctx.project.stage_dir("register") / "selection.npz"
         if sel_f.exists():                       # a selection made by its own block (frame selection)
             sel = np.load(sel_f)
             weight, reasons = sel["weight"].astype(float), sel["reasons"].astype(object)
             ctx.log("frame selection given by the selection block")
+            if excl.any():
+                reasons[(reasons == "") & excl] = EXCLUDED
+                weight[reasons != ""] = 0.0
         else:
-            weight, reasons = select_frames(transp, fwhm, rms, stats, p.min_transparency, p.max_fwhm_ratio)
+            weight, reasons = select_frames(transp, fwhm, rms, stats, p.min_transparency, p.max_fwhm_ratio,
+                                            exclude=excl)
         used = np.where(weight > 0)[0]
         if len(used) < 2:
             raise StageError("fewer than 2 usable frames after selection; relax the selection thresholds")
-        meta = ctx.load_json("inventory", "frames.json")["lights"]
         ctx.save_json("frames.json", [{"path": meta[i]["path"], "time": meta[i].get("time"), "weight": float(weight[i]),
                                        "transparency": float(transp[i]), "fwhm": float(fwhm[i]),
                                        "excluded": reasons[i]} for i in range(n)])
-        for r in ("low transparency", "large stars", "not aligned"):
+        for r in ("low transparency", "large stars", "not aligned", EXCLUDED):
             k = int((reasons == r).sum())
             if k:
                 ctx.log(f"{k} frame(s) excluded: {r}")
@@ -327,10 +346,11 @@ class Stack(Stage):
         ctx.preview("stack", asinh_preview(drz))
 
 
-def select_frames(transp, fwhm, rms, stats, min_transparency: float, max_fwhm_ratio: float):
+def select_frames(transp, fwhm, rms, stats, min_transparency: float, max_fwhm_ratio: float, exclude=None):
     """Weight of every frame, (transparency / noise)^2 x sharpness, and the reason a frame is left out ('' = kept):
-    not aligned, transparency below ``min_transparency`` x the best frames, stars larger than ``max_fwhm_ratio`` x
-    the median."""
+    not aligned, excluded by hand (``exclude``: a boolean per frame), transparency below ``min_transparency`` x the
+    best frames, stars larger than ``max_fwhm_ratio`` x the median. The thresholds are measured on all the frames,
+    so excluding a frame by hand never changes the fate of another."""
     n = len(transp)
     sig = stats[:, :, 1].mean(1)
     weight = (transp / sig) ** 2 * (np.percentile(fwhm, 5) / fwhm) ** 2
@@ -339,10 +359,21 @@ def select_frames(transp, fwhm, rms, stats, min_transparency: float, max_fwhm_ra
     tmin = min_transparency * np.percentile(transp[np.isfinite(rms)], 90)
     reasons = np.full(n, "", dtype=object)
     reasons[~np.isfinite(rms)] = "not aligned"
+    if exclude is not None:
+        reasons[(reasons == "") & np.asarray(exclude, bool)] = EXCLUDED
     reasons[(reasons == "") & (transp < tmin)] = "low transparency"
     reasons[(reasons == "") & (fwhm > max_fwhm_ratio * np.median(fwhm))] = "large stars"
     weight[reasons != ""] = 0.0
     return weight, reasons
+
+
+def excluded_mask(paths: list[str], exclude: list[str]) -> np.ndarray:
+    """Which of the frames (their files, as the inventory lists them) are among the ``exclude`` files. Paths are
+    compared normalised (case, separators)."""
+    def norm(f: str) -> str:
+        return os.path.normcase(os.path.normpath(str(f)))
+    ex = {norm(f) for f in exclude}
+    return np.array([norm(f) in ex for f in paths], bool)
 
 
 def fixed_pattern(mm, used, coef, dev, H, W, nframes, progress=lambda f: None):
