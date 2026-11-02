@@ -1,4 +1,5 @@
-"""Command line interface: create a project, run / resume the pipeline, inspect parameters, export renders."""
+"""Command line of v1 projects (project.json): create a project, run / resume the pipeline, inspect and set
+parameters, manage variants, export renders (``astro-gpu``; v2 projects have ``cli2.py``)."""
 from __future__ import annotations
 
 import argparse
@@ -14,8 +15,6 @@ os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 def _project(project_dir, variant=None):
     """The project, with ``variant`` active for this command only ('main' = no variant; None = as saved)."""
     from .core.project import Project
-    # not added to the interface's list of projects: the interface does that when a project is opened in it (test
-    # copies run from the command line, with the same names, were mistaken for the real projects)
     p = Project(project_dir)
     if variant is not None:
         v = "" if variant == "main" else variant
@@ -156,11 +155,6 @@ def cmd_variant(a):
         raise SystemExit(f"unknown action {act!r}")
 
 
-def cmd_gui(a):
-    from .gui.app import main as gui_main
-    gui_main([a.project] if a.project else [])
-
-
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="astro-gpu", description="GPU astrophotography processing")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -217,9 +211,6 @@ def main(argv=None):
     va.add_argument("--note")
     va.add_argument("--keep", help="promote: keep the former main as a variant with this name")
     va.set_defaults(fn=cmd_variant)
-    g = sub.add_parser("gui", help="open the graphical interface")
-    g.add_argument("project", nargs="?")
-    g.set_defaults(fn=cmd_gui)
     a = ap.parse_args(argv)
     a.fn(a)
 

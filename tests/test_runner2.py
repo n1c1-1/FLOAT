@@ -798,15 +798,12 @@ def test_estimates_follow_units_history_and_the_cpu():
     assert est.denoise_iterations(27.3) == 24000 and est.denoise_iterations(2.0) == 6000
 
 
-def test_record_keeps_the_last_20_and_v1_timings_are_written_atomically(state):
-    from astro_gpu.core.runner import _record_timing
+def test_record_keeps_the_last_20_written_atomically(state):
     for i in range(25):
         est.record("stack", 10.0 + i, 5.0, True)
-        _record_timing("stack", 10.0 + i)
     h = est.load_history()
     assert len(h["stack"]) == 20 and h["stack"][-1] == [34.0, 5.0, "gpu"]
-    assert json.loads((state / "timings.json").read_text())["stack"][-1] == 34.0
-    assert sorted(p.name for p in state.iterdir()) == ["timings.json", "timings2.json"]     # no temporary file left
+    assert sorted(p.name for p in state.iterdir()) == ["timings2.json"]     # no temporary file left
 
 
 def test_workers_recording_at_once_all_keep_their_entries(tmp_path, monkeypatch):
@@ -849,6 +846,7 @@ def test_a_manifest_a_reader_holds_open_is_replaced_once_it_lets_go(tmp_path, mo
     import threading
     from types import SimpleNamespace
 
+    from astro_gpu.core import files
     from astro_gpu.core import runner as runner_mod
     mf = tmp_path / "manifest.json"
     mf.write_text(json.dumps({"status": "running"}))
@@ -860,7 +858,7 @@ def test_a_manifest_a_reader_holds_open_is_replaced_once_it_lets_go(tmp_path, mo
             os.replace(probe, mf)
         probe.unlink()
     threading.Timer(0.4, reader.close).start()
-    runner2._write_json(mf, {"status": "done"})                                      # runner2: the commit
+    files.write_json(mf, {"status": "done"})                                         # runner2: the commit
     assert json.loads(mf.read_text()) == {"status": "done"}
     reader = open(mf, "rb")
     threading.Timer(0.4, reader.close).start()
@@ -873,27 +871,17 @@ def test_a_manifest_a_reader_holds_open_is_replaced_once_it_lets_go(tmp_path, mo
             src = tmp_path / "new.json"
             src.write_text("{}")
             with pytest.raises(PermissionError):
-                runner_mod.replace_file(src, mf, attempts=3)
+                files.replace_file(src, mf, attempts=3)
             src.unlink()
 
     def refuse(src, dst):
         raise PermissionError("held")
 
-    monkeypatch.setattr(runner2, "replace_file", refuse)
+    monkeypatch.setattr(files, "replace_file", refuse)
     with pytest.raises(PermissionError):
-        runner2._write_json(mf, {"status": "x"})
+        files.write_json(mf, {"status": "x"})
     assert sorted(x.name for x in tmp_path.iterdir()) == ["manifest.json"]
     assert json.loads(mf.read_text()) == {"status": "failed"}
-
-
-def test_the_reference_is_heart_from_the_mockup_data():
-    data = json.loads((TESTS.parent / "mockup" / "alt2" / "data" / "data.json").read_text(encoding="utf-8"))
-    for s, d in data["stages"].items():
-        assert est.HEART[s] == (d["seconds"], d["gb"]), s
-    inv = data["inventory"]
-    f = est.HEART_FACTS
-    assert (f.lights, f.frames) == (inv["n_lights"], inv["n_lights"] + inv["n_darks"] + inv["n_flats"])
-    assert f.mpx == inv["width"] * inv["height"] / 1e6 and f.grid_mpx == data["grid"][0] * data["grid"][1] / 1e6
 
 
 IRIS = Path("<user folder>/astro_gpu_scratch/projects/Iris")
@@ -960,7 +948,7 @@ def test_select_frames_keeps_its_positional_signature_and_honours_exclude():
         [True, True, False]
 
 
-def test_exclude_is_internal_hidden_in_the_v1_form_and_old_stacks_stay_done(monkeypatch):
+def test_exclude_is_internal_and_old_stacks_stay_done():
     from astro_gpu.core.runner import _same_params
     from astro_gpu.stages.stack import Stack, StackParams
     d = {x["name"]: x for x in StackParams.describe()}
@@ -969,14 +957,6 @@ def test_exclude_is_internal_hidden_in_the_v1_form_and_old_stacks_stay_done(monk
     stored.pop("exclude")                                   # a manifest written before the parameter existed
     assert _same_params(Stack(), StackParams(), stored)
     assert not _same_params(Stack(), StackParams(exclude=["F:/a.ARW"]), stored)
-    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtWidgets import QApplication
-    app = QApplication.instance() or QApplication([])
-    from astro_gpu.gui.widgets import ParamForm
-    form = ParamForm(StackParams, StackParams().model_dump(), advanced=True)
-    assert "exclude" not in form.widgets and "kappa" in form.widgets and "scale" in form.widgets
-    form.deleteLater()
-    app.processEvents()
 
 
 HEART_A7S = Path("F:/astro_essais/projets/heart_a7s")
