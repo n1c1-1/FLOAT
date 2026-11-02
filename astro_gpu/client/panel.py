@@ -30,12 +30,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .. import texts
 from ..core import workflow as wfl
 from . import prefs
 from .blocks import BY_KEY, STATE_WORD, block_state, block_title, fmt_int, stages_of  # noqa: F401
-from .i18n import _, all_workflows, hm, number
+from .i18n import _, all_workflows, hm, language, number
 from .model import NotInEngine, method_of, method_value, methods_of
-from .settings import RangeBar, SettingRow, fmt, needed_stages, step_settings
+from .settings import RangeBar, SettingRow, fmt, needed_stages, selection_rule_text, step_settings
 from .settings import loading as settings_loading
 from .widgets import ACCENT, BAD, NEW, WARN, clear, hline, label
 
@@ -208,6 +209,64 @@ class MethodCard(QFrame):
         v.addWidget(label(_(m["what"]), "small", wrap=True))
         if why:
             v.addWidget(label(why, "warn", wrap=True))
+
+    def mousePressEvent(self, e):                       # noqa: N802 - Qt's name
+        if self.ok:
+            self.clicked.emit()
+
+
+class InfoDot(QLabel):
+    """A small "i" in a circle: what it is about shows in its tooltip."""
+
+    def __init__(self, tip: str, parent=None):
+        super().__init__("i", parent)
+        self.setObjectName("infodot")
+        self.setAlignment(Qt.AlignCenter)
+        self.setFixedSize(15, 15)
+        self.setStyleSheet("QLabel#infodot { color: #b9c2cf; border: 1px solid #6b7280; border-radius: 7px; "
+                           "font-size: 8pt; font-weight: 600; font-family: Georgia, serif; padding: 0; }")
+        self.setToolTip(tip)
+        self.setCursor(Qt.WhatsThisCursor)
+
+
+class StackMethodCard(QFrame):
+    """A stacking method: its name, what it does; the engine's advice as a discreet "Recommended" outline in the accent
+    colour, with an "i" whose tooltip says why. ``clicked`` asks for this method (the advice never chooses it)."""
+    clicked = Signal()
+
+    def __init__(self, key: str, on: bool, recommended: bool = False, why: str = "", enabled: bool = True,
+                 parent=None):
+        super().__init__(parent)
+        from .settings import method_text
+        self.key, self.on, self.recommended, self.ok = key, on, recommended, enabled and not on
+        self.setObjectName("meth")
+        self.setCursor(Qt.PointingHandCursor if self.ok else Qt.ArrowCursor)
+        border = ACCENT if on else "#353b47"
+        self.setStyleSheet(f"QFrame#meth {{ background: {'#2b3446' if on else '#20242c'}; border: 1px solid "
+                           f"{border}; border-radius: 6px; }} QLabel {{ background: transparent; }}")
+        name, what = method_text(key)
+        v = QVBoxLayout(self)
+        v.setContentsMargins(10, 6, 10, 6)
+        v.setSpacing(2)
+        top = QHBoxLayout()
+        top.setSpacing(6)
+        n = QLabel(("● " if on else "○ ") + name)
+        n.setStyleSheet("font-weight: 600;" + ("" if enabled else " color: #6b7280;"))
+        top.addWidget(n)
+        top.addStretch(1)
+        self.tag = self.info = None
+        if recommended:
+            self.tag = QLabel(_("Recommended"))
+            self.tag.setObjectName("rec")
+            self.tag.setStyleSheet(f"QLabel#rec {{ color: {ACCENT}; border: 1px solid {ACCENT}; border-radius: 8px; "
+                                   "padding: 0px 7px; font-size: 8.5pt; }")
+            top.addWidget(self.tag)
+            if why:
+                self.info = InfoDot(why)
+                top.addWidget(self.info)
+        v.addLayout(top)
+        if what:
+            v.addWidget(label(what, "small", wrap=True))
 
     def mousePressEvent(self, e):                       # noqa: N802 - Qt's name
         if self.ok:
@@ -463,13 +522,17 @@ class Panel(QWidget):
         if k == "selection":
             units += [_("% of the best"), "px", _("× median")]
         self._unit_w = unit_column(units)
+        extra = 0
         if k == "selection":
+            groups, extra = self.selection_rule(p, groups)
             self.selection(p)
         if k == "empilement" and len(s.sessions) > 1:
             self.stack_sessions()
+        if k == "empilement":
+            self.stack_methods(p)
         if k == "post" and p.end:
             self.bv.addWidget(kv([(_("Output of"), block_title(p, p.end))]))
-        self.settings(p, k, groups)
+        self.settings(p, k, groups, extra)
         self.bv.addStretch(1)
 
     def stack_sessions(self):
@@ -621,6 +684,26 @@ class Panel(QWidget):
                     opt, method_value(k, mk), _("Method: {name}").format(name=_(nm)), _(sh)))
             self.bv.addWidget(card)
 
+    def stack_methods(self, p):
+        """The stacking methods the engine offers, as cards; the engine's advice marks one "Recommended" (with its
+        reason under an "i"), and never changes the method by itself. Below, only the settings of the method shown."""
+        from .settings import STACK_METHOD, method_advice, method_text, stack_methods
+        keys = stack_methods(self.s, p)
+        if len(keys) < 2:
+            return
+        info = self.s.param_info(p, *STACK_METHOD)
+        advice = method_advice(self.s, p)
+        self.bv.addWidget(self.group_title(_("Method")))
+        for key in keys:
+            rec = advice is not None and advice[0] == key
+            card = StackMethodCard(key, key == info.value, rec, advice[1] if rec else "", not info.locked)
+            if card.ok:
+                name = method_text(key)[0]
+                card.clicked.connect(lambda k_=key, nm=name: self.propose(
+                    STACK_METHOD[0], STACK_METHOD[1], k_, None, _("Stacking method: {name}").format(name=nm),
+                    nm.lower()))
+            self.bv.addWidget(card)
+
     def _cancel(self):
         self.s.pending_change = None
         self.changed.emit()
@@ -641,11 +724,32 @@ class Panel(QWidget):
         g.setStyleSheet("color: #aab2bf; font-weight: 600; margin-top: 8px; margin-bottom: 2px;")
         return g
 
+    def selection_rule(self, p, groups):
+        """The Selection block's top: the rule that decides which frames are left out, in plain words, and its setting
+        rows. Returns the other groups, and how many Advanced rows were drawn here (for the Advanced settings count)."""
+        title = _("Rule")
+        rule = next((rs for t, rs in groups if t == title), [])
+        rest = [(t, rs) for t, rs in groups if t != title]
+        if not rule and settings_loading(self.s, p, "selection"):
+            return groups, 0
+        self.bv.addWidget(self.group_title(title))
+        self.bv.addWidget(label(selection_rule_text(self.s, p), "small", wrap=True))
+        for r in rule:
+            if r["level"] == "normal" or (self.expert and r["level"] == "expert"):
+                self.add_row(r)
+        return rest, sum(r["level"] != "normal" for r in rule)
+
     def selection(self, p):
         s = self.s
         t, f = s.thresholds_now()
         px = s.thresholds_unit() == "px"
+        live = s.thresholds_active(p)
         self.bv.addWidget(self.group_title(_("Thresholds")))
+        if not live:
+            why = label(_("These thresholds act only when the frame selection is “{rule}”.").format(
+                rule=texts.choice_label("thresholds", language())), "small", wrap=True)
+            why.setObjectName("thresholds_reason")
+            self.bv.addWidget(why)
         for name, val, unit, lo, hi, step, which in (
                 (_("Minimum transparency"), t, _("% of the best"), 0, 100, 1, "t"),
                 (_("Maximum FWHM") if px else _("Maximum star size"), f, "px" if px else _("× median"),
@@ -661,6 +765,7 @@ class Panel(QWidget):
             e.setSingleStep(step)
             e.setValue(val)
             e.setFixedWidth(EDITOR_W)
+            e.setEnabled(live)
             e.editingFinished.connect(lambda ed=e, wh=which: self._sel(ed.value(), wh))
             row.addWidget(e)
             row.addWidget(unit_label(unit, self._unit_w))
@@ -706,7 +811,7 @@ class Panel(QWidget):
             groups += [(_("Starless image") + f" · {g}", rs) for g, rs in step_settings(s, p, "sans_etoiles")]
         return groups
 
-    def settings(self, p, k, groups=None):
+    def settings(self, p, k, groups=None, extra_hidden=0):
         s = self.s
         groups = self._groups(p, k) if groups is None else groups
         if settings_loading(s, p, k) and not groups:
@@ -714,7 +819,7 @@ class Panel(QWidget):
             self.bv.addWidget(label(_("The settings cannot be read: {why}").format(why=err) if err else
                                     _("Loading the settings…"), "dim", wrap=True))
             return
-        hidden = 0
+        hidden = extra_hidden
         system = []
         for title, rs in groups:
             shown = [r for r in rs if r["level"] == "normal" or (self.expert and r["level"] == "expert")]

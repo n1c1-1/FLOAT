@@ -12,18 +12,29 @@ from ..core.stage import Stage
 AUTO_FIELDS: dict[str, frozenset[str]] = {
     "calibrate": frozenset({"workers"}),
     "register": frozenset({"workers"}),
-    "stack": frozenset({"scale", "min_transparency", "half_block", "read_noise", "gain"}),
+    "stack": frozenset({"scale", "pixfrac", "min_transparency", "half_block", "read_noise", "gain"}),
     "astrometry": frozenset({"ra", "dec", "target", "pixel_um", "focal_mm"}),
     "color": frozenset({"aperture"}),
     "denoise": frozenset({"iterations"}),
     "starless": frozenset({"learned_stars"}),
     "background": frozenset({"large_scale_px"}),
 }
-#: fields an ``auto()`` sets only under another setting: {stage: {field: (setting, values that select its rule)}}.
-#: Automatic (kept in a key at their default) only where that setting has one of those values; elsewhere a field like
-#: any other, dropped at its default (core/store.py). ``stack.pixfrac``: the coverage rule of stacking v2 sets it
-AUTO_WHEN: dict[str, dict[str, tuple[str, tuple]]] = {
-    "stack": {"pixfrac": ("scale_rule", ("coverage",))},
+#: settings whose default changed after results had been keyed under the previous one: {stage: {field: the previous
+#: default}}. The key holds such a field's effective value unless it is the previous default (core/store.py), so a
+#: definition that stored the previous default keeps its key and one that leaves the field unset gets a new one
+KEY_BASELINE: dict[str, dict[str, object]] = {
+    "stack": {"selection": "thresholds"},
+}
+#: settings removed from a stage: a definition that still stores one is read without it
+RETIRED: dict[str, frozenset[str]] = {
+    "stack": frozenset({"rejection", "weighting", "normalisation", "scale_rule"}),
+    "register": frozenset({"channel_align", "fwhm_method"}),
+}
+#: removed settings whose last value stays in every key, so that the results computed with it keep their keys:
+#: {stage: {field: value}} (the Moffat star measure and the drizzle coverage rule are now the only behaviour)
+KEY_CONSTANTS: dict[str, dict[str, object]] = {
+    "stack": {"scale_rule": "coverage"},
+    "register": {"fwhm_method": "moffat"},
 }
 #: fields naming a file: keyed by the file (name, size, modification time), not by the path string
 PATH_FIELDS: dict[str, frozenset[str]] = {

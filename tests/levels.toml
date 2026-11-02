@@ -20,20 +20,14 @@ level3 = [
     "tests/test_api.py::test_a_detached_run_is_followed_through_events_and_cancelled",             # worker, 9 s
     "tests/test_api.py::test_cli2_creates_plans_runs_follows_and_stops_a_toy_project",             # worker, 11 s
     "tests/test_integration_v2.py::test_toy_v2_run_equals_v1_bit_for_bit",                         # worker, 8 s
+    "tests/test_runner2.py::test_after_a_gpu_fault_a_fresh_worker_retries_the_job_once_and_the_lock_is_held_throughout",  # workers, 8-11 s
     "tests/test_layers.py::test_v1_render_is_unchanged_bit_for_bit",                               # heavy: renders the old engine from git, 8 s
     "tests/test_layers.py::test_region_with_the_quarter_fit_equals_the_full_render",               # heavy: 720x1080, 9-11 s each
     "tests/test_layers.py::test_region_fit_reuse_scales_and_errors",                               # heavy: 720x1080, 4.6 s
     "tests/test_layers.py::test_layer_service_renders_engine_and_simple_layers",                   # heavy: 720x1080, 6 s
     "tests/test_layers.py::test_masks",                                                            # heavy: 720x1080, 5 s
     "tests/test_star_net.py::test_stage_end_to_end_on_a_synthetic_project",                        # heavy: trains a network, 7 s
-    # stacking v2: the two fixtures of normalize_local (2.4-5 s, the module's report), and the toy-night stacks over 4 s
-    "tests/test_normalize_local.py::test_scale_is_measured_per_colour_on_the_stars",
-    "tests/test_normalize_local.py::test_normalised_backgrounds_match_the_reference_within_noise",
-    "tests/test_normalize_local.py::test_two_frames_normalised_as_stack_py_does_differ_by_their_noise_only",
-    "tests/test_normalize_local.py::test_the_reference_integrates_the_best_frames",
-    "tests/test_normalize_local.py::test_diagnostic_measures_the_spread_of_the_backgrounds",
-    "tests/test_normalize_local.py::test_flat_set_from_float16_frames",
-    "tests/test_normalize_local.py::test_global_mode_is_sirils_additive_with_scaling",
+    # stacking v2: the toy-night stacks over 4 s
     "tests/test_stacking_v2.py::test_colour_alignment_per_block_is_applied_in_the_drizzle",          # heavy: 3 stacks, 6 s
     "tests/test_stacking_v2.py::test_api_serves_what_the_switches_add",                              # heavy: 2 stacks, 5 s
     "tests/test_stacking_v2.py::test_selection_at_k_sigma_with_reasons",                             # heavy: 2 stacks, 5 s

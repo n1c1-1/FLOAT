@@ -634,7 +634,8 @@ class ProjectModel(QObject):
         workflow's id."""
         if key == "selection":
             st = p.params.get("stack") or {}
-            return ("selection", st.get("min_transparency"), st.get("max_fwhm_ratio"))
+            return ("selection", st.get("min_transparency"), st.get("max_fwhm_ratio"),
+                    st.get("selection", "min_weight"), st.get("selection_transparency", "on"))
         ref = next((b for b in self._blocks.get(p.pid, []) if ENGINE_KEY.get(b.block) == key), None)
         return (key, ref.key if ref is not None else ())
 
@@ -936,7 +937,8 @@ class ProjectModel(QObject):
             if key == "selection":
                 reg, st = ref("alignement"), p.params.get("stack") or {}
                 parts += [list(reg.key) if reg is not None else [], st.get("min_transparency"),
-                          st.get("max_fwhm_ratio"), sorted(list(x) for x in self.frames_excluded)]
+                          st.get("max_fwhm_ratio"), st.get("selection", "min_weight"),
+                          st.get("selection_transparency", "on"), sorted(list(x) for x in self.frames_excluded)]
             raw = json.dumps(parts, sort_keys=True, default=str)
             self._cache[k] = f"{KEY_ENGINE_BLOCK.get(key, key)}:{hashlib.sha1(raw.encode()).hexdigest()[:16]}"
         return self._cache[k]
@@ -1343,6 +1345,17 @@ class ProjectModel(QObject):
         v = self._facts.register.get("fwhm_px")
         return float(v) if v else None
 
+    def selection_rule(self, p=None) -> str:
+        """The frame selection rule of the workflow: "min_weight" (the default), "sota" (k × σ filters) or "thresholds" (the
+        transparency and star-size thresholds)."""
+        p = p or self.path
+        v = self.param_value(p, "stack", "selection") if p is not None else None
+        return str(v) if v else "min_weight"
+
+    def thresholds_active(self, p=None) -> bool:
+        """Whether the transparency and star-size thresholds act: only with the "thresholds" rule."""
+        return self.selection_rule(p) == "thresholds"
+
     def thresholds_unit(self) -> str:
         return "px" if self.fwhm_median() else "× median"
 
@@ -1495,14 +1508,6 @@ class ProjectModel(QObject):
             self.p.validate()
         self.reload_sources()
         return True
-
-    def references(self) -> list[dict]:
-        """The images from outside the project that every viewer offers in its Compare with list (a bench project:
-        Another processing program's results for the same frames): [{"name", "path", "kind": camera | linear | picture, "blocks": the
-        blocks it compares with first, "white": a picture's white level}]. They
-        live in the definition, in ``post["references"]`` (``tools/bench/references.py`` fills them)."""
-        refs = (getattr(self.p, "post", None) or {}).get("references") or []
-        return [dict(r) for r in refs if isinstance(r, dict) and r.get("path")]
 
     def request_selection(self, tmin: float | None = None, fmax: float | None = None):
         """Ask the worker how many frames these thresholds keep (answer: ``selectionChanged``, ``kept_frames``)."""

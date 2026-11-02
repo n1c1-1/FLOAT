@@ -38,9 +38,8 @@ LOCALE = Path(__file__).parent / "client" / "locale"
 STAGES_DIR = Path(__file__).parent / "stages"
 CORE_DIR = Path(__file__).parent / "core"
 #: the core modules of stacking v2 whose reasons reach the user (core/coverage.py writes ``Auto``s with plain
-#: templates; core/frame_weights.py and core/normalize_local.py list theirs in ``REASON_TEMPLATES``,
-#: core/rejection_classic.py in ``REASONS``)
-REASON_MODULES = ("coverage.py", "frame_weights.py", "normalize_local.py", "rejection_classic.py")
+#: templates; core/frame_weights.py lists its own in ``REASON_TEMPLATES``, core/rejection_classic.py in ``REASONS``)
+REASON_MODULES = ("coverage.py", "frame_weights.py", "rejection_classic.py")
 DECLARED = ("REASON_TEMPLATES", "REASONS")
 
 # ------------------------------------------------------------------------------------------------------ catalogues
@@ -98,12 +97,31 @@ def number(x: float, digits: int = 1, lang: str = "en") -> str:
     return t.replace(".", ",") if lang in DECIMAL_COMMA else t
 
 
+#: reason templates reworded after results had stored them (a stack's "reason_template"): the old English -> the new
+#: one, so that an older result reads like a new one in every language. 2 November: the interface no longer names
+#: other software
+REWORDED: dict[str, str] = {
+    "{n} frames: percentile clipping ({low:g} / {high:g}), as a reference processing suite's WBPP below 6 frames":
+        "{n} frames: percentile clipping ({low:g} / {high:g}), the usual choice under 6 frames",
+    "{n} frames: winsorized sigma clipping ({low:g} / {high:g} σ), as a reference processing suite's WBPP from 6 to 15 frames, with "
+    "Another processing program's thresholds":
+        "{n} frames: winsorized sigma clipping ({low:g} / {high:g} σ), the usual choice from 6 to 15 frames",
+    "{n} frames: linear fit clipping ({low:g} / {high:g} σ), as a reference processing suite's WBPP from 16 frames":
+        "{n} frames: linear fit clipping ({low:g} / {high:g} σ), the usual choice from 16 frames",
+    "{n} frames: generalized ESD test (up to {low:.0%} outliers, significance {high:g}), as another processing program advises above 50 "
+    "frames":
+        "{n} frames: generalized ESD test (up to {low:.0%} outliers, significance {high:g}), the usual advice above 50 "
+        "frames",
+}
+
+
 def format_reason(template: str, args: dict | None = None, lang: str = "en") -> str:
     """The reason of an automatic value in ``lang``.
 
     ``template`` is the English template of ``Auto`` and ``args`` its arguments (None: a fixed text, used as it is).
     A translation that does not fit its arguments (a wrong field name) falls back on the English text.
     """
+    template = REWORDED.get(template, template)
     if args is None:
         return translate(template, lang)
     t = translate(template, lang)
@@ -178,25 +196,21 @@ _METRIC_ROWS: list[tuple] = [
      "Median width of the stars from a Moffat fit on the green pixels, at full resolution."),
     ("roundness_moffat", "Star roundness (Moffat)", "", ".2f",
      "Median ratio of the smallest to the largest width of the stars (1 is round)."),
-    ("channel_alignment", "Color alignment", "", "",
-     "How the red and blue images of the stars were put on the green one, per block of frames over the night."),
     # stack
     ("frames_used", "Frames stacked", "", "d", "Frames kept in the stack."),
     ("integration_used_h", "Stacked exposure", "h", ".2f", "Exposure time of the frames kept in the stack."),
     ("grid", "Stack size", "px", "d", "Width and height of the stacked image.", " × "),
     ("fixed_pattern", "Fixed pattern", "", "", "What was measured of the sensor's fixed pattern."),
     ("rejected_pct", "Rejected pixels", "%", ".3f", "Share of pixels rejected as outliers (satellites, cosmic rays)."),
+    ("drizzle_excluded_pct", "Drops left out", "%", ".3f",
+     "Share of the drizzle's drops left out where the frames' integration rejected the pixel."),
     ("channel_offsets", "Color offsets", "", "",
      "Where the red and blue images of the stars fell relative to the green one (lateral chromatic aberration, "
      "atmospheric dispersion), corrected in the stack."),
     ("near_saturation_pct", "Near saturation", "%", ".4f",
      "Share of the pixels of the stack with samples near saturation (star cores)."),
-    ("untested_pct", "Untested pixels", "%", ".3f",
-     "Share of pixels covered by fewer than 3 frames in their colour: they cannot be tested for outliers."),
     ("coverage_variation_pct", "Coverage variation", "%", ".1f",
      "How much the weight of the pixels of the stack varies, red / green / blue (under 20 % is even enough)."),
-    ("normalisation_spread_sigma", "Background spread", "σ", ".1f",
-     "Largest difference of background between frames from edge to edge, in noise sigmas, before normalisation."),
     # astrometry
     ("ra", "Centre RA", "deg", ".4f", "Right ascension of the image centre."),
     ("dec", "Centre Dec", "deg", ".4f", "Declination of the image centre."),
@@ -230,9 +244,14 @@ _METRIC_ROWS: list[tuple] = [
     ("profile_agreement_pct", "Camera profile error", "%", ".2f", "Same gap with the saved profile of this camera."),
     ("generic_agreement_pct", "Generic sensor error", "%", ".2f", "Same gap with the curves of a typical color sensor."),
     ("response_source", "Sensitivity curves", "", "", "Where the camera's sensitivity curves come from."),
+    ("correction", "Colour correction", "", "", "What turned the camera colours into true colours: a colour matrix or "
+                                                "one factor per colour."),
     ("stars", "Color stars", "", "d", "Stars measured for the colour calibration."),
     ("fit_residual", "Fit residual", "", ".4f", "Relative error of the fit in red, green and blue."),
     ("chromaticity_residual", "Color residual", "", ".4f", "Typical gap between the measured and the predicted star colors."),
+    ("white_balance", "White balance", "", ".3f",
+     "Multipliers of red, green and blue that make the stars match their catalogue colors."),
+    ("white_balance_stars", "White balance stars", "", "d", "Stars used for the white balance."),
     ("matrix", "Color matrix", "", ".3f", "Matrix that turns the camera colors into sRGB."),
     ("response_at_lines", "Response at the lines", "", "", "Camera response to H-beta, OIII and H-alpha (red, green, blue)."),
     # denoise
@@ -356,6 +375,9 @@ assert len(METRICS) == len(_METRIC_ROWS), "a metric key is listed twice"
 VALUE_TEXTS: dict[str, str] = {
     "fit": "fitted on this field",
     "generic colour sensor": "generic colour sensor",
+    "one factor per colour (no reliable sensitivity curves)": "one factor per colour (no reliable sensitivity curves)",
+    "colour matrix": "colour matrix",
+    "one factor per colour": "one factor per colour",
     "aperture": "wide apertures",
     "star models": "star models",
     "fitted": "fitted",
@@ -507,14 +529,18 @@ def format_metric(key: str, value: Any, lang: str = "en") -> str:
 CHOICE_TEXTS: dict[str, str] = {
     "auto": "Automatic", "none": "None", "nsns": "NSNS", "finkbeiner": "Finkbeiner",
     "main": "Main GPU", "aux": "Second GPU",
-    # the switches of stacking v2 (stages/stack.py, stages/register.py)
-    "legacy": "Previous version", "moffat": "Moffat fit", "per_block": "Per block of frames",
-    "coverage": "Coverage rule", "hubble": "Hubble (driz_cr)", "noise": "Noise", "sharp": "Sharp stars",
-    "sota": "k × σ filters", "local": "Local", "global": "Global (like another processing program)", "on": "On", "off": "Off",
+    # the stacking settings (stages/stack.py)
+    "thresholds": "Thresholds", "sota": "k × σ filters", "on": "On", "off": "Off",
+    "min_weight": "Automatic", "own": "On the raw pixels", "integration": "From the classic stack's rejection",
     "drizzle": "Bayer drizzle", "classic": "Classic",
-    "rcd": "RCD", "bilinear": "Bilinear", "lanczos4": "Lanczos-4", "siril": "Siril", "reference_suite": "ReferenceSuite",
+    "rcd": "RCD", "bilinear": "Bilinear", "lanczos4": "Lanczos-4",
+    # the Classic method's clamping (core/resample.CLAMPINGS): the stored values name where each comes from, the
+    # interface says what it does
+    "siril": "Bilinear guide", "reference_suite": "Lobe clamping",
     "percentile": "Percentile clipping", "winsorized": "Winsorized sigma clipping", "linear_fit": "Linear fit clipping",
     "gesdt": "Generalized ESD test",
+    # the colour stage's correction (stages/color.py)
+    "full": "Full correction", "per_colour": "One factor per colour",
 }
 
 _stage_index: dict[str, dict] | None = None

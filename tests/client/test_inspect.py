@@ -324,6 +324,9 @@ def test_each_block_shows_its_real_picture(win):
                 assert [x for x in t.findChildren(QTableWidget) if x.isVisible()][0].rowCount() == 40
             elif kind == "rejection":                                  # an older result: said plainly
                 assert t.view is not None or any("Rejection maps" in x for x in texts_of(t))
+            elif kind == "coverage":                                   # the drizzle's red, blue, green maps
+                assert t.view is not None and t.view.wait(120), (step, key)
+                assert {"Red", "Blue", "Green"} <= set(texts_of(t)), texts_of(t)
         win.tune.tab_of.pop(step, None)
 
 
@@ -343,7 +346,8 @@ def test_the_output_block_shows_the_final_image_the_render_worker_makes(win):
     v = t.view
     vi = v.image()
     assert vi is not None and vi.stretched and v.prepared() is not None
-    assert any("The workflow's result at the suggested render settings" in x for x in texts_of(t))
+    # one line on what it is: the engine's rendering of Full, not the Gradient removed picture
+    assert any("Post's own rendering, not the Gradient removed picture" in x for x in texts_of(t))
     rw = win.render_worker()
     assert win.tune.service._rw is rw                                  # shared with Post: engines and images kept once
     got = []
@@ -362,6 +366,12 @@ def test_the_output_block_shows_the_final_image_the_render_worker_makes(win):
     assert txt.startswith(f"x   100  y   120    R {r}   G {g}   B {b}") and "RA " in txt
     names = [v.cmp_cb.itemText(i) for i in range(v.cmp_cb.count())]
     assert "Gradient removed" in names and "Colour-calibrated stack" in names
+    # compared with Gradient removed: put on the final image's grid (its crop of the stack, at half size), said
+    v.set_compare(names.index("Gradient removed") - 1)
+    assert v.wait(120)
+    al = v.compare_alignment()
+    assert al is not None and al.how == "grid" and al.scale == pytest.approx(2.0, rel=0.01)
+    assert v.align_bar.isVisible() and "geometry of the results" in v.alignment_note()
     shot(win, "inspect_output")
 
 
@@ -412,7 +422,7 @@ def test_the_astrometry_block_opens_on_the_users_image_with_its_solution(win):
     prep = v.prepared()
     assert prep.size() == (6384, 4272) and prep.wcs is not None
     shown = texts_of(t)
-    assert any(x.startswith("Your stack with the sky grid") for x in shown)
+    assert any(x.startswith("Your image with the sky grid") for x in shown)
     assert "Sky grid" in shown and "Catalogue stars" in shown
     sky = next(d for (name, _k), d in t._data.items() if name == "sky")
     assert isinstance(sky, si.SkyData) and {ln.kind for ln in sky.lines} == {"ra", "dec"}
@@ -494,7 +504,15 @@ def test_the_color_chart_draws_the_fitted_curves(win):
         colors = {img.pixelColor(x, y).name() for x in range(60, 880, 7) for y in range(40, 360, 5)}
         assert len(colors) > 8                                     # the three curves and the grid, not a blank widget
         rows = dict(win.steps.facts(win.s.path, "couleur"))
-        assert rows[texts.metric_label("stars")] == "2879"
+        # the stars of the result shown (its manifest's, not a number of one run); a colour stage of version 4 adds the
+        # white balance (red, green, blue multipliers and the stars behind them), shown whenever the result has it
+        out = win.steps.outputs(win.s.path, "color", win.steps.which_for(win.s.path, "color"))
+        assert rows[texts.metric_label("stars")] == str(out.metrics["stars"])
+        has_wb = "white_balance" in out.metrics
+        assert (texts.metric_label("white_balance") in rows) == has_wb
+        if has_wb:
+            assert len(rows[texts.metric_label("white_balance")].replace(",", ".").split(" / ")) == 3
+            assert rows[texts.metric_label("white_balance_stars")] == str(out.metrics["white_balance_stars"])
         shot(win, "inspect_color")
     finally:
         win.tune.tab_of.pop("couleur", None)
@@ -1077,6 +1095,89 @@ def test_a_calibration_frame_is_left_out_frame_by_frame_and_taken_back(tmp_path)
         m.set_calibration_excluded(s.id, "lights", str(darks / "D2.ARW"), True)
 
 
+def test_the_drift_tab_shows_the_path_of_the_session_and_no_tab_hides(win):
+    """The x / y path of the session (the "Lissajous"), coloured by time, is drawn under the drift in the Drift tab
+    and has its own tab; on a narrow window the tabs of the block shorten their names, none goes behind scroll
+    arrows."""
+    from astro_gpu.client.charts import DriftChart, TrackChart
+    win.tune.tab_of["alignement"] = "drift"
+    inspect(win, "alignement")
+    t = win.tune
+    drift = [c for c in t.findChildren(DriftChart) if c.isVisibleTo(t)]
+    track = [c for c in t.findChildren(TrackChart) if c.isVisibleTo(t)]
+    assert len(drift) == 1 and len(track) == 1
+    tr = track[0]
+    assert np.isfinite(tr.d.dx).sum() > 10 and tr.colorbar is not None and tr.colorbar[0] == "Time"
+    bar = next(b for b in t.findChildren(QTabBar) if b.isVisibleTo(t) and b.count() == 6)
+    assert not bar.usesScrollButtons() and bar.tabToolTip(3) == "Tracking x / y (Lissajous)"
+    win.tune.tab_of["alignement"] = "track"
+    inspect(win, "alignement")
+    assert [c for c in t.findChildren(TrackChart) if c.isVisibleTo(t)]
+    win.tune.tab_of.pop("alignement", None)
+
+
+def test_the_offsets_are_made_when_the_registration_table_has_none(tmp_path, monkeypatch):
+    """A registration whose table gives no offsets (the sensor size unknown to it) still draws its drift: the sensor
+    size comes from the calibration's cache description, the offsets from the registration's polynomials."""
+    from astro_gpu.client.charts import RegistrationData
+    cal, reg = tmp_path / "calibrate", tmp_path / "register"
+    cal.mkdir()
+    reg.mkdir()
+    (cal / "cache.json").write_text(json.dumps({"width": 200, "height": 100}), encoding="utf-8")
+    coef = np.zeros((3, 2, 10))
+    for i, (dx, dy) in enumerate(((0, 0), (5, -2), (9, 4))):    # the frame's centre lands at (100 - dx, 50 - dy)
+        coef[i, 0, 0], coef[i, 1, 0] = 100 - dx, 50 - dy
+        coef[i, 0, 1], coef[i, 1, 2] = 100, 50                   # no rotation, the same scale
+    np.savez(reg / "reg.npz", coef=coef)
+    dirs = {"calibrate": cal, "register": reg}
+    monkeypatch.setattr(si.api, "stage_outputs", lambda p, wid, stage, which="current": (
+        api.StageOutputs(stage, "k", which, str(dirs[stage])) if stage in dirs else None))
+    nan = np.full(3, np.nan)
+    d = RegistrationData(["a", "b", "c"], [""] * 3, nan, nan, nan, nan, nan, nan, np.ones(3, bool), nan.copy(),
+                         nan.copy(), 0, None)
+    assert si.sensor_size(None, 1) == (200.0, 100.0)
+    si._offsets_anyway(None, 1, "current", d)
+    assert d.dx.tolist() == pytest.approx([0, 5, 9]) and d.dy.tolist() == pytest.approx([0, -2, 4])
+
+
+def test_the_pictures_are_placed_on_the_reference_frame_of_their_registration(tmp_path, monkeypatch):
+    """Every picture on the stack grid sits on the registration's reference frame at the drizzle scale; an engine
+    preview of it (a reduced copy) and the final image (a crop at half size) too: Compare puts them on each other."""
+    from astro_gpu.client import imageview as iv
+    st = tmp_path / "stack"
+    st.mkdir()
+    (st / "drz_meta.json").write_text(json.dumps({"scale": 1.5, "width": 600, "height": 450, "sensor": [400, 300]}),
+                                      encoding="utf-8")
+    monkeypatch.setattr(si.api, "stage_outputs", lambda p, wid, stage, which="current": (
+        api.StageOutputs("stack", "s1", which, str(st), manifest={"inputs": {"register": "r1"}})
+        if stage == "stack" else None))
+    full = si.stack_place(None, 1)(600, 450)
+    assert full.frame == ("reference frame", "r1") and full.m == pytest.approx((1 / 1.5, 0, 0, 0, 1 / 1.5, 0))
+    preview = si.stack_place(None, 1)(150, 113)                     # a quarter of the grid (rounded up)
+    assert preview.m[0] == pytest.approx(4 / 1.5) and preview.m[4] == pytest.approx(450 / 113 / 1.5)
+    final = si.render_place(None, 1, "current", (480, 320), (64, 96), (240, 160))(240, 160)
+    assert final.frame == full.frame
+    # pixel (10, 20) of the final image is pixel (64 + 20, 96 + 40) of the stack: (84 / 1.5, 136 / 1.5) on the frame
+    assert final.matrix() @ np.array([10.0, 20.0, 1.0]) == pytest.approx([84 / 1.5, 136 / 1.5, 1.0])
+    ref = si.reference_frame_place(None, 1)(400, 300)
+    assert ref.frame == full.frame and ref.m == iv.Placement(ref.frame).m
+
+
+def test_the_output_says_what_the_final_image_is():
+    """One line under Output says what the final image is and which steps it holds: the simple output is the Gradient
+    removed picture with Post's stretch, the engine's rendering is another preparation."""
+    from astro_gpu.client import steps as st
+    base = {"stack", "color", "background_poly", "render_simple"}
+    assert st.output_note("render_simple", base) == st.OUTPUT_SIMPLE_NOTE
+    assert st.output_note("render_simple", base | {"denoise"}) == st.OUTPUT_SIMPLE_DENOISED_NOTE
+    assert st.output_note("render_simple", {"stack", "color", "render_simple"}) == st.OUTPUT_COLOR_NOTE
+    assert st.output_note("render_simple", {"stack", "render_simple"}) == st.OUTPUT_RAW_NOTE
+    assert st.output_note("render_prep", base) == st.OUTPUT_ENGINE_NOTE
+    assert st.output_note("render_prep_learned", base) == st.OUTPUT_LEARNED_NOTE
+    assert "Final image = Gradient removed, then the steps of Post" in st.OUTPUT_SIMPLE_NOTE
+    assert "not the Gradient removed picture" in st.OUTPUT_ENGINE_NOTE
+
+
 def test_the_tables_and_the_charts_of_the_blocks(qapp):
     from astro_gpu.client.tune import ColorFitChart, WeightsChart, colour_index, make_table, per_channel, weight_rows
     t = make_table(["Frame", "Weight"], [["b", 2.0], ["a", 10.0], ["c", None]], {1: 2}, [False, False, True])
@@ -1102,6 +1203,47 @@ def test_the_tables_and_the_charts_of_the_blocks(qapp):
              api.StarFit(30.0, 40.0, (0.5, 0.3, 0.2), (0.40, 0.35), None, None, False, "saturated", bp_rp=1.9)]
     cf = ColorFitChart(api.ColorFit(stars=stars))
     assert any(tr.name == "rejected" for tr in cf.traces) and cf.x_title.startswith("Catalogue colour")
+
+
+def test_the_stacking_tabs_say_the_frames_left_out_the_rejection_rate_and_the_coverage(qapp):
+    """Inspect > Stacking: each frame left out with the engine's reason (translated), the rejected pixels next to
+    Another processing program's 0.1-0.5 %, the drizzle's coverage variation per colour against DrizzlePac's 20 % (none for Classic)."""
+    from astro_gpu.client import i18n
+    from astro_gpu.client.tune import coverage_text, rejection_rate_text, weight_rows
+    rows = [api.FrameRow(i, f"p{i}", f"f{i}.ARW", 1, "2026-08-17T00:00:00", 3.0, 1.0, 0.4, 0.5, "", False)
+            for i in range(2)]
+    why = "stars {sigma:.1f} σ larger than the night's median ({value:.1f} px for {median:.1f} px): wind, focus or seeing?"
+
+    class Bundle:
+        frames = api.FrameTable(rows, 2, 0.6, 2.0, "stack")
+        diag = api.StackDiag(weights=[("f0.ARW", 0.0, None, None), ("f1.ARW", 0.7, None, None)],
+                             excluded={"f0.ARW": "stars 4.0 σ larger ..."},
+                             exclusions={"f0.ARW": [{"code": "fwhm", "template": why,
+                                                     "args": {"sigma": 3.99, "value": 3.04, "median": 1.87}}]},
+                             rejection={"rejected_pct": 0.83, "reference_pct": [0.1, 0.5]},
+                             coverage={"variation": {"R": 0.26, "G": 0.08, "B": 0.19}, "estimate": {"limit": 0.2}})
+    wr = weight_rows(Bundle())
+    assert wr[0]["why"] == "stars 4.0 σ larger than the night's median (3.0 px for 1.9 px): wind, focus or seeing?"
+    assert wr[1]["why"] == ""
+    t = rejection_rate_text(Bundle.diag)
+    assert "Rejected pixels: 0.83 %" in t and "Usual range: 0.1 to 0.5 %" in t and "above it" in t
+    assert "#e6a23c" in t.lower()                                       # amber: outside the usual range
+    c = coverage_text(Bundle.diag, True)
+    assert "red" in c and "26 %" in c and "blue" in c and "under 20 % (DrizzlePac)" in c
+    assert coverage_text(Bundle.diag, False) == ""                      # Classic: the colours are filled alike
+    ok = api.StackDiag(rejection={"rejected_pct": 0.3, "classic": "winsorized",
+                                  "reason_template": {"template": "{n} frames: winsorized sigma clipping", "args": {"n": 9}}})
+    t = rejection_rate_text(ok)
+    assert "#5fbf7f" in t and "Rejection: Winsorized sigma clipping" in t
+    appmod.apply_language("fr")
+    try:
+        assert weight_rows(Bundle())[0]["why"].startswith("étoiles plus grosses de 4,0 σ que la médiane")
+        assert "Pixels rejetés : 0,83 %" in rejection_rate_text(Bundle.diag)
+        assert "rouge" in coverage_text(Bundle.diag, True)
+        left = {x for x in i18n.missing() if "Rejected" in x or "Coverage" in x or "range" in x}
+        assert not left, left
+    finally:
+        appmod.apply_language("en")
 
 
 # ---------------------------------------------------------------------------------------------- the French, the look

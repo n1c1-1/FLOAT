@@ -807,6 +807,19 @@ def test_the_panel_lists_the_settings_of_the_engine(world, model, page):
     page.panel.expert = False
 
 
+def test_the_colour_block_offers_one_factor_per_colour(world, model, page):
+    """The colour correction (2 November): a normal setting of the Colour block, full correction by default, its
+    choices in words."""
+    page.select_node(node(page, "couleur"))
+    settle(world["w"], page)
+    rows = {r.r["key"]: r for r in live_rows(page)}
+    assert "color.correction" in rows
+    r = rows["color.correction"].r
+    assert r["label"] == "Colour correction" and r["value"] == "full" and not r["changed"]
+    assert r["choices"] == [("full", "Full correction"), ("per_colour", "One factor per colour")]
+    assert "One factor per colour" in r["help"]
+
+
 def test_a_settings_row_changes_marks_and_goes_back_to_the_suggestion(world, model, page):
     page.select_node(node(page, "debruitage"))
     settle(world["w"], page)
@@ -833,25 +846,203 @@ def test_a_settings_row_changes_marks_and_goes_back_to_the_suggestion(world, mod
     assert model.state(model.view(1), "denoise") == "done"
 
 
-def test_selection_thresholds_come_from_the_stack_settings(world, model, page):
+def stack_cards(page):
+    from astro_gpu.client.panel import StackMethodCard
+    return [c for c in page.panel.findChildren(StackMethodCard) if c.isVisibleTo(page.panel)]
+
+
+def test_the_stacking_method_is_chosen_on_cards_and_shows_only_its_own_settings(world, model, page):
+    """Drizzle (the default) and Classic stack, from the engine's list of methods: each shows its own settings only;
+    choosing the other on a computed stack asks Replace or Try as variant; the withdrawn switches never show."""
+    page.select_node(node(page, "empilement"))
+    settle(world["w"], page)
+    page.panel.expert = True
+    page.panel.refresh(page.panel.node)
+    settle(world["w"], page)
+    cards = stack_cards(page)
+    assert [c.key for c in cards] == ["drizzle", "classic"] and [c.on for c in cards] == [True, False]
+    texts = " ".join(texts_of(page.panel))
+    assert "Drizzle" in texts and "Classic stack" in texts
+    keys = {r.r["key"] for r in live_rows(page)}
+    assert {"stack.scale", "stack.pixfrac", "stack.kappa"} <= keys
+    assert not any(k.startswith("stack.classic_") for k in keys) and "stack.method" not in keys
+    assert "stack.rejection" not in keys                          # Hubble withdrawn: nothing left to choose
+    rows = {r.r["key"]: r.r for r in live_rows(page)}
+    for key, gone in (("stack.weighting", "noise"), ("stack.normalisation", "local")):
+        if key in rows:
+            assert gone not in [c[0] for c in rows[key]["choices"]], key
+    done = model.state(model.view(1), "stack") == "done"
+    cards[1].clicked.emit()                                       # Classic stack
+    settle(world["w"], page)
+    ch = model.pending_change
+    if done:                                                      # a computed stack: Replace or Try as variant
+        assert ch and ch["kind"] == "param" and (ch["stage"], ch["name"], ch["value"]) == ("stack", "method",
+                                                                                           "classic")
+        button(page.panel, "Replace").click()
+        settle(world["w"], page)
+    else:
+        assert ch is None
+    assert model.view(1).params["stack"]["method"] == "classic"
+    cards = stack_cards(page)
+    assert [c.on for c in cards] == [False, True]
+    keys = {r.r["key"] for r in live_rows(page)}
+    assert {"stack.classic_debayer", "stack.classic_interpolation", "stack.classic_clamping",
+            "stack.classic_rejection"} <= keys
+    assert not keys & {"stack.scale", "stack.pixfrac", "stack.kappa", "stack.scale_rule", "stack.gain"}
+    labels = {r.r["name"]: r.r["label"] for r in live_rows(page)}
+    assert labels["classic_debayer"] == "Debayering" and labels["classic_clamping"] == "Clamping"
+    # the register's per-block colour alignment is withdrawn too: not in Registration
+    page.select_node(node(page, "alignement"))
+    settle(world["w"], page)
+    assert "register.channel_align" not in {r.r["key"] for r in live_rows(page)}
+    page.panel.expert = False
+    model.undo()
+    settle(world["w"], page)
+    assert "method" not in (model.view(1).params.get("stack") or {})
+
+
+def test_the_engine_advice_is_a_recommended_outline_that_never_changes_the_method(world, model, page, monkeypatch):
+    """The engine's advice on "method" (ParamInfo.advice, here a fake one: Classic, with its reason) puts a discreet
+    "Recommended" outline and an "i" with the reason on that card; the method stays the user's."""
+    import copy
+
+    from astro_gpu.client import i18n
+    from astro_gpu.client.widgets import ACCENT
+    real = model.param_info
+    reason = "{n} frames (drizzle needs 15): Classic"                     # one of the engine's (core/coverage.py)
+
+    def fake(p, stage, name):
+        info = real(p, stage, name)
+        if (stage, name) == ("stack", "method") and info is not None:
+            info = copy.copy(info)
+            info.advice, info.advice_reason, info.advice_args = "classic", reason, {"n": 12}
+        return info
+    monkeypatch.setattr(model, "param_info", fake)
+    page.select_node(node(page, "empilement"))
+    settle(world["w"], page)
+    page.panel.refresh(page.panel.node)
+    settle(world["w"], page)
+    cards = {c.key: c for c in stack_cards(page)}
+    assert cards["drizzle"].on and not cards["drizzle"].recommended and cards["drizzle"].tag is None
+    rec = cards["classic"]
+    assert rec.recommended and not rec.on and rec.tag.text() == "Recommended"
+    assert ACCENT in rec.tag.styleSheet() and "border-radius" in rec.tag.styleSheet()
+    assert rec.info.text() == "i" and rec.info.toolTip() == "12 frames (drizzle needs 15): Classic"
+    assert model.pending_change is None and "method" not in (model.view(1).params.get("stack") or {})
+    # in French: the outline and the reason are translated
+    appmod.apply_language("fr")
+    try:
+        page.panel.refresh(page.panel.node)
+        settle(world["w"], page)
+        rec = {c.key: c for c in stack_cards(page)}["classic"]
+        assert rec.tag.text() == "Conseillé" and rec.info.toolTip() == "12 images (le drizzle en demande 15) : Classique"
+        assert "Recommended" not in i18n.missing()
+    finally:
+        appmod.apply_language("en")
+    # the engine's own advice (none: nothing is marked)
+    from astro_gpu.client.settings import method_advice
+    monkeypatch.setattr(model, "param_info", real)
+    page.panel.refresh(page.panel.node)
+    settle(world["w"], page)
+    adv = method_advice(model, model.path)
+    assert [c.key for c in stack_cards(page) if c.recommended] == ([adv[0]] if adv else [])
+
+
+def test_the_selection_rule_is_said_and_the_thresholds_act_only_with_the_thresholds_rule(world, model, page):
+    """The Selection panel says the active rule in plain words (min_weight by default, k × σ, thresholds); the two
+    threshold editors are enabled with the thresholds rule only, with a one-line reason otherwise; the chart has no
+    grips then. In French too. (The state of Registration does not matter here: the stored rule is set in memory.)"""
+    from PySide6.QtWidgets import QDoubleSpinBox, QLabel
     model.scope = None
     page.select_node(node(page, "selection"))
     settle(world["w"], page)
-    t, f = model.thresholds_now()
-    assert t == 60 and abs(f - 2.0 * 3.95) < 1e-6 and model.thresholds_unit() == "px"
-    st, sf = model.suggested_thresholds()
-    assert st == 60 and abs(sf - f) < 1e-6
-    assert model.kept_frames() == 40 and any("40 of 40 frames kept" in t for t in texts_of(page.panel))
-    # a change goes through the same choice (the stack is done)
-    page.panel.propose_selection(70, f)
-    settle(world["w"], page)
-    assert model.pending_change and model.pending_change["kind"] == "params"
-    assert model.pending_change["items"][0] == ("stack", "min_transparency", 0.7)
-    button(page.panel, "Cancel").click()
-    model.request_selection(70, f)
-    settle(world["w"], page)
-    assert model.kept_frames() <= 40 and model.selection_total() == 40
-    assert "transparency ≥ 60 % · stars ≤ 7.9 px" in Graph(model).summary(node(page, "selection"))
+    stored = model.path.params.setdefault("stack", {})
+    before = stored.get("selection", "<unset>")
+
+    def thresholds_editors():
+        return [e for e in page.panel.findChildren(QDoubleSpinBox)
+                if e.isVisibleTo(page.panel) and not isinstance(e.parent(), CompactRow)]
+
+    def reason():
+        return [b.text() for b in page.panel.findChildren(QLabel) if b.objectName() == "thresholds_reason"
+                and b.isVisibleTo(page.panel)]
+    try:
+        assert model.selection_rule() == "min_weight" and not model.thresholds_active()      # the default
+        for rule, said, live, summary in (
+                ("min_weight", "Every aligned frame is kept, except those weighing less than 5 % of the best one.",
+                 False, "every frame, weight ≥ 5 % of the best"),
+                ("sota", "Frames far worse than the night's median (over 2.5 σ) in star size, roundness or "
+                         "transparency are left out, then those weighing less than 5 % of the best one.", False,
+                 "k × σ filters · weight ≥ 5 % of the best"),
+                ("thresholds", "Frames under the minimum transparency or over the maximum star size below are left out.",
+                 True, "transparency ≥ ")):
+            stored["selection"] = rule
+            model._cache.clear()
+            page.panel.refresh(page.panel.node)
+            settle(world["w"], page)
+            assert model.selection_rule() == rule and model.thresholds_active() is live
+            assert said in texts_of(page.panel)
+            eds = thresholds_editors()
+            assert len(eds) == 2 and all(e.isEnabled() is live for e in eds), rule
+            assert reason() == ([] if live else ["These thresholds act only when the frame selection is “Thresholds”."]), rule
+            assert summary in Graph(model).summary(node(page, "selection"))
+            assert any(r.r["key"] == "stack.selection" for r in live_rows(page))      # the rule is chosen right here
+        # in French
+        stored["selection"] = "min_weight"
+        model._cache.clear()
+        appmod.apply_language("fr")
+        try:
+            page.panel.refresh(page.panel.node)
+            settle(world["w"], page)
+            assert "Toutes les images alignées sont gardées, sauf celles qui pèsent moins de 5 % de la meilleure."                 in texts_of(page.panel)
+            assert reason() == ["Ces seuils n'agissent que si la sélection des poses est sur « Seuils »."]
+        finally:
+            appmod.apply_language("en")
+    finally:
+        if before == "<unset>":
+            stored.pop("selection", None)
+        else:
+            stored["selection"] = before
+        if not stored:
+            model.path.params.pop("stack", None)
+        model._cache.clear()
+
+
+def test_selection_thresholds_come_from_the_stack_settings(world, model, page):
+    """With the previous selection rule ("legacy": the only one the thresholds act with) they are the stack's settings
+    and the panel's count is the engine's preview. (Needs Registration done at the present settings.)"""
+    model.scope = None
+    stored = model.path.params.setdefault("stack", {})
+    before = stored.get("selection", "<unset>")
+    stored["selection"] = "legacy"
+    model._cache.clear()
+    try:
+        page.select_node(node(page, "selection"))
+        settle(world["w"], page)
+        assert model.thresholds_active()
+        t, f = model.thresholds_now()
+        assert t == 60 and abs(f - 2.0 * 3.95) < 1e-6 and model.thresholds_unit() == "px"
+        st, sf = model.suggested_thresholds()
+        assert st == 60 and abs(sf - f) < 1e-6
+        assert model.kept_frames() == 40 and any("40 of 40 frames kept" in t for t in texts_of(page.panel))
+        # a change goes through the same choice (the stack is done)
+        page.panel.propose_selection(70, f)
+        settle(world["w"], page)
+        assert model.pending_change and model.pending_change["kind"] == "params"
+        assert model.pending_change["items"][0] == ("stack", "min_transparency", 0.7)
+        button(page.panel, "Cancel").click()
+        model.request_selection(70, f)
+        settle(world["w"], page)
+        assert model.kept_frames() <= 40 and model.selection_total() == 40
+        assert "transparency ≥ 60 % · stars ≤ 7.9 px" in Graph(model).summary(node(page, "selection"))
+    finally:
+        if before == "<unset>":
+            stored.pop("selection", None)
+        else:
+            stored["selection"] = before
+        if not stored:
+            model.path.params.pop("stack", None)
+        model._cache.clear()
 
 
 # ---------------------------------------------------------------------------------------------- Spec mode
@@ -1199,13 +1390,17 @@ def test_a_change_of_an_automatic_setting_is_seen_by_the_what_if(world, model, p
 def test_no_setting_of_the_engine_is_out_of_reach(world, model, page):
     """Every setting a stage describes (but the ones the project or the options own) has a row in the panel of its
     block, in some workflow; no row is listed twice in a panel."""
-    from astro_gpu.client.settings import HIDDEN
+    from astro_gpu.client.settings import HIDDEN, setting_method, stack_method
     want = set()
     for v in model.paths:
         for stage in model.all_stages(v):
             for info in api.describe(model.p, v.pid, stage):
-                if info.level != "internal" and (stage, info.name) not in HIDDEN:
-                    want.add(f"{stage}.{info.name}")
+                if info.level == "internal" or (stage, info.name) in HIDDEN:
+                    continue
+                m = setting_method({"stage": stage, "name": info.name})
+                if m is not None and m != stack_method(model, v):
+                    continue                                      # the other stacking method's (its own test)
+                want.add(f"{stage}.{info.name}")
     got = set()
     page.panel.expert = True
     for v in model.paths:

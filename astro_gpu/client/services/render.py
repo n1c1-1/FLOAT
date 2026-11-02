@@ -464,6 +464,7 @@ class Request:
     overlay: bool = False                               # a red overlay of the first wanted mask
     need_thumbs: tuple = ()                             # (thumbs kind) the ids of the workflow layers to thumbnail
     refine: bool = False                                # (half) first the exact 1/4, shown at once ("refine")
+    hists: tuple = ()                                   # ids of filters whose input's histograms come back (not drafts)
     seq: int = 0
     tag: Any = None
 
@@ -488,6 +489,7 @@ class Result:
     device: str = "cpu"
     tag: Any = None
     missing: tuple = ()                                 # image layers' keys whose image was not found
+    hists: dict = field(default_factory=dict)           # filter id -> {channel: counts}: the Curves editor's histograms
 
 
 _RETIRED: list = []                    # workers asked to stop that were still busy: kept until their thread ends
@@ -535,12 +537,12 @@ class Renderer:
             layers = self._before_layers(layers)
         if req.kind == "half" and req.refine and req.box is None and emit is not None:
             first = Request(kind="refine", layers=layers, level=req.level + 1, want=req.want, overlay=req.overlay,
-                            seq=req.seq, tag=req.tag)
+                            hists=req.hists, seq=req.seq, tag=req.tag)
             emit(self.run(first, stop))
             t0 = time.perf_counter()
             self.source.engine_ms = 0.0
         comp = cp.compose(layers, req.level, req.box, want=req.want, thumbs=req.thumbs, stop=stop,
-                          draft=req.kind == "draft")
+                          draft=req.kind == "draft", hists=() if req.kind == "draft" else req.hists)
         if stop is not None and stop():                       # a newer request came meanwhile: this answer is stale
             raise Superseded()
         if comp is None:
@@ -548,6 +550,7 @@ class Renderer:
         res = Result(req.seq, req.kind, req.level, comp.box, to_u8(comp.rgb), cp.canvas_of(layers), comp.masks,
                      None, comp.mask_thumbs, {}, set(), 0.0, self.source.engine_ms, comp.drawn, comp.notes,
                      self.device, req.tag)
+        res.hists = comp.hists
         if req.overlay and req.want and req.want[0] in comp.masks:
             res.overlay = red_overlay(comp.masks[req.want[0]])
         res.previews = {lay["pid"] for lay in layers if lay["kind"] == "workflow" and self.source.available(lay["pid"])
@@ -655,6 +658,22 @@ def _solution(sol):
         return WCS(fits.getheader(sol) if isinstance(sol, str | Path) else sol, naxis=2)
 
 
+def export_header(sol):
+    """The solution as the export writes it: the header of the workflow's wcs.fits without its empty image axes (that
+    file holds a header only, NAXIS = 0, which astropy notes with a warning on every FITS export when it builds the
+    WCS of the exported image). A header or a WCS goes through as it is."""
+    if not isinstance(sol, str | Path):
+        return sol
+    from astropy.io import fits
+    try:
+        h = fits.getheader(sol)
+    except OSError:
+        return sol
+    for key in [k for k in h if k == "NAXIS" or (k.startswith("NAXIS") and k[5:].isdigit())]:
+        del h[key]
+    return h
+
+
 def canvas_annotations(sol, canvas, show: dict):
     """The sky grid and the named objects of Post's canvas (``annotate.field_annotations`` on the solution of the
     bottom workflow's grid, moved to the canvas's origin)."""
@@ -705,7 +724,7 @@ def run_export(renderer: Renderer, job: ExportJob, progress, stop=None,
         if (ga.W, ga.H) != (gb.W, gb.H):
             ref_pid = None
     sol = renderer.wcs_of(ref_pid) if ref_pid is not None and getattr(renderer, "wcs_of", None) else None
-    wcs = sol if job.wcs else None
+    wcs = export_header(sol) if job.wcs else None
     meta = {"wcs": wcs, "origin": canvas.origin, "wf": ref_pid if job.wcs else None,
             "history": history_of(job, renderer, canvas) if job.history else None}
     rgb = np.ascontiguousarray(np.moveaxis(comp.rgb, -1, 0))
@@ -876,7 +895,9 @@ class RenderWorker(QThread):
         """The export through the engine API (render/export), into the folder chosen and nowhere else."""
         from ... import api
         m = {"origin": meta.get("origin"), "history": meta.get("history"), "out_dir": str(out_dir)}
-        if meta.get("wf") is not None:
+        if meta.get("wcs") is not None:              # the solution's header as run_export read it (export_header)
+            m["wcs"] = meta["wcs"]
+        elif meta.get("wf") is not None:
             m["wf"] = meta["wf"]
         return api.export_image(self.project, rgb, m, opts)
 

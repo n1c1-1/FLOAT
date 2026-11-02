@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
+from pydantic import field_validator
 from scipy.optimize import least_squares, nnls
 
 from ..core.params import ADVANCED, Auto, P, StageParams
@@ -22,6 +23,15 @@ OIII_LINES = {500.7: 1.0, 495.9: 0.33, 486.1: 0.3}
 PROFILES = STATE / "camera_profiles"   # per-user state (core/project.py)
 #: the fit of every catalogue star, for the Inspect mode (``star_fit``; an extra file: an older result lacks it)
 STARS = "color_stars.npz"
+#: ``response_source`` when no sensitivity curves are trusted: no matrix, one factor per colour (SPCC's white balance)
+PER_COLOUR = "one factor per colour (no reliable sensitivity curves)"
+#: ``correction``: "full" (a colour matrix when sensitivity curves are trusted, else one factor per colour) or
+#: "per_colour" (always one factor per colour: the white balance of the PER_COLOUR fallback, never a matrix). Added
+#: 2 November with "full" as its static default, the behaviour before it: out of the key at that default
+#: (core/store.py), so the results computed before it keep their keys
+CORRECTIONS = ("full", "per_colour")
+#: the ``correction`` metric: what the matrix applied is
+APPLIED = {"matrix": "colour matrix", "per_colour": "one factor per colour"}
 
 
 class ColorParams(StageParams):
@@ -53,6 +63,19 @@ class ColorParams(StageParams):
                                  help="A camera profile is accepted if it predicts the measured star colours of this "
                                       "field within this scatter (a modified / unmodified camera of the same model "
                                       "fails this test).")
+    correction: str = P("full", label="Colour correction", choices=list(CORRECTIONS),
+                        help="Full: when the sensitivity curves of the camera predict the star colours, a colour "
+                             "matrix mixes the three colours of the sensor to make the star colours right; otherwise "
+                             "one factor per colour. One factor per colour: always only the white balance of the "
+                             "stars. Less colour noise, but the star colours are less corrected.",
+                        tip="The colour matrix can multiply the colour noise up to 4 times. Choose one factor per "
+                            "colour for a noisy image or when the star colours matter less than a clean background.")
+
+    @field_validator("correction")
+    @classmethod
+    def _choice(cls, v: str, info) -> str:
+        from .register import check_choice
+        return check_choice(info.field_name, v, CORRECTIONS)
 
 
 class Color(Stage):
@@ -66,8 +89,11 @@ class Color(Stage):
     Params = ColorParams
     # 2: physical check, camera profiles, synthetic spectra in the matrix fit; 3: a star is left out when a sample of
     # its aperture was near saturation in a frame (the stack's map), not when its peak passes 45 % of the brightest
-    # pixel (on heart_a7s that left out 1121 of 4000 stars; on m8, half of them had no sample above 65 %)
-    version = "3"
+    # pixel (on heart_a7s that left out 1121 of 4000 stars; on m8, half of them had no sample above 65 %); 4: the
+    # white point set by the stars' white balance (star_white_balance, as SPCC), not by the matrix fit alone; 5: when
+    # neither the fitted curves, a profile nor the typical curves are trusted (profile_tolerance), one factor per
+    # colour (PER_COLOUR) instead of a matrix fitted on curves that do not predict the stars
+    version = "5"
 
     def auto(self, ctx: Context) -> dict[str, Auto]:
         try:
@@ -118,15 +144,34 @@ class Color(Stage):
             agree = colour_agreement(xp["flux"][idx], lam, cam, gen)
             S = gen * np.median(cam / predict(xp["flux"][idx], lam, gen), 0)[:, None]
             rel = [agree / 100] * 3
-            source = "generic colour sensor"
             ctx.metric("generic_agreement_pct", round(agree, 2))
-            ctx.log(f"the sensitivity curves found are not physical ({why}) and no validated profile of this camera "
-                    f"is available: the curves of a typical colour sensor are used, scaled to this field's stars "
-                    f"(they predict them within {agree:.1f} %). Processing a Milky Way field with the same camera "
-                    f"first gives it its own profile", "warning")
+            if agree <= p.profile_tolerance:
+                source = "generic colour sensor"
+                ctx.log(f"the sensitivity curves found are not physical ({why}) and no validated profile of this "
+                        f"camera is available: the curves of a typical colour sensor are used, scaled to this field's "
+                        f"stars (they predict them within {agree:.1f} %). Processing a Milky Way field with the same "
+                        f"camera first gives it its own profile", "warning")
+            else:
+                # the typical curves do not predict this field's stars either (the test a camera profile must pass):
+                # a matrix fitted between them and the stars mixes the channels with large opposite terms (heart's
+                # Another processing program-debayered Classic stack, 2 November: generic curves 17.9 % off, red noise x 2.4 and H-alpha
+                # rendered orange). No curves are trusted, so no matrix: one factor per colour from the stars' white
+                # balance, as the spectrophotometric calibrations of another processing program and a reference processing suite make it (SPCC [P21][S13])
+                source = PER_COLOUR
+                ctx.log(f"the sensitivity curves found are not physical ({why}), and neither a profile of this camera "
+                        f"nor the curves of a typical colour sensor predict this field's star colours (the typical "
+                        f"curves within {agree:.1f} %, more than {p.profile_tolerance:.1f} %): the colours are "
+                        f"calibrated with one factor per colour from the stars' white balance, as the usual "
+                        f"photometric colour calibrations do", "warning")
         elif p.camera_profile and camera and max(rel) < 0.06:
             save_profile(camera, lam, S, ctx.project.config.name, max(rel))
         ctx.metric("response_source", source)
+        # one factor per colour: when no curves are trusted, or when the settings ask for it (the same white balance,
+        # never a matrix: less colour noise, the star colours less corrected)
+        per_colour = source == PER_COLOUR or p.correction == "per_colour"
+        if p.correction == "per_colour" and source != PER_COLOUR:
+            ctx.log("one factor per colour from the stars' white balance, as chosen in the settings: no colour matrix")
+        ctx.metric("correction", APPLIED["per_colour" if per_colour else "matrix"])
         cam_hii, xyz_hii = line_vec(S, lam, HII_LINES)
         cam_oiii, xyz_oiii = line_vec(S, lam, OIII_LINES)
         xyz = xp["xyz"][idx]
@@ -154,14 +199,22 @@ class Color(Stage):
                 r.append(w * (qa - xv / xv.sum())[:2])
             return np.concatenate(r)
 
-        sol = least_squares(resid, M0.ravel(), loss="soft_l1", f_scale=0.01)
-        M = sol.x.reshape(3, 3)
+        W_ref = white_xyz(p.white_temp)
+        W_d65 = colour.xy_to_XYZ(colour.CCS_ILLUMINANTS["CIE 1931 2 Degree Standard Observer"]["D65"])
+        to_out = XYZ_TO_SRGB @ bradford(W_ref, W_d65)
+        if per_colour:
+            M = np.linalg.inv(to_out)          # camera colours as the output's: the white balance below is all
+        else:
+            sol = least_squares(resid, M0.ravel(), loss="soft_l1", f_scale=0.01)
+            M = sol.x.reshape(3, 3)
+        wb = star_white_balance(cam @ (to_out @ M).T, xyz @ to_out.T)
+        ctx.metric("white_balance", [round(float(v), 4) for v in wb["k"]])
+        ctx.metric("white_balance_stars", wb["stars"])
+        M = np.linalg.solve(to_out, np.diag(wb["k"]) @ to_out @ M)       # the camera -> XYZ matrix applied
         q = cam_n @ M.T
         q = q / q.sum(1, keepdims=True)
         rs = np.hypot(*(q - xyz_n)[:, :2].T)
-        W_ref = white_xyz(p.white_temp)
-        W_d65 = colour.xy_to_XYZ(colour.CCS_ILLUMINANTS["CIE 1931 2 Degree Standard Observer"]["D65"])
-        Mtot = XYZ_TO_SRGB @ bradford(W_ref, W_d65) @ M
+        Mtot = to_out @ M
         white_cam = np.linalg.solve(Mtot, np.ones(3))
         Mtot = Mtot * white_cam.mean()
         ctx.save("M.npy", Mtot)
@@ -174,11 +227,43 @@ class Color(Stage):
         resp = {f"{l0:.0f}nm": [round(float(np.interp(l0, lam, S[c]) / S.max()), 3) for c in range(3)]
                 for l0 in (486.1, 500.7, 656.3)}
         ctx.metric("response_at_lines", resp)
-        if np.median(rs) > 0.03 or (np.diag(Mtot) < 0).any():
+        if (np.median(rs) > 0.03 and p.correction != "per_colour") or (np.diag(Mtot) < 0).any():
             ctx.log("the colour fit is poor: check that the colour pattern (Bayer) of the camera is right",
                     "warning")
         ctx.log(f"spectral response from {len(idx)} Gaia XP stars, chromaticity residual {np.median(rs):.4f}")
         ctx.preview("spectral_response", response_plot(lam, S, len(idx)))
+
+
+def star_white_balance(measured, expected) -> dict:
+    """The white balance of the stars, as the spectrophotometric colour calibrations make it (a reference processing suite's SPCC
+    [P21], another processing program's SPCC [S13]): for red and blue, a robust straight line through the stars' measured colour ratio
+    (c / green) against the ratio their catalogue spectrum gives, evaluated at the ratio of the white reference; the
+    factor brings that value to the white reference's. Here the ratios are taken after the colour matrix, against the
+    Gaia XP spectra put in the same output space (``measured``, ``expected`` (N, 3); the white reference is (1, 1, 1)
+    there), so the white point no longer rests on the matrix's least-squares fit alone: the stars of a demosaiced
+    stack have their colours pulled towards grey (RCD takes the fine detail of red and blue from green), which makes
+    the fitted sensitivity curves overlap and moved heart's white from BP-RP 0.88 to 0.71. The line is Theil-Sen's
+    (the median of the pairwise slopes, Sen 1968), robust to the per-star scatter. Returns {"k": (3,) factors (green
+    1), "stars": the stars used, "at_white": the measured red and blue ratios at the white reference}.
+
+    [P21] a reference processing suite SpectrophotometricColorCalibration documentation (2022): the calibration factors are the
+    fitted functions evaluated at the white reference; [S13] another processing program 1.2 documentation, Spectrophotometric Color
+    Calibration."""
+    from scipy.stats import theilslopes
+    m, e = np.asarray(measured, float), np.asarray(expected, float)
+    ok = np.isfinite(m).all(1) & np.isfinite(e).all(1) & (m > 0).all(1) & (e > 0).all(1)
+    k = np.ones(3)
+    at = [1.0, 1.0]
+    if ok.sum() < 20:
+        return {"k": k, "stars": int(ok.sum()), "at_white": at}
+    for j, c in enumerate((0, 2)):
+        x, y = e[ok, c] / e[ok, 1], m[ok, c] / m[ok, 1]
+        slope, intercept = theilslopes(y, x)[:2]
+        v = float(intercept + slope * 1.0)
+        if np.isfinite(v) and v > 0:
+            k[c] = 1.0 / v
+            at[j] = v
+    return {"k": k, "stars": int(ok.sum()), "at_white": at}
 
 
 def saturation_map(ctx: Context, clipped: bool = False) -> np.ndarray | None:

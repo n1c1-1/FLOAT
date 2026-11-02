@@ -130,25 +130,22 @@ class FakeCtx:
 
 
 def _stack_ctx(tmp_path, n, fwhm, low):
-    """n frames of star size fwhm, the first ``low`` of them with a transparency of 0.2 (the others 1)."""
+    """n frames of star size fwhm, the first ``low`` of them with a transparency of 0.2 (the others 1). (The drizzle
+    scale and drop size come from the coverage rule, whose reasons are in tests/test_coverage.py.)"""
     transp = np.ones(n)
     transp[:low] = 0.2
     np.savez(tmp_path / "register_reg.npz", fwhm=np.full(n, fwhm), rms=np.full(n, 0.2), transp=transp)
     rng = np.random.default_rng(1)
     np.save(tmp_path / "calibrate_frame_stats.npy", rng.uniform(50, 100, (n, 4, 2)))
-    return FakeCtx(tmp_path, metrics={("calibrate", "dark_frame_noise"): 2.0, ("calibrate", "cache_scale"): 1.0})
+    project = SimpleNamespace(overrides=lambda stage: {})
+    return FakeCtx(tmp_path, metrics={("calibrate", "dark_frame_noise"): 2.0, ("calibrate", "cache_scale"): 1.0},
+                   jsons={("calibrate", "cache.json"): {}}, project=project)
 
 
 def _old_stack_reasons(n, f, frac, hb):
     """The reasons of stages/stack.py as its f-strings wrote them before P16."""
     out = {"half_block": f"{n} frames: blocks of {hb} give two half-stacks of about {n // 2} frames"
                          + ("" if hb == 20 else " (blocks of 20 need 80 frames)")}
-    if f < 3.0 and n >= 150:
-        out["scale"] = f"small stars (FWHM {f:.1f} px) and {n} frames"
-    elif f < 5.5 and n >= 40:
-        out["scale"] = f"FWHM {f:.1f} px with {n} frames: under-sampled, enough frames to drizzle"
-    else:
-        out["scale"] = f"FWHM {f:.1f} px / {n} frames: drizzling would add noise without detail"
     if frac > 0.5:
         out["min_transparency"] = (f"{100 * frac:.0f} % of frames are below 60 % transparency: only the "
                                    "worst (below 30 %) are excluded")
@@ -160,14 +157,22 @@ def _old_stack_reasons(n, f, frac, hb):
     return out
 
 
+def _no_coverage_rule(monkeypatch):
+    """The coverage rule's suggestion stubbed (it reads the registration polynomials this toy has not)."""
+    from astro_gpu.stages import stack
+    rule = SimpleNamespace(scale=Auto(1.0, "rule"), pixfrac=Auto(1.0, "rule"), method=Auto("drizzle", "rule"))
+    monkeypatch.setattr(stack, "drizzle_suggestion", lambda *a, **k: rule)
+
+
 @pytest.mark.parametrize("n, fwhm, low", [
     (100, 4.5, 0),           # blocks of 20, scale 1.5, stable
     (60, 4.5, 6),            # blocks of 15, 10 % lost
     (200, 2.5, 120),         # small stars, 60 % lost
     (30, 6.5, 3),            # few frames, big stars
 ])
-def test_stack_gives_the_same_english_and_the_same_values(tmp_path, n, fwhm, low):
+def test_stack_gives_the_same_english_and_the_same_values(tmp_path, monkeypatch, n, fwhm, low):
     from astro_gpu.stages.stack import Stack
+    _no_coverage_rule(monkeypatch)
     auto = Stack().auto(_stack_ctx(tmp_path, n, fwhm, low))
     want = _old_stack_reasons(n, fwhm, low / n, int(max(1, min(20, n // 4))))
     for name, text in want.items():
@@ -175,7 +180,6 @@ def test_stack_gives_the_same_english_and_the_same_values(tmp_path, n, fwhm, low
         assert auto[name].text("en") == text
         assert auto[name].args is not None or auto[name].template == text
     assert auto["half_block"].value == int(max(1, min(20, n // 4)))
-    assert auto["scale"].value == (2.0 if fwhm < 3.0 and n >= 150 else 1.5 if fwhm < 5.5 and n >= 40 else 1.0)
     assert auto["min_transparency"].value == (0.3 if low / n > 0.5 else 0.6)
     assert {"read_noise", "gain"} <= set(auto)
     assert auto["read_noise"].reason == "noise of a single dark frame"
@@ -183,14 +187,15 @@ def test_stack_gives_the_same_english_and_the_same_values(tmp_path, n, fwhm, low
     # and in French, with the decimal comma
     fr = {k: a.text("fr") for k, a in auto.items()}
     assert fr["half_block"].startswith(f"{n} images : des blocs de ")
-    if fwhm < 5.5 and n >= 40 and fwhm == 4.5:
-        assert fr["scale"] == f"FWHM 4,5 px avec {n} images : image sous-échantillonnée, assez d'images pour le drizzle"
     for k, a in auto.items():
+        if a.template == "rule":
+            continue
         assert a.text("fr") != a.reason or not any(c.isalpha() for c in a.reason), k
 
 
-def test_stack_without_darks_reason(tmp_path):
+def test_stack_without_darks_reason(tmp_path, monkeypatch):
     from astro_gpu.stages.stack import Stack
+    _no_coverage_rule(monkeypatch)
     ctx = _stack_ctx(tmp_path, 100, 4.5, 0)
     ctx.metrics.clear()
     auto = Stack().auto(ctx)
@@ -461,3 +466,32 @@ def test_module_stays_light():
     import sys
     code = "import sys, astro_gpu.texts; assert not [m for m in sys.modules if m.startswith(('PySide', 'PyQt', 'torch'))]"
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_the_interface_names_no_other_software():
+    """2 November: no text that describes our methods names another processing program or a reference processing suite. The bench's own texts (the Home
+    section of the bench and its reference images) and the credits of the data we read (client/credits.py, the
+    names' source in Astrometry) do. The stored values keep their names ("another processing program" clamping, "integration" rejection),
+    shown in words; a reason an older result stored is reworded."""
+    import re
+
+    from astro_gpu.client.credits import DATA_SOURCES
+    bad = re.compile(r"(?i)siril|reference_suite|wbpp|spcc")
+    credits = {x for s in DATA_SOURCES for x in (s["use"], s.get("note")) if x}
+    bench = re.compile(r"(?i)bench against another processing program|both another processing program and astro_gpu|compared with another processing program|another processing program tutorial|"
+                       r"another processing program \(reference\)")
+    for f in sorted((texts.LOCALE / "fr").glob("*.json")):
+        for k, v in json.loads(f.read_text(encoding="utf-8")).items():
+            if bench.search(k) or k in credits:
+                continue
+            assert not bad.search(k) and not bad.search(v), (f.name, k)
+    for st in texts.stage_names():
+        for name in texts.param_names(st):
+            assert not any(bad.search(t) for t in texts.param_texts(st, name).values()), (st, name)
+    assert not [v for v in texts.CHOICE_TEXTS.values() if bad.search(v)]
+    assert not [t for t in texts.reason_templates() if bad.search(t)]
+    assert texts.choice_label("siril", "fr") == "Guide bilinéaire" and texts.choice_label("own") == "On the raw pixels"
+    old = "{n} frames: linear fit clipping ({low:g} / {high:g} σ), as a reference processing suite's WBPP from 16 frames"
+    args = {"n": 40, "low": 5, "high": 3.5}
+    assert texts.format_reason(old, args) == "40 frames: linear fit clipping (5 / 3.5 σ), the usual choice from 16 frames"
+    assert texts.format_reason(old, args, "fr").startswith("40 images : rejet par ajustement linéaire (5 / 3,5 σ)")

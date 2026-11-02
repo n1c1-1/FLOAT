@@ -521,6 +521,28 @@ def test_french_covers_every_shell_screen(env, qapp):
     assert not _untranslated(texts), _untranslated(texts)
 
 
+def test_about_credits_the_data_sources(env, qapp):
+    """Help › About lists every external data source with its licence and link (client/credits.py), in French too;
+    the acknowledgements the providers ask for stay as they wrote them."""
+    from astro_gpu.client.credits import DATA_SOURCES
+    w = appmod.Main()
+    for lang in ("en", "fr"):
+        appmod.apply_language(lang)
+        d = w.about_dialog()
+        t = d.findChild(QWidget, "data_sources").toPlainText()
+        for s in DATA_SOURCES:
+            assert s["name"] in t and s["licence"] in t, s["name"]
+        assert "OpenNGC" in t and "CC BY-SA 4.0" in t and "Steinicke" in t and "ESA/Gaia/DPAC" in t
+        # the shipped catalogues with their versions; Steinicke's terms as he wrote them, his address
+        assert "v20260501" in t and "8 February 2026" in t and "VII/7A" in t and "another processing program's catalogue lists" not in t
+        assert "steinicke-zehnle@t-online.de" in t and "Please inform the author Dr. Wolfgang Steinicke" in t
+        assert ("Sources des données" in t) == (lang == "fr")
+        d.close()
+    appmod.apply_language("en")
+    assert not i18n.missing(), sorted(i18n.missing())
+    w.close()
+
+
 def _shots_dir(tmp_path) -> Path:
     d = Path(os.environ.get("ASTRO_GPU_SHOTS") or tmp_path / "shots")
     d.mkdir(parents=True, exist_ok=True)

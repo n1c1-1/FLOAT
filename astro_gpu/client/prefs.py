@@ -25,8 +25,6 @@ DEFAULTS = {
     "home_sections": [
         {"label": "My projects", "workspace": True, "open": True,
          "note": "Your own projects. New project creates its folder here."},
-        {"label": "Bench against another processing program", "folder": "F:/astro_essais/bench", "open": True,
-         "note": "Test sets processed by both another processing program and astro_gpu on the same frames, to compare the results."},
         {"label": "Test copies", "folder": "F:/astro_essais/v2", "open": False,
          "note": "Copies of a project, used to try new versions of the program. Your own projects are not touched."},
     ],
@@ -39,8 +37,6 @@ DEFAULTS = {
     "memory_limit_gb": 24,
     "benchmark": None,                # result of the machine benchmark
     # catalogs and astrometry
-    "gaia": "online",                 # online | local
-    "gaia_path": "",
     "solver": "internal",             # internal | a reference plate solver | astrometry.net
     "survey_cache": "",
     # file formats

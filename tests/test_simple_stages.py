@@ -360,8 +360,10 @@ def test_every_auto_key_of_heart_a7s_is_in_auto_fields(tmp_path):
     seen = {}
     for st in V2_STAGES():
         ctx = Context(proj, st, journal, "cpu")
-        keys = set(st.auto(ctx))
+        autos = st.auto(ctx)
+        keys = {k for k, a in autos.items() if not a.advice}      # an advice (the stack's method) is never applied
         seen[st.name] = keys
-        assert keys <= AUTO_FIELDS.get(st.name, frozenset()), (st.name, keys)
+        allowed = AUTO_FIELDS.get(st.name, frozenset())
+        assert keys <= allowed, (st.name, keys)
     assert seen["stack"] and seen["denoise"] == {"iterations"} and seen["calibrate"] == {"workers"}
     assert {p: p.stat().st_mtime_ns for p in (HEART_A7S / "work").rglob("manifest.json")} == before

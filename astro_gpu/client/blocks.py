@@ -20,7 +20,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .i18n import _, hm, plural
+from .. import texts
+from .i18n import _, hm, language, plural
 
 # the columns of the graph, left to right; optional columns only appear when a workflow uses them
 COLUMNS = ["sources", "calibration", "alignement", "selection", "empilement", "astrometrie", "couleur", "deconv",
@@ -286,14 +287,23 @@ class Graph:
         if k == "alignement":
             return _("on the sharpest frame")
         if k == "selection":
+            rule = s.selection_rule(p)
+            if rule == "min_weight":
+                return _("every frame, weight ≥ 5 % of the best")
+            if rule == "sota":
+                return _("k × σ filters · weight ≥ 5 % of the best")
             t, f = s.thresholds_now()
             unit = s.thresholds_unit()
             return (_("transparency ≥ {t} % · stars ≤ {f} px").format(t=f"{t:.0f}", f=fnum(f)) if unit == "px" else
                     _("transparency ≥ {t} % · stars ≤ {f} × median").format(t=f"{t:.0f}", f=fnum(f)))
         if k == "empilement":
-            sc = fnum(s.param_value(p, "stack", "scale") or 1.0, 2).rstrip("0").rstrip(",.")
-            txt = _("drizzle ×{scale} · rejection at {kappa} σ").format(
-                scale=sc, kappa=fnum(s.param_value(p, "stack", "kappa") or 5, 0))
+            if s.param_value(p, "stack", "method") == "classic":
+                txt = _("classic stack · {how}").format(how=texts.choice_label(
+                    str(s.param_value(p, "stack", "classic_debayer") or "rcd"), language()))
+            else:
+                sc = fnum(s.param_value(p, "stack", "scale") or 1.0, 2).rstrip("0").rstrip(",.")
+                txt = _("drizzle ×{scale} · rejection at {kappa} σ").format(
+                    scale=sc, kappa=fnum(s.param_value(p, "stack", "kappa") or 5, 0))
             if any(q.opts["debruitage"] for q in node.paths):
                 txt += " · " + _("+ half-stacks")
             return txt
@@ -308,7 +318,9 @@ class Graph:
         if k == "astrometrie":
             return _("plate solved · Gaia DR3")
         if k == "couleur":
-            return _("SPCC · Gaia spectra")
+            if s.param_value(p, "color", "correction") == "per_colour":
+                return _("Gaia spectra · one factor per colour")
+            return _("Gaia spectra · colour matrix")
         return ""
 
     def side_inputs(self, node: Node):

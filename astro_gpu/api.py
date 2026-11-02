@@ -297,7 +297,10 @@ class ParamInfo:
     ``suggested`` the value without the user's (``suggestion_known`` False: the stage cannot compute it yet, the
     upstream results are not done). ``reason`` / ``reason_args``: the engine's ``Auto.template`` and ``Auto.args``,
     unformatted (``reason_en`` is ``Auto.reason``). ``drift``: the done result used another value
-    (``result_value``); ``locked``: the workflow's options or the project's exclusions set it."""
+    (``result_value``); ``locked``: the workflow's options or the project's exclusions set it. ``advice``: the value
+    the engine advises without applying it (the stack's "method": "drizzle" or "classic"; None when it gives none or
+    cannot compute it yet), its reason in ``advice_reason`` / ``advice_args`` (template and arguments, as for
+    ``reason``) and ``advice_reason_en``."""
 
     name: str
     label: str
@@ -323,6 +326,10 @@ class ParamInfo:
     locked: bool = False
     drift: bool = False
     result_value: Any = None
+    advice: Any = None
+    advice_reason: str = ""
+    advice_args: Any = None
+    advice_reason_en: str = ""
 
 
 @dataclass
@@ -417,28 +424,20 @@ class RegRow:
     transparency: float = float("nan")   # star flux relative to the reference frame
     reference: bool = False
     reason: str = ""
-    # stacking v2 (None for a result made without the switch): register's fwhm_method = moffat, the Moffat fit on the
-    # green samples (FWHM px, roundness minor / major, beta); channel_align = per_block, the frame's block and the
-    # correction applied to its red and blue samples at the centre of the sensor (R dx, R dy, B dx, B dy, sensor px)
+    # register's Moffat fit on the green samples (FWHM px, roundness minor / major, beta); None for a registration
+    # result made before it
     fwhm_moffat: float | None = None
     roundness_moffat: float | None = None
     beta_moffat: float | None = None
-    colour_block: int | None = None
-    colour_shift: tuple[float, float, float, float] | None = None
 
 
 class RegTable(list):
-    """``registration_table``'s answer: a list of RegRow, with ``missing`` and ``notes``; with stacking v2's
-    switches, ``fwhm_method`` ("legacy" or "moffat") and ``channel_alignment`` (register's chan.npz: its summary, the
-    blocks of frames with their shift and error; None without)."""
+    """``registration_table``'s answer: a list of RegRow, with ``missing`` and ``notes``."""
 
-    def __init__(self, rows: Iterable[RegRow] = (), missing: Iterable[str] = (), notes: Iterable[str] = (),
-                 fwhm_method: str = "legacy", channel_alignment: dict | None = None):
+    def __init__(self, rows: Iterable[RegRow] = (), missing: Iterable[str] = (), notes: Iterable[str] = ()):
         super().__init__(rows)
         self.missing = list(missing)
         self.notes = list(notes)
-        self.fwhm_method = fwhm_method
-        self.channel_alignment = channel_alignment
 
 
 @dataclass
@@ -473,7 +472,8 @@ class StackDiag:
     #: the switches the stack was made with ({} for a stack made before they existed: the previous version)
     switches: dict[str, str] = field(default_factory=dict)
     #: {"method": "legacy" | "hubble", "rejected_pct", "untested_pct" (Hubble: fewer than 3 samples around),
-    #: "reference_pct": Another processing program's mark [0.1, 0.5], "prediction" (Hubble: samples per point and median / minmed per colour)}
+    #: "reference_pct": Another processing program's mark [0.1, 0.5], "prediction" (Hubble: samples per point and median / minmed per colour),
+    #: "classic" and "reason_template" (the Classic method: the rejection its rule chose, {"template", "args"})}
     rejection: dict[str, Any] = field(default_factory=dict)
     #: (h, w) counts of the samples left untested (Hubble), on the rejection maps' grid; None otherwise
     rejection_untested: Any = None
@@ -1094,14 +1094,19 @@ def _table(p: Project2, wf: int | Workflow, min_t: float | None, max_f: float | 
         reasons = [str(f.get("excluded") or "") for f in sf]
         min_t, max_f = _stack_thresholds(p, wf)
     else:
-        from .stages.stack import select_frames
+        from .stages.stack import StackParams, frame_selection
         stats = np.load(_need(p, wf, "calibrate") / "frame_stats.npy")
+        infos = {i.name: i for i in describe(p, wf, "stack")}
         if min_t is None or max_f is None:
-            d_min, d_max = _stack_thresholds(p, wf)
+            d_min, d_max = float(infos["min_transparency"].value), float(infos["max_fwhm_ratio"].value)
             min_t, max_f = d_min if min_t is None else min_t, d_max if max_f is None else max_f
-        weight, reasons_a = select_frames(reg["transp"].astype(float), reg["fwhm"], reg["rms"], stats, min_t, max_f,
-                                          exclude=by_hand, noise=reg["noise"] if "noise" in reg.files else None)
-        reasons = [str(r) for r in reasons_a]
+        # the stack's own selection: the thresholds act only with the "thresholds" rule; by default the frames
+        # under the minimum weight are left out (stages/stack.frame_selection)
+        sp = StackParams(min_transparency=min_t, max_fwhm_ratio=max_f, selection=infos["selection"].value,
+                         selection_transparency=infos["selection_transparency"].value)
+        sel = frame_selection(sp, reg, stats, by_hand)
+        weight = sel.weight
+        reasons = [str(r) for r in sel.reasons]
     rows = [FrameRow(i, inv[i]["path"], names[i], sid[i], inv[i].get("time"), float(reg["fwhm"][i]),
                      float(reg["transp"][i]), float(reg["rms"][i]), float(weight[i]), reasons[i], bool(by_hand[i]))
             for i in range(n)]
@@ -1466,13 +1471,13 @@ _METHODS: dict[str, list[MethodInfo]] = {
                    "Starts from a network trained on earlier projects and fine-tunes it on the half-stacks."),
         MethodInfo("pretrained", "Pretrained (a reference gradient tool-like)", "pretrained", "both", "denoise_ai", True,
                    "A pretrained network applied as is: the fastest. May smooth or invent detail: compare."),
-        MethodInfo("nlbayes", "NL-Bayes (as in another processing program)", "NL-Bayes", "cpu", "denoise_cl", True,
+        MethodInfo("nlbayes", "NL-Bayes", "NL-Bayes", "cpu", "denoise_cl", True,
                    "Averages similar patches after stabilising the photon noise. Classic, predictable."),
     ],
     "gradient": [
         MethodInfo("halpha", "H-alpha survey", "H-alpha survey", "cpu", "background", False,
                    "Tells the sky background from the instrument's defects with a professional H-alpha survey."),
-        MethodInfo("polynomial", "Polynomial (as in another processing program)", "polynomial", "cpu", "background_poly", False,
+        MethodInfo("polynomial", "Polynomial", "polynomial", "cpu", "background_poly", False,
                    "A smooth surface fitted on dark samples."),
     ],
     "stars": [
@@ -1905,9 +1910,9 @@ def sky_objects(p: Project2, wf: int | Workflow, which: str = "current") -> list
     falls in the field of the workflow's astrometric solution (the stack grid it was solved on), biggest first.
     ``SkyObject``: name ("M 42", "IC 1805", "Sh2-275"), common name ("Heart Nebula" or ""), kind, RA / Dec in degrees
     J2000, axes in arcminutes, position angle in degrees east of north, other designations. ``NotDone`` when Astrometry
-    is not computed; ``CatalogueUnavailable`` (a plain message) when no catalogue can be had (offline with nothing
-    cached and no another processing program). Where the names come from: ``core.skyobjects.catalogue_source()``. The first call may
-    download the catalogue once (OpenNGC 4 MB, Sharpless 12 kB): worker thread."""
+    is not computed; ``CatalogueUnavailable`` (a plain message) when the catalogue shipped with the package is
+    incomplete. Where the names come from: ``core.skyobjects.catalogue_source()``. The first call of a session reads
+    the catalogue (a few tens of ms from its cache, about a second the first time): worker thread."""
     import warnings
 
     import numpy as np
@@ -2185,17 +2190,7 @@ def registration_table(p: Project2, wf: int | Workflow, which: str = "current") 
         dx, dy, rot, sc = dg.frame_geometry(reg["coef"], width, height, aligned)
     rnd = reg.get("roundness")
     ref = int(reg["ref"]) if "ref" in reg else -1
-    # stacking v2: the Moffat fit (fwhm_method = moffat) and the colour alignment per block (channel_align = per_block)
-    from .stages.register import CHAN
-    chan = None
-    if (d / CHAN).is_file():
-        from .core.channel_align import ChannelAlignment
-        with np.load(d / CHAN) as z:
-            info, block_of = json.loads(str(z["info"])), np.asarray(z["block_of"], int)
-            align = ChannelAlignment.from_npz(z)
-        chan = {**info, "blocks_detail": align.blocks if align is not None else []}
-
-    def opt(name, i):
+    def opt(name, i):                    # register's Moffat arrays (absent from a result made before them)
         a = reg.get(name)
         return None if a is None or not np.isfinite(a[i]) else float(a[i])
 
@@ -2211,15 +2206,11 @@ def registration_table(p: Project2, wf: int | Workflow, which: str = "current") 
         row.fwhm_moffat, row.roundness_moffat, row.beta_moffat = (opt(k, i) for k in ("fwhm_moffat",
                                                                                        "roundness_moffat",
                                                                                        "beta_moffat"))
-        if chan is not None and align is not None and i < len(block_of):
-            row.colour_block = int(block_of[i])
-            q = align.coefs[i]                           # at the centre of the sensor only the constant term remains
-            row.colour_shift = (float(q[0, 0, 0]), float(q[0, 1, 0]), float(q[2, 0, 0]), float(q[2, 1, 0]))
         rows.append(row)
     missing = [] if "roundness" in reg else [_missing("roundness", "register")]
     if "nstars" not in reg:
         missing.append(_missing("stars detected", "register"))
-    return RegTable(rows, missing, notes, "moffat" if "fwhm_moffat" in reg else "legacy", chan)
+    return RegTable(rows, missing, notes)
 
 
 def stack_diagnostics(p: Project2, wf: int | Workflow, which: str = "current") -> StackDiag:
@@ -2294,17 +2285,20 @@ def _stack_v2(out: StackDiag, d: Path, m: dict, sf: list, names: list[str], diag
     with the previous version (every switch at its default) gets the same fields from what it has."""
     import numpy as np
 
-    from .stages.stack import COVERAGE, LEGACY_CODES, SWITCHES, reduce_map
+    from .stages.stack import COVERAGE, THRESHOLD_CODES, reduce_map
     metrics = m.get("metrics") or {}
     diag = diag or {}
-    out.switches = dict(diag.get("switches") or {k: v[0] for k, v in SWITCHES.items()})
+    out.switches = dict(diag.get("switches") or {})
     rej = dict(diag.get("rejection") or {})
     summ = rej.get("summary") or {}
-    out.rejection = {"method": rej.get("method", "legacy"), "rejected_pct": _num(metrics.get("rejected_pct")),
+    out.rejection = {"method": rej.get("method", "own"), "rejected_pct": _num(metrics.get("rejected_pct")),
                      "untested_pct": _num(metrics.get("untested_pct")), "reference_pct": [0.1, 0.5]}
     for k in ("low_pct", "high_pct", "exempt_pct", "z_spread_median"):
         if k in summ:
             out.rejection[k] = summ[k]
+    for k in ("classic", "reason_template"):           # the Classic method: the rejection its rule chose, and why
+        if rej.get(k):
+            out.rejection[k] = rej[k]
     if rej.get("prediction"):
         out.rejection["prediction"] = rej["prediction"]
     # ---- weights per colour, the reasons of the frames left out
@@ -2316,12 +2310,12 @@ def _stack_v2(out: StackDiag, d: Path, m: dict, sf: list, names: list[str], diag
                 out.exclusions[names[i]] = [dict(r) for r in f["exclusions"]]
             elif f.get("excluded"):
                 r = str(f["excluded"])
-                out.exclusions[names[i]] = [{"code": LEGACY_CODES.get(r, "selection"), "template": r, "args": None}]
+                out.exclusions[names[i]] = [{"code": THRESHOLD_CODES.get(r, "selection"), "template": r, "args": None}]
     out.selection = diag.get("selection")
     out.normalisation = diag.get("normalisation")
     ca = diag.get("channel_alignment")
     if ca is None and metrics.get("channel_offsets") is not None:
-        ca = {**metrics["channel_offsets"], "mode": "legacy"}
+        ca = {**metrics["channel_offsets"], "mode": "night"}
     out.channel_alignment = ca
     # ---- the coverage per colour: kept by the v2 stack (coverage.npz), else from its weight map
     cov: dict[str, Any] = {}
@@ -2481,7 +2475,7 @@ def _resolve(p: Project2, wf: int | Workflow, stage: str) -> _Resolved:
         autos, ok = {}, False
         params, origin = resolve(model, autos, given)
         sug, _ = resolve(model, autos, {})
-    auto_f = keys.rules.auto_fields(stage, params.model_dump(mode="json"))
+    auto_f = keys.rules.auto_fields(stage)
     known = {n: (n in autos) or ok or (n not in auto_f) for n in model.model_fields}
     return _Resolved(params.model_dump(mode="json"), origin, sug.model_dump(mode="json"), known, autos, ok)
 
@@ -2505,13 +2499,17 @@ def describe(p: Project2, wf: int | Workflow, stage: str) -> list[ParamInfo]:
         a = r.autos.get(n) if r.origin[n] == "auto" else None
         drift = bool(used) and n in used and n not in skip and used[n] != r.values[n]
         english = getattr(a, "reason", "")
+        adv = r.autos.get(n)
+        adv = adv if getattr(adv, "advice", False) else None
         out.append(ParamInfo(
             n, d.get("label", n), d.get("help", ""), d.get("tip", ""), d["type"], d["default"], r.values[n],
             r.suggested[n], r.known[n], r.origin[n],
             reason=getattr(a, "template", english), reason_args=getattr(a, "args", None), reason_en=english,
             level=d.get("level", "basic"), unit=d.get("unit", ""), ge=d.get("ge"), le=d.get("le"), gt=d.get("gt"),
             lt=d.get("lt"), step=d.get("step"), choices=d.get("choices"), locked=n in locked, drift=drift,
-            result_value=used.get(n) if drift else None))
+            result_value=used.get(n) if drift else None,
+            advice=None if adv is None else adv.value, advice_reason="" if adv is None else adv.template,
+            advice_args=None if adv is None else adv.args, advice_reason_en="" if adv is None else adv.reason))
     return out
 
 

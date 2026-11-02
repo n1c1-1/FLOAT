@@ -650,6 +650,8 @@ class Main(QMainWindow):
         self.mode_btns[i].setChecked(True)
         if i == 2 and not was_post and self.post_holder is not None and self.post_holder.page is not None:
             self.post_holder.page.refresh()
+        if i == 0 and self.graph is not None and getattr(self.graph, "graph", None) is not None:
+            self.graph.graph.rebuild()             # the arrows of the images sent to Post meanwhile
         self.refresh()
 
     def _strip_pick(self, k: str):
@@ -1016,11 +1018,18 @@ class Main(QMainWindow):
         t.setWordWrap(True)
         t.setTextFormat(Qt.RichText)
         lv.addWidget(t)
-        lv.addStretch(1)
+        from PySide6.QtWidgets import QTextBrowser
+
+        from .credits import data_sources_html
+        src = QTextBrowser()                         # the data the product reads, credited (credits.py)
+        src.setObjectName("data_sources")
+        src.setOpenExternalLinks(True)
+        src.setHtml(data_sources_html())
+        lv.addWidget(src, 1)
         b = QPushButton(_("Close"))
         b.clicked.connect(d.accept)
         lv.addWidget(b, 0, Qt.AlignRight)
-        d.resize(640, 300)
+        d.resize(760, 640)
         return d
 
     def closeEvent(self, e):
