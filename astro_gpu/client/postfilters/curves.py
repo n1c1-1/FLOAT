@@ -18,6 +18,8 @@
   Presets/Curves), and four astrophotography classics built from documented functions; the user's own presets, kept
   in a file beside the settings; a reference image editor's .acv files read and written (Adobe a reference image editor File Formats Specification,
   "Curves file format": a version, a count, then for each curve its points as (output, input) in 0-255).
+
+``Spline`` interpolates one curve; ``apply`` applies a set of curves to an image.
 """
 from __future__ import annotations
 

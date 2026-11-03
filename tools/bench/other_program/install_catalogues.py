@@ -8,7 +8,7 @@ What another processing program's Catalog_Installer script does, without its win
   offline.
 Each archive is checked against its sha256 and decompressed. The bench's copy of the another processing program settings (_siril/config.ini)
 then points core.catalogue_gaia_astro and core.catalogue_gaia_photo at them. Why: the online catalogues another processing program uses
-(VizieR) did not answer on 2026-11-01; another processing program itself recommends these local extracts.
+(VizieR) does not always answer; another processing program itself recommends these local extracts.
 """
 from __future__ import annotations
 

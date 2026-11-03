@@ -1,7 +1,6 @@
 """The methods of Post's filters, without widgets and without the composition (postengine imports them).
 
-Each module follows a published or documented method, named in its docstring (docs/pilot/POST_TOOLS.md has the
-inventory against a reference processing suite and another processing program):
+Each module follows a published or documented method, named in its docstring:
 
 * ``curves``: the Curves tool (a reference processing suite CurvesTransformation, another processing program 1.4 Curves, a reference image editor Curves): Akima, natural
   cubic or linear curves per channel (RGB/K, R, G, B, CIE L*, saturation, CIE c*, CIE hue), the presets of the pro tools,
