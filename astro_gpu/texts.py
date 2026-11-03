@@ -359,6 +359,9 @@ _METRIC_ROWS: list[tuple] = [
 ]
 
 METRICS: dict[str, Metric] = {r[0]: Metric(*r) for r in _METRIC_ROWS}
+#: metrics no stage writes any more, kept for the results computed before (the background anchored on the H-alpha
+#: survey, replaced by the Gradient block)
+RETIRED_METRICS = frozenset({"ha_fit", "ha_signature", "large_scale_correction_adu"})
 #: how some metrics read on screen, beyond their number format (display only: the stored values are unchanged):
 #: "hours" a duration given in hours, in minutes under one hour (0.17 -> "10 min", 3.02 -> "3.0 h"); "sig2" two
 #: significant digits (1.821 -> "1.8", 0.0123 -> "0.012")
@@ -531,6 +534,8 @@ CHOICE_TEXTS: dict[str, str] = {
     "gesdt": "Generalized ESD test",
     # the colour stage's correction (stages/color.py)
     "full": "Full correction", "per_colour": "One factor per colour",
+    # the Gradient block's methods (stages/gradient.py)
+    "polynomial": "Polynomial", "automatic": "Automatic",
 }
 
 _stage_index: dict[str, dict] | None = None
