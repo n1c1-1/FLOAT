@@ -54,7 +54,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from PySide6.QtCore import QObject, QPointF, QRectF, QStandardPaths, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, QStandardPaths, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -1092,6 +1092,10 @@ class ImageCanvas(QWidget):
         self.overlays: list = []                    # callables (painter, canvas)
         self.minimap_on = True
         self.mode = "pan"                           # pan | rect
+        #: an editing tool (the Gradient block's samples and areas): press(canvas, x, y, button) -> bool (taken),
+        #: move(canvas, x, y), release(canvas), hover(canvas, x, y), cursor (a Qt cursor), in image coordinates
+        self.tool = None
+        self._space = False                         # Space held: the hand, whatever the tool (as in a reference image editor)
         self.frame_ms: list[float] = []             # paint times (the measurements)
         self._drag = None
         self._rect = None
@@ -1403,7 +1407,11 @@ class ImageCanvas(QWidget):
         elif e.button() == Qt.LeftButton and self.mode == "rect":
             self._rect = [(ix, iy), (ix, iy)]
             self._drag = ("rect",)
-        elif e.button() in (Qt.LeftButton, Qt.MiddleButton):
+        elif (self.tool is not None and e.button() != Qt.MiddleButton and not self._space
+              and not (e.button() == Qt.RightButton and getattr(self.tool, "mode", None) == "brush")
+              and self.tool.press(self, ix, iy, e.button())):
+            self._drag = ("tool",)
+        elif e.button() in (Qt.LeftButton, Qt.MiddleButton) or (self.tool is not None and e.button() == Qt.RightButton):
             self._drag = ("pan", pos, self.cx, self.cy)
             self.setCursor(Qt.ClosedHandCursor)
         self.update()
@@ -1419,6 +1427,12 @@ class ImageCanvas(QWidget):
                 self.hovered.emit(ix * r, iy * r, 1)
             else:
                 self.hovered.emit(ix, iy, 0)
+            if (self.tool is not None and not self._space and not self._near_split(pos.x())
+                    and not self._in_minimap(pos)):
+                self.tool.hover(self, ix, iy)
+                self.setCursor(self.tool.cursor)
+                self.update()
+                return
             self.setCursor(Qt.SplitHCursor if self._near_split(pos.x()) else
                            Qt.PointingHandCursor if self._in_minimap(pos) else
                            Qt.CrossCursor if self.mode == "rect" else Qt.CrossCursor)
@@ -1430,6 +1444,8 @@ class ImageCanvas(QWidget):
             self._minimap_goto(pos)
         elif d[0] == "rect":
             self._rect[1] = (ix, iy)
+        elif d[0] == "tool":
+            self.tool.move(self, ix, iy)
         elif d[0] == "pan":
             self.cx = d[2] - (pos.x() - d[1].x()) / self.scale
             self.cy = d[3] - (pos.y() - d[1].y()) / self.scale
@@ -1441,7 +1457,9 @@ class ImageCanvas(QWidget):
     def mouseReleaseEvent(self, e):  # noqa: N802
         d = self._drag
         self._drag = None
-        self.setCursor(Qt.CrossCursor)
+        self.setCursor(Qt.CrossCursor if self.tool is None else self.tool.cursor)
+        if d and d[0] == "tool" and self.tool is not None:
+            self.tool.release(self)
         if d and d[0] == "rect" and self._rect:
             (ax, ay), (bx, by) = self._rect
             self._rect = None
@@ -1449,8 +1467,32 @@ class ImageCanvas(QWidget):
                 self.rectDone.emit(min(ax, bx), min(ay, by), max(ax, bx), max(ay, by))
         self.update()
 
+    def event(self, e):
+        # the keys of the tool on (Escape, Delete, M…) before Inspect's and the window's shortcuts
+        if (e.type() == QEvent.ShortcutOverride and self.tool is not None and hasattr(self.tool, "wants")
+                and self.tool.wants(e)):
+            e.accept()
+            return True
+        return super().event(e)
+
+    def keyPressEvent(self, e):  # noqa: N802
+        if self.tool is not None and e.key() != Qt.Key_Space and self.tool.key(e):
+            return
+        if e.key() == Qt.Key_Space and self.tool is not None and not e.isAutoRepeat():
+            self._space = True
+            self.setCursor(Qt.OpenHandCursor)
+            return
+        super().keyPressEvent(e)
+
+    def keyReleaseEvent(self, e):  # noqa: N802
+        if e.key() == Qt.Key_Space and not e.isAutoRepeat():
+            self._space = False
+            self.setCursor(self.tool.cursor if self.tool is not None else Qt.CrossCursor)
+            return
+        super().keyReleaseEvent(e)
+
     def mouseDoubleClickEvent(self, e):  # noqa: N802
-        if self.display is None or self.mode != "pan" or self._near_split(e.position().x()):
+        if self.display is None or self.mode != "pan" or self.tool is not None or self._near_split(e.position().x()):
             return
         if self.fitted or self.scale <= self.fit_scale() * 1.01:
             self.set_zoom_percent(100.0, e.position())
@@ -2593,6 +2635,10 @@ class ImageView(QWidget):
         self.readout.setObjectName("ivread")
         self.readout.setTextFormat(Qt.PlainText)
         h.addWidget(self.readout, 1)
+        #: what the active tool does (its gestures and keys), as Post's line under its image
+        self.tool_hint = label("", "small")
+        self.tool_hint.hide()
+        h.addWidget(self.tool_hint, 2)
         self.size_l = label("", "small")
         h.addWidget(self.size_l)
         self.units_cb = QComboBox()

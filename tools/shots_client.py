@@ -704,7 +704,110 @@ def part_evening(stale="S1"):
     sp.post = old
 
 
-PART_FN = {"home": part_home, "evening": part_evening, "graph": part_graph, "stack": part_stack, "inspect": part_inspect,
+def part_gradedit():
+    from PySide6.QtCore import Qt
+    """The Gradient block's samples and areas on the image (gradientedit.py), on the --drizzle workflow: the samples
+    of the method shown, the generated grid, an ellipse and a brush stroke excluded, the previews, each edit a setting
+    (in memory: the model is read-only), the editor then forgotten as when the project is opened again."""
+    print("Gradient editing", flush=True)
+    open_it()
+    pid = pid_of(DRIZZLE)
+    walk.show_tab("fond", "result", "gradedit_result", pid)
+    ed = w.tune.grad_editor
+    if ed._method() == "automatic":                   # the samples are the polynomial's (in memory only)
+        w.s.apply_change([w.s.view(pid)], {"kind": "opt", "key": "fond", "value": "simple"})
+        walk.show_tab("fond", "result", "gradedit_result", pid)
+
+    def canvas():                        # Inspect is built again after each edit, as after any setting
+        walk.pump(0.4)
+        return w.tune.view.canvas
+
+    def idle(what):
+        walk.until(lambda: not ed.busy and not ed._timer.isActive(), 60, what)
+        walk.pump(1.0)
+        walk.settle()
+    ed.set_mode("points")
+    walk.until(lambda: not ed.busy and ed.small is not None, 120, "the reduced stack")
+    walk.settle()
+    walk.shot("gradedit_samples")                 # none placed: the ones the last run chose
+    ed.generate()
+    walk.until(lambda: not ed.busy and ed.work["sample_points"], 60, "the generated grid")
+    idle("the grid's preview")
+    walk.shot("gradedit_grid")
+    if not ed.s.param_value(ed.p, "gradient", "sample_points"):
+        walk.problem("the generated grid is not in the settings")
+    W, H = ed.small["W"], ed.small["H"]
+    ed.set_mode("ellipse")
+
+    def drag(a, b):                      # a drag of the tool, in stack pixels
+        c = canvas()
+        f = ed._f(c)
+        ed.press(c, a[0] * f, a[1] * f, Qt.LeftButton)
+        ed.move(c, b[0] * f, b[1] * f)
+        ed.release(c)
+
+    def handle(name):
+        c = canvas()
+        f = ed._f(c)
+        x, y = c.w_to_img(*ed._handles(c, f)[name])
+        return x / f, y / f
+    drag((W * 0.32, H * 0.25), (W * 0.62, H * 0.8))            # drawn
+    rot = handle("rot")
+    e = ed.work["exclude_ellipses"][ed._sel]
+    drag(rot, (e[0] + W * 0.15, e[1] - H * 0.3))                # turned
+    rx = handle("rx")
+    drag(rx, (rx[0] + W * 0.04, rx[1]))                         # widened
+    stored = ed.s.param_value(ed.p, "gradient", "exclude_ellipses") or []
+    if not (len(stored) == 1 and abs(stored[0][4]) > 5):
+        walk.problem(f"the ellipse was not turned, or not in the settings: {stored}")
+    idle("the ellipse's preview")
+    walk.shot("gradedit_ellipse")
+    ed.set_mode("brush")
+    c = canvas()
+    f = ed._f(c)
+    ed.press(c, W * 0.15 * f, H * 0.2 * f, Qt.LeftButton)
+    for t in range(1, 20):
+        ed.move(c, W * (0.15 + 0.01 * t) * f, H * 0.2 * f)
+    ed.release(c)
+    ed._hover = (W * 0.36 * f, H * 0.2 * f)
+    idle("the brush's preview")
+    walk.shot("gradedit_brush")
+    # the project opened again: an editor that remembers nothing draws all from the settings
+    ed.set_mode(None)
+    ed.p, ed.result, ed.samples, ed.small, ed.work = None, None, None, None, {k: [] for k in ed.work}
+    walk.show_tab("fond", "result", "gradedit_reopened", pid)
+    if len(ed.work["exclude_ellipses"]) != 1 or not ed.work["sample_points"] or not ed.work["exclude_brush"]:
+        walk.problem(f"the edits did not come back from the settings: {[(k, len(x)) for k, x in ed.work.items()]}")
+    for _i in range(20):                               # back as the project was, with the window's Undo
+        if not any(ed.s.param_value(ed.p, "gradient", k) for k in ("sample_points", "exclude_ellipses",
+                                                                    "exclude_brush")):
+            break
+        w.undo()
+        walk.pump(0.3)
+    else:
+        walk.problem("Undo did not take the edits back")
+    walk.settle()
+    # Post's mask brush, the same gestures (for the comparison of the two editors)
+    w.set_mode(2)
+    post_render()
+    view = w.post.view
+    lay = next((x for x in view.layers if x["kind"] == "workflow"), None)
+    if lay is not None:
+        view.select(lay["id"], "layer")
+        view.add_mask(lay)
+        view.add_part(view.layer(lay["id"]), "brush")
+        view.select(lay["id"], "mask")
+        walk.settle()
+        vw = view.viewer
+        vw._mouse = vw.img_to_w(*[a / 2 for a in vw.source.size()])
+        vw.update()
+        walk.settle()
+        walk.shot("gradedit_post_mask_brush")
+    w.set_mode(1)
+
+
+PART_FN = {"gradedit": part_gradedit,
+           "home": part_home, "evening": part_evening, "graph": part_graph, "stack": part_stack, "inspect": part_inspect,
            "post": part_post, "export": part_export, "naming": part_naming}
 
 for lang in LANGS:

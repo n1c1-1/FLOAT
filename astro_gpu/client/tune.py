@@ -537,6 +537,9 @@ class TuneView(QWidget):
         h.addWidget(mid, 1)
         self.panel = Panel(project, steps, tune=True)
         h.addWidget(self.panel)
+        from .gradientedit import GradientEditor
+        self.grad_editor = GradientEditor(self)            # the Gradient block's samples and areas, on the image
+        self.panel.grad_editor = self.grad_editor
         self.pages.addWidget(body)
         self.sources = sources_view
         self.pages.addWidget(sources_view)
@@ -603,6 +606,9 @@ class TuneView(QWidget):
     # ------------------------------------------------------------ refresh
     def request_refresh(self, *_a):
         self._dirty = True
+        ed = getattr(self, "grad_editor", None)
+        if ed is not None and ed.gesture:
+            return                             # not built again under the mouse: the editor asks again on release
         if self.isVisible() and not self._pending:
             self._pending = True
             QTimer.singleShot(0, self.refresh)
@@ -650,6 +656,7 @@ class TuneView(QWidget):
         self.panel.refresh(node)
         self._remember()
         clear(self.head)
+        self.grad_editor.detach()
         self._clear_center()
         if node is None or p is None:
             return
@@ -702,6 +709,8 @@ class TuneView(QWidget):
         self.head.addStretch(1)
         self._cur = (p, k, vis[i])
         self._fill()
+        if k == "fond" and vis[i].key in ("result", "removed") and self.view is not None:
+            self.grad_editor.attach(self.view, p)
         QTimer.singleShot(PREFETCH_DELAY_MS, lambda pp=p, kk=k: self._prefetch(pp, kk))
 
     def _prefetch(self, p, k: str):

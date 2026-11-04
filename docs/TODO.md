@@ -28,7 +28,10 @@ obsolètes.
   étoiles et du workflow Complet (« à réintroduire avec leur chantier »), recaler les chiffres de l'ancien petit projet
   de test, mettre à jour ceux de l'ancien Gradient.
 - **M8 express** : relancer `python tools/bench/gradient_projects.py --cases m8` quand les services Gaia répondent.
-- **Le gradient automatique sur la Rosette** emporte environ un tiers de la nébuleuse : l'échelle du modèle ou le seuil
-  de protection, à voir dans l'onglet « Modèle du ciel ».
+- **L'édition des échantillons et zones du Gradient** (Inspect), restes de la revue d'ergonomie du 4 novembre :
+  l'aperçu aussi dans l'onglet « Modèle du ciel » ; compacter les touches de pinceau enregistrées (chaque coup de
+  pinceau entre dans la définition du projet) ; la question « Remplacer / Essayer en variante » des autres réglages
+  n'est pas posée (chaque coup de pinceau la poserait) : à revoir si le besoin d'une variante vient ; le réglage
+  « Protection en bruit du ciel », sans effet au banc, à retirer (en attente de l'accord).
 - **Les filtres « netteté » et « débruitage » du Post-traitement** ne changent rien à l'image d'après les captures
   (`ml_sharpen`, `ml_denoise`) : à regarder.

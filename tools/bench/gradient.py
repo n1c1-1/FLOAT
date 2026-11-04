@@ -177,12 +177,27 @@ def ours_poly(img: np.ndarray, work: Path) -> np.ndarray:
     return img - poly_sky(fit["coefs"], p.degree, *img.shape[1:])
 
 
-def ours_auto(img: np.ndarray, work: Path) -> np.ndarray:
+def ours_poly_grid(img: np.ndarray, work: Path) -> np.ndarray:
+    """Our polynomial on the generated grid (another processing program's: Samples per side along the shorter side), as the editor's
+    Generate the grid shows it."""
+    from astro_gpu.stages.gradient import GradientParams, grid_points, point_values, poly_sky, poly_terms
+    p = GradientParams()
+    valid = np.ones(img.shape[1:], bool)
+    H, W = valid.shape
+    pts, use, box = grid_points(img, valid, p.samples, p.object_clip)
+    vals, ok = point_values(img, valid, pts, box)
+    use &= ok
+    A = poly_terms(pts[use, 0], pts[use, 1], W, H, p.degree)
+    coefs = np.stack([np.linalg.lstsq(A, vals[c, use], rcond=None)[0] for c in range(3)])
+    return img - poly_sky(coefs, p.degree, H, W)
+
+
+def ours_auto(img: np.ndarray, work: Path, **settings) -> np.ndarray:
     """Our version of another processing program's automatic model (stages/gradient_auto.py), applied as another processing program does: each channel minus its
     background plus the background's median. Another processing program works on the image upside down (FITS rows): so does this, so that
     the same rows are dropped by the reduction."""
     from astro_gpu.stages.gradient_auto import AutoSettings, enlarge, sky_model
-    s = AutoSettings()
+    s = AutoSettings(**settings)
     out = np.empty_like(img)
     for c in range(img.shape[0]):
         ch = img[c, ::-1]
@@ -198,7 +213,13 @@ METHODS = {
     "siril_auto": lambda img, work: siril(img, work, "subsky -auto", SIRIL_DEV),
     "graxpert_ai": reference_gradient,
     "ours_poly": ours_poly,
+    "ours_poly_grid": ours_poly_grid,
     "ours_auto": ours_auto,
+    # the automatic model's protection in sky noise (not another processing program's: its threshold is a fraction of the image's range),
+    # and its largest scale
+    "ours_auto_prot3": lambda img, work: ours_auto(img, work, protect_sigmas=3.0),
+    "ours_auto_prot5": lambda img, work: ours_auto(img, work, protect_sigmas=5.0),
+    "ours_auto_scale10": lambda img, work: ours_auto(img, work, scale=10.0),
 }
 
 
