@@ -5,13 +5,15 @@ obsolètes.
 
 ## Chantiers, dans l'ordre
 
-1. **Le débruitage** : garder la qualité de notre Noise2Noise, en une fraction du temps, et le rendre utilisable sur
-   processeur (un modèle pré-entraîné, puis quelques pas d'affinage sur l'image). Jeu de données disponible :
-   `F:\dataset_astro\data` (à trier).
-2. **Le retrait des étoiles** : deux couches, sans étoiles et étoiles seules, recombinées dans le Post-traitement par
-   les modes de fusion et des filtres ordinaires ; plus de curseurs « magiques ». A reference star-removal tool (appelé installé par
-   l'utilisateur, licence à vérifier) ou notre modèle, à comparer ; la resynthèse des étoiles devient le recours en cas
-   de mise au point ou de suivi ratés.
+Le débruitage est fait (4 novembre, `docs/chantiers/debruitage.md`) : un réseau pré-entraîné, adapté à l'image en
+option ; meilleur que notre ancien apprentissage sur chaque image, que a reference gradient tool et que a reference denoiser sur le banc.
+
+1. **Le retrait des étoiles** (état de l'art : `docs/chantiers/etoiles_etat_de_lart.md` ; échantillons a reference star-removal tool et
+   notre méthode : `tools/bench/stars_samples.py`, `F:\astro_essais\stars_compare`). Deux sujets : la séparation en
+   deux couches (sans étoiles, étoiles seules) et leur recombinaison dans le Post-traitement par les modes de fusion et
+   des filtres ordinaires, plus de curseurs « magiques » ; le retrait des étoiles lui-même. A reference star-removal tool (installé par
+   l'utilisateur) sert à comparer et pourra être une option, jamais une dépendance ; la resynthèse des étoiles devient
+   le recours en cas de mise au point ou de suivi ratés.
 
 ## Plus tard
 
@@ -23,11 +25,11 @@ obsolètes.
 
 - **La couleur** (fiche : `docs/chantiers/couleur.md`) : c'est désormais une balance des blancs photométrique, comme
   Another processing program (la matrice qui produisait le magenta est sortie du code, la sortie simple prend le niveau du ciel du bloc
-  Gradient). Reste à la mesurer face à la calibration photométrique de another processing program sur les 6 cas.
+  Gradient). Mesurée face à another processing program le 4 novembre sur 5 cas (fiche, §5) : d'accord à 0,5 % avec SPCC, PCC s'écarte de 3
+  à 15 %. M8 (SPCC) fait le 4 novembre au soir : d'accord à 2 % près.
 - **Les tests de l'interface** sur Heart express : 42 rouges (aucun défaut du code). Écarter ceux du débruitage, des
   étoiles et du workflow Complet (« à réintroduire avec leur chantier »), recaler les chiffres de l'ancien petit projet
   de test, mettre à jour ceux de l'ancien Gradient.
-- **M8 express** : relancer `python tools/bench/gradient_projects.py --cases m8` quand les services Gaia répondent.
 - **L'édition des échantillons et zones du Gradient** (Inspect), restes de la revue d'ergonomie du 4 novembre :
   l'aperçu aussi dans l'onglet « Modèle du ciel » ; compacter les touches de pinceau enregistrées (chaque coup de
   pinceau entre dans la définition du projet) ; la question « Remplacer / Essayer en variante » des autres réglages
