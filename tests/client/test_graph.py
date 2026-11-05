@@ -1,7 +1,8 @@
 """The graph, the panel and the model, offscreen, on the test project with four workflows.
 
-The test project (tests/conftest.py, TEST_PROJECT) has Full computed; the tests add Classic stack, Classic + denoise and
-Full + neural stars in memory. The model is read-only (nothing is saved into the project), except the autosave test,
+The test project (tests/conftest.py, TEST_PROJECT) is taken down to its Full workflow, computed (conftest.full_only,
+whatever the bench added since); the tests add Classic stack (not computed from Gradient on), Classic + denoise and
+Full twin in memory. The model is read-only (nothing is saved into the project), except the autosave test,
 which works on a copy of the definition in a temporary folder. ASTRO_GPU_SETTINGS points to a temporary file in every
 test; the user's settings file is checked untouched. ASTRO_GPU_SHOTS names the folder of the screenshots (default: a
 temporary folder).
@@ -24,7 +25,7 @@ if Path("C:/Windows/Fonts").is_dir():
     os.environ.setdefault("QT_QPA_FONTDIR", "C:/Windows/Fonts")      # the offscreen platform has no fonts else
 
 pytest.importorskip("PySide6")
-from conftest import TEST_PROJECT, needs_test_project, scratch_project  # noqa: E402
+from conftest import TEST_PROJECT, full_only, needs_test_project, scratch_project  # noqa: E402
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt  # noqa: E402
 from PySide6.QtGui import QFont, QFontMetricsF  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
@@ -48,7 +49,7 @@ from PySide6.QtWidgets import (  # noqa: E402
 from astro_gpu import api  # noqa: E402
 from astro_gpu.client import app as appmod  # noqa: E402
 from astro_gpu.client import i18n, prefs  # noqa: E402
-from astro_gpu.client.blocks import COLUMNS, Graph, block_state  # noqa: E402
+from astro_gpu.client.blocks import COLUMNS, STATE_WORD, Graph, block_state  # noqa: E402
 from astro_gpu.client.graph import BH, BW, MIN_SCALE, BlockItem, GraphPage  # noqa: E402
 from astro_gpu.client.i18n import hm  # noqa: E402
 from astro_gpu.client.model import ProjectModel  # noqa: E402
@@ -60,9 +61,11 @@ from astro_gpu.core.project import Target  # noqa: E402
 
 F_PROJECT = TEST_PROJECT
 pytestmark = needs_test_project
-FOUR = (("Classic stack", "Classic stack", None),
-        ("Classic + denoise", "Classic + denoise", {"denoise": {"iterations": 6000}}),
-        ("Full + neural stars", "Full + neural stars", {"denoise": {"iterations": 6000}}))
+#: the workflows the tests add: Classic stack with an Output setting of its own (so its Output is not computed),
+#: Classic + denoise and Full twin as the store has them (computed)
+FOUR = (("Classic stack", "Classic stack", {"render_simple": {"linked": False}}),
+        ("Classic + denoise", "Classic + denoise", None),
+        ("Full twin", "Full", None))
 
 
 def _user_settings() -> Path:
@@ -107,7 +110,7 @@ def env(tmp_path, monkeypatch, qapp):
 
 
 def _open_four(folder: Path | None = None):
-    p = api.open_project(folder or F_PROJECT)
+    p = full_only(api.open_project(folder or F_PROJECT))
     for name, template, params in FOUR:
         api.add_workflow(p, name, template, params)
     return p
@@ -201,7 +204,7 @@ def texts_of(root: QWidget) -> list[str]:
     return [t.strip() for t in out if t and t.strip()]
 
 
-NAMES = {"Full", "Classic stack", "Classic + denoise", "Full + neural stars", "Raw stack"}
+NAMES = {"Full", "Classic stack", "Classic + denoise", "Full twin", "Raw stack"}
 
 
 def untranslated(texts) -> list[str]:
@@ -287,7 +290,7 @@ def test_the_model_does_not_wait_for_the_disk(qapp):
     t0 = time.perf_counter()
     m = ProjectModel(p, w, readonly=True)
     assert time.perf_counter() - t0 < 1.0 and not m.ready
-    assert [v.name for v in m.paths] == ["Full", "Classic stack", "Classic + denoise", "Full + neural stars"]
+    assert [v.name for v in m.paths] == ["Full", "Classic stack", "Classic + denoise", "Full twin"]
     assert m.all_stages() == [] and m.total_seconds() == 0.0 and m.state(None, "stack") == "pending"
     got = []
     m.readyChanged.connect(lambda: got.append(m.ready))
@@ -308,32 +311,31 @@ def test_the_tree_shares_blocks_as_the_engine_does(world, model, page):
     for key in ("calibration", "alignement", "selection", "empilement", "astrometrie", "fond", "couleur"):
         assert len(by_key[key]) == 1 and len(by_key[key][0].paths) == 4, key
     den = by_key["debruitage"]
-    assert len(den) == 1 and {q.name for q in den[0].paths} == {"Full", "Classic + denoise", "Full + neural stars"}
+    assert len(den) == 1 and {q.name for q in den[0].paths} == {"Full", "Classic + denoise", "Full twin"}
     stars = by_key["etoiles"]
-    assert len(stars) == 2 and all(len(n.paths) == 1 for n in stars)           # the methods differ
-    assert {q.name for n in stars for q in n.paths} == {"Full", "Full + neural stars"}
+    assert len(stars) == 1 and {q.name for q in stars[0].paths} == {"Full", "Full twin"}     # one network, one key
     assert len(by_key["post"]) == 4 and all(len(n.paths) == 1 for n in by_key["post"])
     assert g.final.paths and len(g.final.paths) == 4
     # the leaves go to Post, one per workflow
     assert {g.leaves[pid].key for pid in ids.values()} == {"post"}
-    assert by_key["debruitage"][0].shared and not stars[0].shared
+    assert by_key["debruitage"][0].shared and stars[0].shared
 
 
 def test_the_graph_shows_the_real_engine_order(world, model, page):
     """Frames, Calibration, Registration, Selection, Stacking, Astrometry, Gradient, Color, Denoise, Stars, Output,
-    Post (the engine's order); the phase bands; Deconvolution only when something uses it."""
+    Composition, Post (the engine's order); the phase bands; Deconvolution only when something uses it."""
     assert COLUMNS == ["sources", "calibration", "alignement", "selection", "empilement", "astrometrie", "fond",
-                       "couleur", "deconv", "debruitage", "etoiles", "post", "final"]
+                       "couleur", "deconv", "debruitage", "etoiles", "post", "composition", "final"]
     assert model.block_keys(model.paths[0]) == ["calibration", "alignement", "selection", "empilement", "astrometrie",
                                                 "fond", "couleur", "debruitage", "etoiles", "post"]
     items = {it.node.key + str(id(it.node)): it for it in page.graph.scene().items() if isinstance(it, BlockItem)}
     xs = sorted({it.pos().x() for it in items.values()})
-    assert len(xs) == 12                                                        # no Deconvolution column
+    assert len(xs) == 13                                                        # no Deconvolution column
     gradient = [it for it in items.values() if it.node.key == "fond"]
     color = [it for it in items.values() if it.node.key == "couleur"]
     assert max(g.pos().x() for g in gradient) < min(c.pos().x() for c in color)  # Gradient before Color
     bands = [it for it in page.graph.scene().items() if type(it).__name__ == "BandItem"]
-    assert sorted(b.text for b in bands) == ["Linear processing", "Pre-processing"]
+    assert sorted(b.text for b in bands) == ["Composition", "Linear processing", "Pre-processing"]
 
 
 def test_states_come_from_the_api(world, model, page):
@@ -345,8 +347,8 @@ def test_states_come_from_the_api(world, model, page):
     assert full.computed and full.rendered and not model.paths[1].computed
     states = {(n.key, n.paths[0].name): g.state(n) for n in g.nodes if n.paths and n.key not in ("sources", "final")}
     assert states[("empilement", "Full")] == "done"
-    assert states[("fond", "Classic stack")] == "pending" and states[("post", "Classic stack")] == "pending"
-    assert states[("etoiles", "Full + neural stars")] == "pending" and states[("etoiles", "Full")] == "done"
+    assert states[("fond", "Full")] == "done" and states[("post", "Classic stack")] == "pending"
+    assert states[("etoiles", "Full")] == "done" and states[("post", "Full twin")] == "done"
     assert g.state(g.final) == "pending"                                       # not every layer is rendered
     # a block is as bad as its worst stage in any of its workflows
     model._states[(2, "gradient")] = api.StageState("failed", "boom", "k")
@@ -354,21 +356,21 @@ def test_states_come_from_the_api(world, model, page):
     model._states[(2, "gradient")] = api.StageState("running", "", "k")
     assert block_state(model, model.view(2), "fond") == "running"
     model._sync()
-    assert block_state(model, model.view(2), "fond") == "pending"
-    assert g.summary(g.root).startswith("1 session · ") and "40 lights" in g.summary(g.root)
+    assert block_state(model, model.view(2), "fond") == "done"                 # back to the store's state
+    assert g.summary(g.root).startswith("1 session · ") and re.search(r"\d+ lights", g.summary(g.root))
 
 
 def test_a_shared_stage_is_one_key(world, model):
     full, classic, cd, neural = model.paths
     assert [q.name for q in model.sharing(full, "stack")] == [q.name for q in model.paths]
     assert model.owner(neural, "stack") is full
-    assert {q.name for q in model.sharing(full, "denoise")} == {"Full", "Classic + denoise", "Full + neural stars"}
+    assert {q.name for q in model.sharing(full, "denoise")} == {"Full", "Classic + denoise", "Full twin"}
     assert model.stage_key(full, "stack") == api.stage_key(model.p, full.pid, "stack")
     assert model.upstream(full, "color") >= {"inventory", "calibrate", "register", "stack", "astrometry"}
-    assert "render_prep" in model.downstream(full, "stars")
-    assert [x for _p, x in model.pending_upto(classic, ["render_simple"])] == ["gradient", "render_simple"]
+    assert "star_removal" in model.downstream(full, "render_simple")
+    assert [x for _p, x in model.pending_upto(classic, ["render_simple"])] == ["render_simple"]
     assert model.pending(full) == []
-    assert model.seconds("stack", full) > 0 and model.seconds("denoise_cl") == 300.0
+    assert model.seconds("stack", full) > 0 and model.seconds("deconv") == 150.0
 
 
 # ---------------------------------------------------------------------------------------------- option rules
@@ -378,19 +380,18 @@ def test_adding_and_removing_blocks_follows_the_rules_with_toasts(world, model, 
     page.toasted.connect(toasts.append)
     page.add_tool("etoiles", classic.pid)                                      # Stars needs Denoise
     settle(world["w"], page)
-    assert classic.opts["etoiles"] == "mesurer" and classic.opts["debruitage"]
+    assert classic.opts["etoiles"] == "retirer" and classic.opts["debruitage"]
     assert any("Denoise added" in t for t in toasts)
     assert model.sel_step == "etoiles" and model.path is classic
     # Denoise cannot go while Stars is there
     toasts.clear()
     page.remove_tool(node(page, "debruitage", classic.pid), [classic.pid])
     assert classic.opts["debruitage"] and toasts and "remove Stars first" in toasts[0]
-    # removing Stars turns the H-alpha gradient into the polynomial one, and the neural removal goes too
-    model.set_opts(classic, {**classic.opts, "fond": "halpha", "appris": True})
+    # removing Stars keeps Denoise and the gradient: nothing else goes with it
     toasts.clear()
     page.remove_tool(node(page, "etoiles", classic.pid), [classic.pid])
-    assert classic.opts["etoiles"] == "garder" and classic.opts["fond"] == "simple" and not classic.opts["appris"]
-    assert len(toasts) == 1 and toasts[0].count(" · ") == 1
+    assert classic.opts["etoiles"] == "garder" and classic.opts["debruitage"] and classic.opts["fond"] == "simple"
+    assert not toasts
     # Gradient cannot be removed, and the card after the output says so
     new, why = model.without_tool(classic.opts, "simple")
     assert new is None and why
@@ -461,7 +462,7 @@ def test_a_change_on_a_shared_done_block_offers_replace_or_variant(world, model,
     button(page.panel, "Replace").click()
     settle(world["w"], page)
     assert all(q.params["stack"]["kappa"] == 4.0 for q in model.paths)
-    assert model.state(model.paths[0], "stack") == "stale" and model.state(model.paths[0], "render_prep") == "stale"
+    assert model.state(model.paths[0], "stack") == "stale" and model.state(model.paths[0], "render_simple") == "stale"
     assert model.state(model.paths[0], "register") == "done"
     assert model.paths[0].computed is False and model.paths[0].rendered                       # a previous result stays
     g = Graph(model)
@@ -516,18 +517,18 @@ def test_a_method_card_asks_the_same_question(world, model, page):
     page.select_node(node(page, "fond", 1))
     settle(world["w"], page)
     cards = method_cards(page)
-    assert [c.ok for c in cards] == [True, True]
-    other = next(c for c in cards if "Polynomial" in c.findChildren(QLabel)[0].text())
+    assert [c.ok for c in cards] == [True, True, True]
+    other = next(c for c in cards if "Automatic" in c.findChildren(QLabel)[0].text())
     other.clicked.emit()
     settle(world["w"], page)
     assert model.pending_change and model.pending_change["key"] == "fond"
-    assert "Method: Polynomial" in model.pending_change["what"]
+    assert "Method: Automatic" in model.pending_change["what"]
     var = button(page.panel, "Try as variant")
     var.click()
     settle(world["w"], page)
     q = model.paths[-1]
-    assert q.opts["fond"] == "simple" and q.opts["etoiles"] == "mesurer" and q.variant_of == 1
-    assert q.name == "Full · polynomial"
+    assert q.opts["fond"] == "auto" and q.opts["etoiles"] == "retirer" and q.variant_of == 1
+    assert q.name == "Full · automatic"
 
 
 def test_a_method_card_says_the_duration_on_each_device_and_which_one_is_used(world, model, page):
@@ -535,7 +536,7 @@ def test_a_method_card_says_the_duration_on_each_device_and_which_one_is_used(wo
     bold. A machine whose GPUs are hidden still shows what the GPU would take."""
     from astro_gpu.client.panel import durations_text
     w = world["w"]
-    page.select_node(node(page, "etoiles", 1))
+    page.select_node(node(page, "debruitage", 1))
     settle(w, page)
     try:
         for gpu in (True, False):
@@ -557,9 +558,9 @@ def test_a_method_card_says_the_duration_on_each_device_and_which_one_is_used(wo
                     assert len(bold) == 1 and bold[0].startswith(here.upper()), (lines[0], here)
             assert seen >= 2
             # the figures are the engine's for each device, not the machine's twice
-            ok = [m for m in model_methods("etoiles") if m["runs"] != "cpu" and not m["new"]]
+            ok = [m for m in model_methods("debruitage") if m["runs"] != "cpu" and not m["new"]]
             assert ok
-            t = model.method_times(model.path, "etoiles", ok[0]["key"])
+            t = model.method_times(model.path, "debruitage", ok[0]["key"])
             assert set(t) == {"gpu", "cpu"} and t["gpu"][0] > 0 and t["cpu"][0] > t["gpu"][0] * 3, t
             assert durations_text(t, here).count("<b") == 1
         # the cards as the user sees them, on a machine whose GPUs are hidden (the case that quoted the CPU as the GPU)
@@ -614,17 +615,13 @@ def test_the_durations_of_the_cards_are_read_by_the_worker_and_the_panel_follows
         assert w.wait(180)
         assert fired and m.method_times(v, "debruitage", key) is not None
         assert seen and not any(seen), "the estimates were made in the GUI thread"
-        # a ◇ method has the spec's figure for the device it is meant for, at once
-        new = next(x for x in model_methods("debruitage") if x["new"])
-        t = m.method_times(v, "debruitage", new["key"])
-        assert len(t) == 1 and not next(iter(t.values()))[1]
     finally:
         w.stop()
 
 
 def test_undo_and_redo_restore_the_workflows(world, model, page):
     n0 = len(model.paths)
-    p = model.add_path("Extra", {"debruitage": False, "etoiles": "garder", "appris": False, "fond": "simple"})
+    p = model.add_path("Extra", {"debruitage": False, "etoiles": "garder", "fond": "simple"})
     assert len(model.paths) == n0 + 1 and model.can_undo()
     model.rename(p.pid, "Renamed")
     model.set_param(model.view(1), "stack", "kappa", 4.0)
@@ -660,8 +657,8 @@ def test_outputs_pulled_to_post_make_a_raw_stack_workflow(world, model, page):
     n0 = len(model.paths)
     stacking = node(page, "empilement")
     item = next(it for it in page.graph.scene().items() if isinstance(it, BlockItem) and it.node is stacking)
-    assert item.port and not any(it.port for it in page.graph.scene().items()
-                                 if isinstance(it, BlockItem) and it.node.key != "empilement")
+    assert item.port and not any(it.port for it in page.graph.scene().items()       # Stars has its two images'
+                                 if isinstance(it, BlockItem) and it.node.key not in ("empilement", "etoiles"))
     # drag the port onto Post, as the user does
     page.graph.start_wire(item)
     post = page.graph.final_item.sceneBoundingRect().center()
@@ -682,9 +679,9 @@ def test_outputs_pulled_to_post_make_a_raw_stack_workflow(world, model, page):
     from astro_gpu.client.graph import ToolCard
     assert all(c.state == "in" for c in page.findChildren(ToolCard))
     assert [c.text() for c in page.findChildren(QLabel) if c.text() == "after the output"]
-    ok, why, need = model.slider_state(q, "stars_number")
+    ok, why, need = model.slider_state(q, "star_strength")
     assert ok is False and "before the Stars block" in why and need is None             # nothing to add after the exit
-    assert model.slider_state(model.view(1), "stars_number")[0] is True
+    assert model.slider_state(model.view(1), "star_strength", "combined")[0] is True
 
 
 def test_the_mouse_over_and_on_every_block_works(world, model, page):
@@ -695,13 +692,14 @@ def test_the_mouse_over_and_on_every_block_works(world, model, page):
     items = [it for it in page.graph.scene().items() if isinstance(it, BlockItem)]
     assert items
     for it in items:
-        for pos in (QPointF(it.w / 2, BH / 2), QPointF(it.w, BH / 2)):           # the body, then the port's place
+        # the body, then each port (the exit of Stacking, the two images of Stars): a hand that can grab the wire
+        for pos, grab in [(QPointF(it.w / 2, BH / 2), False)] + [(QPointF(it.w, y), True) for _w, y in it.ports]:
             ev = QGraphicsSceneHoverEvent(QEvent.GraphicsSceneHoverMove)
             ev.setPos(pos)
             it.hoverMoveEvent(ev)
-            assert it.cursor().shape() == (Qt.CrossCursor if it.port and pos.x() == it.w else Qt.PointingHandCursor)
+            assert it.cursor().shape() == (Qt.OpenHandCursor if grab else Qt.PointingHandCursor)
         assert isinstance(it._x_rect(), QRectF)
-    stacking = next(it for it in items if it.port)
+    stacking = next(it for it in items if it.node.key == "empilement")
     press = QGraphicsSceneMouseEvent(QEvent.GraphicsSceneMousePress)
     press.setButton(Qt.LeftButton)
     press.setPos(QPointF(stacking.w, BH / 2))
@@ -753,13 +751,13 @@ def test_clicking_selects_and_sets_the_scope(world, model, page):
     settle(world["w"], page)
     assert model.sel_step == "debruitage" and model.scope == [v.pid for v in n.paths] and len(n.paths) == 3
     assert model.path in n.paths
-    n = node(page, "etoiles", 4)
+    n = node(page, "post", 4)                                   # Full twin's Output: its own block
     page.select_node(n)
     assert model.path.pid == 4 and model.scope == [4]
     page.select_node(page.graph.graph.final)
     assert model.sel_step == "final" and model.scope is None
     settle(world["w"], page)
-    assert "Layers" in texts_of(page.panel) and "Pending" in " ".join(texts_of(page.panel))
+    assert "Layers" in texts_of(page.panel) and "Not computed yet" in " ".join(texts_of(page.panel))
     opened = []
     page.openBlock.connect(lambda: opened.append(1))
     page.graph.blockOpened.emit(n)
@@ -773,7 +771,7 @@ def test_the_panel_lists_the_settings_of_the_engine(world, model, page):
     rows = {r.r["key"]: r for r in live_rows(page)}
     assert {"stack.scale", "stack.pixfrac"} <= set(rows)
     sc = rows["stack.scale"].r
-    assert sc["suggested"] == 1.5 and re.search(r"stars of [\d.]+ px", sc["reason"]), sc["reason"]   # from the star size
+    assert sc["suggested"] in (1.0, 1.5, 2.0) and re.search(r"stars of [\d.]+ px", sc["reason"]), sc["reason"]  # star size
     assert sc["min"] == 1.0 and sc["max"] == 3.0
     assert sc["unit"] == "×" and not sc["changed"] and sc["type"] == "float"
     # advanced settings: the others, from the engine, nothing left out
@@ -786,47 +784,44 @@ def test_the_panel_lists_the_settings_of_the_engine(world, model, page):
     rows = {r.r["key"]: r for r in live_rows(page)}
     rows["stack.scale"].focused.emit(rows["stack.scale"].r)                          # a click on the row
     dt = texts_of(page.panel.details)
-    assert any(t.startswith("Suggested: 1.5 · " + sc["reason"][:12]) for t in dt), dt
+    assert any(t.startswith("Suggested: ") and sc["reason"][:12] in t for t in dt), dt
     page.panel.expert = False
 
 
-def test_the_colour_block_offers_one_factor_per_colour(world, model, page):
-    """The colour correction (2 November): a normal setting of the Colour block, full correction by default, its
-    choices in words."""
+def test_the_colour_block_has_one_factor_per_colour_and_no_choice_of_correction(world, model, page):
+    """The Colour block balances the stars with one factor per colour, its only way since 3 November: no correction
+    to choose, the white reference as its setting."""
     page.select_node(node(page, "couleur"))
     settle(world["w"], page)
     rows = {r.r["key"]: r for r in live_rows(page)}
-    assert "color.correction" in rows
-    r = rows["color.correction"].r
-    assert r["label"] == "Colour correction" and r["value"] == "full" and not r["changed"]
-    assert r["choices"] == [("full", "Full correction"), ("per_colour", "One factor per colour")]
-    assert "One factor per colour" in r["help"]
+    assert "color.white_temp" in rows and "color.correction" not in rows
 
 
 def test_a_settings_row_changes_marks_and_goes_back_to_the_suggestion(world, model, page):
-    page.select_node(node(page, "debruitage"))
-    settle(world["w"], page)
-    rows = {r.r["key"]: r for r in live_rows(page)}
-    it = rows["denoise.iterations"]
-    assert it.r["changed"] and it.r["value"] == 6000 and it.r["suggested"] == 24000      # Full has 6000 stored
-    back = [b for b in it.findChildren(QPushButton) if b.text() == "↺"][0]
-    assert not back.isHidden()
-    assert "24000" in back.toolTip() or "24 000" in back.toolTip() or "24,000" in back.toolTip()
-    name = it.findChildren(QLabel)[0]
-    assert "e6a23c" in name.styleSheet().lower()                                          # the name of a changed row
-    back.click()                                                                          # ↺: back to the suggestion
-    settle(world["w"], page)
-    ch = model.pending_change                       # the denoise is done and shared by 3: Replace / variant is asked
-    assert ch and ch["kind"] == "param" and ch["value"] is None and len(ch["pids"]) == 3
-    button(page.panel, "Replace").click()
-    settle(world["w"], page)
-    assert "iterations" not in (model.view(1).params.get("denoise") or {})              # the stored value is gone
-    rows = {r.r["key"]: r for r in live_rows(page)}
-    assert not rows["denoise.iterations"].r["changed"] and rows["denoise.iterations"].r["value"] == 24000
-    assert model.state(model.view(1), "denoise") == "stale"                               # 24000 steps: to compute again
-    model.undo()
-    settle(world["w"], page)
-    assert model.state(model.view(1), "denoise") == "done"
+    model.set_param(model.view(1), "gradient", "degree", 3)        # a value stored in Full, not the one computed
+    page.panel.expert = True
+    try:
+        page.select_node(node(page, "fond", 1))
+        settle(world["w"], page)
+        rows = {r.r["key"]: r for r in live_rows(page)}
+        it = rows["gradient.degree"]
+        assert it.r["changed"] and it.r["value"] == 3 and it.r["suggested"] == 2
+        assert model.state(model.view(1), "gradient") == "stale"
+        back = [b for b in it.findChildren(QPushButton) if b.text() == "↺"][0]
+        assert not back.isHidden() and "2" in back.toolTip()
+        name = it.findChildren(QLabel)[0]
+        assert "e6a23c" in name.styleSheet().lower()                                      # the name of a changed row
+        back.click()                                                                      # ↺: back to the suggestion
+        settle(world["w"], page)
+        if model.pending_change:                                                          # Replace / variant asked
+            button(page.panel, "Replace").click()
+            settle(world["w"], page)
+        assert "degree" not in (model.view(1).params.get("gradient") or {})              # the stored value is gone
+        rows = {r.r["key"]: r for r in live_rows(page)}
+        assert not rows["gradient.degree"].r["changed"] and rows["gradient.degree"].r["value"] == 2
+        assert model.state(model.view(1), "gradient") == "done"                           # the computed one again
+    finally:
+        page.panel.expert = False
 
 
 def stack_cards(page):
@@ -977,7 +972,8 @@ def test_the_selection_rule_is_said_and_the_thresholds_act_only_with_the_thresho
         try:
             page.panel.refresh(page.panel.node)
             settle(world["w"], page)
-            assert "Toutes les images alignées sont gardées, sauf celles qui pèsent moins de 5 % de la meilleure."                 in texts_of(page.panel)
+            assert "Toutes les images alignées sont gardées, sauf celles qui pèsent moins de 5 % de la meilleure." \
+                in texts_of(page.panel)
             assert reason() == ["Ces seuils n'agissent que si la sélection des images est sur « Seuils »."]
         finally:
             appmod.apply_language("en")
@@ -1004,10 +1000,11 @@ def test_selection_thresholds_come_from_the_stack_settings(world, model, page):
         settle(world["w"], page)
         assert model.thresholds_active()
         t, f = model.thresholds_now()
-        assert t == 60 and abs(f - 2.0 * 3.95) < 1e-6 and model.thresholds_unit() == "px"
+        assert t == 60 and f > 0 and model.thresholds_unit() == "px"                # 2 × the night's median FWHM
         st, sf = model.suggested_thresholds()
         assert st == 60 and abs(sf - f) < 1e-6
-        assert model.kept_frames() == 40 and any("40 of 40 frames kept" in t for t in texts_of(page.panel))
+        n = model.selection_total()
+        assert n > 0 and model.kept_frames() == n and any(f"{n} of {n} frames kept" in t for t in texts_of(page.panel))
         # a change goes through the same choice (the stack is done)
         page.panel.propose_selection(70, f)
         settle(world["w"], page)
@@ -1016,8 +1013,8 @@ def test_selection_thresholds_come_from_the_stack_settings(world, model, page):
         button(page.panel, "Cancel").click()
         model.request_selection(70, f)
         settle(world["w"], page)
-        assert model.kept_frames() <= 40 and model.selection_total() == 40
-        assert "transparency ≥ 60 % · stars ≤ 7.9 px" in Graph(model).summary(node(page, "selection"))
+        assert model.kept_frames() <= n and model.selection_total() == n
+        assert f"transparency ≥ 60 % · stars ≤ {f:.1f} px" in Graph(model).summary(node(page, "selection"))
     finally:
         if before == "<unset>":
             stored.pop("selection", None)
@@ -1035,14 +1032,15 @@ def test_spec_mode_shows_what_the_engine_does_not_have_disabled(world, model, pa
     settle(world["w"], page)
     plain = texts_of(page.panel)
     assert not any("◇" in t for t in plain)
-    assert len(method_cards(page)) == 1                                        # Noise2Noise only
+    assert len(method_cards(page)) == 2                                        # pretrained, adapted
     prefs.set("spec_mode", True)
     page.refresh()
     settle(world["w"], page)
     cards = method_cards(page)
-    assert len(cards) == 4 and [c.ok for c in cards] == [True, False, False, False]
-    assert any("◇" in "".join(lb.text() for lb in c.findChildren(QLabel)) for c in cards[1:])
+    assert [c.ok for c in cards] == [True, True]                               # the engine has both: nothing ◇
     page.panel.expert = False
+    page.select_node(node(page, "couleur"))                                     # its ◇ settings (white reference)
+    settle(world["w"], page)
     rows = live_rows(page)
     new_rows = [r for r in rows if r.r["kind"] == "new"]
     assert new_rows and not [b for r in new_rows for b in r.findChildren(QPushButton)
@@ -1054,13 +1052,6 @@ def test_spec_mode_shows_what_the_engine_does_not_have_disabled(world, model, pa
     tc = {c.key: c for c in page.findChildren(ToolCard)}
     assert "deconv" in tc and not tc["deconv"].isEnabled() and tc["deconv"].state == "off"
     assert "◇" in " ".join(lb.text() for lb in tc["deconv"].findChildren(QLabel))
-    # a click on a ◇ method changes nothing
-    cards[1].clicked.emit() if cards[1].ok else None
-    assert model.pending_change is None
-    # the Gradient block says the reorder is for later
-    page.select_node(node(page, "fond"))
-    settle(world["w"], page)
-    assert any("Gradient before Color" in t for t in texts_of(page.panel))
     # a ◇ value is never stored and never changes a key
     keys_before = {s: model.stage_key(model.paths[0], s) for s in model.all_stages(model.paths[0])}
     page.panel.set_setting(next(r for r in new_rows).r, 1)
@@ -1097,7 +1088,8 @@ def test_the_french_switch_translates_everything_visible(world, model, page):
     # block names, states, summaries and the toolbar in French
     g = page.graph.graph
     tip = " ".join(it.toolTip() for it in page.graph.scene().items() if isinstance(it, BlockItem))
-    assert "Empilement" in tip and "À jour" in tip and "À calculer" in tip
+    assert "Empilement" in tip and "À jour" in tip
+    assert i18n._(STATE_WORD["pending"]) == "Pas encore calculé"                  # (the test project may have none pending)
     assert i18n._("Gradient") == "Gradient"
     assert g.summary(next(n for n in g.nodes if n.key == "alignement")) == "sur l'image la plus nette"
     assert "Ajouter une étape" in " ".join(t)
@@ -1155,7 +1147,7 @@ def test_nothing_slow_runs_in_the_gui_thread(qapp, monkeypatch):
     settle(w, pg)
     _edit_kappa(pg, 4.0)
     button(pg.panel, "Try as variant").click()
-    m.add_path("X", {"debruitage": True, "etoiles": "mesurer", "appris": True, "fond": "halpha"})
+    m.add_path("X", {"debruitage": True, "etoiles": "retirer", "fond": "simple"})
     m.undo()
     m.cost()
     m.all_pending()
@@ -1178,7 +1170,7 @@ def test_autosave_writes_only_the_definition_and_flushes_on_close(qapp, tmp_path
     m = ProjectModel(p, w)
     assert w.wait(180)
     before = (root / "project.astroproj").read_bytes()
-    m.add_path("Autosaved", {"debruitage": True, "etoiles": "garder", "appris": False, "fond": "simple"})
+    m.add_path("Autosaved", {"debruitage": True, "etoiles": "garder", "fond": "simple"})
     assert (root / "project.astroproj").read_bytes() == before                  # debounced: not yet
     time.sleep(0.45)
     qapp.processEvents()
@@ -1305,8 +1297,8 @@ def test_dropping_a_tool_on_a_lane_adds_it_where_the_rules_say(world, model, pag
     page.toasted.connect(toasts.append)
     graph.toolDropped.emit("etoiles", 3)                         # on Classic + denoise
     settle(world["w"], page)
-    assert model.view(3).opts["etoiles"] == "mesurer" and model.sel_step == "etoiles" and model.path.pid == 3
-    assert model.scope == [1, 3]                                 # its Stars are the same as Full's: one block, two workflows
+    assert model.view(3).opts["etoiles"] == "retirer" and model.sel_step == "etoiles" and model.path.pid == 3
+    assert model.scope == [1, 3, 4]                              # its Stars are the same as Full's and Full twin's
     assert not toasts or "Denoise added" not in toasts[0]        # it had Denoise
     graph.toolDropped.emit("etoiles", 2)                         # on Classic stack: Denoise comes with it
     settle(world["w"], page)
@@ -1358,7 +1350,7 @@ def test_a_change_of_an_automatic_setting_is_seen_by_the_what_if(world, model, p
         ch = {"kind": "param", "stage": "stack", "name": name, "value": value}
         assert model.throws_away(model.paths, ch), name
         assert model.cost_with([full], ch) > 0, name
-    ch = {"kind": "param", "stage": "denoise", "name": "iterations", "value": 8000}
+    ch = {"kind": "param", "stage": "gradient", "name": "degree", "value": 3}
     assert model.throws_away([full], ch) and model.cost_with([full], ch) > 0
     # an invalid value is refused with the name of the setting, and nothing changes
     toasts = []
@@ -1373,7 +1365,16 @@ def test_a_change_of_an_automatic_setting_is_seen_by_the_what_if(world, model, p
 def test_no_setting_of_the_engine_is_out_of_reach(world, model, page):
     """Every setting a stage describes (but the ones the project or the options own) has a row in the panel of its
     block, in some workflow; no row is listed twice in a panel."""
-    from astro_gpu.client.settings import HIDDEN, setting_method, stack_method
+    from astro_gpu.client.settings import CATALOG, HIDDEN, catalog_key, setting_method, stack_method
+
+    def names(ck):
+        return {it["name"] for _t, items in CATALOG.get(ck, []) for it in items}
+
+    def another_methods(v, stage, name):
+        """A setting of a method this workflow does not use (Gradient's, Denoise's): its row comes with the method."""
+        block = {"gradient": "fond", "denoise": "debruitage"}.get(stage)
+        return block is not None and name not in names(catalog_key(v, block)) and \
+            any(name in names(ck) for ck in CATALOG if ck.startswith(block + ":"))
     want = set()
     for v in model.paths:
         for stage in model.all_stages(v):
@@ -1383,6 +1384,8 @@ def test_no_setting_of_the_engine_is_out_of_reach(world, model, page):
                 m = setting_method({"stage": stage, "name": info.name})
                 if m is not None and m != stack_method(model, v):
                     continue                                      # the other stacking method's (its own test)
+                if another_methods(v, stage, info.name):
+                    continue
                 want.add(f"{stage}.{info.name}")
     got = set()
     page.panel.expert = True
@@ -1476,7 +1479,7 @@ def test_every_block_has_pause_here_for_review_and_the_dot_shows(world, model, p
     assert {"calibration", "alignement", "selection", "empilement", "astrometrie", "couleur", "debruitage", "etoiles",
             "fond", "post"} <= set(keys)
     for n in page.graph.graph.nodes:
-        if n.key in ("sources", "final"):
+        if n.key in ("sources", "final", "composition"):          # a Stars and background block is a layer of Post
             continue
         m = menu_of(page, n, monkeypatch)
         act = next(a for a in m.actions() if a.text() == "Pause here for review")

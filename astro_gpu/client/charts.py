@@ -2,8 +2,8 @@
 
 * ``FramesChart``: Selection. Star size and transparency of every frame, the thresholds dragged, the frames clicked
   (``api.frame_table``). Shift + drag draws a rectangle of frames to exclude or keep.
-* ``SpectralChart``, ``ColorLinesChart``: Color. The sensor's curves the stage fitted (``api.spectral_response``), and
-  the colour the camera gives to each wavelength.
+* ``SpectralChart``, ``ColorLinesChart``: Color. An approximation of the sensor's curves rebuilt from the field's
+  stars (``api.spectral_response``), and the colour the camera gives to each wavelength.
 * Registration (``registration_data`` reads the stage's results, ``registration_tabs`` builds the charts):
   ``QualityChart`` (star size, roundness, stars, transparency of each frame), ``DriftChart`` (the offset of each
   frame from the reference, in pixels or arcseconds), ``TrackChart`` (x against y, coloured by time),
@@ -278,60 +278,52 @@ class FramesChart(ChartView):
 
 # ============================================================================================ Color
 CHANNELS = ((QColor("#ff6b6b"), "Red"), (QColor("#5fd38d"), "Green"), (QColor("#5ea1ff"), "Blue"))
-LINES = [(486.1, "Hβ"), (500.7, "OIII"), (656.3, "Hα")]
+LINES = ((486.1, "Hβ"), (500.7, "[OIII]"), (656.3, "Hα"))           # the emission lines drawn (nm)
 
 
 class SpectralChart(ChartView):
-    """Spectral response of the sensor, reconstructed from the Gaia spectra of the field's stars: the three channels'
-    curves, relative to the strongest, and the emission lines of the nebulae. The readout interpolates the curves."""
+    """An approximation of the sensor's response, rebuilt from the Gaia spectra of the field's stars
+    (``core.spectral``): the three channels' curves relative to the strongest, and the emission lines of the nebulae.
+    Approximate: star spectra are broad, a narrow feature (the H-alpha line) can be well off."""
 
-    LINES = LINES
-
-    def __init__(self, lam, S, parent=None):
-        super().__init__(_("Sensor response, rebuilt from the Gaia spectra of the field stars"), parent, zoom="xy",
-                         readout="x", export_name="spectral_response")
+    def __init__(self, r, parent=None):
+        super().__init__(_("Approximate sensor response, rebuilt from {n} stars of the field").format(n=r.stars),
+                         parent, zoom="xy", readout="x", export_name="spectral_response")
         self.setMinimumHeight(260)
-        self.lam, self.S = np.array(lam), np.array(S)
-        top = float(self.S.max()) or 1.0
+        self.r = r
         self.x_pad = 0.0                                          # the curves are known from lam[0] to lam[-1]
         self.add_panel(_("Relative response"), "", digits=None)
         self.set_x(_("Wavelength (nm)"), kind="num", digits=0)
-        names = {"Red": _("Red"), "Green": _("Green"), "Blue": _("Blue")}
-        for c, (col, en) in enumerate(CHANNELS[: len(self.S)]):
-            self.add_line(names[en], self.lam, np.maximum(self.S[c], 0.0) / top, color=col, width=2.2, interp=True,
-                          digits=2)
-        for lam0, name in self.LINES:
+        for c, (col, en) in enumerate(CHANNELS):
+            self.add_line(_(en), r.lam, np.maximum(r.S[c], 0.0), color=col, width=2.2, interp=True, digits=2)
+        for lam0, name in LINES:
             self.add_vline(lam0, name)
         self.set_home(0, y=(0.0, 1.08))
 
 
 class ColorLinesChart(ChartView):
-    """The colour the camera gives to each wavelength: the share of each channel in the signal of a pure line. The
-    emission lines of the nebulae (Hβ, [OIII], Hα) sit where the fit decides their colour."""
+    """The colour the camera gives to each wavelength, from the approximate curves: the share of each channel in the
+    signal of a pure line. The emission lines of the nebulae (Hβ, [OIII], Hα) sit where their colour is read."""
 
-    def __init__(self, lam, S, parent=None):
+    def __init__(self, r, parent=None):
         super().__init__(_("Colour the camera gives to each wavelength"), parent, zoom="xy", readout="x",
                          export_name="line_colours")
         self.setMinimumHeight(260)
-        self.lam, self.S = np.array(lam), np.array(S)
-        tot = np.maximum(self.S, 0.0).sum(0)
-        keep = tot > 0.03 * float(tot.max() or 1.0)                 # where the sensor sees nothing, a share means nothing
-        share = 100 * np.maximum(self.S, 0.0) / np.where(tot > 0, tot, 1.0)
+        self.r = r
+        share = r.shares()
         self.x_pad = 0.0
         self.add_panel(_("Share of the signal (%)"), "%", digits=0)
         self.set_x(_("Wavelength (nm)"), kind="num", digits=0)
-        names = {"Red": _("Red"), "Green": _("Green"), "Blue": _("Blue")}
-        for c, (col, en) in enumerate(CHANNELS[: len(self.S)]):
-            y = np.where(keep, share[c], np.nan)
-            self.add_line(names[en], self.lam, y, color=col, width=2.2, interp=False, digits=0, unit="%")
+        for c, (col, en) in enumerate(CHANNELS):
+            self.add_line(_(en), r.lam, share[c], color=col, width=2.2, interp=False, digits=0, unit="%")
         for lam0, name in LINES:
             self.add_vline(lam0, name)
         self.set_home(0, y=(0.0, 100.0))
 
 
-def color_tabs(lam, S) -> list[tuple[str, ChartView]]:
-    """The charts of the Color block as (tab title, widget). ``lam``, ``S``: ``api.spectral_response``. No I/O."""
-    return [(_("Spectral response"), SpectralChart(lam, S)), (_("Colour of the lines"), ColorLinesChart(lam, S))]
+def color_tabs(r) -> list[tuple[str, ChartView]]:
+    """The charts of the Color block as (tab title, widget). ``r``: ``api.spectral_response``. No I/O."""
+    return [(_("Approximate spectral response"), SpectralChart(r)), (_("Colour of the lines"), ColorLinesChart(r))]
 
 
 # ============================================================================================ Registration
@@ -569,7 +561,7 @@ class TrackChart(_Offsets):
 
     def __init__(self, d: RegistrationData, parent=None, left_out: dict | None = None):
         """``left_out``: in Selection, the frames the stack leaves out (name -> reason), circled in red on the path."""
-        super().__init__(_("Tracking x / y (Lissajous)"), parent, zoom="xy", readout="xy", snap=18.0,
+        super().__init__(_("Drift path (x / y)"), parent, zoom="xy", readout="xy", snap=18.0,
                          export_name="drift_path")
         self.setMinimumHeight(300)
         self.d = d
@@ -686,6 +678,6 @@ def registration_tabs(d: RegistrationData) -> list[tuple[str, ChartView]]:
     sensor size is unknown."""
     tabs = [(_("Quality"), QualityChart(d))]
     if np.isfinite(d.dx).any():
-        tabs += [(_("Drift"), DriftChart(d)), (_("Tracking x / y (Lissajous)"), TrackChart(d))]
+        tabs += [(_("Drift"), DriftChart(d)), (_("Drift path (x / y)"), TrackChart(d))]
     tabs.append((_("Distribution"), DistributionChart(d)))
     return tabs

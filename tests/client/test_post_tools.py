@@ -172,7 +172,7 @@ def test_the_presets_are_the_pro_tools_ones():
     for n in ("Medium Contrast", "Strong Contrast", "Lighter", "Darker", "Increase Contrast", "Linear Contrast",
               "Negative", "Color Negative", "Cross Process"):
         assert n in names
-    astro = [p for p in pc.builtin_presets() if p["source"] not in ("ReferenceEditor",) and p["name"] != "Linear"]
+    astro = [p for p in pc.builtin_presets() if p["source"] != pc.PS and p["name"] != "Linear"]
     assert len(astro) == 4 and all(p["source"] for p in astro)
     # A reference image editor's: the very points of the .acv files a reference image editor ships
     if PS_CURVES.is_dir():

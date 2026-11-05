@@ -3,8 +3,8 @@
 The views (tune.py, frames.py, sources.py) never touch a file. They ask an ``InspectService``; it runs the job in a
 worker thread and answers with a signal in the GUI thread:
 
-* images: the array of a block (stack, denoised, starless...) or the engine's preview, with the automatic display stretch,
-  the histograms and the astrometric solution (``ShownImage``); the last images are kept (least recently used);
+* images: the array of a block (stack, denoised, the starless image...) or the engine's preview, with the automatic
+  display stretch, the histograms and the astrometric solution (``ShownImage``); the last images are kept (least recently used);
 * the metrics of a done result (``api.stage_outputs``), the frame table of Selection, the sessions with their headers
   and health checks, the frames of a group, their thumbnails and statistics;
 * the scan of a folder to import, with its progress.
@@ -163,7 +163,7 @@ class ShownImage:
     wcs: Any = None
     hist: dict[str, np.ndarray] = field(default_factory=dict)     # "stretched" / "linear" -> (3, 256) counts
     stretch: dict[str, list[float]] = field(default_factory=dict)  # black, white, balance per channel
-    curves: Any = None                         # SpectralCurves, for a chart
+    curves: Any = None                         # core.spectral.SpectralResponse, for a chart of the Color block
     nbytes: int = 0
 
 
@@ -1581,10 +1581,11 @@ def stack_bundle(p, wid: int) -> StackBundle:
 
 @dataclass
 class ColorBundle:
-    curves: Any = None                   # api.SpectralCurves
+    curves: Any = None                   # core.spectral.SpectralResponse
 
 
 def color_bundle(p, wid: int, which: str = "current") -> ColorBundle:
+    """The sensor's curves with their uncertainty (worker thread: about a second of fitting)."""
     return ColorBundle(curves=api.spectral_response(p, wid, which))
 
 
