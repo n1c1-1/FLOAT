@@ -176,7 +176,7 @@ class Harness(appmod.Main):
         return self.tune
 
     def close_project(self, go_home=True):
-        super().close_project(go_home)
+        return super().close_project(go_home)
 
 
 def open_window(root: Path, size=(1680, 1000), readonly=True) -> Harness:
@@ -828,6 +828,24 @@ def scratch(tmp_path):
     w.close()
 
 
+def test_a_setting_of_the_block_shown_keeps_its_picture_on_screen(scratch):
+    """Issue #24: Away from emission ticked in the Gradient block: the block is Outdated, its picture (the previous
+    result) is the same, so the viewer stays (built again, the image flickered); the header says it is Outdated."""
+    w = scratch
+    s = w.s
+    full = next(p for p in s.paths if p.name == "Full")
+    if s.state(full, "gradient") != "done":
+        pytest.skip("Gradient of the test project is not up to date")
+    inspect(w, "fond", index=s.index_of(full.pid))
+    t = w.tune
+    v0, img0 = t.view, t.view.image().identity()
+    t.grad_editor._set_avoid(not t.grad_editor.avoid)
+    settle(w)
+    assert s.state(full, "gradient") == "stale"
+    assert t.view is v0 and t.view.image().identity() == img0
+    assert "previous result" in texts_of(t)
+
+
 def test_an_outdated_block_shows_its_previous_result(scratch):
     w = scratch
     s = w.s
@@ -880,6 +898,80 @@ def test_a_variant_is_shown_compared_with_its_original(scratch):
         return
     names = [v.cmp_cb.itemText(i) for i in range(v.cmp_cb.count())]
     assert any(n.startswith(full.name + "  ·  ") for n in names) and v.compare_mode() == "side"
+
+
+def test_the_frames_of_each_kind_are_chosen_by_their_files(env, monkeypatch, tmp_path):
+    """The import: the darks chosen by three of their files, the flats taken away; read again, then into the project
+    exactly so (the user's rule, 5 November: each kind chosen by selecting its files)."""
+    root = tmp_path / "ws" / "Chosen"
+    project2.create(root, "Chosen", Target(name="IC 1805"))
+    w = open_window(root, readonly=False)
+    try:
+        darks = sorted(str(p) for p in (DATA / "darks").iterdir())[:3]
+
+        def wait_scan(d):
+            end = time.monotonic() + 120
+            while (d.scan is None or not d.ok.isEnabled()) and time.monotonic() < end:
+                QApplication.processEvents()
+                time.sleep(0.01)
+            assert d.scan is not None
+
+        def fake_exec(self):
+            wait_scan(self)
+            assert "darks" in self.suggested and len(self.scan.frames["darks"]) == 15
+            self.rows["darks"].changed.emit("darks", darks)                # Choose files…: three of them
+            wait_scan(self)
+            self.rows["flats"].changed.emit("flats", [])                   # ✕: no flats
+            wait_scan(self)
+            assert len(self.scan.frames["darks"]) == 3 and not self.scan.frames["flats"]
+            assert "darks" not in self.suggested and "3 darks" in self.rows["darks"].detail.text()
+            assert self.rows["flats"].what.text() == "None"
+            self.accept()
+            return 1
+        monkeypatch.setattr(ImportDialog, "exec", fake_exec)
+        assert import_folder(w.s, w, str(DATA / "lights"), service=w.tune.service)
+        w.s.flush()
+        d = project2.load(root)
+        assert len(d.sessions) == 1 and sorted(d.sessions[0].darks) == darks and not d.sessions[0].flats
+    finally:
+        w.s.flush()
+        w.close()
+
+
+def test_change_frames_replaces_the_darks_of_a_session(env, monkeypatch, tmp_path):
+    """Frames > Sessions: Change frames… opens the import on the session's frames; two darks chosen, the session holds
+    them (and only them)."""
+    from astro_gpu.client.sources import edit_session_frames
+    root = tmp_path / "ws" / "Edit"
+    p = project2.create(root, "Edit", Target(name="IC 1805"))
+    api.add_session(p, lights=[DATA / "lights"], darks=[DATA / "darks"], flats=[DATA / "flats"], name="night")
+    api.save(p)
+    w = open_window(root, readonly=False)
+    try:
+        darks = sorted(str(x) for x in (DATA / "darks").iterdir())[:2]
+
+        def wait_scan(d):
+            end = time.monotonic() + 120
+            while (d.scan is None or not d.ok.isEnabled()) and time.monotonic() < end:
+                QApplication.processEvents()
+                time.sleep(0.01)
+            assert d.scan is not None
+
+        def fake_exec(self):
+            wait_scan(self)
+            assert len(self.scan.frames["darks"]) == 15 and not self.suggested     # the session's own, no guess
+            self.rows["darks"].changed.emit("darks", darks)
+            wait_scan(self)
+            self.accept()
+            return 1
+        monkeypatch.setattr(ImportDialog, "exec", fake_exec)
+        assert edit_session_frames(w.s, w.s.p.sessions[0].id, w, service=w.tune.service)
+        w.s.flush()
+        d = project2.load(root)
+        assert sorted(d.sessions[0].darks) == [Path(x).as_posix() for x in darks] and d.sessions[0].flats
+    finally:
+        w.s.flush()
+        w.close()
 
 
 def test_importing_the_heart_folder_gives_the_counts_the_sessions_and_the_thumbnails(env, monkeypatch, tmp_path):
@@ -1538,3 +1630,28 @@ def test_the_gui_thread_keeps_beating_while_the_images_load(win):
 def test_the_test_project_was_not_written():
     """The views and the model read the test project: nothing in its definition, manifests or previews changed."""
     assert _snapshot(F_PROJECT) == PROJECT_BEFORE
+
+
+def test_edits_wait_for_save_and_closing_asks(qapp, tmp_path, monkeypatch):
+    """Issue #1: an edit writes nothing; the title has a star until Save; closing with edits asks: Cancel keeps the
+    project open, Don't save closes it without writing."""
+    root = tmp_path / "ws" / "Saved"
+    p = project2.create(root, "Saved", Target(name="IC 1805"))
+    api.add_workflow(p, "Full", "Full", None)
+    api.save(p)
+    before = (root / project2.FILE).read_bytes()
+    w = open_window(root, readonly=False)
+    try:
+        assert not w.windowTitle().endswith("*")
+        w.s.rename(w.s.paths[0].pid, "Renamed")
+        assert w.windowTitle().endswith(" *") and (root / project2.FILE).read_bytes() == before
+        w.save()
+        assert not w.windowTitle().endswith("*") and project2.load(root).workflows[0].name == "Renamed"
+        w.s.rename(w.s.paths[0].pid, "Dropped")
+        answers = iter(["cancel", "discard"])
+        monkeypatch.setattr(type(w), "ask_save", lambda self: next(answers))
+        assert w.close_project() is False and w.project is not None              # Cancel: still open
+        assert w.close_project() is True and w.project is None                   # Don't save
+        assert project2.load(root).workflows[0].name == "Renamed"
+    finally:
+        w.close()

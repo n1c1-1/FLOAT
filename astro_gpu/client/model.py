@@ -2,7 +2,7 @@
 
 Each member is a thin call on ``astro_gpu.api``: the workflows (``WorkflowView``), their stages, keys and states, what a
 change costs, the Replace / Try as variant choice, variants, undo and redo, the sessions, the selection thresholds and
-the settings of a stage. Edits autosave, debounced 300 ms.
+the settings of a stage. Edits are saved by Save only (issue #1): until then the model is ``dirty``.
 
 What the GUI thread may do, and what it may not:
 
@@ -44,7 +44,6 @@ from .blocks import ENGINE_BLOCK as ENGINE_KEY
 from .i18n import _, hm
 from .services.worker import ApiWorker, norm_path
 
-SAVE_DELAY_MS = 300
 #: the stage of the Output block: a workflow has a layer in Post once it is computed
 BY_OUTPUT = ("render_simple",)
 #: the name a layer of the Stars block's images gets after its workflow's ("Full · Stars and background"); its words
@@ -242,6 +241,7 @@ class ProjectModel(QObject):
     factsChanged = Signal()                # the facts of the done results (info) changed
     selectionChanged = Signal()            # the count of kept frames changed
     postChanged = Signal(object)           # the Post composition changed (the object that changed it, or None)
+    dirtyChanged = Signal(bool)            # there are edits not saved yet (True), or they were saved (False)
 
     def __init__(self, project, worker: ApiWorker | None = None, *, readonly: bool = False,
                  history: list | None = None, gpu: bool = True, device: str | None = None):
@@ -285,10 +285,6 @@ class ProjectModel(QObject):
         self._redo: list = []
         self._depth = 0
         self._dirty = False
-        self._save_timer = QTimer(self)
-        self._save_timer.setSingleShot(True)
-        self._save_timer.setInterval(SAVE_DELAY_MS)
-        self._save_timer.timeout.connect(self.flush)
         self._rebuild_views()
         if self.paths:
             self.current = max(0, next((i for i, v in enumerate(self.paths) if v.pid == project.current), 0))
@@ -468,9 +464,11 @@ class ProjectModel(QObject):
         self.costChanged.emit()
         self.pathsChanged.emit()
 
-    def close(self):
-        """Save what is pending and let go of the worker (the project is closed)."""
-        self.flush()
+    def close(self, save: bool = True):
+        """Save what is pending (unless ``save`` is False: the edits are dropped) and let go of the worker (the project
+        is closed)."""
+        if save:
+            self.flush()
         self.worker.cancel(f"model.warm:{id(self)}")
         for sig, slot in ((self.worker.done, self._worker_done), (self.worker.failed, self._worker_failed)):
             try:
@@ -481,21 +479,28 @@ class ProjectModel(QObject):
             self.worker.stop()
 
     # ------------------------------------------------------------ saving
+    @property
+    def dirty(self) -> bool:
+        """Edits not saved yet."""
+        return self._dirty
+
     def flush(self):
-        """Write the definition now (the edits are saved 300 ms after the last one)."""
-        self._save_timer.stop()
+        """Save: write the definition now (the edits are written by Save only)."""
         if self._dirty and not self.readonly and self.root is not None:
             if self.path is not None:
                 self.p.current = self.path.pid
             api.save(self.p)
-        self._dirty = False
+        if self._dirty:
+            self._dirty = False
+            self.dirtyChanged.emit(False)
 
     def edited(self):
-        """The definition changed outside the workflows (the sessions, the frames excluded by hand, the Post
-        composition): it is saved 300 ms after the last change, as any edit."""
+        """The definition changed (the workflows, the sessions, the frames excluded by hand, the Post composition):
+        it waits for Save, the window says so."""
+        if self.readonly or self._dirty:
+            return
         self._dirty = True
-        if not self.readonly:
-            self._save_timer.start()
+        self.dirtyChanged.emit(True)
 
     # ------------------------------------------------------------ the Post composition
     # Post's layers are the project's (``project.post["layers"]``, postengine.save_layers). Post edits them, and so
@@ -1165,6 +1170,11 @@ class ProjectModel(QObject):
         params = copy.deepcopy(params or {})
         if not params and self.path is not None:
             params = {s: dict(v) for s, v in self.path.params.items() if s in TRUNK}
+        # the camera white balance in Stacking (issue #6): on in a new project; else as the project's workflows have
+        # it, so that they share their stack (a project computed before it stays without)
+        have = [w.params.get("stack", {}).get("white_balance", False) for w in self.p.workflows]
+        if (bool(have[0]) if have else True):
+            params.setdefault("stack", {})["white_balance"] = True
         with self._edit():
             w = api.add_workflow(self.p, name, wfl.check_options(to_engine(opts)), params)
         return self.view(w.id)
@@ -1548,6 +1558,24 @@ class ProjectModel(QObject):
         emptied = sorted((sid, kind) for sid, kind in touched if not getattr(p.session(sid), kind))
         self.reload_sources()
         return {"done": done, "emptied": emptied}
+
+    def set_session_frames(self, session: int, chosen: dict) -> bool:
+        """The frames of a session, kind by kind (folders or files, as the import dialog chose them): saved, the frames
+        read again, what follows Outdated. False when the session is not known or nothing changes."""
+        try:
+            s = self.p.session(session)
+        except (KeyError, ValueError):
+            return False
+        new = {k: [Path(x).as_posix() for x in chosen.get(k, [])] for k in ("lights",) + tuple(CALIBRATION_KINDS)}
+        old = {k: [Path(self.p.abspath(x)).as_posix() for x in getattr(s, k)] for k in new}
+        if new == old or not new["lights"]:
+            return False
+        with self._edit():
+            for k, v in new.items():
+                setattr(s, k, v)
+            self.p.validate()
+        self.reload_sources()
+        return True
 
     def add_calibration_folder(self, session: int, kind: str, folder: str) -> bool:
         """A folder of calibration frames (darks, flats, bias, flat darks) added to a session: saved, the frames read

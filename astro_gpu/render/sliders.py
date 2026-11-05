@@ -23,7 +23,8 @@ from .stars import StarSettings
 KINDS = ("simple", "stacking", "starless", "stars", "combined")
 STAR_KINDS = ("starless", "stars", "combined")
 #: settings moved by a step (the others by a ratio)
-ADDITIVE = frozenset({"sky", "contrast", "noise_mix", "smooth_px", "star_size"})
+ADDITIVE = frozenset({"sky", "contrast", "noise_mix", "smooth_px", "star_size", "halpha", "keep_colours",
+                      "faint", "star_small"})
 SUGGESTED = 2.0
 LO, HI = 0.0, 4.0
 
@@ -52,13 +53,23 @@ NEBULA, STARS = "Nebula and background", "Stars"
 SLIDERS: tuple[Slider, ...] = (
     Slider("sky", "Sky", NEBULA, ("darker", "brighter"), {"sky": (0.10, 0.15, 0.20, 0.26, 0.32)}),
     Slider("contrast", "Contrast", NEBULA, ("softer", "stronger"), {"contrast": (-0.35, -0.18, 0.0, 0.25, 0.5)}),
+    # the faint tones above the sky (render/simple.faint_tones): 0.8 at 2 (the default), 0 (as stretched) at 1
+    Slider("faint", "Faint tones", NEBULA, ("darker", "brighter"), {"faint": (-0.4, 0.0, 0.8, 1.6, 2.4)}),
     Slider("saturation", "Saturation", NEBULA, ("paler", "more vivid"), {"saturation": (0.6, 0.9, 1.2, 1.5, 1.85)}),
+    # how much of the stretch keeps the colours (render/simple.SimpleRenderEngine.tone)
+    Slider("colours", "Colours", NEBULA, ("faded", "true"), {"keep_colours": (0.0, 0.25, 0.5, 0.75, 1.0)}),
+    # the measured H-alpha emission (render/simple.emission): taken out below 2, added above
+    Slider("halpha", "H-alpha", NEBULA, ("less", "more"), {"halpha": (-0.6, -0.3, 0.0, 1.0, 2.0)}),
     # the denoised layer: the raw stack mixed back below 2, faint areas smoothed above
     Slider("noise", "Noise smoothing", NEBULA, ("less", "more"),
            {"noise_mix": (0.4, 0.7, 1.0, 1.0, 1.0), "smooth_px": (0.0, 0.0, 0.0, 0.8, 1.6)}, needs="denoise"),
     Slider("star_strength", "Strength", STARS, ("subtler", "bolder"),
-           {"star_strength": (0.35, 0.6, 1.0, 1.6, 2.6)}, needs="stars"),
-    Slider("star_size", "Star size", STARS, ("smaller", "larger"), {"star_size": (-2.0, -1.0, 0.0, 1.0, 2.0)},
+           {"star_strength": (0.25, 0.4, 0.6, 1.0, 1.6)}, needs="stars"),
+    # the small stars taken away (render/stars.fade_small_stars), left = fewer stars (the user, issue #7): those
+    # narrower than 1.0 then 0.6 times the image's typical star at 0 and 1, none at 2 (the default) and above
+    Slider("star_small", "Small stars", STARS, ("less", "more"), {"star_small": (1.0, 0.6, 0.0, 0.0, 0.0)},
+           needs="stars"),
+    Slider("star_size", "Star size", STARS, ("smaller", "larger"), {"star_size": (-3.0, -2.0, -1.0, 0.0, 1.0)},
            needs="stars"),
     Slider("star_color", "Star color", STARS, ("whiter", "more colorful"),
            {"star_saturation": (0.4, 0.8, 1.2, 1.7, 2.3)}, needs="stars"),

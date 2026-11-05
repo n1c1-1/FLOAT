@@ -33,7 +33,7 @@ if Path("C:/Windows/Fonts").is_dir():
 pytest.importorskip("PySide6")
 import torch  # noqa: E402
 from conftest import TEST_PROJECT, TEST_PROJECT_CLASSIC, needs_test_project  # noqa: E402
-from PySide6.QtCore import QObject, Signal  # noqa: E402
+from PySide6.QtCore import QObject, Qt, Signal  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton  # noqa: E402
 
 from astro_gpu import api  # noqa: E402
@@ -699,7 +699,7 @@ def test_the_layer_rules_normalize_and_the_composition_is_saved():
     f3 = new_filter_layer("curves", 9999)                                     # its layer is gone
     # a layer's own filters always sit just above it; a filter whose layer is gone applies to everything below
     names = [x["name"] for x in normalize([b, f1, a, f2, f3])]
-    assert names.index("Sharpen") == names.index("A") - 1 and names.index("SCNR (green removal)") == names.index("B") - 1
+    assert names.index("Sharpen") == names.index("A") - 1 and names.index("Green removal") == names.index("B") - 1
     assert f3["target"] is None
     layers = normalize([f1, f2, f3, b, a])
     a["mask"] = new_mask()
@@ -1104,7 +1104,10 @@ def test_the_first_layers_and_the_first_image(post):
     assert v.src.canvas == (688, 464) and shown(v).shape == (232, 344, 3) and shown(v).dtype == np.uint8
     assert np.array_equal(shown(v), reference(post).rgb)                    # the page shows what the engine path gives
     assert post.model.touched == 0                                          # opening Post writes nothing in the project
-    # a workflow that is rendered later gets its layer on top, hidden
+    # a workflow rendered later does not come by itself (issue #10); a block's output sent from the graph does
+    post.model.paths.append(WF(4, "Later", None))
+    post.model.pathsChanged.emit()
+    assert "Later" not in [lay["name"] for lay in v.layers]
     post.model.paths.append(WF(3, "Raw stack", "stacking"))
     post.model.pathsChanged.emit()
     assert [(lay["name"], lay["visible"]) for lay in v.layers][0] == ("Raw stack", False)
@@ -1126,7 +1129,7 @@ def test_filters_on_one_layer_and_on_everything_below(post):
     # the panel (a reference image editor's): the filter is a child of its layer, indented under it
     assert [(r.lay["name"], r.depth) for r in v.rows] == [("Classic", 0), ("Full", 0), ("Saturation", 1)]
     assert rows[sat["id"]].sub.text() == "Normal · 100%" and rows[sat["id"]].toolTip() == 'Applies to "Full" only'
-    assert rows[full["id"]].toggle is not None and rows[full["id"]].toggle.text() == "▾"
+    assert rows[full["id"]].toggle is not None and rows[full["id"]].toggle.arrowType() == Qt.DownArrow
     assert rows[classic["id"]].toggle is None
     # another one, on everything below
     v.select(classic["id"], "layer")
@@ -1137,10 +1140,10 @@ def test_filters_on_one_layer_and_on_everything_below(post):
     assert next(r for r in v.rows if r.lay["id"] == sh["id"]).sub.text() == "on everything below · Normal · 100%"
     assert [(r.lay["name"], r.depth) for r in v.rows] == [("Sharpen", 0), ("Classic", 0), ("Full", 0),
                                                          ("Saturation", 1)]
-    # the properties of a filter: where it applies, its settings
+    # the properties of a filter: its settings; where it applies is its place in the layers (issue #26)
     v.select(sat["id"], "layer")
     texts = [b.text() for b in widgets_of(v, QPushButton)]
-    assert '"Full" only' in texts and "Everything below" in texts
+    assert '"Full" only' not in texts and "Everything below" not in texts
     assert [lb.text() for lb in widgets_of(v, QLabel)][0] == "Saturation"
     assert post.settle()
     img = shown(v).copy()
@@ -1156,11 +1159,13 @@ def test_filters_on_one_layer_and_on_everything_below(post):
     # the + Filter menu: the filters by family (the first Post's arcsinh stretch is no longer offered)
     fam = {a.text(): [x.text() for x in a.menu().actions()] for a in v.filter_menu.actions()}
     assert list(fam) == ["Stretch", "Contrast", "Color", "Detail", "Noise", "Combine"]
-    assert sum(len(x) for x in fam.values()) == len([f for f in FILTERS.values() if not f.get("hidden")]) == 15
+    assert sum(len(x) for x in fam.values()) == len([f for f in FILTERS.values() if not f.get("hidden")]) == 19  # Dehaze, #22
     # Curves and Levels are stretches (2 November: where the user looked for them first)
     assert fam["Stretch"] == ["Generalised hyperbolic stretch", "Arcsinh stretch", "Histogram transformation", "Curves",
                               "Levels"]
     assert "Curves" not in fam["Contrast"] and fam["Combine"] == ["H-alpha to red"]
+    assert "Highlight compression" in fam["Contrast"] and "Faint area smoothing" in fam["Noise"]
+    assert "Spot healing" in fam["Detail"]
     assert all(x.isEnabled() for a in v.filter_menu.actions() for x in a.menu().actions())
 
 
@@ -1290,6 +1295,55 @@ def test_the_brush_paints_erases_and_is_one_undo_step(post):
     assert post.settle() and v.mask1.max() == 0
 
 
+def test_spot_healing_is_a_brush_healed_on_release_with_nothing_left_on_the_image(post):
+    """Issue #20, a reference image editor's Spot Healing Brush: a click or a stroke heals when let go (one Undo step); a stroke is
+    spots every half radius, none healed from the stroke itself; Alt+click sets the source by hand for the strokes
+    that follow (a reference image editor's Healing Brush); nothing is drawn on the image afterwards."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QImage, QPainter
+    v = post.view
+    f = v.add_filter("heal")
+    v.select(f["id"], "layer")
+    assert v.viewer.mode == "heal" and v._heal_layer() is f
+    assert post.settle()
+    before = shown(v).copy()
+    n0 = len(v.undo)
+    left = int(Qt.LeftButton.value)
+    v._heal_press(200.0, 150.0, left, False)
+    assert f["params"]["spots"] == [] and len(v.undo) == n0                            # healed when let go
+    v._heal_release()
+    spots = f["params"]["spots"]
+    assert len(spots) == 1 and len(v.undo) == n0 + 1 and spots[0][2] == pytest.approx(v.heal_size / 2)
+    assert np.hypot(spots[0][3], spots[0][4]) > spots[0][2]                            # the source beside the spot
+    assert post.settle() and not np.array_equal(shown(v), before)
+    # a stroke along a trail: spots every half radius, their sources off the stroke, one Undo step
+    r = v.heal_size / 2
+    v._heal_press(100.0, 300.0, left, False)
+    v._heal_move(100.0 + 4 * r, 300.0)
+    v._heal_release()
+    trail = f["params"]["spots"][1:]
+    assert len(trail) == 9 and len(v.undo) == n0 + 2
+    assert all(abs(y + dy - 300.0) >= 2 * r - 1 or not (100.0 - r <= x + dx <= 100.0 + 5 * r)
+               for x, y, _r, dx, dy in trail)
+    # Alt+click: the source by hand; the next stroke keeps the offset (a reference image editor's Aligned)
+    v._heal_press(400.0, 100.0, left, True)
+    assert len(f["params"]["spots"]) == 10                                              # sets the source only
+    v._heal_press(300.0, 100.0, left, False)
+    v._heal_release()
+    assert f["params"]["spots"][-1][3:] == [100.0, 0.0]
+    v.do_undo()
+    assert len(v._heal_layer()["params"]["spots"]) == 10
+    # nothing on the image when no stroke is painted
+    img = QImage(64, 64, QImage.Format_ARGB32)
+    img.fill(0)
+    qp = QPainter(img)
+    v._heal_src = v._heal_off = None
+    v._heal_overlay(qp, v.viewer)
+    qp.end()
+    assert img.constBits().tobytes() == bytes(64 * 64 * 4)
+    assert post.settle()
+
+
 def test_a_stars_workflow_comes_as_its_stars_and_background_image(preps, qapp):
     """A workflow with the Stars block: its layer is its Stars block's recombined image, the stars put back in Screen;
     it shows only the sliders it has, the stars first, and the Stars blend under their title. Its starless image and
@@ -1308,7 +1362,9 @@ def test_a_stars_workflow_comes_as_its_stars_and_background_image(preps, qapp):
         assert np.array_equal(shown(v), reference(s).rgb)
         v.select(full["id"], "layer")
         names = [x.name.text() for x in widgets_of(v, ContSlider)]
-        assert names == ["Opacity", "Strength", "Star size", "Star color", "Sky", "Contrast", "Saturation"]
+        assert names == ["Opacity", "Strength", "Small stars", "Star size", "Star color", "Sky", "Contrast",
+                         "Faint tones",
+                         "Saturation", "Colours", "H-alpha"]
         assert all(x.s.isEnabled() for x in widgets_of(v, ContSlider))
         combo = next(c for c in widgets_of(v, QComboBox) if c.currentData() == "Screen")
         before = shown(v).copy()
@@ -1325,6 +1381,87 @@ def test_a_stars_workflow_comes_as_its_stars_and_background_image(preps, qapp):
         c = src.layer(new_workflow_layer(1, "Full", True, part="combined"), 1, (0, 0, w, h))
         assert a.min() >= 0 and a.max() > 0.2
         assert np.allclose(c, 1 - (1 - a) * (1 - b), atol=1e-4)
+    finally:
+        s.close()
+
+
+def test_a_stars_and_background_layer_has_its_two_images_as_sub_layers_with_their_own_filters(preps, qapp):
+    """Issue #3: under a Stars and background layer, its stars alone and its starless image are sub-layers; a filter
+    added on one of them applies to that image only, before the two are put back together, and the eye of a
+    sub-layer leaves its image out."""
+    s = Setup(preps, qapp, stars=True)
+    try:
+        assert s.settle()
+        v = s.view
+        full = v.layers[1]
+        assert [(r.lay["kind"], r.lay.get("sub"), r.depth) for r in v.rows][1:] == [
+            ("workflow", None, 0), ("sub", "stars", 1), ("sub", "starless", 1)]
+        before = shown(v).copy()
+        v.select(full["id"], "stars")
+        lv = v.add_filter("levels")
+        lv["params"].update(black=0.0, white=0.5)
+        assert lv["target"] == full["id"] and lv["sub"] == "stars"
+        assert [(r.lay.get("sub"), r.depth) for r in v.rows][2:] == [("stars", 1), ("stars", 2), ("starless", 1)]
+        # issue #21: an arrow on a row with rows under it only, down expanded, right collapsed
+        subs = {r.lay["sub"]: r for r in v.rows if r.lay["kind"] == "sub"}
+        assert subs["stars"].toggle.arrowType() == Qt.DownArrow and subs["starless"].toggle is None
+        v.toggle_children((full["id"], "stars"))
+        assert [(r.lay.get("sub"), r.depth) for r in v.rows][2:] == [("stars", 1), ("starless", 1)]
+        assert next(r for r in v.rows if r.lay.get("sub") == "stars").toggle.arrowType() == Qt.RightArrow
+        v.toggle_children((full["id"], "stars"))
+        v.request(final_only=True)
+        assert s.settle()
+        # the stars alone brightened, the starless image untouched: the stars brighter, the sky as it was
+        src = LayerSource(lambda sid: s.folders.get(sid), LayerService(DEV))
+        w, h = src.canvas([("stars", 1)]).size(1)
+        a = src.layer(new_workflow_layer(1, "Full", True, part="stars"), 1, (0, 0, w, h))
+        b = src.layer(new_workflow_layer(1, "Full", True, part="starless"), 1, (0, 0, w, h))
+        a2 = postengine.FILTERS["levels"]["fn"](a, lv["params"], None)
+        want = postengine.Composer.blend("Screen", b, a2)
+        alone = reference(s, postengine.only_layer(v.layers, full["id"])).rgb
+        assert np.abs(alone.astype(np.float32) - want * 255).max() <= 2
+        assert not np.array_equal(shown(v), before)
+        # the stars sub-layer hidden: the starless image alone
+        v.set_shown(full["id"], "stars", False)
+        alone = reference(s, postengine.only_layer(v.layers, full["id"])).rgb
+        assert np.abs(alone.astype(np.float32) - np.clip(b, 0, 1) * 255).max() <= 2
+        # saved and loaded as it is
+        kept = postengine.load_layers(postengine.save_layers(v.layers), {1, 2})
+        assert next(x for x in kept if x.get("part") == "combined")["shown"] == {"stars": False, "starless": True}
+        assert next(x for x in kept if x["kind"] == "filter")["sub"] == "stars"
+        # taken out of the layer, a filter is no longer on one of its images
+        v.set_target(lv, None)
+        assert lv["target"] is None and lv["sub"] is None
+    finally:
+        s.close()
+
+
+def test_a_starless_slider_leaves_the_stars_as_they_are(preps, qapp):
+    """Issue #19: a Stars and background layer's two images are rendered and kept apart, each keyed on its own sliders:
+    moving a slider of the starless image renders the starless image only, the stars stay (no blink); the two put
+    together are the engine's recombined image."""
+    s = Setup(preps, qapp, stars=True)
+    try:
+        assert s.settle()
+        v = s.view
+        full = v.layers[1]
+        src = LayerSource(lambda sid: s.folders.get(sid), LayerService(DEV))
+        w, h = src.canvas([("stars", 1)]).size(1)
+        whole = src.layer(new_workflow_layer(1, "Full", True, part="combined"), 1, (0, 0, w, h))
+        alone = reference(s, postengine.only_layer(v.layers, full["id"])).rgb
+        assert np.abs(alone.astype(np.float32) - np.clip(whole, 0, 1) * 255).max() <= 1
+        asked = []
+        real = s.worker.renderer.source.layer
+        s.worker.renderer.source.layer = lambda lay, *a, **k: (asked.append(lay.get("part")), real(lay, *a, **k))[1]
+        full["sliders"]["contrast"] = 3.17                                        # values no other test uses (a cache)
+        v.request(final_only=True)
+        assert s.settle()
+        assert asked and "stars" not in asked and "starless" in asked
+        asked.clear()
+        full["sliders"]["star_strength"] = 3.31
+        v.request(final_only=True)
+        assert s.settle()
+        assert "stars" in asked and "starless" not in asked
     finally:
         s.close()
 
@@ -1410,28 +1547,28 @@ def test_dragging_a_row_nests_or_unnests_a_filter_with_clear_hints(post):
     for _i in range(3):
         post.qapp.processEvents()
     order = lambda: [(r.lay["name"], r.depth) for r in v.rows]                          # noqa: E731
-    assert order() == [("Classic", 0), ("Full", 0), ("Curves", 1), ("SCNR (green removal)", 1)]
+    assert order() == [("Classic", 0), ("Full", 0), ("Curves", 1), ("Green removal", 1)]
     row = lambda lid: next(r for r in v.rows if r.lay["id"] == lid)                     # noqa: E731
     # to the top, between rows: a row of its own, on everything below
     d, line, text, frames = _drag(v, row(f["id"]), row(classic["id"]), 0.1)
     assert d["parent"] is None and d["index"] == 0 and line and text == "Applies to everything below"
     assert not any(frames) and f["target"] is None
-    assert order() == [("SCNR (green removal)", 0), ("Classic", 0), ("Full", 0), ("Curves", 1)]
+    assert order() == [("Green removal", 0), ("Classic", 0), ("Full", 0), ("Curves", 1)]
     # onto the Classic row: nested in it, the row framed
     d, line, text, frames = _drag(v, row(f["id"]), row(classic["id"]), 0.5)
     assert d["parent"] == classic["id"] and not line and text == 'Applies to "Classic" only' and any(frames)
-    assert f["target"] == classic["id"] and order() == [("Classic", 0), ("SCNR (green removal)", 1), ("Full", 0),
+    assert f["target"] == classic["id"] and order() == [("Classic", 0), ("Green removal", 1), ("Full", 0),
                                                        ("Curves", 1)]
     # between Full's children (the indented line): it joins them, under Curves (applied before it)
     rows_now = v.rows
     d, line, text, _f = _drag(v, row(f["id"]), rows_now[-1], 0.9, x=200)
     assert d["parent"] == full["id"] and d["index"] == 1 and text == 'Applies to "Full" only'
     assert d["x0"] > v.rows[0].geometry().left() + 40                                     # the line is indented
-    assert order() == [("Classic", 0), ("Full", 0), ("Curves", 1), ("SCNR (green removal)", 1)]
-    assert [x["name"] for x in v.layers] == ["Classic", "Curves", "SCNR (green removal)", "Full"]
+    assert order() == [("Classic", 0), ("Full", 0), ("Curves", 1), ("Green removal", 1)]
+    assert [x["name"] for x in v.layers] == ["Classic", "Curves", "Green removal", "Full"]
     # a layer moves with its children; dropped among another layer's children it goes after that group
     _drag(v, row(full["id"]), row(classic["id"]), 0.1)
-    assert order() == [("Full", 0), ("Curves", 1), ("SCNR (green removal)", 1), ("Classic", 0)]
+    assert order() == [("Full", 0), ("Curves", 1), ("Green removal", 1), ("Classic", 0)]
     assert full["visible"] and classic["visible"]
     # one undo step per drop, nothing when it lands where it was
     n = len(v.undo)
@@ -1443,7 +1580,7 @@ def test_dragging_a_row_nests_or_unnests_a_filter_with_clear_hints(post):
     assert post.settle() and np.array_equal(shown(v), reference(post).rgb)
     # ▾ / ▸ hides a layer's children in the panel only
     v.toggle_children(full["id"])
-    assert [r.lay["name"] for r in v.rows] == ["Classic", "Full"] and row(full["id"]).toggle.text() == "▸"
+    assert [r.lay["name"] for r in v.rows] == ["Classic", "Full"] and row(full["id"]).toggle.arrowType() == Qt.RightArrow
     assert "2 filters" in row(full["id"]).sub.text()
     v.toggle_children(full["id"])
     assert len(v.rows) == 4
@@ -1519,6 +1656,15 @@ def test_sliders_are_greyed_with_their_reason_and_double_click_resets(post):
     assert lay["sliders"]["sky"] == pytest.approx(3.0)
     sky.name.mouseDoubleClickEvent(None)
     assert "sky" not in lay["sliders"] and sky.val.text() == "0"
+    # issue #16: a double-click on the slider itself too (a reference photo editor's)
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+    sky = sliders()["Sky"]
+    sky.done.emit(3.5)
+    assert lay["sliders"]["sky"] == pytest.approx(3.5)
+    sky = sliders()["Sky"]
+    QTest.mouseDClick(sky.s, Qt.LeftButton, Qt.NoModifier, QPoint(sky.s.width() // 2, sky.s.height() // 2))
+    assert "sky" not in lay["sliders"]
 
 
 def test_a_slider_drag_is_a_draft_then_the_screen_image(post):
@@ -1831,7 +1977,7 @@ def test_a_workflow_that_goes_takes_its_layer_and_the_filters_retarget(post):
     f = v.add_filter("scnr")
     post.model.paths = [w for w in post.model.paths if w.pid != 1]
     post.model.pathsChanged.emit()
-    assert [lay["name"] for lay in v.layers] == ["Classic", "SCNR (green removal)"]
+    assert [lay["name"] for lay in v.layers] == ["Classic", "Green removal"]
     assert f["target"] is None and named(v, "Classic")["visible"]                        # the bottom layer is shown again
 
 
@@ -2081,6 +2227,7 @@ def test_each_layer_and_the_masks_go_into_subfolders_of_the_folder_chosen(export
     assert s.settle()
     d = ExportDialog(s.view)
     try:
+        d.fmt.setCurrentIndex(d.fmt.findData("tiff16"))
         d.dest.setText((s.out / "heart_16bit.tif").as_posix())
         d.c_layers.setChecked(True)
         d.c_masks.setChecked(True)

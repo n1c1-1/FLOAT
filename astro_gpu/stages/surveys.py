@@ -23,11 +23,10 @@ HIPS_SERVERS = {"nsns": "https://simg.de/nebulae3/dr0_2/halpha"}
 
 class SurveysParams(StageParams):
     survey: str = P("auto", label="H-alpha reference survey", choices=["auto", "nsns", "finkbeiner", "none"],
-                    help="Professional H-alpha map used as absolute reference for the faint background: what is "
-                         "faint emission (kept) and what is sky gradient or light pollution (removed).",
+                    help="Professional H-alpha map of the field: it shows where the faint nebulosity is, so that "
+                         "the Gradient block takes no sky sample there. It never enters the sky model.",
                     tip="'auto' uses NSNS (sharper) when it covers the field, otherwise the all-sky Finkbeiner map. "
-                        "'none' for fields without emission (galaxies, clusters): the background is then modelled "
-                        "with a smooth polynomial only.")
+                        "'none': no survey (the Gradient block then chooses its samples on the image alone).")
     min_coverage: float = P(0.95, label="Minimum NSNS coverage", level=ADVANCED, ge=0.0, le=1.0, step=0.05,
                             help="Below this fraction of the field covered by NSNS, 'auto' switches to Finkbeiner.")
 
@@ -35,13 +34,13 @@ class SurveysParams(StageParams):
 class Surveys(Stage):
     name = "surveys"
     title = "H-alpha reference"
-    description = ("Downloads a professional H-alpha survey of the field (NSNS in the north, Finkbeiner elsewhere) "
-                   "and reprojects it pixel by pixel onto the stack. Your camera sees the same H-alpha plus sky "
-                   "gradients; comparing both lets the background step separate real faint nebulosity from "
-                   "light pollution with a physical reference instead of guessing.")
+    description = ("Downloads once a professional H-alpha survey of the field (NSNS in the north, Finkbeiner "
+                   "elsewhere), kept on disk, and reprojects it onto the stack. It shows where the faint nebulosity "
+                   "is: the Gradient block takes no sky sample there, so the faint extensions of a nebula are not "
+                   "removed as sky. No survey (no network, or none covers the field): the run goes on without it.")
     deps = ("astrometry", "stack")
     Params = SurveysParams
-    version = "1"
+    version = "2"          # 2: never stops the run: no survey, or no network, gives 'none' and the reason
     network = True
 
     def run(self, ctx: Context, p: SurveysParams) -> None:
@@ -50,24 +49,22 @@ class Surveys(Stage):
         if p.survey == "none":
             ctx.save_json("survey.json", {"survey": "none"})
             ctx.metric("survey", "none")
-            ctx.log("no H-alpha reference: the background will be modelled without anchoring")
+            ctx.log("no H-alpha survey (set to none): the Gradient block chooses its samples on the image alone")
             return
         wd = WCS(fits.getheader(ctx.input("astrometry", "wcs.fits")))
         meta = ctx.load_json("stack", "drz_meta.json")
         W, H = meta["width"], meta["height"]
         scale = float(ctx.metric_of("astrometry", "scale_arcsec"))
-        order = ["nsns", "finkbeiner"] if p.survey == "auto" else [p.survey]
-        out = None
-        for k, name in enumerate(order):
-            ctx.progress(0.1 + 0.4 * k, f"downloading {SURVEYS[name][1]}")
-            img = fetch_survey(name, wd, W, H, scale, ctx.log)
-            cov = float(np.isfinite(img).mean())
-            ctx.log(f"{SURVEYS[name][1]}: covers {100 * cov:.0f} % of the field")
-            if cov >= p.min_coverage or name == order[-1]:
-                out, used = img, name
-                break
-        if out is None or np.isfinite(out).mean() < 0.3:
-            raise StageError("no H-alpha survey covers this field: set the survey to 'none'")
+        try:
+            out, used = survey_on_grid(wd, W, H, scale, p.survey, p.min_coverage, ctx.log,
+                                       lambda f, m: ctx.progress(0.1 + 0.8 * f, m))
+        except Exception as e:  # noqa: BLE001 - a guide only: the run goes on without it, the reason said
+            why = (e.why if isinstance(e, online.ServiceDown) else
+                   "no H-alpha survey covers this field" if isinstance(e, StageError) else f"not available ({e})")
+            ctx.save_json("survey.json", {"survey": "none", "why": str(why)[:300]})
+            ctx.metric("survey", "none")
+            ctx.log(f"no H-alpha survey: {why}; the Gradient block chooses its samples on the image alone", "warning")
+            return
         ctx.save("ref_ha.npy", out.astype(np.float32))
         ctx.save_json("survey.json", {"survey": used, "title": SURVEYS[used][1]})
         ctx.metric("survey", used)
@@ -77,6 +74,61 @@ class Surveys(Stage):
         sm = np.nan_to_num(out[::4, ::4])
         lo, hi = np.percentile(sm, [1, 99.5])
         ctx.preview("halpha_reference", np.clip((sm - lo) / max(hi - lo, 1e-6), 0, 1) ** 0.5)
+
+
+def survey_on_grid(wd, W: int, H: int, scale: float, which: str = "auto", min_coverage: float = 0.95, log=print,
+                   progress=None) -> tuple[np.ndarray, str]:
+    """The H-alpha survey of the field on a W x H grid of WCS ``wd`` (``scale`` arcsec per pixel), and the survey's
+    name: with ``auto``, NSNS when it covers ``min_coverage`` of the field, else Finkbeiner. NaN outside the survey."""
+    order = ["nsns", "finkbeiner"] if which == "auto" else [which]
+    for k, name in enumerate(order):
+        if progress is not None:
+            progress(k / len(order), f"downloading {SURVEYS[name][1]}")
+        img = fetch_survey(name, wd, W, H, scale, log)
+        cov = float(np.isfinite(img).mean())
+        log(f"{SURVEYS[name][1]}: covers {100 * cov:.0f} % of the field")
+        if cov >= min_coverage or name == order[-1]:
+            if cov < 0.3:
+                break
+            return img, name
+    raise StageError("no H-alpha survey covers this field: set the survey to 'none'")
+
+
+#: the survey's levels taken as its sky and as its bright emission (percentiles of the field)
+LEVEL_PERCENTILES = (1.0, 99.5)
+
+
+def emission_level(img: np.ndarray) -> np.ndarray:
+    """The survey scaled so that its sky is 0 and its bright emission 1 (``LEVEL_PERCENTILES`` of the field), NaN
+    outside it: the same reading on every survey and every field."""
+    v = img[np.isfinite(img)]
+    if v.size == 0:
+        return np.full(img.shape, np.nan, np.float32)
+    lo, hi = np.percentile(v, LEVEL_PERCENTILES)
+    return ((img - lo) / max(float(hi - lo), 1e-9)).astype(np.float32)
+
+
+#: a survey sees nebulosity when its range (1st to 99.5th percentile) is this many times its noise (a field without
+#: nebulosity: the survey's noise alone, about 5 times)
+EMISSION_CONTRAST = 12.0
+
+
+def has_emission(img: np.ndarray) -> bool:
+    """Whether the survey (any scale: raw or emission_level) shows nebulosity rather than its own noise. The noise is
+    measured between pixels a few apart (the survey is smooth at its own resolution, so neighbours would understate
+    it): the robust spread of the differences, over the square root of 2."""
+    a = np.asarray(img, np.float32)
+    v = a[np.isfinite(a)]
+    if v.size < 100:
+        return False
+    s = max(2, min(a.shape) // 128)
+    d = (a[:, s:] - a[:, :-s]).ravel()
+    d = d[np.isfinite(d)]
+    if d.size < 100:
+        return False
+    noise = 1.4826 * float(np.median(np.abs(d - np.median(d)))) / np.sqrt(2)
+    lo, hi = np.percentile(v, LEVEL_PERCENTILES)
+    return float(hi - lo) > EMISSION_CONTRAST * max(noise, 1e-12)
 
 
 def fetch_survey(name: str, wd, W: int, H: int, scale: float, log=print) -> np.ndarray:
