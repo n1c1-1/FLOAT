@@ -29,6 +29,9 @@ class RegisterParams(StageParams):
                                 "dense Milky Way fields to keep only clean stars.")
     max_stars: int = P(2500, label="Stars per frame", level=ADVANCED, ge=100, le=20000,
                        help="Brightest stars kept per frame for matching and for the alignment polynomial.")
+    align: bool = P(True, label="Align the frames", level=ADVANCED,
+                    help="Off when the Registration block is cut (issue #43): the frames are taken as already aligned "
+                         "(each stays where it is); the stars are still measured, to weigh and select the frames.")
     workers: int = P(8, label="Parallel workers", level=ADVANCED, ge=1, le=64,
                      help="CPU processes used to detect stars in parallel.")
 
@@ -80,6 +83,9 @@ class Register(Stage):
                         cache_p.write_bytes(pickle.dumps((cats, fwhm, rmsb, rnd, noise, psf)))
                     ctx.progress(0.9 * (n - len(todo) + c + 1) / n, f"stars detected in {n - len(todo) + c + 1}/{n} frames")
         nst = np.array([len(c) for c in cats])
+        if not p.align:
+            self._not_aligned(ctx, p, meta, cats, fwhm, rmsb, rnd, noise, psf, nst, W, H)
+            return
         if np.median(nst) < 30:
             raise StageError(f"too few stars detected per frame (median {np.median(nst):.0f}); lower the detection "
                              "threshold or check the focus / exposure")
@@ -156,6 +162,42 @@ class Register(Stage):
                 f"transparency p10/p90 {np.percentile(transp[ok], 10):.2f}/{np.percentile(transp[ok], 90):.2f}")
         ctx.preview("frame_quality", quality_plot(meta, fwhm, transp, ok))
 
+    def _not_aligned(self, ctx: Context, p: RegisterParams, meta, cats, fwhm, rmsb, rnd, noise, psf, nst, W, H):
+        """The Registration block cut (issue #43): every frame stays where it is (the identity map), its stars still
+        matched to the reference's within 3 px for the residual and the transparency."""
+        n = len(cats)
+        ctx.log("Registration cut: the frames are taken as already aligned")
+        ref = int(np.argmin(np.where(nst >= np.percentile(nst, 50), fwhm, np.inf)))
+        refcat = cats[ref] if cats[ref] is not None and len(cats[ref]) else np.zeros((1, 3))
+        tree = cKDTree(refcat[:, :2])
+        ident = np.zeros((2, 10))
+        ident[0, 0], ident[0, 1] = W / 2, W / 2
+        ident[1, 0], ident[1, 2] = H / 2, H / 2
+        coef = np.repeat(ident[None], n, axis=0)
+        nmatch, rms, transp = np.zeros(n, int), np.zeros(n), np.ones(n)
+        for i in range(n):
+            c = cats[i]
+            if c is None or not len(c):
+                continue
+            d, j = tree.query(c[:, :2], distance_upper_bound=3.0)
+            m = np.isfinite(d)
+            nmatch[i] = int(m.sum())
+            if m.any():
+                rms[i] = float(np.sqrt(np.mean(d[m] ** 2)))
+            if m.sum() >= 5:
+                transp[i] = float(np.median(c[m, 2] / refcat[j[m], 2]))
+        extra = moffat_arrays(psf)
+        np.savez(ctx.out("reg.npz"), coef=coef, fwhm=fwhm, transp=transp, nmatch=nmatch, rms=rms, ref=ref,
+                 nstars=nst, bkgrms=rmsb, roundness=rnd, noise=noise, **extra)
+        ctx.metric("registration_cut", True)
+        ctx.metric("reference_frame", os.path.basename(meta[ref]["path"]))
+        ctx.metric("aligned", n)
+        ctx.metric("rms_px", round(float(np.median(rms)), 3))
+        ctx.metric("fwhm_px", round(float(np.median(fwhm)), 2))
+        ok = np.ones(n, bool)
+        ctx.metric("drift_px", 0.0)
+        ctx.preview("frame_quality", quality_plot(meta, fwhm, transp, ok))
+
 
 def moffat_arrays(psf: list) -> dict[str, np.ndarray]:
     """reg.npz's Moffat arrays from the workers' fits ((fwhm, roundness, beta, stars) per frame, NaN where fewer
@@ -230,7 +272,8 @@ def phase_shift(mm, i: int, ref: int, H: int, W: int, cfa: str = "") -> np.ndarr
     from ..core.cfa import equalised
 
     def small(k):
-        a = np.nan_to_num(equalised(np.asarray(mm[k], np.float32), cfa, VALID_MAX))
+        # bad pixels and the float16 cache's overflows (a star brighter than 65504: inf) count as empty sky
+        a = np.nan_to_num(equalised(np.asarray(mm[k], np.float32), cfa, VALID_MAX), nan=0.0, posinf=0.0, neginf=0.0)
         a = a[: H - H % PHASE_BIN, : W - W % PHASE_BIN]
         a = a.reshape(a.shape[0] // PHASE_BIN, PHASE_BIN, a.shape[1] // PHASE_BIN, PHASE_BIN).mean((1, 3))
         a = a - cv2.GaussianBlur(a, (0, 0), 10)
@@ -238,7 +281,7 @@ def phase_shift(mm, i: int, ref: int, H: int, W: int, cfa: str = "") -> np.ndarr
     s_ref, s_i = small(ref), small(i)
     win = cv2.createHanningWindow(s_ref.shape[::-1], cv2.CV_32F)
     (dx, dy), peak = cv2.phaseCorrelate(s_ref, s_i, win)
-    return None if peak < PHASE_MIN else np.array([dx, dy]) * PHASE_BIN
+    return None if not peak >= PHASE_MIN or not np.isfinite([dx, dy]).all() else np.array([dx, dy]) * PHASE_BIN
 
 
 def _rotate(xy, ang_deg, W, H):
@@ -401,7 +444,8 @@ def _catalog(idx):
     x = s - bkg.back()
     rms = bkg.globalrms
     sep.set_extract_pixstack(3000000)
-    o = sep.extract(x, _G["k"], err=rms, minarea=4, mask=mask, deblend_cont=0.005)
+    from ..core.imgutil import sep_extract
+    o = sep_extract(x, _G["k"], err=rms, minarea=4, mask=mask, deblend_cont=0.005)
     o = o[(o["flag"] == 0) & (o["npix"] < 200)]
     o = np.sort(o, order="flux")[::-1][: _G["nmax"]]
     # the noise of the frame: adjacent super-pixels differ by their noise only (the sky and the objects larger than
@@ -414,9 +458,17 @@ def _catalog(idx):
     xw, yw, _ = sep.winpos(x, o["x"], o["y"], np.full(len(o), 0.9))
     hfr, _ = sep.flux_radius(x, xw, yw, np.full(len(o), 5.0), 0.5, subpix=5)
     aps = []
+    good = (~mask).astype(np.float32)
     for r in APERTURES:
-        f, _, fl = sep.sum_circle(x, xw, yw, r, mask=mask, bkgann=(r + 2.0, r + 6.0))
-        aps.append(np.where(fl == 0, f, np.nan))
+        # a star whose background annulus is wholly masked (beside a saturated or bad area) has no measure: sep raises
+        # for the whole call on it, so it is left out first
+        seen, _, _ = sep.sum_circann(good, xw, yw, r + 2.0, r + 6.0)
+        ok = seen > 1.0
+        f = np.full(len(xw), np.nan)
+        if ok.any():
+            fo, _, fl = sep.sum_circle(x, xw[ok], yw[ok], r, mask=mask, bkgann=(r + 2.0, r + 6.0))
+            f[ok] = np.where(fl == 0, fo, np.nan)
+        aps.append(f)
     cat = np.c_[2 * xw + 0.5, 2 * yw + 0.5, o["flux"], hfr, *aps]   # sensor coordinates
     fin = np.isfinite(cat[:, :4]).all(1)
     cat = cat[fin]

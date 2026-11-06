@@ -158,11 +158,13 @@ _METRIC_ROWS: list[tuple] = [
     ("black_level", "Black level", "ADU", "g", "Value the sensor gives without light."),
     ("focal_mm", "Focal length", "mm", "g", "Focal length written in the files."),
     ("pixel_um", "Pixel size", "µm", ".2f", "Size of one sensor pixel."),
+    ("pixel_scale", "Pixel scale", "arcsec/px", ".3f", "Sky angle of one sensor pixel, as the FITS headers give it."),
     ("first_time", "First frame", "", "", "Time of the first light frame."),
     ("last_time", "Last frame", "", "", "Time of the last light frame."),
     ("pointing_ra", "Pointing RA", "deg", ".3f", "Right ascension the telescope was pointing at."),
     ("pointing_dec", "Pointing Dec", "deg", ".3f", "Declination the telescope was pointing at."),
     ("object", "Object", "", "", "Name of the object written in the files."),
+    ("mono", "Monochrome", "", "", "The frames have no colour filter array: a monochrome camera."),
     # calibrate
     ("dark_level", "Dark level", "ADU", ".1f", "Typical level of the master dark."),
     ("dark_frame_noise", "Dark noise", "ADU", ".2f", "Noise of a single dark frame (read noise)."),
@@ -175,6 +177,18 @@ _METRIC_ROWS: list[tuple] = [
     ("sky_noise_adu", "Sky noise", "ADU", ".2f", "Noise of the sky background in one light frame."),
     ("cache_scale", "Cache scale", "", ".2f", "Size of the calibrated frames kept on disk (1 is full size)."),
     ("cache_gb", "Cache size", "GB", ".1f", "Disk space taken by the calibrated frames."),
+    ("calibration_cut", "Calibration cut", "", "", "The frames were taken as they are, without calibration frames."),
+    ("dark_scale", "Dark scaling", "", ".3f",
+     "Ratio of the lights' exposure to the darks': their thermal signal was scaled by it."),
+    # the sessions' join (issue #43)
+    ("sessions", "Sessions", "", "d", "Number of sessions, each calibrated with its own frames, stacked together."),
+    # an image source (issue #43)
+    ("factor", "Value factor", "", "g", "Factor the image's values were multiplied by (65535 for values in 0-1)."),
+    # the channels' fusion (issue #43)
+    ("palette", "Palette", "", "", "How the filters became red, green and blue (SHO, HSO, HOO, RGB, LRGB)."),
+    ("channels", "Channels", "", "", "The filters combined.", ", "),
+    ("star_source", "Star source", "", "", "Where the stars put back on the starless fusion came from (palette, channel "
+                                           "or workflow)."),
     # register
     ("reference_frame", "Reference frame", "", "", "The frame all the others are aligned on."),
     ("aligned", "Aligned frames", "", "d", "Frames that could be aligned."),
@@ -184,6 +198,7 @@ _METRIC_ROWS: list[tuple] = [
     ("transparency_p10_p90", "Transparency range", "", ".2f",
      "Transparency of the worst and of the best frames (10 % and 90 %)."),
     ("drift_px", "Drift", "px", ".1f", "How far the field moved on the sensor during the session."),
+    ("registration_cut", "Registration cut", "", "", "The frames were taken as already aligned."),
     ("photometry_aperture_px", "Photometry aperture", "px", "g",
      "Diameter of the aperture the transparency of each frame is measured in."),
     ("fwhm_moffat_px", "Star FWHM (Moffat)", "px", ".2f",
@@ -442,6 +457,8 @@ CHOICE_TEXTS: dict[str, str] = {
     "full": "Full correction", "per_colour": "One factor per colour",
     # the Gradient block's methods (stages/gradient.py)
     "polynomial": "Polynomial", "rbf": "RBF", "automatic": "Automatic",
+    # the fusion's palettes (stages/fusion.py)
+    "SHO": "SHO (Hubble palette)", "HSO": "HSO", "HOO": "HOO", "RGB": "RGB", "LRGB": "LRGB",
     # the Denoise block's methods and adaptation lengths (stages/denoise.py)
     "pretrained": "Pretrained network", "adapted": "Pretrained + adapted", "short": "Short", "long": "Long",
 }

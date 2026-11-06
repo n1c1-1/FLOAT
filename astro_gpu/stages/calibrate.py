@@ -46,6 +46,9 @@ class CalibrateParams(StageParams):
                           help="Raw values above this fraction of the sensor white level are flagged as saturated; the "
                                "stacker then treats them specially instead of averaging clipped values.",
                           tip="Keep the default unless star cores look flat-topped or rings appear around bright stars.")
+    apply_masters: bool = P(True, label="Apply the calibration frames", level=ADVANCED,
+                            help="Off when the Calibration block is cut (issue #43): the frames are taken as they are "
+                                 "(already calibrated), without master dark, flat or defective pixels.")
     workers: int = P(8, label="Parallel workers", level=ADVANCED, ge=1, le=64,
                      help="Number of CPU processes used to calibrate frames in parallel.",
                      tip="Defaults to the number of CPU cores minus two (max 12).")
@@ -79,10 +82,14 @@ class Calibrate(Stage):
             return
         H, W = int(ctx.metric_of("inventory", "height")), int(ctx.metric_of("inventory", "width"))
         black = float(ctx.metric_of("inventory", "black_level"))
+        if not p.apply_masters:
+            pass_through(ctx, p, frames["lights"], H, W, black)
+            return
         bias = master_bias([f["path"] for f in frames["bias"]], ctx)
         if bias is not None:
             ctx.save("master_bias.npy", bias)
         dark, dark_noise = master_dark([f["path"] for f in frames["darks"]], bias, H, W, black, ctx)
+        dark = scaled_dark(ctx, dark, bias, black, frames)
         kept: dict = {}
         flat = master_flat([f["path"] for f in frames["flats"]], [f["path"] for f in frames["flat_darks"]], bias,
                            float(np.median(dark)), H, W, p.flat_scale_px, ctx, keep=kept,
@@ -91,6 +98,23 @@ class Calibrate(Stage):
             ctx.save("master_flat_dark.npy", kept.pop("flat_dark"))
         calibrate_lights(ctx, p, frames["lights"], dark, flat, bool(frames["darks"]), dark_noise,
                          ctx.metric_of("inventory", "cfa"), float(ctx.metric_of("inventory", "white_level")))
+
+
+def pass_through(ctx: Context, p: CalibrateParams, lights: list[dict], H: int, W: int, black: float) -> None:
+    """The Calibration block cut (issue #43): the frames as they are (already calibrated), the black level taken off,
+    no flat, no defective pixel; the calibrated cache the later stages read is written all the same."""
+    ctx.log("Calibration cut: the frames are taken as they are (no master dark, flat or defective pixels)")
+    dark = np.full((H, W), black, np.float32)
+    flat = np.ones((H, W), np.float32)
+    ctx.save("master_dark.npy", dark)
+    ctx.save("master_flat.npy", flat)
+    bad = np.zeros((H, W), bool)
+    ctx.save("badmask.npy", bad)
+    ctx.metric("dark_level", round(black, 1))
+    ctx.metric("bad_pixels_pct", 0.0)
+    ctx.metric("calibration_cut", True)
+    _calibrated_cache(ctx, p, lights, dark, flat, bad, ctx.metric_of("inventory", "cfa"),
+                      float(ctx.metric_of("inventory", "white_level")), time.time())
 
 
 def master_bias(paths: list[str], ctx: Context) -> np.ndarray | None:
@@ -110,6 +134,27 @@ def master_dark(paths: list[str], bias: np.ndarray | None, H: int, W: int, black
     ctx.log("no dark frames: using " + ("the master bias" if bias is not None else "the black level") +
             " as dark (hot pixels will not be removed by calibration)", "warning")
     return dark, None
+
+
+def _exposure(frames: list[dict]) -> float | None:
+    t = [float(f["exposure"]) for f in frames if f.get("exposure")]
+    return float(np.median(t)) if t else None
+
+
+def scaled_dark(ctx: Context, dark: np.ndarray, bias: np.ndarray | None, black: float, frames: dict) -> np.ndarray:
+    """The master dark brought to the lights' exposure when the darks were taken at another one: its thermal signal
+    (the dark minus the bias, or minus the black level without bias frames) scaled by the ratio of the exposures, the
+    bias put back (dark current grows in proportion to the exposure; the classic dark scaling of the reduction
+    guides, e.g. the astropy CCD reduction guide, "scaling dark frames"). Darks of the lights' exposure: as they are."""
+    t_l, t_d = _exposure(frames.get("lights") or []), _exposure(frames.get("darks") or [])
+    if not frames.get("darks") or not t_l or not t_d or abs(t_d - t_l) <= 0.05 * t_l:
+        return dark
+    base = bias if bias is not None else np.float32(black)
+    r = t_l / t_d
+    ctx.log(f"darks of {t_d:g} s for lights of {t_l:g} s: their thermal signal scaled by {r:.3f}"
+            + ("" if bias is not None else " (no bias frames: above the black level)"))
+    ctx.metric("dark_scale", round(r, 4))
+    return (base + (dark - base) * np.float32(r)).astype(np.float32)
 
 
 def master_flat(paths: list[str], flat_dark_paths: list[str], bias: np.ndarray | None, dark_level: float, H: int,
@@ -171,6 +216,9 @@ def calibrate_lights(ctx: Context, p: CalibrateParams, lights: list[dict], dark:
         v = _plane(flat, k, P)
         loc = median_filter(v, size=9)
         _plane(bad, k, P)[...] |= (v < (1 - p.flat_defect) * loc) | (v > (1 + p.flat_defect) * loc)
+    # a pixel the flat's light hardly reached (a sensor's overscan, a dead column: a band the local test above cannot
+    # see) would be multiplied by ten or more
+    bad |= flat < FLAT_UNLIT * float(np.median(flat))
     moved = True
     if p.hot_from_lights and len(lights) >= 15:
         n0 = int(bad.sum())
@@ -202,6 +250,8 @@ def result_params(p: CalibrateParams) -> dict:
     """The settings that decide the result (the worker count does not)."""
     d = p.model_dump(mode="json")
     d.pop("workers", None)
+    if d.get("apply_masters", True):                 # the default: as the results made before the setting existed
+        d.pop("apply_masters", None)
     return d
 
 
@@ -317,6 +367,8 @@ def _median_stack(paths: list[str], ctx: Context, label: str) -> np.ndarray:
 
 #: the rows a pixel-wise statistic of a stack of frames is taken on at a time (its temporary arrays stay small)
 BAND = 256
+#: a flat pixel under this share of the flat's median received no light: a bad pixel
+FLAT_UNLIT = 0.1
 
 
 def _master_flat(paths: list[str], fdark: np.ndarray, ctx: Context) -> np.ndarray:
@@ -353,7 +405,10 @@ def _hot_from_lights(paths, dark, flat, bad, median_filter, n=40, k=5.0, cfa: st
     is a plane of its own: its neighbours in the plane are of its colour."""
     P = cfa_mod.period(cfa)
     sub = [paths[i] for i in np.linspace(0, len(paths) - 1, min(n, len(paths))).astype(int)]
-    a, b = ((read_cfa(q) - dark) / flat for q in (sub[0], sub[-1]))
+    # the pixels already flagged (an unlit edge of the flat, nearly 0: values of 1e8 once divided) make the
+    # correlation's peak fall anywhere (a still sky read as moved by 1000 px, its stars then flagged as hot pixels)
+    a, b = (np.where(bad, 0.0, np.nan_to_num((read_cfa(q) - dark) / flat, nan=0.0, posinf=0.0, neginf=0.0))
+            for q in (sub[0], sub[-1]))
     g0 = cfa_mod.green_position(cfa)
     ga, gb = (cv2.resize(np.ascontiguousarray(_plane(x, g0, P)), None, fx=0.5, fy=0.5,
                          interpolation=cv2.INTER_AREA).astype(np.float32) for x in (a, b))

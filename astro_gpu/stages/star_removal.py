@@ -61,6 +61,9 @@ class StarRemoval(Stage):
         prep = ctx.load_json("render_simple", "prep_simple.json")
         lin = ctx.load("render_simple", "lin.npy").astype(np.float32)
         valid = ctx.load("render_simple", "valid.npy")
+        if ctx.load_json("stack", "drz_meta.json").get("starless"):
+            self.fused(ctx, prep, lin, valid)          # a starless fusion (option A): its star layer, no network
+            return
         M = np.asarray(prep["M"], np.float64)
         x0, x1, y0, y1 = prep["crop"]
         shown = np.zeros_like(valid)
@@ -75,6 +78,9 @@ class StarRemoval(Stage):
         t0 = time.time()
         starless = apply(net, (lin - bk) / unit, dev, ctx) * unit + bk
         ctx.log(f"stars taken off in {time.time() - t0:.1f} s on {dev}")
+        if np.array_equal(lin[0, ::97, ::97], lin[1, ::97, ::97]) and np.array_equal(lin[2, ::97, ::97],
+                                                                                    lin[1, ::97, ::97]):
+            starless = np.repeat(starless.mean(0, keepdims=True), 3, axis=0)   # a monochrome image stays grey (#43)
         starless[:, ~valid] = lin[:, ~valid]
         # the network's own grid (its checkerboard, at the multiples of 1/16 px^-1) notched where it stands out
         from ..core.periodic import lattice_frequencies, remove_periodic
@@ -98,6 +104,30 @@ class StarRemoval(Stage):
         s = min(800, h, w) // 2
         box = (slice(None), slice(max(0, cy - s), cy + s), slice(max(0, cx - s), cx + s))
         a, b = lin[box], starless[box]                   # one stretch for both: before and after side by side
+        ctx.preview("starless", asinh_preview(np.concatenate([a, np.zeros((3, a.shape[1], 6), np.float32), b], 2)))
+
+
+    def fused(self, ctx: Context, prep: dict, lin: np.ndarray, valid: np.ndarray) -> None:
+        """A starless fusion of filters (stages/fusion.py, option A): the starless image is the fusion's output, the
+        stars the fusion's star layer; written as this block writes its result, for Post and the Combine block."""
+        from .fusion import STARS_FILE
+        stars = ctx.load("stack", STARS_FILE).astype(np.float32)
+        stars[:, ~valid] = 0
+        ctx.save("starless.npy", lin)
+        ctx.save("stars.npy", stars)
+        np.save(ctx.out("valid.npy"), valid)
+        ctx.save_json("prep_stars.json", {"crop": prep["crop"], "M": prep["M"],
+                                          "drizzle_scale": prep.get("drizzle_scale", 1.0), "width": prep.get("width"),
+                                          "height": prep.get("height"), "unit": 1.0, "background": [0.0, 0.0, 0.0],
+                                          "stats_full": prep["stats"], "fused": True})
+        ctx.metric("grid_peaks", 0)
+        ctx.log("the fusion's starless image and its star layer (the stars were taken off in each channel)")
+        x0, x1, y0, y1 = prep["crop"]
+        h, w = lin.shape[1:]
+        cy, cx = (y0 + y1) // 2, (x0 + x1) // 2
+        s = min(800, h, w) // 2
+        box = (slice(None), slice(max(0, cy - s), cy + s), slice(max(0, cx - s), cx + s))
+        a, b = (lin + stars)[box], lin[box]
         ctx.preview("starless", asinh_preview(np.concatenate([a, np.zeros((3, a.shape[1], 6), np.float32), b], 2)))
 
 
