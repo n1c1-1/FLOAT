@@ -221,15 +221,23 @@ class InputScan:
     def frames(self, project: Project2, sid: int | None = None, sessions: list | None = None) -> list[list]:
         """inventory's project part: [kind, file name, size] of each frame of the union of the sessions (``sid``: of
         that session only), per kind, in the order the inventory reads them (list_frames: by full path). Names and
-        sizes only, so copied raws keep the key; ordered, because the half-stack blocks follow the order."""
+        sizes, so copied raws keep the key; ordered, because the half-stack blocks follow the order.
+
+        A frame of a session after the project's first carries that session's id (issue #56): capture programs
+        number every night's frames alike ("Light_001.fits", the same size, even the same dates on a camera whose
+        clock was reset), so that two nights' frames would be taken for the same ones. The first session's frames
+        carry none: a project of one session, and the first night of several, keep their keys."""
         out: list[list] = []
+        first = min((s.id for s in project.sessions), default=None)
         sessions = (sessions if sessions is not None else project.sessions) if sid is None else [project.session(sid)]
         for kind in KINDS:
             sizes: dict[Path, int] = {}
+            tag: dict[Path, int | None] = {}
             for s in sessions:
                 for f, n in self.session_frames(project, s)[kind]:
                     sizes.setdefault(f, n)
-            out += [[kind, f.name, sizes[f]] for f in sorted(sizes)]
+                    tag.setdefault(f, None if s.id == first else s.id)
+            out += [[kind, f.name, sizes[f]] + ([tag[f]] if tag[f] is not None else []) for f in sorted(sizes)]
         return out
 
     def excluded_paths(self, project: Project2) -> list[str]:
@@ -269,6 +277,10 @@ class Keys:
     def chain(self, wf: int | Workflow) -> list[str]:
         """The stages of a workflow, in order."""
         w = self._wf(wf)
+        if id(w) not in self._chains and getattr(w, "blocks", None) is not None:      # a graph (issue #47)
+            self._chains[id(w)] = self.rules.chains.sequence(wfl.sequence_chain(
+                w.blocks, wfl.source_of(w), reference=bool(self.project.reference_image),
+                sessions=self.project.separate_sessions(w)))
         if id(w) not in self._chains:
             from .project2 import is_fusion, is_image, is_stretched
             src = getattr(w, "source", None)
@@ -295,7 +307,11 @@ class Keys:
         b = base(stage)
         gone = self.rules.retired(b)
         stored = {**w.stored(b), **(w.stored(stage) if stage != b else {})}
-        v = {**{k: x for k, x in stored.items() if k not in gone}, **self.rules.implied(w.options, b)}
+        if "~" in stage:                                 # a later node of a graph's block: its own settings only
+            stored = w.stored(stage)
+        imp = wfl.node_implied(w.blocks, stage, wfl.source_of(w)) if getattr(w, "blocks", None) is not None \
+            else self.rules.implied(w.options, b)
+        v = {**{k: x for k, x in stored.items() if k not in gone}, **imp}
         if self.rules.injects_exclude(stage):
             v.pop("exclude", None)
             if exclude:
@@ -361,7 +377,7 @@ class Keys:
         and Astrometry: a change in a channel's workflow makes the fusion Outdated)."""
         src = getattr(w, "source", None)
         if stage == "image" and src:
-            fid = self.scan.file_id(_absolute(self.project, src["path"]))
+            fid = self.scan.file_id(_absolute(self.project, src["path"])) if src["path"] else ["", None, None]
             return fid + ["stretched"] if src.get("stretched") else fid
         if stage == "fusion" and src:
             f = src["fusion"]
@@ -446,7 +462,7 @@ class Keys:
         excl = self.scan.excluded_paths(self.project) if self.rules.injects_exclude(base(stage)) else None
         v = self._given(w, stage, excl)
         if base(stage) == "image" and getattr(w, "source", None):
-            v["path"] = _absolute(self.project, w.source["path"])
+            v["path"] = _absolute(self.project, w.source["path"]) if w.source["path"] else ""
             v["stretched"] = bool(w.source.get("stretched"))
         if base(stage) == "fusion" and getattr(w, "source", None):
             store = Store(self.project.root) if self.project.root is not None else None
@@ -595,6 +611,10 @@ class StoreProject:
         for a in self.dirs:
             for d in wfl.PROVIDES.get(base(a), ()):
                 self.alias.setdefault(d, a)
+
+    def own_dir(self) -> Path:
+        """The job's own folder (a graph's later node, "denoise~2", reads the first one as "denoise", issue #47)."""
+        return self.dirs[self.stage]
 
     def stage_dir(self, stage: str) -> Path:
         d = self.dirs.get(stage)

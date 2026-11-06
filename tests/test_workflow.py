@@ -11,8 +11,8 @@ from astro_gpu.core.workflow import TEMPLATES, Chains, OptionRefused, chain, cha
 BASE = ["inventory", "calibrate", "register", "stack"]
 TABLE = {      # §2.1: the stages after stack, without the reference image
     "Classic stack": ["astrometry", "catalogs", "surveys", "gradient", "color", "render_simple"],
-    "Classic + denoise": ["astrometry", "catalogs", "surveys", "gradient", "color", "denoise", "render_simple"],
-    "Full": ["astrometry", "catalogs", "surveys", "gradient", "color", "denoise", "render_simple", "star_removal"],
+    "Classic + denoise": ["astrometry", "catalogs", "surveys", "gradient", "denoise", "color", "render_simple"],
+    "Full": ["astrometry", "catalogs", "surveys", "gradient", "denoise", "color", "render_simple", "star_removal"],
 }
 CLASSIC, CLASSIC_DN, FULL = (TEMPLATES[k] for k in TABLE)
 
@@ -176,12 +176,13 @@ def test_blocks():
     c = chain(FULL, reference=True)
     blocks = ch.blocks_in(c)
     assert [b for b, _ in blocks] == ["calibration", "registration", "selection", "stacking", "astrometry",
-                                      "gradient", "color", "denoise", "stars", "output"]
+                                      "gradient", "denoise", "color", "stars", "output"]
     assert dict(blocks)["stars"] == ("star_removal",)
     assert ch.run_to("selection", c) == ["register"]
     assert ch.run_to("gradient", c) == ["gradient"]
     assert ch.run_to("stars", c) == ["star_removal"]
-    assert ch.key_stages("astrometry", c) == ["astrometry", "reference", "catalogs"]   # the survey follows Gradient
+    assert ch.key_stages("astrometry", c) == ["astrometry", "reference"]   # the survey follows Gradient; the
+    # catalogs follow a Color block after it (issue #47: a branch without Color shares the plate solution)
     assert ch.block_of("star_removal") == "stars" and ch.block_of("register") == "registration"
     assert [b for b, _ in ch.blocks_in(chain(CLASSIC, "stacking"))] == ["calibration", "registration", "selection",
                                                                         "stacking", "output"]

@@ -758,12 +758,14 @@ class PostView(QWidget):
             self.layers = load_layers(post.get("layers"), alive)
             self._saved = json.dumps(save_layers(self.layers), sort_keys=True)
         known = {lay["pid"] for lay in self.layers if lay["kind"] == "workflow"}
-        fresh = not known
+        fresh = not known and not (getattr(getattr(self.s, "p", None), "post", None) or {}).get("edited")
         for p in paths:
             # an empty composition is filled; afterwards only a block's output sent from the graph (an exit) comes
             # (issue #10: every computed workflow came back on top, hidden, even one the user had taken away)
             sent = getattr(p, "end", None) is not None
-            if (fresh or sent) and p.rendered and p.pid not in known:   # with Stars: its Stars and background block
+            channel = getattr(self.s, "feeds_fusion", None) is not None and self.s.feeds_fusion(p)   # #47: the fusion
+            channel = channel or (getattr(self.s, "gives_post", None) is not None and not self.s.gives_post(p))
+            if (fresh or sent) and p.rendered and p.pid not in known and not channel:   # with Stars: its Combine
                 stars = p.opts.get("etoiles") == "retirer"
                 self.layers.insert(0, new_workflow_layer(
                     p.pid, p.name + (" · " + POST_PART_NAMES["combined"] if stars else ""),
@@ -1781,6 +1783,24 @@ class PostView(QWidget):
         part = lay.get("part")
         if part:
             self.pbox.addWidget(label(_(PART_NOTES[part]), "small", wrap=True))
+        if p is not None and hasattr(self.s, "param_value") and hasattr(self.s, "set_param"):
+            # issue #49: the Output block's setting, here (the block is in the wire): its channels stretched linked
+            r = QHBoxLayout()
+            r.addWidget(label(_("Channels"), "dim"))
+            c = QComboBox()
+            c.addItem(_("Linked"), True)
+            c.addItem(_("Each channel"), False)
+            c.setToolTip(_("Each channel: every color stretched apart, which neutralizes the background "
+                           "(the workflow's output is prepared again)"))
+            try:
+                linked = self.s.param_value(p, "render_simple", "linked")
+            except Exception:  # noqa: BLE001 - a value the worker has not read yet
+                linked = True
+            c.setCurrentIndex(0 if linked in (None, True) else 1)
+            c.currentIndexChanged.connect(lambda i, c=c, q=p: self.s.set_param(q, "render_simple", "linked",
+                                                                              c.itemData(i)))
+            r.addWidget(c, 1)
+            self.pbox.addLayout(r)
         bases = self.bases_of(p)
         if bases:
             r = QHBoxLayout()

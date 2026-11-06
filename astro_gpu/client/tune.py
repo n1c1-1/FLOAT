@@ -697,7 +697,7 @@ class TuneView(QWidget):
         self.head.addWidget(label(f"{title}  ·  {p.name}" if k != "post" else p.name, "h1"))
         # a session's block shows that session's results (steps.which_for reads them from the selected block): the
         # views are the block's own
-        k = k.partition("@")[0]
+        k = k.partition("@")[0].partition("~")[0]
         not_done = state in ("pending", "running", "failed", "interrupted", "skipped") or \
             (state == "stale" and not self._has_previous(p, k))
         # the calibration frames can be looked at (and the wrong ones left out) before Calibration is computed: its
@@ -2133,7 +2133,7 @@ class TuneView(QWidget):
             if t not in titles:
                 titles.append(t)
         rb.setToolTip(", ".join(titles))
-        rb.setEnabled(s.sources_loaded and bool(plan.jobs))
+        rb.setEnabled(s.has_data(p) and bool(plan.jobs))
         if getattr(s, "run_active", False):              # issue #33: it would only open the run in progress
             rb.setEnabled(False)
             rb.setToolTip(_("A run is in progress: Run to here comes back when it ends"))
@@ -2161,8 +2161,9 @@ class TuneView(QWidget):
             pv.setToolTip("◇ " + _("Not in the engine yet."))
             pv.setEnabled(False)
             box.addWidget(pv, 0, Qt.AlignHCenter)
-        if not s.sources_loaded:
-            box.addWidget(label(_("No frames yet."), "warn"), 0, Qt.AlignHCenter)
+        if not s.has_data(p):
+            box.addWidget(label(_("No frames yet.") if p.source is None else _("No image file yet: choose it in the "
+                                                                              "Image block."), "warn"), 0, Qt.AlignHCenter)
         self.center.addStretch(1)
         self.center.addLayout(box)
         self.center.addStretch(2)
