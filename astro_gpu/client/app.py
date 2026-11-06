@@ -1,6 +1,6 @@
 """The main window of the client.
 
-Home: the workspace and its projects. A project has three modes over the same blocks:
+Home: the recent projects and the sections of folders. A project has three modes over the same blocks:
 * Graph: the workflows as a graph of blocks, the tools on top, the selected block's settings on the right;
 * Inspect: the image of one block, large, the workflow as a strip, the same settings with the measurements;
 * Post: the workflows' layers, masks and filter layers (Post is the Inspect view of the Post block).
@@ -301,7 +301,7 @@ class Main(QMainWindow):
         self._flash = ""
         self._flash_timer.stop()
         self.setWindowTitle(f"{APP_NAME} · " + _("Home"))
-        self.status.setText(prefs.get("workspace"))
+        self.status.setText("")
         self.update_spec_note()
 
     def new_project(self):
@@ -312,10 +312,13 @@ class Main(QMainWindow):
         self.show_home()
         self.home.open_other()
 
-    def create_project(self, root: str, name: str, target: str) -> bool:
-        """A new v2 project in ``root``, opened. Its calibrated frames go to <cache folder>/<project folder>."""
+    def create_project(self, root: str, name: str, target: str, details: dict | None = None) -> bool:
+        """A new v2 project in ``root``, opened. Its calibrated frames go to <cache folder>/<project folder>.
+        ``details``: the target's coordinates and the capture data New project gives (issue #38)."""
         try:
-            p = project2.create(root, name, Target(name=target))
+            d = details or {}
+            p = project2.create(root, name, Target(name=target, ra=d.get("ra"), dec=d.get("dec"),
+                                                   focal_mm=d.get("focal_mm"), pixel_um=d.get("pixel_um")))
             cache = prefs.get("cache_dir")
             if cache:
                 p.scratch_dir = (Path(cache) / Path(root).name).as_posix()
@@ -328,7 +331,8 @@ class Main(QMainWindow):
     def import_folder_as_new(self):
         """Import folder as new project: the folder of the lights gives the name and the target, then its frames
         are read into the new project."""
-        folder = QFileDialog.getExistingDirectory(self, _("Import folder as new project…"), prefs.get("workspace"))
+        folder = QFileDialog.getExistingDirectory(self, _("Import folder as new project…"), prefs.last_folder())
+        prefs.remember_folder(folder)
         if not folder:
             return
         g = guess_names(folder)
@@ -389,6 +393,9 @@ class Main(QMainWindow):
         s.dirtyChanged.connect(lambda _d: self._title())
         self.run = RunController(s, window=self, console=lambda: getattr(self, "logp", None))
         self.run.runningChanged.connect(lambda _on: self.request_refresh())
+        # Inspect's Run to here greys while a run is in progress (issue #33)
+        self.run.runningChanged.connect(lambda _on: getattr(getattr(self, "tune", None), "request_refresh",
+                                                            lambda: None)())
         self.run.updated.connect(self._run_updated)
         self.run.finished.connect(self._run_finished)
         self.run.logRequested.connect(lambda: self.b_log.setChecked(True))
@@ -806,7 +813,8 @@ class Main(QMainWindow):
             return
         if self.s is not None:
             self.s.flush()
-        d = QFileDialog.getExistingDirectory(self, _("Save as…"), prefs.get("workspace"))
+        d = QFileDialog.getExistingDirectory(self, _("Save as…"), prefs.last_folder())
+        prefs.remember_folder(d)
         if not d:
             return
         root = Path(d)
@@ -829,8 +837,8 @@ class Main(QMainWindow):
         self.open_project(root)
 
     def offer_import(self, root: Path):
-        """A project made with an older version: it opens once imported into the workspace; its folder is never
-        written."""
+        """A project made with an older version: it opens once imported as a new project, in a folder the user
+        chooses; its own folder is never written."""
         d = self.import_dialog(root)
         ok = d.exec()
         new = d.result_root
@@ -848,7 +856,7 @@ class Main(QMainWindow):
     def import_box(self, root: Path) -> QMessageBox:
         """A note that the folder holds a project of an older version (tests check its text)."""
         return QMessageBox(QMessageBox.Information, _("Open project"), _(
-            "“{name}” was made with an older version. Import it into the workspace to open it here; its folder "
+            "“{name}” was made with an older version. Import it as a new project to open it here; its folder "
             "is never changed.").format(name=Path(root).name), QMessageBox.Ok, self)
 
     # ------------------------------------------------------------ frames, runs, export, undo
@@ -918,10 +926,12 @@ class Main(QMainWindow):
             self.flash(_("Redone"))
 
     def clear_cache(self):
-        """Clear the unused results of the closed projects of the workspace, after a confirmation (read in the
-        worker: it walks the stores)."""
+        """Clear the unused results of the closed projects Home knows (the recent ones and those of its sections),
+        after a confirmation (read in the worker: it walks the stores)."""
+        from .home import section_rows
         open_root = self.project.root if self.project is not None else None
-        self.worker.submit("cache.usage", _closed_usage, prefs.get("workspace"), open_root)
+        self.worker.submit("cache.usage", _closed_usage, section_rows(), [r["path"] for r in prefs.recent()],
+                           open_root)
 
     def _confirm_clear(self, found):
         total = sum(b for _r, b in found)
@@ -942,7 +952,6 @@ class Main(QMainWindow):
         d.languageChanged.connect(self.change_language)
         d.deviceChanged.connect(self.set_device)
         d.specChanged.connect(self.set_spec)
-        d.workspaceChanged.connect(lambda _w: self.home.rescan() if self.home is not None else None)
         d.homeChanged.connect(lambda: self.home.rescan() if self.home is not None else None)
         d.clearCache.connect(self.clear_cache)
         d.exec()
@@ -1007,7 +1016,7 @@ class Main(QMainWindow):
                 self.screens.currentWidget() is self.proj_screen:
             self.status.setText(getattr(self, "_line", ""))
         else:
-            self.status.setText(prefs.get("workspace"))
+            self.status.setText("")
 
     def about(self):
         d = self.about_dialog()
@@ -1068,11 +1077,13 @@ def _write_thumb(path: Path, rgb) -> None:
     tmp.replace(path)
 
 
-def _closed_usage(workspace: str, open_root) -> list[tuple[str, int]]:
-    """(project folder, unused bytes) of the projects of the workspace, the open one aside (worker thread)."""
+def _closed_usage(rows: list[dict], recent: list[str], open_root) -> list[tuple[str, int]]:
+    """(project folder, unused bytes) of the projects Home knows (the recent ones, those of the sections: issue #31,
+    no workspace), the open one aside (worker thread)."""
+    from .home import known_projects
     out = []
-    for info in api.list_projects(workspace):
-        root = Path(info.root)
+    for root in known_projects(rows, recent):
+        info = api.project_summary(root)
         if open_root is not None and root.resolve() == Path(open_root).resolve():
             continue
         if info.running or info.error:

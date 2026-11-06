@@ -58,7 +58,6 @@ class SettingsDialog(QDialog):
     languageChanged = Signal(str)
     deviceChanged = Signal(str)                      # auto | cuda:<n> | cpu
     specChanged = Signal(bool)
-    workspaceChanged = Signal(str)
     homeChanged = Signal()                           # the sections of Home (Folders page)
     clearCache = Signal()
 
@@ -91,7 +90,7 @@ class SettingsDialog(QDialog):
         self.setWindowTitle(_("Settings"))
         self.spec = prefs.spec()
         self.bars = {}
-        self.sec_rows, self.sec_ws = [], None
+        self.sec_rows = []
         self.nav = QListWidget()
         self.nav.setFixedWidth(200)
         self.h.addWidget(self.nav)
@@ -242,14 +241,12 @@ class SettingsDialog(QDialog):
         self.row(v, _("Spec mode"), spec)
 
     def folders(self, v):
-        self.path_row(v, _("Workspace"), "workspace", changed=self._workspace)
         self.path_row(v, _("Cache (calibrated frames)"), "cache_dir",
                       placeholder=_("In the project folder"), changed=lambda _x: self.measure_disks())
         self.path_row(v, _("Temporary files"), "temp_dir", new=True)
         self.row(v, _("Cache limit"), self.spin(10, 4000, "cache_limit_gb"), _("GB"), new=True)
         v.addWidget(label(_("Disk use"), "h2"))
-        for key, name, new in (("cache", _("Cache"), False), ("workspace", _("Workspace"), False),
-                               ("temp", _("Temporary"), True)):
+        for key, name, new in (("cache", _("Cache"), False), ("temp", _("Temporary"), True)):
             bar = QProgressBar()
             bar.setRange(0, 1000)
             bar.setTextVisible(False)
@@ -270,8 +267,7 @@ class SettingsDialog(QDialog):
         self.home_sections(v)
 
     def home_sections(self, v):
-        """The sections of Home: a row each (name, folder, description); the workspace's row takes its folder from
-        the Workspace setting above and cannot be removed."""
+        """The sections of Home, under the recent projects: a row each (name, folder, description)."""
         from .home import section_rows
         v.addSpacing(6)
         v.addWidget(label(_("Home sections"), "h2"))
@@ -296,14 +292,6 @@ class SettingsDialog(QDialog):
                 e.setPlaceholderText(text)
                 e.setToolTip(text)
                 e.setCursorPosition(0)
-            if r["workspace"]:
-                why = _("The workspace, set above: New project creates its folders there.")
-                folder.setEnabled(False)
-                browse.setEnabled(False)
-                rm.setEnabled(False)
-                for w in (folder, browse, rm):
-                    w.setToolTip(why)
-                self.sec_ws = folder
             self.sec_rows.append({"row": r, "name": name, "folder": folder, "note": note})
             for e in (name, folder, note):
                 e.editingFinished.connect(self._save_sections)
@@ -368,6 +356,55 @@ class SettingsDialog(QDialog):
                                                    ("astrometry.net (local)", "astrometry.net", True)],
                                                   prefs.get("solver"), "solver"))
         self.path_row(v, _("Survey cache (H-alpha)"), "survey_cache", new=True)
+        self.survey_offline(v)
+
+    def survey_offline(self, v):
+        """Issue #39: the H-alpha survey's tiles of the recent projects' fields fetched ahead, so that their Surveys
+        stage (and any new stack of the same fields) works offline. Off the GUI thread; said when done."""
+        v.addWidget(label(_("H-alpha survey offline"), "h2"))
+        v.addWidget(label(_("The survey is read tile by tile and each tile is kept: a field already seen works "
+                            "offline. Download fetches the tiles of the recent projects' solved fields now."),
+                          "small", wrap=True))
+        r = QHBoxLayout()
+        b = QPushButton(_("Download for offline use"))
+        st = label("", "small", wrap=True)
+        r.addWidget(b)
+        r.addWidget(st, 1)
+        v.addLayout(r)
+        state = {}
+
+        def done():
+            if "result" not in state:
+                return
+            t.stop()
+            b.setEnabled(True)
+            res = state["result"]
+            if isinstance(res, Exception):
+                st.setText(_("Not downloaded: {why}").format(why=str(res)[:200]))
+                return
+            st.setText(_("{fields} fields, {tiles} tiles in the cache").format(fields=res["fields"], tiles=res["tiles"])
+                       + (("; " + _("not read: {why}").format(why="; ".join(res["failed"][:3]))) if res["failed"]
+                          else ""))
+
+        def go():
+            import threading
+
+            from ..stages.surveys import prefetch_field
+            roots = [r["path"] for r in prefs.recent()]
+            b.setEnabled(False)
+            st.setText(_("Downloading the tiles of {n} projects…").format(n=len(roots)))
+            state.clear()
+
+            def work():
+                try:
+                    state["result"] = prefetch_field(roots)
+                except Exception as e:  # noqa: BLE001 - said in the dialog
+                    state["result"] = e
+            threading.Thread(target=work, daemon=True).start()
+            t.start(500)
+        t = QTimer(b)
+        t.timeout.connect(done)
+        b.clicked.connect(go)
 
     def offline_extracts(self, v):
         """The Gaia DR3 extracts the engine reads offline: their folder, what is installed, the two downloads (run
@@ -525,7 +562,6 @@ class SettingsDialog(QDialog):
         if self.worker is None or not self.bars:
             return
         self.worker.submit("settings.disks", disk_usage, {"cache": prefs.get("cache_dir"),
-                                                          "workspace": prefs.get("workspace"),
                                                           "temp": prefs.get("temp_dir")})
 
     def _done(self, channel, _n, result):
@@ -558,15 +594,6 @@ class SettingsDialog(QDialog):
         prefs.set("device", dev)
         self.deviceChanged.emit(dev)
 
-    def _workspace(self, folder):
-        self.measure_disks()
-        if getattr(self, "sec_ws", None) is not None:
-            try:
-                self.sec_ws.setText(folder)
-            except RuntimeError:                     # the page was built again meanwhile
-                pass
-        self.workspaceChanged.emit(folder)
-
     # ------------------------------------------------------------ the sections of Home
     def _section_values(self) -> list[dict]:
         """The rows as edited: a name or a description left as shown (translated) keeps its stored English."""
@@ -576,8 +603,7 @@ class SettingsDialog(QDialog):
             name, note = w["name"].text().strip(), w["note"].text().strip()
             r["label"] = r["label"] if name == maybe(r["label"]) else name
             r["note"] = r["note"] if note == maybe(r["note"]) else note
-            if not r["workspace"]:
-                r["folder"] = w["folder"].text().strip()
+            r["folder"] = w["folder"].text().strip()
             rows.append(r)
         return rows
 
@@ -596,12 +622,12 @@ class SettingsDialog(QDialog):
 
     def _remove_section(self, k: int):
         rows = self._section_values()
-        if 0 <= k < len(rows) and not rows[k]["workspace"]:
+        if 0 <= k < len(rows):
             del rows[k]
             self._save_sections(rows)
             QTimer.singleShot(0, self.rebuild)
 
     def _add_section(self):
-        rows = self._section_values() + [{"label": "", "folder": "", "note": "", "open": True, "workspace": False}]
+        rows = self._section_values() + [{"label": "", "folder": "", "note": "", "open": True, "only": ""}]
         self._save_sections(rows)
         QTimer.singleShot(0, self.rebuild)

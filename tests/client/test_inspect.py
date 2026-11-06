@@ -393,6 +393,10 @@ def test_the_output_block_shows_the_final_image_the_render_worker_makes(win):
     al = v.compare_alignment()
     assert al is not None and al.how == "grid" and al.scale == pytest.approx(2.0, rel=0.01)
     assert v.align_bar.isVisible() and "geometry of the results" in v.alignment_note()
+    shown = v.image()
+    t.refresh()                                                         # nothing changed: the viewer stays (#24, 3)
+    settle(win)
+    assert t.view is v and v.image() is shown
     shot(win, "inspect_output")
 
 
@@ -557,6 +561,7 @@ def test_the_selection_chart_updates_the_kept_count_through_selection_preview(wi
         QTest.mouseMove(ch, QPoint(int(bot.left() + 30), int(dest.y())))
         QTest.mouseRelease(ch, Qt.LeftButton, Qt.NoModifier, QPoint(int(bot.left() + 30), int(dest.y())))
         settle(win)
+        assert t.chart is ch                              # issue #24: the chart moved in place, not built again
         assert abs(ch.tmin - goal) < 2, (ch.tmin, goal)
         want = api.selection_preview(win.s.p, 1, ch.tmin / 100, ch.fmax / win.s.fwhm_median()).kept
         assert want < N_LIGHTS and ch.kept() == want
@@ -599,6 +604,28 @@ def test_a_frame_is_picked_on_the_chart_and_excluded_by_hand_for_the_whole_proje
     s.set_excluded([(row.session, row.name)], False)                    # the shared window goes back as it was
     settle(win)
     assert s.stage_key(s.path, "stack") == before["stack"]
+
+
+def test_excluding_a_calibrated_frame_with_x_keeps_the_viewer_and_its_frame(win):
+    """Issue #24, case 2: the scan of the sources that follows Exclude (X) built the tab again, its viewer back on
+    its first frame."""
+    win.tune.tab_of["calibration"] = "calibrated"
+    inspect(win, "calibration")
+    t, s = win.tune, win.s
+    v = t.view
+    assert v is not None and len(v.frames()) > 3
+    v.set_index(2)
+    settle(win)
+    it = t._seq_items[2]
+    v.toggle_excluded()
+    settle(win)
+    try:
+        assert (it.session, it.name) in s.frames_excluded
+        assert t.view is v and v.index() == 2 and v.frames()[2].info["excluded"]
+    finally:
+        s.set_excluded([(it.session, it.name)], False)                  # the shared window goes back as it was
+        settle(win)
+        t.tab_of.pop("calibration", None)
 
 
 def test_a_block_not_computed_says_so_and_offers_run_to_here(win):
@@ -1655,3 +1682,17 @@ def test_edits_wait_for_save_and_closing_asks(qapp, tmp_path, monkeypatch):
         assert project2.load(root).workflows[0].name == "Renamed"
     finally:
         w.close()
+
+
+def test_run_to_here_is_greyed_while_a_run_is_in_progress(win):
+    """Issue #33: during a run, Run to here would only open the run in progress: greyed, with its reason."""
+    s = win.s
+    t = win.tune
+    p = s.paths[0]
+    s.run_active = True
+    try:
+        rb = t._run_button(p, "fond")
+        assert not rb.isEnabled() and "run is in progress" in rb.toolTip()
+    finally:
+        s.run_active = False
+    assert "run is in progress" not in t._run_button(p, "fond").toolTip()

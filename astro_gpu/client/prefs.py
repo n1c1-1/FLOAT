@@ -17,14 +17,12 @@ DEFAULTS = {
     "language": "en",
     "spec_mode": False,
     "recent": [],                     # [{"path", "name", "target"}], most recent first
-    # folders and disk
-    "workspace": "F:/astro_projets",
-    # the sections of Home (Settings › Folders): each lists the projects of a folder and of its sub-folders. "label" and
-    # "note" are English (translated where shown) or typed by the user; "open": shown open; "workspace": the row whose
-    # folder is the workspace above (where New project creates), so it has no "folder" of its own
+    # folders and disk. No workspace (issue #31): a project lives where the user puts it
+    # the folder the file dialogs open in: the last one used (issues #31, #32)
+    "last_folder": "",
+    # the sections of Home (Settings › Folders), under the recent projects: each lists the projects of a folder and of
+    # its sub-folders. "label" and "note" are English (translated where shown) or typed by the user; "open": shown open
     "home_sections": [
-        {"label": "My projects", "workspace": True, "open": True,
-         "note": "Your own projects. New project creates its folder here."},
         {"label": "Test copies", "folder": "F:/astro_essais/v2", "open": False,
          "note": "Copies of a project, used to try new versions of the program. Your own projects are not touched."},
     ],
@@ -110,6 +108,23 @@ def save():
 def spec() -> bool:
     """Spec mode: shows what the engine still has to build (◇ marks), disabled."""
     return bool(get("spec_mode"))
+
+
+def last_folder() -> str:
+    """Where a file dialog opens: the last folder used in one (issues #31, #32: every dialog started from a fixed
+    workspace, so the flats were looked for again from there after the lights), else the user's home folder."""
+    cand = get("last_folder")
+    return str(cand) if cand and Path(cand).is_dir() else str(Path.home())
+
+
+def remember_folder(path) -> None:
+    """A file or folder chosen in a dialog: its folder is where the next dialog opens."""
+    if not path:
+        return
+    p = Path(path)
+    folder = p if p.is_dir() else p.parent
+    if str(folder) and folder.is_dir():
+        set("last_folder", folder.as_posix())
 
 
 def recent() -> list[dict]:

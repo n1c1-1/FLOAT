@@ -660,11 +660,11 @@ def is_warm(p: Project2) -> bool:
 
 # ---------------------------------------------------------------------------------------------- projects
 
-def list_projects(workspace: str | Path, deep: bool = False) -> list[ProjectSummary]:
-    """The projects of a workspace folder, most recent first (Home cards). Skips ``_*`` folders and folders without
+def list_projects(folder: str | Path, deep: bool = False) -> list[ProjectSummary]:
+    """The projects of a folder, most recent first. Skips ``_*`` folders and folders without
     ``project.astroproj``; a definition that cannot be read gives a summary with ``error``. A cheap scan: the state is
     read from state.json and the store (never the raws); ``deep=True`` computes the true states (worker thread)."""
-    ws = Path(workspace)
+    ws = Path(folder)
     out: list[ProjectSummary] = []
     if not ws.is_dir():
         return out
@@ -673,6 +673,11 @@ def list_projects(workspace: str | Path, deep: bool = False) -> list[ProjectSumm
             out.append(_summary(d, deep))
     out.sort(key=lambda s: s.last, reverse=True)
     return out
+
+
+def project_summary(root: str | Path, deep: bool = False) -> ProjectSummary:
+    """The summary of one project folder (as ``list_projects`` gives each)."""
+    return _summary(Path(root), deep)
 
 
 def _mtime(*paths: Path) -> float:
@@ -1148,21 +1153,17 @@ def _mtf(m: float, x: Any) -> Any:
 
 
 def _superpixel(mosaic: Any, cfa: str, black: float) -> Any:
-    """The mosaic as (h/2, w/2, 3): each 2x2 cell is one pixel (the green cells averaged), black level removed."""
+    """The mosaic as (h/2, w/2, 3): each 2x2 cell is one pixel (the green cells averaged; X-Trans: core/cfa's), black
+    level removed."""
     import numpy as np
 
-    from .io.frames import cfa_channel_map
+    from .core.cfa import superpixel
     a = np.asarray(mosaic, np.float32) - np.float32(black)
     H, W = a.shape[0] // 2 * 2, a.shape[1] // 2 * 2
     if not cfa:
         g = a[:H, :W].reshape(H // 2, 2, W // 2, 2).mean((1, 3))
         return np.repeat(g[:, :, None], 3, axis=2)
-    out = np.zeros((H // 2, W // 2, 3), np.float32)
-    cnt = np.zeros(3, np.float32)
-    for k, c in enumerate(cfa_channel_map(cfa)):
-        out[:, :, c] += a[k // 2:H:2, k % 2:W:2]
-        cnt[c] += 1
-    return out / np.maximum(cnt, 1)
+    return superpixel(a, cfa)
 
 
 def frame_thumb(p: Project2, path: str | Path, size: int = 256) -> Any:
@@ -1495,7 +1496,7 @@ _METHODS: dict[str, list[MethodInfo]] = {
     "stars": [
         MethodInfo("neural", "Neural star removal", "neural", "both", "star_removal", False,
                    "Takes the stars off the image (a network trained on many stacks): the starless image and the stars "
-                   "alone, recombined by a Stars and background block or each used as a layer of Post. Seconds on a "
+                   "alone, combined by a Combine stars & background layers block or each used as a layer of Post. Seconds on a "
                    "GPU, a few minutes on a processor."),
     ],
     "deconvolution": [
