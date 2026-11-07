@@ -13,7 +13,7 @@ The window (app.py ``make_model``) makes one controller per project, after the m
 calls ``watch_graph`` with each new graph, ``attach`` when a project opens (a live run is followed again),
 ``retranslate`` when the project screen is rebuilt and ``close`` when the project closes (the run goes on).
 
-Breakpoints ("Pause here for review", set on the blocks of the graph): ``launch`` and ``run_to_here`` plan the run up to
+Breakpoints ("Review pause", set on the blocks of the graph): ``launch`` and ``run_to_here`` plan the run up to
 the first review not done yet (``ProjectModel.plan_run``); the dialog says "Stops after Calibration for your review", and
 at the end of the run its recap offers Continue (``continue_run``: the review is marked, the run goes on to the next pause
 or to the end) and Open in Inspect (``open_in_inspect``: selects the block, then the window's graph page emits the
@@ -34,7 +34,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 
 from ... import api
 from ...core.project2 import Project2
-from ..i18n import _, hm, number, plural
+from ..i18n import _, hm, is_raw_error, number, plain_error, plural
 from .worker import ApiWorker
 
 # job states (what the events say; the graph's states come from the engine through the model)
@@ -60,6 +60,118 @@ def duration_text(seconds: float, measured: bool = True) -> str:
 def size_text(gb: float) -> str:
     """A size in GB, with the language's decimal mark ("7,6" in French)."""
     return number(gb, 2 if gb < 0.1 else 1)
+
+
+#: the stages the model's titles do not name (exploration 6.1: "sessions", "inventory@2" were shown as they are)
+STAGE_TITLES = {"sessions": "Sessions joined", "image": "Image", "fusion": "Fusion"}
+
+
+def stage_title(model, stage: str) -> str:
+    """A stage of the engine in plain words, translated: a session's instance with its session's name
+    ("Inventory · Session 2"), a block placed twice with its number ("Sky gradient 2")."""
+    st, at, sid = stage.partition("@")
+    b, sep, n = st.partition("~")
+    text = (_(STAGE_TITLES[b]) + (f" {n}" if sep else "")) if b in STAGE_TITLES else model.title(st)
+    if at:
+        try:
+            name = model.p.session(int(sid)).name
+        except (AttributeError, KeyError, ValueError):
+            name = ""
+        text += " · " + (name or _("Session {n}").format(n=sid))
+    return text
+
+
+def start_failure(text: str) -> str:
+    """Why a run could not start, in plain English words translated where shown (exploration 6.4: the worker's error
+    was shown raw): the common causes by what the error says, else a general sentence."""
+    t = text or ""
+    low = t.lower()
+    if "errno 28" in low or "no space left" in low or "disk is full" in low or "not enough space" in low:
+        return "the project's drive is full"
+    if t.startswith("PermissionError") or "errno 13" in low or "access is denied" in low:
+        return "the project's folder cannot be written: access is refused"
+    if t.startswith("FileNotFoundError") or "errno 2]" in low or "winerror 3]" in low:
+        # which one (GUI exploration 2: "a folder of the project" did not say): the path the error names, said in the
+        # language of the moment (a sentence with a path has no entry in the catalogue)
+        m = re.search(r"""(?:errno 2\]|winerror 3\])[^'"]*['"]([^'"]+)['"]""", t, re.IGNORECASE)
+        if m:
+            return _("{path} cannot be found (a drive unplugged?)").format(path=Path(m.group(1)).as_posix())
+        return "a folder of the project cannot be found (a drive unplugged?)"
+    if "has no folder yet" in low:
+        return "the project has no folder yet: save it first"
+    return "an unexpected error stopped it"
+
+
+def log_not_started(model, why: str, raw: str) -> None:
+    """The history line of a run that could not start: the plain reason, and the real cause after it (GUI exploration
+    2: "Show log" said the same sentence again, and the exported log had no cause)."""
+    detail = start_detail(raw)
+    if detail and detail != why:
+        model.log("Run not started: {why} · cause: {detail}", why=why, detail=detail)
+    else:
+        model.log("Run not started: {why}", why=why)
+
+
+def start_detail(text: str) -> str:
+    """The real cause of a run that could not start, as the worker said it (its last meaningful line, a traceback's
+    error line): written under the plain sentence in the console and the history, never in the run window (GUI
+    exploration 2: the cause was written nowhere)."""
+    lines = [x.strip() for x in (text or "").strip().splitlines() if x.strip()]
+    errors = [x for x in lines if is_raw_error(x) and not x.startswith("Traceback")]
+    return (errors[-1] if errors else lines[-1])[:300] if lines else ""
+
+
+def pause_text(model, pause, stops=None, named: bool | None = None) -> str:
+    """The blocks a pause stops after, as the graph names them ("Gradient 1", "Calibration · Session 2"); ``named``
+    (by default: different blocks in several workflows, Run all with a pause in each), each with its workflow when
+    the project has more than one ("Registration (Flow), Stacking (Workflow)"). ``stops``: (workflow id, block)
+    pairs, the pause's own by default."""
+    return ", ".join(pause_titles(model, pause, stops, named))
+
+
+def pause_titles(model, pause, stops=None, named: bool | None = None) -> list[str]:
+    """``pause_text``'s names, each once."""
+    if pause is None and stops is None:
+        return []
+    stops = pause.all_stops() if stops is None else stops
+    from ..blocks import review_title
+    titles = [(model.pause_name(pid, k) if hasattr(model, "pause_name") else review_title(k), pid) for pid, k in stops]
+    if named is None:
+        named = len({p for _t, p in titles}) > 1 and len({t for t, _p in titles}) > 1
+    many = named and len(getattr(model, "paths", None) or []) > 1
+    out: list[str] = []
+    for t, pid in titles:
+        v = model.view(pid) if many and hasattr(model, "view") else None
+        text = f"{t} ({v.name})" if v is not None else t
+        if text not in out:
+            out.append(text)
+    return out
+
+
+class PlanRefused(Exception):
+    """A plan that cannot be made, and why, in plain words (translated)."""
+
+
+def run_key(key: str) -> str:
+    """The block Run to here plans for a block of the views: its own, a block placed twice included ("fond~2"); for
+    Recombine, the Split block it reads (exploration #21: it answered "Nothing to run")."""
+    return "etoiles" if key == "composition" else key
+
+
+def plan_to(model, p, key: str):
+    """The plan of Run to here for a block of the views (``run_key``)."""
+    return model.plan_to_block(p, run_key(key))
+
+
+def run_here_refusal(model, key: str | None) -> str:
+    """Why Run to here cannot run on this block (English, translated where shown), '' when it can (exploration #29: a
+    Session block opened "Nothing to run")."""
+    if model is None or model.path is None or not key:
+        return "Select a block first"
+    if key in ("sources", "final") or key.startswith("session"):
+        return "A Session block is not computed: select a block after it" if key != "final" else \
+            "Post is not computed by a run: select a block of a workflow"
+    return ""
 
 
 # ---------------------------------------------------------------------------------------------- the engine's texts
@@ -101,6 +213,32 @@ PATTERNS: list[tuple[re.Pattern, str, tuple]] = [
          "it already stopped responding {0} times in this run", ()),
         (r"^no fresh process could take over \((.*)\)$", "no fresh process could take over ({0})", ()),
         (r"^the run cannot start: (.*)$", "the run cannot start: {0}", ()),
+        # GUI exploration 7.9: a session's folder not there
+        (r"^the folder of the (lights|darks|flats|bias|flat darks) is not found: (.+) \(is its disk plugged in\?\)$",
+         "the folder of the {0} is not found: {1} (is its disk plugged in?)", (0,)),
+        # GUI exploration 2: the failures data can cause, with what to do (stages/stack.py, inventory.py, astrometry.py,
+        # io/frames.py)
+        (r"^only (\d+) light frame\(s\): a stack needs at least 2; add light frames to the session$",
+         "only {0} light frame(s): a stack needs at least 2; add light frames to the session", ()),
+        (r"^only (\d+) of (\d+) light frames could be aligned: a stack needs at least 2; check the frames$",
+         "only {0} of {1} light frames could be aligned: a stack needs at least 2; check the frames", ()),
+        (r"^only (\d+) of (\d+) light frames are kept, (\d+) taken out by hand: a stack needs at least 2; put frames "
+         r"back$", "only {0} of {1} light frames are kept, {2} taken out by hand: a stack needs at least 2; put frames "
+                   "back", ()),
+        (r"^only (\d+) of (\d+) light frames are kept by the frame selection: a stack needs at least 2; relax the "
+         r"selection thresholds$", "only {0} of {1} light frames are kept by the frame selection: a stack needs at "
+                                   "least 2; relax the selection thresholds", ()),
+        (r"^(.+) cannot be read: it is not a valid FITS file \(damaged, or wrongly named\); take it out of the "
+         r"session$", "{0} cannot be read: it is not a valid FITS file (damaged, or wrongly named); take it out of the "
+                      "session", ()),
+        (r"^(\d+) (darks|flats|bias|flat darks) have another size than the lights \((\d+x\d+)\), e\.g\. (.+): take "
+         r"them out of the session, or use those of this camera$",
+         "{0} {1} have another size than the lights ({2}), e.g. {3}: take them out of the session, or use those of "
+         "this camera", (1,)),
+        (r"^only (\d+) stars found in the stack, at least 50 are needed to identify the field: add light frames, or "
+         r"take Astrometry out of this workflow$", "only {0} stars found in the stack, at least 50 are needed to "
+                                                   "identify the field: add light frames, or take Astrometry out of "
+                                                   "this workflow", ()),
 
         # the lines the stages log (the common ones: the rest of their free diagnostics stays in English)
         (r"^(\d+) lights of ([\d.]+) s \(([\d.]+) h\), (\d+)x(\d+) (\w+), (\d+) darks, (\d+) flats, (\d+) bias, camera (.*)$",
@@ -134,6 +272,8 @@ PATTERNS: list[tuple[re.Pattern, str, tuple]] = [
 def engine_text(msg: str) -> str:
     """A progress message of a stage, in the language of the client (decimals with the language's mark)."""
     msg = (msg or "").strip()
+    if is_raw_error(msg):                         # a program error ("OSError: …"): never shown as it is (exploration 2)
+        return plain_error(msg)
     for rx, template, translated in PATTERNS:
         m = rx.match(msg)
         if m:
@@ -223,6 +363,9 @@ class RunTrack:
         self.lines: list[Line] = []
         self.counts: dict[str, int] = {}
         self.plan = None                         # the runner2.Plan this is the run of (set by the controller)
+        #: the job keys of each block, as the run window's rows (set by the controller; #3: the console counted the
+        #: engine's stages); None: each job counts as a block
+        self.groups: list[list[str]] | None = None
 
     # ------------------------------------------------------------ construction
     @classmethod
@@ -266,7 +409,8 @@ class RunTrack:
         j = self._job(e)
         if kind == "run_start":
             self.status, self.t0, self.device, self.pid = "running", t, e.get("device") or "", e.get("pid")
-            self._say(out, t, "run_start", n=len(self.jobs) or int(e.get("jobs") or 0), sec=self.seconds(),
+            n = len(self.groups) if self.groups else len(self.jobs) or int(e.get("jobs") or 0)
+            self._say(out, t, "run_start", n=n, sec=self.seconds(),
                       measured=self.measured())
         elif kind == "plan":
             if not self.jobs:
@@ -330,16 +474,28 @@ class RunTrack:
             elif j.state == WAITING:
                 j.state = NOT_STARTED
         self.counts = self.count()
-        self._say(out, t, "run_end", status=status, sec=self.elapsed(t), error=self.error, **self.counts)
+        self._say(out, t, "run_end", status=status, sec=self.elapsed(t), error=self.error, **self.counts,
+                  blocks=self.block_count())
         out.ended = out.stage_changed = out.progressed = True
 
     def abort(self, why: str = "") -> Batch:
-        """The run never started (its worker ended before saying anything): nothing ran."""
+        """The run never started (its worker ended before saying anything): nothing ran. The console says why in plain
+        words (6.4); ``error`` keeps what the worker said."""
         out = Batch()
         self._end("failed", time.time(), {"error": why}, out)
-        self.lines[-1] = (self.lines[-1][0], "not_started", {"why": why or _("its process ended")})
+        self.lines[-1] = (self.lines[-1][0], "not_started", {"why": start_failure(why)})
         out.lines[-1] = self.lines[-1]
+        detail = start_detail(why)
+        if detail:                               # the real cause, for the Log and its export (exploration 2)
+            line = (self.lines[-1][0], "start_detail", {"detail": detail})
+            self.lines.append(line)
+            out.lines.append(line)
         return out
+
+    @property
+    def never_started(self) -> bool:
+        """A run over that never started (6.4: the recap says so, not "Failed")."""
+        return self.finished and self.t0 is None and self.status == "failed"
 
     def end_lost(self, why: str = "") -> Batch:
         """The worker is gone and never said run_end (killed, crashed, never started): the run is over, interrupted."""
@@ -357,6 +513,26 @@ class RunTrack:
             c[j.state] += 1
         c["reused"] = sum(1 for j in self.jobs if j.reused)
         c["computed"] = c[DONE] - c["reused"]
+        return c
+
+    def block_count(self) -> dict[str, int]:
+        """What ``count`` says, by block (``groups``; #3): a block is done when all its jobs are (computed when one of
+        them was), failed when one of them failed, not run when none of them ran, stopped when one was stopped."""
+        c = {DONE: 0, FAILED: 0, INTERRUPTED: 0, "notrun": 0, "computed": 0}
+        for keys in self.groups or [[j.key] for j in self.jobs]:
+            js = [self.by_key[k] for k in keys if k in self.by_key]
+            st = {j.state for j in js}
+            if not js:
+                continue
+            if FAILED in st:
+                c[FAILED] += 1
+            elif INTERRUPTED in st:
+                c[INTERRUPTED] += 1
+            elif st == {DONE}:
+                c[DONE] += 1
+                c["computed"] += any(not j.reused for j in js)
+            elif st <= {SKIPPED, NOT_STARTED}:
+                c["notrun"] += 1
         return c
 
     def seconds(self) -> float:
@@ -427,10 +603,11 @@ def render_line(line: Line, title=lambda stage: stage) -> str:
     t, kind, d = line
     when = time.strftime("%H:%M:%S", time.localtime(t))
     stage = title(d["stage"]) if d.get("stage") else ""
-    if kind == "starting":
-        text = _("Starting the run: {n} stages").format(n=d["n"])
+    if kind == "starting":                       # #3: blocks, as the run window counts them
+        text = plural(d["n"], "Starting: {n} block", "Starting: {n} blocks")
     elif kind == "run_start":
-        text = _("Run started: {n} stages · {t}").format(n=d["n"], t=duration_text(d["sec"], d["measured"]))
+        text = plural(d["n"], "Run started: {n} block · {t}", "Run started: {n} blocks · {t}",
+                      t=duration_text(d["sec"], d["measured"]))
     elif kind == "stage_start":
         text = _("{stage} · started").format(stage=stage)
     elif kind == "progress":
@@ -443,34 +620,41 @@ def render_line(line: Line, title=lambda stage: stage) -> str:
         text = _("{stage} · done in {t}").format(stage=stage, t=hm(d["sec"]))
     elif kind == "stage_reused":
         text = _("{stage} · already computed").format(stage=stage)
-    elif kind == "stage_failed":
-        text = (_("{stage} · failed: {error}").format(stage=stage, error=d["error"]) if d["error"]
+    elif kind == "stage_failed":                 # in plain words; a program error keeps its own words after (2)
+        err = (d["error"] or "").strip()
+        plain = engine_text(err.splitlines()[0]) if err else ""
+        if err and is_raw_error(err):
+            plain += " · " + start_detail(err)
+        text = (_("{stage} · failed: {error}").format(stage=stage, error=plain) if err
                 else _("{stage} · failed").format(stage=stage))
     elif kind == "stage_stopped":
         text = _("{stage} · stopped").format(stage=stage)
     elif kind == "stage_skipped":
         up = ", ".join(title(s) for s in d["upstream"])
         text = (_("{stage} · not run, {up} failed").format(stage=stage, up=up) if up
-                else _("{stage} · not run, an earlier stage failed").format(stage=stage))
+                else _("{stage} · not run, earlier failure").format(stage=stage))
     elif kind == "stop_asked":
-        text = _("Stop asked: the stage in progress stops at its next check")
+        text = _("Stop asked")
     elif kind == "run_end":
         st = d["status"]
+        b = d.get("blocks") or {DONE: d[DONE], FAILED: d[FAILED], "notrun": d[SKIPPED] + d[NOT_STARTED]}
         if st == "done":
-            text = _("Run finished: {n} stages in {t}").format(n=d[DONE], t=hm(d["sec"]))
+            text = plural(b[DONE], "Run finished: {n} block in {t}", "Run finished: {n} blocks in {t}",
+                          t=hm(d["sec"]))
         elif st == "interrupted":
-            text = _("Run stopped: {n} stages done").format(n=d[DONE])
+            text = plural(b[DONE], "Run stopped: {n} block done", "Run stopped: {n} blocks done")
         else:
-            text = _("Run failed: {failed} failed, {skipped} not run").format(
-                failed=d[FAILED], skipped=d[SKIPPED] + d[NOT_STARTED])
+            text = _("Run failed: {failed} failed, {skipped} not run").format(failed=b[FAILED], skipped=b["notrun"])
     elif kind == "paused":
         from ..blocks import review_title
-        text = _("Paused for your review at {block}: check it in Inspect, then Continue.").format(
-            block=review_title(d["block"]))
+        text = _("Review pause: {block} · Inspect, then Continue").format(
+            block=d.get("name") or review_title(d["block"]))
     elif kind == "run_lost":
-        text = _("The run stopped without warning: its process ended")
+        text = _("Run ended unexpectedly")
     elif kind == "not_started":
-        text = _("The run could not start: {why}").format(why=d["why"])
+        text = _("Run not started: {why}").format(why=_(d["why"]))
+    elif kind == "start_detail":                 # the worker's own words, under the plain sentence (exploration 2)
+        text = _("Cause: {detail}").format(detail=d["detail"])
     else:
         text = kind
     return f"{when}  {text}"
@@ -611,7 +795,7 @@ class RunController(QObject):
     statusChanged = Signal(str)              # the status line of a run in progress ('' when none)
     updated = Signal()                       # the track changed: the dialog, the status widget and the graph redraw
     finished = Signal(str, str)              # status (done | failed | interrupted), one line to flash
-    logRequested = Signal()                  # "Show the log" of the recap
+    logRequested = Signal()                  # "Show log" of the recap
     openInspect = Signal(int, str)           # "Open in Inspect" of a paused run: workflow id, block (of the views)
 
     def __init__(self, model, window=None, console=None, worker: ApiWorker | None = None):
@@ -643,6 +827,17 @@ class RunController(QObject):
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setSingleShot(True)
         self._refresh_timer.timeout.connect(self._refresh_model)
+        self.plan_error = ""                 # why the plan of the window could not be made ('' when it was)
+        self._stop_asked = False             # Stop pressed while the run was starting
+        self.scope: set | None = None        # the workflows of Run to here (what may refuse it); None: Run all
+        self._follow_timer = QTimer(self)    # the plan window follows the graph (coalesced)
+        self._follow_timer.setSingleShot(True)
+        self._follow_timer.setInterval(120)
+        self._follow_timer.timeout.connect(self._replan)
+        for name in ("pathsChanged", "costChanged", "sourcesChanged"):
+            sig = getattr(model, name, None)
+            if sig is not None and hasattr(sig, "connect"):
+                sig.connect(self._graph_changed)
 
     # ------------------------------------------------------------ state
     @property
@@ -657,17 +852,29 @@ class RunController(QObject):
         t = self.track
         if self.phase == "idle" or t is None:
             return ""
-        if self.phase == "starting" or not t.running:
-            return _("Starting the run…")
         if self.phase == "stopping":
             return _("Stopping…")
+        if self.phase == "starting" or not t.running:
+            return _("Starting…")
         j = t.current()
         left = t.remaining()
-        what = self.model.title(j.stage) if j is not None else ""
+        what = self.stage_title(j.stage) if j is not None else ""
         pct = int(round(100 * t.fraction()))
         text = (_("Running: {stage} · {pct} %").format(stage=what, pct=pct) if what
                 else _("Running · {pct} %").format(pct=pct))
         return text + " · " + _("≈ {t} left").format(t=hm(left)) if left > 30 else text
+
+    def stage_title(self, stage: str) -> str:
+        """A stage of the run in plain words (``stage_title``)."""
+        return stage_title(self.model, stage)
+
+    def groups(self, plan) -> list[list[str]]:
+        """The job keys of each block of the run window (runs.build_rows): what the console counts (#3)."""
+        from ..runs import build_rows
+        try:
+            return [list(r.keys) for r in build_rows(self.model, plan.jobs, self.names) if not r.echo]
+        except Exception:  # noqa: BLE001 - a graph that cannot be built now: one block per job
+            return [[j.key] for j in plan.jobs]
 
     # ------------------------------------------------------------ planning
     def launch(self, start: bool = False):
@@ -676,8 +883,11 @@ class RunController(QObject):
         dialog following it; not without frames (issue #48)."""
         if self.running:
             return self.show_dialog()
+        self.scope = None
         d = self._plan_and_open(self.model.plan_run, lambda: _("Run project"), show_done=True)
-        if start and d is not None and self.plan and self.model.has_data():
+        # never at once when the plan has something to say first (a file that may be a mistake, a workflow left out,
+        # the disk): the window shows it, Run is the user's (GUI exploration round 2)
+        if start and d is not None and self.plan and self.model.has_data() and not d.warnings(sync=True):
             d.start()
         return d
 
@@ -688,21 +898,66 @@ class RunController(QObject):
         p = m.path
         if self.running:
             return self.show_dialog()
-        if p is None or m.sel_step in ("sources", "final"):
-            return None
-        from ..blocks import block_title
         key = m.sel_step
-        return self._plan_and_open(lambda: m.plan_run_to(p, key), lambda: _('Run "{name}" to {block}').format(
-            name=p.name, block=_("Output") if key == "post" else block_title(p, key)))
+        if p is None or run_here_refusal(m, key):                 # a Session block is not computed (#29)
+            return None
+        pid, name = p.pid, self.block_name(p, key)
+        self.scope = {pid}
+
+        def planner():
+            q = m.view(pid)                                  # the window follows the graph: Ctrl+Z may take it away
+            if q is not None and m.ready and m.is_cut(q, run_key(key)):   # drawn, but switched off: not computed
+                raise PlanRefused(_("{block} is switched off: D switches it on again").format(block=name))
+            if q is None or (m.ready and run_key(key) not in m.pause_keys(q) + ["post", "etoiles"]):
+                raise PlanRefused(_("{block} is no longer in the graph").format(block=name))
+            return m.plan_run_to(q, run_key(key))
+        return self._plan_and_open(planner, lambda: _('Run "{name}" to {block}').format(name=p.name, block=name))
+
+    def block_name(self, p, key: str) -> str:
+        """A block as the graph and the run window name it ("Gradient 2", "Calibration · Session 2", 4.1 and 6.1)."""
+        from ..blocks import Graph, block_title
+        from ..runs import row_title
+        if key == "post":
+            return _("Output")
+        try:
+            node = Graph(self.model).node_of(p, key)
+        except Exception:  # noqa: BLE001 - a graph that cannot be built now: its plain name
+            node = None
+        return row_title(self.model, node, p) if node is not None else block_title(p, key)
 
     def _plan_and_open(self, planner, title, show_done: bool = False):
-        """``planner()`` gives (plan, pause); the dialog of that plan."""
-        try:
-            plan, pause = planner()
-        except (ValueError, KeyError, OSError):
-            plan, pause = api.Plan(), None
+        """``planner()`` gives (plan, pause); the dialog of that plan. A plan that cannot be made is said in the
+        dialog, never an empty "Nothing to run" (GUI exploration round 2: a pause on "Gradient 2" hid an error)."""
+        plan, pause, self.plan_error = self._make_plan(planner)
         self._planner = planner
         return self.open_plan(plan, title, show_done, pause)
+
+    @staticmethod
+    def _make_plan(planner):
+        """(plan, pause, why it could not be planned: '' when it was)."""
+        try:
+            plan, pause = planner()
+            return plan, pause, ""
+        except PlanRefused as e:                              # said by the planner, in plain words already
+            return api.Plan(), None, str(e)
+        except (ValueError, KeyError, OSError) as e:
+            from ..i18n import plain_error
+            return api.Plan(), None, plain_error(str(e))
+
+    def _graph_changed(self, *_a):
+        """The graph, the settings or the device changed: a plan window not run yet follows (GUI exploration round 2:
+        Ctrl+Z left the undone block in it, and its Run ran the old graph)."""
+        if self.dialog is not None and self.phase == "idle" and self._planner is not None:
+            self._follow_timer.start()
+
+    def _replan(self):
+        d = self.dialog
+        if d is None or self.running or self._planner is None or d.phase() != "plan":
+            return
+        plan, pause, self.plan_error = self._make_plan(self._planner)
+        self._snapshot = Project2.from_dict(self.model.p.to_dict(), self.model.p.root)
+        self.plan, self.pause = plan, pause
+        d.set_plan(plan)
 
     def open_plan(self, plan, title, show_done: bool = False, pause=None):
         """The plan dialog (a snapshot of the definition is taken now: the plan is frozen). ``title``: the text, or a
@@ -767,8 +1022,7 @@ class RunController(QObject):
 
     def pause_text(self) -> str:
         """The block the run stopped at, for a line of text."""
-        from ..blocks import review_title
-        return review_title(self.pause.block) if self.pause is not None else ""
+        return pause_text(self.model, self.pause)          # as the graph names it ("Gradient 1", "Calibration · Session 2")
 
     def _make_dialog(self):
         from ..runs import RunDialog
@@ -788,16 +1042,32 @@ class RunController(QObject):
         """The Run button of the plan dialog: start the run (in the worker: nothing blocks the window)."""
         if self.running or not plan or self._snapshot is None:
             return False
+        if self.refusal(plan):                               # a fusion or data that cannot run (1.1): never started
+            return False
         self.plan = plan
         self.track = RunTrack.of_plan(plan)
         self.track.plan = plan
         self.names = {}
         self.phase = "starting"
-        self.track.lines.append((time.time(), "starting", {"n": len(plan.jobs)}))
+        self.track.groups = self.groups(plan)                 # #3: the console counts blocks, as the window shows
+        self.track.lines.append((time.time(), "starting", {"n": len(self.track.groups)}))
         self.set_console()
         self.worker.submit(self.ch_start, _start_job, self._snapshot, plan, self.model.device)
         self._emit_state(True)
         return True
+
+    def refusal(self, plan) -> list[tuple[str, str]]:
+        """(workflow, why) of what refuses this plan: the fusions and the data that cannot run, among the workflows the
+        plan computes (Run to here on a channel's Stacking is not refused for the fusion after it)."""
+        problems = getattr(self.model, "run_problems", None)
+        if problems is None:
+            return []
+        if self.scope is None:                               # Run all: the whole project
+            return problems()
+        try:
+            return problems(set(self.scope))                 # the workflow Run to here runs (sharing jobs or not)
+        except TypeError:                                    # a model without the workflows' filter
+            return problems()
 
     def _done(self, channel: str, _n: int, result):
         if channel == self.ch_start:
@@ -812,12 +1082,16 @@ class RunController(QObject):
         why = text.splitlines()[0] if text else "?"
         if channel == self.ch_start:
             self.phase = "idle"
+            self._stop_asked = False
             if "already in progress" in why:     # another window, or a run started before this client: follow it
                 self.track = None
                 self._drop_dialog()
                 self.attach()
-            else:
-                self.append_console(self.track.abort(why.split(": ", 1)[-1]).lines)
+            else:                                # 6.4: plain words in the console, the history and the window
+                self.append_console(self.track.abort(why).lines)
+                plain = start_failure(why)
+                log_not_started(self.model, plain, text)
+                self.finished.emit("failed", _("Run not started: {why}").format(why=_(plain)))
             self._emit_state(False)
         elif channel == self.ch_attach:
             self._attaching = False
@@ -826,6 +1100,10 @@ class RunController(QObject):
         t = self.track
         t.run_id, t.pid = info.run_id, info.pid
         self.phase = "running"
+        if self._stop_asked:                                 # Stop was pressed while it started
+            self._stop_asked = False
+            self.phase = "stopping"
+            self.worker.submit(self.ch_stop, _stop_job, self.model.p)
         self._follow(info, info.offset)
         self._emit_state(True)
 
@@ -867,25 +1145,29 @@ class RunController(QObject):
         self._refresh_timer.stop()
         self._refresh_due, self._refresh_at = False, time.monotonic()
         self.model.results_changed()
-        n, c = t.elapsed(), t.counts or t.count()
+        n, c = t.elapsed(), t.block_count()                  # #3: blocks, as the run window shows them
         if t.status == "done" and self.pause is not None:
-            text = plural(c[DONE], "Run paused for your review at {block}: {n} stage in {t}",
-                          "Run paused for your review at {block}: {n} stages in {t}", block=self.pause_text(), t=hm(n))
-            self.model.log("{text}", text=text)
-            line = (time.time(), "paused", {"block": self.pause.block})       # the console says what comes next
+            text = plural(c[DONE], "Review pause at {block}: {n} block in {t}",
+                          "Review pause at {block}: {n} blocks in {t}", block=self.pause_text(), t=hm(n))
+            # the history line is written in the language shown when it is read (#31): a template and its words
+            self.model.log("Review pause at {block}", block=self.pause_text())
+            # the console says what comes next
+            line = (time.time(), "paused", {"block": self.pause.block, "name": self.pause_text()})
             t.lines.append(line)
             self.append_console([line])
         elif t.status == "done":
-            text = _("Run finished: {n} stages in {t}").format(n=c[DONE], t=hm(n))
-            self.model.log("Run: {n} stages · {t}", n=c[DONE], t=hm(n))
+            text = plural(c[DONE], "Run finished: {n} block in {t}", "Run finished: {n} blocks in {t}", t=hm(n))
+            self.model.log("Run finished in {t}", t=hm(n))
         elif t.status == "interrupted":
-            text = _("Run stopped: {n} stages done").format(n=c[DONE])
-            self.model.log("Run stopped: {n} stages done", n=c[DONE])
+            text = plural(c[DONE], "Run stopped: {n} block done", "Run stopped: {n} blocks done")
+            self.model.log("Run stopped")
+        elif t.never_started:                                # 6.4: said in plain words, in the history too
+            why = start_failure(t.error)
+            text = _("Run not started: {why}").format(why=_(why))
+            log_not_started(self.model, why, t.error)
         else:
-            text = _("Run failed: {failed} failed, {skipped} not run").format(
-                failed=c[FAILED], skipped=c[SKIPPED] + c[NOT_STARTED])
-            self.model.log("Run failed: {failed} failed, {skipped} not run", failed=c[FAILED],
-                           skipped=c[SKIPPED] + c[NOT_STARTED])
+            text = _("Run failed: {failed} failed, {skipped} not run").format(failed=c[FAILED], skipped=c["notrun"])
+            self.model.log("Run failed: {failed} failed, {skipped} not run", failed=c[FAILED], skipped=c["notrun"])
         self.phase = "idle"
         c_ = self._console_obj()
         if c_ is not None and hasattr(c_, "refresh"):
@@ -905,13 +1187,16 @@ class RunController(QObject):
     def stop(self):
         """Stop the run at the next check of the stage in progress: what is computed is kept, and the next run
         goes on from the stage's last checkpoint."""
-        if self.phase != "running":
+        if self.phase == "starting":                       # round 2: asked while starting, done once it has started
+            self._stop_asked = True
+        elif self.phase != "running":
             return
+        else:
+            self.worker.submit(self.ch_stop, _stop_job, self.model.p)
         self.phase = "stopping"
         self.track.stop_asked = True
         self.track.lines.append((time.time(), "stop_asked", {}))
         self.append_console()
-        self.worker.submit(self.ch_stop, _stop_job, self.model.p)
         self.updated.emit()
         self.statusChanged.emit(self.status_text())
 
@@ -933,6 +1218,7 @@ class RunController(QObject):
         self.pause = None
         self.track = RunTrack.of_plan(plan, info.run_id)
         self.track.plan, self.track.pid = plan, info.pid
+        self.track.groups = self.groups(plan)
         b = self.track.apply(events)
         self.set_console()
         self.phase = "running"
@@ -955,14 +1241,14 @@ class RunController(QObject):
         """Fill the Log panel's console with the lines of the run."""
         c = self._console_obj()
         if c is not None and self.track is not None:
-            c.set_console("\n".join(render_line(x, self.model.title) for x in self.track.lines))
+            c.set_console("\n".join(render_line(x, self.stage_title) for x in self.track.lines))
 
     def append_console(self, lines=None):
         c = self._console_obj()
         if c is None or self.track is None:
             return
         for x in (self.track.lines[-1:] if lines is None else lines):
-            c.append_console(render_line(x, self.model.title))
+            c.append_console(render_line(x, self.stage_title))
 
     # ------------------------------------------------------------ views
     def status_widget(self):
@@ -995,6 +1281,12 @@ class RunController(QObject):
             self.follower.stop()
             self.follower = None
         self._refresh_timer.stop()
+        self._follow_timer.stop()
+        for name in ("pathsChanged", "costChanged", "sourcesChanged"):
+            try:
+                getattr(self.model, name).disconnect(self._graph_changed)
+            except (AttributeError, RuntimeError, TypeError):
+                pass
         self._drop_dialog()
         self.phase = "idle"
         for sig, slot in ((self.worker.done, self._done), (self.worker.failed, self._failed)):

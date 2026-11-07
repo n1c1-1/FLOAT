@@ -66,8 +66,8 @@ TEMPLATES: dict[str, dict[str, Any]] = {
 }
 
 # the notes of the option rules (shown in the client, translated by its catalogues)
-NOTE_DENOISE_ADDED = "Denoise added: the star removal needs it"
-REFUSE_DENOISE = "the star removal needs it: remove Stars first"
+NOTE_DENOISE_ADDED = "Denoise added: needed by Stars/background"
+REFUSE_DENOISE = "needed by Stars/background"
 REFUSE_GRADIENT = "the sky gradient is always removed: choose another method instead"
 #: stored option values of earlier versions, read as the current ones
 OPTION_ALIASES: dict[str, dict[Any, Any]] = {"gradient": {"halpha": "polynomial"}, "denoise": {"n2n": "pretrained"},
@@ -126,9 +126,9 @@ def cuts(options: dict[str, Any]) -> list[str]:
 
 #: why a block cannot run (the user reads it on the greyed block; English, translated by the client)
 NEEDS_ASTROMETRY = "needs Astrometry"
-NEEDS_HALF_STACKS = "needs the half-stacks of a stack"
+NEEDS_HALF_STACKS = "needs half-stacks"
 NEEDS_DENOISE = "needs Denoise"
-MONO_NO_COLOUR = "a monochrome image has no colours: they come from combining filters"
+MONO_NO_COLOUR = "monochrome: colours from filters"
 
 
 def greyed(options: dict[str, Any], image: bool = False, mono: bool = False, stretched: bool = False
@@ -254,7 +254,7 @@ BLOCKS: dict[str, tuple[str, ...]] = {
 BLOCK_TITLES = {"fusion": "Fusion", "image": "Image", "calibration": "Calibration", "registration": "Registration",
                 "selection": "Selection",
                 "stacking": "Stacking", "astrometry": "Astrometry", "color": "Color", "denoise": "Denoise",
-                "stars": "Split stars & background", "gradient": "Gradient", "output": "Output"}
+                "stars": "Stars/background", "gradient": "Gradient", "output": "Output"}
 #: what Run to here runs for a block without stages of its own
 RUN_TO: dict[str, tuple[str, ...]] = {"selection": ("register",)}
 #: stages a block's key leaves out: the survey follows the Gradient method, not the Astrometry block
@@ -266,6 +266,14 @@ def base(name: str) -> str:
     """The stage of a chain entry: "calibrate" for the instance "calibrate@2", "denoise" for the second Denoise of a
     graph, "denoise~2"."""
     return name.split("@", 1)[0].split("~", 1)[0]
+
+
+def block_order(name: str) -> tuple[int, int]:
+    """Where an engine block stands in the usual order: its block's rank, then a graph's later node after the first
+    ("gradient~2" after "gradient")."""
+    order = list(BLOCKS)
+    b, _sep, n = name.partition("~")
+    return (order.index(b) if b in order else len(order), int(n) if n.isdigit() else 0)
 
 
 def session_of(name: str) -> str | None:
@@ -522,20 +530,25 @@ SOURCES = ("frames", "image", "stretched", "fusion")
 SOURCE_GIVES = {"frames": FRAMES, "image": IMAGE, "stretched": IMAGE, "fusion": IMAGE}
 
 #: why a block cannot be placed (the client translates them)
-WHY_INPUT = "it takes {takes}, and {before} gives {gives}"
-WHY_ONCE = "a workflow has one {block} block"
+WHY_INPUT = "takes {takes}; {before} gives {gives}"
+WHY_STACK_FIRST = "{block} needs Stacking first"
+WHY_ONCE = "one {block} per workflow"
+WHY_ONCE_OFF = "{block} already here, off: switch on (D)"
 WHY_FRAME_ORDER = "{block} comes {where} {other}"
-WHY_NEEDS = "it needs the {need} block before it"
-WHY_HALVES = "it needs the half-stacks of a stack (a workflow from frames)"
-WHY_SOURCE = "a workflow from {source} has no {block} block"
-WHY_AFTER_OUTPUT = "only Split stars & background comes after the Output block"
-WHY_OUTPUT_AUTO = "the Output is made automatically, at the end of every workflow that gives an image"
-WHY_OUTPUT_LAST = "the Output block ends the image blocks"
-WHY_REMOVE_NEEDED = "{other} needs it: remove {other} first"
-WHY_REMOVE_BRIDGE = "the blocks after it take {takes}: {block} makes it"
-WHY_OFF_KIND = "{block} turns {takes} into {gives}: switched off, the next block would get the wrong data"
-KIND_WORDS = {FRAMES: "a series of frames", IMAGE: "an image", PAIR: "a starless image and its stars"}
-SOURCE_WORDS = {"frames": "frames", "image": "an image file", "stretched": "a stretched image", "fusion": "a fusion"}
+WHY_NEEDS = "needs {need} first"
+WHY_HALVES = "needs half-stacks (from frames)"
+WHY_SOURCE = "no {block} {source}"
+WHY_AFTER_OUTPUT = "only Stars/background after Output"
+WHY_OUTPUT_AUTO = "Output is automatic"
+WHY_OUTPUT_LAST = "Output ends the chain"
+WHY_REMOVE_NEEDED = "needed by {other}"
+WHY_OFF_NEEDED = "needed by {other}: switch {other} off first"      # the same, said for a switch-off
+WHY_REMOVE_BRIDGE = "the next blocks need its {takes}"
+WHY_OFF_KIND = "{block}: {takes} → {gives}, needed"
+KIND_WORDS = {FRAMES: "frames", IMAGE: "image", PAIR: "starless + stars"}
+#: "from ..." as a whole: the French joins the preposition to the word ("de brutes", "d'un fichier image")
+SOURCE_WORDS = {"frames": "from frames", "image": "from image file", "stretched": "from stretched image",
+                "fusion": "from fusion"}
 
 
 class BlockRefused(ValueError):
@@ -630,6 +643,8 @@ def graph_problem(blocks: Sequence[dict], source: str, raise_it: bool = False) -
             return bad(WHY_SOURCE, source=SOURCE_WORDS[source], block=_title(b))
         if after_output and b != "stars":
             return bad(WHY_AFTER_OUTPUT)
+        if takes != kind and takes == IMAGE and kind == FRAMES:      # what to do, not only why (8.5)
+            return bad(WHY_STACK_FIRST, block=_title(b))
         if takes != kind:
             return bad(WHY_INPUT, takes=KIND_WORDS[takes], before=before, gives=KIND_WORDS[kind])
         if b in FRAME_BLOCKS:
@@ -657,8 +672,14 @@ def place_problem(blocks: Sequence[dict], source: str, block: str, index: int) -
     """Why ``block`` cannot be inserted at ``index`` of the graph (None: it can)."""
     if block == "output":
         return BlockRefused(WHY_OUTPUT_AUTO)
+    if block not in IMAGE_OPS and any(n["block"] == block and n.get("off") for n in blocks):
+        return BlockRefused(WHY_ONCE_OFF, block=_title(block))      # GUI exploration 4.4: no second one
     trial = list(blocks[:index]) + [node(block, name=new_name(blocks, block))] + list(blocks[index:])
-    return graph_problem(with_output(trial, source), source)
+    e = graph_problem(with_output(trial, source), source)
+    if e is not None and e.template == WHY_STACK_FIRST and getattr(e, "block", "") == "output":
+        e = BlockRefused(WHY_STACK_FIRST, block=_title(block))     # the block placed needs it, not the Output (never
+        e.block = block                                             # a block on screen)
+    return e
 
 
 def places(blocks: Sequence[dict], source: str, block: str) -> list[int]:
@@ -727,8 +748,12 @@ def off_problem(blocks: Sequence[dict], source: str, index: int) -> BlockRefused
         return BlockRefused(WHY_OFF_KIND, block=_title(n["block"]), takes=KIND_WORDS[takes], gives=KIND_WORDS[gives])
     trial = [dict(x, off=True) if i == index else x for i, x in enumerate(blocks)]
     e = graph_problem(with_output(trial, source), source)
-    return None if e is None else _explain_removal(blocks, [x for i, x in enumerate(blocks) if i != index], source,
-                                                   index, e)
+    if e is None:
+        return None
+    e = _explain_removal(blocks, [x for i, x in enumerate(blocks) if i != index], source, index, e)
+    if e.template == WHY_REMOVE_NEEDED:                  # a switch-off is not a removal: say what to switch off
+        return BlockRefused(WHY_OFF_NEEDED, **e.fields)
+    return e
 
 
 def from_options(options: dict[str, Any], end: str | None = None, source: str = "frames") -> list[dict[str, Any]]:
@@ -905,7 +930,7 @@ def sync_blocks(blocks: Sequence[dict], source: str, options: dict[str, Any]) ->
 
 def with_output(blocks: Sequence[dict], source: str = "frames") -> list[dict[str, Any]]:
     """A graph with its Output block where it belongs (issue #49: the user does not place it): right after the last
-    block that gives an image, before Split stars & background; none while the graph gives no image (it ends on
+    block that gives an image, before Stars/background; none while the graph gives no image (it ends on
     frames). A stretched image has none (it is its own output)."""
     g = [dict(n) for n in blocks if n["block"] != "output"]
     if source == "stretched":

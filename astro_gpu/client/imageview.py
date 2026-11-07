@@ -94,7 +94,7 @@ from PySide6.QtWidgets import (
 
 from . import APP_NAME
 from . import stretch as sm
-from .i18n import _, language, number
+from .i18n import _, language, log_detail, number, plain_error
 from .widgets import ACCENT, BAD, OK, WARN, ElidedLabel, label
 
 TILE = 512
@@ -2795,7 +2795,8 @@ class ImageView(QWidget):
             self._failed_key = key
             self.canvas.busy = False
             self.canvas.message = why if key in self.loader.unavailable else \
-                _("This image cannot be shown: {why}").format(why=why)
+                _("This image cannot be shown: {why}").format(why=plain_error(why))
+            log_detail(getattr(self.window(), "s", None), why)      # the program's error: in the Log only
             if not self._frames:
                 self.canvas.set_display(None)
             self.canvas.update()
@@ -2803,7 +2804,7 @@ class ImageView(QWidget):
                 self._targets[self._cmp_i].identity() == key:
             self._cmp_failed = key                  # the compared image cannot be read: said, and not waited for
             text = why if key in self.loader.unavailable else \
-                _("This image cannot be shown: {why}").format(why=why)
+                _("This image cannot be shown: {why}").format(why=plain_error(why))
             self.canvas2.message = text
             self.canvas2.update()
             self.toasted.emit(text)
@@ -3759,8 +3760,8 @@ class ImageExportDialog(QDialog):
         grid.addWidget(label(_("Content")), r, 0, Qt.AlignTop)
         cb = QVBoxLayout()
         cb.setSpacing(4)
-        self.c_data = QRadioButton(_("The data, as they are"))
-        self.c_view = QRadioButton(_("The stretched view, as shown"))
+        self.c_data = QRadioButton(_("Data as is"))
+        self.c_view = QRadioButton(_("Stretched view"))
         self.c_view.setChecked(True)
         cb.addWidget(self.c_data)
         cb.addWidget(self.c_view)
@@ -3769,17 +3770,17 @@ class ImageExportDialog(QDialog):
         grid.addWidget(label(_("Area")), r, 0, Qt.AlignTop)
         ab = QVBoxLayout()
         ab.setSpacing(4)
-        self.a_all = QRadioButton(_("The whole image ({w} × {h})").format(w=self.prep.width, h=self.prep.height))
+        self.a_all = QRadioButton(_("Whole image ({w} × {h})").format(w=self.prep.width, h=self.prep.height))
         x0, y0, x1, y1 = view.visible_area()
         self.area = (x0, y0, x1, y1)
-        self.a_vis = QRadioButton(_("The visible part ({w} × {h})").format(w=x1 - x0, h=y1 - y0))
+        self.a_vis = QRadioButton(_("Visible part ({w} × {h})").format(w=x1 - x0, h=y1 - y0))
         self.a_all.setChecked(True)
         self.a_vis.setEnabled(not view.canvas.whole_visible())
         ab.addWidget(self.a_all)
         ab.addWidget(self.a_vis)
         grid.addLayout(ab, r, 1)
         r += 1
-        self.c_wcs = QCheckBox(_("Astrometric solution (WCS) in the header"))
+        self.c_wcs = QCheckBox(_("Astrometry (WCS) in header"))
         self.c_wcs.setChecked(hasattr(self.prep.wcs, "to_header"))
         grid.addWidget(self.c_wcs, r, 1)
         r += 1
@@ -3915,7 +3916,8 @@ class ImageExportDialog(QDialog):
         self.go.setEnabled(True)
         if error:
             self.error = error
-            self.status.setText(_("The export failed: {why}").format(why=error))
+            self.status.setText(_("The export failed: {why}").format(why=plain_error(error)))
+            log_detail(getattr(self.parent(), "s", None) or getattr(self.window(), "s", None), error)
             self.status.setStyleSheet(f"color: {WARN};")
             return
         self.result_path = Path(path)

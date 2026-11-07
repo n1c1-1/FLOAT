@@ -337,9 +337,8 @@ TIPS = {
     ("stack", "pixfrac"): "Smaller, the image is sharper but noisier, with a risk of holes; 0.6 to 0.8 is the usual "
                           "range.",
     ("stack", "kappa"): "Lower (3 to 4), it removes more trails, but can eat into the star cores in poor seeing.",
-    ("stack", "pattern_removal"): "Off by default: on the Rosette, the estimate also held the traces of the faint "
-                                  "stars, and subtracting it drew the streaks it was meant to remove. Neutral on "
-                                  "Heart.",
+    ("stack", "pattern_removal"): "Off by default: on some stacks the estimate also held the traces of the faint "
+                                  "stars, and subtracting it drew the streaks it was meant to remove.",
 }
 UNITS = {"x median": "× median", "frames": "frames", "deg": "°", "sigma": "σ", "x": "×", "G mag": "G",
          "arcsec/px": "″/px", "e-/ADU": "e⁻/ADU", "um": "µm", "x field": "× field", "x noise": "× noise",
@@ -356,17 +355,18 @@ TYPES = {"int": "int", "float": "float", "bool": "bool", "str": "str", "float | 
 # ======================================================================== resolving a setting for a workflow
 def catalog_key(p, step: str) -> str:
     step = step.split("@", 1)[0]                     # a session's block: the block's catalogue (issue #43)
-    if step == "fond":
-        return f"fond:{p.opts['fond']}"
-    if step == "debruitage":
-        return f"debruitage:{p.opts.get('dn', 'generique')}"
-    return step
+    base = step.partition("~")[0]                    # a block placed twice ("fond~2"): the same catalogue (round 4)
+    if base in ("fond", "debruitage"):
+        from .model import method_of                 # the node's own method: Gradient 2 may differ from Gradient 1
+        return f"{base}:{method_of(p, step)}"
+    return base
 
 
-def _stage_of(s, p, it: dict, sid: str | None = None) -> str | None:
+def _stage_of(s, p, it: dict, sid: str | None = None, num: str = "") -> str | None:
     """The stage of a catalogue item, when the workflow has it; for a session's block (``sid``, issue #43), that
-    session's instance ("calibrate@2"): the settings of that session."""
-    st = f"{it['stage']}@{sid}" if sid is not None else it["stage"]
+    session's instance ("calibrate@2"): the settings of that session; for a block placed twice (``num``, "fond~2"),
+    its own stage ("gradient~2"): the items of a shared stage (the first block's catalogs) are not its own."""
+    st = f"{it['stage']}@{sid}" if sid is not None else f"{it['stage']}~{num}" if num else it["stage"]
     return st if st in s.all_stages(p) else None
 
 
@@ -401,7 +401,7 @@ def resolve(s, p, step: str, it: dict, stage: str | None = None) -> dict | None:
     """The setting as shown: label, help, tip, value, suggestion, reason, bounds; None when not in this workflow (or
     when the worker has not described its stage yet). The texts are translated here, at display time."""
     step, sid = _split(step)
-    stage = stage or _stage_of(s, p, it, sid)
+    stage = stage or _stage_of(s, p, it, sid, step.partition("~")[2])
     if stage is None:
         return None
     r = dict(it, stage=stage, cat_stage=it["stage"], step_key=step, key=f"{stage}.{it['name']}", locked=False,
@@ -421,7 +421,10 @@ def resolve(s, p, step: str, it: dict, stage: str | None = None) -> dict | None:
                  reason=_reason_text(s, info, stage), min=lo, max=hi, step=info.step, tip=_(tip),
                  unit=_(it["unit"] if it["unit"] is not None else UNITS.get(info.unit, info.unit)),
                  choices=choices, type=typ, value=info.value, changed=info.origin == "user", locked=info.locked,
-                 drift=info.drift, result_value=info.result_value, optional=info.type == "float | None")
+                 drift=info.drift, result_value=info.result_value, optional=info.type == "float | None",
+                 # an automatic value the engine sets from the data, not known yet: "auto", never the default it would
+                 # replace (round 3: drizzle 1,50 before the run, 1,00 after, as the block said "auto")
+                 pending_auto=info.origin != "user" and not getattr(info, "suggestion_known", True))
     else:
         r.update(label=_(it["label"]), help=_(it["help"]), unit=_(it["unit"]), suggested=it["default"], tip="",
                  reason=_(it.get("reason") or "proposed value"), value=it["default"], changed=False,
@@ -454,9 +457,10 @@ def needed_stages(s, p, step: str) -> set[str]:
     """Every stage the rows of this block come from (so that the panel can ask the worker for them)."""
     out = set()
     sid = _split(step)[1]
+    num = _split(step)[0].partition("~")[2]
     for _t, items in CATALOG.get(catalog_key(p, _split(step)[0]), []):
         for it in items:
-            st = _stage_of(s, p, it, sid) if it["kind"] == "engine" else None
+            st = _stage_of(s, p, it, sid, num) if it["kind"] == "engine" else None
             if st:
                 out.add(st)
     out |= {x for x in _stages_of_step(s, p, step) if x not in ("inventory", "reference")}
@@ -547,7 +551,7 @@ def step_settings(s, p, step: str):
     rows = []
     for st in ([] if step == "demi_piles" else _stages_of_step(s, p, step)):
         for info in s.params(p, st) or []:
-            bst = st.split("@", 1)[0]
+            bst = st.split("@", 1)[0].split("~", 1)[0]   # "gradient~2": its method on its cards too (round 3)
             if (bst, info.name) in COVERED or (bst, info.name) in HIDDEN or info.level == "internal":
                 continue
             it = E(st, info.name, ENGINE_LEVEL.get(info.level, "normal"))
@@ -680,7 +684,26 @@ class SettingRow(QFrame):
             e.setChecked(bool(cur))
             e.toggled.connect(lambda x: self.changed.emit(self.r, x))
         elif typ == "zone":
-            e = QPushButton(_("Draw on the image…"))
+            e = QPushButton(_("Draw on image…"))
+        elif typ in ("int", "float") and r.get("pending_auto") and not off:
+            # set by the engine from the data, not known yet: "auto" (round 3), a number typed is the user's
+            e = QLineEdit("")
+            e.setFixedWidth(110)
+            e.setPlaceholderText("auto")
+            e.setToolTip(_("Automatic: set from the data when the previous blocks are done. Type a value to fix it."))
+
+            def typed():
+                t = e.text().strip().replace(",", ".")
+                try:
+                    v = float(t) if t else None
+                except ValueError:
+                    return
+                if v is not None:
+                    lo, hi = r.get("min"), r.get("max")
+                    v = max(v, lo) if lo is not None else v
+                    v = min(v, hi) if hi is not None else v
+                    self.changed.emit(self.r, int(round(v)) if typ == "int" else round(v, 6))
+            e.editingFinished.connect(typed)
         elif typ == "int":
             e = QSpinBox()
             e.setLocale(QLocale())                  # the language's numbers: a widget keeps its parent's locale

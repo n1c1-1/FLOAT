@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import numpy as np
 
@@ -31,7 +32,13 @@ class Inventory(Stage):
 
     def run(self, ctx: Context, p: InventoryParams) -> None:
         cfg = ctx.project.config.inputs
-        groups = {k: list_frames(getattr(cfg, k)) for k in ("lights", "darks", "flats", "bias", "flat_darks")}
+        kinds = ("lights", "darks", "flats", "bias", "flat_darks")
+        for k in kinds:                        # a folder not there (its disk unplugged) is said, not "add frames" (7.9)
+            gone = next((e for e in getattr(cfg, k) if not Path(e).exists()), None)
+            if gone is not None:
+                raise StageError(f"the folder of the {k.replace('_', ' ')} is not found: {Path(gone).as_posix()} "
+                                 f"(is its disk plugged in?)")
+        groups = {k: list_frames(getattr(cfg, k)) for k in kinds}
         if not groups["lights"]:
             raise StageError("no light frame found: add at least one folder of light frames")
         if p.max_lights and p.max_lights < len(groups["lights"]):
@@ -69,7 +76,9 @@ class Inventory(Stage):
         for k in ("darks", "flats", "bias", "flat_darks"):
             bad = [f["path"] for f in out[k] if (f["width"], f["height"]) != (w, h)]
             if bad:
-                raise StageError(f"{len(bad)} {k} frame(s) have a different size than the lights, e.g. {bad[0]}")
+                raise StageError(f"{len(bad)} {k.replace('_', ' ')} have another size than the lights ({w}x{h}), e.g. "
+                                 f"{Path(bad[0]).name}: take them out of the session, or use those of this "
+                                 f"camera")
         odd = [f["path"] for f in lights if (f["width"], f["height"]) != (w, h) or f["cfa"] != cfa]
         if odd:
             ctx.log(f"{len(odd)} light frame(s) with a different size or pattern are ignored", "warning")

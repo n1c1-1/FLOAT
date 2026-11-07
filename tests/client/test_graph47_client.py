@@ -204,7 +204,7 @@ def test_what_the_play_test_found_stays_fixed(qapp, tmp_path, monkeypatch):
         m.set_session_filter(1, "Ha")
         settle(w, page)
         ha = m.paths[0]
-        assert m.palette_reason(ha, "color").startswith("a monochrome image") and m.place_indices(ha, "color") == []
+        assert m.palette_reason(ha, "color").startswith("monochrome") and m.place_indices(ha, "color") == []
     finally:
         page.close()
         m.close(save=False)
@@ -272,6 +272,25 @@ def test_branches_parallel_flows_removable_wires_and_the_palette_taking_a_block_
         w.stop()
 
 
+def test_a_lone_session_says_why_it_stays(qapp, tmp_path, monkeypatch):
+    """GUI exploration 2: Del, or the lone Session dragged onto the palette, is refused with the reason (it was
+    silent); the session stays."""
+    w, m, page = open_page(tmp_path, monkeypatch)
+    said = []
+    page.toasted.connect(said.append)
+    try:
+        m.select(step="sources")
+        settle(w, page)
+        page._delete_selected()                                    # Del
+        assert said == ["Last session: kept"] and len(m.p.sessions) == 1
+        page.remove_tool(Graph(m).root, None)                      # dropped on the palette
+        assert said[-1] == "Last session: kept" and len(m.p.sessions) == 1
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
 def test_a_stage_phase_moves_the_bar_from_its_first_file():
     """Issue #50: progress within a phase fills that phase's share of the bar."""
     from types import SimpleNamespace
@@ -292,12 +311,12 @@ def test_a_stage_phase_moves_the_bar_from_its_first_file():
 
 def test_the_second_play_test_stays_fixed(qapp, tmp_path, monkeypatch):
     """Dragging Combine does not break the page; a wire taken away stays away (Post gives no layer by itself any
-    more); a branch beside the same block tries another method; a rebuilt graph forgets its selected wire."""
+    more); a branch beside the same block tries another method; a rebuilt graph keeps its selected wire chosen."""
     from astro_gpu.client.graph import WireItem
     w, m, page = open_page(tmp_path, monkeypatch)
     try:
         page.graph.drag_block = "composition"
-        page.graph.rebuild()                                       # its places: after the split block, no error
+        page.graph.rebuild()                                       # its places: after the Stars/background block, no error
         assert any(getattr(gh, "node", None) is not None for gh in page.graph.ghosts)
         page.graph.drag_block = None
         page.graph.rebuild()
@@ -308,11 +327,258 @@ def test_the_second_play_test_stays_fixed(qapp, tmp_path, monkeypatch):
         wires = [it for it in page.graph.scene().items() if isinstance(it, WireItem)]
         page.graph.select_wire(wires[0])
         page.graph.rebuild()
-        assert page.graph.sel_wire is None                        # forgotten with the scene
+        sw = page.graph.sel_wire                                  # 2nd round: the same wire drawn again stays
+        assert sw is not None and sw is not wires[0] and sw.scene() is page.graph.scene() and sw.selected   # chosen
+        page.graph.clear_selection()
+        page.graph.rebuild()
+        assert page.graph.sel_wire is None                        # nothing chosen: none comes back
         n_before = len(Graph(m).post_layers)
         page.remove_post_link(q.pid)
         settle(w, page)
         assert len(Graph(m).post_layers) == n_before - 1 and q.pid not in Graph(m).to_post   # it stays away
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def test_a_fusion_channel_session_removed_keeps_the_project_valid_and_the_fusion_red(qapp, tmp_path, monkeypatch):
+    """GUI exploration 2, decision 3: the only Session of a fusion's channel cannot be removed: refused with the reason
+    (no empty session put in its place, no broken project, no undo step); the channel's workflow and Image likewise."""
+    w, m, page = open_page(tmp_path, monkeypatch, workflows=())
+    try:
+        assert m.ensure_frames_workflow() is not None
+        d = page.new_workflow(tab="mono")
+        d.pick(next(c.t for c in d.cards if c.t["key"] == "hoo"))
+        page.make_workflow(d)
+        settle(w, page)
+        hoo = next(q for q in m.paths if (q.source or {}).get("fusion"))
+        ha = next(q for q in m.paths if m.feeds_fusion(q))
+        sid = m.sessions_of(ha)[0]
+        n_sessions, n_undo = len(m.p.sessions), len(m._undo)
+        assert "Ha" in m.session_removal_problem(sid) and hoo.name in m.session_removal_problem(sid)
+        assert not m.remove_session(sid)
+        toasts = []
+        page.toast = toasts.append
+        page.session_action("remove", sid)                         # the cross, Del, the menu: said why
+        page.workflow_action("delete", ha.pid)
+        settle(w, page)
+        m.p.validate()                                             # still a valid project
+        assert len(m.p.sessions) == n_sessions and len(m._undo) == n_undo and m.view(ha.pid) is not None
+        assert len(toasts) == 2 and all(hoo.name in t for t in toasts)
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def test_a_parallel_flow_on_a_template_without_night_and_a_calibration_in_the_second_flow(qapp, tmp_path,
+                                                                                          monkeypatch):
+    """GUI exploration 1.5: a template's flow of frames, no night yet: a Session dropped on the new-flow zone makes a
+    valid project. 1.6: Calibration placed in the second flow is selected beside that flow's own session."""
+    w, m, page = open_page(tmp_path, monkeypatch, workflows=())
+    try:
+        m.p.sessions.clear()
+        m.add_graph_workflow("Workflow", [])
+        q = m.add_parallel_flow()
+        m.p.validate()
+        assert m.sessions_of(q) and m.sessions_of(m.paths[0]) and m.sessions_of(q) != m.sessions_of(m.paths[0])
+        page.place_block("calibration", q.pid)
+        settle(w, page)
+        assert m.sel_step == f"calibration@{m.sessions_of(m.view(q.pid))[0]}"
+        page.refresh()                                             # the panel shows it (no error)
+        # round 2: its review pause is its own and names its session (it did nothing, "after Calibration")
+        sid = m.sessions_of(m.view(q.pid))[0]
+        ref = f"calibration@{sid}"
+        page.toggle_pause(Graph(m).node_of(m.view(q.pid), ref))
+        settle(w, page)
+        # the flow stacks that one session: the engine computes its Calibration as the workflow's own
+        assert m.has_breakpoint(m.view(q.pid), ref) and m.breakpoints(m.view(q.pid)) == ["calibration"]
+        name = m.p.session(sid).name
+        assert m.history[-1][1] == "Pause set after {block}" and m.history[-1][2] == {"block": f"Calibration · {name}"}
+        assert m.pause_point().all_stops() == [(q.pid, "calibration")]
+        assert m.review_state(m.view(q.pid), ref) is not None                    # the dot on the block drawn
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def test_a_block_placed_twice_has_its_own_settings_and_its_own_pause(qapp, tmp_path, monkeypatch):
+    """GUI exploration 1.2: the second Gradient is a block of its own: its setting changes (the first keeps its
+    own), it gets its pause for review, and Run to here aims at it."""
+    w, m, page = open_page(tmp_path, monkeypatch)
+    try:
+        full = m.paths[0]
+        page.place_block("gradient")
+        settle(w, page)
+        p = m.view(full.pid)
+        assert "fond~2" in m.display_keys(p)
+        m.set_param(p, "gradient~2", "degree", 4)
+        assert m.p.workflow(full.pid).params.get("gradient~2", {}).get("degree") == 4
+        assert m.p.workflow(full.pid).params.get("gradient", {}).get("degree") is None
+        m.set_breakpoint([p], "fond~2", True)
+        assert m.has_breakpoint(p, "fond~2") and not m.has_breakpoint(p, "fond")
+        assert m.breakpoints(p) == ["fond~2"]
+        m.p.validate()
+        # round 2: Run planned up to it (an error hidden behind "Nothing to run" before), named as the graph names it
+        pause = m.pause_point()
+        assert pause is not None and pause.block == "fond~2" and pause.all_stops() == [(p.pid, "fond~2")]
+        plan, pause = m.plan_run()
+        assert plan.jobs and pause.block == "fond~2"
+        assert m.pause_name(p.pid, "fond~2") == "Gradient 2" and m.pause_name(p.pid, "fond") == "Gradient 1"
+        from astro_gpu.client.services.run import pause_text
+        assert pause_text(m, pause) == "Gradient 2"
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def test_a_pause_stays_with_a_block_switched_off_and_works_on_a_sessions_calibration(qapp, tmp_path, monkeypatch):
+    """Round 2: switching a block off kept no pause (switching it on did not bring it back); the pause on a session's
+    Calibration did nothing and its name did not say which session."""
+    w, m, page = open_page(tmp_path, monkeypatch)
+    try:
+        p = m.paths[0]
+        m.set_breakpoint([p], "fond", True)
+        g = Graph(m)
+        node = g.node_of(m.view(p.pid), "fond")
+        page.toggle_cut(node, [p.pid])                                 # D
+        settle(w, page)
+        assert "gradient" in m.cut_blocks(m.view(p.pid))
+        assert m.has_breakpoint(m.view(p.pid), "fond")                # kept with the block switched off
+        assert "fond" not in m.breakpoints(m.view(p.pid))              # but no stop while it is off
+        m.undo()
+        settle(w, page)
+        assert m.breakpoints(m.view(p.pid)) == ["fond"]
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def test_the_answers_to_the_design_questions(qapp, tmp_path, monkeypatch):
+    """The user's answers (GUI exploration, 7 November): a branch made only to send an image goes with its wire (1);
+    a block placed starts from its defaults (9); Fusion is greyed with what to do while there is nothing to combine
+    (6); a workflow deleted at once, said (10.1); a block switched off is not placed twice (4.4); a removal refused in
+    one workflow is refused in all (3.7)."""
+    w, m, page = open_page(tmp_path, monkeypatch)
+    try:
+        full = m.paths[0]
+        page.send_to_post(Graph(m).node_of(m.view(full.pid), "astrometrie"))
+        settle(w, page)
+        sent = m.paths[-1]
+        assert m.is_sent_branch(sent)
+        page.remove_post_link(sent.pid)
+        settle(w, page)
+        assert m.view(sent.pid) is None                            # question 1: the branch went with its wire
+        # question 9: a Gradient placed again starts from its defaults
+        m.set_param(m.view(full.pid), "gradient", "degree", 4)
+        page.remove_tool(Graph(m).node_of(m.view(full.pid), "fond"), None)
+        settle(w, page)
+        page.place_block("gradient", full.pid)
+        settle(w, page)
+        assert m.p.workflow(full.pid).params.get("gradient", {}).get("degree") is None
+        # question 6: nothing to combine yet in a project of one colour workflow without Stacking? it has one: placeable
+        assert page.palette_reason("fusion", m.view(full.pid), None) == ""
+        # 4.4: Registration switched off is not placed a second time
+        page.toggle_cut(Graph(m).node_of(m.view(full.pid), "alignement"), None)
+        settle(w, page)
+        assert "off: switch on" in m.palette_reason(m.view(full.pid), "registration")
+        # 10.1: Delete workflow at once, no question
+        toasts = []
+        page.toasted.connect(toasts.append)
+        page.workflow_action("delete", full.pid)
+        settle(w, page)
+        assert m.view(full.pid) is None and toasts and "Ctrl+Z" in toasts[-1]
+        assert m.undo() and m.view(full.pid) is not None
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def test_a_wire_taken_away_stays_away_and_what_is_sent_after_still_goes_to_post(qapp, tmp_path, monkeypatch):
+    """GUI exploration 1.3: once a wire to Post was taken away, a block's image sent to Post, a new branch and the
+    wire given back all reach Post; only the image taken out stays out (it is listed, not the whole composition)."""
+    w, m, page = open_page(tmp_path, monkeypatch)
+    try:
+        full = m.paths[0]
+        page.remove_post_link(full.pid)
+        settle(w, page)
+        assert full.pid not in Graph(m).to_post
+        page.send_to_post(Graph(m).node_of(m.view(full.pid), "astrometrie"))      # a block's image, sent
+        settle(w, page)
+        sent = m.paths[-1]
+        assert sent.pid in Graph(m).to_post and full.pid not in Graph(m).to_post
+        q, _key = m.add_branch(full, "astrometrie", "gradient")                  # a new branch
+        settle(w, page)
+        assert q.pid in Graph(m).to_post and full.pid not in Graph(m).to_post
+        m.add_post_layer(full.pid, None)                                          # the wire given back
+        settle(w, page)
+        assert full.pid in Graph(m).to_post and (full.pid, None) not in m.post_removed()
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def test_branch_names_are_numbered_as_names_not_by_their_blocks_number(qapp, tmp_path, monkeypatch):
+    """GUI exploration 4: a branch whose new block is the chain's second Gradient was named "… · Gradient 2", and the
+    next one "… · Gradient 2 2". Branches are named by their block's kind, numbered only to stay unique."""
+    w, m, page = open_page(tmp_path, monkeypatch)
+    try:
+        full = m.paths[0]
+        if "fond" not in m.display_keys(full):
+            page.place_block("gradient", full.pid)
+            settle(w, page)
+        names = []
+        for key in ("astrometrie", "fond", "fond"):
+            q, _k = m.add_branch(m.view(full.pid), key, "gradient")
+            names.append(q.name)
+        assert names == [f"{full.name} · Gradient", f"{full.name} · Gradient 2", f"{full.name} · Gradient 3"]
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def test_a_new_projects_template_is_saved_with_it(qapp, tmp_path, monkeypatch):
+    """GUI exploration 4: the template chosen when the project is made is part of it: saved at once (closing the
+    project then asks nothing, and it reopens with its workflow, not empty with no template window)."""
+    w, m, page = open_page(tmp_path, monkeypatch)
+    try:
+        n0 = len(m.paths)
+        d = page.new_workflow(fresh=True)
+        d.pick(next(c.t for c in d.cards if c.t["key"] == "classic"))
+        d.name.setText("Made")
+        d.ok.click()
+        settle(w, page)
+        assert len(m.paths) == n0 + 1 and not m.dirty and not m.can_undo()
+        assert "Made" in [x.name for x in project2.load(m.root).workflows]
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def test_post_saving_its_layers_keeps_the_workflows_not_computed_yet(qapp, tmp_path, monkeypatch):
+    """GUI exploration 4: Post holds layers only for the computed workflows; its saving a composition (a filter added)
+    does not take the others' images out of Post (they used to be listed as removed, their wires gone for good)."""
+    w, m, page = open_page(tmp_path, monkeypatch)
+    try:
+        full = m.paths[0]
+        q, _key = m.add_branch(full, "astrometrie", "gradient")
+        settle(w, page)
+        before = set(Graph(m).to_post)
+        assert q.pid in before
+        post_page = type("PostView", (), {"is_post_page": True})()
+        lay = {"id": 50, "kind": "filter", "filter": "curves", "name": "Curves", "visible": True, "opacity": 100.0,
+               "mode": "Normal", "params": {}, "mask": None}
+        m.set_post_layers([lay], post_page)                                      # nothing computed: no workflow layer
+        settle(w, page)
+        assert not m.post_removed() and set(Graph(m).to_post) == before
     finally:
         page.close()
         m.close(save=False)
@@ -483,6 +749,220 @@ def test_a_file_added_by_mistake_is_warned_and_taken_out_one_by_one(qapp, tmp_pa
         assert [Path(e).name for e in m.session(1).lights] == ["a2.ARW"]
         assert m.remove_session_files(1, "lights", [(raw / "a2.ARW").as_posix()])     # the last light too
         assert m.session(1).lights == []
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+# ------------------------------------------------------------ GUI exploration, control round (agent G)
+def graph_page(tmp_path, monkeypatch, blocks):
+    """A workflow built block by block from the palette, on the project's one session (nothing computed)."""
+    w, m, page = open_page(tmp_path, monkeypatch, workflows=())
+    p = m.ensure_frames_workflow()
+    for b in blocks:
+        page.place_block(b, p.pid)
+        settle(w, page)
+    return w, m, page, m.view(p.pid)
+
+
+def menu_texts(page, node, monkeypatch) -> list[str]:
+    from PySide6.QtCore import QPoint
+    from PySide6.QtWidgets import QMenu
+
+    from astro_gpu.client import graph as graphmod
+    got = []
+
+    class Menu(QMenu):                                  # built, not run (exec would wait for a click)
+        def exec(self, *a, **k):
+            got.append(self)
+    monkeypatch.setattr(graphmod, "QMenu", Menu)
+    page.graph.block_menu(node, QPoint(0, 0))
+    return [a.text() or "---" for a in got[-1].actions()] if got else []
+
+
+def test_control_round_a_port_pulled_again_or_after_its_wire_went_says_so_or_gives_it_back(qapp, tmp_path,
+                                                                                            monkeypatch):
+    """5, 7, 10: every block giving an image has its port and "To Post", at one place in its menu; pulled again it
+    says its image is a layer already; the last block after its wire was taken away gives the wire back; a shared
+    block's image is named after the workflow that owns it."""
+    w, m, page, p = graph_page(tmp_path, monkeypatch, ["calibration", "registration", "stacking", "astrometry",
+                                                        "gradient", "color"])
+    told = []
+    page.toasted.connect(told.append)
+    try:
+        def nd(key, q=None):
+            return page.graph.graph.node_of(q or m.view(p.pid), key)
+        page.send_to_post(nd("fond"))
+        settle(w, page)
+        assert [q.name for q in m.paths] == ["Workflow", "Workflow · Gradient"]
+        assert page.graph.has_port(nd("fond"))                      # its port stays
+        page.send_to_post(nd("fond"))
+        settle(w, page)
+        assert len(m.paths) == 2 and "already a layer of Post" in told[-1]
+        m.current = 1                                               # the branch chosen: the shared Stacking
+        page.send_to_post(nd("empilement", m.paths[0]))
+        settle(w, page)
+        assert m.paths[-1].name == "Workflow · Raw stack"           # its owner's name, not the branch's
+        page.send_to_post(nd("empilement", m.paths[0]))
+        settle(w, page)
+        assert "already a layer of Post" in told[-1]
+        page.remove_post_link(p.pid)                                # the trunk's wire taken away...
+        settle(w, page)
+        assert p.pid not in page.graph.graph.to_post and page.graph.has_port(nd("couleur"))
+        page.send_to_post(nd("couleur"))                            # ...its last block's port gives it back
+        settle(w, page)
+        assert p.pid in page.graph.graph.to_post and "to Post" in told[-1] and "Ctrl+Z" in told[-1]
+        texts = menu_texts(page, nd("fond"), monkeypatch)
+        i = texts.index("Inspect")
+        assert texts[i + 1:i + 4] == ["---", "To Post", "---"]
+        texts = menu_texts(page, nd("couleur"), monkeypatch)       # the last block too, not in its Workflow submenu
+        i = texts.index("Inspect")
+        assert texts[i + 1:i + 4] == ["---", "To Post", "---"]
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def test_control_round_a_branch_left_without_a_block_of_its_own_goes_with_it(qapp, tmp_path, monkeypatch):
+    w, m, page, p = graph_page(tmp_path, monkeypatch, ["calibration", "registration", "stacking", "astrometry"])
+    told = []
+    page.toasted.connect(told.append)
+    try:
+        page.branch_block("color", p.pid, "astrometrie")
+        settle(w, page)
+        br = m.paths[-1]
+        assert [q.name for q in m.paths] == ["Workflow", "Workflow · Color"]
+        page.remove_tool(Graph(m).node_of(br, "couleur"), None)
+        settle(w, page)
+        assert [q.name for q in m.paths] == ["Workflow"]          # not a copy of the trunk sending its image
+        assert "with its branch “Workflow · Color”" in told[-1] and "Ctrl+Z" in told[-1]
+        assert m.undo() and [q.name for q in m.paths] == ["Workflow", "Workflow · Color"]      # one step: both back
+        # a block's image sent to Post (a branch with no block of its own from the start) stays so
+        page.send_to_post(Graph(m).node_of(m.view(p.pid), "empilement"))
+        settle(w, page)
+        sent = m.paths[-1]
+        assert sent.name == "Workflow · Raw stack" and not m.is_emptied_branch(m.view(p.pid))
+        assert m.is_emptied_branch(sent)
+        # a copy (or any workflow not made as a branch) never goes with a block deleted in it
+        page.workflow_action("duplicate", p.pid)
+        settle(w, page)
+        cp = m.paths[-1]
+        page.remove_tool(Graph(m).node_of(cp, "astrometrie"), [cp.pid])
+        settle(w, page)
+        assert m.view(cp.pid) is not None and "astrometrie" not in m.display_keys(m.view(cp.pid))
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def test_control_round_a_fusion_channel_sent_to_post_keeps_the_channels_apart(qapp, tmp_path, monkeypatch):
+    """1: the branch of a channel's block takes its channel's last lane: two channels never drawn on each other."""
+    from PySide6.QtCore import QRectF
+
+    from astro_gpu.client.graph import BlockItem, GraphView
+    monkeypatch.setenv("ASTRO_GPU_SETTINGS", str(tmp_path / "settings.json"))
+    prefs.load()
+    i18n.set_language("en")
+    p = project2.create(tmp_path / "P", "P", Target(name="M 31"))
+    for sid, f in ((1, "Ha"), (2, "OIII")):
+        p.sessions.append(project2.Session(sid, f, lights=[str(frames(tmp_path / f, [f"{f}1.ARW"]))], filter=f))
+        x = p.add_workflow(f, wfl.TEMPLATES["Classic stack"])
+        x.sessions = [sid]
+        p.set_blocks(x.id, [wfl.node(b) for b in ("calibration", "registration", "stacking", "astrometry")])
+    project2.save(p)
+    w = ApiWorker()
+    m = ProjectModel(p, w)
+    assert w.wait(120)
+    m._sync()
+    page = GraphPage(m)
+    page.resize(1500, 800)
+    try:
+        ha = m.paths[0]
+        page.send_to_post(Graph(m).node_of(ha, "empilement"))
+        settle(w, page)
+        br = m.paths[-1]
+        assert br.name == "Ha · Raw stack"
+        order = GraphView.lane_order(Graph(m))
+        assert order.index(br.pid) == order.index(ha.pid) + 1 < order.index(m.paths[1].pid)
+        rects = [QRectF(it.pos(), it.boundingRect().size()) for it in page.graph.scene().items()
+                 if isinstance(it, BlockItem) and it.node.key not in ("sources", "final")]
+        assert not any(a.intersects(b) for i, a in enumerate(rects) for b in rects[i + 1:])
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def test_control_round_the_fusion_card_waits_for_the_channels_lights(qapp, tmp_path, monkeypatch):
+    """2: a colour project without lights: the Fusion card greyed, saying what to do."""
+    w, m, page, p = graph_page(tmp_path, monkeypatch, ["calibration", "registration", "stacking"])
+    try:
+        assert page.palette_reason("fusion", m.view(p.pid), None) == ""
+        assert m.remove_session_entry(1, "lights", m.session(1).lights[0])
+        settle(w, page)
+        assert page.palette_reason("fusion", m.view(p.pid), None) == "lights first in “Workflow”"
+        n = len(m.paths)
+        page.place_fusion()                                         # refused: nothing placed
+        assert len(m.paths) == n
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def test_control_round_undo_selects_the_block_before_and_a_file_taken_out_is_one_undo_step(qapp, tmp_path,
+                                                                                           monkeypatch):
+    """12: Ctrl+Z of a placed block selects the block drawn before it; 13: a file taken out of a session is one
+    undo step (Ctrl+Z puts it back, it never undoes an older step), said with Ctrl+Z."""
+    w, m, page, p = graph_page(tmp_path, monkeypatch, ["calibration", "registration", "stacking"])
+    told = []
+    page.toasted.connect(told.append)
+    try:
+        assert m.sel_step == "empilement"
+        assert m.undo()
+        settle(w, page)
+        assert m.sel_step == "alignement" and page.current_node() is not None
+        assert m.redo()
+        settle(w, page)
+        lights = list(m.session(1).lights)
+        blocks = [n["block"] for n in m.p.workflow(p.pid).blocks]
+        page.panel._files_out(1, "lights", lights, True)
+        settle(w, page)
+        assert m.session(1).lights == [] and "Ctrl+Z" in told[-1]
+        assert m.undo()
+        settle(w, page)
+        assert m.session(1).lights == lights and [n["block"] for n in m.p.workflow(p.pid).blocks] == blocks
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def test_control_round_a_variant_of_a_graph_keeps_its_blocks_and_each_choice_is_said(qapp, tmp_path, monkeypatch):
+    """14: Try as variant on a graph: the variant has the original's blocks (no Selection added), Keep keeps them;
+    Keep, Discard, Duplicate say what they did."""
+    w, m, page, p = graph_page(tmp_path, monkeypatch, ["calibration", "registration", "stacking"])
+    told = []
+    page.toasted.connect(told.append)
+    try:
+        ch = dict(kind="param", stage="stack", name="kappa", value=3.5, suggested=None)
+        before = [n["block"] for n in m.p.workflow(p.pid).blocks]
+        q = m.add_variant(m.view(p.pid), ch, "Workflow · kappa")
+        assert [n["block"] for n in m.p.workflow(q.pid).blocks] == before
+        assert m.p.workflow(q.pid).sessions == m.p.workflow(p.pid).sessions
+        page.select(index=m.paths.index(m.view(q.pid)), step="empilement")
+        settle(w, page)
+        from PySide6.QtWidgets import QPushButton
+        keep = next(b for b in page.panel.findChildren(QPushButton) if b.text() == "Keep")
+        keep.click()
+        settle(w, page)
+        assert [q.name for q in m.paths] == ["Workflow"] and "kept" in told[-1] and "Ctrl+Z" in told[-1]
+        assert [n["block"] for n in m.p.workflow(m.paths[0].pid).blocks] == before
+        page.workflow_action("duplicate", m.paths[0].pid)
+        assert "duplicated" in told[-1] and "Ctrl+Z" in told[-1]
     finally:
         page.close()
         m.close(save=False)

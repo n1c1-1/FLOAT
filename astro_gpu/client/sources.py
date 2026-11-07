@@ -123,6 +123,25 @@ def frame_filter() -> str:
     return _("Raw and FITS frames ({patterns})").format(patterns=pats) + ";;" + _("All files (*)")
 
 
+def no_lights_text(entries) -> str:
+    """Why folders or files chosen give no light frame, translated (#28, #29): not found, empty, or only files of a
+    kind not read (JPEG lights are not read yet)."""
+    from ..core.project import file_type, frame_kind
+    files: list[Path] = []
+    for e in entries:
+        p = Path(e)
+        if not p.exists():
+            return _("Not found: {folder}. Is its disk plugged in?").format(folder=p.as_posix())
+        files += [q for q in p.iterdir() if q.is_file()] if p.is_dir() else [p]
+    other = sorted({file_type(f) for f in files if not frame_kind(f)})
+    if not files:
+        return _("This folder holds no files.")
+    if other:
+        return _("No camera raw or FITS frames here, only {types} files: this version does not read them as "
+                 "lights yet.").format(types=", ".join(other))
+    return _("No light frames chosen.")
+
+
 def common(values) -> str:
     """The most frequent of the values, as text ('' when none)."""
     vals = [v for v in values if v not in (None, "")]
@@ -178,14 +197,14 @@ class KindRow(QFrame):
         return prefs.last_folder()                   # issue #32: where the last kind was chosen, not the workspace
 
     def _pick_files(self):
-        fs, _f = QFileDialog.getOpenFileNames(self, _("Choose the {kind}").format(kind=_(KIND_WORD[self.key])),
+        fs, _f = QFileDialog.getOpenFileNames(self, _("Choose {kind}").format(kind=_(KIND_WORD[self.key])),
                                               self._start(), frame_filter())
         if fs:
             prefs.remember_folder(fs[0])
             self.changed.emit(self.key, fs)
 
     def _pick_folder(self):
-        d = QFileDialog.getExistingDirectory(self, _("Choose the {kind}").format(kind=_(KIND_WORD[self.key])),
+        d = QFileDialog.getExistingDirectory(self, _("Choose {kind}").format(kind=_(KIND_WORD[self.key])),
                                              self._start())
         if d:
             prefs.remember_folder(d)
@@ -348,13 +367,15 @@ class ImportDialog(QDialog):
         self.bar.setValue(1000)
         self.cur.setText(_("{n} files read.").format(n=total))
         if not n["lights"]:
-            self.warn.setText(_("No light frames chosen."))
+            lentries = (self.chosen or {}).get("lights") or [self.folder]
+            self.warn.setText(no_lights_text(lentries) if any(lentries) else _("No light frames chosen."))
             return
         parts = [_(KIND_COUNT[k]).format(n=n[k]) for k, _t, _s in GROUPS if n[k]]
-        missing = [_(KIND_WORD[k]) for k in ("bias", "flat_darks") if not n[k]]
+        missing = tuple(k for k in ("bias", "flat_darks") if not n[k])
         txt = _("<b>Found</b>: {parts}.").format(parts=join_and(parts))
-        if missing:
-            txt += " " + _("No {what}.").format(what=", ".join(missing))
+        if missing:                                   # whole sentences, for the French elision (GUI exploration 7.5)
+            txt += " " + _({("bias",): "No bias.", ("flat_darks",): "No dark flats.",
+                            ("bias", "flat_darks"): "No bias, no dark flats."}[missing])
         self.found.setText(txt)
         gs = api.group_sessions(scan.frames["lights"], self.service.criteria)
         names = " · ".join(_("{name} ({n} lights)").format(name=g.name, n=g.count) for g in gs)
@@ -382,7 +403,7 @@ def edit_session_frames(model, session: int, parent=None, service=None) -> bool:
     chosen = {k: [model.p.abspath(x) for x in getattr(ses, k)] for k, _t, _s in GROUPS}
     first = next(iter(chosen["lights"]), "")
     d = ImportDialog(model, first, True, parent, svc, chosen=chosen,
-                     title=_("Frames of the session {name}").format(name=ses.name))
+                     title=_("Session {name}: frames").format(name=ses.name))
     ok = d.exec()
     scan, picked = d.scan, d.chosen
     d.deleteLater()
@@ -392,6 +413,35 @@ def edit_session_frames(model, session: int, parent=None, service=None) -> bool:
         return False
     model.log('Frames of the session "{name}" changed', name=ses.name)
     return True
+
+
+def fill_empty_sessions(p, made: list) -> tuple[list, set]:
+    """The sessions just made by an import, poured into the empty Session blocks of the project (a template's, waiting
+    for their frames): an empty session of the same filter first, else one without a filter, which takes the frames'
+    filter. Its name stays when a filter template named it, else it takes the night's. Returns (the sessions holding
+    the frames, the ids of the empty ones filled)."""
+    def empty(s):
+        return not any(getattr(s, k) for k in ("lights", "darks", "flats", "bias", "flat_darks"))
+    new_ids = {s.id for s in made}
+    free = [s for s in p.sessions if s.id not in new_ids and empty(s)]
+    out, filled = [], set()
+    for m in made:
+        e = next((s for s in free if s.filter and s.filter == m.filter), None) or \
+            next((s for s in free if not s.filter), None)
+        if e is None:
+            out.append(m)
+            continue
+        free.remove(e)
+        for k in ("lights", "darks", "flats", "bias", "flat_darks"):
+            setattr(e, k, list(getattr(m, k)))
+        p.sessions.remove(m)
+        if not e.filter:
+            e.filter, e.name = m.filter, m.name
+        out.append(e)
+        filled.add(e.id)
+    if filled:
+        p.validate()
+    return out, filled
 
 
 def import_folder(model, parent=None, folder: str | None = None, new_session: bool = False, service=None) -> bool:
@@ -407,7 +457,9 @@ def import_folder(model, parent=None, folder: str | None = None, new_session: bo
     norm = norm_path(folder)
     for ses in model.p.sessions:
         if any(norm_path(model.p.abspath(x)) == norm for x in ses.lights):
-            QMessageBox.information(parent, _("Add folder"), _("This folder is already in the project."))
+            from PySide6.QtGui import QCursor
+            from PySide6.QtWidgets import QToolTip
+            QToolTip.showText(QCursor.pos(), _("Folder already in project"), parent)   # not blocking (10.2)
             return False
     d = ImportDialog(model, folder, new_session, parent, svc)
     ok = d.exec()
@@ -415,14 +467,20 @@ def import_folder(model, parent=None, folder: str | None = None, new_session: bo
     d.deleteLater()
     if not ok or scan is None:
         return False
-    if new_session:
-        made = [api.add_session(model.p, name=scan.name)]
-        api.add_frames(model.p, scan, session=made[0].id)
-    else:
-        made = add_scan(model.p, scan, svc.criteria)
+    with model.batch():                               # one step of Undo (2.3)
+        if new_session:
+            made = [api.add_session(model.p, name=scan.name)]
+            api.add_frames(model.p, scan, session=made[0].id)
+            made[0].filter = next((i.filter for i in scan.frames.get("lights", []) if getattr(i, "filter", "")), "")
+        else:
+            made = add_scan(model.p, scan, svc.criteria)
+        made, filled = fill_empty_sessions(model.p, made)
+        if made and not model.p.workflows:         # issue #11: a project is never left without a workflow; #47: an
+            model.ensure_frames_workflow()         # empty one, built from the palette (a template chosen replaces it)
+        for x in made:
+            if x.id not in filled:                 # an empty Session of the graph filled: already in its flow
+                model.join_session(model.path, x.id)   # a new night joins the flow shown, or one of its own (1.8)
     model.log('Folder "{folder}" imported · {lights} lights', folder=folder, lights=len(scan.frames.get("lights", [])))
-    if made and not model.p.workflows:             # issue #11: a project is never left without a workflow; #47: an
-        model.ensure_frames_workflow()             # empty one, built from the palette (a template chosen replaces it)
     model.load_sources()                              # saved 300 ms after, then the frames are read again
     return bool(made)
 
@@ -681,7 +739,7 @@ class SourcesView(QWidget):
             row.clicked.connect(self.select_group)
             self.lv.addWidget(row)
             if key == "lights":
-                b = QPushButton(_("+ Add lights (another night)…"))
+                b = QPushButton(_("+ Lights (another night)…"))
                 b.setObjectName("link")
                 b.clicked.connect(self.add_session)
                 self.lv.addWidget(b)
@@ -1049,7 +1107,7 @@ class SourcesView(QWidget):
             f.excluded = want
         else:
             if not set_calibration_excluded(self.s, f, want, self.items):
-                QMessageBox.information(self, _("Browse"), _("The last frame of a folder cannot be left out."))
+                QMessageBox.information(self, _("Browse"), _("Last frame of folder: kept"))
                 pos = self._seq_order.index(i) if i in self._seq_order else -1
                 if pos >= 0:
                     self.viewer.set_excluded(pos, f.excluded)
@@ -1128,7 +1186,7 @@ class SourcesView(QWidget):
             self.rv.addSpacing(8)
             self.rv.addWidget(label(_("FWHM and transparency are measured at registration. To exclude by thresholds "
                                       "rather than one by one:"), "small", wrap=True))
-            b = QPushButton(_("Frame selection by thresholds  →"))
+            b = QPushButton(_("Select by thresholds  →"))
             b.setObjectName("link")
             b.clicked.connect(lambda: self.goChain.emit("selection"))
             self.rv.addWidget(b)

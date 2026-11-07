@@ -1084,7 +1084,9 @@ def test_the_page_is_empty_until_a_workflow_is_rendered(preps, qapp):
         assert s.page.pages.currentIndex() == 0
         texts = [lb.text() for lb in s.page.empty.findChildren(QLabel)] + \
                 [b.text() for b in s.page.empty.findChildren(QPushButton)]
-        assert "No layers yet" in texts and "Go to graph  →" in texts
+        # GUI exploration 2: the layers it will have, named as the graph's Post block counts them, not computed yet
+        assert "Nothing computed yet" in texts and "Graph  →" in texts
+        assert "Full  ·  not computed yet" in texts and "Classic  ·  not computed yet" in texts
         went = []
         s.page.goWorkflow.connect(lambda: went.append(1))
         next(b for b in s.page.empty.findChildren(QPushButton)).click()
@@ -1097,8 +1099,8 @@ def test_the_page_is_empty_until_a_workflow_is_rendered(preps, qapp):
         # the workflow that is not computed yet is a link to its Output
         s.qapp.processEvents()
         links = [b for b in v.lbox.parentWidget().findChildren(QPushButton)
-                 if "not computed yet" in b.text() and not b.isHidden()]
-        assert [b.text() for b in links] == ['"Classic": not computed yet  →']
+                 if "to compute" in b.text() and not b.isHidden()]
+        assert [b.text() for b in links] == ['"Classic": to compute  →']
         got = []
         v.goResults.connect(got.append)
         links[0].click()
@@ -1114,16 +1116,19 @@ def test_the_first_layers_and_the_first_image(post):
     assert v.src.canvas == (688, 464) and shown(v).shape == (232, 344, 3) and shown(v).dtype == np.uint8
     assert np.array_equal(shown(v), reference(post).rgb)                    # the page shows what the engine path gives
     assert post.model.touched == 0                                          # opening Post writes nothing in the project
-    # a workflow rendered later does not come by itself (issue #10); a block's output sent from the graph does
+    # a workflow rendered later comes too (GUI exploration 1.3); only an image the user took out stays out (issues
+    # #10, #52: model.post_removed, tests/client/test_graph47_client.py); a block's output sent from the graph comes
     post.model.paths.append(WF(4, "Later", None))
     post.model.pathsChanged.emit()
-    assert "Later" not in [lay["name"] for lay in v.layers]
+    assert "Later" in [lay["name"] for lay in v.layers]
     post.model.paths.append(WF(3, "Raw stack", "stacking"))
     post.model.pathsChanged.emit()
-    assert [(lay["name"], lay["visible"]) for lay in v.layers][0] == ("Raw stack", False)
+    # an image sent from a block arrives shown, as the Split images do (GUI exploration 2)
+    assert [(lay["name"], lay["visible"]) for lay in v.layers][0] == ("Raw stack", True)
+    assert [lay["visible"] for lay in v.layers if lay["name"] == "Later"] == [False]
     assert post.settle()
     # each workflow layer has its thumbnail, made from its image
-    assert all(lay["id"] in v._lthumbs for lay in v.layers)
+    assert all(lay["id"] in v._lthumbs for lay in v.layers if lay["name"] != "Later")   # (no image of its own here)
     assert v._lthumbs[named(v, "Full")["id"]][1].width() == 54
 
 
@@ -1153,7 +1158,7 @@ def test_filters_on_one_layer_and_on_everything_below(post):
     # the properties of a filter: its settings; where it applies is its place in the layers (issue #26)
     v.select(sat["id"], "layer")
     texts = [b.text() for b in widgets_of(v, QPushButton)]
-    assert '"Full" only' not in texts and "Everything below" not in texts
+    assert '"Full" only' not in texts and "All below" not in texts
     assert [lb.text() for lb in widgets_of(v, QLabel)][0] == "Saturation"
     assert post.settle()
     img = shown(v).copy()
@@ -1366,7 +1371,7 @@ def test_a_stars_workflow_comes_as_its_stars_and_background_image(preps, qapp):
         assert s.settle()
         v = s.view
         assert [(lay["name"], lay.get("part")) for lay in v.layers] == [
-            ("Classic", None), ("Full · Combine stars & background layers", "combined")]
+            ("Classic", None), ("Full · Recombine", "combined")]
         full = v.layers[1]
         assert full["blend"] == "Screen" and full["mode"] == "Normal" and full["visible"]
         assert np.array_equal(shown(v), reference(s).rgb)
@@ -1476,6 +1481,33 @@ def test_a_starless_slider_leaves_the_stars_as_they_are(preps, qapp):
         s.close()
 
 
+def test_post_undo_takes_back_a_graph_gesture_when_post_has_none(post):
+    """GUI exploration 4: on the Post page, Ctrl+Z after a gesture made in the graph (Post having no step of its
+    own) undoes that gesture, then Ctrl+Y redoes it: one Undo for the whole window."""
+    v = post.view
+    s = v.s
+    v.undo.clear()
+    v.redo.clear()
+    assert v.do_undo() is False                                  # nothing anywhere: nothing happens
+    p = s.paths[0]
+    old = p.name
+    names = {"undo": [old], "redo": []}                          # the workflows' Undo, as the model keeps it
+
+    def back(src, dst):
+        if not names[src]:
+            return False
+        names[dst].append(p.name)
+        p.name = names[src].pop()
+        return True
+    s.undo, s.redo = (lambda: back("undo", "redo")), (lambda: back("redo", "undo"))
+    s.can_undo, s.can_redo = (lambda: bool(names["undo"])), (lambda: bool(names["redo"]))
+    p.name = "Renamed in the graph"                              # a gesture in the graph, before Post is shown
+    v._undo_buttons()
+    assert v.b_undo.isEnabled()
+    assert v.do_undo() is True and s.paths[0].name == old
+    assert v.do_redo() is True and s.paths[0].name == "Renamed in the graph"
+
+
 def test_undo_and_redo_one_step_per_action(post):
     from astro_gpu.client.post3 import ContSlider
     v = post.view
@@ -1561,7 +1593,7 @@ def test_dragging_a_row_nests_or_unnests_a_filter_with_clear_hints(post):
     row = lambda lid: next(r for r in v.rows if r.lay["id"] == lid)                     # noqa: E731
     # to the top, between rows: a row of its own, on everything below
     d, line, text, frames = _drag(v, row(f["id"]), row(classic["id"]), 0.1)
-    assert d["parent"] is None and d["index"] == 0 and line and text == "Applies to everything below"
+    assert d["parent"] is None and d["index"] == 0 and line and text == "On all below"
     assert not any(frames) and f["target"] is None
     assert order() == [("Green removal", 0), ("Classic", 0), ("Full", 0), ("Curves", 1)]
     # onto the Classic row: nested in it, the row framed
@@ -1601,7 +1633,7 @@ def test_the_context_menu_and_the_properties_nest_and_unnest(post):
     full, classic = named(v, "Full"), named(v, "Classic")
     v.select(classic["id"], "layer")
     f = v.add_filter("levels")
-    assert v.scope_choices(f) == [('"Classic" only', classic["id"]), ("Everything below", None)]
+    assert v.scope_choices(f) == [('"Classic" only', classic["id"]), ("All below", None)]
     v.set_target(f, None)                                                                # out: just above its layer
     assert [(r.lay["name"], r.depth) for r in v.rows][:2] == [("Levels", 0), ("Classic", 0)]
     assert v.scope_choices(f)[0] == ('"Classic" only', classic["id"])                    # the layer just under it
@@ -1652,13 +1684,13 @@ def test_sliders_are_greyed_with_their_reason_and_double_click_resets(post):
     assert sl["Sky"].s.isEnabled() and sl["Noise smoothing"].s.isEnabled()
     for k in ("Strength", "Star size", "Star color"):
         assert not sl[k].s.isEnabled() and not sl[k].why.isHidden()
-    assert sl["Star size"].why.text() == "the star sliders work on the stars of the split block"
+    assert sl["Star size"].why.text() == "the star sliders work on the stars of the Stars/background block"
     post.model.paths.append(WF(3, "Raw stack", "stacking"))                              # pulled from Stacking
     post.model.pathsChanged.emit()
     v.select(named(v, "Raw stack")["id"], "layer")
     sl = sliders()
     assert sl["Noise smoothing"].why.text() == "this layer leaves the graph before the Denoise block"
-    assert sl["Star size"].why.text() == "this layer leaves the graph before the split block"
+    assert sl["Star size"].why.text() == "this layer leaves the graph before the Stars/background block"
     lay = named(v, "Classic")                                                            # a double-click: the suggestion
     v.select(lay["id"], "layer")
     sky = sliders()["Sky"]
@@ -1783,9 +1815,15 @@ def test_an_image_sent_from_a_stage_is_a_normal_layer(post, preps, tmp_path):
     # its settings: the channels and three sliders, nothing that needs a workflow
     names = [x.name.text() for x in widgets_of(v, ContSlider) if x.name.text() not in ("Opacity",)]
     assert names == ["Sky", "Contrast", "Saturation"]
-    from PySide6.QtWidgets import QComboBox
-    combos = [[c.itemText(i) for i in range(c.count())] for c in widgets_of(v, QComboBox)]
-    assert ["Linked", "Each channel"] in combos
+    from PySide6.QtWidgets import QCheckBox
+    # one name and one kind of control with the Output block's in the graph (GUI exploration 2)
+    boxes = [c for c in widgets_of(v, QCheckBox) if c.text() == "Linked channels"]
+    assert len(boxes) == 1 and boxes[0].isChecked()
+    boxes[0].setChecked(False)
+    assert lay["linked"] is False and v.undo
+    v.do_undo()
+    lay = v.layer(lay["id"])
+    assert lay["linked"] is True
     before = shown(v).copy()
     lay["sliders"]["sky"] = 3.4
     v.request(final_only=True)
@@ -2353,7 +2391,8 @@ def test_the_french_switch_translates_every_thing_the_page_and_the_dialog_show(p
     root.mkdir(parents=True)
     empty = Setup(preps, qapp, rendered=False)
     try:
-        assert "Pas encore de calque" in [lb.text() for lb in empty.page.empty.findChildren(QLabel)]
+        shown = [lb.text() for lb in empty.page.empty.findChildren(QLabel)]   # 2nd round: the layers to come, named
+        assert "Rien de calculé" in shown and any("pas encore calculé" in t for t in shown), shown
     finally:
         empty.close()
     s = Setup(preps, qapp, root=root)
@@ -2369,7 +2408,7 @@ def test_the_french_switch_translates_every_thing_the_page_and_the_dialog_show(p
             widgets_of(v, QLabel)
         v.select(named(v, "Classic")["id"], "layer")                                    # greyed sliders and their reasons
         sl = {x.name.text(): x for x in widgets_of(v, ContSlider)}
-        assert any("bloc Split" in x.why.text() for x in sl.values())
+        assert any("bloc Étoiles/fond" in x.why.text() for x in sl.values())
         v.select(named(v, "Full")["id"], "layer")
         v.add_mask(named(v, "Full"))
         for src in postengine.MASK_SOURCES:
@@ -2381,7 +2420,7 @@ def test_the_french_switch_translates_every_thing_the_page_and_the_dialog_show(p
         v.b_cmp.setChecked(False)
         v.select(named(v, "Full")["id"], "mask")
         post_texts = [w.text() for w in widgets_of(v, QPushButton)] + [w.text() for w in widgets_of(v, QLabel)]
-        assert "Voir le masque" in [v.b_mask.text()] and any("Ajouter au masque" in t for t in post_texts)
+        assert "Voir masque" in [v.b_mask.text()] and any("Ajouter au masque" in t for t in post_texts)
         for lay in list(v.layers):                                                      # every row, in French
             v.sub_text(lay)
             v.thumb(lay)

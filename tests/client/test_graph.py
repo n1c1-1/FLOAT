@@ -28,6 +28,7 @@ pytest.importorskip("PySide6")
 from conftest import TEST_PROJECT, full_only, needs_test_project, scratch_project  # noqa: E402
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt  # noqa: E402
 from PySide6.QtGui import QFont, QFontMetricsF  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QAbstractButton,
     QAbstractSpinBox,
@@ -316,10 +317,11 @@ def test_the_tree_shares_blocks_as_the_engine_does(world, model, page):
     assert len(den) == 1 and {q.name for q in den[0].paths} == {"Full", "Classic + denoise", "Full twin"}
     stars = by_key["etoiles"]
     assert len(stars) == 1 and {q.name for q in stars[0].paths} == {"Full", "Full twin"}     # one network, one key
-    assert len(by_key["post"]) == 4 and all(len(n.paths) == 1 for n in by_key["post"])
+    assert "post" not in by_key                       # the Output is never a block: in the wire of the last block
     assert g.final.paths and len(g.final.paths) == 4
-    # the leaves go to Post, one per workflow
-    assert {g.leaves[pid].key for pid in ids.values()} == {"post"}
+    # the leaves go to Post, one per workflow: its last block, which holds its Output
+    assert all(g.leaves[pid] is g.node_of(model.view(pid), "post") and g.leaves[pid].key != "post"
+               for pid in ids.values())
     assert by_key["debruitage"][0].shared and stars[0].shared
 
 
@@ -331,7 +333,7 @@ def test_the_graph_shows_the_real_engine_order(world, model, page):
                                                 "fond", "debruitage", "couleur", "etoiles", "post"]
     cols = page.graph.columns(page.graph.graph)
     assert cols[:5] == ["sources", "calibration", "alignement", "selection", "empilement"]
-    assert cols[5:9] == ["i0", "i1", "i2", "i3"] and cols[-4:] == ["etoiles", "post", "composition", "final"]
+    assert cols[5:9] == ["i0", "i1", "i2", "i3"] and cols[-3:] == ["etoiles", "composition", "final"]   # no Output
     items = {it.node.key + str(id(it.node)): it for it in page.graph.scene().items() if isinstance(it, BlockItem)}
     gradient = [it for it in items.values() if it.node.key == "fond"]
     color = [it for it in items.values() if it.node.key == "couleur"]
@@ -349,8 +351,9 @@ def test_states_come_from_the_api(world, model, page):
     assert full.computed and full.rendered and not model.paths[1].computed
     states = {(n.key, n.paths[0].name): g.state(n) for n in g.nodes if n.paths and n.key not in ("sources", "final")}
     assert states[("empilement", "Full")] == "done"
-    assert states[("fond", "Full")] == "done" and states[("post", "Classic stack")] == "pending"
-    assert states[("etoiles", "Full")] == "done" and states[("post", "Full twin")] == "done"
+    by_name = {v.name: v for v in model.paths}       # a workflow's Output: in its last block (no block of its own)
+    assert states[("fond", "Full")] == "done" and not by_name["Classic stack"].computed
+    assert states[("etoiles", "Full")] == "done" and g.state(g.node_of(by_name["Full twin"], "post")) == "done"
     assert g.state(g.final) == "pending"                                       # not every layer is rendered
     # a block is as bad as its worst stage in any of its workflows
     model._states[(2, "gradient")] = api.StageState("failed", "boom", "k")
@@ -360,7 +363,21 @@ def test_states_come_from_the_api(world, model, page):
     model._sync()
     assert block_state(model, model.view(2), "fond") == "done"                 # back to the store's state
     # one session: the Session block in place of Frames, its lights and calibration frames (issue #43)
-    assert re.match(r"\d+ lights · \d+ darks, \d+ flats", g.summary(g.root))
+    assert re.match(r"\d+ lights · \d+ darks? · \d+ flats?", g.summary(g.root))
+
+
+def test_calibration_counts_take_the_plural():
+    """GUI exploration 2: "3 darks · 1 flat", as the lights ("6 lights"); French singular for 0 and 1."""
+    from astro_gpu.client import i18n
+    from astro_gpu.client.blocks import calibration_counts
+    assert calibration_counts(3, 1) == "3 darks · 1 flat"
+    assert calibration_counts(5, 0, 0) == "5 darks · 0 flats · 0 bias"
+    i18n.set_language("fr")
+    try:
+        assert calibration_counts(3, 1, 1) == "3 darks · 1 flat · 1 offset"
+        assert calibration_counts(0, 2, 4) == "0 dark · 2 flats · 4 offsets"
+    finally:
+        i18n.set_language("en")
 
 
 def test_a_shared_stage_is_one_key(world, model):
@@ -396,13 +413,14 @@ def test_adding_and_removing_blocks_follows_the_rules_with_toasts(world, model, 
     # Denoise cannot go while Split stars is there
     toasts.clear()
     page.remove_tool(node(page, "debruitage", classic.pid), [classic.pid])
-    assert model.view(2).opts["debruitage"] and toasts and "Split stars & background needs it" in toasts[0]
+    assert model.view(2).opts["debruitage"] and toasts and "needed by Stars/background" in toasts[0]
     # removing Split stars keeps Denoise: nothing else goes with it
     toasts.clear()
     page.remove_tool(node(page, "etoiles", classic.pid), [classic.pid])
     settle(world["w"], page)
     classic = model.view(2)
-    refused = lambda: [t for t in toasts if "to run" not in t]                   # noqa: E731 (the cost's toast)
+    refused = lambda: [t for t in toasts if "to run" not in t and "Ctrl+Z" not in t]   # noqa: E731 (the cost's,
+    #                                                                         and a removal's: said, with Ctrl+Z)
     assert classic.opts["etoiles"] == "garder" and classic.opts["debruitage"] and not refused()
     # the Gradient can go too: a graph holds the blocks it uses
     page.remove_tool(node(page, "fond", classic.pid), [classic.pid])
@@ -421,13 +439,13 @@ def test_the_palette_offers_every_block_and_says_why_one_cannot_go(world, model,
     assert "output" not in cards                                  # issue #49: made automatically, in the wire
     # Full (the current one) has every block: the image blocks can go again, the others are there once
     assert not cards["denoise"].reason and not cards["gradient"].reason and not cards["session"].reason
-    assert cards["stacking"].reason == "a workflow has one Stacking block"
+    assert cards["stacking"].reason == "one Stacking per workflow"
     model.select(index=1)                                                      # Classic stack
     page.refresh()
     cards = {c.block: c for c in page.findChildren(PaletteCard)}
-    assert cards["stars"].reason == "it needs the Denoise block before it"
+    assert cards["stars"].reason == "needs Denoise first"
     page.show_hint(cards["stars"], cards["stars"].reason)
-    assert page.hint.isVisibleTo(page) and page.hint.text() == "It needs the Denoise block before it"
+    assert page.hint.isVisibleTo(page) and page.hint.text() == "Needs Denoise first"
     page.hide_hint()
     assert not page.hint.isVisibleTo(page)
     assert page.findChildren(QLabel, "h2")[0].text() == "Blocks"
@@ -674,6 +692,26 @@ def test_undo_and_redo_restore_the_workflows(world, model, page):
     assert model.view(1) is not None and model.view(1).computed and full.pid == 1
 
 
+def test_escape_cancels_a_port_pulled_to_post(world, model, page):
+    """GUI exploration 4: Escape while a port is pulled toward Post cancels it, as in reference apps: the wire goes,
+    released on Post it sends nothing."""
+    from PySide6.QtWidgets import QGraphicsSceneMouseEvent
+    n0 = len(model.paths)
+    stacking = node(page, "empilement")
+    item = next(it for it in page.graph.scene().items() if isinstance(it, BlockItem) and it.node is stacking)
+    press = QGraphicsSceneMouseEvent(QEvent.GraphicsSceneMousePress)
+    press.setButton(Qt.LeftButton)
+    press.setPos(QPointF(item.w, BH / 2))
+    item.mousePressEvent(press)
+    post = page.graph.final_item.sceneBoundingRect().center()
+    page.graph.move_wire(post)
+    QTest.keyClick(page.graph.viewport(), Qt.Key_Escape)
+    assert not item._wire and not page.graph.final_item.target and page.graph._pull_path.scene() is None
+    item.mouseReleaseEvent(QGraphicsSceneMouseEvent(QEvent.GraphicsSceneMouseRelease))
+    settle(world["w"], page)
+    assert len(model.paths) == n0
+
+
 def test_outputs_pulled_to_post_make_a_raw_stack_workflow(world, model, page):
     n0 = len(model.paths)
     stacking = node(page, "empilement")
@@ -689,19 +727,22 @@ def test_outputs_pulled_to_post_make_a_raw_stack_workflow(world, model, page):
     settle(world["w"], page)
     assert len(model.paths) == n0 + 1
     q = model.paths[-1]
-    assert q.name == "Raw stack" and q.end == "empilement" and model.path is q and model.sel_step == "post"
+    # a branch up to Stacking, its Output its own (GUI exploration 3.1: no exit block)
+    # named after its workflow and its block (GUI exploration 2)
+    assert q.name == "Full · Raw stack" and q.end is None and model.path is q and model.sel_step == "post"
     assert model.block_keys(q) == ["calibration", "alignement", "selection", "empilement", "post"]
     assert model.all_stages(q)[-1] == "render_simple"
     g = Graph(model)
-    assert g.summary(g.node_of(q, "post")) == "from Stacking"
     assert g.node_of(q, "empilement") is g.node_of(model.view(1), "empilement")      # shares everything up to Stacking
-    assert any("Raw stack" in t for t in texts_of(page.graph))
+    assert g.node_of(q, "post") is g.node_of(q, "empilement")    # no Output block: hidden in Stacking's wire to Post
+    wires = [it for it in page.graph.scene().items() if type(it).__name__ == "WireItem" and it.pid == q.pid]
+    assert len(wires) == 1 and "Full · Raw stack" in wires[0].toolTip()
     # issue #47: its graph can grow (an image block before its Output); no Split stars without Denoise
     from astro_gpu.client.graph import PaletteCard
     cards = {c.block: c for c in page.findChildren(PaletteCard)}
     assert not cards["gradient"].reason and cards["stars"].reason
     ok, why, need = model.slider_state(q, "star_strength")
-    assert ok is False and "before the split block" in why and need is None             # nothing to add after the exit
+    assert ok is False and "Stars/background block" in why                                         # no star slider without it
     assert model.slider_state(model.view(1), "star_strength", "combined")[0] is True
 
 
@@ -776,9 +817,9 @@ def test_clicking_selects_and_sets_the_scope(world, model, page):
     settle(world["w"], page)
     assert model.sel_step == "debruitage" and model.scope == [v.pid for v in n.paths] and len(n.paths) == 3
     assert model.path in n.paths
-    n = node(page, "post", 4)                                   # Full twin's Output: its own block
+    n = next(x for x in page.graph.graph.nodes if x.key == "couleur" and len(x.paths) == 1)   # one workflow's own
     page.select_node(n)
-    assert model.path.pid == 4 and model.scope == [4]
+    assert model.path is n.paths[0] and model.scope == [n.paths[0].pid]
     page.select_node(page.graph.graph.final)
     assert model.sel_step == "final" and model.scope is None
     settle(world["w"], page)
@@ -973,10 +1014,10 @@ def test_the_selection_rule_is_said_and_the_thresholds_act_only_with_the_thresho
         assert model.selection_rule() == "min_weight" and not model.thresholds_active()      # the default
         for rule, said, live, summary in (
                 ("min_weight", "Every aligned frame is kept, except those weighing less than 5 % of the best one.",
-                 False, "every frame, weight ≥ 5 % of the best"),
+                 False, "all frames · weight ≥ 5 %"),
                 ("sota", "Frames far worse than the night's median (over 2.5 σ) in star size, roundness or "
                          "transparency are left out, then those weighing less than 5 % of the best one.", False,
-                 "k × σ filters · weight ≥ 5 % of the best"),
+                 "k × σ filters · weight ≥ 5 %"),
                 ("thresholds", "Frames under the minimum transparency or over the maximum star size below are left out.",
                  True, "transparency ≥ ")):
             stored["selection"] = rule
@@ -1115,8 +1156,8 @@ def test_the_french_switch_translates_everything_visible(world, model, page):
     assert "Empilement" in tip and "À jour" in tip
     assert i18n._(STATE_WORD["pending"]) == "Pas encore calculé"                  # (the test project may have none pending)
     assert i18n._("Gradient") == "Gradient"
-    assert g.summary(next(n for n in g.nodes if n.key == "alignement")) == "sur l'image la plus nette"
-    assert "Blocs" in t and "SUR LES POSES" in t
+    assert g.summary(next(n for n in g.nodes if n.key == "alignement")) == "réf : plus nette"
+    assert "Blocs" in t and "BRUTES" in t
     # back to English at runtime: the page is built again, in English
     appmod.apply_language("en")
     page.refresh()
@@ -1313,7 +1354,7 @@ def test_the_page_says_it_is_reading_while_the_worker_works(qapp):
     pg.graph.show_wait()
     m.error = "boom"
     pg.graph.show_wait()
-    assert pg.graph.wait.isVisible() and "boom" in pg.graph.wait.text() and "ne peut pas" in pg.graph.wait.text()
+    assert pg.graph.wait.isVisible() and "boom" in pg.graph.wait.text() and "illisible" in pg.graph.wait.text()
     m.error = ""
     w.stop()
     root.close()
@@ -1354,7 +1395,7 @@ def test_a_project_without_workflows_has_a_graph_and_an_import_button(qapp, tmp_
     settle(w, pg)
     items = [it for it in pg.graph.scene().items() if isinstance(it, BlockItem)]
     assert not items                                          # issue #47: a blank page is empty
-    assert any(getattr(g, "text", "").startswith("+  Drop a Session or an Image") for g in pg.graph.scene().items())
+    assert any(getattr(g, "text", "").startswith("+  Start: Session/Image") for g in pg.graph.scene().items())
     got = []
     pg.addSources.connect(lambda: got.append(1))
     pg.select_node(pg.graph.graph.root)
@@ -1417,6 +1458,8 @@ def test_no_setting_of_the_engine_is_out_of_reach(world, model, page):
                     continue                                      # the other stacking method's (its own test)
                 if another_methods(v, stage, info.name):
                     continue
+                if (stage, info.name) == ("render_simple", "linked"):
+                    continue                  # #49: the Output is in the wire; its channels setting is in Post's layer
                 want.add(f"{stage}.{info.name}")
     got = set()
     page.panel.expert = True
@@ -1502,24 +1545,24 @@ def test_every_block_has_pause_here_for_review_and_the_dot_shows(world, model, p
     from astro_gpu.client.blocks import BREAK_COL
     pin(model, monkeypatch)                                                     # nothing computed
     settle(world["w"], page)
-    # no menu, no dot, on the Frames and Post blocks
-    assert menu_of(page, page.graph.graph.root, monkeypatch) is None
-    assert menu_of(page, page.graph.graph.final, monkeypatch) is None
+    # no dot on the Frames and Post blocks; a lone Session has its menu (GUI exploration 5.2), Post its Open Post
+    assert menu_of(page, page.graph.graph.root, monkeypatch) is not None
+    assert [a.text() for a in menu_of(page, page.graph.graph.final, monkeypatch).actions()] == ["Open Post"]
     assert all(it.bp is None for it in block_items(page))
     keys = [n.key for n in page.graph.graph.nodes if n.key not in ("sources", "final")]
     assert {"calibration", "alignement", "selection", "empilement", "astrometrie", "couleur", "debruitage", "etoiles",
-            "fond", "post"} <= set(keys)
+            "fond"} <= set(keys) and "post" not in keys        # the Output: in its last block's wire
     for n in page.graph.graph.nodes:
         if n.key in ("sources", "final", "composition"):          # a Stars and background block is a layer of Post
             continue
         m = menu_of(page, n, monkeypatch)
-        act = next(a for a in m.actions() if a.text() == "Pause here for review")
+        act = next(a for a in m.actions() if a.text() == "Review pause")
         assert act.isCheckable() and not act.isChecked(), n.key
-        assert not any(a.text() == "Mark as reviewed" for a in m.actions())
+        assert not any(a.text() == "Mark reviewed" for a in m.actions())
     # choose it on Calibration: every workflow going through the block gets the breakpoint (the block is shared)
     cal = node(page, "calibration")
     assert len(cal.paths) == len(model.paths) == 4
-    act = next(a for a in menu_of(page, cal, monkeypatch).actions() if a.text() == "Pause here for review")
+    act = next(a for a in menu_of(page, cal, monkeypatch).actions() if a.text() == "Review pause")
     act.trigger()
     settle(world["w"], page)
     assert [w.breakpoints for w in model.p.workflows] == [["calibration"]] * 4
@@ -1530,17 +1573,18 @@ def test_every_block_has_pause_here_for_review_and_the_dot_shows(world, model, p
     assert any(h[1] == "Pause set after {block}" for h in model.history)
     assert graph_faults(page) == []                                             # the dot hides nothing and cuts nothing
     # the menu now shows it checked, and choosing it again takes it off
-    again = next(a for a in menu_of(page, cal, monkeypatch).actions() if a.text() == "Pause here for review")
+    again = next(a for a in menu_of(page, cal, monkeypatch).actions() if a.text() == "Review pause")
     assert again.isChecked()
     again.trigger()
     settle(world["w"], page)
     assert [w.breakpoints for w in model.p.workflows] == [[]] * 4 and item_of(page, "calibration").bp is None
     assert not pixel_near(page, item_of(page, "calibration"), BREAK_COL)
     # on a block of one workflow only
-    leaf = node(page, "post", 2)
-    next(a for a in menu_of(page, leaf, monkeypatch).actions() if a.text() == "Pause here for review").trigger()
+    leaf = page.graph.graph.leaves[2]                 # its last block, its own (it holds its Output)
+    assert leaf.key == "couleur" and len(leaf.paths) == 1
+    next(a for a in menu_of(page, leaf, monkeypatch).actions() if a.text() == "Review pause").trigger()
     settle(world["w"], page)
-    assert [w.breakpoints for w in model.p.workflows] == [[], ["output"], [], []]
+    assert [w.breakpoints for w in model.p.workflows] == [[], ["color"], [], []]
     assert item_of(page, "post", 2).bp == ("pending", 1, 1)
 
 
@@ -1561,19 +1605,19 @@ def test_the_dot_says_pending_paused_or_reviewed_and_the_graph_follows(world, mo
     assert "Paused: check this block (Inspect), then Continue from the Run window." in it.toolTip()
     assert "Pause set in 1 workflow of 4." in it.toolTip()                      # only one of the four workflows
     m = menu_of(page, node(page, "calibration"), monkeypatch)
-    assert "Mark as reviewed" in [a.text() for a in m.actions()]
+    assert "Mark reviewed" in [a.text() for a in m.actions()]
     # a second breakpoint, further on, waits (red) until the first is checked
     model.set_breakpoint([p], "empilement")
     pin(model, monkeypatch, "calibration", "empilement")
     settle(world["w"], page)
     assert [model.review_state(p, k) for k in ("calibration", "empilement")] == ["paused", "pending"]
     # Mark as reviewed: green, and the next one is the one the run will wait at
-    next(a for a in m.actions() if a.text() == "Mark as reviewed").trigger()
+    next(a for a in m.actions() if a.text() == "Mark reviewed").trigger()
     settle(world["w"], page)
     assert [model.review_state(p, k) for k in ("calibration", "empilement")] == ["reviewed", "paused"]
     assert item_of(page, "calibration").bp[0] == "reviewed" and pixel_near(page, item_of(page, "calibration"), REVIEWED_COL)
     assert item_of(page, "empilement").bp[0] == "paused"
-    assert any(h[1] == "{block} marked as reviewed" for h in model.history)
+    assert any(h[1] == "{block} reviewed" for h in model.history)
     state = json.loads((Path(world["folder"]) / "state.json").read_text(encoding="utf-8"))
     assert state["reviewed"] == [model.review_key(p, "calibration")]
     # a block that is not computed any more shows as waiting again (the run will go through it, and stop after it)
@@ -1640,8 +1684,10 @@ def test_selection_is_reviewed_with_its_thresholds_and_runs_to_registration(worl
     pause = model.pause_point()
     assert pause.block == "selection" and pause.pids == [1]
     plan, pause2 = model.plan_run()
-    assert pause2.block == "selection" and (not plan.jobs or plan.jobs[-1].stage == "register")
-    assert all(j.stage != "stack" for j in plan.jobs)                              # before stacking, as asked
+    # Run all: the workflows without a pause run too (GUI exploration round 2), this one stops at Registration
+    mine = [j for j in plan.jobs if 1 in j.wf]
+    assert pause2.block == "selection" and (not mine or mine[-1].stage == "register")
+    assert all(j.stage != "stack" for j in mine)                                    # before stacking, as asked
     k0 = model.review_key(p, "selection")
     model.apply_change([p], {"kind": "params", "items": [("stack", "min_transparency", 0.73)]})
     assert model.review_key(p, "selection") != k0                                  # other thresholds, other selection
@@ -1665,11 +1711,11 @@ def test_the_pause_in_french_on_the_graph(world, model, page, monkeypatch):
     assert "Pause définie dans 1 workflow sur 4." in it.toolTip()
     m = menu_of(page, node(page, "calibration"), monkeypatch)
     names = [a.text() for a in m.actions()]
-    assert "Pause ici pour vérification" in names and "Pause here for review" not in names
-    next(a for a in m.actions() if a.text() == "Pause ici pour vérification").trigger()
-    assert page.graph.toast.text() == "L'exécution s'arrêtera après Calibration pour votre vérification dans 4 workflows"
-    for text in ("Pause here for review", "Mark as reviewed", "No more pause after {block}",
-                 "The run will stop after {block} for your review in {n} workflows", "{block} marked as reviewed",
+    assert "Pause vérif" in names and "Review pause" not in names
+    next(a for a in m.actions() if a.text() == "Pause vérif").trigger()
+    assert page.graph.toast.text() == "Pause vérif après Calibration · 4 workflows"
+    for text in ("Review pause", "Mark reviewed", "No more pause after {block}",
+                 "Review pause after {block} · {n} workflows", "{block} reviewed",
                  "Pause set after {block}", "Pause removed after {block}",
                  "Paused: check this block (Inspect), then Continue from the Run window.",
                  "Reviewed: the run goes through while these results stay as they are."):
@@ -1745,6 +1791,80 @@ def test_the_default_view_shows_the_whole_chain_from_frames_to_post_at_any_width
     page.graph.b_all.setChecked(False)
 
 
+def test_a_chain_wider_than_the_view_keeps_post_at_hand_and_a_drag_near_the_edge_scrolls(world, model, page):
+    """GUI exploration 2 (1366 x 768): the readable scale is kept, the view shows the left end; "Post ›" at the top right
+    while Post is out of view, a click scrolls to it; a drag held near the view's edge scrolls the view that way."""
+    import astro_gpu.client.graph as graphmod
+    gv = page.graph
+    try:
+        page.root.resize(900, 700)
+        settle(world["w"], page)
+        bar = gv.horizontalScrollBar()
+        assert bar.maximum() > 0 and abs(gv.transform().m11() - MIN_SCALE) < 1e-6 and bar.value() == bar.minimum()
+        assert gv.b_post.isVisible() and gv.b_post.text().startswith("Post")
+        assert QRectF(gv.rect()).contains(QRectF(gv.b_post.geometry()))
+        gv.b_post.click()
+        _events()
+        vp = QRectF(gv.viewport().rect())
+        assert vp.contains(QRectF(gv.mapFromScene(gv.final_item.sceneBoundingRect()).boundingRect()))
+        assert not gv.b_post.isVisible()                                      # Post in view: no button
+        # a drag held at the left edge scrolls left (after a short wait: crossing the edge moves nothing)
+        right = bar.value()
+        gv._edge_scroll(QPoint(5, gv.viewport().height() // 2))
+        gv._edge_tick()
+        assert bar.value() == right                                           # not yet
+        gv._edge_since -= graphmod.EDGE_WAIT + 0.1
+        gv._edge_tick()
+        assert bar.value() < right and gv._edge_timer.isActive()
+        gv._edge_scroll(QPoint(gv.viewport().width() // 2, gv.viewport().height() // 2))   # away from the edge
+        assert not gv._edge_timer.isActive()
+        gv._edge_scroll(None)
+        bar.setValue(bar.minimum())
+        _events()
+        assert gv.b_post.isVisible()
+    finally:
+        page.root.resize(1680 + PALETTE_W, 934)
+        settle(world["w"], page)
+
+
+def test_a_band_one_column_wide_writes_its_title_on_two_lines():
+    """GUI exploration 2: "TRAITEMENT LINÉAIRE" over one image block was cut; it wraps (a second line drawn)."""
+    from PySide6.QtGui import QColor, QImage, QPainter
+
+    from astro_gpu.client.graph import BandItem
+    i18n.set_language("fr")
+    try:
+        img = QImage(140, 80, QImage.Format_ARGB32)
+        img.fill(QColor(0, 0, 0, 0))
+        p = QPainter(img)
+        BandItem(QRectF(0, 0, BW + 11, 80), i18n._("Linear processing")).paint(p, None)
+        p.end()
+        text = QColor("#6b7280").rgb()
+        rows = {y for y in range(80) for x in range(140) if img.pixel(x, y) == text}
+        assert rows and max(rows) - min(rows) > 18, sorted(rows)                 # two lines of 9 pt
+    finally:
+        i18n.set_language("en")
+
+
+def test_the_why_greyed_message_stays_in_the_page_and_goes_when_the_palette_is_built_again(world, model, page):
+    from astro_gpu.client.graph import PaletteCard
+    model.select(index=1)                                                      # Classic stack: Stars/background greyed
+    page.refresh()
+    settle(world["w"], page)
+    cards = {c.block: c for c in page.findChildren(PaletteCard)}
+    try:
+        page.root.resize(1280, 420)                                            # a short page (the Log open at 768)
+        settle(world["w"], page)
+        page.show_hint(cards["composition"] if cards["composition"].reason else cards["stars"], "x " * 80)
+        assert page.hint.isVisibleTo(page) and page.hint.geometry().bottom() <= page.height()
+        page.build_tools()                                                     # Ctrl+Y made the card available
+        assert not page.hint.isVisibleTo(page)
+    finally:
+        page.hide_hint()
+        page.root.resize(1680 + PALETTE_W, 934)
+        settle(world["w"], page)
+
+
 # ---------------------------------------------------------------------------------------------- last
 def test_the_test_project_is_untouched():
     """Run last (pytest keeps the order of the file): nothing above wrote into the test project or its store."""
@@ -1789,3 +1909,98 @@ def test_the_panel_built_again_keeps_the_setting_being_edited_focused(page, qapp
     shown = [pn.bv.itemAt(i).widget() for i in range(pn.bv.count())]
     new = next(r for r in shown if isinstance(r, CompactRow) and r.r.get("key") == row.r["key"])
     assert fw is new.editor
+
+
+# ---------------------------------------------------------------------------------------------- 2nd round: Post, menus
+def test_round2_post_block_menu_opens_post_and_the_last_block_menu_puts_the_workflow_apart(world, model, page,
+                                                                                          monkeypatch):
+    settle(world["w"], page)
+    opened = []
+    page.openBlock.connect(lambda: opened.append(model.sel_step))
+    m = menu_of(page, page.graph.graph.final, monkeypatch)
+    m.actions()[0].trigger()
+    assert opened == ["final"] and model.can_undo() is False             # opening is never an undo step (decision 7)
+    last = next((n for n in page.graph.graph.nodes if n.handle), None)
+    if last is None:                                                      # every last block shared: one made own
+        model.duplicate(model.view(1), "Own")
+        settle(world["w"], page)
+        last = next(n for n in page.graph.graph.nodes if n.handle)
+    p = last.paths[0]
+    m = menu_of(page, last, monkeypatch)
+    top = [a.text() for a in m.actions() if not a.isSeparator()]
+    sub = next(a.menu() for a in m.actions() if a.menu() is not None)
+    assert sub.title() == f"Workflow “{p.name}”"
+    assert "Delete workflow" in [a.text() for a in sub.actions()] and "Delete workflow" not in top
+    assert sum(t.startswith("Delete") for t in top) == 1                 # one Delete: the block's
+    comp = page.graph.graph.compositions[0]
+    m = menu_of(page, comp, monkeypatch)
+    assert "Delete\tDel" in [a.text() for a in m.actions()]
+
+
+def test_round2_d_on_a_recombine_says_why_and_a_new_recombine_is_said_and_numbered(world, model, page):
+    settle(world["w"], page)
+    toasts = []
+    page.toasted.connect(toasts.append)
+    p = model.view(1)
+    comp = page.graph.graph.compositions[0]
+    page.toggle_cut(comp, None)
+    assert toasts[-1].startswith("Recombine cannot be switched off")
+    page.new_composition(page.graph.graph.node_of(p, "etoiles"))
+    settle(world["w"], page)
+    g = Graph(model)
+    assert len([n for n in g.compositions if p in n.paths]) == 2          # the default one stays: a second one
+    assert "Recombine 2" in toasts[-1] and toasts[-1].endswith("Ctrl+Z")
+    model.undo()
+    settle(world["w"], page)
+    assert len([n for n in Graph(model).compositions if p in n.paths]) == 1
+
+
+def test_round2_opening_a_default_recombine_in_post_is_no_undo_step(world, model, page):
+    p = model.view(1)
+    n = len(model._undo)
+    lid = model.default_post_layer(p.pid)
+    assert len(model._undo) == n and model.post_layer(lid)["name"] == f"{p.name} · Recombine"
+    assert len([x for x in Graph(model).compositions if p in x.paths]) == 1
+
+
+def test_round2_an_empty_click_deselects_and_undo_selects_what_comes_back(world, model, page):
+    settle(world["w"], page)
+    page.select(index=0, step="fond")
+    settle(world["w"], page)
+    page.graph.clear_selection()
+    settle(world["w"], page)
+    assert model.sel_step == "" and page.current_node() is None
+    before = [list(model.block_keys(q)) for q in model.paths]
+    page._delete_selected()
+    page.toggle_cut(page.current_node(), None)
+    assert [list(model.block_keys(q)) for q in model.paths] == before    # Del and D do nothing
+    page.select(index=0, step="fond")
+    page.remove_tool(page.current_node(), None)
+    settle(world["w"], page)
+    page.graph.clear_selection()
+    model.undo()
+    settle(world["w"], page)
+    assert model.sel_step == "fond"                                       # the block brought back is selected
+
+
+def test_round2_a_wire_chosen_takes_the_block_selection_and_stays_chosen(world, model, page):
+    from astro_gpu.client.graph import WireItem
+    settle(world["w"], page)
+    wires = [it for it in page.graph.scene().items() if isinstance(it, WireItem)]
+    assert wires
+    page.graph.select_wire(wires[0])
+    settle(world["w"], page)
+    assert model.sel_step == "" and page.graph.sel_wire is not None and page.graph.sel_wire.selected
+    page.graph.clear_selection()
+    settle(world["w"], page)
+    assert page.graph.sel_wire is None or not page.graph.sel_wire.selected
+    assert not page.graph.remove_selected_wire()
+
+
+def test_round2_a_shown_widget_without_parent_never_opens_as_a_window():
+    from PySide6.QtWidgets import QPushButton
+
+    from astro_gpu.client.panel import retain
+    b = retain(QPushButton("x"), True)
+    assert not b.isWindow() or not b.isVisible()                          # it closed the Stacking block's menu
+    assert retain(QPushButton("y"), False).isHidden()

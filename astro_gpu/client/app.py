@@ -32,6 +32,7 @@ from pathlib import Path
 from PySide6.QtCore import QCoreApplication, QLibraryInfo, QLocale, Qt, QTimer, QTranslator
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
+    QAbstractSpinBox,
     QApplication,
     QButtonGroup,
     QComboBox,
@@ -40,6 +41,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -56,11 +58,11 @@ from ..core.project import Target
 from . import APP_NAME, prefs
 from .gcguard import GuiGarbageCollector
 from .home import HomeView
-from .i18n import _, language, plural, set_language
+from .i18n import _, language, plain_error, plural, set_language
 from .logview import LogPanel
 from .services.run import duration_text
 from .services.worker import ApiWorker, Machine, machine_info
-from .settingsdlg import SettingsDialog
+from .settingsdlg import SettingsDialog, auto_device, device_items
 from .widgets import NEW, QSS, WARN, label
 
 EXTRA_QSS = ("QSlider:horizontal { margin-left: 6px; margin-right: 6px; }"
@@ -89,6 +91,23 @@ def apply_language(code: str):
         if t.load(f"qtbase_{lang}", QLibraryInfo.path(QLibraryInfo.TranslationsPath)):
             app.installTranslator(t)
             _qt_translator = t
+
+
+def no_block(w) -> bool:
+    """A workflow with no block placed after its source (GUI exploration 6.5: it is not "up to date", it has nothing
+    to compute); a Fusion computes itself, a workflow made before the free graph has its blocks; an image already
+    stretched is its own Output (Image → Post: its Image block is computed, GUI exploration round 2)."""
+    from ..core.project2 import is_fusion
+    from ..core.workflow import source_of
+    return w.blocks is not None and not is_fusion(w) and source_of(w) != "stretched" and \
+        all(b.get("block") == "output" for b in w.blocks)
+
+
+def images_only(s) -> bool:
+    """Whether every workflow starts from an Image block (no Session): what is missing then is its file, not "lights
+    or image" (GUI exploration round 2: the "Already stretched image" template)."""
+    srcs = [q.source for q in s.paths if not (q.source and "fusion" in q.source)]
+    return bool(srcs) and all(isinstance(x, dict) and "path" in x for x in srcs)
 
 
 def machine_text(machine: Machine | None, device: str) -> tuple[str, bool]:
@@ -241,13 +260,14 @@ class Main(QMainWindow):
         act(f, _("Import folder…"), self.add_sources, "Ctrl+I", enabled=has)
         self.a_export = act(f, _("Export image…"), self.export, "Ctrl+E", enabled=has)
         if spec:
-            act(f, _("Export project as script…"), new=True)
+            act(f, _("Export as script…"), new=True)
         f.addSeparator()
         act(f, _("Close project"), self.close_project, "Ctrl+W", enabled=has)
         act(f, _("Quit"), self.close, "Ctrl+Q")
         e = mb.addMenu(_("Edit"))
         self.a_undo = act(e, _("Undo"), self.undo, "Ctrl+Z", enabled=has)
         self.a_redo = act(e, _("Redo"), self.redo, "Ctrl+Y", enabled=has)
+        self.a_redo.setShortcuts([QKeySequence("Ctrl+Y"), QKeySequence("Ctrl+Shift+Z")])
         e.addSeparator()
         act(e, _("Settings…"), self.open_settings, "Ctrl+,")
         v = mb.addMenu(_("View"))
@@ -261,7 +281,7 @@ class Main(QMainWindow):
         self.a_spec.toggled.connect(self.set_spec)
         r = mb.addMenu(_("Run"))
         self.a_run = act(r, _("Run all"), self.launch, "F5", enabled=has)
-        self.a_here = act(r, _("Run to selected block"), self.run_to_here, "Shift+F5", enabled=has)
+        self.a_here = act(r, _("Run to here"), self.run_to_here, "Shift+F5", enabled=has)   # Inspect's button's name
         r.addSeparator()
         self.a_stop = act(r, _("Stop"), self.stop_run, enabled=False)
         h = mb.addMenu(_("Help"))
@@ -281,8 +301,13 @@ class Main(QMainWindow):
             self.a_undo.setEnabled(s.can_undo() or self._post_shown())
             self.a_redo.setEnabled(s.can_redo() or self._post_shown())
             self.a_stop.setEnabled(self.run is not None and self.run.running)
+            self.a_stop.setToolTip(_("Stop the run: what is computed is kept") if self.a_stop.isEnabled()
+                                   else _("No run in progress"))             # greyed: why (round 2)
             self.a_export.setEnabled(any(p.rendered for p in s.paths))
-            self.a_here.setEnabled(s.path is not None and s.sel_step not in ("sources", "final"))
+            from .services.run import run_here_refusal
+            why = run_here_refusal(s, s.sel_step)            # a Session block is not computed: greyed, and why (#29)
+            self.a_here.setEnabled(not why)
+            self.a_here.setToolTip(_(why) if why else _("Run what the selected block needs, up to it"))
         except RuntimeError:                         # the menus are being rebuilt
             pass
 
@@ -313,9 +338,11 @@ class Main(QMainWindow):
         self.show_home()
         self.home.open_other()
 
-    def create_project(self, root: str, name: str, target: str, details: dict | None = None) -> bool:
+    def create_project(self, root: str, name: str, target: str, details: dict | None = None,
+                       gallery: bool = True) -> bool:
         """A new v2 project in ``root``, opened. Its calibrated frames go to <cache folder>/<project folder>.
-        ``details``: the target's coordinates and the capture data New project gives (issue #38)."""
+        ``details``: the target's coordinates and the capture data New project gives (issue #38). ``gallery``: the
+        template gallery opens on it (an import opens it after its frames, GUI exploration 7.1)."""
         try:
             d = details or {}
             p = project2.create(root, name, Target(name=target, ra=d.get("ra"), dec=d.get("dec"),
@@ -329,29 +356,44 @@ class Main(QMainWindow):
         except (OSError, ValueError, project2.LegacyProject) as e:
             QMessageBox.warning(self, _("New project"), _("The project cannot be created: {why}").format(why=e))
             return False
-        return self.open_project(root, created=True)
+        return self.open_project(root, created=True, gallery=gallery)
 
     def import_folder_as_new(self):
         """Import folder as new project: the folder of the lights gives the name and the target, then its frames
-        are read into the new project."""
+        are read into the new project. GUI exploration 7.1, #28, #29: a folder without lights makes no project (said
+        why); the project is proposed where the projects are, never inside the frames' folder; the import window,
+        then the template gallery, one after the other."""
         folder = QFileDialog.getExistingDirectory(self, _("Import folder as new project…"), prefs.last_folder())
-        prefs.remember_folder(folder)
         if not folder:
             return
+        from ..core.project import list_frames
+        if not list_frames([folder]):
+            from .sources import no_lights_text
+            self.flash(no_lights_text([folder]) + " " + _("No project made."))
+            return
+        from .home import projects_location
+        where = projects_location(avoid=folder)            # read before the frames' folder is the last one used
+        prefs.remember_folder(folder)
         g = guess_names(folder)
-        got = self.home.ask_new_project(g["name"], g["target"])
-        if got and self.create_project(*got):
-            self.import_frames(folder)
+        got = self.home.ask_new_project(g["name"], g["target"], location=where)
+        if got and self.create_project(*got, gallery=False):
+            if not self.import_frames(folder):
+                self.flash(_("Project without lights: add them in Session"))
+            if self.graph is not None and self.s is not None and all(w.blocks == [] for w in self.s.p.workflows):
+                QTimer.singleShot(0, lambda: self.graph.new_workflow(fresh=True) if self.graph is not None else None)
 
     # ------------------------------------------------------------ a project
     def _device(self) -> tuple[bool, str | None]:
-        """(a GPU computes, the device asked: None for automatic) from Settings > Compute and the machine."""
+        """(a GPU computes, the device asked) from Settings > Compute and the machine. Automatic is the GPU it picks
+        (GUI exploration 6.8: its durations were the CPU's); None while the machine is not known yet."""
         dev = prefs.get("device") or "auto"
+        if dev == "auto":
+            dev = auto_device(self.machine) or "auto"
         if dev == "cpu" or (self.machine is not None and not self.machine.gpus):
             return False, "cpu"
         return True, (None if dev == "auto" else dev)
 
-    def open_project(self, root, created: bool = False) -> bool:
+    def open_project(self, root, created: bool = False, gallery: bool = True) -> bool:
         root = Path(root)
         if self.project is not None and root.as_posix().lower() == self.project.root.as_posix().lower():
             self.show_project()
@@ -367,8 +409,9 @@ class Main(QMainWindow):
             prefs.drop_recent(root.as_posix())
             self.build_menus()
             return False
-        except (OSError, ValueError, KeyError, TypeError) as e:
-            QMessageBox.warning(self, _("Open project"), _("This project cannot be opened: {why}").format(why=e))
+        except (OSError, ValueError, KeyError, TypeError):   # said plainly, never the raw error (7.5)
+            QMessageBox.warning(self, _("Open project"), _("This project cannot be opened: its file is damaged, or "
+                                                           "it is not a project file of this program."))
             return False
         if self.close_project(go_home=False) is False:              # unsaved edits kept: Cancel
             return False
@@ -381,9 +424,9 @@ class Main(QMainWindow):
         self.build_menus()
         self.build_project()
         self.run.attach()                            # a run that goes on (started before, or elsewhere): follow it
-        if created and not d.workflows and self.graph is not None:
+        if created and gallery and not d.workflows and self.graph is not None:
             # issue #43: a new project starts from the template gallery
-            QTimer.singleShot(0, lambda: self.graph.new_workflow() if self.graph is not None else None)
+            QTimer.singleShot(0, lambda: self.graph.new_workflow(fresh=True) if self.graph is not None else None)
         return True
 
     def make_model(self):
@@ -455,11 +498,12 @@ class Main(QMainWindow):
         box.exec()
         return "save" if box.clickedButton() is b_save else "discard" if box.clickedButton() is b_drop else "cancel"
 
-    def close_project(self, go_home=True) -> bool:
+    def close_project(self, go_home=True, discard=False) -> bool:
         """Close the project, asking first when it has edits not saved (a run in progress goes on: opening the
-        project follows it again). False when the user cancels."""
-        save = True
-        if self.project is not None:
+        project follows it again). False when the user cancels. ``discard``: closed without its edits, no question
+        (Save As wrote them elsewhere)."""
+        save = not discard
+        if self.project is not None and not discard:
             self._flush_post()
             if self.s is not None and self.s.dirty:
                 answer = self.ask_save()
@@ -479,7 +523,9 @@ class Main(QMainWindow):
             self._flush_post()
             if self.s is not None:
                 from .services.inspect import _services
-                sv = _services.get(self.s)
+                # taken out: the service holds its model, so the weak key never let either go (GUI exploration 4: a
+                # project closed stayed in memory with its workers and image cache, ≈ 10 MB a reopening)
+                sv = _services.pop(self.s, None)
                 self.s.close(save)
                 if sv is not None:
                     sv.stop()
@@ -492,8 +538,8 @@ class Main(QMainWindow):
                 self.screens.removeWidget(self.proj_screen)
                 self.proj_screen.deleteLater()
                 self.proj_screen = None
-            self.graph = self.tune = self.frames = self.browser = self.post_holder = None
-            self.build_menus()
+            self.graph = self.tune = self.frames = self.browser = self.steps = self.post_holder = None   # (steps held
+            self.build_menus()                                                       # the closed model, GUI expl. 4)
         if go_home:
             self.show_home()
         return True
@@ -608,6 +654,7 @@ class Main(QMainWindow):
         page.set_image_resolver(lambda key, p=self.s.p: resolve_key(p, key))   # the layers Inspect sent, reopened
         page.goWorkflow.connect(lambda: self.set_mode(0))
         page.view.goResults.connect(self._go_results)
+        page.view.toasted.connect(self.flash)            # what a change of Post did beyond Post (a branch removed)
         page.view.goProcessing.connect(lambda pid, k: (self.select(index=self.s.index_of(pid), step=k),
                                                        self.set_mode(1)))
         return page
@@ -744,10 +791,7 @@ class Main(QMainWindow):
         cb = self.device_cb
         dev = prefs.get("device") or "auto"
         m = self.machine
-        items = [(g.name, g.device, f"{g.device} · {g.memory_gb:.0f} GB") for g in (m.gpus if m is not None else [])]
-        if m is None and dev.startswith("cuda:"):
-            items.append((dev, dev, ""))
-        items.append((_("CPU"), "cpu", _("The processor: much slower")))
+        items = device_items(m, dev)                   # the same list as Settings > Compute (GUI exploration 6.9)
         cb.blockSignals(True)
         if [(cb.itemText(i), cb.itemData(i)) for i in range(cb.count())] != [(t, d) for t, d, _tip in items]:
             cb.clear()
@@ -755,9 +799,6 @@ class Main(QMainWindow):
                 cb.addItem(t, d)
                 cb.setItemData(cb.count() - 1, tip, Qt.ToolTipRole)
         _text, gpu = machine_text(m, dev)
-        if dev == "auto":                              # the GPU Automatic picks, or the CPU without one
-            g = max(m.gpus, key=lambda x: x.memory_gb) if m is not None and m.gpus else None
-            dev = g.device if g is not None else "cpu"
         cb.setCurrentIndex(max(cb.findData(dev), 0))
         cb.blockSignals(False)
         cb.setStyleSheet("" if gpu else f"QComboBox {{ color: {WARN}; }}")
@@ -770,6 +811,7 @@ class Main(QMainWindow):
         n = len(s.paths) if s is not None else 0
         cost = s.cost() if s is not None and s.ready and s.paths else None
         todo = cost is not None and cost.jobs > 0
+        empty = s is not None and bool(s.paths) and all(no_block(w) for w in s.p.workflows)
         self.device_cb.setEnabled(not running)
         self.device_cb.setToolTip(_("A run computes on the device it started on") if running else
                                   _("Where the run computes"))
@@ -778,15 +820,16 @@ class Main(QMainWindow):
             self.bt_run.setEnabled(True)
             self.bt_run.setToolTip(_("Show the run"))
         else:
+            why = self.run_refusal(cost)
+            # no duration on a refused Run (round 2: "≈ 3 h 03" with the lights' folder gone, "≈ 10 min" on a fusion
+            # that cannot run)
             self.bt_run.setText(_("Run") + (f"  ·  {duration_text(cost.seconds, cost.measured)}"
-                                            if todo and frames else ""))
-            self.bt_run.setEnabled(frames and todo)
-            self.bt_run.setToolTip(_("Nothing to compute yet: add the lights in the Session blocks, or choose the "
-                                     "Image's file") if not frames else
-                                   "" if todo else (_("No frames yet") if not frames else
-                                                    _("Nothing to compute: all up to date.") if cost is not None
-                                                    else ""))
-        self.a_run.setEnabled(frames and (todo or running))
+                                            if todo and frames and not empty and not why else ""))
+            self.bt_run.setEnabled(todo and not why)
+            self.bt_run.setToolTip(why)                       # a greyed Run says why (6.7, #15)
+        self.a_run.setEnabled(frames and not empty and (todo or running))
+        self.a_run.setToolTip(_("Run every workflow, up to the review pauses") if self.a_run.isEnabled() else
+                              self.run_refusal(cost) or _("All up to date"))       # greyed: why (round 2)
         if not n:
             line = _("No workflow yet") if s is not None and s.ready else ""
         else:
@@ -796,13 +839,43 @@ class Main(QMainWindow):
             elif not s.ready:
                 line += "  ·  " + _("reading the project…")
             elif not frames:                              # no estimate without frames (issue #47)
-                line += "  ·  " + _("nothing to compute yet: add the lights, or choose the Image's file")
+                line += "  ·  " + (_("Image: choose its file") if images_only(s) else
+                                   _("nothing to compute: add lights or image"))
+            elif empty:                                   # never "all up to date" with nothing placed (6.5, #13)
+                # its Image or Session is a block on screen: what is missing is a block after it (round 3)
+                line += "  ·  " + (_("nothing after Image: place a block") if images_only(s) else
+                                   _("nothing after Session: place a block") if not any(
+                                       q.source is not None for q in s.paths) else
+                                   _("nothing after the sources: place a block"))
+            elif todo and self.run_refusal(cost):         # refused: said with its reason, never a time to run
+                line += "  ·  " + self.run_refusal(cost)  # (round 2; report shots: the reason only in a tooltip)
             elif todo:
                 line += "  ·  " + _("to run: {t}").format(t=duration_text(cost.seconds, cost.measured))
             elif cost is not None:
                 line += "  ·  " + _("all up to date")
         self._line = line
         self.status.setText(self._flash or line)
+
+    def run_refusal(self, cost=None) -> str:
+        """Why Run cannot run now, translated ('' when it can): one place for the Run button's tooltip (GUI exploration
+        6.5, 6.7, #13, #15). The fusions that cannot run (the model's ``run_problems``, when it has it) are said
+        too."""
+        s = self.s
+        if s is None or not s.ready:
+            return ""
+        if not s.paths:
+            return _("No workflow: place a block")
+        if not s.has_data():
+            return _("Image: choose its file") if images_only(s) else _("Nothing to compute: add lights or image")
+        if all(no_block(w) for w in s.p.workflows):
+            return _("No block: place one")
+        problems = getattr(s, "run_problems", lambda: [])()
+        if problems:
+            from .runs import refusal_text
+            return refusal_text(problems)
+        if cost is not None and not cost.jobs:
+            return _("All up to date")
+        return ""
 
     def _run_updated(self):
         if self.run is not None and self.run.running and self.proj_screen is not None:
@@ -834,22 +907,32 @@ class Main(QMainWindow):
     def _worker_failed(self, channel, _n, text):
         if channel.startswith("cache."):
             QMessageBox.warning(self, _("Clear cache"), _("The cache cannot be cleared: {why}").format(
-                why=(text or "?").splitlines()[0]))
+                why=plain_error(text)))
 
     # ------------------------------------------------------------ files
     def save(self):
-        """Save: the edits written into the project (nothing is written before, issue #1)."""
+        """Save: the edits written into the project (nothing is written before, issue #1), a field still being typed
+        in included (its focus taken away: it applies what it holds, as Enter would)."""
+        self._commit_typing()
         self._flush_post()
         if self.s is not None:
             self.s.flush()
         self.flash(_("Project saved"))
 
+    @staticmethod
+    def _commit_typing():
+        w = QApplication.focusWidget()
+        if isinstance(w, (QLineEdit, QAbstractSpinBox)):
+            w.clearFocus()                               # editingFinished: what is typed applies before the save
+
     def save_as(self):
-        """The definition of the project in another folder (its results stay where they are), then opened."""
+        """The definition of the project, its edits included, in another folder (its results stay where they are),
+        then opened in place of the project, which keeps what it had on disk (as Save As does in reference apps:
+        cancelled, nothing is written; GUI exploration 4)."""
         if self.project is None:
             return
-        if self.s is not None:
-            self.s.flush()
+        self._commit_typing()
+        self._flush_post()                               # Post's last edit into the definition (not written)
         d = QFileDialog.getExistingDirectory(self, _("Save as…"), prefs.last_folder())
         prefs.remember_folder(d)
         if not d:
@@ -859,6 +942,8 @@ class Main(QMainWindow):
             QMessageBox.warning(self, _("Save as…"), _("This folder already holds a project."))
             return
         old = self.project.definition
+        if self.s is not None and self.s.path is not None:
+            old.current = self.s.path.pid                # the copy opens on the workflow shown
         p = project2.Project2.from_dict(old.to_dict())
         for s in p.sessions:
             for kind in project2.KINDS:
@@ -871,6 +956,7 @@ class Main(QMainWindow):
         except (OSError, ValueError, project2.LegacyProject) as e:
             QMessageBox.warning(self, _("Save as…"), _("The project cannot be saved: {why}").format(why=e))
             return
+        self.close_project(go_home=False, discard=True)  # its edits went into the copy: no question
         self.open_project(root)
 
     def offer_import(self, root: Path):
@@ -931,25 +1017,32 @@ class Main(QMainWindow):
             sid = s.add_session(Path(folder).name, lights=[folder])
             if flt:
                 s.set_session_filter(sid, flt)
-        self.flash(_("Session “{name}” added: choose its darks and flats in its block").format(name=Path(folder).name))
+            # "+ Session": it joins the flow it is drawn with (else the one shown), or one of its own (decision 1)
+            pid = getattr(getattr(self.graph, "graph", None), "plus_session_pid", None)
+            q = s.join_session(s.view(pid) if pid is not None else s.path, sid)
+        if q is not None:
+            s.current = s.paths.index(s.view(q.pid))
+        self.flash(_("Session “{name}” added · darks/flats in its block").format(name=s.session(sid).name))
         self.select(step=f"session@{sid}" if s.separate_sessions() else "sources")
 
-    def import_frames(self, folder: str):
+    def import_frames(self, folder: str) -> bool:
         """The frames of a folder into the open project, after Import folder as new project."""
         if self.s is None:
-            return
+            return False
         from .services.inspect import service_of
         from .sources import import_folder
         if import_folder(self.s, self, folder=folder, service=service_of(self.s)):
             self.select(step="sources")
             self.set_mode(1)
+            return True
+        return False
 
     def export(self):
         """File > Export image… (the Export dialog of Post, on the composition of its layers)."""
         if self.s is None:
             return
         if not any(p.rendered for p in self.s.paths):
-            self.flash(_("Nothing to export yet: no workflow is computed."))
+            self.flash(_("Nothing to export: no workflow computed"))
             return
         self.post.export(self)
 
@@ -957,13 +1050,22 @@ class Main(QMainWindow):
         """Run all (F5, the Run button): the run starts at once, its window following it (issue #51); without
         frames, the window says why nothing runs."""
         if self.s is not None and not self.s.has_data():
-            self.flash(_("Nothing to compute yet: add the lights in the Session blocks, or choose the Image's file"))
+            self.flash(_("Nothing to compute: add lights or image"))
+            return
+        if self.s is not None and self.s.paths and all(no_block(w) for w in self.s.p.workflows):
+            self.flash(_("No block: place one"))     # an empty workflow is not run
             return
         if self.run is not None:
             self.run.launch(start=True)
 
     def run_to_here(self):
-        """Run to the selected block (Shift+F5)."""
+        """Run to the selected block (Shift+F5): as F5 without data, nothing opens and why is said (round 2: a window
+        announced a disk need with no frames)."""
+        s = self.s
+        busy = self.run is not None and self.run.running
+        if s is not None and not busy and s.path is not None and not s.has_data(s.path):
+            self.flash(_("Nothing to compute: add lights or image"))
+            return
         if self.run is not None:
             self.run.run_to_here()
 
@@ -975,17 +1077,27 @@ class Main(QMainWindow):
     def undo(self):
         """Undo: in Post, the composition's last change; elsewhere the workflows' last change."""
         if self._post_shown():
-            self.post_holder.page.view.do_undo()
+            if self.post_holder.page.view.do_undo():
+                self._say_restored("Undone", "Undone: {what}")
         elif self.s is not None and self.s.undo():
-            self.s.log("Undone")
-            self.flash(_("Undone"))
+            self._say_restored("Undone", "Undone: {what}")
 
     def redo(self):
         if self._post_shown():
-            self.post_holder.page.view.do_redo()
+            if self.post_holder.page.view.do_redo():
+                self._say_restored("Redone", "Redone: {what}")
         elif self.s is not None and self.s.redo():
-            self.s.log("Redone")
-            self.flash(_("Redone"))
+            self._say_restored("Redone", "Redone: {what}")
+
+    def _say_restored(self, plain: str, said: str):
+        """The Undo / Redo message and Log line: what was undone or redone, in the words of its step."""
+        what = getattr(self.s, "restored", "")
+        if what:
+            self.s.log(said, what=what)
+            self.flash(_(said).format(what=what))
+        else:
+            self.s.log(plain)
+            self.flash(_(plain))
 
     def clear_cache(self):
         """Clear the unused results of the closed projects Home knows (the recent ones and those of its sections),

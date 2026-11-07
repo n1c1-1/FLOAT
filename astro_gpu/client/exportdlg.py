@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import prefs
-from .i18n import _, plural
+from .i18n import _, log_detail, plain_error, plural
 from .imageview import slug
 from .postengine import snapshot
 from .services.render import ExportJob
@@ -121,7 +121,7 @@ class ExportDialog(QDialog):
         self.warn.setWordWrap(True)
         v.addWidget(self.warn)
         v.addWidget(label(_("Include"), "h2"))
-        self.c_wcs = self._check(v, _("Astrometric solution (WCS) in the header"), True)
+        self.c_wcs = self._check(v, _("Astrometry (WCS) in header"), True)
         self.c_hist = self._check(v, _("Processing history (a file next to the image; in the header too for FITS)"),
                                   True)
         self.c_layers = self._check(v, _("Each layer as a separate file"), False)
@@ -283,7 +283,9 @@ class ExportDialog(QDialog):
             self.error = error
             self.bar.hide()
             self.status.setText(_("Export stopped.") if error == "stopped"
-                                else _("The export failed: {why}").format(why=error))
+                                else _("The export failed: {why}").format(why=plain_error(error)))
+            if error != "stopped":
+                log_detail(getattr(self.view, "s", None), error)     # the program's error: in the Log only
             self.status.setStyleSheet(f"color: {WARN};")
             return
         self.files = files

@@ -142,16 +142,16 @@ class StackParams(StageParams):
                                    "as the median of the frames in sensor coordinates (stars and sky removed) and "
                                    "subtracted from every frame. Skipped automatically when the drift is too small "
                                    "to tell the pattern from the sky.",
-                              tip="Off by default: on the Rosette the estimate also held the tracks of the faint stars "
-                                  "across the sensor, and subtracting it drew the very streaks it was meant to remove "
-                                  "(without it the stacked background has none; it was neutral on Heart).")
+                              tip="Off by default: on some stacks the estimate also held the tracks of the faint "
+                                  "stars across the sensor, and subtracting it drew the very streaks it was meant to "
+                                  "remove (without it the stacked background has none).")
     pattern_frames: int = P(48, label="Frames for the pattern reference", level=ADVANCED, ge=8, le=400,
                             help="Number of frames, evenly spread over the session, whose median is the first estimate "
                                  "of the fixed pattern; the final estimate uses all frames around it.")
     white_balance: bool = P(False, label="Camera white balance", key_neutral=False,
                             help="The three colours of the stack multiplied by the camera's daylight white balance, "
-                                 "read from the raw files (as the camera and the raw converters do; a reference stacking program's "
-                                 "Use camera white balance): the stack no longer looks green. Colour calibration "
+                                 "read from the raw files (as the camera and the raw converters do): the stack no "
+                                 "longer looks green. Colour calibration "
                                  "measures the white on the stars and takes this factor back exactly; the steps "
                                  "between work on each colour apart. FITS frames hold no such balance: unchanged.",
                             tip="On in new workflows. Turning it on makes Stacking and what follows Outdated.")
@@ -325,7 +325,8 @@ class Stack(Stage):
         weight = sel.weight
         used = np.where(weight > 0)[0]
         if len(used) < 2:
-            raise StageError("fewer than 2 usable frames after selection; relax the selection thresholds")
+            raise StageError(too_few_frames(len(weight), int(np.isfinite(reg["rms"]).sum()), int(excl.sum()),
+                                            len(used)))
         ctx.save_json("frames.json", sel.rows(meta, transp, fwhm))
         sel.log(ctx)
         used_metrics(ctx, used, Wo, Ho)
@@ -1261,6 +1262,20 @@ class Selection:
             d["auto"] = {k: _auto_dict(a) for k, a in self.fs.auto.items()}
             d["suggestion"] = _auto_dict(self.fs.suggestion)
         return d
+
+
+def too_few_frames(n: int, aligned: int, by_hand: int, kept: int) -> str:
+    """Why a stack has fewer than 2 frames, and what to do, by the first cause (GUI exploration 2: "relax the selection
+    thresholds" was said with a single light frame and no Selection block)."""
+    if n < 2:
+        return f"only {n} light frame(s): a stack needs at least 2; add light frames to the session"
+    if aligned < 2:
+        return f"only {aligned} of {n} light frames could be aligned: a stack needs at least 2; check the frames"
+    if aligned - by_hand < 2:
+        return (f"only {kept} of {n} light frames are kept, {by_hand} taken out by hand: a stack needs at least 2; "
+                f"put frames back")
+    return (f"only {kept} of {n} light frames are kept by the frame selection: a stack needs at least 2; relax the "
+            f"selection thresholds")
 
 
 def frame_selection(p: StackParams, reg, stats, excl) -> Selection:

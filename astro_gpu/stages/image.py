@@ -17,6 +17,80 @@ from ..core.params import P, StageParams
 from ..core.stage import Context, Stage, StageError
 
 FORMATS = (".fits", ".fit", ".fts", ".tif", ".tiff", ".png", ".jpg", ".jpeg")
+#: the first bytes of each format (GUI exploration 7.3: a text file or a missing one is refused with its reason)
+MAGIC = {".fits": (b"SIMPLE",), ".fit": (b"SIMPLE",), ".fts": (b"SIMPLE",),
+         ".tif": (b"II*\0", b"MM\0*", b"II+\0", b"MM\0+"), ".tiff": (b"II*\0", b"MM\0*", b"II+\0", b"MM\0+"),
+         ".png": (b"\x89PNG",), ".jpg": (b"\xff\xd8\xff",), ".jpeg": (b"\xff\xd8\xff",)}
+#: an 8 or 16-bit picture: stretched by nature (GUI exploration 1.7)
+STRETCHED_FORMATS = (".png", ".jpg", ".jpeg")
+
+
+def stretched_by_nature(path: str | Path) -> bool:
+    """Whether a file can only be a stretched picture: a PNG or JPEG, or an 8-bit TIFF (a stack is never stored on 8
+    bits; GUI exploration round 3: an 8-bit TIFF stayed "Linear" where the same photo in PNG was "Stretched"). Reads
+    the TIFF's first page header only."""
+    p = Path(str(path or ""))
+    suf = p.suffix.lower()
+    if suf in STRETCHED_FORMATS:
+        return True
+    if suf not in (".tif", ".tiff"):
+        return False
+    try:
+        import tifffile
+        with tifffile.TiffFile(p) as t:
+            return t.pages[0].bitspersample <= 8
+    except Exception:  # noqa: BLE001 - a TIFF that cannot be read: its problem is said elsewhere (image_problem)
+        return False
+
+
+def image_problem(path: str | Path) -> str:
+    """Why a file cannot be an Image block's image, in plain English ("{name}" to fill in), or "" when it can: none
+    chosen, not found, not a format read here, or its content not of its format (a text file renamed)."""
+    if not str(path or "").strip():
+        return "No image file chosen yet."
+    p = Path(str(path).strip())
+    if not p.is_file():
+        return "File not found: {name}"
+    suf = p.suffix.lower()
+    if suf not in FORMATS:
+        return "{name} is not an image this version reads (FITS, TIFF, PNG or JPEG)."
+    try:
+        with open(p, "rb") as f:
+            head = f.read(8)
+        if any(head.startswith(m) for m in MAGIC[suf]) and suf in (".fits", ".fit", ".fts") and _fits_damaged(p):
+            return "{name} cannot be read: the file is damaged."
+    except OSError:
+        return "{name} cannot be read."
+    if not any(head.startswith(m) for m in MAGIC[suf]):
+        return "{name} is not an image: its content is not that of its format."
+    return ""
+
+
+def _fits_damaged(p: Path) -> bool:
+    """Whether a FITS file is cut or damaged (GUI exploration round 2: said before the run, as a missing file is): its
+    header has no END card, or the file is shorter than the data its header declares. Reads only the header."""
+    size = p.stat().st_size
+    cards: dict[str, str] = {}
+    n = 0
+    with open(p, "rb") as f:
+        while True:
+            block = f.read(2880)
+            if len(block) < 2880 or n >= 1000:           # no END in what there is (or an absurd header)
+                return True
+            n += 1
+            for i in range(0, 2880, 80):
+                card = block[i:i + 80].decode("ascii", "replace")
+                key = card[:8].strip()
+                if key == "END":
+                    try:
+                        bitpix = abs(int(cards.get("BITPIX", "0")))
+                        dims = [int(cards.get(f"NAXIS{k}", "0")) for k in range(1, int(cards.get("NAXIS", "0")) + 1)]
+                    except ValueError:
+                        return True
+                    data = bitpix // 8 * int(np.prod(dims)) if dims else 0
+                    return size < n * 2880 + data
+                if card[8:10] == "= ":
+                    cards[key] = card[10:].split("/")[0].strip()
 
 
 class ImageParams(StageParams):

@@ -98,9 +98,9 @@ def test_the_placement_rules():
     # a block that is there once: nowhere, with the reason the palette shows
     e = wfl.palette_problem(g, "frames", "stacking")
     assert e is not None and e.template == wfl.WHY_ONCE
-    # the frame blocks keep their order; a frame block after the stack takes the wrong data
+    # an image block before the stack: what to do, said (GUI exploration 8.5)
     e = wfl.place_problem(g, "frames", "denoise", 2)
-    assert e is not None and e.template == wfl.WHY_INPUT
+    assert e is not None and e.template == wfl.WHY_STACK_FIRST
     # Denoise needs the half-stacks of a stack: not on an image file
     img = [node("astrometry"), node("output")]
     e = wfl.palette_problem(img, "image", "denoise")
@@ -156,6 +156,23 @@ def test_repeated_and_reordered_image_blocks_get_their_own_entries_and_keys(tmp_
     g4 = [dict(n, off=n["block"] == "calibration") for n in g]
     p.set_blocks(w.id, g4)
     assert Keys(p).key_params(w.id, "calibrate").get("apply_masters") is False
+
+
+def test_the_same_computation_has_the_same_key_whatever_number_the_graph_gave_its_block(tmp_path, nights):
+    """GUI exploration 2: Gradient 1 switched off, Gradient 2 alone does what a lone Gradient does: same keys, nothing
+    recomputed. A graph without a block placed twice keeps its keys (the user's computed projects)."""
+    p = project(tmp_path / "p", nights)
+    w = p.add_workflow("W", TEMPLATES["Full"])
+    ref = Keys(p).keys(w.id)
+    g = wfl.graph_of(w)
+    p.set_blocks(w.id, g)
+    assert Keys(p).keys(w.id) == ref
+    i = next(j for j, n in enumerate(g) if n["block"] == "gradient")
+    twice = g[:i] + [dict(g[i], off=True), dict(g[i], name="gradient~2")] + g[i + 1:]
+    p.set_blocks(w.id, twice)
+    k = Keys(p)
+    assert "gradient~2" in k.chain(w.id) and "gradient" not in k.chain(w.id)
+    assert k.key(w.id, "gradient~2") == ref["gradient"] and k.key(w.id, "render_simple") == ref["render_simple"]
 
 
 def test_two_nights_with_frames_of_the_same_names_sizes_and_dates_have_their_own_keys(tmp_path):

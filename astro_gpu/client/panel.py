@@ -121,7 +121,8 @@ def retain(w: QWidget, shown: bool) -> QWidget:
     sp = w.sizePolicy()
     sp.setRetainSizeWhenHidden(True)
     w.setSizePolicy(sp)
-    w.setVisible(shown)
+    if not shown or w.parentWidget() is not None:  # shown without a parent yet, it would open as a window of its
+        w.setVisible(shown)                         # own for a moment and close the menu open (Stacking's, 2nd round)
     return w
 
 
@@ -432,7 +433,9 @@ class Panel(QWidget):
         scroll = self._sc.verticalScrollBar().value() if same else 0
         self._refresh(node)
         if same:
-            QTimer.singleShot(0, lambda v=scroll: self._sc.verticalScrollBar().setValue(v))
+            # the scroll area as context, never the panel in the lambda: a panel closed meanwhile is not kept with its
+            # model (GUI exploration 4: every closed project stayed in memory)
+            QTimer.singleShot(0, self._sc, lambda v=scroll, sb=self._sc.verticalScrollBar(): sb.setValue(v))
             if had_focus and self.focus_key is not None:
                 shown = [self.bv.itemAt(i).widget() for i in range(self.bv.count())]   # not the rows going away
                 row = next((r for r in shown if isinstance(r, CompactRow) and r.r.get("key") == self.focus_key), None)
@@ -444,6 +447,8 @@ class Panel(QWidget):
         clear(self.hv)
         clear(self.bv)
         self.details.hide()
+        if node is not None and not self._alive(node):     # its block went away (Ctrl+Z, a removal): the page gives
+            node = None                                     # the panel the block selected now
         self.node = node
         if node is None:
             return
@@ -479,14 +484,30 @@ class Panel(QWidget):
                 self.bv.addSpacing(8)
                 b = QPushButton(_("Open Post"))
                 b.setObjectName("primary")
-                b.setEnabled(any(q.rendered for q in self.s.paths))
+                if not any(q.rendered for q in self.s.paths):   # opened as its double-click does (2nd round): Post
+                    b.setToolTip(_("Nothing computed yet: Post lists the layers to come"))   # lists them
+
                 b.clicked.connect(self.openPost.emit)
                 self.bv.addWidget(b, 0, Qt.AlignLeft)
+            else:                                         # no layer left: what makes one (control round)
+                self.bv.addWidget(label(_("No layer: a block's image becomes one by “To Post” in its menu, or by "
+                                          "pulling its ● onto Post."), "dim", wrap=True))
             self.bv.addStretch(1)
         elif k == "composition":
             self.composition(node)
         else:
             self.block(node)
+
+    def _alive(self, node) -> bool:
+        """Whether a block shown is still in the project: its session and its workflows (GUI exploration 1.6)."""
+        if node.key in ("sources", "final"):
+            return True
+        if node.sid is not None and node.sid not in {x["id"] for x in self.s.sessions}:
+            return False
+        if node.key == "session":
+            return True
+        alive = {q.pid for q in self.s.paths}
+        return bool(node.paths) and all(q.pid in alive for q in node.paths)
 
     def sources(self):
         s = self.s
@@ -504,7 +525,7 @@ class Panel(QWidget):
             self.bv.addWidget(kv([(html.escape(ses["night"]), _("{lights} lights · {flats} flats · darks: {darks}").format(
                 lights=ses["lights"], flats=ses["flats"], darks=darks))], pad=10))
             if ses.get("rotation"):
-                self.bv.addWidget(label(_("Camera rotated {deg}°: this session uses its own flats").format(
+                self.bv.addWidget(label(_("Camera rotated {deg}°: own flats").format(
                     deg=number(ses["rotation"])), "warn", wrap=True))
         self.bv.addSpacing(6)
         self.bv.addWidget(kv([(_("Excluded by hand"), str(len(s.frames_excluded))),
@@ -525,7 +546,24 @@ class Panel(QWidget):
 
     # ------------------------------------------------------------ issue #43: sessions, cut blocks, image source
     KIND_TITLES = (("lights", "Lights"), ("darks", "Darks"), ("flats", "Flats"), ("bias", "Bias"),
-                   ("flat_darks", "Flat darks"))
+                   ("flat_darks", "Dark flats"))       # one name everywhere, as the import's (#49)
+
+    def name_edited(self, ed, old: str, pid: int | None = None, sid: int | None = None):
+        """A workflow's or a session's name typed in the panel (GUI exploration 2, decision 8): an empty name, or
+        another's, is refused with the reason, the old one back in the field."""
+        t = ed.text().strip()
+        gone = (sid is not None and sid not in [x.id for x in self.s.p.sessions]) or \
+            (pid is not None and self.s.view(pid) is None)
+        if t == old or gone:                              # its session or workflow went (Ctrl+Z): nothing to name
+            return
+        why = self.s.name_problem(t, pid=pid, sid=sid)
+        if why:
+            ed.setText(old)
+            self.toast.emit(_("Name refused: {why}").format(why=why))
+        elif sid is not None:
+            self.s.rename_session(sid, t)
+        else:
+            self.renamed.emit(pid, t)
 
     def session_panel(self, sid: int):
         """A Session block: its name, its filter, and its frames kind by kind, chosen here (issue #43)."""
@@ -539,36 +577,56 @@ class Panel(QWidget):
                          "border-bottom: 1px dashed #3a4150; border-radius: 0; } "
                          f"QLineEdit:focus {{ border-bottom: 1px solid {ACCENT}; }}")
         ed.setToolTip(_("Session name"))
-        ed.editingFinished.connect(lambda: s.rename_session(sid, ed.text()))
+        ed.editingFinished.connect(lambda: self.name_edited(ed, ses.name, sid=sid))
         top.addWidget(ed, 1)
         self.hv.addLayout(top)
+        if not self.tune:                                 # as every block: its Delete under its name (expl. 2)
+            acts = QHBoxLayout()
+            x = QPushButton(_("Delete"))
+            why = s.session_removal_problem(sid)
+            x.setEnabled(not why)                         # greyed, with why (its menu says the same)
+            x.setToolTip(_("Cannot be deleted: {why}").format(why=why) if why else
+                         _("Take this session out of the project, its files kept (Del)"))
+            x.clicked.connect(self.removeTool.emit)
+            acts.addWidget(x)
+            acts.addStretch(1)
+            self.hv.addLayout(acts)
         row = QHBoxLayout()
         row.addWidget(label(_("Filter"), "dim"))
         cb = QComboBox()
         for f in FILTERS:
             cb.addItem(f or _("none (colour camera)"), f)
         cb.setCurrentIndex(max(0, cb.findData(ses.filter)))
-        cb.setToolTip(_("The filter of these lights. Monochrome cameras are planned: the filter is kept for then."))
+        cb.setToolTip(_("The filter of these lights (a monochrome camera): the workflows by filter and their Fusion "
+                        "use it; none for a colour camera."))
         cb.currentIndexChanged.connect(lambda _i: s.set_session_filter(sid, cb.currentData()))
         row.addWidget(cb)
         row.addStretch(1)
         self.hv.addLayout(row)
         n = {"lights": counts.get("lights", 0), "darks": counts.get("darks", 0), "flats": counts.get("flats", 0),
              "bias": counts.get("bias", 0), "flat_darks": counts.get("dark_flats", 0)}
+        from .blocks import gone_kinds
         from .frames import type_warning_text
+        gone = gone_kinds(s, {sid})
         warns = s.file_warnings(sid)                       # issue #58: files that may be mistakes, shown on their kind
         flagged = self._flagged(sid, warns)
         for kind, title in self.KIND_TITLES:
             if kind == "lights":
                 kept = counts.get("kept", n["lights"])
+                # a file the engine does not read (a JPEG added by mistake) is not used (GUI exploration 6.10)
+                kept = max(kept - sum(w["n"] for w in warns if w["key"] == "unread" and w["kind"] == "lights"), 0)
+                # nor a light that cannot be read (damaged, or not a FITS file: round 3, "5 / 5 used")
+                kept = max(kept - getattr(s, "unreadable_lights", lambda _i: 0)(sid), 0)
                 count = _("{kept} / {n} used").format(kept=kept, n=n["lights"])
             else:
                 count = str(n[kind]) if n[kind] else _("none")
+            if not n[kind] and kind in gone:              # not an empty folder: one not found (GUI exploration 4)
+                count = _("folder not found")
             self.bv.addWidget(self.group_title(_(title) + "  ·  " + count))
             shared = s.shared_with(sid, kind) if kind != "lights" else []
             if shared:
                 names = ", ".join(s.session(o).name for o in shared)
-                self.bv.addWidget(label("⇄ " + _("shared with {names}: one master for all").format(names=names),
+                self.bv.addWidget(label("⇄ " + _("shared with {names}: one master").format(names=names),
                                         "small", wrap=True))
             for w in [w for w in warns if w["kind"] == kind]:      # issue #58: a file that may be a mistake
                 self.bv.addWidget(label("⚠ " + type_warning_text(w), "warn", wrap=True))
@@ -578,9 +636,10 @@ class Panel(QWidget):
                 sets.setdefault((pth.parent if pth.suffix else pth).as_posix(), []).append(e)
             files = s.session_files(sid, kind)
             for folder, entries in sets.items():
-                whole = len(entries) == 1 and not Path(entries[0]).suffix
-                mine = [f for f in files if Path(f).parent.as_posix().lower() == folder.lower()] if whole else \
-                    [Path(s.p.abspath(e)).as_posix() for e in entries]
+                # 7.4: a folder chosen whole lists every file of it, a file of it also chosen alone included once
+                whole = any(not Path(e).suffix for e in entries)
+                mine = list(dict.fromkeys(f for f in files if Path(f).parent.as_posix().lower() == folder.lower())) \
+                    if whole else [Path(s.p.abspath(e)).as_posix() for e in entries]
                 self._file_group(sid, kind, folder, entries, mine, flagged)
             add = QHBoxLayout()
             b = QPushButton(_("Add") + " ▾")                # one menu per kind: folder, files, another session's
@@ -628,29 +687,37 @@ class Panel(QWidget):
         bad = [f for f in files if f.lower() in flagged]
         is_open = key in opened or bool(bad)
         r = QHBoxLayout()
-        whole = len(entries) == 1 and not Path(entries[0]).suffix
-        n = len(files) if files or not whole else 0
-        t = QPushButton(("▾ " if is_open else "▸ ") + "📁 " + Path(folder).name + "  · " +
-                        plural(n, "{n} file", "{n} files"))
-        t.setFlat(True)
-        t.setStyleSheet("QPushButton { text-align: left; padding: 2px 4px; } ")
-        t.setToolTip(folder + "\n" + _("Click to see its files, and take one out"))
+        n = len(files)
+        if not Path(folder).exists():                     # moved, renamed outside, its disk unplugged: said, and a
+            # click chooses where it is now, as a reference photo app's missing folder (GUI exploration 4)
+            t = QPushButton("⚠ 📁 " + Path(folder).name + "  · " + _("folder not found"))
+            t.setFlat(True)
+            t.setStyleSheet(f"QPushButton {{ text-align: left; padding: 2px 4px; color: {WARN}; }} ")
+            t.setToolTip(folder + "\n" + _("Not found (moved, renamed, or its disk unplugged): click to choose where "
+                                           "it is now"))
+            t.clicked.connect(lambda _c=False, k=kind, ens=list(entries): self._locate(sid, k, folder, ens))
+        else:
+            t = QPushButton(("▾ " if is_open else "▸ ") + "📁 " + Path(folder).name + "  · " +
+                            plural(n, "{n} file", "{n} files"))
+            t.setFlat(True)
+            t.setStyleSheet("QPushButton { text-align: left; padding: 2px 4px; } ")
+            t.setToolTip(folder + "\n" + _("Click to see its files, and take one out"))
 
-        def toggle(_c=False, k=key):
-            opened.symmetric_difference_update({k})
-            self.changed.emit()
-        t.clicked.connect(toggle)
+            def toggle(_c=False, k=key):
+                opened.symmetric_difference_update({k})
+                self.changed.emit()
+            t.clicked.connect(toggle)
         r.addWidget(t, 1)
         x = QPushButton("×")
         x.setFixedWidth(26)
+        x.setStyleSheet("QPushButton { padding: 0px; }")    # the cross whole in its 26 px (as a file's, below)
         x.setToolTip(_("Remove the whole folder from the session (the files are not touched)"))
-        x.clicked.connect(lambda _c=False, k=kind, ens=list(entries): [s.remove_session_entry(sid, k, en)
-                                                                        for en in ens])
+        x.clicked.connect(lambda _c=False, k=kind, ens=list(entries): self._files_out(sid, k, ens, True))
         r.addWidget(x)
         self.bv.addLayout(r)
         if not is_open or not files:
             return
-        lst = FileList(lambda chosen, k=kind: s.remove_session_files(sid, k, chosen))
+        lst = FileList(lambda chosen, k=kind: self._files_out(sid, k, chosen))
         for f in files:
             it = QListWidgetItem()
             it.setData(Qt.UserRole, f)
@@ -665,12 +732,25 @@ class Panel(QWidget):
             b.setFixedSize(26, 20)
             b.setStyleSheet("QPushButton { padding: 0px; }")
             b.setToolTip(_("Take this file out of the session (the file is not touched)"))
-            b.clicked.connect(lambda _c=False, k=kind, ff=f: s.remove_session_files(sid, k, [ff]))
+            b.clicked.connect(lambda _c=False, k=kind, ff=f: self._files_out(sid, k, [ff]))
             h.addWidget(b)
             it.setSizeHint(row.sizeHint())
             lst.setItemWidget(it, row)
         lst.setFixedHeight(min(len(files), 8) * (lst.sizeHintForRow(0) or 24) + 6)
         self.bv.addWidget(lst)
+
+    def _files_out(self, sid: int, kind: str, files: list, entries: bool = False):
+        """Files (or a folder's entries) taken out of a session: one undo step, said with Ctrl+Z (control round,
+        decision 11: Ctrl+Z undid an older step, the file stayed out, nothing said)."""
+        s = self.s
+        name = s.session(sid).name
+        with s.batch():
+            done = any([s.remove_session_entry(sid, kind, e) for e in files]) if entries else \
+                s.remove_session_files(sid, kind, files)
+        if done:
+            self.toast.emit(_("Folder out of “{session}” · files kept · Ctrl+Z").format(session=name) if entries else
+                            plural(len(files), "{n} file out of “{session}” · file kept · Ctrl+Z",
+                                   "{n} files out of “{session}” · files kept · Ctrl+Z", session=name))
 
     def _add_entries(self, sid: int, kind: str, folder: bool):
         from . import prefs as _prefs
@@ -685,7 +765,38 @@ class Panel(QWidget):
                                                    _("All files (*)"))
         if got:
             _prefs.remember_folder(got[0])
-            self.s.add_session_entries(sid, kind, got)
+            notes: list = []                              # what was not added, said (GUI exploration 7.5)
+            self.s.add_session_entries(sid, kind, got, notes)
+            if notes:
+                self.toast.emit(" · ".join(_(t).format(name=nm) for t, nm in notes))
+
+    def _locate(self, sid: int, kind: str, folder: str, entries: list[str]):
+        """A folder of a session not found: where it is now, chosen (a reference photo app's "find missing folder",
+        GUI exploration 4); it takes the old one's place in the list, its files chosen one by one found in it by their
+        names. One undo step; a folder without frames chosen: nothing changes, said."""
+        from . import prefs as _prefs
+        start = next((p for p in Path(folder).parents if p.is_dir()), Path(_prefs.last_folder()))
+        d = self.pick_folder(_("Where is “{name}” now?").format(name=Path(folder).name), start.as_posix())
+        if not d:
+            return
+        _prefs.remember_folder(d)
+        whole = any(not Path(e).suffix for e in entries)
+        new = [Path(d).as_posix()] if whole else [(Path(d) / Path(e).name).as_posix() for e in entries
+                                                  if (Path(d) / Path(e).name).is_file()]
+        notes: list = [] if new else [("“{name}” holds no frames (camera raw or FITS): not added.", Path(d).name)]
+        s = self.s
+        with s.batch():
+            if new and s.add_session_entries(sid, kind, new, notes):
+                for e in entries:
+                    s.remove_session_entry(sid, kind, e)
+                notes = []
+                self.toast.emit(_("“{name}” found again in “{session}” · Ctrl+Z").format(
+                    name=Path(d).name, session=s.session(sid).name))
+        if notes:
+            self.toast.emit(" · ".join(_(t).format(name=nm) for t, nm in notes))
+
+    def pick_folder(self, title: str, start: str) -> str:
+        return QFileDialog.getExistingDirectory(self, title, start)
 
     def all_nights(self):
         """A project made before issue #43: its nights are calibrated together. They can be calibrated each on its
@@ -699,18 +810,18 @@ class Panel(QWidget):
             self.bv.addWidget(kv([(html.escape(ses["night"]), _("{lights} lights · {flats} flats · darks: {darks}").format(
                 lights=ses["lights"], flats=ses["flats"], darks=ses["darks"] or _("none")))], pad=10))
         self.bv.addSpacing(8)
-        b = QPushButton(_("Calibrate each night separately…"))
+        b = QPushButton(_("Calibrate per night…"))
         b.setObjectName("primary")
         b.setToolTip(_("Each night with its own calibration frames, then all stacked together"))
         b.clicked.connect(self._separate)
         self.bv.addWidget(b, 0, Qt.AlignLeft)
-        a = QPushButton(_("Add a session…"))
+        a = QPushButton(_("Add session…"))
         a.clicked.connect(self.addSession.emit)
         self.bv.addWidget(a, 0, Qt.AlignLeft)
         self.bv.addStretch(1)
 
     def _separate(self):
-        if QMessageBox.question(self, _("Calibrate each night separately"), _(
+        if QMessageBox.question(self, _("Calibrate per night"), _(
                 "Each night gets its own Session and Calibration blocks, and its own masters. Calibration and "
                 "everything after it are computed again. Undo takes it back.")) == QMessageBox.Yes:
             self.s.set_stack_mode("per_session")
@@ -723,7 +834,7 @@ class Panel(QWidget):
         src = p.source or {}
         self.hv.addWidget(label(_("Image"), "h1"))
         acts = QHBoxLayout()                             # as every block: its Delete under its name
-        x = QPushButton(_("Delete block"))
+        x = QPushButton(_("Delete"))
         x.setToolTip(_("Take this block out, with the blocks after it (Del)"))
         x.clicked.connect(self.removeTool.emit)
         acts.addWidget(x)
@@ -735,11 +846,15 @@ class Panel(QWidget):
             f = Path(path)
             self.bv.addWidget(kv([(_("File"), html.escape(f.name)), (_("Folder"), html.escape(f.parent.as_posix()))],
                                  pad=10))
+            from ..stages.image import image_problem
+            why = image_problem(path)                     # moved, or its disk unplugged (GUI exploration 7.3)
+            if why:
+                self.bv.addWidget(label(_(why).format(name=f.name), "warn", wrap=True))
         else:
             self.bv.addWidget(label(_("No file yet: choose the image this block reads."), "warn", wrap=True))
         self.bv.addSpacing(6)
         row = QHBoxLayout()
-        b = QPushButton(_("Change the image…") if path else _("Choose the image…"))
+        b = QPushButton(_("Change image…") if path else _("Choose image…"))
         b.setObjectName("primary" if not path else "")
         b.clicked.connect(lambda: self._choose_image(p))
         row.addWidget(b)
@@ -770,11 +885,21 @@ class Panel(QWidget):
 
     def _choose_image(self, p):
         from . import prefs as _prefs
-        f, _x = QFileDialog.getOpenFileName(self, _("Image"), _prefs.last_folder(),
-                                            _("Images (*.fits *.fit *.fts *.tif *.tiff)"))
+        from .gallery import image_filter
+        f, _x = QFileDialog.getOpenFileName(self, _("Image"), _prefs.last_folder(), image_filter())
         if f:
             _prefs.remember_folder(f)
-            self.s.set_image_file(p, f)
+            self.set_image(p, f)
+
+    def set_image(self, p, f: str) -> bool:
+        """An Image block's file, refused with its reason when it is not an image read here (GUI exploration 7.3)."""
+        from ..stages.image import image_problem
+        why = image_problem(f)
+        if why:
+            self.toast.emit(_(why).format(name=Path(f).name))
+            return False
+        self.s.set_image_file(p, f)
+        return True
 
     def fusion_panel(self, node):
         """A Fusion block (issue #43): its workflow's name, its palette, its channels and the workflows they come
@@ -788,20 +913,30 @@ class Panel(QWidget):
         ed.setStyleSheet("QLineEdit { font-size: 13pt; font-weight: 600; background: transparent; border: none; "
                          "border-bottom: 1px dashed #3a4150; border-radius: 0; } "
                          f"QLineEdit:focus {{ border-bottom: 1px solid {ACCENT}; }}")
-        ed.editingFinished.connect(lambda: ed.text().strip() and ed.text().strip() != p.name
-                                   and self.renamed.emit(p.pid, ed.text().strip()))
+        ed.editingFinished.connect(lambda: self.name_edited(ed, p.name, pid=p.pid))
         top.addWidget(ed, 1)
         st = self.graph_state(node)
         chip = QLabel(_(STATE_WORD[st]))
         chip.setStyleSheet(f"color: {STATE_COLOR[st]}; font-size: 9pt;")
         top.addWidget(chip)
         self.hv.addLayout(top)
-        self.hv.addWidget(label(_("Fusion of the channels"), "small"))
+        self.hv.addWidget(label(_("Channel fusion"), "small"))
+        acts = QHBoxLayout()                             # as the Image block: its Delete under its name (#34)
+        x = QPushButton(_("Delete"))
+        x.setToolTip(_("Take this block out, with the blocks after it (Del)"))
+        x.clicked.connect(self.removeTool.emit)
+        acts.addWidget(x)
+        acts.addStretch(1)
+        self.hv.addLayout(acts)
+        if node.broken:                                  # why Run is refused, as the graph's red circle says (round 3)
+            why = label(_("Run refused: {why}").format(why=node.broken.rstrip(".")), "warn", wrap=True)
+            self.hv.addWidget(why)
         self.bv.addWidget(self.group_title(_("Palette")))
         roles = [i["role"] for i in f.get("inputs") or []]
+        read = PALETTES.get(f.get("palette"), (tuple(roles), None))[0]     # the channels its palette reads (7.6)
         row = QHBoxLayout()
         for pal, (need, _m) in PALETTES.items():
-            b = QPushButton(pal)
+            b = QPushButton(_(pal) if pal in ("RGB", "LRGB") else pal)    # RVB, LRVB in French; SHO... as they are
             b.setCheckable(True)
             b.setObjectName("face")
             b.setMinimumWidth(48)                          # the five fit the panel: they shrink below the style's 80 px
@@ -814,14 +949,17 @@ class Panel(QWidget):
         row.addStretch(1)
         self.bv.addLayout(row)
         self.bv.addWidget(self.group_title(_("Channels")))
-        words = {"L": _("its grey"), "R": _("its red"), "G": _("its green"), "B": _("its blue"),
-                 "GB": _("its green and blue")}
+        words = {"L": _("grey"), "R": _("red"), "G": _("green"), "B": _("blue"),
+                 "GB": _("green + blue")}
         weights = f.get("weights") or {}
-        for i in f.get("inputs") or []:
+        for i in [i for i in f.get("inputs") or [] if i["role"] in read]:
             q = s.view(i["pid"])
             row = QHBoxLayout()
-            row.addWidget(label(f"<b>{html.escape(i['role'])}</b>", None), 0)
-            row.addWidget(label(_("{workflow}, {channel}").format(
+            row.setSpacing(10)                             # the channel's name apart from its text (#27)
+            role = label(f"<b>{html.escape(i['role'])}</b>", None)
+            role.setMinimumWidth(36)
+            row.addWidget(role, 0)
+            row.addWidget(label(_("{workflow} · {channel}").format(
                 workflow=html.escape(q.name if q is not None else "?"),
                 channel=words.get(i.get("channel", "L"), "")), "small"), 1)
             sp = QDoubleSpinBox()
@@ -834,7 +972,11 @@ class Panel(QWidget):
             sp.editingFinished.connect(lambda r=i["role"], b=sp: s.set_fusion_weight(p, r, b.value()))
             row.addWidget(sp)
             self.bv.addLayout(row)
-        self.fusion_stars(p, f, roles)
+        unread = [r for r in roles if r not in read]
+        if unread:
+            self.bv.addWidget(label(_("Unused by {palette}: {roles}").format(
+                palette=f.get("palette", ""), roles=", ".join(unread)), "small", wrap=True))
+        self.fusion_stars(p, f, [r for r in roles if r in read])
         self.bv.addSpacing(6)
         self.bv.addWidget(label(_("Each channel is its workflow's output, aligned on the first channel through the "
                                   "plate solutions (each channel's workflow needs its Astrometry) and brought to the "
@@ -844,16 +986,16 @@ class Panel(QWidget):
 
     def fusion_stars(self, p, f: dict, roles: list[str]):
         """Option A: the palette on the channels' starless images, then the stars from a source, put back by the
-        Combine stars & background block."""
+        Recombine block."""
         s = self.s
         cur = f.get("stars") or {}
         self.bv.addWidget(self.group_title(_("Stars")))
         others = [q for q in s.paths if q.pid != p.pid and q.source is None and not s.is_mono(q)]
-        choices = [(_("With the channels (no separation)"), None),
-                   (_("The channels' stars, same palette"), {"mode": "palette"})]
-        choices += [(_("The stars of {channel} (neutral)").format(channel=r), {"mode": "channel", "role": r})
+        choices = [(_("With channels (no split)"), None),
+                   (_("Channel stars, same palette"), {"mode": "palette"})]
+        choices += [(_("{channel} stars (neutral)").format(channel=r), {"mode": "channel", "role": r})
                     for r in roles]
-        choices += [(_("The stars of “{workflow}” (their colours)").format(workflow=q.name),
+        choices += [(_("“{workflow}” stars (own colours)").format(workflow=q.name),
                      {"mode": "workflow", "pid": q.pid}) for q in others]
         cb = QComboBox()
         cb.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)     # a long workflow name: elided,
@@ -862,7 +1004,7 @@ class Panel(QWidget):
             cb.addItem(text, val)
         cb.setCurrentIndex(next((i for i, (_t, v) in enumerate(choices) if (v or {}) == cur), 0))
         cb.setToolTip(_("The palette is made on the channels' starless images; these stars are put back by the "
-                        "Combine stars & background block. Each channel's workflow gets Split stars & background."))
+                        "Recombine block. Each channel's workflow gets Stars/background."))
         cb.activated.connect(lambda i: s.set_fusion_stars(p, cb.itemData(i)))
         self.bv.addWidget(cb)
         if cur:
@@ -880,19 +1022,19 @@ class Panel(QWidget):
         if node.cut:
             self.bv.addWidget(label(_("Switched off: this block does not change the data, which passes through to "
                                       "the next block. Its settings are kept."), None, wrap=True))
-            b = QPushButton(_("Switch this block on") + "  (D)")
+            b = QPushButton(_("Switch on") + "  (D)")
             b.setObjectName("primary")
             b.clicked.connect(self.cutToggled.emit)
             self.bv.addSpacing(6)
             self.bv.addWidget(b, 0, Qt.AlignLeft)
         else:
-            self.bv.addWidget(label(_("Cannot run: {why}. The image passes through to the next block.").format(
+            self.bv.addWidget(label(_("Blocked: {why} · image passes through").format(
                 why=node.grey), "warn", wrap=True))
             cause = {_("needs Astrometry"): "astrometrie", _("needs Denoise"): "debruitage"}.get(node.grey)
             if cause and cause in s.display_keys(p):
                 self.bv.addSpacing(6)
                 if s.is_cut(p, cause):
-                    r = QPushButton(_("Restore {block}").format(block=block_title(None, cause)))
+                    r = QPushButton(_("Switch on {block}").format(block=block_title(None, cause)))
                     r.setObjectName("primary")
                     r.clicked.connect(lambda: self.restoreBlock.emit(cause))
                     self.bv.addWidget(r, 0, Qt.AlignLeft)
@@ -912,8 +1054,7 @@ class Panel(QWidget):
                              "border-bottom: 1px dashed #3a4150; border-radius: 0; } "
                              f"QLineEdit:focus {{ border-bottom: 1px solid {ACCENT}; }}")
             ed.setToolTip(_("Workflow name"))
-            ed.editingFinished.connect(lambda: ed.text().strip() and ed.text().strip() != p.name
-                                       and self.renamed.emit(p.pid, ed.text().strip()))
+            ed.editingFinished.connect(lambda: self.name_edited(ed, p.name, pid=p.pid))
             top.addWidget(ed, 1)
         else:
             from .blocks import node_title
@@ -927,21 +1068,25 @@ class Panel(QWidget):
         top.addWidget(chip)
         kb = k.partition("~")[0]
         graph_block = kb not in ("sources", "final", "session", "composition", "fusion", "image", "post") and \
-            node.sid is None and not self.tune
+            (node.sid is None or kb == "calibration") and not self.tune      # a session's Calibration too (expl. 2)
         acts = QHBoxLayout()                             # the block's actions, under its name (issue #47)
         acts.setSpacing(6)
         if graph_block:                                  # any block can go when what follows allows it
-            x = QPushButton(_("Delete block"))
-            x.setToolTip(_("Take this block out of the workflow (Del)"))
+            x = QPushButton(_("Delete"))
+            x.setToolTip(_("Take this block out of the workflow (Del)") if node.sid is None else
+                         _("Take the Calibration out of every session of the workflow (Del)"))
             x.clicked.connect(self.removeTool.emit)
             acts.addWidget(x)
-        if graph_block and (node.cut or not s.can_switch_off(p, k)):
+        if graph_block:                                   # question 7: greyed with its reason, as in the menu
+            why_off = "" if node.cut else s.can_switch_off(p, k)
             cut = QPushButton(_("Switch on") if node.cut else _("Switch off"))
-            cut.setToolTip(_("Switch this block off (D): the data passes through it; its settings are kept"))
+            cut.setToolTip(_("Cannot be switched off: {why}").format(why=why_off) if why_off else
+                           _("Switch this block off (D): the data passes through it; its settings are kept"))
+            cut.setEnabled(not why_off)
             cut.clicked.connect(self.cutToggled.emit)
             acts.addWidget(cut)
         if k == "post" and not self.tune:                # the workflow as a template of the gallery
-            tpl = QPushButton(_("Save as template…"))
+            tpl = QPushButton(_("Save template…"))
             tpl.setToolTip(_("Keep this workflow's graph as a template of the gallery"))
             tpl.clicked.connect(lambda: self.saveTemplate.emit(p.pid))
             acts.addWidget(tpl)
@@ -951,7 +1096,7 @@ class Panel(QWidget):
             self.hv.addLayout(acts)
         # which workflows a change goes to (the Stars block has no setting: nothing to apply)
         if node.shared and k != "etoiles":
-            self.hv.addWidget(label(_("Changes apply to:"), "dim"))
+            self.hv.addWidget(label(_("Apply to:"), "dim"))
             box = QVBoxLayout()
             box.setSpacing(2)
             allp = [q.pid for q in node.paths]
@@ -990,13 +1135,13 @@ class Panel(QWidget):
                 self.bv.addSpacing(6)
         if k == "etoiles":                  # what the block gives first: its two images, and where they go
             self.outputs(node)
-        if k in ("fond", "debruitage", "etoiles", "deconv"):
+        if k.partition("~")[0] in ("fond", "debruitage", "etoiles", "deconv"):     # Gradient 2 too (round 3)
             self.methods(p, k)
         if k == "fond" and self.tune and getattr(self, "grad_editor", None) is not None:
-            self.bv.addWidget(self.group_title(_("Samples and excluded areas")))
+            self.bv.addWidget(self.group_title(_("Samples · exclusions")))
             self.bv.addWidget(self.grad_editor.controls(p))
         elif k == "fond" and not self.tune:            # issue #15: the samples are edited on the image, in Inspect
-            b = QPushButton(_("Edit the samples on the image…"))
+            b = QPushButton(_("Edit samples…"))
             b.setToolTip(_("Opens the block in Inspect: place, move or remove the samples and the excluded areas on "
                            "the image"))
             b.clicked.connect(self.openTune.emit)
@@ -1020,7 +1165,7 @@ class Panel(QWidget):
             self.bv.addWidget(kv([(_("Output of"), block_title(p, p.end))]))
         if k == "etoiles":
             self.bv.addWidget(label(_("No setting here: the network is applied as it was trained. Its two images are "
-                                      "adjusted in a Combine stars & background layers block, or each as a layer of Post."),
+                                      "adjusted in a Recombine block, or each as a layer of Post."),
                                     "small", wrap=True))
         else:
             self.settings(p, sk, groups, extra)
@@ -1054,9 +1199,12 @@ class Panel(QWidget):
         row.addWidget(label(_('Variant of "{name}"').format(name=src.name), "dim"), 1)
         keep = QPushButton(_("Keep"))
         keep.setToolTip(_('Replaces "{name}" and takes its name').format(name=src.name))
-        keep.clicked.connect(lambda: (self.s.keep_variant(p), self.changed.emit()))
+        # what each did, said with Ctrl+Z (control round, decision 11)
+        keep.clicked.connect(lambda: (self.s.keep_variant(p), self.changed.emit(), self.toast.emit(
+            _("Variant “{name}” kept: it replaces “{orig}” · Ctrl+Z").format(name=p.name, orig=src.name))))
         drop = QPushButton(_("Discard"))
-        drop.clicked.connect(lambda: (self.s.drop_variant(p), self.changed.emit()))
+        drop.clicked.connect(lambda: (self.s.drop_variant(p), self.changed.emit(), self.toast.emit(
+            _("Variant “{name}” discarded · Ctrl+Z").format(name=p.name))))
         row.addWidget(keep)
         row.addWidget(drop)
         self.hv.addLayout(row)
@@ -1131,8 +1279,8 @@ class Panel(QWidget):
             self.changed.emit()
             return
         self.s.log("{what} · replaced in {names}", what=ch["what"], names=", ".join(q.name for q in paths))
-        if notes:
-            self.toast.emit(" · ".join(_(n) for n in notes))
+        said = _("{what} · replaced in {names}").format(what=ch["what"], names=", ".join(q.name for q in paths))
+        self.toast.emit(" · ".join([said] + [_(n) for n in notes] + ["Ctrl+Z"]))     # said, as the others (decision 11)
         self.changed.emit()
 
     def _variant(self, p):
@@ -1151,7 +1299,8 @@ class Panel(QWidget):
         """The ways of computing this block, as cards: what it does, where it runs, how long on this machine."""
         s = self.s
         from .model import METHOD_OPT
-        cur = method_of(p, k)
+        cur = method_of(p, k)                           # a block placed twice ("fond~2"): its own node's (round 3)
+        again, k = "~" in k, k.partition("~")[0]
         self.bv.addWidget(self.group_title(_("Method")))
         opt = METHOD_OPT[k]
         spec = prefs.spec()
@@ -1170,10 +1319,23 @@ class Panel(QWidget):
                 if on:
                     why = _("Computed earlier on a GPU; running it again here takes ≈ {t}.").format(t=t)
             card = MethodCard(m, on, ok, times, "gpu" if s.gpu else "cpu", why)
-            if not on and ok:
+            if not on and ok and again:
+                card.clicked.connect(lambda ek=m["engine_key"], nm=m["name"]: self._node_method(ek, _(nm)))
+            elif not on and ok:
                 card.clicked.connect(lambda mk=m["key"], nm=m["name"], sh=m["short"]: self.propose_opt(
                     opt, method_value(k, mk), _("Method: {name}").format(name=_(nm)), _(sh)))
             self.bv.addWidget(card)
+
+    def _node_method(self, method: str, name: str):
+        """The method of a block placed twice, chosen on its cards: stored on its node, one Undo step, said (round 3:
+        its Method list was greyed "Set by the options of the workflow")."""
+        from .blocks import node_title
+        node = self.node
+        if node is None or not node.paths:
+            return
+        if self.s.set_node_method(node.paths, node.key, method):
+            self.toast.emit(_("{block}: {method} · Ctrl+Z").format(block=node_title(self.s, node), method=name))
+        self.changed.emit()
 
     def stack_methods(self, p):
         """The stacking methods the engine offers, as cards; the engine's advice marks one "Recommended" (with its
@@ -1217,8 +1379,8 @@ class Panel(QWidget):
             to = [block_title(n.paths[0], "composition") + (f" ({n.paths[0].name})" if len(node.paths) > 1 else "")
                   for n in mine]
             if any(src._bk == node._bk and part == what for src, part in g.direct):
-                to.append(_("Post (as a layer)"))
-            to = to or [_("not used: drag its dot onto Post or onto Composition")]
+                to.append(_("Post layer"))
+            to = to or [_("unused: drag to Post or Composition")]
             lb = QLabel(f"<span style='color:{IMAGE_COL[what]}'>●</span> <b>{html.escape(names[what])}</b>"
                         + "".join(f"<br>&nbsp;&nbsp;&nbsp;→ {html.escape(t)}" for t in to))
             lb.setTextFormat(Qt.RichText)
@@ -1234,7 +1396,7 @@ class Panel(QWidget):
                     b.clicked.connect(lambda _c=False, w=what, pp=p: self._part_out_of_post(pp, w))
                 else:
                     b = QPushButton(_("To Post"))
-                    b.setToolTip(_("This image as a layer of Post, as it is (no Combine stars & background layers "
+                    b.setToolTip(_("This image as a layer of Post, as it is (no Recombine "
                                    "block)"))
                     b.clicked.connect(lambda _c=False, w=what, pp=p: self._part_to_post(pp, w))
                 row.addWidget(b, 0, Qt.AlignTop)
@@ -1242,7 +1404,7 @@ class Panel(QWidget):
             else:
                 self.bv.addWidget(lb)
         if len(node.paths) == 1:
-            nb = QPushButton(_("New Combine stars & background layers block"))
+            nb = QPushButton(_("+ Recombine").replace("&", "&&"))
             nb.setToolTip(_("A layer of Post that puts the stars back on the starless image; each of the two keeps "
                             "its own settings"))
             nb.clicked.connect(lambda _c=False, pp=node.paths[0]: self._new_composition(pp))
@@ -1255,21 +1417,34 @@ class Panel(QWidget):
         self.s.add_post_layer(p.pid, part, self)
         self.s.log('{image} of "{name}" sent to Post', image=dict(STAR_OUTPUTS)[part], name=p.name)
         self.s.select(index=self.s.paths.index(p), step="etoiles")
+        self.toast.emit(_('{image} · "{name}" to Post').format(image=_(dict(STAR_OUTPUTS)[part]), name=p.name)
+                        + " · Ctrl+Z")                    # said, as the graph's menu (decision 11)
 
     def _part_out_of_post(self, p, part):
-        """One of the split block's images sent as it is, taken out of Post (#29)."""
+        """One of the Stars/background block's images sent as it is, taken out of Post (#29)."""
         from .blocks import STAR_OUTPUTS
         if self.s.remove_post_part(p.pid, part, self):
             self.s.log('{image} of "{name}" taken out of Post', image=dict(STAR_OUTPUTS)[part], name=p.name)
+            self.toast.emit(_('{image} of "{name}" taken out of Post').format(
+                image=_(dict(STAR_OUTPUTS)[part]), name=p.name) + " · Ctrl+Z")
         self.s.select(index=self.s.paths.index(p), step="etoiles")
 
     def _new_composition(self, p):
         """A Stars and background block for this workflow's Stars block (as dragging a dot onto Composition)."""
+        from .post3 import tr_name
         lid = self.s.add_post_layer(p.pid, "combined", self)
-        self.s.log('Combine stars & background layers block for "{name}"', name=p.name)
+        self.s.log('Recombine for "{name}"', name=p.name)
         self.s.sel_layer = lid
         self.s.select(index=self.s.paths.index(p), step="composition")
         self.s.scope = [p.pid]
+        lay = self.s.post_layer(lid) or {}
+        self.toast.emit(_('Layer "{name}" ({block}) to Post').format(
+            name=tr_name(str(lay.get("name") or p.name)), block=block_title(None, "composition")) + " · Ctrl+Z")
+
+    def _one_step(self, change):
+        """A change of a Recombine block whose layer is made real by it: one undo step (decision 7)."""
+        with self.s.batch():
+            change()
 
     def composition(self, node):
         """A Stars and background block: its layer of Post, recombining the Stars block's two images. How the stars go
@@ -1280,18 +1455,23 @@ class Panel(QWidget):
         from .post3 import BLENDS, ContSlider, offset_text
         s = self.s
         p = node.paths[0]
-        lid = node.lid if node.lid is not None else s.add_post_layer(p.pid, "combined", self)
-        node.lid = lid
-        s.sel_layer = lid
-        lay = s.post_layer(lid) or {}
+        def lid():                                        # the layer is made at the first change, not by showing the
+            if node.lid is None:                          # block (GUI exploration 3.6: a click made a layer)
+                node.lid = s.add_post_layer(p.pid, "combined", self, keep_default=False)   # it is the default one
+            s.sel_layer = node.lid
+            return node.lid
+        if node.lid is not None:
+            s.sel_layer = node.lid
+        lay = (s.post_layer(node.lid) if node.lid is not None else None) or {}
         top = QHBoxLayout()
-        top.addWidget(label(block_title(p, "composition"), "h1", wrap=True), 1)
+        from .blocks import node_title
+        top.addWidget(label(node_title(s, node), "h1", wrap=True), 1)        # "Recombine 2": as the graph names it
         st = block_state(s, p, "etoiles")
         chip = QLabel(_(STATE_WORD[st]))
         chip.setStyleSheet(f"color: {STATE_COLOR[st]}; font-size: 9pt;")
         top.addWidget(chip)
-        x = QPushButton(_("Delete block"))
-        x.setToolTip(_("Take this block out of Post (the split block's images stay computed)"))
+        x = QPushButton(_("Delete"))
+        x.setToolTip(_("Take this block out of Post (the Stars/background block's images stay computed)"))
         x.clicked.connect(self.removeTool.emit)
         top.addWidget(x)
         self.hv.addLayout(top)
@@ -1299,7 +1479,7 @@ class Panel(QWidget):
         from .blocks import BY_KEY
         self.bv.addWidget(label(_(BY_KEY["composition"]["what"]), "small", wrap=True))
         if st != "done":
-            self.bv.addWidget(label(_("The split block is not computed yet: run it to see the result in Post."),
+            self.bv.addWidget(label(_("To compute: Stars/background"),
                                     "warn", wrap=True))
         sliders = dict(lay.get("sliders") or {})
 
@@ -1308,7 +1488,8 @@ class Panel(QWidget):
                 sliders.pop(key, None)
             else:
                 sliders[key] = v
-            s.set_post_layer(lid, self, sliders=dict(sliders))
+            with s.batch():                               # its layer made real and the value: one undo step (decision 7)
+                s.set_post_layer(lid(), self, sliders=dict(sliders))
         group = None
         infos = [x for x in s.slider_infos(p, "combined") if x.available]     # the stars first: what the block is for
         for sd in sorted(infos, key=lambda x: x.group != STARS_GROUP):
@@ -1324,7 +1505,8 @@ class Panel(QWidget):
                     cb.setToolTip(_("How the stars go back on the starless image: Screen (the usual way), Linear "
                                     "dodge (add) or Lighten"))
                     cb.setCurrentIndex(max(0, BLENDS.index(lay.get("blend") or BLENDS[0])))
-                    cb.currentIndexChanged.connect(lambda i, cb=cb: s.set_post_layer(lid, self, blend=cb.itemData(i)))
+                    cb.currentIndexChanged.connect(lambda i, cb=cb: self._one_step(
+                        lambda: s.set_post_layer(lid(), self, blend=cb.itemData(i))))
                     row.addWidget(cb, 1)
                     self.bv.addLayout(row)
             sl = ContSlider(_(sd.name), 0, 4, sliders.get(sd.key, 2.0), 2, ends=[_(e) for e in sd.ends],
@@ -1334,16 +1516,47 @@ class Panel(QWidget):
             sl.done.connect(lambda v, k=sd.key: commit(k, v))
             self.bv.addWidget(sl)
         self.bv.addSpacing(8)
-        b = QPushButton(_("Open in Post"))
+        b = QPushButton(_("Open Post"))
         b.setObjectName("primary")
         b.setToolTip(_("Post, with this block's layer selected: the image, the same settings, masks and filters"))
-        b.clicked.connect(lambda: self.openLayer.emit(lid))
+        b.clicked.connect(lambda: self.openLayer.emit(node.lid if node.lid is not None else
+                                                      s.default_post_layer(p.pid)))     # never an undo step (decision 7)
         self.bv.addWidget(b, 0, Qt.AlignLeft)
         self.bv.addStretch(1)
 
+    def show_wire(self, name: str, note: str, actions: list):
+        """A wire to Post selected (control round: the panel went empty): the layer it makes, its name, what it is,
+        and its actions ((text, function, tooltip))."""
+        clear(self.hv)
+        clear(self.bv)
+        self.details.hide()
+        self.node = None                                  # no block: nothing of a block's to build again
+        self._later.stop()                                # (the block chosen before, asked to build again)
+        self.hv.addWidget(label(name, "h1", wrap=True))
+        self.bv.addWidget(label(note, "dim", wrap=True))
+        self.bv.addSpacing(8)
+        row = QHBoxLayout()
+        for text, fn, tip in actions:
+            b = QPushButton(text)
+            b.setToolTip(tip)
+            b.clicked.connect(lambda _c=False, f=fn: f())
+            row.addWidget(b)
+        row.addStretch(1)
+        self.bv.addLayout(row)
+        self.bv.addStretch(1)
+
     def graph_state(self, node):
+        """The block's state as the graph shows it (round 3: a session's Calibration said "Up to date" never computed,
+        the last block "Up to date" where the graph said "Outdated" for the Output it holds)."""
+        from .blocks import STATE_ORDER, Graph
+        try:
+            g = Graph(self.s)
+            same = g.node_of(node.paths[0], node.ref) if node.paths else None
+            if same is not None:
+                return g.state(same)
+        except (KeyError, ValueError, AttributeError, IndexError):
+            pass
         states = {block_state(self.s, q, node.key) for q in node.paths}
-        from .blocks import STATE_ORDER
         return next((w for w in STATE_ORDER if w in states), "pending")
 
     def _scope(self, pids):
@@ -1444,8 +1657,8 @@ class Panel(QWidget):
         groups = self._groups(p, k) if groups is None else groups
         if settings_loading(s, p, k) and not groups:
             err = next((s.params_error(p, st) for st in needed_stages(s, p, k) if s.params_error(p, st)), "")
-            self.bv.addWidget(label(_("The settings cannot be read: {why}").format(why=err) if err else
-                                    _("Loading the settings…"), "dim", wrap=True))
+            self.bv.addWidget(label(_("Settings unreadable: {why}").format(why=err) if err else
+                                    _("Loading settings…"), "dim", wrap=True))
             return
         hidden = extra_hidden
         system = []
@@ -1459,7 +1672,7 @@ class Panel(QWidget):
             for r in shown:
                 self.add_row(r)
         if self.expert and system:
-            self.bv.addWidget(self.group_title(_("System: speed and memory")))
+            self.bv.addWidget(self.group_title(_("Speed · memory")))
             for r in system:
                 self.add_row(r)
         if hidden:

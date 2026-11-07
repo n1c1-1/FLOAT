@@ -43,15 +43,15 @@ from ..core import workflow as wfl
 from . import prefs
 from .blocks import KEY_ENGINE_BLOCK, TITLES, TRUNK
 from .i18n import _, hm
-from .widgets import ACCENT, label
+from .widgets import ACCENT, label, size_within
 
 FULL = dict(debruitage=True, etoiles="retirer", fond="simple")
 CLASSIC_DN = dict(debruitage=True, etoiles="garder", fond="simple")
 CLASSIC = dict(debruitage=False, etoiles="garder", fond="simple")
 
 #: the tabs, in order: key and title
-TABS = (("frames", "From frames"), ("mono", "Filters"), ("image", "From an image"), ("mine", "My templates"),
-        ("copy", "Copy of a workflow"))
+TABS = (("frames", "From frames"), ("mono", "Filters"), ("image", "From image"), ("mine", "My templates"),
+        ("copy", "Workflow copy"))                    # compact names (decision 12): two words, no articles
 #: a user's template file (Export / Import)
 TEMPLATE_SUFFIX = ".sftemplate"
 
@@ -75,7 +75,7 @@ GALLERY: list[dict] = [
               "stack gives it, without denoise. The quickest complete workflow."),
     dict(key="nights", tab="frames", name="Several nights", opts=FULL, sessions=2,
          text="Each night is a Session block with its own lights, darks and flats, calibrated on its own; all the "
-              "nights are then registered and stacked together. Add the other nights with Add a session…, then "
+              "nights are then registered and stacked together. Add the other nights with Add session…, then "
               "choose their calibration frames in their blocks."),
     dict(key="calibrated", tab="frames", name="Frames already calibrated", opts=FULL, drop=["calibration"],
          text="For frames another program has already calibrated (darks and flats applied): no Calibration block, "
@@ -101,7 +101,7 @@ GALLERY: list[dict] = [
     dict(key="image_stretched", tab="image", name="Already stretched image", opts=CLASSIC, source="image",
          stretched=True,
          text="An image already stretched (a TIFF, PNG or JPEG finished elsewhere, not linear) goes to Post as it is. "
-              "Add Split stars & background to take its stars off: the starless image and the stars come to Post as "
+              "Add Stars/background to take its stars off: the starless image and the stars come to Post as "
               "two layers."),
     dict(key="mono_each", tab="mono", name="One workflow per filter", opts=CLASSIC_DN, kind="filters",
          filters=("any",),
@@ -139,13 +139,20 @@ RECOMMENDED = "full"
 #: the engine's cut blocks → the views' block keys
 _CUT_KEY = {"calibration": "calibration", "registration": "alignement", "astrometry": "astrometrie",
             "gradient": "fond", "color": "couleur"}
-_SHORT = {"calibration": "Calib.", "alignement": "Regist.", "selection": "Select.", "empilement": "Stack",
-          "astrometrie": "Astrom.", "fond": "Gradient", "couleur": "Color", "debruitage": "Denoise",
-          "etoiles": "Stars", "post": "Output", "image": "Image", "session": "Session", "combine": "Combine"}
+#: a block's name in the pictures: the graph's own, whole (control round: "Calib.", "Astrom." were abbreviations); the
+#: last block of a template is where its image goes, Post
+_PICTURE_NAMES = {"post": "Post", "combine": "Recombine"}
+
+
+def picture_name(key: str) -> str:
+    """The name a template's picture writes in a block: the graph's, never shortened."""
+    return _(_PICTURE_NAMES.get(key) or TITLES.get(key, key))
 
 
 def template_source(t: dict) -> str:
     """The source of a template's workflow: frames, an image, a stretched image."""
+    if t.get("stretched"):                       # "Already stretched image" is an image too: its kind first (1.7)
+        return "stretched"
     if t.get("source") in wfl.SOURCES:
         return t["source"]
     return "stretched" if t.get("stretched") else ("image" if t.get("source") == "image" else "frames")
@@ -208,6 +215,34 @@ def chain_of(t: dict) -> list[tuple[str, str]]:
     return out
 
 
+#: the width of the chosen template's graph, beside the cards (GUI exploration 2: 492 cut the blocks' names)
+PREVIEW_W = 612
+#: the smallest letter a block's name is written in, in a picture; a name wider than its block at this size makes the
+#: chain go on, on a second row (the names are never cut, GUI exploration 2)
+NAME_PT = 6
+
+
+def _name_width(text: str, pt: int = NAME_PT) -> int:
+    f = QFont("Segoe UI", pt)
+    f.setBold(True)
+    return QFontMetrics(f).horizontalAdvance(text) + 7
+
+
+def _draw_name(p: QPainter, r: QRectF, text: str, font: QFont):
+    """A block's name in its box, whole (control round: never shortened): in a smaller letter if need be, down to
+    NAME_PT, then on two lines (at its "/" or anywhere)."""
+    f = QFont(font)
+    room = r.width() - 7
+    while f.pointSize() > NAME_PT and QFontMetrics(f).horizontalAdvance(text) > room:
+        f.setPointSize(f.pointSize() - 1)
+    p.setFont(f)
+    box = r.adjusted(4, 0, -1, 0)
+    if QFontMetrics(f).horizontalAdvance(text) <= room:
+        p.drawText(box, Qt.AlignVCenter | Qt.AlignLeft, text)
+    else:
+        p.drawText(box, Qt.AlignVCenter | Qt.AlignLeft | Qt.TextWrapAnywhere, text.replace("/", "/\u200b"))
+
+
 def draw_graph(t: dict, w: int, h: int, names: bool = False) -> QPixmap:
     """A picture of a template's graph: its sources (one or two nights with their Calibration, or an image file),
     then its blocks; a cut block hatched, a greyed one outlined in amber."""
@@ -234,9 +269,23 @@ def draw_graph(t: dict, w: int, h: int, names: bool = False) -> QPixmap:
     lead = 1 if image else (3 if mono else 2)     # the image; a night and its Calibration; (mono) and its stack
     n = lead + len(chain)
     gap = max(4.0, w * 0.012)
-    bw = (w - 2 * gap - (n - 1) * gap - (gap * 2 if rows > 1 else 0)) / n
-    bh = min(h * 0.22 if rows > 1 else h * 0.34, max(bw * 0.62, h * (0.18 if rows > 2 else 0.24)))
-    mid = h / 2
+
+    def name_of(key):
+        kb, _t, num = key.partition("~")                    # a block placed twice (issue #47): its number
+        return key if key in mono else picture_name(kb) + (f" {num}" if num else "")
+
+    def width_of(n):
+        return (w - 2 * gap - (n - 1) * gap - (gap * 2 if rows > 1 else 0)) / n
+    bw = width_of(n)
+    wrap = len(chain)                                   # the chain's blocks on the first row, the others on a second
+    if names and len(chain) > 2 and bw < max(_name_width(name_of(k)) for k, _h in chain):
+        wrap = max(1, (n + 1) // 2 - lead)
+        bw = width_of(max(lead + wrap, len(chain) - wrap))
+    hb = h if wrap == len(chain) else h / 2             # the height of a row of the picture
+    bh = min(hb * 0.22 if rows > 1 else hb * 0.34, max(bw * 0.62, hb * (0.18 if rows > 2 else 0.24)))
+    if hb < h and rows == 1:
+        bh = min(hb * 0.6, max(bh, hb * 0.42))
+    mid = hb / 2
     font = QFont("Segoe UI", min(10, max(6, int(bh * 0.28))))
     font.setBold(True)
     p.setFont(font)
@@ -269,14 +318,7 @@ def draw_graph(t: dict, w: int, h: int, names: bool = False) -> QPixmap:
         p.drawRect(QRectF(x, y - bh / 2 + 2, 3, bh - 4))
         if names:
             p.setPen(QColor("#e8ebf0" if how != "cut" else "#8b93a1"))
-            kb, _t, num = key.partition("~")                # a block placed twice (issue #47): its number
-            text = key if key in mono else _(_SHORT.get(kb, TITLES.get(kb, kb))) + (f" {num}" if num else "")
-            f = QFont(font)
-            while f.pointSize() > 6 and QFontMetrics(f).horizontalAdvance(text) > bw - 7:
-                f.setPointSize(f.pointSize() - 1)          # the name whole, in a smaller letter if need be
-            p.setFont(f)
-            p.drawText(r.adjusted(4, 0, -1, 0), Qt.AlignVCenter | Qt.AlignLeft,
-                       QFontMetrics(f).elidedText(text, Qt.ElideRight, int(bw - 5)))
+            _draw_name(p, r, name_of(key), font)
             p.setFont(font)
         return r
 
@@ -322,7 +364,18 @@ def draw_graph(t: dict, w: int, h: int, names: bool = False) -> QPixmap:
             p.drawLine(QPointF(xb, min(ys)), QPointF(xb, max(ys)))
             ends = [(xb, mid)]
             x += gap * 2
-    for k, how in chain:
+    for i, (k, how) in enumerate(chain):
+        if i == wrap:                                     # the chain goes on, on the second row, from the left
+            (ex, ey), y2 = ends[0], h * 0.75
+            p.setPen(QPen(QColor("#6f7888"), 1.4))
+            p.setBrush(Qt.NoBrush)
+            turn = QPainterPath(QPointF(ex, ey))
+            for pt in ((ex + gap * 0.5, ey), (ex + gap * 0.5, (ey + y2) / 2), (gap * 0.5, (ey + y2) / 2),
+                       (gap * 0.5, y2), (gap, y2)):
+                turn.lineTo(QPointF(*pt))
+            p.drawPath(turn)
+            x, mid = gap, y2
+            ends = []
         for ex, ey in ends:
             wire(ex, ey, x, mid)
         r = block(x, mid, k, how)
@@ -350,8 +403,15 @@ def draw_filters(t: dict, w: int, h: int, names: bool = False) -> QPixmap:
     rows = (["Colour"] if kind == "dualband" else (["Ha", "OIII"] if kind == "filters" else list(t["filters"])))
     fusion = kind in ("fusion", "dualband")
     n = 1 + len(chain) + (2 if fusion else 0)
-    gap = max(4.0, w * 0.012)
+    gap = max(4.0, w * (0.008 if names else 0.012))      # with the names: narrower gaps, wider blocks
     bw = (w - 2 * gap - (n - 1) * gap - (gap * 2 if fusion else 0)) / n
+    # one row (dual band) whose names do not fit: the Fusion and the Recombine go on a second row (never cut names)
+    below = names and fusion and len(rows) == 1 and \
+        bw < max(_name_width(x) for x in [picture_name(k) for k in chain] +
+                 [_("Fusion") + " " + t.get("palette", ""), _("Recombine")])
+    if below:
+        n = 1 + len(chain)
+        bw = (w - 2 * gap - (n - 1) * gap) / n
     pitch_max = (h - 8) / max(len(rows), 1)
     bh = min(h * 0.34, pitch_max * 0.78, max(bw * 0.62, h * 0.12))
     font = QFont("Segoe UI", min(10, max(6, int(bh * 0.3))))
@@ -366,13 +426,8 @@ def draw_filters(t: dict, w: int, h: int, names: bool = False) -> QPixmap:
         p.setBrush(QColor(colour))
         p.drawRect(QRectF(x, y - bh / 2 + 2, 3, bh - 4))
         if names:
-            f = QFont(font)
-            while f.pointSize() > 6 and QFontMetrics(f).horizontalAdvance(text) > bw - 7:
-                f.setPointSize(f.pointSize() - 1)
-            p.setFont(f)
             p.setPen(QColor("#e8ebf0"))
-            p.drawText(r.adjusted(4, 0, -1, 0), Qt.AlignVCenter | Qt.AlignLeft,
-                       QFontMetrics(f).elidedText(text, Qt.ElideRight, int(bw - 5)))
+            _draw_name(p, r, text, font)
         return r
 
     def wire(x1, y1, x2, y2):
@@ -383,7 +438,7 @@ def draw_filters(t: dict, w: int, h: int, names: bool = False) -> QPixmap:
         p.drawPath(path)
 
     pitch = min(pitch_max, bh + max(4.0, h * 0.06))
-    ys = [h / 2 + (i - (len(rows) - 1) / 2) * pitch for i in range(len(rows))]
+    ys = [h / 2 + (i - (len(rows) - 1) / 2) * pitch for i in range(len(rows))] if not below else [h * 0.3]
     ends = []
     for row, y in zip(rows, ys):
         x = gap
@@ -391,16 +446,27 @@ def draw_filters(t: dict, w: int, h: int, names: bool = False) -> QPixmap:
         for k in chain:
             x = r.right() + gap
             wire(r.right(), y, x, y)
-            r = block(x, y, _(_SHORT.get(k, TITLES.get(k, k))), "#5fbf7f")
+            r = block(x, y, picture_name(k), "#5fbf7f")
         ends.append((r.right(), y))
     if fusion:
+        yf = h * 0.72 if below else h / 2
+        if below:                                       # the row's end turns down to the second row, on the left
+            (ex, ey) = ends[0]
+            p.setPen(QPen(QColor("#6f7888"), 1.4))
+            p.setBrush(Qt.NoBrush)
+            turn = QPainterPath(QPointF(ex, ey))
+            for pt in ((ex + gap * 0.5, ey), (ex + gap * 0.5, (ey + yf) / 2), (gap * 0.5, (ey + yf) / 2),
+                       (gap * 0.5, yf)):
+                turn.lineTo(QPointF(*pt))
+            p.drawPath(turn)
+            ends = [(gap * 0.5, yf)]
         x = ends[0][0] + 3 * gap
-        r = block(x, h / 2, _("Fusion") + " " + t.get("palette", ""), "#c9a227")
-        r2 = block(r.right() + gap, h / 2, _("Combine"), "#c9a227")       # the stars put back (option A)
-        wire(r.right(), h / 2, r2.left(), h / 2)
+        r = block(x, yf, _("Fusion") + " " + t.get("palette", ""), "#c9a227")
+        r2 = block(r.right() + gap, yf, _("Recombine"), "#c9a227")     # the stars put back (option A)
+        wire(r.right(), yf, r2.left(), yf)
         if kind == "dualband":                          # one colour image, two channels
             for _lab, dy in (("Ha", -bh * 0.25), ("OIII", bh * 0.25)):
-                wire(ends[0][0], ends[0][1], r.left(), h / 2 + dy)
+                wire(ends[0][0], ends[0][1], r.left(), yf + dy)
         else:
             for ex, ey in ends:
                 wire(ex, ey, r.left(), h / 2)
@@ -451,7 +517,9 @@ class TemplateGallery(QDialog):
         self.s = session
         self.templates = list(GALLERY if templates is None else templates)
         self.setWindowTitle(_("New workflow"))
-        self.resize(1180, 700)
+        # never taller than a 1366 x 768 screen's room: 768 less the task bar and this window's title bar (control
+        # round: 700 was taller than that)
+        size_within(self, 1180, 660)
         self.choice: dict | None = None
         self.image = ""
         root = QVBoxLayout(self)
@@ -492,7 +560,7 @@ class TemplateGallery(QDialog):
         side = QFrame()
         side.setObjectName("side")
         side.setStyleSheet("QFrame#side { background: #1c1f26; border-radius: 8px; } QLabel { background: transparent; }")
-        side.setFixedWidth(520)
+        side.setFixedWidth(PREVIEW_W + 28)              # the room left by two columns of cards: a wide preview
         sv = QVBoxLayout(side)
         sv.setContentsMargins(14, 14, 14, 14)
         sv.setSpacing(8)
@@ -517,6 +585,26 @@ class TemplateGallery(QDialog):
         b.clicked.connect(self._browse)
         fr.addWidget(b)
         sv.addWidget(self.file_row)
+        # One workflow per filter on a project without filters yet (GUI exploration 7.2): the filters shot, chosen
+        # here, each get an empty Session block and its workflow
+        self.filter_row = QWidget()
+        flr = QHBoxLayout(self.filter_row)
+        flr.setContentsMargins(0, 0, 0, 0)
+        flr.addWidget(label(_("Filters"), "dim"))
+        self.filter_b: dict[str, QPushButton] = {}
+        from ..core.project2 import FILTERS
+        for f in [x for x in FILTERS if x]:
+            fb = QPushButton(f)
+            fb.setCheckable(True)
+            fb.setObjectName("face")
+            fb.setMinimumWidth(40)
+            fb.toggled.connect(lambda _on: self._update())
+            flr.addWidget(fb)
+            self.filter_b[f] = fb
+        flr.addStretch(1)
+        sv.addWidget(self.filter_row)
+        self.why = label("", "warn", wrap=True)             # why Create is greyed (GUI exploration 7.5)
+        sv.addWidget(self.why)
         nr = QHBoxLayout()
         nr.addWidget(label(_("Name"), "dim"))
         self.name = QLineEdit()
@@ -555,7 +643,7 @@ class TemplateGallery(QDialog):
 
     # ------------------------------------------------------------ the cards
     def _copies(self) -> list[dict]:
-        return [dict(key=f"copy:{p.pid}", tab="copy", name=_("Copy of “{name}”").format(name=p.name), copy=p,
+        return [dict(key=f"copy:{p.pid}", tab="copy", name=_("{name} (copy)").format(name=p.name), copy=p,
                      opts=p.opts, cut=p.opts.get("cut") or [], end=p.end, source="image" if p.source else None,
                      text=_("The workflow “{name}” with all its settings: to try one change against it.").format(
                          name=p.name)) for p in self.s.paths]
@@ -587,10 +675,13 @@ class TemplateGallery(QDialog):
         self.choice = t
         for c in self.cards:
             c.set_selected(c.t is t)
-        self.preview.setPixmap(draw_graph(t, 492, 190, names=True))
+        self.preview.setPixmap(draw_graph(t, PREVIEW_W, 190, names=True))
         self.title.setText(_(t["name"]) if not t.get("copy") else t["name"])
         self.text.setText(_(t["text"]) if not t.get("copy") else t["text"])
         self.file_row.setVisible(template_source(t) in ("image", "stretched") and not t.get("copy"))
+        self.file.setPlaceholderText(_("a TIFF, PNG or JPEG file, already stretched") if template_source(t) ==
+                                     "stretched" else _("a FITS or TIFF file, straight out of a stack"))
+        self.filter_row.setVisible(self._asks_filters(t))
         mine = bool(t.get("user"))
         self.export_b.setVisible(mine)
         self.delete_b.setVisible(mine)
@@ -613,8 +704,7 @@ class TemplateGallery(QDialog):
         self._update()
 
     def _browse(self):
-        f, _x = QFileDialog.getOpenFileName(self, _("Image"), prefs.last_folder(),
-                                            _("Images (*.fits *.fit *.fts *.tif *.tiff)"))
+        f, _x = QFileDialog.getOpenFileName(self, _("Image"), prefs.last_folder(), image_filter())
         if f:
             prefs.remember_folder(f)
             self.file.setText(f)
@@ -623,8 +713,8 @@ class TemplateGallery(QDialog):
         """(what the template uses of the project's sessions, what is missing) for a filters template."""
         kind = t.get("kind")
         have = self.s.filters() if hasattr(self.s, "filters") else {}
-        if kind == "filters":
-            return (sorted(have), [] if have else [_("a session with a filter (its Session block's Filter)")])
+        if kind == "filters":                             # none yet: the filters chosen here (GUI exploration 7.2)
+            return sorted(have), []
         if kind == "fusion":                              # a missing filter gets an empty Session block (#47)
             return ([f for f in t["filters"] if f in have], [])
         if kind == "dualband":
@@ -637,31 +727,52 @@ class TemplateGallery(QDialog):
         have = self.s.filters() if hasattr(self.s, "filters") else {}
         if t.get("kind") == "fusion":
             return [f for f in t["filters"] if f not in have]
+        if t.get("kind") == "filters" and not have:
+            return self.chosen_filters()
         if t.get("kind") == "dualband":
             colour = [s for s in getattr(getattr(self.s, "p", None), "sessions", []) if not s.filter]
             return [] if colour else [_("colour")]
         return []
 
+    def _asks_filters(self, t: dict) -> bool:
+        """One workflow per filter, on a project whose sessions name no filter yet: its filters are chosen here."""
+        return t.get("kind") == "filters" and not (self.s.filters() if hasattr(self.s, "filters") else {})
+
+    def chosen_filters(self) -> list[str]:
+        return [f for f, b in self.filter_b.items() if b.isChecked()]
+
     def _update(self):
         t = self.choice or {}
         ok = bool(t) and not t.get("planned")
+        why = ""
         if t.get("kind"):
             used, missing = self.needs(t)
             new = self.to_create(t)
             ok = ok and not missing
+            if self._asks_filters(t) and not new:
+                ok, why = False, _("Choose the filters you shot: each gets its Session block and its workflow.")
             self.duration.setText((_("Uses: {what}").format(what=", ".join(used)) if used else "") +
                                   ("\n" + _("Missing: {what}. Add a session with that filter (its Session block), then "
                                              "come back.").format(what=", ".join(missing)) if missing else "") +
                                   ("\n" + _("Empty Session blocks are made for {what}: add their frames there.").format(
                                       what=", ".join(new)) if new else ""))
         if template_source(t) in ("image", "stretched") and not t.get("copy") and not t.get("blank"):
-            ok = ok and Path(self.file.text().strip()).is_file()
+            from ..stages.image import image_problem
+            f = self.file.text().strip()                 # a greyed Create says why (GUI exploration 7.5)
+            why = _(image_problem(f)).format(name=Path(f).name)
+            ok = ok and not why
+        self.why.setText(why)
+        self.why.setVisible(bool(why))
         self.ok.setEnabled(ok)
+        self.ok.setToolTip(why)
 
     def _create(self):
         if not self.ok.isEnabled():
             return
         self.image = self.file.text().strip()
+        t = self.choice or {}
+        if self._asks_filters(t):                          # the filters chosen go with the choice (7.2)
+            self.choice = {**t, "filters": tuple(self.chosen_filters())}
         self.accept()
 
     # ------------------------------------------------------------ the user's templates (issue #47)
@@ -676,8 +787,8 @@ class TemplateGallery(QDialog):
         prefs.remember_folder(f)
         try:
             t = import_template(f)
-        except (OSError, ValueError) as e:
-            self.duration.setText(_("This file is not a template: {why}").format(why=e))
+        except (OSError, ValueError):                      # said once, plainly (GUI exploration 7.5)
+            self.duration.setText(_("“{name}” is not a template file of this program.").format(name=Path(f).name))
             return
         self._reload()
         self._show_tab("mine")
@@ -718,11 +829,16 @@ class TemplateGallery(QDialog):
         return _view_opts(self.choice or {})
 
 
+def image_filter() -> str:
+    """The file dialog's filter of an Image block (GUI exploration 7.3): every format it reads, then any file."""
+    return (_("Images (*.fits *.fit *.fts *.tif *.tiff *.png *.jpg *.jpeg)") + ";;" + _("All files (*)"))
+
+
 def template_dialog(parent, name: str) -> tuple[str, str] | None:
     """Save as template: its name and its gallery tab, in one dialog (issue #47). None when cancelled."""
     from PySide6.QtWidgets import QComboBox, QDialogButtonBox, QFormLayout
     d = QDialog(parent)
-    d.setWindowTitle(_("Save as template"))
+    d.setWindowTitle(_("Save template"))
     f = QFormLayout(d)
     ed = QLineEdit(name)
     ed.selectAll()

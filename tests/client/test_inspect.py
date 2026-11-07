@@ -175,8 +175,8 @@ class Harness(appmod.Main):
         self.tune.back.connect(lambda: self.set_mode(0))
         return self.tune
 
-    def close_project(self, go_home=True):
-        return super().close_project(go_home)
+    def close_project(self, go_home=True, discard=False):
+        return super().close_project(go_home, discard)
 
 
 def open_window(root: Path, size=(1680, 1000), readonly=True) -> Harness:
@@ -646,12 +646,12 @@ def test_a_block_not_computed_says_so_and_offers_run_to_here(win):
         t.runHere.connect(lambda: got.append(1))
         run.click()
         assert got == [1]
-        assert not any("Preview on a region" in x for x in texts_)       # ◇: Spec mode only
+        assert not any("Preview region" in x for x in texts_)       # ◇: Spec mode only
         shot(win, "inspect_pending")
         prefs.set("spec_mode", True)
         t.refresh()
         settle(win)
-        assert any("Preview on a region" in x for x in texts_of(t))
+        assert any("Preview region" in x for x in texts_of(t))
         prefs.set("spec_mode", False)
     finally:
         s.remove_path(s.index_of(q.pid))
@@ -761,6 +761,67 @@ def test_frames_shows_the_sessions_the_health_checks_and_the_counts(win):
     shot(win, "frames_sessions")
 
 
+def test_a_long_health_check_scrolls_and_never_makes_the_window_taller(win, monkeypatch):
+    """GUI exploration 2: 16 warnings took a 768 window to 920 px (and it stayed so): the Sessions page scrolls."""
+    from PySide6.QtWidgets import QScrollArea
+
+    from astro_gpu.client import frames
+    inspect(win, "sources")
+    f = win.frames
+    monkeypatch.setattr(frames, "check_lines", lambda _d: [("warn", f"Session 1: DSC{i:05d}.ARW cannot be read")
+                                                          for i in range(60)])
+    f._build()
+    settle(win)
+    assert isinstance(f.pages.widget(0), QScrollArea)
+    assert win.minimumSizeHint().height() < 700 and win.minimumHeight() < 700
+    monkeypatch.undo()
+    f._build()
+    settle(win)
+
+
+def test_the_strip_shows_the_open_block(win):
+    """GUI exploration 2: at 1366 x 768 the strip of a long chain showed only the first letter of the block opened."""
+    size = win.size()
+    try:
+        from astro_gpu.client.blocks import chain
+        win.resize(700, size.height())
+        inspect(win, [k for k in chain(win.s.path) if k != "post"][-1])        # the last block: at the strip's end
+        settle(win)
+        b, sa = win.tune.strip.current, win.tune.strip_scroll
+        bar = sa.horizontalScrollBar()
+        # scrolled to it when the blocks overflow (the window may stay wider than 700 px: its minimum width depends
+        # on what the module's earlier tests left open; under a parallel run it did)
+        assert b is not None and b.isVisible() and (bar.maximum() == 0 or bar.value() > 0), (
+            win.width(), sa.viewport().width(), win.tune.strip.width(), bar.maximum())
+        left = b.mapTo(sa.viewport(), b.rect().topLeft()).x()
+        assert left >= 0 and left + b.width() <= sa.viewport().width(), (left, b.width(), sa.viewport().width())
+        # control round: only the blocks scroll, "◂ Graph" and the workflow list stay in view
+        st = win.tune.strip
+        back = next(x for x in st.findChildren(QPushButton) if x.text().startswith("◂"))
+        assert not sa.isAncestorOf(back) and back.isVisible()
+        assert 0 <= back.mapTo(win, back.rect().topLeft()).x() < win.width()
+        # the graph's blocks with the graph's names: no Output (never a block), the Session first
+        names = [x.text() for x in st.blocks.findChildren(QPushButton)]
+        assert "Output" not in names and names[-1] == "Post" and names.count(names[0]) == 1, names
+    finally:
+        win.resize(size)
+        settle(win)
+
+
+def test_the_panel_says_the_state_the_graph_shows(win):
+    """Control round: the last block (which holds the Output) said "Up to date" in its panel and in Inspect where the
+    graph said "Outdated"; a session's Calibration said "Up to date" never computed. One state: the graph's."""
+    from astro_gpu.client.blocks import STATE_WORD, Graph, chain
+    keys = [x for x in chain(win.s.path) if x != "post"]
+    k = keys[-1]                                            # the last block: it holds the Output
+    inspect(win, k)
+    g = Graph(win.s)
+    want = i18n._(STATE_WORD[g.state(g.node_of(win.s.path, k))])
+    chips = [lb.text() for lb in win.tune.panel.findChildren(QLabel)
+             if lb.isVisible() and lb.text() in {i18n._(x) for x in STATE_WORD.values()}]
+    assert chips[:1] == [want], (k, chips, want)
+
+
 def shot_dialog(d, name, lang="en"):
     QApplication.processEvents()
     d.grab().save(str(shots_dir() / f"{name}_{lang}.png"))
@@ -823,12 +884,12 @@ def test_two_sessions_merge_their_flats_and_offer_the_stacking_mode(win):
         lines = check_lines(f.data)
         assert any(lv == "warn" and "The flats of 2 sessions are merged into one master flat" in tx for lv, tx in lines)
         assert "Stacking" in texts_of(f.pages.widget(0))
-        assert "All sessions together" in texts_of(f.pages.widget(0))
+        assert "All together" in texts_of(f.pages.widget(0))          # compact names: the sentence in its tooltip
         assert "One stack per session" not in " ".join(texts_of(f.pages.widget(0)))        # ◇
         prefs.set("spec_mode", True)
         f._build()
         settle(win)
-        b = [x for x in f.findChildren(QPushButton) if x.text().startswith("One stack per session")][0]
+        b = [x for x in f.findChildren(QPushButton) if x.text().startswith("One per session")][0]   # compact name
         assert not b.isEnabled() and "◇" in b.text()
         prefs.set("spec_mode", False)
         shot(win, "frames_two_sessions")
@@ -1061,8 +1122,9 @@ def test_importing_the_heart_folder_gives_the_counts_the_sessions_and_the_thumbn
         assert import_folder(w.s, w, str(DATA / "flats"), new_session=True, service=w.tune.service)
         assert len(w.s.p.sessions) == 2
         # the same folder twice: said, not added
+        from PySide6.QtWidgets import QToolTip
         assert not import_folder(w.s, w, str(DATA / "lights"), service=w.tune.service)
-        assert len(w.s.p.sessions) == 2 and any(k == "information" for k, _a in env["shown"])
+        assert len(w.s.p.sessions) == 2 and QToolTip.text() == "Folder already in project"   # said, not blocking (10.2)
     finally:
         w.s.flush()
         w.close()
@@ -1155,8 +1217,7 @@ def test_the_image_cache_forgets_the_oldest_within_its_budget():
 
 def test_missing_diagnostics_are_said_plainly_in_the_language():
     e = "rejection maps: missing: recompute Stacking to get it"
-    assert si.missing_text(e) == ("Rejection maps: not in this result, made by an older version of the engine. "
-                                  "Recompute Stacking to get it.")
+    assert si.missing_text(e) == "Rejection maps: older result · recompute Stacking"
 
     class Diag:
         missing = [e, "roundness: missing: recompute Registration to get it"]
@@ -1165,9 +1226,9 @@ def test_missing_diagnostics_are_said_plainly_in_the_language():
     appmod.apply_language("fr")
     try:
         fr = si.missing_of(Diag())
-        assert fr[0].startswith("Les cartes de rejet : pas dans ce résultat") and "Recalculez Empilement" in fr[0]
+        assert fr[0].startswith("Les cartes de rejet : résultat ancien") and "recalculer Empilement" in fr[0]
         assert fr[1].startswith("La rondeur : ") and "Alignement" in fr[1]
-        assert si.not_yet("stack") == "Pas encore disponible : recalculez Empilement pour l'avoir."
+        assert si.not_yet("stack") == "À recalculer : Empilement"
     finally:
         appmod.apply_language("en")
 
@@ -1680,6 +1741,59 @@ def test_edits_wait_for_save_and_closing_asks(qapp, tmp_path, monkeypatch):
         assert w.close_project() is False and w.project is not None              # Cancel: still open
         assert w.close_project() is True and w.project is None                   # Don't save
         assert project2.load(root).workflows[0].name == "Renamed"
+    finally:
+        w.close()
+
+
+def test_save_as_writes_the_edits_into_the_copy_only(qapp, tmp_path, monkeypatch):
+    """GUI exploration 4: Save As cancelled writes nothing (the original keeps its file, the edits stay pending); Save
+    As to a new folder puts the edits in the copy, opened at once without a question, the original as it was."""
+    from astro_gpu.client import app as appmod_
+    root = tmp_path / "ws" / "Orig"
+    p = project2.create(root, "Orig", Target(name="IC 1805"))
+    api.add_workflow(p, "Full", "Full", None)
+    api.save(p)
+    before = (root / project2.FILE).read_bytes()
+    w = open_window(root, readonly=False)
+    try:
+        monkeypatch.setattr(type(w), "ask_save", lambda self: pytest.fail("no question on Save As"))
+        w.s.rename(w.s.paths[0].pid, "Edited")
+        monkeypatch.setattr(appmod_.QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: ""))
+        w.save_as()                                                              # cancelled
+        assert (root / project2.FILE).read_bytes() == before and w.s.dirty
+        copy = tmp_path / "ws" / "Copy"
+        copy.mkdir()
+        monkeypatch.setattr(appmod_.QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(copy)))
+        w.save_as()
+        assert (root / project2.FILE).read_bytes() == before
+        assert project2.load(copy).workflows[0].name == "Edited"
+        assert Path(w.s.root) == copy and not w.s.dirty
+    finally:
+        w.close()
+
+
+def test_save_takes_the_name_being_typed(qapp, tmp_path):
+    """GUI exploration 4: a name typed in a field without Enter, then Ctrl+S: the name typed is saved (the field
+    applies what it holds before the save, as in reference apps). And Ctrl+Shift+Z redoes, as Ctrl+Y."""
+    from PySide6.QtGui import QKeySequence
+    from PySide6.QtWidgets import QLineEdit
+    root = tmp_path / "ws" / "Typed"
+    p = project2.create(root, "Typed", Target(name="IC 1805"))
+    api.add_workflow(p, "Full", "Full", None)
+    api.save(p)
+    w = open_window(root, readonly=False)
+    try:
+        ed = QLineEdit("Full", w)
+        ed.editingFinished.connect(lambda: w.s.rename(w.s.paths[0].pid, ed.text()))
+        ed.show()
+        w.activateWindow()
+        ed.setFocus()
+        qapp.processEvents()
+        assert QApplication.focusWidget() is ed
+        ed.setText("Night of the 4th")                                       # typed, no Enter
+        w.save()
+        assert project2.load(root).workflows[0].name == "Night of the 4th"
+        assert QKeySequence("Ctrl+Shift+Z") in w.a_redo.shortcuts()
     finally:
         w.close()
 

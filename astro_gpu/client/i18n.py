@@ -15,6 +15,8 @@ a decimal comma in French.
 from __future__ import annotations
 
 import json
+import re
+import string
 from pathlib import Path
 
 LOCALE = Path(__file__).parent / "locale"
@@ -25,6 +27,58 @@ _cat: dict[str, str] = {}
 _missing: set[str] = set()
 
 
+#: the feminine nouns of the interface, by language: the names of the blocks and of the things a message names (a name
+#: is known by its first word: "Gradient 2", "Sortie Gradient"); any other name is masculine
+FEMININE = {"fr": {"Calibration", "Sélection", "Astrométrie", "Couleur", "Fusion", "Session", "Image", "Images",
+                   "Sortie", "Branche", "Pause", "Variante", "Copie"}}
+#: the forms a translation may ask of a name in its fields: "{block} retiré{block:e}", "{block:un} seul{block:e}",
+#: "Retirer {name:de}" (French: agreement, articles, elision before a vowel; "de « Ha »" stays as it is)
+_NOUN_FORMS = ("e", "un", "Un", "de", "le", "Le", "du", "au")
+_NOUN_FIELD = re.compile(r"\{\w*:(" + "|".join(_NOUN_FORMS) + r")\}")
+_ELIDED = set("AEIOUYÂÀÉÈÊËÎÏÔÛÜaeiouyâàéèêëîïôûü")
+
+
+def noun_form(name: str, form: str, lang: str | None = None) -> str:
+    """A name in the form a sentence needs (French): its gender's ending ("e" or ""), "un"/"une", "de"/"d'" before it,
+    "le"/"la"/"l'" before it, "du"/"de la"/"de l'", "au"/"à la"/"à l'"."""
+    lang = lang or _lang
+    head = name.split(" ")[0] if name else ""
+    fem = head in FEMININE.get(lang, ())
+    vowel = bool(name) and name[0] in _ELIDED
+    if form == "e":
+        return "e" if fem else ""
+    if form in ("un", "Un"):
+        w = "une" if fem else "un"
+        return w.capitalize() if form == "Un" else w
+    if form == "de":
+        return ("d'" if vowel else "de ") + name
+    if form in ("le", "Le"):
+        w = "l'" if vowel else "la " if fem else "le "
+        return (w[0].upper() + w[1:] if form == "Le" else w) + name
+    if form == "du":
+        return ("de l'" if vowel else "de la " if fem else "du ") + name
+    if form == "au":
+        return ("à l'" if vowel else "à la " if fem else "au ") + name
+    return name
+
+
+class _NounFormatter(string.Formatter):
+    def format_field(self, value, spec):
+        if spec in _NOUN_FORMS and isinstance(value, str):      # a number keeps "{x:e}" (an exponent)
+            return noun_form(value, spec)
+        return super().format_field(value, spec)
+
+
+_NOUNS = _NounFormatter()
+
+
+class Text(str):
+    """A translation whose fields ask a name in a form ("{block:e}"): its format() gives that form (the English template
+    has the plain field, so the code formats both the same way)."""
+    def format(self, *args, **kwargs):
+        return _NOUNS.vformat(str(self), args, kwargs)
+
+
 def set_language(code: str):
     global _lang, _cat
     _lang = code if code in LANGUAGES else "en"
@@ -33,6 +87,9 @@ def set_language(code: str):
     if _lang != "en":
         for f in sorted((LOCALE / _lang).glob("*.json")):
             _cat.update(json.loads(f.read_text(encoding="utf-8")))
+        for k, v in _cat.items():
+            if _NOUN_FIELD.search(v):
+                _cat[k] = Text(v)
 
 
 def language() -> str:
@@ -63,10 +120,13 @@ def missing() -> set[str]:
 def plural(n: int, one: str, many: str, **args) -> str:
     """A count with its noun in the right form, translated: ``plural(n, "{n} night", "{n} nights")``. English takes the
     singular for 1 only; French for 0 and 1 ("0 nuit", "1 nuit", "2 nuits"). Other fields go in ``args``. When English
-    has one form for both ("{n} outdated"), the catalogue gives the language's plural under "<text>#many"."""
+    has one form for both ("{n} outdated"), the catalogue gives the language's plural under "<text>#many" (and, when
+    the plain entry is the plural one, its singular under "<text>#one": "{n} bias" → "1 offset", "3 offsets")."""
     single = (abs(n) < 2) if _lang == "fr" else (n == 1)
     if not single and one == many and _lang != "en" and many + "#many" in _cat:
         return _cat[many + "#many"].format(n=n, **args)     # one English form, two in the language ("obsolète(s)")
+    if single and one == many and _lang != "en" and one + "#one" in _cat:
+        return _cat[one + "#one"].format(n=n, **args)
     return _(one if single else many).format(n=n, **args)
 
 
@@ -94,3 +154,40 @@ def hm(seconds: float) -> str:
     if m < 1:
         return "≤ 1 min"
     return f"{m // 60} h {m % 60:02d}" if m >= 60 else f"{m} min"
+
+
+#: a program error as Python writes it ("TypeError: ...", a traceback): never shown as it is (GUI exploration 9.9)
+_RAW_ERROR = re.compile(r"^\s*(Traceback|[A-Za-z_.]*(Error|Exception|Interrupt)\b)")
+#: the usual troubles behind a program error, in plain words (searched in the error's text)
+_PLAIN_ERRORS = (
+    (("PermissionError", "Permission denied", "Access is denied"), "no permission to write or read there"),
+    (("FileNotFoundError", "No such file", "cannot find the path"), "a file or folder is not found"),
+    (("No space left", "ENOSPC", "not enough space on the disk"), "the disk is full"),
+    (("MemoryError", "out of memory", "Unable to allocate"), "not enough memory"),
+)
+
+
+def is_raw_error(text: str) -> bool:
+    """Whether a text is a program error as Python writes it, not a sentence for the user."""
+    return bool(text) and bool(_RAW_ERROR.match(text))
+
+
+def plain_error(text: str) -> str:
+    """The reason of a failure in plain words, translated: a sentence the program wrote is kept (translated when the
+    catalogue has it); a program error becomes the usual trouble it shows (no permission, a file not found, a full
+    disk, not enough memory), else "an error of the program", the technical text being for the Log only."""
+    text = (text or "").strip()
+    if not is_raw_error(text):
+        return maybe(text.splitlines()[0]) if text else _("an error of the program (the details are in the Log)")
+    for marks, words in _PLAIN_ERRORS:
+        if any(m in text for m in marks):
+            return _(words)
+    return _("an error of the program (the details are in the Log)")
+
+
+def log_detail(model, text: str) -> None:
+    """The technical text of a failure, kept in the Log (the history of the project) when a model is at hand."""
+    log = getattr(model, "log", None)
+    if callable(log) and is_raw_error(text or ""):
+        lines = (text or "").strip().splitlines()
+        log("Technical detail: {detail}", detail=(lines[-1] if lines[0].startswith("Traceback") else lines[0])[:300])

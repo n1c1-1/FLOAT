@@ -24,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
@@ -193,8 +193,9 @@ def _thumb(root: Path) -> QImage | None:
 
 def project_info(root: Path) -> ProjectInfo:
     p = project2.load(root)
-    info = ProjectInfo(root.as_posix(), p.name, p.target.name or "", len(p.sessions), n_workflows=len(p.workflows),
-                       description=p.description or "")
+    # a night is a session with lights: a template's empty Sessions are none (GUI exploration 2)
+    info = ProjectInfo(root.as_posix(), p.name, p.target.name or "", sum(1 for s in p.sessions if s.lights),
+                       n_workflows=len(p.workflows), description=p.description or "")
     inv = max(_manifests(root, "inventory"), key=lambda d: d.get("finished") or "", default=None)
     m = (inv or {}).get("metrics") or {}
     info.integration_h = m.get("integration_h")
@@ -541,9 +542,39 @@ def folder_name(name: str) -> str:
     return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name.strip()).rstrip(". ")
 
 
+def holds_frames(folder: Path) -> bool:
+    """Whether a folder holds frames (camera raw or FITS files) itself: the folder of a session's frames."""
+    from ..core.project import frame_kind
+    try:
+        return any(frame_kind(q.name) for q in folder.iterdir())
+    except OSError:
+        return False
+
+
+def projects_location(avoid: str = "") -> str:
+    """Where a new project is proposed (GUI exploration 7.1): beside the last project opened, else the last folder
+    used, else the home folder; never in ``avoid`` or below it (the folder of the frames an import reads), never in a
+    folder of frames (GUI exploration 4: the darks just added to a session were the last folder used)."""
+    bad = Path(avoid).resolve() if avoid else None
+    last = Path(prefs.last_folder())
+    for c in [Path(r["path"]).parent for r in prefs.recent()] + [last, Path.home()]:
+        try:
+            if not c.is_dir():
+                continue
+            r = c.resolve()
+        except OSError:
+            continue
+        if bad is not None and (r == bad or bad in r.parents):
+            continue
+        if c is last and holds_frames(c):
+            continue
+        return c.as_posix()
+    return (bad.parent if bad is not None else Path.home()).as_posix()
+
+
 class NewProjectDialog(QDialog):
     """Name, target and folder of a new project; the folder is <location>/<name>, the location chosen with Browse…
-    (the last folder used at first)."""
+    (where the projects are at first: ``projects_location``)."""
 
     def __init__(self, location: str, name: str = "", target: str = "", parent=None):
         super().__init__(parent)
@@ -639,6 +670,20 @@ class NewProjectDialog(QDialog):
             self.found.setText(_("Not in the catalogues here: it will be looked up online, else the field is solved "
                                  "from its stars alone"))
             self.found.setStyleSheet(f"color: {WARN};")
+        self._fit_found()
+        QTimer.singleShot(0, self._fit_found)             # again once the dialog has its width
+
+    def _fit_found(self):
+        """The message under the target as tall as its lines: a dialog already shown does not grow by itself for a
+        wrapped label (GUI exploration 2: its second line was cut at the bottom)."""
+        try:
+            lb = self.found
+            lb.setMinimumHeight(lb.heightForWidth(lb.width()) if lb.text() else 0)
+            self.layout().activate()
+            if self.height() < self.minimumSizeHint().height():
+                self.resize(self.width(), self.minimumSizeHint().height())
+        except RuntimeError:                              # the dialog was closed meanwhile
+            pass
 
     def details(self) -> dict:
         """What New project gives the project's target: its coordinates when found, the capture data entered."""
@@ -691,10 +736,11 @@ class HomeView(QWidget):
         lv.setSpacing(8)
         buttons = []
         for text, fn, primary, on in ((_("New project…"), self.new_project, True, True),
-                                      (_("Import folder as new project…"), lambda: self.importFolder.emit(), False,
-                                       can_import),
+                                      (_("Import folder…"), lambda: self.importFolder.emit(), False, can_import),
                                       (_("Open project…"), self.open_other, False, True)):
-            b = QPushButton(text)
+            b = QPushButton(text)                    # compact names (decision 12): the sentence in the tooltip
+            if fn is not self.new_project and fn is not self.open_other:
+                b.setToolTip(_("Import folder as new project…"))
             if primary:
                 b.setObjectName("primary")
             b.clicked.connect(lambda _x=False, f=fn: f())
@@ -829,9 +875,12 @@ class HomeView(QWidget):
         return False
 
     # ------------------------------------------------------------ actions
-    def ask_new_project(self, name: str = "", target: str = "") -> tuple[str, str, str, dict] | None:
-        """The New project dialog: (folder, name, target, details: ra, dec, focal_mm, pixel_um when known), or None."""
-        d = NewProjectDialog(prefs.last_folder(), name, target, self.window())
+    def ask_new_project(self, name: str = "", target: str = "", location: str | None = None
+                        ) -> tuple[str, str, str, dict] | None:
+        """The New project dialog: (folder, name, target, details: ra, dec, focal_mm, pixel_um when known), or None.
+        ``location``: where it is proposed (else where the projects are: ``projects_location``, never the folder of
+        the frames last added, GUI exploration 4)."""
+        d = NewProjectDialog(location or projects_location(), name, target, self.window())
         if d.exec():
             return d.folder().as_posix(), d.name.text().strip(), d.target.text().strip(), d.details()
         return None
@@ -843,8 +892,9 @@ class HomeView(QWidget):
 
     def open_other(self):
         f, _x = QFileDialog.getOpenFileName(self, _("Open project"), prefs.last_folder(),
-                                            _("Projects (*.astroproj)") + ";;"
-                                            + _("Projects made with an older version (project.json)"))
+                                            # one kind of file for the user: a project, of this version or older
+                                            _("FLOAT project") + " (*.astroproj project.json)",
+                                            options=QFileDialog.HideNameFilterDetails)   # no file name shown
         if f:
             prefs.remember_folder(Path(f).parent.parent)       # the folder the project's folder is in
             self.openProject.emit(Path(f).parent.as_posix())

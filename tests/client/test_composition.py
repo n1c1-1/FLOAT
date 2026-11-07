@@ -18,7 +18,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from astro_gpu import api  # noqa: E402
 from astro_gpu.client import postengine  # noqa: E402
-from astro_gpu.client.blocks import Graph  # noqa: E402
+from astro_gpu.client.blocks import Graph, node_title  # noqa: E402
 from astro_gpu.client.model import POST_PART_NAMES, ProjectModel  # noqa: E402
 from astro_gpu.client.postengine import (  # noqa: E402
     BLENDS,
@@ -44,6 +44,10 @@ def two(qapp, tmp_path_factory):
     """A model on an empty project with Full (Stars) and Classic stack (no Stars), read-only."""
     root = tmp_path_factory.mktemp("composition") / "P"
     p = project2.create(root, "P", Target(name="M 1"))
+    raw = root.parent / "raw"                         # lights: a workflow without any gives Post no layer (question 4)
+    raw.mkdir(parents=True, exist_ok=True)
+    (raw / "a1.ARW").write_bytes(b"\0" * 100)
+    p.sessions.append(project2.Session(1, "night 1", lights=[str(raw)]))
     api.add_workflow(p, "Full", "Full")
     api.add_workflow(p, "Classic stack", "Classic stack")
     w = ApiWorker()
@@ -81,14 +85,15 @@ def test_a_stars_workflow_comes_as_its_stars_and_background_block_and_the_others
     assert [n.paths for n in g.compositions] == [[full]] and g.compositions[0].lid is None
     assert g.compositions[0].parent is g.node_of(full, "etoiles")
     assert g.to_post == {classic.pid} and g.direct == []
-    assert sorted(g.post_layers) == sorted([("Full · Combine stars & background layers", full.pid),
+    assert sorted(g.post_layers) == sorted([("Full · Recombine", full.pid),
                                             ("Classic stack", classic.pid)])
     assert g.summary(g.final) == "2 layers"
     # issue #17: no Output block of its own, its Stars block holds it (the workflow's name, its menu)
     st = g.node_of(full, "etoiles")
     assert g.node_of(full, "post") is st and st.handle and all(n.key != "post" or n.paths != [full] for n in g.nodes)
     assert g.summary(st).startswith("Full · ") and g.leaves[full.pid] is st
-    assert g.summary(g.node_of(classic, "post")) == "Classic stack · to Post"          # #47: titled Output
+    po = g.node_of(classic, "post")                   # #49, exploration 2: its Output in its last block's wire
+    assert po.key != "post" and g.leaves[classic.pid] is po and g.summary(po).startswith("Classic stack · ")
     assert g.summary(g.compositions[0]) == "stars in Screen"
 
 
@@ -98,7 +103,7 @@ def test_the_default_layer_of_a_stars_workflow_puts_the_stars_back_in_screen():
     out = new_workflow_layer(2, "Classic stack", True)
     assert out["part"] is None and "blend" not in out and out["mode"] == "Normal"
     assert POST_PART_NAMES == {"starless": "Starless image", "stars": "Stars alone",
-                               "combined": "Combine stars & background layers"}
+                               "combined": "Recombine"}
 
 
 # ---------------------------------------------------------------------------------------------- the model's edits
@@ -153,7 +158,12 @@ def test_the_graph_has_a_block_per_stars_and_background_layer_and_sends_the_othe
     model.set_post_layer(b, blend="Lighten")
     g = Graph(model)
     stars = g.node_of(full, "etoiles")
-    assert [n.lid for n in g.compositions] == [b, a] and all(n.parent is stars for n in g.compositions)
+    # 2nd round: the Recombine Post gives Full by default stays; the ones added come on top of it, numbered
+    first = g.compositions[-1].lid
+    assert [n.lid for n in g.compositions] == [b, a, first] and all(n.parent is stars for n in g.compositions)
+    assert [model.post_layer(x)["name"] for x in (first, a, b)] == ["Full · Recombine", "Full · Recombine 2",
+                                                                     "Full · Recombine 3"]
+    assert [node_title(model, n) for n in g.compositions] == ["Recombine 3", "Recombine 2", "Recombine 1"]
     assert g.node_of(full, "composition", a).lid == a and g.node_of(full, "composition").lid == b
     assert g.direct == [(stars, "stars"), (stars, "starless")]               # Post's order, top first
     # Classic has no layer yet: Post will give it its Output image
@@ -161,11 +171,12 @@ def test_the_graph_has_a_block_per_stars_and_background_layer_and_sends_the_othe
     assert g.node_of(full, "post") is stars                                  # Full's Output image is in no layer (#17)
     assert g.summary(g.node_of(full, "composition", b)) == "stars in Lighten"
     assert g.summary(g.node_of(full, "composition", a)) == "stars in Screen"
-    assert g.summary(g.final) == "6 layers" and len(g.post_layers) == 6
+    assert g.summary(g.final) == "7 layers" and len(g.post_layers) == 7
     assert g.state(g.compositions[0]) == g.state(stars)                  # computed in Post from the Stars block's images
     model.add_post_layer(full.pid, None)                                    # its Output image as a layer
     g = Graph(model)
-    assert full.pid in g.to_post and g.summary(g.node_of(full, "post")) == "Full · to Post"
+    stars = g.node_of(full, "etoiles")
+    assert full.pid in g.to_post and g.node_of(full, "post") is stars and g.summary(stars).startswith("Full · ")
 
 
 def test_an_image_layer_counts_in_the_post_block_without_a_workflow(model):
@@ -173,7 +184,7 @@ def test_an_image_layer_counts_in_the_post_block_without_a_workflow(model):
     model.add_post_layer(full.pid, "combined")
     model.set_post_layers([postengine.new_image_layer("stack/abc", "Stack")] + model.post_layers())
     g = Graph(model)
-    assert ("Stack", None) in g.post_layers and g.summary(g.final).startswith("3 ")
+    assert ("Stack", None) in g.post_layers and g.summary(g.final).startswith("4 ")   # Full's default Recombine stays (2nd round)
 
 
 # ---------------------------------------------------------------------------------------------- postengine
@@ -219,8 +230,8 @@ def test_the_stars_panel_sends_each_image_to_post_and_makes_a_stars_and_backgrou
     panel = Panel(model)
     stars = Graph(model).node_of(full, "etoiles")
     panel.outputs(stars)
-    buttons = {b.text(): b for b in panel.findChildren(QPushButton)}
-    assert "To Post" in buttons and "New Combine stars & background layers block" in buttons
+    buttons = {b.text().replace("&&", "&"): b for b in panel.findChildren(QPushButton)}   # "&&": a plain "&" shown
+    assert "To Post" in buttons and "+ Recombine" in buttons
     panel._part_to_post(full, "starless")
     panel._new_composition(full)
     assert [x.get("part") for x in model.post_layers()][:2] == ["combined", "starless"]
@@ -229,7 +240,7 @@ def test_the_stars_panel_sends_each_image_to_post_and_makes_a_stars_and_backgrou
 def test_sending_the_stars_alone_keeps_the_combine_block_and_the_link_can_be_taken_back(model):
     """Issue #29: on a composition never filled, sending the stars alone first puts the layers Post gives the
     workflows (Full's Combine block), so that block does not vanish; the link of the stars alone to Post is taken
-    back from the graph (the split block's menu, its panel's Out of Post), with its layer's filters."""
+    back from the graph (the Stars/background block's menu, its panel's Out of Post), with its layer's filters."""
     from PySide6.QtWidgets import QPushButton
 
     from astro_gpu.client.panel import Panel

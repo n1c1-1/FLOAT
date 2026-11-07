@@ -44,7 +44,7 @@ from astro_gpu.client import app as appmod  # noqa: E402
 from astro_gpu.client import i18n, prefs  # noqa: E402
 from astro_gpu.client.blocks import Graph  # noqa: E402
 from astro_gpu.client.graph import BlockItem, GraphPage  # noqa: E402
-from astro_gpu.client.logview import LogPanel  # noqa: E402
+from astro_gpu.client.logview import LogPanel, event_text  # noqa: E402
 from astro_gpu.client.model import ProjectModel  # noqa: E402
 from astro_gpu.client.runs import RunDialog, RunOverlay, RunStatus, build_rows, row_state, run_blocks  # noqa: E402
 from astro_gpu.client.services.run import (  # noqa: E402
@@ -136,7 +136,9 @@ class B(Stage):
         ck = ctx.ckpt / "i.json"
         start = json.loads(ck.read_text())["i"] if ck.exists() else 0
         for i in range(start, p.steps):
-            ck.write_text(json.dumps({"i": i + 1}))
+            part = ck.with_suffix(".part")                 # written whole, then put in place: never read half-written
+            part.write_text(json.dumps({"i": i + 1}))      # (the test reads it while it runs)
+            os.replace(part, ck)
             time.sleep(p.delay)
             ctx.progress((i + 1) / p.steps, f"step {i + 1}", force=True)        # raises Interrupted on STOP
         ctx.save_json("b.json", {"steps": p.steps, "resumed_from": start})
@@ -460,8 +462,74 @@ def test_a_stopped_run_and_a_lost_worker_and_a_run_that_never_started():
     assert [j.state for j in lost.jobs] == [INTERRUPTED, NOT_STARTED] and lost.lines[-1][1] == "run_lost"
     never = RunTrack([job("ka", "a", "stacking")], "r1")
     never.abort("ImportError: no module named x")
-    assert never.status == "failed" and never.jobs[0].state == NOT_STARTED and never.lines[-1][1] == "not_started"
-    assert "no module named x" in render_line(never.lines[-1])
+    assert never.status == "failed" and never.jobs[0].state == NOT_STARTED and never.lines[-2][1] == "not_started"
+    # GUI exploration 6.4: said in plain words, the worker's own words on a line of their own (below)
+    assert render_line(never.lines[-2]).endswith("Run not started: an unexpected error stopped it")
+    assert never.never_started and "no module named x" in never.error
+    # GUI exploration 2: the real cause is a line of its own after the plain sentence (the Log and its export)
+    assert never.lines[-1][1] == "start_detail" and render_line(never.lines[-1]).endswith(
+        "Cause: ImportError: no module named x")
+
+
+def test_engine_failures_in_plain_words_with_what_to_do():
+    """GUI exploration 2: a missing folder is named; a program error is never shown raw; the failures data cause say
+    what to do, in the language of the interface."""
+    from astro_gpu.client.services.run import start_detail, start_failure
+    from astro_gpu.stages.stack import too_few_frames
+    why = start_failure("FileNotFoundError: [Errno 2] No such file or directory: 'E:\\\\gone\\\\lights'")
+    assert why.startswith("E:") and "gone" in why and "cannot be found" in why
+    assert start_failure("FileNotFoundError: x") == "a folder of the project cannot be found (a drive unplugged?)"
+    assert start_detail("Traceback (most recent call last):\n  File x\nOSError: disk") == "OSError: disk"
+    assert start_detail("worker crashed: CUDA error 999") == "worker crashed: CUDA error 999"
+    assert too_few_frames(1, 1, 0, 1).startswith("only 1 light frame(s)") and "selection" not in too_few_frames(
+        1, 1, 0, 1)
+    assert "aligned" in too_few_frames(5, 1, 0, 1) and "by hand" in too_few_frames(5, 5, 4, 1)
+    assert "selection thresholds" in too_few_frames(5, 5, 0, 1)
+    line = (0.0, "stage_failed", {"stage": "register", "error": "OSError: No SIMPLE card found, this file does not"})
+    assert "SIMPLE" in render_line(line) and "OSError" in render_line(line)             # the console keeps the words
+    appmod.apply_language("fr")
+    try:
+        assert "OSError" not in engine_text("OSError: No SIMPLE card found") and engine_text("OSError: x")
+        assert engine_text(too_few_frames(1, 1, 0, 1)).startswith("1 brute(s) seulement")
+        assert engine_text("x.fits cannot be read: it is not a valid FITS file (damaged, or wrongly named); take it "
+                           "out of the session").startswith("x.fits ne peut pas être lu")
+        assert "darks de flat" in engine_text("3 flat darks have another size than the lights (600x400), e.g. a.fits: "
+                                              "take them out of the session, or use those of this camera")
+        from astro_gpu.stages.gradient import NOT_ALIGNED
+        assert "placez l'Alignement avant l'Empilement" in engine_text(NOT_ALIGNED)
+    finally:
+        appmod.apply_language("en")
+
+
+def test_a_frame_that_is_not_a_fits_file_is_named_not_shown_as_a_program_error(tmp_path):
+    from astro_gpu.io.frames import fits_header, read_cfa
+    bad = tmp_path / "frame_01.fits"
+    bad.write_bytes(b"not a fits file at all" * 200)
+    for read in (fits_header, read_cfa):
+        with pytest.raises(StageError, match="frame_01.fits cannot be read"):
+            read(bad)
+
+
+def test_the_stacking_block_says_auto_while_the_engine_cannot_compute_its_drizzle_scale():
+    """GUI exploration 2: "drizzle ×1,5" before the run, "×1" after: the default was shown, not what is used."""
+    from types import SimpleNamespace as NS
+
+    from astro_gpu.client.blocks import drizzle_auto
+    p = NS(params={})
+    unknown = NS(origin="default", suggestion_known=False)
+    known = NS(origin="auto", suggestion_known=True)
+    assert drizzle_auto(NS(param_info=lambda *_a: unknown), p)
+    assert drizzle_auto(NS(param_info=lambda *_a: None), p)
+    assert not drizzle_auto(NS(param_info=lambda *_a: known), p)
+    assert not drizzle_auto(NS(param_info=lambda *_a: unknown), NS(params={"stack": {"scale": 2.0}}))
+
+
+def test_the_cache_bar_measures_the_cache_folder_itself(tmp_path):
+    from astro_gpu.client.services.worker import disk_usage
+    (tmp_path / "c" / "p").mkdir(parents=True)
+    (tmp_path / "c" / "p" / "a.npy").write_bytes(b"x" * 3_000_000)
+    u = disk_usage({"cache": str(tmp_path / "c"), "gone": ""})
+    assert abs(u["cache"][0] - 0.003) < 1e-6 and u["cache"][1] > 0 and u["gone"] is None
 
 
 def test_row_states_and_the_progress_numbers():
@@ -528,9 +596,9 @@ def test_the_plan_dialog_lists_the_blocks_the_sharing_workflows_the_durations_an
     rows = [(r.row.title, r.row.who) for r in d.rows]
     # the graph's order: the first workflow's blocks, then what the second one adds
     # (issue #47: Color comes after Denoise and does not read it: one Color for both)
+    # the Output is never a block: its job is the workflow's last block's (the lead's round 2 decision)
     assert rows == [("Calibration", ["Plain", "Trained"]), ("Stacking", ["Plain", "Trained"]),
-                    ("Color", ["Plain", "Trained"]), ('Output "Plain"', []), ("Denoise", ["Trained"]),
-                    ('Output "Trained"', [])]
+                    ("Color", ["Plain", "Trained"]), ("Denoise", ["Trained"]), ("Color", ["Trained"])]
     # a block every workflow shares says so, as the panel's scope does; else the workflows by name
     assert [r.who.full_text() for r in d.rows[:3]] == ["both workflows", "both workflows", "both workflows"]
     plan = toy.model.plan_all()
@@ -554,11 +622,11 @@ def test_the_plan_names_the_workflows_that_cannot_run_and_warns_about_the_disk(t
     d = toy.ctl.open_plan(plan, lambda: i18n._("Run project"))
     assert pump(lambda: toy.ctl.free_gb() is not None, 30)
     texts = texts_of(d)
-    assert '"Trained" is not run: the earlier layer belongs to another stack' in texts
-    assert not any("Not enough free disk space" in t for t in texts)
+    assert '"Trained" not run: the earlier layer belongs to another stack' in texts
+    assert not any(t.startswith("Disk: ") for t in texts)
     plan.jobs[0].disk_gb = 1e9                                                   # more than any drive
     toy.ctl.updated.emit()
-    assert any(t.startswith("Not enough free disk space: ") for t in texts_of(d))
+    assert any(t.startswith("Disk: ") for t in texts_of(d))
     d.close()
     empty = toy.ctl.open_plan(api.Plan(), lambda: i18n._("Run project"))
     assert empty.summary.text() == "Nothing to run" and not empty.b_run.isEnabled() and not empty.scroll.isVisible()
@@ -572,10 +640,10 @@ def test_the_dialog_in_french(toy):
     toy.model.plan_all = lambda: plan
     d = toy.ctl.launch()
     t = texts_of(d)
-    assert t[0] == "Exécuter le projet"
+    assert t[0] == "Exécuter projet"
     assert any(x.startswith("Durée : ≈ ") and x.endswith(f" · disque : {size_text(plan.disk_gb)} Go") and
                "," in size_text(plan.disk_gb) for x in t), t
-    assert 'Sortie « Plain »' in t and "Annuler" in t and "Exécuter" in t
+    assert "Couleur" in t and "Annuler" in t and "Exécuter" in t
     assert untranslated(t) == []
     d.close()
 
@@ -613,8 +681,9 @@ def test_a_breakpoint_stops_the_run_after_its_block_and_continue_goes_on(toy, mo
     # the plan: Calibration only, and it says why
     d = ctl.launch()
     assert [j.stage for j in d.plan.jobs] == ["inventory"] and [r.row.title for r in d.rows] == ["Calibration"]
-    assert d.pause_note.isVisibleTo(d) and d.pause_note.text() == "Stops after Calibration for your review"
-    assert d.pause_more.isVisibleTo(d) and d.pause_more.text() == "Workflow: Plain"      # one of the two workflows
+    assert d.pause_note.isVisibleTo(d) and d.pause_note.text() == "Review pause after Calibration"
+    # one of the two workflows; the other shares the paused Calibration: it waits for the review (round 2)
+    assert d.pause_more.isVisibleTo(d) and d.pause_more.text() == "Workflow: Plain · Waiting for the review: Trained"
     assert not d.review.isVisibleTo(d) and d.b_run.isEnabled()
     assert ctl.pause is not None and ctl.pause.block == "calibration" and ctl.pause.pids == [1]
     # the graph before the run: the dot is there, red (the run will stop), on the block both workflows share
@@ -628,16 +697,16 @@ def test_a_breakpoint_stops_the_run_after_its_block_and_continue_goes_on(toy, mo
     assert states_of(toy)[(1, "inventory")] == "done" and states_of(toy)[(1, "stack")] == "pending"
     # the recap: paused, with its two buttons; the graph says paused
     assert d.phase() == "end" and d.paused() and d.review.isVisibleTo(d)
-    assert d.review_text.text() == "Paused for your review at Calibration: check it in Inspect, then Continue."
+    assert d.review_text.text() == "Review pause: Calibration · Inspect, then Continue"
     assert d.b_continue.isVisibleTo(d) and d.b_continue.text() == "Continue"
     assert d.b_inspect.isVisibleTo(d) and d.b_inspect.text() == "Open in Inspect"
-    assert d.summary.text() == "Paused for your review" and not d.pause_note.isVisibleTo(d)
+    assert d.summary.text() == "Review pause" and not d.pause_note.isVisibleTo(d)
     assert [r.mark.state for r in d.rows] == [DONE]
     assert Graph(m, None).breakpoint(Graph(m, None).node_of(plain, "calibration")) == ("paused", 1, 2)
     assert m.review_state(plain, "calibration") == "paused" and m.review_state(trained, "calibration") is None
-    assert "Paused for your review at Calibration: check it in Inspect, then Continue." in toy.console()
-    assert m.history[-1][1] == "{text}"
-    assert m.history[-1][2]["text"].startswith("Run paused for your review at Calibration: 1 stage in")
+    assert "Review pause: Calibration · Inspect, then Continue" in toy.console()
+    # the history line is a template and its words, written in the language it is read in (exploration #31)
+    assert m.history[-1][1] == "Review pause at {block}" and m.history[-1][2] == {"block": "Calibration"}
     # Continue: the review is marked, and the run goes on to the end, in a new dialog, at once
     d.b_continue.click()
     assert ctl.pause is None and ctl.running and ctl.dialog is not d and m.is_reviewed(plain, "calibration")
@@ -659,29 +728,30 @@ def test_each_continue_runs_on_to_the_next_pause_and_the_plan_counts_them(toy, m
     m.set_breakpoint([plain], "empilement")
     m.set_breakpoint([plain], "post")
     d = ctl.launch()
-    assert d.pause_note.text() == "Stops after Calibration for your review"
-    assert d.pause_more.text() == "Workflow: Plain · 2 more pauses after it: Stacking, Output"
-    assert ctl.pause.later == ["empilement", "post"]
+    assert d.pause_note.text() == "Review pause after Calibration"
+    assert d.pause_more.text() == "Workflow: Plain · +2 pauses after: Stacking, Output · Waiting for the review: Trained"
+    assert ctl.pause.later == [(1, "empilement"), (1, "post")]
     d.start()
     finish(toy)
     assert [j.stage for j in toy.track.jobs] == ["inventory"] and d.paused()
-    assert d.review_more.text() == "Workflow: Plain · 2 more pauses after it: Stacking, Output"
+    assert d.review_more.text() == "Workflow: Plain · +2 pauses after: Stacking, Output · Waiting for the review: Trained"
     d.b_continue.click()                                       # to the second pause
     finish(toy)
     d2 = ctl.dialog
     assert [j.stage for j in toy.track.jobs] == ["stack"] and d2.paused()
-    assert d2.review_text.text() == "Paused for your review at Stacking: check it in Inspect, then Continue."
-    assert d2.review_more.text() == "Workflow: Plain · 1 more pause after it: Output"
+    assert d2.review_text.text() == "Review pause: Stacking · Inspect, then Continue"
+    assert d2.review_more.text() == "Workflow: Plain · +1 pause after: Output · Waiting for the review: Trained"
     assert [m.review_state(plain, k) for k in ("calibration", "empilement", "post")] == ["reviewed", "paused", "pending"]
     d2.b_continue.click()                                      # to the third (the Output of Plain)
     finish(toy)
     d3 = ctl.dialog
-    assert [j.stage for j in toy.track.jobs] == ["color", "render_simple"] and d3.paused()
-    assert d3.review_text.text() == "Paused for your review at Output: check it in Inspect, then Continue."
+    # past Plain's last pause nothing waits for a review: the other workflow is computed in the same run (round 2)
+    assert [j.stage for j in toy.track.jobs] == ["color", "render_simple", "denoise", "render_simple"] and d3.paused()
+    assert d3.review_text.text() == "Review pause: Output · Inspect, then Continue"
     assert d3.review_more.text() == "Workflow: Plain"
-    d3.b_continue.click()                                      # nothing is left but the other workflow
-    finish(toy)
     assert all(s == "done" for s in states_of(toy).values())
+    d3.b_continue.click()                                      # nothing is left
+    finish(toy)
     assert [m.review_state(plain, k) for k in ("calibration", "empilement", "post")] == ["reviewed"] * 3
 
 
@@ -713,7 +783,7 @@ def test_reviewed_is_tied_to_the_results_of_the_block(toy, monkeypatch):
     m.apply_change(m.paths, {"kind": "param", "stage": "inventory", "name": "max_lights", "value": 2})
     stale = m.review_key(plain, "calibration")
     d2 = ctl.launch()
-    assert [j.stage for j in d2.plan.jobs][:1] == ["inventory"] and d2.pause_note.text().startswith("Stops after")
+    assert [j.stage for j in d2.plan.jobs][:1] == ["inventory"] and d2.pause_note.text().startswith("Review pause after")
     d2.start()
     finish(toy)
     assert d2.paused() and m.review_state(plain, "calibration") == "paused" and m.review_key(plain, "calibration") == stale
@@ -741,8 +811,8 @@ def test_a_block_done_and_not_reviewed_opens_the_dialog_on_the_pause(toy, monkey
     ctl.openInspect.connect(lambda pid, block: inspected.append((pid, block)))
     d = ctl.launch()
     assert d.phase() == "plan" and d.paused() and d.review.isVisibleTo(d) and not d.pause_note.isVisibleTo(d)
-    assert not d.b_run.isVisibleTo(d) and d.b_cancel.text() == "Close" and d.summary.text() == "Waiting for your review"
-    assert d.review_text.text() == "Paused for your review at Stacking: check it in Inspect, then Continue."
+    assert not d.b_run.isVisibleTo(d) and d.b_cancel.text() == "Close" and d.summary.text() == "Awaiting review"
+    assert d.review_text.text() == "Review pause: Stacking · Inspect, then Continue"
     # Open in Inspect: the block is selected for the window, which routes it (the graph page's openBlock)
     m.select(step="sources")
     d.b_inspect.click()
@@ -786,7 +856,7 @@ def test_run_to_here_stops_at_the_first_review_before_the_block(toy, monkeypatch
     d = ctl.run_to_here()
     assert d.windowTitle() == 'Run "Plain" to Stacking'
     assert [j.stage for j in d.plan.jobs] == ["inventory"]
-    assert d.pause_note.text() == "Stops after Calibration for your review"
+    assert d.pause_note.text() == "Review pause after Calibration"
     d.start()
     finish(toy)
     assert d.paused()
@@ -807,9 +877,15 @@ def test_several_workflows_pausing_at_one_block_are_planned_together_and_the_ear
     m.set_breakpoint([plain, trained], "empilement")
     m.set_breakpoint([trained], "calibration")
     pause = m.pause_point()
-    assert (pause.block, pause.pids, pause.later, pause.done) == ("calibration", [2], ["empilement"], False)
+    assert (pause.block, pause.pids, pause.later, pause.done) == ("calibration", [2], [(2, "empilement")], False)
+    # Run all: each workflow to its own first review (round 2: only the one paused the most upstream went on)
+    assert pause.all_stops() == [(2, "calibration"), (1, "empilement")]
     plan, _ = m.plan_run()
-    assert [j.stage for j in plan.jobs] == ["inventory"]
+    assert [j.stage for j in plan.jobs] == ["inventory", "stack"]
+    d = toy.ctl.launch()
+    assert d.pause_note.text() == "Review pause after Calibration (Trained), Stacking (Plain)"
+    assert d.pause_more.text() == "+1 pause after: Stacking (Trained)"
+    d.close()
     m.set_breakpoint([trained], "calibration", False)
     pause = m.pause_point()
     assert (pause.block, pause.pids, pause.later) == ("empilement", [1, 2], [])
@@ -817,11 +893,12 @@ def test_several_workflows_pausing_at_one_block_are_planned_together_and_the_ear
     assert pause2.block == "empilement" and [j.stage for j in plan.jobs] == ["inventory", "stack"]    # shared: once
     assert plan.jobs[1].wf == [1, 2] and set(plan.targets) == {(1, "stack"), (2, "stack")}
     d = toy.ctl.launch()
-    assert d.pause_note.text() == "Stops after Stacking for your review" and not d.pause_more.isVisibleTo(d)   # both
+    assert d.pause_note.text() == "Review pause after Stacking" and not d.pause_more.isVisibleTo(d)   # both
     d.close()
     m.set_breakpoint([trained], "empilement", False)
     d = toy.ctl.launch()
-    assert d.pause_note.text() == "Stops after Stacking for your review" and d.pause_more.text() == "Workflow: Plain"
+    assert d.pause_note.text() == "Review pause after Stacking"
+    assert d.pause_more.text() == "Workflow: Plain · Waiting for the review: Trained"     # it shares Plain's Color
     d.close()
     assert [Graph(m, None).breakpoint(n)[:3] for n in Graph(m, None).nodes if n.key == "empilement"] == [("pending", 1, 2)]
 
@@ -842,10 +919,12 @@ def test_a_review_is_kept_with_the_project_and_the_breakpoints_too(env, monkeypa
     d = ctl.launch()
     d.start()
     assert pump(lambda: ctl.track is not None and ctl.track.finished and not ctl.running, 60)
-    d.b_continue.click()
-    assert m.is_reviewed(plain, "calibration")
-    assert pump(lambda: ctl.track.finished and not ctl.running, 60)               # on to the Output of Trained
+    # each workflow ran to its own review (round 2): Plain's Calibration and Trained's Output wait
+    assert ctl.pause.all_stops() == [(1, "calibration"), (2, "post")]
     assert m.review_state(m.view(2), "post") == "paused"
+    from astro_gpu.client.model import Pause
+    m.mark_reviewed(Pause("calibration", [1]))                  # the graph's "Mark reviewed" on Plain's Calibration
+    assert m.is_reviewed(plain, "calibration") and m.review_state(m.view(2), "post") == "paused"
     state = json.loads((Path(p.root) / "state.json").read_text(encoding="utf-8"))
     assert state["reviewed"] == [m.review_key(plain, "calibration")] and "last_keys" in state   # beside the old keys
     ctl.close()
@@ -883,29 +962,29 @@ def test_the_pause_in_french(toy, monkeypatch):
         m.set_breakpoint([plain], k)
     d = ctl.launch()
     t = texts_of(d)
-    assert "S'arrête après Calibration pour votre vérification" in t, t
-    assert "Workflow : Plain · 2 autres pauses ensuite : Empilement, Sortie" in t, t
+    assert "Pause vérif après Calibration" in t, t
+    assert "Workflow : Plain · +2 pauses ensuite : Empilement, Sortie · En attente de la vérif : Trained" in t, t
     assert untranslated(t) == []
     d.start()
     finish(toy)
     seen = texts_of(d)
-    assert "En pause pour votre vérification à Calibration : vérifiez-le dans Inspection, puis cliquez sur Continuer." in seen
-    assert "Continuer" in seen and "Ouvrir dans Inspection" in seen and "En pause pour vérification" in seen
-    assert "Workflow : Plain · 2 autres pauses ensuite : Empilement, Sortie" in seen
-    assert "En pause pour votre vérification à Calibration : vérifiez-le dans Inspection, puis cliquez sur Continuer." \
+    assert "Pause vérif : Calibration · Inspection, puis Continuer" in seen
+    assert "Continuer" in seen and "Ouvrir dans Inspection" in seen and "Pause vérif" in seen
+    assert "Workflow : Plain · +2 pauses ensuite : Empilement, Sortie · En attente de la vérif : Trained" in seen
+    assert "Pause vérif : Calibration · Inspection, puis Continuer" \
         in toy.console()
-    assert m.history[-1][2]["text"].startswith("Exécution en pause pour votre vérification à Calibration : 1 étape en")
+    assert event_text(m.history[-1])[1] == "Pause vérif à Calibration"
     assert untranslated(seen) == [], untranslated(seen)
     d.b_continue.click()
     finish(toy)
     d2 = ctl.dialog
-    assert "Workflow : Plain · 1 autre pause ensuite : Sortie" in texts_of(d2)
+    assert "Workflow : Plain · +1 pause ensuite : Sortie · En attente de la vérif : Trained" in texts_of(d2)
     assert untranslated(texts_of(d2)) == []
     # the zero / one rule of French: "0 étape" and "1 étape" are singular, "2 étapes" is not
-    one, many = "{n} more pause after it: {blocks}", "{n} more pauses after it: {blocks}"
-    assert i18n.plural(0, one, many, blocks="x") == "0 autre pause ensuite : x"
-    assert i18n.plural(1, one, many, blocks="x") == "1 autre pause ensuite : x"
-    assert i18n.plural(2, one, many, blocks="x") == "2 autres pauses ensuite : x"
+    one, many = "+{n} pause after: {blocks}", "+{n} pauses after: {blocks}"
+    assert i18n.plural(0, one, many, blocks="x") == "+0 pause ensuite : x"
+    assert i18n.plural(1, one, many, blocks="x") == "+1 pause ensuite : x"
+    assert i18n.plural(2, one, many, blocks="x") == "+2 pauses ensuite : x"
 
 
 def test_every_plural_of_the_pause_has_its_french_in_both_forms():
@@ -924,7 +1003,7 @@ def test_every_plural_of_the_pause_has_its_french_in_both_forms():
                 forms += 1
                 assert one == many or cat.get(one) != cat.get(many), (one, many)
     assert not missing and forms >= 6, (missing, forms)
-    for text in ("Continue", "Open in Inspect", "Waiting for your review", "Paused for your review"):
+    for text in ("Continue", "Open in Inspect", "Awaiting review", "Review pause"):
         assert text in cat and cat[text] != text
 
 
@@ -953,13 +1032,14 @@ def test_run_all_follows_a_detached_worker_without_blocking_the_gui(toy, monkeyp
     # the dialog became the recap: every row green, the sentence, Close
     assert d.phase() == "end" and all(r.mark.state == DONE for r in d.rows) and d.b_done.isVisible()
     recap = texts_of(d.recap)
-    assert recap == ["6 stages computed in " + i18n.hm(t.elapsed()) + "."] or recap[0].startswith("6 stages computed in")
+    # blocks, as the window shows them (#3), never the engine's stages
+    assert recap == ["5 blocks computed · " + i18n.hm(t.elapsed())]
     assert d.summary.text().startswith("Done in ")
     # the history line and the console
-    assert toy.model.history[-1][1:] == ("Run: {n} stages · {t}", {"n": 6, "t": i18n.hm(t.elapsed())})
+    assert toy.model.history[-1][1:] == ("Run finished in {t}", {"t": i18n.hm(t.elapsed())})
     text = toy.console()
-    assert "Starting the run: 6 stages" in text and "Run started: 6 stages" in text
-    assert "Run finished: 6 stages in" in text and "Stacking · done in" in text and text.count("Stacking · started") == 1
+    assert "Starting: 5 blocks" in text and "Run started: 5 blocks" in text
+    assert "Run finished: 5 blocks in" in text and "Stacking · done in" in text and text.count("Stacking · started") == 1
     # nothing left to run
     assert len(toy.model.plan_all()) == 0
     d2 = toy.ctl.launch()
@@ -992,16 +1072,16 @@ def test_failed_job_skips_its_downstream_blocks_and_says_so_in_plain_words(env):
         assert by[("color", (1, 2))] == DONE and by[("render_simple", (1,))] == DONE   # the other workflow completes
         recap = texts_of(d.recap)
         assert "Denoise failed: b failed on purpose" in recap, recap
-        assert 'Not run because Denoise failed: Output "Trained".' in recap
-        assert "The blocks that did not depend on it were computed." in recap
-        assert [r.mark.state for r in d.rows] == [DONE, DONE, DONE, DONE, FAILED, SKIPPED]
+        assert "Not run (Denoise failed): Color (Trained)" in recap        # the Output's job is in its last block
+        assert "Independent blocks computed" in recap
+        assert [r.mark.state for r in d.rows] == [DONE, DONE, DONE, FAILED, SKIPPED]
         assert d.summary.text() == "Failed" and d.b_log.isVisible()
         # the engine's own states, and the graph's stripes, say it too
         v = w.model.view(2)
         assert [w.model.state(v, s) for s in ("denoise", "color", "render_simple")] == ["failed", "done", "skipped"]
         g = Graph(w.model, None)
-        assert [g.state(g.node_of(v, k)) for k in ("debruitage", "couleur", "post")] == ["failed", "done", "skipped"]
-        assert g.state(g.node_of(w.model.view(1), "post")) == "done"
+        # the Output is no block of the graph (round 2): its state is the engine's, said above
+        assert [g.state(g.node_of(v, k)) for k in ("debruitage", "couleur")] == ["failed", "done"]
         text = w.console()
         assert "Denoise · failed: b failed on purpose" in text and "Output prep · not run, Denoise failed" in text
         assert "Run failed: 1 failed, 1 not run" in text
@@ -1055,11 +1135,11 @@ def test_stop_keeps_the_results_and_the_next_run_resumes_the_checkpoint(env):
         stopped_at = _checkpoint(w)
         assert 0 < stopped_at < 120
         assert d.phase() == "end" and d.summary.text() == "Run stopped"
-        assert any(x.startswith("Stopped. What was computed is kept") for x in texts_of(d.recap))
-        assert "Stopped during Denoise." in texts_of(d.recap)
+        assert any(x.startswith("Stopped · results kept") for x in texts_of(d.recap))
+        assert "Stopped during Denoise" in texts_of(d.recap)
         text = w.console()
         assert "Run stopped: " in text and "Stop asked" in text and "Denoise · stopped" in text
-        assert w.model.history[-1][1] == "Run stopped: {n} stages done"
+        assert w.model.history[-1][1] == "Run stopped"
         # the next run plans the denoise again and goes on from the checkpoint, not from the start
         d.close()
         d = w.ctl.launch()
@@ -1089,7 +1169,7 @@ def test_killing_the_worker_marks_the_run_interrupted_and_the_next_run_resumes(e
         assert api.running(w.p) is None                      # a stale lock is not a run
         assert (root / "logs" / "run.lock").exists()
         assert w.model.state(w.model.view(2), "denoise") == "interrupted"
-        assert any("without warning" in x for x in texts_of(d.recap)) and "stopped without warning" in w.console()
+        assert any("ended unexpectedly" in x for x in texts_of(d.recap)) and "ended unexpectedly" in w.console()
         killed_at = _checkpoint(w)
         d.close()
         d = w.ctl.launch()                                   # the stale lock is replaced; the denoise resumes
@@ -1138,7 +1218,7 @@ def test_closing_and_reopening_the_project_reattaches_to_the_run(env):
         assert got and got[0][0] == "done" and got[0][1].startswith("Run finished: ")
         assert sw.isHidden() and api.running(p2) is None
         assert all(w2.model.state(v, s) == "done" for v in w2.model.paths for s in w2.model.all_stages(v))
-        assert w2.model.history[-1][1] == "Run: {n} stages · {t}"
+        assert w2.model.history[-1][1] == "Run finished in {t}"
     finally:
         w2.close()
 
@@ -1176,8 +1256,13 @@ def test_a_start_that_fails_is_said_and_nothing_stays_running(env, monkeypatch):
         d = w.ctl.launch()
         d.start()
         assert pump(lambda: w.track.finished and not w.ctl.running, 30)
-        assert w.track.status == "failed" and "The run could not start: the disk is full" in w.console()
-        assert d.phase() == "end" and d.summary.text() == "Failed"
+        # GUI exploration 6.4: in plain words, in the console, the history and the window
+        assert w.track.status == "failed" and "Run not started: the project's drive is full" in w.console()
+        assert d.phase() == "end" and d.summary.text() == "Run not started"
+        # exploration 2: the real cause written after it, in the history and the console
+        assert w.model.history[-1][1] == "Run not started: {why} · cause: {detail}"
+        assert w.model.history[-1][2]["detail"] == "OSError: the disk is full"
+        assert "Cause: OSError: the disk is full" in w.console()
     finally:
         w.close()
 
@@ -1238,14 +1323,14 @@ def test_the_console_survives_a_rebuilt_panel_and_a_change_of_language(toy):
     toy.run_all()
     english = toy.console()
     assert toy.track.status == "done", english                  # the whole console when a stage failed
-    assert "Run finished: 6 stages in" in english
+    assert "Run finished: 5 blocks in" in english
     # the Log panel is built again with the project screen (a change of language): the console is filled again
     appmod.apply_language("fr")
     toy.logp = LogPanel(toy.model)
     assert toy.console() == ""
     toy.ctl.retranslate()
     french = toy.console()
-    assert "Exécution terminée : 6 étapes en" in french and "Empilement · terminé en" in french
+    assert "Exécution terminée : 5 blocs en" in french and "Empilement · terminé en" in french
     assert "Run finished" not in french and "Starting" not in french
     assert untranslated([x.split("  ", 1)[1] for x in french.splitlines()]) == []
     # the export of the log writes the console after the history
@@ -1347,7 +1432,8 @@ CLASSIC_STORE = ("inventory", "calibrate", "register", "stack", "astrometry", "s
 
 def _classic_copy(tmp: Path) -> Path:
     """A copy of the test project holding the results of the Classic stack chain (not the scratch, not the stages of
-    Full alone): a run in it writes into the copy only."""
+    Full alone, not the other results the bench left in those stages' folders): a run in it writes into the copy
+    only."""
     dst = tmp / "heart"
     dst.mkdir()
     for f in F_COPY.iterdir():
@@ -1356,11 +1442,23 @@ def _classic_copy(tmp: Path) -> Path:
     for name in ("inputs",):
         if (F_COPY / name).is_dir():
             shutil.copytree(F_COPY / name, dst / name)
+    src = api.open_project(F_COPY)                                           # in memory: never saved
+    classic = api.add_workflow(src, "Classic stack", "Classic stack")
+    keep = {(st, Path(o.dir).name) for st in CLASSIC_STORE
+            if (o := api.stage_outputs(src, classic.id, st)) is not None}
+    assert {st for st, _k in keep} == set(CLASSIC_STORE), f"the test project lacks Classic results: {sorted(keep)}"
+    (dst / "store").mkdir()
     for sd in (F_COPY / "store").iterdir():
-        if sd.is_dir() and (sd.name in CLASSIC_STORE or sd.name.startswith("_")):
+        if sd.is_dir() and sd.name.startswith("_"):
             shutil.copytree(sd, dst / "store" / sd.name)
+        elif sd.is_dir() and sd.name in CLASSIC_STORE:
+            for e in sd.iterdir():
+                if e.is_file():
+                    (dst / "store" / sd.name).mkdir(exist_ok=True)
+                    shutil.copy2(e, dst / "store" / sd.name / e.name)
+                elif (sd.name, e.name) in keep:
+                    shutil.copytree(e, dst / "store" / sd.name / e.name)
         elif sd.is_file():
-            (dst / "store").mkdir(exist_ok=True)
             shutil.copy2(sd, dst / "store" / sd.name)
     return dst
 
@@ -1372,12 +1470,15 @@ def _grab(w: QWidget, name: str):
 
 
 def _real_world(root: Path) -> World:
-    """The project in ``root`` with the four workflows, on the CPU: the model never saves (the plan carries the
-    definition), the runs write the new results into ``root``."""
+    """The project in ``root`` with the four workflows (its Full, whatever workflows the bench added, and three
+    more), on the CPU: the model never saves (the plan carries the definition), the runs write the new results into
+    ``root``."""
+    from conftest import full_only
+
     from astro_gpu.core import workflow as wfl
-    p = api.open_project(root)
+    p = full_only(api.open_project(root), fresh_ids=True)
     for name, template, params in (("Classic stack", "Classic stack", None),
-                                   ("Classic + denoise", "Classic + denoise", {"denoise": {"iterations": 6000}}),
+                                   ("Classic + denoise", "Classic + denoise", None),
                                    ("Full", "Full", None)):
         assert template in wfl.TEMPLATES
         api.add_workflow(p, name, template, params)
@@ -1414,7 +1515,7 @@ def _shell(w: World):
 @real
 @pytest.mark.slow
 def test_a_real_render_simple_job_runs_with_the_heartbeat_under_200_ms_and_the_screenshots(env, monkeypatch):
-    """Run the Classic stack of a copy of the test project for real on the CPU: gradient and render_simple.
+    """Run the Classic stack of a copy of the test project for real on the CPU: gradient, color and render_simple.
     The stripes turn green and the layer appears. Takes the screenshots in English and in French."""
     w = _real_world(_classic_copy(env["tmp"]))
     root = None
@@ -1444,21 +1545,26 @@ def test_a_real_render_simple_job_runs_with_the_heartbeat_under_200_ms_and_the_s
             d.refresh()
             _grab(d, f"run_plan_{lang}")
             assert any(len(r.row.who) == 4 for r in d.rows)
-            assert all(r.dur.text().startswith("≈") or r.dur.text() == "≤ 1 min" for r in d.rows)
+            # every block in the graph's order (#27): the ones up to date say so, the others give their time
+            assert any(not r.row.uptodate for r in d.rows)
+            assert all(r.dur.text() == i18n._("up to date") if r.row.uptodate else
+                       r.dur.text().startswith("≈") or r.dur.text() == "≤ 1 min" for r in d.rows), \
+                [(r.row.title, r.row.uptodate, r.dur.text()) for r in d.rows]
             assert untranslated(texts_of(d)) == [], untranslated(texts_of(d))
             d.close()
             w.model.undo()
             for _i in range(10):
                 w.worker.wait(30)
                 QApplication.processEvents()
-            # a late, cheap setting of the Classic workflow: Run to its Output only runs two short jobs
+            # a late, cheap setting of the Classic workflow: Run to its last block only runs the short jobs after the
+            # Gradient (it comes right after the stacking: Color reads the stack with its gradient removed)
             w.model.set_param(classic, "gradient", "object_clip", 2.5 + (int(time.time()) % 100000 + n) / 1e6)
             for _i in range(10):
                 w.worker.wait(30)
                 QApplication.processEvents()
             d = w.ctl.run_to_here()
             jobs = [(j.stage, j.measured) for j in d.plan.jobs]
-            assert [s for s, _m in jobs] == ["gradient", "render_simple"], jobs
+            assert [s for s, _m in jobs] == ["gradient", "color", "render_simple"], jobs
             w.beat.start()
             d.start()
             shot = False
@@ -1507,6 +1613,11 @@ def test_screenshots_of_the_failed_run_and_the_stopped_run_on_the_real_plan(env)
     the recaps in English and French."""
     w = _real_world(F_COPY)
     try:
+        # a change of the stacking (in memory: the model never saves) makes the plan whatever the bench computed
+        assert w.model.set_trunk_param("stack", "kappa", 4.0)
+        for _i in range(10):
+            w.worker.wait(30)
+            QApplication.processEvents()
         plan = w.model.plan_all()
         jobs = plan.jobs
         assert len(jobs) >= 3
@@ -1650,14 +1761,14 @@ def test_real_pause_after_calibration_runs_for_real_continues_and_the_shots_en_f
             menus[-1].show()
             QApplication.processEvents()
             names = [a.text() for a in menus[-1].actions()]
-            assert i18n._("Pause here for review") in names
+            assert i18n._("Review pause") in names
             shot(menus[-1], "1_block_menu")
             menus[-1].hide()
         w.change_language("en")
         settle()
         for key in ("calibration", "alignement"):
             w.graph.graph.block_menu(graph().node_of(s.view(1), key), None)
-            next(a for a in menus[-1].actions() if a.text() == "Pause here for review").trigger()
+            next(a for a in menus[-1].actions() if a.text() == "Review pause").trigger()
             settle()
         assert [x.breakpoints for x in s.p.workflows] == [["calibration", "registration"]] * 2
         assert block(1, "calibration").bp == ("pending", 2, 2) and block(1, "alignement").bp == ("pending", 2, 2)
@@ -1665,8 +1776,8 @@ def test_real_pause_after_calibration_runs_for_real_continues_and_the_shots_en_f
         # 2. Run all: the plan stops after Calibration
         w.run.launch()                                     # the plan first (#51: the button starts)
         d = w.run.dialog
-        assert d.pause_note.text() == "Stops after Calibration for your review" and d.pause_more.text().startswith(
-            "1 more pause after it: Registration")
+        assert d.pause_note.text() == "Review pause after Calibration" and d.pause_more.text().startswith(
+            "+1 pause after: Registration")
         assert [j.stage for j in d.plan.jobs] == ["inventory", "calibrate"] and not d.review.isVisibleTo(d)
         both("3_plan_dialog", lambda: w.run.dialog)
         # 3. Run: the real calibration, in a detached worker
@@ -1676,10 +1787,11 @@ def test_real_pause_after_calibration_runs_for_real_continues_and_the_shots_en_f
             "the run did not end"
         settle(30)
         t = w.run.track
-        assert t.status == "done" and [j.stage for j in t.jobs] == ["inventory", "calibrate"], t.error
+        assert t.status == "done" and [j.stage for j in t.jobs] == ["inventory", "calibrate"], (
+            t.error, [(j.stage, j.state, getattr(j, "error", "")) for j in t.jobs], t.lines[-6:])
         d = w.run.dialog
         assert d.paused() and d.review.isVisibleTo(d) and d.b_continue.isVisibleTo(d) and d.b_inspect.isVisibleTo(d)
-        assert d.review_text.text() == "Paused for your review at Calibration: check it in Inspect, then Continue."
+        assert d.review_text.text() == "Review pause: Calibration · Inspect, then Continue"
         assert [s.state(s.view(1), x) for x in ("inventory", "calibrate", "register", "stack")] == \
             ["done", "done", "pending", "pending"]
         assert block(1, "calibration").bp == ("paused", 2, 2) and block(1, "alignement").bp == ("pending", 2, 2)
@@ -1692,8 +1804,8 @@ def test_real_pause_after_calibration_runs_for_real_continues_and_the_shots_en_f
             menus[-1].show()
             QApplication.processEvents()
             checked = [a for a in menus[-1].actions() if a.isChecked()]
-            assert [a.text() for a in checked] == [i18n._("Pause here for review")]
-            assert i18n._("Mark as reviewed") in [a.text() for a in menus[-1].actions()]
+            assert [a.text() for a in checked] == [i18n._("Review pause")]
+            assert i18n._("Mark reviewed") in [a.text() for a in menus[-1].actions()]
             shot(menus[-1], "5b_block_menu_paused")
             menus[-1].hide()
         # 4. Open in Inspect: the window shows the block in Inspect
@@ -1710,7 +1822,7 @@ def test_real_pause_after_calibration_runs_for_real_continues_and_the_shots_en_f
         # 5. Continue: the review is marked, Registration runs for real, and the run stops again at its breakpoint
         w.run.launch()
         d = w.run.dialog
-        assert d.paused() and d.phase() == "plan" and d.summary.text() == "Waiting for your review"
+        assert d.paused() and d.phase() == "plan" and d.summary.text() == "Awaiting review"
         d.b_continue.click()
         assert w.run.running or w.run.track.finished
         assert pump(lambda: w.run.track.finished and not w.run.running, 400), "the second run did not end"
@@ -1719,7 +1831,7 @@ def test_real_pause_after_calibration_runs_for_real_continues_and_the_shots_en_f
         assert t.status == "done" and [j.stage for j in t.jobs] == ["register"], t.error
         d = w.run.dialog
         assert d.paused() and d.review_text.text() == \
-            "Paused for your review at Registration: check it in Inspect, then Continue."
+            "Review pause: Registration · Inspect, then Continue"
         assert [s.review_state(s.view(1), k) for k in ("calibration", "alignement")] == ["reviewed", "paused"]
         assert [s.state(s.view(1), x) for x in ("calibrate", "register", "stack")] == ["done", "done", "pending"]
         both("7_second_pause_recap", lambda: w.run.dialog)
@@ -1749,8 +1861,8 @@ def test_the_plan_lists_the_blocks_up_to_date_too_with_a_tick(toy, monkeypatch):
     monkeypatch.setattr(runs.Graph, "state", lambda self, node: "done")          # what the plan leaves out is done
     rows = build_rows(toy.model, [j for j in jobs if j.stage not in ("inventory", "calibrate", "stack")], with_done=True)
     assert [(r.title, r.uptodate) for r in rows][:2] == [("Calibration", True), ("Stacking", True)]
-    # the second workflow's Color (after its Denoise, issue #47) is the first one's: computed once, listed done
-    assert [r.title for r in rows if r.uptodate] == ["Calibration", "Stacking", "Color"]
+    # the second workflow's Color holds its Output's job (the Output is no block, round 2): to compute, not done
+    assert [r.title for r in rows if r.uptodate] == ["Calibration", "Stacking"]
     assert all(r.keys for r in rows if not r.uptodate)
     w = runs.RunRow(rows[0])
     w.show_state(runs.DONE, 1.0, "up to date", "")
@@ -1762,3 +1874,92 @@ def test_the_run_button_starts_the_run_at_once(toy):
     d = toy.ctl.launch(start=True)
     assert d is not None and toy.ctl.running and d.phase() == "run"
     assert pump(lambda: toy.track is not None and toy.track.finished and not toy.ctl.running, 120)
+
+
+# ---------------------------------------------------------------------------------------------- round 2 of the GUI exploration
+def test_run_shows_the_window_first_when_the_plan_has_a_warning(toy, monkeypatch):
+    """Round 2: Run started at once, so the warnings of the plan (a file that may be a mistake, a workflow left out,
+    the disk) were never seen: with one, Run opens the window and waits for the user's Run."""
+    from astro_gpu.client import runs
+    monkeypatch.setattr(runs.RunDialog, "_file_warnings", lambda self: ["Session 1: DSC0001.JPG is not a raw"])
+    d = toy.ctl.launch(start=True)
+    assert d is not None and not toy.ctl.running and d.phase() == "plan"
+    assert "⚠ Session 1: DSC0001.JPG is not a raw" in texts_of(d)
+    assert d.b_run.isEnabled() and d.b_run.isDefault()                       # Enter runs (it was a hidden button)
+    d.close()
+
+
+def test_a_plan_that_cannot_be_made_is_said_never_nothing_to_run(toy):
+    """Round 2: a pause on a repeated block raised in the planning and the window said "Nothing to run"."""
+    from astro_gpu.client.services.run import PlanRefused
+
+    def broken():
+        raise ValueError("unknown block 'gradient~2'")
+    d = toy.ctl._plan_and_open(broken, "Run project")
+    assert d.summary.text() and d.summary.text() != "Nothing to run" and not d.b_run.isEnabled()
+    assert d.b_run.toolTip() == d.summary.text()
+
+    def gone():
+        raise PlanRefused("Gradient is no longer in the graph")
+    d = toy.ctl._plan_and_open(gone, "Run project")
+    assert d.summary.text() == "Gradient is no longer in the graph" and not d.b_run.isEnabled()
+    d.close()
+
+
+def test_the_plan_window_follows_the_graph_while_it_is_open(toy):
+    """Round 2: Ctrl+Z with the window open left the undone block in it, and its Run ran the old graph; a change of
+    device did not change the durations."""
+    m, ctl = toy.model, toy.ctl
+    plain = m.view(1)
+    m.select(index=m.index_of(plain.pid), step="empilement")
+    d = ctl.run_to_here()
+    before = [r.row.title for r in d.rows]
+    assert before and before[-1] == "Stacking"
+    m.set_breakpoint([plain], "calibration")                        # the graph changes: the window follows
+    assert pump(lambda: [r.row.title for r in ctl.dialog.rows] == ["Calibration"], 10)
+    assert ctl.dialog.pause_note.text() == "Review pause after Calibration"
+    m.undo()
+    assert pump(lambda: [r.row.title for r in ctl.dialog.rows] == before, 10)
+    ctl.dialog.close()
+
+
+def test_run_to_here_is_refused_only_for_what_its_plan_computes(toy, monkeypatch):
+    """Round 2: a fusion that cannot run refused Run to here on a channel's Stacking, which does not compute it;
+    the reason names every channel; Run all is refused, with no duration."""
+    m, ctl = toy.model, toy.ctl
+    plain = m.view(1)
+    monkeypatch.setattr(type(m), "run_problems", lambda self, pids=None: [
+        (n, w) for pid, n, w in [(2, "Trained", "Ha, OIII: needs Astrometry")] if pids is None or pid in pids])
+    m.select(index=m.index_of(plain.pid), step="empilement")
+    d = ctl.run_to_here()
+    assert d.b_run.isEnabled()                                     # Plain's Stacking: not Trained's problem
+    d.close()
+    d = ctl.launch()
+    assert not d.b_run.isEnabled()
+    assert d.summary.text() == "Run refused · Trained: Ha, OIII: needs Astrometry" == d.b_run.toolTip()
+    d.close()
+
+
+def test_stop_while_the_run_starts_is_kept_and_done_once_it_has_started(toy, monkeypatch):
+    """Round 2: Stop was greyed without a reason while the run started, and the menu's Stop did nothing."""
+    from astro_gpu.client.services import run as run_service
+    calls = []
+    monkeypatch.setattr(run_service, "_stop_job", lambda p: calls.append(p))
+    ctl = toy.ctl
+    ctl.phase, ctl.track = "starting", run_service.RunTrack()
+    ctl.stop()
+    assert ctl.phase == "stopping" and ctl._stop_asked and ctl.status_text() == "Stopping…" and not calls
+    ctl.phase, ctl.track = "idle", None
+
+
+def test_the_rows_of_the_run_window_round_2(toy):
+    """Round 2: "Closing does not stop the run" (it said "Window closed" in the open window); a long title is cut with
+    "…" and given whole in its tooltip."""
+    from astro_gpu.client.widgets import ElidedLabel
+    d = toy.ctl.launch()
+    head = d.body.findChildren(ElidedLabel)[0]
+    assert head.full_text() == "Run project"
+    d.hint.setVisible(True)
+    d.refresh()
+    assert d.hint.text() == "Closing does not stop the run"
+    d.close()
