@@ -330,39 +330,14 @@ def test_new_project_writes_a_v2_folder(env):
     assert dlg.ok.isEnabled() and dlg.folder() == env["ws"] / "Rosette_ night 2"
 
 
-def test_import_folder_as_new_project_one_window_after_the_other(env, monkeypatch, qapp):
-    """GUI exploration 7.1, #28, #30: proposed where the projects are, never in the frames' folder; the import, then
-    the gallery; a folder without lights makes no project; an unreadable project says so plainly."""
+def test_an_unreadable_project_says_so_plainly(env):
+    """#30: said in plain words, never the raw error."""
     w = _main(env)
-    raw = env["tmp"] / "shoot" / "lights"
-    raw.mkdir(parents=True)
-    (raw / "L_001.fits").write_bytes(b"SIMPLE  =" + bytes(2871))
-    asked, order = [], []
-    monkeypatch.setattr(appmod.QFileDialog, "getExistingDirectory", lambda *a, **k: raw.as_posix())
-
-    def ask(name="", target="", location=None):
-        asked.append(location)
-        return (Path(location) / "M81").as_posix(), "M81", "", {}
-    monkeypatch.setattr(w.home, "ask_new_project", ask)
-    monkeypatch.setattr(w, "import_frames", lambda folder: order.append(("import", getattr(w.graph, "_gallery",
-                                                                                          None))) or True)
-    w.import_folder_as_new()
-    qapp.processEvents()
-    assert asked and Path(asked[0]).resolve() != raw.resolve() and raw.resolve() not in Path(asked[0]).resolve().parents
-    assert w.project is not None and raw.resolve() not in w.project.root.resolve().parents
-    assert order == [("import", None)] and w.graph._gallery is not None          # the gallery after the import
-    w.graph._gallery.reject()
-    empty = env["tmp"] / "empty"
-    empty.mkdir()
-    monkeypatch.setattr(appmod.QFileDialog, "getExistingDirectory", lambda *a, **k: empty.as_posix())
-    asked.clear()
-    w.import_folder_as_new()
-    assert not asked and "No project made" in w.status.text()
     bad = env["ws"] / "Broken"
     bad.mkdir()
     (bad / "project.astroproj").write_text("{'broken", encoding="utf-8")
     assert not w.open_project(bad)
-    assert "damaged" in env["shown"][-1][1][1] and "Expecting" not in env["shown"][-1][1][1]
+    assert "damaged" in w.banner.text.text() and "Expecting" not in w.banner.text.text() and not w.banner.isHidden()
 
 
 def test_open_a_v1_folder_offers_its_import_and_writes_nothing(env, monkeypatch):
@@ -683,7 +658,7 @@ def test_french_covers_every_shell_screen(env, qapp):
         qapp.processEvents()
         texts += _texts(d)
     for dlg in (NewProjectDialog(env["ws"].as_posix(), "Iris"), TemplateGallery(FakeModel()),
-                name_dialog(w, "Rename", "Full")[0], w.about_dialog(), w.import_box(env["ws"] / "OldM31")):
+                name_dialog(w, "Rename", "Full")[0], w.about_dialog()):
         dlg.show()
         qapp.processEvents()
         texts += _texts(dlg) + [dlg.windowTitle()]
@@ -773,7 +748,7 @@ def test_shots(env, qapp, tmp_path):
                           (NewProjectDialog(env["ws"].as_posix(), "Iris"), "new_project_taken"),
                           (TemplateGallery(FakeModel()), "new_workflow"),
                           (name_dialog(w, "Rename", "Classic + denoise")[0], "rename"),
-                          (w.about_dialog(), "about"), (w.import_box(env["ws"] / "OldM31"), "previous_version")):
+                          (w.about_dialog(), "about")):
             shot(dlg, f"dialog_{name}_{lang}")
             dlg.close()
         w.close()

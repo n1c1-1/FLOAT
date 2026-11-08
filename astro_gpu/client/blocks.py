@@ -46,14 +46,15 @@ PHASES = [("Pre-processing", "calibration", "empilement"), ("Linear processing",
           ("Composition", "fusion", "composition")]
 TOOL_COLUMN = {"debruitage": "debruitage", "etoiles": "etoiles", "deconv": "deconv",
                "auto": "fond", "rbf": "fond", "simple": "fond"}
-TITLES = {"sources": "Frames", "final": "Post", "image": "Image", "session": "Session", "fusion": "Fusion",
+TITLES = {"sources": "Frames", "final": "Post", "image": "Image", "session": "Session", "fusion": "Combine channels",
           "calibration": "Calibration",
           "alignement": "Registration",
           "selection": "Selection", "empilement": "Stacking", "astrometrie": "Astrometry", "fond": "Gradient",
           "couleur": "Color", "debruitage": "Denoise", "deconv": "Deconvolution", "etoiles": "Stars/background",
-          "post": "Output", "demi_piles": "Half-stacks", "composition": "Recombine"}
+          "post": "Output", "demi_piles": "Half-stacks", "composition": "Combine layers"}
 # the optional blocks, in the toolbar's order
 TOOLBOX = ["debruitage", "deconv", "etoiles"]
+WARN_MARK = "⚠ "                       # a summary that opens with it: the block draws a warning icon (issue #58)
 #: the two images of the Stars block (the parts of Post's layers) and their words on the wires
 STAR_OUTPUTS = (("starless", "Starless image"), ("stars", "Stars alone"))
 # the engine's block names (core/workflow.BLOCKS) and the views' keys
@@ -118,17 +119,17 @@ STEPS = [
               "inventing anything."),
     dict(key="etoiles", phase=4, title="Stars/background", kind="tool", tool="etoiles", stages=["star_removal"],
          what="A network trained on our stacks takes the stars off the image: two images, the starless image and the "
-              "stars alone, sent to Post as they are or combined by a Recombine block."),
+              "stars alone, sent to Post as they are or combined by a Combine layers block."),
     dict(key="fond", phase=4, title="Gradient", kind="slot", stages=["gradient"],
          what="Models the sky gradient (light pollution, the Moon, vignetting) on the stack and removes it from what "
               "every later block reads. Polynomial: a smooth surface fitted on the sky between the objects. "
               "Automatic: a more flexible surface that follows complex gradients."),
     dict(key="post", phase=5, title="Output", kind="fixed", stages=["render_simple"],
          what="Prepares the render: what this workflow gives in Post, its image and its sliders."),
-    dict(key="fusion", phase=6, title="Fusion", kind="slot", stages=["fusion", "render_simple"],
+    dict(key="fusion", phase=6, title="Combine channels", kind="slot", stages=["fusion", "render_simple"],
          what="Combines the outputs of several workflows (one per filter, or a dual-band image's channels) into one "
               "colour image with a palette (SHO, HSO, HOO, RGB, LRGB), aligned through their plate solutions."),
-    dict(key="composition", phase=6, title="Recombine", kind="slot", stages=[],
+    dict(key="composition", phase=6, title="Combine layers", kind="slot", stages=[],
          what="Combines the Stars/background block's two images: the starless image and the stars, each stretched, the stars "
               "put back on top (Screen, Linear dodge or Lighten). Its settings are those of its layer in Post."),
 ]
@@ -140,7 +141,7 @@ TOOLS = {
                             "to predict one from the other."),
     "etoiles": dict(title="Stars/background", phase=4,
                     what="Takes the stars off the image with a trained network: the starless image and the stars "
-                         "alone, two images for Post (combined by a Recombine block, or as they are)."),
+                         "alone, two images for Post (combined by a Combine layers block, or as they are)."),
     "deconv": dict(title="Deconvolution", phase=4,
                    what="Sharpens the image with the point spread function measured on the stars."),
 }
@@ -203,6 +204,13 @@ def gone_kinds(s, sids=None) -> set[str]:
     return out
 
 
+def own_calibration_summary(s, p, sid: int) -> str:
+    """Under a Calibration placed in parallel: its counts, and whether they are its own or still its Session's."""
+    n = {k: len(s.calibration_files(p, sid, k)) for k in ("darks", "flats")}
+    follows = all(s.calibration_follows(p, sid, k) for k in ("darks", "flats", "bias", "flat_darks"))
+    return (_("as Session") if follows else _("own files")) + " · " + calibration_counts(n["darks"], n["flats"])
+
+
 def session_summary(s, sid: int) -> str:
     """Under a Session block's name: its lights, its calibration frames, its filter; a kind whose folder is not
     found says so (GUI exploration 4)."""
@@ -215,7 +223,7 @@ def session_summary(s, sid: int) -> str:
     text = plural(int(ses.get("lights") or 0), "{n} light", "{n} lights")
     text += " · " + calibration_counts(ses.get("darks", 0), ses.get("flats", 0), gone=gone)
     flt = getattr(s.session(sid), "filter", "") if hasattr(s, "session") else ""
-    warn = "⚠ " if hasattr(s, "file_warnings") and s.file_warnings(sid) else ""   # issue #58: see its panel
+    warn = WARN_MARK if hasattr(s, "file_warnings") and s.file_warnings(sid) else ""   # issue #58: see its panel
     return warn + text + (f" · {flt}" if flt else "")
 
 
@@ -226,8 +234,10 @@ def node_title(s, n) -> str:
         return s.session(n.sid).name or _("Session {n}").format(n=n.sid)
     if n.key == "post" and not n.handle:              # issue #47: the block's name; the workflow's under it
         return _("Output")
-    if n.key == "composition" and n.num:              # several Recombine blocks: all numbered, top to bottom, as
+    if n.key == "composition" and n.num:              # several Combine layers blocks: all numbered, top to bottom, as
         return f"{block_title(None, 'composition')} {n.num}"     # Gradient 1, Gradient 2 (control round)
+    if n.num and n.key in FRAME_KEYS:                 # frame blocks placed in parallel, the same way
+        return f"{block_title(None, n.key)} {n.num}"
     if n.key in ("fusion", "image") and n.paths:      # several Fusions, several Images: numbered in the project's
         src = "fusion" if n.key == "fusion" else "path"            # order (exploration 2, control round); a branch
         bk = getattr(s, "block_key", None)                         # shares its source's block: counted once (round 4:
@@ -337,7 +347,8 @@ class Node:
     grey: str = ""                             # why it cannot run (a cut before it), translated; "" when it can
     broken: str = ""                           # why it cannot run at all (a fusion's channel gone...): circled in red
     slot: int = -1                             # an image block: its rank among its workflow's image blocks (#47)
-    num: int = 0                               # a Recombine block among several: its number (control round)
+    num: int = 0                               # a Combine layers block among several, or a frame block among those
+    #                                            placed in parallel: its number (control round)
     _bk: object = None
 
     @property
@@ -369,6 +380,8 @@ class Graph:
         self.by_path: dict[int, dict[str, Node]] = {}
         #: issue #43: (Session block, its Calibration block) per session calibrated on its own
         self.sessions: list[tuple[Node, Node]] = []
+        #: the Calibration blocks placed in parallel on a night, drawn under its own (session -> blocks)
+        self.calib_forks: dict[int, list[Node]] = {}
         sids = project.separate_sessions() if hasattr(project, "separate_sessions") else []
         uses = getattr(project, "sessions_of", None)
         for sid in sids:
@@ -378,9 +391,20 @@ class Graph:
                      or any(n["block"] == "calibration" for n in model_.graph(q))]      # #47: placed, or not drawn
             # switched off: one Calibration block for every session of the workflow, each drawn so (GUI exploration 2)
             off = bool(calib) and all(getattr(model_, "is_cut", lambda q, k: False)(q, "calibration") for q in calib)
-            sn, cn = Node("session", mine, sid=sid), Node("calibration", calib, sid=sid, cut=off)
+            fork = getattr(model_, "calibration_fork", lambda q, n: None)
+            sn, cn = Node("session", mine, sid=sid), Node("calibration", [q for q in calib if fork(q, sid) is None],
+                                                          sid=sid, cut=off)
             self.sessions.append((sn, cn))
             self.nodes += [sn, cn]
+            apart: dict[int, list] = {}                # night's Calibrations placed in parallel, each with its workflows
+            for q in calib:
+                if fork(q, sid) is not None:
+                    apart.setdefault(fork(q, sid), []).append(q)
+            for mark in sorted(apart):
+                n = Node("calibration", apart[mark], sid=sid, cut=all(getattr(model_, "is_cut", lambda q, k: False)(
+                    q, "calibration") for q in apart[mark]))
+                self.calib_forks.setdefault(sid, []).append(n)
+                self.nodes.append(n)
         model = getattr(project, "model", None) or project
         for p in project.paths:
             cur = self.root
@@ -388,6 +412,7 @@ class Graph:
             for sn, cn in self.sessions:
                 if p in sn.paths:
                     self.by_path[p.pid][sn.ref], self.by_path[p.pid][cn.ref] = sn, cn
+                    self.by_path[p.pid][cn.ref] = next((n for n in self.calib_forks.get(sn.sid, []) if p in n.paths), cn)
             rank = 0
             for k in chain(p):
                 cut = bool(getattr(model, "is_cut", None)) and model.is_cut(p, k)
@@ -474,7 +499,11 @@ class Graph:
                 self.compositions.append(n)
             elif (src, part) not in self.direct:
                 self.direct.append((src, part))
-        # GUI exploration 4, Q10: a workflow with Stars but no lights yet has no layer, so no Recombine block; it is
+        #: the workflows whose image comes to Post with their lights: no layer yet, their wire drawn dashed
+        waits = getattr(project, "awaits_post", lambda q: False)
+        self.awaits_post = {p.pid for p in project.paths if waits(p) and not (feeds is not None and feeds(p)) and
+                            (p.pid, "combined" if p.opts.get("etoiles") == "retirer" else None) not in removed}
+        # GUI exploration 4, Q10: a workflow with Stars but no lights yet has no layer, so no Combine layers block; it is
         # shown greyed from the start (no wire, never chosen), the one Post will give it once the lights are added
         gives = getattr(project, "gives_post", lambda q: True)
         for p in project.paths:
@@ -484,8 +513,9 @@ class Graph:
                 if src is not None:
                     self.nodes.append(Node("composition", [p], src, grey=_("after the lights")))
         self._fold_outputs(project)
-        for p in project.paths:                       # several Recombine blocks of a workflow: each its number, its
-            mine = [n for n in self.compositions if p in n.paths]   # layer's ("Full · Recombine 2"), the first 1
+        self._number_parallel(model)
+        for p in project.paths:                       # several Combine layers blocks of a workflow: each its number, its
+            mine = [n for n in self.compositions if p in n.paths]   # layer's ("Full · Combine layers 2"), the first 1
             if len(mine) > 1:                         # (control round: as Gradient 1, Gradient 2)
                 for n in mine:
                     name = str((project.post_layer(n.lid) or {}).get("name") or "") \
@@ -500,6 +530,24 @@ class Graph:
                                                   for i in src["fusion"]["inputs"]
                                                   if i["pid"] in self.leaves and self.leaves[i["pid"]] is not n}.values())
         self.nodes.append(self.final)
+
+    def _number_parallel(self, model):
+        """Frame blocks placed in parallel: all of a kind numbered, as a block placed twice in a chain, so that two
+        alike are never two of the same name. A night's Calibrations, among themselves."""
+        fork = getattr(model, "node_fork", lambda q, k: None)
+        night = getattr(model, "own_calibration_night", lambda q, s=None: None)
+
+        def number(group):
+            for i, n in enumerate(group):
+                n.num = i + 1
+        for k in FRAME_KEYS:
+            shown = [n for n in self.nodes if n.key == k and n.paths and n.sid is None]
+            if len(shown) > 1 and any(fork(n.paths[0], k) is not None or
+                                      (k == "calibration" and night(n.paths[0]) is not None) for n in shown):
+                number(shown)
+        for sn, cn in self.sessions:
+            if sn.sid in self.calib_forks:
+                number([n for n in [cn] + self.calib_forks[sn.sid] if n.paths])
 
     def _fold_outputs(self, project):
         """Issues #17, #49: a workflow has no Output block of its own in the graph: its last block holds it
@@ -527,7 +575,8 @@ class Graph:
             return self.final
         if "@" in key:                                  # a session's block (issue #43)
             k, sid = key.split("@", 1)
-            return next((n for pair in self.sessions for n in pair if n.key == k and str(n.sid) == sid), None)
+            mine = self.by_path.get(p.pid, {}).get(key) if p is not None else None   # beside its own Calibration
+            return mine or next((n for pair in self.sessions for n in pair if n.key == k and str(n.sid) == sid), None)
         if p is None:
             return None
         if key == "composition":
@@ -602,6 +651,10 @@ class Graph:
             return session_summary(s, node.sid)
         if node.sid is not None and node.cut:
             return _("off: frames as they are").format(block=title)
+        if node.key == "calibration" and node.paths and not node.cut and hasattr(s, "own_calibration_night"):
+            night = node.sid if node.sid is not None else s.own_calibration_night(node.paths[0])
+            if night is not None and s.own_calibration_night(node.paths[0], night) is not None:
+                return own_calibration_summary(s, node.paths[0], night)
         if node.sid is not None:
             ses = next((x for x in s.sessions if x["id"] == node.sid), {})
             return calibration_counts(ses.get("darks", 0), ses.get("flats", 0), gone=gone_kinds(s, {node.sid}))

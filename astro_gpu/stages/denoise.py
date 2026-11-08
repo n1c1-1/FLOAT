@@ -9,7 +9,10 @@ Noise2Noise steps on the half-stacks) helps most when the image differs from wha
 dithering, whose noise is independent from one pixel to the next, needs the long adaptation.
 
 Methods (the workflow's ``denoise`` option, ``method`` here): ``pretrained`` the network as it is (seconds, also on a
-processor); ``adapted`` the network adapted first (``adaptation``: short, about 40 s on a GPU; long, about 5 min).
+processor); ``adapted`` the network adapted first (``adaptation``: short, about 40 s on a GPU; long, about 5 min). With
+``pretrained``, a monochrome stack of few frames has its own network (issue #45): the colour one turns its noise into
+star-like dots. Fine-tuned on monochrome half-stacks (tools/bench/denoise_mono.py), it removes them and denoises as much,
+but brightens the faint stars by 8 to 11 % on the bench: for pictures, not for photometry.
 """
 from __future__ import annotations
 
@@ -37,6 +40,15 @@ ADAPTATIONS = {"short": (500, 2e-4), "long": (4000, 3e-4)}
 UNDITHERED_CORRELATION = 0.08
 MODEL = Path(__file__).resolve().parents[1] / "resources" / "denoise" / "pretrained_unet.pt"
 MODEL_ID = hashlib.sha256(MODEL.read_bytes()).hexdigest()[:10] if MODEL.exists() else "missing"
+#: the network of the monochrome stacks of fewer light frames than MONO_FEW_FRAMES (issue #45): the colour one turns the
+#: noise of those stacks into star-like dots (found again in the other half-stack: 12 and 13 frames 0-7 %, 20 frames
+#: 33-44 %, against 100 % at 34 frames and 84-98 % at 40)
+MODEL_MONO = MODEL.with_name("pretrained_unet_mono.pt")
+MODEL_MONO_ID = hashlib.sha256(MODEL_MONO.read_bytes()).hexdigest()[:10] if MODEL_MONO.exists() else "missing"
+MONO_FEW_FRAMES = 30
+#: the Denoise panel's word on that network (the Pretrained method's text, api._METHODS, says the same)
+MONO_TIP = ("A monochrome stack of fewer than 30 frames gets a network made for monochrome noise. It slightly brightens "
+            "faint stars (+8 to +11 % on the bench): it is for pictures, not for photometry.")
 PATCH, BATCH = 192, 12
 #: the card memory the network takes for a tile of 512 (with its padding): 0.21 GB measured on 8 November 2026 for 512
 #: pixels in bfloat16, plus the padding's area; a 4 GB card holds it many times over
@@ -46,7 +58,8 @@ TILE_GB = 0.35
 class DenoiseParams(StageParams):
     method: str = P("pretrained", label="Method", choices=list(METHODS),
                     help="Pretrained: the network as it is, in seconds (also on a processor). Adapted: the network "
-                         "first learns this image's noise for a while on the half-stacks.")
+                         "first learns this image's noise for a while on the half-stacks.",
+                    tip=MONO_TIP)
     adaptation: str = P("short", label="Adaptation", choices=list(ADAPTATIONS),
                         help="How long the network learns this image before denoising it: short, 500 steps (about "
                              "40 s on a GPU); long, 4000 steps (about 5 min).",
@@ -80,6 +93,12 @@ class Denoise(Stage):
     Params = DenoiseParams
     version = f"3-{MODEL_ID}"     # 3: the sky level of each colour kept (keep_level)
 
+    def mono_key_version(self, values: dict, lights: int) -> str:
+        """The version in the store key of a monochrome workflow of ``lights`` frames: with its own network when it has
+        few, for the Pretrained method (issue #45). No other key moves."""
+        own = uses_mono_network(values.get("method", "pretrained"), lights)
+        return f"{self.version}+mono-{MODEL_MONO_ID}" if own else str(self.version)
+
     def auto(self, ctx: Context) -> dict[str, Auto]:
         try:
             c = noise_correlation(np.load(ctx.input("stack", "drz_A.npy"), mmap_mode="r"),
@@ -100,7 +119,14 @@ class Denoise(Stage):
         bk, sg, nm = norm_params(A, Wt)
         corr = noise_correlation(ctx.load("stack", "drz_A.npy", mmap=True), ctx.load("stack", "drz_B.npy", mmap=True))
         ctx.metric("noise_correlation", round(corr, 3))
-        net = pretrained(dev)
+        full = image_in(ctx).img
+        mono = is_grey(full)                         # a monochrome stack (its three channels one, core/cfa.MONO)
+        keys, w = getattr(ctx.project, "keys", None), getattr(ctx.project, "workflow", None)
+        lights = keys.mono_lights(w) if keys is not None and w is not None else None      # as the key counts them
+        own = mono and lights is not None and uses_mono_network(p.method, lights)
+        net = pretrained(dev, mono=own)
+        if own:
+            ctx.log(f"monochrome stack of {lights} frames: the network made for monochrome noise")
         if p.method == "adapted":
             steps, lr = ADAPTATIONS[p.adaptation]
             adapt(ctx, net, A, B, nm, bk, sg, dev, steps, lr, p.seed)
@@ -117,11 +143,8 @@ class Denoise(Stage):
         dA = apply_net(net, A, nm, bk, sg, dev)
         dB = apply_net(net, B, nm, bk, sg, dev)
         ctx.progress(0.96, "denoising the full stack")
-        full = image_in(ctx).img
-        # a monochrome stack (its three channels one, core/cfa.MONO): the network, trained on colour, moves them a
-        # little apart; their mean, in the three, keeps it grey (issue #43)
-        mono = bool(np.array_equal(full[0, ::97, ::97], full[1, ::97, ::97])
-                    and np.array_equal(full[2, ::97, ::97], full[1, ::97, ::97]))
+        # a monochrome stack: the network moves the three channels a little apart; their mean, in the three, keeps it
+        # grey (issue #43)
         grey = (lambda a: np.repeat(a.mean(0, keepdims=True), 3, axis=0)) if mono else (lambda a: a)
         dA, dB = keep_level(grey(dA), A, Wt), keep_level(grey(dB), B, Wt)
         ctx.save("n2n_avg.npy", 0.5 * (dA + dB))
@@ -189,12 +212,24 @@ def noise_correlation(A, B, size: int = 800) -> float:
     return float((d[:, 1:] * d[:, :-1]).sum() / den) if den > 0 else 0.25
 
 
-def pretrained(dev) -> nn.Module:
-    """The bundled pretrained network (resources/denoise), in float32."""
-    if not MODEL.exists():
-        raise FileNotFoundError(f"the pretrained denoising network is missing: {MODEL}")
+def is_grey(full: np.ndarray) -> bool:
+    """Whether a (3, H, W) stack is monochrome: its three channels one (core/cfa.MONO), on a sparse grid of pixels."""
+    return bool(np.array_equal(full[0, ::97, ::97], full[1, ::97, ::97])
+                and np.array_equal(full[2, ::97, ::97], full[1, ::97, ::97]))
+
+
+def uses_mono_network(method: str, lights: int) -> bool:
+    """Whether a monochrome stack of ``lights`` frames, with this method, is denoised by the monochrome network."""
+    return method == "pretrained" and 0 < lights < MONO_FEW_FRAMES and MODEL_MONO.exists()
+
+
+def pretrained(dev, mono: bool = False) -> nn.Module:
+    """The bundled pretrained network (resources/denoise), in float32: with ``mono``, the monochrome stacks' one."""
+    path = MODEL_MONO if mono else MODEL
+    if not path.exists():
+        raise FileNotFoundError(f"the pretrained denoising network is missing: {path}")
     net = UNet().to(dev)
-    state = torch.load(MODEL, map_location=dev, weights_only=False)["net"]
+    state = torch.load(path, map_location=dev, weights_only=False)["net"]
     net.load_state_dict({k: v.float() for k, v in state.items()})
     return net
 

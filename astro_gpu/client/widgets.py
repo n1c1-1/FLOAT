@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QApplication, QFrame, QLabel, QVBoxLayout, QWidget
 ACCENT, OK, WARN, SHARED, BAD = "#5ea1ff", "#5fbf7f", "#e6a23c", "#a395ff", "#e06c6c"
 NEW = "#c9b37e"                       # the ◇ mark: what the engine does not have yet (Spec mode)
 DISABLED = "#5d6470"
+ICON, ICON_DIM, INK = "#c9cfd8", "#8b93a1", "#0f1115"     # the icons (icons.py): their usual, secondary and on-accent colours
 
 QSS = f"""
 * {{ font-family: 'Segoe UI'; font-size: 10pt; color: #d8dce4; }}
@@ -135,7 +136,9 @@ _CAP = _Cap()
 def _room(w):
     """Where a dialog opens: the window it opens over, else the screen's free area."""
     top = w.parentWidget().window() if w.parentWidget() is not None else None
-    return top.geometry() if top is not None and top.isVisible() else (w.screen() or QApplication.primaryScreen())         .availableGeometry()
+    if top is not None and top.isVisible():
+        return top.geometry()
+    return (w.screen() or QApplication.primaryScreen()).availableGeometry()
 
 
 def cap_dialog(d):

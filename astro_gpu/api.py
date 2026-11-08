@@ -1070,6 +1070,8 @@ def type_warning_english(w: dict, session: str) -> str:
                 "a JPEG, PNG or TIFF only with lights of its kind)")
     if w["key"] == "mixed":
         return f"{session}: {w['n']} {w['type']} file(s) among {w['of']} {w['main']} {w['kind']}: added by mistake?"
+    if w["key"] == "same_files":
+        return f"{session}: {w['n']} file(s) of the {w['kind']} are also in the {w['other']}"
     if w["key"] == "wrong_kind":
         return f"{session}: the {w['kind']} are {w['type']}, the lights {w['main']}: they cannot calibrate them"
     return f"{session}: the {w['kind']} are {w['type']}, the lights {w['main']}"
@@ -1330,6 +1332,8 @@ def add_workflow(p: Project2, name: str, options: dict[str, Any] | str | None = 
     for st, kv in (params or {}).items():
         merged.setdefault(st, {}).update(copy.deepcopy(kv))
     w = p.add_workflow(name, opts, merged, end=end)
+    if copy_of is not None:                            # the same frames: its Calibration placed in parallel too
+        w.calibration = copy.deepcopy(p.workflow(copy_of).calibration)
     return copy.deepcopy(w)
 
 
@@ -1552,7 +1556,9 @@ _METHODS: dict[str, list[MethodInfo]] = {
     "denoise": [
         MethodInfo("pretrained", "Pretrained network", "pretrained", "both", "denoise", False,
                    "A network trained on many pairs of half-stacks (Noise2Noise), applied as it is. Nothing is "
-                   "invented: it learned to predict one half-stack from the other."),
+                   "invented: it learned to predict one half-stack from the other. A monochrome stack of fewer than "
+                   "30 frames gets a network made for monochrome noise. It slightly brightens faint stars (+8 to +11 % "
+                   "on the bench): it is for pictures, not for photometry."),
         MethodInfo("adapted", "Pretrained + adapted to the image", "adapted", "both", "denoise", False,
                    "The same network first learns this image's own noise on its half-stacks: longer, fitted to this "
                    "image (a session without dithering most of all)."),
@@ -1570,7 +1576,7 @@ _METHODS: dict[str, list[MethodInfo]] = {
     "stars": [
         MethodInfo("neural", "Neural star removal", "neural", "both", "star_removal", False,
                    "Takes the stars off the image (a network trained on many stacks): the starless image and the stars "
-                   "alone, combined by a Recombine block or each used as a layer of Post. Seconds on a "
+                   "alone, combined by a Combine layers block or each used as a layer of Post. Seconds on a "
                    "GPU, a few minutes on a processor."),
     ],
     "deconvolution": [

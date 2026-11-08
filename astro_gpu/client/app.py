@@ -50,19 +50,21 @@ from PySide6.QtWidgets import (
     QPushButton,
     QStackedWidget,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from .. import __version__, api
 from ..core import project2
-from ..core.newproject import guess_names
 from ..core.project import Target
 from . import APP_NAME, prefs
 from . import layout as lay
 from .gcguard import GuiGarbageCollector
 from .home import HomeView
 from .i18n import _, language, plain_error, plural, set_language
+from .icons import icon as make_icon
+from .icons import IconLabel, icon_only, set_icon
 from .logview import LogPanel
 from .services.run import duration_text
 from .services.worker import ApiWorker, Machine, machine_info
@@ -99,7 +101,7 @@ def apply_language(code: str):
 
 def no_block(w) -> bool:
     """A workflow with no block placed after its source (GUI exploration 6.5: it is not "up to date", it has nothing
-    to compute); a Fusion computes itself, a workflow made before the free graph has its blocks; an image already
+    to compute); a Combine channels computes itself, a workflow made before the free graph has its blocks; an image already
     stretched is its own Output (Image → Post: its Image block is computed, GUI exploration round 2)."""
     from ..core.project2 import is_fusion
     from ..core.workflow import source_of
@@ -185,6 +187,29 @@ class PostHolder(QWidget):
         self.ensure()
 
 
+class Banner(QFrame):
+    """A failure said without stopping the user: a strip over the window, until it is closed or replaced."""
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("banner")
+        self.setStyleSheet("QFrame#banner { background: #3a2f1c; border-bottom: 1px solid #5a4a26; }")
+        h = QHBoxLayout(self)
+        h.setContentsMargins(10, 5, 6, 5)
+        h.addWidget(IconLabel("warning", 16, "warning"))
+        self.text = label("", "", wrap=True)
+        h.addWidget(self.text, 1)
+        b = icon_only(QToolButton(), "remove", _("Close"))
+        b.setAutoRaise(True)
+        b.clicked.connect(self.hide)
+        h.addWidget(b)
+        self.hide()
+
+    def say(self, text: str):
+        self.text.setText(text)
+        self.show()
+
+
 class Main(QMainWindow):
     def __init__(self, worker: ApiWorker | None = None):
         super().__init__()
@@ -211,7 +236,14 @@ class Main(QMainWindow):
         self._flash_timer.setSingleShot(True)
         self._flash_timer.timeout.connect(self._flash_end)
         self.screens = QStackedWidget()
-        self.setCentralWidget(self.screens)
+        self.banner = Banner()
+        root = QWidget()
+        rv = QVBoxLayout(root)
+        rv.setContentsMargins(0, 0, 0, 0)
+        rv.setSpacing(0)
+        rv.addWidget(self.banner)
+        rv.addWidget(self.screens, 1)
+        self.setCentralWidget(root)
         self.status = label("", "small")
         self.statusBar().addWidget(self.status, 1)
         self.spec_note = label("", "small")
@@ -244,8 +276,10 @@ class Main(QMainWindow):
         has = self.project is not None
         spec = prefs.spec()
 
-        def act(menu, text, fn=None, key=None, checkable=False, enabled=True, new=False):
+        def act(menu, text, fn=None, key=None, checkable=False, enabled=True, new=False, role=None):
             a = QAction(text + ("  ◇" if new else ""), menu)
+            if role:
+                a.setIcon(make_icon(role, 16))
             if key:
                 a.setShortcut(QKeySequence(key))
             a.setCheckable(checkable)
@@ -258,9 +292,9 @@ class Main(QMainWindow):
             return a
 
         f = mb.addMenu(_("File"))
-        act(f, _("Home"), self.show_home, "Ctrl+H")
-        act(f, _("New project…"), self.new_project, "Ctrl+N")
-        act(f, _("Open project…"), self.open_other, "Ctrl+O")
+        act(f, _("Home"), self.show_home, "Ctrl+H", role="home")
+        act(f, _("New project…"), self.new_project, "Ctrl+N", role="new")
+        act(f, _("Open project…"), self.open_other, "Ctrl+O", role="open")
         rec = f.addMenu(_("Recent projects"))
         for r in prefs.recent():
             text = r["name"] + (f" · {r['target']}" if r.get("target") else "")
@@ -269,44 +303,43 @@ class Main(QMainWindow):
         rec.setEnabled(bool(prefs.recent()))
         rec.setToolTipsVisible(True)
         f.addSeparator()
-        act(f, _("Save"), self.save, "Ctrl+S", enabled=has)
-        act(f, _("Save as…"), self.save_as, enabled=has)
+        act(f, _("Save"), self.save, "Ctrl+S", enabled=has, role="save")
+        act(f, _("Save as…"), self.save_as, enabled=has, role="save")
         f.addSeparator()
-        act(f, _("Import folder…"), self.add_sources, "Ctrl+I", enabled=has)
-        self.a_export = act(f, _("Export image…"), self.export, "Ctrl+E", enabled=has)
+        self.a_export = act(f, _("Export image…"), self.export, "Ctrl+E", enabled=has, role="export")
         if spec:
             act(f, _("Export as script…"), new=True)
         f.addSeparator()
-        act(f, _("Close project"), self.close_project, "Ctrl+W", enabled=has)
-        act(f, _("Quit"), self.close, "Ctrl+Q")
+        act(f, _("Close project"), self.close_project, "Ctrl+W", enabled=has, role="close_project")
+        act(f, _("Quit"), self.close, "Ctrl+Q", role="quit")
         e = mb.addMenu(_("Edit"))
-        self.a_undo = act(e, _("Undo"), self.undo, "Ctrl+Z", enabled=has)
-        self.a_redo = act(e, _("Redo"), self.redo, "Ctrl+Y", enabled=has)
+        self.a_undo = act(e, _("Undo"), self.undo, "Ctrl+Z", enabled=has, role="undo")
+        self.a_redo = act(e, _("Redo"), self.redo, "Ctrl+Y", enabled=has, role="redo")
         self.a_redo.setShortcuts([QKeySequence("Ctrl+Y"), QKeySequence("Ctrl+Shift+Z")])
         e.addSeparator()
-        act(e, _("Settings…"), self.open_settings, "Ctrl+,")
+        act(e, _("Settings…"), self.open_settings, "Ctrl+,", role="settings")
         v = mb.addMenu(_("View"))
-        act(v, _("Graph"), lambda: self.set_mode(0), "Ctrl+1", enabled=has)
-        act(v, _("Inspect"), lambda: self.set_mode(1), "Ctrl+2", enabled=has)
-        act(v, _("Post"), lambda: self.set_mode(2), "Ctrl+3", enabled=has)
+        act(v, _("Graph"), lambda: self.set_mode(0), "Ctrl+1", enabled=has, role="graph")
+        act(v, _("Inspect"), lambda: self.set_mode(1), "Ctrl+2", enabled=has, role="inspect")
+        act(v, _("Post"), lambda: self.set_mode(2), "Ctrl+3", enabled=has, role="layers")
         v.addSeparator()
         self.a_hide = act(v, _("Hide panels") + "\tTab", lambda: self.toggle_panels("hidden"), None, True, enabled=has)
         self.a_hide_r = act(v, _("Hide right") + "\tShift+Tab", lambda: self.toggle_panels("right_hidden"), None, True,
                             enabled=has)
         self.a_max = act(v, _("Maximise"), lambda: self.toggle_panels("max"), "Ctrl+Space", True, enabled=has)
-        act(v, _("Reset layout"), self.reset_layout, enabled=has)
+        act(v, _("Reset layout"), self.reset_layout, enabled=has, role="reset")
         v.addSeparator()
-        act(v, _("Log"), lambda: self.b_log.toggle(), "Ctrl+L")
+        act(v, _("Log"), lambda: self.b_log.toggle(), "Ctrl+L", role="log")
         self.a_spec = act(v, _("Spec mode"), None, None, True)
         self.a_spec.setChecked(spec)
         self.a_spec.toggled.connect(self.set_spec)
         r = mb.addMenu(_("Run"))
-        self.a_run = act(r, _("Run all"), self.launch, "F5", enabled=has)
-        self.a_here = act(r, _("Run to here"), self.run_to_here, "Shift+F5", enabled=has)   # Inspect's button's name
+        self.a_run = act(r, _("Run all"), self.launch, "F5", enabled=has, role="run")
+        self.a_here = act(r, _("Run to here"), self.run_to_here, "Shift+F5", enabled=has, role="run")   # Inspect's button's name
         r.addSeparator()
-        self.a_stop = act(r, _("Stop"), self.stop_run, enabled=False)
+        self.a_stop = act(r, _("Stop"), self.stop_run, enabled=False, role="stop")
         h = mb.addMenu(_("Help"))
-        act(h, _("About"), self.about, "F1")
+        act(h, _("About"), self.about, "F1", role="about")
         if spec:
             act(h, _("Glossary"), new=True)
         for m in (f, e, v, r, h):
@@ -387,7 +420,7 @@ class Main(QMainWindow):
             state = "hidden"
         else:
             state = st.get("post") or ("icons" if prefs.get("post_panel_shown") is False else st["right"])
-        view.set_layout(state)
+        view.set_layout(state, lay.effective(cls) == lay.SMALL)
         view.set_compact(lay.compact(cls))
 
     def _tab(self):
@@ -438,10 +471,9 @@ class Main(QMainWindow):
         if self.project is not None:
             self._leave_thumbnail()                  # Home shows the open project as Post last showed it
         if self.home is None:
-            self.home = HomeView(self.worker, can_import=True, last=last)
+            self.home = HomeView(self.worker, last=last)
             self.home.openProject.connect(self.open_project)
             self.home.createProject.connect(self.create_project)
-            self.home.importFolder.connect(self.import_folder_as_new)
             self.screens.insertWidget(0, self.home)
         else:
             self.home.rescan()
@@ -460,11 +492,9 @@ class Main(QMainWindow):
         self.show_home()
         self.home.open_other()
 
-    def create_project(self, root: str, name: str, target: str, details: dict | None = None,
-                       gallery: bool = True) -> bool:
+    def create_project(self, root: str, name: str, target: str, details: dict | None = None) -> bool:
         """A new v2 project in ``root``, opened. Its calibrated frames go to <cache folder>/<project folder>.
-        ``details``: the target's coordinates and the capture data New project gives (issue #38). ``gallery``: the
-        template gallery opens on it (an import opens it after its frames, GUI exploration 7.1)."""
+        ``details``: the target's coordinates and the capture data New project gives (issue #38)."""
         try:
             d = details or {}
             p = project2.create(root, name, Target(name=target, ra=d.get("ra"), dec=d.get("dec"),
@@ -476,33 +506,9 @@ class Main(QMainWindow):
             p.stack_mode = "per_session"
             project2.save(p)
         except (OSError, ValueError, project2.LegacyProject) as e:
-            QMessageBox.warning(self, _("New project"), _("The project cannot be created: {why}").format(why=e))
+            self.banner.say(_("The project cannot be created: {why}").format(why=e))
             return False
-        return self.open_project(root, created=True, gallery=gallery)
-
-    def import_folder_as_new(self):
-        """Import folder as new project: the folder of the lights gives the name and the target, then its frames
-        are read into the new project. GUI exploration 7.1, #28, #29: a folder without lights makes no project (said
-        why); the project is proposed where the projects are, never inside the frames' folder; the import window,
-        then the template gallery, one after the other."""
-        folder = QFileDialog.getExistingDirectory(self, _("Import folder as new project…"), prefs.last_folder())
-        if not folder:
-            return
-        from ..core.project import list_frames
-        if not list_frames([folder]):
-            from .sources import no_lights_text
-            self.flash(no_lights_text([folder]) + " " + _("No project made."))
-            return
-        from .home import projects_location
-        where = projects_location(avoid=folder)            # read before the frames' folder is the last one used
-        prefs.remember_folder(folder)
-        g = guess_names(folder)
-        got = self.home.ask_new_project(g["name"], g["target"], location=where)
-        if got and self.create_project(*got, gallery=False):
-            if not self.import_frames(folder):
-                self.flash(_("Project without lights: add them in Session"))
-            if self.graph is not None and self.s is not None and all(w.blocks == [] for w in self.s.p.workflows):
-                QTimer.singleShot(0, lambda: self.graph.new_workflow(fresh=True) if self.graph is not None else None)
+        return self.open_project(root, created=True)
 
     # ------------------------------------------------------------ a project
     def _device(self) -> tuple[bool, str | None]:
@@ -526,14 +532,11 @@ class Main(QMainWindow):
             self.offer_import(root)
             return False
         except FileNotFoundError:
-            QMessageBox.warning(self, _("Open project"), _("No project in this folder: {folder}").format(
-                folder=root.as_posix()))
-            prefs.drop_recent(root.as_posix())
-            self.build_menus()
-            return False
+            self.banner.say(_("No project in this folder: {folder}").format(folder=root.as_posix()))
+            return False                                  # still in the recents: its disk may only be unplugged
         except (OSError, ValueError, KeyError, TypeError):   # said plainly, never the raw error (7.5)
-            QMessageBox.warning(self, _("Open project"), _("This project cannot be opened: its file is damaged, or "
-                                                           "it is not a project file of this program."))
+            self.banner.say(_("This project cannot be opened: its file is damaged, or it is not a project file of this "
+                              "program."))
             return False
         if self.close_project(go_home=False) is False:              # unsaved edits kept: Cancel
             return False
@@ -703,7 +706,7 @@ class Main(QMainWindow):
         self.device_cb.activated.connect(lambda _i: self.set_device(self.device_cb.currentData()))
         h.addWidget(self.device_cb)
         h.addSpacing(6)
-        self.bt_run = QPushButton(_("Run"))
+        self.bt_run = set_icon(QPushButton(_("Run")), "run", 16, "on_accent")
         self.bt_run.setObjectName("primary")
         self.bt_run.clicked.connect(self.launch)
         h.addWidget(self.bt_run)
@@ -735,7 +738,6 @@ class Main(QMainWindow):
         page.openBlock.connect(lambda: self.set_mode(2 if self.s.sel_step == "final" else 1))
         page.openPost.connect(lambda: self.set_mode(2))
         page.openLayer.connect(self.open_layer)
-        page.addSources.connect(self.add_sources)
         page.addSession.connect(self.add_session)
         page.variantMade.connect(self._variant_made)
         page.changed.connect(self.request_refresh)
@@ -753,6 +755,7 @@ class Main(QMainWindow):
         from .tune import TuneView
         s = self.s
         self.browser = SourcesView(s)
+        self.browser.toast.connect(self.flash)
         self.frames = FramesView(s, self.browser)
         self.post_holder = PostHolder(self.post_page)
         tune = TuneView(s, self.steps, self.frames, self.post_holder)
@@ -1038,8 +1041,7 @@ class Main(QMainWindow):
 
     def _worker_failed(self, channel, _n, text):
         if channel.startswith("cache."):
-            QMessageBox.warning(self, _("Clear cache"), _("The cache cannot be cleared: {why}").format(
-                why=plain_error(text)))
+            self.banner.say(_("The cache cannot be cleared: {why}").format(why=plain_error(text)))
 
     # ------------------------------------------------------------ files
     def save(self):
@@ -1071,7 +1073,7 @@ class Main(QMainWindow):
             return
         root = Path(d)
         if (root / project2.FILE).exists() or (root / project2.V1_FILE).exists():
-            QMessageBox.warning(self, _("Save as…"), _("This folder already holds a project."))
+            self.banner.say(_("This folder already holds a project."))
             return
         old = self.project.definition
         if self.s is not None and self.s.path is not None:
@@ -1087,7 +1089,7 @@ class Main(QMainWindow):
         try:
             project2.save(p, root)
         except (OSError, ValueError, project2.LegacyProject) as e:
-            QMessageBox.warning(self, _("Save as…"), _("The project cannot be saved: {why}").format(why=e))
+            self.banner.say(_("The project cannot be saved: {why}").format(why=e))
             return
         self.close_project(go_home=False, discard=True)  # its edits went into the copy: no question
         self.open_project(root)
@@ -1109,66 +1111,20 @@ class Main(QMainWindow):
         from .previous import PreviousVersionDialog
         return PreviousVersionDialog(root, self)
 
-    def import_box(self, root: Path) -> QMessageBox:
-        """A note that the folder holds a project of an older version (tests check its text)."""
-        return QMessageBox(QMessageBox.Information, _("Open project"), _(
-            "“{name}” was made with an older version. Import it as a new project to open it here; its folder "
-            "is never changed.").format(name=Path(root).name), QMessageBox.Ok, self)
-
     # ------------------------------------------------------------ frames, runs, export, undo
-    def add_sources(self):
-        """File > Import folder…: frames into the open project."""
-        if self.s is None:
-            return
-        from .services.inspect import service_of
-        from .sources import import_folder
-        import_folder(self.s, self, service=service_of(self.s))
-
     def add_session(self):
-        """Add a session…: its folder of lights; its calibration frames are chosen in its Session block, shown then
-        (issue #43). A project of one session calibrates each session on its own from then on (its first session's
-        results stay valid: the same keys); one made before with several nights calibrated together keeps that."""
+        """Add a session…: a new empty session, opened in Inspect, where its files are added (issue #43)."""
         s = self.s
         if s is None:
             return
-        if not s.sources_loaded:                      # the first frames: the import, which sorts them by kind
-            from .services.inspect import service_of
-            from .sources import import_folder
-            import_folder(s, self, new_session=True, service=service_of(s))
-            return
-        folder = QFileDialog.getExistingDirectory(self, _("Lights of the new session"), prefs.last_folder())
-        if not folder:
-            return
-        prefs.remember_folder(folder)
-        from ..core.project import list_frames
-        from ..io.frames import frame_filter
-        first = next(iter(list_frames([folder])), None)
-        flt = frame_filter(first) if first is not None else ""     # a monochrome camera's filter, from the header
-        with s.batch():
-            if s.stack_mode == "together" and len(s.p.sessions) == 1:
-                s.set_stack_mode("per_session")
-            sid = s.add_session(Path(folder).name, lights=[folder])
-            if flt:
-                s.set_session_filter(sid, flt)
-            # "+ Session": it joins the flow it is drawn with (else the one shown), or one of its own (decision 1)
-            pid = getattr(getattr(self.graph, "graph", None), "plus_session_pid", None)
-            q = s.join_session(s.view(pid) if pid is not None else s.path, sid)
-        if q is not None:
-            s.current = s.paths.index(s.view(q.pid))
-        self.flash(_("Session “{name}” added · darks/flats in its block").format(name=s.session(sid).name))
+        # "+ Session": it joins the flow it is drawn with (else the one shown), or one of its own (decision 1)
+        sid = s.new_session(getattr(getattr(self.graph, "graph", None), "plus_session_pid", None))
+        self.flash(_("Session “{name}” added · its files in Inspect").format(name=s.session(sid).name))
         self.select(step=f"session@{sid}" if s.separate_sessions() else "sources")
-
-    def import_frames(self, folder: str) -> bool:
-        """The frames of a folder into the open project, after Import folder as new project."""
-        if self.s is None:
-            return False
-        from .services.inspect import service_of
-        from .sources import import_folder
-        if import_folder(self.s, self, folder=folder, service=service_of(self.s)):
-            self.select(step="sources")
-            self.set_mode(1)
-            return True
-        return False
+        if self.browser is not None:
+            self.browser.show_session(sid)
+            self.frames.show_page(1)
+        self.set_mode(1)
 
     def export(self):
         """File > Export image… (the Export dialog of Post, on the composition of its layers)."""
@@ -1243,7 +1199,7 @@ class Main(QMainWindow):
     def _confirm_clear(self, found):
         total = sum(b for _r, b in found)
         if not total:
-            QMessageBox.information(self, _("Clear cache"), _("The closed projects hold no unused results."))
+            self.flash(_("The closed projects hold no unused results."))
             return
         text = plural(len(found), "{size} of results no workflow uses, in {n} closed project. Clear them?",
                       "{size} of results no workflow uses, in {n} closed projects. Clear them?",
@@ -1368,6 +1324,8 @@ class Main(QMainWindow):
         src = QTextBrowser()                         # the data the product reads, credited (credits.py)
         src.setObjectName("data_sources")
         src.setOpenExternalLinks(True)
+        src.setStyleSheet('QTextBrowser { background: #12141a; border: 1px solid #353b47; }')
+        src.document().setDefaultStyleSheet('a { color: #5ea1ff; } th, td { padding-right: 8px; }')
         src.setHtml(data_sources_html())
         lv.addWidget(src, 1)
         b = QPushButton(_("Close"))
@@ -1447,7 +1405,10 @@ def main(argv=None):
     apply_language(prefs.get("language"))
 
     def show_error(t, v, tb):
-        QMessageBox.critical(None, APP_NAME, "".join(traceback.format_exception(t, v, tb))[-3000:])
+        box = QMessageBox(QMessageBox.Critical, APP_NAME, _("The program hit an unexpected error. The details below "
+                                                            "help to find it."))
+        box.setDetailedText("".join(traceback.format_exception(t, v, tb))[-3000:])
+        box.exec()
 
     sys.excepthook = show_error
     threading.Thread(target=_warm_up, name="warm-up", daemon=True).start()

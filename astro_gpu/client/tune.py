@@ -32,14 +32,13 @@ from the model's signals while it is visible. Its signals: ``back`` (the Graph b
 selected block of the current workflow), ``openPost``, ``removeTool`` (Remove on the panel of an optional block: the
 graph's ``remove_tool(node, None)``), ``toasted(text)``, ``sendToPost(name, source, key)`` (Send to Post of a viewer:
 the window gives it to Post's ``add_image_layer``; ``can_post``, a callable the window sets, says whether Post takes
-it). Importing is the views' own: ``sources.import_folder(model, parent, folder=None, new_session=False)``.
+it). The files of a session are the Session's Inspect (``sources.py``).
 
 Classes: ``TuneView``, ``Strip`` (the strip of blocks), ``WeightsChart`` and ``ColorFitChart`` (Stacking and Color).
 """
 from __future__ import annotations
 
 import html
-import re
 from collections import OrderedDict
 from functools import partial
 
@@ -82,6 +81,7 @@ from .charts import (
 )
 from .chartview import ChartView
 from .i18n import _, hours_text, language, number, plural
+from .icons import IconLabel, IconText, icon, set_icon
 from .imageview import ImageView, ViewImage, quick_thumbnail, sky_text
 from .layout import Dock, fold_button
 from .panel import STATE_COLOR, STATE_WORD, Panel
@@ -180,7 +180,7 @@ class Strip(QFrame):
         clear(self.lead)
         clear(self.h)
         self.current = None                               # the open block's button (the strip scrolls to it)
-        bk = QPushButton("◂  " + _("Graph"))
+        bk = set_icon(QPushButton(_("Graph")), "back", 16)
         bk.setToolTip(_("Back to the graph (Esc)"))
         bk.clicked.connect(self.back.emit)
         self.lead.addWidget(bk)
@@ -201,9 +201,7 @@ class Strip(QFrame):
             self.lead.addSpacing(10)
         for i, (k, title, node) in enumerate(items):
             if i:
-                a = QLabel("›")
-                a.setStyleSheet("color: #6b7280; background: transparent;")
-                self.h.addWidget(a)
+                self.h.addWidget(IconLabel("chevron_right", 16, "dim"))
             off = node is not None and node.cut           # switched off: no state mark (round 3: a green "Up to date")
             st = g.state(node) if node is not None and not off else "pending"
             b = QPushButton(title.replace("&", "&&"))   # no mnemonic
@@ -222,9 +220,7 @@ class Strip(QFrame):
             if sel:
                 self.current = b
         if p is not None:
-            a = QLabel("›")
-            a.setStyleSheet("color: #6b7280; background: transparent;")
-            self.h.addWidget(a)
+            self.h.addWidget(IconLabel("chevron_right", 16, "dim"))
             b = QPushButton(_("Post"))
             b.setStyleSheet("QPushButton { padding: 4px 8px; }")
             b.clicked.connect(lambda: self.picked.emit("final"))
@@ -263,6 +259,9 @@ class _Cell:
         return self._t
 
 
+REF_MARK = "  ★"                  # a table's cell that ends with it holds the reference frame: its icon in the cell
+
+
 class TableModel(QAbstractTableModel):
     """The rows of a ``Table``: texts made once, numbers kept for sorting (−inf when unknown), red rows."""
 
@@ -271,6 +270,7 @@ class TableModel(QAbstractTableModel):
         self.headers = list(headers)
         self.texts: list[list[str]] = []
         self.keys: list[list] = []
+        self.stars: set[tuple[int, int]] = set()
         for row in rows:
             tr, kr = [], []
             for c, v in enumerate(row):
@@ -281,6 +281,9 @@ class TableModel(QAbstractTableModel):
                     kr.append(x if ok else -np.inf)
                 else:
                     t = "" if v is None else str(v)
+                    if t.endswith(REF_MARK):              # the reference frame: its star, drawn in the cell
+                        t = t[:-len(REF_MARK)]
+                        self.stars.add((len(self.texts), c))
                     tr.append(t)
                     kr.append(t)
             self.texts.append(tr)
@@ -300,6 +303,8 @@ class TableModel(QAbstractTableModel):
             return self.texts[r][c]
         if role == Qt.UserRole:
             return self.keys[r][c]
+        if role == Qt.DecorationRole and (r, c) in self.stars:
+            return icon("reference", 16)
         if role == Qt.TextAlignmentRole and c in self.numeric:
             return int(Qt.AlignRight | Qt.AlignVCenter)
         if role == Qt.ForegroundRole and self.red[r]:
@@ -635,7 +640,7 @@ class TuneView(QWidget):
         h.addWidget(self.panel)
         # issue #44: as the graph's: the panel folds to icons or hides
         self.dock = Dock(body, self.panel, lambda: h.addWidget(self.panel), lambda: h.removeWidget(self.panel),
-                         self.panel.section_list, _("Block settings"))
+                         self.panel.folds.items, _("Block settings"))
         h.insertWidget(h.indexOf(self.panel), self.dock.strip)
         self.dock.chosen.connect(lambda st: self.sideChosen.emit(st))
         self.dock.arrow.clicked.connect(self.sidesShown.emit)
@@ -653,7 +658,6 @@ class TuneView(QWidget):
         pn.changed.connect(self.request_refresh)
         pn.openPost.connect(self.openPost.emit)
         pn.variantMade.connect(self._variant_made)
-        pn.addSources.connect(self._import)
         pn.addSession.connect(self._add_session)
         pn.renamed.connect(lambda pid, name: self.s.rename(pid, name))
         pn.toast.connect(self.toasted.emit)
@@ -677,7 +681,7 @@ class TuneView(QWidget):
     # ------------------------------------------------------------ selection (what the strip does)
     def set_layout(self, right: str, strip_shown: bool, compact: bool, solo: bool):
         """Issue #44: the right panel (docked | icons | hidden), the band of blocks and the compact look."""
-        self.panel.set_solo(solo)
+        self.panel.folds.set_solo(solo)
         self.dock.set_state(right)
         self.strip.setVisible(strip_shown)
         self.strip.set_compact(compact)
@@ -721,13 +725,8 @@ class TuneView(QWidget):
         self.select(index=i)
         self.workflow.emit(i)
 
-    def _import(self):
-        from .sources import import_folder
-        import_folder(self.s, self.window(), service=self.service)
-
     def _add_session(self):
-        from .sources import import_folder
-        import_folder(self.s, self.window(), new_session=True, service=self.service)
+        self.sources.add_session()
 
     def _variant_made(self, pid, orig):
         """The variant is shown at the same block, side by side with the workflow it comes from."""
@@ -1075,8 +1074,7 @@ class TuneView(QWidget):
 
     def _missing_line(self, text: str) -> QLabel:
         """A line on what this result does not hold (amber: the user can recompute to get it)."""
-        lb = label("◌  " + text, "warn", wrap=True)
-        return lb
+        return IconText("missing", text, "warning", "warn")
 
     def _card(self, title: str, lines: list[str], more: str = ""):
         """A missing diagnostic, said plainly in the middle of the tab: what, why and how to get it."""
@@ -1456,11 +1454,7 @@ class TuneView(QWidget):
                 tip = ""
                 if sky.objects:
                     text += "  ·  " + plural(len(sky.objects), "{n} named object", "{n} named objects")
-                    src = " + ".join(_(x) for x in re.sub(r"\s*\([^)]*\)", "", sky.source or "").split(" + ")
-                                     if x)
-                    if src:
-                        text += "  ·  " + _("names: {source}").format(source=src)
-                    tip = sky.source
+                    tip = _("names: {source}").format(source=sky.source)    # a source note: a sentence, in the tooltip
                 elif sky.why:
                     text += "  ·  " + _("No names: {why}").format(why=_(sky.why))
                 self.sky_note.setText(text)
@@ -1832,6 +1826,10 @@ class TuneView(QWidget):
         if not todo:
             return {"done": 0, "emptied": []}
         kind = todo[0].kind
+        own = self._own_series(todo[0].session)
+        if own:                                           # its own list: the files leave it (Ctrl+Z brings them back)
+            self.s.remove_calibration_files(own, todo[0].session, kind, [it.path for it in todo])
+            return {"done": len(todo), "emptied": []}
         res = self.s.leave_out_calibration([(it.session, it.kind, it.path) for it in todo],
                                            [(g.session, g.kind, g.path, g.excluded) for g in items
                                             if g.session is not None])
@@ -1845,46 +1843,58 @@ class TuneView(QWidget):
 
     def _no_frames(self, kind: str):
         """No frame of a kind in the project (none was given, or all were left out): what Calibration does then, and
-        Add a folder."""
+        the Session's files, where they are added."""
         title, line = NO_FRAMES.get(kind, ("No frames", "No frames of this kind."))
         box, v = self._card_frame(10)
         v.addWidget(label(_(title), "h2"))
         v.addWidget(label(_(line), "", wrap=True))
-        b = QPushButton(_(ADD_FOLDER.get(kind, "Add a folder…")))
+        b = QPushButton(_("Open frames"))
         b.setObjectName("primary")
-        b.clicked.connect(lambda _x=False, kk=kind: self.add_calibration_folder(kk))
+        b.clicked.connect(lambda _x=False, kk=kind: self.open_frames(kk))
         v.addWidget(b, 0, Qt.AlignLeft)
         self._place_card(box, v)
 
-    def add_calibration_folder(self, kind: str, folder: str | None = None) -> bool:
-        """Add a folder of darks (flats, bias, dark flats) to the sessions that have none of that kind (to every
-        session when all have some): Calibration is then computed again."""
-        if folder is None:
-            folder = QFileDialog.getExistingDirectory(self.window(), _(ADD_FOLDER.get(kind, "Add a folder…")),
-                                                      prefs.last_folder())
-            if not folder:
-                return False
-            prefs.remember_folder(folder)
-        P = self.s.p
-        targets = [x.id for x in P.sessions if not getattr(x, kind)] or [x.id for x in P.sessions]
-        done = [sid for sid in targets if self.s.add_calibration_folder(sid, kind, folder)]
-        if done:
-            self.toasted.emit(_("Folder added · Calibration to recompute"))
-        return bool(done)
+    def open_frames(self, kind: str):
+        """The files of a kind: a Calibration placed in parallel adds a folder to its own list; else its session's
+        Inspect: the first session that has none, else the first."""
+        night = self.s.own_calibration_night(self._cur[0]) if self._cur is not None else None
+        if night is not None:
+            folder = QFileDialog.getExistingDirectory(self.window(), _("Add a folder…"), prefs.last_folder())
+            if folder:
+                from ..core.project import list_frames
+                prefs.remember_folder(folder)
+                if self.s.add_calibration_files(self.s.same_calibration(self._cur[0], night), night, kind,
+                                                [str(f) for f in list_frames([folder])]):
+                    self.toasted.emit(_("Folder added · Calibration to recompute"))
+            return
+        ses = self.s.p.sessions
+        sid = next((x.id for x in ses if not getattr(x, kind)), ses[0].id)
+        self.select(step=f"session@{sid}" if self.s.separate_sessions() else "sources")
+        self.sources.browser.show_session(sid, kind)
+        self.sources.show_page(1)
 
     @property
     def _seq_index(self) -> dict:
         d = self.__dict__.setdefault("_seq_pos", {})
         return d
 
+    def _own_series(self, sid) -> list:
+        """The workflows going through the Calibration placed in parallel shown on this night ([] for a Session's)."""
+        p = self._cur[0] if self._cur is not None else self.s.path
+        return self.s.same_calibration(p, sid) if p is not None and sid is not None else []
+
     def _cal_exclude(self, items, i: int, excluded: bool, group=None):
         it = items[i]
+        own = self._own_series(it.session) if excluded else []
+        if own:                                           # its own list: the file leaves it, Ctrl+Z brings it back
+            self.s.remove_calibration_files(own, it.session, it.kind, [it.path])
+            self.toasted.emit(_("{file} out of master · Calibration to recompute").format(file=it.name))
+            return
         self._mark_exclusion()
         if not si.set_calibration_excluded(self.s, it, excluded, group if group is not None else items):
             self._excl_mark = None
             if self.view is not None:
                 self.view.set_excluded(i, not excluded)
-            self.toasted.emit(_("Last frame of folder: kept"))
             return
         it.excluded = excluded
         self._count_line_update(group if group is not None else items)
@@ -2042,12 +2052,12 @@ class TuneView(QWidget):
             rows, red = [], []
             for i, r in enumerate(b.table):
                 tr = d.transp[i] if i < d.n else np.nan
-                rows.append([r.name + ("  ★" if getattr(r, "reference", False) else ""), (r.time or "")[11:19],
+                rows.append([r.name + (REF_MARK if getattr(r, "reference", False) else ""), (r.time or "")[11:19],
                              r.dx, r.dy, r.rotation, r.scale, r.nmatch if r.used else None, r.nstars or None, r.fwhm,
                              r.roundness, getattr(r, "rms", None), tr, _("yes") if r.used else _("no")])
                 red.append(not r.used)
             t = make_table(heads, rows, {2: 2, 3: 2, 4: 3, 5: 5, 6: 0, 7: 0, 8: 2, 9: 3, 10: 3, 11: 0}, red)
-            self.center.addWidget(label(_("★ the reference frame."), "small"))
+            self.center.addWidget(IconText("reference", _("the reference frame."), name="small"))
             for line in si.missing_of(b.table):
                 self.center.addWidget(self._missing_line(line))
         else:
@@ -2055,13 +2065,13 @@ class TuneView(QWidget):
                      _("Stars detected"), _("FWHM (px)"), _("Residual (px)"), _("Transparency (%)"), _("Aligned")]
             rows, red = [], []
             for i in range(d.n):
-                rows.append([d.names[i] + ("  ★" if i == d.ref else ""), (d.iso[i] or "")[11:19], d.dx[i], d.dy[i],
+                rows.append([d.names[i] + (REF_MARK if i == d.ref else ""), (d.iso[i] or "")[11:19], d.dx[i], d.dy[i],
                              d.nmatch[i], d.nstars[i], d.fwhm[i], d.rms[i], d.transp[i],
                              _("yes") if d.aligned[i] else _("no")])
                 red.append(not d.aligned[i])
             t = make_table(heads, rows, {2: 2, 3: 2, 4: 0, 5: 0, 6: 2, 7: 3, 8: 0}, red)
-            self.center.addWidget(label(_("★ the reference frame. Rotation, scale and roundness: {why}").format(
-                why=si.not_yet("register")), "small", wrap=True))
+            self.center.addWidget(IconText("reference", _("the reference frame. Rotation, scale and roundness: {why}").format(
+                why=si.not_yet("register")), name="small"))
         self.center.addWidget(t, 1)
 
     # ------------------------------------------------------------ Stacking
@@ -2546,8 +2556,6 @@ NO_FRAMES = {
     "flat_darks": ("No dark flats", "No dark flats: the flats are calibrated with the bias, or the camera's black "
                                     "level."),
 }
-ADD_FOLDER = {"darks": "Add a darks folder…", "flats": "Add a flats folder…", "bias": "Add a bias folder…",
-              "flat_darks": "Add a dark flats folder…"}
 
 
 def no_frames_text(kind: str) -> str:

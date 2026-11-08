@@ -15,7 +15,7 @@ the ``ProjectModel``. It makes the edits (add or remove a block, new workflow, r
 to Post) and tells the window, by signals, what it must do (open Inspect or Post, import frames).
 
 The window (app.py ``graph_page``) builds it again with the project screen and connects its signals: ``openBlock``
-and ``openPost`` (Inspect or Post), ``addSources`` and ``addSession`` (import frames), ``variantMade`` (Inspect opens
+and ``openPost`` (Inspect or Post), ``addSession`` (a new session), ``variantMade`` (Inspect opens
 the variant compared with its original), ``changed`` (the Run button and the status line).
 
 Issue #43: the sessions calibrated each on its own sit as rows of a Session block and its Calibration block before the
@@ -35,6 +35,7 @@ The scene's items: ``BlockItem`` (a block), ``GhostItem`` (where a dragged tool 
 """
 from __future__ import annotations
 
+import textwrap
 import time
 from pathlib import Path
 
@@ -42,6 +43,7 @@ from PySide6.QtCore import QEvent, QMimeData, QPoint, QPointF, QRectF, Qt, QTime
 from PySide6.QtGui import (
     QBrush,
     QColor,
+    QCursor,
     QDrag,
     QFont,
     QFontMetrics,
@@ -86,6 +88,7 @@ from .blocks import (
     STEPS,
     TOOL_COLUMN,
     TOOLS,
+    WARN_MARK,
     Graph,
     Node,
     block_title,
@@ -95,6 +98,7 @@ from .blocks import (
 from .dialogs import ask_name
 from .gallery import TemplateGallery
 from .i18n import _, hm, number, plural
+from .icons import BLOCK_ROLES, IconLabel, draw, icon, icon_only, set_icon
 from .imageview import ZOOM_PRESETS, ZOOM_STEP
 from .layout import ARROW_H, ARROW_W, Dock, fold_button, pinch_factor, wheel_gesture
 from .model import NotInEngine, cuttable, node_key, view_key  # noqa: F401  (cuttable: older callers)
@@ -151,10 +155,23 @@ def review_tip(bp) -> str:
     return text
 
 
+POST_WHAT = "Where the workflows' images become layers: stretched, balanced, blended and exported."
+
+
+def block_what(node: Node) -> str:
+    """What a block does, for its tooltip: a paragraph of its own, wrapped (a plain tooltip never wraps by itself)."""
+    what = POST_WHAT if node.key == "final" else BY_KEY.get("session" if node.key == "sources" else kbase(node.key),
+                                                            {}).get("what")
+    return textwrap.fill(_(what), 70) + "\n" if what else ""
+
+
 class BlockItem(QGraphicsItem):
     def __init__(self, view, node: Node, title, summary, state, selected, dim, removable, w: float = BW, bp=None):
         super().__init__()
         self.view, self.node, self.w = view, node, w
+        # a warning at the head of the summary (issue #58) is its mark, drawn as an icon
+        self.warned = summary.startswith(WARN_MARK)
+        summary = summary[len(WARN_MARK):] if self.warned else summary
         self.title, self.summary, self.state = title, summary, state
         self.selected, self.dim, self.removable = selected, dim, removable
         self.bp = bp                           # None, or Graph.breakpoint: (state, workflows that pause here, of how many)
@@ -169,16 +186,15 @@ class BlockItem(QGraphicsItem):
             self.ports = PORTS["etoiles"]                 # a starless fusion: its two images, as the Split block's
         self.port = bool(self.ports)
         self.setAcceptHoverEvents(True)
-        self.setCursor(Qt.PointingHandCursor)
         # a block switched off is not computed: never "Up to date" (round 2), its line below says what it is
-        tip = f"{title}\n{summary}" + ("\n" + _(STATE_WORD[state]) if node.key not in ("sources", "final", "session")
-                                       and not node.cut else "")
+        tip = f"{title}\n{block_what(node)}{summary}" + ("\n" + _(STATE_WORD[state]) if node.key not in
+                                                          ("sources", "final", "session") and not node.cut else "")
         # a reason is a sentence of its own: its full stop is not doubled by the one after {why}
         if node.broken:
             tip += "\n" + _("Cannot run: {why}. Run is refused until it is fixed.").format(why=node.broken.rstrip("."))
         if node.cut:
             tip += "\n" + _("Switched off: the image passes through. D or the menu switches it on again.")
-        elif node.grey and node.key == "composition":     # a Recombine to come (GUI exploration 4, Q10)
+        elif node.grey and node.key == "composition":     # a Combine layers to come (GUI exploration 4, Q10)
             tip += "\n" + _("Comes with the lights: once they are added, Post combines the Stars block's two images")
         elif node.grey:
             tip += "\n" + _("Cannot run: {why}. The image passes through.").format(why=node.grey.rstrip("."))
@@ -186,7 +202,7 @@ class BlockItem(QGraphicsItem):
             tip += "\n" + _("Output ●: drag it onto Post to make a layer")
         elif node.key == "etoiles":
             tip += "\n" + _("● top: the starless image; ● bottom: the stars alone. Drag one onto Post to make it a "
-                            "layer, or onto Composition for a Recombine block")
+                            "layer, or onto Composition for a Combine layers block")
         if bp is not None and node.cut:                  # kept, but a block switched off is not run: no stop now
             tip += "\n" + _("Review point kept: it waits for the block to be switched on again (D); runs go "
                             "through meanwhile.")
@@ -280,25 +296,29 @@ class BlockItem(QGraphicsItem):
         f.setBold(True)
         p.setFont(f)
         p.setPen(QColor("#e8ebf0"))
-        tw = w - 18 - (18 if self.removable and self.hover else 0)
+        mark = ("failed", "error") if self.node.broken else ("off", "dim") if self.node.cut else \
+            ("not_computable", "warning") if self.node.grey else None
+        x0 = 11 + (20 if mark else 0)                     # the block's state, before its title
+        tw = w - 7 - x0 - (18 if self.removable and self.hover else 0)
         # a workflow's name loses its middle (two variants differ at their end; the whole name is in the tooltip), the
         # engine's words their end
         mode = Qt.ElideMiddle if self.node.key == "post" else Qt.ElideRight
-        title = ("⊘ " if self.node.grey else "") + self.title
         readable = QStyleOptionGraphicsItem.levelOfDetailFromTransform(p.worldTransform()) >= MIN_SCALE - 1e-6
-        p.drawText(QRectF(11, 6, tw, 20) if readable else QRectF(11, 0, tw, BH), Qt.AlignLeft | Qt.AlignVCenter,
-                   QFontMetrics(f).elidedText(title, mode, int(tw)))
+        p.drawText(QRectF(x0, 6, tw, 20) if readable else QRectF(x0, 0, tw, BH), Qt.AlignLeft | Qt.AlignVCenter,
+                   QFontMetrics(f).elidedText(self.title, mode, int(tw)))
+        if mark:
+            draw(p, QRectF(11, 8 if readable else (BH - 16) / 2, 16, 16), mark[0], mark[1])
         # issue #44: below the readable size the subtitles go, so that a zoomed-out graph is still a map of titles
         if readable:
             f2 = QFont("Segoe UI", 8.5)
             p.setFont(f2)
             p.setPen(QColor("#8b93a1"))
-            p.drawText(QRectF(11, 28, w - 15, 18), Qt.AlignLeft | Qt.AlignVCenter, elide(self.summary, f2, w - 15))
+            sx = 11 + (20 if self.warned else 0)
+            p.drawText(QRectF(sx, 28, w - 4 - sx, 18), Qt.AlignLeft | Qt.AlignVCenter, elide(self.summary, f2, w - 4 - sx))
+            if self.warned:
+                draw(p, QRectF(11, 29, 16, 16), "warning", "warning")
         if self.removable and self.hover:
-            p.setPen(QPen(QColor("#e06c6c"), 1.6))
-            xr = self._x_rect().adjusted(4, 4, -4, -4)
-            p.drawLine(xr.topLeft(), xr.bottomRight())
-            p.drawLine(xr.topRight(), xr.bottomLeft())
+            draw(p, self._x_rect(), "remove", "error")
         if self.node.key == "composition":                 # its two inputs, in the colours of the Stars block's outputs
             for what, y in PORTS["etoiles"]:
                 p.setPen(QPen(QColor(IMAGE_COL[what]), 1.5))
@@ -319,7 +339,7 @@ class BlockItem(QGraphicsItem):
         self.update()
 
     def hoverMoveEvent(self, e):                                      # noqa: N802
-        self.setCursor(Qt.OpenHandCursor if self._on_port(e.pos()) != NO_PORT else Qt.PointingHandCursor)
+        self.setCursor(Qt.OpenHandCursor if self._on_port(e.pos()) != NO_PORT else Qt.ArrowCursor)
 
     def hoverLeaveEvent(self, e):                                     # noqa: N802
         self.hover = False
@@ -379,7 +399,6 @@ class WireItem(QGraphicsPathItem):
         self.view, self.base_pen, self.on_remove, self.pid = view, QPen(pen), on_remove, pid
         self.setPen(pen)
         self.setAcceptHoverEvents(True)
-        self.setCursor(Qt.PointingHandCursor)
         self.setToolTip(tip + "\n" + _("Click to select it, Del to remove it"))
         self.selected = False
         self.part: tuple | None = None                 # a Stars/background block's image sent as it is: (pid, part)
@@ -455,15 +474,13 @@ def _rounded(r: QRectF) -> QPainterPath:
 
 
 class GhostItem(QGraphicsItem):
-    """A dashed place: where a dragged tool can go, or the next workflow."""
+    """A dashed place: where a dragged tool can go, or the next workflow; ``role``: an icon before its text."""
 
-    def __init__(self, rect: QRectF, text, on_click=None, pid=None):
+    def __init__(self, rect: QRectF, text, on_click=None, pid=None, role: str | None = None):
         super().__init__()
-        self.rect, self.text, self.on_click, self.pid = rect, text, on_click, pid
+        self.rect, self.text, self.on_click, self.pid, self.role = rect, text, on_click, pid, role
         self.hot = False
         self.setAcceptHoverEvents(True)
-        if on_click:
-            self.setCursor(Qt.PointingHandCursor)
 
     def boundingRect(self):                                           # noqa: N802
         return self.rect.adjusted(-2, -2, 2, 2)
@@ -476,7 +493,13 @@ class GhostItem(QGraphicsItem):
         f = QFont("Segoe UI", 9)
         p.setFont(f)
         p.setPen(QColor(ACCENT if self.hot or self.on_click else "#8b93a1"))
-        p.drawText(self.rect, Qt.AlignCenter, self.text)
+        if self.role:                                    # the icon and the text centred together
+            tw = QFontMetricsF(f).horizontalAdvance(self.text)
+            x = self.rect.center().x() - (tw + 20) / 2
+            draw(p, QRectF(x, self.rect.center().y() - 8, 16, 16), self.role, "selected" if self.hot else "dim")
+            p.drawText(QRectF(x + 20, self.rect.y(), tw + 2, self.rect.height()), Qt.AlignVCenter | Qt.AlignLeft, self.text)
+        else:
+            p.drawText(self.rect, Qt.AlignCenter, self.text)
 
     def hoverEnterEvent(self, e):                                     # noqa: N802
         if self.on_click:
@@ -669,7 +692,7 @@ class GraphView(QGraphicsView):
         to each other, so that a block is drawn between its own lanes only, and a workflow that leaves the trunk before
         a block never runs behind it. A workflow that ends on a block the others go on from (a branch sent to Post
         from a block in the middle) takes the lane right after the lanes of that block's own subtree: never one after
-        another channel's (control round: two Fusion channels' blocks on top of each other), nor after the trunk's
+        another channel's (control round: two Combine channels channels' blocks on top of each other), nor after the trunk's
         other branches (a workflow ending on Color drawn below a branch leaving at Gradient overlapped it)."""
         out: list[int] = []
         todo: list = [g.root]
@@ -688,11 +711,13 @@ class GraphView(QGraphicsView):
         return out + [p.pid for p in g.s.paths if p.pid not in out]
 
     @staticmethod
-    def session_rows(g: Graph, order: list[int], frames: list[int]) -> tuple[dict[int, float], dict[int, float]]:
+    def session_rows(g: Graph, order: list[int], frames: list[int], ghost: bool = False
+                     ) -> tuple[dict[int, float], dict[int, float]]:
         """The lanes (workflow -> y) and the sessions' rows (session -> y), from 0 (issue #43): each session level with
         the chains it feeds, with the other sessions of those chains (a filter's second night with its filter's
         chain, not under the last chain: GUI exploration 4); rows never closer than SROW, the lanes below moved down
-        when the rows need the room. A session no workflow reads: after the others."""
+        when the rows need the room. A session no workflow reads: after the others. A night takes a row more per
+        Calibration placed in parallel on it, and one for the place of a new one (``ghost``, while one is dragged)."""
         rel = {pid: i * LANE for i, pid in enumerate(order)}
         fr = set(frames)
         idx = {pid: i for i, pid in enumerate(order) if pid in fr}
@@ -701,21 +726,25 @@ class GraphView(QGraphicsView):
             groups.setdefault(tuple(sorted(idx[p.pid] for p in sn.paths if p.pid in idx)), []).append(sn.sid)
         rows: dict[int, float] = {}
         prev = None
+        high = {sn.sid: 1 + len(getattr(g, "calib_forks", {}).get(sn.sid, [])) + int(ghost) for sn, _cn in g.sessions}
         for key in sorted(groups, key=lambda k: (not k, k)):
             sids = groups[key]
+            span = sum(high[sid] for sid in sids)
             if key:
                 centre = (rel[order[key[0]]] + rel[order[key[-1]]]) / 2
             else:
-                centre = prev + SROW + (len(sids) - 1) * SROW / 2 if prev is not None else 0.0
-            first = centre - (len(sids) - 1) * SROW / 2
+                centre = prev + SROW + (span - 1) * SROW / 2 if prev is not None else 0.0
+            first = centre - (span - 1) * SROW / 2
             if prev is not None and first < prev + SROW:
                 d = prev + SROW - first
                 first += d
                 for pid in order[key[0]:] if key else []:  # its chains and those below: down, level with it
                     rel[pid] += d
-            for i, sid in enumerate(sids):
-                rows[sid] = first + i * SROW
-            prev = first + (len(sids) - 1) * SROW
+            at = first
+            for sid in sids:
+                rows[sid] = at
+                at += high[sid] * SROW
+            prev = at - SROW
         return rel, rows
 
     def rebuild(self):
@@ -762,14 +791,17 @@ class GraphView(QGraphicsView):
         order = frames + [pid for pid in order if pid not in frames]      # the image workflows' lanes last
         n_lanes = max(1, len(s.paths))
         # issue #43: the sessions' rows, each level with the chains it feeds (session_rows)
-        rel, rows = self.session_rows(g, order, frames)
+        rel, rows = self.session_rows(g, order, frames, self.drag_block == "calibration" and bool(g.sessions))
         top = TOP + max(0.0, -min(rows.values(), default=0.0))
         lanes = {pid: top + rel[pid] for pid in order}
         mid = (lanes[order[0]] + lanes[order[-1]]) / 2 if order else top + LANE / 2
         fmid = (lanes[frames[0]] + lanes[frames[-1]]) / 2 if frames else top
         for sn, cn in g.sessions:
             sn.y = cn.y = top + rows[sn.sid]
-        s_last = max((sn.y for sn, _cn in g.sessions), default=fmid)      # the lowest session's row
+            for i, c in enumerate(g.calib_forks.get(sn.sid, [])):          # under the night's own Calibration
+                c.y = sn.y + (i + 1) * SROW
+        s_last = max((n.y for pair in g.sessions for n in pair + tuple(g.calib_forks.get(pair[0].sid, []))),
+                     default=fmid)                                          # the lowest session's row
         others = [pid for pid in order if pid not in frames]
         if others and (s.sources_loaded or s.p.sessions):   # the image lanes: below the sessions and "+ Session"
             last = s_last
@@ -793,7 +825,7 @@ class GraphView(QGraphicsView):
             k = seen.get(n.paths[0].pid, 0)
             seen[n.paths[0].pid] = k + 1
             n.y += k * (BH + 6)
-        # 2nd round: two blocks of one column (a fusion's Recombine and a workflow's) never drawn over each other
+        # 2nd round: two blocks of one column (a fusion's Combine layers and a workflow's) never drawn over each other
         for c in ("composition", "fusion"):
             low = None
             for n in sorted((n for n in g.nodes if n.paths and self.col_of(n) == c), key=lambda n: n.y):
@@ -828,9 +860,14 @@ class GraphView(QGraphicsView):
         for sn, cn in g.sessions:
             if cn.paths:                                  # a session's Calibration, when its workflows have one
                 self._wire(sn, cn, True)
+            for c in g.calib_forks.get(sn.sid, []):       # and those placed in parallel: a fork from the Session
+                self._wire(sn, c, cur is not None and cur in c.paths)
         for t in (firsts if g.sessions else []):   # each first block from the sessions its workflows stack
-            src = [cn if set(map(id, cn.paths)) & set(map(id, t.paths)) else sn for sn, cn in g.sessions
-                   if set(map(id, sn.paths)) & set(map(id, t.paths))]     # without Calibration: from the Session
+            src = []
+            for sn, cn in g.sessions:
+                if set(map(id, sn.paths)) & set(map(id, t.paths)):      # without Calibration: from the Session
+                    src += [c for c in [cn] + g.calib_forks.get(sn.sid, [])
+                            if set(map(id, c.paths)) & set(map(id, t.paths))] or [sn]
             if len(src) > 1:
                 self._join(src, [t], cur)
             elif src:
@@ -844,8 +881,8 @@ class GraphView(QGraphicsView):
         self.plus_session_pid = None                      # the flow it joins: the one it is drawn with
         if s.sources_loaded:
             last = max((sn for sn, _cn in g.sessions), key=lambda n: n.y) if g.sessions else g.root   # the lowest
-            gh = GhostItem(QRectF(cx["sources"], last.y + BH / 2 + 8, cw["sources"], BH * 0.6), "+  " + _("Session"),
-                           self.newSession.emit)
+            gh = GhostItem(QRectF(cx["sources"], last.y + BH / 2 + 8, cw["sources"], BH * 0.6), _("Session"),
+                           self.newSession.emit, role="add")
             cur_flow = s.path if s.path is not None and s.path.source is None else None
             if g.sessions and last.sid is not None:       # it joins the flow of the session it is drawn under
                 cur_flow = next((q for q in s.paths if q.source is None and q.sessions is not None
@@ -864,6 +901,10 @@ class GraphView(QGraphicsView):
                            on_remove=lambda q=p: self.postLinkRemoved.emit(q.pid),
                            tip=_("“{name}”: its image to Post as a layer").format(name=p.name), pid=p.pid,
                            via_y=lanes.get(p.pid))
+            elif p.pid in g.awaits_post and p.pid in g.leaves:   # the same wire, dashed until the image exists
+                grey = next((n for n in g.nodes if n.key == "composition" and n.grey and p in n.paths), None)
+                self._wire(grey or g.leaves[p.pid], g.final, False, via_y=None if grey else lanes.get(p.pid),
+                           waiting=True, tip=_("“{name}”: its image comes to Post with the lights").format(name=p.name))
         # the Stars block's images: into its Stars and background blocks, or straight to Post
         for n in g.compositions:
             strong = cur is not None and cur in n.paths
@@ -921,29 +962,34 @@ class GraphView(QGraphicsView):
             ps = self.plus_session_ghost
             if ps is not None:
                 low.append(ps.rect.bottom())
+            if self.drag_block == "calibration" and g.sessions:   # the row open for a new one: never under this zone
+                low.append(s_last + SROW + BH / 2)
             y = max([y] + [v + 14 for v in low])
-        text = "+  " + (_("Workflow: Session/Image") if s.paths or s.p.sessions else
-                        _("Start: Session/Image"))
-        need = QFontMetricsF(QFont("Segoe UI", 9)).horizontalAdvance(text) + 40
+        text = _("Workflow: Session/Image") if s.paths or s.p.sessions else _("Start: Session/Image")
+        need = QFontMetricsF(QFont("Segoe UI", 9)).horizontalAdvance(text) + 60
         x1 = max(x1, x0 + need)                          # its text whole, however short the chain
-        gh = GhostItem(QRectF(x0, y, x1 - x0, BH), text, None)
+        gh = GhostItem(QRectF(x0, y, x1 - x0, BH), text, None, role="add")
         gh.new_flow = True                               # issue #47: a parallel flow starts here
         gh.hot = self.drag_block in ("session", "image")
         sc.addItem(gh)
         self.new_flow_ghost = gh
-        # issue #47: while an image block is dragged, a new branch can start under each block it can follow
-        if self.drag_block in wfl.IO and wfl.IO[self.drag_block] == (wfl.IMAGE, wfl.IMAGE):
+        # issue #47: while an image or a frame block is dragged, a new branch can start under each block it can follow
+        if self.drag_block in wfl.IO and (wfl.IO[self.drag_block] == (wfl.IMAGE, wfl.IMAGE)
+                                          or self.drag_block in wfl.FRAME_BLOCKS):
             title = block_title(None, view_key(self.drag_block))
             seen: set[int] = set()
             for p in self._flows():
-                for key in s.display_keys(p):
-                    n = g.node_of(p, key)
-                    if n is None or id(n) in seen or n.sid is not None or not s.can_branch(p, key, self.drag_block):
+                for key in s.branch_keys(p):
+                    if not s.can_branch(p, key, self.drag_block):
+                        continue
+                    n, row = self._branch_anchor(g, p, key)
+                    if n is None or id(n) in seen:
                         continue
                     seen.add(id(n))
-                    r = QRectF(n.col + 6, n.y + BH / 2 + 4, n.w - 12, LANE - BH - 8)   # in the gap, not on the
+                    r = QRectF(n.col + 6, n.y + BH / 2 + 4, n.w - 12, LANE - BH - 8) if not row else \
+                        QRectF(n.col + 4, n.y + SROW - BH / 2 + 4, n.w - 8, BH - 8)   # in the gap, not on the
                     #                                                                    block under it (8.1)
-                    bg = GhostItem(r, "⑂  " + _("new branch"), None, p.pid)
+                    bg = GhostItem(r, _("new branch"), None, p.pid, role="branch")
                     bg.branch_key = key
                     bg.setToolTip(_("A new branch from here: what comes before is shared (computed once), then "
                                     "{block}; it goes to Post as a layer of its own").format(block=title))
@@ -961,7 +1007,7 @@ class GraphView(QGraphicsView):
                     gh.setZValue(8)
                     sc.addItem(gh)
                     self.ghosts.append(gh)
-        if self.drag_block == "fusion":                  # issue #53: in the Composition column, under its Fusion blocks
+        if self.drag_block == "fusion":                  # issue #53: in the Composition column, under its Combine channels blocks
             below = [n.y for n in g.nodes if n.paths and self.col_of(n) == "fusion"]
             yc = max(below) + BH + 6 if below else mid
             r = QRectF(cx["fusion"] + 4, yc - BH / 2 + 4, cw["fusion"] - 8, BH - 8)
@@ -999,6 +1045,22 @@ class GraphView(QGraphicsView):
         if self._sel_seen is not None and seen != self._sel_seen:
             self.reveal(self._sel_item)
         self._sel_seen = seen
+
+    def _branch_anchor(self, g: Graph, p, key: str) -> tuple[Node | None, bool]:
+        """The block a new branch's place is drawn under, and whether a whole row is open there: a Calibration beside
+        a night's own (its lowest), any other under the block it follows; ``None`` for what is not drawn there."""
+        if key == "sources":
+            return g.node_of(p, "calibration"), False
+        if key.startswith("session@"):
+            sid = int(key.partition("@")[2])
+            cn = next((c for sn, c in g.sessions if sn.sid == sid), None)
+            forks = g.calib_forks.get(sid, [])
+            return (forks[-1] if forks else cn), True
+        if key == "calibration" and g.sessions:           # the frames of every night: under the last Calibration
+            sn, cn = g.sessions[-1]
+            return (g.calib_forks.get(sn.sid) or [cn])[-1], False
+        n = g.node_of(p, key)
+        return (None if n is not None and n.sid is not None else n), False
 
     def _flows(self) -> list:
         """The workflows a dragged palette block can go in: the one the palette says ("for …"; GUI exploration 4, Q11:
@@ -1057,7 +1119,7 @@ class GraphView(QGraphicsView):
         if item.node.key == "etoiles" and "composition" in getattr(self, "_cx", {}):
             x, w = self._cx["composition"], self._cw["composition"]
             y = item.node.y - BH / 2
-            self._comp_ghost = GhostItem(QRectF(x + 4, y + 4, w - 8, BH - 8), "+  " + _("Recombine"))
+            self._comp_ghost = GhostItem(QRectF(x + 4, y + 4, w - 8, BH - 8), _("Combine layers"), role="add")
             self._comp_ghost.setZValue(8)
             self.scene().addItem(self._comp_ghost)
 
@@ -1203,7 +1265,7 @@ class GraphView(QGraphicsView):
             self.wireSelected.emit(w)
 
     def open_layer(self, node):
-        """Post opened on a Recombine block's layer; the one Post gives by default made a layer first, without an
+        """Post opened on a Combine layers block's layer; the one Post gives by default made a layer first, without an
         undo step (decision 7)."""
         lid = node.lid
         if lid is None and node.paths and hasattr(self.s, "default_post_layer"):
@@ -1277,7 +1339,7 @@ class GraphView(QGraphicsView):
         return it
 
     def _wire(self, a: Node, b: Node, strong: bool, on_remove=None, tip: str = "", pid: int | None = None,
-              via_y: float | None = None):
+              via_y: float | None = None, waiting: bool = False):
         """A wire from a block to the next block of its workflows. A branch bends in the gap right after the block it
         leaves (the last one its workflows share), then runs straight on its own lane past the columns it skips."""
         x1, y1 = a.col + a.w, a.y
@@ -1286,7 +1348,7 @@ class GraphView(QGraphicsView):
         if via_y is not None and x2 - x1 > 4 * BEND:  # a workflow's image to Post: on its own lane past the blocks
             if abs(via_y - y1) > 1:                   # of the others, bent only at both ends (control round: it
                 path.cubicTo(QPointF(x1 + BEND / 2, y1), QPointF(x1 + BEND / 2, via_y), QPointF(x1 + BEND, via_y))
-            path.lineTo(QPointF(x2 - BEND, via_y))    # crossed the Recombine blocks on its way)
+            path.lineTo(QPointF(x2 - BEND, via_y))    # crossed the Combine layers blocks on its way)
             path.cubicTo(QPointF(x2 - BEND / 2, via_y), QPointF(x2 - BEND / 2, y2), QPointF(x2, y2))
             dx = xb = None
         else:
@@ -1297,6 +1359,9 @@ class GraphView(QGraphicsView):
         if xb is not None and (xb < x2 or not dx):
             path.lineTo(QPointF(x2, y2))
         pen = QPen(QColor("#9aa3b2" if strong else "#3d4452"), 2.2 if strong else 1.6)
+        if waiting:                                        # its image comes to Post with the lights
+            self._chain_wire(path, QPen(QColor("#6b7382"), 1.6, Qt.DashLine), tip).setZValue(1)
+            return
         if on_remove is not None:                          # issue #52: a link to Post the user can take away
             it = WireItem(self, path, pen, on_remove, tip, pid)
             self.scene().addItem(it)
@@ -1622,7 +1687,9 @@ class GraphView(QGraphicsView):
         if gone or self.drag_block is not None or vp.contains(box):
             b.hide()
             return
-        b.setText(_("Post") + "  ›")
+        b.setText(_("Post"))
+        set_icon(b, "forward", 16)
+        b.setLayoutDirection(Qt.RightToLeft)              # its arrow after its name
         b.setToolTip(_("Post is further on: show it"))
         b.adjustSize()
         b.move(self.width() - b.width() - 14, self.b_all.geometry().bottom() + 6)   # under "Show all", over no block
@@ -1766,7 +1833,10 @@ class GraphView(QGraphicsView):
                     to_post.append((_(out), lambda _c=False, w=what: self.partOutOfPost.emit(node, w)))
                 else:
                     to_post.append((_(text), lambda _c=False, w=what: self.partToPost.emit(node, w)))
-            to_post.append((_("+ Recombine"), lambda: self.newComposition.emit(node)))
+            to_post.append((_("Combine layers"), lambda: self.newComposition.emit(node), "add"))
+        elif self.has_port(node) and self.graph is not None and any(
+                self.graph.leaves.get(q.pid) is node and q.pid in self.graph.awaits_post for q in node.paths):
+            to_post.append((_("To Post") + "  —  " + _("lights first"), None))        # said, not hidden
         elif self.has_port(node):
             to_post.append((_("To Post"), lambda: self.sendToPost.emit(node)))
         wf = None
@@ -1841,8 +1911,14 @@ class GraphView(QGraphicsView):
             m.addAction(_("Inspect")).triggered.connect(lambda: self.blockOpened.emit(node))
             if to_post:
                 m.addSeparator()
-            for text, fn in to_post:
-                m.addAction(text).triggered.connect(fn)
+            for text, fn, *role in to_post:
+                a = m.addAction(text)
+                if role:
+                    a.setIcon(icon(role[0], 16))
+                if fn is None:
+                    a.setEnabled(False)
+                else:
+                    a.triggered.connect(fn)
             m.addSeparator()
             bp = self.graph.breakpoint(node) if self.graph is not None else None
             a = m.addAction(_("Review pause"))
@@ -1923,7 +1999,7 @@ class GraphView(QGraphicsView):
             self.rebuild()                               # its places light up (8.2)
             e.acceptProposedAction()
             return
-        if k in ("fusion", "composition"):               # issue #53: in the Composition column (Recombine: after a split)
+        if k in ("fusion", "composition"):               # issue #53: in the Composition column (Combine layers: after a split)
             self.drag_block = k
             self.rebuild()
             e.acceptProposedAction()
@@ -2041,7 +2117,7 @@ class GraphMap(QWidget):
         super().__init__(view.viewport())
         self.view = view
         self.rows: list[tuple[QRectF, QColor]] = []       # each block: its rectangle in the scene, the colour of its state
-        self.setCursor(Qt.PointingHandCursor)
+        self.setCursor(Qt.OpenHandCursor)
         self.setToolTip(_("Overview: click or drag to move the view"))
 
     def _frame(self) -> tuple[QRectF, float]:
@@ -2155,7 +2231,7 @@ class ToolCard(QFrame):
             self.page.add_tool(self.key, self.page.s.path.pid)
 
 
-#: the palette's width (issue #47): a panel on the left of the graph; folded (issue #44), a column of first letters
+#: the palette's width (issue #47): a panel on the left of the graph; folded (issue #44), a column of icons
 PALETTE_W = 140
 PALETTE_FOLDED_W = 46
 NEW_FRAMES = -1        # a block placed "in the workflow from the frames" of sessions that have none yet: it starts one
@@ -2166,60 +2242,62 @@ PALETTE_GROUPS = [("Sources", ["session", "image"]),
                   ("Image", ["astrometry", "gradient", "denoise", "color"]),
                   ("Post", ["stars"]),
                   ("Composition", ["fusion", "composition"])]
-PALETTE_TITLES = {"session": "Session", "image": "Image", "fusion": "Fusion"}
+PALETTE_TITLES = {"session": "Session", "image": "Image", "fusion": "Combine channels"}
 
 
 class PaletteCard(QFrame):
     """A block of the palette (issue #47): dragged onto a workflow (only its valid places light up), or placed in the
-    current workflow at its usual place by a double-click. Greyed when it cannot be placed: hovered, it says why."""
+    current workflow at its usual place by a double-click. Greyed when it cannot be placed: its tooltip says why.
+    ``branch``: it cannot be placed in the chain, but can be set in parallel: available, by a drag only."""
 
-    def __init__(self, page, block: str, reason: str, parent=None, folded: bool = False):
+    def __init__(self, page, block: str, reason: str, parent=None, folded: bool = False, branch: bool = False):
         super().__init__(parent)
-        self.page, self.block, self.reason = page, block, reason
+        self.page, self.block, self.reason, self.branch = page, block, reason, branch
         self._press = None
-        # inside the palette, its scroll bar beside it; folded (issue #44): its first letters, the name in the tooltip
+        # inside the palette, its scroll bar beside it; folded (issue #44): its icon alone, the name in the tooltip
         self.setMaximumWidth(PALETTE_FOLDED_W - 12 if folded else PALETTE_W - 26)
-        on = not reason
+        on = not reason or branch
         self.setObjectName("tool")
-        self.setCursor(Qt.OpenHandCursor if on and block in wfl.IO else
-                       Qt.PointingHandCursor if on else Qt.ForbiddenCursor)
+        self.setCursor(Qt.ForbiddenCursor if not on else Qt.ArrowCursor if block == "deconv" else Qt.OpenHandCursor)
         # available: a filled card; not available: the same card faint (a disabled tool), never dashed: dashed is
         # for the places a block can be dropped on
         self.setStyleSheet(f"QFrame#tool {{ background: {'#232831' if on else '#1e2128'}; border: 1px solid "
                            f"{'#353b47' if on else '#262a31'}; border-radius: 6px; }}"
                            f"QFrame#tool:hover {{ border-color: {ACCENT if on else '#3a4150'}; }}"
                            " QLabel { background: transparent; }")
-        v = QVBoxLayout(self)
-        v.setContentsMargins(9, 5, 9, 5)
-        v.setSpacing(0)
         self.title = _(PALETTE_TITLES[block]) if block in PALETTE_TITLES else block_title(None, view_key(block))
         if block == "deconv":
             self.title += "  ◇"
-        t = QLabel(self.title[:2] if folded else self.title)
-        t.setWordWrap(not folded)                        # a long name wraps in the palette's width
+        role = BLOCK_ROLES[block]
         if folded:
-            t.setAlignment(Qt.AlignCenter)
-            v.setContentsMargins(1, 5, 1, 5)
-        t.setStyleSheet("font-weight: 600; font-size: 9pt;" + ("" if on else " color: #555b66;"))
-        v.addWidget(t)
+            v = QVBoxLayout(self)
+            v.setContentsMargins(0, 6, 0, 6)
+            v.addWidget(IconLabel(role, 20, "normal" if on else "disabled"), 0, Qt.AlignHCenter)
+        else:
+            v = QHBoxLayout(self)
+            v.setContentsMargins(7, 5, 7, 5)
+            v.setSpacing(5)
+            v.addWidget(IconLabel(role, 16, "normal" if on else "disabled"), 0, Qt.AlignTop)
+            t = QLabel(self.title)
+            t.setWordWrap(True)                          # a long name wraps in the palette's width
+            t.setStyleSheet("font-weight: 600; font-size: 9pt;" + ("" if on else " color: #555b66;"))
+            v.addWidget(t, 1)
         key = view_key(block)
-        what = BY_KEY[key]["what"] if key in BY_KEY else ""
-        tip = _(what) if what and not reason else ""     # unavailable: the message under it says why
+        what = textwrap.fill(_(BY_KEY[key]["what"]), 70) if key in BY_KEY else ""
+        if branch:
+            tip = (what + "\n" if what else "") + _("Drag it between blocks for a new branch")
+        elif reason:                                     # not available: why, the sentence begun with a capital
+            tip = reason[:1].upper() + reason[1:]
+        else:
+            tip = what
         self.setToolTip((self.title + ("\n" + tip if tip else "")) if folded else tip)
         self.setAccessibleName(self.title)
-
-    def enterEvent(self, e):                                          # noqa: N802
-        if self.reason:
-            self.page.show_hint(self, self.reason)
-
-    def leaveEvent(self, e):                                          # noqa: N802
-        self.page.hide_hint()
 
     def mousePressEvent(self, e):                                     # noqa: N802
         self._press = e.position().toPoint()
 
     def mouseMoveEvent(self, e):                                      # noqa: N802
-        if self._press is None or not (e.buttons() & Qt.LeftButton) or self.reason or \
+        if self._press is None or not (e.buttons() & Qt.LeftButton) or (self.reason and not self.branch) or \
                 self.block not in wfl.IO and self.block not in ("session", "image", "composition", "fusion"):
             return
         if (e.position().toPoint() - self._press).manhattanLength() < QApplication.startDragDistance():
@@ -2239,7 +2317,7 @@ class PaletteCard(QFrame):
 
 
 class CombineCard(QFrame):
-    """The Recombine block in the toolbar (issue #36): a click adds one for the current
+    """The Combine layers block in the toolbar (issue #36): a click adds one for the current
     workflow's split block (a layer of Post that puts its stars back on its starless image); greyed without one."""
 
     def __init__(self, page, split, parent=None):
@@ -2247,7 +2325,6 @@ class CombineCard(QFrame):
         self.page, self.split = page, split
         on = split is not None
         self.setObjectName("tool")
-        self.setCursor(Qt.PointingHandCursor if on else Qt.ArrowCursor)
         self.setStyleSheet(f"QFrame#tool {{ background: {'#232831' if on else 'transparent'}; border: 1px "
                            f"{'solid #353b47' if on else 'dashed #3a4150'}; border-radius: 6px; }}"
                            f"QFrame#tool:hover {{ border-color: {ACCENT if on else '#3a4150'}; }}"
@@ -2274,7 +2351,6 @@ class GraphPage(QWidget):
     openBlock = Signal()                   # double-click or Enter on a block: Inspect (Post when sel_step is "final")
     openPost = Signal()                    # "Open Post" of the Post block
     openLayer = Signal(int)                # Open in Post: Post, with this layer selected
-    addSources = Signal()                  # "Import folder…" of the Frames block
     addSession = Signal()
     variantMade = Signal(int, int)         # a variant (id) was made from this workflow (id): Inspect compares them
     changed = Signal()                     # the page was built again: the window updates its Run button and status
@@ -2326,7 +2402,7 @@ class GraphPage(QWidget):
         ph.addWidget(self.panel)
         # issue #44: the right panel folds to icons (it opens over the graph), or hides leaving a small arrow
         self.dock = Dock(self, self.panel, lambda: ph.addWidget(self.panel), lambda: ph.removeWidget(self.panel),
-                         self.panel.section_list, _("Block settings"))
+                         self.panel.folds.items, _("Block settings"))
         ph.insertWidget(ph.indexOf(self.panel), self.dock.strip)
         self.dock.chosen.connect(lambda st: self.sideChosen.emit("right", st))
         self.dock.arrow.clicked.connect(self.sidesShown.emit)
@@ -2334,12 +2410,11 @@ class GraphPage(QWidget):
         self.panel.corner = fold_button(self.panel, self.dock.fold, _("Fold to icons"))
         self.left_state = "docked"
         self.left_arrow = QToolButton(self)
-        self.left_arrow.setText("›")
+        set_icon(self.left_arrow, "chevron_right", 16, "dim")
         self.left_arrow.setFixedSize(ARROW_W, ARROW_H)
         self.left_arrow.setToolTip(_("Show the blocks again"))
-        self.left_arrow.setStyleSheet("QToolButton { background: #1c1f26; border: 1px solid #2a2f38; color: #aab2bf; "
-                                      "border-top-right-radius: 5px; border-bottom-right-radius: 5px; "
-                                      "font-weight: 600; }")
+        self.left_arrow.setStyleSheet("QToolButton { background: #1c1f26; border: 1px solid #2a2f38; padding: 0; "
+                                      "border-top-right-radius: 5px; border-bottom-right-radius: 5px; }")
         self.left_arrow.clicked.connect(self.sidesShown.emit)
         self.left_arrow.hide()
         gv = self.graph
@@ -2367,13 +2442,12 @@ class GraphPage(QWidget):
         gv.postOpened.connect(self.open_post)
         gv.deselected.connect(self.deselect)
         gv.wireSelected.connect(self.show_wire)
-        gv.filesDropped.connect(self.add_dropped_files)
+        gv.filesDropped.connect(self.add_dropped_files, Qt.QueuedConnection)   # its menu after the drop is over
         pn = self.panel
         pn.changed.connect(self.request_refresh)
         pn.openTune.connect(self.openBlock.emit)
         pn.openPost.connect(self.openPost.emit)
         pn.variantMade.connect(self.variant_made)
-        pn.addSources.connect(self.addSources.emit)
         pn.addSession.connect(self.addSession.emit)
         pn.renamed.connect(self.rename)
         if hasattr(pn, "selectBlock"):
@@ -2414,16 +2488,12 @@ class GraphPage(QWidget):
         dup.activated.connect(self._duplicate_selected)
         # issue #44: the same keys as the Post image; D, Del, F2, Ctrl+D and Enter keep their meaning
         for seqs, fn in ((("F", "Ctrl+0"), gv.fit_all), (("1",), lambda: gv.zoom_to(1.0)),
-                         (("+", "=", "Ctrl++"), lambda: gv.zoom_by(ZOOM_STEP)), (("-", "Ctrl+-"), lambda: gv.zoom_by(1 / ZOOM_STEP))):
+                         (("+", "=", "Ctrl++"), lambda: gv.zoom_by(ZOOM_STEP)),
+                         (("-", "Ctrl+-"), lambda: gv.zoom_by(1 / ZOOM_STEP))):
             for seq in seqs:
                 sc = QShortcut(QKeySequence(seq), self.graph)
                 sc.setContext(Qt.WidgetWithChildrenShortcut)
                 sc.activated.connect(fn)
-        self.hint = QLabel(self)                        # why a palette block is greyed, over the graph (issue #47)
-        self.hint.setStyleSheet("background: #2b2f38; border: 1px solid #5d6470; border-radius: 6px; "
-                                "padding: 5px 9px; color: #e8ebf0;")
-        self.hint.setWordWrap(True)
-        self.hint.hide()
         self.refresh()
 
     # ------------------------------------------------------------ refresh
@@ -2477,7 +2547,7 @@ class GraphPage(QWidget):
         k = self.s.sel_step
         q = self.s.path
         if k == "sources" and not self.s.p.sessions and q is not None and q.source is not None:
-            # no frames in the project: its Image (or Fusion) is what is shown and what the palette targets, never
+            # no frames in the project: its Image (or Combine channels) is what is shown and what the palette targets, never
             # the frames' import (decision 5)
             return g.node_of(q, "fusion" if "fusion" in q.source else "image") or g.root
         if k == "sources":
@@ -2491,17 +2561,17 @@ class GraphPage(QWidget):
     def build_tools(self):
         """The palette (issue #47): every block, greyed where it cannot be placed in the current workflow."""
         clear(self.tl)
-        self.hide_hint()                                 # the card it explained is gone (Ctrl+Y may have freed it)
         s = self.s
         p = self.palette_path()
         folded = self.left_state == "folded"
         self.tl.setContentsMargins(*((4, 6, 8, 6) if folded else (10, 10, 14, 10)))
         toggle = QToolButton()
-        toggle.setText("»" if folded else "«")
+        icon_only(toggle, "fold_right" if folded else "fold_left",
+                  _("Unfold the blocks") if folded else _("Fold the blocks"), 16, "dim")
         toggle.setAutoRaise(True)
-        toggle.setToolTip(_("Unfold the blocks") if folded else _("Fold the blocks"))
-        toggle.setStyleSheet("QToolButton { border: none; color: #8b93a1; font-size: 11pt; padding: 0; } "
-                             "QToolButton:hover { color: #e8ebf0; }")
+        toggle.setFixedSize(20, 18)
+        toggle.setStyleSheet("QToolButton { border: none; padding: 0; } "
+                             "QToolButton:hover { background: #2b3446; border-radius: 3px; }")
         toggle.clicked.connect(lambda: self.sideChosen.emit("left", "docked" if folded else "folded"))
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
@@ -2528,7 +2598,8 @@ class GraphPage(QWidget):
             head_l.setVisible(not folded)                     # folded: only the blocks' first letters
             self.tl.addWidget(head_l)
             for b in blocks:
-                card = PaletteCard(self, b, self.palette_reason(b, p, split), folded=folded)
+                reason = self.palette_reason(b, p, split)
+                card = PaletteCard(self, b, reason, folded=folded, branch=bool(reason) and self.branch_possible(b))
                 self.cards[b] = card
                 self.tl.addWidget(card)
             if title == "Image" and prefs.spec():        # ◇ in Spec mode: not in the engine yet
@@ -2541,7 +2612,7 @@ class GraphPage(QWidget):
     def set_layout(self, right: str, left: str, solo: bool):
         """Issue #44: the right panel (docked | icons | hidden), the blocks' palette (docked | folded | hidden) and the
         sections of the panel (one at a time on a small window)."""
-        self.panel.set_solo(solo)
+        self.panel.folds.set_solo(solo)
         self.dock.set_state(right)
         if left != self.left_state:
             self.left_state = left
@@ -2575,6 +2646,12 @@ class GraphPage(QWidget):
             return True
         return super().eventFilter(obj, e)
 
+    def branch_possible(self, block: str) -> bool:
+        """Whether a frame block can be set in parallel somewhere (its card can then be dragged)."""
+        s = self.s
+        return s.ready and block in wfl.FRAME_BLOCKS and any(
+            s.can_branch(q, key, block) for q in self.graph._flows() for key in s.branch_keys(q))
+
     def palette_reason(self, block: str, p, split) -> str:
         """Why a palette block cannot be placed now (translated), "" when it can."""
         s = self.s
@@ -2592,7 +2669,7 @@ class GraphPage(QWidget):
                 return _("needs 2 filter workflows, a colour stack or image")
             got = self.fusion_choice()                    # decision 2: greyed until each channel has what it needs
             if got is not None:                           # its frames (control round: a template's colour project
-                empty = []                                # without frames made a Fusion of channels with nothing)
+                empty = []                                # without frames made a Combine channels of channels with nothing)
                 for i in got[1]:
                     q = s.view(i["pid"])
                     if q.source is None and not any(x.lights for x in s.p.sessions_of(q.pid)):
@@ -2615,50 +2692,32 @@ class GraphPage(QWidget):
             return s.palette_reason(p, block)
         return s.palette_reason(p, block)
 
-    def show_hint(self, card, text: str):
-        """The small message under a greyed palette block: why it is not available."""
-        self.hint.setText(text[:1].upper() + text[1:])
-        self.hint.setMaximumWidth(320)
-        self.hint.adjustSize()
-        pos = card.mapTo(self, QPoint(card.width() + 6, 0))           # beside the card, over the graph
-        # inside the page (GUI exploration 2: a card low in the palette, the Log open, put it under the page's bottom)
-        self.hint.move(max(4, min(pos.x(), self.width() - self.hint.width() - 4)),
-                       max(4, min(pos.y(), self.height() - self.hint.height() - 4)))
-        self.hint.raise_()
-        self.hint.show()
-
-    def hide_hint(self):
-        self.hint.hide()
-
-    def add_dropped_files(self, sid: int, paths: list):
-        """Files or folders dragged from the Explorer onto a Session block (decision 9, as reference apps import by
-        a drop): each goes to the kind its folder or file name says (dark, flat, bias, flat dark: the names the
-        import sorts by), the others to the lights."""
-        import re
-        from pathlib import Path
-
-        from ..core.newproject import GUESSES
+    def add_dropped_files(self, sid: int, paths: list, kind: str | None = None):
+        """Files or folders dragged from the Explorer onto a Session block (decision 9, as reference apps import by a
+        drop): nothing is guessed from their names, a menu asks what they are (``kind``: already said)."""
         s = self.s
-        names = {k: {n.lower() for n in v} for k, v in GUESSES.items()}
-
-        def kind_of(path: str) -> str:
-            parts = [x.lower() for x in Path(path).parts[-2:]]
-            first = re.split(r"[_\-\s.]+", Path(path).stem.lower())[0]       # "dark_001.fits": a dark
-            for k in ("flat_darks", "darks", "flats", "bias"):
-                if first in names[k] or any(x in names[k] for x in parts):
-                    return k
-            return "lights"
-        by: dict[str, list[str]] = {}
-        for f in paths:
-            by.setdefault(kind_of(f), []).append(f)
+        kind = kind or self.ask_dropped_kind()
+        if kind is None:
+            return
         notes: list = []
         with s.batch():                                   # one drop, one undo step
-            n = sum(s.add_session_entries(sid, k, fl, notes) for k, fl in by.items())
+            n = s.add_session_entries(sid, kind, paths, notes)
         said = [_(t).format(name=nm) for t, nm in notes]
         if n:
-            said.insert(0, plural(n, "{n} entry added to “{session}”", "{n} entries added to “{session}”",
-                                  session=s.session(sid).name) + " · Ctrl+Z")     # one undo step (control round)
+            said.insert(0, plural(n, "{n} file added to “{session}” · Ctrl+Z", "{n} files added to “{session}” · Ctrl+Z",
+                                  session=s.session(sid).name))     # one undo step (control round)
         self.toast(" · ".join(said) if said else _("Nothing added: no frame in what was dropped"))
+
+    def ask_dropped_kind(self) -> str | None:
+        """What the files dropped on a Session block are, as the user says; None: nothing."""
+        from .sources import GROUPS
+        m = QMenu(self)
+        for key, title, _sec in GROUPS:
+            m.addAction(_(title)).setData(key)
+        a = m.exec(QCursor.pos())
+        kind = a.data() if a is not None else None
+        m.deleteLater()
+        return kind
 
     def palette_action(self, block: str):
         """A double-click on a palette block: placed in the current workflow at its usual place; a source starts a
@@ -2673,7 +2732,7 @@ class GraphPage(QWidget):
             self.select(index=s.paths.index(q), step=f"session@{sid}")
             self.toast(_("“{session}”: workflow of its own · Ctrl+Z").format(session=s.session(sid).name))
             return
-        if block == "session":                             # issue #48: placed empty, its frames in its panel
+        if block == "session":                             # issue #48: placed empty, its files in its Inspect
             target = self.palette_path()
             joined = s.view(self.graph.plus_session_pid) if where == "join" and \
                 getattr(self.graph, "plus_session_pid", None) is not None else None
@@ -2711,7 +2770,7 @@ class GraphPage(QWidget):
             self.place_block(block, p.pid if p is not None else NEW_FRAMES)
 
     def place_fusion(self):
-        """A Fusion block placed from the palette (no template window once the project is made): the filters'
+        """A Combine channels block placed from the palette (no template window once the project is made): the filters'
         workflows combined with the first palette they make (SHO, HOO, LRGB, RGB...), else a colour workflow's
         channels as H-alpha and OIII (dual band); its palette and channels are changed in its panel. Refused, with
         what to do, until each channel has what it needs; what it adds to the channels is said (decision 2)."""
@@ -2719,13 +2778,13 @@ class GraphPage(QWidget):
         why = self.palette_reason("fusion", s.path, None)
         got = self.fusion_choice()
         if why or got is None:
-            self.toast(_("Fusion: {why}").format(why=why or _("place its workflows first")))
+            self.toast(_("Combine channels: {why}").format(why=why or _("place its workflows first")))
             return
         pal, inputs, stars = got
         chans = {i["pid"]: s.view(i["pid"]) for i in inputs}
         before = {pid: [n["block"] for n in s.graph(q)] for pid, q in chans.items()}
         q = s.add_fusion(pal, pal, inputs, stars=stars)
-        s.log('Fusion "{name}" placed', name=q.name)
+        s.log('Combine channels "{name}" placed', name=q.name)
         self.select(index=s.paths.index(q), step="fusion")
         added, where = [], []
         for pid, old in before.items():
@@ -2735,18 +2794,18 @@ class GraphPage(QWidget):
                 added += [b for b in more if b not in added]
                 where.append(s.view(pid).name)
         if added:                                         # the blocks it put in the channels: said, Ctrl+Z
-            self.toast(_("Fusion “{block}” placed · {blocks} added to {where} · Ctrl+Z").format(
+            self.toast(_("Combine channels “{block}” placed · {blocks} added to {where} · Ctrl+Z").format(
                 block=q.name, blocks=", ".join(block_title(None, view_key(b)) for b in added),
                 where=", ".join(where)))
         else:
-            self.toast(_("Fusion “{block}” placed · Ctrl+Z").format(block=q.name))
+            self.toast(_("Combine channels “{block}” placed · Ctrl+Z").format(block=q.name))
 
     def linear_images(self) -> list:
-        """The Image workflows a Fusion can read (issue #55): a linear image whose file is chosen."""
+        """The Image workflows a Combine channels can read (issue #55): a linear image whose file is chosen."""
         return [q for q in self.s.paths if self.s.source_kind(q) == "image" and q.source.get("path")]
 
     def fusion_choice(self):
-        """What a Fusion placed now combines: (palette, inputs, stars), or None when there is nothing to combine."""
+        """What a Combine channels placed now combines: (palette, inputs, stars), or None when there is nothing to combine."""
         from ..stages.fusion import PALETTES
         s = self.s
         by_filter = {}
@@ -2919,8 +2978,8 @@ class GraphPage(QWidget):
 
     def select_node(self, node):
         s = self.s
-        if node.key == "composition" and node.lid is None and node.grey:   # a Recombine to come (Q10): said, not chosen
-            self.toast(_("Recombine comes with the lights: add them to the Session"))
+        if node.key == "composition" and node.lid is None and node.grey:   # a Combine layers to come (Q10): said, not chosen
+            self.toast(_("Combine layers comes with the lights: add them to the Session"))
             return
         s.pending_change = None
         self.graph.select_wire(None)                      # a block chosen: the wire chosen before is not any more
@@ -3018,7 +3077,7 @@ class GraphPage(QWidget):
 
     def make_filters(self, t: dict, name: str, opts: dict):
         """A filters template (issue #43): one workflow per filter (made when the filter has none yet), then for a
-        palette the Fusion block of their outputs; a dual-band one: a colour workflow, then its fusion. Returns the
+        palette the Combine channels block of their outputs; a dual-band one: a colour workflow, then its fusion. Returns the
         workflow shown (the fusion, or the first filter's)."""
         s = self.s
         from .gallery import template_blocks
@@ -3063,7 +3122,7 @@ class GraphPage(QWidget):
         settings and results stay, the data passes through it; Undo takes it back."""
         s = self.s
         why = {"session": "a source: Del removes it", "sources": "a source: Del removes it",
-               "image": "a source: Del removes it",      # a Fusion reads its channels (control round: not a source)
+               "image": "a source: Del removes it",      # a Combine channels reads its channels (control round: not a source)
                "fusion": "it combines its channels: Del removes it; to leave it out of Post, remove its wire to Post",
                "composition": "hide its layer in Post, or Del removes it"}.get(node.key if node is not None else "")
         if why and (node.key != "sources" or s.p.sessions):     # refused, and why (decision 11)
@@ -3145,7 +3204,7 @@ class GraphPage(QWidget):
                     self.toast(_("{block} kept: {why}").format(block=block_title(None, node.key), why=why))
                     return
             with s.batch():
-                for q in gone:                            # a Fusion takes back what it added (decision 2)
+                for q in gone:                            # a Combine channels takes back what it added (decision 2)
                     if node.key == "fusion":
                         s.remove_fusion(s.view(q.pid))
                     else:
@@ -3157,8 +3216,9 @@ class GraphPage(QWidget):
             return
         key = node.key
         targets = [q for q in node.paths if pids is None or q.pid in pids]
+        night = None if key != "calibration" or not targets else s.own_calibration_night(targets[0], node.sid)
         for p in targets:                                 # all or none (GUI exploration 3.7): refused, the block
-            why = s.removal_problem(p, key)               # stays, selected, in every workflow
+            why = "" if night is not None else s.removal_problem(p, key)     # stays, selected, in every workflow
             if why:
                 self.toast(_("{block} kept: {why}").format(
                     block=block_title(p, key), name=p.name, why=why))
@@ -3171,7 +3231,10 @@ class GraphPage(QWidget):
         with s.batch():
             for p in targets:
                 s.log('{block} removed from "{name}"', block=block_title(p, key), name=p.name)
-                s.remove_node(p, key)
+                if night is not None:                     # beside the Session's: the workflow takes that one again
+                    s.remove_own_calibration(p, night)
+                else:
+                    s.remove_node(p, key)
             for p in targets:                             # a branch left with no block of its own goes with it, in
                 q = s.view(p.pid)                         # the same undo step (control round)
                 if q is not None and q.pid not in sent and s.is_emptied_branch(q):
@@ -3186,6 +3249,8 @@ class GraphPage(QWidget):
         if gone:
             self.toast(_("{block} removed with its branch “{name}” · Ctrl+Z").format(block=title,
                                                                                     name=", ".join(gone)))
+        elif night is not None:
+            self.toast(_("{block} removed · Ctrl+Z").format(block=title))
         elif node.sid is not None:                        # a session's Calibration: the one of every session goes
             self.toast(_("{block} removed · all sessions · Ctrl+Z").format(block=title))
         else:
@@ -3240,7 +3305,7 @@ class GraphPage(QWidget):
         s = self.s
         src = s.source_kind(p)
         if src == "fusion":
-            self.toast(_("Fusion: no template"))
+            self.toast(_("Combine channels: no template"))
             return
         got = template_dialog(self, p.name)
         if got is None:
@@ -3281,6 +3346,8 @@ class GraphPage(QWidget):
                          and g.leaves.get(q.pid) is g.node_of(q, node.key)), None)
             if last is not None and last.pid not in g.to_post and s.gives_post(last):
                 self.workflow_action("to_post", last.pid)            # its wire taken away before: given back
+            elif last is not None and last.pid in g.awaits_post:     # no layer yet: never "already a layer"
+                self.toast(_("{block}: lights first").format(block=block_title(p, node.key)))
             else:
                 self.toast(_("{block}: its image is already a layer of Post").format(
                     block=block_title(p, node.key)))
@@ -3325,7 +3392,7 @@ class GraphPage(QWidget):
         s = self.s
         p = s.path if s.path in node.paths else node.paths[0]
         lid = s.add_post_layer(p.pid, "combined", self)
-        s.log('Recombine for "{name}"', name=p.name)
+        s.log('Combine layers for "{name}"', name=p.name)
         s.sel_layer = lid
         s.select(index=s.paths.index(p), step="composition")
         s.scope = [p.pid]
@@ -3342,7 +3409,7 @@ class GraphPage(QWidget):
             s.remove_post_part(node.paths[0].pid, "combined", self)
         else:
             s.remove_post_layer(lid, self)
-        s.log("Recombine removed")
+        s.log("Combine layers removed")
         self.toast(_("{block} removed · Ctrl+Z").format(block=block_title(None, "composition")))
         if s.sel_step == "composition" and getattr(s, "sel_layer", None) == lid:
             s.select(step="etoiles")

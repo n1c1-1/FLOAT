@@ -274,7 +274,7 @@ def panel_faults(page) -> list[str]:
     host = panel.findChildren(QScrollArea)[0].widget()
     eds = [w for w in host.findChildren(QWidget) if w.isVisibleTo(panel) and (
         isinstance(w, QAbstractSpinBox) or (isinstance(w, QCheckBox) and not w.text()) or
-        (isinstance(w, (QLineEdit, QPushButton)) and isinstance(w.parent(), CompactRow) and w.text() != "↺"))]
+        (isinstance(w, (QLineEdit, QPushButton)) and isinstance(w.parent(), CompactRow) and w.property("iconRole") != "reset"))]
     xs = sorted({w.mapTo(panel, QPoint(0, 0)).x() for w in eds})
     return [f"editors at x = {xs}"] if len(xs) > 1 else []
 
@@ -444,10 +444,7 @@ def test_the_palette_offers_every_block_and_says_why_one_cannot_go(world, model,
     page.refresh()
     cards = {c.block: c for c in page.findChildren(PaletteCard)}
     assert cards["stars"].reason == "needs Denoise first"
-    page.show_hint(cards["stars"], cards["stars"].reason)
-    assert page.hint.isVisibleTo(page) and page.hint.text() == "Needs Denoise first"
-    page.hide_hint()
-    assert not page.hint.isVisibleTo(page)
+    assert cards["stars"].toolTip() == "Needs Denoise first"
     assert page.findChildren(QLabel, "h2")[0].text() == "Blocks"
 
 
@@ -759,7 +756,7 @@ def test_the_mouse_over_and_on_every_block_works(world, model, page):
             ev = QGraphicsSceneHoverEvent(QEvent.GraphicsSceneHoverMove)
             ev.setPos(pos)
             it.hoverMoveEvent(ev)
-            assert it.cursor().shape() == (Qt.OpenHandCursor if grab else Qt.PointingHandCursor)
+            assert it.cursor().shape() == (Qt.OpenHandCursor if grab else Qt.ArrowCursor)
         assert isinstance(it._x_rect(), QRectF)
     stacking = next(it for it in items if it.node.key == "empilement")
     press = QGraphicsSceneMouseEvent(QEvent.GraphicsSceneMousePress)
@@ -873,7 +870,7 @@ def test_a_settings_row_changes_marks_and_goes_back_to_the_suggestion(world, mod
         it = rows["gradient.degree"]
         assert it.r["changed"] and it.r["value"] == 3 and it.r["suggested"] == 2
         assert model.state(model.view(1), "gradient") == "stale"
-        back = [b for b in it.findChildren(QPushButton) if b.text() == "↺"][0]
+        back = [b for b in it.findChildren(QPushButton) if b.property("iconRole") == "reset"][0]
         assert not back.isHidden() and "2" in back.toolTip()
         name = it.findChildren(QLabel)[0]
         assert "e6a23c" in name.styleSheet().lower()                                      # the name of a changed row
@@ -971,7 +968,7 @@ def test_the_engine_advice_is_a_recommended_outline_that_never_changes_the_metho
     rec = cards["classic"]
     assert rec.recommended and not rec.on and rec.tag.text() == "Recommended"
     assert ACCENT in rec.tag.styleSheet() and "border-radius" in rec.tag.styleSheet()
-    assert rec.info.text() == "i" and rec.info.toolTip() == "12 frames (drizzle needs 15): Classic"
+    assert rec.info.property("iconRole") == "info" and rec.info.toolTip() == "12 frames (drizzle needs 15): Classic"
     assert model.pending_change is None and "method" not in (model.view(1).params.get("stack") or {})
     # in French: the outline and the reason are translated
     appmod.apply_language("fr")
@@ -1109,7 +1106,7 @@ def test_spec_mode_shows_what_the_engine_does_not_have_disabled(world, model, pa
     rows = live_rows(page)
     new_rows = [r for r in rows if r.r["kind"] == "new"]
     assert new_rows and not [b for r in new_rows for b in r.findChildren(QPushButton)
-                             if b.text() == "↺" and b.isVisibleTo(r)]           # never changed: no ↺
+                             if b.property("iconRole") == "reset" and b.isVisibleTo(r)]           # never changed: no ↺
     for r in new_rows:
         editors = r.findChildren(QComboBox) + r.findChildren(QCheckBox) + r.findChildren(QDoubleSpinBox) + \
             r.findChildren(QSpinBox)
@@ -1405,12 +1402,12 @@ def test_a_project_without_workflows_has_a_graph_and_an_import_button(qapp, tmp_
     settle(w, pg)
     items = [it for it in pg.graph.scene().items() if isinstance(it, BlockItem)]
     assert not items                                          # issue #47: a blank page is empty
-    assert any(getattr(g, "text", "").startswith("+  Start: Session/Image") for g in pg.graph.scene().items())
+    assert any(getattr(g, "text", "").startswith("Start: Session/Image") and g.role == "add" for g in pg.graph.scene().items())
     got = []
-    pg.addSources.connect(lambda: got.append(1))
+    pg.openBlock.connect(lambda: got.append(1))
     pg.select_node(pg.graph.graph.root)
     settle(w, pg)
-    button(pg.panel, "Import folder").click()
+    button(pg.panel, "Open frames").click()
     assert got
     assert [lb.text() for lb in pg.findChildren(QLabel) if lb.text() == "Blocks"]
     assert m.total_seconds() == 0 and m.all_pending() == []
@@ -1856,25 +1853,6 @@ def test_a_band_one_column_wide_writes_its_title_on_two_lines():
         i18n.set_language("en")
 
 
-def test_the_why_greyed_message_stays_in_the_page_and_goes_when_the_palette_is_built_again(world, model, page):
-    from astro_gpu.client.graph import PaletteCard
-    model.select(index=1)                                                      # Classic stack: Stars/background greyed
-    page.refresh()
-    settle(world["w"], page)
-    cards = {c.block: c for c in page.findChildren(PaletteCard)}
-    try:
-        page.root.resize(1280, 420)                                            # a short page (the Log open at 768)
-        settle(world["w"], page)
-        page.show_hint(cards["composition"] if cards["composition"].reason else cards["stars"], "x " * 80)
-        assert page.hint.isVisibleTo(page) and page.hint.geometry().bottom() <= page.height()
-        page.build_tools()                                                     # Ctrl+Y made the card available
-        assert not page.hint.isVisibleTo(page)
-    finally:
-        page.hide_hint()
-        page.root.resize(1680 + PALETTE_W, 934)
-        settle(world["w"], page)
-
-
 # ---------------------------------------------------------------------------------------------- last
 def test_the_test_project_is_untouched():
     """Run last (pytest keeps the order of the file): nothing above wrote into the test project or its store."""
@@ -1954,12 +1932,12 @@ def test_round2_d_on_a_recombine_says_why_and_a_new_recombine_is_said_and_number
     p = model.view(1)
     comp = page.graph.graph.compositions[0]
     page.toggle_cut(comp, None)
-    assert toasts[-1].startswith("Recombine cannot be switched off")
+    assert toasts[-1].startswith("Combine layers cannot be switched off")
     page.new_composition(page.graph.graph.node_of(p, "etoiles"))
     settle(world["w"], page)
     g = Graph(model)
     assert len([n for n in g.compositions if p in n.paths]) == 2          # the default one stays: a second one
-    assert "Recombine 2" in toasts[-1] and toasts[-1].endswith("Ctrl+Z")
+    assert "Combine layers 2" in toasts[-1] and toasts[-1].endswith("Ctrl+Z")
     model.undo()
     settle(world["w"], page)
     assert len([n for n in Graph(model).compositions if p in n.paths]) == 1
@@ -1969,7 +1947,7 @@ def test_round2_opening_a_default_recombine_in_post_is_no_undo_step(world, model
     p = model.view(1)
     n = len(model._undo)
     lid = model.default_post_layer(p.pid)
-    assert len(model._undo) == n and model.post_layer(lid)["name"] == f"{p.name} · Recombine"
+    assert len(model._undo) == n and model.post_layer(lid)["name"] == f"{p.name} · Combine layers"
     assert len([x for x in Graph(model).compositions if p in x.paths]) == 1
 
 

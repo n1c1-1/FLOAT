@@ -461,7 +461,7 @@ def test_a_pause_stays_with_a_block_switched_off_and_works_on_a_sessions_calibra
 
 def test_the_answers_to_the_design_questions(qapp, tmp_path, monkeypatch):
     """The user's answers (GUI exploration, 7 November): a branch made only to send an image goes with its wire (1);
-    a block placed starts from its defaults (9); Fusion is greyed with what to do while there is nothing to combine
+    a block placed starts from its defaults (9); Combine channels is greyed with what to do while there is nothing to combine
     (6); a workflow deleted at once, said (10.1); a block switched off is not placed twice (4.4); a removal refused in
     one workflow is refused in all (3.7)."""
     w, m, page = open_page(tmp_path, monkeypatch)
@@ -689,7 +689,7 @@ def test_a_block_in_the_middle_sends_its_image_to_post(qapp, tmp_path, monkeypat
 
 
 def test_after_the_start_no_block_opens_the_template_window(qapp, tmp_path, monkeypatch):
-    """The templates once, when the project is made: a Fusion dropped is placed at once (here a colour workflow's
+    """The templates once, when the project is made: a Combine channels dropped is placed at once (here a colour workflow's
     channels, dual band), Duplicate copies at once, the new-flow zone is no button."""
     w, m, page = open_page(tmp_path, monkeypatch)
     try:
@@ -716,7 +716,7 @@ def test_a_file_added_by_mistake_is_warned_and_taken_out_one_by_one(qapp, tmp_pa
     its files; one file taken out alone, a file of a folder chosen whole too (the folder becomes its other files);
     the last light can go."""
     from astro_gpu import api
-    from astro_gpu.client.panel import FileList
+    from astro_gpu.client.sources import FileList, SourcesView
     from astro_gpu.core.project import type_warnings
     assert [w["key"] for w in type_warnings({"lights": ["a.ARW", "b.ARW", "c.JPG"], "flats": ["f.fits"]})] == \
         ["unread", "other_type"]
@@ -738,9 +738,12 @@ def test_a_file_added_by_mistake_is_warned_and_taken_out_one_by_one(qapp, tmp_pa
         assert any(c.key == "file_types" for c in api.health_checks(m.p))
         page.select_node(Graph(m).root)
         settle(w, page)
-        lists = page.panel.findChildren(FileList)
-        assert lists and any("DSC05869.JPG" in it.data(256) for x in lists for it in
-                             [x.item(i) for i in range(x.count())])                # its group opened by itself
+        view = SourcesView(m)
+        view.refresh()
+        lst = view.file_list
+        assert isinstance(lst, FileList) and any("DSC05869.JPG" in (lst.item(i).data(256) or "") for i in range(lst.count()))
+        assert any("DSC05869.JPG" in x for x in view.anomalies("lights"))           # said beside its kind
+        view.close()
         assert m.remove_session_files(1, "lights", [jpg.as_posix()])
         w.wait(60)
         settle(w, page)
@@ -898,7 +901,7 @@ def test_control_round_a_fusion_channel_sent_to_post_keeps_the_channels_apart(qa
 
 
 def test_control_round_the_fusion_card_waits_for_the_channels_lights(qapp, tmp_path, monkeypatch):
-    """2: a colour project without lights: the Fusion card greyed, saying what to do."""
+    """2: a colour project without lights: the Combine channels card greyed, saying what to do."""
     w, m, page, p = graph_page(tmp_path, monkeypatch, ["calibration", "registration", "stacking"])
     try:
         assert page.palette_reason("fusion", m.view(p.pid), None) == ""
@@ -930,7 +933,12 @@ def test_control_round_undo_selects_the_block_before_and_a_file_taken_out_is_one
         settle(w, page)
         lights = list(m.session(1).lights)
         blocks = [n["block"] for n in m.p.workflow(p.pid).blocks]
-        page.panel._files_out(1, "lights", lights, True)
+        from astro_gpu.client.sources import SourcesView
+        view = SourcesView(m)
+        view.toast.connect(told.append)
+        view.refresh()
+        view.files_out("lights", lights)
+        view.close()
         settle(w, page)
         assert m.session(1).lights == [] and "Ctrl+Z" in told[-1]
         assert m.undo()
@@ -1029,7 +1037,7 @@ def test_show_all_is_kept_with_the_project(qapp, tmp_path, monkeypatch):
 
 
 def test_recombine_is_shown_greyed_before_the_lights(qapp, tmp_path, monkeypatch):
-    """GUI exploration 4, Q10: a workflow with Split stars but no lights yet has no layer in Post, so no Recombine
+    """GUI exploration 4, Q10: a workflow with Split stars but no lights yet has no layer in Post, so no Combine layers
     block; it is drawn greyed from the start ("after the lights"), with no wire, and a click says why instead of
     choosing it. Once the lights are there it is the real one."""
     w, m, page = open_page(tmp_path, monkeypatch, lights=False)
@@ -1104,7 +1112,7 @@ def _drop(view, block: str, pos):
 
 
 def test_fusion_is_dropped_in_the_composition_column_not_on_the_new_flow_band(qapp, tmp_path, monkeypatch):
-    """Issue #53: Fusion's drop zone is in the Composition column; the new-flow band refuses it (it starts the flow of
+    """Issue #53: Combine channels's drop zone is in the Composition column; the new-flow band refuses it (it starts the flow of
     a Session or an Image only)."""
     w, m, page = open_page(tmp_path, monkeypatch)
     try:
@@ -1124,7 +1132,7 @@ def test_fusion_is_dropped_in_the_composition_column_not_on_the_new_flow_band(qa
         assert len(m.paths) == n                                    # refused on the band
         move = _drag_over(view, "fusion", place)
         ghost = view.ghosts[0]
-        assert move.isAccepted() and ghost.text == "Fusion" and ghost.hot
+        assert move.isAccepted() and ghost.text == "Combine channels" and ghost.hot
         assert view._cx["fusion"] <= ghost.rect.left() and ghost.rect.right() <= view._cx["fusion"] + view._cw["fusion"]
         assert _drop(view, "fusion", place()).isAccepted()
         settle(w, page)
@@ -1144,7 +1152,7 @@ def _a_fits(path: Path) -> str:
 
 
 def test_a_linear_image_is_chosen_as_a_fusion_channel_on_its_row(qapp, tmp_path, monkeypatch):
-    """Issue #55: the two meet in a Fusion: a channel's row chooses a linear Image's output (with its Astrometry the
+    """Issue #55: the two meet in a Combine channels: a channel's row chooses a linear Image's output (with its Astrometry the
     channels align); the starless modes work with it, it gets its Stars/background; an image already stretched is
     listed greyed, with its reason."""
     from PySide6.QtWidgets import QComboBox
@@ -1202,8 +1210,8 @@ def test_a_linear_image_is_chosen_as_a_fusion_channel_on_its_row(qapp, tmp_path,
 
 
 def test_a_fusion_can_start_from_a_linear_image_alone(qapp, tmp_path, monkeypatch):
-    """Issue #55: no stack in the project: once its file is chosen, a linear Image gives the Fusion its channels (dual
-    band), with its stars (a star source is chosen in the Fusion's panel)."""
+    """Issue #55: no stack in the project: once its file is chosen, a linear Image gives the Combine channels its channels (dual
+    band), with its stars (a star source is chosen in the Combine channels panel)."""
     w, m, page = open_page(tmp_path, monkeypatch, workflows=())
     try:
         page.palette_action("image")
@@ -1250,8 +1258,8 @@ def test_a_linear_image_takes_stars_without_denoise(qapp, tmp_path, monkeypatch)
 
 
 def test_a_linear_image_chosen_in_a_starless_fusion_gets_its_stars(qapp, tmp_path, monkeypatch):
-    """Issue #55: a channel set to a linear Image while the Fusion takes starless images: the Image gets its
-    Stars/background (taken back with the Fusion, decision 2)."""
+    """Issue #55: a channel set to a linear Image while the Combine channels takes starless images: the Image gets its
+    Stars/background (taken back with the Combine channels, decision 2)."""
     w, m, page = open_page(tmp_path, monkeypatch)
     try:
         page.palette_action("image:new")
@@ -1277,8 +1285,8 @@ def test_a_linear_image_chosen_in_a_starless_fusion_gets_its_stars(qapp, tmp_pat
 
 
 def test_a_linear_image_is_a_fusion_star_source_once_it_has_its_astrometry(qapp, tmp_path, monkeypatch):
-    """Issue #55: the Fusion's Stars list offers a linear Image: choosing it gives it its Stars/background, and until
-    it has its Astrometry the Fusion says so (as for a channel) and Run is refused; then the engine reads its starless
+    """Issue #55: the Combine channels's Stars list offers a linear Image: choosing it gives it its Stars/background, and until
+    it has its Astrometry the Combine channels says so (as for a channel) and Run is refused; then the engine reads its starless
     result and its plate solution. An image already stretched is listed greyed, with its reason, and refused."""
     from PySide6.QtWidgets import QComboBox
 
@@ -1321,7 +1329,7 @@ def test_a_linear_image_is_a_fusion_star_source_once_it_has_its_astrometry(qapp,
         k = Keys(m.p)
         got = k.overrides(fu.pid, "fusion")["stars"]
         assert k.key(img.pid, "star_removal") in got["dir"] and got["wcs"].endswith("wcs.fits")
-        v = m.view(img.pid)                                            # a star source keeps what the Fusion reads
+        v = m.view(img.pid)                                            # a star source keeps what the Combine channels reads
         assert "needed by" in m.removal_problem(v, "astrometrie") and fu.name in m.channel_problem(v)
     finally:
         page.close()

@@ -11,7 +11,7 @@ The settings come from the model's cache of the engine's ``describe`` (the worke
 and builds itself again when the rest arrives. The ◇ methods and settings (not in the engine yet) show in Spec mode
 only, disabled.
 
-Issue #44: the section titles fold (``SectionTitle``); Alt-click keeps one open and closes the others; on a small window
+Issue #44: the section titles fold (``layout.Sections``); Alt-click keeps one open and closes the others; on a small window
 the panel opens with one section at a time, and the ``layout.Dock`` of its page folds the whole panel to icons.
 
 Classes: ``Panel``, its rows (``CompactRow``), the method cards (``MethodCard``, ``StackMethodCard`` with its
@@ -23,9 +23,7 @@ import html
 from pathlib import Path
 
 from PySide6.QtCore import QLocale, Qt, QTimer, Signal
-from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QAbstractSpinBox,
     QApplication,
     QComboBox,
@@ -35,10 +33,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
-    QMenu,
-    QMessageBox,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -49,7 +43,9 @@ from .. import texts
 from ..core import workflow as wfl
 from . import prefs
 from .blocks import STATE_WORD, block_state, block_title
-from .i18n import _, all_workflows, hm, language, number, plural
+from .i18n import _, all_workflows, hm, language, number
+from .icons import IconLabel, IconText, icon_only, set_icon
+from .layout import Sections
 from .model import NotInEngine, method_of, method_value, methods_of
 from .settings import RangeBar, SettingRow, fmt, needed_stages, selection_rule_text, step_settings
 from .settings import loading as settings_loading
@@ -61,25 +57,6 @@ OPTIONAL_BLOCKS = ("debruitage", "etoiles", "deconv")
 EDITOR_W = 104                      # every editor of a row has this width...
 BACK_W = 22                         # ...then the unit column, then the ↺ button (its room kept when hidden)
 UNIT_MAX = 76                       # a longer unit wraps on two lines
-
-
-class FileList(QListWidget):
-    """A session's files of one folder (issue #58): several can be chosen (Ctrl, Shift), Del takes them out."""
-
-    def __init__(self, remove):
-        super().__init__()
-        self.remove = remove
-        self.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.setStyleSheet("QListWidget { background: transparent; border: none; }")
-
-    def chosen(self) -> list[str]:
-        return [it.data(Qt.UserRole) for it in self.selectedItems()]
-
-    def keyPressEvent(self, e):                                       # noqa: N802
-        if e.key() in (Qt.Key_Delete, Qt.Key_Backspace) and self.selectedItems():
-            self.remove(self.chosen())
-            return
-        super().keyPressEvent(e)
 
 
 def kv(rows, pad=14) -> QLabel:
@@ -181,10 +158,8 @@ class CompactRow(SettingRow):
         self.setToolTip(r.get("help") or "")
 
     def _back(self, r, shown: bool) -> QPushButton:
-        rb = QPushButton("↺")
-        rb.setFixedSize(BACK_W, BACK_W)
-        rb.setStyleSheet("padding: 0;")
-        rb.setToolTip(_("Back to the suggested value: {v}").format(v=fmt(r["suggested"], r["type"], r.get("choices"))))
+        rb = icon_only(QPushButton(), "reset", _("Back to the suggested value: {v}").format(
+            v=fmt(r["suggested"], r["type"], r.get("choices"))), 16, box=BACK_W)
         rb.clicked.connect(lambda: self.changed.emit(self.r, None))
         return retain(rb, shown)
 
@@ -227,9 +202,8 @@ class MethodCard(QFrame):
         v = QVBoxLayout(self)
         v.setContentsMargins(10, 6, 10, 6)
         v.setSpacing(1)
-        n = QLabel(("● " if on else "○ ") + _(m["name"]))
-        n.setWordWrap(True)
-        n.setStyleSheet("font-weight: 600;" + ("" if ok else " color: #6b7280;"))
+        n = IconText("radio_on" if on else "radio_off", _(m["name"]), "selected" if on else "dim")
+        n.label.setStyleSheet("font-weight: 600;" + ("" if ok else " color: #6b7280;"))
         v.addWidget(n)
         top = QHBoxLayout()
         top.setSpacing(6)
@@ -248,16 +222,12 @@ class MethodCard(QFrame):
             self.clicked.emit()
 
 
-class InfoDot(QLabel):
+class InfoDot(IconLabel):
     """A small "i" in a circle: what it is about shows in its tooltip."""
 
     def __init__(self, tip: str, parent=None):
-        super().__init__("i", parent)
+        super().__init__("info", 16, "dim", parent=parent)
         self.setObjectName("infodot")
-        self.setAlignment(Qt.AlignCenter)
-        self.setFixedSize(15, 15)
-        self.setStyleSheet("QLabel#infodot { color: #b9c2cf; border: 1px solid #6b7280; border-radius: 7px; "
-                           "font-size: 8pt; font-weight: 600; font-family: Georgia, serif; padding: 0; }")
         self.setToolTip(tip)
         self.setCursor(Qt.WhatsThisCursor)
 
@@ -283,8 +253,9 @@ class StackMethodCard(QFrame):
         v.setSpacing(2)
         top = QHBoxLayout()
         top.setSpacing(6)
-        n = QLabel(("● " if on else "○ ") + name)
-        n.setStyleSheet("font-weight: 600;" + ("" if enabled else " color: #6b7280;"))
+        n = IconText("radio_on" if on else "radio_off", name, "selected" if on else "dim")
+        n.label.setWordWrap(False)
+        n.label.setStyleSheet("font-weight: 600;" + ("" if enabled else " color: #6b7280;"))
         top.addWidget(n)
         top.addStretch(1)
         self.tag = self.info = None
@@ -343,50 +314,10 @@ class Details(QFrame):
         self.show()
 
 
-class SectionTitle(QLabel):
-    """A section's title (issue #44): a click folds it, Alt-click opens only that one, as the reference editors'
-    panels do. Its arrow shows when folded or under the mouse, so that a large window looks as it did."""
-
-    def __init__(self, text, panel):
-        super().__init__(text)
-        self.setObjectName("dim")
-        self.panel, self.folded, self.rows, self._hover = panel, False, [], False
-        self.setToolTip(_("Click: fold or unfold · Alt-click: only this section"))
-        self.setCursor(Qt.PointingHandCursor)
-
-    def set_folded(self, on: bool):
-        self.folded = on
-        for w in self.rows:
-            w.setVisible(not on)
-        self.update()
-
-    def enterEvent(self, e):                                         # noqa: N802 - Qt's name
-        self._hover = True
-        self.update()
-
-    def leaveEvent(self, e):                                         # noqa: N802
-        self._hover = False
-        self.update()
-
-    def mouseReleaseEvent(self, e):                                  # noqa: N802
-        if e.button() == Qt.LeftButton and self.rect().contains(e.position().toPoint()):
-            self.panel.section_clicked(self, bool(e.modifiers() & Qt.AltModifier))
-
-    def paintEvent(self, e):                                         # noqa: N802
-        super().paintEvent(e)
-        if self.folded or self._hover:
-            p = QPainter(self)
-            p.setPen(self.palette().mid().color() if not self.folded else self.palette().text().color())
-            p.drawText(self.contentsRect().adjusted(0, 0, -2, 0), Qt.AlignRight | Qt.AlignVCenter,
-                       "▸" if self.folded else "▾")
-            p.end()
-
-
 class Panel(QWidget):
     changed = Signal()                  # a setting changed (the window rebuilds the graph)
     openTune = Signal()                 # "Browse frames" and the like
     openPost = Signal()
-    addSources = Signal()
     addSession = Signal()
     renamed = Signal(int, str)
     openLayer = Signal(int)             # Open in Post (a Post layer's id)
@@ -402,10 +333,6 @@ class Panel(QWidget):
     def __init__(self, project, steps=None, tune=False, parent=None):
         super().__init__(parent)
         self.s, self.steps, self.tune = project, steps, tune
-        self.sections: list[SectionTitle] = []     # the section titles shown (issue #44: they fold)
-        self._folded: dict[str, set[str]] = {}     # kind of block -> the titles of its folded sections
-        self._auto_folded: set[str] = set()        # the blocks folded by the small window's default, not by the user
-        self.solo = False                          # one section open at a time (the default on small windows)
         self.corner = None                         # the » button that folds the panel (its page's, issue #44)
         self.expert = False
         self.focus_key = None
@@ -431,6 +358,7 @@ class Panel(QWidget):
         self.bv.setContentsMargins(10, 8, 10, 8)
         self.bv.setSpacing(1)
         sc.setWidget(host)
+        self.folds = Sections(self.bv, sc)              # its section titles fold (issue #44)
         v.addWidget(sc, 1)
         self.details = Details()
         v.addWidget(self.details)
@@ -496,7 +424,7 @@ class Panel(QWidget):
     def _refresh(self, node):
         clear(self.hv)
         clear(self.bv)
-        self.sections = []
+        self.folds.reset()
         self.details.hide()
         if node is not None and not self._alive(node):     # its block went away (Ctrl+Z, a removal): the page gives
             node = None                                     # the panel the block selected now
@@ -564,9 +492,9 @@ class Panel(QWidget):
         s = self.s
         self.hv.addWidget(label(_("Frames"), "h1"))
         if not s.sources_loaded:
-            b = QPushButton(_("Import folder…"))
+            b = QPushButton(_("Open frames"))
             b.setObjectName("primary")
-            b.clicked.connect(self.addSources.emit)
+            b.clicked.connect(self.openTune.emit)
             self.bv.addWidget(b, 0, Qt.AlignLeft)
             self.bv.addStretch(1)
             return
@@ -617,7 +545,8 @@ class Panel(QWidget):
             self.renamed.emit(pid, t)
 
     def session_panel(self, sid: int):
-        """A Session block: its name, its filter, and its frames kind by kind, chosen here (issue #43)."""
+        """A Session block: its name, its filter, and what it holds kind by kind; its files are chosen in its Inspect
+        (the one place for them)."""
         from ..core.project2 import FILTERS
         s = self.s
         ses = s.session(sid)
@@ -648,7 +577,7 @@ class Panel(QWidget):
         for f in FILTERS:
             cb.addItem(f or _("none (colour camera)"), f)
         cb.setCurrentIndex(max(0, cb.findData(ses.filter)))
-        cb.setToolTip(_("The filter of these lights (a monochrome camera): the workflows by filter and their Fusion "
+        cb.setToolTip(_("The filter of these lights (a monochrome camera): the workflows by filter and their Combine channels block "
                         "use it; none for a colour camera."))
         cb.currentIndexChanged.connect(lambda _i: s.set_session_filter(sid, cb.currentData()))
         row.addWidget(cb)
@@ -660,12 +589,10 @@ class Panel(QWidget):
         from .frames import type_warning_text
         gone = gone_kinds(s, {sid})
         warns = s.file_warnings(sid)                       # issue #58: files that may be mistakes, shown on their kind
-        flagged = self._flagged(sid, warns)
         note = getattr(s, "colour_note", lambda _i: None)(sid)
         if note:                                           # issue #57: the limit of frames already in colour, said
             from .frames import colour_note_text
-            lb = label("ⓘ " + colour_note_text(note), "small", wrap=True)
-            lb.setObjectName("colour_note")
+            lb = IconText("info", colour_note_text(note), "dim", "colour_note")
             self.bv.addWidget(lb)
         for kind, title in self.KIND_TITLES:
             if kind == "lights":
@@ -683,177 +610,17 @@ class Panel(QWidget):
             shared = s.shared_with(sid, kind) if kind != "lights" else []
             if shared:
                 names = ", ".join(s.session(o).name for o in shared)
-                self.bv.addWidget(label("⇄ " + _("shared with {names}: one master").format(names=names),
-                                        "small", wrap=True))
+                self.bv.addWidget(IconText("link", _("shared with {names}: one master").format(names=names), "dim", "small"))
             for w in [w for w in warns if w["kind"] == kind]:      # issue #58: a file that may be a mistake
-                self.bv.addWidget(label("⚠ " + type_warning_text(w), "warn", wrap=True))
-            sets: dict[str, list[str]] = {}            # one row per folder: its own entry, or its files chosen one by one
-            for e in getattr(ses, kind):
-                pth = Path(s.p.abspath(e))
-                sets.setdefault((pth.parent if pth.suffix else pth).as_posix(), []).append(e)
-            files = s.session_files(sid, kind)
-            for folder, entries in sets.items():
-                # 7.4: a folder chosen whole lists every file of it, a file of it also chosen alone included once
-                whole = any(not Path(e).suffix for e in entries)
-                mine = list(dict.fromkeys(f for f in files if Path(f).parent.as_posix().lower() == folder.lower())) \
-                    if whole else [Path(s.p.abspath(e)).as_posix() for e in entries]
-                self._file_group(sid, kind, folder, entries, mine, flagged)
-            add = QHBoxLayout()
-            b = QPushButton(_("Add") + " ▾")                # one menu per kind: folder, files, another session's
-            menu = QMenu(b)
-            menu.addAction(_("Add folder…"), lambda k=kind: self._add_entries(sid, k, folder=True))
-            menu.addAction(_("Add files…"), lambda k=kind: self._add_entries(sid, k, folder=False))
-            others = [o for o in s.p.sessions if o.id != sid and getattr(o, kind)] if kind != "lights" else []
-            if others:
-                menu.addSeparator()
-                for o in others:
-                    menu.addAction(_("Use the frames of “{name}”").format(name=o.name),
-                                   lambda k=kind, oid=o.id: s.use_from_session(oid, sid, k))
-            b.setMenu(menu)
-            add.addWidget(b)
-            add.addStretch(1)
-            self.bv.addLayout(add)
+                self.bv.addWidget(IconText("warning", type_warning_text(w), "warning", "warn"))
         self.bv.addSpacing(8)
-        row = QHBoxLayout()
         if not self.tune:
-            b = QPushButton(_("Review frames…"))
-            b.setToolTip(_("Opens the frames in Inspect: leave out a frame with X"))
+            b = QPushButton(_("Open frames"))
+            b.setObjectName("primary")
+            b.setToolTip(_("Opens its files in Inspect: add them there, kind by kind, and review its frames"))
             b.clicked.connect(self.openTune.emit)
-            row.addWidget(b)
-        row.addStretch(1)
-        self.bv.addLayout(row)
+            self.bv.addWidget(b, 0, Qt.AlignLeft)
         self.bv.addStretch(1)
-
-    def _flagged(self, sid: int, warns: list[dict]) -> set[str]:
-        """The files a warning points at (lower-case paths): those of a type that is not read, or that differs."""
-        from ..core.project import file_type
-        out: set[str] = set()
-        for w in warns:
-            if w["key"] in ("unread", "mixed"):
-                out |= {f.lower() for f in self.s.session_files(sid, w["kind"]) if file_type(f) == w["type"]}
-        return out
-
-    def _file_group(self, sid: int, kind: str, folder: str, entries: list[str], files: list[str], flagged: set[str]):
-        """One folder of a session's list (issue #58): its row ("📁 folder · 15 files", its cross takes it all out),
-        opened on its files, each with its cross (several chosen, Del). A group holding a file a warning points at
-        opens by itself."""
-        opened = getattr(self, "_opened", set())
-        self._opened = opened
-        key = (sid, kind, folder.lower())
-        bad = [f for f in files if f.lower() in flagged]
-        is_open = key in opened or bool(bad)
-        r = QHBoxLayout()
-        n = len(files)
-        if not Path(folder).exists():                     # moved, renamed outside, its disk unplugged: said, and a
-            # click chooses where it is now, as a reference photo app's missing folder (GUI exploration 4)
-            t = QPushButton("⚠ 📁 " + Path(folder).name + "  · " + _("folder not found"))
-            t.setFlat(True)
-            t.setStyleSheet(f"QPushButton {{ text-align: left; padding: 2px 4px; color: {WARN}; }} ")
-            t.setToolTip(folder + "\n" + _("Not found (moved, renamed, or its disk unplugged): click to choose where "
-                                           "it is now"))
-            t.clicked.connect(lambda _c=False, k=kind, ens=list(entries): self._locate(sid, k, folder, ens))
-        else:
-            t = QPushButton(("▾ " if is_open else "▸ ") + "📁 " + Path(folder).name + "  · " +
-                            plural(n, "{n} file", "{n} files"))
-            t.setFlat(True)
-            t.setStyleSheet("QPushButton { text-align: left; padding: 2px 4px; } ")
-            t.setToolTip(folder + "\n" + _("Click to see its files, and take one out"))
-
-            def toggle(_c=False, k=key):
-                opened.symmetric_difference_update({k})
-                self.changed.emit()
-            t.clicked.connect(toggle)
-        r.addWidget(t, 1)
-        x = QPushButton("×")
-        x.setFixedWidth(26)
-        x.setStyleSheet("QPushButton { padding: 0px; }")    # the cross whole in its 26 px (as a file's, below)
-        x.setToolTip(_("Remove the whole folder from the session (the files are not touched)"))
-        x.clicked.connect(lambda _c=False, k=kind, ens=list(entries): self._files_out(sid, k, ens, True))
-        r.addWidget(x)
-        self.bv.addLayout(r)
-        if not is_open or not files:
-            return
-        lst = FileList(lambda chosen, k=kind: self._files_out(sid, k, chosen))
-        for f in files:
-            it = QListWidgetItem()
-            it.setData(Qt.UserRole, f)
-            lst.addItem(it)
-            row = QWidget()
-            h = QHBoxLayout(row)
-            h.setContentsMargins(18, 0, 2, 0)
-            name = label(("⚠ " if f.lower() in flagged else "") + Path(f).name, "warn" if f.lower() in flagged else None)
-            name.setToolTip(f)
-            h.addWidget(name, 1)
-            b = QPushButton("×")
-            b.setFixedSize(26, 20)
-            b.setStyleSheet("QPushButton { padding: 0px; }")
-            b.setToolTip(_("Take this file out of the session (the file is not touched)"))
-            b.clicked.connect(lambda _c=False, k=kind, ff=f: self._files_out(sid, k, [ff]))
-            h.addWidget(b)
-            it.setSizeHint(row.sizeHint())
-            lst.setItemWidget(it, row)
-        lst.setFixedHeight(min(len(files), 8) * (lst.sizeHintForRow(0) or 24) + 6)
-        self.bv.addWidget(lst)
-
-    def _files_out(self, sid: int, kind: str, files: list, entries: bool = False):
-        """Files (or a folder's entries) taken out of a session: one undo step, said with Ctrl+Z (control round,
-        decision 11: Ctrl+Z undid an older step, the file stayed out, nothing said)."""
-        s = self.s
-        name = s.session(sid).name
-        with s.batch():
-            done = any([s.remove_session_entry(sid, kind, e) for e in files]) if entries else \
-                s.remove_session_files(sid, kind, files)
-        if done:
-            self.toast.emit(_("Folder out of “{session}” · files kept · Ctrl+Z").format(session=name) if entries else
-                            plural(len(files), "{n} file out of “{session}” · file kept · Ctrl+Z",
-                                   "{n} files out of “{session}” · files kept · Ctrl+Z", session=name))
-
-    def _add_entries(self, sid: int, kind: str, folder: bool):
-        from . import prefs as _prefs
-        if folder:
-            d = QFileDialog.getExistingDirectory(self, _("Add folder…"), _prefs.last_folder())
-            got = [d] if d else []
-        else:
-            from ..core.project import COLOUR_EXT, FITS_EXT, RAW_EXT  # frames first; any file still (#58: then warned)
-            pats = " ".join(f"*{e}" for e in sorted(RAW_EXT | FITS_EXT | COLOUR_EXT | {".fz"}))
-            got, _f = QFileDialog.getOpenFileNames(self, _("Add files…"), _prefs.last_folder(),
-                                                   _("Frames ({patterns})").format(patterns=pats) + ";;" +
-                                                   _("All files (*)"))
-        if got:
-            _prefs.remember_folder(got[0])
-            notes: list = []                              # what was not added, said (GUI exploration 7.5)
-            self.s.add_session_entries(sid, kind, got, notes)
-            if notes:
-                self.toast.emit(" · ".join(_(t).format(name=nm) for t, nm in notes))
-
-    def _locate(self, sid: int, kind: str, folder: str, entries: list[str]):
-        """A folder of a session not found: where it is now, chosen (a reference photo app's "find missing folder",
-        GUI exploration 4); it takes the old one's place in the list, its files chosen one by one found in it by their
-        names. One undo step; a folder without frames chosen: nothing changes, said."""
-        from . import prefs as _prefs
-        start = next((p for p in Path(folder).parents if p.is_dir()), Path(_prefs.last_folder()))
-        d = self.pick_folder(_("Where is “{name}” now?").format(name=Path(folder).name), start.as_posix())
-        if not d:
-            return
-        _prefs.remember_folder(d)
-        whole = any(not Path(e).suffix for e in entries)
-        new = [Path(d).as_posix()] if whole else [(Path(d) / Path(e).name).as_posix() for e in entries
-                                                  if (Path(d) / Path(e).name).is_file()]
-        notes: list = [] if new else [("“{name}” holds no frames (camera raw, FITS, JPEG, PNG or TIFF): not added.",
-                                       Path(d).name)]
-        s = self.s
-        with s.batch():
-            if new and s.add_session_entries(sid, kind, new, notes):
-                for e in entries:
-                    s.remove_session_entry(sid, kind, e)
-                notes = []
-                self.toast.emit(_("“{name}” found again in “{session}” · Ctrl+Z").format(
-                    name=Path(d).name, session=s.session(sid).name))
-        if notes:
-            self.toast.emit(" · ".join(_(t).format(name=nm) for t, nm in notes))
-
-    def pick_folder(self, title: str, start: str) -> str:
-        return QFileDialog.getExistingDirectory(self, title, start)
 
     def all_nights(self):
         """A project made before issue #43: its nights are calibrated together. They can be calibrated each on its
@@ -867,9 +634,10 @@ class Panel(QWidget):
             self.bv.addWidget(kv([(html.escape(ses["night"]), _("{lights} lights · {flats} flats · darks: {darks}").format(
                 lights=ses["lights"], flats=ses["flats"], darks=ses["darks"] or _("none")))], pad=10))
         self.bv.addSpacing(8)
-        b = QPushButton(_("Calibrate per night…"))
+        b = QPushButton(_("Calibrate per night"))
         b.setObjectName("primary")
-        b.setToolTip(_("Each night with its own calibration frames, then all stacked together"))
+        b.setToolTip(_("Each night with its own calibration frames, then all stacked together. Calibration and "
+                       "what follows are computed again."))
         b.clicked.connect(self._separate)
         self.bv.addWidget(b, 0, Qt.AlignLeft)
         a = QPushButton(_("Add session…"))
@@ -878,11 +646,9 @@ class Panel(QWidget):
         self.bv.addStretch(1)
 
     def _separate(self):
-        if QMessageBox.question(self, _("Calibrate per night"), _(
-                "Each night gets its own Session and Calibration blocks, and its own masters. Calibration and "
-                "everything after it are computed again. Undo takes it back.")) == QMessageBox.Yes:
-            self.s.set_stack_mode("per_session")
-            self.changed.emit()
+        self.s.set_stack_mode("per_session")
+        self.changed.emit()
+        self.toast.emit(_("Per night · to recompute · Ctrl+Z"))
 
     def image_panel(self, node):
         """The Image block of a workflow that starts from an image (issue #43)."""
@@ -959,7 +725,7 @@ class Panel(QWidget):
         return True
 
     def fusion_panel(self, node):
-        """A Fusion block (issue #43): its workflow's name, its palette, its channels and the workflows they come
+        """A Combine channels block (issue #43): its workflow's name, its palette, its channels and the workflows they come
         from; its output is a layer of Post."""
         from ..stages.fusion import PALETTES
         s = self.s
@@ -977,7 +743,7 @@ class Panel(QWidget):
         chip.setStyleSheet(f"color: {STATE_COLOR[st]}; font-size: 9pt;")
         top.addWidget(chip)
         self.hv.addLayout(top)
-        self.hv.addWidget(label(_("Channel fusion"), "small"))
+        self.hv.addWidget(label(_("Combine channels"), "small"))
         acts = QHBoxLayout()                             # as the Image block: its Delete under its name (#34)
         x = QPushButton(_("Delete"))
         x.setToolTip(_("Take this block out, with the blocks after it (Del)"))
@@ -1063,7 +829,7 @@ class Panel(QWidget):
 
     def fusion_stars(self, p, f: dict, roles: list[str]):
         """Option A: the palette on the channels' starless images, then the stars from a source, put back by the
-        Recombine block."""
+        Combine layers block."""
         s = self.s
         cur = f.get("stars") or {}
         self.bv.addWidget(self.group_title(_("Stars")))
@@ -1084,7 +850,7 @@ class Panel(QWidget):
                 item.setToolTip(why)
         cb.setCurrentIndex(next((i for i, (_t, v, _w) in enumerate(choices) if (v or {}) == cur), 0))
         cb.setToolTip(_("The palette is made on the channels' starless images; these stars are put back by the "
-                        "Recombine block. Each channel's workflow gets Stars/background."))
+                        "Combine layers block. Each channel's workflow gets Stars/background."))
         cb.activated.connect(lambda i: s.set_fusion_stars(p, cb.itemData(i)))
         self.bv.addWidget(cb)
         if cur:
@@ -1213,6 +979,9 @@ class Panel(QWidget):
                 self.bv.addWidget(self.group_title(_("Measurements")))
                 self.bv.addWidget(kv(facts, pad=10))
                 self.bv.addSpacing(6)
+        if k == "calibration":              # a Calibration placed in parallel: its own frames
+            from .ownframes import own_frames
+            own_frames(self, node, p)
         if k == "etoiles":                  # what the block gives first: its two images, and where they go
             self.outputs(node)
         if k.partition("~")[0] in ("fond", "debruitage", "etoiles", "deconv"):     # Gradient 2 too (round 3)
@@ -1245,7 +1014,7 @@ class Panel(QWidget):
             self.bv.addWidget(kv([(_("Output of"), block_title(p, p.end))]))
         if k == "etoiles":
             self.bv.addWidget(label(_("No setting here: the network is applied as it was trained. Its two images are "
-                                      "adjusted in a Recombine block, or each as a layer of Post."),
+                                      "adjusted in a Combine layers block, or each as a layer of Post."),
                                     "small", wrap=True))
         else:
             self.settings(p, sk, groups, extra)
@@ -1483,7 +1252,7 @@ class Panel(QWidget):
                     b.clicked.connect(lambda _c=False, w=what, pp=p: self._part_out_of_post(pp, w))
                 else:
                     b = QPushButton(_("To Post"))
-                    b.setToolTip(_("This image as a layer of Post, as it is (no Recombine "
+                    b.setToolTip(_("This image as a layer of Post, as it is (no Combine layers "
                                    "block)"))
                     b.clicked.connect(lambda _c=False, w=what, pp=p: self._part_to_post(pp, w))
                 row.addWidget(b, 0, Qt.AlignTop)
@@ -1491,7 +1260,7 @@ class Panel(QWidget):
             else:
                 self.bv.addWidget(lb)
         if len(node.paths) == 1:
-            nb = QPushButton(_("+ Recombine").replace("&", "&&"))
+            nb = set_icon(QPushButton(_("Combine layers").replace("&", "&&")), "add", 16)
             nb.setToolTip(_("A layer of Post that puts the stars back on the starless image; each of the two keeps "
                             "its own settings"))
             nb.clicked.connect(lambda _c=False, pp=node.paths[0]: self._new_composition(pp))
@@ -1520,7 +1289,7 @@ class Panel(QWidget):
         """A Stars and background block for this workflow's Stars block (as dragging a dot onto Composition)."""
         from .post3 import tr_name
         lid = self.s.add_post_layer(p.pid, "combined", self)
-        self.s.log('Recombine for "{name}"', name=p.name)
+        self.s.log('Combine layers for "{name}"', name=p.name)
         self.s.sel_layer = lid
         self.s.select(index=self.s.paths.index(p), step="composition")
         self.s.scope = [p.pid]
@@ -1529,7 +1298,7 @@ class Panel(QWidget):
             name=tr_name(str(lay.get("name") or p.name)), block=block_title(None, "composition")) + " · Ctrl+Z")
 
     def _one_step(self, change):
-        """A change of a Recombine block whose layer is made real by it: one undo step (decision 7)."""
+        """A change of a Combine layers block whose layer is made real by it: one undo step (decision 7)."""
         with self.s.batch():
             change()
 
@@ -1552,7 +1321,7 @@ class Panel(QWidget):
         lay = (s.post_layer(node.lid) if node.lid is not None else None) or {}
         top = QHBoxLayout()
         from .blocks import node_title
-        top.addWidget(label(node_title(s, node), "h1", wrap=True), 1)        # "Recombine 2": as the graph names it
+        top.addWidget(label(node_title(s, node), "h1", wrap=True), 1)        # "Combine layers 2": as the graph names it
         st = block_state(s, p, "etoiles")
         chip = QLabel(_(STATE_WORD[st]))
         chip.setStyleSheet(f"color: {STATE_COLOR[st]}; font-size: 9pt;")
@@ -1616,7 +1385,7 @@ class Panel(QWidget):
         and its actions ((text, function, tooltip))."""
         clear(self.hv)
         clear(self.bv)
-        self.sections = []
+        self.folds.reset()
         self.details.hide()
         self.node = None                                  # no block: nothing of a block's to build again
         self._later.stop()                                # (the block chosen before, asked to build again)
@@ -1655,77 +1424,14 @@ class Panel(QWidget):
         self.changed.emit()
 
     def group_title(self, text):
-        g = SectionTitle(text, self)
+        g = self.folds.title(text)
         g.setStyleSheet("color: #aab2bf; font-weight: 600; margin-top: 8px; margin-bottom: 2px;")
-        self.sections.append(g)
         return g
 
     # ------------------------------------------------------------ sections (issue #44)
-    def _fold_key(self) -> str:
-        return (self.node.key.partition("~")[0] if self.node is not None else "") or "wire"
-
     def _finish_sections(self):
-        """The rows of each section, between its title and the next one, follow its fold; on a small window (``solo``) a
-        block is first shown with its first section open and the others folded, as Alt-click would."""
-        titles = self.sections
-        items = [self.bv.itemAt(i).widget() for i in range(self.bv.count())]
-        for t in titles:
-            at = items.index(t) if t in items else -1
-            rows = []
-            for w in items[at + 1:]:
-                if w is None:
-                    continue
-                if isinstance(w, SectionTitle):
-                    break
-                if w.objectName() != "disclosure":             # the Advanced settings' line stays
-                    rows.append(w)
-            t.rows = rows
-        key = self._fold_key()
-        if self.solo and len(titles) > 1 and key not in self._folded:
-            self._folded[key] = {t.text() for t in titles[1:]}
-            self._auto_folded.add(key)
-        self._apply_folds()
+        self.folds.finish((self.node.key.partition("~")[0] if self.node is not None else "") or "wire")
         self.sectionsChanged.emit()
-
-    def _apply_folds(self):
-        off = self._folded.get(self._fold_key(), set())
-        for t in self.sections:
-            t.set_folded(t.text() in off)
-
-    def section_clicked(self, t: SectionTitle, alt: bool):
-        """A click on a section's title folds or unfolds it; Alt-click (and any click on a small window) opens only
-        that one."""
-        key = self._fold_key()
-        self._auto_folded.discard(key)
-        off = self._folded.setdefault(key, set())
-        if alt or self.solo:
-            off.clear()
-            off.update(x.text() for x in self.sections if x is not t)
-        elif t.text() in off:
-            off.discard(t.text())
-        else:
-            off.add(t.text())
-        self._apply_folds()
-
-    def section_list(self) -> list[tuple[str, object]]:
-        """For the strip of icons: (title, what opens that section and brings it in view)."""
-        return [(t.text(), (lambda x=t: self._show_section(x))) for t in self.sections]
-
-    def _show_section(self, t: SectionTitle):
-        if t.folded:
-            self.section_clicked(t, False)
-        self._sc.ensureWidgetVisible(t, 0, 10)
-
-    def set_solo(self, on: bool):
-        """Small windows: one section at a time. Leaving them, what only that default folded opens again."""
-        if on == self.solo:
-            return
-        self.solo = on
-        if not on:
-            for key in self._auto_folded:
-                self._folded.pop(key, None)
-            self._auto_folded.clear()
-            self._apply_folds()
 
     def resizeEvent(self, e):                                         # noqa: N802 - Qt's name
         super().resizeEvent(e)
@@ -1840,8 +1546,9 @@ class Panel(QWidget):
                 self.add_row(r)
         if hidden:
             self.bv.addSpacing(8)
-            # a disclosure, as a reference photo editor's panels have: ▸ shows the advanced rows in their groups, ▾ hides them
-            ex = QPushButton(("▾ " if self.expert else "▸ ") + _("Advanced settings ({n})").format(n=hidden))
+            # a disclosure, as a reference photo editor's panels have: the chevron shows the advanced rows in their groups, or hides them
+            ex = QPushButton(_("Advanced settings ({n})").format(n=hidden))
+            set_icon(ex, "chevron_down" if self.expert else "chevron_right", 16, "dim")
             ex.setObjectName("disclosure")
             ex.setFlat(True)
             ex.setCursor(Qt.PointingHandCursor)
