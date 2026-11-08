@@ -32,7 +32,9 @@ DEFAULTS = {
     "temp_dir": (Path(tempfile.gettempdir()) / "astro_gpu").as_posix(),
     "cache_limit_gb": 200,
     # compute
-    "device": "auto",                 # auto | cuda:<n> | cpu
+    "device": "auto",                 # auto | cuda:<n> | xpu:<n> | mps | privateml:<n> | cpu
+    # what the card test decided: {device (or "auto"): profile}, core/selftest.py; {}: not tested yet
+    "compute_profiles": {},
     "threads": 0,                     # 0 = all cores but two
     "memory_limit_gb": 24,
     # catalogs and astrometry
@@ -46,6 +48,9 @@ DEFAULTS = {
     # display
     "auto_stretch": True,
     "units": "arcsec",                # arcsec | px
+    # the window on a small screen (issue #44): auto | compact | comfortable; the user's panels per size range
+    "layout_density": "auto",
+    "layout": {},
     # master library
     "masters_dir": "",
     "master_tolerance_temp": 2.0,     # °C

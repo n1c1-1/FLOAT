@@ -198,6 +198,10 @@ PATTERNS: list[tuple[re.Pattern, str, tuple]] = [
         (r"^PSF channel ([RGB]): (.*)$", "PSF channel {0}: {1}", ()),
         (r"^training target: (.*)$", "training target: {0}", ()),
         (r"^downloading (.+)$", "downloading {0}", ()),
+        (r"^the card test sends this block to the processor: (.+)$",
+         "the card test sends this block to the processor: {0}", (0,)),
+        (r"^the graphics card has ([\d.]+) GB free and this stack needs about ([\d.]+) GB: it is computed on the CPU$",
+         "the graphics card has {0} GB free and this stack needs about {1} GB: it is computed on the CPU", ()),
         # the runner's hand-over of a run to a fresh process after a graphics card fault (core/runner2.py)
         (r"^the graphics card stopped responding during (.+); the rest of the run continues in a fresh process$",
          "the graphics card stopped responding during {0}; the rest of the run continues in a fresh process", (0,)),
@@ -218,6 +222,10 @@ PATTERNS: list[tuple[re.Pattern, str, tuple]] = [
          "the folder of the {0} is not found: {1} (is its disk plugged in?)", (0,)),
         # GUI exploration 2: the failures data can cause, with what to do (stages/stack.py, inventory.py, astrometry.py,
         # io/frames.py)
+        (r"^useful area from the frames' header: (\d+)x(\d+) of (\d+)x(\d+) pixels, the overscan left out$",
+         "useful area from the frames' header: {0}x{1} of {2}x{3} pixels, the overscan left out", ()),
+        (r"^sparse field: (\d+) frame\(s\) aligned from a few stars \(rotation, shift and scale only\)$",
+         "sparse field: {0} frame(s) aligned from a few stars (rotation, shift and scale only)", ()),
         (r"^only (\d+) light frame\(s\): a stack needs at least 2; add light frames to the session$",
          "only {0} light frame(s): a stack needs at least 2; add light frames to the session", ()),
         (r"^only (\d+) of (\d+) light frames could be aligned: a stack needs at least 2; check the frames$",
@@ -235,8 +243,38 @@ PATTERNS: list[tuple[re.Pattern, str, tuple]] = [
          r"them out of the session, or use those of this camera$",
          "{0} {1} have another size than the lights ({2}), e.g. {3}: take them out of the session, or use those of "
          "this camera", (1,)),
-        (r"^only (\d+) stars found in the stack, at least 50 are needed to identify the field: add light frames, or "
-         r"take Astrometry out of this workflow$", "only {0} stars found in the stack, at least 50 are needed to "
+        # issue #57: frames already in colour
+        (r"^(.+) cannot be used as a colour frame: (.+); take it out of the session$",
+         "{0} cannot be used as a colour frame: {1}; take it out of the session", (1,)),
+        (r"^the (darks|flats|bias|flat darks) \((.+)\) are already in colour, the lights a raw mosaic or monochrome: "
+         r"they cannot calibrate them; take them out of the session, or use (?:darks|flats|bias|flat darks) of the "
+         r"same kind as the lights$",
+         "the {0} ({1}) are already in colour, the lights a raw mosaic or monochrome: they cannot calibrate them; "
+         "take them out of the session, or use {0} of the same kind as the lights", (0,)),
+        (r"^the (darks|flats|bias|flat darks) \((.+)\) are a raw mosaic or monochrome, the lights already in colour: "
+         r"they cannot calibrate them; take them out of the session, or use (?:darks|flats|bias|flat darks) of the "
+         r"same kind as the lights$",
+         "the {0} ({1}) are a raw mosaic or monochrome, the lights already in colour: they cannot calibrate them; "
+         "take them out of the session, or use {0} of the same kind as the lights", (0,)),
+        (r"^the (darks|flats|bias|flat darks) \((.+)\) reach (\d+) and the lights (\d+) \(another bit depth\): they "
+         r"cannot calibrate them; take them out of the session, or use (?:darks|flats|bias|flat darks) of the same "
+         r"kind as the lights$",
+         "the {0} ({1}) reach {2} and the lights {3} (another bit depth): they cannot calibrate them; take them out "
+         "of the session, or use {0} of the same kind as the lights", (0,)),
+        (r"^Bayer drizzle does not apply to frames already in colour \(no mosaic of raw colour samples to drop\): "
+         r"choose the Classic stack$",
+         "Bayer drizzle does not apply to frames already in colour (no mosaic of raw colour samples to drop): choose "
+         "the Classic stack", ()),
+        (r"^the (\d+) stars of this sparse field do not identify it on the sky beyond doubt, so no solution is given "
+         r"rather than a wrong one: take Astrometry out of this workflow$",
+         "the {0} stars of this sparse field do not identify it on the sky beyond doubt, so no solution is given "
+         "rather than a wrong one: take Astrometry out of this workflow", ()),
+        (r"^sparse field: the solution holds (\d+) powers of ten over chance, 9 needed \((\d+) of (\d+) stars\)$",
+         "sparse field: the solution holds {0} powers of ten over chance, 9 needed ({1} of {2} stars)", ()),
+        (r"^reference frame: (.+) aligned too few of the frames \(another field\?\), (.+) is used$",
+         "reference frame: {0} aligned too few of the frames (another field?), {1} is used", ()),
+        (r"^only (\d+) stars found in the stack, at least (\d+) are needed to identify the field: add light frames, or "
+         r"take Astrometry out of this workflow$", "only {0} stars found in the stack, at least {1} are needed to "
                                                    "identify the field: add light frames, or take Astrometry out of "
                                                    "this workflow", ()),
 
@@ -681,8 +719,12 @@ def _tail(path: str, lines: int = 6) -> str:
 
 
 def _start_job(snapshot: Project2, plan, device: str | None):
-    """Launch the run (worker thread): the plan and the definition it was made from are frozen in its plan file."""
-    return api.start_run(snapshot, plan, device)
+    """Launch the run (worker thread): the plan and the definition it was made from are frozen in its plan file. The
+    stages the card test sends to the CPU go there."""
+    from ...core import selftest
+    from .. import prefs
+    profile = selftest.profile_of(prefs.get("compute_profiles"), device)
+    return api.start_run(snapshot, plan, device, selftest.cpu_jobs(profile, plan))
 
 
 def _stop_job(p: Project2):

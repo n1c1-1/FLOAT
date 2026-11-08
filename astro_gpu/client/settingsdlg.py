@@ -40,8 +40,9 @@ from ..core import gaia_extracts as ge
 from . import prefs
 from .i18n import LANGUAGES, _, maybe, number
 from .services import extracts
+from .services.selftest import job as card_test_job
 from .services.worker import Machine, disk_usage
-from .widgets import label, spec_mark
+from .widgets import cap_dialog, label, spec_mark
 
 # (key, title, ◇ page)
 PAGES = [("general", "General", False), ("folders", "Folders & disk", False), ("compute", "Compute", False),
@@ -70,7 +71,10 @@ def device_items(machine: Machine | None, dev: str = "auto") -> list[tuple[str, 
     g = machine.gpu(auto) if machine is not None and auto else None
     out = [(_("Automatic"), "auto", _("The graphics card with the most memory: {name}").format(name=g.name) if g else
             _("The processor: this computer has no graphics card the engine can use") if auto == "cpu" else "")]
-    out += [(x.name, x.device, _("Graphics card, {gb} GB of memory").format(gb=f"{x.memory_gb:.0f}"))
+    out += [(x.name + (f" ({_('beta')})" if x.beta else ""), x.device,
+             _("Graphics card, {gb} GB of memory").format(gb=f"{x.memory_gb:.0f}")
+             + (" · " + _("Beta: this kind of card is not tested by the program's authors; the card test decides "
+                          "which blocks use it") if x.beta else ""))
             for x in (machine.gpus if machine else [])]
     if machine is None and dev.startswith("cuda:"):
         out.append((dev, dev, ""))
@@ -84,6 +88,7 @@ class SettingsDialog(QDialog):
     specChanged = Signal(bool)
     homeChanged = Signal()                           # the sections of Home (Folders page)
     clearCache = Signal()
+    densityChanged = Signal()                        # the compact look was set (issue #44)
 
     def __init__(self, worker=None, machine: Machine | None = None, can_clear: bool = False, parent=None):
         super().__init__(parent)
@@ -91,16 +96,19 @@ class SettingsDialog(QDialog):
         self.machine = machine
         self.can_clear = can_clear
         self.resize(900, 600)
+        cap_dialog(self)
         self.h = QHBoxLayout(self)
         self.nav = self.pages = None
         self.keys: list[str] = []
         self.bars: dict[str, tuple[QProgressBar, QLabel]] = {}
         self.ex: dict = {}                           # the widgets of the offline extracts (Catalogs & astrometry)
+        self.ct: dict = {}                           # the widgets of the card test (Compute)
         if worker is not None:
             worker.done.connect(self._done)
         j = extracts.job()                           # the download goes on when this window is closed
         j.progress.connect(self._ex_progress, Qt.QueuedConnection)
         j.finished.connect(self._ex_finished, Qt.QueuedConnection)
+        card_test_job().changed.connect(self._ct_refresh, Qt.QueuedConnection)
         self.build()
 
     # ------------------------------------------------------------ building
@@ -143,12 +151,12 @@ class SettingsDialog(QDialog):
             width = max([LABEL_MIN] + [lb.sizeHint().width() + 12 for lb in self._labels if not lb.isHidden()])
             for lb in self._labels:
                 lb.setFixedWidth(width)
-            if key == "folders":                     # the sections of Home make it the longest page: it scrolls
-                sc = QScrollArea()
-                sc.setWidgetResizable(True)
-                sc.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-                sc.setWidget(w)
-                w = sc
+            # every page scrolls (the Folders page is the longest; issue #44: a small window's dialog is capped)
+            sc = QScrollArea()
+            sc.setWidgetResizable(True)
+            sc.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            sc.setWidget(w)
+            w = sc
             self.pages.addWidget(w)
             self.keys.append(key)
         self.nav.currentRowChanged.connect(self.pages.setCurrentIndex)
@@ -264,6 +272,17 @@ class SettingsDialog(QDialog):
         spec.setChecked(self.spec)
         spec.toggled.connect(self._spec)
         self.row(v, _("Spec mode"), spec)
+        dens = QComboBox()                                # issue #44: how the window adapts to its size
+        dens.setToolTip(_("Auto: compact and icons on a small window · Never: today's layout on any screen"))
+        for text, key in (("Auto", "auto"), ("Always compact", "compact"), ("Never compact", "comfortable")):
+            dens.addItem(_(text), key)
+        dens.setCurrentIndex(max(dens.findData(prefs.get("layout_density") or "auto"), 0))
+        dens.currentIndexChanged.connect(lambda _i: self._density(dens.currentData()))
+        self.row(v, _("Interface density"), dens)
+
+    def _density(self, key: str):
+        prefs.set("layout_density", key)
+        self.densityChanged.emit()
 
     def folders(self, v):
         self.path_row(v, _("Cache (calibrated frames)"), "cache_dir",
@@ -346,6 +365,7 @@ class SettingsDialog(QDialog):
         c.setCurrentIndex(max(c.findData(dev), 0))
         c.currentIndexChanged.connect(lambda _i: self._device(c.currentData()))
         self.row(v, _("Device"), c)
+        self.card_test(v)
         cores = (m.cores if m is not None and m.cores else os.cpu_count()) or 1
         th = QSpinBox()
         th.setRange(0, cores)
@@ -372,6 +392,83 @@ class SettingsDialog(QDialog):
                     wrap=True)
         v.addWidget(res)
         self._mark([head, text, b, bar, res], True)
+
+    def card_test(self, v):
+        """Whether each heavy block keeps the graphics card here (core/selftest.py), in plain words, and the button that
+        tests it again. The test runs in the background (services/selftest.py)."""
+        v.addWidget(label(_("Card test"), "h2"))
+        status = label("", "small", wrap=True)
+        v.addWidget(status)
+        rows = {}
+        for stage, name in ((("stack", _("Stack")), ("denoise", _("Denoise")), ("star_removal", _("Stars")),
+                             ("post", _("Post")))):
+            val = label("", "small")
+            self.row(v, name, val)
+            rows[stage] = val
+        b = QPushButton(_("Test again"))
+        b.setToolTip(_("Run the card test again now, in the background"))
+        b.clicked.connect(self._ct_start)
+        v.addWidget(b, 0, Qt.AlignLeft)
+        self.ct = {"status": status, "rows": rows, "button": b}
+        self._ct_refresh()
+
+    def _ct_device(self) -> tuple[str, str | None]:
+        """(the setting, the device it names), None when there is no card to test."""
+        pref = prefs.get("device") or "auto"
+        dev = auto_device(self.machine) if pref == "auto" else pref
+        return pref, dev if dev not in (None, "cpu") else None
+
+    def _ct_start(self):
+        pref, dev = self._ct_device()
+        if dev is not None:
+            card_test_job().start(pref, dev, force=True)
+
+    @Slot()
+    def _ct_refresh(self):
+        if not self.ct:
+            return
+        try:
+            self._ct_show()
+        except RuntimeError:                         # the page was built again meanwhile
+            pass
+
+    def _ct_show(self):
+        from ..core import selftest as st
+        pref, dev = self._ct_device()
+        job = card_test_job()
+        profile = st.profile_of(prefs.get("compute_profiles"), pref) if dev is not None else None
+        self.ct["button"].setEnabled(dev is not None and not job.running())
+        if job.running():
+            text = _("Testing the card…")
+        elif dev is None:
+            text = _("The processor computes: nothing to test")
+        elif profile is None:
+            text = (_("The card is in use: tested when it is free") if job.note == "busy" else _("Not tested yet"))
+        else:
+            text = _("{card} · driver {driver} · tested {when}").format(card=profile.get("card", ""),
+                                                                        driver=profile.get("driver") or "?",
+                                                                        when=profile.get("when", ""))
+        self.ct["status"].setText(text)
+        for stage, lab in self.ct["rows"].items():
+            lab.setText("")
+            lab.setToolTip("")
+            if profile is None:
+                continue
+            ops = [r for r in (profile.get("ops") or {}).values() if r.get("stage") == stage]
+            if (profile.get("stages") or {}).get(stage) == "cpu":
+                short = {"wrong": _("wrong result"), "slower": _("slower"), "error": _("card error")}
+                bad = next((r for r in ops if r["verdict"] not in ("ok", "absent")), {})
+                lab.setText(_("CPU · {why}").format(why=short.get(bad.get("verdict"), _("card error"))))
+                lab.setToolTip(_(st.stage_reason(profile, stage)) + (f" ({bad.get('error')})" if bad.get("error") else ""))
+                continue
+            timed = [r for r in ops if r.get("card_s") and r.get("cpu_s")]
+            if timed:
+                ratio = min(r["cpu_s"] / r["card_s"] for r in timed)
+                lab.setText(_("GPU · {n} x faster").format(n=number(ratio, 1)))
+                lab.setToolTip(_("Card {card} s · processor {cpu} s").format(
+                    card=number(sum(r["card_s"] for r in timed), 2), cpu=number(sum(r["cpu_s"] for r in timed), 2)))
+            else:
+                lab.setText(_("GPU · not tested"))
 
     def catalogs(self, v):
         self.offline_extracts(v)
@@ -633,6 +730,7 @@ class SettingsDialog(QDialog):
     def _device(self, dev):
         prefs.set("device", dev)
         self.deviceChanged.emit(dev)
+        self._ct_refresh()
 
     # ------------------------------------------------------------ the sections of Home
     def _section_values(self) -> list[dict]:

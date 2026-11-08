@@ -29,6 +29,7 @@ import numpy as np
 import torch
 from torch import nn
 
+from ..core import devices
 from ..core.imgutil import asinh_preview
 from ..core.params import StageParams
 from ..core.stage import Context, Stage
@@ -37,8 +38,21 @@ MODEL = Path(__file__).resolve().parents[1] / "resources" / "stars" / "starless_
 MODEL_ID = hashlib.sha256(MODEL.read_bytes()).hexdigest()[:10] if MODEL.exists() else "missing"
 #: the network's stretch: it sees asinh(v / STRETCH) / SCALE, v in noise units
 STRETCH, SCALE = 3.0, 10.0
-#: the tiles the network works on (its training size: its channel attention averages over a tile), their overlap
-TILE, OVERLAP = 256, 64
+#: the size the network was trained on, and its tiles on an image that is smaller than a big tile
+NET_TILE, NET_OVERLAP = 256, 64
+#: the tiles it works on: larger than the largest star halos (M45: 280 px), so that the tile holding a star's core also
+#: holds its halo. Tiles of the training size cut such a halo along their boundary: the tile with the core takes it off,
+#: its neighbour, which only sees halo, leaves it (issue #45; 1024/256 on M45: 13 s, 256/64: 9 s, on an RTX 4060 Ti)
+TILE, OVERLAP = 1024, 256
+#: its channel attention averages over this window instead of over the whole tile, the training size. It is how the
+#: network's authors run it on more than its training size: Test-time Local Converter (Chu, Chen, Chen, Lu 2022, "Improving
+#: Image Restoration by Revisiting Global Information Aggregation", arXiv:2112.04491; NAFNetLocal in
+#: github.com/megvii-research/NAFNet). Their default is 1.5 x the training size; their reported range starts at the
+#: training size, which on M45 leaves no ridge on the tile bands where 384 leaves a few (max 3 against 17 noise units)
+WINDOW = NET_TILE
+#: tiles of NET_TILE through the network at once (a big tile counts for its area), and the card memory one of them takes:
+#: 1.4 GB measured for 16 on 8 November 2026, in bfloat16; a 4 GB card holds the whole batch
+BATCH, TILE_GB = 16, 0.09
 
 
 class StarRemovalParams(StageParams):
@@ -53,7 +67,7 @@ class StarRemoval(Stage):
                    "they are.")
     deps = ("render_simple", "stack")
     Params = StarRemovalParams
-    version = f"2-{MODEL_ID}"            # 2: the network's grid notched (core/periodic.py, issue #28)
+    version = f"3-{MODEL_ID}"            # 2: the network's grid notched (core/periodic.py, issue #28); 3: big tiles (#45)
 
     def run(self, ctx: Context, p: StarRemovalParams) -> None:
         from .denoise import norm_params
@@ -146,13 +160,33 @@ class _LayerNorm2d(nn.Module):
         return (x - mu) / (var + 1e-6).sqrt() * self.w[:, None, None] + self.b[:, None, None]
 
 
+class _LocalPool(nn.Module):
+    """The channel attention's average. In training, over the whole tile, as published. Applied, over a ``window`` around
+    each position when the features are larger than that (Test-time Local Converter, see WINDOW): a tile larger than the
+    training size then sees what the network was trained on."""
+
+    def __init__(self, window):
+        super().__init__()
+        self.window = window
+
+    def forward(self, x):
+        h, w = x.shape[2:]
+        if self.training or (self.window >= h and self.window >= w):
+            return x.mean((2, 3), keepdim=True)
+        k1, k2 = min(self.window, h), min(self.window, w)
+        s = nn.functional.pad(x.float().cumsum(2).cumsum(3), (1, 0, 1, 0))            # float32: bfloat16 cannot sum
+        o = (s[:, :, k1:, k2:] + s[:, :, :-k1, :-k2] - s[:, :, :-k1, k2:] - s[:, :, k1:, :-k2]) / (k1 * k2)
+        dh, dw = h - o.shape[2], w - o.shape[3]
+        return nn.functional.pad(o, (dw // 2, dw - dw // 2, dh // 2, dh - dh // 2), mode="replicate").to(x.dtype)
+
+
 class _NAFBlock(nn.Module):
-    def __init__(self, c):
+    def __init__(self, c, window=WINDOW):
         super().__init__()
         self.n1, self.n2 = _LayerNorm2d(c), _LayerNorm2d(c)
         self.c1 = nn.Conv2d(c, 2 * c, 1)
         self.c2 = nn.Conv2d(2 * c, 2 * c, 3, padding=1, groups=2 * c)
-        self.sca = nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Conv2d(c, c, 1))
+        self.sca = nn.Sequential(_LocalPool(window), nn.Conv2d(c, c, 1))
         self.c3 = nn.Conv2d(c, c, 1)
         self.c4 = nn.Conv2d(c, 2 * c, 1)
         self.c5 = nn.Conv2d(c, c, 1)
@@ -180,16 +214,16 @@ class NAFNet(nn.Module):
         self.intro = nn.Conv2d(3, width, 3, padding=1)
         self.ending = nn.Conv2d(width, 3, 3, padding=1)
         self.encs, self.downs, self.ups, self.decs = (nn.ModuleList() for _ in range(4))
-        c = width
+        c, win = width, WINDOW                                        # win: WINDOW in this level's own pixels
         for n in enc:
-            self.encs.append(nn.Sequential(*[_NAFBlock(c) for _ in range(n)]))
+            self.encs.append(nn.Sequential(*[_NAFBlock(c, win) for _ in range(n)]))
             self.downs.append(nn.Conv2d(c, 2 * c, 2, 2))
-            c *= 2
-        self.mid = nn.Sequential(*[_NAFBlock(c) for _ in range(mid)])
+            c, win = 2 * c, win // 2
+        self.mid = nn.Sequential(*[_NAFBlock(c, win) for _ in range(mid)])
         for n in dec:
             self.ups.append(nn.Sequential(nn.Conv2d(c, 2 * c, 1, bias=False), nn.PixelShuffle(2)))
-            c //= 2
-            self.decs.append(nn.Sequential(*[_NAFBlock(c) for _ in range(n)]))
+            c, win = c // 2, win * 2
+            self.decs.append(nn.Sequential(*[_NAFBlock(c, win) for _ in range(n)]))
         self.pad = 2 ** len(enc)
 
     def _run(self, m, v):
@@ -245,14 +279,45 @@ def network(dev) -> NAFNet:
 
 
 @torch.no_grad()
-def apply(net, img: np.ndarray, dev, ctx: Context | None = None, tile: int = TILE, overlap: int = OVERLAP) -> np.ndarray:
-    """The network over a whole (3, H, W) image in noise units, in tiles of its training size, blended with a cosine
-    window; returns the starless image in the same units."""
+def apply(net, img: np.ndarray, dev, ctx: Context | None = None, tile: int = TILE, overlap: int = OVERLAP,
+          batch: int = BATCH) -> np.ndarray:
+    """The network over a whole (3, H, W) image in noise units, in tiles larger than the largest stars (an image smaller
+    than such a tile: tiles of the training size), blended with a cosine window; returns the starless image in the same
+    units. On a card with little free memory the tiles go through fewer at a time, then are cut smaller; a memory error
+    does the same (the batch size changes nothing in the result, the tile a little)."""
+    if min(img.shape[1:]) < tile:
+        tile, overlap = min(tile, NET_TILE), min(overlap, NET_OVERLAP)
+    tile_gb = TILE_GB * (tile / NET_TILE) ** 2
+    fits = devices.tile_that_fits(tile, dev, tile_gb)
+    if fits < tile:
+        overlap, tile_gb = overlap * fits // tile, tile_gb * (fits / tile) ** 2
+        tile = fits
+    batch = max(1, batch * NET_TILE ** 2 // tile ** 2)                # the same memory whatever the tile
+    free = devices.free_memory(dev)
+    if free is not None:
+        batch = max(1, min(batch, int(free / 2 ** 30 / (tile_gb * 1.5))))
+    while True:
+        try:
+            return _apply(net, img, dev, ctx, tile, overlap, batch)
+        except Exception as e:  # noqa: BLE001 - only a memory error is retried
+            if not devices.is_out_of_memory(e):
+                raise
+            devices.empty_cache(dev)
+            if batch > 1:
+                batch //= 2
+            elif tile // 2 >= devices.SMALLEST_TILE:
+                tile, overlap = tile // 2, overlap // 2
+            else:
+                raise
+
+
+def _apply(net, img: np.ndarray, dev, ctx: Context | None, tile: int, overlap: int, batch_size: int) -> np.ndarray:
     img = np.asarray(img, np.float32)
     C, H, W = img.shape
     if H < tile or W < tile:                                    # a tiny image: padded to one tile
         ph, pw = max(0, tile - H), max(0, tile - W)
-        return apply(net, np.pad(img, ((0, 0), (0, ph), (0, pw)), mode="reflect"), dev, ctx, tile, overlap)[:, :H, :W]
+        return _apply(net, np.pad(img, ((0, 0), (0, ph), (0, pw)), mode="reflect"), dev, ctx, tile, overlap,
+                      batch_size)[:, :H, :W]
     step = tile - overlap
     out = np.zeros_like(img, np.float32)
     wsum = np.zeros((H, W), np.float32)
@@ -262,12 +327,12 @@ def apply(net, img: np.ndarray, dev, ctx: Context | None = None, tile: int = TIL
     xs = list(range(0, W - tile + 1, step)) + ([W - tile] if (W - tile) % step else [])
     for i, y in enumerate(ys):
         batch = [img[:, y:y + tile, x:x + tile] for x in xs]
-        for j in range(0, len(batch), 16):
-            b = torch.from_numpy(np.ascontiguousarray(np.stack(batch[j:j + 16]))).to(dev)
+        for j in range(0, len(batch), batch_size):
+            b = torch.from_numpy(np.ascontiguousarray(np.stack(batch[j:j + batch_size]))).to(dev)
             with torch.autocast(dev.type, dtype=torch.bfloat16, enabled=dev.type == "cuda"):
                 r = net(fwd(b)).float()
             r = inv(r).cpu().numpy()
-            for k, x in enumerate(xs[j:j + 16]):
+            for k, x in enumerate(xs[j:j + batch_size]):
                 out[:, y:y + tile, x:x + tile] += r[k] * win
                 wsum[y:y + tile, x:x + tile] += win
         if ctx is not None:

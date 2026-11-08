@@ -43,7 +43,7 @@ from PySide6.QtWidgets import (
 from ..core import project2
 from . import prefs
 from .i18n import _, hours_text, maybe, plural
-from .widgets import ACCENT, WARN, ElidedLabel, label
+from .widgets import ACCENT, WARN, ElidedLabel, cap_dialog, label
 
 TW, TH = 260, 150
 CARD_W, GAP = TW + 20, 16
@@ -543,7 +543,8 @@ def folder_name(name: str) -> str:
 
 
 def holds_frames(folder: Path) -> bool:
-    """Whether a folder holds frames (camera raw or FITS files) itself: the folder of a session's frames."""
+    """Whether a folder holds frames (camera raw, FITS, JPEG, PNG or TIFF files) itself: the folder of a session's
+    frames."""
     from ..core.project import frame_kind
     try:
         return any(frame_kind(q.name) for q in folder.iterdir())
@@ -581,6 +582,7 @@ class NewProjectDialog(QDialog):
         self.location = Path(location)
         self.setWindowTitle(_("New project"))
         self.setMinimumWidth(520)
+        cap_dialog(self)
         v = QVBoxLayout(self)
         v.addWidget(label(_("New project"), "h1"))
         rows = []

@@ -51,7 +51,7 @@ from .services.run import (
     size_text,
     stage_title,
 )
-from .widgets import ACCENT, BAD, OK, WARN, Box, ElidedLabel, clear, label
+from .widgets import ACCENT, BAD, OK, WARN, Box, ElidedLabel, cap_dialog, clear, label
 
 GREY = "#5d6470"
 #: waiting: to compute, an orange circle (issue #27)
@@ -311,6 +311,7 @@ class RunDialog(QDialog):
         self.heading, self.show_done = title, show_done
         self.names = dict(names or {})
         self.setMinimumWidth(740)
+        cap_dialog(self)
         self.setModal(False)
         self._track = track
         self.root = QVBoxLayout(self)
@@ -613,8 +614,12 @@ class RunDialog(QDialog):
             if any(self.s.view(w) is not None and self.s.view(w).source is None and
                    s in self.s.p.sessions_of(w) for w in wids) and s.id not in sids:
                 sids.append(s.id)
-        return [_("{session}: {text}").format(session=self.s.p.session(sid).name, text=type_warning_text(w))
-                for sid in sids for w in self.s.file_warnings(sid)]
+        out = [_("{session}: {text}").format(session=self.s.p.session(sid).name, text=type_warning_text(w))
+               for sid in sids for w in self.s.file_warnings(sid)]
+        from .frames import colour_note_text
+        notes = {sid: getattr(self.s, "colour_note", lambda _i: None)(sid) for sid in sids}    # issue #57: said before
+        return out + [_("{session}: {text}").format(session=self.s.p.session(sid).name, text=colour_note_text(n))
+                      for sid, n in notes.items() if n]
 
     def warnings(self, sync: bool = False) -> list[str]:
         """What the plan says before it runs: the workflows left out and why, the disk too small, the files that may be

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from astropy.io import fits
 
 from astro_gpu.io.frames import cfa_channel_map, read_cfa, read_info
@@ -28,6 +29,61 @@ def test_fits_bayer_offsets_and_roworder(tmp_path):
     assert img.shape == (4, 6) and img[0, 0] == a[-1, 0]   # bottom-up rows flipped to top-down
 
 
+def test_the_useful_area_of_the_header_is_the_frame(tmp_path):
+    """Issue #46: a FITS frame read through its TRIMSEC: its size, its pixels, its Bayer pattern from the area's first
+    pixel. TRIMSEC decides over DATASEC, which a frame can give as the whole image."""
+    a = np.arange(48, dtype=np.uint16).reshape(6, 8)
+    p = tmp_path / "f.fits"
+    _write(p, a, BAYERPAT="RGGB", TRIMSEC="[2:7,2:5]", DATASEC="[1:8,1:6]", BIASSEC="[8:8,1:6]")
+    info = read_info(p)
+    assert (info.width, info.height) == (6, 4)
+    assert info.cfa == "BGGR"                          # one column and one row in: the pattern's other corner
+    img = read_cfa(p)
+    assert img.shape == (4, 6) and np.array_equal(img, a[1:5, 1:7])
+
+
+def test_datasec_counts_without_trimsec_and_the_rows_stay_the_files(tmp_path):
+    """The section is in the file's own rows (1 is its first row): a bottom-up frame is cut first, then turned; the
+    pattern follows the row the image then starts at."""
+    a = np.arange(48, dtype=np.uint16).reshape(6, 8)
+    p = tmp_path / "f.fits"
+    _write(p, a, BAYERPAT="RGGB", DATASEC="[1:8,1:3]", ROWORDER="BOTTOM-UP")
+    info = read_info(p)
+    assert (info.width, info.height) == (8, 3) and info.cfa == "GBRG"      # 3 rows left out above, once turned
+    img = read_cfa(p)
+    assert img.shape == (3, 8) and np.array_equal(img, a[:3][::-1])
+
+
+@pytest.mark.parametrize("hdr", [{}, {"TRIMSEC": "[1:8,1:6]"}, {"TRIMSEC": "N/A"}, {"DATASEC": "[0:8,1:6]"},
+                                 {"TRIMSEC": "[1:9,1:6]"}, {"TRIMSEC": "[5:2,1:6]"}])
+def test_a_frame_without_a_usable_section_is_read_whole(tmp_path, hdr):
+    a = np.arange(48, dtype=np.uint16).reshape(6, 8)
+    p = tmp_path / "f.fits"
+    _write(p, a, BAYERPAT="RGGB", **hdr)
+    info = read_info(p)
+    assert (info.width, info.height, info.cfa) == (8, 6, "RGGB")
+    assert np.array_equal(read_cfa(p), a)
+
+
+def test_the_inventory_works_on_the_useful_area_and_says_so(tmp_path):
+    from types import SimpleNamespace
+
+    from astro_gpu.core.project import Inputs
+    from astro_gpu.stages.inventory import Inventory, InventoryParams
+    d = tmp_path / "lights"
+    d.mkdir()
+    for i in range(2):
+        _write(d / f"l{i}.fits", np.full((6, 8), 100, np.uint16), EXPTIME=20.0, TRIMSEC="[2:7,2:5]")
+    logs, saved = [], {}
+    ctx = SimpleNamespace(project=SimpleNamespace(config=SimpleNamespace(inputs=Inputs(lights=[str(d)]))),
+                          progress=lambda *a, **k: None, log=lambda m, level="info": logs.append(m),
+                          preview=lambda *a, **k: None, save_json=lambda n, o: saved.update({n: o}), metrics={})
+    ctx.metric = lambda k, v: ctx.metrics.__setitem__(k, v)
+    Inventory().run(ctx, InventoryParams())
+    assert (ctx.metrics["width"], ctx.metrics["height"]) == (6, 4)
+    assert "useful area from the frames' header: 6x4 of 8x6 pixels, the overscan left out" in logs
+
+
 def test_cfa_channel_map():
     assert cfa_channel_map("RGGB") == [0, 1, 1, 2]
     assert cfa_channel_map("BGGR") == [2, 1, 1, 0]
@@ -35,9 +91,15 @@ def test_cfa_channel_map():
 
 
 def test_non_bayer_fits_has_no_pattern(tmp_path):
-    p = tmp_path / "rgb.fits"
-    _write(p, np.zeros((3, 8, 8), np.float32))
+    p = tmp_path / "mono.fits"
+    _write(p, np.zeros((8, 8), np.float32))
     assert read_info(p).cfa == ""
+
+
+def test_an_rgb_fits_has_the_pattern_of_a_frame_already_in_colour(tmp_path):
+    p = tmp_path / "rgb.fits"                          # issue #57: three planes, not a monochrome frame
+    _write(p, np.zeros((3, 8, 8), np.float32))
+    assert read_info(p).cfa == "RGB"
 
 
 def test_compressed_fits_are_frames(tmp_path):
@@ -50,7 +112,7 @@ def test_compressed_fits_are_frames(tmp_path):
     (tmp_path / "c.fit.gz").write_bytes(gzip.compress((tmp_path / "b.fit").read_bytes()))
     (tmp_path / "notes.txt.gz").write_bytes(b"")
     assert [p.name for p in list_frames([str(tmp_path)])] == ["a.fits.fz", "b.fit", "c.fit.gz"]
-    assert frame_kind("x.NEF") == "raw" and frame_kind("x.tif") == ""
+    assert frame_kind("x.NEF") == "raw" and frame_kind("x.mov") == ""  # (a .tif is a colour frame, issue #57)
     i = read_info(tmp_path / "a.fits.fz")            # the image and its header are in the first extension
     assert (i.width, i.height, i.exposure, i.cfa) == (8, 8, 300.0, "RGGB")
     assert np.array_equal(read_cfa(tmp_path / "a.fits.fz"), a) and np.array_equal(read_cfa(tmp_path / "c.fit.gz"), a)

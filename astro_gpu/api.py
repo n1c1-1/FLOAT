@@ -47,6 +47,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .core import devices
 from .core import estimate as est
 from .core import project2 as p2
 from .core import workflow as wfl
@@ -226,9 +227,10 @@ class Cost:
 
 @dataclass
 class Gpu:
-    device: str                          # "cuda:0"
+    device: str                          # "cuda:0", "xpu:0", "mps"
     name: str
     memory_gb: float
+    beta: bool = False                   # an Intel, AMD or Apple card: never tested here, the card test guards it
 
 
 @dataclass
@@ -1026,11 +1028,17 @@ def health_checks(p: Project2) -> list[Check]:
     n = {k: len(getattr(inp, k)) for k in KINDS}
     if not p.sessions or not n["lights"]:
         return [Check("warn", "no_lights", "No light frames yet")]
+    from .io.frames import colour_session
     keys = _keys(p)
     for s in keys.project.sessions:                  # issue #58: a file added by mistake, said before the run
         fr = keys.scan.session_frames(keys.project, s)
         for w in type_warnings({k: [str(f) for f, _size in fr[k]] for k in KINDS}):
             out.append(Check("warn", "file_types", type_warning_english(w, s.name), {**w, "session": s.name}))
+        note = colour_session([str(f) for f, _size in fr["lights"]])
+        if note:                                     # issue #57: the limit of such frames, said plainly
+            out.append(Check("info", "colour_frames", f"{s.name}: {note['type']} frames already in colour: no Bayer "
+                             "drizzle; dark and flat correction are approximate when they are not linear data",
+                             {**note, "session": s.name}))
     for w in p.workflows:                            # two filters in one stack: a mistake, said before the run
         flts = sorted({s.filter for s in p.sessions_of(w) if s.lights} - {""}) if w.source is None else []
         if len(flts) > 1:
@@ -1056,10 +1064,14 @@ def health_checks(p: Project2) -> list[Check]:
 def type_warning_english(w: dict, session: str) -> str:
     """A file-type warning (core.project.type_warnings) in English."""
     if w["key"] == "unread":
-        return (f"{session}: {w['name']} is not a frame the engine reads (camera raw or FITS)" if w["n"] == 1 else
-                f"{session}: {w['n']} {w['type']} files are not frames the engine reads (camera raw or FITS)")
+        return (f"{session}: {w['name']} is not a frame the engine reads here (camera raw or FITS; a JPEG, PNG or TIFF "
+                "only with lights of its kind)" if w["n"] == 1 else
+                f"{session}: {w['n']} {w['type']} files are not frames the engine reads here (camera raw or FITS; "
+                "a JPEG, PNG or TIFF only with lights of its kind)")
     if w["key"] == "mixed":
         return f"{session}: {w['n']} {w['type']} file(s) among {w['of']} {w['main']} {w['kind']}: added by mistake?"
+    if w["key"] == "wrong_kind":
+        return f"{session}: the {w['kind']} are {w['type']}, the lights {w['main']}: they cannot calibrate them"
     return f"{session}: the {w['kind']} are {w['type']}, the lights {w['main']}"
 
 
@@ -1212,6 +1224,8 @@ def _superpixel(mosaic: Any, cfa: str, black: float) -> Any:
 
     from .core.cfa import superpixel
     a = np.asarray(mosaic, np.float32) - np.float32(black)
+    if cfa == "RGB":                                 # a frame already in colour, its three planes (issue #57)
+        return superpixel(a, cfa)
     H, W = a.shape[0] // 2 * 2, a.shape[1] // 2 * 2
     if not cfa:
         g = a[:H, :W].reshape(H // 2, 2, W // 2, 2).mean((1, 3))
@@ -1225,10 +1239,14 @@ def frame_thumb(p: Project2, path: str | Path, size: int = 256) -> Any:
     import cv2
     import numpy as np
 
-    from .io.frames import read_cfa, read_info
+    from .io.frames import read_cfa, read_colour, read_info
+
+    def mosaic(f, cfa):                              # a frame already in colour: its planes, for a colour thumbnail
+        return read_colour(f) if cfa == "RGB" else read_cfa(f)
+
     path = Path(path)
     info = read_info(path)
-    img = _superpixel(read_cfa(path), info.cfa, info.black)
+    img = _superpixel(mosaic(path, info.cfa), info.cfa, info.black)
     sid = _light_sessions(p).get(os.path.normcase(os.path.normpath(str(path))))
     st = None
     if sid is not None:
@@ -1241,7 +1259,7 @@ def frame_thumb(p: Project2, path: str | Path, size: int = 256) -> Any:
             files = [f for f, _ in keys.scan.session_frames(keys.project, s)["lights"]]
             ref = files[len(files) // 2]
             ri = read_info(ref)
-            st = c.stretch[ck] = _stretch_of(_superpixel(read_cfa(ref), ri.cfa, ri.black))
+            st = c.stretch[ck] = _stretch_of(_superpixel(mosaic(ref, ri.cfa), ri.cfa, ri.black))
     if st is None:
         st = _stretch_of(img)
     bp, wp, mb = st
@@ -1859,12 +1877,8 @@ def machine(force: bool = False) -> MachineInfo:
         return _MACHINE[0]
     gpus: list[Gpu] = []
     try:
-        import torch
-        if torch.cuda.is_available():
-            for i in range(torch.cuda.device_count()):
-                pr = torch.cuda.get_device_properties(i)
-                gpus.append(Gpu(f"cuda:{i}", " ".join(w for w in pr.name.split() if w != "GeForce"),
-                                pr.total_memory / 2 ** 30))
+        gpus = [Gpu(d.device, " ".join(w for w in d.name.split() if w != "GeForce"), d.memory_gb, d.beta)
+                for d in devices.list_devices()]
     except Exception:  # noqa: BLE001 - no torch or no driver
         pass
     mem = 0.0
@@ -1877,15 +1891,51 @@ def machine(force: bool = False) -> MachineInfo:
     return _MACHINE[0]
 
 
-def start_run(p: Project2, plan: Plan, device: str | None = None) -> RunInfo:
+#: the run window says why (its translations: client/services/run.py, run.json)
+STACK_ON_CPU = "the graphics card has {free} GB free and this stack needs about {need} GB: it is computed on the CPU"
+
+
+def _stack_on_cpu(p: Project2, plan: Plan, device: str | None) -> dict[str, str]:
+    """{key: why} of the Stack jobs of the plan that do not fit in the card's memory (``devices.stack_memory`` for the
+    frame size and the drizzle scale), which go to the CPU."""
+    dev = (device if device not in (None, "", "auto") else (p.devices.get("main") or "cuda:0"))
+    if dev == "cpu":
+        return {}
+    try:
+        free = devices.free_memory(dev) if devices.available(dev) else None
+    except Exception:  # noqa: BLE001 - no torch or no driver
+        free = None
+    out: dict[str, str] = {}
+    if free is None:
+        return out
+    keys, store = _keys(p), _store(p)
+    for j in plan.jobs:
+        if wfl.base(j.stage) != "stack":
+            continue
+        need = devices.stack_memory(est.facts(keys, j.run_wf, store).grid_mpx)
+        if need * 2 ** 30 > free:
+            out[j.key] = STACK_ON_CPU.format(free=f"{free / 2 ** 30:.1f}", need=f"{need:.1f}")
+    return out
+
+
+def start_run(p: Project2, plan: Plan, device: str | None = None, cpu_jobs: dict[str, str] | None = None) -> RunInfo:
     """Launch a plan in a detached worker process; returns at once. Follow it with ``read_events(p, info.offset,
-    info.run_id)``. Raises ``RunInProgress`` when the project already has a live run."""
+    info.run_id)``. Raises ``RunInProgress`` when the project already has a live run. ``cpu_jobs``: {key: why} of the
+    jobs that go to the CPU whatever the device (the card test); a Stack job that does not fit in the card's memory goes
+    there too. The jobs left on the CPU have their duration estimated as such."""
     r2 = _r2()
     if r2.running(p.root) is not None:
         raise RunInProgress("a run is already in progress for this project")
     if plan.rules is None:
         plan.rules = _ctx(p).spec
-    info = r2.launch(p, plan, device)
+    cpu = {**(cpu_jobs or {}), **_stack_on_cpu(p, plan, device)}
+    if cpu:
+        import dataclasses
+        keys, store = _keys(p), _store(p)
+        jobs = [dataclasses.replace(j, est_s=est.estimate(wfl.base(j.stage), est.facts(keys, j.run_wf, store),
+                                                          False).seconds) if j.key in cpu else j for j in plan.jobs]
+        plan = dataclasses.replace(plan, jobs=jobs)
+    info = r2.launch(p, plan, device, cpu_jobs=cpu)
     refresh(p)
     return info
 

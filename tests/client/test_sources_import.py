@@ -292,6 +292,38 @@ def test_a_frames_folder_not_found_is_said(tmp_path):
         i18n.set_language("en")
 
 
+def test_a_frame_with_a_useful_area_is_sized_and_said_as_the_engine_reads_it(tmp_path):
+    """Issue #46: the size the sessions' check compares is the useful area's, and the engine's two new lines have
+    their French."""
+    from astropy.io import fits
+
+    from astro_gpu.client.model import _frame_read
+    from astro_gpu.client.services.run import engine_text
+    p = tmp_path / "a.fits"
+    fits.PrimaryHDU(np.zeros((6, 8), np.uint16), fits.Header({"TRIMSEC": "[2:7,2:5]"})).writeto(p)
+    assert _frame_read(str(p), True) == (True, (6, 4))
+    i18n.set_language("fr")
+    try:
+        assert engine_text("useful area from the frames' header: 3054x2042 of 3136x2112 pixels, the overscan left out") \
+            == "zone utile lue dans l'en-tête des images : 3054x2042 sur 3136x2112 pixels, l'overscan laissé de côté"
+        assert engine_text("sparse field: 12 frame(s) aligned from a few stars (rotation, shift and scale only)") == \
+            "champ peu étoilé : 12 image(s) alignée(s) sur quelques étoiles (rotation, décalage et échelle seulement)"
+        assert engine_text("the 37 stars of this sparse field do not identify it on the sky beyond doubt, so no solution "
+                           "is given rather than a wrong one: take Astrometry out of this workflow") == \
+            "les 37 étoiles de ce champ peu étoilé ne le reconnaissent pas sur le ciel avec certitude : pas de solution " \
+            "plutôt qu'une solution fausse ; retirez l'Astrométrie de ce workflow"
+        assert engine_text("sparse field: the solution holds 117 powers of ten over chance, 9 needed (31 of 37 stars)") \
+            == "champ peu étoilé : la solution tient à 117 puissances de dix au-dessus du hasard, 9 exigées (31 étoiles sur 37)"
+        assert engine_text("reference frame: a.fits aligned too few of the frames (another field?), b.fits is used") == \
+            "image de référence : a.fits alignait trop peu d'images (un autre champ ?), b.fits est prise"
+        assert engine_text("only 5 stars found in the stack, at least 6 are needed to identify the field: add light "
+                           "frames, or take Astrometry out of this workflow") == \
+            "5 étoiles seulement dans l'empilement, il en faut au moins 6 pour reconnaître le champ : ajoutez des " \
+            "brutes, ou retirez l'Astrométrie de ce workflow"
+    finally:
+        i18n.set_language("en")
+
+
 def test_import_words_and_where_a_new_project_goes(tmp_path, monkeypatch):
     """7.1, 7.5, #28, #29: the import's "no lights" says why; the project is never proposed inside the frames'
     folder; "Pas d'offsets"."""
@@ -301,10 +333,10 @@ def test_import_words_and_where_a_new_project_goes(tmp_path, monkeypatch):
     prefs.load()
     phone = tmp_path / "phone"
     phone.mkdir()
-    (phone / "a.JPG").write_bytes(b"\xff\xd8\xff")
+    (phone / "a.MOV").write_bytes(b"\xff\xd8\xff")                  # not a frame (JPEG lights are read, issue #57)
     empty = tmp_path / "empty"
     empty.mkdir()
-    assert "only JPG files" in no_lights_text([str(phone)])
+    assert "only MOV files" in no_lights_text([str(phone)])
     assert no_lights_text([str(empty)]) == "This folder holds no files."
     assert no_lights_text([str(tmp_path / "gone")]).startswith("Not found:")
     raw = tmp_path / "M81" / "lights"
