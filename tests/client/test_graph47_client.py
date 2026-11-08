@@ -44,12 +44,13 @@ def frames(folder: Path, names) -> Path:
     return folder
 
 
-def open_page(tmp_path, monkeypatch, workflows=("Full",)):
+def open_page(tmp_path, monkeypatch, workflows=("Full",), lights=True):
     monkeypatch.setenv("ASTRO_GPU_SETTINGS", str(tmp_path / "settings.json"))
     prefs.load()
     i18n.set_language("en")
     p = project2.create(tmp_path / "P", "P", Target(name="M 31"))
-    p.sessions.append(project2.Session(1, "night 1", lights=[str(frames(tmp_path / "raw" / "n1", ["a1.ARW"]))]))
+    p.sessions.append(project2.Session(1, "night 1", lights=[str(frames(tmp_path / "raw" / "n1", ["a1.ARW"]))]
+                                       if lights else []))
     for name in workflows:
         p.add_workflow(name, wfl.TEMPLATES[name])
     project2.save(p)
@@ -963,6 +964,365 @@ def test_control_round_a_variant_of_a_graph_keeps_its_blocks_and_each_choice_is_
         assert [n["block"] for n in m.p.workflow(m.paths[0].pid).blocks] == before
         page.workflow_action("duplicate", m.paths[0].pid)
         assert "duplicated" in told[-1] and "Ctrl+Z" in told[-1]
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def _shortcut(page, key):
+    from PySide6.QtGui import QKeySequence, QShortcut
+    return next(sc for sc in page.findChildren(QShortcut) if sc.key() == QKeySequence(key))
+
+
+def test_f2_renames_and_ctrl_d_duplicates_what_is_selected(qapp, tmp_path, monkeypatch):
+    """GUI exploration 4, Q5: F2 renames the workflow of the selected block (the Session, when it is selected), Ctrl+D
+    duplicates the workflow, as in the reference apps; D alone still switches the block off."""
+    from astro_gpu.client import graph as graphmod
+    w, m, page = open_page(tmp_path, monkeypatch)
+    names = iter(["Renamed", "Night A"])
+    monkeypatch.setattr(graphmod, "ask_name", lambda parent, title, current: next(names))
+    try:
+        full = m.paths[0]
+        page.select(index=0, step="empilement")
+        settle(w, page)
+        _shortcut(page, "F2").activated.emit()
+        settle(w, page)
+        assert m.view(full.pid).name == "Renamed"
+        n0 = len(m.paths)
+        _shortcut(page, "Ctrl+D").activated.emit()
+        settle(w, page)
+        assert len(m.paths) == n0 + 1 and m.paths[-1].name == "Renamed (copy)"
+        assert not any(n.cut for n in Graph(m).nodes)
+        page.select(index=0, step="sources")
+        settle(w, page)
+        _shortcut(page, "F2").activated.emit()
+        _shortcut(page, "Ctrl+D").activated.emit()                   # a Session: nothing to duplicate
+        settle(w, page)
+        assert m.session(1).name == "Night A" and len(m.paths) == n0 + 1
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def test_show_all_is_kept_with_the_project(qapp, tmp_path, monkeypatch):
+    """GUI exploration 4, Q9: "Show all" on, the project saved and opened again: it is still on (as the selection);
+    it keys no result."""
+    from astro_gpu import api
+    w, m, page = open_page(tmp_path, monkeypatch)
+    try:
+        before = api._keys(m.p).project.to_dict()
+        page.graph.b_all.setChecked(True)
+        assert m.p.show_all
+        assert {k: v for k, v in api._keys(m.p).project.to_dict().items() if k != "show_all"} == \
+            {k: v for k, v in before.items() if k != "show_all"}
+        project2.save(m.p)
+        assert project2.load(m.root).show_all
+        page2 = GraphPage(m)
+        assert page2.graph.b_all.isChecked()
+        page2.close()
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def test_recombine_is_shown_greyed_before_the_lights(qapp, tmp_path, monkeypatch):
+    """GUI exploration 4, Q10: a workflow with Split stars but no lights yet has no layer in Post, so no Recombine
+    block; it is drawn greyed from the start ("after the lights"), with no wire, and a click says why instead of
+    choosing it. Once the lights are there it is the real one."""
+    w, m, page = open_page(tmp_path, monkeypatch, lights=False)
+    told = []
+    page.toasted.connect(told.append)
+    try:
+        full = m.paths[0]
+        assert full.opts.get("etoiles") == "retirer"
+        g = Graph(m)
+        comp = [n for n in g.nodes if n.key == "composition"]
+        assert len(comp) == 1 and comp[0].grey and comp[0].lid is None and not g.compositions
+        assert not g.post_layers
+        page.select_node(comp[0])
+        assert m.sel_step != "composition" and "lights" in told[-1]
+        from astro_gpu.client.graph import BlockItem
+        assert any(isinstance(it, BlockItem) and it.node.key == "composition" for it in page.graph.scene().items())
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def test_a_chain_wire_says_it_cannot_be_removed(qapp, tmp_path, monkeypatch):
+    """Issue #52: the chain's wires are not selectable, but say so: in their tooltip, and when clicked."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    from astro_gpu.client.graph import ChainWireItem
+    w, m, page = open_page(tmp_path, monkeypatch)
+    try:
+        page.show()
+        settle(w, page)
+        view = page.graph
+        chain = [it for it in view.scene().items() if isinstance(it, ChainWireItem)]
+        assert chain and all("cannot be removed" in it.toolTip() for it in chain)
+        spots = [view.mapFromScene(it.path().pointAtPercent(0.5)) for it in chain]
+        pos = next(p for p in spots if isinstance(view.itemAt(p), ChainWireItem))
+        QTest.mouseClick(view.viewport(), Qt.LeftButton, pos=pos)
+        assert view.toast.text() == "Chain wire: not removable" and view.sel_wire is None
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def _carried(block: str):
+    from PySide6.QtCore import QMimeData
+    mime = QMimeData()
+    mime.setText("block:" + block)
+    return mime
+
+
+def _drag_over(view, block: str, pos):
+    """A palette card carried onto the graph, then held at ``pos`` (a function: the places appear once it is carried):
+    the move event, whose answer says if it can drop there."""
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent
+    mime = _carried(block)                                 # alive as long as its events (they hold a C++ pointer)
+    view.dragEnterEvent(QDragEnterEvent(QPoint(5, 5), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier))
+    move = QDragMoveEvent(pos(), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)
+    view.dragMoveEvent(move)
+    return move
+
+
+def _drop(view, block: str, pos):
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtGui import QDropEvent
+    mime = _carried(block)
+    drop = QDropEvent(QPointF(pos), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)
+    view.dropEvent(drop)
+    return drop
+
+
+def test_fusion_is_dropped_in_the_composition_column_not_on_the_new_flow_band(qapp, tmp_path, monkeypatch):
+    """Issue #53: Fusion's drop zone is in the Composition column; the new-flow band refuses it (it starts the flow of
+    a Session or an Image only)."""
+    w, m, page = open_page(tmp_path, monkeypatch)
+    try:
+        view = page.graph
+        view.rebuild()
+        n = len(m.paths)
+
+        def band():
+            return view.mapFromScene(view.new_flow_ghost.rect.center())
+
+        def place():
+            return view.mapFromScene(view.ghosts[0].rect.center())
+        move = _drag_over(view, "fusion", band)
+        assert not move.isAccepted() and not view.new_flow_ghost.hot
+        _drop(view, "fusion", band())
+        settle(w, page)
+        assert len(m.paths) == n                                    # refused on the band
+        move = _drag_over(view, "fusion", place)
+        ghost = view.ghosts[0]
+        assert move.isAccepted() and ghost.text == "Fusion" and ghost.hot
+        assert view._cx["fusion"] <= ghost.rect.left() and ghost.rect.right() <= view._cx["fusion"] + view._cw["fusion"]
+        assert _drop(view, "fusion", place()).isAccepted()
+        settle(w, page)
+        assert len(m.paths) == n + 1 and m.paths[-1].source.get("fusion") and m.sel_step == "fusion"
+        assert view.col_of(Graph(m).node_of(m.paths[-1], "fusion")) == "fusion"
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def _a_fits(path: Path) -> str:
+    import numpy as np
+    from astropy.io import fits
+    fits.PrimaryHDU(np.full((3, 32, 32), 100.0, np.float32)).writeto(path)
+    return str(path)
+
+
+def test_a_linear_image_is_chosen_as_a_fusion_channel_on_its_row(qapp, tmp_path, monkeypatch):
+    """Issue #55: the two meet in a Fusion: a channel's row chooses a linear Image's output (with its Astrometry the
+    channels align); the starless modes work with it, it gets its Stars/background; an image already stretched is
+    listed greyed, with its reason."""
+    from PySide6.QtWidgets import QComboBox
+
+    from astro_gpu.core.store import Keys
+    w, m, page = open_page(tmp_path, monkeypatch)
+    try:
+        page.palette_action("image:new")
+        settle(w, page)
+        img = m.paths[-1]
+        m.set_image_file(img, _a_fits(tmp_path / "stack.fits"))
+        page.place_block("astrometry", img.pid)
+        stretched = m.add_image_workflow("Done", _a_fits(tmp_path / "done.fits"), stretched=True)
+        settle(w, page)
+        page.place_fusion()
+        settle(w, page)
+        fu = m.paths[-1]
+        assert fu.source["fusion"]["stars"]["mode"] == "workflow"     # as for a colour stack: its starless image
+        offered = {q.pid: why for q, why in m.channel_choices(fu, "OIII")}
+        assert offered[img.pid] == "" and "stretch" in offered[stretched.pid]
+        assert not m.set_fusion_channel(fu, "OIII", stretched.pid)
+        assert m.set_fusion_stars(m.view(fu.pid), None)
+        page.select(index=m.paths.index(m.view(fu.pid)), step="fusion")
+        settle(w, page)
+        rows = [c for c in page.panel.findChildren(QComboBox) if c.findData(img.pid) >= 0]
+        assert len(rows) == 2                                        # Ha, OIII
+        grey = rows[1].model().item(rows[1].findData(stretched.pid))
+        assert not grey.isEnabled() and "stretch" in grey.toolTip()
+        i = rows[1].findData(img.pid)
+        rows[1].setCurrentIndex(i)
+        rows[1].activated.emit(i)
+        settle(w, page)
+        fu = m.view(fu.pid)
+        assert [x["pid"] for x in fu.source["fusion"]["inputs"]] == [m.paths[0].pid, img.pid]
+        assert m.fusion_problem(fu) == ""
+        k = Keys(m.p)
+        got = next(x for x in k.overrides(fu.pid, "fusion")["inputs"] if x["role"] == "OIII")
+        assert "render_simple" in k.chain(img.pid) and got["dir"] and got["wcs"]
+        g = Graph(m)
+        assert g.leaves[img.pid] in g.fusion_inputs[id(g.node_of(fu, "fusion"))]
+        page.select(index=m.paths.index(fu), step="fusion")
+        settle(w, page)
+        stars = next(c for c in page.panel.findChildren(QComboBox) if c.itemText(0) == "With channels (no split)")
+        j = next(k for k in range(stars.count()) if stars.itemData(k) == {"mode": "palette"})
+        assert stars.model().item(j).isEnabled()
+        stars.activated.emit(j)
+        settle(w, page)
+        assert m.view(fu.pid).source["fusion"]["stars"] == {"mode": "palette"}
+        assert "star_removal" in m.all_stages(m.view(img.pid))        # it gets its Stars/background, as a stack does
+        assert m.fusion_problem(m.view(fu.pid)) == ""
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def test_a_fusion_can_start_from_a_linear_image_alone(qapp, tmp_path, monkeypatch):
+    """Issue #55: no stack in the project: once its file is chosen, a linear Image gives the Fusion its channels (dual
+    band), with its stars (a star source is chosen in the Fusion's panel)."""
+    w, m, page = open_page(tmp_path, monkeypatch, workflows=())
+    try:
+        page.palette_action("image")
+        settle(w, page)
+        img = m.paths[-1]
+        assert page.palette_reason("fusion", img, None) == "needs 2 filter workflows, a colour stack or image"
+        m.set_image_file(img, _a_fits(tmp_path / "stack.fits"))
+        settle(w, page)
+        assert page.palette_reason("fusion", m.view(img.pid), None) == ""
+        page.place_fusion()
+        settle(w, page)
+        f = m.paths[-1].source["fusion"]
+        assert [(i["pid"], i["channel"]) for i in f["inputs"]] == [(img.pid, "R"), (img.pid, "GB")] and "stars" not in f
+        assert m.fusion_problem(m.paths[-1]) == ""
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def test_a_linear_image_takes_stars_without_denoise(qapp, tmp_path, monkeypatch):
+    """Issue #55: Stars on a linear Image, from the palette, needs no Denoise: its chain has the Output, then the
+    network; the frames keep needing Denoise."""
+    w, m, page = open_page(tmp_path, monkeypatch, workflows=())
+    try:
+        page.palette_action("image")
+        settle(w, page)
+        img = m.paths[-1]
+        m.set_image_file(img, _a_fits(tmp_path / "stack.fits"))
+        settle(w, page)
+        assert page.palette_reason("stars", m.view(img.pid), None) == ""
+        page.place_block("stars", img.pid)
+        settle(w, page)
+        v = m.view(img.pid)
+        assert "etoiles" in m.display_keys(v) and m.all_stages(v)[-2:] == ["render_simple", "star_removal"]
+        assert "denoise" not in m.all_stages(v)
+        with pytest.raises(wfl.BlockRefused, match="Denoise"):
+            wfl.check_blocks([wfl.node("calibration"), wfl.node("registration"), wfl.node("selection"),
+                              wfl.node("stacking"), wfl.node("output"), wfl.node("stars")], "frames")
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def test_a_linear_image_chosen_in_a_starless_fusion_gets_its_stars(qapp, tmp_path, monkeypatch):
+    """Issue #55: a channel set to a linear Image while the Fusion takes starless images: the Image gets its
+    Stars/background (taken back with the Fusion, decision 2)."""
+    w, m, page = open_page(tmp_path, monkeypatch)
+    try:
+        page.palette_action("image:new")
+        settle(w, page)
+        img = m.paths[-1]
+        m.set_image_file(img, _a_fits(tmp_path / "stack.fits"))
+        page.place_block("astrometry", img.pid)
+        settle(w, page)
+        page.place_fusion()
+        settle(w, page)
+        fu = m.paths[-1]
+        assert fu.source["fusion"]["stars"]["mode"] == "workflow"
+        assert m.set_fusion_channel(fu, "OIII", img.pid)
+        settle(w, page)
+        assert "star_removal" in m.all_stages(m.view(img.pid)) and m.fusion_problem(m.view(fu.pid)) == ""
+        m.remove_fusion(m.view(fu.pid))
+        settle(w, page)
+        assert "star_removal" not in m.all_stages(m.view(img.pid))
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def test_a_linear_image_is_a_fusion_star_source_once_it_has_its_astrometry(qapp, tmp_path, monkeypatch):
+    """Issue #55: the Fusion's Stars list offers a linear Image: choosing it gives it its Stars/background, and until
+    it has its Astrometry the Fusion says so (as for a channel) and Run is refused; then the engine reads its starless
+    result and its plate solution. An image already stretched is listed greyed, with its reason, and refused."""
+    from PySide6.QtWidgets import QComboBox
+
+    from astro_gpu.core.store import Keys
+    w, m, page = open_page(tmp_path, monkeypatch)
+    try:
+        page.palette_action("image:new")
+        settle(w, page)
+        img = m.paths[-1]
+        m.set_image_file(img, _a_fits(tmp_path / "stack.fits"))
+        stretched = m.add_image_workflow("Done", _a_fits(tmp_path / "done.fits"), stretched=True)
+        settle(w, page)
+        page.place_fusion()
+        settle(w, page)
+        fu = m.paths[-1]
+        page.select(index=m.paths.index(fu), step="fusion")
+        settle(w, page)
+        stars = next(c for c in page.panel.findChildren(QComboBox) if c.itemText(0) == "With channels (no split)")
+        at = {stars.itemData(k).get("pid"): k for k in range(stars.count()) if stars.itemData(k)}
+        grey = stars.model().item(at[stretched.pid])
+        assert not grey.isEnabled() and "stretch" in grey.toolTip()
+        assert stars.model().item(at[img.pid]).isEnabled()
+        assert not m.set_fusion_stars(m.view(fu.pid), {"mode": "workflow", "pid": stretched.pid})
+        i18n.set_language("fr")
+        try:
+            assert "étirement" in next(why for q, why in m.star_choices(m.view(fu.pid)) if q.pid == stretched.pid)
+        finally:
+            i18n.set_language("en")
+        stars.activated.emit(at[img.pid])
+        settle(w, page)
+        fu = m.view(fu.pid)
+        assert fu.source["fusion"]["stars"] == {"mode": "workflow", "pid": img.pid}
+        assert "star_removal" in m.all_stages(m.view(img.pid))        # the Stars block it needs, as for a stack
+        assert m.fusion_problem(fu) == "Stars: needs Astrometry"
+        assert (fu.name, "Stars: needs Astrometry") in m.run_problems()
+        page.place_block("astrometry", img.pid)
+        settle(w, page)
+        fu = m.view(fu.pid)
+        assert m.fusion_problem(fu) == ""
+        k = Keys(m.p)
+        got = k.overrides(fu.pid, "fusion")["stars"]
+        assert k.key(img.pid, "star_removal") in got["dir"] and got["wcs"].endswith("wcs.fits")
+        v = m.view(img.pid)                                            # a star source keeps what the Fusion reads
+        assert "needed by" in m.removal_problem(v, "astrometrie") and fu.name in m.channel_problem(v)
     finally:
         page.close()
         m.close(save=False)
