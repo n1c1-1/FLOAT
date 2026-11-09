@@ -31,8 +31,8 @@ ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.17763
 OutputDir={#OutputDir}
 OutputBaseFilename=FLOAT-Setup
-SetupIconFile={#StageDir}\FLOAT.ico
-UninstallDisplayIcon={app}\FLOAT.ico
+SetupIconFile={#StageDir}\float.ico
+UninstallDisplayIcon={app}\float.ico
 UninstallDisplayName=FLOAT
 Compression=lzma2/max
 SolidCompression=yes
@@ -54,8 +54,8 @@ en.DesktopIcon=Create a desktop shortcut
 fr.DesktopIcon=Créer un raccourci sur le Bureau
 en.LaunchApp=Start FLOAT
 fr.LaunchApp=Lancer FLOAT
-en.EnvFailed=The libraries could not be installed completely.%n%nSideralForge will offer to finish the installation the next time it is opened from the Start menu.
-fr.EnvFailed=Les bibliothèques n'ont pas pu être installées entièrement.%n%nSideralForge proposera de terminer l'installation à sa prochaine ouverture depuis le menu Démarrer.
+en.EnvFailed=The libraries could not be installed completely.%n%nFLOAT will offer to finish the installation the next time it is opened from the Start menu.
+fr.EnvFailed=Les bibliothèques n'ont pas pu être installées entièrement.%n%nFLOAT proposera de terminer l'installation à sa prochaine ouverture depuis le menu Démarrer.
 en.TooLong=This folder's path is too long for Windows.%n%nPlease choose a shorter folder, at most %1 characters.
 fr.TooLong=Le chemin de ce dossier est trop long pour Windows.%n%nChoisissez un dossier plus court, de %1 caractères au maximum.
 
@@ -72,8 +72,8 @@ Type: filesandordirs; Name: "{app}\python"
 Source: "{#StageDir}\*"; Excludes: "float.iss"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\FLOAT"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\setup\launch.py"""; WorkingDir: "{app}"; IconFilename: "{app}\FLOAT.ico"
-Name: "{autodesktop}\FLOAT"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\setup\launch.py"""; WorkingDir: "{app}"; IconFilename: "{app}\FLOAT.ico"; Tasks: desktopicon
+Name: "{autoprograms}\FLOAT"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\setup\launch.py"""; WorkingDir: "{app}"; IconFilename: "{app}\float.ico"
+Name: "{autodesktop}\FLOAT"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\setup\launch.py"""; WorkingDir: "{app}"; IconFilename: "{app}\float.ico"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\setup\launch.py"""; WorkingDir: "{app}"; Description: "{cm:LaunchApp}"; Flags: postinstall nowait skipifsilent; Check: EnvReady

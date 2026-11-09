@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import detect  # noqa: E402
 import fetch  # noqa: E402
 
-MARKER = ".sideralforge_ok.json"
+MARKER = ".float_ok.json"
 SMOKE_CODE = """\
 import json, torch, numba, cv2, PySide6.QtWidgets
 import astro_gpu, astro_gpu.api, astro_gpu.client.app
@@ -321,7 +321,7 @@ class Installer:
         self.run_tool([self.root / "uv.exe", "pip", "sync", req, "--python", self.env_py, "--no-index", "--find-links",
                        self.downloads, "--offline"], "install_error")
         # the app's own code, found by every Python of the environment (relative: the path may have accents)
-        pth = self.site / "sideralforge_app.pth"
+        pth = self.site / "float_app.pth"
         pth.write_text("..\\..\\..\\app\n", encoding="ascii")
 
     def smoke(self, wheels: list[fetch.Wheel]):

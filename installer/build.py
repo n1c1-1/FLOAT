@@ -179,16 +179,22 @@ def find_star_model() -> Path:
 
 
 def make_icon(path: Path) -> None:
-    """A dark disc with a four-point star (no image file in the repository)."""
-    from PIL import Image, ImageDraw
-    n = 256
-    im = Image.new("RGBA", (n, n), (0, 0, 0, 0))
-    d = ImageDraw.Draw(im)
-    d.ellipse([4, 4, n - 5, n - 5], fill=(18, 26, 48, 255))
-    c, r, w = n / 2, 104, 16
-    d.polygon([(c, c - r), (c + w, c - w), (c + r, c), (c + w, c + w), (c, c + r), (c - w, c + w), (c - r, c), (c - w, c - w)],
-              fill=(244, 232, 190, 255))
-    im.save(path, sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
+    """The program's icon (client/float.svg) as a Windows .ico, drawn for each of its sizes."""
+    from PIL import Image
+    from PySide6.QtCore import QRectF, Qt
+    from PySide6.QtGui import QImage, QPainter
+    from PySide6.QtSvg import QSvgRenderer
+    rend = QSvgRenderer(str(REPO / "astro_gpu" / "client" / "float.svg"))
+    images = []
+    for n in (16, 24, 32, 48, 64, 128, 256):
+        img = QImage(n, n, QImage.Format_RGBA8888)
+        img.fill(Qt.transparent)
+        p = QPainter(img)
+        p.setRenderHint(QPainter.Antialiasing)
+        rend.render(p, QRectF(0, 0, n, n))
+        p.end()
+        images.append(Image.frombuffer("RGBA", (n, n), bytes(img.constBits()), "raw", "RGBA", img.bytesPerLine(), 1).copy())
+    images[-1].save(path, format="ICO", sizes=[i.size for i in images], append_images=images[:-1])
 
 
 def next_stage(base: Path) -> Path:
@@ -238,7 +244,7 @@ def stage(stage_dir: Path, python: str) -> None:
         shutil.copytree(LOCK_FILE.parent / "wheels", setup / "wheels")
     import certifi
     shutil.copy2(certifi.where(), setup / "cacert.pem")
-    make_icon(stage_dir / "FLOAT.ico")
+    make_icon(stage_dir / "float.ico")
 
 
 def iscc() -> str:

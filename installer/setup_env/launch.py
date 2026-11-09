@@ -36,7 +36,7 @@ def main(argv=None) -> int:
     env = {**{k: v for k, v in os.environ.items() if k not in DROP}, "PYTHONIOENCODING": "utf-8"}
     logs = ROOT / "logs"
     logs.mkdir(exist_ok=True)
-    log_path = logs / "FLOAT.log"
+    log_path = logs / "float.log"
     with open(log_path, "wb") as log:
         # python.exe in a hidden console (not pythonw): the computing workers it starts then have a console of their
         # own and their child processes never open a window of their own

@@ -280,7 +280,7 @@ def test_sync_with_nothing_to_fetch_has_its_folder(tmp_path):
     inst.run_tool = lambda cmd, key: seen.append(inst.downloads.is_dir()) or ""
     inst.sync([fetch.Wheel("numba", "0.68.1", "n.whl", "u", "0" * 64, 1)])
     assert seen == [True]
-    assert (inst.site / "sideralforge_app.pth").read_text(encoding="ascii").strip() == r"..\..\..\app"
+    assert (inst.site / "float_app.pth").read_text(encoding="ascii").strip() == r"..\..\..\app"
 
 
 def test_ready_marker(tmp_path):

@@ -400,7 +400,7 @@ def test_french_and_back_rebuild_the_menus(env, qapp):
     assert d.windowTitle() == "Paramètres" and d.nav.item(0).text() == "Général"
     assert w.windowTitle() == "FLOAT · Accueil" and w.screens.currentWidget() is w.home
     assert w.home.sections[0].count.text() == "3 projets"
-    assert [m.text() for m in w.mode_btns] == ["Graphe", "Inspection", "Post"]
+    assert [m.text() for m in w.mode_btns] == ["Graphe", "Inspection", "Post", "Rapport"]
     assert prefs.get("language") == "fr"
     saved = json.loads(Path(os.environ["ASTRO_GPU_SETTINGS"]).read_text(encoding="utf-8"))
     assert saved["language"] == "fr"
@@ -514,8 +514,9 @@ def test_the_log_gives_room_on_a_short_screen(env):
     assert w.logp.maximumHeight() == 200
 
 
-def test_the_status_line_names_the_source_on_screen(env):
-    """Control round: an Image project at opening said "no block: place one" while its Image block is on screen."""
+def test_an_image_with_its_file_and_no_block_is_something_to_compute(env):
+    """Control round: an Image project at opening said "no block: place one" while its Image block is on screen; it goes
+    to Post as it is, so its status is the run's."""
     from astro_gpu.core import workflow as wfl
     root = env["ws"] / "ImageOnly"
     p = project2.create(root, "ImageOnly", Target(name="M 31"))
@@ -531,44 +532,39 @@ def test_the_status_line_names_the_source_on_screen(env):
     for _i in range(20):
         w.worker.wait(30)
         QApplication.processEvents()
-    assert "nothing after Image: place a block" in w.status.text(), w.status.text()
-    assert "no block" not in w.status.text()
+    assert "place a block" not in w.status.text() and "no block" not in w.status.text(), w.status.text()
 
 
 def test_the_template_gallery_on_the_model(qapp, tmp_path):
-    """Issue #43: tabs by kind of task, a thumbnail of each template's graph, the preview and its text, Create. Issue
-    #47: a template holds only the blocks it uses; the blank one; a missing filter gets an empty Session block."""
+    """Issue #43: a thumbnail of each template's graph, the preview and its text, Create. Issue #47: a template holds
+    only the blocks it uses; a missing filter gets an empty Session block."""
     from astro_gpu.client.gallery import template_blocks
     d = TemplateGallery(FakeModel())
-    assert d.tab_keys == ["frames", "mono", "image", "copy"]
-    assert d.choice["key"] == "full" and d.name.text() == "Full 2"            # the recommended one first (#11)
+    assert d.tab_keys == ["frames", "copy"]
+    assert d.choice["key"] == "colour_full" and d.name.text() == "Colour full"   # the recommended one first (#11)
     assert d.ok.isEnabled() and d.opts["etoiles"] == "retirer" and "cut" not in d.opts
-    calibrated = next(c.t for c in d.cards if c.t["key"] == "calibrated")
-    d.pick(calibrated)
-    assert "calibration" not in [n["block"] for n in template_blocks(calibrated)]
-    assert d.text.text().startswith("For frames another program")
-    blank = next(c.t for c in d.cards if c.t["key"] == "blank")
-    d.pick(blank)
-    assert d.ok.isEnabled() and template_blocks(blank) == []
-    d.tabs.setCurrentIndex(2)                                                 # from an image: a file first
-    assert {c.t["key"] for c in d.cards} == {"blank", "image", "image_colours", "image_plain", "image_stretched"}
+    assert {c.t["key"] for c in d.cards} == {"colour_min", "colour_full", "image", "filters_min", "filters_full", "images"}
+    minimal = next(c.t for c in d.cards if c.t["key"] == "colour_min")
+    d.pick(minimal)
+    assert "calibration" in [n["block"] for n in template_blocks(minimal)]
+    assert d.text.text().startswith("Calibration, registration")
+    d.pick(next(c.t for c in d.cards if c.t["key"] == "image"))                  # from an image: a file first
     assert not d.ok.isEnabled() and d.file_row.isVisibleTo(d)
     img = tmp_path / "m42.fits"
     img.write_bytes((b"SIMPLE  =                    T".ljust(80) + b"END".ljust(80)).ljust(2880))   # a FITS file (7.3)
     d.file.setText(str(img))
     assert d.ok.isEnabled()
-    d.tabs.setCurrentIndex(1)                     # filters: the project's sessions have none, so nothing to make
-    assert {c.t["key"] for c in d.cards} >= {"mono_each", "sho", "hoo", "rgb", "lrgb", "dualband"}
-    d.pick(next(c.t for c in d.cards if c.t["key"] == "sho"))
+    d.pick(next(c.t for c in d.cards if c.t["key"] == "filters_full"))  # the project's sessions have none: made empty
     assert d.ok.isEnabled() and "Empty Session blocks are made for SII, Ha, OIII" in d.duration.text()
-    d.tabs.setCurrentIndex(3)
+    d.palette.setCurrentText("HOO")
+    assert "made for Ha, OIII" in d.duration.text() and d.name.text() == "HOO"
+    d.tabs.setCurrentIndex(1)
     assert [c.t["copy"].name for c in d.cards] == ["Classic stack", "Full"] and d.name.text() == "Classic stack (copy)"
     # the graphs drawn from the templates: only their blocks; the mono ones' channels combined
-    plain = next(t for t in GALLERY if t["key"] == "image_plain")
-    assert chain_of(plain) == [("fond", ""), ("post", "")]
-    full = next(t for t in GALLERY if t["key"] == "full")
+    assert chain_of(next(t for t in GALLERY if t["key"] == "image")) == [("post", "")]
+    full = next(t for t in GALLERY if t["key"] == "colour_full")
     assert [k for k, _h in chain_of(full)][-4:] == ["debruitage", "couleur", "etoiles", "post"]
-    assert chain_of(next(t for t in GALLERY if t["key"] == "sho"))[-1] == ("post", "")
+    assert chain_of(next(t for t in GALLERY if t["key"] == "filters_full"))[-1] == ("post", "")
     pm = draw_graph(GALLERY[0], 300, 100, names=True)
     assert (pm.width(), pm.height()) == (300, 100)
 
@@ -615,23 +611,6 @@ def test_the_gallery_fits_a_1366_by_768_screen_and_its_previews_never_cut_a_name
         finally:
             i18n.set_language("en")
     assert not cut, cut
-
-
-def test_the_unknown_target_message_is_never_cut(qapp, tmp_path):
-    """GUI exploration 2: New project's message for a target the catalogues do not have had its second line cut."""
-    i18n.set_language("fr")
-    try:
-        d = NewProjectDialog(tmp_path.as_posix(), "Truc")
-        d.show()
-        d.target.setText("Truc inconnu 42")
-        d._check_target()
-        for _i in range(3):
-            qapp.processEvents()
-        lb = d.found
-        assert lb.text().startswith("Absente des catalogues") and lb.height() >= lb.heightForWidth(lb.width())
-        d.close()
-    finally:
-        i18n.set_language("en")
 
 
 def test_french_covers_every_shell_screen(env, qapp):
@@ -744,7 +723,7 @@ def test_shots(env, qapp, tmp_path):
         w.b_log.setChecked(True)
         w.logp.set_console("[stack] 721 frames · drizzle ×1.5 · pixfrac 0.70\n[stack] done in 33 min 52 s")
         shot(w, f"log_{lang}")
-        for dlg, name in ((NewProjectDialog(env["ws"].as_posix(), "Rosette", "NGC 2237"), "new_project"),
+        for dlg, name in ((NewProjectDialog(env["ws"].as_posix(), "Rosette"), "new_project"),
                           (NewProjectDialog(env["ws"].as_posix(), "Iris"), "new_project_taken"),
                           (TemplateGallery(FakeModel()), "new_workflow"),
                           (name_dialog(w, "Rename", "Classic + denoise")[0], "rename"),

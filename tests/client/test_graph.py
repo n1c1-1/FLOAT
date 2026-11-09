@@ -26,8 +26,8 @@ if Path("C:/Windows/Fonts").is_dir():
 
 pytest.importorskip("PySide6")
 from conftest import TEST_PROJECT, full_only, needs_test_project, scratch_project  # noqa: E402
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt  # noqa: E402
-from PySide6.QtGui import QFont, QFontMetricsF  # noqa: E402
+from PySide6.QtCore import QEvent, QMimeData, QPoint, QPointF, QRectF, Qt  # noqa: E402
+from PySide6.QtGui import QDropEvent, QFont, QFontMetricsF  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QAbstractButton,
@@ -51,7 +51,7 @@ from astro_gpu import api  # noqa: E402
 from astro_gpu.client import app as appmod  # noqa: E402
 from astro_gpu.client import i18n, prefs  # noqa: E402
 from astro_gpu.client.blocks import STATE_WORD, Graph, block_state  # noqa: E402
-from astro_gpu.client.graph import BH, BW, MIN_SCALE, PALETTE_W, BlockItem, GraphPage  # noqa: E402
+from astro_gpu.client.graph import BH, BW, LANE, MIN_SCALE, PALETTE_W, BlockItem, GraphPage  # noqa: E402
 from astro_gpu.client.i18n import hm  # noqa: E402
 from astro_gpu.client.model import ProjectModel  # noqa: E402
 from astro_gpu.client.panel import CompactRow, MethodCard  # noqa: E402
@@ -444,7 +444,8 @@ def test_the_palette_offers_every_block_and_says_why_one_cannot_go(world, model,
     page.refresh()
     cards = {c.block: c for c in page.findChildren(PaletteCard)}
     assert cards["stars"].reason == "needs Denoise first"
-    assert cards["stars"].toolTip() == "Needs Denoise first"
+    tip = cards["stars"].toolTip().splitlines()                    # not here, but Classic + denoise can take it
+    assert "Needs Denoise first" in tip and tip[-1] == "Drag it onto another workflow"
     assert page.findChildren(QLabel, "h2")[0].text() == "Blocks"
 
 
@@ -773,22 +774,14 @@ def test_new_workflow_duplicate_rename_delete(world, model, page, monkeypatch):
     """New workflow is the template gallery (issue #43): opened without blocking; Create makes the workflow."""
     n0 = len(model.paths)
     d = page.new_workflow()
-    assert d.isVisible() and d.choice["key"] == "full"
+    assert d.isVisible() and d.choice["key"] == "colour_full"
     d.name.setText("Mine")
-    d.pick(next(c.t for c in d.cards if c.t["key"] == "classic"))
+    d.pick(next(c.t for c in d.cards if c.t["key"] == "colour_min"))
     d.name.setText("Mine")
     d.ok.click()
     settle(world["w"], page)
     assert len(model.paths) == n0 + 1 and model.path.name == "Mine" and model.sel_step == "post"
     assert not model.path.opts["debruitage"] and model.path.opts["etoiles"] == "garder"
-    # a template without a block (issue #47): the workflow does not have it
-    d = page.new_workflow()
-    d.pick(next(c.t for c in d.cards if c.t["key"] == "calibrated"))
-    d.ok.click()
-    settle(world["w"], page)
-    assert model.path.opts["cut"] == ["calibration"] and "calibration" not in model.display_keys(model.path)
-    model.remove_path(model.paths.index(model.path))
-    settle(world["w"], page)
     # Duplicate keeps the options, the settings and the exit, at once (no template window after the start)
     src = model.view(1)
     page._gallery = None
@@ -1359,8 +1352,12 @@ def test_the_page_says_it_is_reading_while_the_worker_works(qapp):
 
 def test_dropping_a_block_on_a_lane_puts_it_where_the_rules_say(world, model, page):
     """Issue #47: while a palette block is dragged, its valid places light up; dropped on one, it goes there. GUI
-    exploration 4, Q11: only in the workflow the palette places in ("for …"), a large project lit a hundred places."""
+    exploration 4, Q11: shown at once only in the workflow the palette places in ("for …"), a large project lit a
+    hundred places; another workflow's are there too, shown when the cursor comes on its row."""
     graph = page.graph
+
+    def shown():
+        return {g.pid for g in graph.ghosts if g.isVisible()}
 
     def palette_on(pid):
         model.select(index=model.paths.index(model.view(pid)), step="empilement")
@@ -1369,15 +1366,21 @@ def test_dropping_a_block_on_a_lane_puts_it_where_the_rules_say(world, model, pa
     graph.drag_block = "stars"                                   # a palette block is being dragged
     palette_on(1)
     graph.rebuild()
-    assert not graph.ghosts                                      # Full has Split stars already
+    assert not shown() and {g.pid for g in graph.ghosts} == {3}  # Full has Split stars already, Classic + denoise not
     palette_on(3)
     graph.rebuild()
-    assert {g.pid for g in graph.ghosts} == {3}                  # Classic + denoise: no Split stars yet
+    assert shown() == {3}                                        # Classic + denoise: no Split stars yet
     idx = next(g.idx for g in graph.ghosts if g.pid == 3)
     graph.drag_block = "gradient"
     palette_on(2)
     graph.rebuild()
-    assert {g.pid for g in graph.ghosts} == {2} and len(graph.ghosts) >= 3
+    assert shown() == {2} and len([g for g in graph.ghosts if g.pid == 2]) >= 3
+    other = next(g for g in graph.ghosts if g.pid != 2 and abs(g.rect.center().y() - graph._lanes[2]) > LANE / 2)
+    assert not other.isVisible()
+    assert graph._light_ghost(graph.mapFromScene(other.rect.center())) is other and other.isVisible() and other.hot
+    assert 2 in shown()                                          # the palette's workflow stays shown
+    graph._light_ghost(graph.mapFromScene(QPointF(other.rect.center().x(), graph._lanes[2])))
+    assert not other.isVisible()
     graph.drag_block = None
     graph.rebuild()
     assert not graph.ghosts
@@ -1387,7 +1390,24 @@ def test_dropping_a_block_on_a_lane_puts_it_where_the_rules_say(world, model, pa
     assert model.undo() and model.view(3).opts["etoiles"] == "garder"
 
 
-def test_a_project_without_workflows_has_a_graph_and_an_import_button(qapp, tmp_path):
+def test_a_block_dropped_on_another_workflows_place_goes_there(world, model, page):
+    """A block with several places: dropped on the row of a workflow that is not the selected one, it goes in that one."""
+    graph = page.graph
+    model.select(index=model.paths.index(model.view(2)), step="empilement")
+    graph.drag_block = "gradient"
+    graph.rebuild()
+    other = next(g for g in graph.ghosts if g.pid != 2 and hasattr(g, "idx"))
+    n = len(model.graph(model.view(other.pid)))
+    mime = QMimeData()
+    mime.setText("block:gradient")
+    graph.dropEvent(QDropEvent(QPointF(graph.mapFromScene(other.rect.center())), Qt.CopyAction, mime, Qt.LeftButton,
+                               Qt.NoModifier))
+    settle(world["w"], page)
+    assert len(model.graph(model.view(other.pid))) == n + 1 and model.path.pid == other.pid
+    assert model.undo() and len(model.graph(model.view(other.pid))) == n
+
+
+def test_a_project_without_workflows_has_a_blank_graph_and_the_project_panel(qapp, tmp_path):
     p = project2.create(tmp_path / "P", "P", Target(name="M 1"))
     w = ApiWorker()
     m = ProjectModel(p, w, readonly=True)
@@ -1403,12 +1423,7 @@ def test_a_project_without_workflows_has_a_graph_and_an_import_button(qapp, tmp_
     items = [it for it in pg.graph.scene().items() if isinstance(it, BlockItem)]
     assert not items                                          # issue #47: a blank page is empty
     assert any(getattr(g, "text", "").startswith("Start: Session/Image") and g.role == "add" for g in pg.graph.scene().items())
-    got = []
-    pg.openBlock.connect(lambda: got.append(1))
-    pg.select_node(pg.graph.graph.root)
-    settle(w, pg)
-    button(pg.panel, "Open frames").click()
-    assert got
+    assert [lb.text() for lb in pg.panel.findChildren(QLabel) if lb.text() == "Target"]   # the Project block's panel
     assert [lb.text() for lb in pg.findChildren(QLabel) if lb.text() == "Blocks"]
     assert m.total_seconds() == 0 and m.all_pending() == []
     w.stop()
