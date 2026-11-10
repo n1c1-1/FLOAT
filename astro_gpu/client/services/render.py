@@ -31,6 +31,7 @@ import cv2
 import numpy as np
 from PySide6.QtCore import QThread, Signal
 
+from ..i18n import _
 from ..postengine import (
     ALIGN,
     Canvas,
@@ -47,7 +48,7 @@ from ..postengine import (
 
 #: the stage of a workflow's layer: its Output block's image, and its Stars block's images (``postengine.source_id``:
 #: the workflow's id, or ("stars", id))
-OUTPUT_STAGE, STARS_STAGE = "render_simple", "star_removal"
+OUTPUT_STAGE, STARS_STAGE, SYNTH_STAGE = "render_simple", "star_removal", "synth_stars"
 #: the time budgets of a request, in seconds
 BUDGET = {"draft": 0.15, "half": 1.0, "region": 2.0}
 DRAFT_LEVEL, HALF_LEVEL = 2, 1
@@ -161,7 +162,7 @@ def api_resolver(project) -> Callable[[Any], Folder | None]:
     from ... import api
 
     def resolve(sid) -> Folder | None:
-        pid, stage = (sid[1], STARS_STAGE) if isinstance(sid, tuple) else (sid, OUTPUT_STAGE)
+        pid, stage = (sid[1], SYNTH_STAGE if sid[0] == "synth" else STARS_STAGE) if isinstance(sid, tuple) else (sid, OUTPUT_STAGE)
         try:
             chain = api.chain(project, pid)
             if stage not in chain:                       # an already stretched Image stands for the Output (it
@@ -175,7 +176,7 @@ def api_resolver(project) -> Callable[[Any], Folder | None]:
         if so is None:
             return None
         d = Path(so.dir)
-        if stage != OUTPUT_STAGE and stage != STARS_STAGE and not (d / "prep_simple.json").is_file():
+        if stage not in (OUTPUT_STAGE, STARS_STAGE, SYNTH_STAGE) and not (d / "prep_simple.json").is_file():
             return None                                  # a linear image: no Output image yet
         try:
             mt = (d / "manifest.json").stat().st_mtime
@@ -414,7 +415,7 @@ class LayerSource(Provider):
         whole = cv.size(level)
         fi, region, size = self._window(sid, level, box)
         base = self.bases(lay.get("base"))
-        kw = {"part": lay.get("part"), "blend": lay.get("blend")}
+        kw = {"part": "stars" if lay.get("part") == "synth" else lay.get("part"), "blend": lay.get("blend")}
         if level == 0 and tuple(box) != (0, 0, *whole):
             li = self.service.render(f.path, base, lay.get("sliders"), 1.0, region=tuple(int(round(v)) for v in region),
                                      **kw)
@@ -495,6 +496,7 @@ class Request:
     overlay: bool = False                               # a red overlay of the first wanted mask
     need_thumbs: tuple = ()                             # (thumbs kind) the ids of the workflow layers to thumbnail
     refine: bool = False                                # (half) first the exact 1/4, shown at once ("refine")
+    plain: bool = False                                 # (before) these layers as they are: another version's
     hists: tuple = ()                                   # ids of filters whose input's histograms come back (not drafts)
     seq: int = 0
     tag: Any = None
@@ -566,7 +568,7 @@ class Renderer:
         if req.kind == "exact":
             return self._exact(req, stop, t0)
         layers = req.layers
-        if req.kind == "before":
+        if req.kind == "before" and not req.plain:
             layers = self._before_layers(layers)
         if req.kind == "half" and req.refine and req.box is None and emit is not None:
             first = Request(kind="refine", layers=layers, level=req.level + 1, want=req.want, overlay=req.overlay,
@@ -1117,12 +1119,15 @@ class RenderWorker(QThread):
                 src.set_image(key, source)
 
     def _run_export(self, job: ExportJob):
+        from ...render.layers import WriteFailed
         try:
             files = self.renderer.export(job, lambda f, m: self.progress.emit(f, m),
                                          lambda: self._stopping or self._cancel_export)
             self.exported.emit([str(p) for p in files], "")
         except Superseded:
             self.exported.emit([], "stopped")
+        except WriteFailed as e:                         # a sentence that names the file; its second line goes to the Log
+            self.exported.emit([], _("“{name}” could not be written").format(name=e.name) + chr(10) + e.why)
         except Exception as e:  # noqa: BLE001
             self.exported.emit([], f"{type(e).__name__}: {e}")
 

@@ -42,7 +42,7 @@ LOCK_STALE = 30.0                              # a lock file older than this was
 HEART: dict[str, tuple[float, float]] = {
     "inventory": (5.0, 0.0), "calibrate": (310.8, 0.11), "register": (121.4, 0.0), "stack": (2064.0, 1.31),
     "astrometry": (124.1, 0.0), "reference": (89.8, 0.0), "catalogs": (178.3, 0.07), "surveys": (42.5, 0.11),
-    "color": (2.9, 0.0), "denoise": (20.4, 0.68), "gradient": (60.0, 0.01), "render_simple": (30.0, 0.7),
+    "synth_stars": (60.0, 0.3), "color": (2.9, 0.0), "deconv": (85.0, 1.0), "denoise": (20.4, 0.68), "gradient": (60.0, 0.01), "render_simple": (30.0, 0.7),
     "star_removal": (30.0, 0.66),
 }
 #: a stage the table does not know (tests' toy stages): one minute at Heart size
@@ -52,7 +52,7 @@ OTHER = (60.0, 0.0)
 #: writing; the 40 guessed before announced 50 minutes for North America, where the run takes about 4)
 CPU_FACTOR: dict[str, float] = {
     "inventory": 1, "calibrate": 1.3, "register": 1.5, "stack": 5, "astrometry": 1, "catalogs": 1, "surveys": 1,
-    "color": 1.5, "denoise": 45, "gradient": 1, "render_simple": 2, "star_removal": 4,
+    "synth_stars": 1, "color": 1.5, "deconv": 20, "denoise": 45, "gradient": 1, "render_simple": 2, "star_removal": 4,
 }
 DEFAULT_CPU_FACTOR = 2.0
 #: Denoise (stages/denoise.py): applying the pretrained network costs this many adaptation steps per Mpx of the stack
@@ -63,6 +63,8 @@ DENOISE_MPX_UNITS = 8.5
 DENOISE_SECONDS = {"gpu": {"step": 0.088, "mpx": 0.75}, "cpu": {"step": 3.6, "mpx": 3.3}}
 #: the adaptation lengths (stages/denoise.ADAPTATIONS: steps)
 DENOISE_ADAPT_STEPS = {"short": 500, "long": 4000}
+#: the network's passes over the image (stages/denoise.PASSES; the Fast pass setting: one). The times above are per pass
+DENOISE_PASSES = 4
 
 
 @dataclass
@@ -75,6 +77,7 @@ class Facts:
     scale: float = 1.5               # drizzle
     grid_mpx: float = 6384 * 4272 / 1e6
     iterations: int = 0              # denoise: adaptation steps (0: the pretrained network as it is)
+    passes: int = DENOISE_PASSES     # denoise: passes of the network over the image
 
 
 HEART_FACTS = Facts()
@@ -95,7 +98,7 @@ def units(stage: str, f: Facts) -> float:
     if stage == "stack":
         return f.lights * f.mpx * f.scale ** 2
     if stage == "denoise":
-        return float(f.iterations) + DENOISE_MPX_UNITS * f.grid_mpx
+        return float(f.iterations) + DENOISE_MPX_UNITS * f.grid_mpx * f.passes
     return f.grid_mpx
 
 
@@ -224,7 +227,7 @@ def estimate(stage: str, f: Facts, gpu: bool = True, history: dict | None = None
         return Estimate(statistics.median(own) * u, True, gb)
     if stage == "denoise":
         t = DENOISE_SECONDS[_kind(gpu)]
-        return Estimate(t["step"] * f.iterations + t["mpx"] * f.grid_mpx, False, gb)
+        return Estimate(t["step"] * f.iterations + t["mpx"] * f.grid_mpx * f.passes, False, gb)
     other = _rates(hist, stage, _kind(not gpu))          # measured on the other kind of machine: scaled, ≈
     if other:
         return Estimate(statistics.median(other) * u * (1 / factor if gpu else factor), False, gb)
@@ -313,6 +316,7 @@ def facts(keys: Any, wf: Any, store: Any = None) -> Facts:
     dn = {**given("denoise"), **(done("denoise").get("params") or {})}
     f.iterations = denoise_steps(dn.get("method") or (getattr(wf, "options", None) or {}).get("denoise"),
                                  dn.get("adaptation"))
+    f.passes = 1 if dn.get("fast") else DENOISE_PASSES
     return f
 
 

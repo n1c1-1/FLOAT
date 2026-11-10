@@ -87,8 +87,9 @@ class StarsRenderEngine(SimpleRenderEngine):
         self.M = np.array(self.prep["M"], np.float64)
         self.SC = float(self.prep.get("drizzle_scale", 1.0))
         self.crop = self.prep["crop"]
-        self._host = {k: torch.from_numpy(np.load(self.dir / f"{k}.npy")) for k in ("starless", "stars")}
-        self.H, self.W = self._host["starless"].shape[-2:]
+        self._host = {k: torch.from_numpy(np.load(self.dir / f"{k}.npy")) for k in ("starless", "stars")
+                      if (self.dir / f"{k}.npy").exists()}      # a Synthetic stars block: its stars alone
+        self.H, self.W = self._host["stars"].shape[-2:]
         self.valid_host = torch.from_numpy(np.load(self.dir / "valid.npy"))
         self.has_raw = False
         self._proxy = {}
@@ -247,11 +248,14 @@ def large_stars(y: torch.Tensor, r: float) -> torch.Tensor:
 def fade_small_stars(y: torch.Tensor, k: float, r: float) -> torch.Tensor:
     """The stars narrower than r pixels taken away by k (0 kept .. 1 gone), the wider ones left exactly as they were
     (``large_stars``): the star reduction of photo editors' tutorials (the stars selected, the small ones removed),
-    on the stars alone."""
+    on the stars alone. What goes is what a grey opening of that radius takes, the small stars themselves: the halo of
+    a large star and any light wider than them stay under the small stars and past the edge of ``large_stars``."""
     if k <= 0 or r < 0.5:
         return y
     keep = large_stars(y, r)[None]
-    return y * (keep + (1 - keep) * (1 - k))
+    n = max(1, int(round(r)))
+    wide = _morph(_morph(y, n, False), n, True)
+    return y + (1 - keep) * k * (wide - y)
 
 
 def resize_stars(y: torch.Tensor, r: float) -> torch.Tensor:

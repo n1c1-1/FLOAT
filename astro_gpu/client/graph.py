@@ -104,7 +104,7 @@ from .imageview import ZOOM_PRESETS, ZOOM_STEP
 from .layout import ARROW_H, ARROW_W, Dock, fold_button, pinch_factor, wheel_gesture
 from .model import NotInEngine, cuttable, node_key, view_key  # noqa: F401  (cuttable: older callers)
 from .panel import Panel
-from .widgets import ACCENT, BAD, NEW, OK, WARN, clear, label
+from .widgets import ACCENT, BAD, NEW, OK, WARN, Spinner, clear, label
 
 BW, BH = 120, 54            # block size (a column is wider when its title needs it: TITLE_PAD)
 GAP = 12                    # between two columns: where the branches split
@@ -746,6 +746,11 @@ class GraphView(QGraphicsView):
         self.wait.setStyleSheet("color: #8b93a1; background: transparent;")
         self.wait.setAlignment(Qt.AlignCenter)
         self.wait.hide()
+        self.veil = QFrame(self)                                       # no graph before the project is read (#86)
+        self.veil.setStyleSheet("background: #15171c;")
+        self.veil.hide()
+        self.spinner = Spinner(self)
+        self.spinner.hide()
         self.b_all = QPushButton(_("Show all"), self)
         self.b_all.setCheckable(True)
         self.b_all.setObjectName("toggle")
@@ -815,7 +820,7 @@ class GraphView(QGraphicsView):
         slots = [int(c[1:]) for c in used if c[:1] == "i" and c[1:].isdigit()]
         out = ["sources"] + [c for c in FRAME_KEYS if c in used]
         out += [f"i{k}" for k in range(max(slots) + 1 if slots else 0)]
-        out += [c for c in ("etoiles", "post", "fusion", "composition") if c in used]
+        out += [c for c in ("etoiles", "synth", "post", "fusion", "composition") if c in used]
         return out + ["final"]
 
     @staticmethod
@@ -984,7 +989,7 @@ class GraphView(QGraphicsView):
                      s_last + SROW if g.sessions else fmid + SROW / 2) + LANE
         # phase bands
         bands = [("Pre-processing", [c for c in cols if c in FRAME_KEYS]),
-                 ("Linear processing", [c for c in cols if (c[:1] == "i" and c[1:].isdigit()) or c == "etoiles"]),
+                 ("Linear processing", [c for c in cols if (c[:1] == "i" and c[1:].isdigit()) or c in ("etoiles", "synth")]),
                  ("Composition", [c for c in cols if c in ("fusion", "composition")])]
         for title, span in bands:
             if not span:
@@ -1305,7 +1310,23 @@ class GraphView(QGraphicsView):
             text = "" if s.ready else _("Reading the project…")
         self.wait.setText(text)
         self.wait.setVisible(bool(text))
+        loading = not s.error and not s.ready
+        self.veil.setVisible(loading)
+        self.spinner.setVisible(loading)
+        if loading != getattr(self, "_loading", False):  # the system's busy cursor, as long as it lasts
+            self._loading = loading
+            if loading:
+                self.viewport().setCursor(Qt.BusyCursor)
+            else:
+                self.viewport().unsetCursor()
+        self._place_wait()
+
+    def _place_wait(self):
+        self.veil.setGeometry(self.rect())
+        self.spinner.move((self.width() - self.spinner.width()) // 2, self.height() // 2 - 90)
         self.wait.setGeometry(0, self.height() // 2 - 40, self.width(), 30)
+        self.veil.raise_()
+        self.spinner.raise_()
         self.wait.raise_()
 
     # ------------------------------------------------------------ pulling an output to the post
@@ -1969,7 +1990,7 @@ class GraphView(QGraphicsView):
         self.b_zoom.adjustSize()
         self.b_zoom.move(self.b_all.x() - self.b_zoom.width() - 6, 10)
         self.b_zoom.raise_()
-        self.wait.setGeometry(0, self.height() // 2 - 40, self.width(), 30)
+        self._place_wait()
         self._place_post_button()
 
     def show_toast(self, text):
@@ -2441,9 +2462,9 @@ NEW_FRAMES = -1        # a block placed "in the workflow from the frames" of ses
 #: the palette (issue #47): every block, by group; the sources and the composition blocks are not graph nodes. The
 #: headings are one word, shown in capitals ("FRAMES": its own entry, "Frames" being the frames' block, "Images")
 PALETTE_GROUPS = [("Sources", ["session", "image", "align_images"]),
-                  ("FRAMES", ["calibration", "registration", "selection", "stacking"]),
-                  ("Image", ["astrometry", "gradient", "denoise", "color"]),
-                  ("Post", ["stars"]),
+                  ("FRAMES", ["calibration", "registration", "selection", "crop", "stacking"]),
+                  ("Image", ["astrometry", "gradient", "deconv", "denoise", "color"]),
+                  ("Post", ["stars", "synth"]),
                   ("Composition", ["fusion", "composition"])]
 PALETTE_TITLES = {"session": "Session", "image": "Image", "fusion": "Combine channels", "align_images": "Align images"}
 
@@ -2463,7 +2484,7 @@ class PaletteCard(QFrame):
         self.setMaximumWidth(PALETTE_FOLDED_W - 12 if folded else PALETTE_W - 26)
         on = not reason or branch
         self.setObjectName("tool")
-        self.setCursor(Qt.ForbiddenCursor if not on else Qt.ArrowCursor if block in ("deconv", "align_images") else
+        self.setCursor(Qt.ForbiddenCursor if not on else Qt.ArrowCursor if block == "align_images" else
                        Qt.OpenHandCursor)
         # available: a filled card; not available: the same card faint (a disabled tool), never dashed: dashed is
         # for the places a block can be dropped on
@@ -2472,8 +2493,6 @@ class PaletteCard(QFrame):
                            f"QFrame#tool:hover {{ border-color: {ACCENT if on else '#3a4150'}; }}"
                            " QLabel { background: transparent; }")
         self.title = _(PALETTE_TITLES[block]) if block in PALETTE_TITLES else block_title(None, view_key(block))
-        if block == "deconv":
-            self.title += "  ◇"
         role = BLOCK_ROLES[block]
         if folded:
             v = QVBoxLayout(self)
@@ -2863,10 +2882,6 @@ class GraphPage(QWidget):
                 card = PaletteCard(self, b, reason, folded=folded, branch=self.drag_only(b) if reason else "", auto=auto)
                 self.cards[b] = card
                 self.tl.addWidget(card)
-            if title == "Image" and prefs.spec():        # ◇ in Spec mode: not in the engine yet
-                card = PaletteCard(self, "deconv", "◇ " + _("Not in the engine yet."), folded=folded, auto=auto)
-                self.cards["deconv"] = card
-                self.tl.addWidget(card)
         self.combine_card = self.cards["composition"]
         self.tl.addStretch(1)
         self._fit_palette()
@@ -2983,7 +2998,7 @@ class GraphPage(QWidget):
     def drag_only(self, block: str) -> str:
         """Where a block the current workflow cannot take can still be dragged, in words; "" when nowhere."""
         s = self.s
-        if not s.ready or block == "deconv":
+        if not s.ready:
             return ""
         flows = self.graph._flows()
         g = self.graph.graph
