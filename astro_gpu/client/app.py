@@ -490,6 +490,9 @@ class Main(QMainWindow):
     def reset_layout(self):
         lay.reset()
         self.apply_layout()
+        view = getattr(self.post, "view", None) if self.post is not None else None
+        if view is not None:                             # the widths too, at once (the night test pass: kept until
+            view._fit_split()                            # the next docking)
 
     # ------------------------------------------------------------ Home
     def show_home(self, last=None):
@@ -668,6 +671,10 @@ class Main(QMainWindow):
                     return False
                 save = answer == "save"
                 if save and drafts.is_untitled(self.project.root) and not self.name_project():
+                    return False
+                if save and self.s.changed_on_disk():  # another window's work is not replaced: closing waits
+                    self.banner.say(_("Another window of the program saved this project since it was opened here: "
+                                      "nothing is replaced. Save as… keeps this window's work in another folder."))
                     return False
         if self.project is not None:
             self._recovery_timer.stop()
@@ -1106,8 +1113,10 @@ class Main(QMainWindow):
         if self.project is not None and drafts.is_untitled(self.project.root):
             self.name_project()
             return
-        if self.s is not None:
-            self.s.flush()
+        if self.s is not None and not self.s.flush():
+            self.banner.say(_("Another window of the program saved this project since it was opened here: nothing is "
+                              "replaced. Save as… keeps this window's work in another folder."))
+            return
         self.flash(_("Project saved"))
 
     def _suggested_name(self) -> str:
@@ -1192,7 +1201,9 @@ class Main(QMainWindow):
             self._recovery_mine = True
 
     def _saved_or_not(self, dirty: bool):
-        if not dirty and self.project is not None and self._recovery_mine:
+        # saved: the copy of this project goes, this session's or one a crash left (the night test pass: the project
+        # opened from Home, saved, and the older copy was still offered: Reopen would have taken the work back)
+        if not dirty and self.project is not None:
             self._recovery_timer.stop()
             drafts.clear_recovery(self.project.root)
             self._recovery_mine = False
@@ -1570,7 +1581,11 @@ def _warm_up():
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    f = prefs.settings_file()
+    first = f is not None and not f.exists()
     prefs.load()
+    if first:                                           # a first launch speaks the system's language
+        prefs.set("language", prefs.system_language())
     app = QApplication.instance() or QApplication(sys.argv[:1])
     app._gc = GuiGarbageCollector(app)                  # cycles collected on the GUI thread only (gcguard.py)
     app.setApplicationName(APP_NAME)

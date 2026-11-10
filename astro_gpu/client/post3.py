@@ -43,6 +43,7 @@ import numpy as np
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QImage, QKeySequence, QPainter, QPen, QPixmap, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QFrame,
@@ -320,6 +321,8 @@ class ContSlider(QWidget):
 #: the sides' widths: by default, and the limits of the user's drag
 PANEL_W, PANEL_MIN, PANEL_MAX = 400, 320, 760          # the settings, on the right
 LAYERS_W, LAYERS_MIN, LAYERS_MAX = 300, 230, 520       # the layers, on the left
+SUB_MAX = 120                                          # a layer row's blend, at most (its name keeps the rest)
+CENTRE_MIN = 440                                       # the image: its tools go into "…" rather than push the sides out
 
 
 class EyeBox(QCheckBox):
@@ -409,15 +412,17 @@ class LayerRow(QFrame):
         v = QVBoxLayout()
         v.setSpacing(0)
         self.n = ElidedLabel(layer_name(lay), mode=Qt.ElideRight)     # a long name never widens the row
-        self.n.setMinimumWidth(40)
+        self.n.setMinimumWidth(60)
         self.n.setStyleSheet("font-weight: 600;" + ("" if lay["visible"] else " color: #8b93a1;"))
         v.addWidget(self.n)
-        self.sub = label(panel.sub_text(lay), "small")
+        # its blend, shortened before the name is (the night test pass: "Cou…" for Curves beside "on all below · Normal")
+        self.sub = ElidedLabel(panel.sub_text(lay), "small", mode=Qt.ElideRight)
+        self.sub.setMaximumWidth(SUB_MAX)
         h.addLayout(v, 1)
         h.addWidget(self.sub)
         # at its usual blend (Normal, 100 %) a row says nothing more
         usual = f"{_('Normal')} · {with_unit('100', '%')}"
-        self.sub.setVisible(lay["kind"] != "sub" and self.sub.text() != usual)
+        self.sub.setVisible(lay["kind"] != "sub" and self.sub.full_text() != usual)
         if lay["kind"] == "sub":
             self.setToolTip(_("The filters nested here apply to this image only, before the stars are put back on "
                               "the starless image"))
@@ -439,7 +444,7 @@ class LayerRow(QFrame):
     def set_drop(self, on: bool, text: str = ""):
         """The frame of a drop that nests the dragged filter in this layer; ``text`` (what the drop does) shows in place of
         the row's mode and opacity while it lasts."""
-        if bool(self.property("drop")) == on and (not on or self.sub.text() == text):
+        if bool(self.property("drop")) == on and (not on or self.sub.full_text() == text):
             return
         self.setProperty("drop", on)
         if on:
@@ -725,9 +730,20 @@ class PostView(QWidget):
         self.cb_cmp.currentIndexChanged.connect(lambda *_a: self.b_cmp.isChecked() and self._send_before())
         bar.addWidget(self.cb_cmp)
         self._fill_versions()
-        for w in (self.b_crop, self.b_grid, self.b_names, self.b_cmp, self.b_mask, self.b_undo, self.b_redo, self.b_export):
+        # a narrow centre (a laptop, Windows' scale at 125 or 150 %): the tools least used go into "…" one by one,
+        # rather than the bar pushing the sides out of the window (the night test pass)
+        self.b_more = icon_only(QToolButton(), "more", _("More tools"), 16)
+        self.b_more.setPopupMode(QToolButton.InstantPopup)
+        self.more_menu = QMenu(self.b_more)
+        self.more_menu.aboutToShow.connect(self._fill_more)
+        self.b_more.setMenu(self.more_menu)
+        self.b_more.setVisible(False)
+        for w in (self.b_crop, self.b_grid, self.b_names, self.b_cmp, self.b_mask, self.b_more, self.b_undo, self.b_redo,
+                  self.b_export):
             bar.addWidget(w)
         mv.addLayout(bar)
+        mid.setMinimumWidth(CENTRE_MIN)
+        mid.installEventFilter(self)
         self.src = PostSource(self)
         self.before = BeforeSource(self)
         self.viewer = Viewer()
@@ -741,6 +757,47 @@ class PostView(QWidget):
         self.hint.setContentsMargins(10, 3, 10, 5)
         mv.addWidget(self.hint)
         return mid
+
+    def _overflow(self) -> tuple:
+        """The tools that go into "…" when the bar has no room, the first to go first."""
+        return self.b_names, self.b_grid, self.b_mask, self.b_cmp, self.b_crop
+
+    def _fit_bar(self):
+        """As many tools in the bar as the centre has room for; the others in "…"."""
+        for b in self._overflow():
+            b.setVisible(True)
+        self.b_more.setVisible(False)
+        self.b_export.setText(_("Export…"))
+        self.cb_version.setMinimumWidth(120)
+        room = self.centre.width()
+        for b in self._overflow():
+            if self.top_bar.sizeHint().width() <= room:
+                break
+            b.setVisible(False)
+            self.b_more.setVisible(True)
+        if self.top_bar.sizeHint().width() > room:          # still too wide: Export by its icon, a narrower version
+            self.b_export.setText("")
+            self.b_export.setToolTip(_("Export…"))
+            self.cb_version.setMinimumWidth(70)
+
+    def _fill_more(self):
+        """The "…" menu: the tools the bar has no room for, as their buttons (checked, greyed, their tip)."""
+        self.more_menu.clear()
+        for b in reversed(self._overflow()):
+            if b.isVisible():
+                continue
+            a = self.more_menu.addAction(b.text())
+            a.setCheckable(b.isCheckable())
+            a.setChecked(b.isChecked())
+            a.setEnabled(b.isEnabled())
+            a.setToolTip(b.toolTip())
+            a.triggered.connect(lambda _c=False, bb=b: bb.click())
+        self.more_menu.setToolTipsVisible(True)
+
+    def eventFilter(self, obj, e):                                   # noqa: N802 - Qt's name
+        if obj is getattr(self, "centre", None) and e.type() == QEvent.Resize:
+            self._fit_bar()
+        return super().eventFilter(obj, e)
 
     @staticmethod
     def _menu_button() -> QToolButton:
@@ -957,8 +1014,12 @@ class PostView(QWidget):
         elif wl and not any(lay["visible"] for lay in wl):
             wl[-1]["visible"] = True
         if not initial:
-            if self.sel and not self.layer(self.sel[0]):
-                self.sel = (self.layers[-1]["id"], "layer") if self.layers else None
+            # a layer gone, or none chosen yet (the night test pass: Post opened by Open images showed an empty panel):
+            # the bottom one, as on reopening
+            if (self.sel is None or not self.layer(self.sel[0])) and self.layers:
+                self.sel = (self.layers[-1]["id"], "layer")
+            elif self.sel and not self.layer(self.sel[0]):
+                self.sel = None
             self.rebuild()
             self.worker.refresh()
             self.request(final_only=True)                  # (nothing is saved here: the layers a workflow brings are
@@ -1900,6 +1961,14 @@ class PostView(QWidget):
         else:
             self.split.addWidget(w)
         self._fit_split()
+
+    def showEvent(self, e):                                         # noqa: N802 - Qt's name
+        """Shown (the Post tab clicked): the keyboard comes to the image, so that R, C, V… answer at once (the night
+        test pass: it stayed on the tab's button)."""
+        super().showEvent(e)
+        fw = QApplication.focusWidget()
+        if fw is None or not self.isAncestorOf(fw):
+            QTimer.singleShot(0, lambda: self.isVisible() and self.viewer.setFocus(Qt.OtherFocusReason))
 
     def _fit_split(self):
         """The docked sides at their widths (the user's, else the default), the image the rest."""

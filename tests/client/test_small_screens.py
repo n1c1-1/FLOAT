@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (  # noqa: E402
 )
 
 from astro_gpu.client import app as appmod  # noqa: E402
-from astro_gpu.client import layout, prefs  # noqa: E402
+from astro_gpu.client import layout, post3, prefs  # noqa: E402
 from astro_gpu.client import graph as graphmod  # noqa: E402
 from astro_gpu.client.graph import (  # noqa: E402
     MIN_SCALE,
@@ -705,6 +705,52 @@ def test_post_sides_are_shown_as_chosen_and_remembered(env):
     w.resize(1920, 1080)
     _settle(w)
     assert w.size_range == "large" and view.dock.state == "docked" and view.ldock.state == "docked"
+    # widths dragged, then Reset layout: back at once (the night test pass: kept until the next docking)
+    view.split.setSizes([360, 1000, 464])
+    view._panel_moved()
+    w.reset_layout()
+    _settle(w)
+    assert abs(view.left.width() - post3.LAYERS_W) <= 2 and abs(view.right.width() - post3.PANEL_W) <= 2
+
+
+def test_posts_keys_answer_right_after_its_tab_is_clicked(env):
+    """The night test pass: after a click on the Post tab, R (and C, V…) did nothing: the keyboard stayed on the tab."""
+    w = _open(env, (1920, 1080))
+    for v in w.s.paths:
+        v.rendered = True
+    _activate(w)
+    QTest.mouseClick(w.mode_btns[2], Qt.LeftButton)
+    _settle(w, 8)
+    _activate(w)
+    view = w.post.view
+    assert view.isAncestorOf(QApplication.focusWidget()) or QApplication.focusWidget() is view.viewer
+    QTest.keyClick(QApplication.focusWidget(), Qt.Key_R)
+    _settle(w)
+    assert view.b_crop.isChecked()
+
+
+@pytest.mark.parametrize("size", [(1366, 728), (1024, 640)])
+def test_posts_tools_go_into_more_rather_than_push_the_sides_out(env, size):
+    """The night test pass: on a laptop with the layers docked, the bar of tools held the image at 1011 px and pushed
+    the layers out of the window, its buttons cut; dragging an edge did the same."""
+    w = _open(env, size)
+    view = _post_view(w)
+    view.ldock._choose("docked")
+    view.dock._choose("docked")
+    _settle(w)
+    sizes = view.split.sizes()
+    assert sum(sizes) <= view.split.width() + 2 * len(sizes) and all(x > 0 for x in sizes)
+    assert view.left.geometry().left() >= 0 and view.right.geometry().right() <= view.split.width()
+    assert view.b_more.isVisible() and not view.b_names.isVisible()               # the least used first
+    assert view.top_bar.sizeHint().width() <= view.centre.width()
+    view._fill_more()
+    hidden = [a.text() for a in view.more_menu.actions()]
+    assert "Object names" in hidden and view.b_export.isVisible()
+    a = next(x for x in view.more_menu.actions() if x.text() == "Object names")
+    assert a.isEnabled() == view.b_names.isEnabled()
+    w.resize(1920, 1080)
+    _settle(w)
+    assert not view.b_more.isVisible() and view.b_names.isVisible()
 
 
 # ---------------------------------------------------------------------------------------------- the graph's navigation
@@ -960,3 +1006,20 @@ def test_the_post_viewer_has_the_graphs_gestures(qapp):
     finally:
         v.close()
         v.deleteLater()
+
+
+def test_a_project_of_two_stretched_pictures_opens_again(env):
+    """The night test pass: a project of two JPEGs (two workflows without blocks) did not open again: the graph took
+    their shared Output out twice, and the window stayed on Home with the project half open."""
+    import cv2
+    import numpy as np
+    root = env["tmp"] / "ws" / "Two"
+    p = project2.create(root, "Two", Target(name="M 31"))
+    for n in ("a", "b"):
+        jpg = env["tmp"] / f"{n}.jpg"
+        cv2.imwrite(str(jpg), np.full((8, 8, 3), 128, np.uint8))
+        p.add_workflow(n, {}).source = {"path": jpg.as_posix(), "stretched": True}
+        p.workflows[-1].blocks = []
+    project2.save(p)
+    w = _open(env, (1600, 900), root)
+    assert w.graph_page() is not None and [q.name for q in w.s.paths] == ["a", "b"]
