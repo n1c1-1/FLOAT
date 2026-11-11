@@ -111,6 +111,7 @@ class ReportData:
     drift: bytes | None = None
     response: bytes | None = None
     astro: dict = field(default_factory=dict)            # the Astrometry block's metrics
+    metrics: dict = field(default_factory=dict)          # {stage: its metrics} of the stages the head quotes
     thumb: bytes | None = None                           # the picture Post last showed
 
 
@@ -208,6 +209,13 @@ def report_data(project, wf, stages=(), title: str = "") -> ReportData:
     except (OSError, ValueError, KeyError):
         ast = None
     d.astro = dict(ast.metrics) if ast is not None else {}
+    for stage in HEAD_STAGES:
+        try:
+            out = api.stage_outputs(project, wf, stage)
+        except (OSError, ValueError, KeyError):
+            out = None
+        if out is not None:
+            d.metrics[stage] = dict(out.metrics)
     thumb = Path(project.root) / "cache" / "thumb.jpg" if project.root is not None else None
     if thumb is not None and thumb.is_file():
         d.thumb = thumb.read_bytes()
@@ -411,6 +419,83 @@ def shot_rows(d: ReportData, info: dict, entered: dict, lang: str) -> list:
     return rows
 
 
+#: the stages whose figures the head of the report quotes
+HEAD_STAGES = ("inventory", "register", "stack", "catalogs", "gradient", "denoise", "color")
+
+
+def sky_position(ra: float, dec: float) -> str:
+    """RA and Dec as an observer reads them: 03h47m04s +24°03′36″."""
+    h = (ra % 360) / 15
+    t = int(round(h * 3600))
+    hh, mm, ss = t // 3600 % 24, t // 60 % 60, t % 60
+    sign, a = ("−" if dec < 0 else "+"), abs(dec)
+    u = int(round(a * 3600))
+    return f"{hh:02d}h{mm:02d}m{ss:02d}s {sign}{u // 3600:02d}°{u // 60 % 60:02d}′{u % 60:02d}″"
+
+
+def highlights(d: ReportData, lang: str) -> list:
+    """The figures of the head (the night test pass: a picture to post that says what others do not): [(value, what,
+    how it was measured)], each measured on this session's frames; none when it was not."""
+    m, a = d.metrics, d.astro
+    dec = lambda x, n=1: _dec(float(x), n, lang)          # noqa: E731
+    scale = float(a.get("scale_arcsec") or (d.reg.scale if d.reg is not None and d.reg.scale else 0) or 0)
+    out = []
+    if a.get("focal_estimate_mm") and a.get("stars_used"):
+        res = f"{dec(float(a['residual_px']) * scale, 2)}″" if a.get("residual_px") is not None and scale else "–"
+        out.append((f"{float(a['focal_estimate_mm']):.0f} mm", _("Focal length, measured"),
+                    _("from the solved sky: {n} stars, residual {res}").format(n=int(a["stars_used"]), res=res)))
+    if d.reg is not None and d.kept is not None:
+        size, k, unit = size_of(d)
+        sz = size[d.kept]
+        sz = sz[np.isfinite(sz)]
+        if len(sz) and unit == '"':
+            out.append((f"{dec(float(np.median(sz)) * k)}″", _("Star FWHM, measured"),
+                        _("median star width (Moffat fit) of {n} frames, best {best}″").format(
+                            n=len(sz), best=dec(float(sz.min()) * k))))
+    reg = m.get("register") or {}
+    inv = m.get("inventory") or {}
+    if reg.get("drift_px") and scale:
+        drift = float(reg["drift_px"]) * scale
+        how = _("how far the field moved on the sensor during the session (tracking and deliberate shifts)")
+        try:
+            from datetime import datetime
+            mins = (datetime.fromisoformat(inv["last_time"]) - datetime.fromisoformat(inv["first_time"])).total_seconds() / 60
+            if mins > 0:
+                how = _("how far the field moved on the sensor in {t} (tracking and deliberate shifts): {rate}″ a minute").format(
+                    t=exact_time(mins * 60), rate=dec(drift / mins))
+        except (KeyError, TypeError, ValueError):
+            pass
+        out.append((f"{drift:.0f}″", _("Field drift"), how))
+    ch = (m.get("stack") or {}).get("channel_offsets") or {}
+    if ch.get("applied") and ch.get("centre_px"):
+        r, b = (float(np.hypot(*ch["centre_px"][c])) for c in ("R", "B"))
+        out.append((f"{dec(max(r, b), 2)} px", _("Colours offset, corrected"),
+                    _("red {r} px and blue {b} px from green, measured on {n} stars").format(
+                        r=dec(r, 2), b=dec(b, 2), n=int(ch.get("stars") or 0))))
+    dn = m.get("denoise") or {}
+    if dn.get("noise_reduction"):
+        out.append((f"÷ {dec(dn['noise_reduction'])}", _("Sky noise"),
+                    _("measured on the sky before and after Denoise")))
+    gr = m.get("gradient") or {}
+    if gr.get("gradient_pct"):
+        out.append((f"{dec(gr['gradient_pct'])} %", _("Sky gradient, removed"),
+                    _("spread of the sky across the field, against its level, modelled on {n} samples").format(
+                        n=int(gr.get("samples_used") or 0))))
+    cat = m.get("catalogs") or {}
+    if cat.get("stars_deep"):
+        out.append((f"{int(cat['stars_deep']):,}".replace(",", " "), _("Gaia DR3 stars in the field"),
+                    _("{n} of them with their measured spectrum").format(n=int(cat.get("xp_spectra") or 0))))
+    if d.spectral is not None and getattr(d.spectral, "stars", 0):
+        out.append((str(int(d.spectral.stars)), _("Sensor response, rebuilt"),
+                    _("stars whose spectra rebuilt the sensor's colour response")))
+    if reg.get("transparency_p10_p90"):
+        lo, hi = (float(x) for x in reg["transparency_p10_p90"])
+        if hi > 0:
+            out.append((f"{100 * (hi - lo) / hi:.0f} %", _("Transparency changes"),
+                        _("signal of the stars from frame to frame (tenth to ninetieth percentile)")))
+    return out
+
+
 def shot_text(target: str, rows: list) -> str:
     """The text to paste in a forum: what is known, nothing else."""
     lines = [target] if target else []
@@ -424,6 +509,17 @@ def _table(rows, widths=("38%", "62%")) -> str:
         return ""
     body = "".join(f"<tr><td width='{widths[0]}'>{a}</td><td width='{widths[1]}'><b>{b}</b></td></tr>" for a, b in rows)
     return f"<hr/><table width='100%' cellspacing='0' cellpadding='3'>{body}</table><hr/>"
+
+
+def _ruled(head, rows, widths) -> str:
+    """A table as journals set them: three rules (above, under the head, below), no other line, nothing bold, small.
+    The head and the body are two tables of the same columns between rules (Qt draws a cell's border on all sides)."""
+    if not rows:
+        return ""
+    open_ = "<table width='100%' cellspacing='0' cellpadding='2' style='font-size:9.5pt;'>"
+    top = "".join(f"<td width='{w}'><i>{h}</i></td>" for w, h in zip(widths, head))
+    body = "".join("<tr>" + "".join(f"<td width='{w}'>{c}</td>" for w, c in zip(widths, r)) + "</tr>" for r in rows)
+    return f"<hr/>{open_}<tr>{top}</tr></table><hr/>{open_}{body}</table><hr/>"
 
 
 def _meanings() -> dict:
@@ -726,19 +822,11 @@ class ReportPage(QWidget):
         d, p = self.data, self.path()
         many = p is not None and len(self.s.paths) > 1   # a project of one workflow: its name says nothing
         version = self.s.post_version_label() if hasattr(self.s, "post_version_label") else ""
-        head = (f"<h1 align='center'>{_('Processing report')}</h1>"
-                f"<p align='center'>{html.escape(self.title())}"
-                f"{' &mdash; ' + html.escape(p.name) if many else ''}"
-                f"{' &mdash; ' + html.escape(version) if version else ''}<br/>"
-                f"<i>{APP_NAME}, {date.today().isoformat()}</i></p>")
-        if d is not None and d.thumb:
-            self._images["thumb"] = QImage.fromData(d.thumb)
-            head += ("<p align='center'><img src='thumb' width='460'/></p>"
-                     f"<p class='cap' align='center'>{_('The final image, as Post last showed it.')}</p>")
+        head = self._head(d, p, many, version)
         if d is None or p is None or d.reg is None:
             return [("", head + f"<p>{_('Nothing computed yet: run the workflow first.')}</p>")]
-        out = [("", head)] + self._observation(d)
-        n, keys = 1, self.s.block_keys(p)
+        out = [(_("Session card"), head)] + self._observation(d)
+        n, keys = 0, self.s.block_keys(p)                 # the observation is the head's Table 1: blocks from 1
         for key, title in BLOCKS:
             if key in keys:
                 n += 1
@@ -746,12 +834,63 @@ class ReportPage(QWidget):
         out.append((f"{n + 1}. {_('Recipe')}", self._recipe(n + 1, keys, d)))
         return out + self._appendix(n + 2, d)
 
-    def _observation(self, d: ReportData) -> list:
+    def _head(self, d, p, many: bool, version: str) -> str:
+        """The first piece, set as a journal article opens: the target and where it is, the final image (Figure 1),
+        then the program named in one small line, and the tables of the observation and of the figures measured on
+        the session with how each was measured (``highlights``): that part can be posted as a picture on its own."""
+        from PySide6.QtCore import QRectF
+        from PySide6.QtSvg import QSvgRenderer
+
+        from .icons import APP_ICON
+        logo = QImage(48, 48, QImage.Format_ARGB32_Premultiplied)
+        logo.fill(Qt.transparent)
+        q = QPainter(logo)
+        q.setRenderHint(QPainter.Antialiasing)
+        QSvgRenderer(str(APP_ICON)).render(q, QRectF(0, 0, 48, 48))
+        q.end()
+        self._images["logo"] = logo
         lang = language() if language() in WORDS else "en"
-        rows = [(word, html.escape(value)) for key, word, value in shot_rows(d, self.s.info(), self.entered(), lang)
-                if value and key != "processing"]
-        title = f"1. {_('Observation')}"
-        out = [(title, f"<h2>{title}</h2>" + _table(rows))]
+        small = "font-size:9pt;"
+        sub = [html.escape(x) for x in (p.name if many and p is not None else "", version) if x]
+        a = d.astro if d is not None else {}
+        where = []
+        if a.get("ra") is not None and a.get("dec") is not None:
+            where.append(sky_position(float(a["ra"]), float(a["dec"])) + " (ICRS)")
+        if a.get("field_deg"):
+            where.append(_("field {w}° × {h}°").format(w=_dec(float(a["field_deg"][0]), 1, lang),
+                                                       h=_dec(float(a["field_deg"][1]), 1, lang)))
+        if a.get("scale_arcsec"):
+            where.append(f'{_dec(float(a["scale_arcsec"]), 2, lang)}″/px')
+        out = (f"<p align='center' style='font-size:14pt;'>{html.escape(self.title())}</p>"
+               + (f"<p align='center' style='{small}'>{' &mdash; '.join(sub)}</p>" if sub else "")
+               + (f"<p align='center' style='{small}'>{html.escape(' · '.join(where))}</p>" if where else ""))
+        if d is not None and d.thumb:
+            self._images["thumb"] = QImage.fromData(d.thumb)
+            out += ("<p align='center'><img src='thumb' width='560'/></p>"
+                    f"<p align='center' style='{small}'>{_('Figure 1. The final image, as Post last showed it.')}</p>")
+        # the program, in one small line just above the tables (a picture of them takes it along)
+        out += (f"<p style='font-size:8pt; color:#555555;'><img src='logo' width='12' height='12' "
+                f"style='vertical-align: middle;'/>&nbsp;{APP_NAME} &middot; {_('Processing report')} &middot; "
+                f"{date.today().isoformat()}</p>")
+        if d is None or d.reg is None:
+            return out
+        measured = highlights(d, lang)
+        # the focal length and the star size are in Table 2, with how they were measured: not twice
+        twice = {"focal", "fwhm"} if measured else set()
+        rows = [(html.escape(word), html.escape(value))
+                for key, word, value in shot_rows(d, self.s.info(), self.entered(), lang)
+                if value and key != "processing" and key not in twice]
+        out += (f"<p style='{small}'>{_('Table 1. Acquisition.')}</p>"
+                + _ruled((_("Quantity"), _("Value")), rows, ("40%", "60%")))
+        if measured:
+            out += (f"<p style='{small}'>{_('Table 2. Figures measured on the frames of this session.')}</p>"
+                    + _ruled((_("Quantity"), _("Value"), _("How it is measured")),
+                             [(html.escape(t), html.escape(v), html.escape(h)) for v, t, h in measured],
+                             ("27%", "15%", "58%")))
+        return out
+
+    def _observation(self, d: ReportData) -> list:
+        out = []                                         # (its table opens the report, in the session card)
         for night in d.nights:
             body = f"<h3>{html.escape(night.name)}</h3>" if len(d.nights) > 1 else ""
             if len(d.nights) > 1 or d.roundness is not None:

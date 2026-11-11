@@ -93,8 +93,8 @@ def test_a_card_without_times_counts_the_frames(qapp):
 
 def test_the_report_is_numbered_gives_each_block_and_the_recipe_and_a_stale_result_says_so(qapp, monkeypatch):
     t = text(page(monkeypatch, "stale"))
-    assert "Processing report" in t and "1. Observation" in t and "2. Registration" in t and "3. Stacking" in t
-    assert "4. Recipe" in t and "5. Appendix" in t and "Value of alignement" in t and "Registration → Stacking" in t
+    assert "Processing report" in t and "Table 1. Acquisition" in t and "1. Registration" in t and "2. Stacking" in t
+    assert "3. Recipe" in t and "4. Appendix" in t and "Value of alignement" in t and "Registration → Stacking" in t
     assert t.count("Outdated") == 2
 
 
@@ -251,7 +251,7 @@ def test_the_text_and_the_curves_go_to_the_clipboard(qapp, monkeypatch):
 
 def test_the_recipe_gives_only_what_differs_from_the_defaults_and_the_appendix_all(qapp, monkeypatch):
     t = text(page(monkeypatch))
-    recipe, appendix = t.split("5. Appendix")
+    recipe, appendix = t.split("4. Appendix")
     assert "Kappa" in recipe and "Method" not in recipe and "Method" in appendix
 
 
@@ -276,3 +276,21 @@ def test_the_figures_have_a_decimal_comma_in_french():
         assert ax.xaxis.get_major_formatter()(0.5, 0) == "0,5"
     finally:
         i18n.set_language("en")
+
+
+def test_the_session_card_quotes_only_what_was_measured():
+    """The head of the report, made to be posted: its figures come from this session's results, and say how."""
+    assert rep.sky_position(56.76679, 24.05996) == "03h47m04s +24°03′36″"
+    assert rep.sky_position(83.82, -5.39) == "05h35m17s −05°23′24″"
+    d = rep.ReportData(astro={"focal_estimate_mm": 893.7, "stars_used": 242, "residual_px": 0.189, "scale_arcsec": 1.9386},
+                       metrics={"register": {"drift_px": 24.8, "transparency_p10_p90": [0.74, 1.02]},
+                                "inventory": {"first_time": "2023-08-21T00:56:30", "last_time": "2023-08-21T00:59:20"},
+                                "denoise": {"noise_reduction": 14.81}, "catalogs": {"stars_deep": 3203, "xp_spectra": 609},
+                                "stack": {"channel_offsets": {"applied": True, "stars": 253,
+                                                              "centre_px": {"R": [-0.471, 0.289], "B": [0.513, -0.304]}}}})
+    got = {t: (v, h) for v, t, h in rep.highlights(d, "en")}
+    assert got["Focal length, measured"][0] == "894 mm" and "242 stars, residual 0.37″" in got["Focal length, measured"][1]
+    assert got["Field drift"][0] == "48″" and "17.0″ a minute" in got["Field drift"][1]
+    assert got["Colours offset, corrected"][0] == "0.60 px" and got["Sky noise"][0] == "÷ 14.8"
+    assert got["Gaia DR3 stars in the field"][0] == "3 203" and got["Transparency changes"][0] == "27 %"
+    assert not rep.highlights(rep.ReportData(), "en")                      # nothing measured: nothing quoted
