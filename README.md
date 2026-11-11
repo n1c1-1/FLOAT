@@ -57,8 +57,11 @@ with the reason it was chosen.
   NAFNet network (Chen et al. 2022) trained against images of the Euclid space telescope.
 - **Star separation.** A network on the linear image returns the starless image and the stars alone; the
   two add up to the original image.
-- **Bayer drizzle** from the raw colour pixels (Fruchter & Hook 2002), without debayering interpolation, and
-  blind plate solving when the target is unknown (Lang et al. 2010).
+- **Bayer drizzle** from the raw colour pixels (Fruchter & Hook 2002), without debayering interpolation.
+- **Plate solving.** The first solution comes from [Asterion](https://github.com/asterion-solver/asterion),
+  shipped with the installer, in under a second, focal length known or not; FLOAT's fine fit on the Gaia stars
+  starts from it. Without Asterion, FLOAT's own search takes over, with a blind solve when the target is unknown
+  (Lang et al. 2010).
 
 Full list: [Methods and data](#methods-and-data).
 
@@ -170,7 +173,7 @@ Built on PyTorch, NumPy, OpenCV, Astropy, LibRaw and Qt.
 |---|---|
 | Registration | triangle matching, Valdes et al. 1995, Groth 1986 |
 | Stacking | drizzle, Fruchter & Hook 2002 |
-| Plate solving | Bayesian decision of Lang et al. 2010 |
+| Plate solving | first solution by [Asterion](https://github.com/asterion-solver/asterion); FLOAT's own search and Bayesian decision of Lang et al. 2010 as the fallback; fine fit on Gaia DR3 |
 | Colour | Gaia XP spectra, Montegriffo et al. 2023, Demleitner & Andrae 2022 |
 | Denoising | Noise2Noise, Lehtinen et al. 2018 |
 | Deconvolution | Richardson 1972, Lucy 1974, Whyte et al. 2014; NAFNet, Chen et al. 2022 |
