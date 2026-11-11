@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QFileDialog
 
 from astro_gpu.client import exportdlg, imageview
 from astro_gpu.client.imageview import ImageExportDialog
@@ -73,3 +73,15 @@ def test_post_export_window_goes_back_to_ready(app):
     o.cancel.setEnabled(False)
     exportdlg.ExportDialog._ready(o)
     assert o.go.text() == "Export" and o.cancel.isEnabled() and o.status.text() == ""
+def test_the_folder_button_picks_a_folder_and_keeps_the_name(app, tmp_path, monkeypatch):
+    other = tmp_path / "other"
+    other.mkdir()
+    d = ImageExportDialog(FakeView(tmp_path))
+    d.dest.setText((tmp_path / "my_name.fits").as_posix())
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: str(other))
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: pytest.fail("the save dialog was opened"))
+    d._browse()
+    assert d.dest.text() == (other / "my_name.fits").as_posix()
+    assert d.view.export_dir == other.as_posix()
+
+

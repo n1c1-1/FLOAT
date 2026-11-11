@@ -3836,9 +3836,9 @@ class ImageExportDialog(QDialog):
         grid.addWidget(label(_("File")), r, 0)
         fh = QHBoxLayout()
         self.dest = QLineEdit()
-        self.browse = icon_only(QPushButton(), "open", _("Choose the file"), 16)
+        self.browse = icon_only(QPushButton(), "open", _("Choose the folder"), 16)
         self.browse.setFixedWidth(34)
-        self.browse.setToolTip(_("Choose the file"))
+        self.browse.setToolTip(_("Choose the folder. The file name stays in the field: type it there."))
         self.browse.clicked.connect(self._browse)
         fh.addWidget(self.dest, 1)
         fh.addWidget(self.browse)
@@ -3912,11 +3912,15 @@ class ImageExportDialog(QDialog):
             self.note.setText(_("The image as the stretch shows it, computed at full resolution."))
 
     def _browse(self):
-        key = self.format_key()
-        name, suf = FORMATS[key]
-        f, _flt = QFileDialog.getSaveFileName(self, _("Export image"), self.dest.text(), f"{_(name)} (*{suf})")
-        if f:
-            self.dest.setText(Path(f).with_suffix(suf).as_posix())
+        """Picks the folder only: nothing is written before Export, so no "Save" dialog; the name stays in the field."""
+        text = self.dest.text().strip()
+        cur = Path(text) if text else None
+        start = cur.parent.as_posix() if cur is not None and cur.name else (self.view.export_dir or str(Path.home()))
+        d = QFileDialog.getExistingDirectory(self, _("Choose the folder"), start)
+        if d:
+            name = cur.name if cur is not None and cur.name else slug(self.vi.name or "image") + FORMATS[self.format_key()][1]
+            self.dest.setText((Path(d) / name).as_posix())
+            self.view.export_dir = Path(d).as_posix()                   # remembered like the folder of an export
 
     def options(self) -> dict:
         show = {"grid": self.c_grid.isChecked() and self.c_grid.isEnabled(),
