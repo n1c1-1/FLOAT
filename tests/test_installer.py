@@ -403,7 +403,7 @@ def test_download_all_reports_progress(tmp_path, server):
 def test_download_network_failure_kind(tmp_path, monkeypatch):
     def no_network(*a, **k):
         raise urllib.error.URLError("no network")
-    monkeypatch.setattr(fetch, "_open", no_network)
+    monkeypatch.setattr(fetch.shared, "_open", no_network)
     w = fetch.Wheel("x", "1", "x.whl", "http://example.invalid/x.whl", "0" * 64, 10)
     with pytest.raises(fetch.DownloadError) as e:
         fetch.download_one(w, tmp_path, lambda n: None, threading.Event(), ssl.create_default_context())

@@ -122,7 +122,7 @@ def served(monkeypatch):
         s.calls.append((url, start))
         return Body(s.data[url], start, s.cut.pop(url, None))
 
-    monkeypatch.setattr(fetch, "_open", fake_open)
+    monkeypatch.setattr(fetch.shared, "_open", fake_open)
     real = fetch.download_all
     monkeypatch.setattr(fetch, "download_all", lambda *a, **k: real(*a, attempts=1, pause=0))
     return s

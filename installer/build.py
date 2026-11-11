@@ -47,6 +47,7 @@ sys.path.insert(0, str(HERE / "setup_env"))
 import detect  # noqa: E402
 
 LOCK_FILE = HERE / "lock" / "lock.json"
+SKY_DATA_FILE = REPO / "astro_gpu" / "resources" / "sky_data.json"
 #: the Python whose environment is frozen into the lock file: FLOAT_LOCK_SOURCE, else the one running this script
 LOCK_SOURCE = Path(os.environ.get("FLOAT_LOCK_SOURCE") or sys.executable)
 PLATFORM = "x86_64-pc-windows-msvc"
@@ -406,6 +407,7 @@ def stage(stage_dir: Path, lock: dict, cache: Path) -> None:
     for f in (HERE / "setup_env").glob("*.py"):
         shutil.copy2(f, setup / f.name)
     shutil.copy2(LOCK_FILE, setup / "lock.json")
+    shutil.copy2(REPO / "astro_gpu" / "core" / "sky_fetch.py", setup / "sky_fetch.py")    # the downloader fetch.py loads
     if (LOCK_FILE.parent / "wheels").is_dir():
         shutil.copytree(LOCK_FILE.parent / "wheels", setup / "wheels")
     import certifi
@@ -448,6 +450,9 @@ def main() -> int:
         lock = json.loads(LOCK_FILE.read_text(encoding="utf-8"))
         lock["star_catalogue"] = catalogue_part(args.catalogue_astro, args.catalogue_xp)
         LOCK_FILE.write_text(json.dumps(lock, indent=1) + "\n", encoding="utf-8")
+        # the program's own copy of the same part (Settings fetches the catalogue from it where the lock is not beside
+        # the program): written with the lock, a test says they agree
+        SKY_DATA_FILE.write_text(json.dumps(lock["star_catalogue"], indent=1) + "\n", encoding="utf-8")
         files = lock["star_catalogue"]["files"]
         print(f"star catalogue: {len(files)} files, {sum(f['size'] for f in files) / 1e9:.2f} GB")
         return 0
