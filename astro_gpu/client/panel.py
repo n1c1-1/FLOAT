@@ -1034,7 +1034,8 @@ class Panel(QWidget):
             b = QPushButton(_(pal) if pal in ("RGB", "LRGB") else pal)    # RVB, LRVB in French; SHO... as they are
             b.setCheckable(True)
             b.setObjectName("face")
-            b.setMinimumWidth(48)                          # they fit the panel: they shrink below the style's 80 px
+            # they fit the panel: they shrink below the style's 80 px, never below their text ("SHO Hubble" was cut)
+            b.setMinimumWidth(max(48, b.fontMetrics().horizontalAdvance(b.text()) + 16))
             b.setChecked(pal == f.get("palette"))
             ok = set(need) <= set(roles)
             b.setEnabled(ok)
