@@ -1012,6 +1012,8 @@
   "Focal length, measured": "Focale mesurée",
   "from the solved sky: {n} stars, residual {res}": "par l'astrométrie : {n} étoiles, résidu {res}",
   "median star width (Moffat fit) of {n} frames, best {best}″": "largeur médiane des étoiles (ajustement de Moffat) sur {n} poses, meilleure {best}″",
+  "median star width (Moffat fit) of {n} frames, best {best} px; in pixels: the scale on the sky is not known": "largeur médiane des étoiles (ajustement de Moffat) sur {n} poses, meilleure {best} px ; en pixels : l'échelle sur le ciel n'est pas connue",
+  "median star width of {n} frames, best {best} px; in pixels: the scale on the sky is not known": "largeur médiane des étoiles sur {n} poses, meilleure {best} px ; en pixels : l'échelle sur le ciel n'est pas connue",
   "Colours offset, corrected": "Décalage des couleurs, corrigé",
   "red {r} px and blue {b} px from green, measured on {n} stars": "rouge {r} px et bleu {b} px par rapport au vert, mesurés sur {n} étoiles",
   "measured on the sky before and after Denoise": "mesuré sur le ciel avant et après le Débruitage",
@@ -1039,7 +1041,7 @@
   "New version: a copy of this one, to try other settings without losing these": "Nouvelle version : une copie de celle-ci, pour essayer d'autres réglages sans perdre ceux-ci",
   "Apply": "Valider",
   "Keep this crop (Enter)": "Garder ce recadrage (Entrée)",
-  "Leave the crop as it was": "Laisser le recadrage comme il était",
+  "Leave the crop as it was (Esc)": "Laisser le recadrage comme il était (Échap)",
   "Heal spots, dust and satellite trails: click or paint over them (Alt+click: the source by hand)": "Effacer taches, poussières et traînées de satellites : cliquer ou peindre dessus (Alt+clic : la source à la main)",
   "Add a filter": "Ajouter un filtre"
 }

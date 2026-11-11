@@ -599,6 +599,46 @@ def test_a_blank_page_has_a_link_to_the_templates_in_place_of_the_graph(qapp, tm
         w.stop()
 
 
+def test_the_template_cards_take_the_height_of_their_content_in_a_grid_that_wraps(qapp, tmp_path, monkeypatch):
+    """Issue #133: on a tall page the cards stretched to its whole height, their content in their top third. A card is
+    as tall as the tallest of its row, its text whole, at the top; a tall page is empty below the cards; a wide page
+    holds more columns, a narrow one fewer."""
+    from PySide6.QtWidgets import QLabel, QWidget
+    w, m, page = _blank_page(tmp_path, monkeypatch)
+    try:
+        page.resize(1600, 1000)
+        page.show()
+        page.show_templates()
+        settle(w, page)
+
+        def check():
+            cards = page.templates.cards
+            for c in cards:
+                inside = max(x.geometry().bottom() for x in c.findChildren(QWidget) if x.parent() is c and x.isVisible())
+                row = [x for x in cards if x.y() == c.y()]
+                tallest = max(max(x.geometry().bottom() for x in r.findChildren(QWidget) if x.parent() is r)
+                              for r in row)
+                assert c.height() - tallest < 30, (c.t["key"], c.height(), inside)     # no card taller than its row's
+                for lb in c.findChildren(QLabel):
+                    if lb.wordWrap():
+                        assert lb.height() >= lb.heightForWidth(lb.width()), (c.t["key"], lb.text())    # never cut
+                assert len({x.height() for x in row}) == 1                             # a row's cards: one height
+            return cards
+        cards = check()
+        room = page.templates.scroll.viewport().width()
+        assert len({c.x() for c in cards}) == min(6, (room + 12) // (cards[0].width() + 12)) > 3, room   # as many as fit
+        bottom = max(c.geometry().bottom() for c in cards)
+        assert bottom < page.templates.scroll.viewport().height() / 2      # the page's room left below them
+        page.resize(700, 1000)
+        settle(w, page)
+        cards = check()
+        assert len({c.y() for c in cards}) > 2 and len({c.x() for c in cards}) < 3     # narrower: fewer columns
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
 def test_the_filters_card_makes_the_palette_chosen_on_it(qapp, tmp_path, monkeypatch):
     w, m, page = _blank_page(tmp_path, monkeypatch)
     try:
@@ -654,6 +694,34 @@ def test_no_template_asks_for_a_file_it_only_places_its_blocks(qapp, tmp_path, m
             settle(w, page)
             placed(t["key"], "window")
             d.deleteLater()
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def test_several_images_are_all_numbered_the_first_too(qapp, tmp_path, monkeypatch):
+    """Issue #134: "Several images" made Image, Image 2, Image 3, the first block's line ("Image · file to choose") not
+    saying the "Image 1" of its title. Made together, all are numbered, the first included; one alone has none; one
+    placed after a numbered series goes on with it."""
+    from astro_gpu.client.blocks import node_title
+    w, m, page = _blank_page(tmp_path, monkeypatch)
+    try:
+        page.show_templates()
+        next(c for c in page.templates.cards if c.t["key"] == "images").mousePressEvent(None)
+        settle(w, page)
+        assert [q.name for q in m.paths] == ["Image 1", "Image 2", "Image 3"]
+        g = Graph(m)
+        for n in (n for n in g.nodes if n.key == "image"):
+            assert g.summary(n).startswith(node_title(m, n) + " · "), g.summary(n)
+        assert m.unique_name("Image") == "Image 4"        # a fourth placed alone: "Image 4", as its block
+        while not page.is_blank():
+            assert m.undo()
+            settle(w, page)
+        page.show_templates()
+        next(c for c in page.templates.cards if c.t["key"] == "image").mousePressEvent(None)
+        settle(w, page)
+        assert len(m.paths) == 1 and not m.paths[0].name[-1].isdigit()      # one alone: no number
     finally:
         page.close()
         m.close(save=False)

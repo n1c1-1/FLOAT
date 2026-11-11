@@ -119,7 +119,10 @@ def test_the_english_text_has_no_space_before_its_colons(qapp, monkeypatch):
 def test_every_part_can_be_copied_as_a_picture(qapp, monkeypatch):
     from PySide6.QtWidgets import QApplication
     p = page(monkeypatch)
-    assert p.part.count() >= 5 and p.part.itemText(0).startswith("Night card")
+    # in the order the report is read (#140): its first page, the night cards, then the sections
+    names = [p.part.itemText(i) for i in range(p.part.count())]
+    assert names[:4] == ["Session card", "Night card · Night 1", "Night card · Night 2", "The night, frame by frame · Night 1"]
+    assert p.part.currentIndex() == 0 and "Table 1. Acquisition" in p._parts[0][1][1]
     for i in range(p.part.count()):
         p.part.setCurrentIndex(i)
         p.copy_image()
@@ -296,3 +299,30 @@ def test_the_session_card_quotes_only_what_was_measured():
     assert got["Colours offset, corrected"][0] == "0.60 px" and got["Sky noise"][0] == "÷ 14.8"
     assert got["Gaia DR3 stars in the field"][0] == "3 203" and got["Transparency changes"][0] == "27 %"
     assert not rep.highlights(rep.ReportData(), "en")                      # nothing measured: nothing quoted
+
+
+@pytest.mark.parametrize("image,sensor,line,table", [(2.0, 2.0, "2.00″/px", None),       # solved: under the title, once
+                                                     (1.0, 2.0, "1.00″/px", "2.00″/px"),  # drizzled: two figures
+                                                     (None, 2.0, None, "2.00″/px")])      # not solved: from the focal length
+def test_the_first_page_gives_the_field_and_the_scale_once_written_one_way(qapp, monkeypatch, image, sensor, line, table):
+    """#137: the scale was written 1.94″/px under the title and 1.9"/px in Table 1, and the field given in both."""
+    d = data()
+    d.reg.scale = sensor
+    d.astro = dict(field_deg=[7.33, 5.04], **({"scale_arcsec": image} if image else {}))
+    head = page(monkeypatch, d=d)._parts[0][1][1]
+    under, tables = head.split("Table 1. Acquisition.")
+    assert '"/px' not in head and head.count("7.3° × 5.0°") == 1 and "7.3° × 5.0°" in under
+    assert (line is None or line in under) and (table is None or table in tables) and ("Sampling" in tables) == bool(table)
+    assert head.count("″/px") == (line is not None) + (table is not None)
+
+
+def test_without_a_scale_on_the_sky_the_star_size_is_given_in_pixels_saying_so(qapp, monkeypatch):
+    """#135: no plate solving, no focal length: the stars' size is measured all the same, so the first page gives it,
+    once, in pixels, and says why."""
+    d = data()
+    d.reg.scale, d.astro, d.metrics = None, {}, {"gradient": {"gradient_pct": 8.58, "samples_used": 261}}
+    got = {t: (v, h) for v, t, h in rep.highlights(d, "en")}
+    assert got["Star FWHM, measured"][0] == "2.5 px"
+    assert "11 frames, best 2.1 px; in pixels: the scale on the sky is not known" in got["Star FWHM, measured"][1]
+    head = page(monkeypatch, d=d)._parts[0][1][1]
+    assert head.count("Star FWHM, measured") == 1 and head.count("2.5 px") == 1 and "Median FWHM" not in head

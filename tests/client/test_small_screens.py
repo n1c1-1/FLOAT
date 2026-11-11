@@ -736,10 +736,46 @@ def test_posts_keys_answer_right_after_its_tab_is_clicked(env):
     assert view.b_crop.isChecked()
 
 
-@pytest.mark.parametrize("size", [(1366, 728), (1024, 640)])
-def test_posts_tools_go_into_more_rather_than_push_the_sides_out(env, size):
+def test_escape_while_cropping_cancels_the_crop_and_stays_in_post(env):
+    """#143: Escape while the crop was drawn left Post for the graph, the box drawn so far kept as the crop and the tool
+    still on. As in the reference image editors, Escape is the tool's first (Cancel), and leaves Post only when no tool
+    is on."""
+    w = _open(env, (1920, 1080))
+    view = _post_view(w)
+    assert view.b_crop_cancel.toolTip().endswith("(Esc)")
+    view.b_crop.setChecked(True)
+    _settle(w)
+    view._set_crop([10, 20, 300, 200])                                   # a box drawn (what a drag of its edge does)
+    _key(w, Qt.Key_Escape, widget=view.viewer)
+    assert w.mode == 2 and not view.b_crop.isChecked() and view.crop is None and view.viewer.crop_box is None
+    assert not view.b_crop_cancel.isVisible()
+    _key(w, Qt.Key_Escape, widget=view.viewer)                          # no tool on: Escape leaves Post, as before
+    assert w.mode == 0
+
+
+def _bar_fits(view):
+    """The bar's widgets one after the other, none over the next, the last inside the centre; its hint the room."""
+    _settle(view.window(), 3)
+    bar = view.top_bar
+    shown = [bar.itemAt(i).widget() for i in range(bar.count())]
+    shown = [x for x in shown if x is not None and not x.isHidden()]
+    for a, b in zip(shown, shown[1:]):
+        assert a.geometry().right() < b.geometry().left(), (a.text() if hasattr(a, "text") else a, view.centre.width())
+    assert shown[-1].geometry().right() < view.centre.width()
+    assert bar.sizeHint().width() <= view.centre.width()
+    k = next(k for k in range(len(view._bar_steps()) + 1) if view._bar_need(k) <= view.centre.width()
+             or k == len(view._bar_steps()))
+    assert view._bar_need(k) == bar.sizeHint().width()          # the fit's own sum is the layout's, to the pixel
+
+
+@pytest.mark.parametrize("size, lang", [((1366, 700), "en"), ((1366, 700), "fr"), ((1366, 728), "en"),
+                                        ((1280, 720), "fr"), ((1024, 640), "en")])
+def test_posts_tools_go_into_more_rather_than_push_the_sides_out(env, size, lang):
     """The night test pass: on a laptop with the layers docked, the bar of tools held the image at 1011 px and pushed
-    the layers out of the window, its buttons cut; dragging an edge did the same."""
+    the layers out of the window, its buttons cut; dragging an edge did the same. #142: at 1366 x 700 New version
+    covered the arrow of the version list (the fit was tried before the zoom's text grew): no overlap at any width
+    from the centre's minimum, the crop's Apply and Cancel shown or not."""
+    appmod.apply_language(lang)
     w = _open(env, size)
     view = _post_view(w)
     view.ldock._choose("docked")
@@ -749,15 +785,35 @@ def test_posts_tools_go_into_more_rather_than_push_the_sides_out(env, size):
     assert sum(sizes) <= view.split.width() + 2 * len(sizes) and all(x > 0 for x in sizes)
     assert view.left.geometry().left() >= 0 and view.right.geometry().right() <= view.split.width()
     assert view.b_more.isVisible() and not view.b_names.isVisible()               # the least used first
-    assert view.top_bar.sizeHint().width() <= view.centre.width()
+    _bar_fits(view)
     view._fill_more()
     hidden = [a.text() for a in view.more_menu.actions()]
-    assert "Object names" in hidden and view.b_export.isVisible()
-    a = next(x for x in view.more_menu.actions() if x.text() == "Object names")
+    assert view.b_names.text() in hidden and view.b_export.isVisible()
+    a = next(x for x in view.more_menu.actions() if x.text() == view.b_names.text())
     assert a.isEnabled() == view.b_names.isEnabled()
+    for zoom in (0.27, 1.0):                                    # "Zoom 27 %" is wider than "100 %"
+        for crop in (True, False):
+            view.viewer.zoom_to(zoom)
+            view.b_crop.setChecked(crop)
+            _bar_fits(view)
+    view.b_crop.setChecked(True)                                 # the centre at its narrowest
+    view.split.setSizes([post3.LAYERS_MAX, 0, post3.PANEL_MAX])
+    _settle(w)
+    assert view.centre.width() == post3.CENTRE_MIN, view.split.sizes()
+    _bar_fits(view)
+    view._fill_more()
+    names = [a.text() for a in view.more_menu.actions()]
+    assert view.b_crop_ok.isVisible() and view.b_crop_cancel.isVisible() and view.zoom_lab.isVisible()
+    assert all(n for n in names) and (view.b_undo.isVisible() or post3._("Undo") in names)
+    view.b_crop.setChecked(False)
     w.resize(1920, 1080)
     _settle(w)
-    assert not view.b_more.isVisible() and view.b_names.isVisible()
+    view._fit_split()
+    _settle(w)
+    _bar_fits(view)
+    if lang == "en":                                             # (the French names are longer: one tool or two in "…")
+        assert not view.b_more.isVisible() and view.b_names.isVisible()
+    assert view.b_crop.isVisible() and view.b_undo.isVisible() and view.b_version_new.text()
 
 
 # ---------------------------------------------------------------------------------------------- the graph's navigation
@@ -1010,6 +1066,38 @@ def test_the_post_viewer_has_the_graphs_gestures(qapp):
         # fit: no minimap; the wheel with a fitted image zooms as before
         v.fit()
         assert v.whole_visible() and not v._in_minimap(QPointF(790, 590))
+    finally:
+        v.close()
+        v.deleteLater()
+
+
+def test_after_a_crop_the_minimap_is_of_the_cropped_picture(qapp):
+    """#144: after a crop the minimap of the whole image stayed over the corner of the cropped picture fitted to the
+    view. Fitted: none; zoomed in: the cropped picture, the frame of the view on its place in it, a click going there."""
+    a = np.zeros((900, 1400, 3), np.uint8)
+    a[100:500, 300:900] = 200                                    # the crop: bright, the rest black
+    v = Viewer()
+    v.resize(800, 600)
+    v.set_source(StaticSource(a))
+    v.show()
+    qapp.processEvents()
+    try:
+        v.crop_box = (300, 100, 900, 500)
+        v.fit()
+        assert v.whole_visible() and not v._in_minimap(QPointF(790, 590))
+        v.zoom_to(2.0, 600, 300)                                  # the view's centre: the crop's centre
+        assert not v.whole_visible()
+        r = v.minimap_rect()
+        assert r.width() / r.height() == pytest.approx(600 / 400, rel=0.02)
+        thumb = v._thumbnail()
+        assert thumb.pixelColor(1, 1).red() == 200 and thumb.pixelColor(thumb.width() - 2, thumb.height() - 2).red() == 200
+        img = v.grab().toImage()
+        assert img.pixelColor(r.center().toPoint() + QPoint(int(r.width() * 0.4), 0)).red() > 150   # its pictures, not black
+        QTest.mouseClick(v, Qt.LeftButton, Qt.NoModifier, (r.topLeft() + QPointF(r.width() / 4, r.height() / 4)).toPoint())
+        qapp.processEvents()
+        assert v.cx == pytest.approx(450, abs=6) and v.cy == pytest.approx(200, abs=6)
+        v.crop_edit = True                                       # the Crop tool on: the whole image again
+        assert v.extent() == (0, 0, 1400, 900)
     finally:
         v.close()
         v.deleteLater()

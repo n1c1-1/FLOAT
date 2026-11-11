@@ -43,6 +43,7 @@ from .. import texts
 from ..core.params import ADVANCED
 from ..core.project2 import ACQUISITION
 from .i18n import _, language, number
+from .widgets import put_back, typed
 
 #: the sections that are blocks of the chain, in its order: (block key, title)
 BLOCKS = (("calibration", "Calibration"), ("alignement", "Registration"), ("selection", "Selection"),
@@ -435,6 +436,11 @@ def sky_position(ra: float, dec: float) -> str:
     return f"{hh:02d}h{mm:02d}m{ss:02d}s {sign}{u // 3600:02d}°{u // 60 % 60:02d}′{u % 60:02d}″"
 
 
+def scale_text(arcsec: float, lang: str) -> str:
+    """A scale on the sky as the first page writes it, wherever it is (#137): 1.94″/px."""
+    return f"{_dec(arcsec, 2, lang)}″/px"
+
+
 def highlights(d: ReportData, lang: str) -> list:
     """The figures of the head (the night test pass: a picture to post that says what others do not): [(value, what,
     how it was measured)], each measured on this session's frames; none when it was not."""
@@ -454,6 +460,12 @@ def highlights(d: ReportData, lang: str) -> list:
             out.append((f"{dec(float(np.median(sz)) * k)}″", _("Star FWHM, measured"),
                         _("median star width (Moffat fit) of {n} frames, best {best}″").format(
                             n=len(sz), best=dec(float(sz.min()) * k))))
+        elif len(sz):                                    # no scale on the sky (#135): measured all the same, in pixels
+            how = _("median star width (Moffat fit) of {n} frames, best {best} px; in pixels: the scale on the sky is "
+                    "not known") if d.fwhm is not None else \
+                _("median star width of {n} frames, best {best} px; in pixels: the scale on the sky is not known")
+            out.append((f"{dec(float(np.median(sz)))} px", _("Star FWHM, measured"),
+                        how.format(n=len(sz), best=dec(float(sz.min())))))
     reg = m.get("register") or {}
     inv = m.get("inventory") or {}
     if reg.get("drift_px") and scale:
@@ -554,6 +566,7 @@ class ReportPage(QWidget):
         self.data: ReportData | None = None
         self._token = None
         self._buffer = None
+        self._given: dict = {}                           # {field: the text it was last given} (``put_back``, #131)
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
@@ -719,9 +732,10 @@ class ReportPage(QWidget):
 
     def set_field(self, key: str):
         """A field left: what it holds is kept in the project (an empty one is forgotten), by the model as the Project
-        block's form keeps it (issue #89): Undo takes it back, Save writes it."""
+        block's form keeps it (issue #89): Undo takes it back, Save writes it. Only a value the user changed: the one it
+        was given, the form having changed it since, is not written back (#131)."""
         text = self.fields[key].text().strip()
-        if text == self.entered().get(key, ""):
+        if not typed(self.fields[key], self._given) or text == self.entered().get(key, ""):
             return
         self.s.set_shooting_detail(key, text)
         self.build()
@@ -750,16 +764,13 @@ class ReportPage(QWidget):
         self.copied.setText(_("Copied"))
 
     def _part_image(self, i: int) -> QImage:
-        nights = self.data.nights if self.data is not None else []
-        if i < len(nights):
-            return QImage.fromData(nights[i].card)
-        return self._picture([self._sections_now[i - len(nights)]], 2.0)
+        night, section = self._parts[i]
+        return QImage.fromData(night.card) if night is not None else self._picture([section], 2.0)
 
     # ------------------------------------------------------------ the report
     def _fill_entered(self):
-        for key, e in self.fields.items():
-            if not e.hasFocus():                         # the one being typed in keeps what is typed
-                e.setText(self.entered().get(key, ""))
+        for key, e in self.fields.items():               # the one being typed in keeps what is typed (#131)
+            put_back(e, self.entered().get(key, ""), self._given)
 
     def _entered_changed(self):
         """The project changed (an Undo, the Project block's form): the fields and the report follow what is kept."""
@@ -782,16 +793,17 @@ class ReportPage(QWidget):
         self._buffer = buf
 
     def _fill_parts(self):
+        """What Copy image offers, [(night, section)] one of them None, in the order the report is read (#140): its first
+        page (the session card), the night cards, then the sections; the pieces without a title (the appendix's) are
+        not offered."""
         was = self.part.currentText()
         self.part.clear()
         nights = self.data.nights if self.data is not None else []
-        for night in nights:
-            self.part.addItem(_("Night card") + (f" · {night.name}" if len(nights) > 1 else ""))
-        for title, _html in self._sections_now:
-            if title:
-                self.part.addItem(title)
-        # the sections without a title (the head, the appendix's parts) are not offered: keep the index in step
-        self._sections_now = [s for s in self._sections_now if s[0]] + [s for s in self._sections_now if not s[0]]
+        titled = [s for s in self._sections_now if s[0]]
+        self._parts = [(None, s) for s in titled[:1]] + [(n, None) for n in nights] + [(None, s) for s in titled[1:]]
+        for night, section in self._parts:
+            self.part.addItem(section[0] if night is None else
+                              _("Night card") + (f" · {night.name}" if len(nights) > 1 else ""))
         self.part.setCurrentIndex(max(0, self.part.findText(was)))
         self.b_card.setEnabled(self.part.count() > 0)
 
@@ -870,7 +882,7 @@ class ReportPage(QWidget):
             where.append(_("field {w}° × {h}°").format(w=_dec(float(a["field_deg"][0]), 1, lang),
                                                        h=_dec(float(a["field_deg"][1]), 1, lang)))
         if a.get("scale_arcsec"):
-            where.append(f'{_dec(float(a["scale_arcsec"]), 2, lang)}″/px')
+            where.append(scale_text(float(a["scale_arcsec"]), lang))
         out = (f"<p align='center' style='font-size:14pt;'>{html.escape(self.title())}</p>"
                + (f"<p align='center' style='{small}'>{' &mdash; '.join(sub)}</p>" if sub else "")
                + (f"<p align='center' style='{small}'>{html.escape(' · '.join(where))}</p>" if where else ""))
@@ -885,9 +897,15 @@ class ReportPage(QWidget):
         if d is None or d.reg is None:
             return out
         measured = highlights(d, lang)
-        # the focal length and the star size are in Table 2, with how they were measured: not twice
-        twice = {"focal", "fwhm"} if measured else set()
-        rows = [(html.escape(word), html.escape(value))
+        # the focal length and the star size are in Table 2, with how they were measured: not twice; the field is in the
+        # line under the title, the object's place on the sky, and so is the scale (#137): the sensor's sampling is in
+        # Table 1 only when it is another figure (a drizzled image's pixels are smaller) or the only one (no plate
+        # solving: the focal length and the pixel size give it), written the same way
+        twice = ({"focal", "fwhm"} if measured else set()) | {"field"}
+        written = {"sampling": scale_text(float(d.reg.scale), lang)} if d.reg.scale else {}
+        if written.get("sampling") in where:
+            twice.add("sampling")
+        rows = [(html.escape(word), html.escape(written.get(key, value)))
                 for key, word, value in shot_rows(d, self.s.info(), self.entered(), lang)
                 if value and key != "processing" and key not in twice]
         out += (f"<p style='{small}'>{_('Table 1. Acquisition.')}</p>"
