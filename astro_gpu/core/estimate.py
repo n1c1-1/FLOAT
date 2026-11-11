@@ -239,18 +239,33 @@ def estimate(stage: str, f: Facts, gpu: bool = True, history: dict | None = None
 # ---------------------------------------------------------------------------------------------- facts
 
 _SENSOR: dict[str, float | None] = {}
+_SAMPLING: dict[str, float | None] = {}
+
+#: the star size (FWHM, arcsec) a night is taken to have before any frame is measured: the usual amateur seeing. The
+#: stack's drizzle scale is chosen after register from the measured stars (core/coverage.suggest_drizzle: 1x from
+#: ``UNDERSAMPLED`` px up), so the plan can only guess it from the sampling
+TYPICAL_FWHM_ARCSEC = 2.5
 
 
 def _sensor_mpx(path: str) -> float | None:
-    """Mpx of a raw frame from its header (cached; None when it cannot be read)."""
+    """Mpx of a raw frame from its header (cached; None when it cannot be read); its sampling (arcsec per pixel, when
+    the header gives it) is kept in ``_SAMPLING``."""
     if path not in _SENSOR:
         try:
             from ..io.frames import read_info
             i = read_info(path)
             _SENSOR[path] = i.width * i.height / 1e6 if i.width and i.height else None
+            _SAMPLING[path] = i.pixel_scale or (206.265 * i.pixel_um / i.focal_mm if i.pixel_um and i.focal_mm else None)
         except Exception:  # noqa: BLE001 - an estimate never fails
-            _SENSOR[path] = None
+            _SENSOR[path] = _SAMPLING[path] = None
     return _SENSOR[path]
+
+
+def expects_no_drizzle(sampling: float | None) -> bool:
+    """Whether a typical night is already sampled well enough for the stack to choose a drizzle scale of 1 (stars of
+    ``UNDERSAMPLED`` px or more at ``TYPICAL_FWHM_ARCSEC``)."""
+    from .coverage import UNDERSAMPLED
+    return bool(sampling) and TYPICAL_FWHM_ARCSEC / sampling >= UNDERSAMPLED
 
 
 def denoise_steps(method: str | None, adaptation: str | None) -> int:
@@ -283,13 +298,19 @@ def facts(keys: Any, wf: Any, store: Any = None) -> Facts:
         except (ValueError, OSError):
             return {}
 
+    # the sessions this workflow stacks (a filter's workflow: its filter's nights), not the project's: counting every
+    # session for each of the three workflows of a Filters SHO project made 139 lights of each one's 42 to 50, and an
+    # hour announced for a run of 20 minutes (the project's frames are only the fallback of a stub without sessions)
+    w0 = wf if hasattr(wf, "source") else next((x for x in keys.project.workflows if x.id == wf), None)
+    own = getattr(keys.project, "sessions_of", None)
+    sessions = list(own(w0)) if own and w0 is not None else list(keys.project.sessions)
     inv = done("inventory").get("metrics") or {}
     if inv.get("n_lights"):
         f.lights = int(inv["n_lights"])
         f.frames = f.lights + sum(int(inv.get(f"n_{k}") or 0) for k in ("darks", "flats", "bias", "flat_darks"))
     else:
         try:
-            frames = keys.scan.frames(keys.project)
+            frames = keys.scan.frames(keys.project, sessions=sessions) if own else keys.scan.frames(keys.project)
         except (OSError, ValueError):
             frames = []
         if frames:
@@ -297,22 +318,28 @@ def facts(keys: Any, wf: Any, store: Any = None) -> Facts:
             ml = int(given("inventory").get("max_lights") or 0)
             f.lights = min(len(lights), ml) if ml else len(lights)
             f.frames = len(frames) - len(lights) + f.lights
+    sampling = inv.get("pixel_scale")
+    if not sampling and inv.get("pixel_um") and inv.get("focal_mm"):
+        sampling = 206.265 * inv["pixel_um"] / inv["focal_mm"]
     if inv.get("width") and inv.get("height"):
         f.mpx = inv["width"] * inv["height"] / 1e6
     else:
-        for s in keys.project.sessions:
+        for s in sessions:
             try:
                 files = keys.scan.session_frames(keys.project, s)["lights"]
             except (OSError, ValueError):
                 files = []
             if files:
                 f.mpx = _sensor_mpx(str(files[0][0])) or f.mpx
+                sampling = _SAMPLING.get(str(files[0][0]))
                 break
     stack = done("stack")
     scale = (stack.get("params") or {}).get("scale") or given("stack").get("scale")
     if not scale and "stack" in keys.rules.chains.stages:
         scale = keys.rules.defaults("stack").get("scale")
     f.scale = float(scale or f.scale)
+    if not (stack.get("params") or {}).get("scale") and not given("stack").get("scale") and expects_no_drizzle(sampling):
+        f.scale = 1.0              # not asked for, and fine stars: the rule will not drizzle (Wing: 3 grids of 16 Mpx, not 37)
     grid = (stack.get("metrics") or {}).get("grid")
     f.grid_mpx = grid[0] * grid[1] / 1e6 if grid else f.mpx * f.scale ** 2
     dn = {**given("denoise"), **(done("denoise").get("params") or {})}
@@ -321,7 +348,7 @@ def facts(keys: Any, wf: Any, store: Any = None) -> Facts:
     f.passes = 1 if dn.get("fast") else DENOISE_PASSES
     # an image opened (not frames): its own size is the grid (the night test pass: the reference's 27 Mpx gave "≈ 3 min"
     # for a picture of 2 Mpx computed in 10 s)
-    w = wf if hasattr(wf, "source") else next((x for x in keys.project.workflows if x.id == wf), None)
+    w = w0
     path = (getattr(w, "source", None) or {}).get("path")
     if path and not grid:
         mpx = _sensor_mpx(str(keys.project.abspath(path)) if hasattr(keys.project, "abspath") else str(path))

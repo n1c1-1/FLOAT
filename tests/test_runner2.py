@@ -1024,3 +1024,49 @@ def test_cache_only_calibrate_gives_the_same_frames_as_a_full_run(tmp_path, stat
             "dark": digest(cal / "master_dark.npy")} == full
     assert store.manifest("calibrate", key)["metrics"] == metrics and not (cal / "masters.json").exists()
     assert len(list(store.trash.iterdir())) == 1 and Store(p.root).usable_as_input("calibrate", key)
+
+
+def test_a_three_filter_fusion_is_estimated_near_its_real_run(monkeypatch):
+    """Wing, a mono camera with SII, Ha and OIII (139 lights of 4656 x 3520 in 8 nights): the plan said "≈ 1 h 00" and
+    the run took 19.9 min, because every filter's workflow counted the 139 lights of the project (stack: 538 s each)
+    instead of its own filter's 50, 47 and 42. The seconds are the run log's, per stage and workflow."""
+    from types import SimpleNamespace
+    lights = {1: 50, 2: 47, 3: 42}
+    real = {                                       # the run log of that night: seconds of each job
+        1: dict(inventory=2, calibrate=74, register=19, stack=96, astrometry=213, surveys=1, gradient=2, denoise=35,
+                render_simple=10, star_removal=26),
+        2: dict(inventory=2, calibrate=61, register=15, stack=93, astrometry=45, surveys=1, gradient=2, denoise=36,
+                render_simple=9, star_removal=33),
+        3: dict(inventory=1, calibrate=59, register=13, stack=82, astrometry=141, surveys=1, gradient=1, denoise=32,
+                render_simple=9, star_removal=24),
+        4: dict(fusion=11, render_simple=5, star_removal=5),
+    }
+    sess = {i: SimpleNamespace(id=i, filter=f) for i, f in ((1, "SII"), (2, "Ha"), (3, "OIII"))}
+    wfs = [SimpleNamespace(id=i, source=None, options={"denoise": "pretrained"}, sessions=[i]) for i in (1, 2, 3)]
+    wfs.append(SimpleNamespace(id=4, source={"fusion": {"palette": "SHO"}}, options={}, sessions=None))
+
+    def sessions_of(w):
+        return list(sess.values()) if w.sessions is None else [sess[i] for i in w.sessions]
+
+    def frames(project, sid=None, sessions=None):
+        out = [["lights", f"l{s.id}_{n}.fits", 1] for s in sessions for n in range(lights[s.id])]
+        return out + [["darks", "master.fit", 1]]
+
+    keys = SimpleNamespace(
+        chain=lambda w: list(real[w.id]), overrides=lambda w, st: {},
+        project=SimpleNamespace(workflows=wfs, sessions=list(sess.values()), sessions_of=sessions_of),
+        scan=SimpleNamespace(frames=frames, session_frames=lambda p, s: {"lights": [("w.fits", 1)]}),
+        rules=SimpleNamespace(chains=SimpleNamespace(stages={"stack": 1}), defaults=lambda st: {"scale": 1.5}))
+
+    def header(path):                                  # 4656 x 3520 px of 3.8 um behind 1325 mm
+        est._SAMPLING[path] = 206.265 * 3.8 / 1325
+        return 4656 * 3520 / 1e6
+    monkeypatch.setattr(est, "_sensor_mpx", header)
+    total = 0.0
+    for w in wfs:
+        f = est.facts(keys, w)
+        assert f.lights == (lights[w.id] if w.id in lights else 139)
+        assert f.scale == 1.0 and f.grid_mpx == pytest.approx(4656 * 3520 / 1e6)     # 0.59 "/px: no drizzle expected
+        total += sum(est.estimate(st, f, history={}).seconds for st in real[w.id])
+    done = sum(sum(v.values()) for v in real.values())
+    assert 0.7 < total / done < 1.3, (total, done)
