@@ -48,6 +48,19 @@ def crop_box(good: np.ndarray, edge_frac: float):
     return y0, y1, x0, x1
 
 
+def whole_box(good: np.ndarray):
+    """The frame of a fusion: a rectangle where every pixel has data. The fusion's coverage is the AND of its channels'
+    (stages/fusion.py), 0 or 1, and the 99.5 % of ``crop_box`` left a ragged black blob of its corner (545 pixels in the
+    bottom right of Wing, where the three channels' edges cross) in the frame. The holes inside the field are taken
+    for covered first (as ``coverage`` does for a stack): only the places reaching the border cut the frame."""
+    from scipy import ndimage
+    lab, n_lab = ndimage.label(~good)
+    if n_lab:
+        border = np.unique(np.r_[lab[0], lab[-1], lab[:, 0], lab[:, -1]])
+        good = good | ((lab > 0) & ~np.isin(lab, border[border > 0]))
+    return crop_box(good, 1.0)
+
+
 def sky_spread(v: np.ndarray) -> float:
     """Robust spread of the sky in a channel: 1.4826 x the median distance below the median (the stars and nebulae
     of the field, above the median, do not widen it)."""
@@ -151,13 +164,14 @@ class RenderSimple(Stage):
                    "renders it with its sliders (sky, contrast, saturation, noise).")
     deps = ("stack",)
     Params = RenderSimpleParams
-    version = "7"          # 2: the emission anchor of the output preparation (the H-alpha of Classic was violet on
+    version = "8"          # 2: the emission anchor of the output preparation (the H-alpha of Classic was violet on
                            # heart_a7s);
                            # 3: the Raw stack exit's sky made grey (it had the green of the light pollution);
                            # 4: the colour of the places near saturation from their surroundings (repair_saturated);
                            # 5: the sky gradient removed before (the Gradient block): a level here;
                            # 6: that level is the Gradient block's; no emission anchor (the colour is a white balance)
                            # 7: the colour mosaic's periodic pattern notched (core/periodic.py, issue #28)
+                           # 8: the frame of a fusion is the largest rectangle where every channel has data
 
     def run(self, ctx: Context, p: RenderSimpleParams) -> None:
         from ..render.simple import SimpleRenderEngine, SimpleSettings, image_stats
@@ -169,7 +183,9 @@ class RenderSimple(Stage):
         src = r.img
         H, W = src.shape[1:]
         valid = coverage(ctx)
-        y0, y1, x0, x1 = crop_box(valid, 0.995)
+        meta = ctx.load_json("stack", "drz_meta.json")
+        fused = meta.get("source") == "fusion"
+        y0, y1, x0, x1 = whole_box(valid) if fused else crop_box(valid, 0.995)
         shown = np.zeros_like(valid)
         shown[y0:y1, x0:x1] = True
         shown &= valid
@@ -177,10 +193,8 @@ class RenderSimple(Stage):
         lin = src
         ctx.progress(0.2, "sky")
         sky_name = "channel medians"
-        meta = ctx.load_json("stack", "drz_meta.json")
         # issue #43: a fusion of channels keeps its palette's balance (no gains), and a monochrome or uncalibrated
         # workflow with the Gradient block takes that block's sky level
-        fused = meta.get("source") == "fusion"
         graded = not color and "gradient" in kinds
         if fused or graded:
             color_like = True
