@@ -2100,8 +2100,10 @@ def exposure_text(t) -> str:
     if t is None:
         return ""
     t = float(t)
-    if t < 1:
-        return f"1/{round(1 / t)} s" if t > 0 else "0 s"
+    if 0 < t < 1 and round(1 / t) >= 2 and abs(round(1 / t) * t - 1) < 0.05:
+        return f"1/{round(1 / t)} s"
+    if t <= 0:
+        return "0 s"
     txt = f"{t:g}"
     return (txt.replace(".", ",") if language() == "fr" else txt) + " s"
 

@@ -597,7 +597,8 @@ def _calib_of(files: list, hdr: dict) -> dict | None:
         info = read_info(mid)
         med, low = _levels(mid)
         hdr[k] = {"exposure": info.exposure, "iso": info.iso, "time": info.time, "file": mid.name, "level": med,
-                  "low": low, "stacked": info.stacked, "black": info.black, "white": info.white}
+                  "low": low, "stacked": info.stacked, "black": info.black, "white": info.white,
+                  "time_from_file": info.time_from_file}
     return hdr[k]
 
 
@@ -829,6 +830,17 @@ def browse_group(p, wid: int | None, kind: str, headers: dict | None = None, ses
             it.status, it.index = r.status, r.index
             if levels is not None and r.index < len(levels):
                 it.level = float(levels[r.index])
+        if not it.time and kind != "lights":
+            # the header's own date when it has one (a master flat of 2022 is not "taken" on the day it was copied);
+            # else the file's date on disk
+            k = ("date", str(f))
+            if k not in hdr:
+                try:
+                    info = read_info(f, like=like)
+                    hdr[k] = "" if info.time_from_file else (info.time or "")
+                except Exception:  # noqa: BLE001 - a frame that cannot be read has no date of its own
+                    hdr[k] = ""
+            it.time = hdr[k]
         if not it.time and kind != "lights":
             try:
                 it.time = dt.datetime.fromtimestamp(f.stat().st_mtime).isoformat(timespec="seconds")

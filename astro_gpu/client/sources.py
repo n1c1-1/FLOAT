@@ -179,6 +179,15 @@ def master_text(kind: str, n: int) -> str:
 
 
 # ---------------------------------------------------------------------------------------------- the files and the browser
+def calib_rows(n: int, info: dict | None, first_time: str | None) -> list[tuple[str, str]]:
+    """The properties of a session's darks or flats: how many, the exposure (as the matching lines say it: 1/20 s, not
+    1 s), ISO, and the day they were taken: the header's own date, else the file's (``first_time``, the first listed)."""
+    info = info or {}
+    day = (first_time or "")[:10] if info.get("time_from_file", True) else str(info.get("time") or "")[:10]
+    return [(_("Frames"), str(n)), (_("Exposure"), fexp(info.get("exposure")) if info else "–"),
+            ("ISO", str(int(info["iso"])) if info.get("iso") else "–"), (_("Taken on"), day or "–")]
+
+
 class SourcesView(QWidget):
     goChain = Signal(str)
     toast = Signal(str)                                    # what an addition or a removal did
@@ -1218,10 +1227,11 @@ class SourcesView(QWidget):
                     (_("Black / white level"), f"{int(cam.get('black') or 0)} / {int(cam.get('white') or 0)} ADU")]
         elif d is not None and self.items:
             first = self.items[0]
-            info = d.darks if self.group == "darks" else (d.flats if self.group == "flats" else {})
-            rows = [(_("Frames"), str(len(self.items))), (_("Exposure"), fexp(info.get("exposure")) if info else "–"),
-                    ("ISO", str(int(info["iso"])) if info and info.get("iso") else "–"),
-                    (_("Taken on"), (first.time or "")[:10] or "–")]
+            # the session shown's own frames (its row), never the project's first session's: the OIII master flat
+            # said the exposure of the Ha one
+            info = (row0.calib.get(self.group) if row0 is not None else None) or (
+                d.darks if self.group == "darks" else (d.flats if self.group == "flats" else {}))
+            rows = calib_rows(len(self.items), info, first.time)
         folder = Path(self.items[min(self.cur, len(self.items) - 1)].path).parent.as_posix() if self.items else ""
         if folder:
             rows.append((_("Folder"), folder))
