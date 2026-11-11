@@ -27,6 +27,26 @@ and, as an extra place only, never required, a copy that another program already
 named by the ``catalogue_gaia_astro`` / ``catalogue_gaia_photo`` settings in its ``config*.ini`` and its data folder
 (Windows ``%LOCALAPPDATA%/siril``, Linux ``~/.local/share/siril``, macOS ``~/Library/Application Support/siril``).
 
+A cut extract (``tools/catalogue_reduce.py``: the same files holding only the stars the program reads, for the installer to
+fetch) is the same format; its header says what it holds in bytes the format leaves empty: ``FLOATcut`` at offset 96,
+then int32 the brightest and the faintest G kept (mmag, both kept: every star of the full file in that range is there),
+uint32 the most records a pixel of the full file holds, uint32 the records of the full file. The completeness of a cone
+(``astro_cone``) then holds to the cut, and ``limits`` says how faint the installed stars go.
+
+A compact spectra extract (``tools/catalogue_compact.py``: ``float_xp_compact/float_xp_compact_<N>.dat``, the same
+48 chunks, written from the files above) holds each spectrum as its coordinates on a fixed basis, from which the
+spectrum is rebuilt by one matrix product: the Karhunen-Loeve (principal components) compression of spectra (Connolly
+et al. 1995, AJ 110, 1071; Yip et al. 2004, AJ 128, 585), the basis the first K eigenvectors of the second-moment
+matrix of the unit-norm spectra of a random sample of the catalogue. The header is the format's above, with title
+``FLOAT compact``, type 3, the same chunk fields and cut field; at offset 65: uint8 the format's version, uint8 K,
+uint16 the samples of a spectrum (343); then, before the index, the basis (343 x K float32, columns orthonormal).
+The basis' first 3 vectors span the CIE 1931 colour matching functions, the colour the program computes from a
+spectrum (``stages/catalogs._xyz``), so that it is kept exactly; the others are the principal components of what is
+orthogonal to them (``tools/catalogue_compact.py``). Records, 2K + 20 bytes: RA, Dec int32, G int16 (as above), float32
+the spectrum's norm (sqrt of the sum of its squared samples, W m-2 nm-1), the coordinates of the unit-norm spectrum:
+the first 3 float32, the K - 3 others int16 x 32767 (each within [-1, 1]: the basis is orthonormal). ``xp_spectra``
+gives the rebuilt spectrum on the same 343 wavelengths, which the program reads as the sampled ones.
+
 A process that gives the engine a state folder of its own (the tests, the bench, the tools) calls ``private_home``:
 the extracts installed for the user stay visible there, and in the run workers it starts.
 """
@@ -48,7 +68,18 @@ ASTRO_DT = np.dtype([("ra", "<i4"), ("dec", "<i4"), ("pmra", "<i2"), ("pmdec", "
 XP_DT = np.dtype([("ra", "<i4"), ("dec", "<i4"), ("pmra", "<i2"), ("pmdec", "<i2"), ("g", "<i2"), ("e", "i1"),
                   ("flux", "<f2", (343,))])
 XP_WAVELENGTHS = np.arange(336.0, 1020.0 + 1e-6, 2.0)
-TYPE_ASTRO, TYPE_XPSAMP = 1, 2
+TYPE_ASTRO, TYPE_XPSAMP, TYPE_XPCOMPACT = 1, 2, 3
+CUT_MAGIC, CUT_AT = b"FLOATcut", 96                 # the header field of a cut extract (see above)
+NO_BRIGHT_CUT = -(2 ** 31)
+COMPACT_TITLE, COMPACT_VERSION, COMPACT_AT = b"FLOAT compact", 1, 65    # a compact spectra extract (see above)
+COMPACT_DIR = "float_xp_compact"
+COEF_SCALE = 32767.0
+
+
+def compact_dtype(k: int) -> np.dtype:
+    """A compact record: the first 3 coordinates (the colour's span) float32, the k - 3 others int16 x 32767."""
+    return np.dtype([("ra", "<i4"), ("dec", "<i4"), ("g", "<i2"), ("norm", "<f4"), ("xyz", "<f4", (3,)),
+                     ("coef", "<i2", (k - 3,))])
 
 
 @dataclass
@@ -60,12 +91,35 @@ class CatFile:
     chunk: int = 0
     first: int = 0
     last: int = 0
+    cut: tuple[int, int] | None = None              # a cut extract: the G range it holds (mmag, both kept)
+    full_cap: int | None = None                     # ... and the most records a pixel of the full file holds
+    k: int = 0                                      # a compact extract: its coordinates a star
     _index: np.ndarray | None = field(default=None, repr=False)
     _cap: int | None = field(default=None, repr=False)
+    _basis: np.ndarray | None = field(default=None, repr=False)
 
     @property
     def dtype(self) -> np.dtype:
-        return ASTRO_DT if self.kind == TYPE_ASTRO else XP_DT
+        return ASTRO_DT if self.kind == TYPE_ASTRO else XP_DT if self.kind == TYPE_XPSAMP else compact_dtype(self.k)
+
+    @property
+    def extra(self) -> int:
+        """Bytes between the header and the index: a compact extract's basis."""
+        return 4 * len(XP_WAVELENGTHS) * self.k if self.kind == TYPE_XPCOMPACT else 0
+
+    def basis(self) -> np.ndarray:
+        """A compact extract's basis (343, K) float64."""
+        if self._basis is None:
+            self._basis = np.fromfile(self.path, dtype="<f4", count=len(XP_WAVELENGTHS) * self.k, offset=HEADER) \
+                .reshape(len(XP_WAVELENGTHS), self.k).astype(np.float64)
+        return self._basis
+
+    def spectra(self, rec: np.ndarray) -> np.ndarray:
+        """The sampled spectra (N, 343) W m-2 nm-1 of records of this spectra extract (rebuilt from a compact one)."""
+        if self.kind == TYPE_XPCOMPACT:
+            c = np.hstack([rec["xyz"].astype(np.float64), rec["coef"].astype(np.float64) / COEF_SCALE])
+            return rec["norm"].astype(np.float64)[:, None] * (c @ self.basis().T)
+        return rec["flux"].astype(np.float64) * 10.0 ** (-rec["e"].astype(np.float64))[:, None]
 
     @property
     def n_index(self) -> int:
@@ -73,13 +127,15 @@ class CatFile:
 
     def index(self) -> np.ndarray:
         if self._index is None:
-            self._index = np.fromfile(self.path, dtype="<u4", count=self.n_index, offset=HEADER).astype(np.int64)
+            self._index = np.fromfile(self.path, dtype="<u4", count=self.n_index,
+                                      offset=HEADER + self.extra).astype(np.int64)
         return self._index
 
     def cap(self) -> int:
-        """The most records a pixel holds (the extract keeps that many brightest stars per pixel)."""
+        """The most records a pixel holds (the extract keeps that many brightest stars per pixel; a cut one says the full
+        file's: its pixels hold fewer)."""
         if self._cap is None:
-            self._cap = int(np.diff(np.r_[0, self.index()]).max())
+            self._cap = self.full_cap or int(np.diff(np.r_[0, self.index()]).max())
         return self._cap
 
     def read(self, pixels: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -93,7 +149,7 @@ class CatFile:
         # runs of consecutive pixels: one read each
         cut = np.where(np.diff(k) != 1)[0] + 1
         recs, pix = [], []
-        data0 = HEADER + 4 * self.n_index
+        data0 = HEADER + self.extra + 4 * self.n_index
         with open(self.path, "rb") as f:
             for run in np.split(k, cut):
                 a = int(idx[run[0] - 1]) if run[0] > 0 else 0
@@ -118,24 +174,34 @@ def read_header(path: Path) -> CatFile | None:
         size = path.stat().st_size
     except OSError:
         return None
-    if len(h) < HEADER or not h[:48].startswith(b"Siril"):
+    if len(h) < HEADER:
         return None
     level, kind, chunked, clevel = h[49], h[50], h[51], h[52]
-    if not (1 <= level <= 12) or kind not in (TYPE_ASTRO, TYPE_XPSAMP):
+    compact = h[:48].startswith(COMPACT_TITLE)
+    if not (h[:48].startswith(b"Siril") or compact) or not (1 <= level <= 12) \
+            or kind not in ((TYPE_XPCOMPACT,) if compact else (TYPE_ASTRO, TYPE_XPSAMP)):
         return None
+    k = 0
+    if compact:
+        version, k, n_lam = h[COMPACT_AT], h[COMPACT_AT + 1], int.from_bytes(h[COMPACT_AT + 2:COMPACT_AT + 4], "little")
+        if version != COMPACT_VERSION or not k or n_lam != len(XP_WAVELENGTHS):     # a later format: not read
+            return None
     chunk, first, last = (int.from_bytes(h[o:o + 4], "little") for o in (53, 57, 61))
     cf = CatFile(Path(path), level, kind, clevel if chunked else 0, chunk if chunked else 0,
-                 first if chunked else 0, last if chunked else 0)
+                 first if chunked else 0, last if chunked else 0, k=k)
     if cf.chunk_level == 0:
         cf.first = cf.last = 0
+    if h[CUT_AT:CUT_AT + 8] == CUT_MAGIC:
+        lo, hi = (int.from_bytes(h[o:o + 4], "little", signed=True) for o in (CUT_AT + 8, CUT_AT + 12))
+        cf.cut, cf.full_cap = (lo, hi), int.from_bytes(h[CUT_AT + 16:CUT_AT + 20], "little") or None
     n = cf.n_index
-    if size < HEADER + 4 * n:
+    if size < HEADER + cf.extra + 4 * n:
         return None
     try:
-        total = int(np.fromfile(path, dtype="<u4", count=1, offset=HEADER + 4 * (n - 1))[0])
+        total = int(np.fromfile(path, dtype="<u4", count=1, offset=HEADER + cf.extra + 4 * (n - 1))[0])
     except (OSError, IndexError):
         return None
-    if size != HEADER + 4 * n + total * cf.dtype.itemsize:      # incomplete download / other record layout
+    if size != HEADER + cf.extra + 4 * n + total * cf.dtype.itemsize:      # incomplete download / other record layout
         return None
     return cf
 
@@ -200,7 +266,8 @@ def installed_folders() -> list[Path]:
     """The folders that hold extracts the engine finds now (``locate``)."""
     f = locate()
     paths = ([f["astro"].path] if f["astro"] is not None else []) + [cf.path for cf in f["xp"].values()]
-    return list(dict.fromkeys(p.parent.parent if p.parent.name.endswith("_xpsamp") else p.parent for p in paths))
+    return list(dict.fromkeys(p.parent.parent if p.parent.name.endswith("_xpsamp") or p.parent.name == COMPACT_DIR
+                                 else p.parent for p in paths))
 
 
 def private_home(home: str | os.PathLike, environ: dict | None = None) -> None:
@@ -227,7 +294,7 @@ def _scan(p: Path, found: dict) -> None:
             return
         if cf.kind == TYPE_ASTRO and found["astro"] is None:
             found["astro"] = cf
-        elif cf.kind == TYPE_XPSAMP:
+        elif cf.kind in (TYPE_XPSAMP, TYPE_XPCOMPACT):
             found["xp"].setdefault(cf.chunk if cf.chunk_level else -1, cf)
         return
     if not p.is_dir():
@@ -236,9 +303,10 @@ def _scan(p: Path, found: dict) -> None:
         _scan(q, found)
     for q in sorted(p.glob("siril_cat*_healpix*_xpsamp*.dat")):
         _scan(q, found)
-    for d in sorted(p.glob("siril_cat*_healpix*_xpsamp")):
+    # the sampled spectra before the compact ones: where both are, the program reads the spectra as they were made
+    for d in sorted(p.glob("siril_cat*_healpix*_xpsamp")) + [p / COMPACT_DIR]:
         if d.is_dir():
-            for q in sorted(d.glob("siril_cat*_healpix*_xpsamp*.dat")):
+            for q in sorted(d.glob("siril_cat*_healpix*_xpsamp*.dat")) + sorted(d.glob(f"{COMPACT_DIR}_*.dat")):
                 _scan(q, found)
 
 
@@ -265,6 +333,20 @@ def reset() -> None:
     global _FOUND
     with _FOUND_LOCK:
         _FOUND = None
+
+
+def limits() -> dict:
+    """{"astro": (brightest, faintest G held) | None, "xp": ... | None}: the range of a cut extract (``tools/
+    catalogue_reduce.py``), the narrowest over its chunks; None for a full one (all the stars it was made with) or none
+    installed. The parameters that would ask for fainter stars are bounded by it (``stages/catalogs.py``)."""
+    f = locate()
+    out: dict = {"astro": None, "xp": None}
+    for kind, cfs in (("astro", [f["astro"]] if f["astro"] is not None else []), ("xp", list(f["xp"].values()))):
+        cuts = [cf.cut for cf in cfs if cf.cut is not None]
+        if cuts:
+            lo, hi = max(c[0] for c in cuts), min(c[1] for c in cuts)
+            out[kind] = (-np.inf if lo == NO_BRIGHT_CUT else lo / 1000.0, hi / 1000.0)
+    return out
 
 
 def describe() -> str:
@@ -307,6 +389,8 @@ def astro_cone(ra: float, dec: float, radius: float, gmax: float) -> dict | None
             gmaxpix = np.full(len(up), -np.inf)
             np.maximum.at(gmaxpix, inv, g)
             complete_to = float(gmaxpix[full].min())
+    if cf.cut is not None:                  # a cut extract: every star brighter than its faint cut, none fainter
+        complete_to = min(complete_to, (cf.cut[1] + 1) / 1000.0)
     keep = (g < gmax) & (_sep_deg(ra, dec, r_ra, r_dec) <= radius)
     return {"RA_ICRS": r_ra[keep], "DE_ICRS": r_dec[keep], "Gmag": g[keep],
             "pmRA": rec["pmra"][keep].astype(np.float64), "pmDE": rec["pmdec"][keep].astype(np.float64),
@@ -363,6 +447,9 @@ def xp_spectra(ra: np.ndarray, dec: np.ndarray, g: np.ndarray, sources: np.ndarr
                 k = int(np.argmin(d))
                 if d[k] <= tol and abs(r_g[j[k]] - g[i]) <= tol_mag:
                     r = rec[j[k]]
-                    flux = r["flux"].astype(np.float64) * 10.0 ** (-float(r["e"]))
+                    if cf.kind == TYPE_XPCOMPACT:
+                        flux = cf.spectra(rec[j[k]:j[k] + 1])[0]
+                    else:
+                        flux = r["flux"].astype(np.float64) * 10.0 ** (-float(r["e"]))
                     out[i] = (XP_WAVELENGTHS.copy(), flux)
     return out

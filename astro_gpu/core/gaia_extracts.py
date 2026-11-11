@@ -81,6 +81,7 @@ class Status:
     part_bytes: int = 0         # bytes of unfinished downloads in our folder
     outside: Path | None = None  # folder of a copy found elsewhere (not ours), when the engine uses one
     own: bool = False           # every file the engine finds is in our folder
+    g_max: float | None = None  # a cut extract (tools/catalogue_reduce.py): the faintest G it holds; None: full
 
 
 # ------------------------------------------------------------------ texts
@@ -139,7 +140,8 @@ def status(kind: str) -> Status:
                     part += e.stat().st_size
     total = FILES[kind]
     state = "installed" if len(paths) >= total else "partial" if paths or part else "missing"
-    return Status(kind, state, len(paths), total, part, outside, len(mine) == len(paths))
+    cut = sirilcat.limits()[kind]
+    return Status(kind, state, len(paths), total, part, outside, len(mine) == len(paths), cut[1] if cut else None)
 
 
 # ------------------------------------------------------------------ the file lists

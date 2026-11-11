@@ -2737,7 +2737,27 @@ def describe(p: Project2, wf: int | Workflow, stage: str) -> list[ParamInfo]:
             result_value=used.get(n) if drift else None,
             advice=None if adv is None else adv.value, advice_reason="" if adv is None else adv.template,
             advice_args=None if adv is None else adv.args, advice_reason_en="" if adv is None else adv.reason))
+    if b == "catalogs":
+        _bounded_by_spectra(out)
     return out
+
+
+def _bounded_by_spectra(infos: list[ParamInfo]) -> None:
+    """The colour stars' magnitude limits (Catalogues) end where the installed star spectra end, when they are a cut
+    extract: a fainter limit would ask for spectra that are not there. The bound says why on hover; a value set before
+    beyond it is kept and the stage says what it does (stages/catalogs.py)."""
+    import math
+
+    from .core import sirilcat
+    from .texts import SPECTRA_CUT_TIP
+    cut = sirilcat.limits()["xp"]
+    if cut is None:
+        return
+    for i in infos:
+        if i.name in ("xp_gmin", "xp_gmax") and i.le is not None and i.le > cut[1]:
+            step = i.step or 0.5
+            i.le = math.floor(cut[1] / step + 1e-9) * step
+            i.tip = SPECTRA_CUT_TIP
 
 
 # ---------------------------------------------------------------------------------------------- rendering and export

@@ -43,9 +43,10 @@ class Catalogs(Stage):
                    "to calibrate the colour of the sensor. Results are cached and shared between projects.")
     deps = ("inventory", "astrometry", "stack")
     Params = CatalogsParams
-    version = "4"          # 2: the bright stars missing from Gaia are added from Hipparcos; 3: the bright stars only
+    version = "5"          # 2: the bright stars missing from Gaia are added from Hipparcos; 3: the bright stars only
                            # (offline), the deep catalogue for the earlier Stars block left out; 4: the colour stars
-                           # spread over the magnitudes (issue #12)
+                           # spread over the magnitudes (issue #12); 5: the spectra may come from the compact extract
+                           # (core/sirilcat.py): rebuilt on a basis, their XYZ the sampled ones' to 1e-7, not bit-equal
     network = True
 
     def run(self, ctx: Context, p: CatalogsParams) -> None:
@@ -86,6 +87,12 @@ class Catalogs(Stage):
         # loop over the candidates that cost 4-5 min of CPU per run)
         with np.load(ctx.out("gaia_deep.npz")) as z:
             d = {k: z[k] for k in z.files}
+        from ..core import sirilcat
+        cut = sirilcat.limits()["xp"]
+        if cut is not None and p.xp_gmax > cut[1] + 0.02:
+            ctx.log(f"the star spectra installed stop at G {cut[1]:.1f}: the colour stars between it and the faint "
+                    f"limit, G {p.xp_gmax:g}, have none (the full star spectra: Settings › Catalogs & astrometry)",
+                    "warning")
         sel = _isolated_xp(d, p, W, H, scale)
         ctx.log(f"{len(sel)} isolated stars with an XP spectrum selected for the colour calibration")
         rows = _xp_spectra(ctx, d["source"][sel].astype(np.int64), 0.85, 1.0, pos16[sel], d["g"][sel])

@@ -326,7 +326,9 @@ VALUE_TEXTS: dict[str, str] = {
     "camera-colour polynomial, made grey": "smooth sky of each channel, made grey",
 }
 #: texts of the interface the formatting needs
-UI_TEXTS = ("Yes", "No", "{n} values")
+#: the hover of a colour stars' magnitude limit bounded by the star spectra installed (api._bounded_by_spectra)
+SPECTRA_CUT_TIP = "The star spectra installed on this computer go no fainter than this."
+UI_TEXTS = ("Yes", "No", "{n} values", SPECTRA_CUT_TIP)
 #: values with a number in them: (regular expression, English template, names of the numeric groups)
 VALUE_PATTERNS: list[tuple[re.Pattern, str, tuple[str, ...]]] = [
     (re.compile(r"^camera profile \((?P<project>.*)\)$"), "camera profile ({project})", ()),
