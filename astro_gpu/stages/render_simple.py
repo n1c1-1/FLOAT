@@ -165,7 +165,7 @@ class RenderSimple(Stage):
                    "renders it with its sliders (sky, contrast, saturation, noise).")
     deps = ("stack",)
     Params = RenderSimpleParams
-    version = "8"          # 2: the emission anchor of the output preparation (the H-alpha of Classic was violet on
+    version = "9"          # 2: the emission anchor of the output preparation (the H-alpha of Classic was violet on
                            # heart_a7s);
                            # 3: the Raw stack exit's sky made grey (it had the green of the light pollution);
                            # 4: the colour of the places near saturation from their surroundings (repair_saturated);
@@ -173,7 +173,8 @@ class RenderSimple(Stage):
                            # 6: that level is the Gradient block's; no emission anchor (the colour is a white balance)
                            # 7: the colour mosaic's periodic pattern notched (core/periodic.py, issue #28)
                            # 8: the frame of a fusion is the largest rectangle where every channel has data;
-                           # prep_simple.json says the image's origin (mono, palette) for Post's H-alpha slider
+                           # prep_simple.json says the image's origin (mono, palette) for Post's H-alpha slider;
+                           # 9: a fusion whose channels' sky is at 0 keeps it there (no median of the frame taken off)
 
     def run(self, ctx: Context, p: RenderSimpleParams) -> None:
         from ..render.simple import SimpleRenderEngine, SimpleSettings, image_stats
@@ -212,6 +213,9 @@ class RenderSimple(Stage):
             spread = np.array([sky_spread(lin[c][shown]) for c in range(3)])
         if not color_like:                          # the Raw stack exit: a grey sky (below)
             sky, sky_name = raw_exit_sky(ctx, lin, valid)
+        elif fused and meta.get("sky_neutral"):      # the fusion took each channel's sky to 0 on the sky pixels
+            sky = np.zeros((3, 1, 1), np.float32)       # (stages/fusion.neutralise_sky): the median of the whole frame,
+            sky_name = "fusion's background neutralisation"      # nebulosity included, would put a cast back
         elif r.level is not None:                   # the level the Gradient block measured between the objects
             sky = r.level.astype(np.float32)[:, None, None]       # in the image's colours (image_in)
             sky_name = "sky level of the Gradient block"

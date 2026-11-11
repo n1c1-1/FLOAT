@@ -12,9 +12,10 @@ Output block renders as any stack (core/workflow.PROVIDES).
 2. Each channel is its input's luminance (a monochrome image's grey), or one of its colours (``R``, ``G``, ``B``), or
    ``GB`` (the mean of green and blue: the O III of a dual-band filter on a colour sensor, whose green and blue pixels
    both see the 501 nm line).
-3. Each channel is brought to the same scale: divided by a high percentile of its signal (99.5 %, above its sky at
-   0), so that a faint O III weighs as much as a strong H-alpha in the palette (the channels' balance of narrowband
-   palettes, which every reference guide sets by eye or by such a normalisation).
+3. Each channel's sky is taken to 0 (``neutralise_sky``: the background neutralisation, below), then the channel is
+   brought to the same scale: divided by a high percentile of its signal (99.5 %, above its sky at 0), so that a faint
+   O III weighs as much as a strong H-alpha in the palette (the channels' balance of narrowband palettes, which every
+   reference guide sets by eye or by such a normalisation).
 4. The palette maps the channels to red, green and blue: SHO Hubble (the default of S II, H-alpha and O III, below),
    SHO (S II red, H-alpha green, O III blue: the plain mapping, whose H-alpha reads green), HSO, HOO (H-alpha red,
    O III green and blue), RGB, and LRGB (the colour of RGB, the luminance of L: each pixel's RGB scaled so that its
@@ -32,6 +33,15 @@ that the dominant signal does not read green; O III (501 nm) 210 degrees, cyan-b
 mean (30 + 180), so that the three balance to grey with S II and H-alpha weighing alike. The colour balance is each
 column's weight, solved so that equal channels (as step 3 makes a source that every filter sees alike) give a grey:
 the hue of a single filter's signal is exactly its own, and a neutral input stays neutral.
+
+Background neutralisation (step 3): an empty sky must map to (0, 0, 0) whatever the palette, so each channel's sky
+level is measured on the same sky pixels in every channel and subtracted in the linear data, before the balance and the
+palette. It is the first step of the narrow-band compositions (Rector et al. 2007 set the background of each filter's
+image to zero before the layers are coloured and added; PixInsight's and Siril's "background neutralization" is the same
+operation on the colour channels). The input's own sky level is not enough: it is the median of the whole shown frame,
+nebulosity included, so it differs from one filter to the other by what the nebula adds, and the balance divides it by
+a factor ten to twenty times larger for a weak S II than for an H-alpha: a few tenths of a percent of offset in the S II
+became a red or cyan cast of the whole sky (set 56: 8 times the sky's own noise).
 
 The result's valid area is where every input has data. Its scale: the first input's (its level kept).
 
@@ -156,6 +166,72 @@ def balance(ch: np.ndarray, valid: np.ndarray, pct: float) -> tuple[np.ndarray, 
     return ch / np.float32(top), top
 
 
+#: the share of the covered blocks taken for sky: the darkest fifth of the field (the usual rule of the background
+#: samples: the faintest tiles of the frame, where the objects are not)
+SKY_SHARE = 0.2
+#: the side of the blocks whose medians find the sky (px): wide enough that a star or the noise does not move a block's
+#: median, narrow enough that a faint nebula leaves its own blocks
+SKY_BLOCK = 16
+
+
+def block_medians(a: np.ndarray, b: int) -> np.ndarray:
+    """The median of each b x b block of an image (the incomplete border dropped)."""
+    h, w = a.shape[0] // b, a.shape[1] // b
+    return np.median(a[:h * b, :w * b].reshape(h, b, w, b).transpose(0, 2, 1, 3).reshape(h, w, b * b), axis=2)
+
+
+def sky_mask(chans: dict[str, np.ndarray], valid: np.ndarray, share: float = SKY_SHARE, b: int = SKY_BLOCK) -> np.ndarray:
+    """(H, W) bool: the pixels of the blocks that are the sky of every channel at once. Each channel's block medians
+    are put in units of their own robust spread (the median absolute deviation across the frame) and added: a block is
+    sky when it is among the faintest ``share`` of the covered blocks in all the channels together, whichever filter
+    is weak or strong. The same pixels serve every channel, so that the skies are compared where they are the same."""
+    H, W = valid.shape
+    b = max(2, min(b, H // 8, W // 8))
+    ok = block_medians(valid.astype(np.float32), b) > 0.999
+    z = 0.0
+    for ch in chans.values():
+        m = block_medians(np.where(valid & np.isfinite(ch), ch, 0).astype(np.float32), b)
+        med = float(np.median(m[ok])) if ok.any() else 0.0
+        spread = 1.4826 * float(np.median(np.abs(m[ok] - med))) if ok.any() else 0.0
+        z = z + (m - med) / (spread or 1.0)
+    out = np.zeros((H, W), bool)
+    if not ok.any():
+        return out
+    keep = ok & (z <= np.percentile(z[ok], 100 * share))
+    out[:keep.shape[0] * b, :keep.shape[1] * b] = np.kron(keep, np.ones((b, b), bool))
+    return out & valid
+
+
+def sky_level(ch: np.ndarray, sky: np.ndarray, clip: float = 3.0, iters: int = 5) -> tuple[float, float]:
+    """(the level, the noise) of a channel's sky on the pixels of ``sky``: the median of the samples kept after
+    clipping those further than ``clip`` robust sigmas from it (the stars' and nebula's remains), iterated."""
+    v = ch[sky]
+    v = v[np.isfinite(v)]
+    if v.size == 0:
+        return 0.0, 0.0
+    med, sig = float(np.median(v)), 0.0
+    for _ in range(iters):
+        med = float(np.median(v))
+        sig = 1.4826 * float(np.median(np.abs(v - med)))
+        keep = np.abs(v - med) <= clip * max(sig, 1e-12)
+        if keep.all():
+            break
+        v = v[keep]
+    return med, sig
+
+
+def neutralise_sky(chans: dict[str, np.ndarray], valid: np.ndarray) -> dict[str, tuple[float, float]]:
+    """The background neutralisation (module docstring): every channel loses its sky level, in place, measured on the
+    pixels that are sky in all of them together (``sky_mask``). Returns {role: (level removed, sky noise)}."""
+    sky = sky_mask(chans, valid)
+    out = {}
+    for role, ch in chans.items():
+        level, noise = sky_level(ch, sky)
+        ch -= np.float32(level)
+        out[role] = (level, noise)
+    return out
+
+
 def star_support(s: np.ndarray, k: float = 3.0, grow: int = 2) -> np.ndarray:
     """A stars-only image kept on its stars: the pixels above k times its noise (1.4826 x its median absolute
     deviation), the mask grown by ``grow`` pixels to keep the stars' wings; zero elsewhere (the noise the subtraction
@@ -178,7 +254,11 @@ def fuse(chans: dict[str, np.ndarray], palette: str) -> np.ndarray:
     if palette == "LRGB":
         rgb = np.stack([chans["R"], chans["G"], chans["B"]])
         lum = np.tensordot(LUM, rgb, 1)
-        k = np.where(lum > 1e-6, chans["L"] / np.maximum(lum, 1e-6), 1.0).astype(np.float32)
+        # the colour ratio only where the colour has signal: with the sky at 0 its luminance is noise around 0, whose
+        # ratio to L's is meaningless; the floor is 3 robust sigmas of the colour's luminance over the frame
+        med = float(np.median(lum))
+        floor = max(1e-6, 3 * 1.4826 * float(np.median(np.abs(lum - med))))
+        k = np.where(lum > floor, chans["L"] / np.maximum(lum, floor), 1.0).astype(np.float32)
         return (rgb * k[None]).astype(np.float32)
     m = np.asarray(mat, np.float32)
     stack = np.stack([chans[r] for r in roles])
@@ -192,10 +272,11 @@ class Fusion(Stage):
                    "one colour image with a palette (SHO Hubble, SHO, HSO, HOO, RGB, LRGB), aligned through their "
                    "plate solutions.")
     Params = FusionParams
-    version = "4"                    # 2: option A, the starless channels and a star layer; 3: the stars kept on
+    version = "5"                    # 2: option A, the starless channels and a star layer; 3: the stars kept on
     #                                  their support (the noise of the subtraction left out); the channels' weights;
     #                                  4: the SHO Hubble palette (hues, Rector et al. 2007), the SHO default: the
-    #                                  colours of new results change
+    #                                  colours of new results change; 5: the channels' sky taken to 0 before the
+    #                                  balance (background neutralisation): the sky of the result is grey
 
     def run(self, ctx: Context, p: FusionParams) -> None:
         from astropy.io import fits
@@ -241,6 +322,8 @@ class Fusion(Stage):
             valid_all = out_valid if valid_all is None else (valid_all & out_valid)
             chans[inp["role"]] = out_ch
             ctx.progress(0.6 * (n + 1) / len(p.inputs), f"channel {inp['role']}")
+        skies = neutralise_sky(chans, valid_all)
+        ctx.log("sky removed (level, noise): " + ", ".join(f"{r} {a:.4g}, {b:.3g}" for r, (a, b) in skies.items()))
         level = None
         for role in list(chans):
             chans[role], tops[role] = balance(chans[role], valid_all, p.percentile)
@@ -267,6 +350,7 @@ class Fusion(Stage):
             if (ref["dir"] / "prep_simple.json").is_file() else {}
         ctx.save_json("drz_meta.json", {"scale": float(meta.get("drizzle_scale", 1.0)), "source": "fusion",
                                         "palette": p.palette, "width": W, "height": H, "starless": starless,
+                                        "sky_neutral": True,
                                         "channels": {r: round(t, 4) for r, t in tops.items()}})
         if ref["wcs"] is not None:
             ref["wcs"].to_fits().writeto(ctx.out("wcs.fits"), overwrite=True)

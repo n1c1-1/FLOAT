@@ -430,6 +430,82 @@ def test_the_sho_hubble_palette_keeps_grey_grey_and_gives_each_filter_its_hue(tm
     assert project2.load(p.root).workflow(f.id).source["fusion"]["palette"] == "SHO"
 
 
+def _sky_field(offsets: dict[str, float], noise: dict[str, float], H: int = 160, W: int = 192, seed: int = 3):
+    """Narrow-band channels on a sky of their own level and noise, a nebula (a wide blob, a different strength in each
+    filter) in the middle: {role: (H, W)}, the nebula's mask."""
+    rng = np.random.default_rng(seed)
+    yy, xx = np.mgrid[0:H, 0:W]
+    neb = np.exp(-((xx - W / 2) ** 2 + (yy - H / 2) ** 2) / (2 * 22.0 ** 2)).astype(np.float32)
+    amp = {"SII": 20.0, "Ha": 300.0, "OIII": 150.0, "L": 100.0, "R": 60.0, "G": 80.0, "B": 50.0}
+    ch = {r: (offsets[r] + amp[r] * neb + rng.normal(0, noise[r], (H, W))).astype(np.float32) for r in offsets}
+    return ch, neb > 0.02
+
+
+def test_the_fusion_takes_each_channels_sky_to_zero_so_that_an_empty_sky_is_grey_in_every_palette():
+    """Background neutralisation: channels whose skies differ in level and noise (a weak S II, whose balance factor is
+    the largest) give a fused sky at 0 in red, green and blue, whatever the palette."""
+    from astro_gpu.stages.fusion import PALETTES, balance, fuse, neutralise_sky
+    valid = np.ones((160, 192), bool)
+    for palette, roles in (("SHO Hubble", ("SII", "Ha", "OIII")), ("SHO", ("SII", "Ha", "OIII")),
+                           ("HSO", ("Ha", "SII", "OIII")), ("HOO", ("Ha", "OIII"))):
+        assert PALETTES[palette][0] == roles
+        off = {"SII": -0.7, "Ha": 2.5, "OIII": -0.3}
+        sig = {"SII": 0.09, "Ha": 0.4, "OIII": 0.2}
+        ch, neb = _sky_field({r: off[r] for r in roles}, {r: sig[r] for r in roles})
+        sky = neutralise_sky(ch, valid)
+        assert all(abs(sky[r][0] - off[r]) < 3 * sig[r] / 10 + 0.05 for r in roles)      # the levels found
+        bal = {r: balance(ch[r], valid, 99.5)[0] for r in roles}
+        rgb = fuse(bal, palette)
+        far = ~neb
+        far[:, 60:132] = False                                               # the frame's two sides, no nebula
+        for c in range(3):
+            assert abs(float(np.mean(rgb[c][far]))) < 0.02 * float(rgb[c].max()), (palette, c)
+    # without it the same channels carry the cast of their own offsets
+    ch, neb = _sky_field(off, sig)
+    raw = fuse({r: balance(ch[r], valid, 99.5)[0] for r in off}, "SHO Hubble")
+    assert abs(float(np.mean(raw[0][~neb]))) > 0.005 * float(raw[0].max())
+
+
+def test_the_neutralised_sky_keeps_a_nebula_that_was_neutral_already_and_lrgb_stays_grey():
+    """Channels whose sky is at 0 already (Wing's) come out as they were: the nebula's colours do not move; the colour
+    of an LRGB fusion on a sky at 0 does not blow its noise up through the luminance ratio."""
+    from astro_gpu.stages.fusion import balance, fuse, neutralise_sky
+    valid = np.ones((160, 192), bool)
+    roles = ("SII", "Ha", "OIII")
+    ch, neb = _sky_field({r: 0.0 for r in roles}, {"SII": 0.09, "Ha": 0.4, "OIII": 0.2})
+    before = {r: balance(ch[r].copy(), valid, 99.5)[0] for r in roles}
+    neutralise_sky(ch, valid)
+    after = {r: balance(ch[r], valid, 99.5)[0] for r in roles}
+    a, b = fuse(before, "SHO Hubble"), fuse(after, "SHO Hubble")
+    core = np.zeros_like(neb)
+    core[70:90, 86:106] = True
+    ra, rb = a[:, core].mean(1), b[:, core].mean(1)
+    assert np.allclose(ra / ra.sum(), rb / rb.sum(), atol=0.01)              # the nebula's hue as before
+    chans, _ = _sky_field({r: 0.0 for r in "LRGB"}, {"L": 0.2, "R": 0.3, "G": 0.3, "B": 0.3}, seed=5)
+    neutralise_sky(chans, valid)
+    bal = {r: balance(chans[r], valid, 99.5)[0] for r in chans}
+    rgb = fuse(bal, "LRGB")
+    far = ~neb
+    far[:, 60:132] = False
+    assert float(np.abs(rgb[:, far]).max()) < 0.25 * float(rgb.max())         # no speckle where the sky is noise
+
+
+def test_the_fusion_stage_removes_the_skies_and_says_so_to_the_output_preparation(tmp_path):
+    from astro_gpu.stages.fusion import Fusion, FusionParams
+    off = {"SII": -0.7, "Ha": 2.5, "OIII": -0.3}
+    ch, _ = _sky_field(off, {"SII": 0.09, "Ha": 0.4, "OIII": 0.2})
+    ins = []
+    for r in off:
+        _output(tmp_path / r, np.repeat(ch[r][None], 3, 0))
+        ins.append({"role": r, "channel": "L", "dir": str(tmp_path / r), "pid": 1})      # one grid: no alignment
+    pr = _Project(tmp_path, {"fusion": tmp_path / "out"}, ["fusion"])
+    st = Fusion()
+    st.run(Context(pr, st, Journal(pr.logs), "cpu"), FusionParams(palette="SHO Hubble", inputs=ins))
+    rgb = np.load(tmp_path / "out" / "drz_full.npy")
+    assert json.loads((tmp_path / "out" / "drz_meta.json").read_text())["sky_neutral"] is True
+    assert abs(float(np.median(rgb[:, :, :40]))) < 0.05 * float(rgb.max())     # the side, away from the nebula
+
+
 def test_a_fusion_workflow_reads_its_channels_outputs(tmp_path, nights):
     p = project(tmp_path / "p", nights, "per_session")
     p.sessions[0].filter, p.sessions[1].filter = "Ha", "OIII"
