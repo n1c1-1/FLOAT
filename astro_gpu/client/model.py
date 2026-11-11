@@ -1323,7 +1323,11 @@ class ProjectModel(QObject):
         words = dict(instrument=_("instrument"), mount=_("mount"), filter=_("filter"), location=_("location"),
                      date=_("date"))
         has_target = bool(self.target_state().name)
-        missing = ([] if has_target else [_("target")]) + [words[k] for k in ACQUISITION if not self.p.acquisition.get(k)]
+        # a filter given by every session (the filters template sets one per session) is the project's filter said: asking
+        # for it again in the Project block said "Missing: filter" over sessions that each had theirs
+        by_session = bool(self.p.sessions) and all(s.filter for s in self.p.sessions)
+        missing = ([] if has_target else [_("target")]) + [words[k] for k in ACQUISITION if not self.p.acquisition.get(k)
+                                                           and not (k == "filter" and by_session)]
         return ProjectState("none" if not has_target else "partial" if missing else "complete", missing)
 
     def target_state(self) -> TargetState:
