@@ -244,6 +244,7 @@ _METRIC_ROWS: list[tuple] = [
     ("blind_solved", "Blind solved", "", "", "Whether the field was found on the whole sky, with no starting point."),
     ("first_solver", "First solution", "", "", "What found the field before the fine fit: Asterion, or FLOAT's own search."),
     ("first_solution_s", "First solution time", "s", ".2f", "Time Asterion took to find the field."),
+    ("centre_from", "Field found around", "", "", "The typed target or the frames' header pointing, when the two disagree."),
     # reference
     ("orientation", "Orientation", "", "", "Mirror and quarter turns that bring the reference image onto the stack."),
     ("stars_matched", "Stars matched", "", "d", "Stars found in both the stack and the reference image."),
