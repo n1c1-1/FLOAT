@@ -1028,17 +1028,23 @@ def health_checks(p: Project2) -> list[Check]:
     n = {k: len(getattr(inp, k)) for k in KINDS}
     if not p.sessions or not n["lights"]:
         return [Check("warn", "no_lights", "No light frames yet")]
-    from .io.frames import colour_session
+    from .io.frames import colour_session, master_kinds
     keys = _keys(p)
+    same: dict[tuple, list[str]] = {}               # one warning, the sessions it concerns (nine said once each)
     for s in keys.project.sessions:                  # issue #58: a file added by mistake, said before the run
         fr = keys.scan.session_frames(keys.project, s)
-        for w in type_warnings({k: [str(f) for f, _size in fr[k]] for k in KINDS}):
-            out.append(Check("warn", "file_types", type_warning_english(w, s.name), {**w, "session": s.name}))
+        files = {k: [str(f) for f, _size in fr[k]] for k in KINDS}
+        for w in type_warnings(files, master_kinds(files)):
+            same.setdefault(tuple(sorted(w.items())), []).append(s.name)
         note = colour_session([str(f) for f, _size in fr["lights"]])
         if note:                                     # issue #57: the limit of such frames, said plainly
             out.append(Check("info", "colour_frames", f"{s.name}: {note['type']} frames already in colour: no Bayer "
                              "drizzle; dark and flat correction are approximate when they are not linear data",
                              {**note, "session": s.name}))
+    for items, names in same.items():
+        w = dict(items)
+        out.append(Check("warn", "file_types", type_warning_english(w, ", ".join(names)),
+                         {**w, "session": ", ".join(names), "sessions": names}))
     for w in p.workflows:                            # two filters in one stack: a mistake, said before the run
         flts = sorted({s.filter for s in p.sessions_of(w) if s.lights} - {""}) if w.source is None else []
         if len(flts) > 1:
@@ -2204,7 +2210,7 @@ def calibration_frames(p: Project2, session_id: int, wf: int | Workflow | None =
         t = info.temperature if info.temperature is not None else (
             dg.raw_temperature(f) if info.kind == "raw" else None)
         st.update(exposure=info.exposure, iso=info.iso, temperature=t, time=info.time, white=info.white,
-                  black=info.black)
+                  black=info.black, stacked=getattr(info, "stacked", None))
         return st
 
     stats: list[dict[str, Any]] = []
@@ -2229,6 +2235,7 @@ def calibration_frames(p: Project2, session_id: int, wf: int | Workflow | None =
     for i in by_kind.get("flats", []):
         st = stats[i]
         z = zero if zero is not None else float(st["black"])
+        z = 0.0 if st.get("stacked") is not None else z        # a master flat is already calibrated: used as it is
         st.update(zero=z, **dg.flat_measures(st, z, float(st["white"])))
     for kind, idx in by_kind.items():
         for i, (flag, reason, checks) in zip(idx, dg.flag_frames(kind, [stats[i] for i in idx])):
