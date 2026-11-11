@@ -248,13 +248,14 @@ def node_title(s, n) -> str:
         return f"{block_title(None, 'composition')} {n.num}"     # Gradient 1, Gradient 2 (control round)
     if n.num and n.key in FRAME_KEYS:                 # frame blocks placed in parallel, the same way
         return f"{block_title(None, n.key)} {n.num}"
-    if n.key in ("fusion", "image") and n.paths:      # several Fusions, several Images: numbered in the project's
-        src = "fusion" if n.key == "fusion" else "path"            # order (exploration 2, control round); a branch
-        bk = getattr(s, "block_key", None)                         # shares its source's block: counted once (round 4:
-        ident = (lambda q: bk(q, n.key)) if bk is not None else (lambda q: q.pid)   # one Image became "Image 1")
+    if n.key == "image" and n.paths and n.paths[0].name:   # its workflow's name, which carries the number (#155: one
+        return n.paths[0].name                              # source; numbered by place, a deletion shifted them)
+    if n.key == "fusion" and n.paths:                 # several Fusions: numbered in the project's order (exploration 2,
+        bk = getattr(s, "block_key", None)                         # control round); a branch shares its source's
+        ident = (lambda q: bk(q, n.key)) if bk is not None else (lambda q: q.pid)   # block: counted once (round 4)
         same = []
         for q in getattr(s, "paths", []):
-            if isinstance(q.source, dict) and src in q.source and ident(q) not in same:
+            if isinstance(q.source, dict) and "fusion" in q.source and ident(q) not in same:
                 same.append(ident(q))
         mine = ident(n.paths[0])
         if len(same) > 1 and mine in same:

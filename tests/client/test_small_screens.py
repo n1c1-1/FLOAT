@@ -851,6 +851,47 @@ def test_a_long_version_name_shows_its_start_and_never_pushes_the_bar(env):
     _bar_fits(view)
 
 
+@pytest.mark.parametrize("size", [(1920, 1150), (1366, 700)])
+def test_the_version_lists_letters_are_whole(env, size):
+    """#152: the Version list's field drew its text in 15 px against 19 px for a normal list's (styled as a field of its
+    own, its padding and border inside the list's), the tail of a "g" cut: "Strong" read "Strona". Its text has the
+    height of a normal list's field, the descent of a "g" inside it, cut with "…" or not; the bar's fit stays exact."""
+    from PySide6.QtWidgets import QComboBox, QStyle, QStyleOptionFrame
+    w = _open(env, size)
+    view = _post_view(w)
+    view.ldock._choose("docked")
+    view.dock._choose("docked")
+    _settle(w)
+    _bar_fits(view)
+    ref = QComboBox(view.centre)                                  # a normal list beside it, as the bar shows it
+    ref.setEditable(True)
+    ref.resize(view.cb_version.size())
+    ref.show()
+    _settle(w)
+
+    def text_box(ed):
+        opt = QStyleOptionFrame()
+        ed.initStyleOption(opt)
+        return ed.style().subElementRect(QStyle.SE_LineEditContents, opt, ed)
+
+    def ink_bottom(ed, text):
+        ed.setText(text)
+        img = ed.grab().toImage()
+        ink = [y for y in range(img.height()) if any(img.pixelColor(x, y).lightness() > 150 for x in range(img.width()))]
+        return ink[-1]
+    cb = view.cb_version
+    ed, red, name = cb.lineEdit(), ref.lineEdit(), cb.currentText()
+    try:
+        assert ed.height() == red.height() and text_box(ed).height() == text_box(red).height() == red.height()
+        assert ink_bottom(ed, "ggg") == ink_bottom(red, "ggg") < ed.height() - 1     # the g's tail drawn whole
+        assert ink_bottom(ed, "Strong stars, soft background, typed while cropping") == ink_bottom(red, "ggg")
+        assert ed.shown().endswith("…")                                              # cut with "…": whole too
+    finally:
+        ref.deleteLater()
+        ed.setText(name)
+    _bar_fits(view)
+
+
 # ---------------------------------------------------------------------------------------------- the graph's navigation
 def test_the_wheel_zooms_at_the_pointer_and_the_zoom_is_the_users(env):
     w = _open(env, (1366, 728))

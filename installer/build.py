@@ -11,13 +11,15 @@ SHA-256; and the Asterion plate solver (its released archive and its index), pin
 as it is. Staging gathers what the .exe carries: a private Python (standalone, with Tk), uv, the Visual C++ runtime next
 to python.exe (PyTorch needs it and a clean Windows lacks it), the app's tracked files plus the Stars network (not in
 git), the plate solver and its index in ``asterion`` (the layout astro_gpu/core/asterion.py looks for beside ``app``),
-the setup scripts, an icon. Inno Setup compiles float.iss around it.
+the setup scripts, an icon, the third-party notices (written from the credits of About, shown before the installation).
+Inno Setup compiles float.iss around it.
 
 The plate solver's files come from a local folder (``--asterion-cache``, or FLOAT_ASTERION_CACHE), each found by its
 file name there or one folder down (the archive's folder and the catalogs' folder of a solver workspace both do), and
 checked against the lock: nothing is downloaded, a file missing or different stops the build.
 
-Run with a Python that has Pillow and certifi (the ComfyUI environment here). Inno Setup and uv must be installed.
+Run with a Python that has Pillow and certifi (the ComfyUI environment here). Inno Setup and uv must be installed. The
+stage goes on an NTFS drive: uv cannot install the private Python on one in exFAT or FAT, which the build says first.
 """
 from __future__ import annotations
 
@@ -288,11 +290,59 @@ def next_stage(base: Path) -> Path:
     return base / f"{n:03d}"
 
 
+def junctions_work(folder: Path) -> bool:
+    """Whether ``folder``'s drive can hold a directory junction: uv makes one beside the private Python it installs (its
+    minor-version link) and fails without it, the Python complete, on a drive in exFAT or FAT. Tried, not guessed from
+    the file system's name (a network share answers for itself)."""
+    if sys.platform != "win32":
+        return True
+    import _winapi
+    folder.mkdir(parents=True, exist_ok=True)
+    target = Path(tempfile.mkdtemp(prefix=".junction-probe-", dir=folder))
+    link = target.with_name(target.name + "-link")
+    try:
+        _winapi.CreateJunction(str(target), str(link))
+        return True
+    except OSError:
+        return False
+    finally:
+        for p in (link, target):                            # the junction first: rmdir removes it, not its target
+            try:
+                p.rmdir()
+            except OSError:
+                pass
+
+
+#: the third-party notices by language: the English one in {app}, each shown before the installation by its wizard
+NOTICES = {"en": "THIRD-PARTY-NOTICES.txt", "fr": "THIRD-PARTY-NOTICES.fr.txt"}
+
+
+def write_notices(folder: Path, fetched_catalogue: bool = False) -> list[Path]:
+    """The notices of the data and programs FLOAT carries, written from astro_gpu/client/credits.py (the list About
+    shows: one source), in each language of the installer; UTF-8 with a byte-order mark, which Inno Setup's page and
+    any editor read. ``fetched_catalogue``: the installer fetches FLOAT's own star catalogue (not yet)."""
+    if str(REPO) not in sys.path:
+        sys.path.insert(0, str(REPO))
+    from astro_gpu.client import credits, i18n
+    written = []
+    try:
+        for lang, name in NOTICES.items():
+            i18n.set_language(lang)
+            path = folder / name
+            path.write_text(credits.notices_text(fetched_catalogue), encoding="utf-8-sig", newline="\r\n")
+            written.append(path)
+    finally:
+        i18n.set_language("en")
+    return written
+
+
 def stage(stage_dir: Path, lock: dict, cache: Path) -> None:
     python = lock["python"]
     stage_dir.mkdir(parents=True)
-    # the plate solver first: a missing or wrong pinned file stops the build before the long copies
+    # the plate solver and the notices first: a missing or wrong pinned file stops the build before the long copies;
+    # the lock gets a part for FLOAT's own star catalogue with the data release, and the notices say it then
     stage_asterion(stage_dir, lock, cache)
+    write_notices(stage_dir, fetched_catalogue="star_catalogue" in lock)
     # the private Python, a standalone build (with Tk for the progress window)
     tmp_py = stage_dir.with_name(stage_dir.name + "_python")
     run(uv(), "python", "install", python, "--install-dir", tmp_py, "--no-bin")
@@ -369,6 +419,9 @@ def main() -> int:
         folder = stage_asterion(next_stage(args.stage), lock, args.asterion_cache)
         print(folder)
         return 0
+    if not junctions_work(args.stage):
+        raise SystemExit(f"{args.stage} is on a drive that cannot hold links (exFAT or FAT): the private Python cannot be "
+                         f"installed there. Stage on an NTFS drive: --stage <folder on NTFS>")
     with open(REPO / "pyproject.toml", "rb") as f:
         version = tomllib.load(f)["project"]["version"]
     stage_dir = next_stage(args.stage)

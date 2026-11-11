@@ -40,8 +40,8 @@ DATA_SOURCES: list[dict] = [
          cite="ESA 1997, The Hipparcos and Tycho Catalogues (VizieR I/239); Høg et al. 2000, A&A 355, L27 "
               "(VizieR I/259)."),
     dict(name="Asterion", by="the Asterion Solver authors", version="0.4.2",
-         use="The plate solver that gives Astrometry its first solution, with its index of the Tycho-2 stars "
-             "(installed separately).",
+         use="The plate solver that gives Astrometry its first solution, with its index of the Tycho-2 stars, "
+             "both installed with FLOAT.",
          licence="Apache License 2.0", link="https://github.com/asterion-solver/asterion"),
     dict(name="VizieR", by="CDS, Strasbourg",
          use="Access to the Gaia, Hipparcos and Tycho-2 catalogues; the Sharpless and Lynds catalogues shipped with "
@@ -112,6 +112,19 @@ DATA_SOURCES: list[dict] = [
 ]
 
 
+#: the icons' credit, in two halves around the licence's link (About and the installer's notices say it alike)
+ICONS_CREDIT = ("Interface icons from IBM Carbon, © IBM Corp., under the Apache License 2.0 ",
+                "recoloured and resized here; the licence text ships with the icons.")
+ICONS_LICENCE_LINK = "https://www.apache.org/licenses/LICENSE-2.0"
+#: the closing line of the data sources
+NON_COMMERCIAL = "Gaia, NSNS and the NGC/IC data of W. Steinicke are free for non-commercial use only."
+#: the entry the installer adds after the Gaia extracts once it fetches FLOAT's own star catalogue (not yet: the data
+#: release does not exist, and the extracts' entry says what the product reads until then)
+FETCHED_CATALOGUE = dict(name="FLOAT star catalogue", by="FLOAT",
+                         use="Fetched at install time from FLOAT's data release, reduced to the stars FLOAT reads; "
+                             "derived from the Zenodo extracts above.")
+
+
 def icons_html() -> str:
     """The icons of the interface (Apache-2.0 asks to say what is used), as rich text."""
     from .icons import BLOCK_ROLES, CARBON
@@ -119,9 +132,9 @@ def icons_html() -> str:
     rows = "".join(f"<tr><td>{e(k)}</td><td>&nbsp;·&nbsp;{e(v)}</td></tr>" for k, v in sorted(CARBON.items()))
     own = ", ".join(e(r.removeprefix("block_")) for r in sorted(set(BLOCK_ROLES.values()) - set(CARBON)))
     return (f"<h3>{e(_('Icons'))}</h3>"
-            f"<p>{e(_('Interface icons from IBM Carbon, © IBM Corp., under the Apache License 2.0 '))}"
-            f"(<a href='https://www.apache.org/licenses/LICENSE-2.0'>apache.org/licenses/LICENSE-2.0</a>), "
-            f"{e(_('recoloured and resized here; the licence text ships with the icons.'))}</p>"
+            f"<p>{e(_(ICONS_CREDIT[0]))}"
+            f"(<a href='{ICONS_LICENCE_LINK}'>apache.org/licenses/LICENSE-2.0</a>), "
+            f"{e(_(ICONS_CREDIT[1]))}</p>"
             f"<p>{e(_('Function → Carbon icon:'))}</p><table>{rows}</table>"
             f"<p>{e(_('The block icons were drawn for this program: {names}.').format(names=own))}</p>")
 
@@ -148,6 +161,59 @@ def data_sources_html() -> str:
         if s.get("note"):
             bits.append(e(_(s["note"])))
         out.append("<p>" + "<br>".join(bits) + "</p>")
-    out.append(f"<p>{e(_('Gaia, NSNS and the NGC/IC data of W. Steinicke are free for non-commercial use only.'))}</p>")
+    out.append(f"<p>{e(_(NON_COMMERCIAL))}</p>")
     out.append(icons_html())
     return "".join(out)
+
+
+def notices_text(fetched_catalogue: bool = False, width: int | None = None) -> str:
+    """The installer's THIRD-PARTY-NOTICES: every entry of DATA_SOURCES and the icons, as plain text in the current
+    language (the labels and uses translated; names, licences, terms, references and acknowledgements as written).
+    ``fetched_catalogue``: the installer fetches FLOAT's own star catalogue, said after the Gaia extracts. ``width``:
+    lines folded at that many characters; none by default, a paragraph per line, which the installer's page and a
+    text editor fold to their own width (folded here, they would be folded twice)."""
+    import textwrap
+
+    def wrap(text: str, first: str = "", next_: str = "") -> list[str]:
+        if not width:
+            return [first + text]
+        return textwrap.wrap(text, width, initial_indent=first, subsequent_indent=next_, break_on_hyphens=False,
+                             break_long_words=False)
+
+    def field(text: str) -> list[str]:
+        return wrap(text, "  ", "    ")
+
+    sources = list(DATA_SOURCES)
+    if fetched_catalogue:
+        at = next(i for i, s in enumerate(sources) if "zenodo" in s["link"]) + 1
+        sources.insert(at, FETCHED_CATALOGUE)
+    title = _("FLOAT: third-party notices")
+    out = [title, "=" * len(title), "", *wrap(_("The product reads these data. Thanks to their authors.")),
+           *wrap(_("The Asterion plate solver's licence and third-party notices are in the asterion folder of this "
+                   "installation.")), ""]
+    for s in sources:
+        out.append(s["name"])
+        lines = [_("By: {by}").format(by=s["by"])]
+        if s.get("version"):
+            lines.append(_("Version: {version}").format(version=s["version"]))
+        lines.append(_("Used for: {use}").format(use=_(s["use"])))
+        if s.get("licence"):
+            lines.append(_("Licence: {licence}").format(licence=s["licence"]))
+        if s.get("link"):
+            lines.append(_("Link: {link}").format(link=s["link"]))
+        if s.get("terms"):
+            lines.append(_("Terms:") + f" “{s['terms']}”")
+        if s.get("contact"):
+            lines.append(_("Contact: {address}").format(address=s["contact"]))
+        if s.get("cite"):
+            lines.append(_("To cite: {refs}").format(refs=s["cite"]))
+        if s.get("ack"):
+            lines.append(_("Acknowledgement asked:") + f" “{s['ack']}”")
+        if s.get("note"):
+            lines.append(_(s["note"]))
+        for line in lines:
+            out += field(line)
+        out.append("")
+    out += wrap(_(NON_COMMERCIAL)) + ["", _("Icons")]
+    out += field(f"{_(ICONS_CREDIT[0])}({ICONS_LICENCE_LINK}), {_(ICONS_CREDIT[1])}")
+    return "\n".join(out) + "\n"

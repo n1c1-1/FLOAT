@@ -206,6 +206,85 @@ def test_staging_refuses_a_missing_or_different_file(tmp_path):
         build_mod.stage_asterion(tmp_path / "b", lock, tmp_path / "cache", ask_version=False)
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="junctions are Windows'")
+def test_junction_probe(tmp_path, monkeypatch):
+    """The probe of the stage's drive: yes on NTFS (the test folder's), no where a junction cannot be made (exFAT,
+    as the failure is simulated here); it leaves nothing behind either way."""
+    import _winapi
+    build_mod = load_build()
+    assert build_mod.junctions_work(tmp_path / "ntfs")
+    assert list((tmp_path / "ntfs").iterdir()) == []
+
+    def refused(target, link):
+        raise OSError(1, "Incorrect function")
+    monkeypatch.setattr(_winapi, "CreateJunction", refused)
+    assert not build_mod.junctions_work(tmp_path / "exfat")
+    assert list((tmp_path / "exfat").iterdir()) == []
+
+
+def test_build_refuses_a_stage_without_links_early(tmp_path, monkeypatch):
+    """On such a drive the build stops before staging anything, and says where to stage instead."""
+    build_mod = load_build()
+    monkeypatch.setattr(build_mod, "junctions_work", lambda folder: False)
+    monkeypatch.setattr(build_mod, "stage", lambda *a: pytest.fail("staged on a drive without links"))
+    monkeypatch.setattr(sys, "argv", ["build.py", "--stage", str(tmp_path / "stage"), "--out", str(tmp_path / "out")])
+    with pytest.raises(SystemExit, match="NTFS"):
+        build_mod.main()
+    assert not (tmp_path / "stage").exists() and not (tmp_path / "out").exists()
+
+
+def test_notices_are_written_from_every_credit(tmp_path):
+    """THIRD-PARTY-NOTICES comes from credits.py alone: every entry with its name, author, licence, link, references
+    and acknowledgement as written, the icons too; the French one has every label translated; the language is left
+    as it was."""
+    from astro_gpu.client import credits, i18n
+    build_mod = load_build()
+    paths = build_mod.write_notices(tmp_path)
+    assert [p.name for p in paths] == list(build_mod.NOTICES.values())
+    assert i18n.language() == "en"
+    for path in paths:
+        raw = path.read_bytes()
+        assert raw.startswith(b"\xef\xbb\xbf") and b"\r\n" in raw          # UTF-8 with its mark, Windows lines
+        text = raw.decode("utf-8-sig")
+        for s in credits.DATA_SOURCES:
+            for key in ("name", "by", "version", "licence", "link", "terms", "contact", "cite", "ack"):
+                if s.get(key):
+                    assert s[key] in text, (path.name, s["name"], key)
+        assert credits.ICONS_LICENCE_LINK in text
+        assert credits.FETCHED_CATALOGUE["name"] not in text                 # not fetched yet
+    en = paths[0].read_text(encoding="utf-8-sig")
+    assert all(s["use"] in en for s in credits.DATA_SOURCES) and credits.NON_COMMERCIAL in en
+    i18n.set_language("fr")
+    try:
+        credits.notices_text(fetched_catalogue=True)
+        assert i18n.missing() == set()
+    finally:
+        i18n.set_language("en")
+
+
+def test_notices_say_the_fetched_catalogue_after_the_extracts():
+    from astro_gpu.client import credits
+    text = credits.notices_text(fetched_catalogue=True)
+    assert text.index("Gaia DR3 offline extracts") < text.index(credits.FETCHED_CATALOGUE["name"]) < text.index(
+        "Hipparcos and Tycho-2")
+    assert "derived from the Zenodo extracts above" in text
+
+
+def test_inno_setup_shows_and_installs_the_notices():
+    """Each language's wizard shows its notices before the installation (an information page: nothing to accept),
+    and the files go to {app} with the rest of the stage."""
+    build_mod = load_build()
+    text = (ROOT / "installer" / "float.iss").read_text(encoding="utf-8")
+    languages = text.split("[Languages]")[1].split("\n[")[0]
+    for lang, name in build_mod.NOTICES.items():
+        line = next(ln for ln in languages.splitlines() if ln.startswith(f'Name: "{lang}"'))
+        assert f'InfoBeforeFile: "{{#StageDir}}\\{name}"' in line
+    files = text.split("[Files]")[1].split("\n[")[0]
+    assert 'Source: "{#StageDir}\\*"' in files and 'DestDir: "{app}"' in files
+    assert "NOTICES" not in files.split("Excludes:")[1].split(";")[0]
+    assert "LicenseFile" not in text                                         # nothing to accept
+
+
 def test_inno_setup_installs_and_removes_the_asterion_folder():
     """The folder comes with the [Files] line that copies the whole stage; an update removes the former one first and
     the uninstaller removes it, by name, as the other folders of the program."""

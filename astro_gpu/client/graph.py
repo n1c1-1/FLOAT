@@ -2166,6 +2166,8 @@ class GraphView(QGraphicsView):
                 to_post.append((_("To Post"), lambda _c=False, q=p: self.workflowMenu.emit("to_post", q.pid)))
             elif node.key == "fusion" or self.can_exit(node):   # question 3: an Image's own image, as other blocks;
                 to_post.append((_("To Post"), lambda: self.sendToPost.emit(node)))     # in Post already: said
+            if node.key == "image" and node.handle:          # a bare Image: its workflow renamed on it as any other (#156)
+                m.addAction(_("Rename")).triggered.connect(lambda: self.workflowMenu.emit("rename", p.pid))
             m.addAction(_("Delete") + "\t" + _("Del")).triggered.connect(lambda: self.remove_block(node, None))
             if node.key == "image":
                 for text, fn in to_post:
@@ -2898,7 +2900,7 @@ class GraphPage(QWidget):
         w = getattr(self.graph, "sel_wire", None)
         if node is None and w is not None:                # a wire still chosen: its layer stays in the panel
             self.show_wire(w)
-        self.build_tools()
+        self.build_tools_free()
         if not self.is_blank():
             self.hide_templates()
         self.panel.corner.setToolTip(_("Fold to icons"))     # issue #44: its words follow the language as the page's
@@ -3015,8 +3017,9 @@ class GraphPage(QWidget):
             head_l = QLabel(_(title).upper())                 # a group's header, as the graph's phase bands
             head_l.setStyleSheet("color: #8b93a1; font-size: 8pt; font-weight: 600; letter-spacing: 1px; "
                                  "background: transparent;")
-            head_l.setVisible(not folded)                     # folded: only the blocks' first letters
-            if auto:
+            if folded:                                        # folded: only the blocks' first letters. Hidden, never
+                head_l.hide()                                 # shown, before it has its parent: shown, it was a window
+            if auto:                                          # for an instant, which closed an open menu (#154)
                 self._only_unfolded(head_l)
             self.tl.addWidget(head_l)
             for b in blocks:
@@ -3026,6 +3029,20 @@ class GraphPage(QWidget):
         self.combine_card = self.cards["composition"]
         self.tl.addStretch(1)
         self._fit_palette()
+
+    def build_tools_free(self):
+        """The palette built again, or once the menu open closes (#154): a right-click on another workflow's block makes
+        it current while its menu opens; the palette's cards and headers, replaced under it, could close it."""
+        menu = QApplication.activePopupWidget()
+        if not isinstance(menu, QMenu):
+            self.build_tools()
+        elif not getattr(self, "_tools_waiting", False):
+            self._tools_waiting = True                   # once, whatever refreshes come meanwhile
+            menu.aboutToHide.connect(lambda: QTimer.singleShot(0, self, self._tools_after_menu), Qt.SingleShotConnection)
+
+    def _tools_after_menu(self):
+        self._tools_waiting = False
+        self.build_tools_free()                          # a submenu closed: its menu may still be open
 
     def _only_unfolded(self, w: QWidget):
         """Shown only unfolded: its place kept when it is not, and no width asked of the strip."""
@@ -3854,7 +3871,9 @@ class GraphPage(QWidget):
                 if isinstance(it, WireItem):              # that stands for it
                     return it.pid == pid
                 return (it.node.key == "post" or it.node.handle) and bool(it.node.paths) and it.node.paths[0].pid == pid
-            if not self.graph.edit_name(anchor, 1, p.name, lambda name: self.rename_typed(pid, name)):
+            it = self.graph.find_item(anchor)             # an Image block's title is the name (#155): typed there
+            line = 0 if isinstance(it, BlockItem) and it.node.key == "image" else 1
+            if not self.graph.edit_name(anchor, line, p.name, lambda name: self.rename_typed(pid, name)):
                 self.select(index=s.paths.index(p), step="post")
                 self.focus_panel_name()
         elif action == "duplicate":                        # at once: no template window after the project's start

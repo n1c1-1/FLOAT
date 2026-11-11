@@ -1726,6 +1726,33 @@ def test_a_layer_is_renamed_in_place_in_its_row(post, monkeypatch):
     assert all(r.name_edit is None for r in v.rows)
 
 
+def test_a_name_typed_in_place_has_its_rows_width_and_shows_its_start(post):
+    """#153: renamed in place, a layer whose row shows a note ("Normal · 100% · preview") had its name in a field about
+    50 px wide beside the note, only its end shown ("e layers"). While the name is typed the note gives its room, the
+    field takes the row's width, the name shown from its start; the note is back after."""
+    v = post.view
+    lay = named(v, "Full")
+    lay["name"], lay["mode"], lay["opacity"] = "Colour full · Combine layers", "Screen", 60.0
+    v.rebuild()
+    QApplication.processEvents()
+
+    def row():
+        return next(r for r in v.rows if r.lay["id"] == lay["id"])
+    r = row()
+    assert r.sub.isVisibleTo(r)
+    width = r.n.width()
+    v.rename(lay)
+    QApplication.processEvents()
+    ed = r.name_edit
+    assert ed is not None and ed.selectedText() == lay["name"] and not r.sub.isVisibleTo(r)
+    assert ed.width() >= width + r.sub.width()                         # the row's width, the note's room too
+    assert ed.geometry().right() >= r.width() - r.layout().contentsMargins().right() - 3     # (its 2 px border)
+    assert ed.cursorPosition() == 0                                    # its start in view
+    r.end_name(False)
+    QApplication.processEvents()
+    assert r.sub.isVisibleTo(r) and r.n.isVisibleTo(r)                 # the note back
+
+
 def test_sliders_are_greyed_with_their_reason_and_double_click_resets(post):
     from astro_gpu.client.post3 import ContSlider
     v = post.view

@@ -3435,25 +3435,26 @@ class ProjectModel(QObject):
         return f"{base} {n}"
 
     def image_name(self, base: str) -> str:
-        """The name of one more Image workflow named after its kind (``base``: "Image"), in the edit that adds it. One
-        alone has no number; with others, all are numbered as their blocks are, in the project's order (``node_title``),
-        the first too: a workflow still named ``base`` takes its block's number (a name the user typed never changes),
-        and the new one the number its block will show (issue #134: "Image" beside "Image 2", blocks Image 1 and 2)."""
-        blocks: list = []                                  # the Image blocks, a branch sharing its source's counted once
-        for q in self.paths:
-            if isinstance(q.source, dict) and "path" in q.source:
-                k = self.block_key(q, "image")
-                if all(k != b for b, _q in blocks):
-                    blocks.append((k, q))
-        if not blocks:
+        """The name of one more Image workflow named after its kind (``base``: "Image"), in the edit that adds it. The
+        name carries the number and the block's title shows it (``node_title``; #155: numbered by place, the blocks
+        shifted beside their lines once a middle one was deleted). One alone has no number; with others, a workflow still
+        named ``base`` takes the first number free (#134; a name the user typed never changes), and the new one the
+        next: a number freed by a deletion is taken again ("Image 2" beside Image 1, 3 and 4)."""
+        if not any(isinstance(q.source, dict) and "path" in q.source for q in self.paths):
             return self.unique_name(base)
-        for i, (_k, q) in enumerate(blocks):
-            if q.name == base and f"{base} {i + 1}" not in {x.name for x in self.paths}:
+
+        def free() -> str:
+            names = {x.name for x in self.paths}
+            n = 1
+            while f"{base} {n}" in names:
+                n += 1
+            return f"{base} {n}"
+        for q in self.paths:
+            if q.name == base and isinstance(q.source, dict) and "path" in q.source:
                 with self._edit():
-                    self._rename(q.pid, f"{base} {i + 1}")
+                    self._rename(q.pid, free())
                 self._rebuild_views()                     # inside a batch the views are built at its end: now
-        want = f"{base} {len(blocks) + 1}"
-        return want if want not in {x.name for x in self.paths} else self.unique_name(base, numbered=True)
+        return free()
 
     def add_path(self, name: str, opts: dict, params: dict | None = None, end: str | None = None) -> WorkflowView:
         """A new workflow. Without settings of its own it joins the current one's pre-processing (the settings of

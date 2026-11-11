@@ -202,7 +202,8 @@ def test_a_fusion_is_greyed_until_its_channels_have_astrometry_and_says_what_it_
 
 def test_one_image_sent_to_post_from_a_block_is_not_numbered(qapp, tmp_path, monkeypatch):
     """Round 4: a block of an Image's chain sent to Post (a branch with the same source) made the only Image block
-    "Image 1"; a second Image file makes them "Image 1" and "Image 2"."""
+    "Image 1"; it shows its workflow's name, not the branch's. A second Image file: each block its workflow's name, which
+    carries the number (#155), a name given as it is."""
     w, m, page = open_page(tmp_path, monkeypatch, workflows=())
     try:
         tif = frames(tmp_path / "img", ["a.tif", "b.tif"])
@@ -220,7 +221,7 @@ def test_one_image_sent_to_post_from_a_block_is_not_numbered(qapp, tmp_path, mon
         settle(w, page)
         g = Graph(m)
         images = {id(g.node_of(q, "image")): g.node_of(q, "image") for q in m.paths}
-        assert sorted(node_title(m, n) for n in images.values()) == ["Image 1", "Image 2"]
+        assert sorted(node_title(m, n) for n in images.values()) == ["Image", "Other"]
     finally:
         done(w, m, page)
 

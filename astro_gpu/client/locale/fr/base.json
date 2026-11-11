@@ -908,6 +908,12 @@
   "Version: {version}": "Version : {version}",
   "Terms:": "Conditions :",
   "Contact: {address}": "Contact : {address}",
+  "FLOAT: third-party notices": "FLOAT : mentions des tiers",
+  "The Asterion plate solver's licence and third-party notices are in the asterion folder of this installation.": "La licence du solveur astrométrique Asterion et ses mentions des tiers sont dans le dossier asterion de cette installation.",
+  "By: {by}": "Par : {by}",
+  "Used for: {use}": "Sert à : {use}",
+  "Link: {link}": "Lien : {link}",
+  "Fetched at install time from FLOAT's data release, reduced to the stars FLOAT reads; derived from the Zenodo extracts above.": "Téléchargé à l'installation depuis la publication des données de FLOAT, réduit aux étoiles que FLOAT lit ; dérivé des extraits Zenodo ci-dessus.",
   "Not possible here: one image is already stretched for the eye (the final image, rendered by Post), the other is linear data. Each keeps its own stretch.": "Impossible ici : l'une des images est déjà étirée pour l'œil (l'image finale, rendue par Post), l'autre contient les données brutes. Chacune garde son propre étirement.",
   "An image of {block} is a layer of Post": "Une image du bloc {block} est un calque de Post",
   "pretrained network": "réseau pré-entraîné",
@@ -1067,5 +1073,5 @@
   "Leave the crop as it was (Esc)": "Laisser le recadrage comme il était (Échap)",
   "Heal spots, dust and satellite trails: click or paint over them (Alt+click: the source by hand)": "Effacer taches, poussières et traînées de satellites : cliquer ou peindre dessus (Alt+clic : la source à la main)",
   "Add a filter": "Ajouter un filtre",
-  "The plate solver that gives Astrometry its first solution, with its index of the Tycho-2 stars (installed separately).": "Le solveur astrométrique qui donne à l'astrométrie sa première solution, avec son index des étoiles de Tycho-2 (installé à part)."
+  "The plate solver that gives Astrometry its first solution, with its index of the Tycho-2 stars, both installed with FLOAT.": "Le solveur astrométrique qui donne à l'astrométrie sa première solution, avec son index des étoiles de Tycho-2, tous deux installés avec FLOAT."
 }

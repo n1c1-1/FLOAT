@@ -494,11 +494,15 @@ class LayerRow(QFrame):
                          f"border-bottom: 1px solid {ACCENT}; border-radius: 0; }}")
         self._names.insertWidget(self._names.indexOf(self.n), ed)
         self.n.hide()
+        # the note under way while it is typed: beside it the field had about 50 px, only the name's end shown (#153)
+        self._sub_shown = not self.sub.isHidden()
+        self.sub.hide()
         ed.show()                                        # (a child made after its row was shown)
         ed.editingFinished.connect(lambda: self.end_name(True))
         ed.installEventFilter(self)
         QApplication.instance().installEventFilter(self)          # a click anywhere else keeps the name
-        ed.selectAll()
+        n = len(ed.text())
+        ed.setSelection(n, -n)                           # all selected, the cursor at its start: the name's start shown
         ed.setFocus(Qt.OtherFocusReason)
 
     def end_name(self, keep: bool):
@@ -512,6 +516,7 @@ class LayerRow(QFrame):
         ed.hide()
         ed.deleteLater()
         self.n.show()
+        self.sub.setVisible(self._sub_shown)
         if keep:
             lay = self.panel.layer(self.lay["id"])       # (the layers may have been built again meanwhile)
             if lay is not None:
@@ -807,7 +812,9 @@ class PostView(QWidget):
         self.version_lab = label(_("Version"), "dim")
         self.cb_version = QComboBox()
         self.cb_version.setEditable(True)
-        self.cb_version.setLineEdit(NameEdit())          # its name's start shown, "…" at its end (#146)
+        # its name's start shown, "…" at its end (#146); made in the list, the list's own field: made apart, it was styled
+        # as a field of its own, its padding and border inside the list's, its text 13 px high, a g's tail cut (#152)
+        self.cb_version.setLineEdit(NameEdit("", self.cb_version))
         self.cb_version.setToolTip(_("The version shown; type here to rename it"))
         # one width whatever its names, today's (about "Version 1"), within bounds: a long name never pushes the bar, it
         # is cut (#146; as wide as its names, the list resized itself after the bar's layout and covered New version)

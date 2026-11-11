@@ -47,8 +47,10 @@ RestartApplications=no
 ExtraDiskSpaceRequired=3221225472
 
 [Languages]
-Name: "en"; MessagesFile: "compiler:Default.isl"
-Name: "fr"; MessagesFile: "compiler:Languages\French.isl"
+; the notices of the data and programs FLOAT carries (build.py writes them from the credits of About), shown before
+; the installation, nothing to accept; both stay in {app}
+Name: "en"; MessagesFile: "compiler:Default.isl"; InfoBeforeFile: "{#StageDir}\THIRD-PARTY-NOTICES.txt"
+Name: "fr"; MessagesFile: "compiler:Languages\French.isl"; InfoBeforeFile: "{#StageDir}\THIRD-PARTY-NOTICES.fr.txt"
 
 [CustomMessages]
 en.DesktopIcon=Create a desktop shortcut

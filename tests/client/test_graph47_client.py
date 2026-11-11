@@ -799,8 +799,117 @@ def test_an_image_added_beside_one_numbers_both_as_their_blocks(qapp, tmp_path, 
         assert m.rename(m.paths[0].pid, "M 31")
         page.palette_action("image")
         settle(w, page)
-        assert [q.name for q in m.paths] == ["M 31", "Image 2"]    # typed: kept; the new one, its block's number
+        assert [q.name for q in m.paths] == ["M 31", "Image 1"]    # typed: kept; the new one, the first number free
+        same_numbers(["M 31", "Image 1"])                          # (#155), its block's title its name
     finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def test_deleting_a_middle_image_keeps_each_blocks_title_its_workflows_name(qapp, tmp_path, monkeypatch):
+    """Issue #155: Several images then the Image template (Image 1 to 4), Image 2 deleted: the blocks were numbered again
+    1, 2, 3 beside their lines Image 1, 3, 4, and an Image from the palette was a workflow "Image 2" on a block "Image 4".
+    The workflow's name carries the number: the blocks say Image 1, 3, 4; the new Image takes the number freed, 2, and
+    its block, its line and the palette all say "Image 2"."""
+    from astro_gpu.client.blocks import node_title
+
+    def titles():
+        g = Graph(m)
+        out = {}
+        for n in (x for x in g.nodes if x.key == "image"):
+            assert g.summary(n).startswith(node_title(m, n) + " · "), (node_title(m, n), g.summary(n))
+            out[n.paths[0].name] = node_title(m, n)
+        return out
+    w, m, page = _blank_page(tmp_path, monkeypatch)
+    try:
+        page.show_templates()
+        next(c for c in page.templates.cards if c.t["key"] == "images").mousePressEvent(None)
+        settle(w, page)
+        d = page.new_workflow()
+        d.pick(next(c.t for c in d.cards if c.t["key"] == "image"))
+        d._create()
+        settle(w, page)
+        assert [q.name for q in m.paths] == ["Image 1", "Image 2", "Image 3", "Image 4"]
+        page.workflow_action("delete", next(q.pid for q in m.paths if q.name == "Image 2"))
+        settle(w, page)
+        assert titles() == {"Image 1": "Image 1", "Image 3": "Image 3", "Image 4": "Image 4"}
+        page.palette_action("image")
+        settle(w, page)
+        assert [q.name for q in m.paths] == ["Image 1", "Image 3", "Image 4", "Image 2"]
+        assert titles() == {"Image 1": "Image 1", "Image 2": "Image 2", "Image 3": "Image 3", "Image 4": "Image 4"}
+        assert m.path.name == "Image 2" and node_title(m, page.current_node()) == "Image 2"
+        assert page._tools_sig[1] == "Image 2"                     # the palette places in it
+        assert m.rename(m.path.pid, "M 31")                        # a name typed: the block says it
+        settle(w, page)
+        assert titles()["M 31"] == "M 31"
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def test_the_menu_of_another_workflows_block_stays_open(qapp, tmp_path, monkeypatch):
+    """Issue #154: a right-click on a block of a workflow that is not the current one made it current; the palette, built
+    again while the menu was open, showed a group header for an instant as a window of its own, which closed the menu
+    (about 40 ms). The menu stays open, the palette follows once it is closed, and its rebuild never shows a window."""
+    from PySide6.QtCore import QEvent, QObject, QPoint
+    from PySide6.QtWidgets import QMenu
+
+    from astro_gpu.client import graph as graphmod
+    from astro_gpu.client.graph import BlockItem
+    opened = []
+
+    class Menu(QMenu):                                   # shown as exec shows it, without waiting for a click
+        def exec(self, pos=None, *a):
+            opened.append(self)
+            self.popup(pos)
+
+    class Windows(QObject):                              # every top-level window shown, the menu's apart
+        seen: list = []
+
+        def eventFilter(self, obj, e):                   # noqa: N802
+            if e.type() == QEvent.Show and obj.isWidgetType() and obj.isWindow() and not isinstance(obj, QMenu):
+                self.seen.append(obj)
+            return False
+    monkeypatch.setattr(graphmod, "QMenu", Menu)
+    w, m, page = open_page(tmp_path, monkeypatch, workflows=("Full", "Classic stack"))
+    page.show()
+    spy = Windows()
+    try:
+        settle(w, page)
+        m.select(0, "post")
+        settle(w, page)
+        other = m.paths[1]
+        n = next(x for x in page.graph.graph.nodes if x.handle and [q.pid for q in x.paths] == [other.pid])
+        it = next(x for x in page.graph.scene().items() if isinstance(x, BlockItem) and x.node is n)
+
+        class Click:
+            def screenPos(self):                        # noqa: N802
+                return page.graph.mapToGlobal(QPoint(200, 200))
+
+            def accept(self):
+                pass
+        sig = page._tools_sig
+        qapp.installEventFilter(spy)
+        it.contextMenuEvent(Click())
+        for _i in range(5):
+            QApplication.processEvents()
+        assert m.path.pid == other.pid                   # the block's workflow made current
+        assert opened and opened[-1].isVisible(), "the menu closed itself"
+        assert page._tools_sig == sig                    # the palette waits for the menu
+        assert not spy.seen, spy.seen
+        opened[-1].hide()
+        for _i in range(3):
+            QApplication.processEvents()
+        assert page._tools_sig != sig                    # then follows the workflow made current
+        assert page.palette_path().pid == other.pid and page._tools_sig[1] == other.name
+        page._tools_sig = None                           # built again whole: no window shown, not even for an instant
+        page.build_tools()
+        QApplication.processEvents()
+        assert not spy.seen, spy.seen
+    finally:
+        qapp.removeEventFilter(spy)
         page.close()
         m.close(save=False)
         w.stop()
@@ -1351,6 +1460,37 @@ def test_rename_from_a_blocks_menu_types_the_name_on_the_block(qapp, tmp_path, m
         m.undo()
         settle(w, page)
         assert m.view(full.pid).name == "Full"                   # one Undo step
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def test_a_bare_image_workflow_is_renamed_on_its_block(qapp, tmp_path, monkeypatch):
+    """Issue #156: an Image workflow with no block after it had only Delete in its block's menu. Its Rename types the
+    name on the block's title, which shows it (#155); Enter renames, one Undo step."""
+    from PySide6.QtCore import QRectF
+    w, m, page = _blank_page(tmp_path, monkeypatch)
+    no_window(monkeypatch)
+    page.show()
+    try:
+        page.show_templates()
+        next(c for c in page.templates.cards if c.t["key"] == "image").mousePressEvent(None)
+        settle(w, page)
+        img = next(n for n in page.graph.graph.nodes if n.key == "image")
+        assert m.graph(img.paths[0]) == []                       # bare: no block after it
+        menu_action(page, img, "Rename", monkeypatch).trigger()
+        ed = page.graph.name_editor()
+        assert ed is not None and ed.selectedText() == "Image" and ed.hasFocus()
+        blk = page.graph.find_item(lambda it: getattr(it, "node", None) is img)
+        title = page.graph.mapFromScene(blk.mapRectToScene(QRectF(8, 5, blk.w - 14, 22))).boundingRect()
+        assert title.intersects(ed.geometry())                    # over the title, which shows the name
+        type_name(page, "M 31")
+        settle(w, page)
+        assert [q.name for q in m.paths] == ["M 31"]
+        m.undo()
+        settle(w, page)
+        assert [q.name for q in m.paths] == ["Image"]             # one Undo step
     finally:
         page.close()
         m.close(save=False)
