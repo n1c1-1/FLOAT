@@ -1021,20 +1021,25 @@ def set_excluded(p: Project2, pairs: Iterable[tuple[int, str]], excluded: bool =
     p.validate()
 
 
-def health_checks(p: Project2) -> list[Check]:
-    """What to look at before running: no lights, no bias, flats of several sessions merged into one master, the star
-    size per session (once Registration is done) and the disk the calibrated cache needs. Worker thread (it reads
-    the frame lists and one header)."""
+def health_checks(p: Project2, dates: dict[int, list[tuple[str, str]]] | None = None) -> list[Check]:
+    """What to look at before running: no lights, no bias, flats of several sessions merged into one master, frames
+    whose own date contradicts their file names', the star size per session (once Registration is done) and the disk
+    the calibrated cache needs. Worker thread (it reads the frame lists and one header). ``dates``: {session id:
+    (path, time) of lights} whose headers the caller has read already, their own dates only (never a file's date on
+    disk: a copy's); none, nothing is said of the dates (the Inventory's record does not say where a time came from)."""
     out: list[Check] = []
     inp = p.inputs()
     n = {k: len(getattr(inp, k)) for k in KINDS}
     if not p.sessions or not n["lights"]:
         return [Check("warn", "no_lights", "No light frames yet")]
-    from .io.frames import colour_session, master_kinds
+    from .io.frames import clock_disagreement, colour_session, master_kinds, name_date
     keys = _keys(p)
     same: dict[tuple, list[str]] = {}               # one warning, the sessions it concerns (nine said once each)
+    dated = []                                       # sessions whose file names say a date: nothing else is looked at
     for s in keys.project.sessions:                  # issue #58: a file added by mistake, said before the run
         fr = keys.scan.session_frames(keys.project, s)
+        if fr["lights"] and name_date(fr["lights"][0][0].name) is not None:
+            dated.append(s)
         files = {k: [str(f) for f, _size in fr[k]] for k in KINDS}
         for w in type_warnings(files, master_kinds(files)):
             same.setdefault(tuple(sorted(w.items())), []).append(s.name)
@@ -1047,6 +1052,12 @@ def health_checks(p: Project2) -> list[Check]:
         w = dict(items)
         out.append(Check("warn", "file_types", type_warning_english(w, ", ".join(names)),
                          {**w, "session": ", ".join(names), "sessions": names}))
+    for s in dated:                                  # a camera whose clock was never set: said once per session; the
+        bad = clock_disagreement((dates or {}).get(s.id, ()))   # engine keeps the camera's date (star epoch, night)
+        if bad:
+            out.append(Check("warn", "clock", f"{s.name}: dates: the camera says {bad['camera']}, the file names say "
+                             f"{bad['names']}: the camera's clock was probably never set. The star positions are "
+                             "computed for the camera's date", {**bad, "session": s.name}))
     for w in p.workflows:                            # two filters in one stack: a mistake, said before the run
         flts = sorted({s.filter for s in p.sessions_of(w) if s.lights} - {""}) if w.source is None else []
         if len(flts) > 1:
