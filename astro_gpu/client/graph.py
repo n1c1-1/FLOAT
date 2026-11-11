@@ -553,7 +553,8 @@ class LinkItem(QGraphicsItem):
 
 class ProjectItem(QGraphicsItem):
     """The Project block: above the first object, out of the flow; what it says of the target by a dot (green known,
-    orange unknown to the catalogues here, grey empty). A click shows its panel."""
+    orange unknown to the catalogues here, grey empty). A click shows its panel; a double-click opens it, the keyboard
+    in its first field (issue #89)."""
 
     DOTS = {"known": OK, "unknown": WARN, "empty": "#6b7382"}
 
@@ -590,6 +591,11 @@ class ProjectItem(QGraphicsItem):
 
     def mousePressEvent(self, e):                                     # noqa: N802
         self.view.projectClicked.emit()
+        e.accept()
+
+    def mouseDoubleClickEvent(self, e):                               # noqa: N802
+        # Qt's own gave a second press, a click again: the panel shown, never its fields to be typed in (issue #89)
+        self.view.projectOpened.emit()
         e.accept()
 
 
@@ -710,6 +716,7 @@ class GraphView(QGraphicsView):
     newSession = Signal()                  # "+ Session" (issue #43)
     templatesAsked = Signal()              # the blank page's link
     projectClicked = Signal()              # the Project block
+    projectOpened = Signal()               # its double-click (issue #89): its fields, to be typed in
     sessionMenu = Signal(str, int)         # action (rename, remove), session id
     postOpened = Signal()                  # "Open Post" of the Post block's menu
     deselected = Signal()                  # 2nd round, decision 5: a click on empty space, Escape, or a wire chosen
@@ -2696,6 +2703,7 @@ class GraphPage(QWidget):
         gv.newSession.connect(self.addSession.emit)
         gv.templatesAsked.connect(self.show_templates)
         gv.projectClicked.connect(self.select_project)
+        gv.projectOpened.connect(self.open_project)
         gv.sessionMenu.connect(self.session_action)
         gv.postOpened.connect(self.open_post)
         gv.deselected.connect(self.deselect)
@@ -2811,6 +2819,28 @@ class GraphPage(QWidget):
         self._project_sel = True
         s.select()
         self.request_refresh()
+
+    def open_project(self):
+        """The Project block's double-click (issue #89): opened as a double-click opens the other blocks, here where its
+        fields are: its panel shown (over the graph when folded, back when hidden), the keyboard in its first field."""
+        self.select_project()
+        if self.dock.state == "hidden":
+            self.sidesShown.emit()
+        # after the refresh asked above: the graph is built again under the double-click, its item with it
+        QTimer.singleShot(0, self, self._type_in_project)
+
+    def _type_in_project(self, shown: bool = False):
+        if self._pending:
+            self.refresh()
+        if self.current_node() is not self.project_node:     # another block chosen meanwhile
+            return
+        self.dock.open_overlay()                         # folded to icons or automatic: over the graph; docked: as it is
+        ed = self.panel.first_field
+        if ed is not None and ed.isHidden() and not shown:   # a field just built is shown by its layout a moment later,
+            QTimer.singleShot(0, self, lambda: self._type_in_project(True))     # and a hidden one takes no keyboard
+        elif ed is not None:                             # the target, its text selected to be typed over
+            ed.setFocus(Qt.OtherFocusReason)
+            ed.selectAll()
 
     def current_node(self, g=None):
         if self.is_blank() or (self._project_sel and not self.s.sel_step):
@@ -2945,10 +2975,8 @@ class GraphPage(QWidget):
         if state and state != self.left_state:
             self.sideChosen.emit("left", state)
 
-    def set_layout(self, right: str, left: str, solo: bool):
-        """Issue #44: the right panel (docked | icons | hidden), the blocks' palette (docked | folded | hidden) and the
-        sections of the panel (one at a time on a small window)."""
-        self.panel.folds.set_solo(solo)
+    def set_layout(self, right: str, left: str):
+        """Issue #44: the right panel (docked | icons | hidden) and the blocks' palette (docked | folded | hidden)."""
         self.dock.set_state(right)
         if left != self.left_state:
             self.left_state = left
@@ -3401,10 +3429,10 @@ class GraphPage(QWidget):
             self.templates.hide()
             self.graph.show()
 
-    def template_chosen(self, t: dict, files: list):
+    def template_chosen(self, t: dict):
         from .gallery import _view_opts
         self.make_from_template(t, self.s.unique_name(t["palette"] if t.get("kind") == "fusion" else _(t["name"])),
-                                _view_opts(t), files)
+                                _view_opts(t))
 
     def new_workflow(self, start=None, tab=None):
         """New workflow: on a blank page its templates in place of the graph; else the template gallery (issue #43), or
@@ -3423,7 +3451,7 @@ class GraphPage(QWidget):
     def make_workflow(self, d):
         """The workflow the gallery's choice makes: a copy, from an image, or from the frames."""
         if d.choice is not None:
-            self.make_from_template(d.choice, d.name.text().strip() or _("New workflow"), d.opts, d.images)
+            self.make_from_template(d.choice, d.name.text().strip() or _("New workflow"), d.opts)
 
     def align_images(self) -> bool:
         """Every image in the Align images block (the palette, Post's button), which is selected; False when it cannot."""
@@ -3453,8 +3481,9 @@ class GraphPage(QWidget):
                 made.append(s.view(q.pid))
         return made[0] if made else None
 
-    def make_from_template(self, t: dict, name: str, opts: dict, files: list):
-        """The workflow a template makes: a copy, from images, or from the frames."""
+    def make_from_template(self, t: dict, name: str, opts: dict):
+        """The workflow a template makes: a copy, from images, or from the frames. It asks for nothing (issue #114): its
+        blocks are placed, its Image blocks without their file and its Sessions without frames, chosen in the graph."""
         s = self.s
         from .gallery import template_blocks, template_source
         empty = [q for q in s.paths if q.source is None and s.p.workflow(q.pid).blocks == []]
@@ -3470,14 +3499,16 @@ class GraphPage(QWidget):
             p = self.make_filters(t, name, opts)
             if p is None:
                 return
-        elif t.get("plain"):
-            p = self.place_images(files)
-            if p is None:
-                return
         elif template_source(t) in ("image", "stretched"):
+            # as many Image blocks as its picture shows ("Several images": three), each its own block and layer of Post
+            # (two Image blocks without a file are two blocks, decision 4); one Ctrl+Z takes them all away
+            n = int(t.get("images") or 1) if t.get("plain") else 1
             with s.batch():
-                p = s.add_image_workflow(name, files[0], opts, stretched=template_source(t) == "stretched")
-                s.set_graph(p, template_blocks(t))
+                made = [s.add_image_workflow(name if n == 1 else _("Image"), "", opts,
+                                             stretched=template_source(t) == "stretched") for _i in range(n)]
+                for q in made:
+                    s.set_graph(q, template_blocks(t))
+            p = s.view(made[0].pid)
         else:
             with s.batch():
                 # GUI exploration 7.2: it starts from a Session block, empty when the project has no frames yet
