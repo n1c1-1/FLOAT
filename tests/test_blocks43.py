@@ -580,6 +580,46 @@ def test_option_a_fuses_the_starless_channels_and_makes_a_star_layer(tmp_path):
     assert kept[10, 10] > 40 and np.count_nonzero(kept) < 40
 
 
+def test_a_starless_fusion_is_stretched_on_the_whole_image_with_its_stars(tmp_path):
+    """A bright coloured nebula over a quarter of the field, its stars apart (option A): Post stretches the starless
+    fusion and its star layer on the statistics of the two together, as a workflow's Split stars block does; the
+    starless fusion's own put the white point on the nebula's top, which burnt its brightest part (the Faint tones
+    off: the white point alone)."""
+    from astro_gpu.render.simple import image_stats
+    from astro_gpu.render.stars import StarSettings, StarsRenderEngine
+    from astro_gpu.stages.fusion import STARS_FILE
+    from astro_gpu.stages.star_removal import StarRemoval, StarRemovalParams
+    H, W = 96, 96
+    rng = np.random.default_rng(5)
+    yy, xx = np.mgrid[0:H, 0:W]
+    r = np.hypot(xx - 48, yy - 48)
+    neb = 40.0 / (1 + np.exp((r - 22) / 3)) + rng.normal(0, 1, (H, W))       # a quarter of the field, its sky at 0
+    starless = (neb[None] * np.array([1.0, 0.5, 0.8])[:, None, None]).astype(np.float32)   # SII, Ha, OIII
+    stars = np.zeros((3, H, W), np.float32)
+    for y, x in rng.integers(4, H - 4, (25, 2)):
+        stars += np.float32(3000 * rng.uniform(0.05, 1)) * _star(H, W, x, y).astype(np.float32)[None]
+    fused, out, split = tmp_path / "fused", tmp_path / "out", tmp_path / "split"
+    fused.mkdir()
+    np.save(fused / STARS_FILE, stars)
+    (fused / "drz_meta.json").write_text(json.dumps({"starless": True, "source": "fusion"}))
+    _output(out, starless)
+    own = image_stats(starless, np.ones((H, W), bool))
+    (out / "prep_simple.json").write_text(json.dumps({"M": np.eye(3).tolist(), "crop": [0, W, 0, H], "stats": own}))
+    pr = _Project(tmp_path, {"stack": fused, "render_simple": out, "star_removal": split}, ["star_removal"])
+    st = StarRemoval()
+    st.run(Context(pr, st, Journal(pr.logs), "cpu"), StarRemovalParams())
+    prep = json.loads((split / "prep_stars.json").read_text())
+    assert prep["fused"] and prep["stats_full"] == image_stats(starless + stars, np.ones((H, W), bool))
+
+    def clipped() -> float:
+        y = StarsRenderEngine(split, device="cpu").render(StarSettings(faint=0), 1.0, part="starless").final.numpy()
+        return float((y >= 254 / 255).any(0).mean())
+    assert clipped() < 0.01                                                   # the nebula's core keeps its tones
+    prep["stats_full"] = own
+    (split / "prep_stars.json").write_text(json.dumps(prep))
+    assert clipped() > 0.05                                                  # on its own statistics: burnt
+
+
 def test_a_starless_fusion_chain_ends_with_its_split_block(tmp_path, nights):
     p = project(tmp_path / "p", nights, "per_session")
     p.sessions[0].filter, p.sessions[1].filter = "Ha", "OIII"

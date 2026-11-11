@@ -67,7 +67,8 @@ class StarRemoval(Stage):
                    "they are.")
     deps = ("render_simple", "stack")
     Params = StarRemovalParams
-    version = f"3-{MODEL_ID}"            # 2: the network's grid notched (core/periodic.py, issue #28); 3: big tiles (#45)
+    version = f"4-{MODEL_ID}"            # 2: the network's grid notched (core/periodic.py, issue #28); 3: big tiles (#45);
+    #                                      4: a starless fusion's stretch on the whole image's statistics (whole_stats)
 
     def run(self, ctx: Context, p: StarRemovalParams) -> None:
         from .denoise import norm_params
@@ -137,7 +138,7 @@ class StarRemoval(Stage):
         ctx.save_json("prep_stars.json", {"crop": prep["crop"], "M": prep["M"],
                                           "drizzle_scale": prep.get("drizzle_scale", 1.0), "width": prep.get("width"),
                                           "height": prep.get("height"), "unit": 1.0, "background": [0.0, 0.0, 0.0],
-                                          "stats_full": prep["stats"], "fused": True})
+                                          "stats_full": whole_stats(lin, stars, valid, prep["crop"]), "fused": True})
         ctx.metric("grid_peaks", 0)
         ctx.log("the fusion's starless image and its star layer (the stars were taken off in each channel)")
         x0, x1, y0, y1 = prep["crop"]
@@ -247,6 +248,20 @@ class NAFNet(nn.Module):
         for d, up, sk in zip(self.decs, self.ups, reversed(skips)):
             x = self._run(d, up(x) + sk)
         return (self.ending(x) + x0)[:, :, :H, :W]
+
+
+def whole_stats(starless: np.ndarray, stars: np.ndarray, valid: np.ndarray, crop) -> dict:
+    """The statistics of the stretch (render/simple.image_stats) of a starless fusion with its star layer put back, on
+    the shown pixels: what a workflow's Split stars block keeps from its Output block (the whole image's, stars
+    included; render/stars.py stretches both images with them). The starless fusion's own put the white point on the
+    nebula's brightest 0.005 %: on a nebula filling the field 5 to 7 % of the pixels clipped, the stars stretched as
+    hard (NGC 6995 in SHO: 7.2 % against 0.05 % on a colour workflow)."""
+    from ..render.simple import image_stats
+    x0, x1, y0, y1 = crop
+    shown = np.zeros_like(valid)
+    shown[y0:y1, x0:x1] = True
+    shown &= valid
+    return image_stats(starless + stars, shown)
 
 
 def sky_unit(lin: np.ndarray, shown: np.ndarray) -> float:
