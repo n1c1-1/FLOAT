@@ -119,10 +119,12 @@ class Astrometry(Stage):
                    "typical residual is a few hundredths of a pixel.")
     deps = ("inventory", "stack")
     Params = AstrometryParams
-    version = "3"          # 2: the fine fit starts from Asterion's solution when it is installed: the corners can differ
+    version = "4"          # 2: the fine fit starts from Asterion's solution when it is installed: the corners can differ
                            # (NGC 7000 2 px, its Tycho-2 stars there 1.0 -> 0.5 px off; 10 frames 30 px, 6.2 -> 0.3)
                            # 3: the triangle match's random draws are seeded (``seeded_match``): a solution is the same at
                            # every run, and may differ a little from one computed before (a star used more or less)
+                           # 4: a typed target far from the frames' header pointing that does not solve the field is
+                           # followed by the header pointing as the centre: a field that failed now has a solution
     network = True
 
     def auto(self, ctx: Context) -> dict[str, Auto]:
@@ -158,7 +160,27 @@ class Astrometry(Stage):
 
     def run(self, ctx: Context, p: AstrometryParams) -> None:
         with _stoppable(ctx):
-            self._solve(ctx, p)
+            far = _header_far(ctx, p)
+            if far is None:                      # they agree, or one is not known: the centre given, as it always was
+                self._solve(ctx, p)
+                return
+            sep, (hra, hdec) = far
+            name = f" {p.target}" if p.target else ""
+            # the typed target first, without the all-sky solver (it would answer wherever the sky is, and the header's
+            # pointing would never be tried), then the header's pointing with the block's own settings
+            try:
+                self._solve(ctx, p.model_copy(update={"blind": False}))
+                ctx.metric("centre_from", "target")
+                ctx.log(f"the field is where the typed target{name} puts it, {sep:.0f} deg from the pointing in the "
+                        "frames' headers")
+                return
+            except StageError:
+                ctx.log(f"no solution around the typed target{name}, {sep:.0f} deg from the pointing in the frames' "
+                        f"headers: trying the header pointing, RA {hra:.3f} Dec {hdec:+.3f}", "warning")
+            self._solve(ctx, p.model_copy(update={"ra": hra, "dec": hdec}))
+            ctx.metric("centre_from", "header")
+            ctx.log(f"solved around the pointing in the frames' headers, not around the typed target{name}: check the "
+                    "project's target", "warning")
 
     def _solve(self, ctx: Context, p: AstrometryParams) -> None:
         import astroalign as aa
@@ -421,6 +443,33 @@ class Astrometry(Stage):
         remember_instrument(camera, pix, 206.265 * pix / (scale * S) if pix else None, bool(flip))
         ctx.log(f"solved: centre RA {c.ra.deg:.4f} Dec {c.dec.deg:.4f}, {scale:.3f}\"/px, field "
                 f"{W * scale / 3600:.2f} x {H * scale / 3600:.2f} deg, residual {np.median(res):.3f} px on {len(res)} stars")
+
+
+def _header_far(ctx: Context, p: AstrometryParams):
+    """(separation deg, (ra, dec) of the frames' header pointing) when the centre given (the typed target's) and the
+    header's pointing are both known and apart by more than the field's diagonal plus 2 degrees; None otherwise (the
+    field's size is not known without a scale: then 2 degrees only, a vain retry costing nothing but a failure)."""
+    ra, dec = ctx.metric_of("inventory", "pointing_ra"), ctx.metric_of("inventory", "pointing_dec")
+    if p.ra is None or p.dec is None or ra is None or dec is None:
+        return None
+    sep = angular_separation(p.ra, p.dec, float(ra), float(dec))
+    diag = 0.0
+    try:
+        S = float(ctx.load_json("stack", "drz_meta.json")["scale"])
+        sc = p.scale or (206.265 * p.pixel_um / p.focal_mm / S if p.focal_mm and p.pixel_um else None)
+        if sc:
+            h, w = ctx.load("stack", "drz_full.npy", mmap=True).shape[-2:]
+            diag = float(np.hypot(w, h)) * sc / 3600
+    except Exception:  # noqa: BLE001 - the size of the field is a refinement of the threshold, not a need
+        diag = 0.0
+    return (sep, (float(ra), float(dec))) if sep > diag + 2.0 else None
+
+
+def angular_separation(ra1: float, dec1: float, ra2: float, dec2: float) -> float:
+    """The angle in degrees between two sky positions (degrees)."""
+    a1, d1, a2, d2 = np.radians([ra1, dec1, ra2, dec2])
+    h = np.sin((d2 - d1) / 2) ** 2 + np.cos(d1) * np.cos(d2) * np.sin((a2 - a1) / 2) ** 2
+    return float(np.degrees(2 * np.arcsin(np.sqrt(min(1.0, h)))))
 
 
 def detect(g: np.ndarray, tile_above: int = 20_000_000) -> np.ndarray:
