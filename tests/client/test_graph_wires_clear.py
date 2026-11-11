@@ -2,8 +2,9 @@
 Synthetic stars block in two arcs drawn behind it, and nothing left Synthetic stars). A wire runs from the block it
 leaves to the block it enters; on its way it crosses the gaps, never another block's rectangle.
 
-Synthetic stars after Stars/background: the stars enter Synthetic stars, its stars enter Combine layers (Post puts them
-on the stars through its row: postengine.with_synth_rows), the starless image goes on to Combine layers clear of it."""
+Synthetic stars after Stars/background: the stars enter Synthetic stars; two wires enter Combine layers' stars input, the
+real stars from Stars/background and the synthetic ones from Synthetic stars (the two layers of the Stars group of its
+layer in Post, issue #93: postengine.with_synth_rows); the starless image goes on to Combine layers clear of it."""
 from __future__ import annotations
 
 import os
@@ -87,9 +88,13 @@ def test_synthetic_stars_feed_combine_layers_and_no_wire_passes_under_it(qapp, t
         def on(pt: QPointF, n, side):                    # on the block's left or right side
             x = n.col if side == "in" else n.col + n.w
             return abs(pt.x() - x) < 2 and n.y - BH / 2 - 1 <= pt.y() <= n.y + BH / 2 + 1
-        into_comp = [(a, b) for _it, path in wires(view) for a, b in [ends(path)] if on(b, comp, "in")]
-        assert any(on(a, synth, "out") for a, _b in into_comp), "no wire from Synthetic stars into Combine layers"
-        assert any(on(a, stars, "out") for a, _b in into_comp), "the starless image does not reach Combine layers"
+        into_comp = [(it, a, b) for it, path in wires(view) for a, b in [ends(path)] if on(b, comp, "in")]
+        assert any(on(a, synth, "out") for _it, a, _b in into_comp), "no wire from Synthetic stars into Combine layers"
+        from_stars = [(it.toolTip(), b.y()) for it, a, b in into_comp if on(a, stars, "out")]
+        assert len(from_stars) == 2, f"the starless image and the real stars do not both reach Combine layers: {from_stars}"
+        # the real stars and the synthetic ones end on the same port: the stars input
+        y_synth = next(b.y() for _it, a, b in into_comp if on(a, synth, "out"))
+        assert sum(abs(y - y_synth) < 1 for _t, y in from_stars) == 1, "the real stars do not enter the stars input"
         assert any(on(a, stars, "out") and on(b, synth, "in") for _it, path in wires(view) for a, b in [ends(path)])
         assert under(view) == []
     finally:

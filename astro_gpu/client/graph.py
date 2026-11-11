@@ -1133,10 +1133,11 @@ class GraphView(QGraphicsView):
             synth = self._synth_of(g, n)
             for i, (what, word) in enumerate(STAR_OUTPUTS):
                 yb = BH * (0.32 + 0.36 * i)
-                if what == "stars" and synth is not None:     # its stars drawn on the stars by its row in Post
+                # with Synthetic stars two wires enter the stars input: the real stars and the synthetic ones, the two
+                # layers of the Stars group of its layer in Post (#93), the real ones routed clear of the block
+                self._image_wire(n.parent, PORTS["etoiles"][i][1], n, yb, what, _(word), strong)
+                if what == "stars" and synth is not None:
                     self._image_wire(synth, BH / 2, n, yb, what, _("Synthetic stars"), strong)
-                else:
-                    self._image_wire(n.parent, PORTS["etoiles"][i][1], n, yb, what, _(word), strong)
             self._wire(n, g.final, strong)
         for src, what in g.direct:
             i = [w for w, _y in PORTS["etoiles"]].index(what)
@@ -1754,8 +1755,9 @@ class GraphView(QGraphicsView):
         return path
 
     def _synth_of(self, g: Graph, n: Node) -> Node | None:
-        """The Synthetic stars block whose stars a Combine layers block puts on its stars: its workflow's, on (Post
-        gives the layer a row of them, postengine.with_synth_rows) and in the engine's chain (a greyed one makes none)."""
+        """The Synthetic stars block whose stars a Combine layers block puts beside its real stars: its workflow's, on
+        (Post gives the Stars group of the layer a Synthetic stars layer, postengine.with_synth_rows) and in the engine's
+        chain (a greyed one makes none)."""
         sy = g.node_of(n.paths[0], "synth") if n.paths else None
         return sy if sy is not None and sy.paths and not sy.cut and not sy.grey and self._drawn(g, sy) else None
 
