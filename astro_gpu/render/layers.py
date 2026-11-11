@@ -66,6 +66,15 @@ def has_denoise(folder: str | Path) -> bool:
     return True
 
 
+def origin_of(folder: str | Path) -> str:
+    """Where the layer's image comes from (render/sliders.ORIGINS), as render_simple wrote it ("" for a folder made
+    before it did)."""
+    d = Path(folder)
+    if (d / "prep_simple.json").exists():
+        return str(json.loads((d / "prep_simple.json").read_text(encoding="utf-8")).get("origin") or "")
+    return ""
+
+
 def open_engine(folder: str | Path, device: str = "cpu") -> SimpleRenderEngine:
     d = Path(folder)
     if is_stars_folder(d):
@@ -141,7 +150,7 @@ class LayerService:
 
     def sliders_of(self, folder, part: str | None = None) -> dict[str, str]:
         """Per slider, '' when the layer offers it, else the reason it is greyed."""
-        return availability(layer_kind(folder, part), has_denoise(folder))
+        return availability(layer_kind(folder, part), has_denoise(folder), origin_of(folder))
 
     # ------------------------------------------------------------------ rendering
     def _render(self, folder, s, scale, region=None, **kw):
@@ -161,7 +170,7 @@ class LayerService:
                  blend: str | None = None):
         """The render settings of a layer: its base moved by its slider positions (and, recombined, the stars'
         blend)."""
-        s = settings_at(layer_kind(folder, part), base, sliders, has_denoise(folder))
+        s = settings_at(layer_kind(folder, part), base, sliders, has_denoise(folder), origin_of(folder))
         if blend and "blend" in type(s).model_fields:
             s = s.model_copy(update={"blend": type(s)(blend=blend).blend})
         return s

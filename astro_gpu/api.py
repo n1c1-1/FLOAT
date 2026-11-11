@@ -2810,13 +2810,23 @@ def _bounded_by_spectra(infos: list[ParamInfo]) -> None:
 
 # ---------------------------------------------------------------------------------------------- rendering and export
 
+def _origin(p: Project2, w: Workflow) -> str:
+    """Where a workflow's image comes from (render/sliders.ORIGINS): a palette fusion of narrow-band filters, a
+    monochrome sensor, else a colour camera or an opened image ("")."""
+    from .render.sliders import NARROWBAND_PALETTES
+    fusion = (w.source or {}).get("fusion")
+    if fusion:
+        return "palette" if fusion.get("palette") in NARROWBAND_PALETTES else ""
+    return "mono" if w.source is None and p.is_mono(w) else ""
+
+
 def sliders_of(p: Project2, wf: int | Workflow, part: str | None = None) -> list[SliderInfo]:
     """The Post sliders of a workflow's layer and which ones it offers (the reason when it does not). ``part``: None
     for the Output block's image, else one of the Stars block's: 'starless', 'stars', 'combined'."""
     from .render.sliders import SLIDERS, availability
     w = _keys(p).project.workflow(wf)
     kind = part or ("stacking" if w.end == "stacking" else "simple")
-    why = availability(kind, bool(w.options.get("denoise")))
+    why = availability(kind, bool(w.options.get("denoise")), _origin(p, w))
     return [SliderInfo(s.key, s.name, s.group, s.ends, not why[s.key], why[s.key]) for s in SLIDERS]
 
 

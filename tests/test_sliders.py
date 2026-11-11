@@ -121,3 +121,27 @@ def test_rendered_sliders_move_the_image():
     assert float(sat[0].std(0).mean()) < float(sat[1].std(0).mean())          # paler to more vivid
     base = eng.render(SimpleSettings(), 0.5).final
     assert torch.equal(eng.render(S.settings_at("simple", None, {k: 2 for k in S.KEYS}), 0.5).final, base)
+
+
+def test_the_halpha_slider_is_for_colour_cameras_only():
+    """render/simple.emission adds the red above the green: on an SHO fusion red is S II and green is H-alpha, so the
+    slider strengthened S II over H-alpha, the opposite of its name; a monochrome image has no such channels."""
+    from types import SimpleNamespace
+
+    from astro_gpu import api
+    assert S.availability("simple", True)["halpha"] == ""
+    assert S.availability("simple", True, "")["halpha"] == ""
+    assert S.availability("simple", True, "palette")["halpha"] == S.WHY_PALETTE
+    assert S.WHY_PALETTE == "Only for colour cameras: in a palette fusion, Hα is its own channel"
+    assert "monochrome" in S.availability("simple", True, "mono")["halpha"]
+    assert not S.availability("simple", True, "palette")["sky"]                        # the others stay
+    # a greyed slider is ignored by the settings, wherever its position is
+    assert S.settings_at("simple", None, {"halpha": 4}, True, "palette").halpha == 0.0
+    assert S.settings_at("simple", None, {"halpha": 4}, True, "").halpha > 0.0
+    # where the project says it
+    sho = SimpleNamespace(source={"fusion": {"palette": "SHO"}})
+    rgb = SimpleNamespace(source={"fusion": {"palette": "LRGB"}})
+    mono = SimpleNamespace(source=None)
+    p = SimpleNamespace(is_mono=lambda w: w is mono)
+    assert api._origin(p, sho) == "palette" and api._origin(p, rgb) == ""
+    assert api._origin(p, mono) == "mono" and api._origin(p, SimpleNamespace(source=None)) == ""

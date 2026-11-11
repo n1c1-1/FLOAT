@@ -22,6 +22,7 @@ from pydantic import field_validator
 
 from ..core.params import P, StageParams
 from ..core.stage import Context, Stage, StageError
+from ..render.sliders import NARROWBAND_PALETTES
 from .gradient import LUM, GradientParams, coverage, fit_poly_sky, image_in, poly_sky
 
 STRETCHES = ["auto"]                       # the other stretches of the spec (GHS, arcsinh, STF, none) are not in the engine
@@ -171,7 +172,8 @@ class RenderSimple(Stage):
                            # 5: the sky gradient removed before (the Gradient block): a level here;
                            # 6: that level is the Gradient block's; no emission anchor (the colour is a white balance)
                            # 7: the colour mosaic's periodic pattern notched (core/periodic.py, issue #28)
-                           # 8: the frame of a fusion is the largest rectangle where every channel has data
+                           # 8: the frame of a fusion is the largest rectangle where every channel has data;
+                           # prep_simple.json says the image's origin (mono, palette) for Post's H-alpha slider
 
     def run(self, ctx: Context, p: RenderSimpleParams) -> None:
         from ..render.simple import SimpleRenderEngine, SimpleSettings, image_stats
@@ -191,6 +193,10 @@ class RenderSimple(Stage):
         shown &= valid
         M = r.M                                     # the colour matrices of the graph, applied by image_in
         lin = src
+        # where the image comes from, for Post's H-alpha slider (render/sliders.availability): in a palette fusion of
+        # narrow-band filters red is not an H-alpha over a continuum, nor is a monochrome sensor's one channel
+        origin = ("palette" if meta.get("palette") in NARROWBAND_PALETTES else "") if fused else (
+            "mono" if ctx.has("inventory") and ctx.metric_of("inventory", "mono") else "")
         ctx.progress(0.2, "sky")
         sky_name = "channel medians"
         # issue #43: a fusion of channels keeps its palette's balance (no gains), and a monochrome or uncalibrated
@@ -247,7 +253,8 @@ class RenderSimple(Stage):
                 "stats": stats, "stretch": p.stretch, "linked": p.linked, "denoised": denoised, "color": color,
                 "sky": sky_name, "source": name, "gains": gains.tolist(),
                 "exit": None if color_like else "stacking", "width": W, "height": H,
-                "drizzle_scale": float(ctx.load_json("stack", "drz_meta.json").get("scale", 1.0))}
+                "drizzle_scale": float(ctx.load_json("stack", "drz_meta.json").get("scale", 1.0)),
+                "origin": origin}
         del lin
         if denoised:
             ctx.progress(0.65, "raw stack")

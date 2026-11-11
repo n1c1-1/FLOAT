@@ -35,6 +35,12 @@ WHY_DENOISE = "noise smoothing needs the Denoise block"
 WHY_WHOLE = "noise smoothing works on the whole image (the Output layer)"
 WHY_EXIT_STARS = "this layer leaves the graph before the Stars/background block"
 WHY_EXIT_DENOISE = "this layer leaves the graph before the Denoise block"
+WHY_PALETTE = "Only for colour cameras: in a palette fusion, Hα is its own channel"
+WHY_MONO = "Only for colour cameras: a monochrome image has no red channel over a continuum"
+#: where a layer's image comes from (``origin``, written by render_simple and read from the project): "" unknown or a
+#: colour camera, "mono" a monochrome sensor, "palette" a fusion of narrow-band filters (SHO, HSO, HOO)
+ORIGINS = ("", "mono", "palette")
+NARROWBAND_PALETTES = ("SHO", "HSO", "HOO")
 
 
 @dataclass(frozen=True)
@@ -91,13 +97,19 @@ def _check_kind(kind: str) -> str:
     return kind
 
 
-def availability(kind: str, has_denoise: bool) -> dict[str, str]:
+def availability(kind: str, has_denoise: bool, origin: str = "") -> dict[str, str]:
     """Per slider, '' when the layer offers it, else the reason it is greyed. ``kind``: one of ``KINDS`` (a layer
-    pulled from Stacking leaves the graph before Denoise and Stars)."""
+    pulled from Stacking leaves the graph before Denoise and Stars). ``origin``: see ``ORIGINS``; the H-alpha slider adds
+    the red above the green (render/simple.emission), which is the H-alpha over a continuum only in a colour camera's
+    channels: in an SHO fusion red is S II and green is H-alpha, and the slider strengthened S II over H-alpha."""
     _check_kind(kind)
     out = {}
     for s in SLIDERS:
         why = ""
+        if s.key == "halpha" and origin:
+            why = WHY_PALETTE if origin == "palette" else WHY_MONO
+            out[s.key] = why
+            continue
         if s.needs == "stars":
             if kind not in ("stars", "combined"):
                 why = WHY_EXIT_STARS if kind == "stacking" else WHY_STARS
@@ -143,12 +155,12 @@ def value_at(name: str, table: tuple[float, ...], base: float, pos: float) -> fl
 
 
 def settings_at(kind: str, base: Any = None, positions: dict[str, float] | None = None,
-                has_denoise: bool = True) -> SimpleSettings:
+                has_denoise: bool = True, origin: str = "") -> SimpleSettings:
     """The settings of a workflow layer: its base (``base_settings``) moved by the slider positions. Positions of
     unknown or greyed sliders are ignored."""
     b = base_settings(kind, base)
     model = type(b)
-    ok = availability(kind, has_denoise)
+    ok = availability(kind, has_denoise, origin)
     vals = b.model_dump()
     for key, pos in (positions or {}).items():
         sl = BY_KEY.get(key)
