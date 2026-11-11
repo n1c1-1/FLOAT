@@ -3867,13 +3867,26 @@ class ImageExportDialog(QDialog):
         self.dest.setText((Path(folder) / (slug(self.vi.name or "image") + ".fits")).as_posix())
         self.fmt.currentIndexChanged.connect(self._changed)
         self.c_data.toggled.connect(self._changed)
+        self.dest.textChanged.connect(self._ready)
         self.finished_export.connect(self._done)
         self._changed()
 
     def format_key(self) -> str:
         return self.fmt.currentData()
 
+    def _ready(self, *_a):
+        """After an export, any change of the format, the content or the file is the start of the next one: the window
+        goes back to ready (without it _go would just close the window and nothing else could be written)."""
+        if self.result_path is None:
+            return
+        self.result_path = None
+        self.go.setText(_("Export"))
+        self.cancel_b.setEnabled(True)
+        self.status.setStyleSheet("")
+        self.status.setText("")
+
     def _changed(self, *_a):
+        self._ready()
         key = self.format_key()
         fits_ = key == "fits"
         self.c_view.setEnabled(not fits_)

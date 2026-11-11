@@ -183,6 +183,7 @@ class ExportDialog(QDialog):
         v.addLayout(bb)
         self.fmt.currentIndexChanged.connect(self._format_changed)
         self.dest.textChanged.connect(self._check_dest)
+        self.dest.textChanged.connect(self._ready)
         self.dest.textChanged.connect(self.dest.setToolTip)
         self.browse.clicked.connect(self._browse)
         self.worker.progress.connect(self._progress)
@@ -225,7 +226,19 @@ class ExportDialog(QDialog):
     def format_key(self) -> str:
         return self.fmt.currentData() or "tiff16"
 
+    def _ready(self, *_a):
+        """After an export, a change of the format or of the file starts the next one: the button says Export again
+        (_export would otherwise just close the window), Cancel works, and the line about the previous file goes."""
+        if self.running or self.go.text() != _("Close"):
+            return
+        self.go.setText(_("Export"))
+        self.cancel.setEnabled(True)
+        self.bar.hide()
+        self.status.setStyleSheet("")
+        self.status.setText("")
+
     def _format_changed(self, *_a):
+        self._ready()
         key = self.format_key()
         folder, name = split_file(self.dest.text())
         self.dest.setText(f"{folder}/{name}{SUFFIX[key]}" if folder else name + SUFFIX[key])
