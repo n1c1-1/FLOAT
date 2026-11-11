@@ -46,6 +46,12 @@ def fexp(t) -> str:
     return "–" if t is None else exposure_text(t)
 
 
+def iso_word(gain) -> str:
+    """What a frame's ISO / gain number is called: "Gain" for the frames of an astro camera (FITS, GAIN), "ISO" for the
+    cameras that record an ISO speed (raw files)."""
+    return _("Gain") if gain else "ISO"
+
+
 def night_start(first: str):
     """The day the night of a frame began on (noon to noon: a frame of 00:16 on 1 January is of the night of 31
     December), a ``date``; None for a time that cannot be read."""

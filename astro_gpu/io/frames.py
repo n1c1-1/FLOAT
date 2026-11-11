@@ -73,10 +73,13 @@ class FrameInfo:
     #: ``time`` is the file's date on disk, the frame having none of its own (no EXIF date, no DATE-OBS): never a
     #: camera's clock to doubt (``clock_disagreement``). Not in ``to_dict``: the Inventory's record stays as it was
     time_from_file: bool = False
+    #: ``iso`` is a gain (a FITS frame of an astro camera: GAIN), not an ISO speed: the interface says "Gain" then.
+    #: Not in ``to_dict`` either
+    iso_is_gain: bool = False
 
     def to_dict(self) -> dict:
         d = asdict(self)
-        del d["time_from_file"]
+        del d["time_from_file"], d["iso_is_gain"]
         return d
 
 
@@ -580,6 +583,7 @@ def _fits_info(path: Path) -> FrameInfo:
                      white)
     info.exposure = _exposure_s(hd)
     info.iso = _num(hd.get("GAIN", hd.get("ISOSPEED")))
+    info.iso_is_gain = "GAIN" in hd or "ISOSPEED" not in hd
     info.time = str(hd.get("DATE-OBS", "")) or datetime.fromtimestamp(path.stat().st_mtime).isoformat()
     info.time_from_file = not hd.get("DATE-OBS")
     info.camera = str(hd.get("INSTRUME", "")).strip()

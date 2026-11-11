@@ -542,6 +542,7 @@ class SessionRow:
     last: str = ""
     exposure: float | None = None
     iso: float | None = None
+    gain: bool = False           # ``iso`` is a camera gain (FITS frames of an astro camera), said "Gain", not "ISO"
     temperature: float | None = None
     filter: str = ""
     fwhm: float | None = None    # median star size of its frames, once Registration is done
@@ -598,7 +599,7 @@ def _calib_of(files: list, hdr: dict) -> dict | None:
         med, low = _levels(mid)
         hdr[k] = {"exposure": info.exposure, "iso": info.iso, "time": info.time, "file": mid.name, "level": med,
                   "low": low, "stacked": info.stacked, "black": info.black, "white": info.white,
-                  "time_from_file": info.time_from_file}
+                  "time_from_file": info.time_from_file, "gain": info.iso_is_gain}
     return hdr[k]
 
 
@@ -687,6 +688,7 @@ def project_frames(p, wid: int | None, headers: dict | None = None) -> ProjectFr
             if a is not None:
                 first_info = first_info or a
                 row.exposure, row.iso, row.temperature = a.exposure, a.iso, a.temperature
+                row.gain = a.iso_is_gain
                 times = [x for x in (a.time, b.time if b is not None else None) if x]
                 row.first, row.last = (min(times), max(times)) if times else ("", "")
                 dates[s.id] = [(x.path, x.time) for x in (a, b)        # the file's date on disk is not a clock

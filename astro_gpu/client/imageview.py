@@ -2221,8 +2221,8 @@ class InfoBand(QFrame):
             else "",
             "weight": number(info["weight"], 2) if info.get("weight") is not None else "",
         }
-        self.cells["iso"][0].setText(_("Gain") if info.get("iso") is None and info.get("gain") is not None
-                                     else _("ISO"))
+        self.cells["iso"][0].setText(_("Gain") if info.get("is_gain") or (info.get("iso") is None
+                                                                          and info.get("gain") is not None) else _("ISO"))
         compact = bool(info.get("compact"))      # only the cells with a value (a master, a calibration frame)
         for k, (cap, val) in self.cells.items():
             val.setText(vals[k] or "–")

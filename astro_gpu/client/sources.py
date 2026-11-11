@@ -44,7 +44,7 @@ from PySide6.QtWidgets import (
 
 from . import icons as ic
 from . import prefs
-from .frames import clock_text, colour_note_text, fexp, night_start, type_warning_text
+from .frames import clock_text, colour_note_text, fexp, iso_word, night_start, type_warning_text
 from .i18n import _, hours_text, number, plural
 from .imageview import ImageView, ViewImage, quick_thumbnail
 from .services.inspect import FrameItem, ProjectFrames, calib_checks, flat_pct, light_thumb, service_of, set_calibration_excluded
@@ -179,13 +179,13 @@ def master_text(kind: str, n: int) -> str:
 
 
 # ---------------------------------------------------------------------------------------------- the files and the browser
-def calib_rows(n: int, info: dict | None, first_time: str | None) -> list[tuple[str, str]]:
+def calib_rows(n: int, info: dict | None, first_time: str | None, gain: bool = False) -> list[tuple[str, str]]:
     """The properties of a session's darks or flats: how many, the exposure (as the matching lines say it: 1/20 s, not
     1 s), ISO, and the day they were taken: the header's own date, else the file's (``first_time``, the first listed)."""
     info = info or {}
     day = (first_time or "")[:10] if info.get("time_from_file", True) else str(info.get("time") or "")[:10]
     return [(_("Frames"), str(n)), (_("Exposure"), fexp(info.get("exposure")) if info else "–"),
-            ("ISO", str(int(info["iso"])) if info.get("iso") else "–"), (_("Taken on"), day or "–")]
+            (iso_word(gain or info.get("gain")), str(int(info["iso"])) if info.get("iso") else "–"), (_("Taken on"), day or "–")]
 
 
 class SourcesView(QWidget):
@@ -737,9 +737,10 @@ class SourcesView(QWidget):
             # the day and the month of the night's first day, both (the day of the night with the frame's own month
             # said "night of 31/01" for a frame of 00:16 on 1 January)
             d0 = night_start(row.first)
-            return plural(n, "{n} light · {exp} · ISO {iso} · night of {day}/{month}",
-                          "{n} lights · {exp} · ISO {iso} · night of {day}/{month}",
-                          exp=fexp(row.exposure), iso=int(row.iso) if row.iso else "–", day=d0.day if d0 else "–",
+            return plural(n, "{n} light · {exp} · {word} {iso} · night of {day}/{month}",
+                          "{n} lights · {exp} · {word} {iso} · night of {day}/{month}",
+                          exp=fexp(row.exposure), word=iso_word(getattr(row, "gain", False)),
+                          iso=int(row.iso) if row.iso else "–", day=d0.day if d0 else "–",
                           month=f"{d0.month:02d}" if d0 else "–")
         folders = {Path(f).parent.name for f in self.s.session_files(self.sid, key)}
         if len(folders) == 1:                       # one frame is one frame: a master said "1 frames · master_DOF"
@@ -827,10 +828,18 @@ class SourcesView(QWidget):
         where = {"bias": _("the bias"), "black level": _("the black level"), "dark level": _("the darks' level")}
         dk = c.get("darks")
         if dk:
-            same = dk.get("exposure") == ref.exposure and dk.get("iso") == ref.iso
-            t = (_("Darks: exposure {exp}, ISO {iso}, same as the lights.") if same else
-                 _("Darks: exposure {exp}, ISO {iso}, different from the lights."))
-            out.append((same, t.format(exp=fexp(dk.get("exposure")), iso=int(dk.get("iso") or 0))))
+            # a value one side does not record is no mismatch (a master dark without GAIN was read as gain 0 and said
+            # different from lights of gain 90); the exposures are compared as numbers, to the microsecond
+            de, le, dg, lg = dk.get("exposure"), ref.exposure, dk.get("iso"), ref.iso
+            same = (de is None or le is None or abs(de - le) < 1e-6) and (dg is None or lg is None or dg == lg)
+            word = iso_word(ref.gain or dk.get("gain"))
+            if dg is None:
+                t = (_("Darks: exposure {exp}, same as the lights; {word} not recorded in the darks.") if same else
+                     _("Darks: exposure {exp}, different from the lights; {word} not recorded in the darks."))
+            else:
+                t = (_("Darks: exposure {exp}, {word} {iso}, same as the lights.") if same else
+                     _("Darks: exposure {exp}, {word} {iso}, different from the lights."))
+            out.append((same, t.format(exp=fexp(de), word=word, iso=int(dg or 0))))
             if dk.get("stacked") is not None:
                 out.append((None, master_text("Darks", dk["stacked"])))
             far = bad.get("dark_far")
@@ -933,6 +942,9 @@ class SourcesView(QWidget):
         """The info band of a frame: what its header and the engine say."""
         f = self.items[i]
         info = {"time": f.time, "exposure": f.exposure, "iso": f.iso, "temperature": f.temperature}
+        row = self._row()
+        if row is not None and row.gain:
+            info["is_gain"] = True                       # the band's cell says "Gain" (a FITS frame of an astro camera)
         if self.group == "lights":
             info.update(fwhm=f.fwhm, roundness=f.roundness, weight=f.weight,
                         transparency=(f.transparency / self.p90) if f.transparency is not None else None,
@@ -1151,9 +1163,10 @@ class SourcesView(QWidget):
             tr = f"{100 * f.transparency / self.p90:.0f}" if f.transparency is not None else "–"
             exp = f.exposure if f.exposure is not None else (row0.exposure if row0 else None)
             iso = f.iso if f.iso is not None else (row0.iso if row0 else None)
-            t = _("{file} · {time} · {exp} · ISO {iso} · FWHM {fwhm} px · transparency {transp} % of the best · "
+            t = _("{file} · {time} · {exp} · {word} {iso} · FWHM {fwhm} px · transparency {transp} % of the best · "
                   "weight {weight}").format(
                 file=f.name, time=(f.time or "")[11:16], exp=fexp(exp), iso=int(iso) if iso else "–",
+                word=iso_word(row0.gain if row0 else False),
                 fwhm=number(f.fwhm, 2) if f.fwhm is not None else "–",
                 transp=tr, weight=number(f.weight, 2) if f.weight is not None else "–")
         else:
@@ -1220,7 +1233,7 @@ class SourcesView(QWidget):
             rows = [(_("Camera"), cam.get("camera") or "–"),
                     (_("Sensor"), _("{w} × {h} px, {cfa} pattern").format(w=cam.get("width"), h=cam.get("height"),
                                                                           cfa=cam.get("cfa"))),
-                    (_("Exposure"), fexp(row0.exposure)), ("ISO", f"{int(row0.iso)}" if row0.iso else "–"),
+                    (_("Exposure"), fexp(row0.exposure)), (iso_word(row0.gain), f"{int(row0.iso)}" if row0.iso else "–"),
                     (_("First frame"), (row0.first or "–").replace("T", " ")[:16]),
                     (_("Last frame"), (row0.last or "–").replace("T", " ")[:16]),
                     (_("Integration"), f"{hours_text(hours)} ({n} × {fexp(row0.exposure)})"),
@@ -1231,7 +1244,7 @@ class SourcesView(QWidget):
             # said the exposure of the Ha one
             info = (row0.calib.get(self.group) if row0 is not None else None) or (
                 d.darks if self.group == "darks" else (d.flats if self.group == "flats" else {}))
-            rows = calib_rows(len(self.items), info, first.time)
+            rows = calib_rows(len(self.items), info, first.time, row0.gain if row0 is not None else False)
         folder = Path(self.items[min(self.cur, len(self.items) - 1)].path).parent.as_posix() if self.items else ""
         if folder:
             rows.append((_("Folder"), folder))
