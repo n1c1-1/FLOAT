@@ -30,7 +30,7 @@ DATA_SOURCES: list[dict] = [
              "institutions, in particular the institutions participating in the Gaia Multilateral Agreement."),
     dict(name="Gaia DR3 offline extracts", by="I. Cass, A. Knagg-Baugh, C. Melis, C. Richard (2025), Zenodo",
          version="astrometric v1.0.0, spectrophotometric v1.0.1",
-         use="Gaia stars and spectra read offline, once downloaded in Settings › Catalogs & astrometry.",
+         use="The source of FLOAT's star catalogue below; also read as they are when installed.",
          licence="CC BY 4.0", link="https://doi.org/10.5281/zenodo.14692304",
          cite="Siril Astrometry Catalogue extracted from Gaia DR3, v1.0.0, doi:10.5281/zenodo.14692304; Siril "
               "Spectrophotometric Catalog extracted from Gaia DR3, v1.0.1, doi:10.5281/zenodo.14738271."),
@@ -118,11 +118,14 @@ ICONS_CREDIT = ("Interface icons from IBM Carbon, © IBM Corp., under the Apache
 ICONS_LICENCE_LINK = "https://www.apache.org/licenses/LICENSE-2.0"
 #: the closing line of the data sources
 NON_COMMERCIAL = "Gaia, NSNS and the NGC/IC data of W. Steinicke are free for non-commercial use only."
-#: the entry the installer adds after the Gaia extracts once it fetches FLOAT's own star catalogue (not yet: the data
-#: release does not exist, and the extracts' entry says what the product reads until then)
+#: FLOAT's own star catalogue (the release sky-data-v1), said after the Gaia extracts it is derived from: what the
+#: installer and Settings fetch
 FETCHED_CATALOGUE = dict(name="FLOAT star catalogue", by="FLOAT",
-                         use="Fetched at install time from FLOAT's data release, reduced to the stars FLOAT reads; "
-                             "derived from the Zenodo extracts above.")
+                         use="Fetched once, by the installer or from Settings › Catalogs & astrometry, from FLOAT's data "
+                             "release: the stars FLOAT reads, the spectra in a compact form; derived from the Zenodo "
+                             "extracts above.",
+                         licence="CC BY 4.0; Gaia data CC BY-NC 3.0 IGO",
+                         link="https://github.com/n1c1-1/FLOAT/releases/tag/sky-data-v1")
 
 
 def icons_html() -> str:
@@ -144,7 +147,9 @@ def data_sources_html() -> str:
     e = html.escape
     out = [f"<h3>{e(_('Data sources'))}</h3>",
            f"<p>{e(_('The product reads these data. Thanks to their authors.'))}</p>"]
-    for s in DATA_SOURCES:
+    sources = list(DATA_SOURCES)
+    sources.insert(next(i for i, s in enumerate(sources) if "zenodo" in s["link"]) + 1, FETCHED_CATALOGUE)
+    for s in sources:
         bits = [f"<b>{e(s['name'])}</b> · {e(s['by'])}", e(_(s["use"])),
                 e(_("Licence: {licence}").format(licence=s["licence"]))
                 + f" · <a href='{e(s['link'])}'>{e(s['link'])}</a>"]
