@@ -331,7 +331,9 @@ PATTERNS: list[tuple[re.Pattern, str, tuple]] = [
          "{0}/{1} frames aligned, residual {2} px, FWHM {3} px, transparency p10/p90 {4}/{5}", ()),
         (r"^drizzle (\d+)x(\d+) from (\d+) frames in ([\d.]+) min, ([\d.]+) % pixels rejected$",
          "drizzle {0}x{1} from {2} frames in {3} min, {4} % pixels rejected", ()),
-        # issue #125: the time of each pass of the stack (stages/stack.PassClock, core/stack_classic.py)
+        # issue #125: the threads of the stack on the processor, the time of each of its passes (stages/stack.PassClock,
+        # core/stack_classic.py)
+        (r"^stacking on the processor with (\d+) threads$", "stacking on the processor with {0} threads", ()),
         (r"^pass (\d) done in ([\d.]+) min, of which (\d+) s reading the frames$",
          "pass {0} done in {1} min, of which {2} s reading the frames", ()),
         (r"^normalisation done in ([\d.]+) min, of which (\d+) s reading the frames$",

@@ -320,6 +320,8 @@ class Stack(Stage):
         if p.method == "classic" and classic_missing():
             raise StageError(CLASSIC_NOT_YET)
         dev = ctx.device
+        if dev.type == "cpu":                         # the threads its maths and compiled kernels run on (issue #125)
+            ctx.log(f"stacking on the processor with {torch.get_num_threads()} threads")
         info = ctx.load_json("calibrate", "cache.json")
         H, W = info["height"], info["width"]
         colour = bool(info.get("rgb_path"))           # frames already in colour (issue #57): three planes, no mosaic

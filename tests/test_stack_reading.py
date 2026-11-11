@@ -1,7 +1,7 @@
 """The Stack stage reads each calibrated frame by one explicit read into a buffer, no longer through a memory map of
 the cache (issue #125): every file it writes is the same to the bit as when it read through the map, with the drizzle
 (its own rejection, the integration's) and the Classic method, on mosaic frames and on frames already in colour; and
-the log says the time of each pass."""
+the log says the time of each pass, and once the threads the stack computes with on the processor."""
 from __future__ import annotations
 
 import functools
@@ -10,6 +10,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import torch
 from test_stacking import copy_project, run_stage, toy_night
 
 from astro_gpu.stages import calibrate as cal
@@ -81,6 +82,8 @@ def test_read_or_mapped_the_stack_writes_the_same_files(night, monkeypatch, sett
                                                                                     settings.get("method", "")]
     for what in passes:
         assert f"{what} done in " in log and " s reading the frames" in log, what
+    # the threads it computes with, once (issue #125: what a laptop's slower stack could not tell)
+    assert log.count(f"stacking on the processor with {torch.get_num_threads()} threads") == 1
     if settings:
         assert "classic: rejection and means done in " in log
 
