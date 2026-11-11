@@ -20,6 +20,12 @@ Layers (a list, top first, as in the reference image editor; saved as it is in `
   None). In a Stars and background layer, ``sub`` names the one of its two images (``SUBS``) the filter applies to,
   before they are put together; None: to the recombined image.
 
+The stars of a Combine layers layer are a group (issue #93), in its ``blend`` over the starless image: the real stars
+at its bottom (their eye: ``shown["real"]``), and, when the workflow has the Synthetic stars block, a Synthetic stars
+layer beside them (``is_synth``: saved as a filter row of the stars, ``filter`` "synth", whose image is the block's
+stars), composed in Normal through its mask over what is under it in the group; the group's other rows are filters on
+what is under them in it. The panel shows the group as ``rows`` says, the composition reads it from the same rows.
+
 The model is the reference image editor's: a filter that applies to one layer is that layer's child; a filter that applies to
 everything below is a layer of its own. In the list a layer's children sit just above it, top child first; the panel
 shows each pixel layer with its children indented under it (``rows``), and reading the panel from the bottom up is the
@@ -493,8 +499,11 @@ FILTERS = {
                  source="A spot replaced by a patch of its neighbourhood, seamlessly (Poisson image editing, Perez et "
                         "al. 2003, as the healing brush of photo editors); the source found automatically, movable",
                  params=[SPOTS("spots")]),
+    # the Synthetic stars layer of a Stars group (is_synth, issue #93): never in the filter menu
     "synth": dict(name="Synthetic stars", family="Detail", fn=lambda x, p, ctx: ctx.synth() if ctx.synth else x, hidden=True,
-                  source="The stars of the Synthetic stars block, through this row's mask", params=[]),
+                  source="The stars of the Synthetic stars block: where the mask is white they replace the real stars, "
+                         "where it is painted black the real stars show",
+                  params=[]),
     "halpha_red": dict(name="H-alpha to red", family="Combine", fn=f_halpha, needs="halpha",
                        source="The engine's H-alpha map added to the red channel",
                        params=[P("strength", "Strength", 0, 1, 0, step=0.01)]),
@@ -542,24 +551,50 @@ def new_mask() -> dict:
     return {"parts": [], "feather": 0.0, "density": 100.0, "invert": False}
 
 
+def is_synth(lay: dict) -> bool:
+    """The Synthetic stars layer of a Combine layers layer's Stars group (issue #93): a sibling of the real stars in the
+    panel. It is kept as a row nested in the stars (``sub`` "stars", see the module's docstring) so that its mask,
+    eye, opacity and mode are a layer's as any other; its image is the Synthetic stars block's, composed in Normal over
+    what is under it in the group: where its mask is white the synthetic stars replace the real ones, never add to
+    them."""
+    return lay.get("kind") == "filter" and lay.get("filter") == "synth"
+
+
+def new_synth_layer(gid: int) -> dict:
+    """A Synthetic stars layer in the Stars group of the layer ``gid``. Its mask starts open for both methods (issue
+    #93; the image's shape started closed, the instrument's open): the synthetic stars replace all the real ones, the
+    block's effect shows at once; its brush subtracts, so that what is painted brings the real stars back."""
+    row = new_filter_layer("synth", gid, "stars")
+    row["mask"] = dict(new_mask(), parts=[dict(new_part("brush"), op="sub")])
+    return row
+
+
 def with_synth_rows(layers: list[dict], wanted: dict[int, str]) -> list[dict]:
-    """The layers with one Synthetic stars row on the stars of each combined layer whose workflow has the block
-    (``wanted``: {workflow id: its method}), none on the others. With the image's shape the row's mask starts closed, to
-    be painted (the corners); with the instrument's PSF, open: every star replaced."""
-    out = []
+    """The layers with one Synthetic stars layer in the Stars group of each combined layer whose workflow has the block
+    (``wanted``: {workflow id: its method}), none in the others. A new one goes at the bottom of the group's rows above
+    the real stars (applied first: the filters of the group then act on the stars it leaves). A composition saved
+    before the group (#93) holds the same row, its mask and settings: it is kept as it is, so the image is the same;
+    one put on the starless image by an older drag goes back to the stars, a second one in a group goes."""
+    out, seen = [], set()
     for lay in layers:
-        if lay.get("kind") == "filter" and lay.get("filter") == "synth":
+        if is_synth(lay):
             t = next((x for x in layers if x["id"] == lay.get("target")), None)
-            if t is None or t.get("pid") not in wanted:
+            if t is None or not is_group(t) or t.get("pid") not in wanted or t["id"] in seen:
                 continue
+            seen.add(t["id"])
+            if lay.get("sub") != "stars":
+                lay = dict(lay, sub="stars")
         if is_group(lay) and lay["pid"] in wanted and not any(
-                x.get("filter") == "synth" and x.get("target") == lay["id"] for x in layers):
-            row = new_filter_layer("synth", lay["id"], "stars")
-            if wanted[lay["pid"]] != "instrument":
-                row["mask"] = dict(new_mask(), parts=[new_part("brush")])
-            out.append(row)
+                is_synth(x) and x.get("target") == lay["id"] for x in layers):
+            out.append(new_synth_layer(lay["id"]))
         out.append(lay)
     return out
+
+
+def has_synth(layers: list[dict], gid: int) -> bool:
+    """Whether the Stars group of the layer ``gid`` holds a Synthetic stars layer (then its real stars are a row of
+    their own, with their eye)."""
+    return any(is_synth(x) and x.get("target") == gid for x in layers)
 
 
 def new_workflow_layer(pid: int, name: str, visible=False, part=None, base=None) -> dict:
@@ -607,8 +642,10 @@ def new_filter_layer(key: str, target=None, sub=None) -> dict:
             "target": target, "sub": sub}
 
 
-#: the names of a Stars and background layer's two images (POST_PART_NAMES of the model)
-SUB_NAMES = {"starless": "Starless image", "stars": "Stars alone"}
+#: the rows of a Combine layers layer's images in the panel: its stars (a group, in Screen over the starless image,
+#: issue #93), the real stars in that group when it holds Synthetic stars, its starless image
+SUB_NAMES = {"starless": "Starless image", "stars": "Stars", "real": "Real stars"}
+SUB_ROWS = ("stars", "real", "starless")
 
 
 def is_group(lay: dict) -> bool:
@@ -682,6 +719,8 @@ def rows(layers: list[dict], collapsed=()) -> list[tuple[dict, int]]:
                 out.append((sub_row(lay, sub), 1))
                 if (lay["id"], sub) not in collapsed:
                     out += [(k, 2) for k in kids if k.get("sub") == sub]
+                    if sub == "stars" and any(map(is_synth, kids)):     # the group's bottom row (#93)
+                        out.append((sub_row(lay, "real"), 2))
     return out
 
 
@@ -793,6 +832,8 @@ def load_layers(raw, alive: set[int]) -> list[dict]:
                 lay["blend"] = d.get("blend") if d.get("blend") in BLENDS else BLENDS[0]
                 shown = d.get("shown") if isinstance(d.get("shown"), dict) else {}
                 lay["shown"] = {k: bool(shown.get(k, True)) for k in SUBS}
+                if "real" in shown:                              # the real stars' eye, in a Stars group (#93)
+                    lay["shown"]["real"] = bool(shown["real"])
             lay["sliders"] = {k: _num(v, 2.0, 0, 4) for k, v in (d.get("sliders") or {}).items()}
         elif d.get("kind") == "image" and isinstance(d.get("key"), str) and d["key"]:
             lay = new_image_layer(d["key"], str(d.get("name") or "?"), bool(d.get("visible", True)))
@@ -1292,12 +1333,19 @@ class Composer:
     def group_rgb(self, lay, own, level, abox, canvas, ctx, cache, draft, check, keep_mask, where, want, thumbs):
         """A Stars and background layer whose sub-layers have filters (or one of them hidden): its two images, each
         through its own filters (bottom first), put together as its ``blend`` says (render/stars.blend: the same three
-        modes as Post's); with what the result depends on."""
+        modes as Post's); with what the result depends on. The stars are a group (#93): the real stars at its bottom,
+        then its rows bottom first, the Synthetic stars layer among them (Normal through its mask: it covers what is
+        under it); the real stars' eye off, the group starts from black."""
         got, sigs = [], [_settings_of(lay)]
         for sub in self._shown(lay):                                      # the starless image first, then the stars
             part = dict(lay, part=sub)
-            x = self.layer_rgb(part, level, abox, canvas, cache, draft, check)
-            sig = _sig(self._key(part, level, abox, canvas))
+            if sub == "stars" and not (lay.get("shown") or {}).get("real", True) and \
+                    any(is_synth(fl) and fl.get("sub") == "stars" for fl in own):
+                hw = (abox[3] - abox[1], abox[2] - abox[0])
+                x, sig = np.zeros((*hw, 3), np.float32), _sig("no real stars", hw)
+            else:
+                x = self.layer_rgb(part, level, abox, canvas, cache, draft, check)
+                sig = _sig(self._key(part, level, abox, canvas))
             synth = dict(lay, part="synth")
             ctx.synth = None
             if sub == "stars" and self.provider.available(source_id(synth)):

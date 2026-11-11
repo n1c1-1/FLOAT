@@ -21,7 +21,8 @@ comes back here (``postChanged``).
 
 A workflow with the Stars block comes in as a Stars and background layer (its starless image and its stars, each
 stretched, the stars put back in Screen: render/stars.py), with the star sliders; the others as their Output block's
-image.
+image. Its stars are a group (#93): the real stars and, with the Synthetic stars block, the synthetic ones beside them,
+each with its eye; the synthetic stars are added and removed here too, their block with them in the graph.
 
     page = PostPage3(model)              # model: the ProjectModel
     page.goWorkflow                      # "Go to graph →"
@@ -87,11 +88,15 @@ from .postengine import (
     OLD_NAMES,
     OPS,
     PART_SETTINGS,
+    SUB_NAMES,
+    SUB_ROWS,
     SUBS,
     THUMB,
     children,
+    has_synth,
     is_group,
     is_pixel,
+    is_synth,
     load_layers,
     move,
     new_filter_layer,
@@ -151,7 +156,7 @@ def tr_name(n: str, image: bool = False) -> str:
         n, k = n[:-len(COPY)], k + 1
     if image:
         return _pieces(n, maybe) + _(COPY) * k
-    known = {f["name"] for f in FILTERS.values()} | set(OLD_NAMES) | set(POST_PART_NAMES.values())
+    known = {f["name"] for f in FILTERS.values()} | set(OLD_NAMES) | set(POST_PART_NAMES.values()) | set(SUB_NAMES.values())
 
     def piece(b):                                 # "Combine layers 2": a numbered copy of a Split image's name
         m = re.fullmatch(r"(.+) (\d+)", b)
@@ -415,7 +420,8 @@ class LayerRow(QFrame):
         eye.setChecked(lay["visible"])
         eye.setToolTip(_("Show / hide layer"))
         if lay["kind"] == "sub":
-            eye.setToolTip(_("Show / hide this image in its Combine layers layer"))
+            eye.setToolTip(_("Show / hide the real stars: hidden, the synthetic stars show alone") if lay["sub"] == "real"
+                           else _("Show / hide this image in its Combine layers layer"))
             eye.toggled.connect(lambda v: panel.set_shown(lay["id"], lay["sub"], v))
         else:
             eye.toggled.connect(lambda v: panel.set_visible(lay["id"], v))
@@ -444,7 +450,7 @@ class LayerRow(QFrame):
         self.t.setFixedSize(SMALL_W + 2, SMALL_H + 2)
         self.t.setPixmap(small(thumb))
         self.t.setStyleSheet(f"border: 1px solid {ACCENT if sel_layer else 'transparent'};")
-        if is_pixel(lay) or lay["kind"] == "sub":       # its image, larger, under the mouse
+        if is_pixel(lay) or lay["kind"] == "sub" or is_synth(lay):       # its image, larger, under the mouse
             self.t.installEventFilter(self)
         else:
             self.t.setToolTip(_("Layer settings"))
@@ -472,11 +478,17 @@ class LayerRow(QFrame):
         # at its usual blend (Normal, 100 %) a row says nothing more
         usual = f"{_('Normal')} · {with_unit('100', '%')}"
         self.sub.setVisible(lay["kind"] != "sub" and self.sub.full_text() != usual)
-        if lay["kind"] == "sub":
+        if lay["kind"] == "sub" and lay["sub"] == "real":
+            self.setToolTip(_("The stars of the Stars/background block, under the synthetic stars: they show where the "
+                              "synthetic stars' mask is black"))
+        elif lay["kind"] == "sub":
             self.setToolTip(_("The filters nested here apply to this image only, before the stars are put back on "
                               "the starless image"))
+        elif is_synth(lay):
+            self.setToolTip(_("The stars of the Synthetic stars block: where the mask is white they replace the real "
+                              "stars, where it is painted black the real stars show"))
         elif lay.get("sub"):
-            self.setToolTip(_('Applies to "{name}" only').format(name=_(POST_PART_NAMES[lay["sub"]])))
+            self.setToolTip(_('Applies to "{name}" only').format(name=_(SUB_NAMES[lay["sub"]])))
         elif depth:
             tgt = panel.layer(lay.get("target"))
             self.setToolTip(_('Applies to "{name}" only').format(name=layer_name(tgt)) if tgt else "")
@@ -563,7 +575,7 @@ class LayerRow(QFrame):
             self.panel.layer_menu(self.lay, e.globalPosition().toPoint())
 
     def mouseMoveEvent(self, e):
-        if self.lay["kind"] == "sub":                    # a sub-layer stays in its layer
+        if self.lay["kind"] == "sub" or is_synth(self.lay):     # a sub-layer, the synthetic stars stay in their group
             return
         if self._press is not None and (e.position().toPoint() - self._press).manhattanLength() > 8:
             if not self._dragging:
@@ -1837,14 +1849,19 @@ class PostView(QWidget):
 
     # ------------------------------------------------------------ the layers panel
     def thumb(self, lay) -> QPixmap:
-        if lay["kind"] == "filter":
+        if is_synth(lay) or lay["kind"] == "sub":       # an image of a Combine layers layer (the real stars: its stars)
+            hit = self._lthumbs.get((lay["target"], "synth") if is_synth(lay) else
+                                    (lay["id"], "stars" if lay["sub"] == "real" else lay["sub"]))
+            if hit is not None:
+                return hit[1]
+        if lay["kind"] == "filter" and not is_synth(lay):
             pm = QPixmap(TW, TH)
             pm.fill(QColor("#1d2129"))
             qp = QPainter(pm)
             draw_icon(qp, QRectF((TW - 20) / 2, (TH - 20) / 2, 20, 20), "filter_layer", "dim", 20)
             qp.end()
             return pm
-        hit = self._lthumbs.get((lay["id"], lay["sub"]) if lay["kind"] == "sub" else lay["id"])
+        hit = None if lay["kind"] in ("sub", "filter") else self._lthumbs.get(lay["id"])
         if hit is not None:
             return hit[1]
         pm = QPixmap(TW, TH)
@@ -1869,7 +1886,7 @@ class PostView(QWidget):
         for row in self.rows:
             if is_pixel(row.lay) and row.lay["id"] in self._lthumbs:
                 row.t.setPixmap(small(self._lthumbs[row.lay["id"]][1]))
-            elif row.lay["kind"] == "sub" and (row.lay["id"], row.lay["sub"]) in self._lthumbs:
+            elif row.lay["kind"] == "sub" or is_synth(row.lay):
                 row.t.setPixmap(small(self.thumb(row.lay)))
 
     def show_big(self, lay, at: QWidget):
@@ -1925,7 +1942,7 @@ class PostView(QWidget):
             self._collapsed -= {lay["target"], (lay["target"], lay.get("sub"))}     # the selected filter is shown
         for lay, depth in rows(self.layers, self._collapsed):
             sl = self.sel is not None and self.sel[0] == lay["id"]
-            if lay["kind"] == "sub" or (sl and self.sel[1] in SUBS):      # a sub-layer is selected as (its layer, it)
+            if lay["kind"] == "sub" or (sl and self.sel[1] in SUB_ROWS):  # a sub-layer is selected as (its layer, it)
                 sl = sl and self.sel[1] == lay.get("sub", "layer")
                 if lay["kind"] == "sub":
                     n = sum(1 for f in children(self.layers, lay["id"]) if f.get("sub") == lay["sub"])
@@ -1956,7 +1973,7 @@ class PostView(QWidget):
             QTimer.singleShot(0, lambda: (self.lsc.ensureWidgetVisible(sel_row, 0, 10),
                                           self.lsc.horizontalScrollBar().setValue(0)))
         lay = self.layer(self.sel[0]) if self.sel else None
-        self.b_dup.setEnabled(lay is not None)
+        self.b_dup.setEnabled(lay is not None and not is_synth(lay))      # one Synthetic stars layer per group
         why = self.s.align_problem() if hasattr(self.s, "align_problem") else "needs 2 images"     # greyed, and why
         self.b_align.setEnabled(not why)
         self.b_align.setToolTip(_("Align the image layers") if not why else _("Align the image layers") + ": " + why)
@@ -2007,6 +2024,8 @@ class PostView(QWidget):
         layer's two images (``key`` (its id, the image)); the image does not change. A hidden filter that was selected
         leaves the selection to the row it is under."""
         self._collapsed ^= {key}
+        if key in self._collapsed and isinstance(key, tuple) and key[1] == "stars" and self.sel == (key[0], "real"):
+            self.sel = key                               # the real stars folded in their Stars group: the group (#93)
         cur = self.layer(self.sel[0]) if self.sel else None
         if key in self._collapsed and cur is not None and cur["kind"] == "filter":
             lid, sub = key if isinstance(key, tuple) else (key, None)
@@ -2048,8 +2067,11 @@ class PostView(QWidget):
                 if is_f and is_pixel(r.lay) and 0.28 <= rel <= 0.72:
                     return None                         # onto its own layer: where it is
                 if is_f and r.lay["kind"] == "sub" and 0.28 <= rel <= 0.72:
-                    return {"parent": r.lay["target"], "index": 0, "row": i, "sub": r.lay["sub"],
-                            "text": _('Applies to "{name}" only').format(name=_(POST_PART_NAMES[r.lay["sub"]]))}
+                    # onto the real stars: the bottom of the Stars group, under the synthetic stars (#93)
+                    real = r.lay["sub"] == "real"
+                    index = len([c for c in children(self.layers, r.lay["target"]) if c["id"] not in mine]) if real else 0
+                    return {"parent": r.lay["target"], "index": index, "row": i, "sub": "stars" if real else r.lay["sub"],
+                            "text": _('Applies to "{name}" only').format(name=_(SUB_NAMES[r.lay["sub"]]))}
                 gap = i if rel < 0.5 else i + 1
                 break
         above = rs[gap - 1] if gap > 0 else None
@@ -2080,7 +2102,8 @@ class PostView(QWidget):
                     above if above is not None and (above.depth == 2 or above.lay["kind"] == "sub") else None
                 sub = near.lay.get("sub") if near is not None else None
                 if sub:
-                    text, depth = _('Applies to "{name}" only').format(name=_(POST_PART_NAMES[sub])), 2
+                    text, depth = _('Applies to "{name}" only').format(name=_(SUB_NAMES[sub])), 2
+                    sub = "stars" if sub == "real" else sub        # in the Stars group, above the real stars
                 return {"parent": parent, "index": index, "sub": sub, "text": text,
                         "y": below.geometry().top() - 2 if below is not None else rs[-1].geometry().bottom() + 1,
                         "x0": rs[0].geometry().left() + 30 + 4 + INDENT * depth}
@@ -2179,7 +2202,7 @@ class PostView(QWidget):
             tgt = next((x for x, _kids in t[i + 1:] if is_pixel(x)), None)
         out = [(_('"{name}" only').format(name=layer_name(tgt)), tgt["id"])] if tgt else []
         if tgt is not None and is_group(tgt):           # or one of its two images (issue #3)
-            out += [(_('"{name}" only').format(name=_(POST_PART_NAMES[sub])), (tgt["id"], sub)) for sub in SUBS]
+            out += [(_('"{name}" only').format(name=_(SUB_NAMES[sub])), (tgt["id"], sub)) for sub in SUBS]
         return out + [(_("All below"), None)]
 
     @staticmethod
@@ -2193,10 +2216,27 @@ class PostView(QWidget):
     def layer_menu_of(self, lay) -> QMenu:
         """A layer's right-click menu."""
         m = QMenu(self)
+        if is_synth(lay):                                # its mask, and out with its block (#93)
+            if lay["mask"] is None:
+                m.addAction(_("Add mask")).triggered.connect(lambda: self.add_mask(lay))
+            else:
+                m.addAction(_("Delete mask")).triggered.connect(lambda: self.remove_mask(lay))
+            m.addSeparator()
+            a = m.addAction(_("Delete"))
+            a.setToolTip(_("Takes them out, their block in the graph too · Ctrl+Z"))
+            m.setToolTipsVisible(True)
+            a.triggered.connect(lambda: self.remove_synth(self.layer(lay["target"])))
+            return m
         self._fill_filters(m.addMenu(_("Add a filter")), lay)     # #120: where one looks for them first
-        if lay["kind"] == "sub":                         # one of a layer's two images: its filters only
+        if lay["kind"] == "sub":                         # one of a layer's images: its filters only; the Stars group,
+            if lay["sub"] == "stars":                    # its synthetic stars too (#93)
+                m.addSeparator()
+                self._synth_action(m, self.layer(lay["id"]))
             return m
         m.addSeparator()
+        if is_group(lay):
+            self._synth_action(m, lay)
+            m.addSeparator()
         m.addAction(_("Duplicate")).triggered.connect(lambda: (self.select(lay["id"], "layer"), self.duplicate()))
         if lay["mask"] is None:
             m.addAction(_("Add mask")).triggered.connect(lambda: self.add_mask(lay))
@@ -2230,6 +2270,96 @@ class PostView(QWidget):
         """An image's kind said by the user: computed again."""
         self.s.set_image_file(q, stretched=stretched)
         self.runAsked.emit()
+
+    # ---- the Synthetic stars of a Stars group (#93): added and removed here, their block with them in the graph
+    def _synth_action(self, menu: QMenu, group):
+        """"Synthetic stars", ticked when the Stars group of ``group`` holds them: a click places their block in the
+        graph or takes it out; greyed with its reason on hover when the block cannot be placed."""
+        if group is None or not is_group(group):
+            return
+        on = has_synth(self.layers, group["id"])
+        why = "" if on else self.synth_problem(group)
+        a = menu.addAction(_("Synthetic stars"))
+        a.setCheckable(True)
+        a.setChecked(on)
+        a.setEnabled(not why)
+        a.setToolTip(why or (_("Takes them out, their block in the graph too · Ctrl+Z") if on else
+                             _("Places the Synthetic stars block after Stars/background in the graph: they replace "
+                               "the real stars, paint their mask where the real ones stay · Ctrl+Z")))
+        menu.setToolTipsVisible(True)
+        a.triggered.connect(lambda _c=False: self.remove_synth(group) if on else self.add_synth(group))
+
+    def synth_problem(self, group) -> str:
+        """Why the Synthetic stars block cannot be placed in the workflow of a Combine layers layer, "" when it can."""
+        p = self.path(group.get("pid"))
+        if p is None or not hasattr(self.s, "insert_block"):
+            return _("not in workflow")
+        return self.s.palette_reason(p, "synth") if hasattr(self.s, "palette_reason") else ""
+
+    def _model_change(self, fn, toast: str) -> bool:
+        """A change of the graph made from here (``fn``): one step of the workflows' Undo, which Post's Undo takes back
+        (MODEL_STEP), the composition it puts back being none of Post's own steps. False when the model refused it."""
+        self.flush()
+        self._restoring = True
+        try:
+            fn()
+        except ValueError as e:
+            self.toasted.emit(str(e))
+            return False
+        finally:
+            self._restoring = False
+        self.undo.append(MODEL_STEP)
+        self.redo.clear()
+        self._undo_buttons()
+        self.toasted.emit(toast)
+        return True
+
+    def add_synth(self, group):
+        """Synthetic stars in the Stars group of a Combine layers layer: their block placed in the graph after
+        Stars/background, as the palette places it; the layer comes with it (``with_synth_rows``, its mask open),
+        selected."""
+        p = self.path(group["pid"])
+        if p is None or self.synth_problem(group):
+            return
+
+        def place():
+            with self.s.batch():
+                self.s.insert_block(p, "synth")
+                if hasattr(self.s, "log"):
+                    self.s.log('{block} added to "{name}"', block=_("Synthetic stars"), name=p.name)
+        if self._model_change(place, _('Synthetic stars added to "{name}": its block is in the graph · Ctrl+Z').format(
+                name=p.name)):
+            row = next((x for x in self.layers if is_synth(x) and x.get("target") == group["id"]), None)
+            if row is not None:
+                self._collapsed -= {group["id"], (group["id"], "stars")}
+                self.sel, self.part_sel = (row["id"], "layer"), None
+                self.rebuild()
+
+    def remove_synth(self, group):
+        """The Synthetic stars of a Stars group taken out, their block with them from the graph: one step of Undo,
+        which brings both back, the layer with its mask (the composition without it is saved in the same step)."""
+        from .model import node_key
+        p = self.path(group["pid"])
+        key = next((node_key(n) for n in self.s.graph(p) if n["block"] == "synth"), None) \
+            if p is not None and hasattr(self.s, "graph") else None
+        why = self.s.removal_problem(p, key) if key is not None else _("not in workflow")
+        if why:
+            self.toasted.emit(_("{block} kept: {why}").format(block=_("Synthetic stars"), why=why))
+            return
+
+        def take_out():
+            with self.s.batch():
+                if hasattr(self.s, "log"):
+                    self.s.log('{block} removed from "{name}"', block=_("Synthetic stars"), name=p.name)
+                self.s.remove_node(p, key)
+                self.layers = [x for x in self.layers if not (is_synth(x) and x.get("target") == group["id"])]
+                self._save()
+        if self._model_change(take_out, _('Synthetic stars removed from "{name}": its block too · Ctrl+Z').format(
+                name=p.name)):
+            if self.sel and self.layer(self.sel[0]) is None:
+                self.sel = (group["id"], "stars")
+            self.rebuild()
+            self.request(final_only=True)
 
     def _dock_side(self, w: QWidget):
         """A side docked again, at its place in the splitter."""
@@ -2364,20 +2494,22 @@ class PostView(QWidget):
 
     def add_filter(self, key):
         """A new filter is nested in the chosen pixel layer, on top of its children (or goes where the chosen filter
-        is: in its layer, or above it on everything below)."""
+        is: in its layer, or above it on everything below). On the real stars of a Stars group: at the group's bottom,
+        under the synthetic stars, so that it acts on the real stars alone (#93)."""
         cur = self.layer(self.sel[0]) if self.sel else None
         target = sub = None
+        real = cur is not None and is_pixel(cur) and self.sel[1] == "real"
         if cur is not None:
             target = cur["id"] if is_pixel(cur) else cur.get("target")
-            sub = self.sel[1] if self.sel[1] in SUBS else None if is_pixel(cur) else cur.get("sub")
+            sub = "stars" if real else self.sel[1] if self.sel[1] in SUBS else None if is_pixel(cur) else cur.get("sub")
         self.push()
         fl = new_filter_layer(key, target, sub)
         same = sum(1 for lay in self.layers if lay["kind"] == "filter" and lay.get("filter") == key)
         if same:                                        # a second Curves is "Curves · 2" (issue #15: no twin names)
             fl["name"] = f"{fl['name']} · {same + 1}"
-        if target is not None:                          # on top of that layer's own filters
+        if target is not None:                          # on top of that layer's own filters (real stars: under them)
             group = [lay for lay in self.layers if lay.get("target") == target]
-            self.sel = ((group[0] if group else self.layer(target))["id"], "layer")
+            self.sel = ((group[0] if group and not real else self.layer(target))["id"], "layer")
         self._insert_above_sel(fl)
         self.rebuild()
         self.request(final_only=True)
@@ -2447,6 +2579,9 @@ class PostView(QWidget):
         others = [x for x in self.layers if x["id"] != lay["id"] and x.get("target") != lay["id"]] if lay else []
         if lay is None or not any(is_pixel(x) for x in others) and is_pixel(lay):
             return
+        if is_synth(lay):                                # the Synthetic stars: their block goes with them (#93)
+            self.remove_synth(self.layer(lay["target"]))
+            return
         p = self.path(lay["pid"]) if lay["kind"] == "workflow" and lay.get("part") is None else None
         if p is not None and not any(x.get("pid") == p.pid for x in others if x["kind"] == "workflow") and (
                 getattr(p, "end", None) is not None or getattr(self.s, "is_sent_branch", lambda q: False)(p)):
@@ -2514,12 +2649,17 @@ class PostView(QWidget):
             return
         if self.sel[1] == "mask" and lay["mask"] is not None:
             self.mask_props(lay)
-        elif self.sel[1] in SUBS:
-            self.pbox.addWidget(label(_(POST_PART_NAMES[self.sel[1]]), "h2"))
-            self.pbox.addWidget(label(_('Image of "{name}". The filters added while it is selected apply to it only, '
-                                        "before the stars are put back on the starless image.").format(
-                                            name=layer_name(lay)), "small", wrap=True))
-            self._part_props(lay, self.sel[1])
+        elif self.sel[1] in SUB_ROWS:
+            self.pbox.addWidget(label(_(SUB_NAMES[self.sel[1]]), "h2"))
+            if self.sel[1] == "real":                    # the bottom of the Stars group (#93)
+                self.pbox.addWidget(label(_("The stars of the Stars/background block, under the synthetic stars: "
+                                            "they show where the synthetic stars' mask is black. The filters added "
+                                            "while they are selected apply to them only."), "small", wrap=True))
+            else:
+                self.pbox.addWidget(label(_('Image of "{name}". The filters added while it is selected apply to it '
+                                            "only, before the stars are put back on the starless image.").format(
+                                                name=layer_name(lay)), "small", wrap=True))
+            self._part_props(lay, "stars" if self.sel[1] == "real" else self.sel[1])
         else:
             self.layer_props(lay)
         self.pbox.addStretch(1)

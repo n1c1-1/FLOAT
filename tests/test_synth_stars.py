@@ -85,14 +85,17 @@ def test_the_block_comes_after_the_stars_and_says_its_method():
     assert "synth_stars" not in wfl.sequence_chain(blocks, "frames")
 
 
-def test_the_row_of_post_opens_closed_with_the_image_shape_and_open_with_the_instrument():
+def test_the_layer_of_post_opens_open_with_both_methods():
+    """Issue #93: one start for the image shape and the instrument, the mask open (its brush subtracts); the Stars group
+    of Post: tests/client/test_post_stars_group.py."""
     group = pe.new_workflow_layer(1, "Full", part="combined")
     layers = pe.with_synth_rows([group], {1: "measured"})
     row = next(x for x in layers if x.get("filter") == "synth")
     assert row["target"] == group["id"] and row["sub"] == "stars" and row["mask"]["parts"][0]["strokes"] == []
+    assert row["mask"]["parts"][0]["op"] == "sub"
     assert pe.with_synth_rows(layers, {1: "measured"}) == layers          # once
     open_ = next(x for x in pe.with_synth_rows([pe.new_workflow_layer(2, "F", part="combined")], {2: "instrument"})
                  if x.get("filter") == "synth")
-    assert open_["mask"] is None
+    assert [p["op"] for p in open_["mask"]["parts"]] == ["sub"] and open_["mask"]["parts"][0]["strokes"] == []
     assert [x for x in pe.with_synth_rows(layers, {}) if x.get("filter") == "synth"] == []
     assert pe.source_id(dict(group, part="synth")) == ("synth", 1) and pe.part_sliders({"star_size": 1, "noise": 2}, "synth") == {"star_size": 1}

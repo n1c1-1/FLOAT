@@ -39,6 +39,7 @@ from ..postengine import (
     Provider,
     SUBS,
     Superseded,
+    has_synth,
     is_group,
     is_pixel,
     only_layer,
@@ -638,11 +639,19 @@ class Renderer:
             a = self.composer.cached(lay, 2, canvas)
             if a is not None:
                 out[lay["id"]] = thumb_of(a)
-            for sub in SUBS if is_group(lay) else ():     # its two images, each its own (issue #70)
+            for sub in self._thumb_subs(layers, lay):     # its two images, each its own (issue #70)
                 b = self.composer.cached(dict(lay, part=sub), 2, canvas)
                 if b is not None:
                     out[(lay["id"], sub)] = thumb_of(b)
         return out
+
+    def _thumb_subs(self, layers, lay) -> tuple:
+        """The images of a Combine layers layer that have a thumbnail of their own: its two, and the synthetic stars of
+        its Stars group once computed (#93)."""
+        if not is_group(lay):
+            return ()
+        synth = has_synth(layers, lay["id"]) and self.source.available(source_id(dict(lay, part="synth")))
+        return SUBS + (("synth",) if synth else ())
 
     def _thumbs(self, req: Request, stop, t0) -> Result:
         res = Result(req.seq, "thumbs", 2, None, None, None, device=self.device, tag=req.tag)
@@ -656,7 +665,7 @@ class Renderer:
                 raise Superseded()
             if lay["id"] in req.need_thumbs and is_pixel(lay) and self.source.available(source_id(lay)):
                 res.layer_thumbs[lay["id"]] = thumb_of(self.composer.layer_rgb(lay, 2, (0, 0, W, H), cv))
-                for sub in SUBS if is_group(lay) else ():
+                for sub in self._thumb_subs(req.layers, lay):
                     res.layer_thumbs[(lay["id"], sub)] = thumb_of(
                         self.composer.layer_rgb(dict(lay, part=sub), 2, (0, 0, W, H), cv))
         res.notes = self.source.notes()

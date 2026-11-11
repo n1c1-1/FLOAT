@@ -1609,8 +1609,8 @@ _METHODS: dict[str, list[MethodInfo]] = {
     ],
     "synth": [
         MethodInfo("measured", "Image shape", "image shape", "both", "synth_stars", False,
-                   "The detected stars drawn with the shape measured at the centre of the field: paint in Post where "
-                   "they replace the real ones, the corners for example."),
+                   "The detected stars drawn with the shape measured at the centre of the field: in Post they replace "
+                   "the real ones; paint their mask where the real ones stay, the centre for example."),
         MethodInfo("instrument", "Instrument PSF", "instrument PSF", "both", "synth_stars", False,
                    "Every star replaced by the theoretical star of the instrument: for a missed focus or a bad "
                    "tracking."),
