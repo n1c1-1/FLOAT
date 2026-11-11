@@ -2472,7 +2472,7 @@ class ProjectModel(QObject):
 
     def set_fusion_palette(self, p: WorkflowView, palette: str) -> bool:
         """Another palette for a fusion (its channels kept when the new one reads the same roles). Its name follows
-        while it is the one its palette gave it ("SHO (Hubble palette)" → "HSO"); a name the user gave stays (GUI
+        while it is the one its palette gave it ("SHO" → "HSO"); a name the user gave stays (GUI
         exploration 4: an HSO fusion kept saying SHO)."""
         w = self.p.workflow(p.pid)
         if not is_fusion_view(p) or w.source["fusion"]["palette"] == palette:
@@ -2483,6 +2483,8 @@ class ProjectModel(QObject):
 
         def given(pal):                                   # the names a palette gives: its own, its templates'
             names = {pal, choice_label(pal, "en")} | {t["name"] for t in GALLERY if t.get("palette") == pal}
+            if pal == "SHO":                              # the label the plain SHO had before the SHO Hubble palette
+                names |= {"SHO (Hubble palette)", "SHO (palette Hubble)"}
             return names | {_(x) for x in names}
         base, _sp, num = w.name.rpartition(" ")           # "HSO 2": a second one, numbered by unique_name
         follow = w.name in given(w.source["fusion"]["palette"]) or \

@@ -136,7 +136,8 @@ STEPS = [
          what="Prepares the render: what this workflow gives in Post, its image and its sliders."),
     dict(key="fusion", phase=6, title="Combine channels", kind="slot", stages=["fusion", "render_simple"],
          what="Combines the outputs of several workflows (one per filter, or a dual-band image's channels) into one "
-              "colour image with a palette (SHO, HSO, HOO, RGB, LRGB), aligned through their plate solutions."),
+              "colour image with a palette (SHO Hubble, SHO, HSO, HOO, RGB, LRGB), aligned through their plate "
+              "solutions."),
     dict(key="composition", phase=6, title="Combine layers", kind="slot", stages=[],
          what="Combines the Stars/background block's two images: the starless image and the stars, each stretched, the stars "
               "put back on top (Screen, Linear dodge or Lighten). Its settings are those of its layer in Post."),

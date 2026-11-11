@@ -56,8 +56,22 @@ TABS = (("frames", "Templates"), ("mine", "My templates"), ("copy", "Workflow co
 #: a user's template file (Export / Import)
 TEMPLATE_SUFFIX = ".sftemplate"
 
-#: the palettes the Filters templates offer, and their filters
-PALETTES = {"SHO": ("SII", "Ha", "OIII"), "HOO": ("Ha", "OIII"), "RGB": ("R", "G", "B"), "LRGB": ("L", "R", "G", "B")}
+#: the default palette of S II, H-alpha and O III: stages/fusion.SHO_DEFAULT (not imported here: that module loads
+#: OpenCV, which the gallery does not need)
+SHO_DEFAULT = "SHO Hubble"
+#: the palettes the Filters templates offer, and their filters: S II, H-alpha and O III in the Hubble look first (the
+#: default), the plain SHO kept as a choice
+PALETTES = {SHO_DEFAULT: ("SII", "Ha", "OIII"), "SHO": ("SII", "Ha", "OIII"), "HOO": ("Ha", "OIII"),
+            "RGB": ("R", "G", "B"), "LRGB": ("L", "R", "G", "B")}
+#: what each palette of a fusion does, in a sentence (the tooltip of its choice, here and in the block's panel)
+PALETTE_TIPS = {
+    SHO_DEFAULT: "S II in red-orange, H-alpha in gold, O III in cyan-blue: the look of the Hubble images.",
+    "SHO": "S II in red, H-alpha in green, O III in blue: each filter straight to one colour.",
+    "HSO": "H-alpha in red, S II in green, O III in blue.",
+    "HOO": "H-alpha in red, O III in green and blue: the usual palette of a dual-band filter.",
+    "RGB": "The red, green and blue filters as they are.",
+    "LRGB": "The colours of the red, green and blue filters, the detail of the luminance filter.",
+}
 #: the templates: key, tab, name, what it is for, the workflow's options (the views'), and: kind and palette (Filters),
 #: source ("image"), plain (each image straight to Post), images (several files), recommended
 GALLERY: list[dict] = [
@@ -72,8 +86,8 @@ GALLERY: list[dict] = [
     dict(key="filters_min", tab="frames", name="Filters minimal", opts=CLASSIC, kind="filters", palette="HOO",
          filters=PALETTES["HOO"],
          text="A monochrome camera: each filter gets its own workflow, and each result is a layer of Post."),
-    dict(key="filters_full", tab="frames", name="Filters full", opts=CLASSIC_DN, kind="fusion", palette="SHO",
-         filters=PALETTES["SHO"],
+    dict(key="filters_full", tab="frames", name="Filters full", opts=CLASSIC_DN, kind="fusion", palette=SHO_DEFAULT,
+         filters=PALETTES[SHO_DEFAULT],
          text="Each filter's workflow with denoise and its stars taken off, then a Combine channels block makes the "
               "colour image with the palette chosen here; the stars come back by a Combine layers block."),
     dict(key="images", tab="frames", name="Several images", opts=CLASSIC, source="image", plain=True, blocks=[], images=3,
@@ -432,6 +446,8 @@ def palette_box(current: str) -> QComboBox:
     """The palette of a Filters template."""
     cb = QComboBox()
     cb.addItems(list(PALETTES))
+    for i, pal in enumerate(PALETTES):                 # what each palette does, on its item
+        cb.setItemData(i, _(PALETTE_TIPS[pal]), Qt.ToolTipRole)
     cb.setCurrentText(current)
     cb.setToolTip(_("The filters shot: each gets its Session block and its workflow"))
     return cb
@@ -601,7 +617,7 @@ class TemplateGallery(QDialog):
         flr = QHBoxLayout(self.palette_row)
         flr.setContentsMargins(0, 0, 0, 0)
         flr.addWidget(label(_("Palette"), "dim"))
-        self.palette = palette_box("SHO")
+        self.palette = palette_box(SHO_DEFAULT)
         self.palette.currentTextChanged.connect(self._palette)
         flr.addWidget(self.palette)
         flr.addStretch(1)
@@ -678,7 +694,7 @@ class TemplateGallery(QDialog):
         self.text.setText(_(t["text"]) if not t.get("copy") else t["text"])
         self.palette_row.setVisible(self._asks_filters(t))
         self.palette.blockSignals(True)
-        self.palette.setCurrentText(t.get("palette", "SHO"))
+        self.palette.setCurrentText(t.get("palette", SHO_DEFAULT))
         self.palette.blockSignals(False)
         mine = bool(t.get("user"))
         self.export_b.setVisible(mine)

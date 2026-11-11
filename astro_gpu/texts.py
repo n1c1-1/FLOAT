@@ -187,7 +187,8 @@ _METRIC_ROWS: list[tuple] = [
     # an image source (issue #43)
     ("factor", "Value factor", "", "g", "Factor the image's values were multiplied by (65535 for values in 0-1)."),
     # the channels' fusion (issue #43)
-    ("palette", "Palette", "", "", "How the filters became red, green and blue (SHO, HSO, HOO, RGB, LRGB)."),
+    ("palette", "Palette", "", "", "How the filters became red, green and blue (SHO Hubble, SHO, HSO, HOO, RGB, "
+                                   "LRGB)."),
     ("channels", "Channels", "", "", "The filters combined.", ", "),
     ("star_source", "Star source", "", "", "Where the stars put back on the starless fusion came from (palette, channel "
                                            "or workflow)."),
@@ -472,7 +473,7 @@ CHOICE_TEXTS: dict[str, str] = {
     # the Gradient block's methods (stages/gradient.py)
     "polynomial": "Polynomial", "rbf": "RBF", "automatic": "Automatic",
     # the fusion's palettes (stages/fusion.py)
-    "SHO": "SHO (Hubble palette)", "HSO": "HSO", "HOO": "HOO", "RGB": "RGB", "LRGB": "LRGB",
+    "SHO Hubble": "SHO Hubble", "SHO": "SHO", "HSO": "HSO", "HOO": "HOO", "RGB": "RGB", "LRGB": "LRGB",
     # the Denoise block's methods and adaptation lengths (stages/denoise.py)
     "measured": "Image shape", "instrument": "Instrument PSF", "newton": "Newtonian", "refractor": "Refractor",
     "sct": "Schmidt-Cassegrain", "lens": "Photo lens",

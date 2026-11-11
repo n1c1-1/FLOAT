@@ -3391,7 +3391,7 @@ class GraphPage(QWidget):
 
     def fusion_choice(self):
         """What a Combine channels placed now combines: (palette, inputs, stars), or None when there is nothing to combine."""
-        from ..stages.fusion import PALETTES
+        from ..stages.fusion import PALETTES, SHO_DEFAULT
         s = self.s
         by_filter = {}
         for f, sids in s.filters().items():
@@ -3399,8 +3399,8 @@ class GraphPage(QWidget):
                       and sorted(q.sessions) == sorted(sids)), None)
             if q is not None:
                 by_filter[f] = q
-        order = ["SHO", "HSO", "HOO", "LRGB", "RGB"] + [x for x in PALETTES if x not in ("SHO", "HSO", "HOO", "LRGB",
-                                                                                        "RGB")]
+        first = [SHO_DEFAULT, "HSO", "HOO", "LRGB", "RGB"]          # S II, H-alpha and O III: the Hubble look
+        order = first + [x for x in PALETTES if x not in first]
         pal = next((x for x in order if x in PALETTES and set(PALETTES[x][0]) <= set(by_filter)), None)
         # #39: the stars as its template makes them (option A): the channels' for RGB and LRGB, else H-alpha's;
         # a dual band's, of the colour image itself

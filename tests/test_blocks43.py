@@ -399,6 +399,37 @@ def test_the_fusion_aligns_its_channels_through_their_plate_solutions(tmp_path):
         fuse({"Ha": ch["Ha"]}, "SHO")
 
 
+def test_the_sho_hubble_palette_keeps_grey_grey_and_gives_each_filter_its_hue(tmp_path, nights):
+    """The SHO Hubble palette (Rector et al. 2007): equal channels give a grey; S II alone is red-orange, H-alpha alone
+    gold, O III alone cyan-blue (their HSV hues); it is the default of S II, H-alpha and O III; a project that chose
+    the plain SHO keeps it."""
+    import colorsys
+
+    from astro_gpu.stages.fusion import HUBBLE_HUES, PALETTES, SHO_DEFAULT, FusionParams, fuse, hue_palette
+    assert SHO_DEFAULT == "SHO Hubble" and FusionParams().palette == SHO_DEFAULT
+    roles, mat = PALETTES[SHO_DEFAULT]
+    assert roles == ("SII", "Ha", "OIII") and PALETTES["SHO"][1] == [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+    one, nil = np.ones((1, 1), np.float32), np.zeros((1, 1), np.float32)
+    assert np.allclose(fuse({"SII": one, "Ha": one, "OIII": one}, SHO_DEFAULT)[:, 0, 0], 1.0)     # neutral stays
+
+    def hue(rgb):
+        return 360 * colorsys.rgb_to_hsv(*(float(v) for v in rgb))[0]
+    alone = {r: fuse({x: one if x == r else nil for x in roles}, SHO_DEFAULT)[:, 0, 0] for r in roles}
+    assert 0 <= hue(alone["SII"]) < 30                   # red-orange
+    assert 30 <= hue(alone["Ha"]) < 60                   # gold: H-alpha never reads green
+    assert 180 <= hue(alone["OIII"]) < 240               # cyan-blue
+    assert [round(hue(alone[r])) for r in roles] == [round(h) for h in HUBBLE_HUES]   # the hues exactly
+    assert (np.asarray(mat) >= 0).all()
+    for hues in ((0.0, 30.0, 60.0), (15.0, 45.0, 180.0)):   # no blue at all; a cyan that outweighs H-alpha's gold
+        with pytest.raises(ValueError, match="grey"):
+            hue_palette(hues)
+    p = project(tmp_path / "p", nights, "per_session")  # a saved project's plain SHO stays SHO
+    f = p.add_workflow("SHO", CLASSIC)
+    f.source = {"fusion": {"palette": "SHO", "inputs": [{"pid": 1, "role": "Ha", "channel": "L"}]}}
+    project2.save(p)
+    assert project2.load(p.root).workflow(f.id).source["fusion"]["palette"] == "SHO"
+
+
 def test_a_fusion_workflow_reads_its_channels_outputs(tmp_path, nights):
     p = project(tmp_path / "p", nights, "per_session")
     p.sessions[0].filter, p.sessions[1].filter = "Ha", "OIII"

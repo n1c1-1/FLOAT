@@ -999,6 +999,7 @@ class Panel(QWidget):
         """A Combine channels block (issue #43): its workflow's name, its palette, its channels and the workflows they come
         from; its output is a layer of Post."""
         from ..stages.fusion import PALETTES
+        from .gallery import PALETTE_TIPS
         s = self.s
         p = node.paths[0]
         f = (p.source or {}).get("fusion") or {}
@@ -1033,11 +1034,12 @@ class Panel(QWidget):
             b = QPushButton(_(pal) if pal in ("RGB", "LRGB") else pal)    # RVB, LRVB in French; SHO... as they are
             b.setCheckable(True)
             b.setObjectName("face")
-            b.setMinimumWidth(48)                          # the five fit the panel: they shrink below the style's 80 px
+            b.setMinimumWidth(48)                          # they fit the panel: they shrink below the style's 80 px
             b.setChecked(pal == f.get("palette"))
             ok = set(need) <= set(roles)
             b.setEnabled(ok)
-            b.setToolTip(_("Needs the {roles} channels").format(roles=", ".join(need)) if not ok else "")
+            b.setToolTip(_("Needs the {roles} channels").format(roles=", ".join(need)) if not ok else
+                         _(PALETTE_TIPS[pal]) if pal in PALETTE_TIPS else "")
             b.clicked.connect(lambda _c=False, x=pal: s.set_fusion_palette(p, x))
             row.addWidget(b)
         row.addStretch(1)

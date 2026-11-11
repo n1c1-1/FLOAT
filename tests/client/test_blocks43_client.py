@@ -157,6 +157,11 @@ def test_filters_make_one_workflow_each_and_a_fusion_in_the_composition_section(
     d = page.new_workflow()
     d.pick(next(c.t for c in d.cards if c.t["key"] == "filters_full"))
     assert d.ok.isEnabled() and "Empty Session blocks are made for SII" in d.duration.text()   # #47: made empty
+    from astro_gpu.client.gallery import PALETTE_TIPS, SHO_DEFAULT
+    from astro_gpu.stages import fusion
+    assert d.palette.currentText() == SHO_DEFAULT == fusion.SHO_DEFAULT          # the SHO template: the Hubble look
+    assert "SHO" in [d.palette.itemText(i) for i in range(d.palette.count())]   # the plain SHO kept as a choice
+    assert set(PALETTE_TIPS) == set(fusion.PALETTES)                             # each palette says what it does
     d.palette.setCurrentText("HOO")
     assert d.ok.isEnabled() and "Ha" in d.duration.text()
     d.ok.click()
@@ -176,6 +181,7 @@ def test_filters_make_one_workflow_each_and_a_fusion_in_the_composition_section(
     page.select(index=m.paths.index(hoo), step="fusion")
     page.refresh()
     assert any(b.text() == "HOO" and b.isChecked() for b in page.panel.findChildren(QPushButton))
+    assert next(b for b in page.panel.findChildren(QPushButton) if b.text() == "HOO").toolTip() == PALETTE_TIPS["HOO"]
     assert m.set_fusion_palette(hoo, "SHO") is True                            # (the SII channel is then missing)
     d = page.new_workflow()                                                   # the same filters again: reused
     d.pick(next(c.t for c in d.cards if c.t["key"] == "filters_min"))

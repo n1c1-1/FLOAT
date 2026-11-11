@@ -15,9 +15,23 @@ Output block renders as any stack (core/workflow.PROVIDES).
 3. Each channel is brought to the same scale: divided by a high percentile of its signal (99.5 %, above its sky at
    0), so that a faint O III weighs as much as a strong H-alpha in the palette (the channels' balance of narrowband
    palettes, which every reference guide sets by eye or by such a normalisation).
-4. The palette maps the channels to red, green and blue: SHO (S II red, H-alpha green, O III blue: the "Hubble
-   palette"), HSO, HOO (H-alpha red, O III green and blue), RGB, and LRGB (the colour of RGB, the luminance of L:
-   each pixel's RGB scaled so that its luminance is L's).
+4. The palette maps the channels to red, green and blue: SHO Hubble (the default of S II, H-alpha and O III, below),
+   SHO (S II red, H-alpha green, O III blue: the plain mapping, whose H-alpha reads green), HSO, HOO (H-alpha red,
+   O III green and blue), RGB, and LRGB (the colour of RGB, the luminance of L: each pixel's RGB scaled so that its
+   luminance is L's).
+
+The SHO Hubble palette follows Rector, Levay, Frattare, English & Pu'uohau-Pummill 2007, AJ 133, 598, "Image-processing
+techniques for the creation of presentation-quality astronomical images": each filter's greyscale image is given its
+own hue and the colourised layers are added (their screen), the hues in the chromatic order of the filters'
+wavelengths (the longest the reddest), the colour balance then set on the whole. The familiar look of the SHO images
+(gold where H-alpha dominates, cyan-blue where O III does, red-orange for S II) comes from those hues, not from
+H-alpha mapped straight to green. In linear data, a channel tinted with a hue and the layers added is a 3x3 matrix
+whose columns are the hues' colours (``hue_palette``). The hues (on the HSV colour wheel of the linear RGB):
+S II (672 nm) 15 degrees, red-orange; H-alpha (656 nm) 45 degrees, gold: the next one in the chromatic order, warm so
+that the dominant signal does not read green; O III (501 nm) 210 degrees, cyan-blue: the complement of the warm pair's
+mean (30 + 180), so that the three balance to grey with S II and H-alpha weighing alike. The colour balance is each
+column's weight, solved so that equal channels (as step 3 makes a source that every filter sees alike) give a grey:
+the hue of a single filter's signal is exactly its own, and a neutral input stays neutral.
 
 The result's valid area is where every input has data. Its scale: the first input's (its level kept).
 
@@ -32,6 +46,7 @@ differs from one filter to another.
 """
 from __future__ import annotations
 
+import colorsys
 import json
 from pathlib import Path
 
@@ -41,8 +56,29 @@ import numpy as np
 from ..core.params import P, StageParams
 from ..core.stage import Context, Stage, StageError
 
+
+def hue_palette(hues: tuple[float, ...]) -> list[list[float]]:
+    """The matrix of a palette of hues (Rector et al. 2007): each channel tinted with its hue (degrees on the HSV
+    colour wheel, its colour fully saturated, its brightest component 1), the layers added; each column then weighted
+    so that equal channels give a grey (1, 1, 1): the colour balance, which keeps each hue as it is. Three hues whose
+    balance needs a negative weight (no grey between them) are refused."""
+    cols = np.array([colorsys.hsv_to_rgb((h % 360) / 360, 1.0, 1.0) for h in hues]).T
+    try:
+        w = np.linalg.solve(cols, np.ones(3))
+    except np.linalg.LinAlgError:                      # e.g. three hues without blue
+        w = np.zeros(3)
+    if not (w > 0).all():
+        raise ValueError(f"the hues {hues} do not balance to a grey")
+    return (cols * w[None]).round(6).tolist()
+
+
+#: the SHO Hubble palette's hues (module docstring): S II red-orange, H-alpha gold, O III cyan-blue
+HUBBLE_HUES = (15.0, 45.0, 210.0)
+#: the default palette of S II, H-alpha and O III (the SHO templates', and a fusion placed on those filters)
+SHO_DEFAULT = "SHO Hubble"
 #: palettes: the roles a palette reads, and its matrix (rows R, G, B; columns the roles, in that order)
 PALETTES: dict[str, tuple[tuple[str, ...], list[list[float]]]] = {
+    SHO_DEFAULT: (("SII", "Ha", "OIII"), hue_palette(HUBBLE_HUES)),
     "SHO": (("SII", "Ha", "OIII"), [[1, 0, 0], [0, 1, 0], [0, 0, 1]]),
     "HSO": (("Ha", "SII", "OIII"), [[1, 0, 0], [0, 1, 0], [0, 0, 1]]),
     "HOO": (("Ha", "OIII"), [[1, 0], [0, 1], [0, 1]]),
@@ -58,9 +94,10 @@ STAR_SOURCES = ("palette", "channel", "workflow")
 
 
 class FusionParams(StageParams):
-    palette: str = P("SHO", label="Palette", choices=list(PALETTES),
-                     help="How the filters become red, green and blue: SHO (S II, H-alpha, O III: the Hubble "
-                          "palette), HSO, HOO (H-alpha red, O III green and blue), RGB, LRGB (the luminance of L).")
+    palette: str = P(SHO_DEFAULT, label="Palette", choices=list(PALETTES),
+                     help="How the filters become red, green and blue: SHO Hubble (S II red-orange, H-alpha gold, "
+                          "O III cyan-blue), SHO (S II red, H-alpha green, O III blue), HSO, HOO (H-alpha red, O III "
+                          "green and blue), RGB, LRGB (the luminance of L).")
     #: the inputs, set by the project (not keyed: their workflows' keys are): [{"role", "channel", "dir",
     #: "stars_dir", "wcs", "pid"}]
     inputs: list[dict] = P([], label="Inputs", level="internal",
@@ -152,11 +189,13 @@ class Fusion(Stage):
     name = "fusion"
     title = "Combine channels"
     description = ("Combines the outputs of several workflows (one per filter, or a dual-band image's channels) into "
-                   "one colour image with a palette (SHO, HSO, HOO, RGB, LRGB), aligned through their plate "
-                   "solutions.")
+                   "one colour image with a palette (SHO Hubble, SHO, HSO, HOO, RGB, LRGB), aligned through their "
+                   "plate solutions.")
     Params = FusionParams
-    version = "3"                    # 2: option A, the starless channels and a star layer; 3: the stars kept on
-    #                                  their support (the noise of the subtraction left out); the channels' weights
+    version = "4"                    # 2: option A, the starless channels and a star layer; 3: the stars kept on
+    #                                  their support (the noise of the subtraction left out); the channels' weights;
+    #                                  4: the SHO Hubble palette (hues, Rector et al. 2007), the SHO default: the
+    #                                  colours of new results change
 
     def run(self, ctx: Context, p: FusionParams) -> None:
         from astropy.io import fits
