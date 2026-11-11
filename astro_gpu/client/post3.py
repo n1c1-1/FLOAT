@@ -461,7 +461,7 @@ class LayerRow(QFrame):
         if e.button() == Qt.LeftButton:
             self._press = e.position().toPoint()
             self._dragging = False
-        elif e.button() == Qt.RightButton and self.lay["kind"] != "sub":
+        elif e.button() == Qt.RightButton:                # a sub-layer too: its filters (#120)
             self.panel.layer_menu(self.lay, e.globalPosition().toPoint())
 
     def mouseMoveEvent(self, e):
@@ -708,8 +708,8 @@ class PostView(QWidget):
         for w in (self.b_fit, self.b_100, self.zoom_lab):
             bar.addWidget(w)
         bar.addSpacing(12)
-        # the versions of the processing (#123: a "+" and a "−" beside a list were not understood), as a reference photo editor's
-        # snapshots: their name, a named button that makes one, a bin that deletes the one shown
+        # the versions of the processing (#123: a "+" and a "−" beside a list were not understood), as the reference
+        # editors' snapshots: their name, a named button that makes one, a bin that deletes the one shown
         self.version_lab = label(_("Version"), "dim")
         self.cb_version = QComboBox()
         self.cb_version.setEditable(True)
@@ -737,8 +737,8 @@ class PostView(QWidget):
         self.more_menu = QMenu(self.b_more)
         self.b_more.clicked.connect(self._show_more)
         self.b_more.setVisible(False)
-        # the crop is confirmed or given up with named buttons, shown while it is drawn (#121), as a reference image editor's options
-        # bar; Spot healing is a tool of the bar (#122: it was found only in the filters' menu)
+        # the crop is confirmed or given up with named buttons, shown while it is drawn (#121), as the reference
+        # editors' options bar; Spot healing is a tool of the bar (#122: it was found only in the filters' menu)
         self.b_crop_ok = set_icon(QPushButton(_("Apply")), "ok", 16, tip=_("Keep this crop (Enter)"))
         self.b_crop_ok.setObjectName("primary")
         self.b_crop_cancel = QPushButton(_("Cancel"))
@@ -958,10 +958,19 @@ class PostView(QWidget):
                         ("-", lambda: self.viewer.zoom_by(1 / ZOOM_STEP)),
                         ("Ctrl+-", lambda: self.viewer.zoom_by(1 / ZOOM_STEP)), ("X", self.toggle_paint),
                         ("[", lambda: self.brush_size(1 / 1.25)), ("]", lambda: self.brush_size(1.25)),
-                        ("Ctrl+J", self.duplicate), ("Return", self.crop_apply), ("Enter", self.crop_apply)):
+                        ("Ctrl+J", self.duplicate)):
             sc = QShortcut(QKeySequence(seq), self)
             sc.setContext(Qt.WidgetWithChildrenShortcut)
             sc.activated.connect(fn)
+        # Enter keeps the crop, only while it is drawn: always on, these two took the key from every field of Post
+        # (#141: a version's name, a Curves value were no longer applied by Enter)
+        self._crop_keys = []
+        for seq in ("Return", "Enter"):
+            sc = QShortcut(QKeySequence(seq), self)
+            sc.setContext(Qt.WidgetWithChildrenShortcut)
+            sc.activated.connect(self.crop_apply)
+            sc.setEnabled(False)
+            self._crop_keys.append(sc)
         self._draft_t = QTimer(self)
         self._draft_t.setSingleShot(True)
         self._draft_t.timeout.connect(self._send_draft)
@@ -1707,8 +1716,9 @@ class PostView(QWidget):
                 if f["family"] == fam and not f.get("hidden"):
                     a = sub.addAction(_(f["name"]))
                     a.setToolTip(_(f["source"]))
-                    a.triggered.connect(lambda _c=False, kk=k: (lay is not None and self.select(lay["id"], "layer"),
-                                                                 self.add_filter(kk)))
+                    a.triggered.connect(lambda _c=False, kk=k: (
+                        lay is not None and self.select(lay["id"], lay["sub"] if lay["kind"] == "sub" else "layer"),
+                        self.add_filter(kk)))
 
     def rebuild(self, props: bool = True):
         """The layers' rows built again; ``props``: the properties panel too (not for a visibility toggle, issue #24:
@@ -1996,6 +2006,8 @@ class PostView(QWidget):
         """A layer's right-click menu."""
         m = QMenu(self)
         self._fill_filters(m.addMenu(_("Add a filter")), lay)     # #120: where one looks for them first
+        if lay["kind"] == "sub":                         # one of a layer's two images: its filters only
+            return m
         m.addSeparator()
         m.addAction(_("Duplicate")).triggered.connect(lambda: (self.select(lay["id"], "layer"), self.duplicate()))
         if lay["mask"] is None:
@@ -2294,9 +2306,7 @@ class PostView(QWidget):
         self._hint()
 
     def _group(self, text):
-        g = self.folds.title(text)
-        g.setStyleSheet("color: #aab2bf; font-weight: 600; margin-top: 8px;")
-        self.pbox.addWidget(g)
+        self.pbox.addWidget(self.folds.title(text))      # its look is the section title's own (layout.SectionTitle)
 
     def layer_props(self, lay):
         self.pbox.addWidget(label(layer_name(lay), "h2"))
@@ -2442,6 +2452,8 @@ class PostView(QWidget):
             self._crop_before = list(self.crop) if self.crop else None
         for b in (self.b_crop_ok, self.b_crop_cancel):
             b.setVisible(on)
+        for sc in self._crop_keys:
+            sc.setEnabled(on)
         self._fit_bar()                                  # its two buttons take room in the bar
         v.crop_edit = on
         if on and v.crop_box is None and v.source:
