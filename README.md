@@ -117,6 +117,36 @@ The star catalogue is then installed once from Settings › Catalogs & astrometr
 
 New project → choose a template → choose the frames → Run.
 
+## First steps
+
+![Home](docs/images/guide/1-home.png)
+
+**1. New project.** Home lists the projects of your folders; New project opens an empty graph.
+
+![The template gallery](docs/images/guide/2-templates.png)
+
+**2. Choose a template.** Colour full is the recommended workflow for a colour camera; Blank page starts from nothing,
+and blocks can be added from the palette on the left at any time.
+
+![The frames of a session](docs/images/guide/3-frames.png)
+
+**3. Choose the frames.** In Inspect, the Session block takes the folders of the lights, darks and flats; the table
+reads them and the health check says whether anything is missing.
+
+![The Run window](docs/images/guide/4-run.png)
+
+**4. Run.** The window lists the blocks to compute, with the duration and the disk space expected, before anything starts.
+
+![The graph after a run](docs/images/guide/5-graph.png)
+
+**5. Read the graph.** A green block is computed and kept; when a setting changes, only the blocks after it are
+computed again.
+
+![Post](docs/images/guide/6-post.png)
+
+**6. Adjust in Post.** The result of each workflow is a layer; the sliders and filters are applied on top and can be
+changed at any time. Export writes the final image.
+
 ## Known limits
 
 Version 0.1. Neural deconvolution is in beta; monochrome support is younger than colour; Post rendering is
