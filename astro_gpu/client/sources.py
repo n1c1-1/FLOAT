@@ -44,7 +44,7 @@ from PySide6.QtWidgets import (
 
 from . import icons as ic
 from . import prefs
-from .frames import clock_text, colour_note_text, fexp, iso_word, night_start, type_warning_text
+from .frames import clock_text, colour_note_text, fexp, iso_word, night_start, nights_text, target_far_text, type_warning_text
 from .i18n import _, hours_text, number, plural
 from .imageview import ImageView, ViewImage, quick_thumbnail
 from .services.inspect import FrameItem, ProjectFrames, calib_checks, flat_pct, light_thumb, service_of, set_calibration_excluded
@@ -737,6 +737,11 @@ class SourcesView(QWidget):
             # the day and the month of the night's first day, both (the day of the night with the frame's own month
             # said "night of 31/01" for a frame of 00:16 on 1 January)
             d0 = night_start(row.first)
+            several = nights_text(getattr(row, "nights", None) or [])          # the nights as they are, not the first's
+            if several:
+                return plural(n, "{n} light · {exp} · {word} {iso} · {nights}", "{n} lights · {exp} · {word} {iso} · {nights}",
+                              exp=fexp(row.exposure), word=iso_word(getattr(row, "gain", False)),
+                              iso=int(row.iso) if row.iso else "–", nights=several)
             return plural(n, "{n} light · {exp} · {word} {iso} · night of {day}/{month}",
                           "{n} lights · {exp} · {word} {iso} · night of {day}/{month}",
                           exp=fexp(row.exposure), word=iso_word(getattr(row, "gain", False)),
@@ -826,6 +831,9 @@ class SourcesView(QWidget):
         c = ref.calib if ref is not None else {}
         bad = calib_checks(ref, d.camera) if ref is not None else {}
         where = {"bias": _("the bias"), "black level": _("the black level"), "dark level": _("the darks' level")}
+        far = getattr(ref, "target_far", None)
+        if far:                                      # the typed target against where the frames point: a warning, once
+            out.append((False, target_far_text(far)))
         dk = c.get("darks")
         if dk:
             # a value one side does not record is no mismatch (a master dark without GAIN was read as gain 0 and said

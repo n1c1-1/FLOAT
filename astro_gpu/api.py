@@ -1021,6 +1021,43 @@ def set_excluded(p: Project2, pairs: Iterable[tuple[int, str]], excluded: bool =
     p.validate()
 
 
+#: lights pointing farther than this from the project's target (degrees): the target is probably the wrong object
+TARGET_FAR_DEG = 5.0
+
+
+def target_position(p: Project2) -> tuple[float, float] | None:
+    """Where the project's target is (ra, dec in degrees): its coordinates when given, else what the catalogues here say
+    of its name (no network); None when neither tells."""
+    t = p.target
+    if t.ra is not None and t.dec is not None:
+        return float(t.ra), float(t.dec)
+    if (t.name or "").strip():
+        from .stages.astrometry import find_offline
+        return find_offline(t.name)
+    return None
+
+
+def target_far(p: Project2, facts: dict[int, dict]) -> list[dict]:
+    """The sessions whose lights' header pointing (``facts``: session id -> io.frames.light_facts) is more than
+    ``TARGET_FAR_DEG`` from the project's target: [{"sid", "session", "sep" (deg), "target" (its name), "object" (the
+    name the header gives, or "")}]. The header says where the telescope pointed; a target typed for another object
+    (NGC 602 over lights of NGC 6995) was handed to Astrometry as the field's centre."""
+    where = target_position(p)
+    if where is None:
+        return []
+    from .stages.astrometry import angular_separation
+    out = []
+    for s in p.sessions:
+        f = facts.get(s.id) or {}
+        if f.get("ra") is None or f.get("dec") is None:
+            continue
+        sep = angular_separation(where[0], where[1], f["ra"], f["dec"])
+        if sep > TARGET_FAR_DEG:
+            out.append(dict(sid=s.id, session=s.name, sep=sep, target=p.target.name or "the target's coordinates",
+                            object=f.get("object") or ""))
+    return out
+
+
 def health_checks(p: Project2, dates: dict[int, list[tuple[str, str]]] | None = None) -> list[Check]:
     """What to look at before running: no lights, no bias, flats of several sessions merged into one master, frames
     whose own date contradicts their file names', the star size per session (once Registration is done) and the disk
@@ -1032,7 +1069,7 @@ def health_checks(p: Project2, dates: dict[int, list[tuple[str, str]]] | None = 
     n = {k: len(getattr(inp, k)) for k in KINDS}
     if not p.sessions or not n["lights"]:
         return [Check("warn", "no_lights", "No light frames yet")]
-    from .io.frames import clock_disagreement, colour_session, master_kinds, name_date
+    from .io.frames import clock_disagreement, colour_session, light_facts, master_kinds, name_date
     keys = _keys(p)
     same: dict[tuple, list[str]] = {}               # one warning, the sessions it concerns (nine said once each)
     dated = []                                       # sessions whose file names say a date: nothing else is looked at
@@ -1058,6 +1095,17 @@ def health_checks(p: Project2, dates: dict[int, list[tuple[str, str]]] | None = 
             out.append(Check("warn", "clock", f"{s.name}: dates: the camera says {bad['camera']}, the file names say "
                              f"{bad['names']}: the camera's clock was probably never set. The star positions are "
                              "computed for the camera's date", {**bad, "session": s.name}))
+    try:                                             # lights pointing far from the target: once per kind of case
+        grouped: dict[tuple, dict] = {}
+        for x in target_far(p, {s.id: light_facts([f for f, _size in keys.scan.session_frames(keys.project, s)["lights"]],
+                                                  limit=8) for s in keys.project.sessions}):
+            g = grouped.setdefault((round(x["sep"]), x["object"]), {**x, "sep": float(round(x["sep"])), "sessions": []})
+            g["sessions"].append(x["session"])
+        for (sep, obj), g in grouped.items():
+            out.append(Check("warn", "target_far", f"Target: the frames point {sep}° away from {g['target']}"
+                             + (f" (their header says {obj})" if obj else "") + ": check the project's target.", g))
+    except Exception:  # noqa: BLE001 - a hint: headers that cannot be read are said elsewhere
+        pass
     for w in p.workflows:                            # two filters in one stack: a mistake, said before the run
         flts = sorted({s.filter for s in p.sessions_of(w) if s.lights} - {""}) if w.source is None else []
         if len(flts) > 1:

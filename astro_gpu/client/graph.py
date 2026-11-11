@@ -160,10 +160,17 @@ def review_tip(bp) -> str:
 POST_WHAT = "Where the workflows' images become layers: stretched, balanced, blended and exported."
 
 
-def block_what(node: Node) -> str:
-    """What a block does, for its tooltip: a paragraph of its own, wrapped (a plain tooltip never wraps by itself)."""
+SEVERAL_NIGHTS_WHAT = "{nights}: their light frames and the dark, flat and bias frames chosen for them, and the filter."
+
+
+def block_what(node: Node, nights: str = "") -> str:
+    """What a block does, for its tooltip: a paragraph of its own, wrapped (a plain tooltip never wraps by itself).
+    ``nights``: the nights a Session's lights were taken in, when several ("8 nights · 28/06 to 21/07"): it is not
+    "one night" then."""
     what = POST_WHAT if node.key == "final" else BY_KEY.get("session" if node.key == "sources" else kbase(node.key),
                                                             {}).get("what")
+    if nights and node.key in ("session", "sources"):
+        return textwrap.fill(_(SEVERAL_NIGHTS_WHAT).format(nights=nights), 70) + "\n"
     return textwrap.fill(_(what), 70) + "\n" if what else ""
 
 
@@ -189,7 +196,11 @@ class BlockItem(QGraphicsItem):
         self.port = bool(self.ports)
         self.setAcceptHoverEvents(True)
         # a block switched off is not computed: never "Up to date" (round 2), its line below says what it is
-        tip = f"{title}\n{block_what(node)}{summary}" + ("\n" + _(STATE_WORD[state]) if node.key not in
+        nights = ""
+        if node.key == "session" or (node.key == "sources" and len(view.s.sessions) == 1):
+            sid = node.sid if node.sid is not None else view.s.sessions[0]["id"]
+            nights = view.s.nights_text(sid) if hasattr(view.s, "nights_text") else ""
+        tip = f"{title}\n{block_what(node, nights)}{summary}" +("\n" + _(STATE_WORD[state]) if node.key not in
                                                           ("sources", "final", "session") and not node.cut else "")
         # a reason is a sentence of its own: its full stop is not doubled by the one after {why}
         if node.broken:

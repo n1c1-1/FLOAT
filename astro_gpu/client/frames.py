@@ -61,6 +61,30 @@ def night_start(first: str):
         return None
 
 
+def nights_of(times) -> list[str]:
+    """The nights (noon to noon, ``night_start``) frames of these ISO times were taken in: the days they began on, ISO,
+    first to last."""
+    return sorted({d.isoformat() for t in times if (d := night_start(t)) is not None})
+
+
+def nights_text(nights) -> str:
+    """Several nights said as they are: "8 nights · 28/06 to 21/07" (the nights' own days); "" for none or one."""
+    if len(nights) < 2:
+        return ""
+    a, b = (datetime.fromisoformat(x) for x in (nights[0], nights[-1]))
+    return plural(len(nights), "{n} night · {a} to {b}", "{n} nights · {a} to {b}",
+                  a=f"{a.day:02d}/{a.month:02d}", b=f"{b.day:02d}/{b.month:02d}")
+
+
+def target_far_text(a: dict) -> str:
+    """Lights pointing far from the project's target (``api.target_far``), said plainly, with the name the header gives."""
+    if a.get("object"):
+        return _("Target: the frames point {sep}° away from {target} (their header says {object}): check the "
+                 "project's target.").format(sep=int(round(a["sep"])), target=a["target"], object=a["object"])
+    return _("Target: the frames point {sep}° away from {target}: check the project's target.").format(
+        sep=int(round(a["sep"])), target=a["target"])
+
+
 def day_text(iso: str) -> str:
     """A day as the night's text writes it ("17 Jun 2025", "17 juin 2025"); the ISO text itself when it cannot be read."""
     try:
@@ -147,6 +171,8 @@ def check_text(c, data: ProjectFrames | None = None) -> str:
     if c.key == "clock":                                  # a camera clock never set: once per session
         return f"{a.get('session', '')} : " + clock_text(a) if language() == "fr" else \
             f"{a.get('session', '')}: " + clock_text(a)
+    if c.key == "target_far":                             # the typed target against where the lights point
+        return target_far_text(a)
     if c.key == "unreadable":                             # GUI exploration 6.10: a light that cannot be read
         return _("{session}: {name} cannot be read (damaged, or not a frame): take it out of the session.").format(
             session=a.get("session", ""), name=a.get("name", ""))

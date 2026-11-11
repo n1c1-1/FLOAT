@@ -428,6 +428,44 @@ def clock_disagreement(frames) -> dict | None:
     return None
 
 
+#: what ``light_facts`` read, by (first, last, count, limit, first's date on disk): a project's sessions are read at
+#: each opening and edit, their headers do not change meanwhile
+_LIGHT_FACTS: dict = {}
+
+
+def light_facts(paths, limit: int = 400) -> dict:
+    """What the headers of a session's lights say of when and where: {"times": the frames' own times (ISO; never a
+    file's date on disk), "ra", "dec": the pointing of the first frame that gives one (degrees, FITS only), "object":
+    the first OBJECT name} ({} for none). At most ``limit`` frames are read, evenly spread (the nights are blocks of
+    frames: a sample finds them all); a frame that cannot be read is passed over (the checks say so)."""
+    paths = [Path(p) for p in paths]
+    if not paths:
+        return {}
+    if len(paths) > limit:
+        paths = [paths[i] for i in sorted({int(i) for i in np.linspace(0, len(paths) - 1, limit)})]
+    try:
+        key = (str(paths[0]), str(paths[-1]), len(paths), limit, paths[0].stat().st_mtime_ns)
+    except OSError:
+        return {}
+    if key in _LIGHT_FACTS:
+        return _LIGHT_FACTS[key]
+    out: dict = {"times": [], "object": ""}
+    like = None
+    for f in paths:
+        try:
+            info = read_info(f, like=like) if like is not None else read_info(f)
+        except Exception:  # noqa: BLE001 - a damaged or foreign file: said by the checks
+            continue
+        like = like or info
+        if info.time and not info.time_from_file:
+            out["times"].append(info.time)
+        if "ra" not in out and info.ra is not None and info.dec is not None:
+            out["ra"], out["dec"] = info.ra, info.dec
+        out["object"] = out["object"] or info.object
+    _LIGHT_FACTS[key] = out
+    return out
+
+
 def _ratio(v) -> float | None:
     if v is None:
         return None

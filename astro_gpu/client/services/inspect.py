@@ -554,6 +554,10 @@ class SessionRow:
     #: {"camera", "names"} ISO dates), from the first and last lights' headers read for ``first`` and ``last`` when
     #: the date is their own (EXIF, DATE-OBS), never the file's date on disk
     clock: dict | None = None
+    #: the nights its lights were taken in (``frames.nights_of``: ISO days, first to last) when its headers give their times
+    nights: list = field(default_factory=list)
+    #: its lights' header pointing far from the project's target (``api.target_far``): {"sep", "target", "object"}, or None
+    target_far: dict | None = None
 
 
 @dataclass
@@ -651,7 +655,8 @@ def project_frames(p, wid: int | None, headers: dict | None = None) -> ProjectFr
     owned by the service). A light that cannot be read never stops it (exploration 6.10: the checks stayed on "Reading
     the frames…"): it is said in the checks; the files the engine does not read (a JPEG) are not counted as kept."""
     from ...core.project import colour_lights, frame_kind
-    from ...io.frames import clock_disagreement
+    from ...io.frames import clock_disagreement, light_facts
+    from ..frames import nights_of
     hdr = headers if headers is not None else {}
     out = ProjectFrames()
     table = None
@@ -665,6 +670,7 @@ def project_frames(p, wid: int | None, headers: dict | None = None) -> ProjectFr
         for r in table.rows:
             by_session.setdefault(r.session, []).append(r)
     first_info = None
+    points: dict[int, dict] = {}                                  # what the lights' headers say of where, by session
     dates: dict[int, list[tuple[str, str]]] = {}      # the lights' own dates read here, for the health checks
     for s in p.sessions:
         row = SessionRow(s.id, s.name, filter=s.filter)
@@ -694,6 +700,9 @@ def project_frames(p, wid: int | None, headers: dict | None = None) -> ProjectFr
                 dates[s.id] = [(x.path, x.time) for x in (a, b)        # the file's date on disk is not a clock
                                if x is not None and x.time and not x.time_from_file]
                 row.clock = clock_disagreement(dates[s.id])
+                facts = light_facts(frames)
+                row.nights = nights_of(facts.get("times") or [])
+                points[s.id] = facts
         rows = by_session.get(s.id)
         if rows:
             fw = [r.fwhm for r in rows if np.isfinite(r.fwhm)]
@@ -710,6 +719,9 @@ def project_frames(p, wid: int | None, headers: dict | None = None) -> ProjectFr
             if c is not None:
                 row.calib[kind] = c
         out.sessions.append(row)
+    far = {x["sid"]: x for x in api.target_far(p, points)}
+    for row in out.sessions:
+        row.target_far = far.get(row.id)
     if first_info is not None:
         out.camera = dict(camera=first_info.camera, width=first_info.width, height=first_info.height,
                           cfa=first_info.cfa, black=first_info.black, white=first_info.white)

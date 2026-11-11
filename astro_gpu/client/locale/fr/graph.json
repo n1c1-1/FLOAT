@@ -184,6 +184,7 @@
   "Go to {block}": "Aller à {block}",
   "shared with {names}: one master": "partagé avec {names} : un master",
   "One night: its light frames and the dark, flat and bias frames chosen for it, and the filter.": "Une nuit : ses brutes, les darks, flats et offsets choisis pour elle, et le filtre.",
+  "{nights}: their light frames and the dark, flat and bias frames chosen for them, and the filter.": "{nights} : leurs brutes, les darks, flats et offsets choisis pour elles, et le filtre.",
   "An image file (a linear stack) this workflow starts from: the blocks after it read it as a stack.": "Un fichier image (un empilement linéaire) dont part ce workflow : les blocs suivants le lisent comme un empilement.",
   "planned": "prévu",
   "a FITS or TIFF file, straight out of a stack": "un fichier FITS ou TIFF, sorti directement d'un empilement",

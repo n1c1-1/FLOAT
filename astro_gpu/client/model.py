@@ -269,13 +269,15 @@ class ProjectState:
 
     level: str
     missing: list[str]
+    #: what the files contradict in the block (lights pointing far from the target): it is orange, and says why
+    warnings: list[str] = field(default_factory=list)
 
     @property
     def line(self) -> str:
-        """What is missing, in one line: the block's tooltip and the top of its form say it."""
-        if not self.missing:
-            return _("Complete: target and shooting details given")
-        return _("Missing: {what}").format(what=", ".join(self.missing))
+        """What is missing, then what is contradicted, in lines: the block's tooltip and the top of its form say it."""
+        head = ([_("Missing: {what}").format(what=", ".join(self.missing))] if self.missing else
+                [] if self.warnings else [_("Complete: target and shooting details given")])
+        return "\n".join(head + self.warnings)
 
 
 @dataclass
@@ -295,6 +297,8 @@ class Facts:
     colour: dict = field(default_factory=dict)
     #: session id -> the calibration kinds it gives as masters only (io/frames.master_kinds: their headers, read here)
     masters: dict = field(default_factory=dict)
+    #: session id -> io.frames.light_facts of its lights: their own times, header pointing and OBJECT name
+    lights: dict = field(default_factory=dict)
     #: the named objects of the first field solved, biggest first (core/skyobjects.SkyObject)
     in_field: list = field(default_factory=list)
 
@@ -310,6 +314,7 @@ def _warm_job(p) -> tuple[dict, Facts]:
 
 def _facts_job(p) -> Facts:
     from ..core.project import list_frames
+    from ..io.frames import light_facts
     f = Facts()
     for w in p.workflows:
         for stage in ("inventory", "register", "stack"):
@@ -334,6 +339,10 @@ def _facts_job(p) -> Facts:
         f.files[s.id] = files
         f.checks[s.id] = session_checks(p, s, files)
         f.colour[s.id] = _colour_of(files)
+        try:
+            f.lights[s.id] = light_facts(files["lights"])
+        except Exception:  # noqa: BLE001 - a hint (the nights, the pointing): unreadable frames are said by session_checks
+            f.lights[s.id] = {}
         f.masters[s.id] = _masters_of(files)
     if p.root is not None:
         f.reviewed = [str(x) for x in read_state(p.root).get("reviewed") or []]
@@ -1328,7 +1337,24 @@ class ProjectModel(QObject):
         by_session = bool(self.p.sessions) and all(s.filter for s in self.p.sessions)
         missing = ([] if has_target else [_("target")]) + [words[k] for k in ACQUISITION if not self.p.acquisition.get(k)
                                                            and not (k == "filter" and by_session)]
-        return ProjectState("none" if not has_target else "partial" if missing else "complete", missing)
+        warnings = self.target_far_texts() if has_target else []
+        return ProjectState("none" if not has_target else "partial" if missing or warnings else "complete", missing,
+                            warnings)
+
+    def target_far_texts(self) -> list[str]:
+        """The project's target against where its lights point (``api.target_far``, from the headers the worker read):
+        one sentence per case, in the language of the interface; none when they agree or when nothing is known."""
+        from .frames import target_far_text
+        try:
+            far = api.target_far(self.p, self._facts.lights)
+        except Exception:  # noqa: BLE001 - a hint: the catalogues of names not installed, nothing said
+            return []
+        return list(dict.fromkeys(target_far_text(x) for x in far))
+
+    def nights_text(self, sid: int) -> str:
+        """The nights a session's lights were taken in, when several ("8 nights · 28/06 to 21/07"); "" otherwise."""
+        from .frames import nights_of, nights_text
+        return nights_text(nights_of((self._facts.lights.get(sid) or {}).get("times") or []))
 
     def target_state(self) -> TargetState:
         """What the Project block says of the target: known, unknown or nothing; a target the solved field does not

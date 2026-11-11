@@ -14,7 +14,8 @@ from astro_gpu.client.model import ProjectModel  # noqa: E402
 
 def _state(filters, acquisition=None):
     p = SimpleNamespace(sessions=[SimpleNamespace(filter=f) for f in filters], acquisition=acquisition or {})
-    return ProjectModel.project_state(SimpleNamespace(p=p, target_state=lambda: SimpleNamespace(name="NGC 6995")))
+    return ProjectModel.project_state(SimpleNamespace(p=p, target_state=lambda: SimpleNamespace(name="NGC 6995"),
+                                              target_far_texts=lambda: []))
 
 
 def test_a_filter_given_by_every_session_is_not_missing():
