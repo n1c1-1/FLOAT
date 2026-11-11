@@ -599,6 +599,36 @@ def test_a_blank_page_has_a_link_to_the_templates_in_place_of_the_graph(qapp, tm
         w.stop()
 
 
+def test_a_project_with_a_workflow_has_a_new_workflow_link_that_opens_its_window(qapp, tmp_path, monkeypatch):
+    """Issue #147: the New workflow window (templates, a copy of a workflow, a template file) had no way in. Once the
+    project has a workflow, a named link under the zone where a parallel flow starts opens it, without blocking."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    from astro_gpu.client.gallery import TemplateGallery
+    from astro_gpu.client.graph import LinkItem
+    w, m, page = open_page(tmp_path, monkeypatch)
+    page.show()
+    try:
+        assert m.paths
+        page.graph.rebuild()
+        link = next(x for x in page.graph.scene().items() if isinstance(x, LinkItem))
+        assert link.text == "New workflow" and link.toolTip()
+        QApplication.processEvents()
+        QTest.mouseClick(page.graph.viewport(), Qt.LeftButton, pos=page.graph.mapFromScene(link.sceneBoundingRect().center()))
+        d = page._gallery
+        assert isinstance(d, TemplateGallery) and d.isVisible() and "copy" in d.tab_keys
+        n = len(m.paths)
+        d.pick(next(c.t for c in d.cards))
+        d._create()
+        settle(w, page)
+        assert len(m.paths) > n
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
 def test_the_template_cards_take_the_height_of_their_content_in_a_grid_that_wraps(qapp, tmp_path, monkeypatch):
     """Issue #133: on a tall page the cards stretched to its whole height, their content in their top third. A card is
     as tall as the tallest of its row, its text whole, at the top; a tall page is empty below the cards; a wide page
@@ -722,6 +752,54 @@ def test_several_images_are_all_numbered_the_first_too(qapp, tmp_path, monkeypat
         next(c for c in page.templates.cards if c.t["key"] == "image").mousePressEvent(None)
         settle(w, page)
         assert len(m.paths) == 1 and not m.paths[0].name[-1].isdigit()      # one alone: no number
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
+def test_an_image_added_beside_one_numbers_both_as_their_blocks(qapp, tmp_path, monkeypatch):
+    """Issue #134, the part left: the Image template then an Image from the palette made "Image" and "Image 2" (blocks
+    Image 1 and Image 2); then Several images in the New workflow window, workflows Image 1 to 3 beside the blocks Image
+    2 to 4. A second of a kind numbers the first, still named by default, and each block's number is its workflow's; a
+    name the user typed is kept."""
+    from astro_gpu.client.blocks import node_title
+
+    def image_template():
+        page.show_templates()
+        next(c for c in page.templates.cards if c.t["key"] == "image").mousePressEvent(None)
+        settle(w, page)
+
+    def same_numbers(names):
+        assert [q.name for q in m.paths] == names
+        g = Graph(m)
+        images = [n for n in g.nodes if n.key == "image"]
+        assert len(images) == len(names)
+        for n in images:
+            assert g.summary(n).startswith(node_title(m, n) + " · "), (node_title(m, n), g.summary(n))
+    w, m, page = _blank_page(tmp_path, monkeypatch)
+    try:
+        image_template()
+        same_numbers(["Image"])                                    # one alone: no number
+        page.palette_action("image")
+        settle(w, page)
+        same_numbers(["Image 1", "Image 2"])
+        assert m.undo()                                            # one Ctrl+Z: the first named as it was
+        settle(w, page)
+        same_numbers(["Image"])
+        d = page.new_workflow()
+        d.pick(next(c.t for c in d.cards if c.t["key"] == "images"))
+        d._create()
+        settle(w, page)
+        same_numbers(["Image 1", "Image 2", "Image 3", "Image 4"])
+        while not page.is_blank():
+            assert m.undo()
+            settle(w, page)
+        image_template()
+        assert m.rename(m.paths[0].pid, "M 31")
+        page.palette_action("image")
+        settle(w, page)
+        assert [q.name for q in m.paths] == ["M 31", "Image 2"]    # typed: kept; the new one, its block's number
     finally:
         page.close()
         m.close(save=False)
