@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 
 from ..core import bright_stars as bs
 from ..core import gaia_extracts as ge
+from ..core import sky_catalogue as sc
 from . import prefs
 from .i18n import LANGUAGES, _, maybe, number
 from .icons import icon
@@ -570,13 +571,14 @@ class SettingsDialog(QDialog):
         v.addSpacing(6)
 
     def offline_extracts(self, v):
-        """The Gaia DR3 extracts the engine reads offline: their folder, what is installed, the two downloads (run
-        off the GUI thread by services.extracts, only when a button is pressed)."""
-        v.addWidget(label(_("Offline Gaia extracts"), "h2"))
-        v.addWidget(label(_("Star positions find where the image points on the sky; star spectra calibrate the colours. "
-                            "Nothing is fetched while a project runs: download them once here, with the buttons below. "
-                            "Without them, the blocks that need them are marked and left out of the runs."), "small", wrap=True))
-        where = QLineEdit(str(ge.folder()))
+        """The star data the engine reads offline: their folder, what is installed, the two downloads (the star
+        catalogue, FLOAT's own, and the bright stars; run off the GUI thread by services.extracts, only when a button is
+        pressed)."""
+        v.addWidget(label(_("Offline star data"), "h2"))
+        v.addWidget(label(_("The star catalogue finds where the image points on the sky and calibrates the colours. "
+                            "Nothing is fetched while a project runs: install it once here, with the buttons below. "
+                            "Without it, the blocks that need it are marked and left out of the runs."), "small", wrap=True))
+        where = QLineEdit(str(sc.folder()))
         where.setReadOnly(True)
         where.setCursorPosition(0)
         opn = QPushButton(_("Open folder"))
@@ -589,15 +591,16 @@ class SettingsDialog(QDialog):
         self.row(v, _("Folder"), box)
         self.ex = {"status": {}, "button": {}, "tip": {}}
         buttons = QHBoxLayout()
-        # each row says which block cannot run without it: the positions alone leave the Color block out of the
-        # runs (it calibrates on the spectra, the 10 GB part), which a user installing only the positions must know
-        # the third row, the bright stars of the whole sky (core/bright_stars.py): their size is what the files take
-        # on the disk, built here from lists of a few MB
+        # each row says what it holds and which block cannot run without it (the star catalogue: Astrometry and Color;
+        # the bright stars of the whole sky, core/bright_stars.py: their size is what the files take on the disk, built
+        # here from lists of a few MB)
+        cat_size = f"{number(sc.total_bytes() / 1e9, 2)} {_('GB')}"
         for kind, name, needed, button, tip in (
-                (ge.ASTRO, _("Star positions"), _("Needed by Astrometry"), _("Download positions ({size})"),
-                 _("Download star positions ({size})")),
-                (ge.XP, _("Star spectra"), _("Needed by the Color block"), _("Download spectra ({size})"),
-                 _("Download star spectra ({size})")),
+                (sc.KIND, _("Star catalogue"),
+                 _("Positions and colours of the stars, {size} · needed by Astrometry and Color").format(size=cat_size),
+                 _("Install ({size})"),
+                 _("Downloads FLOAT's star catalogue ({size}) into the cache folder; a download that stops goes on from "
+                   "where it was. The full Gaia extracts are also read when they are on this computer.")),
                 (bs.KIND, _("Bright stars"), _("Find an unknown field; add the brightest stars Gaia lacks"),
                  _("Install bright stars ({size})"),
                  _("Downloads the Hipparcos and Tycho-2 star lists ({download}) and builds the blind solver's index "
@@ -611,10 +614,12 @@ class SettingsDialog(QDialog):
             col.addWidget(st)
             col.addWidget(label(needed, "dim", wrap=True))
             self.row(v, name, box)
-            gb = f"{number((ge.DOWNLOAD_BYTES.get(kind) or bs.DISK_BYTES) / 1e9)} {_('GB')}"
+            gb = cat_size if kind == sc.KIND else f"{number(bs.DISK_BYTES / 1e9)} {_('GB')}"
             b = QPushButton(button.format(size=gb))
             b.setToolTip(tip.format(size=gb, download=f"{number(bs.DOWNLOAD_BYTES / 1e6, 0)} {_('MB')}"))
             self.ex["tip"][kind] = b.toolTip()
+            if kind == sc.KIND:                      # the row says it too: the full extracts are read when present
+                box.setToolTip(b.toolTip())
             b.clicked.connect(lambda _x=False, k=kind: self._ex_start(k))
             buttons.addWidget(b)
             self.ex["status"][kind], self.ex["button"][kind] = st, b
@@ -641,13 +646,13 @@ class SettingsDialog(QDialog):
             self._ex_progress(*j.last)
         self._ex_refresh()
 
-    def _ex_status_text(self, st: ge.Status) -> str:
+    def _catalogue_status_text(self, st: sc.Status) -> str:
         if st.state == "installed":
             if st.outside is not None:
                 return _("Found in another program's data folder: {path}").format(path=st.outside)
-            return _("Installed")
+            return _("Installed: {path}").format(path=st.where)
         if st.state == "partial":
-            if st.files and st.total > 1:
+            if st.files:
                 return _("Partly downloaded: {n} of {total} files").format(n=st.files, total=st.total)
             return _("Partly downloaded: {size}").format(size=ge.human(st.part_bytes))
         return _("Not installed")
@@ -673,11 +678,11 @@ class SettingsDialog(QDialog):
                     b.setEnabled(not busy and not done)
                     b.setToolTip(_("Already installed.") if done else self.ex["tip"][kind])
                     continue
-                st = ge.status(kind)
-                lab.setText(self._ex_status_text(st))
-                done = st.state == "installed" and st.own
+                st = sc.status()
+                lab.setText(self._catalogue_status_text(st))
+                done = st.state == "installed"
                 b.setEnabled(not busy and not done)
-                b.setToolTip(_("Already installed.") if done else "")
+                b.setToolTip(_("Already installed: {path}").format(path=st.where) if done else self.ex["tip"][kind])
         except RuntimeError:                         # the page was built again meanwhile
             pass
 
@@ -691,10 +696,10 @@ class SettingsDialog(QDialog):
 
     def _ex_open(self):
         try:
-            ge.folder().mkdir(parents=True, exist_ok=True)
+            sc.folder().mkdir(parents=True, exist_ok=True)
         except OSError:
             pass
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(ge.folder())))
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(sc.folder())))
 
     @Slot(object, object, str)                       # byte counts: a Slot(int) would overflow past 2 GB
     def _ex_progress(self, done, total, text):

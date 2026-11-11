@@ -1,4 +1,4 @@
-"""The download of the offline Gaia extracts and of the bright stars, off the GUI thread (core/gaia_extracts.py and
+"""The download of the star catalogue and of the bright stars, off the GUI thread (core/sky_catalogue.py and
 core/bright_stars.py do the work).
 
 One job for the whole program (``job()``): a plain thread runs the download and tells the GUI by signals, so that it
@@ -8,7 +8,7 @@ thread shared by every short request of the client, and a download takes minutes
     j = job()
     j.progress.connect(slot, Qt.QueuedConnection)       # (done, total, text)
     j.finished.connect(slot, Qt.QueuedConnection)       # (kind, "" when done | "cancelled" | the error)
-    j.start("astro")
+    j.start(sc.KIND)
 """
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from PySide6.QtCore import QCoreApplication, QObject, Signal
 
 from ...core import bright_stars as bs
 from ...core import gaia_extracts as ge
+from ...core import sky_catalogue as sc
 from ..i18n import _, number
 
 
@@ -27,7 +28,7 @@ class ExtractsJob(QObject):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.kind: str | None = None                 # the extract being downloaded; None when idle
+        self.kind: str | None = None                 # what is being downloaded (sc.KIND or bs.KIND); None when idle
         self.last = (0, 1, "")
         self._cancel = threading.Event()
         self._thread: threading.Thread | None = None
@@ -44,7 +45,7 @@ class ExtractsJob(QObject):
             return False
         ge.translate, ge.number = _, number          # the language of the moment
         self.kind = kind
-        self.last = (0, 1, _("Reading the file list from Zenodo") if kind != bs.KIND else _("Asking for the star lists"))
+        self.last = (0, 1, _("Asking for the star lists") if kind == bs.KIND else _("Checking the files"))
         self._cancel = threading.Event()
         self._thread = threading.Thread(target=self._run, args=(kind, self._cancel), daemon=True,
                                         name=f"gaia-extracts-{kind}")
@@ -64,7 +65,7 @@ class ExtractsJob(QObject):
             if kind == bs.KIND:                      # the bright stars: lists asked of the services, indexes built
                 bs.download(self._progress, cancel)
             else:
-                ge.download(kind, self._progress, cancel)
+                sc.download(self._progress, cancel)
         except ge.Cancelled:
             outcome = "cancelled"
         except ge.DownloadError as e:
