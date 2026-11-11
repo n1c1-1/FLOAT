@@ -83,6 +83,9 @@ def test_the_cpu_setting_has_nothing_to_test(env, qapp):
     d, page = _dialog(qapp)
     b = next(x for x in page.findChildren(QPushButton) if x.text() == "Test again")
     assert not b.isEnabled() and "The processor computes: nothing to test" in _texts(page)
+    # the night test pass: four empty lines, and the greyed button did not say why
+    assert "nothing to test" in b.toolTip()
+    assert not any(lab.isVisibleTo(page) for lab in d.ct["rows"].values())
     d.close()
 
 
@@ -162,7 +165,7 @@ def test_the_new_words_are_french(env):
     i18n.set_language("fr")
     i18n._missing.clear()
     assert i18n._("Card test") == "Test de la carte" and i18n._("Test again") == "Retester"
-    assert i18n._("GPU · {n} x faster").startswith("GPU")
+    assert i18n._("GPU · {n} x faster").startswith("Carte graphique")         # one name for it (the night test pass)
     msg = st.STAGE_ON_CPU.format(why=st.REASONS[st.WRONG])
     assert "carte" in engine_text(msg) and "faux" in engine_text(msg)
     msg = "the graphics card has 3.1 GB free and this stack needs about 8.0 GB: it is computed on the CPU"

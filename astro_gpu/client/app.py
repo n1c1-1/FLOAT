@@ -350,8 +350,8 @@ class Main(QMainWindow):
         act(v, _("Report"), lambda: self.set_mode(3), "Ctrl+4", enabled=has)
         v.addSeparator()
         self.a_hide = act(v, _("Hide panels") + "\tTab", lambda: self.toggle_panels("hidden"), None, True, enabled=has)
-        self.a_hide_r = act(v, _("Hide right") + "\tShift+Tab", lambda: self.toggle_panels("right_hidden"), None, True,
-                            enabled=has)
+        self.a_hide_r = act(v, _("Hide right") + "\t" + QKeySequence("Shift+Tab").toString(QKeySequence.NativeText),
+                            lambda: self.toggle_panels("right_hidden"), None, True, enabled=has)   # "Maj+Tab" in French
         self.a_max = act(v, _("Maximise"), lambda: self.toggle_panels("max"), "Ctrl+Space", True, enabled=has)
         act(v, _("Reset layout"), self.reset_layout, enabled=has, role="reset")
         v.addSeparator()
@@ -576,11 +576,18 @@ class Main(QMainWindow):
         if not drafts.is_untitled(root):
             prefs.add_recent(root.as_posix(), d.name, d.target.name or "")
         self._recovery_mine = recovered is not None
-        self.make_model()
-        self.mode = 0
-        self._last_step = None
-        self.build_menus()
-        self.build_project()
+        try:
+            self.make_model()
+            self.mode = 0
+            self._last_step = None
+            self.build_menus()
+            self.build_project()
+        except Exception as e:  # noqa: BLE001 - the night test pass: a project that failed to build stayed half open,
+            import logging      # invisible, the next gestures acting on it; closed, said, the detail in the output
+            logging.getLogger(__name__).exception("the project could not be shown")
+            self.close_project(go_home=True, discard=True)
+            self.banner.say(_("This project cannot be shown: {why}").format(why=plain_error(f"{type(e).__name__}: {e}")))
+            return False
         self.run.attach()                            # a run that goes on (started before, or elsewhere): follow it
         self.run.before_run = self._named_for_run
         if recovered is not None:
@@ -779,6 +786,7 @@ class Main(QMainWindow):
         """Report: the measures of a workflow, read-only (issue #81)."""
         from .report import ReportPage
         self.report = ReportPage(self.s, self.steps)
+        self.report.said.connect(self.flash)
         return self.report
 
     def graph_page(self) -> QWidget:

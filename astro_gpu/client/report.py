@@ -225,6 +225,12 @@ def _figure(rows: int, height: float):
 
 
 def _png(fig) -> bytes:
+    if language() == "fr":                               # a decimal comma on the axes too (the night test pass)
+        from matplotlib.ticker import FuncFormatter, ScalarFormatter
+        for ax in fig.axes:
+            for axis in (ax.xaxis, ax.yaxis):
+                if type(axis.get_major_formatter()) is ScalarFormatter:
+                    axis.set_major_formatter(FuncFormatter(lambda v, _pos: f"{v:g}".replace(".", ",").replace("-", "−")))
     buf = io.BytesIO()
     fig.savefig(buf, format="png", facecolor="white")
     return buf.getvalue()
@@ -349,7 +355,8 @@ def draw_figures(d: ReportData, title: str = ""):
     """The report's figures and the cards. Agg only: no widget, so that the worker thread can do it."""
     if d.reg is not None:
         for name, idx in d.sessions:
-            rows = [f"{a}: {b}" for a, b in card_rows(d, idx)]
+            colon = " : " if language() == "fr" else ": "      # French typography (the night test pass)
+            rows = [f"{a}{colon}{b}" for a, b in card_rows(d, idx)]
             foot = "     ".join(rows[:3]) + chr(10) + "     ".join(rows[3:])
             shown = name if len(d.sessions) > 1 else ""  # a project of one session: its name says nothing
             head = " · ".join(x for x in (_("Night card"), title, shown) if x)
@@ -440,6 +447,7 @@ class ReportPage(QWidget):
     is seen is what is exported, and it zooms."""
 
     loaded = Signal()                                    # the data of the workflow shown have been read
+    said = Signal(str)                                   # a word for the status line (an export written)
 
     def __init__(self, session, steps, parent=None):
         super().__init__(parent)
@@ -682,7 +690,9 @@ class ReportPage(QWidget):
         self.b_card.setEnabled(self.part.count() > 0)
 
     def _new_doc(self, body: str) -> QTextDocument:
-        doc = QTextDocument(self)
+        # no parent: gone with its last reference (the night test pass: owned by the page, each showing of the report
+        # kept its documents and their figures, about 15 MB, for good)
+        doc = QTextDocument()
         font = QFont("Times New Roman", 12)
         font.setStyleHint(QFont.Serif)
         doc.setDefaultFont(font)
@@ -797,14 +807,31 @@ class ReportPage(QWidget):
 
     # ------------------------------------------------------------ export
     def _ask_png(self):
-        path, _f = QFileDialog.getSaveFileName(self, _("Export PNG…"), "report.png", "PNG (*.png)")
-        if path:
-            self.save_png(path)
+        self._export(_("Export PNG…"), "png", "PNG (*.png)", self.save_png)
 
     def _ask_pdf(self):
-        path, _f = QFileDialog.getSaveFileName(self, _("Export PDF…"), "report.pdf", "PDF (*.pdf)")
-        if path:
-            self.save_pdf(path)
+        self._export(_("Export PDF…"), "pdf", "PDF (*.pdf)", self.save_pdf)
+
+    def _export(self, title: str, ext: str, kinds: str, write):
+        """The file asked (in the project's folder at first, named after it), written with the wait shown, then said
+        (the night test pass: 7 s without a sign, the file proposed in the program's own folder)."""
+        from . import prefs
+        from .imageview import slug
+        root = getattr(self.s, "root", None)
+        folder = Path(root) if root else Path(prefs.last_folder())
+        path, _f = QFileDialog.getSaveFileName(self, title, (folder / f"{slug(self.title())}_report.{ext}").as_posix(),
+                                               kinds)
+        if not path:
+            return
+        prefs.remember_folder(path)
+        self.said.emit(_("Writing {name}…").format(name=Path(path).name))
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.processEvents()
+        try:
+            write(path)
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.said.emit(_("Exported to {path}").format(path=path))
 
     def _picture(self, parts: list, scale: float = 1.0) -> QImage:
         docs = [self._new_doc(body) for _title, body in parts]

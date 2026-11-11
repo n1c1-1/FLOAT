@@ -12,6 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QObject, Signal  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
+from astro_gpu.client import i18n  # noqa: E402
 from astro_gpu.client import report as rep  # noqa: E402
 from astro_gpu.client.charts import RegistrationData  # noqa: E402
 from astro_gpu.client.chartview import ChartView  # noqa: E402
@@ -156,6 +157,15 @@ def test_the_exports_hold_the_report_and_no_path(qapp, monkeypatch, tmp_path):
     p.save_png(tmp_path / "r.png")
     p.save_pdf(tmp_path / "r.pdf")
     assert (tmp_path / "r.png").stat().st_size > 2000 and (tmp_path / "r.pdf").read_bytes()[:4] == b"%PDF"
+    # the night test pass: 7 s without a sign, the file proposed in the program's own folder
+    said, asked = [], []
+    p.said.connect(said.append)
+    monkeypatch.setattr(p.s, "root", tmp_path, raising=False)
+    monkeypatch.setattr(rep.QFileDialog, "getSaveFileName",
+                        lambda *a: (asked.append(a[2]), ((tmp_path / "x.pdf").as_posix(), ""))[1])
+    p._ask_pdf()
+    assert asked[0].startswith(tmp_path.as_posix()) and asked[0].endswith("_report.pdf")
+    assert said[0].startswith("Writing x.pdf") and "x.pdf" in said[-1] and (tmp_path / "x.pdf").is_file()
 
 
 def test_one_night_card_per_session_beside_the_image(qapp, monkeypatch, tmp_path):
@@ -252,3 +262,17 @@ def test_the_details_stay_in_the_project_file(tmp_path):
     p.acquisition["mount"] = "EQ6"
     project2.save(p)
     assert project2.load(tmp_path / "A").acquisition == {"mount": "EQ6"}
+
+
+def test_the_figures_have_a_decimal_comma_in_french():
+    """The night test pass: the night card's axis read 0.5, 1.0, 1.5 where the rest of the program writes 0,5."""
+    from matplotlib.figure import Figure
+    i18n.set_language("fr")
+    try:
+        fig = Figure()
+        ax = fig.add_subplot()
+        ax.plot([0, 0.5, 1.5], [1, 2, 3])
+        rep._png(fig)
+        assert ax.xaxis.get_major_formatter()(0.5, 0) == "0,5"
+    finally:
+        i18n.set_language("en")

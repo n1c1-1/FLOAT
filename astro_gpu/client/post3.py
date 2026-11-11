@@ -322,7 +322,7 @@ class ContSlider(QWidget):
 PANEL_W, PANEL_MIN, PANEL_MAX = 400, 320, 760          # the settings, on the right
 LAYERS_W, LAYERS_MIN, LAYERS_MAX = 300, 230, 520       # the layers, on the left
 SUB_MAX = 120                                          # a layer row's blend, at most (its name keeps the rest)
-CENTRE_MIN = 440                                       # the image: its tools go into "…" rather than push the sides out
+CENTRE_MIN = 470                                       # the image: its tools go into "…" rather than push the sides out
 
 
 class EyeBox(QCheckBox):
@@ -732,11 +732,9 @@ class PostView(QWidget):
         self._fill_versions()
         # a narrow centre (a laptop, Windows' scale at 125 or 150 %): the tools least used go into "…" one by one,
         # rather than the bar pushing the sides out of the window (the night test pass)
-        self.b_more = icon_only(QToolButton(), "more", _("More tools"), 16)
-        self.b_more.setPopupMode(QToolButton.InstantPopup)
+        self.b_more = icon_only(QPushButton(), "more", _("More tools"), 16)     # as the bar's other buttons
         self.more_menu = QMenu(self.b_more)
-        self.more_menu.aboutToShow.connect(self._fill_more)
-        self.b_more.setMenu(self.more_menu)
+        self.b_more.clicked.connect(self._show_more)
         self.b_more.setVisible(False)
         for w in (self.b_crop, self.b_grid, self.b_names, self.b_cmp, self.b_mask, self.b_more, self.b_undo, self.b_redo,
                   self.b_export):
@@ -764,6 +762,9 @@ class PostView(QWidget):
 
     def _fit_bar(self):
         """As many tools in the bar as the centre has room for; the others in "…"."""
+        def need() -> int:                                  # the bar's width now (its hint is kept until invalidated)
+            self.top_bar.invalidate()
+            return self.top_bar.sizeHint().width()
         for b in self._overflow():
             b.setVisible(True)
         self.b_more.setVisible(False)
@@ -771,14 +772,18 @@ class PostView(QWidget):
         self.cb_version.setMinimumWidth(120)
         room = self.centre.width()
         for b in self._overflow():
-            if self.top_bar.sizeHint().width() <= room:
+            if need() <= room:
                 break
             b.setVisible(False)
             self.b_more.setVisible(True)
-        if self.top_bar.sizeHint().width() > room:          # still too wide: Export by its icon, a narrower version
+        if need() > room:                                   # still too wide: Export by its icon, a narrower version
             self.b_export.setText("")
             self.b_export.setToolTip(_("Export…"))
-            self.cb_version.setMinimumWidth(70)
+            self.cb_version.setMinimumWidth(95)
+
+    def _show_more(self):
+        self._fill_more()
+        self.more_menu.exec(self.b_more.mapToGlobal(self.b_more.rect().bottomLeft()))
 
     def _fill_more(self):
         """The "…" menu: the tools the bar has no room for, as their buttons (checked, greyed, their tip)."""
@@ -1459,6 +1464,36 @@ class PostView(QWidget):
         """The workflow whose solution the canvas uses: the bottom workflow layer (as the export does)."""
         return next((lay["pid"] for lay in reversed(self.layers) if lay["kind"] == "workflow"), None)
 
+    def ann_problem(self) -> str:
+        """Why the sky grid and the names cannot be drawn, '' when they can: the bottom workflow has no Astrometry, or it
+        is not computed (the night test pass: they could be ticked and showed nothing, on screen and in the export)."""
+        pid = self._ann_pid()
+        p = self.path(pid) if pid is not None else None
+        if p is None or not hasattr(self.s, "state_info"):
+            return ""
+        st = self.s.state_info(p, "astrometry")
+        if st is None:
+            return _("The image at the bottom has no Astrometry: place the block in its workflow, or put a layer that "
+                     "has one at the bottom")
+        if st.state not in ("done", "stale"):
+            return _("Astrometry is not computed yet for the image at the bottom")
+        return ""
+
+    def _ann_buttons(self):
+        """Sky grid and Object names greyed, the reason on hover, while there is no solution to draw."""
+        why = self.ann_problem()
+        for b, k in ((self.b_grid, "grid"), (self.b_names, "objects")):
+            b.setEnabled(not why)
+            if why:
+                if not b.property("why"):
+                    b.setProperty("tip", b.toolTip())         # its own tip, back once there is a solution
+                b.setToolTip(why)
+                if b.isChecked():
+                    self.set_annotations(**{k: False})
+            elif b.property("why"):
+                b.setToolTip(b.property("tip") or "")
+            b.setProperty("why", why)
+
     def _want_annotations(self):
         c, pid = self._canvas, self._ann_pid()
         if c is None or pid is None:
@@ -1647,6 +1682,7 @@ class PostView(QWidget):
         """The layers' rows built again; ``props``: the properties panel too (not for a visibility toggle, issue #24:
         its scroll and an open curves editor were lost)."""
         self._mask_button()
+        self._ann_buttons()
         self.hide_big()
         clear(self.lbox)
         self.rows = []
