@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import re
 import sys
 import time
@@ -17,8 +18,7 @@ from PySide6.QtWidgets import QApplication, QLabel
 
 from astro_gpu.client import i18n
 
-SCRATCH = Path(os.environ.get("PM_RAW", r"<user folder>\AppData\Local\Temp\scratch\c--Users-Nicolas-sandbox-astro"
-                                      r"\1c71fa0b-0835-4bbb-8d5f-35813a28f6ff\scratchpad\pm_raw"))
+SCRATCH = Path(os.environ.get("PM_RAW", str(Path(tempfile.gettempdir()) / "pm_raw")))
 SCRATCH.mkdir(parents=True, exist_ok=True)
 
 # English words that should not remain in a French text ("workflow" is allowed)

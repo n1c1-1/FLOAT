@@ -454,7 +454,7 @@ class StackDiag:
     #: the switches the stack was made with ({} for a stack made before the stack kept them)
     switches: dict[str, str] = field(default_factory=dict)
     #: {"method": "own" (or as recorded), "rejected_pct", "untested_pct" (Hubble: fewer than 3 samples around),
-    #: "reference_pct": Another processing program's mark [0.1, 0.5], "prediction" (Hubble: samples per point and median / minmed per colour),
+    #: "reference_pct": The reference program's mark [0.1, 0.5], "prediction" (Hubble: samples per point and median / minmed per colour),
     #: "classic" and "reason_template" (the Classic method: the rejection its rule chose, {"template", "args"})}
     rejection: dict[str, Any] = field(default_factory=dict)
     #: (h, w) counts of the samples left untested (Hubble), on the rejection maps' grid; None otherwise

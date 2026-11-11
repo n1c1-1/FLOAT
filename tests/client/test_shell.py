@@ -655,7 +655,7 @@ def test_about_credits_the_data_sources(env, qapp):
             assert s["name"] in t and s["licence"] in t, s["name"]
         assert "OpenNGC" in t and "CC BY-SA 4.0" in t and "Steinicke" in t and "ESA/Gaia/DPAC" in t
         # the shipped catalogues with their versions; Steinicke's terms as he wrote them, his address
-        assert "v20260501" in t and "8 February 2026" in t and "VII/7A" in t and "another processing program's catalogue lists" not in t
+        assert "v20260501" in t and "8 February 2026" in t and "VII/7A" in t and "the reference program's catalogue lists" not in t
         assert "steinicke-zehnle@t-online.de" in t and "Please inform the author Dr. Wolfgang Steinicke" in t
         assert ("Sources des données" in t) == (lang == "fr")
         d.close()

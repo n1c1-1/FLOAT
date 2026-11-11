@@ -95,14 +95,14 @@ def number(x: float, digits: int = 1, lang: str = "en") -> str:
 #: reason templates reworded after results had stored them (a stack's "reason_template"): the old English -> the new
 #: one, so that an older result reads like a new one in every language (the texts do not name other software)
 REWORDED: dict[str, str] = {
-    "{n} frames: percentile clipping ({low:g} / {high:g}), as a reference processing suite's WBPP below 6 frames":
+    "{n} frames: percentile clipping ({low:g} / {high:g}), as the reference processing suite's WBPP below 6 frames":
         "{n} frames: percentile clipping ({low:g} / {high:g}), the usual choice under 6 frames",
-    "{n} frames: winsorized sigma clipping ({low:g} / {high:g} σ), as a reference processing suite's WBPP from 6 to 15 frames, with "
-    "Another processing program's thresholds":
+    "{n} frames: winsorized sigma clipping ({low:g} / {high:g} σ), as the reference processing suite's WBPP from 6 to 15 frames, with "
+    "the reference program's thresholds":
         "{n} frames: winsorized sigma clipping ({low:g} / {high:g} σ), the usual choice from 6 to 15 frames",
-    "{n} frames: linear fit clipping ({low:g} / {high:g} σ), as a reference processing suite's WBPP from 16 frames":
+    "{n} frames: linear fit clipping ({low:g} / {high:g} σ), as the reference processing suite's WBPP from 16 frames":
         "{n} frames: linear fit clipping ({low:g} / {high:g} σ), the usual choice from 16 frames",
-    "{n} frames: generalized ESD test (up to {low:.0%} outliers, significance {high:g}), as another processing program advises above 50 "
+    "{n} frames: generalized ESD test (up to {low:.0%} outliers, significance {high:g}), as the reference program advises above 50 "
     "frames":
         "{n} frames: generalized ESD test (up to {low:.0%} outliers, significance {high:g}), the usual advice above 50 "
         "frames",
@@ -464,7 +464,7 @@ CHOICE_TEXTS: dict[str, str] = {
     "rcd": "RCD", "bilinear": "Bilinear", "lanczos4": "Lanczos-4",
     # the Classic method's clamping (core/resample.CLAMPINGS): the stored values name where each comes from, the
     # interface says what it does
-    "siril": "Bilinear guide", "reference_suite": "Lobe clamping",
+    "bilinear_guide": "Bilinear guide", "lobe_clamp": "Lobe clamping",
     "percentile": "Percentile clipping", "winsorized": "Winsorized sigma clipping", "linear_fit": "Linear fit clipping",
     "gesdt": "Generalized ESD test",
     # the colour stage's correction (stages/color.py)

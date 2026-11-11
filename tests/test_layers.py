@@ -170,7 +170,7 @@ def test_exports_reopen_with_the_right_dtype_and_size(tmp_path):
         assert im.size == (500, 300) and im.mode == "RGB" and im.info.get("icc_profile")
     with fits.open(tmp_path / "t.fits") as h:
         assert h[0].data.dtype.kind == "f" and h[0].data.dtype.itemsize == 4 and h[0].data.shape == (3, 300, 500)
-        # the rows bottom up, as FITS (and another processing program) have them; the history in the header
+        # the rows bottom up, as FITS (and the reference program) have them; the history in the header
         assert np.array_equal(h[0].data[:, ::-1], rgb) and h[0].header["ROWORDER"] == "BOTTOM-UP"
         assert any("layer" in str(x) or "astro_gpu" in str(x) for x in h[0].header["HISTORY"])
     # reduced (long side) and turned

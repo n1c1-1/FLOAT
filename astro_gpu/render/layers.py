@@ -9,7 +9,7 @@ the composed image.
   byte budget is reached). A GPU out-of-memory error renders again on the CPU, with a note.
 * ``masks(folder, scale, region)``: the H-alpha map of Post's mask parts.
 * ``export_rgb(rgb, out_dir, options, wcs, origin, history)``: TIFF 16 / 32f, PNG 16, JPEG, FITS 32f with the WCS and
-  the history in its header (ROWORDER TOP-DOWN: Another processing program shows it the right way up), in sRGB, at full size or reduced, in
+  the history in its header (ROWORDER TOP-DOWN: The reference program shows it the right way up), in sRGB, at full size or reduced, in
   a quarter turn or a mirror (never resampled), with a history file.
 """
 from __future__ import annotations
@@ -374,7 +374,7 @@ def export_rgb(rgb: np.ndarray, out_dir: str | Path, options: ExportOptions | di
             hdr = fits.Header()
             if wcs is not None:
                 hdr = oriented_wcs(_wcs_header(wcs), H, W, origin, o.rot90, o.flip, zoom)
-            # the rows bottom up, as FITS has them (another processing program shows the first row at the bottom and ignores ROWORDER for
+            # the rows bottom up, as FITS has them (the reference program shows the first row at the bottom and ignores ROWORDER for
             # display): the solution follows, exactly (the SIP distortion terms too)
             hdr = flip_rows_wcs(hdr, img.shape[1]) if wcs is not None else hdr
             hdr["COLORSPC"] = ("sRGB", "display-referred, non-linear")

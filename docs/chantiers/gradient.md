@@ -6,23 +6,23 @@ Branche `gradient`. Étapes 1 à 3 du plan : l'état de l'art, ce que fait notre
 
 | Outil | Méthode | Ce qu'il faut à l'utilisateur | Source |
 |---|---|---|---|
-| **Another processing program** | **Polynôme** (degré 1 à 4, au-delà instable) ou **RBF** (splines en plaque mince, avec un lissage) sur une grille d'échantillons. Un échantillon est rejeté s'il dépasse médiane + tolérance × MAD. Défauts : 20 échantillons par côté, tolérance 1,0, lissage 0,5. | retirer à la main les échantillons tombés sur les objets | [doc another processing program](https://another processing program.readthedocs.io/en/latest/processing/background.html) |
-| **Another processing program, version récente** | **Automatique, sans échantillons** : rejette par itérations tout ce qui ne ressemble pas au fond, puis ajuste un modèle multi-échelle. Défauts : échelle 5, douceur 1, protection des structures 0,05. | recadrer les bords d'abord | idem |
-| **Another processing program + a reference gradient tool** | another processing program appelle le réseau de neurones de a reference gradient tool par un script ; les modèles sont téléchargés par a reference gradient tool. | installer a reference gradient tool | [doc another processing program](https://another processing program.readthedocs.io/en/latest/processing/a reference gradient tool.html) |
-| **A reference processing suite ABE** | Polynôme automatique. Les utilisateurs le jugent le moins bon : il surcorrige les coins. | rien | forums |
-| **A reference processing suite DBE** | Échantillons posés à la main, surface en splines. Le plus contrôlable, mais tout dépend du placement. | placer les échantillons | forums |
-| **A reference processing suite GradientCorrection** (2024) | Automatique, à plusieurs échelles ; ses principes ne sont pas publiés. Résultats inégaux selon les images. | régler l'échelle et la protection | forums |
-| **A reference processing suite MGC** | Le gradient est mesuré en comparant l'image à une **image de référence à grand champ** du même ciel. Seules les grandes échelles sont corrigées. La base de référence MARS (tout le ciel) est en préparation. | une image de référence, ou plus tard MARS | [tutoriel MGC](https://a reference processing suite.com/tutorials/multiscale-gradient-correction/), [MARS](https://a reference processing suite.com/doc/docs/MARS/MARS.html) |
-| **A reference gradient tool IA** | Un réseau de neurones prédit le fond, sans échantillons. Réglages : lissage (0 à 1), soustraction ou division. Ligne de commande : `a reference gradient tool image.fits -cli -cmd background-extraction`. | rien | [a reference gradient tool](https://github.com/Steffenhir/a reference gradient tool) |
-| **A reference gradient tool classique** | RBF, splines ou krigeage sur des échantillons choisis. | placer les échantillons | idem |
+| **le programme de référence** | **Polynôme** (degré 1 à 4, au-delà instable) ou **RBF** (splines en plaque mince, avec un lissage) sur une grille d'échantillons. Un échantillon est rejeté s'il dépasse médiane + tolérance × MAD. Défauts : 20 échantillons par côté, tolérance 1,0, lissage 0,5. | retirer à la main les échantillons tombés sur les objets | [doc le programme de référence](https://siril.readthedocs.io/en/latest/processing/background.html) |
+| **le programme de référence, version récente** | **Automatique, sans échantillons** : rejette par itérations tout ce qui ne ressemble pas au fond, puis ajuste un modèle multi-échelle. Défauts : échelle 5, douceur 1, protection des structures 0,05. | recadrer les bords d'abord | idem |
+| **le programme de référence + l'outil de gradient de référence** | Le programme de référence appelle le réseau de neurones de l'outil de gradient de référence par un script ; les modèles sont téléchargés par l'outil de gradient de référence. | installer l'outil de gradient de référence | [doc le programme de référence](https://siril.readthedocs.io/en/latest/processing/graxpert.html) |
+| **le logiciel de traitement de référence ABE** | Polynôme automatique. Les utilisateurs le jugent le moins bon : il surcorrige les coins. | rien | forums |
+| **le logiciel de traitement de référence DBE** | Échantillons posés à la main, surface en splines. Le plus contrôlable, mais tout dépend du placement. | placer les échantillons | forums |
+| **le logiciel de traitement de référence GradientCorrection** (2024) | Automatique, à plusieurs échelles ; ses principes ne sont pas publiés. Résultats inégaux selon les images. | régler l'échelle et la protection | forums |
+| **le logiciel de traitement de référence MGC** | Le gradient est mesuré en comparant l'image à une **image de référence à grand champ** du même ciel. Seules les grandes échelles sont corrigées. La base de référence MARS (tout le ciel) est en préparation. | une image de référence, ou plus tard MARS | tutoriel MGC, MARS |
+| **l'outil de gradient de référence IA** | Un réseau de neurones prédit le fond, sans échantillons. Réglages : lissage (0 à 1), soustraction ou division. Ligne de commande : `l'outil de gradient de référence image.fits -cli -cmd background-extraction`. | rien | [l'outil de gradient de référence](https://github.com/Steffenhir/GraXpert) |
+| **l'outil de gradient de référence classique** | RBF, splines ou krigeage sur des échantillons choisis. | placer les échantillons | idem |
 
-**Les licences de a reference gradient tool** :
-- **le programme** est sous **GPL-3.0** ([License.md](https://github.com/Steffenhir/a reference gradient tool/blob/main/License.md)) ;
+**Les licences de l'outil de gradient de référence** :
+- **le programme** est sous **GPL-3.0** ([License.md](https://github.com/Steffenhir/GraXpert/blob/main/License.md)) ;
 - **les modèles de réseau de neurones** sont sous **CC BY-NC-SA 4.0**, d'après un enregistrement du dépôt officiel et un miroir. C'est donc un **usage non commercial seulement**. À confirmer sur les fichiers officiels.
 
 **Ce que ça implique** :
 - Embarquer les modèles dans notre logiciel le soumettrait à cette clause non commerciale. Un utilisateur qui vend ses tirages serait en dehors de la licence.
-- Si l'on **appelle a reference gradient tool installé par l'utilisateur**, comme le fait another processing program, la licence reste entre l'utilisateur et a reference gradient tool.
+- Si l'on **appelle l'outil de gradient de référence installé par l'utilisateur**, comme le fait le programme de référence, la licence reste entre l'utilisateur et l'outil de gradient de référence.
 - **Ma recommandation : l'appeler comme un programme externe.**
 
 **Remarques** :
@@ -32,7 +32,7 @@ Branche `gradient`. Étapes 1 à 3 du plan : l'état de l'art, ce que fait notre
 ## 2. Ce que fait notre code
 
 **Le fond polynomial** (`background_poly`, workflows Empilement classique et Classique + débruitage) :
-- Il suit la méthode habituelle de another processing program et d'ABE : un polynôme ajusté sur des blocs du ciel, en rejetant par itérations les blocs trop au-dessus de la surface.
+- Il suit la méthode habituelle du programme de référence et d'ABE : un polynôme ajusté sur des blocs du ciel, en rejetant par itérations les blocs trop au-dessus de la surface.
 - Réglages : degré 2, 16 échantillons par côté, rejet à 2,5 σ. Un grand objet qui remplit le champ (M31) est laissé de côté en entier.
 - **Généralisable : oui**, il ne contient pas de règle calée sur nos images.
 - Il lui manque la RBF, la méthode automatique et les échantillons posés à la main.
@@ -70,11 +70,11 @@ Les mesures portent sur les empilements du banc déjà calculés (Heart, Iris, M
 4. **Ton œil, dans le GUI**, avec l'avant, l'après et le modèle retiré côte à côte.
 
 **Méthodes comparées** :
-- **Another processing program** (1.4.0-beta3 installé) : polynôme et RBF ;
-- **A reference gradient tool** : réseau de neurones et RBF. Il faut l'installer, ce que je ne ferai qu'avec ton accord ;
+- **le programme de référence** (1.4.0-beta3 installé) : polynôme et RBF ;
+- **l'outil de gradient de référence** : réseau de neurones et RBF. Il faut l'installer, ce que je ne ferai qu'avec ton accord ;
 - **nos deux méthodes**.
 
-A reference processing suite n'est pas installé : il reste comparé sur la documentation et les publications.
+Le logiciel de traitement de référence n'est pas installé : il reste comparé sur la documentation et les publications.
 
 ## 4. Les résultats du banc (3 novembre)
 
@@ -82,35 +82,35 @@ Six cas, cinq versions de chaque image, six méthodes avec leurs réglages par d
 chiffres : `F:\astro_essais\bench\gradient\results.json` ; planches : `F:\astro_essais\bench\gradient\sheet_<cas>.jpg`
 (l'image d'entrée, chaque résultat, chaque fond retiré).
 
-Méthodes : Another processing program 1.4.5 (polynôme degré 2 et 4, RBF), another processing program 1.5 en développement (automatique, sans échantillons),
-A reference gradient tool 3.1.0-RC2 (réseau de neurones), notre polynôme (degré 2).
+Méthodes : Le programme de référence 1.4.5 (polynôme degré 2 et 4, RBF), le programme de référence 1.5 en développement (automatique, sans échantillons),
+L'outil de gradient de référence 3.1.0-RC2 (réseau de neurones), notre polynôme (degré 2).
 
 | Méthode | Gradients injectés : écart au vrai (pente, dôme, coin éclairé) | Nuage faible gardé | Planéité du fond |
 |---|---|---|---|
 | Notre polynôme | **1 à 3 %**, **1 à 3 %**, 24 à 51 % | **76 à 104 %** | 3,6 à 8,5 % |
-| Another processing program polynôme 2 | 5 à 17 %, 8 à 37 %, 27 à 57 % | 82 à 95 % | 3,7 à 9,6 % |
-| Another processing program polynôme 4 | 7 à 71 %, 25 à 44 %, 9 à 50 % | 52 à 85 % | 3,3 à 9,2 % |
-| Another processing program RBF | 9 à 21 %, 25 à 42 %, 11 à 47 % | 36 à 78 % | 2,0 à 8,3 % |
-| Another processing program automatique (1.5) | **2 à 4 %** (M8 : 18 %), **5 à 10 %** (M8 : 27 %), **3 %** (M8 : 14 %) | 11 à 20 % (M8 : 53 %) | **1,6 à 3,5 %** (M8 : 6,4 %) |
-| A reference gradient tool IA | 7 à 27 %, 9 à 43 %, 7 à 37 % | 13 à 24 % (M8 : 76 %) | 1,6 à 9,1 % |
+| Le programme de référence polynôme 2 | 5 à 17 %, 8 à 37 %, 27 à 57 % | 82 à 95 % | 3,7 à 9,6 % |
+| Le programme de référence polynôme 4 | 7 à 71 %, 25 à 44 %, 9 à 50 % | 52 à 85 % | 3,3 à 9,2 % |
+| Le programme de référence RBF | 9 à 21 %, 25 à 42 %, 11 à 47 % | 36 à 78 % | 2,0 à 8,3 % |
+| Le programme de référence automatique (1.5) | **2 à 4 %** (M8 : 18 %), **5 à 10 %** (M8 : 27 %), **3 %** (M8 : 14 %) | 11 à 20 % (M8 : 53 %) | **1,6 à 3,5 %** (M8 : 6,4 %) |
+| L'outil de gradient de référence IA | 7 à 27 %, 9 à 43 %, 7 à 37 % | 13 à 24 % (M8 : 76 %) | 1,6 à 9,1 % |
 
 Ce que ça dit :
 - **Deux familles, un même compromis.**
   - **Les méthodes rigides** (les polynômes) **gardent le signal faible et étendu**, mais ne suivent pas un gradient
     qui n'a pas une forme de polynôme : le coin éclairé par la Lune laisse 24 à 57 % d'erreur.
-  - **Les méthodes souples** (another processing program automatique, a reference gradient tool, et la RBF dans une moindre mesure) **suivent les
+  - **Les méthodes souples** (le programme de référence automatique, l'outil de gradient de référence, et la RBF dans une moindre mesure) **suivent les
     gradients compliqués**, mais **retirent aussi les grandes structures faibles**. Sur la Rosette, la planche montre
-    que la nébuleuse elle-même passe en partie dans le fond retiré, avec a reference gradient tool comme avec another processing program automatique.
-- **Notre polynôme est meilleur que celui de another processing program** sur les gradients lisses (1 à 3 % contre 5 à 37 %). Another processing program écarte
+    que la nébuleuse elle-même passe en partie dans le fond retiré, avec l'outil de gradient de référence comme avec le programme de référence automatique.
+- **Notre polynôme est meilleur que celui du programme de référence** sur les gradients lisses (1 à 3 % contre 5 à 37 %). Le programme de référence écarte
   les échantillons plus brillants que la médiane de toute l'image : avec un gradient fort, il ignore tout le côté
   éclairé et extrapole depuis le côté sombre. Sa documentation conseille d'ailleurs de garder tous les échantillons
   dans ce cas. Réserve : la pente et le dôme injectés ont une forme de polynôme, ce qui avantage les polynômes. Le coin
   éclairé est la mesure honnête pour eux.
-- **Another processing program automatique est la meilleure des méthodes souples** : il retrouve les trois gradients à quelques % près, mieux
-  que a reference gradient tool, et donne le fond le plus plat.
+- **le programme de référence automatique est la meilleure des méthodes souples** : il retrouve les trois gradients à quelques % près, mieux
+  que l'outil de gradient de référence, et donne le fond le plus plat.
 - **M8 (Voie lactée dense) met toutes les méthodes en difficulté.**
 - **Une méthode qui ne regarde que l'image ne peut pas distinguer un nuage faible très étendu d'un gradient.** Seule une
-  référence extérieure du ciel le peut : c'est l'idée de MGC et de MARS chez a reference processing suite, et celle de notre fond ancré
+  référence extérieure du ciel le peut : c'est l'idée de MGC et de MARS chez le logiciel de traitement de référence, et celle de notre fond ancré
   sur le relevé H-alpha. C'est la piste de l'état de l'art pour garder les nébulosités faibles.
 - **Notre fond « physique » n'est pas dans ce banc** : il demande toute la chaîne du workflow Complet. Ses résultats
   précédents sur Rosette et Iris restent visibles dans le GUI.
@@ -119,7 +119,7 @@ Ce que ça dit :
 
 **Ce qu'elle fait** : la même surface lisse que notre polynôme, mais le relevé H-alpha professionnel du champ entre
 dans l'ajustement comme une partie du vrai ciel (gain × relevé + surface). Seule la surface est retirée. C'est le
-principe de MGC chez a reference processing suite (une image du même ciel, sans gradient, dit ce qui est du ciel), limité ici à ce que
+principe de MGC chez le logiciel de traitement de référence (une image du même ciel, sans gradient, dit ce qui est du ciel), limité ici à ce que
 voit le relevé : l'émission H-alpha. Méthode `anchored` de l'étape Gradient ; elle a besoin du relevé (étape
 `surveys`) et donc d'Internet.
 
@@ -133,13 +133,13 @@ le plus favorable à la méthode ancrée (sa référence a exactement cette form
 |---|---|---|---|---|
 | Notre polynôme | 0 à 2 %, 0 à 2 %, 23 à 52 % | 33 à 108 % | 65 à 94 % | 3,1 à 15 % |
 | **Ancrée** | 0 à 2 %, 1 à 2 %, 33 à 52 % | 19 à 103 % | **96 à 101 %** (Iris : 135 %) | 3,0 à 12 % |
-| Another processing program polynôme 2 | 5 à 15 %, 5 à 30 %, 26 à 56 % | 80 à 96 % | 85 à 103 % | 3,6 à 17 % |
-| Another processing program automatique (1.5) | 1 à 5 % (M8 : 21 %), 5 à 13 % (M8 : 30 %), 3 à 4 % (M8 : 16 %) | 13 à 24 % (M8 : 64 %) | 26 à 100 % | 1,2 à 11 % |
-| A reference gradient tool IA | 4 à 14 %, 6 à 17 %, 5 à 12 % | 10 à 22 % (M8 : 75 %) | 88 à 106 % | 1,1 à 17 % |
+| Le programme de référence polynôme 2 | 5 à 15 %, 5 à 30 %, 26 à 56 % | 80 à 96 % | 85 à 103 % | 3,6 à 17 % |
+| Le programme de référence automatique (1.5) | 1 à 5 % (M8 : 21 %), 5 à 13 % (M8 : 30 %), 3 à 4 % (M8 : 16 %) | 13 à 24 % (M8 : 64 %) | 26 à 100 % | 1,2 à 11 % |
+| L'outil de gradient de référence IA | 4 à 14 %, 6 à 17 %, 5 à 12 % | 10 à 22 % (M8 : 75 %) | 88 à 106 % | 1,1 à 17 % |
 
 Ce que ça dit :
 - **L'ancrage garde l'émission que le relevé voit** : 96 à 101 % contre 65 à 94 % pour le polynôme seul. Sur Rosette,
-  Another processing program automatique n'en garde que 26 % (la planche montre la nébuleuse creusée).
+  le programme de référence automatique n'en garde que 26 % (la planche montre la nébuleuse creusée).
 - **Il ne rend pas la surface plus souple** : le coin éclairé reste à 33 à 52 % d'erreur, comme avec le polynôme.
 - **Il a un défaut** : sur Iris (peu d'H-alpha, beaucoup de poussière), le gain du relevé s'emballe et l'émission
   injectée ressort à 135 %. Le relevé y ressemble à la poussière, et l'ajustement lui attribue de la lumière qui n'est
@@ -151,53 +151,53 @@ Ce que ça dit :
 
 **Décision (3 novembre, 17h20) : la méthode ancrée est abandonnée**, retirée du moteur. Elle ne rend pas la surface
 plus souple, et seul le relevé H-alpha est à notre portée comme référence. Le chantier continue avec la réécriture de
-la méthode automatique de another processing program (étape Gradient) et un retrait du gradient image par image avant l'empilement.
+la méthode automatique du programme de référence (étape Gradient) et un retrait du gradient image par image avant l'empilement.
 
-## 6. La méthode automatique de another processing program, réécrite (3 novembre, soir)
+## 6. La méthode automatique du programme de référence, réécrite (3 novembre, soir)
 
-**Ce qu'elle est.** La méthode « automatique, sans échantillons » de another processing program 1.5 (`subsky -auto`), réécrite dans notre
+**Ce qu'elle est.** La méthode « automatique, sans échantillons » du programme de référence 1.5 (`subsky -auto`), réécrite dans notre
 moteur (`astro_gpu/stages/gradient_auto.py`, méthode `automatic` de l'étape Gradient). Sa marche vient de la
-documentation de another processing program ; les valeurs que la documentation ne donne pas viennent de leur code source (version du
+documentation du programme de référence ; les valeurs que la documentation ne donne pas viennent de leur code source (version du
 2 novembre) : rejet au-dessus de médiane + 2 σ et au-dessous de médiane − 4 σ, 20 tours au plus, flou de rayon 5 % du
 petit côté de l'image réduite 4 fois, bouchage des trous en 10 passes, masque de protection des structures. Notre code
 est écrit à partir de cette description ; il ne traduit pas le leur.
 
 **La fidélité, mesurée.**
-- Les fonctions du code source de another processing program, compilées à part, donnent **exactement** nos résultats (écart 0,00004).
-- Mais **le programme another processing program distribué ne fait pas exactement ce que dit son code source.** Deux différences trouvées
+- Les fonctions du code source du programme de référence, compilées à part, donnent **exactement** nos résultats (écart 0,00004).
+- Mais **le programme le programme de référence distribué ne fait pas exactement ce que dit son code source.** Deux différences trouvées
   et reproduites :
   1. aux bords, le programme continue l'image selon sa pente (le code source répète le dernier pixel, ce qui fait
      s'affaisser le fond aux bords puis dériver tout le modèle tour après tour) ;
   2. les statistiques du rejet se comportent comme si elles portaient sur toute l'image, pas sur les seuls pixels
      gardés.
-- Avec ces deux corrections, l'écart entre notre fond et celui du programme another processing program est de **1 à 10 % de l'amplitude du
+- Avec ces deux corrections, l'écart entre notre fond et celui du programme le programme de référence est de **1 à 10 % de l'amplitude du
   fond** selon les cas (le plus grand sur M8 et le Seestar). Une troisième différence reste inexpliquée ; le nombre de
   passes, de tours, la règle d'arrêt et la protection ont été testés sans la trouver.
 
-**Le banc** (mêmes six cas, en couleurs de l'appareil ; another processing program : `F:\astro_essais\bench\gradient_auto`, notre version :
+**Le banc** (mêmes six cas, en couleurs de l'appareil ; le programme de référence : `F:\astro_essais\bench\gradient_auto`, notre version :
 `F:\astro_essais\bench\gradient_auto_v2`).
 
 | Cas | Méthode | Pente | Dôme | Coin | Nuage gardé | Planéité |
 |---|---|---|---|---|---|---|
-| Heart | another processing program | 1,3 | 4,7 | **2,5** | 15 | 3,6 |
+| Heart | The reference program | 1,3 | 4,7 | **2,5** | 15 | 3,6 |
 | | nôtre | 3,5 | 6,6 | 9,7 | 20 | 3,6 |
-| Iris | another processing program | 2,9 | 5,6 | 2,9 | 14 | 2,7 |
+| Iris | The reference program | 2,9 | 5,6 | 2,9 | 14 | 2,7 |
 | | nôtre | 2,5 | 2,4 | 2,2 | 18 | 2,8 |
-| M51 | another processing program | 2,6 | 5,7 | 3,5 | 16 | 1,2 |
+| M51 | The reference program | 2,6 | 5,7 | 3,5 | 16 | 1,2 |
 | | nôtre | 2,2 | 2,6 | 2,9 | 20 | 1,5 |
-| M8 | another processing program | 21 | 30 | 16 | 64 | 11 |
+| M8 | The reference program | 21 | 30 | 16 | 64 | 11 |
 | | nôtre | **4,1** | **10** | **4,2** | 60 | 12 |
-| Rosette | another processing program | 2,5 | 5,3 | 2,7 | 24 | 5,0 |
+| Rosette | The reference program | 2,5 | 5,3 | 2,7 | 24 | 5,0 |
 | | nôtre | 2,1 | 2,2 | 2,3 | 27 | 5,2 |
-| Seestar | another processing program | 5,3 | 13 | 3,8 | 13 | 1,5 |
+| Seestar | The reference program | 5,3 | 13 | 3,8 | 13 | 1,5 |
 | | nôtre | 2,8 | 9,2 | 2,8 | 16 | 1,5 |
 
 (écarts au gradient injecté en %, nuage gardé en %, planéité en % du niveau du ciel)
 
 Ce que ça dit :
-- **Notre version est du même niveau que another processing program, avec un écart résiduel inexpliqué.** Ses chiffres s'écartent des siens
+- **Notre version est du même niveau que le programme de référence, avec un écart résiduel inexpliqué.** Ses chiffres s'écartent des siens
   dans un sens ou dans l'autre : plus favorables sur la plupart des gradients injectés (nettement sur M8), moins bons
   sur le coin éclairé de Heart (9,7 % contre 2,5 %). Ce n'est pas une amélioration voulue : c'est la différence
   inexpliquée, et six cas ne disent pas si elle est bonne ou mauvaise en général.
-- Comme another processing program, elle **retire la plus grande partie d'un nuage faible et très étendu** (15 à 27 % gardés, M8 à part) :
+- Comme le programme de référence, elle **retire la plus grande partie d'un nuage faible et très étendu** (15 à 27 % gardés, M8 à part) :
   c'est le prix de la souplesse. Le polynôme, lui, le garde (33 à 108 %) mais rate le coin éclairé.

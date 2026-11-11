@@ -33,10 +33,10 @@ temps, et le rendre utilisable sur processeur. Ouvert le 4 novembre.
   autre façon d'obtenir **des niveaux de bruit variés** (ta proposition de cette nuit, que nous faisons avec de vraies
   données : chaque jeu empilé avec toutes ses poses, puis avec un quart).
 - **Les outils d'astrophotographie** :
-  - A reference denoiser ([a reference tool maker](https://a reference tool maker.com/software/nxt)) : réseau propriétaire, entraîné uniquement sur des
+  - Le débruiteur de référence (l'éditeur d'outils de référence) : réseau propriétaire, entraîné uniquement sur des
     images du ciel profond, de façon « non générative » ; rien n'est publié de son architecture ni de ses données ;
-  - A reference gradient tool ([via another processing program](https://another processing program.readthedocs.io/fr/latest/processing/a reference gradient tool.html)) : un réglage unique
-    (l'intensité), un modèle ONNX d'environ 480 Mo d'après un [miroir](https://huggingface.co/jromanghf/a reference gradient tool-models)
+  - L'outil de gradient de référence ([via le programme de référence](https://siril.readthedocs.io/fr/latest/processing/graxpert.html)) : un réglage unique
+    (l'intensité), un modèle ONNX d'environ 480 Mo d'après un [miroir](https://huggingface.co/jromanghf/graxpert-models)
     (lent sur processeur, de l'aveu de la documentation) ;
   - Cosmic Clarity (Seti Astro) : rien trouvé sur son entraînement.
 
@@ -171,20 +171,20 @@ Modèle `pretrained_unet_v2_mid.pt` : le meilleur point de validation de la v2 c
 Partir du modèle pré-entraîné bat la référence partout ; sur M8, il faut une adaptation longue (la référence, partie
 de zéro, n'avait pas fini d'apprendre).
 
-## 6. Face à a reference gradient tool et a reference denoiser
+## 6. Face à l'outil de gradient de référence et le débruiteur de référence
 
 Outil : `tools/bench/denoise_compare.py` ; tout dans `F:\astro_essais\denoise_compare\` (résultats `results.json`,
 images de détail `crops\<cas>.jpg`). Chaque outil débruite A et B séparément (l'image entière) ; même mesure que plus
 haut, sur la même zone, sur l'image entière et sans les étoiles (les étoiles et leurs abords, 1 à 41 % de la zone).
-- **A reference gradient tool 3.0.2**, le dernier modèle de débruitage publié (les préversions 3.1 n'ajoutent que la déconvolution).
+- **l'outil de gradient de référence 3.0.2**, le dernier modèle de débruitage publié (les préversions 3.1 n'ajoutent que la déconvolution).
   Sa « force » est un mélange de l'entrée et du débruitage complet (vérifié) : il tourne une fois à 1, et la mesure
   donne sa force par défaut (0,5) et la meilleure pour chaque cas (toujours 1).
-- **A reference denoiser DeNoise AI**, passé par l'utilisateur sur A et B étirés (TIFF 16 bits, un étirement connu, défait pour la
+- **le débruiteur de référence**, passé par l'utilisateur sur A et B étirés (TIFF 16 bits, un étirement connu, défait pour la
   mesure).
 
 Image entière :
 
-| Cas | Sans | Nous, seul | Nous + 40 s | Nous + 5 min | a reference gradient tool 0,5 | a reference gradient tool 1 | a reference denoiser |
+| Cas | Sans | Nous, seul | Nous + 40 s | Nous + 5 min | L'outil de gradient de référence 0,5 | L'outil de gradient de référence 1 | Le débruiteur de référence |
 |---|---|---|---|---|---|---|---|
 | Heart | 3,159 | 2,196 | **1,976** | 1,984 | 2,818 | 2,680 | 105 |
 | Iris | 2,730 | 1,454 | 1,437 | **1,426** | 1,872 | 1,532 | 34 |
@@ -195,7 +195,7 @@ Image entière :
 
 Sans les étoiles (le plancher ≈ la moitié de « sans ») :
 
-| Cas | Plancher ≈ | Nous, seul | Nous + 40 s | a reference gradient tool 1 | a reference denoiser |
+| Cas | Plancher ≈ | Nous, seul | Nous + 40 s | L'outil de gradient de référence 1 | Le débruiteur de référence |
 |---|---|---|---|---|---|
 | Heart | 0,488 | 0,521 | **0,518** | 0,520 | 0,645 |
 | Iris | 1,214 | 1,230 | **1,228** | 1,238 | 1,275 |
@@ -205,10 +205,10 @@ Sans les étoiles (le plancher ≈ la moitié de « sans ») :
 | Seestar | 0,766 | **0,770** | **0,770** | 0,776 | 0,796 |
 
 Temps par image de la taille de Heart (12 Mpx) : nous ≈ 3 s sur la carte graphique, ≈ 40 s sur le processeur ;
-A reference gradient tool ≈ 105 s sur la carte graphique.
+L'outil de gradient de référence ≈ 105 s sur la carte graphique.
 
 À l'œil (`crops\`) : chez nous, le fond est propre, toutes les étoiles faibles restent, les étoiles allongées et les
-aigrettes sont respectées. A reference gradient tool est fidèle aux étoiles mais laisse un grain sur le fond. A reference denoiser efface beaucoup
+aigrettes sont respectées. L'outil de gradient de référence est fidèle aux étoiles mais laisse un grain sur le fond. Le débruiteur de référence efface beaucoup
 d'étoiles faibles, rend les étoiles allongées en points à cœur noir, supprime les aigrettes et marbre le fond ; il
 accentue les étoiles (le haut des étoiles brillantes de Heart passe de 46 500 à 51 700 sur 65 535), d'où ses scores
 sur l'image entière.

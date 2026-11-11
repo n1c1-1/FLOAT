@@ -1,5 +1,5 @@
-"""Another processing program 1.4's own Bayer drizzle on the frozen frames of a case: the classic recipe (run_other.py), changed only where
-the drizzle requires it, as another processing program's documentation and its script OSC_Preprocessing_BayerDrizzle.ssf say.
+"""the reference program 1.4's own Bayer drizzle on the frozen frames of a case: the classic recipe (run_other.py), changed only where
+the drizzle requires it, as the reference program's documentation and its script OSC_Preprocessing_BayerDrizzle.ssf say.
 
     python tools/bench/other_program/run_other_drizzle.py CASE LEVEL [--post-only] [--pre-only] [--threads 8]
 
@@ -22,7 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cases as C  # noqa: E402
-import run_siril as R  # noqa: E402
+import run_other as R  # noqa: E402
 
 DRZ = "-drizzle -scale=1.0 -pixfrac=1.0 -kernel=square"
 _siril_dir = C.siril_dir
@@ -54,6 +54,6 @@ if __name__ == "__main__":
     f = drizzle_dir(case, level, C.norm_variant(case, None)) / "siril.json"
     if f.exists():
         rec = json.loads(f.read_text(encoding="utf-8"))
-        rec["drizzle"] = "Bayer drizzle, scale 1.0, pixfrac 1.0, square kernel (another processing program doc / OSC_Preprocessing_BayerDrizzle)"
+        rec["drizzle"] = "Bayer drizzle, scale 1.0, pixfrac 1.0, square kernel (the reference program doc / OSC_Preprocessing_BayerDrizzle)"
         f.write_text(json.dumps(rec, indent=1), encoding="utf-8")
     sys.exit(rc)

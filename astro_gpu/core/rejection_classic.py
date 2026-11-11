@@ -1,50 +1,50 @@
-"""Pixel rejection of the Classic stacking method, chosen by the number of frames as a reference processing suite's WBPP does.
+"""Pixel rejection of the Classic stacking method, chosen by the number of frames as the reference processing suite's WBPP does.
 
 The rule (WBPP 3.x, BPP-Global.js: the automatic rejection by the size of the group [P15]; the same ranges in the
-documentation of a reference processing suite [P1] and of another processing program [S1]):
+documentation of the reference processing suite [P1] and of the reference program [S1]):
 
     frames      method                        low / high        formulas from
     < 3         none (too few to tell an outlier from the others; said in the reason)
-    3 to 5      percentile clipping           0.2 / 0.1         another processing program = a reference processing suite [S6][P20]
-    6 to 15     winsorized sigma clipping     3 / 3             another processing program's code (its default thresholds) [S2][S6]
-    16 and up   linear fit clipping           5 / 3.5           a reference processing suite's code (WBPP's thresholds) [P15][P20]
-    option > 50 generalized ESD test (GESDT)  0.3 / 0.05        another processing program's code (its defaults) [S1][S6]
+    3 to 5      percentile clipping           0.2 / 0.1         the reference program = the reference processing suite [S6][P20]
+    6 to 15     winsorized sigma clipping     3 / 3             the reference program's code (its default thresholds) [S2][S6]
+    16 and up   linear fit clipping           5 / 3.5           the reference processing suite's code (WBPP's thresholds) [P15][P20]
+    option > 50 generalized ESD test (GESDT)  0.3 / 0.05        the reference program's code (its defaults) [S1][S6]
 
 Each method is the published formula of the tool whose thresholds it uses (the thresholds mean nothing with another
-tool's formula: Another processing program's linear fit divides by the mean absolute deviation, a reference processing suite's by twice it):
+tool's formula: The reference program's linear fit divides by the mean absolute deviation, the reference processing suite's by twice it):
 
-* **Percentile** (another processing program ``percentile_clipping`` = a reference processing suite PercentileClipRejectionThread): a value is rejected low when
+* **Percentile** (the reference program ``percentile_clipping`` = the reference processing suite PercentileClipRejectionThread): a value is rejected low when
   median - v > low x median, high when v - median > high x median; one pass; the median of an even count is the mean
   of the two middle values. Nothing with fewer than 2 values or a zero median.
-* **Winsorized sigma clipping** (another processing program ``apply_rejection_float``, WINSORIZED; a reference processing suite's RejectionWinsorization is
+* **Winsorized sigma clipping** (the reference program ``apply_rejection_float``, WINSORIZED; the reference processing suite's RejectionWinsorization is
   the same algorithm): sigma = the standard deviation (n - 1) and m = the median of the values; the values are then
   winsorized again and again at m +- 1.5 sigma, sigma = 1.134 x their standard deviation, until sigma changes by at
   most 0.05 %; a value is rejected when m - v > low x sigma or v - m > high x sigma; repeated on what is left while
-  something was rejected and more than 3 values are left. Another processing program's guard: no rejection once n - r <= 4 (r: the
-  rejections so far). Another processing program applies it in the order of its array (scrambled by its quickselect median); here, when it
+  something was rejected and more than 3 values are left. The reference program's guard: no rejection once n - r <= 4 (r: the
+  rejections so far). The reference program applies it in the order of its array (scrambled by its quickselect median); here, when it
   binds, the most deviant values go first.
-* **Linear fit clipping** (a reference processing suite LinearFitRejectionThread, ImageIntegration code of 2016 [P20]): the values are
+* **Linear fit clipping** (the reference processing suite LinearFitRejectionThread, ImageIntegration code of 2016 [P20]): the values are
   sorted and a straight line y = a + b k is fitted to them against their rank k = 0..n-1 by minimising the mean
   absolute deviation (PCL's LinearFit; the median fit of Numerical Recipes, ``medfit`` / ``rofunc``, done here);
   sigma = 2 x that mean absolute deviation ("mult. by 2 to compatibilize with sigma clipping"); a value below the
   line is rejected when (line - v) / sigma >= low, above it when (v - line) / sigma >= high; repeated on what is left
   while something was rejected and at least 3 values are left. Needs 5 values to start.
-* **GESDT** (another processing program ``apply_rejection_float``, GESDT, with the critical values of ``stack_mean_or_median``; Rosner 1983
+* **GESDT** (the reference program ``apply_rejection_float``, GESDT, with the critical values of ``stack_mean_or_median``; Rosner 1983
   [L8]): at most floor(0.3 x N) outliers (N the frames of the stack, missing values counted as already removed); at
   each step the value farthest from the mean (in standard deviations, n - 1) of what is left is set aside and its
   Grubbs statistic compared with lambda_j = (n - j - 1) t / sqrt((n - j) (n - j - 2 + t^2)), t the Student quantile
   of 1 - alpha / (2 (n - j)) with n - j - 2 degrees of freedom, alpha = 0.05; the outliers are all those set aside up
   to the last step whose statistic exceeds its lambda; above the median: high, below: low.
 
-Missing values (NaN: the frame does not cover the pixel) are left out of every statistic, as another processing program leaves out its
-zeros. The rejections are per frame, colour and pixel; ``combine`` makes the weighted mean of what is kept, as another processing program's
+Missing values (NaN: the frame does not cover the pixel) are left out of every statistic, as the reference program leaves out its
+zeros. The rejections are per frame, colour and pixel; ``combine`` makes the weighted mean of what is kept, as the reference program's
 ``mean_and_reject`` does (with the frame weights; the median of all values where nothing is kept).
 
 All functions work on a stack ``v`` (N frames, P pixels) on any device, by chunks the caller chooses.
 
-Sources: [S1] https://another processing program.readthedocs.io/en/latest/preprocessing/stacking.html ; [S2] another processing program's ``stack`` command;
-[S6] another processing program 1.4 src/stacking/rejection_float.c, median_and_mean.c, siril_fit_linear.c; [P1] ImageIntegration
-documentation (2013); [P15] WBPP (BatchPreprocessing scripts); [P20] a reference processing suite ImageIntegration code (2016:
+Sources: [S1] https://siril.readthedocs.io/en/latest/preprocessing/stacking.html ; [S2] the reference program's ``stack`` command;
+[S6] the reference program 1.4 src/stacking/rejection_float.c, median_and_mean.c, siril_fit_linear.c; [P1] ImageIntegration
+documentation (2013); [P15] WBPP (BatchPreprocessing scripts); [P20] the reference processing suite ImageIntegration code (2016:
 ImageIntegrationInstance.cpp), PCL include/pcl/LinearFit.h; Numerical Recipes in C, 2nd ed., section 15.7 (medfit,
 rofunc); [L8] NIST/SEMATECH e-Handbook, generalized ESD test (Rosner 1983).
 """
@@ -62,7 +62,7 @@ DEFAULTS = {"percentile": (0.2, 0.1), "winsorized": (3.0, 3.0), "linear_fit": (5
 #: WBPP's ranges: percentile below this many frames, winsorized below LINEAR_FROM, linear fit from it on
 WINSORIZED_FROM = 6
 LINEAR_FROM = 16
-#: the GESDT option takes over above this many frames (another processing program: "excellent above 50")
+#: the GESDT option takes over above this many frames (the reference program: "excellent above 50")
 GESD_ABOVE = 50
 #: fewest frames for any rejection (the drizzle's rule too: under 3 nothing can be told apart)
 MIN_FRAMES = 3
@@ -132,7 +132,7 @@ def _count(valid: torch.Tensor) -> torch.Tensor:
 
 def median(v: torch.Tensor, valid: torch.Tensor | None = None) -> torch.Tensor:
     """(P,) the median of the valid values of each column of v (N, P) (NaN where none), the mean of the two middle
-    values for an even count (gsl's and another processing program's quickmedian, a reference processing suite's RejectionMedian)."""
+    values for an even count (gsl's and the reference program's quickmedian, the reference processing suite's RejectionMedian)."""
     valid = torch.isfinite(v) if valid is None else valid
     x = torch.where(valid, v, torch.full_like(v, float("inf")))
     s = torch.sort(x, dim=0).values
@@ -155,7 +155,7 @@ def std(v: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
 
 # ------------------------------------------------------------------------------------------------ the methods
 def percentile_clip(v: torch.Tensor, low: float, high: float, valid: torch.Tensor | None = None):
-    """(low, high) rejected (N, P): Another processing program's / a reference processing suite's percentile clipping."""
+    """(low, high) rejected (N, P): The reference program's / the reference processing suite's percentile clipping."""
     valid = torch.isfinite(v) if valid is None else valid
     med = median(v, valid)
     ok = valid & ((_count(valid) >= 2) & (med != 0) & torch.isfinite(med))[None]
@@ -166,7 +166,7 @@ def percentile_clip(v: torch.Tensor, low: float, high: float, valid: torch.Tenso
 
 def winsorized_clip(v: torch.Tensor, low: float, high: float, valid: torch.Tensor | None = None,
                     max_rounds: int = 100, max_winsor: int = 200):
-    """(low, high) rejected (N, P): Another processing program's winsorized sigma clipping (see the module's docstring).
+    """(low, high) rejected (N, P): The reference program's winsorized sigma clipping (see the module's docstring).
 
     Each round runs on the whole band with the finished columns masked out, not on the columns ``torch.nonzero``
     picks: an index_put on such indices in deterministic mode trips PyTorch's bound check when the GPU misbehaves.
@@ -205,7 +205,7 @@ def winsorized_clip(v: torch.Tensor, low: float, high: float, valid: torch.Tenso
         ch = act & (x - m[None] > sigma[None] * high)
         cand = cl | ch
         allowed = (n - r - 4).clamp(min=0)
-        if bool((cand.sum(0) > allowed).any()):     # another processing program's guard: the most deviant first
+        if bool((cand.sum(0) > allowed).any()):     # The reference program's guard: the most deviant first
             cand = _guard_most_deviant(cand, (x - m[None]).abs(), allowed)
             cl, ch = cl & cand, ch & cand
         nrej = cand.sum(0)
@@ -334,7 +334,7 @@ def l1_line(y: torch.Tensor, n: torch.Tensor, max_iter: int = 100):
 
 def linear_fit_clip(v: torch.Tensor, low: float, high: float, valid: torch.Tensor | None = None,
                     max_rounds: int = 100):
-    """(low, high) rejected (N, P): A reference processing suite's linear fit clipping (see the module's docstring)."""
+    """(low, high) rejected (N, P): The reference processing suite's linear fit clipping (see the module's docstring)."""
     valid = torch.isfinite(v) if valid is None else valid
     N, P = v.shape
     lo = torch.zeros_like(valid)
@@ -369,7 +369,7 @@ _CRIT: dict = {}
 
 
 def gesd_critical(nb_frames: int, frac: float = 0.3, alpha: float = 0.05) -> np.ndarray:
-    """Another processing program's GESDT critical values lambda_j, j = 0 .. floor(frac x nb_frames) - 1 (median_and_mean.c)."""
+    """the reference program's GESDT critical values lambda_j, j = 0 .. floor(frac x nb_frames) - 1 (median_and_mean.c)."""
     key = (int(nb_frames), float(frac), float(alpha))
     if key not in _CRIT:
         from scipy.stats import t as student
@@ -387,7 +387,7 @@ def gesd_critical(nb_frames: int, frac: float = 0.3, alpha: float = 0.05) -> np.
 
 
 def gesd_clip(v: torch.Tensor, frac: float = 0.3, alpha: float = 0.05, valid: torch.Tensor | None = None):
-    """(low, high) rejected (N, P): Another processing program's generalized ESD test (see the module's docstring)."""
+    """(low, high) rejected (N, P): The reference program's generalized ESD test (see the module's docstring)."""
     valid = torch.isfinite(v) if valid is None else valid
     N, P = v.shape
     dev = v.device
@@ -462,7 +462,7 @@ def reject(v: torch.Tensor, choice: Choice, valid: torch.Tensor | None = None):
 def combine(v: torch.Tensor, keep: torch.Tensor, w: torch.Tensor):
     """(mean, sum of weights, kept count) (P,): the weighted mean of the kept values of v (N, P) with the frame
     weights w (N,); where the kept values weigh nothing, their plain mean; where nothing is kept, the median of all
-    the values (another processing program's mean_and_reject); NaN where there is no value."""
+    the values (the reference program's mean_and_reject); NaN where there is no value."""
     wk = torch.where(keep, w.to(v.dtype)[:, None].expand_as(v), torch.zeros_like(v))
     x = torch.where(keep, v, torch.zeros_like(v))
     num = (wk * x).sum(0)

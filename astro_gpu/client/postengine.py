@@ -3,7 +3,7 @@
 The images come from a ``Provider`` (the engine's layers, see ``services/render.py``), the composition is numpy and
 runs in the render worker, never in the GUI thread.
 
-Layers (a list, top first, as in a reference image editor; saved as it is in ``project.post["layers"]``):
+Layers (a list, top first, as in the reference image editor; saved as it is in ``project.post["layers"]``):
 
 * a workflow layer ``{id, kind: "workflow", pid, part, blend, name, visible, opacity, mode, base, sliders, mask}``:
   an image of a workflow, rendered by the engine with its ``base`` (a named rendering of the project, or None for the
@@ -20,7 +20,7 @@ Layers (a list, top first, as in a reference image editor; saved as it is in ``p
   None). In a Stars and background layer, ``sub`` names the one of its two images (``SUBS``) the filter applies to,
   before they are put together; None: to the recombined image.
 
-The model is a reference image editor's: a filter that applies to one layer is that layer's child; a filter that applies to
+The model is the reference image editor's: a filter that applies to one layer is that layer's child; a filter that applies to
 everything below is a layer of its own. In the list a layer's children sit just above it, top child first; the panel
 shows each pixel layer with its children indented under it (``rows``), and reading the panel from the bottom up is the
 order of the composition: a pixel layer, then its children from the lowest to the highest, then the next row up.
@@ -287,7 +287,7 @@ def f_mixer(x, p, ctx):
 
 
 def f_scnr(x, p, ctx):
-    """SCNR, another processing program's and a reference processing suite's four protections (postfilters.colour.scnr)."""
+    """SCNR, the reference program's and the reference processing suite's four protections (postfilters.colour.scnr)."""
     return pf_colour.scnr(x, p["method"], p["strength"], bool(p["lightness"]))
 
 
@@ -598,7 +598,7 @@ def source_id(lay: dict):
 
 
 def new_filter_layer(key: str, target=None, sub=None) -> dict:
-    """A filter layer. target: the id of the one layer it applies to (it sits just above it, as a a reference image editor clipping
+    """A filter layer. target: the id of the one layer it applies to (it sits just above it, as a reference image editor clipping
     mask); None: it applies to everything below it. sub: in a Stars and background layer, the one of its two images it
     applies to (``SUBS``)."""
     f = FILTERS[key]
@@ -1159,7 +1159,7 @@ class Composer:
         m = lay["mask"]
         if m is None:
             return None
-        if not m["parts"]:                                 # a new mask shows the whole layer, as in a reference image editor
+        if not m["parts"]:                                 # a new mask shows the whole layer, as in the reference image editor
             return self._finish(np.ones(below.shape[:2], np.float32), m, level)
         out = None
         for part in m["parts"]:

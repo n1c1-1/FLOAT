@@ -120,7 +120,7 @@ couvre 78 % de Heart).
 
 - **Les paires** : 23 champs du jeu de données (sans le banc, sans le set 53 non relu), 56 images en tout (les niveaux
   de profondeur d'un même champ), chacune avec son image sans étoiles : celle de l'outil de référence, corrigée à la main sous
-  A reference image editor par Nicolas (15 champs retouchés, de 0,01 % à 2,7 % de l'image). Les pixels retouchés reviennent dans les
+  l'éditeur d'images de référence par l'auteur (15 champs retouchés, de 0,01 % à 2,7 % de l'image). Les pixels retouchés reviennent dans les
   données en défaisant l'étirement connu des TIFF ; les autres gardent la précision de l'outil de référence.
 - **Zones ignorées** (aucun apprentissage) : le halo d'Alnitak (impossible à effacer proprement), l'étoile de NGC 2023
   restée dans l'image sans étoiles, un nœud de M33 effacé (région H II ?) ; dans les autres niveaux d'un champ, les
@@ -153,11 +153,10 @@ couvre 78 % de Heart).
   **Composition**, reçoit les blocs **Étoiles et fond** qui les recombinent. Une sortie tirée sur le Post en fait un
   calque tel quel. Un bloc Étoiles et fond est un calque du Post (partie « combined ») : ses réglages sont les mêmes dans
   le panneau du graphe et dans le Post, synchronisés dans les deux sens.
-- **Le rendu des deux images** (`render/stars.py`), selon l'état de l'art (outil de recombinaison de another processing program, notes de
-  A reference tool maker sur a reference star-removal tool, calque en Écran sous a reference image editor) : chaque image étirée à part, les étoiles remises en
+- **Le rendu des deux images** (`render/stars.py`), selon l'état de l'art (outil de recombinaison du programme de référence, notes de l'éditeur d'outils de référence sur l'outil de retrait d'étoiles de référence, calque en Écran sous l'éditeur d'images de référence) : chaque image étirée à part, les étoiles remises en
   Écran (ou Densité linéaire, ou Éclaircir). Par défaut, les deux suivent la courbe de l'image entière : « Étoiles et
   fond » au réglage suggéré ressemble à la Sortie. Curseurs : ciel, contraste, saturation pour le fond ; Étoiles
-  (l'étirement des étoiles, la réduction qu'apporte la séparation), Taille (filtres Minimum / Maximum de a reference image editor),
+  (l'étirement des étoiles, la réduction qu'apporte la séparation), Taille (filtres Minimum / Maximum de l'éditeur d'images de référence),
   Couleur.
 
 ## Le calendrier proposé

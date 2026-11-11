@@ -1385,5 +1385,451 @@
     "dest": "catalogs"
    }
   ]
+ },
+ "star_catalogue": {
+  "version": "sky-data-v1",
+  "files": [
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "siril_cat_healpix8_astro.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/siril_cat_healpix8_astro.dat",
+    "sha256": "5e110a944a7df1813c054e75c8b612565577eeb2af4336fd1a783d9c2b8d09b3",
+    "size": 780242592,
+    "dest": ""
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_0.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_0.dat",
+    "sha256": "23af3be20afc51e3b15051b5e4232bf9364185b66ab971c4b2d9e462f57ce1bc",
+    "size": 7609532,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_1.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_1.dat",
+    "sha256": "f3e0c278273f73f69451c6b3fd3eb2c2d1983d1f8192e22daaff912642e4406f",
+    "size": 26842040,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_2.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_2.dat",
+    "sha256": "724cd869e0b7c50e377e442253f46f213bd55826c0b3928290d015e106b6a144",
+    "size": 24674200,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_3.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_3.dat",
+    "sha256": "a620414a632bad093aa4c91abbefd3cadec549346de5fd0ed3bfe6f56a352ae7",
+    "size": 27553184,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_4.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_4.dat",
+    "sha256": "a0459f2196c3e931ca5f56e9aaba6c25b7859b389e3b190e941ed4281f1c2ca3",
+    "size": 10160416,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_5.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_5.dat",
+    "sha256": "30be37d2571e218636d387d0479432ea716086f908a72ef446890239e7836fe4",
+    "size": 6125296,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_6.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_6.dat",
+    "sha256": "f55fadd1b9847d074a22e5a26bd6b1a54073c5caf1799cee17f273050a04eaa8",
+    "size": 15435992,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_7.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_7.dat",
+    "sha256": "893b5f8c195e97c90472c3d799762d03dd8f8d3853a8cf75815abd73b903b718",
+    "size": 10191152,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_8.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_8.dat",
+    "sha256": "f50cf4b0b5666fc81c6fdb03ec6451f7508b220ab6d98e88bf3dd81bc31c1803",
+    "size": 6259936,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_9.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_9.dat",
+    "sha256": "6ec6b523b0df12da1b1ef8800c65a6118dff4a5f7adf9c857c192175934cce36",
+    "size": 10393316,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_10.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_10.dat",
+    "sha256": "55651f42d83d0e308fce31aca9211eeeda6e3f7fc992de8e01556068b9b25195",
+    "size": 5499696,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_11.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_11.dat",
+    "sha256": "465a786abd0f37887fb79f5a17d8909f41384956cc4faa3f062394a3fdcad17d",
+    "size": 8712356,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_12.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_12.dat",
+    "sha256": "81508d44cab43f31cdd4a4b076a45770273c0ee82ba27df7c822e874002d092d",
+    "size": 39607680,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_13.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_13.dat",
+    "sha256": "32e64d11b088da7d766feb7ea30c565ad381890f90c77300507c91adf6b0ae67",
+    "size": 40447072,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_14.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_14.dat",
+    "sha256": "66c04d1094e96645bd5126ce51f0f62669d756cdcf5b18c97b77a0aa974c42c2",
+    "size": 47004516,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_15.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_15.dat",
+    "sha256": "8a9f314947312b301c1b3598456d73c7f557e1657591058210ea80b92855d758",
+    "size": 28792416,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_16.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_16.dat",
+    "sha256": "baf8a2407762279d2cc9c47a59af5d71b16ac89b217b31c7ee6e953228667e72",
+    "size": 3545784,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_17.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_17.dat",
+    "sha256": "fd0ae6ad1f554879aa8f18db0fced56c53a141161bb32b5dfc5bd3b559c524b7",
+    "size": 6067224,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_18.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_18.dat",
+    "sha256": "a9817d7f4397f68f50d2cc4d6e42744c268ac3d30bdbed140d643b6b390843f1",
+    "size": 5755036,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_19.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_19.dat",
+    "sha256": "9d8be6a2fa6cc0548dac0853d1631832950aa843b2b6904130e553c1d501d59c",
+    "size": 9260300,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_20.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_20.dat",
+    "sha256": "254a8192ddd336847dffa555d64d898bb5197f8b4374760e01515bc0c47f985d",
+    "size": 23870372,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_21.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_21.dat",
+    "sha256": "201c05b5eb1f5cef76fea2802d55316f14ec717ed402b7adce3112d43ef70211",
+    "size": 33267360,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_22.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_22.dat",
+    "sha256": "b59c528fc55cf49f1628c5c2ee8e9aa3c5d2bb4f369b8bd0e16d1063a09e97d2",
+    "size": 11116632,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_23.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_23.dat",
+    "sha256": "ff1b01baee08d95bdabc8235d84090785f893b054fe4b15e1bc08b90029a4a47",
+    "size": 31389200,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_24.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_24.dat",
+    "sha256": "6e2fac4bbfacc80215553bdd9b937527c4e5329bc4d9899f4a0f94d4c0deab2b",
+    "size": 9149800,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_25.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_25.dat",
+    "sha256": "a2b0b365dc0ae66d40ffe983749cf70543281683b871ddde406b9d995c752c11",
+    "size": 6276800,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_26.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_26.dat",
+    "sha256": "9402db3550769b1a80ffc7e4afd26b99f396062be4661778a3344762d6025966",
+    "size": 4556876,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_27.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_27.dat",
+    "sha256": "f333080bfaa04e5870ccb4fdcfe3963fa554d1a459436378eac6f9619c5a0c8f",
+    "size": 3012800,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_28.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_28.dat",
+    "sha256": "0eb664094b3d98a6d18cb63d6a4ad0b062216bc642e116238ec97e00678e9839",
+    "size": 67862088,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_29.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_29.dat",
+    "sha256": "0602d0309fef1edab331c020f126c181feb9393a6170eb3aabb770d17f5de3da",
+    "size": 42170328,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_30.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_30.dat",
+    "sha256": "f8f81c8b84516916b51cd5ad8600c9483e0e7383a517b5a714c33f85108c8ff9",
+    "size": 13691112,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_31.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_31.dat",
+    "sha256": "3c4254d6dfbfba3ce717f7da706b0aa0ad2bed7985d512dc25d1c2c98d395619",
+    "size": 31792712,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_32.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_32.dat",
+    "sha256": "0e0bf5fc6e137d8f24295a17b5886c1d9b7b002b4e66b1324c1c9512115720fd",
+    "size": 10907532,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_33.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_33.dat",
+    "sha256": "629921eaa1cafd08c95103e0a4ff46e39716cf15b327535fda87bd565d533077",
+    "size": 10337760,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_34.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_34.dat",
+    "sha256": "8022bfb781c7060355a2026a72419bd6b009d5be5511608c72ca9889f94c9f46",
+    "size": 6299988,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_35.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_35.dat",
+    "sha256": "bbcfb61df495be8b3fce29549ced5ee68fa4d0234a7b2494f5c37c64c6b17b23",
+    "size": 5995620,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_36.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_36.dat",
+    "sha256": "d1b060849b6970aa8a60a53003b33b2ff45cb21a0b725fc97053e56759e7cf24",
+    "size": 45076512,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_37.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_37.dat",
+    "sha256": "c40ddae7e1dee9e5797e1d30c81ab2daf4a585c8b4594ea89b6770f378849a59",
+    "size": 44473488,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_38.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_38.dat",
+    "sha256": "e649d01e08c1b711539aa54d520a44de4e05aa0e33566086201157152ffa8193",
+    "size": 40300056,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_39.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_39.dat",
+    "sha256": "d5b5dfb0dbfbb46fec080cbe619af5877355417f781529496f59cfed5a802f16",
+    "size": 31238376,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_40.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_40.dat",
+    "sha256": "e443ec74b5c37c8cf2b9f40ffd93557dcfd62681d1b124a3db374bd3eb7c84de",
+    "size": 71667572,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_41.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_41.dat",
+    "sha256": "90c8fec0fe446bf004912a28ea97ee90ddb851c97fe9ec4ebf025cd3c9435a51",
+    "size": 70105204,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_42.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_42.dat",
+    "sha256": "670d6cb1fbbd22dde5f321dc9e99010cb73c4d537e520c389417d3c0e6123977",
+    "size": 34080164,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_43.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_43.dat",
+    "sha256": "b047727ccb192c7068a29471062986841f6f4dbb496a7811f75a16104c232a78",
+    "size": 11338788,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_44.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_44.dat",
+    "sha256": "7af326e76576e1e88609c6d27281af256da32d7a3ce2af39cdf6715a47afa4ce",
+    "size": 15034044,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_45.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_45.dat",
+    "sha256": "136b1f14df0a3d7a48a6a1dac04b0a83943931c4638bd2fb6f6f01f71ea8ec60",
+    "size": 8413972,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_46.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_46.dat",
+    "sha256": "4c390704febe63bf9d5eb99ffc6d14e387cd9c9154abc9da0fca7276f5358fd9",
+    "size": 31906408,
+    "dest": "float_xp_compact"
+   },
+   {
+    "name": "star_catalogue",
+    "version": "sky-data-v1",
+    "filename": "float_xp_compact_47.dat",
+    "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/float_xp_compact_47.dat",
+    "sha256": "6a7901a753b2d731259f2cc10679f702bfb3a11627df2c673bdaa6a1170e17b5",
+    "size": 14830452,
+    "dest": "float_xp_compact"
+   }
+  ]
  }
 }

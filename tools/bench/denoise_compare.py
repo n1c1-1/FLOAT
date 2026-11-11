@@ -1,8 +1,8 @@
 """Our denoiser against other tools, on the bench cases, with the measure of denoise_eval.py (docs/chantiers/debruitage.md).
 
     python tools/bench/denoise_compare.py export                       the half-stacks A and B of each case as FITS
-    python tools/bench/denoise_compare.py a reference gradient tool                     a reference gradient tool's AI denoising (3.0.2) on A and on B
-    python tools/bench/denoise_compare.py a reference denoiser                        A and B stretched, 16-bit TIFF, for a reference denoiser
+    python tools/bench/denoise_compare.py the reference gradient tool                     the reference gradient tool's AI denoising (3.0.2) on A and on B
+    python tools/bench/denoise_compare.py the reference denoiser                        A and B stretched, 16-bit TIFF, for the reference denoiser
     python tools/bench/denoise_compare.py ours [--model ...] [--adapt ft500@2e-4,ft4000@3e-4]   our denoiser, the same way
     python tools/bench/denoise_compare.py measure                      the measure of every output found
 
@@ -12,18 +12,18 @@ weighted by the expected noise, over the same held-out zone (the right 20 % of t
 beside those of our methods (F:/astro_essais/denoise_eval/results*.json). The FITS hold the stack's own levels divided
 by one factor per case (the brightest value of A and B), so that they span 0..1 as the tools expect.
 
-A reference gradient tool's strength is a blend of its input and its full denoising (checked: strength 0.5 is exactly half of each), so
+The reference gradient tool's strength is a blend of its input and its full denoising (checked: strength 0.5 is exactly half of each), so
 it runs once at strength 1 and the measure gives its default (0.5), the full one (1.0) and the best strength of each
-case (the most favourable setting for a reference gradient tool).
+case (the most favourable setting for the reference gradient tool).
 
-A reference denoiser (a photo tool) works on stretched images: ``a reference denoiser`` writes A and B of each case with the background taken off
+The reference denoiser (a photo tool) works on stretched images: ``the reference denoiser`` writes A and B of each case with the background taken off
 (a neutral sky), the channels kept in their own proportions, and one stretch known and invertible, the same for A and
 B: y = asinh((v + 3 s) / (3 s)) / asinh((vmax + 3 s) / (3 s)), v the level above the background, s the mean noise
-(values under -3 s are set to -3 s). The outputs put back in a reference denoiser/out under the same name (any suffix, the same for A
+(values under -3 s are set to -3 s). The outputs put back in the reference denoiser/out under the same name (any suffix, the same for A
 and B) are measured after undoing the stretch.
 
 Files: F:/astro_essais/denoise_compare/<case>/{A,B}.fits, meta.json, <tool>_<setting>_{A,B}.fits, results.json;
-A reference denoiser/in/<case>_{A,B}.tif, a reference denoiser/stretch.json, a reference denoiser/out/<case>_{A,B}<suffix>.tif.
+The reference denoiser/in/<case>_{A,B}.tif, the reference denoiser/stretch.json, the reference denoiser/out/<case>_{A,B}<suffix>.tif.
 """
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ sys.path.insert(0, str(ROOT / "tools" / "bench"))
 import denoise_eval as E  # noqa: E402
 
 OUT = Path("F:/astro_essais/denoise_compare")
-REFERENCE_GRADIENT = Path.home() / "AppData/Local/Programs/ReferenceGradient/ReferenceGradient.exe"
+GRAXPERT = Path.home() / "AppData/Local/Programs/GraXpert/GraXpert.exe"
 
 
 def log(msg: str) -> None:
@@ -82,7 +82,7 @@ def export(cases) -> int:
     return 0
 
 
-def reference_gradient(cases, strengths) -> int:
+def graxpert(cases, strengths) -> int:
     for case in cases:
         d = OUT / case
         for s in strengths:
@@ -91,20 +91,20 @@ def reference_gradient(cases, strengths) -> int:
                 if Path(f"{out}.fits").exists():
                     continue
                 t = time.time()
-                r = subprocess.run([str(REFERENCE_GRADIENT), str(d / f"{k}.fits"), "-cli", "-cmd", "denoising",
+                r = subprocess.run([str(GRAXPERT), str(d / f"{k}.fits"), "-cli", "-cmd", "denoising",
                                     "-strength", str(s), "-output", str(out)], capture_output=True, text=True)
                 for _ in range(60):                      # the file is written a moment after the program returns
                     if Path(f"{out}.fits").exists():
                         break
                     time.sleep(1)
                 found = Path(f"{out}.fits").exists()
-                log(f"{case} ReferenceGradient {s} on {k}: {'done' if found else 'NO OUTPUT'} in {time.time() - t:.0f} s")
+                log(f"{case} The reference gradient tool {s} on {k}: {'done' if found else 'NO OUTPUT'} in {time.time() - t:.0f} s")
                 if not found:
                     log(r.stdout[-2000:] + r.stderr[-2000:])
     return 0
 
 
-def topaz_export(cases) -> int:
+def reference_denoiser_export(cases) -> int:
     import tifffile
     tin = OUT / "reference_denoiser" / "in"
     tin.mkdir(parents=True, exist_ok=True)
@@ -123,13 +123,13 @@ def topaz_export(cases) -> int:
             tifffile.imwrite(tin / f"{case}_{k}.tif", np.round(np.clip(y, 0, 1) * 65535).astype(np.uint16)
                              .transpose(1, 2, 0), photometric="rgb")
         stretch[case] = {"s": s, "vmax": vmax, "sg": sg.ravel().tolist()}
-        log(f"{case}: reference_denoiser/in/{case}_A.tif, {case}_B.tif")
+        log(f"{case}: The reference denoiser/in/{case}_A.tif, {case}_B.tif")
     st_f.write_text(json.dumps(stretch, indent=1))
     return 0
 
 
-def topaz_outputs(case: str) -> dict[str, dict[str, np.ndarray]]:
-    """The a reference denoiser results of a case put back in a reference denoiser/out, in the units of the pairs (the stretch undone), by suffix."""
+def reference_denoiser_outputs(case: str) -> dict[str, dict[str, np.ndarray]]:
+    """The reference denoiser results of a case put back in the reference denoiser/out, in the units of the pairs (the stretch undone), by suffix."""
     import tifffile
     st = json.loads((OUT / "reference_denoiser" / "stretch.json").read_text())[case]
     sg = np.asarray(st["sg"], np.float32)[:, None, None]
@@ -140,11 +140,11 @@ def topaz_outputs(case: str) -> dict[str, dict[str, np.ndarray]]:
         fb = next((OUT / "reference_denoiser" / "out").glob(f"{case}_B{suffix}.tif*"), None)
         if fb is None:
             continue
-        found[f"reference_denoiser{suffix}"] = {}
+        found[f"The reference denoiser{suffix}"] = {}
         for k, fp in (("A", fa), ("B", fb)):
             y = tifffile.imread(fp).astype(np.float32)
             y = (y[..., :3] / (65535.0 if y.max() > 1.5 else 1.0)).transpose(2, 0, 1)
-            found[f"reference_denoiser{suffix}"][k] = (3 * s * np.sinh(y * top) - 3 * s) / sg
+            found[f"The reference denoiser{suffix}"][k] = (3 * s * np.sinh(y * top) - 3 * s) / sg
     return found
 
 
@@ -203,7 +203,7 @@ def measure(cases) -> int:
         tools = {"none": {"A": A, "B": B}}
         tools.update({t: None for t in sorted({f.stem[:-2] for f in d.glob("*_A.fits")}) if (d / f"{t}_B.fits").exists()})
         if (OUT / "reference_denoiser" / "stretch.json").exists():
-            tools.update(topaz_outputs(case))
+            tools.update(reference_denoiser_outputs(case))
         r = allres.setdefault(case, {})
         for tool, given in tools.items():
             dens = given or {k: (read_fits(d / f"{tool}_{k}.fits") * m["scale"] - bk) / sg for k in "AB"}
@@ -231,7 +231,7 @@ def measure(cases) -> int:
                     r.setdefault("graxpert_1.0", {})[z] = losses[z][1.0]
                     r.setdefault("graxpert_best", {})[z] = losses[z][best]
                     r.setdefault("graxpert_best_strength", {})[z] = best
-                log(f"{case} ReferenceGradient: {r['graxpert_0.5']} (0.5), {r['graxpert_1.0']} (1.0), "
+                log(f"{case} The reference gradient tool: {r['graxpert_0.5']} (0.5), {r['graxpert_1.0']} (1.0), "
                     f"best {r['graxpert_best']} at {r['graxpert_best_strength']}")
             else:
                 r[tool] = {z: losses[z][1.0] for z in zones}
@@ -243,7 +243,7 @@ def measure(cases) -> int:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("cmd", choices=("export", "reference_gradient", "reference_denoiser", "ours", "measure"))
+    ap.add_argument("cmd", choices=("export", "graxpert", "reference_denoiser", "ours", "measure"))
     ap.add_argument("--model", default=str(E.DATA / "pretrained_unet_v2_mid.pt"))
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--adapt", default="ft500@2e-4,ft4000@3e-4")
@@ -256,9 +256,9 @@ def main(argv=None) -> int:
     if a.cmd == "ours":
         return ours(cases, Path(a.model), a.device, [x for x in a.adapt.split(",") if x])
     if a.cmd == "reference_denoiser":
-        return topaz_export(cases)
-    if a.cmd == "reference_gradient":
-        return reference_gradient(cases, [float(x) for x in a.strengths.split(",")])
+        return reference_denoiser_export(cases)
+    if a.cmd == "graxpert":
+        return graxpert(cases, [float(x) for x in a.strengths.split(",")])
     return measure(cases)
 
 

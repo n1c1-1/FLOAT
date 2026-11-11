@@ -4,11 +4,13 @@
     python installer/build.py lock       # regenerates installer/lock/lock.json (then build)
     python installer/build.py --out D:/x
     python installer/build.py asterion --stage D:/x   # stages the plate solver's folder alone (a check, no .exe)
+    python installer/build.py catalogue  # pins the star catalogue's 49 files (from the local folders) in the lock
 
 The lock file: the versions of the environment the tests pass on (``uv pip freeze`` of LOCK_SOURCE), restricted to
 pyproject's dependencies and what they need, for two builds of PyTorch (CUDA and CPU), with each wheel's URL, size and
 SHA-256; and the Asterion plate solver (its released archive and its index), pinned the same way, which ``lock`` keeps
-as it is. Staging gathers what the .exe carries: a private Python (standalone, with Tk), uv, the Visual C++ runtime next
+as it is, and the star catalogue the setup fetches from FLOAT's data release (``catalogue`` measures the local files).
+Staging gathers what the .exe carries: a private Python (standalone, with Tk), uv, the Visual C++ runtime next
 to python.exe (PyTorch needs it and a clean Windows lacks it), the app's tracked files plus the Stars network (not in
 git), the plate solver and its index in ``asterion`` (the layout astro_gpu/core/asterion.py looks for beside ``app``),
 the setup scripts, an icon, the third-party notices (written from the credits of About, shown before the installation).
@@ -45,7 +47,8 @@ sys.path.insert(0, str(HERE / "setup_env"))
 import detect  # noqa: E402
 
 LOCK_FILE = HERE / "lock" / "lock.json"
-LOCK_SOURCE = Path(r"<user folder>\sandbox\ComfyUI\.venv\Scripts\python.exe")
+#: the Python whose environment is frozen into the lock file: FLOAT_LOCK_SOURCE, else the one running this script
+LOCK_SOURCE = Path(os.environ.get("FLOAT_LOCK_SOURCE") or sys.executable)
 PLATFORM = "x86_64-pc-windows-msvc"
 BUILDS = {"cu128": "cu128", "cpu": "cpu"}
 OUT_DEFAULT = Path("F:/astro_essais/A_REGARDER/installeur")
@@ -56,6 +59,14 @@ ASTERION_CACHE = Path(os.environ.get("FLOAT_ASTERION_CACHE") or REPO / "build" /
 #: what the installation keeps of the released archive: the program, its licence and the third-party notices (not the
 #: web interface, nor the README of a command line FLOAT runs itself)
 ASTERION_KEEP = ("asterion.exe", "LICENSE.txt", "third-party")
+#: the star catalogue FLOAT reads, published as the assets of one release (tag, repository) and fetched by the setup into
+#: ``sky`` of the installation: the positions cut to G < 16 beside the 48 compact spectra chunks in their sub-folder
+CATALOGUE_TAG = "sky-data-v1"
+CATALOGUE_REPO = "n1c1-1/FLOAT"
+CATALOGUE_ASTRO = Path("F:/astro_essais/_a_effacer/agent_reduce/extracts/siril_cat_healpix8_astro.dat")
+CATALOGUE_XP = Path("F:/astro_essais/_a_effacer/agent_compact/extracts/float_xp_compact")
+CATALOGUE_XP_DIR = "float_xp_compact"                  # the sub-folder the reader (core/sirilcat) expects
+CATALOGUE_CHUNKS = 48
 
 
 def run(*cmd, **kw):
@@ -160,16 +171,34 @@ def make_lock() -> dict:
                 if norm(p["name"]) not in pins:
                     print("not in the tested environment:", p["name"], p["version"])
             lock["builds"][build] = wheels
-    # the plate solver is pinned by hand (a release of its own, not a Python package): kept through a new lock
+    # the plate solver and the star catalogue are pinned by hand (releases of their own, not Python packages): kept
     if LOCK_FILE.is_file():
         former = json.loads(LOCK_FILE.read_text(encoding="utf-8"))
         if "asterion" in former:
             lock["asterion"] = former["asterion"]
+        if "star_catalogue" in former:
+            lock["star_catalogue"] = former["star_catalogue"]
     LOCK_FILE.parent.mkdir(exist_ok=True)
     LOCK_FILE.write_text(json.dumps(lock, indent=1) + "\n", encoding="utf-8")
     for build, wheels in lock["builds"].items():
         print(f"{build}: {len(wheels)} packages, {sum(w['size'] for w in wheels) / 1e9:.2f} GB")
     return lock
+
+
+def catalogue_part(astro: Path = CATALOGUE_ASTRO, xp: Path = CATALOGUE_XP, tag: str = CATALOGUE_TAG,
+                   repo: str = CATALOGUE_REPO, hashed=None) -> dict:
+    """The lock's ``star_catalogue`` part from the local files: size and SHA-256 of each, the URL its release asset will
+    have (assets are flat: the folder a file goes to is its ``dest``). ``hashed``: the function measuring a file."""
+    hashed = hashed or sha256_file
+    files = [(astro, "")] + [(xp / f"{CATALOGUE_XP_DIR}_{n}.dat", CATALOGUE_XP_DIR) for n in range(CATALOGUE_CHUNKS)]
+    out = []
+    for path, dest in files:
+        if not path.is_file():
+            raise SystemExit(f"{path} is missing: the star catalogue has {len(files)} files")
+        out.append({"name": "star_catalogue", "version": tag, "filename": path.name,
+                    "url": f"https://github.com/{repo}/releases/download/{tag}/{path.name}", "sha256": hashed(path),
+                    "size": path.stat().st_size, "dest": dest})
+    return {"version": tag, "files": out}
 
 
 def check_lock() -> None:
@@ -320,7 +349,7 @@ NOTICES = {"en": "THIRD-PARTY-NOTICES.txt", "fr": "THIRD-PARTY-NOTICES.fr.txt"}
 def write_notices(folder: Path, fetched_catalogue: bool = False) -> list[Path]:
     """The notices of the data and programs FLOAT carries, written from astro_gpu/client/credits.py (the list About
     shows: one source), in each language of the installer; UTF-8 with a byte-order mark, which Inno Setup's page and
-    any editor read. ``fetched_catalogue``: the installer fetches FLOAT's own star catalogue (not yet)."""
+    any editor read. ``fetched_catalogue``: the installer fetches FLOAT's own star catalogue (its lock has one)."""
     if str(REPO) not in sys.path:
         sys.path.insert(0, str(REPO))
     from astro_gpu.client import credits, i18n
@@ -405,13 +434,22 @@ def compile_installer(stage_dir: Path, out: Path, version: str) -> Path:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("what", nargs="?", choices=("lock", "asterion"))
+    ap.add_argument("what", nargs="?", choices=("lock", "asterion", "catalogue"))
     ap.add_argument("--out", type=Path, default=OUT_DEFAULT)
     ap.add_argument("--stage", type=Path, default=REPO / "build" / "installer-stage")
     ap.add_argument("--asterion-cache", type=Path, default=ASTERION_CACHE)
+    ap.add_argument("--catalogue-astro", type=Path, default=CATALOGUE_ASTRO)
+    ap.add_argument("--catalogue-xp", type=Path, default=CATALOGUE_XP)
     args = ap.parse_args()
     if args.what == "lock":
         make_lock()
+        return 0
+    if args.what == "catalogue":
+        lock = json.loads(LOCK_FILE.read_text(encoding="utf-8"))
+        lock["star_catalogue"] = catalogue_part(args.catalogue_astro, args.catalogue_xp)
+        LOCK_FILE.write_text(json.dumps(lock, indent=1) + "\n", encoding="utf-8")
+        files = lock["star_catalogue"]["files"]
+        print(f"star catalogue: {len(files)} files, {sum(f['size'] for f in files) / 1e9:.2f} GB")
         return 0
     check_lock()
     lock = json.loads(LOCK_FILE.read_text(encoding="utf-8"))

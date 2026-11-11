@@ -2,8 +2,8 @@
 
 A spot is ``[x, y, r, dx, dy]`` in full-resolution canvas pixels: the disc of radius ``r`` around (x, y) is replaced by
 the disc at (x + dx, y + dy), its source, raccorded to the edge of the spot by Poisson editing (P. Perez, M. Gangnet
-and A. Blake, "Poisson Image Editing", SIGGRAPH 2003; the principle of a reference image editor's Healing Brush, T. Georgiev,
-"A reference image editor Healing Brush: a Tool for Seamless Cloning", ECCV 2004 workshop): the result keeps the source's detail (its
+and A. Blake, "Poisson Image Editing", SIGGRAPH 2003; the principle of the reference image editor's Healing Brush, T. Georgiev,
+"the reference image editor Healing Brush: a Tool for Seamless Cloning", ECCV 2004 workshop): the result keeps the source's detail (its
 stars, its grain) and takes the level and colour of the spot's surroundings, so that a darker or lighter source leaves
 no edge. A soft rim of ``FEATHER`` of the radius blends it into the image.
 

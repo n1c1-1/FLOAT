@@ -3,10 +3,10 @@
 * The layers of Post are display-referred sRGB values in [0, 1] (after the Output stretch). CIE L*a*b* (D65) is computed
   from them with the exact sRGB transfer function (IEC 61966-2-1) and OpenCV's linear-RGB to L*a*b* conversion (its
   sRGB path approximates the transfer by a spline: up to 1.3 8-bit levels off in a round trip; this one 0.07). Values
-  are clipped to [0, 1] first, as in a reference processing suite and another processing program.
-* SCNR: Another processing program's "Remove green noise" (processing/colors, derived from a reference processing suite's SCNR): Average Neutral, Maximum
+  are clipped to [0, 1] first, as in the reference processing suite and the reference program.
+* SCNR: The reference program's "Remove green noise" (processing/colors, derived from the reference processing suite's SCNR): Average Neutral, Maximum
   Neutral, Maximum Mask and Additive Mask protection, with the amount and the "preserve lightness" option (the original
-  CIE L* is put back, computed as another processing program computes it, on the values taken as linear RGB: equal to another processing program-cli 1.4's).
+  CIE L* is put back, computed as the reference program computes it, on the values taken as linear RGB: equal to the reference program 1.4's).
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 import torch
 
-LUM = (0.2126, 0.7152, 0.0722)                         # Rec. 709 / sRGB luminance weights (another processing program's "human" weights)
+LUM = (0.2126, 0.7152, 0.0722)                         # Rec. 709 / sRGB luminance weights (the reference program's "human" weights)
 
 
 def f32(x: np.ndarray) -> np.ndarray:
@@ -47,7 +47,7 @@ def lightness(rgb: np.ndarray) -> np.ndarray:
 
 
 def lab_linear(rgb: np.ndarray) -> np.ndarray:
-    """CIE L*a*b* of the values taken as linear RGB (another processing program's conversion)."""
+    """CIE L*a*b* of the values taken as linear RGB (the reference program's conversion)."""
     return cv2.cvtColor(np.clip(f32(rgb), 0, 1), cv2.COLOR_LRGB2Lab)
 
 
@@ -62,8 +62,8 @@ SCNR_METHODS = ["Average neutral", "Maximum neutral", "Maximum mask", "Additive 
 
 
 def scnr(x: np.ndarray, method: str, amount: float, preserve: bool) -> np.ndarray:
-    """SCNR, another processing program's formulas: m = (R + B) / 2 (average neutral), max(R, B) (maximum neutral and mask), min(1, R + B)
-    (additive mask). Neutral protections: G' = min(G, m), mixed with G by the amount (a reference processing suite's amount, 1 = another processing program's);
+    """SCNR, the reference program's formulas: m = (R + B) / 2 (average neutral), max(R, B) (maximum neutral and mask), min(1, R + B)
+    (additive mask). Neutral protections: G' = min(G, m), mixed with G by the amount (the reference processing suite's amount, 1 = the reference program's);
     mask protections: G' = G (1 - a)(1 - m) + m G. ``preserve``: the original CIE L* is put back."""
     if amount <= 0:
         return x

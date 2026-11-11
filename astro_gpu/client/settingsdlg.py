@@ -3,7 +3,7 @@ library, Display. Kept in prefs; the language, the device and Spec mode take eff
 the sections of Home (a name, a folder and a description each: home.section_rows).
 
 What the engine does not have yet is shown only in Spec mode, disabled and marked ◇, and hidden otherwise: Temporary
-files, Cache limit, CPU threads, Memory limit, Benchmark, a reference plate solver, astrometry.net, the survey cache folder, and the File
+files, Cache limit, CPU threads, Memory limit, Benchmark, the reference plate solver, astrometry.net, the survey cache folder, and the File
 formats and Master library pages. The dialog is ``SettingsDialog``.
 """
 from __future__ import annotations
@@ -494,7 +494,7 @@ class SettingsDialog(QDialog):
         self.offline_extracts(v)
         self.asterion_status(v)
         self.row(v, _("Plate solver"), self.combo([("Internal (Gaia)", "internal", False),
-                                                   ("External solver (installed separately)", "reference_solver", True),
+                                                   ("External solver (installed separately)", "astap", True),
                                                    ("External all-sky index solver (installed separately)",
                                                     "astrometry.net", True)],
                                                   prefs.get("solver"), "solver"))
@@ -574,7 +574,8 @@ class SettingsDialog(QDialog):
         off the GUI thread by services.extracts, only when a button is pressed)."""
         v.addWidget(label(_("Offline Gaia extracts"), "h2"))
         v.addWidget(label(_("Star positions find where the image points on the sky; star spectra calibrate the colours. "
-                            "Without them, Gaia stars are fetched online and kept in the cache."), "small", wrap=True))
+                            "Nothing is fetched while a project runs: download them once here, with the buttons below. "
+                            "Without them, the blocks that need them are marked and left out of the runs."), "small", wrap=True))
         where = QLineEdit(str(ge.folder()))
         where.setReadOnly(True)
         where.setCursorPosition(0)
@@ -695,7 +696,7 @@ class SettingsDialog(QDialog):
             pass
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(ge.folder())))
 
-    @Slot(int, int, str)
+    @Slot(object, object, str)                       # byte counts: a Slot(int) would overflow past 2 GB
     def _ex_progress(self, done, total, text):
         try:
             self.ex["bar"].setValue(int(1000 * done / max(total, 1)))

@@ -36,7 +36,7 @@ DEFAULTS = {
     "threads": 0,                     # 0 = all cores but two
     "memory_limit_gb": 24,
     # catalogs and astrometry
-    "solver": "internal",             # internal | a reference plate solver | astrometry.net
+    "solver": "internal",             # internal | astap | astrometry.net
     "survey_cache": "",
     # file formats
     "format": "FITS",                 # FITS | XISF

@@ -1,9 +1,9 @@
 """Where the bench measures the target's signal-to-noise (tools/bench/regions.py).
 
 The defect these tests guard against: the target and its sky were chosen box by box on ONE of the compared images
-(another processing program's), then every stack was measured there. A region picked on a noisy image keeps the boxes where that image's own
-noise falls well, so it flatters that image (circular analysis; on Iris, 9 % under another processing program for our classic stack when
-Another processing program chose, 13 % over when we chose, equal when neither did). The published fix (SExtractor's dual-image mode, Bertin &
+(the reference program's), then every stack was measured there. A region picked on a noisy image keeps the boxes where that image's own
+noise falls well, so it flatters that image (circular analysis; on Iris, 9 % under the reference program for our classic stack when
+The reference program chose, 13 % over when we chose, equal when neither did). The published fix (SExtractor's dual-image mode, Bertin &
 Arnouts 1996; Kriegeskorte et al. 2009): choose on an independent image, measure all stacks on the same regions.
 """
 from __future__ import annotations
@@ -91,7 +91,7 @@ def test_the_order_of_the_list_does_not_matter():
 
 
 def test_the_old_choice_on_one_image_favours_it():
-    """Control: regions chosen on stack A alone (the old way, another processing program's image) put A ahead of an identical B by several
+    """Control: regions chosen on stack A alone (the old way, the reference program's image) put A ahead of an identical B by several
     percent on average; this is the bias the new choice removes."""
     r = []
     for k in range(24):

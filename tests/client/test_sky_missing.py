@@ -51,7 +51,11 @@ def test_the_block_without_its_catalogue_is_marked_and_says_why(qapp, tmp_path, 
         g = Graph(m)
         ast = g.node_of(q, "astrometrie")
         assert ast.missing == NO_STARS
-        assert all(not n.missing for n in g.nodes if n is not ast)          # Stacking, Gradient...: they run
+        assert all(not n.missing for n in g.nodes if n not in (ast, g.node_of(q, "couleur")))   # Stacking, Gradient...
+        # #161: the Color block needs the spectra too; it is left out with Astrometry and says it, not only the earlier one
+        col = g.node_of(q, "couleur")
+        assert col.missing == NO_STARS
+        assert m.sky_missing(q, "couleur") == NO_STARS
         item = next(it for it in page.graph.scene().items() if isinstance(it, BlockItem) and it.node.key == "astrometrie")
         tip = item.toolTip()
         assert f"Cannot run: {NO_STARS}. Install it: Settings › Catalogs & astrometry" in tip
@@ -60,8 +64,8 @@ def test_the_block_without_its_catalogue_is_marked_and_says_why(qapp, tmp_path, 
         assert f"Cannot run: {NO_STARS}" in _texts(page.panel)
         # the run window says it before the run, and the plan runs the rest
         plan = m.plan_all()
-        assert plan.left_out == {q.pid: {"astrometry": NO_STARS}} and {"inventory", "stack"} <= {j.stage for j in
-                                                                                                  plan.jobs}
+        assert plan.left_out == {q.pid: {"astrometry": NO_STARS, "catalogs": NO_STARS}}
+        assert {"inventory", "stack"} <= {j.stage for j in plan.jobs}
         from astro_gpu.client.runs import RunDialog
         d = RunDialog(m, plan, "Run")
         assert f'"{q.name}": Astrometry and the blocks after it not run: {NO_STARS}. Install it: Settings › Catalogs ' \
@@ -141,6 +145,10 @@ def test_home_says_once_when_the_star_catalogue_is_not_installed(qapp, tmp_path,
         home.resize(1200, 700)
         assert home.sky_box.isVisibleTo(home)
         assert home.sky_text.text() == "Star catalogue not installed: Astrometry and Color need it"
+        # at the top of the left column, above its buttons, not at the foot where it was missed
+        home.show()
+        new = _button(home, "New project")
+        assert home.sky_box.mapTo(home, home.sky_box.rect().topLeft()).y() < new.mapTo(home, new.rect().topLeft()).y()
         asked = []
         home.open_settings = lambda pg=None: asked.append(pg)
         _button(home, "Install catalogue").click()
@@ -221,3 +229,29 @@ def test_get_survey_fetches_it_outside_the_run_and_the_next_run_uses_it(qapp, tm
         page.close()
         m.close(save=False)
         worker.stop()
+
+
+def test_the_run_window_says_when_asterion_is_not_installed(qapp, tmp_path, monkeypatch, no_catalogue):  # noqa: F811
+    """The plan has an Astrometry: the window says, as information and not as a warning, that FLOAT's own search finds
+    the field (the run's log and Inspect's checks already said it); said no more once the solver is there."""
+    from astro_gpu.client.runs import INFO_NOTE, RunDialog
+    from astro_gpu.core import asterion
+    from tests import skyfield
+    monkeypatch.setenv("ASTRO_GPU_GAIA_EXTRACTS", str(skyfield.field(tmp_path / "sky", spectra=True)["extracts"]))
+    sirilcat.reset()
+    w, m, page = open_page(tmp_path, monkeypatch, workflows=("Full",))
+    try:
+        settle(w, page)
+        monkeypatch.setattr(asterion, "status", lambda *a, **k: asterion.Status(False, why="not installed", missing=True))
+        d = RunDialog(m, m.plan_all(), "Run")
+        note = [t for t in d.warnings() if "Asterion" in t]
+        assert len(note) == 1 and note[0].startswith(INFO_NOTE) and "is not installed" in note[0]
+        d.refresh()
+        assert any("Asterion is not installed" in x.text() for x in d.findChildren(QLabel))
+        d.close()
+        monkeypatch.setattr(asterion, "status", lambda *a, **k: asterion.Status(True))
+        d = RunDialog(m, m.plan_all(), "Run")
+        assert not [t for t in d.warnings() if "Asterion" in t]
+        d.close()
+    finally:
+        done(w, m, page)

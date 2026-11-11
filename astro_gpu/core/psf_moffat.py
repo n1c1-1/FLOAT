@@ -2,14 +2,14 @@
 at native resolution: on the samples of one colour of a raw CFA frame, at their true positions, or on one plane of a
 stack. Entry points: ``measure_psf``, ``measure_psf_rgb``, ``find_stars``.
 
-The method of another processing program's PSF (star finder, Dynamic PSF) and of a reference processing suite's DynamicPSF / SubframeSelector [S3][P21]:
+The method of the reference program's PSF (star finder, Dynamic PSF) and of the reference processing suite's DynamicPSF / SubframeSelector [S3][P21]:
 
     I(x, y) = B + A (1 + Q)^-beta,   Q = a dx^2 + 2 b dx dy + c dy^2,   dx = x - x0, dy = y - y0
 
-an ellipse at any angle, fitted by Levenberg-Marquardt on the values at the pixel centres (another processing program: GSL's
+an ellipse at any angle, fitted by Levenberg-Marquardt on the values at the pixel centres (the reference program: GSL's
 Levenberg-Marquardt on B, A, x0, y0, two widths, the angle and beta, beta <= 10). Per star: the FWHM along each axis is
-2 alpha sqrt(2^(1/beta) - 1) (another processing program's ``FWHM_from_s``), alpha = 1 / sqrt(eigenvalue of [[a, b], [b, c]]); roundness =
-FWHM_minor / FWHM_major (another processing program's r); eccentricity = sqrt(1 - r^2) (SubframeSelector). A star is kept as another processing program's star
+2 alpha sqrt(2^(1/beta) - 1) (the reference program's ``FWHM_from_s``), alpha = 1 / sqrt(eigenvalue of [[a, b], [b, c]]); roundness =
+FWHM_minor / FWHM_major (the reference program's r); eccentricity = sqrt(1 - r^2) (SubframeSelector). A star is kept as the reference program's star
 finder keeps it (``reject_star`` and the defaults of ``settings.c``): roundness >= 0.5, beta >= 1.5, RMS residual <= 0.2
 x the amplitude; and, as both tools do for their statistics, no saturated sample and no other catalogued star in its
 window. The value of the image is the median over the kept stars (SubframeSelector weights each star by its residual
@@ -37,8 +37,8 @@ Callers
 Pure numpy (scipy for the neighbour search, ``sep`` only in ``find_stars``); no torch, no GPU.
 
 Sources:
-[S3] another processing program 1.4, registration: https://gitlab.com/free-astro/another processing program-doc/-/raw/1.4/doc/preprocessing/registration.rst
-[P21] a reference processing suite SubframeSelector documentation: https://gitlab.com/a reference processing suite/Reference-Documentation/-/raw/master/tools/obsolete/SubframeSelector/SubframeSelector.pidoc
+[S3] the reference program 1.4, registration: https://gitlab.com/free-astro/siril-doc/-/raw/1.4/doc/preprocessing/registration.rst
+[P21] the reference processing suite SubframeSelector documentation (no link)
 """
 from __future__ import annotations
 
@@ -48,12 +48,12 @@ from dataclasses import dataclass, field
 import numpy as np
 
 CHANNELS = "RGB"
-#: Another processing program's star finder defaults (src/core/settings.c, starfinder_conf): minimum roundness and minimum Moffat beta
+#: The reference program's star finder defaults (src/core/settings.c, starfinder_conf): minimum roundness and minimum Moffat beta
 MIN_ROUNDNESS = 0.5
 MIN_BETA = 1.5
-#: Another processing program's upper bound of beta in the fit (MOFFAT_BETA_UBOUND)
+#: The reference program's upper bound of beta in the fit (MOFFAT_BETA_UBOUND)
 MAX_BETA = 10.0
-#: Another processing program's reject_star: a fit whose RMS residual exceeds 0.2 x its amplitude is not a star (sigma = 1, the default)
+#: The reference program's reject_star: a fit whose RMS residual exceeds 0.2 x its amplitude is not a star (sigma = 1, the default)
 MAX_REL_RMSE = 0.2
 #: fewest fitted stars for a measure
 MIN_STARS = 10
@@ -70,8 +70,8 @@ class PSF:
     fwhm: float                 # median sqrt(FWHM_major x FWHM_minor), pixels of the image given
     fwhm_major: float
     fwhm_minor: float
-    roundness: float            # median FWHM_minor / FWHM_major (another processing program's r; 1 = round)
-    eccentricity: float         # median sqrt(1 - r^2) (a reference processing suite)
+    roundness: float            # median FWHM_minor / FWHM_major (the reference program's r; 1 = round)
+    eccentricity: float         # median sqrt(1 - r^2) (the reference processing suite)
     beta: float                 # median Moffat beta
     n: int                      # stars kept
     tried: int                  # stars fitted (isolated and unsaturated candidates)

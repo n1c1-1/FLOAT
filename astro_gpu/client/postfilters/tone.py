@@ -1,22 +1,22 @@
 """The stretches of Post, each a published method, the identity at its defaults.
 
-* **Generalised hyperbolic stretch** (D. Payne and M. Cranfield, GHSastro; another processing program's "Generalised Hyperbolic Stretch",
-  Another processing program.org/tutorials/ghs and processing/stretching; a reference processing suite's GHS). The stretch factor is given as ln(D + 1), as in
-  Another processing program; b the local stretch intensity, SP the symmetry point, LP and HP the shadow and highlight protection points, BP a
-  black point moved first (another processing program's "linear stretch"). The transformation is the family whose slope is D at SP:
+* **Generalised hyperbolic stretch** (D. Payne and M. Cranfield, GHSastro; the reference program's "Generalised Hyperbolic Stretch",
+  siril.org/tutorials/ghs and processing/stretching; the reference processing suite's GHS). The stretch factor is given as ln(D + 1), as in
+  the reference program; b the local stretch intensity, SP the symmetry point, LP and HP the shadow and highlight protection points, BP a
+  black point moved first (the reference program's "linear stretch"). The transformation is the family whose slope is D at SP:
   T'(x) = D (1 + b D |x - SP|)^(-(1 + b) / b) for b > 0, D e^(-D |x - SP|) for b = 0, D (1 + |b| D |x - SP|)^(-1 / |b|)
   for b < 0 (b = -1: logarithmic), symmetric about SP, linear below LP and above HP with the slope it has there, and
-  normalised so that 0 -> 0 and 1 -> 1 (the equations of another processing program's ``ght.c``). Colour: each channel, or the luminance
+  normalised so that 0 -> 0 and 1 -> 1 (the equations of the reference program's ``ght.c``). Colour: each channel, or the luminance
   (human-weighted 0.2126 / 0.7152 / 0.0722, or even-weighted) with the colour ratios kept.
-* **Asinh transformation** (another processing program, processing/stretching; after Lupton et al. 2004, PASP 116, 133): as another processing program's code
-  runs it (checked against another processing program-cli 1.4), x' = max(0, (x - blackpoint) / (1 - blackpoint)), then
+* **Asinh transformation** (the reference program, processing/stretching; after Lupton et al. 2004, PASP 116, 133): as the reference program's code
+  runs it (checked against the reference program 1.4), x' = max(0, (x - blackpoint) / (1 - blackpoint)), then
   pixel = x' * asinh(L' * stretch) / (L' * asinh(stretch)), with L' the even- or human-weighted luminance of x' (the
-  colour ratios kept), each channel clipped to [0, 1] (another processing program's clipping of this stretch).
-* **Histogram transformation** (a reference processing suite HistogramTransformation, another processing program's MTF): x' = (x - shadows) / (highlights -
+  colour ratios kept), each channel clipped to [0, 1] (the reference program's clipping of this stretch).
+* **Histogram transformation** (the reference processing suite HistogramTransformation, the reference program's MTF): x' = (x - shadows) / (highlights -
   shadows), clipped to [0, 1], then the midtones transfer function MTF(m, x) = (m - 1) x / ((2m - 1) x - m).
 
 The luminance-based ones can push a channel above 1: the pixel is then divided by its largest channel (the hue kept),
-Another processing program's "Rescale" clipping mode (equal to another processing program-cli's to the 8-bit level).
+The reference program's "Rescale" clipping mode (equal to the reference program's to the 8-bit level).
 """
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ def _luma(t: torch.Tensor, mode: str) -> torch.Tensor:
 
 
 def _rescale(t: torch.Tensor) -> torch.Tensor:
-    """Another processing program's "Rescale": a pixel whose largest channel passes 1 is divided by it."""
+    """the reference program's "Rescale": a pixel whose largest channel passes 1 is divided by it."""
     return (t / t.amax(-1, keepdim=True).clamp(min=1.0)).clamp_(0, 1)
 
 

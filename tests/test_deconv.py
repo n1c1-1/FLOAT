@@ -88,6 +88,21 @@ def test_stop_is_looked_at_after_each_zone():
                                                                 tick=stop), "cpu")
 
 
+def test_the_noise_sample_is_the_same_at_every_run_and_leaves_the_global_state_alone(monkeypatch):
+    """An image over SIGMA_SAMPLE pixels has its noise measured on a random sample (here 20 000 of 25 600): drawn from
+    torch's global generator, the restoration changed a little from one run to the next and moved the global state."""
+    full, a, b, _pts, _ = field(size=160, stars=16)
+    valid, sat = np.ones(full.shape[1:], bool), np.zeros(full.shape[1:], bool)
+    monkeypatch.setattr(lib, "SIGMA_SAMPLE", 20_000)
+    torch.manual_seed(12345)
+    before = torch.get_rng_state()
+    st = lib.StackDeconvSettings(tiles_long=1, log=lambda *x, **k: None, iterations=3)
+    one, two = (lib.run(full, a, b, sat, valid, st, "cpu") for _ in range(2))
+    assert all(np.array_equal(x, y) for x, y in zip(one[:3], two[:3])) and one[3]["applied"]
+    assert all(np.array_equal(np.asarray(one[3][k]), np.asarray(two[3][k])) for k in one[3])
+    assert torch.equal(torch.get_rng_state(), before)
+
+
 def test_a_saturated_core_and_the_pixels_without_data_stay_as_they_were():
     full, a, b, pts, _ = field()
     valid = np.ones(full.shape[1:], bool)

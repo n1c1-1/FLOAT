@@ -3,12 +3,12 @@
 Survey of free, existing software for each processing step (stacking, stars, noise, sharpening, background, colour),
 with a verdict per tool: test it as-is against our own code, reuse its code or ideas, or skip it.
 
-**Bottom line.** Test as-is first: Another processing program 1.4.4 run from scripts (stacking, sharpening, background, noise, SPCC colour
-with a custom A7S-mod sensor file); the reference tool `--linear` and nox (stars); a reference gradient tool 3.1.0rc2 (background, noise,
+**Bottom line.** Test as-is first: The reference program 1.4.4 run from scripts (stacking, sharpening, background, noise, SPCC colour
+with a custom A7S-mod sensor file); the reference tool `--linear` and the reference denoiser (stars); the reference gradient tool 3.1.0rc2 (background, noise,
 sharpening); SASpro MFDeconv (sharpening from many frames, the closest free tool to our goal); photutils (star shapes);
 STScI drizzle (check of our stacking); maskfill (masked pixels). Build on: deepinv, the main toolbox for our own
 sharpening and noise reduction, with ideas from ImageMM, STARRED, ASTERIS, Piff, elderflower and Gnuastro. There is no
-free a reference deconvolution tool equivalent with open weights.
+free the reference deconvolution tool equivalent with open weights.
 
 ## How to read this document
 
@@ -40,7 +40,7 @@ may be drizzled to larger sizes (up to about 24 MP); two half-stacks are availab
 |---|---|
 | PSF, star shape | The shape a point-like star takes on the image. |
 | FWHM | Star size: width of the star profile at half its peak brightness. |
-| Deconvolution, sharpening | Undoing the blur caused by the optics and the atmosphere, using the PSF. Richardson-Lucy (RL) is the classic method (the one in another processing program). |
+| Deconvolution, sharpening | Undoing the blur caused by the optics and the atmosphere, using the PSF. Richardson-Lucy (RL) is the classic method (the one in the reference program). |
 | Non-blind / blind | Non-blind: the blur is measured on the stars and given to the tool. Blind: the tool guesses the blur itself. |
 | Varying across the field ("space-varying") | The star shape changes across the image (for example coma in the corners). The opposite, "one shape for the whole image", is called space-invariant or stationary. |
 | Many-frame ("multi-frame") | Working on all the individual registered frames together, instead of on the finished stack. |
@@ -97,14 +97,14 @@ may be drizzled to larger sizes (up to about 24 MP); two half-stacks are availab
 6. **the reference tool (2026-09) adds `--linear`** (works on unstretched data); our local install is 2.5.4. Its licence
    forbids using its outputs to train networks for commercial software, and sharing full-resolution input images that
    demonstrate its performance.
-7. **A reference gradient tool**: deconvolution exists only in the 3.1.0 release candidates (test versions); its trained networks are
+7. **the reference gradient tool**: deconvolution exists only in the 3.1.0 release candidates (test versions); its trained networks are
    **CC BY-NC-SA 4.0**; the main branch has been idle since 2025-01. Its AI background model works on a 240 x 240
    shrunk copy of the whole image.
-8. **No free a reference deconvolution tool equivalent with open weights exists.** Cosmic Clarity's networks are licensed for use
+8. **No free the reference deconvolution tool equivalent with open weights exists.** Cosmic Clarity's networks are licensed for use
    inside SASpro only.
 9. **Windows limits**: JAX cannot use an NVIDIA GPU on native Windows (so SCICO, scarlet2, STARRED and J-UBIK run on
    CPU or in WSL2); Piff, PSFEx, Gnuastro and GalSim need WSL2.
-10. **Another processing program's SPCC sensor database has no Sony A7S**, and its DSLR curves include the stock IR-cut filter: a custom
+10. **the reference program's SPCC sensor database has no Sony A7S**, and its DSLR curves include the stock IR-cut filter: a custom
     A7S-mod sensor file (JSON) is needed for a fair SPCC comparison.
 
 ---
@@ -210,19 +210,19 @@ Notes.
 
 | Candidate | Licence (code / weights) | Activity (checked) | GitHub stars | Runs on | Inputs | Verdict |
 |---|---|---|---|---|---|---|
-| **Another processing program 1.4.4** RL / Wiener / split Bregman (+ `makepsf`) | GPL-3.0+ / none | 1.4.4 released 2026-06-16 (1.4.0 2025-12-04) | 194 (GitLab) | C/C++, CPU only (multi-threaded, FFTW library; no GPU code in `src/filters/deconvolution`), native Windows, `another processing program-cli` without interface | linear (RL "gradient descent" mode) or stretched (multiplicative RL); mono or RGB; one star shape for the whole image, can load ours | **Test as-is** (classic reference) |
-| **A reference gradient tool 3.1.0rc2** `deconv-obj` / `deconv-stellar` | GPL-3.0 / **CC BY-NC-SA 4.0** | main 2025-01-01; develop 2025-10-03; rc3 2025-10-03 (macOS-only fix); last active branch 2026-01-12 | 325 | ONNX Runtime: DirectML on Windows, CUDA on Linux | accepts linear data (each tile normalised in log scale); each colour channel separately; 512 px tiles | **Test as-is** |
+| **the reference program 1.4.4** RL / Wiener / split Bregman (+ `makepsf`) | GPL-3.0+ / none | 1.4.4 released 2026-06-16 (1.4.0 2025-12-04) | 194 (GitLab) | C/C++, CPU only (multi-threaded, FFTW library; no GPU code in `src/filters/deconvolution`), native Windows, its command line without interface | linear (RL "gradient descent" mode) or stretched (multiplicative RL); mono or RGB; one star shape for the whole image, can load ours | **Test as-is** (classic reference) |
+| **the reference gradient tool 3.1.0rc2** `deconv-obj` / `deconv-stellar` | GPL-3.0 / **CC BY-NC-SA 4.0** | main 2025-01-01; develop 2025-10-03; rc3 2025-10-03 (macOS-only fix); last active branch 2026-01-12 | 325 | ONNX Runtime: DirectML on Windows, CUDA on Linux | accepts linear data (each tile normalised in log scale); each colour channel separately; 512 px tiles | **Test as-is** |
 | **Seti Astro Suite Pro (SASpro) MFDeconv** | GPL-3.0 / no network (pure algorithm) | v1.22.5 2026-10-10 (very active) | 112 | PyTorch CUDA / DirectML / CPU, Windows | registered frames; star shape measured per frame on the stars; lightness (luma) or per channel; optional super-resolution x2 / x3 | **Test as-is + code reference** (closest free tool to our goal) |
 | Cosmic Clarity AI4 sharpen (inside SASpro) | app GPL-3.0 / **proprietary, SASpro only** | 2026-10 | - | NAFNet (a published restoration network design), PyTorch/ONNX, CUDA/DirectML | auto-stretches if median < 0.08, then un-stretches | **Test as-is, inside SASpro only**; never reused |
-| Aberration Remover 2.0.1 (R. Alberghi) | another processing program script GPL-3 / weights CC BY-NC-SA 4.0 | model 2.0.1 2026-02-11 | 5 | ONNX through another processing program `pyscript`, GPU | linear data, after background and colour calibration, before deconvolution | **Test as-is for the Iris (Newton coma)** |
-| SyQon Parallax Nano | another processing program script MIT / closed weights, terms PDF unverified | unverified | - | unverified | unverified | optional test (login required) |
+| Aberration Remover 2.0.1 (R. Alberghi) | The reference program script GPL-3 / weights CC BY-NC-SA 4.0 | model 2.0.1 2026-02-11 | 5 | ONNX through the reference program `pyscript`, GPU | linear data, after background and colour calibration, before deconvolution | **Test as-is for the Iris (Newton coma)** |
+| SyQon Parallax Nano | The reference program script MIT / closed weights, terms PDF unverified | unverified | - | unverified | unverified | optional test (login required) |
 | BM3D deblurring (`pip bm3d` 4.0.3) | "free for non-commercial use" | unverified | - | CPU | known star shape, constant (Gaussian) noise | optional classic test |
 | AstroSharp, Galaxy-Deconv, Astraios, PI-AstroDeconv, AstroClearNet | see notes | | | | | **Skip** |
 
 Notes.
 
-- **Another processing program deconvolution** (docs https://another processing program.readthedocs.io/en/stable/processing/deconvolution.html, source
-  https://gitlab.com/free-astro/another processing program).
+- **the reference program deconvolution** (docs https://siril.readthedocs.io/en/stable/processing/deconvolution.html, source
+  https://gitlab.com/free-astro/siril).
   - Richardson-Lucy in two flavours: multiplicative (for stretched data) and gradient descent (default, recommended
     for linear data). Anti-noise regularisation: total variation (TV) or the Frobenius norm of the Hessian (a
     smoothness measure). Wiener (assumes constant noise; weak on deep sky). Split Bregman TV (for starless or lunar
@@ -234,20 +234,20 @@ Notes.
     `rl [-loadpsf=] [-alpha=] [-iters=] [-tv|-fh] [-mul]`, `sb`, `wiener`, and sequence versions `seqrl`, `seqsb`,
     `seqwiener`. For sequences the docs say "the PSF will be calculated only for the first image" and re-used for all
     frames, so a PSF per frame needs one script call per frame.
-  - Python: `sirilpy` drives a *running* another processing program (`cmd()`, `get/set_image_pixeldata`); it ships with another processing program and is not on
+  - Python: `sirilpy` drives a *running* the reference program (`cmd()`, `get/set_image_pixeldata`); it ships with the reference program and is not on
     PyPI.
   - Limits: one star shape for the whole image; CPU only.
-  - How to plug in: `another processing program-cli -s script.ssf` with `makepsf load our_psf.fits` then `rl`; and `makepsf stars` (another processing program's
+  - How to plug in: its command line with a script with `makepsf load our_psf.fits` then `rl`; and `makepsf stars` (the reference program's
     own PSF) as a second baseline. Effort 0.5-1 day.
-- **A reference gradient tool deconvolution** (https://github.com/Steffenhir/a reference gradient tool).
+- **the reference gradient tool deconvolution** (https://github.com/Steffenhir/GraXpert).
   - Versions: object model added in 3.1.0rc1 (2024-11-10), stellar model in 3.1.0rc2 (2025-01-01). The last Windows
-    installer with deconvolution is 3.1.0rc2 (`a reference gradient tool-windows-amd64.msi`); the "latest" stable version is still 3.0.2
+    installer with deconvolution is 3.1.0rc2 (`the reference gradient tool-windows-amd64.msi`); the "latest" stable version is still 3.0.2
     (no deconvolution).
   - Network licence: CC BY-NC-SA 4.0 (`licenses/Deconvolution-Model-LICENSE.html`, develop branch). The networks are
     `model.onnx` zip files downloaded from online storage (MinIO/S3) with credentials added when the official program is
     built: a plain copy of the source code cannot download them; the official program, or the PyPI test build 3.2.0a3
-    from the fork geeksville/a reference gradient tool, can.
-  - CLI: `a reference gradient tool-win64.exe img.fits -cli -cmd deconv-obj|deconv-stellar -strength 0..1 -psfsize <FWHM px> -batch_size 4 -gpu true -ai_version x.y.z -output name`.
+    from the fork geeksville/GraXpert, can.
+  - CLI: `the reference gradient tool-win64.exe img.fits -cli -cmd deconv-obj|deconv-stellar -strength 0..1 -psfsize <FWHM px> -batch_size 4 -gpu true -ai_version x.y.z -output name`.
   - How it works (from `deconvolution.py`): 512 px tiles moved in steps of 448 px (overlapping); each channel processed
     on its own; values put in log scale then normalised (minus mean, divided by standard deviation); the network
     predicts the correction to apply, in log scale; output clipped to [0, 1]. **psfsize is clamped** (computed from the
@@ -270,17 +270,17 @@ Notes.
 - **Cosmic Clarity AI4** (in SASpro). Licence file `COSMIC_CLARITY_LICENSE.txt` (SASpro release files): personal,
   non-commercial use **only inside SASpro**; no use in another pipeline; no extracting the networks, no training a copy
   from them (distillation), no retraining (fine-tuning). The old standalone repository setiastro/cosmicclarity (MIT
-  code, archived 2026-09-16) still contains old `.pth` network files. Another processing program's `CosmicClarity_Native.py` runs AI4 models
+  code, archived 2026-09-16) still contains old `.pth` network files. The reference program's `CosmicClarity_Native.py` runs AI4 models
   outside SASpro, which seems to contradict that licence: do not use that path. Test only through SASpro (interface or
   its headless entry point). Effort 0.5 day.
 - **Aberration Remover** (https://github.com/riccardoalberghi/abberation_models): corrects defocus, astigmatism, coma,
   trefoil and spherical aberration (not seeing, not lateral chromatic aberration) on linear data. Relevant to the
-  Newton 130/900 coma. Effort 0.5 day through another processing program.
+  Newton 130/900 coma. Effort 0.5 day through the reference program.
 - **Skipped.** AstroSharp (deepskydetail/AstroSharp, MIT; a web app written in R, works on stretched TIFF; sharpening,
   not deconvolution); Galaxy-Deconv (Lukeli0425; small galaxy cut-outs from weak-lensing simulations); Astraios (alpha,
   2 GitHub stars); PI-AstroDeconv (arXiv 2403.01692) and AstroClearNet (arXiv 2504.06463): no code found (section 1).
-- No free tool trained like a reference deconvolution tool (star shape varying across the field, network told the measured star
-  shape, works on linear data) with weights that may be redistributed was found. The closest free ones are a reference gradient tool
+- No free tool trained like the reference deconvolution tool (star shape varying across the field, network told the measured star
+  shape, works on linear data) with weights that may be redistributed was found. The closest free ones are the reference gradient tool
   (CC BY-NC-SA weights) and Cosmic Clarity (SASpro only).
 
 ---
@@ -290,8 +290,8 @@ Notes.
 | Candidate | Licence (code / weights) | Activity (checked) | GitHub stars | Runs on | Inputs | Verdict |
 |---|---|---|---|---|---|---|
 | **ASTERIS** (Science 2026, arXiv 2602.17205) | **MIT / CC-BY-4.0 (Zenodo)** | last commit 2026-06-23 | 55 | PyTorch 2.5, CUDA 12.1, tested on Ubuntu Linux; Windows unverified | 4 or 8 aligned exposures (stacked as a 3D block), mono, linear | **Reuse ideas + test after retraining on our data** |
-| **A reference gradient tool denoise** | GPL-3.0 / CC BY-NC-SA 4.0 | since 3.0.0 (2024-04-22) | 325 | ONNX Runtime, DirectML/CUDA | linear; 3 channels (mono is copied to 3) | **Test as-is** |
-| **Another processing program `denoise`** (NL-Bayes, `-vst`, `-da3d`, `-sos`) | GPL-3.0+ | 1.4.4 | 194 | C, CPU, Windows | linear (with VST) or stretched | **Test as-is** (classic level to beat) |
+| **the reference gradient tool denoise** | GPL-3.0 / CC BY-NC-SA 4.0 | since 3.0.0 (2024-04-22) | 325 | ONNX Runtime, DirectML/CUDA | linear; 3 channels (mono is copied to 3) | **Test as-is** |
+| **the reference program `denoise`** (NL-Bayes, `-vst`, `-da3d`, `-sos`) | GPL-3.0+ | 1.4.4 | 194 | C, CPU, Windows | linear (with VST) or stretched | **Test as-is** (classic level to beat) |
 | **BM3D with noise spectrum** (`pip bm3d`) | free non-commercial | unverified | - | CPU | Gaussian noise with a **correlated** noise spectrum | **Test as-is** (matches the correlated noise of our stacks) |
 | **CAREamics** (N2V, N2V2, structN2V, N2N, CARE, PN2V, HDN, MicroSplit) | BSD-3 | v0.3.4 2026-09-23; commit 2026-10-06 | 154 | PyTorch Lightning, Python >= 3.11, GPU, Windows | single image or pairs, mono or multi-channel | **Test as-is** (N2V2 / structN2V) + reference Noise2Noise code |
 | **deepinv training recipes ("losses")** | BSD-3 | v0.4.2 2026-08-30 | 827 | PyTorch | any image model | **Reuse** (extra training terms for our Noise2Noise) |
@@ -321,11 +321,11 @@ Notes.
   - It is the many-frame generalisation of our half-stack Noise2Noise. Use: (a) borrow its input made of several
     sub-stacks, its "average + frame" loss, its bright/faint split and its completeness/purity metric; (b) retrain it
     on our sub-stacks, per Bayer colour plane, as a comparison. Effort 1-2 weeks (retraining).
-- **A reference gradient tool denoise**: CLI `-cmd denoising -strength 0..1 -batch_size -ai_version -gpu`. From the code: 256 px tiles;
+- **the reference gradient tool denoise**: CLI `-cmd denoising -strength 0..1 -batch_size -ai_version -gpu`. From the code: 256 px tiles;
   each channel normalised as (x - median) / MAD x 0.04 (MAD = median absolute deviation, a robust noise measure);
   pixels above about median + 250 MAD (model v2 and later) are not denoised; strength = linear blend with the input.
   Evidence: blog comparisons only. Effort 0.5 day.
-- **Another processing program `denoise`**: NL-Bayes (a classic patch-based denoiser), with options: generalised Anscombe VST
+- **the reference program `denoise`**: NL-Bayes (a classic patch-based denoiser), with options: generalised Anscombe VST
   (variance-stabilising transform: makes photon noise behave like constant noise, for linear data), DA3D and SOS
   (extra refinement passes). Effort 0.5 day.
 - **BM3D** (a classic patch-based denoiser): accepts a noise power spectrum (PSD: describes how the noise is correlated
@@ -371,20 +371,20 @@ Notes.
 | Candidate | Licence (code / weights) | Activity (checked) | GitHub stars | Runs on | Inputs | Verdict |
 |---|---|---|---|---|---|---|
 | **the reference tool CLI 2.6.2** (installed: 2.5.4) | closed, free; licence restricts use (see notes) | 2.6.2 package 2026-09-19 (2.6.0 2026-09-04) | - | ONNX Runtime: DirectML included, CUDA by swapping a DLL; Windows/Linux/macOS | 8/16-bit TIFF/PNG or FITS in [0, 1]; **`--linear` since 2.6.0**; RGB recommended; minimum 512 x 512 | **Test as-is**; in our chain only to clean leftovers, and only where a known star is |
-| **nox** (charvey2718) | **MIT code and MIT weights** | `nox.exe` v1.1.0 2025-12-25 | 8 | TensorFlow/Keras; exe; GPU on Windows untested by the author | TIFF 8/16/32-bit float (no FITS); `-l` = temporary stretch for linear data | **Test as-is + template for our own** (trained on synthetic stars) |
+| **the reference denoiser** (charvey2718) | **MIT code and MIT weights** | `the reference denoiser.exe` v1.1.0 2025-12-25 | 8 | TensorFlow/Keras; exe; GPU on Windows untested by the author | TIFF 8/16/32-bit float (no FITS); `-l` = temporary stretch for linear data | **Test as-is + template for our own** (trained on synthetic stars) |
 | **compact-source-removal** (Madarasz et al. 2025, A&A 696 A37) | MIT | last commit 2025-11-21 | 2 | PyTorch, partial-convolution U-Net | linear FITS (Herschel), masks supplied | **Reuse** (network design + training recipe; retrain) |
-| SyQon Zenith (another processing program script) / SyQon Studio CLI | script by another processing program/SyQon; weights proprietary, licence PDF unreachable (unverified) | 2026 | - | PyTorch NAFNet, DirectML | temporary auto-stretch (in intensity-hue-saturation space) for linear data | test only |
+| SyQon Zenith (the reference program script) / SyQon Studio CLI | script by the reference program/SyQon; weights proprietary, licence PDF unreachable (unverified) | 2026 | - | PyTorch NAFNet, DirectML | temporary auto-stretch (in intensity-hue-saturation space) for linear data | test only |
 | Cosmic Clarity Dark Star | proprietary networks, SASpro only | 2026 | - | PyTorch | auto-stretch | **Skip** (licence); optional manual comparison |
-| the reference tool v1 (nekitmm/a reference star-removal tool) | MIT code / CC BY-NC-SA weights | 2022-09-12 | 313 | TensorFlow 1/2 | stretched 8-bit | **Skip** (superseded) |
+| the reference tool v1 (the first version's public repository) | MIT code / CC BY-NC-SA weights | 2022-09-12 | 313 | TensorFlow 1/2 | stretched 8-bit | **Skip** (superseded) |
 | starrem2k13 | MIT | v7.0 2025-06-16 | 11 | ONNX, CPU | 8-bit | **Skip** (trained on 3 images) |
 | MRF (AstroJacobLi/mrf), elderflower | MIT | 2021 / 2025-06-25 | - / 6 | numpy, GalSim | high-resolution reference image / bright stars | **Reuse ideas** (subtracting bright-star halos and wings, section 7) |
-| A reference gradient tool | - | - | - | - | - | no star removal (checked: its CLI commands are only background-extraction, denoising, deconv-obj, deconv-stellar) |
+| The reference gradient tool | - | - | - | - | - | no star removal (checked: its CLI commands are only background-extraction, denoising, deconv-obj, deconv-stellar) |
 
 Notes.
 
-- **the reference tool** (https://starnetastro.com/cli-tools/a reference star-removal tool/, command-line reference
-  https://starnetastro.com/documentation/a reference star-removal tool/command-line-tool/).
-  - Local install `F:\photos\heart_nebula\tools\starnet2_2.5.4\...` (2.5.4, ONNX Runtime engine, no `--linear`). Its
+- **the reference tool** (command-line reference
+  (link removed)).
+  - Local install `the local install` (2.5.4, ONNX Runtime engine, no `--linear`). Its
     network file `the reference tool_weights.onnx` (inspected read-only): a U-Net in pix2pix style (a classic image-to-image
     design), about 32.9 million parameters; input 512 x 512 RGB tiles, single-precision values in [0, 1]; output
     clipped to [0, 1].
@@ -400,11 +400,11 @@ Notes.
   - Use: upgrade to 2.6.2; run `--linear` on linear FITS scaled to [0, 1] (test with and without `-u`: our stack FWHM is
     about 4 px or more, so `-u` may not be needed). In our chain, accept its star layer only inside the footprint of
     known Gaia stars (the area covered by their measured star shape). Effort 0.5-1 day.
-- **nox** (https://github.com/charvey2718/nox; LICENSE and README checked: "My code and trained weights ... are made
+- **the reference denoiser** (https://github.com/charvey2718/nox; LICENSE and README checked: "My code and trained weights ... are made
   available under the MIT License"; GitHub's licence detector shows NOASSERTION because of a preamble). Same network
   design as the reference tool v1, trained on a **fully synthetic** dataset (`GenerateStars.py`: Moffat/Gaussian stars with random
   FWHM, Poisson noise, gain, MTF stretch, spikes, colour fringing, asymmetry, on photo-denoising backgrounds). The author
-  says generalisation "remains to be proved". Use: test `nox.exe -l`. Its real value is as a template to train our own
+  says generalisation "remains to be proved". Use: test `the reference denoiser.exe -l`. Its real value is as a template to train our own
   PyTorch star remover for linear data, with our measured star shapes (spikes, coma), our noise model and real starless
   backgrounds from our data. Effort 0.5 day (test), 1-2 weeks (own model).
 - **compact-source-removal** (https://github.com/xMediMadix/compact-source-removal, arXiv 2502.18345): partial
@@ -413,8 +413,8 @@ Notes.
   noise and its texture (power spectrum) are preserved. Filling acts only inside the masks, so the background outside
   the stars is untouched by design. Use: retrain with Gaia star masks on our star-subtracted backgrounds. Effort about
   1 week.
-- **Another processing program integration**: since 1.4, another processing program calls the reference tool through the Python script `the reference tool Astro/the reference tool.py`
-  (`pyscript the reference tool.py --linear --masks descreen`, supports CLI 2.5.0-2.6.2); the old built-in `a reference star-removal tool` command
+- **the reference program integration**: since 1.4, the reference program calls the reference tool through the Python script `the reference tool Astro/the reference tool.py`
+  (`pyscript the reference tool.py --linear --masks descreen`, supports CLI 2.5.0-2.6.2); the old built-in `the reference star-removal tool` command
   remains for old versions.
 
 ---
@@ -423,23 +423,23 @@ Notes.
 
 | Candidate | Licence (code / weights) | Activity (checked) | GitHub stars | Runs on | Inputs | Verdict |
 |---|---|---|---|---|---|---|
-| **A reference gradient tool AI background** | GPL-3.0 / **CC BY-NC-SA 4.0** | stable 3.0.2 (2024-05-03); 3.1.0rc2/rc3; PyPI test build 3.2.0a3 2026-09-22 (fork) | 325 | ONNX Runtime; CLI + usable from Python | linear OK; whole image shrunk to 240 x 240 | **Test as-is**; at most an optional hint (prior) for our own fit |
-| **Another processing program 1.4 `subsky` / `seqsubsky`** (polynomial up to degree 4, or RBF = a flexible smooth surface) | GPL-3.0+ | 1.4.4 | 194 | C, CPU, Windows | linear; `seqsubsky` works per frame on the raw **Bayer (CFA)** colour planes | **Test as-is + idea** (gradient removed per frame, on Bayer data) |
-| VeraLux Nox (another processing program script) | GPL-3.0 | v1.0.1 (2025) | - | Python in another processing program | linear | Test as-is |
-| AutoBGE (another processing program script, port of AutoDBE) | GPL-3.0 | unverified | - | Python in another processing program | linear | optional test |
+| **the reference gradient tool AI background** | GPL-3.0 / **CC BY-NC-SA 4.0** | stable 3.0.2 (2024-05-03); 3.1.0rc2/rc3; PyPI test build 3.2.0a3 2026-09-22 (fork) | 325 | ONNX Runtime; CLI + usable from Python | linear OK; whole image shrunk to 240 x 240 | **Test as-is**; at most an optional hint (prior) for our own fit |
+| **the reference program 1.4 `subsky` / `seqsubsky`** (polynomial up to degree 4, or RBF = a flexible smooth surface) | GPL-3.0+ | 1.4.4 | 194 | C, CPU, Windows | linear; `seqsubsky` works per frame on the raw **Bayer (CFA)** colour planes | **Test as-is + idea** (gradient removed per frame, on Bayer data) |
+| VeraLux the reference denoiser (the reference program script) | GPL-3.0 | v1.0.1 (2025) | - | Python in the reference program | linear | Test as-is |
+| AutoBGE (the reference program script, port of AutoDBE) | GPL-3.0 | unverified | - | Python in the reference program | linear | optional test |
 | photutils `Background2D` 3.0.0, SEP 1.4.1 | BSD-3 / LGPL-3 | 2026-04-17 / 2025-02-18 | 310 / - | CPU, Windows (in our venv) | any | **Reuse** only for the local sky level and noise in forced photometry |
 | Gnuastro NoiseChisel 0.24 | GPL-3.0 | 2025-11-26 | - | C, WSL only | | **Skip** (needs sky tiles with no detected objects; a dense Milky Way field leaves none) |
 
 Notes.
 
-- **A reference gradient tool** (`a reference gradient tool/background_extraction.py`): the whole image is resized to 240 x 240 (padded to 256); each
+- **the reference gradient tool** (`the reference gradient tool/background_extraction.py`): the whole image is resized to 240 x 240 (padded to 256); each
   channel normalised as (x - median) / MAD x 0.04 and clipped; the network output is smoothed (sigma = 20 x the
   smoothing setting, then 3) and enlarged back. It can only model structures larger than image width / 240 (about
   18 px for a 4240 px wide frame, more on a drizzled stack). In a field filled with H-alpha (Heart & Soul) it can absorb
   real large-scale emission and IFN (faint galactic dust clouds). CLI:
-  `A reference gradient tool-win64.exe img.fits -cli -cmd background-extraction [-correction Subtraction|Division] [-smoothing 0..1] [-bg] [-ai_version] [-gpu true]`.
-  Python: `from a reference gradient tool.background_extraction import extract_background(...)`. Effort 0.5-1 day.
-- **Another processing program**: `subsky {-rbf | degree} [-samples] [-tolerance] [-smooth] [-existing]`; `seqsubsky` on Bayer frames (the
+  `the reference gradient tool-win64.exe img.fits -cli -cmd background-extraction [-correction Subtraction|Division] [-smoothing 0..1] [-bg] [-ai_version] [-gpu true]`.
+  Python: `from the reference gradient tool.background_extraction import extract_background(...)`. Effort 0.5-1 day.
+- **the reference program**: `subsky {-rbf | degree} [-samples] [-tolerance] [-smooth] [-existing]`; `seqsubsky` on Bayer frames (the
   docs recommend degree 1 before Bayer drizzle); sample points can be set from Python (`set_bgsamples`). Idea to test in
   our chain (driven by the data, no instrument-specific rule): for each frame, fit a simple low-degree gradient to
   (registered frame - reference stack) on star-masked pixels, where the nebula cancels out. Effort about 1 day.
@@ -450,16 +450,16 @@ Notes.
 
 | Candidate | Licence | Activity (checked) | GitHub stars | Runs on | Inputs | Verdict |
 |---|---|---|---|---|---|---|
-| **Another processing program 1.4.4 drizzle** (port of the Hubble drizzle code, Bayer drizzle) | GPL-3.0+ | 1.4.0 2025-12-05, 1.4.4 2026-06-16/17 | 194 | C, CPU, Windows; `another processing program-cli`; sirilpy | raw Bayer (CFA) frames; SIP distortion (the standard FITS description of optical distortion) | **Test as-is** |
+| **the reference program 1.4.4 drizzle** (port of the Hubble drizzle code, Bayer drizzle) | GPL-3.0+ | 1.4.0 2025-12-05, 1.4.4 2026-06-16/17 | 194 | C, CPU, Windows; its command line; sirilpy | raw Bayer (CFA) frames; SIP distortion (the standard FITS description of optical distortion) | **Test as-is** |
 | **STScI drizzle 3.0.0** (from Hubble's Space Telescope Science Institute) | BSD-3 (AURA) | release 2026-09-24, commit 2026-09-28 | 59 | C core + Python, CPU | any frames + **explicit pixel map** (where each input pixel lands) + weight map | **Reuse** (to check our GPU Bayer drizzle) |
 | Handheld Multi-Frame SR (Jamy-L) | MIT | release 1.4 2026-09-03, commit 2026-09-30 | 214 | numba-cuda + torch; WSL recommended on Windows | raw Bayer burst of about 13-20 frames | **Skip** as a test; possible idea for the merging step |
-| A reference stacking program 6.2.3 beta | BSD-3 | 2026-10-02 | 1140 | C++, Windows | | optional test (no pixfrac drizzle) |
+| The reference stacking program 6.2.3 beta | BSD-3 | 2026-10-02 | 1140 | C++, Windows | | optional test (no pixfrac drizzle) |
 | SyQon Stacking Studio | closed, account needed | 2026 | - | | Bayer (CFA) drizzle | optional test |
 | astroalign, reproject, drizzlepac, burst super-resolution networks | | | | | | **Skip** |
 
 Notes.
 
-- **Another processing program drizzle** (https://another processing program.readthedocs.io/en/stable/preprocessing/drizzle.html; the source file
+- **the reference program drizzle** (https://siril.readthedocs.io/en/stable/preprocessing/drizzle.html; the source file
   `src/drizzle/cdrizzlebox.c` carries the AURA copyright, i.e. it is a port of STScI's cdrizzle). Works from a pixel
   map; for Bayer drizzle the colour is chosen per input pixel from the CFA. Kernels: square (keeps total flux), point,
   turbo, gaussian, lanczos2/3 (only at scale = pixfrac = 1). Command:
@@ -582,16 +582,16 @@ Notes.
 
 | Candidate | Licence | Activity (checked) | Windows | Verdict |
 |---|---|---|---|---|
-| **Siril 1.4.4 SPCC** | GPL-3.0+; offline Gaia XP catalogue CC BY 4.0 (Zenodo 10.5281/zenodo.14697692) | 1.4.4 2026-06-16; sensor database commit 2026-10-02 | native, `siril-cli` | **Test as-is** (with a custom A7S-mod sensor JSON) |
+| **the reference program 1.4.4 SPCC** | GPL-3.0+; offline Gaia XP catalogue CC BY 4.0 (Zenodo 10.5281/zenodo.14697692) | 1.4.4 2026-06-16; sensor database commit 2026-10-02 | native, its command line | **Test as-is** (with a custom A7S-mod sensor JSON) |
 | **GaiaXPy 2.1.4** | BSD-3 | 2025-12-15 | yes (in venv) | **Reuse** (Gaia XP spectra -> our own synthetic star brightness per channel and effective wavelengths) |
 | GaiaXPcorrection (Huang et al. 2024) | not detected | 2026-05 | yes | optional reuse, within its validity range (interstellar reddening E(B-V) < 0.8) |
 | colour-science 0.4.7 `matrix_idt` | BSD-3 | | yes | Reuse for the final camera -> display colour matrix |
 | SASpro SFCC | GPL-3.0 | 2026-10-10 | yes | Skip as a tool; read `sfcc.py` (its "blind sensor characterisation" idea) |
-| Another processing program PCC, a reference plate solver, a reference gradient tool | | | | **Skip** (no sensor response, or no colour calibration) |
+| The reference program PCC, the reference plate solver, the reference gradient tool | | | | **Skip** (no sensor response, or no colour calibration) |
 
 Notes.
 
-- **Another processing program SPCC** (https://another processing program.readthedocs.io/en/latest/processing/color-calibration/spcc.html): needs a plate-solved
+- **the reference program SPCC** (https://siril.readthedocs.io/en/latest/processing/color-calibration/spcc.html): needs a plate-solved
   linear image. Stars are matched to Gaia DR3 (data release 3) XP spectra. For each channel, synthetic flux = spectrum x
   sensor QE (quantum efficiency curve) x filter / Bayer filter (x optional low-pass filter); same for a white reference.
   Robust straight-line fit of the image's R/G and B/G against the catalogue ratios; optional correction for the
@@ -599,7 +599,7 @@ Notes.
   `spcc [-limitmag=] [-catalog=gaia|localgaia] [-oscsensor=] [-oscfilter=] [-osclpf=] [-whiteref=] [-atmos ...]`.
   The offline catalogue keeps at most the 127 brightest XP stars per sky cell of about 13.7 arcmin (level-8
   HEALPixel): enough for a white balance, but far fewer stars than our Gaia forced photometry.
-- **Sensor database** (https://gitlab.com/free-astro/another processing program-spcc-database, GPL-3; checked by listing `osc_sensors`):
+- **Sensor database** (https://gitlab.com/free-astro/siril-spcc-database, GPL-3; checked by listing `osc_sensors`):
   **no Sony A7S** (22 Sony entries, IMX071 ... IMX715, ICX285AK). DSLR curves include the stock IR-cut filter (Canon
   600D red at 656 nm = 0.35 relative), so a DSLR entry is wrong for an astro-modified camera. Use a custom JSON = bare
   Sony Bayer-filter QE x measured mod-filter curve. No public measured A7S curve was found. Our sensor response derived
@@ -608,8 +608,8 @@ Notes.
   2 nm); `generate()` gives synthetic brightness for built-in filter systems or those of the SVO online filter
   database. For our own curves it is better to integrate ourselves (counting photons), which also gives the effective
   wavelength per channel for the colour-dependent star shape (section 7).
-- Method details worth copying from a reference processing suite SPCC (paid; read from its documentation only,
-  https://a reference processing suite.com/doc/docs/SPCC/SPCC.html): repeated-median regression (a robust line fit that tolerates up to
+- Method details worth copying from the reference processing suite SPCC (paid; read from its documentation only,
+  (link removed)): repeated-median regression (a robust line fit that tolerates up to
   50 % outliers), fine integration grid.
 - Gaia DR4 is announced for December 2026 (XP spectra per observation date): keep our XP loader independent of the
   data-release version.
@@ -625,9 +625,9 @@ estimates (wrapper + a run on the 100-frame quick test + scoring), not counting 
 
 | # | Item | Step(s) | What exactly | Effort |
 |---|---|---|---|---|
-| 1 | **Another processing program 1.4.4 run from scripts** | Step 1: test bench (stacking); Step 3: sharpening (deconvolution); Step 4: noise reduction; Step 6: sky background; Step 7: colour | `another processing program-cli -s` scripts: calibrate; register `-disto master -drizzle` (Bayer drizzle, scale 1 / pixfrac 1, then 1.5 / 0.7); stack with rejection; `rl` with our PSF (`makepsf load`) and with `makepsf stars`; `subsky -rbf`; `denoise -vst`; `spcc -catalog=localgaia` with a custom A7S-mod sensor JSON | 2-3 days (one set of scripts); about 100 GB of intermediate files on C: or E: |
-| 2 | **the reference tool `--linear`** (upgrade from 2.5.4) + **nox.exe `-l`** | Step 5: stars | on the linear stack scaled to [0, 1], with and without `-u`; score inside and outside the footprints of known Gaia stars | 1 day |
-| 3 | **A reference gradient tool 3.1.0rc2 CLI** | Step 6: sky background; Step 4: noise reduction; Step 3: sharpening (deconvolution) | `background-extraction`, `denoising`, `deconv-obj` then `deconv-stellar` (psfsize within its valid range) | 1 day |
+| 1 | **the reference program 1.4.4 run from scripts** | Step 1: test bench (stacking); Step 3: sharpening (deconvolution); Step 4: noise reduction; Step 6: sky background; Step 7: colour | `command line -s` scripts: calibrate; register `-disto master -drizzle` (Bayer drizzle, scale 1 / pixfrac 1, then 1.5 / 0.7); stack with rejection; `rl` with our PSF (`makepsf load`) and with `makepsf stars`; `subsky -rbf`; `denoise -vst`; `spcc -catalog=localgaia` with a custom A7S-mod sensor JSON | 2-3 days (one set of scripts); about 100 GB of intermediate files on C: or E: |
+| 2 | **the reference tool `--linear`** (upgrade from 2.5.4) + **the reference denoiser.exe `-l`** | Step 5: stars | on the linear stack scaled to [0, 1], with and without `-u`; score inside and outside the footprints of known Gaia stars | 1 day |
+| 3 | **the reference gradient tool 3.1.0rc2 CLI** | Step 6: sky background; Step 4: noise reduction; Step 3: sharpening (deconvolution) | `background-extraction`, `denoising`, `deconv-obj` then `deconv-stellar` (psfsize within its valid range) | 1 day |
 | 4 | **SASpro MFDeconv** | Step 3: sharpening (deconvolution), many frames | wrapper to run it without the interface; 20-40 registered sub-stacks of the batch; star shape measured per frame; lightness and per channel | 1-2 days |
 | 5 | **photutils 3.0 GriddedPSFModel + forced PSFPhotometry** | Step 2: star-shape measurement; Step 5: stars (photometry) | per tile and per Bayer channel on a subset of frames; saturated pixels masked; reference for our star-shape map | 1 day |
 | 6 | **STScI drizzle 3.0** | Step 1: test bench (check of our stacking) | three Drizzle objects with Bayer weight maps and our pixel maps; compare flux / weights / star shape / noise with our GPU drizzle on 50-100 frames | 1 day |
@@ -649,11 +649,11 @@ estimates (wrapper + a run on the 100-frame quick test + scoring), not counting 
 | # | Item | Why / when | Effort |
 |---|---|---|---|
 | 14 | **ASTERIS retrained** on our sub-stacks (per Bayer colour plane) | state of the art for many-frame noise reduction without clean examples; compare with half-stack Noise2Noise; borrow its training loss and bright/faint split even without retraining | 1-2 weeks |
-| 15 | **Our own star remover for linear data** (nox MIT template, or compact-source-removal partial-convolution U-Net) trained with our measured star shapes and noise | only if Gaia star subtraction + the reference tool limited to known stars fails Step 5: stars | 1-2 weeks |
+| 15 | **Our own star remover for linear data** (the reference denoiser MIT template, or compact-source-removal partial-convolution U-Net) trained with our measured star shapes and noise | only if Gaia star subtraction + the reference tool limited to known stars fails Step 5: stars | 1-2 weeks |
 | 16 | **Piff 1.6 in WSL2** | independent colour-dependent star-shape reference | 2-3 days |
 | 17 | **STARRED / AstroPhot tests on crops** | independent joint-fit references on 64-256 px crops | 1-2 days each |
 | 18 | **AI tools with closed weights**: Cosmic Clarity AI4 (inside SASpro only), SyQon Zenith / Prism mini / Parallax Nano, DeepSNR, Aberration Remover (Iris) | complete the comparison of free tools; scoring only, never reused | 0.5 day each |
-| 19 | Gnuastro / elderflower originals in WSL, a reference stacking program, another processing program VeraLux Nox / AutoBGE | optional cross-checks | 0.5-2 days each |
+| 19 | Gnuastro / elderflower originals in WSL, the reference stacking program, the reference program VeraLux the reference denoiser / AutoBGE | optional cross-checks | 0.5-2 days each |
 
 ### Skipped (details in sections 1-9)
 
@@ -666,7 +666,7 @@ estimates (wrapper + a run on the 100-frame quick test + scoring), not counting 
 - the reference tool v1, starrem2k13, Cosmic Clarity Dark Star as a reusable part: superseded, toy, or licence.
 - PSFEx, psfr, psfmachine.
 - LaMa, astroDDPM, biharmonic filling, `interpolate_replace_nans`.
-- Another processing program PCC, a reference plate solver, NoiseChisel.
+- The reference program PCC, the reference plate solver, NoiseChisel.
 - The original Noise2Noise / Noise2Void / Noise2Self repositories (use deepinv / CAREamics).
 
 ---
@@ -675,9 +675,9 @@ estimates (wrapper + a run on the 100-frame quick test + scoring), not counting 
 
 - deepinv (BSD-3), PyLops / PyProximal (LGPL-3: keep them replaceable), photutils, GaiaXPy, STScI drizzle (BSD): no
   constraint beyond credit.
-- Copying code from SASpro, a reference gradient tool, another processing program scripts, STARRED, AstroPhot or elderflower-derived GPL files makes the
+- Copying code from SASpro, the reference gradient tool, the reference program scripts, STARRED, AstroPhot or elderflower-derived GPL files makes the
   project GPL-3 (acceptable according to PLAN.md; to be decided once).
-- A reference gradient tool and Aberration Remover weights are CC BY-NC-SA 4.0: non-commercial, and any derived model must keep the same
+- The reference gradient tool and Aberration Remover weights are CC BY-NC-SA 4.0: non-commercial, and any derived model must keep the same
   licence.
 - the reference tool licence: outputs may not be used to train networks for commercial software; full-resolution inputs that
   demonstrate its performance may not be shared. Keep the reference tool outputs out of any training set we publish, and publish
@@ -687,10 +687,10 @@ estimates (wrapper + a run on the 100-frame quick test + scoring), not counting 
 
 ## 12. Still unverified
 
-- A reference gradient tool's online list of model versions (needs its credentials).
+- The reference gradient tool's online list of model versions (needs its credentials).
 - BM3D package details.
 - Licence terms of SyQon Parallax / Prism / Zenith; DeepSNR licence; licence of the RAM weights.
 - ASTERIS on native Windows; deepinv `distributed` on Windows with several GPUs.
-- Whether another processing program carries the per-pixel drizzle weights into the stack.
+- Whether the reference program carries the per-pixel drizzle weights into the stack.
 - Whether PSFEx accepts colour columns not produced by SExtractor.
 - Whether GaiaXPcorrection is valid for the reddening of the Heart field.

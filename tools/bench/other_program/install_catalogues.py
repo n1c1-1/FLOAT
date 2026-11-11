@@ -1,14 +1,14 @@
-"""Another processing program's own offline catalogues for the bench, in F:/astro_essais/bench/_siril/catalogues (not the user's profile).
+"""Siril's own offline catalogues for the bench, in F:/astro_essais/bench/_siril/catalogues (not the user's profile).
 
     python tools/bench/other_program/install_catalogues.py
 
-What another processing program's Catalog_Installer script does, without its window:
+What Siril's Catalog_Installer script does, without its window:
 - the astrometric extract of Gaia DR3 (Zenodo 14692304, 1.1 GB compressed): plate solving and PCC offline;
 - the chunks of the spectrophotometric extract (Zenodo 14738271, HEALPix level 1) that cover the five fields: SPCC
   offline.
-Each archive is checked against its sha256 and decompressed. The bench's copy of the another processing program settings (_siril/config.ini)
-then points core.catalogue_gaia_astro and core.catalogue_gaia_photo at them. Why: the online catalogues another processing program uses
-(VizieR) does not always answer; another processing program itself recommends these local extracts.
+Each archive is checked against its sha256 and decompressed. The bench's copy of the Siril settings (_siril/config.ini)
+then points core.catalogue_gaia_astro and core.catalogue_gaia_photo at them. Why: the online catalogues Siril uses
+(VizieR) does not always answer; Siril itself recommends these local extracts.
 """
 from __future__ import annotations
 

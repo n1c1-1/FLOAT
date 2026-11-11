@@ -1,5 +1,5 @@
 """Resampling onto the reference grid for the Classic stacking method (astro_gpu/core/resample.py: Lanczos-4 with
-Another processing program's or a reference processing suite's clamping, bilinear; the registration polynomial inverted).
+The reference program's or the reference processing suite's clamping, bilinear; the registration polynomial inverted).
 
 Synthetic images whose values at any position are known: smooth band-limited fields, linear ramps, undersampled stars
 on a flat sky (the ringing case), shifts given by registration polynomials of register.py's form.
@@ -68,7 +68,7 @@ def test_lanczos_follows_a_smooth_field_better_than_bilinear_and_pcl_keeps_a_ram
         err[name] = float((o - truth)[6:-6, 6:-6].abs().max())
     assert err["lanczos"] < 0.5 and err["lanczos"] < 0.3 * err["bilinear"]
     ramp = (3.0 * xx - 2.0 * yy + 500).float()[None]
-    o = rs.resample(ramp, x, y, clamping="reference_suite", threshold=-1)[0].double()
+    o = rs.resample(ramp, x, y, clamping="lobe_clamp", threshold=-1)[0].double()
     assert float((o - (3.0 * x - 2.0 * y + 500))[6:-6, 6:-6].abs().max()) < 1e-3
 
 
@@ -83,8 +83,8 @@ def test_clamping_removes_the_dark_ring_around_an_undersampled_star():
         o = rs.resample(img, x, y, clamping=c)[0]
         low[c] = float(o[16:48, 16:48].min())
     assert low["none"] < sky - 10                       # the ring
-    assert low["siril"] > sky - 0.5                     # replaced by the bilinear guide around it
-    assert low["none"] < low["reference_suite"] < sky + 1    # PCL shrinks the negative lobes
+    assert low["bilinear_guide"] > sky - 0.5                     # replaced by the bilinear guide around it
+    assert low["none"] < low["lobe_clamp"] < sky + 1    # PCL shrinks the negative lobes
 
 
 def test_sirils_clamping_takes_the_guide_on_a_cross_around_each_undershoot():
@@ -95,7 +95,7 @@ def test_sirils_clamping_takes_the_guide_on_a_cross_around_each_undershoot():
     x, y = xx + 0.5, yy.clone()
     plain = rs.resample(img, x, y, clamping="none")[0]
     guide = rs.resample(img, x, y, method="bilinear")[0]
-    sir = rs.resample(img, x, y, clamping="siril")[0]
+    sir = rs.resample(img, x, y, clamping="bilinear_guide")[0]
     under = plain < rs.CLAMPING_FACTOR * guide
     cross = under.clone()
     cross[1:] |= under[:-1]
@@ -119,7 +119,7 @@ def test_a_frame_goes_to_the_reference_grid_through_its_registration_polynomial(
     x, y = rs.source_positions(c, H, W, W, H)
     Xb, Yb = nl.poly_apply(c, x, y, W, H)
     assert float((Xb - xx).abs().max()) < 1e-6 and float((Yb - yy).abs().max()) < 1e-6
-    out = rs.to_reference(frame, c, W, H, clamping="siril")[0].double()
+    out = rs.to_reference(frame, c, W, H, clamping="bilinear_guide")[0].double()
     inner = torch.isfinite(out)
     assert float(inner.float().mean()) > 0.7
     assert float((out - smooth(xx, yy))[inner].abs().max()) < 1.0          # 0.1 % of the field

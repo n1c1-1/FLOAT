@@ -444,7 +444,7 @@ def export_script(project: Project, path: Path) -> None:
 | CPU threads | PARTIAL | the `workers` parameter of calibrate and register |
 | Memory limit | MISSING | — |
 | Cache and temporary folders, cache limit | PARTIAL | `scratch_dir` per project; no limit |
-| Gaia DR3 local or online, plate solver (Internal / a reference plate solver / astrometry.net), survey cache | PARTIAL | online catalogues (`core/gaia_archive.py`), an internal blind solver (`core/blindsolve.py`) |
+| Gaia DR3 local or online, plate solver (Internal / the reference plate solver / astrometry.net), survey cache | PARTIAL | online catalogues (`core/gaia_archive.py`), an internal blind solver (`core/blindsolve.py`) |
 | Intermediate format (FITS / XISF, bit depth, compression), keep calibrated frames | MISSING | `.npy` files and a scratch cache |
 | Master library folder and tolerances | MISSING | — |
 

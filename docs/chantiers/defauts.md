@@ -1,7 +1,7 @@
 # Ce qu'obtient un nouvel utilisateur : les décisions du 5 novembre
 
 Branche `defauts`. Elle fait suite au verdict Rosette (`docs/chantiers/rosette_verdict.md`), avec les décisions de
-Nicolas du 5 novembre au soir. Le contrôle des valeurs par défaut est dans `F:\astro_essais\defauts\`.
+l'auteur du 5 novembre au soir. Le contrôle des valeurs par défaut est dans `F:\astro_essais\defauts\`.
 
 ## 1. Les échantillons du gradient évitent la nébulosité (fait)
 
@@ -41,7 +41,7 @@ Nicolas du 5 novembre au soir. Le contrôle des valeurs par défaut est dans `F:
 
 ## 3 et 4. Les valeurs par défaut, contrôlées sur Heart, Iris, M8 et M31 (fait)
 
-- **M31 rejoint le banc** à partir des images de Nicolas de 2023 (`G:\Astro\2023-08-24_M31_top`, lues sans y écrire),
+- **M31 rejoint le banc** à partir des images de l'auteur de 2023 (`G:\Astro\2023-08-24_M31_top`, lues sans y écrire),
   avec son rendu `traitement\m31_flat.jpg` comme cible.
 - **L'outil `tools/bench/defaults_check.py`** calcule le workflow « Full » aux réglages par défaut sur les quatre
   cibles, puis rend le calque étoiles et fond avec les défauts d'avant et ceux proposés.
@@ -50,7 +50,7 @@ Nicolas du 5 novembre au soir. Le contrôle des valeurs par défaut est dans `F:
 - **Nouvelles valeurs par défaut**, chacune au milieu de son curseur, l'ancien rendu restant à un cran :
   - force des étoiles 0,6 et taille −1 (les positions 1/1 d'avant) ;
   - Tons faibles 0,8.
-- **Constat** : sur M31, notre rendu par défaut reste moins contrasté et moins coloré que celui de Nicolas (bandes de
+- **Constat** : sur M31, notre rendu par défaut reste moins contrasté et moins coloré que celui de l'auteur (bandes de
   poussière pâles). À reprendre, sans toucher à ces réglages.
 
 ## 5. Les fichiers de chaque type choisis par l'utilisateur (fait pour l'import)
@@ -91,4 +91,4 @@ Nicolas du 5 novembre au soir. Le contrôle des valeurs par défaut est dans `F:
   - les noms en double ;
   - l'export en JPEG par défaut ;
   - des mots techniques (SCNR, CLAHE, RBF).
-- Plus tard, sur décision de Nicolas : une vraie réduction d'étoiles, les traînées diagonales du capteur.
+- Plus tard, sur décision de l'auteur : une vraie réduction d'étoiles, les traînées diagonales du capteur.

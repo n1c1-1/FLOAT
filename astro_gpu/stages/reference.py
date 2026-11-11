@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
+from ..core.determinism import seeded_match
 from ..core.params import P, StageParams
 from ..core.stage import Context, Stage, StageError
 
@@ -22,7 +23,8 @@ class Reference(Stage):
                    "by side with synchronised zoom and the renders can be exported with exactly the same framing.")
     deps = ("stack",)
     Params = ReferenceParams
-    version = "1"
+    version = "2"          # 2: the triangle match's random draws are seeded (``seeded_match``): the alignment is the
+                           # same at every run, and may differ a little from one computed before
 
     def run(self, ctx: Context, p: ReferenceParams) -> None:
         ref_path = ctx.project.config.reference_image
@@ -140,7 +142,8 @@ def align_reference(path, drz, S, nmax, progress=lambda f, m: None):
             progress((2 * k + flip) / 10, "testing orientations")
             bx, by = orient_xy(Bd[:, 0], Bd[:, 1], H, W, k, flip)
             try:
-                T, (s_, _) = aa.find_transform(np.c_[bx, by][:1500] / S, A[:1000], max_control_points=100)
+                with seeded_match(aa):
+                    T, (s_, _) = aa.find_transform(np.c_[bx, by][:1500] / S, A[:1000], max_control_points=100)
             except Exception:  # noqa: BLE001
                 continue
             # prefer the orientation needing the least residual rotation (exact rot90 exports), then more stars

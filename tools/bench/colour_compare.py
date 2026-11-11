@@ -1,4 +1,4 @@
-"""Our colour calibration against another processing program's (PCC, or SPCC for the cameras of its database), on the bench cases, with one
+"""Our colour calibration against the reference program's (PCC, or SPCC for the cameras of its database), on the bench cases, with one
 judge for both (docs/chantiers/couleur.md).
 
     python tools/bench/colour_compare.py [--cases heart,iris,...]
@@ -11,13 +11,13 @@ needs (1, 1, 1): the red and blue numbers below are what is left to correct, in 
 that line (the median absolute deviation of log(measured ratio / expected ratio)), which does not depend on the white
 reference. The expected colours are the Gaia XP spectra in linear sRGB with a white reference made neutral; both
 images are judged against two of them: a G2V star (the Sun; our stage's, and SPCC's "Star, type G2(v)") and the
-Average Spiral Galaxy (SPCC's default, SWIRE templates), both from another processing program's SPCC database (wb_refs). Our image is fitted
+Average Spiral Galaxy (SPCC's default, SWIRE templates), both from the reference program's SPCC database (wb_refs). Our image is fitted
 by its own stage on the first criterion with the same stars: its number there is near 0 by construction; what the
 comparison shows is how far each calibration stands from each white, and how far apart they are.
 
 Images: ours, the Classic stack workflow of ``ours_express`` (the stack minus its gradient, times the Color stage's
-factors); another processing program's, ``siril_express/color_linear.fit`` (subsky then pcc / spcc, its own plate solution). The stars are
-placed on another processing program's image through the sky: our pixel -> our WCS -> RA, Dec -> another processing program's WCS.
+factors); the reference program's, ``siril_express/color_linear.fit`` (subsky then pcc / spcc, its own plate solution). The stars are
+placed on the reference program's image through the sky: our pixel -> our WCS -> RA, Dec -> the reference program's WCS.
 """
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def log(msg: str) -> None:
 
 
 def siril_factors(case: str) -> dict:
-    """Another processing program's white balance factors and what it ran (pcc / spcc), from its log."""
+    """the reference program's white balance factors and what it ran (pcc / spcc), from its log."""
     d = BENCH / case / "siril_express"
     text = (d / "post.log").read_text(encoding="utf-8", errors="replace")
     i = text.rfind("White balance factors:")
@@ -56,7 +56,7 @@ def siril_factors(case: str) -> dict:
 
 
 def white_of(name: str) -> np.ndarray:
-    """The XYZ (Y = 1) of a white reference spectrum of another processing program's SPCC database."""
+    """The XYZ (Y = 1) of a white reference spectrum of the reference program's SPCC database."""
     import colour
     d = json.loads((WB_REFS / WHITES[name]).read_text(encoding="utf-8"))[0]
     lam = np.asarray(d["wavelength"]["value"], float) * (0.1 if d["wavelength"].get("units") == "angstrom" else 1.0)
@@ -93,7 +93,7 @@ def judge(img, x, y, xyz, aperture) -> dict:
 
 
 def case_images(api, case: str):
-    """(our calibrated image, another processing program's, the stars' positions on each, their XYZ, the aperture)."""
+    """(our calibrated image, the reference program's, the stars' positions on each, their XYZ, the aperture)."""
     from astropy.io import fits
     from astropy.wcs import WCS
 

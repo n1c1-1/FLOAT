@@ -1,5 +1,5 @@
-"""The generalised hyperbolic stretch (D. Payne and M. Cranfield, GHSastro; another processing program's "Generalised Hyperbolic Stretch",
-Another processing program.org/tutorials/ghs; the equations of another processing program's ``ght.c``): the transformation whose slope is D at the symmetry point
+"""The generalised hyperbolic stretch (D. Payne and M. Cranfield, GHSastro; the reference program's "Generalised Hyperbolic Stretch",
+siril.org/tutorials/ghs; the equations of the reference program's ``ght.c``): the transformation whose slope is D at the symmetry point
 SP, shaped by the local intensity b, linear below the shadow protection LP and above the highlight protection HP with
 the slope it has there. Shared by Post's GHS filter (client/postfilters/tone.py) and the layer's Faint tones slider
 (render/simple.py)."""

@@ -4,7 +4,7 @@ second method, adapted to it first (docs/chantiers/debruitage.md).
 Noise2Noise: the network learns to predict one half-stack from the other; their noise is independent, so the only
 thing it can learn is the sky common to both, never detail that is not in the data. Pretrained on 76 pairs (a varied
 dataset stacked by this chain at four signal-to-noise levels, and projects), it beat on the bench a network trained
-from scratch on each image (21 min of GPU) and a reference gradient tool; adapting it to the image (all its weights, a few hundred
+from scratch on each image (21 min of GPU) and the reference gradient tool; adapting it to the image (all its weights, a few hundred
 Noise2Noise steps on the half-stacks) helps most when the image differs from what it has seen: a session without
 dithering, whose noise is independent from one pixel to the next, needs the long adaptation.
 
@@ -303,6 +303,14 @@ def to_input(x, nm, bk, sg):
     return torch.cat([torch.asinh(a / 8.0), nm], 1)
 
 
+def _tile_generator(seed: int) -> torch.Generator:
+    """The generator of the adaptation's tiles, on the processor where they are drawn, seeded with ``seed`` (the "Random
+    seed" setting). Its own: torch's global generator seeded the same way gives the same draws (the same algorithm), so
+    the results are those of before, but other code drawing from it meanwhile (another thread, a hook) shifted every
+    tile after, and seeding it moved the state that other code reads."""
+    return torch.Generator().manual_seed(seed)
+
+
 def adapt(ctx, net, A, B, nm, bk, sg, dev, steps: int, lr: float, seed: int) -> None:
     """Noise2Noise steps on random tiles of the half-stacks (one predicts the other, both ways), all the weights,
     a one-cycle learning rate: the network learns this image's noise. The loss is weighted by the expected noise."""
@@ -314,23 +322,23 @@ def adapt(ctx, net, A, B, nm, bk, sg, dev, steps: int, lr: float, seed: int) -> 
     bk_t, sg_t = torch.from_numpy(bk).to(dev), torch.from_numpy(sg).to(dev)
     Hh, Ww = tA.shape[1:]
     valid = (tN[0] > 0) & (tN[0] < 1.6)
-    torch.manual_seed(seed)
+    gen = _tile_generator(seed)
     opt = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=lr, total_steps=steps, pct_start=0.05)
     net.train()
     run = 0.0
     t0 = time.time()
     for it in range(steps):
-        ys = torch.randint(0, Hh - PATCH, (BATCH * 2,), device="cpu")
-        xs = torch.randint(0, Ww - PATCH, (BATCH * 2,), device="cpu")
+        ys = torch.randint(0, Hh - PATCH, (BATCH * 2,), device="cpu", generator=gen)
+        xs = torch.randint(0, Ww - PATCH, (BATCH * 2,), device="cpu", generator=gen)
         xin, tgt, nmp = [], [], []
         for y, x in zip(ys.tolist(), xs.tolist()):
             if not bool(valid[y + PATCH // 2, x + PATCH // 2]):
                 continue
-            src, dst = (tA, tB) if torch.rand(1).item() < 0.5 else (tB, tA)
+            src, dst = (tA, tB) if torch.rand(1, generator=gen).item() < 0.5 else (tB, tA)
             p_in, p_t, p_n = (src[:, y:y + PATCH, x:x + PATCH], dst[:, y:y + PATCH, x:x + PATCH],
                               tN[:, y:y + PATCH, x:x + PATCH])
-            k = int(torch.randint(0, 4, (1,)))
+            k = int(torch.randint(0, 4, (1,), generator=gen))
             p_in, p_t, p_n = (torch.rot90(t, k, (1, 2)) for t in (p_in, p_t, p_n))
             xin.append(p_in)
             tgt.append(p_t)

@@ -56,7 +56,7 @@ def test_the_default_keeps_every_frame_of_a_steady_night_with_its_weight():
     np.testing.assert_allclose(fs.weight, weights(m), rtol=0, atol=0)      # the weights are never changed
     assert list(fs.reasons) == [""] * N
     assert fs.suggestion.value == N and fs.suggestion.reason == f"all {N} aligned frames kept"
-    assert all(fs.criteria[c].status == "off" for c in fwm.CRITERIA)        # no filter by default (another processing program, a reference processing suite)
+    assert all(fs.criteria[c].status == "off" for c in fwm.CRITERIA)        # no filter by default (the reference program, the reference processing suite)
     assert fs.auto["min_weight"].value == MIN_WEIGHT == 0.05                # WBPP's minimum weight
 
 
@@ -197,7 +197,7 @@ def test_k_sigma_clips_only_the_bad_tail():
 
 
 def test_siril_and_mad_limits_agree_on_gaussian_nights():
-    """Another processing program's k x sigma (median + k x standard deviation, recomputed after each clip until stable, bad tail only)
+    """the reference program's k x sigma (median + k x standard deviation, recomputed after each clip until stable, bad tail only)
     and ours (median + k x 1.4826 MAD) on Gaussian nights: the docstring's 2.41 to 2.49 sigma at k = 2.5."""
     def siril_limit(v, k):
         v = np.sort(v)

@@ -1,7 +1,7 @@
 #!/bin/sh
 # block_actions: run scenarios one after the other, each in its own process with a hard timeout.
 # usage: sh explore_blocks_batch.sh <lang> <scenario>...
-cd /c/Users/Nicolas/sandbox/astro || exit 1
+cd <user folder>/sandbox/astro || exit 1
 OUT=F:/astro_essais/A_REGARDER/exploration/block_actions
 lang=$1
 shift

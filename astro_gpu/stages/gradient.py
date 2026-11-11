@@ -1,26 +1,26 @@
 """Sky gradient: the smooth sky the light pollution, the Moon and the vignetting leave on the stack, modelled right after
-stacking and removed from what every later stage reads (the state of the art: Another processing program, a reference processing suite and a reference gradient tool remove it
+stacking and removed from what every later stage reads (the state of the art: The reference program, the reference processing suite and the reference gradient tool remove it
 on the linear stack, before the colour calibration, the denoising and the star removal).
 
 Entry points: the stage ``Gradient``, and ``stack_image(ctx, name)``: a stack image (drz_full, drz_A, drz_B) with the
 sky gradient removed when the workflow has the Gradient block. Only the gradient goes: its variation across the field,
-not the sky's level, which the noise models of the later stages rely on (as another processing program does).
+not the sky's level, which the noise models of the later stages rely on (as the reference program does).
 
 Methods (``method``, set by the workflow's Gradient option):
 
-* ``polynomial``: per camera channel, a polynomial of the pixel position fitted on sky samples, as another processing program's and
-  A reference processing suite ABE's background extraction. The field is cut into blocks (``samples`` x 4 per side), each one's median a
+* ``polynomial``: per camera channel, a polynomial of the pixel position fitted on sky samples, as the reference program's and
+  the reference processing suite ABE's background extraction. The field is cut into blocks (``samples`` x 4 per side), each one's median a
   sample. The sky samples are found on the luminance, from the whole field (``sky_blocks``): the surface is fitted, the
   samples more than ``object_clip`` sigmas above it are left out, and again until it settles; the sigma is the scatter
   between neighbouring samples. An object that fills most of the field (a large galaxy) is left out whole and the
   surface passes under it. Each channel is then fitted on those samples, leaving out, iteratively, the ones farther
   than ``object_clip`` sigmas from its surface.
-* ``automatic``: Another processing program's automatic, sample-free model, written again (stages/gradient_auto.py): a smooth multiscale
-  surface fitted on every pixel that survives an iterative rejection of the structures, each channel apart. Another processing program's
+* ``automatic``: The reference program's automatic, sample-free model, written again (stages/gradient_auto.py): a smooth multiscale
+  surface fitted on every pixel that survives an iterative rejection of the structures, each channel apart. The reference program's
   thresholds are in units of an image scaled to 0..1: the stack is scaled as an image exported for it would be, from
   its darkest to its brightest pixels (0.01th and 99.99th percentiles of the covered field, 20 % of headroom above).
 
-* ``rbf``: radial basis functions (thin-plate splines, with a smoothing), another processing program's second sample-based model: the
+* ``rbf``: radial basis functions (thin-plate splines, with a smoothing), the reference program's second sample-based model: the
   surface passes near every sample, so it follows a gradient of any shape, and depends on where the samples are.
 
 The samples of the polynomial and the RBF: a grid found automatically (the sky between the objects), or the points the
@@ -29,7 +29,7 @@ user placed and moved on the image (``sample_points``, stack pixels). The areas 
 
 Outputs: sky.npy, the sky's variation (3, h, w) on a grid (its median over the covered field is 0 in each channel):
 cells of ``SKY_FACTOR`` px read back bicubically for the polynomial, the automatic model's reduced grid read back
-bilinearly (corners aligned) as another processing program does; gradient.json (method, grid, the sky level kept, the model's settings);
+bilinearly (corners aligned) as the reference program does; gradient.json (method, grid, the sky level kept, the model's settings);
 samples.npz for the polynomial (the samples, those used); a preview of the stack with the gradient removed.
 """
 from __future__ import annotations
@@ -297,7 +297,7 @@ def enlarge_mask(valid: np.ndarray, shape: tuple[int, int], f: int) -> np.ndarra
 
 
 def unit_scale(stack: np.ndarray, valid: np.ndarray) -> tuple[float, float]:
-    """(lo, span): ``(stack - lo) / span`` is the stack in 0..1 as an image exported for another processing program (see the module)."""
+    """(lo, span): ``(stack - lo) / span`` is the stack in 0..1 as an image exported for the reference program (see the module)."""
     lo, hi = np.percentile(stack[:, valid][:, ::7], UNIT_PERCENTILES)
     return float(lo), float(max(hi - lo, 1e-12) * UNIT_HEADROOM)
 
@@ -417,7 +417,7 @@ def point_values(rgb: np.ndarray, valid: np.ndarray, pts: np.ndarray, box: int) 
 
 
 def grid_points(rgb: np.ndarray, valid: np.ndarray, samples: int, clip: float) -> tuple[np.ndarray, np.ndarray, int]:
-    """Another processing program's generated grid: ``samples`` points along the shorter side, a square box around each; the samples of
+    """the reference program's generated grid: ``samples`` points along the shorter side, a square box around each; the samples of
     sky are kept (``sky_blocks``: the ones not above a smooth surface through them by ``clip`` sigmas). Returns
     (points (n, 2) array pixels, kept (n,), box px)."""
     H, W = valid.shape

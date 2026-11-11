@@ -1,7 +1,7 @@
-"""The Post of the client: the image at the centre; on the right the layers, as in a reference image editor, and the properties of
+"""The Post of the client: the image at the centre; on the right the layers, as in the reference image editor, and the properties of
 the selected layer or of its mask.
 
-The layers panel follows a reference image editor's model. A pixel layer (a workflow's output, one of its Stars block's images,
+The layers panel follows the reference image editor's model. A pixel layer (a workflow's output, one of its Stars block's images,
 or a stage's image sent from Inspect) shows its own filters as children, indented under it: they apply to it alone and
 move with it. A filter that applies to everything below is a row of its own, like a layer, above what it affects. Drag a
 filter onto a layer to nest it, between two rows to make it apply to everything below (an indented line: it joins that
@@ -9,7 +9,7 @@ layer's children); the line, the frame and a short label say where it goes. Read
 order of the composition.
 
 A row: eye, the ▾ of a layer's children, thumbnail, mask thumbnail, name, blend mode and opacity. A click on the
-thumbnail shows the layer's settings; a click on the mask thumbnail shows its mask, made of parts as in a reference photo editor, with a
+thumbnail shows the layer's settings; a click on the mask thumbnail shows its mask, made of parts as in the reference photo editor, with a
 red overlay on the image.
 
 Nothing here renders. Every image comes from the render worker (services/render.py): a draft while a slider or the
@@ -178,7 +178,7 @@ def dec(s: str) -> str:
 
 
 def offset_text(x: float) -> str:
-    """A rendering slider's value, as a reference photo editor shows it: its offset from the suggested setting (position 2), 0 there,
+    """A rendering slider's value, as the reference photo editor shows it: its offset from the suggested setting (position 2), 0 there,
     with a true minus sign."""
     return "0" if round(x - 2, 1) == 0 else dec(f"{x - 2:+.1f}").replace("-", "−")
 
@@ -219,7 +219,7 @@ class Step(list):
 
 class ContSlider(QWidget):
     """A slider that glides: `moved` while dragging (draft render), `done` when let go (full render). Double-click
-    on the slider or on its name: back to the default (a reference photo editor's, issue #16)."""
+    on the slider or on its name: back to the default (the reference photo editor's, issue #16)."""
     moved = Signal(float)
     done = Signal(float)
 
@@ -692,7 +692,7 @@ class PostView(QWidget):
         self.heal_size = 80.0                           # Spot healing: the next spot's diameter (px)
         self._heal_stroke = None                        # the stroke being painted: (its points, the layers before)
         self._heal_src = None                           # Alt+click: the source set by hand (x, y), then its offset
-        self._heal_off = None                           # (dx, dy) of the strokes since, as a reference image editor's Aligned
+        self._heal_off = None                           # (dx, dy) of the strokes since, as the reference image editor's Aligned
         self.show_mask = False
         self.crop = None                                 # [x0, y0, x1, y1] of the canvas, or None: a setting of the composition
         self._big = None                                 # the larger thumbnail under the mouse
@@ -1043,7 +1043,7 @@ class PostView(QWidget):
         self.drop_line.setFixedHeight(3)
         self.drop_line.setStyleSheet(f"background: {ACCENT}; border-radius: 1px;")
         self.drop_line.hide()
-        self.drop_dot = QFrame(lh)                       # the start of the line, as in a reference image editor
+        self.drop_dot = QFrame(lh)                       # the start of the line, as in the reference image editor
         self.drop_dot.setFixedSize(9, 9)
         self.drop_dot.setStyleSheet(f"background: #1b1f27; border: 2px solid {ACCENT}; border-radius: 4px;")
         self.drop_dot.hide()
@@ -2014,7 +2014,7 @@ class PostView(QWidget):
                 self.sel, self.part_sel = (lid, sub or "layer"), None
         self.rebuild()
 
-    # ---- drag and drop (a reference image editor's): onto a layer nests, between rows places; the line says at which depth
+    # ---- drag and drop (the reference image editor's): onto a layer nests, between rows places; the line says at which depth
     def drag_start(self, row):
         eff = QGraphicsOpacityEffect(row)
         eff.setOpacity(0.45)
@@ -3091,7 +3091,7 @@ class PostView(QWidget):
 
     # ------------------------------------------------------------ spot healing
     def heal_props(self, lay):
-        """The Spot healing filter's panel (a reference image editor's Spot Healing Brush, issue #20): the brush size, what is
+        """The Spot healing filter's panel (the reference image editor's Spot Healing Brush, issue #20): the brush size, what is
         healed, and the source set by hand (Alt+click) when there is one."""
         self.viewer.mode = "heal"
         self.viewer.brush_r = self.heal_size / 2
@@ -3131,7 +3131,7 @@ class PostView(QWidget):
         self.build_props()
 
     def _heal_source(self, x, y, r, avoid=()):
-        """The source of a spot: the best match around it on the image shown (its half resolution), as a reference image editor's
+        """The source of a spot: the best match around it on the image shown (its half resolution), as the reference image editor's
         Spot Healing Brush; ``avoid``: the stroke's other spots (x, y, r), no source on them (a trail is not healed
         from itself); beside the spot when the image is not there yet."""
         from .postfilters.heal import find_source
@@ -3148,8 +3148,8 @@ class PostView(QWidget):
         return 2.5 * r, 0.0
 
     def _heal_press(self, x, y, button, alt):
-        """A reference image editor's Spot Healing Brush: a press starts a stroke (healed when the button is let go); Alt+click
-        sets the source by hand (a reference image editor's Healing Brush) for the strokes that follow."""
+        """the reference image editor's Spot Healing Brush: a press starts a stroke (healed when the button is let go); Alt+click
+        sets the source by hand (the reference image editor's Healing Brush) for the strokes that follow."""
         lay = self._heal_layer()
         if lay is None or button != int(Qt.LeftButton.value):
             return
@@ -3197,7 +3197,7 @@ class PostView(QWidget):
         self.viewer.update()
 
     def _heal_overlay(self, p: QPainter, v: Viewer):
-        """While painting, the stroke in light grey (as a reference image editor's), and the source set by hand as a small cross;
+        """While painting, the stroke in light grey (as the reference image editor's), and the source set by hand as a small cross;
         nothing is left on the image afterwards."""
         lay = self._heal_layer()
         if lay is None or self.b_cmp.isChecked():

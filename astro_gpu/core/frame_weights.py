@@ -10,31 +10,31 @@ sharpness); this module never changes it, it only says which frames are left out
 
 The state of the art, and where each value comes from
 -----------------------------------------------------
-* **Keep almost every frame and let the weights do the work (the default).** another processing program keeps every frame unless a filter
-  is asked for [S2]; a reference processing suite's SubframeSelector approval expressions are empty by default [P21]; Zackay & Ofek
+* **Keep almost every frame and let the weights do the work (the default).** the reference program keeps every frame unless a filter
+  is asked for [S2]; the reference processing suite's SubframeSelector approval expressions are empty by default [P21]; Zackay & Ofek
   [L6]: once the weights are right, "the rejection of images becomes a damaging operation".
-* **Minimum weight 0.05 (a reference processing suite WBPP 2.5.0, its "Minimum weight" default [P17])**: the weights of the frames
+* **Minimum weight 0.05 (the reference processing suite WBPP 2.5.0, its "Minimum weight" default [P17])**: the weights of the frames
   still in are normalised (the best = 1) and those below the minimum are left out. It is the only frame the default
   leaves out besides the frames registration could not align and those excluded by hand.
-* **Selection filters, an option off by default: Another processing program's ``-filter-fwhm / -filter-round / -filter-bkg`` [S2]**, with
-  its three forms: a value (the worst value kept), a percentage of the best frames kept, or k x sigma. Another processing program's
+* **Selection filters, an option off by default: The reference program's ``-filter-fwhm / -filter-round / -filter-bkg`` [S2]**, with
+  its three forms: a value (the worst value kept), a percentage of the best frames kept, or k x sigma. The reference program's
   k x sigma (code: ``generic_compute_accepted_value_with_rejection``, sequence_filtering.c) clips only the bad tail
-  (high FWHM and background, low roundness), around the median. Another processing program's sigma is the standard deviation, recomputed
+  (high FWHM and background, low roundness), around the median. The reference program's sigma is the standard deviation, recomputed
   after each clip until nothing moves; ours is 1.4826 x MAD in one pass (the Hampel identifier: Hampel 1974, JASA
   69, 383), the robust estimate of the same Gaussian sigma that the outliers it must find cannot inflate. On Gaussian
-  nights of 30 to 2000 frames, another processing program's limit at k = 2.5 falls at 2.41 to 2.49 sigma, ours at 2.5
+  nights of 30 to 2000 frames, the reference program's limit at k = 2.5 falls at 2.41 to 2.49 sigma, ours at 2.5
   (tests/test_frame_weights.py). Transparency, our measure of clouds, is filtered the same way (low tail).
-  A reference processing suite's SubframeSelector approval expressions (``FWHMSigma < 2``...) are the same idea [P21].
-* **k = 2.5 when the filters are on (``K_SIGMA_FILTERS``)**: Another processing program's official Seestar script (SeeStar_Preprocessing
+  the reference processing suite's SubframeSelector approval expressions (``FWHMSigma < 2``...) are the same idea [P21].
+* **k = 2.5 when the filters are on (``K_SIGMA_FILTERS``)**: The reference program's official Seestar script (SeeStar_Preprocessing
   v1.3, C. Richard, June 2024, ``seqapplyreg pp_light -filter-round=2.5k``), the only k a tool ships; on FWHM,
   roundness and transparency; the background stays off (a brighter sky only adds noise, which the weights count).
 * The statistics of a filter are measured on all the aligned frames, those excluded by hand included, so excluding
   a frame by hand never changes the fate of another through a filter.
 
 Sources:
-[S2] another processing program 1.4, the ``stack`` command: https://gitlab.com/free-astro/another processing program-doc/-/raw/1.4/doc/commands/stack.rst
-[P17] WBPP 2.5.0 release notes (minimum weight, colour drizzle): https://a reference processing suite.com/forum/index.php?threads/wbpp-2-5-0-released.19112/
-[P21] a reference processing suite SubframeSelector documentation: https://gitlab.com/a reference processing suite/Reference-Documentation/-/raw/master/tools/obsolete/SubframeSelector/SubframeSelector.pidoc
+[S2] the reference program 1.4, the ``stack`` command: https://gitlab.com/free-astro/siril-doc/-/raw/1.4/doc/commands/stack.rst
+[P17] WBPP 2.5.0 release notes (minimum weight, colour drizzle), in the reference processing suite's forum (no link)
+[P21] the reference processing suite SubframeSelector documentation (no link)
 [L6] Zackay & Ofek 2017, ApJ 836, 187 (optimal weighting, rejection of frames): https://arxiv.org/abs/1512.06872
 """
 from __future__ import annotations
@@ -52,11 +52,11 @@ MAD_TO_SIGMA = 1.4826
 CRITERIA = ("fwhm", "roundness", "transparency", "background")
 #: the bad tail of each criterion: True when a high value is bad
 HIGH_IS_BAD = {"fwhm": True, "roundness": False, "transparency": False, "background": True}
-#: the k x sigma filters, k = 2.5 as in another processing program's official Seestar script (-filter-round=2.5k); an option: Another processing program and
+#: the k x sigma filters, k = 2.5 as in the reference program's official Seestar script (-filter-round=2.5k); an option: The reference program and
 #: SubframeSelector filter nothing by default
 K_SIGMA_FILTERS = {"fwhm": "2.5k", "roundness": "2.5k", "transparency": "2.5k", "background": ""}
 NO_FILTERS = {c: "" for c in CRITERIA}
-#: A reference processing suite WBPP 2.5.0's default minimum weight (relative to the best frame)
+#: The reference processing suite WBPP 2.5.0's default minimum weight (relative to the best frame)
 MIN_WEIGHT = 0.05
 
 # ------------------------------------------------------------------------------------------------- reason templates
@@ -143,7 +143,7 @@ class Reason:
 # ------------------------------------------------------------------------------------------------- filters
 @dataclass(frozen=True)
 class Filter:
-    """A selection filter in another processing program's syntax: ``"2.5k"`` k x sigma, ``"90%"`` the best 90 % kept, ``"4.2"`` the worst
+    """A selection filter in the reference program's syntax: ``"2.5k"`` k x sigma, ``"90%"`` the best 90 % kept, ``"4.2"`` the worst
     value kept, ``""`` / ``"off"`` none. A zero amount switches the filter off."""
     kind: str = "off"          # "k", "pct", "value" or "off"
     amount: float = 0.0
@@ -153,7 +153,7 @@ class Filter:
 
 
 def parse_filter(spec) -> Filter:
-    """A ``Filter`` from another processing program's syntax (``ValueError`` when it is not one)."""
+    """A ``Filter`` from the reference program's syntax (``ValueError`` when it is not one)."""
     if isinstance(spec, Filter):
         return spec
     if spec is None:
@@ -302,7 +302,7 @@ def select(weight, fwhm=None, roundness=None, transparency=None, background=None
     ``weight`` (n,): the stack's weight of each frame (NaN or <= 0 for an aligned frame: no measure); ``fwhm`` (n,)
     px (Moffat), ``roundness`` (n,) minor / major axis (1 = round), ``transparency`` (n,), ``background`` (n,) or
     (n, 3) the sky level: the measures of the filters (None: that filter cannot apply); ``aligned`` (n,) bool (None:
-    all); ``saturated`` (n,) bool: frames without usable pixels (None: none); ``exclude`` (n,) bool: excluded by hand; ``filters`` {criterion: Another processing program-style spec} over NO_FILTERS (None:
+    all); ``saturated`` (n,) bool: frames without usable pixels (None: none); ``exclude`` (n,) bool: excluded by hand; ``filters`` {criterion: The reference program-style spec} over NO_FILTERS (None:
     none, the default); ``min_weight`` relative to the best frame still in (0: none).
 
     Order: not aligned, by hand, the filters (statistics on all aligned frames), no measure of the weight, the

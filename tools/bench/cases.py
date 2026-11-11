@@ -4,12 +4,12 @@ Layout under BENCH (F:/astro_essais/bench):
 
     _home/                      USERPROFILE of our engine's runs: _home/.astro_gpu is its ASTRO_GPU_HOME (camera
                                 profiles copied from the user's) and holds its catalogue cache (.astro_gpu/cache)
-    _siril/config.ini           a copy of the user's another processing program settings, given to another processing program-cli with -i (never written back)
-    <case>/data/lights_express/ the frozen lights of each level (copies; another processing program converts a whole folder)
+    _siril/config.ini           a copy of the user's the reference program settings, given to siril-cli with -i (never written back)
+    <case>/data/lights_express/ the frozen lights of each level (copies; the reference program converts a whole folder)
     <case>/data/lights_base/
     <case>/data/{darks,flats,bias}/   every matching calibration frame (copies)
     <case>/manifest.json        files, sizes, camera, expected calibration
-    <case>/siril_<level>/       another processing program's work folder, its linear stacks (FITS) and finals (TIFF 16, PNG)
+    <case>/siril_<level>/       the reference program's work folder, its linear stacks (FITS) and finals (TIFF 16, PNG)
     <case>/ours_<level>/        our v2 project (workflow "Classic stack") and its exports
     <case>/measures_<level>.json, sheet_<level>.jpg
 
@@ -19,7 +19,7 @@ A case with VARIANTS (rosette: the same lights calibrated three ways) adds, per 
 except for its MAIN variant (rosette: B, the user's choice), whose folders and files carry no suffix (ours_<level>,
 siril_<level>, measures_<level>.json: the case's main projects, as Home lists them); measures_<level>_all.json
 measures every variant of a level on the same sky, and one sheet per level shows them all (sheet_<level>.jpg). A
-variant may skip another processing program or a level.
+variant may skip the reference program or a level.
 
 The sources are only read.
 """
@@ -34,8 +34,8 @@ HOME = BENCH / "_home"                         # USERPROFILE of our runs (Path.h
 AG_HOME = HOME / ".astro_gpu"                  # ASTRO_GPU_HOME of our runs
 USER_AG = Path(os.path.expanduser("~")) / ".astro_gpu"   # the user's: read only
 REPO = Path(__file__).resolve().parents[2]
-PYTHON = Path("<user folder>/sandbox/ComfyUI/.venv/Scripts/python.exe")
-SIRIL = Path("C:/Program Files/another processing program/bin/another processing program-cli.exe")
+PYTHON = Path(os.environ.get("FLOAT_BENCH_PYTHON") or sys.executable)   # the Python of the runs
+SIRIL = Path("C:/Program Files/Siril/bin/siril-cli.exe")
 SIRIL_CFG_USER = Path(os.environ.get("LOCALAPPDATA", "")) / "siril" / "config.1.4.ini"
 SIRIL_CFG = BENCH / "_siril" / "config.ini"
 
@@ -183,7 +183,7 @@ def engine_home(profile: bool = True, home: str | Path | None = None) -> None:
 
 
 def offline_env() -> None:
-    """Our engine reads the bench's local Gaia extracts (another processing program's) before any network service."""
+    """Our engine reads the bench's local Gaia extracts (the reference program's) before any network service."""
     os.environ.setdefault("ASTRO_GPU_SIRIL_CATALOGUES", str(BENCH / "_siril" / "catalogues"))
 
 

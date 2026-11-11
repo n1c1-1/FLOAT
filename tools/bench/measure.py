@@ -1,16 +1,16 @@
-"""Measures of the bench: our linear stacks against another processing program's, on the same sky, plus the side-by-side sheet of the finals.
+"""Measures of the bench: our linear stacks against the reference program's, on the same sky, plus the side-by-side sheet of the finals.
 
-    python tools/bench/measure.py CASE LEVEL [--variant V [--another processing program-variant W]] [--no-sheet]
+    python tools/bench/measure.py CASE LEVEL [--variant V [--siril-variant W]] [--no-sheet]
 
-A case with variants (rosette) measures our project of variant V against another processing program's of the same variant (or of W: a
-variant without another processing program, C, is measured against another processing program's A); the level's sheet with every variant is sheet.py's
+A case with variants (rosette) measures our project of variant V against the reference program's of the same variant (or of W: a
+variant without the reference program, C, is measured against the reference program's A); the level's sheet with every variant is sheet.py's
 (make_variants), once all are measured.
 
-Both images keep their own pixel grid (ours is drizzled, another processing program's is not): every measure is placed on the sky with each
+Both images keep their own pixel grid (ours is drizzled, the reference program's is not): every measure is placed on the sky with each
 image's own astrometric solution, and sizes are angular. The star list is Gaia DR3 (the catalogue our engine
 downloaded for the field: positions at the date of the frames, G, BP, RP); only the stars inside both images are used.
 
-On the raw linear stacks (ours: stack/drz_full; another processing program: stack_linear.fit), luminance = mean of the three channels:
+On the raw linear stacks (ours: stack/drz_full; the reference program: stack_linear.fit), luminance = mean of the three channels:
 - photometric zero point: G + 2.5 log10(flux) on isolated unsaturated stars, so that both images speak in magnitudes;
 - background noise: robust spread of boxes of the same angular size in the sky (stars masked, smooth background
   removed), as a surface brightness (mag/arcsec2: higher = less noise); and the 5-sigma depth of a point source
@@ -25,7 +25,7 @@ On the raw linear stacks (ours: stack/drz_full; another processing program: stac
   centre and in the outer part of the field;
 - trails and rejection residuals: high-pass image over its noise, Gaia stars masked; long thin features (trails),
   compact spots above +6 / below -6 sigma; a spot found in one image only (not at a spot of the other) is an artefact.
-On the gradient-removed, colour-calibrated linear images (ours: render_simple/lin; another processing program: color_linear.fit):
+On the gradient-removed, colour-calibrated linear images (ours: render_simple/lin; the reference program: color_linear.fit):
 - background flatness: floor of 8 x 8 tiles (median of the darkest fifth, stars masked); spread p90 - p10, as a surface
   brightness (mag/arcsec2 through the zero point: higher = flatter);
 - star colours: -2.5 log10(B/R) and -2.5 log10(G/R) of isolated stars against Gaia BP-RP: robust scatter around a
@@ -120,7 +120,7 @@ def load_siril(case: str, level: str, which: str, variant: str = "") -> Img:
     if data.ndim == 2:
         data = np.repeat(data[None], 3, 0)
     cover = _erode(np.all(data != 0, axis=0), 40)
-    return Img(f"Siril {which}", data, WCS(hdr, naxis=2), cover)
+    return Img(f"The reference program {which}", data, WCS(hdr, naxis=2), cover)
 
 
 def ours_dirs(case: str, level: str, variant: str = "") -> dict[str, Path]:
@@ -369,7 +369,7 @@ def star_shapes(im: Img, st: dict, cand: np.ndarray, frame: Img | None = None) -
     fmi = np.array([f["fwhm_minor"] for f in res])
     fx = np.array([f["x"] for f in res])
     fy = np.array([f["y"] for f in res])
-    # centre and edge of the field in one frame for both images (another processing program's, through the sky): the same stars
+    # centre and edge of the field in one frame for both images (the reference program's, through the sky): the same stars
     fr = frame or im
     if fr is not im:
         ra, dec = im.wcs.all_pix2world(fx - im.dx, fy - im.dy, 0)
@@ -396,7 +396,7 @@ def star_shapes(im: Img, st: dict, cand: np.ndarray, frame: Img | None = None) -
 def normalise_channels(im: Img, st: dict, sel: np.ndarray, fwhm_px: float, zp_ref: float = 25.0) -> list[float]:
     """Each channel brought to the same photometric scale (a star of magnitude G gives 10^(-0.4 (G - zp_ref)) in its
     exact circular aperture), so that the luminance (mean of the channels) mixes them the same way in both programs: the channel
-    scalings of a pipeline (another processing program's background equalisation, our colour space) then do not weigh on the noise."""
+    scalings of a pipeline (the reference program's background equalisation, our colour space) then do not weigh on the noise."""
     x, y = im.pix(st["ra"][sel], st["dec"][sel])
     ok = im.inside(x, y, 40)
     x, y, g = x[ok], y[ok], st["g"][sel][ok]
@@ -475,7 +475,7 @@ def box_map(im: Img, mask: np.ndarray, b: int, bex: float, zp: float) -> BoxMap:
 
 def independent_map(case: str, level: str, sv: str, st: dict, bright: np.ndarray, fwhm_as: float, bs: int,
                     within: Img) -> BoxMap | None:
-    """The image the target is chosen on when it is not one of the stacks compared: Another processing program's Base stack (100 frames,
+    """The image the target is chosen on when it is not one of the stacks compared: The reference program's Base stack (100 frames,
     other frames than the Express stacks') of the case, gradient removed (its colour_linear), limited to the sky
     ``within`` covers. None when the case has no Base stack, or when the level measured is the Base itself."""
     if level == "base" or not (C.siril_dir(case, "base", sv) / "color_linear.fit").exists():
@@ -492,7 +492,7 @@ def target_measures(case: str, level: str, sv: str, maps: dict[str, BoxMap], ref
                     fwhm_as: float, bs: int, within: Img, dump=None) -> tuple[dict, dict]:
     """SNR on the target for every stack compared, on regions chosen once on an image independent of them (regions.py:
     SExtractor's dual-image mode, Bertin & Arnouts 1996; the rule against circular analysis, Kriegeskorte et al. 2009):
-    Another processing program's Base stack when the case has one, else the mean of all the stacks compared. Returns
+    the reference program's Base stack when the case has one, else the mean of all the stacks compared. Returns
     ({name: regions.on_regions result}, {"source", "target_fraction", "level_sigma"})."""
     ind = independent_map(case, level, sv, st, bright, fwhm_as, bs, within)
     reg, sel, src = choose(maps, ref, ind)
@@ -752,7 +752,7 @@ def measure(case: str, level: str, variant: str = "", siril_variant: str = "") -
     st = gaia(d, so)
     so.cover, ss.cover = common_cover(so, ss), common_cover(ss, so)    # every measure on the sky both cover
     res["gaia_stars"] = int(len(st["g"]))
-    print(f"loaded: ours {so.W}x{so.H} at {so.scale:.2f}\"/px, Siril {ss.W}x{ss.H} at {ss.scale:.2f}\"/px; "
+    print(f"loaded: ours {so.W}x{so.H} at {so.scale:.2f}\"/px, the reference program {ss.W}x{ss.H} at {ss.scale:.2f}\"/px; "
           f"{len(st['g'])} Gaia stars ({time.time() - t0:.0f} s)", flush=True)
     both = {}
     for im in (so, ss):
@@ -911,9 +911,9 @@ def _g50(found: np.ndarray, g: np.ndarray) -> float:
 
 
 def measure_variants(case: str, level: str) -> dict:
-    """Every variant of a level, ours and another processing program's, measured on the same sky: the coverage common to all the images,
-    one star set, one target (chosen on the first another processing program variant's colour image, the reference), boxes of the same
-    angular size. The pairwise files (measure) compare each of ours with its another processing program; this one compares the variants
+    """Every variant of a level, ours and the reference program's, measured on the same sky: the coverage common to all the images,
+    one star set, one target (chosen on the first the reference program variant's colour image, the reference), boxes of the same
+    angular size. The pairwise files (measure) compare each of ours with its reference program; this one compares the variants
     with each other."""
     t0 = time.time()
     names, ims, dirs = [], [], {}
@@ -1030,9 +1030,9 @@ def main() -> int:
     ap.add_argument("level", choices=list(C.LEVELS))
     ap.add_argument("--no-sheet", action="store_true")
     ap.add_argument("--all", action="store_true", help="a case with variants: every variant of the level, ours and "
-                                                       "Another processing program's, on the same sky (measures_<level>_all.json)")
+                                                       "the reference program's, on the same sky (measures_<level>_all.json)")
     ap.add_argument("--variant", help="the variant of a case that has some (rosette: A, B, C)")
-    ap.add_argument("--siril-variant", help="another processing program's variant to measure against (default: the same, or A)")
+    ap.add_argument("--siril-variant", help="the reference program's variant to measure against (default: the same, or A)")
     a = ap.parse_args()
     if a.all:
         out = C.BENCH / a.case / f"measures_{a.level}_all.json"

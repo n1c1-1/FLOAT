@@ -1,11 +1,11 @@
 """Post's tools: the Curves editor and the filters (GHS, asinh, histogram transformation, SCNR, CLAHE, starlets...).
 
-Each method against its reference: the interpolations against scipy, a reference image editor's presets against the .acv files
-A reference image editor ships (when installed), GHS, asinh, the histogram transformation and SCNR against another processing program-cli (when installed),
+Each method against its reference: the interpolations against scipy, the reference image editor's presets against the .acv files
+The reference image editor ships (when installed), GHS, asinh, the histogram transformation and SCNR against the reference program (when installed),
 CLAHE against OpenCV, the starlet transform against its definition. Every filter is the identity at its defaults, then
 has a known effect on synthetic data. The Curves editor in the page: points added, moved and deleted with the mouse, a
 draft while a point moves and the exact image on release (one undo step), the live histogram, the presets (built-in, the
-user's own, a reference image editor files), the French. The test project (slow): screenshots EN and FR and the time of a filter drag.
+user's own, the reference image editor files), the French. The test project (slow): screenshots EN and FR and the time of a filter drag.
 
 ASTRO_GPU_POST_TOOLS_SHOTS names the folder of the screenshots (default: %TEMP%/post_tools_shots).
 """
@@ -54,8 +54,8 @@ from astro_gpu.client.postfilters import curves as pc  # noqa: E402
 from astro_gpu.client.postfilters import detail as pd  # noqa: E402
 from astro_gpu.client.postfilters import tone as pt  # noqa: E402
 
-SIRIL = Path("C:/Program Files/another processing program/bin/another processing program-cli.exe")
-PS_CURVES = Path("C:/Program Files/Adobe/Adobe a reference image editor 2026/Presets/Curves")
+SIRIL = Path("C:/Program Files/Siril/bin/siril-cli.exe")
+PS_CURVES = Path("C:/Program Files/Adobe/Adobe the reference image editor 2026/Presets/Curves")
 SHOTS = Path(os.environ.get("ASTRO_GPU_POST_TOOLS_SHOTS") or
              Path(os.environ.get("TEMP") or tempfile.gettempdir()) / "post_tools_shots")
 NEW = ("ghs", "asinh", "histogram", "curves", "clahe", "ml_sharpen", "ml_denoise", "scnr")
@@ -106,7 +106,7 @@ def test_the_interpolations_are_akimas_the_natural_cubic_and_linear():
     xp, yp = np.array(pts).T
     ak = pc.Spline(pts, "Akima")(xs)
     ref = np.clip(Akima1DInterpolator(xp, yp)(xs), 0, 1)
-    assert np.abs(ak - ref).max() < 1e-9                                   # Akima 1970, as scipy's (and another processing program's)
+    assert np.abs(ak - ref).max() < 1e-9                                   # Akima 1970, as scipy's (and the reference program's)
     nat = pc.Spline(pts, "Cubic spline")(xs)
     assert np.abs(nat - np.clip(CubicSpline(xp, yp, bc_type="natural")(xs), 0, 1)).max() < 1e-9
     assert np.abs(pc.Spline(pts, "Linear")(xs) - np.interp(xs, xp, yp)).max() < 1e-12
@@ -116,7 +116,7 @@ def test_the_interpolations_are_akimas_the_natural_cubic_and_linear():
         assert np.allclose(pc.Spline([[0, 0], [0.4, 0.4], [1, 1]], interp)(xs), xs, atol=1e-12)
     two = pc.Spline([[0, 0.1], [1, 0.9]], "Akima")
     assert np.allclose(two(xs), 0.1 + 0.8 * xs)
-    # outside its end points a curve is flat (a reference image editor's moved black and white points)
+    # outside its end points a curve is flat (the reference image editor's moved black and white points)
     sp = pc.Spline([[0.2, 0.0], [0.8, 1.0]], "Linear")
     assert sp(0.1) == 0 and sp(0.95) == 1 and abs(sp(0.5) - 0.5) < 1e-12
     # the image: the table of a draft within a tenth of an 8-bit level of the exact curve
@@ -164,7 +164,7 @@ def test_the_channels_act_on_what_they_name():
     lab_a, lab_b = pcol.to_lab(sat), pcol.to_lab(pc.apply(sat, {"H": turn}))
     dh = np.degrees(np.arctan2(lab_b[..., 2], lab_b[..., 1]) - np.arctan2(lab_a[..., 2], lab_a[..., 1])) % 360
     assert np.abs(dh - 30).max() < 2.0
-    # the order is another processing program's: RGB/K first, then the channels, then L*, S, c*, H
+    # the order is the reference program's: RGB/K first, then the channels, then L*, S, c*, H
     assert pc.CHANNELS == ["RGB/K", "R", "G", "B", "L*", "S", "c*", "H"]
 
 
@@ -176,7 +176,7 @@ def test_the_presets_are_the_pro_tools_ones():
         assert n in names
     astro = [p for p in pc.builtin_presets() if p["source"] != pc.PS and p["name"] != "Linear"]
     assert len(astro) == 4 and all(p["source"] for p in astro)
-    # A reference image editor's: the very points of the .acv files a reference image editor ships
+    # The reference image editor's: the very points of the .acv files the reference image editor ships
     if PS_CURVES.is_dir():
         for n in ("Medium Contrast", "Strong Contrast", "Lighter", "Darker", "Increase Contrast", "Linear Contrast",
                   "Negative", "Color Negative", "Cross Process"):
@@ -197,7 +197,7 @@ def test_the_presets_are_the_pro_tools_ones():
     assert np.all(np.diff(prot) >= -1e-6) and prot[-1] == pytest.approx(1.0)
 
 
-def test_the_users_presets_and_photoshop_files(tmp_path):
+def test_the_users_presets_and_curve_files(tmp_path):
     f = tmp_path / "presets.json"
     assert pc.user_presets(f) == []
     curves = {"RGB/K": {"pts": [[0, 0], [0.3, 0.4], [1, 1]], "interp": "Akima"},
@@ -212,7 +212,7 @@ def test_the_users_presets_and_photoshop_files(tmp_path):
     assert [p["name"] for p in pc.user_presets(f)] == ["Heart, soft"]
     # the default file is beside the settings (here the test's temporary settings), never the user's
     assert pc.presets_file().parent == Path(os.environ["ASTRO_GPU_SETTINGS"]).parent
-    # A reference image editor .acv: written and read back (to the 8-bit point); .json: exact
+    # The reference image editor .acv: written and read back (to the 8-bit point); .json: exact
     pc.write_preset_file(tmp_path / "c.acv", curves)
     back = pc.read_preset_file(tmp_path / "c.acv")
     assert set(back) == {"RGB/K", "B"}
@@ -305,13 +305,13 @@ def test_scnr_is_sirils_formulas():
         y = pcol.scnr(x, method, a, False)
         assert np.abs(y[..., 1] - want).max() < 1e-6, method
         assert np.array_equal(y[..., [0, 2]], x[..., [0, 2]])
-    y = pcol.scnr(x, "Average neutral", 1.0, True)                         # the lightness put back (another processing program's L*)
+    y = pcol.scnr(x, "Average neutral", 1.0, True)                         # the lightness put back (the reference program's L*)
     assert np.abs(pcol.lab_linear(y)[..., 0] - pcol.lab_linear(x)[..., 0]).max() < 0.05
 
 
-@pytest.mark.skipif(not SIRIL.exists(), reason="another processing program-cli not installed")
+@pytest.mark.skipif(not SIRIL.exists(), reason="siril-cli not installed")
 def test_the_stretches_and_scnr_equal_siril(tmp_path):
-    """The same image through another processing program-cli 1.4 and through Post: equal to the 8-bit level."""
+    """The same image through the reference program 1.4 and through Post: equal to the 8-bit level."""
     from astropy.io import fits
     x = _ramp()
     fits.writeto(tmp_path / "cin.fits", np.ascontiguousarray(np.moveaxis(x, -1, 0)), overwrite=True)
@@ -538,7 +538,7 @@ def test_the_users_presets_in_the_editor(post, tmp_path):
     assert fl["params"]["curves"]["RGB/K"] == pc.preset_curves("Strong Contrast")["RGB/K"]
     ed.delete_preset()
     assert pc.user_presets() == []
-    # a a reference image editor file
+    # a reference image editor file
     pc.write_preset_file(tmp_path / "x.acv", pc.preset_curves("Cross Process"))
     assert ed.import_file(str(tmp_path / "x.acv"))
     assert pc.active(fl["params"]["curves"]) and "R" in fl["params"]["curves"]

@@ -9,6 +9,7 @@ from contextlib import contextmanager
 
 import numpy as np
 
+from ..core.determinism import seeded_match
 from ..core.params import ADVANCED, Auto, P, StageParams
 from ..core.stage import Context, Interrupted, Stage, StageError
 
@@ -118,8 +119,10 @@ class Astrometry(Stage):
                    "typical residual is a few hundredths of a pixel.")
     deps = ("inventory", "stack")
     Params = AstrometryParams
-    version = "2"          # 2: the fine fit starts from Asterion's solution when it is installed: the corners can differ
+    version = "3"          # 2: the fine fit starts from Asterion's solution when it is installed: the corners can differ
                            # (NGC 7000 2 px, its Tycho-2 stars there 1.0 -> 0.5 px off; 10 frames 30 px, 6.2 -> 0.3)
+                           # 3: the triangle match's random draws are seeded (``seeded_match``): a solution is the same at
+                           # every run, and may differ a little from one computed before (a star used more or less)
     network = True
 
     def auto(self, ctx: Context) -> dict[str, Auto]:
@@ -356,6 +359,8 @@ class Astrometry(Stage):
                 if res is not None:
                     best = (*res, sc_b, glim, radius)
         if best is None:
+            if getattr(ctx, "check_stop", None) is not None:
+                ctx.check_stop()            # a stop asked meanwhile ends the stage as stopped, whatever the search made of it
             if sparse:
                 raise unproved
             raise StageError("the stars of the image match no star of the catalogue: check the target or its "
@@ -614,7 +619,10 @@ def _match(gs, gm, ra0, dec0, sc, W, H, brightdet, off, fw, fh, aa, tol, flips=(
             if flip:
                 q[:, 1] = H - 1 - q[:, 1]
             try:
-                T, (a, _) = aa.find_transform(q, gpos, max_control_points=mcp)
+                with seeded_match(aa):
+                    T, (a, _) = aa.find_transform(q, gpos, max_control_points=mcp)
+            except Interrupted:             # a stop looked at inside the match is a stop, not a hypothesis without a match
+                raise                       # (#159: swallowed here, the stage ended "match no star" after the blind solve)
             except Exception:  # noqa: BLE001 - no match for this hypothesis
                 continue
             if abs(np.log(T.scale)) < tol and (best is None or len(a) > best[2]):

@@ -8,7 +8,7 @@ quantized once to 16 bits, on a square-root scale (fine steps in the shadows, wh
   scaled so that its sky (the median) and its stars (the 99.5th percentile) line up with the green channel;
 * black, mid and white points per channel (linked: the same three numbers for all channels); the mid point is the
   value shown as mid grey;
-* the curve between black and white: ``linear``, ``mtf`` (the midtones transfer function of another processing program and a reference processing suite),
+* the curve between black and white: ``linear``, ``mtf`` (the midtones transfer function of the reference program and the reference processing suite),
   ``asinh``, or ``histogram`` (equalisation).
 
 A slider move rebuilds three tables (about a millisecond) and re-indexes the tiles in view. The histogram of the data
@@ -22,15 +22,15 @@ under the sky, white at the 99.99th percentile, sky at a quarter of the range).
 The automatic stretch depends on what the image is (``auto_for``, the ``kind`` of ``imageview.ViewImage``), each rule a
 known display of its kind of frame:
 
-* a light (and anything not said otherwise): the ScreenTransferFunction auto-stretch of a reference processing suite, the autostretch of
-  Another processing program (their defaults: shadows clipped at the median - 2.8 x 1.4826 MAD, the background at 0.25 through the midtones
+* a light (and anything not said otherwise): the ScreenTransferFunction auto-stretch of the reference processing suite, the autostretch of
+  the reference program (their defaults: shadows clipped at the median - 2.8 x 1.4826 MAD, the background at 0.25 through the midtones
   transfer function);
 * a dark, a bias (offset) or a dark flat: the same STF with the target background at 0.5, its median at mid grey,
   each channel on its own (unlinked, as STF's unlinked mode): the frame centred on its own level, the noise and the
   fixed patterns around grey, the cold pixels towards black, the amp glow compressed towards white with its shape
   kept (a linear window of a few sigma would saturate the glow), the hot pixels white; a channel offset of one or two
   ADU, which a linked stretch turns into a colour cast of the whole frame, does not tint it;
-* a flat: linear, each channel from the lowest to the highest value of its smoothed field (another processing program's min / max cut levels,
+* a flat: linear, each channel from the lowest to the highest value of its smoothed field (the reference program's min / max cut levels,
   taken on a coarse level of the display pyramid, median-filtered, so that single defective pixels do not set them):
   the vignetting and the dust shadows fill the whole range;
 * a model (a sky model, a gradient surface, a star flat): linear, the channels linked, from zero to the brightest point

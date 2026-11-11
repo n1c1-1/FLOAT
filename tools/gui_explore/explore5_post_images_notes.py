@@ -63,7 +63,7 @@ ex.note(
     "Curseurs « 1 px » de Netteté multi-échelle et de Réduction du bruit multi-échelle : rien ne change en vue ajustée",
     "Vue ajustée (25 %), filtre ajouté sur « Classic stack », curseur « 1 px » tiré à 2,6 (netteté) ou 9 σ (bruit) : "
     "l'image à l'écran ne change pas du tout (écart 0,0), sans message. À 100 % la même action change bien l'image "
-    "(écart moyen 29 et 12 niveaux). Comme a reference image editor (« juger la netteté à 100 % »), mais rien ne le dit à "
+    "(écart moyen 29 et 12 niveaux). Comme l'éditeur d'images de référence (« juger la netteté à 100 % »), mais rien ne le dit à "
     "l'utilisateur, qui croit le curseur sans effet. Reproduit 2 fois (passage de tous les filtres, puis contrôle).",
     shot=str(out / "recheck_ml_sharpen_fit.png"),
     steps=OPEN + ["+ Filtre > Détail > Netteté multi-échelle", "Tirer « 1 px » : l'image ne bouge pas",

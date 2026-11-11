@@ -97,7 +97,8 @@ def _tiny_astro(path: Path):
 def test_the_section_shows_the_folder_the_state_and_the_two_downloads(env, qapp):
     d, page = _page(qapp)
     shown = _texts(page)
-    assert "Offline Gaia extracts" in shown and "Without them" in " ".join(shown)
+    assert "Offline Gaia extracts" in shown and "Nothing is fetched while a project runs" in " ".join(shown)
+    assert "online" not in " ".join(_gaia(shown))
     assert "Download positions (1.1 GB)" in shown and "Download spectra (10.6 GB)" in shown
     assert _gaia(shown).count("Not installed") == 3 and "Open folder" in shown        # the bright stars too
     assert not [t for t in shown if "Gaia DR3 folder" in t or "12 GB" in t or "◇" in t]      # the old, unbuilt widgets
@@ -277,4 +278,19 @@ def test_the_section_has_its_french(env, qapp):
         assert "Fichier 3 sur 48" in ge._t("File {i} of {n}", i=3, n=48)
     finally:
         ge.translate, ge.number = (lambda s: s), (lambda x, d=1: f"{x:.{d}f}")
+    d.close()
+
+
+def test_the_progress_moves_with_byte_counts_above_four_gigabytes(env, qapp):
+    """Issue #157: the signal and its slot were declared int, so a count past 2^31 raised OverflowError on every report
+    and the bar and the text stayed where they were."""
+    d, page = _page(qapp)
+    j = extracts.job()
+    for bar in page.findChildren(QProgressBar):
+        bar.setVisible(True)
+    j.progress.emit(5 * 2**30, 10 * 2**30, "5.0 GB of 10.0 GB")
+    _wait(qapp, lambda: d.ex["msg"].text() == "5.0 GB of 10.0 GB")
+    assert d.ex["bar"].value() == 500
+    j._progress(9 * 2**30, 10 * 2**30, "9.0 GB of 10.0 GB")
+    _wait(qapp, lambda: d.ex["bar"].value() == 900)
     d.close()

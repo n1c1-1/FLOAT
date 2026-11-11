@@ -3,8 +3,11 @@
 Run by the installer right after it copied the files, and again by the launcher if a former run did not finish. Every
 step can be run again: what is already right stays, a re-install or an upgrade only fetches what changed, and a change
 of card (a new driver) is picked up the same way. The Asterion plate solver and its index came with the files: they are
-only checked at the end, and a problem with them is said without failing the installation. Standard library only, from
-the private Python.
+only checked at the end, and a problem with them is said without failing the installation. The star catalogue (1.85 GB,
+FLOAT's own data release) is fetched last, into ``sky`` of the installation, where FLOAT finds it without any setting; a
+file already there at its pinned size and checksum is kept, so an update does not fetch it again, and a failure of this
+step is said in the summary without failing the installation (FLOAT starts; running the setup again resumes). Standard
+library only, from the private Python.
 
     python setup_env.py --root <install folder> [--no-gui] [--lock lock.json] [--lang fr|en]
 
@@ -31,6 +34,11 @@ import detect  # noqa: E402
 import fetch  # noqa: E402
 
 MARKER = ".float_ok.json"
+#: the catalogue folder's record of the files already checked (size, modification time, checksum): at each setup the
+#: 1.85 GB are not read again for the checksum when a file is as it was when it was checked
+SKY_STAMP = ".sky_ok.json"
+#: room left free beyond the catalogue files to fetch
+SKY_MARGIN = 200 << 20
 SMOKE_CODE = """\
 import json, torch, numba, cv2, PySide6.QtWidgets
 import astro_gpu, astro_gpu.api, astro_gpu.client.app
@@ -88,6 +96,19 @@ TEXTS = {
         "asterion_index": "The star index of the Asterion plate solver is missing or incomplete in this installation. "
                           "FLOAT works all the same: Astrometry uses its own search, slower. Running this installer "
                           "again puts it back.",
+        "catalogue": "the FLOAT star catalogue",
+        "catalogue_stage": "Checking the star catalogue...",
+        "catalogue_net": "The star catalogue could not be downloaded: no connection, or the server did not answer. "
+                         "FLOAT starts all the same, but Astrometry and what follows stay unavailable until the "
+                         "catalogue is there. Run this installer again: it goes on where it stopped.\n({detail})",
+        "catalogue_disk": "The star catalogue was not downloaded: not enough disk space on this drive ({need} needed, "
+                          "{free} free). FLOAT starts all the same, but Astrometry and what follows stay unavailable. "
+                          "Free some space, then run this installer again: it goes on where it stopped.",
+        "catalogue_hash": "A star catalogue file was damaged on the way (checksum) and was dropped. FLOAT starts all the "
+                          "same, but Astrometry and what follows stay unavailable. Run this installer again to fetch it "
+                          "again.\n({detail})",
+        "catalogue_stopped": "The star catalogue download was stopped. FLOAT starts all the same, but Astrometry and what "
+                             "follows stay unavailable. Run this installer again: it goes on where it stopped.",
     },
     "fr": {
         "title": "Installation de FLOAT",
@@ -142,6 +163,22 @@ TEXTS = {
         "asterion_index": "L'index d'étoiles du solveur astrométrique Asterion manque ou est incomplet dans cette "
                           "installation. FLOAT fonctionne quand même : l'Astrométrie utilise sa propre recherche, plus "
                           "lente. Relancer cette installation le remet en place.",
+        "catalogue": "le catalogue d'étoiles de FLOAT",
+        "catalogue_stage": "Vérification du catalogue d'étoiles...",
+        "catalogue_net": "Le catalogue d'étoiles n'a pas pu être téléchargé : pas de connexion, ou le serveur n'a pas "
+                         "répondu. FLOAT démarre quand même, mais l'Astrométrie et ce qui la suit restent indisponibles "
+                         "tant que le catalogue n'est pas là. Relancez cette installation : elle reprend où elle s'est "
+                         "arrêtée.\n({detail})",
+        "catalogue_disk": "Le catalogue d'étoiles n'a pas été téléchargé : espace disque insuffisant sur ce disque "
+                          "({need} nécessaires, {free} libres). FLOAT démarre quand même, mais l'Astrométrie et ce qui la "
+                          "suit restent indisponibles. Libérez de la place puis relancez cette installation : elle reprend "
+                          "où elle s'est arrêtée.",
+        "catalogue_hash": "Un fichier du catalogue d'étoiles a été abîmé en route (somme de contrôle) et a été écarté. "
+                          "FLOAT démarre quand même, mais l'Astrométrie et ce qui la suit restent indisponibles. Relancez "
+                          "cette installation pour le télécharger à nouveau.\n({detail})",
+        "catalogue_stopped": "Le téléchargement du catalogue d'étoiles a été arrêté. FLOAT démarre quand même, mais "
+                             "l'Astrométrie et ce qui la suit restent indisponibles. Relancez cette installation : elle "
+                             "reprend où elle s'est arrêtée.",
     },
 }
 
@@ -178,6 +215,8 @@ def card_message(choice: detect.Choice, lang: str) -> str:
 def what_is(w: fetch.Wheel, lang: str) -> str:
     t = TEXTS[lang]
     n = w.name.lower()
+    if n == "star_catalogue":
+        return t["catalogue"]
     if n == "torch":
         return t["torch_cuda"] if "cu" in w.version.split("+")[-1] and "cpu" not in w.version else t["torch_cpu"]
     if n.startswith(("pyside", "shiboken")):
@@ -228,6 +267,7 @@ class Installer:
         self.site = self.env_dir / "Lib" / "site-packages"
         self.env_py = self.env_dir / "Scripts" / "python.exe"
         self.downloads = self.root / "downloads"
+        self.sky = self.root / "sky"                          # the star catalogue (core/sirilcat.install_dir looks here)
         self.log = self.root / "setup.log"
         self.cancel = threading.Event()
         self.choice: detect.Choice | None = None
@@ -380,6 +420,78 @@ class Installer:
         self.note(f"asterion: {m.group(1)}, index there")
         return ""
 
+    def check_catalogue(self, files: list[fetch.Wheel]) -> tuple[list[fetch.Wheel], dict]:
+        """Which files of the star catalogue are not in ``sky`` yet at their pinned size and checksum, and the stamp (a file
+        as it was when checked is not read again)."""
+        try:
+            stamp = json.loads((self.sky / SKY_STAMP).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            stamp = {}
+        missing = []
+        for w in files:
+            path = self.sky / w.dest / w.filename
+            try:
+                st = path.stat()
+            except OSError:
+                missing.append(w)
+                continue
+            key = f"{w.dest}/{w.filename}"
+            if st.st_size != w.size:
+                missing.append(w)
+            elif stamp.get(key) != [st.st_size, st.st_mtime_ns, w.sha256]:
+                if fetch.sha256_of(path) == w.sha256:
+                    stamp[key] = [st.st_size, st.st_mtime_ns, w.sha256]
+                else:
+                    stamp.pop(key, None)
+                    missing.append(w)
+        return missing, stamp
+
+    def save_stamp(self, files: list[fetch.Wheel], stamp: dict):
+        """Record the files as they are now: every one was checked against its checksum, by the check or the fetch."""
+        for w in files:
+            st = (self.sky / w.dest / w.filename).stat()
+            stamp[f"{w.dest}/{w.filename}"] = [st.st_size, st.st_mtime_ns, w.sha256]
+        try:
+            (self.sky / SKY_STAMP).write_text(json.dumps(stamp, indent=1), encoding="utf-8")
+        except OSError:
+            pass
+
+    def fetch_catalogue(self) -> str:
+        """Fetch the star catalogue of the lock into ``sky``, the folder FLOAT looks in beside ``app``: what is there whole
+        stays, an interrupted file continues, a file with a wrong checksum is refused. The text to tell the user when it
+        did not come, "" when it is all there or the lock carries none. Never a failure: FLOAT starts without it, the
+        blocks that need the stars being marked unavailable, and the next run of the setup goes on from the ``.part``."""
+        if not self.lock.get("star_catalogue"):
+            return ""
+        self.ui.stage(self.t["catalogue_stage"])
+        self.ui.indeterminate()
+        files = [fetch.Wheel(**f) for f in self.lock["star_catalogue"]["files"]]
+        self.sky.mkdir(parents=True, exist_ok=True)
+        missing, stamp = self.check_catalogue(files)
+        self.note(f"star catalogue: {len(files)} files, {len(missing)} to fetch, {sum(w.size for w in missing)} bytes")
+        if missing:
+            need = sum(w.size for w in missing) + SKY_MARGIN
+            free = fetch.free_bytes(self.sky)
+            if free < need:
+                self.note(f"star catalogue: need {need}, free {free}")
+                return self.t["catalogue_disk"].format(need=human(need, self.lang), free=human(free, self.lang))
+            context = fetch.ssl_context(self.root / "setup" / "cacert.pem")
+            try:
+                fetch.download_all(missing, self.sky, self.ui.download, self.cancel, context)
+            except fetch.Cancelled:
+                return self.t["catalogue_stopped"]
+            except fetch.DownloadError as e:
+                self.note(f"star catalogue: {e.kind}: {e.detail}")
+                if e.kind == "disk":
+                    return self.t["catalogue_disk"].format(need=human(need, self.lang),
+                                                           free=human(fetch.free_bytes(self.sky), self.lang))
+                return self.t["catalogue_hash" if e.kind == "hash" else "catalogue_net"].format(detail=e.detail)
+            except Exception as e:  # noqa: BLE001 - a step that breaks must not stop the installation
+                self.note(f"star catalogue: {type(e).__name__}: {e}")
+                return self.t["catalogue_net"].format(detail=f"{type(e).__name__}: {e}")
+        self.save_stamp(files, stamp)
+        return ""
+
     def finish(self, build: str, info: dict, cuda_build: bool):
         self.summary = card_message(self.choice, self.lang)
         if cuda_build and not info.get("cuda"):
@@ -424,6 +536,10 @@ class Installer:
         self.sync(wheels)
         info, cuda_build = self.smoke(wheels)
         self.finish(build, info, cuda_build)
+        problem = self.fetch_catalogue()
+        if problem:
+            self.summary += "\n" + problem
+            self.note("summary: " + problem)
 
     def run(self) -> int:
         """The whole work, in its own thread; the UI decides whether a failure is retried."""

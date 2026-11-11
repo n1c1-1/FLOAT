@@ -5,33 +5,33 @@ pixel (x, y) -> reference sensor position (X, Y), a cubic in x / (W/2) - 1, y / 
 output pixel (core/poly.poly_inverse: an inverse cubic, then Newton steps on the polynomial itself; 1e-6 px).
 Output pixel (j, i) is the reference sensor position X = j, Y = i: the grid of the drizzle at scale 1, the sensor
 resolution. A pixel whose interpolation window leaves the frame has no value (NaN): the frame does not cover it (as
-OpenCV's BORDER_TRANSPARENT leaves it untouched in another processing program, which then counts it as missing).
+OpenCV's BORDER_TRANSPARENT leaves it untouched in the reference program, which then counts it as missing).
 
 Interpolation, ``lanczos4`` (default) or ``bilinear``:
 
-* **Lanczos-4**, another processing program's default interpolation for registration (``register -interp=lanczos4``) and a reference processing suite's
+* **Lanczos-4**, the reference program's default interpolation for registration (``register -interp=lanczos4``) and the reference processing suite's
   StarAlignment "Auto" choice without a change of scale [S3][S4][P13]: L(t) = sinc(t) sinc(t / 4) for |t| < 4, the 8 x 8
   samples around the position (offsets -3..+4 from its integer part), separable weights.
-  - ``clamping="another processing program"`` (default): Another processing program 1.4's clamping (src/opencv/opencv.cpp, ``cvTransformImage``): the frame is
+  - ``clamping="bilinear_guide"`` (default): The reference program 1.4's clamping (src/opencv/opencv.cpp, ``cvTransformImage``): the frame is
     warped twice, with OpenCV's INTER_LANCZOS4 (weights normalised to a sum of 1, OpenCV's ``interpolateLanczos4``)
     and with the "area" interpolation as a guide (OpenCV's warps do not have it and run INTER_LINEAR, bilinear); where
     the Lanczos value is below CLAMPING_FACTOR = 0.98 x the guide, that pixel and its 4 nearest neighbours (the 3 x 3
     "ellipse" of getStructuringElement, a cross) take the guide's value, colour by colour. It removes the dark rings
-    Lanczos leaves around stars; another processing program's documentation credits it with "often 8 % smaller FWHM" than the pixel-area
+    Lanczos leaves around stars; the reference program's documentation credits it with "often 8 % smaller FWHM" than the pixel-area
     method [S3]. OpenCV quantises the sub-pixel position to 1/32 px (INTER_BITS); here it is exact.
-  - ``clamping="a reference processing suite"``: PCL's LanczosInterpolation (include/pcl/LanczosInterpolation.h and
+  - ``clamping="lobe_clamp"``: PCL's LanczosInterpolation (include/pcl/LanczosInterpolation.h and
     LanczosRowInterpolation.h): the weights corrected for their first two moments (PCL_CorrectLanczosMoments, sum 1
-    and centroid at the position: no sub-pixel position bias, the a reference processing suite 1.9.5 fix [P8]); the positive and
+    and centroid at the position: no sub-pixel position bias, the reference processing suite 1.9.5 fix [P8]); the positive and
     negative contributions s+ and s- summed apart with their weights w+ and w-; r = s- / s+ above the clamping
     threshold c (0.3, the default of PCL and of StarAlignment [P13]) shrinks the negative lobes by 1 - ((r - c) /
     (1 - c))^2, r >= 1 keeps the positive lobes only; value = (s+ - s-) / (w+ - w-).
   - ``clamping="none"``: OpenCV's Lanczos-4 alone.
-* **Bilinear**: the 2 x 2 samples around the position (an option, and the guide of another processing program's clamping).
+* **Bilinear**: the 2 x 2 samples around the position (an option, and the guide of the reference program's clamping).
 
-Sources: [S3] https://gitlab.com/free-astro/another processing program-doc/-/raw/1.4/doc/preprocessing/registration.rst ; [S4] .../commands/
-register.rst ; another processing program 1.4 https://gitlab.com/free-astro/another processing program/-/blob/1.4/src/opencv/opencv.cpp ; OpenCV
+Sources: [S3] https://gitlab.com/free-astro/siril-doc/-/raw/1.4/doc/preprocessing/registration.rst ; [S4] .../commands/
+register.rst ; the reference program 1.4 https://gitlab.com/free-astro/siril/-/blob/1.4/src/opencv/opencv.cpp ; OpenCV
 modules/imgproc/src/imgwarp.cpp (interpolateLanczos4, remapLanczos4, INTER_AREA -> INTER_LINEAR in the warps);
-PCL https://gitlab.com/a reference processing suite/PCL (include/pcl/LanczosInterpolation.h, LanczosRowInterpolation.h); [P8] a reference processing suite
+the Pixel Class Library of the reference processing suite (LanczosInterpolation.h, LanczosRowInterpolation.h); [P8] the reference processing suite
 1.9.5 release notes; [P13] StarAlignment documentation.
 """
 from __future__ import annotations
@@ -42,8 +42,8 @@ import torch.nn.functional as F
 from .poly import poly_inverse
 
 METHODS = ("lanczos4", "bilinear")
-CLAMPINGS = ("siril", "reference_suite", "none")
-#: Another processing program (opencv.cpp): a Lanczos value below this fraction of the guide is replaced by the guide
+CLAMPINGS = ("bilinear_guide", "lobe_clamp", "none")
+#: The reference program (opencv.cpp): a Lanczos value below this fraction of the guide is replaced by the guide
 CLAMPING_FACTOR = 0.98
 #: PCL / StarAlignment default clamping threshold (__PCL_LANCZOS_CLAMPING_THRESHOLD)
 PCL_CLAMPING_THRESHOLD = 0.3
@@ -99,11 +99,11 @@ def bilinear_at(img: torch.Tensor, x: torch.Tensor, y: torch.Tensor) -> tuple[to
     return torch.where(ok[None], v, torch.full_like(v, float("nan"))), ok
 
 
-def lanczos_at(img: torch.Tensor, x: torch.Tensor, y: torch.Tensor, clamping: str = "siril",
+def lanczos_at(img: torch.Tensor, x: torch.Tensor, y: torch.Tensor, clamping: str = "bilinear_guide",
                threshold: float = PCL_CLAMPING_THRESHOLD) -> tuple[torch.Tensor, torch.Tensor]:
     """(C, P) the image (C, h, w) sampled by Lanczos-4 at (x, y) (P,), and (P,) whether the 8 x 8 window is inside
-    the frame (outside: NaN). ``clamping``: "a reference processing suite" applies PCL's clamping here; "another processing program" and "none" return
-    OpenCV's plain Lanczos-4 (another processing program's clamping needs the whole grid: ``resample``)."""
+    the frame (outside: NaN). ``clamping``: "lobe_clamp" applies PCL's clamping here; "bilinear_guide" and "none" return
+    OpenCV's plain Lanczos-4 (the reference program's clamping needs the whole grid: ``resample``)."""
     C, h, w = img.shape
     flat = img.reshape(C, -1)
     x0f, y0f = torch.floor(x), torch.floor(y)
@@ -111,7 +111,7 @@ def lanczos_at(img: torch.Tensor, x: torch.Tensor, y: torch.Tensor, clamping: st
     x0, y0 = x0f.long(), y0f.long()
     ok = (x0 - N + 1 >= 0) & (x0 + N <= w - 1) & (y0 - N + 1 >= 0) & (y0 + N <= h - 1)
     x0c, y0c = x0.clamp(N - 1, w - 1 - N), y0.clamp(N - 1, h - 1 - N)
-    pcl = clamping == "reference_suite"
+    pcl = clamping == "lobe_clamp"
     kind = "pcl" if pcl else "opencv"
     wx, wy = lanczos_weights(fx, kind), lanczos_weights(fy, kind)
     P = x.numel()
@@ -157,7 +157,7 @@ def _cross_dilate(m: torch.Tensor) -> torch.Tensor:
 
 
 def resample(img: torch.Tensor, x: torch.Tensor, y: torch.Tensor, *, method: str = "lanczos4",
-             clamping: str = "siril", threshold: float = PCL_CLAMPING_THRESHOLD,
+             clamping: str = "bilinear_guide", threshold: float = PCL_CLAMPING_THRESHOLD,
              chunk: int = CHUNK) -> torch.Tensor:
     """(C, Ho, Wo): the image (C, h, w) sampled at the source positions x, y (Ho, Wo) of every output pixel, NaN
     where the interpolation window leaves the frame. See the module's docstring for the methods."""
@@ -169,7 +169,7 @@ def resample(img: torch.Tensor, x: torch.Tensor, y: torch.Tensor, *, method: str
     Ho, Wo = x.shape
     xf, yf = x.reshape(-1), y.reshape(-1)
     out = torch.empty((C, Ho * Wo), device=img.device, dtype=img.dtype)
-    guide = torch.empty_like(out) if (method == "lanczos4" and clamping == "siril") else None
+    guide = torch.empty_like(out) if (method == "lanczos4" and clamping == "bilinear_guide") else None
     for s in range(0, Ho * Wo, chunk):
         xs, ys = xf[s:s + chunk], yf[s:s + chunk]
         if method == "bilinear":
@@ -196,7 +196,7 @@ def source_positions(coef, Ho: int, Wo: int, W: int, H: int, device="cpu", rows:
 
 
 def to_reference(img: torch.Tensor, coef, W: int, H: int, *, Ho: int | None = None, Wo: int | None = None,
-                 method: str = "lanczos4", clamping: str = "siril", threshold: float = PCL_CLAMPING_THRESHOLD,
+                 method: str = "lanczos4", clamping: str = "bilinear_guide", threshold: float = PCL_CLAMPING_THRESHOLD,
                  chunk: int = CHUNK) -> torch.Tensor:
     """(C, Ho, Wo): a debayered frame (C, H, W) put on the reference grid (by default the sensor's, Ho x Wo = H x W)
     through its registration polynomial ``coef``; NaN where the frame does not cover."""

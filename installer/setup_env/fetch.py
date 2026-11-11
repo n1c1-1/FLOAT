@@ -37,6 +37,7 @@ class Wheel:
     sha256: str
     size: int
     bundled: bool = False       # in the installer itself (setup/wheels), never downloaded
+    dest: str = ""              # the sub-folder of the download folder the file goes to (the star catalogue's chunks)
 
 
 @dataclass
@@ -130,6 +131,8 @@ def download_one(w: Wheel, folder: Path, on_bytes, cancel: threading.Event, cont
                  timeout: float = 30.0) -> Path:
     """Fetch one wheel into ``folder``, continuing a ``.part``; its bytes are checked against the lock. ``on_bytes(n)``
     is called with each number of new bytes, negative when a bad file is started over."""
+    folder = folder / w.dest if w.dest else folder
+    folder.mkdir(parents=True, exist_ok=True)
     final = folder / w.filename
     part = folder / (w.filename + ".part")
     if final.is_file():

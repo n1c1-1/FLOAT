@@ -217,7 +217,7 @@ def test_advice_table_colour_rows():
     s = cv.suggest_drizzle(transforms(64, rot_deg=0.2, seed=9), W, H, "RGGB", 3.0)
     assert (s.method.value, s.method.template, s.scale.value) == ("drizzle", cv.M_DRIZZLE, 1.0)
     assert s.method.args["cov"] < 20
-    # fewer than 15 frames, however well dithered: Classic (a reference processing suite: drizzle from 15-20 frames)
+    # fewer than 15 frames, however well dithered: Classic (the reference processing suite: drizzle from 15-20 frames)
     s = cv.suggest_drizzle(transforms(14, rot_deg=0.2, seed=9), W, H, "RGGB", 3.0)
     assert (s.method.value, s.method.template, s.method.args) == ("classic", cv.M_FEW, {"n": 14})
     # little dither: the coverage varies by more than 20 % (DrizzlePac): Classic

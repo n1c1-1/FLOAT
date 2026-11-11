@@ -1,10 +1,10 @@
-"""Side-by-side sheet of the finals: Another processing program's (final.tif, linked autostretch) against ours (export bench_final, the
+"""Side-by-side sheet of the finals: The reference program's (final.tif, linked autostretch) against ours (export bench_final, the
 engine's suggested rendering), on the same sky.
 
     python tools/bench/sheet.py CASE LEVEL
 
-Ours is resampled onto another processing program's framing through both astrometric solutions (overview), and the crops show the same
-sky at our native resolution (another processing program's pixels enlarged, bicubic). Crops: the target, the field centre, a corner, a
+Ours is resampled onto the reference program's framing through both astrometric solutions (overview), and the crops show the same
+sky at our native resolution (the reference program's pixels enlarged, bicubic). Crops: the target, the field centre, a corner, a
 bright star. Writes <case>/sheet_<level>.jpg.
 """
 from __future__ import annotations
@@ -83,13 +83,13 @@ def ours_side(case: str, level: str):
 
 
 def render(case: str, level: str, s_img, s_wcs, s_H, s_flip, o_img, o_wcs, o_org, u0, v0, w, h, scale):
-    """Both finals on a display grid: (u, v) display pixels of another processing program's final at `scale` display px per another processing program px,
-    the window starting at another processing program-final pixel (u0, v0), size w x h display px."""
+    """Both finals on a display grid: (u, v) display pixels of the reference program's final at `scale` display px per the reference program px,
+    the window starting at the reference program-final pixel (u0, v0), size w x h display px."""
     step = 8
     gu = np.arange(0, w + step, step)
     gv = np.arange(0, h + step, step)
     GU, GV = np.meshgrid(gu, gv)
-    fx = u0 + GU / scale                      # another processing program final pixel
+    fx = u0 + GU / scale                      # The reference program final pixel
     fy = v0 + GV / scale
     fits_y = (s_H - 1 - fy) if s_flip else fy
     ra, dec = s_wcs.all_pix2world(fx.ravel(), fits_y.ravel(), 0)
@@ -165,11 +165,11 @@ def make(case: str, level: str) -> Path:
         sheet.paste(Image.fromarray((a * 255 + 0.5).astype(np.uint8)), (x, y))
     put(ov[0], gap, top)
     put(ov[1], 2 * gap + OW, top)
-    dr.text((gap + 6, top + 6), "another processing program 1.4 (recette de base)", fill=(255, 220, 120), font=f1)
+    dr.text((gap + 6, top + 6), "the reference program 1.4 (recette de base)", fill=(255, 220, 120), font=f1)
     dr.text((2 * gap + OW + 6, top + 6), "astro_gpu · Classic stack", fill=(120, 220, 255), font=f1)
     y = top + ovh + gap
-    dr.text((gap, y), f"Recadrages à 100 % de notre grille ({o_scale:.2f}\"/px) ; Siril ({s_scale:.2f}\"/px) agrandi "
-                      f"x{cs:.2f} pour montrer la même zone du ciel. Gauche : Siril, droite : astro_gpu.",
+    dr.text((gap, y), f"Recadrages à 100 % de notre grille ({o_scale:.2f}\"/px) ; the reference program ({s_scale:.2f}\"/px) agrandi "
+                      f"x{cs:.2f} pour montrer la même zone du ciel. Gauche : Le programme de référence, droite : astro_gpu.",
             fill=(200, 200, 200), font=f2)
     y += 30
     for i, (name, (a, b)) in enumerate(crops):
@@ -232,7 +232,7 @@ def _zstretch(L: np.ndarray, block: int) -> np.ndarray:
 
 
 def _linear_lum(kind: str, case: str, level: str, variant: str):
-    """(luminance of the raw linear stack, its WCS): ours drz_full, another processing program's stack_linear.fit."""
+    """(luminance of the raw linear stack, its WCS): ours drz_full, the reference program's stack_linear.fit."""
     if kind == "siril":
         with fits.open(C.siril_dir(case, level, variant) / "stack_linear.fit", memmap=False) as h:
             d = np.asarray(h[0].data, np.float32)
@@ -248,7 +248,7 @@ def _linear_lum(kind: str, case: str, level: str, variant: str):
 
 
 def make_variants(case: str, level: str) -> Path:
-    """One sheet for the level: every variant, another processing program's and ours, on the framing of the first another processing program variant. Rows: the
+    """One sheet for the level: every variant, the reference program's and ours, on the framing of the first the reference program variant. Rows: the
     finals; the raw linear stacks shown by their own noise (streaks show there); 100 % crops of the target and of a
     corner (finals), and of the same corner in the linear stacks."""
     man = json.loads((C.BENCH / case / "manifest.json").read_text(encoding="utf-8"))
@@ -336,7 +336,7 @@ def make_variants(case: str, level: str) -> Path:
     f1, f2 = ImageFont.truetype(FONT, 22), ImageFont.truetype(FONT, 16)
     lv = man["levels"][level]
     dr.text((gap, 12), f"{case} · {level} · {lv['count']} poses · {man['camera_label']} · {man['scope']} · même zone "
-                       f"du ciel ; Siril {s_scale:.2f}\"/px, astro_gpu {o_scale:.2f}\"/px", fill=(235, 235, 235), font=f1)
+                       f"du ciel ; the reference program {s_scale:.2f}\"/px, astro_gpu {o_scale:.2f}\"/px", fill=(235, 235, 235), font=f1)
     y = top
     for title, ims in rows:
         dr.text((gap, y + 3), title, fill=(220, 220, 220), font=f2)
@@ -346,7 +346,7 @@ def make_variants(case: str, level: str) -> Path:
             sheet.paste(Image.fromarray((np.clip(a, 0, 1) * 255 + 0.5).astype(np.uint8)), (x, y))
             if title.startswith("Images finales"):
                 kind, v = cols[i]
-                who = "another processing program 1.4" if kind == "siril" else "astro_gpu"
+                who = "the reference program 1.4" if kind == "siril" else "astro_gpu"
                 short = (man.get("variants") or {}).get(v, {}).get("short", "")
                 dr.text((x + 6, y + 6), f"{v} · {who}", fill=(255, 220, 120) if kind == "siril" else (120, 220, 255),
                         font=f1)

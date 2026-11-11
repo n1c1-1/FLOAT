@@ -29,7 +29,7 @@ import numpy as np  # noqa: E402
 
 OUT = Path("F:/astro_essais/A_REGARDER/exploration2/engine_shapes")
 RESULTS = Path("F:/astro_essais/bench_engine_explore/_results")
-PY = "<user folder>/sandbox/ComfyUI/.venv/Scripts/python.exe"
+PY = os.environ.get("FLOAT_BENCH_PYTHON") or sys.executable
 
 
 # ---------------------------------------------------------------------------------------------- notes

@@ -42,8 +42,8 @@ ASTRO = "astro"                                                 # star positions
 XP = "xp"                                                       # star spectra
 RECORDS = {ASTRO: 14692304, XP: 14738271}
 VERSIONS = {ASTRO: "1.0.0", XP: "1.0.1"}
-TITLES = {ASTRO: "another processing program Astrometry Catalogue extracted from Gaia DR3",
-          XP: "another processing program Spectrophotometric Catalog extracted from Gaia DR3"}
+TITLES = {ASTRO: "Siril Astrometry Catalogue extracted from Gaia DR3",
+          XP: "Siril Spectrophotometric Catalog extracted from Gaia DR3"}
 NAME_RE = {ASTRO: re.compile(r"^siril_cat_healpix8_astro\.dat\.bz2$"),
            XP: re.compile(r"^siril_cat1_healpix8_xpsamp_(\d+)\.dat\.bz2$")}
 SUBDIR = {ASTRO: "", XP: "siril_cat1_healpix8_xpsamp"}
@@ -129,7 +129,9 @@ def status(kind: str) -> Status:
         paths = [found["astro"].path] if found["astro"] is not None else []
     else:
         paths = [cf.path for cf in found["xp"].values()]
-    mine = [p for p in paths if _inside(p, folder())]
+    # the installation's own ``sky`` folder is ours too (the setup fetched it): not "another program's data folder"
+    roots = [folder()] + ([sirilcat.install_dir()] if sirilcat.install_dir() else [])
+    mine = [p for p in paths if any(_inside(p, r) for r in roots)]
     outside = next((p.parent for p in paths if p not in mine), None)
     part = 0
     d = target_dir(kind)

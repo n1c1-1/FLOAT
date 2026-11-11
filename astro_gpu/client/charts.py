@@ -43,7 +43,7 @@ UNALIGNED = QColor("#8b93a1")                  # a frame that did not align: no 
 
 # ============================================================================================ Selection
 class FramesChart(ChartView):
-    """Star size and transparency of every frame, another processing program / a reference processing suite style: thresholds dragged, points clicked.
+    """Star size and transparency of every frame, the reference program / the reference processing suite style: thresholds dragged, points clicked.
 
     ``rows``: the frame table's rows (name, time, fwhm, transparency, status, excluded). Thresholds: ``tmin`` in % of the
     best frames, ``fmax`` in px. ``hand``: the indices excluded by hand. The mouse: the wheel zooms the frames axis, a

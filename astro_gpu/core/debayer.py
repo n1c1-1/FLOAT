@@ -4,12 +4,12 @@
 Two methods, torch, on the device of the frame (GPU or CPU):
 
 * ``rcd`` (default): **Ratio Corrected Demosaicing**, Luis Sanz Rodríguez, release 2.3 (2017-11-25) [L10], exactly as
-  Another processing program runs it (another processing program's default since 1.2 [S6][S11]: ``src/algos/demosaicing_rtp.cpp`` calls librtprocess's
+  the reference program runs it (the reference program's default since 1.2 [S6][S11]: ``src/algos/demosaicing_rtp.cpp`` calls librtprocess's
   ``rcd_demosaic``). The reference code is librtprocess ``src/demosaic/rcd.cc`` (RawTherapee's tiled version by Ingo
   Weyrich, with the author's exact shorter form of the directional statistics) and ``src/demosaic/border.cc``
   (``bayerborder_demosaic``); this module follows it step by step:
 
-  - Another processing program's float path first maps the frame from [min, max] to [0, 65535] (``debayer_buffer_new_float``) and back
+  - The reference program's float path first maps the frame from [min, max] to [0, 65535] (``debayer_buffer_new_float``) and back
     afterwards; rcd.cc divides by 65536 and clips to [0, 1] (LIM01), and its output is max(0, value) x 65536;
   - step 1: vertical / horizontal discrimination VH = V / (V + H), V and H the sums over three rows (columns) of the
     squared colour-difference high-pass ``(c[-3] - c[-1] - c[+1] + c[+3]) - 3 (c[-2] + c[+2]) + 6 c``; this short form
@@ -25,13 +25,13 @@ Two methods, torch, on the device of the frame (GPU or CPU):
     frame are filled by ``bayerborder_demosaic``: the mean of the samples of each colour in the 3 x 3 neighbourhood;
   - rcd.cc stores the diagonal high-pass terms of step 4 at half resolution (``indx / 2``) for the odd columns only,
     so that a sample reads the term of the odd column of its pair (x | 1), not always its own diagonal as RCD v2.3
-    does. Kept as another processing program runs it.
+    does. Kept as the reference program runs it.
 
-  Checked against another processing program 1.4's own RCD on a real calibrated frame: relative difference rms 1.6e-7 of the [0, 1]
-  range (with the diagonal terms at their own place, as in RCD v2.3, it grows 2700-fold: Another processing program runs librtprocess's
+  Checked against the reference program 1.4's own RCD on a real calibrated frame: relative difference rms 1.6e-7 of the [0, 1]
+  range (with the diagonal terms at their own place, as in RCD v2.3, it grows 2700-fold: The reference program runs librtprocess's
   indexing). tests/test_debayer.py repeats the check (marked slow) when the files are there.
 
-  RCD was chosen by another processing program because it renders round, sharp-edged objects (stars) without the zipper and the
+  RCD was chosen by the reference program because it renders round, sharp-edged objects (stars) without the zipper and the
   overshoot of the older methods [S11].
 
   **White balance before demosaicing** (``balance``, on by default in ``debayer``): the colour channels are scaled to
@@ -43,25 +43,25 @@ Two methods, torch, on the device of the frame (GPU or CPU):
   weak channel. Measured on a calibrated frame of heart (Sony A7S, blue sky level 0.4 x green), aperture photometry
   of 3760 stars against the exact sums of each colour's samples (2 x 2 superpixels): without the balance, blue
   +46 % and red +11 % on average, more for the red stars (the colour stage then found unphysical sensitivity
-  curves); with it, -4 % to -3 % (bilinear: -3 % to -1 %). Another processing program runs RCD on the unbalanced frame
+  curves); with it, -4 % to -3 % (bilinear: -3 % to -1 %). The reference program runs RCD on the unbalanced frame
   (its photometric calibration then corrects the mean part with one factor per channel); ``balance=None`` does so.
   The multipliers are the frame's own (``cfa_balance``: the median of each colour's samples against green's, the
   levels a CFA equalisation brings to the same value), since astronomical frames (FITS) seldom carry the camera's;
   the bilinear method interpolates each colour from its own samples only and is not changed by them.
 * ``bilinear``: the textbook bilinear demosaicing, each missing colour the mean of the samples of that colour in the
-  3 x 3 neighbourhood (DSS's default [D1]; librtprocess's ``bayerborder_demosaic`` formula everywhere). Not another processing program's
+  3 x 3 neighbourhood (DSS's default [D1]; librtprocess's ``bayerborder_demosaic`` formula everywhere). Not the reference program's
   "bilinear", which is librtprocess's ``bayerfast`` (gradient-weighted green): a simple option, not the reference.
 
 Before demosaicing, the samples the calibration left out (NaN in the calibrated cache: hot, cold and dusty pixels) are
-filled as another processing program's cosmetic correction fills a hot pixel of a CFA image (``getAverage3x3`` in
+filled as the reference program's cosmetic correction fills a hot pixel of a CFA image (``getAverage3x3`` in
 ``src/filters/cosmetic_correction.c``: the mean of its 8 nearest samples of the same colour, 2 pixels away), here of
 those that are valid; a sample with none valid gets the mean of the next ring, then the colour's median
 (``fill_bad``). Saturated samples are the caller's to replace (stack_classic puts the saturation level there).
 
 Sources: [L10] https://github.com/LuisSR/RCD-Demosaicing (rcd_demosaicing.c, release 2.3);
-librtprocess https://github.com/CarVac/librtprocess (src/demosaic/rcd.cc, border.cc); another processing program 1.4
-https://gitlab.com/free-astro/another processing program/-/blob/1.4/src/algos/demosaicing_rtp.cpp and src/filters/cosmetic_correction.c;
-[S11] https://another processing program.org/2020/09/whats-new-in-another processing program-0.99.4/ ; [D1] a reference stacking program technical help; [D2] dcraw.c
+librtprocess https://github.com/CarVac/librtprocess (src/demosaic/rcd.cc, border.cc); the reference program 1.4
+https://gitlab.com/free-astro/siril/-/blob/1.4/src/algos/demosaicing_rtp.cpp and src/filters/cosmetic_correction.c;
+[S11] https://siril.org/2020/09/whats-new-in-siril-0.99.4/ ; [D1] le logiciel d'empilement de référence technical help; [D2] dcraw.c
 (Dave Coffin): main() calls scale_colors() before pre_interpolate() and the interpolations; [L11] RawTherapee
 rtengine/rawimagesource.cc (scaleColors before demosaic); [D3] darktable user manual, processing modules: demosaic
 and white balance (the default module order).
@@ -81,7 +81,7 @@ STEP = TILE - 2 * TILE_BORDER
 #: rcd.cc: tolerances against a division by zero
 EPS = 1e-5
 EPSSQ = 1e-10
-#: rcd.cc divides by this (and multiplies back); another processing program's float path maps the frame onto [0, NORM] first
+#: rcd.cc divides by this (and multiplies back); the reference program's float path maps the frame onto [0, NORM] first
 SCALE = 65536.0
 NORM = 65535.0
 #: tiles processed together (memory: about 40 arrays of TILE x TILE floats per tile)
@@ -128,7 +128,7 @@ def _shifter(a: torch.Tensor, pad: int = 4):
 # ------------------------------------------------------------------------------------------------ bad samples
 def fill_bad(cfa: torch.Tensor, bad: torch.Tensor | None = None, rounds: int = 3,
              ch_of_k=None) -> tuple[torch.Tensor, torch.Tensor]:
-    """The CFA frame with its bad samples (NaN, or ``bad``) filled as another processing program's cosmetic correction fills a hot pixel
+    """The CFA frame with its bad samples (NaN, or ``bad``) filled as the reference program's cosmetic correction fills a hot pixel
     (getAverage3x3, CFA step 2): the mean of the valid samples of the same colour among the 8 nearest (2 pixels
     away); those with none take the mean of the next ring (4 pixels away), up to ``rounds`` times, then the median of
     their colour. Returns (filled frame, the mask of the samples filled). ``ch_of_k`` an X-Trans pattern (its
@@ -404,11 +404,11 @@ def cfa_balance(cfa: torch.Tensor, ch_of_k) -> tuple[float, float, float] | None
 
 def rcd(cfa: torch.Tensor, ch_of_k, *, siril_range: bool = True, balance=None,
         tiles_per_batch: int = TILES_PER_BATCH) -> torch.Tensor:
-    """(3, H, W): the CFA frame (H, W) demosaiced by RCD as another processing program runs it (see the module's docstring). ``ch_of_k``:
+    """(3, H, W): the CFA frame (H, W) demosaiced by RCD as the reference program runs it (see the module's docstring). ``ch_of_k``:
     the pattern ("RGGB") or the colour of each 2 x 2 position. ``siril_range``: map the frame's [min, max] onto
-    [0, 65535] first and back after, as another processing program's float path does (False: the values are taken as 16-bit data, clipped
+    [0, 65535] first and back after, as the reference program's float path does (False: the values are taken as 16-bit data, clipped
     to [0, 65536] by rcd.cc). ``balance``: white-balance multipliers (R, G, B) put on the samples before and taken off
-    the result after (the raw converters' order, see the module's docstring); None: none, as another processing program. No NaN allowed
+    the result after (the raw converters' order, see the module's docstring); None: none, as the reference program. No NaN allowed
     (``fill_bad`` first). Same device and float32."""
     x = cfa.float()
     H, W = x.shape
@@ -473,7 +473,7 @@ def debayer(cfa: torch.Tensor, ch_of_k, method: str = "rcd", balance="auto", tem
             return bilinear(cfa, ch_of_k)
         return markesteijn(cfa, ch_of_k, template)
     """(3, H, W) float32 from a CFA frame (H, W) without NaN: ``method`` one of METHODS. ``balance`` (RCD): "auto"
-    the frame's own white balance (``cfa_balance``) before demosaicing, None none (as another processing program), or the multipliers
+    the frame's own white balance (``cfa_balance``) before demosaicing, None none (as the reference program), or the multipliers
     (R, G, B)."""
     if method == "rcd":
         if isinstance(balance, str):

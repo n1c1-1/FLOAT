@@ -43,6 +43,8 @@ WAITING, RUNNING, DONE, FAILED, INTERRUPTED, SKIPPED, NOT_STARTED = (
 SETTLED = (DONE, FAILED, SKIPPED, NOT_STARTED, INTERRUPTED)
 POLL_MS = 500
 CLOCK_MS = 1000                                  # the run's time is said again this often, events or not (#150)
+MIN_LEFT = 1.0                                  # seconds a running job always has to go: 0 would say 100 % before its end (#158)
+MAX_RUNNING = 0.99                               # a bar of a running job stops short of 100 % until it ends (#158)
 #: the model reads the states of the graph again at most this often while a run goes (it replans and rebuilds the graph:
 #: tens of ms each time, more on a busy machine); a stage that ends is shown within this time
 REFRESH_MS = 1500
@@ -452,6 +454,7 @@ class RunTrack:
         self.error = ""                          # why the run ended badly, as the worker said it
         self.lost = False                        # the worker ended without saying run_end (killed, crashed)
         self.stop_asked = False
+        self._shown: dict[tuple, float] = {}     # the highest progress shown for each set of jobs (#158: a bar never goes back)
         self.lines: list[Line] = []
         self.counts: dict[str, int] = {}
         self.plan = None                         # the runner2.Plan this is the run of (set by the controller)
@@ -669,7 +672,10 @@ class RunTrack:
         prior = max(j.est_s * (1.0 - j.frac), 0.0)
         rest = prior if j.eta is None else (1.0 - j.frac) * prior + j.frac * max(float(j.eta), 0.0)
         at = (now or time.time()) if j.state == RUNNING else j.ended
-        return max(rest - (at - j.said), 0.0) if at is not None and j.said is not None else rest
+        left = rest - (at - j.said) if at is not None and j.said is not None else rest
+        # a job that runs always has some time to go: its own estimate ran out before it ended (#158: the bars sat at
+        # 100 % and the time at 0 until the next event raised them again)
+        return max(left, MIN_LEFT if j.state == RUNNING else 0.0)
 
     @staticmethod
     def left(j: JobState, now: float | None = None) -> float:
@@ -686,17 +692,27 @@ class RunTrack:
         not run its estimate: the bar of a block stopped shows how far it got."""
         jobs = list(jobs)
         gone, rest = sum(self.spent(j, now) for j in jobs), sum(self.to_go(j, now) for j in jobs)
-        if gone + rest > 0:
-            return gone / (gone + rest)
-        return 1.0 if jobs and all(j.state == DONE for j in jobs) else 0.0
+        if jobs and all(j.state == DONE for j in jobs):
+            return self._hold(tuple(j.key for j in jobs), 1.0, False)
+        return self._hold(tuple(j.key for j in jobs), gone / (gone + rest) if gone + rest > 0 else 0.0,
+                          any(j.state == RUNNING for j in jobs))
+
+    def _hold(self, key: tuple, value: float, running: bool) -> float:
+        """The one place where a progress is made fit to be shown (#158): below 100 % while its job runs, and never lower
+        than it was shown, whatever a new ETA says, until the true figure passes it."""
+        if running:
+            value = min(value, MAX_RUNNING)
+        value = max(value, self._shown.get(key, 0.0))
+        self._shown[key] = value
+        return value
 
     def fraction(self, now: float | None = None) -> float:
         """The share of the whole run done, 0..1, in time as ``progress``: what its jobs took over that and the time
         left (``remaining``). A job over has nothing left to go in this run, whatever it reached: the run ends at 1."""
         gone, rest = sum(self.spent(j, now) for j in self.jobs), self.remaining(now)
-        if gone + rest > 0:
-            return gone / (gone + rest)
-        return 1.0 if self.jobs and all(j.settled for j in self.jobs) else 0.0
+        if self.jobs and all(j.settled for j in self.jobs):
+            return self._hold(("run",), 1.0, False)
+        return self._hold(("run",), gone / (gone + rest) if gone + rest > 0 else 0.0, self.running)
 
     def remaining(self, now: float | None = None) -> float:
         """Seconds to go: the sum of the jobs' ``left``, as the run window's rows show them (#116: the status bar counted

@@ -1,12 +1,12 @@
-"""Bench of the gradient removal methods: Another processing program (polynomial, RBF; automatic in its development version), a reference gradient tool
-(AI), ours (polynomial, and the automatic model of another processing program written again), on the bench's
+"""Bench of the gradient removal methods: The reference program (polynomial, RBF; automatic in its development version), the reference gradient tool
+(AI), ours (polynomial, and the automatic model of the reference program written again), on the bench's
 stacks, with injected gradients and an injected faint object (docs/chantiers/gradient.md, part 3).
 
     python tools/bench/gradient.py [--cases heart,iris,...] [--out F:/astro_essais/bench/gradient]
 
 For each case, the input is the stack of the bench's reference workflow (PI-own of v2x_express) in camera colours, as
-the Gradient block sees it (before the colour calibration), cropped to the area every frame covers, scaled to 0..1 (another processing program and
-A reference gradient tool expect it). Five versions of it go through every method: as it is, plus a tilted plane, a dome, a corner
+the Gradient block sees it (before the colour calibration), cropped to the area every frame covers, scaled to 0..1 (the reference program and
+The reference gradient tool expect it). Five versions of it go through every method: as it is, plus a tilted plane, a dome, a corner
 glow (each a known gradient), and plus a faint wide object. The background a method removes is input - output.
 
 Measures (results.json, and a table printed):
@@ -36,10 +36,11 @@ sys.path.insert(0, str(ROOT))
 BENCH = Path("F:/astro_essais/bench")
 CASES = ("heart", "iris", "m51", "m8", "rosette", "seestar")
 WORKFLOW = "PI-own"
-SIRIL = Path("<user folder>/Tools/siril-1.4.5/siril/bin/siril-cli.exe")
-#: Another processing program's development version (1.5, built from its master branch): the automatic sample-free model is only there
-SIRIL_DEV = Path("<user folder>/Tools/siril-1.5-dev-20261102/siril/bin/siril-cli.exe")
-REFERENCE_GRADIENT = Path("<user folder>/Tools/ReferenceGradient-3.1.0rc2/ReferenceGradient.exe")
+#: the other programs of the comparison: set FLOAT_BENCH_SIRIL, FLOAT_BENCH_SIRIL_DEV and FLOAT_BENCH_GRAXPERT to their executables
+SIRIL = Path(os.environ.get("FLOAT_BENCH_SIRIL", "siril-cli"))
+#: The reference program's development version (1.5, built from its master branch): the automatic sample-free model is only there
+SIRIL_DEV = Path(os.environ.get("FLOAT_BENCH_SIRIL_DEV", "siril-cli"))
+GRAXPERT = Path(os.environ.get("FLOAT_BENCH_GRAXPERT", "GraXpert"))
 LP_COLOUR = np.array([1.25, 1.0, 0.7])           # light pollution is orange: more red, less blue
 LUM = np.array([0.2126, 0.7152, 0.0722])
 
@@ -85,7 +86,7 @@ def inner_box(mask: np.ndarray, fill: float = 0.998) -> tuple[int, int, int, int
 
 
 def to_unit(img: np.ndarray) -> tuple[np.ndarray, float, float]:
-    """The image in 0..1 (another processing program and a reference gradient tool expect it): (img - lo) / span, the brightest stars clipped."""
+    """The image in 0..1 (the reference program and the reference gradient tool expect it): (img - lo) / span, the brightest stars clipped."""
     lo = float(np.percentile(img, 0.01))
     hi = float(np.percentile(img, 99.99))
     span = (hi - lo) * 1.2
@@ -149,21 +150,21 @@ def siril(img: np.ndarray, work: Path, command: str, exe: Path = SIRIL) -> np.nd
     if not out.exists():
         out = work / "out.fits"
     if not out.exists():
-        raise RuntimeError(f"Siril failed: {r.stdout[-800:]}")
+        raise RuntimeError(f"The reference program failed: {r.stdout[-800:]}")
     a = read_fits(out, img)
     out.unlink()
     return a
 
 
-def reference_gradient(img: np.ndarray, work: Path) -> np.ndarray:
+def graxpert(img: np.ndarray, work: Path) -> np.ndarray:
     src, dst = work / "in.fits", work / "gx_out"
     write_fits(src, img)
-    r = subprocess.run([str(REFERENCE_GRADIENT), str(src), "-cli", "-cmd", "background-extraction", "-output", str(dst),
+    r = subprocess.run([str(GRAXPERT), str(src), "-cli", "-cmd", "background-extraction", "-output", str(dst),
                         "-correction", "Subtraction", "-gpu", "true"], capture_output=True, text=True, timeout=1800,
                        env={k: v for k, v in os.environ.items() if k != "CUDA_VISIBLE_DEVICES"})
     out = next((p for p in (work / "gx_out.fits", work / "gx_out.fit") if p.exists()), None)
     if out is None:
-        raise RuntimeError(f"ReferenceGradient failed: {(r.stdout + r.stderr)[-800:]}")
+        raise RuntimeError(f"The reference gradient tool failed: {(r.stdout + r.stderr)[-800:]}")
     a = read_fits(out, img)
     out.unlink()
     return a
@@ -178,7 +179,7 @@ def ours_poly(img: np.ndarray, work: Path) -> np.ndarray:
 
 
 def ours_poly_grid(img: np.ndarray, work: Path) -> np.ndarray:
-    """Our polynomial on the generated grid (another processing program's: Samples per side along the shorter side), as the editor's
+    """Our polynomial on the generated grid (the reference program's: Samples per side along the shorter side), as the editor's
     Generate the grid shows it."""
     from astro_gpu.stages.gradient import GradientParams, grid_points, point_values, poly_sky, poly_terms
     p = GradientParams()
@@ -193,8 +194,8 @@ def ours_poly_grid(img: np.ndarray, work: Path) -> np.ndarray:
 
 
 def ours_auto(img: np.ndarray, work: Path, **settings) -> np.ndarray:
-    """Our version of another processing program's automatic model (stages/gradient_auto.py), applied as another processing program does: each channel minus its
-    background plus the background's median. Another processing program works on the image upside down (FITS rows): so does this, so that
+    """Our version of the reference program's automatic model (stages/gradient_auto.py), applied as the reference program does: each channel minus its
+    background plus the background's median. The reference program works on the image upside down (FITS rows): so does this, so that
     the same rows are dropped by the reduction."""
     from astro_gpu.stages.gradient_auto import AutoSettings, enlarge, sky_model
     s = AutoSettings(**settings)
@@ -211,11 +212,11 @@ METHODS = {
     "siril_poly4": lambda img, work: siril(img, work, "subsky 4 -samples=20 -tolerance=1.0"),
     "siril_rbf": lambda img, work: siril(img, work, "subsky -rbf -samples=20 -tolerance=1.0 -smooth=0.5"),
     "siril_auto": lambda img, work: siril(img, work, "subsky -auto", SIRIL_DEV),
-    "graxpert_ai": reference_gradient,
+    "graxpert_ai": graxpert,
     "ours_poly": ours_poly,
     "ours_poly_grid": ours_poly_grid,
     "ours_auto": ours_auto,
-    # the automatic model's protection in sky noise (not another processing program's: its threshold is a fraction of the image's range),
+    # the automatic model's protection in sky noise (not the reference program's: its threshold is a fraction of the image's range),
     # and its largest scale
     "ours_auto_prot3": lambda img, work: ours_auto(img, work, protect_sigmas=3.0),
     "ours_auto_prot5": lambda img, work: ours_auto(img, work, protect_sigmas=5.0),
@@ -337,7 +338,7 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
-    os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")          # our engine on the CPU; a reference gradient tool uses its own GPU
+    os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")          # our engine on the CPU; the reference gradient tool uses its own GPU
     f = out / "results.json"
     allres = json.loads(f.read_text()) if f.exists() else {}
     for case in a.cases.split(","):

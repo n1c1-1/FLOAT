@@ -67,8 +67,10 @@ class Deconv(Stage):
                    "of the field and per colour.")
     deps = ("stack",)
     Params = DeconvParams
-    version = "5"     # 5: the network of the second training, each plane denoised first; 4: damping, stop, local
-    #                   deringing, protection (#92), the network's tiles blended
+    version = "6"     # 6: the noise's sample drawn by a seeded generator (``deconv_lib._robust_sigma``): the same result
+    #                   at every run, a little different from one computed before on an image over 2 Mpx; 5: the network
+    #                   of the second training, each plane denoised first; 4: damping, stop, local deringing, protection
+    #                   (#92), the network's tiles blended
 
     def run(self, ctx: Context, p: DeconvParams) -> None:
         full, A, B = (image_in(ctx, h).img for h in ("full", "A", "B"))

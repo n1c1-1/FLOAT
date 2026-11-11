@@ -1,16 +1,16 @@
-"""The another processing program reference of the bench: Another processing program 1.4 (another processing program-cli) on the frozen frames of a case and level.
+"""The reference program reference of the bench: The reference program 1.4 (siril-cli) on the frozen frames of a case and level.
 
     python tools/bench/other_program/run_other.py CASE LEVEL [--variant V] [--post-only] [--threads 8]
 
 Writes F:/astro_essais/bench/<case>/siril_<level>/ (siril_<level>_<V> for a variant of a case that has some):
     pre.ssf, post.ssf         the two scripts (pre-processing up to the stack; post: astrometry, background, colour,
                               stretch), pre.log, post.log
-    stack_linear.fit          the stack (32-bit, linear, plate-solved: it carries another processing program's WCS)
+    stack_linear.fit          the stack (32-bit, linear, plate-solved: it carries the reference program's WCS)
     bkg_linear.fit            after the background extraction (polynomial, degree 2)
     color_linear.fit          after the colour calibration (SPCC or PCC): the linear end of the pipeline
     final.tif, final.png      linked autostretch: the final (TIFF 16 bits, PNG)
-    Another processing program.json                durations, colour method, the commands, whether every step succeeded
-The recipe in plain words is in docs/pilot/BENCH.md (§ La recette another processing program). Another processing program reads a copy of the user's settings
+    siril.json                durations, colour method, the commands, whether every step succeeded
+The recipe in plain words is in docs/pilot/BENCH.md (§ La recette the reference program). The reference program reads a copy of the user's settings
 (-i, _siril/config.ini), never the user's own file.
 """
 from __future__ import annotations
@@ -29,20 +29,20 @@ import cases as C  # noqa: E402
 
 C.utf8_console()
 
-#: SPCC where another processing program's database has the sensor; PCC otherwise (why: in BENCH.md)
+#: SPCC where the reference program's database has the sensor; PCC otherwise (why: in BENCH.md)
 COLOUR = {
-    "heart": ("pcc", "Sony A7S (astro-modified): no curve of this sensor in another processing program's SPCC database, and the "
+    "heart": ("pcc", "Sony A7S (astro-modified): no curve of this sensor in the reference program's SPCC database, and the "
                      "modification changes the red response anyway"),
-    "iris": ("pcc", "Sony A7S (astro-modified): no curve of this sensor in another processing program's SPCC database, and the "
+    "iris": ("pcc", "Sony A7S (astro-modified): no curve of this sensor in the reference program's SPCC database, and the "
                     "modification changes the red response anyway"),
-    "m51": ("pcc", "Canon EOS 6D: not in another processing program's SPCC database (only older Canons are)"),
+    "m51": ("pcc", "Canon EOS 6D: not in the reference program's SPCC database (only older Canons are)"),
     "m8": ("spcc", "Sony IMX571 (the ASI2600MC's sensor) is in the database; filter assumed UV/IR block (the "
                    "camera has a plain AR window, broadband imaging adds an IR-cut)"),
     "seestar": ("spcc", "ZWO Seestar S50 is in the database; the frames say FILTER=IRCUT: UV/IR block"),
-    "rosette": ("pcc", "Sony A7S (astro-modified): no curve of this sensor in another processing program's SPCC database, and the "
+    "rosette": ("pcc", "Sony A7S (astro-modified): no curve of this sensor in the reference program's SPCC database, and the "
                        "modification changes the red response anyway"),
 }
-#: flats without darks (rosette A): Another processing program's cosmetic correction of the lights themselves, as a another processing program user without darks
+#: flats without darks (rosette A): The reference program's cosmetic correction of the lights themselves, as a reference program user without darks
 #: does it (Image processing > Cosmetic correction on the sequence, CFA): cold 3 sigma, hot 3 sigma, before the
 #: calibration (on the raw mosaic, so that a hot pixel is not spread by the demosaicing)
 COSME = (3, 3)
@@ -101,7 +101,7 @@ def pre_script(case: str, level: str, man: dict, threads: int, variant: str = ""
 
 def post_script(case: str, man: dict, threads: int) -> str:
     how = COLOUR[case][0]
-    # the catalogues: Another processing program's own local extracts of Gaia DR3 (install_catalogues.py); VizieR, which another processing program queries
+    # the catalogues: The reference program's own local extracts of Gaia DR3 (install_catalogues.py); VizieR, which the reference program queries
     # online, did not answer on 2026-11-01
     colour = f"spcc -catalog=localgaia {SPCC_ARGS[case]}" if how == "spcc" else "pcc -catalog=localgaia"
     return "\n".join([
@@ -145,7 +145,7 @@ def main() -> int:
     a = ap.parse_args()
     variant = C.norm_variant(a.case, a.variant)
     if variant and (not C.variant_has_siril(a.case, variant) or a.level not in C.variant_levels(a.case, variant)):
-        print(f"{a.case} {variant} {a.level}: no Siril run for this variant")
+        print(f"{a.case} {variant} {a.level}: no run of the other program for this variant")
         return 1
     man = json.loads((C.BENCH / a.case / "manifest.json").read_text(encoding="utf-8"))
     if man["levels"][a.level].get("same_as"):
@@ -180,7 +180,7 @@ def main() -> int:
     dt, rc, txt = run_script(work, "post", post_script(a.case, man, a.threads))
     rec["post_s"], rec["post_ok"] = round(dt, 1), rc == 0
     rec["when_post"] = datetime.now().isoformat(timespec="seconds")
-    # what another processing program said about the frames it kept and the colour calibration
+    # what the reference program said about the frames it kept and the colour calibration
     rec["log_notes"] = [ln.strip() for ln in txt.splitlines()
                         if re.search(r"(?i)images? (were|was) (excluded|stacked)|pixel scale|catalog|"
                                      r"white balance|factors|error|failed|solved", ln)][:40]

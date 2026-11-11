@@ -81,7 +81,7 @@ def test_elongated_stars_give_roundness_and_angle():
     img, xy, _ = moffat_field(3.0, 3.0, roundness=0.7, angle=30.0, seed=3)
     r = measure_psf(img, xy)
     assert abs(r.fwhm - 3.0) < 0.06
-    assert abs(r.roundness - 0.7) < 0.02                       # another processing program's r: FWHM_minor / FWHM_major
+    assert abs(r.roundness - 0.7) < 0.02                       # The reference program's r: FWHM_minor / FWHM_major
     assert abs(r.eccentricity - np.sqrt(1 - 0.49)) < 0.02      # SubframeSelector's eccentricity
     assert abs(r.fwhm_major / r.fwhm_minor - 1 / 0.7) < 0.05
     assert abs(np.median(r.stars["angle"]) - 30.0) < 2.0

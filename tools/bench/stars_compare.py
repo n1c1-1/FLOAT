@@ -1,12 +1,12 @@
-"""A reference star-removal tool against our star removal networks on the bench cases: five measures and side-by-side sheets
+"""the reference star-removal tool against our star removal networks on the bench cases: five measures and side-by-side sheets
 (docs/chantiers/etoiles_etat_de_lart.md §3).
 
     python tools/bench/stars_compare.py [--cases heart,iris,...]
 
 Every method starts from the same linear image O (input.fits of each case: the denoised stack minus its gradient,
-times the white balance, made once with a reference star-removal tool's results on 4 November 2026 by a tool since removed: see the git
+times the white balance, made once with the reference star-removal tool's results on 4 November 2026 by a tool since removed: see the git
 history of tools/bench/stars_samples.py) and gives a starless image S in the same units; the star layer is O - S
-(linear, not clipped). The methods: ``a reference star-removal tool`` (a reference star-removal tool 2, ``--linear``) and the networks ``stars_train.py`` trained
+(linear, not clipped). The methods: ``the reference star-removal tool`` (the reference star-removal tool 2, ``--linear``) and the networks ``stars_train.py`` trained
 (``net_<run>``: net_mixed is the one the Stars block ships).
 
 The measures (the published tests of the state of the art, transposed to images whose truth is unknown):
@@ -20,7 +20,7 @@ The measures (the published tests of the state of the art, transposed to images 
 3. **Texture where the stars were** (power spectrum / histogram under the masks, Madarász et al. 2025): for stars
    brighter than G 14, the fine-scale spread of S inside the star's disc over the one in a ring around it (1: the
    filled area looks like its surroundings; below 1: a smooth blotch; above: residual structure).
-4. **The two layers give back the original** (exactness): for a reference star-removal tool, its own star layer (unscreen U: O = S +
+4. **The two layers give back the original** (exactness): for the reference star-removal tool, its own star layer (unscreen U: O = S +
    U (1 - S)) recombined against O, the 99.9th percentile of the error in noise units; our networks' layers are O - S
    by construction (0).
 5. **Compact objects stay** (maskfill / photutils practice): the named galaxies and planetary nebulae smaller than 3'
@@ -50,7 +50,7 @@ OUT = Path("F:/astro_essais/stars_compare")
 CASES = ("heart", "iris", "m51", "m8", "rosette", "seestar")
 SOURCE = "Classic stack · denoise"
 BINS = [(-5, 10), (10, 12), (12, 14), (14, 16), (16, 18.5)]
-LABELS = {"original": "original", "star_removal": "StarRemoval"}
+LABELS = {"original": "original", "reference": "reference tool"}
 
 
 def log(msg: str) -> None:
@@ -81,8 +81,8 @@ def load_case(api, case: str):
     meta = json.loads((d / "meta.json").read_text())
     O = read_fits(d / "input.fits")
     S = {}
-    if (d / "starnet_starless.fits").exists():
-        S["star_removal"] = read_fits(d / "starnet_starless.fits")
+    if (d / "reference_starless.fits").exists():
+        S["reference"] = read_fits(d / "reference_starless.fits")
     for f in sorted(d.glob("net_*_starless.fits")):                # the trained star removal networks (stars_train.py)
         S[f.name[:-len("_starless.fits")]] = read_fits(f)
     p = api.open_project(BENCH / case / "ours_express")
@@ -241,13 +241,13 @@ def compact_objects(O, S, wcs) -> list:
 
 
 def exactness(case: str, O, S_sn, sigma) -> dict:
-    f = OUT / case / "starnet_unscreen.fits"
+    f = OUT / case / "reference_unscreen.fits"
     if S_sn is None or not f.exists():
         return {}
     U = read_fits(f)
     err = np.abs(S_sn + U * (1 - S_sn) - O)
-    return {"starnet_p999_sigma": round(float(np.percentile(err, 99.9)) / sigma, 2),
-            "starnet_max_sigma": round(float(err.max()) / sigma, 1),
+    return {"reference_p999_sigma": round(float(np.percentile(err, 99.9)) / sigma, 2),
+            "reference_max_sigma": round(float(err.max()) / sigma, 1),
             "ours": "O - S by construction: exact"}
 
 
@@ -311,7 +311,7 @@ def main(argv=None) -> int:
         sigma = noise_of(O)
         mask = star_mask(O, stars, fwhm)
         r = {"methods": sorted(S), "fwhm_px": fwhm, "colour": meta.get("colour"),
-             "exact": exactness(case, O, S.get("star_removal"), sigma),
+             "exact": exactness(case, O, S.get("reference"), sigma),
              "compact_objects": compact_objects(O, S, wcs), "by_method": {}}
         for k, Sm in S.items():
             r["by_method"][k] = {"off_stars": off_stars(O, Sm, mask, sigma), "texture": texture(Sm, stars, fwhm),

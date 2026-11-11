@@ -3,9 +3,9 @@
 No side effect on import (numpy and scipy only), so that the tests can import it alone (tests/test_bench_regions.py).
 
 The defect it replaces: the target (the brightest extended region) and its nearby sky used to be chosen box by box on
-Another processing program's own image, then every stack was measured on those boxes. A choice made on a noisy image keeps the boxes where
+The reference program's own image, then every stack was measured on those boxes. A choice made on a noisy image keeps the boxes where
 that image's noise happens to fall well (a brighter nebula, a darker sky), so the image that chose is favoured and the
-others are not: circular analysis. On Iris it put our classic stack 9 % under another processing program's, while the same measure with
+others are not: circular analysis. On Iris it put our classic stack 9 % under the reference program's, while the same measure with
 the choice made on our stack put it 13 % over, and with a neutral choice the two were equal.
 
 The published method:
@@ -81,7 +81,7 @@ def local_noise(v: np.ndarray, t: np.ndarray) -> float:
 def poly2_removed(v: np.ndarray, good: np.ndarray, iters: int = 4, dark: float = 0.7) -> np.ndarray:
     """The map minus a degree-2 polynomial fitted to the darker ``dark`` share of the good boxes (the nebula and the
     target are the bright ones; refitted ``iters`` times on the darker share of the residuals): the usual robust
-    background of a gradient-removed image, as the bench's another processing program reference (a degree-2 polynomial) does."""
+    background of a gradient-removed image, as the bench's the reference program reference (a degree-2 polynomial) does."""
     h, w = v.shape
     yy, xx = np.mgrid[0:h, 0:w]
     x, y = xx / max(w, 1) - 0.5, yy / max(h, 1) - 0.5

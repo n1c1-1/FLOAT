@@ -1,5 +1,5 @@
 """The training set of our star removal network: starless images of the denoise dataset's fields, made once by
-A reference star-removal tool, then reviewed by hand (docs/chantiers/etoiles.md, the plan of 4 November).
+The reference star-removal tool, then reviewed by hand (docs/chantiers/etoiles.md, the plan of 4 November).
 
     python tools/bench/stars_dataset.py prepare  [--device cuda:1]     the white balance of every field
     python tools/bench/stars_dataset.py generate [--only name,...] [--device cuda:1]
@@ -20,12 +20,12 @@ denoiser: ``denoise_dataset.HELD_OUT``; the two Stellina sets left out: EXCLUDED
 modelled by the engine's Gradient method (polynomial, its defaults) on the whole stack and taken off both half-stacks;
 each channel minus its background over its noise; denoised by the shipped network and averaged; then each channel
 times its white balance factor and its noise, over the mean of those (one unit for the three channels: noise sigmas,
-colours balanced). A reference star-removal tool 2 (``--linear``) removes its stars; it takes values in 0..1: the image goes in as (v +
-OFFSET) / (top + OFFSET), clipped at 0, and comes back the same way. A reference star-removal tool is a tool of the data preparation only:
+colours balanced). The reference star-removal tool 2 (``--linear``) removes its stars; it takes values in 0..1: the image goes in as (v +
+OFFSET) / (top + OFFSET), clipped at 0, and comes back the same way. The reference star-removal tool is a tool of the data preparation only:
 the software never calls it.
 
 ``review``: for each field, the deepest level as two 16-bit TIFFs stretched by one known curve (y = asinh((v + OFFSET)
-/ SOFT) / asinh((top + OFFSET) / SOFT)): the original and a reference star-removal tool's starless image, to correct by hand, with nothing
+/ SOFT) / asinh((top + OFFSET) / SOFT)): the original and the reference star-removal tool's starless image, to correct by hand, with nothing
 global changed (levels, colours, sharpness). The pixels left as they were keep their full precision on the way back.
 
 Files: F:/astro_essais/stars_dataset_v2/<pair>/{input.npy, starless.npy, meta.json};
@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -53,7 +54,8 @@ PROJECTS = Path("F:/astro_essais/dataset_projets")
 USER = Path("F:/astro_projets")
 DATASET_CATALOG = Path("F:/dataset_astro/catalog.csv")
 OUT = Path("F:/astro_essais/stars_dataset_v2")
-STAR_REMOVAL = Path.home() / "astro_gpu_scratch/tools/starnet2_2.6.2/starnet2_win_2.6.2-0242_ORT_x64_cli/star_removal.exe"
+#: the executable of the reference star-removal tool (a command-line program of the owner's choice): set FLOAT_BENCH_REF_STARLESS
+REF_STARLESS = Path(os.environ["FLOAT_BENCH_REF_STARLESS"]) if os.environ.get("FLOAT_BENCH_REF_STARLESS") else None
 OFFSET = 3.0           # noise sigmas below the background kept (the sky sits at OFFSET / (top + OFFSET))
 SOFT = 3.0             # the review stretch's softness, in noise sigmas
 LEVELS = ("", "_half", "_quarter", "_eighth")
@@ -236,6 +238,9 @@ def prepare(device: str) -> int:
 
 # ---------------------------------------------------------------------------------------------- generate
 def generate(only, device: str) -> int:
+    if REF_STARLESS is None or not REF_STARLESS.exists():
+        log("set FLOAT_BENCH_REF_STARLESS to the executable of the reference star-removal tool")
+        return 1
     import torch
 
     from astro_gpu.stages.denoise import apply_net, norm_params, pretrained
@@ -280,10 +285,10 @@ def generate(only, device: str) -> int:
         d.mkdir(parents=True, exist_ok=True)
         np.save(d / "input.npy", img.astype(np.float16))
         write_fits(d / "_in.fits", np.clip((img + OFFSET) / (top + OFFSET), 0, 1))
-        r = subprocess.run([str(STAR_REMOVAL), "--input", str(d / "_in.fits"), "--output", str(d / "_sl.fits"), "--linear",
-                            "--quiet"], capture_output=True, text=True, cwd=str(STAR_REMOVAL.parent))
+        r = subprocess.run([str(REF_STARLESS), "--input", str(d / "_in.fits"), "--output", str(d / "_sl.fits"), "--linear",
+                            "--quiet"], capture_output=True, text=True, cwd=str(REF_STARLESS.parent))
         if not (d / "_sl.fits").exists():
-            log(f"{m['name']}: StarRemoval FAILED {(r.stdout + r.stderr)[-600:]}")
+            log(f"{m['name']}: The reference star-removal tool FAILED {(r.stdout + r.stderr)[-600:]}")
             continue
         sl = read_fits(d / "_sl.fits") * (top + OFFSET) - OFFSET
         sl[:, nm <= 0] = 0.0
@@ -293,10 +298,10 @@ def generate(only, device: str) -> int:
         meta = {"name": m["name"], "field": field_of(m["name"]), "shape": list(img.shape), "top": top,
                 "offset": OFFSET, "white_balance": k.tolist(), "white_balanced": field_of(m["name"]) in colours
                 and bool(colours[field_of(m["name"])].get("k")), "gain": gain.tolist(),
-                "prep_s": round(t1 - t, 1), "starnet_s": round(time.time() - t1, 1),
+                "prep_s": round(t1 - t, 1), "reference_s": round(time.time() - t1, 1),
                 "units": "noise sigmas (the mean of the three channels' after the white balance), background 0"}
         (d / "meta.json").write_text(json.dumps(meta, indent=1))
-        log(f"{m['name']}: {img.shape[2]}x{img.shape[1]}, prepared {meta['prep_s']} s, StarRemoval {meta['starnet_s']} s"
+        log(f"{m['name']}: {img.shape[2]}x{img.shape[1]}, prepared {meta['prep_s']} s, the reference star-removal tool {meta['reference_s']} s"
             f"{'' if meta['white_balanced'] else ', no white balance'}")
     return 0
 

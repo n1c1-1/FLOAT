@@ -123,7 +123,7 @@ def test_no_block_after_an_early_output():
 
 
 def test_set_option_rejects_invalid_values():
-    for key, value in (("denoise", "nlbayes"), ("stars", "star_removal"), ("stars", "psf"), ("deconvolution", "wiener"),
+    for key, value in (("denoise", "nlbayes"), ("stars", "reference_net"), ("stars", "psf"), ("deconvolution", "wiener"),
                        ("colour", 1)):
         with pytest.raises(ValueError) as e:
             set_option(FULL, key, value)

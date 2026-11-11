@@ -3,8 +3,10 @@ name = "astro-gpu"
 version = "0.1.0"
 description = "GPU astrophotography processing: Gaia-calibrated stacking, physical sky background, modelled stars and interactive rendering"
 readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 requires-python = ">=3.11,<3.13"
-authors = [{ name = "Nicolas" }]
+authors = [{ name = "FLOAT" }]
 dependencies = [
     "numpy>=2.0",
     "scipy>=1.13",

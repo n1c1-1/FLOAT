@@ -110,6 +110,7 @@ BW, BH = 120, 54            # block size (a column is wider when its title needs
 GAP = 12                    # between two columns: where the branches split
 BEND = 22                   # a wire to Post: the length of its bends onto its lane and into Post
 LANE = 80                   # lane pitch
+WIRE_CLEAR = 8              # a wire routed past blocks: its distance to them
 SROW = BH + 14              # the pitch of the sessions' rows (issue #43)
 CUT_COL, GREY_COL = "#6b7280", "#c9a227"
 BROKEN_COL = "#e05252"                          # a block that cannot run at all (GUI exploration 1.1)
@@ -502,6 +503,16 @@ def _line(x1, y1, x2, y2) -> QPainterPath:
     path = QPainterPath(QPointF(x1, y1))
     path.lineTo(QPointF(x2, y2))
     return path
+
+
+def _crosses(path: QPainterPath, r: QRectF) -> bool:
+    """Whether a wire passes inside a block's rectangle: its points every 2 px (``intersects`` fills an open path)."""
+    inner = r.adjusted(1, 1, -1, -1)
+    if not path.boundingRect().adjusted(-1, -1, 1, 1).intersects(inner):     # a level wire's own is empty: no
+        return False                                                           # intersection for Qt
+    steps = max(8, int(path.length() / 2))
+    return any(inner.contains(path.pointAtPercent(path.percentAtLength(path.length() * i / steps)))
+               for i in range(steps + 1))
 
 
 def _rounded(r: QRectF) -> QPainterPath:
@@ -1038,6 +1049,8 @@ class GraphView(QGraphicsView):
                     n.y = low
                 low = n.y + BH + 6
         self._lanes, self._cx, self._cw = lanes, cx, cw
+        # what a wire that skips columns keeps out of (_route): every block's rectangle, placed now, drawn below
+        self._rects = [(n, QRectF(n.col, n.y - BH / 2, n.w, BH)) for n in g.nodes if self._drawn(g, n)]
         bottom = max(top + n_lanes * LANE, max(lanes.values(), default=top) + LANE,
                      s_last + SROW if g.sessions else fmid + SROW / 2) + LANE
         # phase bands
@@ -1061,6 +1074,10 @@ class GraphView(QGraphicsView):
             if n.key in ("image", "fusion") or (g.sessions and n in firsts):
                 continue
             par = n.parent if n.parent is not None else g.root
+            if kbase(n.key) == "synth" and kbase(par.key) == "etoiles":   # it reads the stars alone (synth_stars.py)
+                self._image_wire(par, PORTS["etoiles"][1][1], n, BH / 2, "stars", _(dict(STAR_OUTPUTS)["stars"]),
+                                 cur is not None and cur in n.paths)
+                continue
             self._wire(par, n, cur is not None and cur in n.paths)
         for sn, cn in g.sessions:
             if cn.paths:                                  # a session's Calibration, when its workflows have one
@@ -1113,8 +1130,13 @@ class GraphView(QGraphicsView):
         # the Stars block's images: into its Stars and background blocks, or straight to Post
         for n in g.compositions:
             strong = cur is not None and cur in n.paths
+            synth = self._synth_of(g, n)
             for i, (what, word) in enumerate(STAR_OUTPUTS):
-                self._image_wire(n.parent, PORTS["etoiles"][i][1], n, BH * (0.32 + 0.36 * i), what, _(word), strong)
+                yb = BH * (0.32 + 0.36 * i)
+                if what == "stars" and synth is not None:     # its stars drawn on the stars by its row in Post
+                    self._image_wire(synth, BH / 2, n, yb, what, _("Synthetic stars"), strong)
+                else:
+                    self._image_wire(n.parent, PORTS["etoiles"][i][1], n, yb, what, _(word), strong)
             self._wire(n, g.final, strong)
         for src, what in g.direct:
             i = [w for w, _y in PORTS["etoiles"]].index(what)
@@ -1130,14 +1152,8 @@ class GraphView(QGraphicsView):
         # blocks
         self._add_align_blocks(g, sel)
         for n in g.nodes:
-            if n.key == "align_images":
-                continue                                  # drawn together, across their lanes
-            if n.key not in ("sources", "final", "session") and not n.paths:
-                continue                                  # a Session is drawn even when no workflow reads it (1.8)
-            if n.key == "sources" and (g.sessions or (s.paths and not g.root.paths and not s.p.sessions)):
-                continue                                  # the sessions' blocks stand for it; or only image workflows
-            if n.key in ("sources", "final") and not s.paths and not s.p.sessions:
-                continue                                  # a blank page is empty (issue #47)
+            if not self._drawn(g, n):
+                continue
             title = node_title(s, n)
             removable = n.key == "composition" or (n.key in ("image", "fusion", "calibration") and bool(n.paths)) or \
                 n.key == "session" or (n.key == "sources" and len(s.p.sessions) == 1) or \
@@ -1267,6 +1283,17 @@ class GraphView(QGraphicsView):
             self.reveal(self._sel_item)
         self._sel_seen = seen
         self._place_name_edit()                           # a name being typed follows its block, built again
+
+    def _drawn(self, g: Graph, n: Node) -> bool:
+        """Whether a node is drawn as a block of its own (BlockItem)."""
+        s = self.s
+        if n.key == "align_images":
+            return False                                  # drawn together, across their lanes
+        if n.key not in ("sources", "final", "session") and not n.paths:
+            return False                                  # a Session is drawn even when no workflow reads it (1.8)
+        if n.key == "sources" and (g.sessions or (s.paths and not g.root.paths and not s.p.sessions)):
+            return False                                  # the sessions' blocks stand for it; or only image workflows
+        return not (n.key in ("sources", "final") and not s.paths and not s.p.sessions)   # a blank page is empty (#47)
 
     def _add_align_blocks(self, g: Graph, sel):
         """Each group of aligned images: one block across their lanes (each lane's node keeps its wires)."""
@@ -1681,19 +1708,12 @@ class GraphView(QGraphicsView):
 
     def _image_wire(self, a: Node, ya: float, b: Node, yb: float, what: str, word: str, strong: bool,
                     direct: bool = False):
-        """A wire of one of the Stars block's images, from its port to a Stars and background block or straight to
-        Post (dashed), in the image's colour: it arcs over (the starless image) or under (the stars) the blocks on its
-        way; its name in its tooltip."""
-        above = what == "starless"
+        """A wire of one of the Stars block's images, from its port to a Stars and background block, a Synthetic stars
+        block or straight to Post (dashed), in the image's colour, its name in its tooltip; routed clear of the blocks
+        on its way (_route), over them for the starless image, under them for the stars."""
         x1, y1 = a.col + a.w, a.y - BH / 2 + ya
         x2, y2 = b.col, b.y - BH / 2 + yb
-        path = QPainterPath(QPointF(x1, y1))
-        if x2 - x1 < 80:                                   # the next block (#17: no Output block between): straight
-            mid = (x1 + x2) / 2
-            path.cubicTo(QPointF(mid, y1), QPointF(mid, y2), QPointF(x2, y2))
-        else:
-            bend = (min(y1, y2) - BH / 2 - 8) if above else (max(y1, y2) + BH / 2 + 8)
-            path.cubicTo(QPointF(x1 + 40, bend), QPointF(x2 - 40, bend), QPointF(x2, y2))
+        path = self._route(x1, y1, x2, y2, (a, b), up=what == "starless")
         col = QColor(IMAGE_COL[what])
         if not strong:
             col.setAlpha(110)
@@ -1707,6 +1727,37 @@ class GraphView(QGraphicsView):
         else:
             it = self._chain_wire(path, pen, word)
         it.setZValue(4 if direct else 2)                  # behind the blocks (their text stays readable)
+
+    def _route(self, x1: float, y1: float, x2: float, y2: float, ends, up: bool) -> QPainterPath:
+        """A wire's path from (x1, y1) to (x2, y2) that never passes under a block other than its ``ends`` (11 November:
+        two arcs went behind the Synthetic stars block, drawn over them): an S-curve when no block stands in its way;
+        else it bends in the gap after the block it leaves onto the nearest line clear of the blocks on its way, above
+        (``up``) or below them, runs along it and bends again in the gap before the block it enters."""
+        mid = (x1 + x2) / 2
+        path = QPainterPath(QPointF(x1, y1))
+        path.cubicTo(QPointF(mid, y1), QPointF(mid, y2), QPointF(x2, y2))
+        way = [r for n, r in getattr(self, "_rects", ()) if all(n is not e for e in ends) and r.right() > x1 and
+               r.left() < x2]                         # (by identity: two Nodes alike compare equal)
+        if not any(_crosses(path, r) for r in way):
+            return path
+        yc, moved = y1, True                              # the nearest free line: moved past each block it would cut
+        while moved:
+            moved = False
+            for r in way:
+                if r.top() - WIRE_CLEAR < yc < r.bottom() + WIRE_CLEAR:
+                    yc, moved = (r.top() - WIRE_CLEAR) if up else (r.bottom() + WIRE_CLEAR), True
+        g = min(GAP, (x2 - x1) / 2)                       # the bends stay in the gaps between the columns
+        path = QPainterPath(QPointF(x1, y1))
+        path.cubicTo(QPointF(x1 + g / 2, y1), QPointF(x1 + g / 2, yc), QPointF(x1 + g, yc))
+        path.lineTo(QPointF(x2 - g, yc))
+        path.cubicTo(QPointF(x2 - g / 2, yc), QPointF(x2 - g / 2, y2), QPointF(x2, y2))
+        return path
+
+    def _synth_of(self, g: Graph, n: Node) -> Node | None:
+        """The Synthetic stars block whose stars a Combine layers block puts on its stars: its workflow's, on (Post
+        gives the layer a row of them, postengine.with_synth_rows) and in the engine's chain (a greyed one makes none)."""
+        sy = g.node_of(n.paths[0], "synth") if n.paths else None
+        return sy if sy is not None and sy.paths and not sy.cut and not sy.grey and self._drawn(g, sy) else None
 
     def _post_sources(self, g: Graph) -> list[Node]:
         """The blocks whose image is a layer of Post (``project.post["layers"]``, image layers: the key Inspect gave,

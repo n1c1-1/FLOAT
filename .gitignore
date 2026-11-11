@@ -44,3 +44,12 @@ docs/pilot/nouveautes/
 
 # package data the engine loads (the rule above would drop it from the built wheel)
 !astro_gpu/resources/*.npz
+
+# internal working notes and the owner's launcher (kept on disk, not published)
+docs/pilot/
+docs/archive/pilot/
+client.bat
+
+# local, never published
+tools/gui_explore/banned_words.txt
+tools/local_env.bat

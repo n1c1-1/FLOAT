@@ -1,4 +1,4 @@
-"""The automatic sky model (stages/gradient_auto.py, another processing program's ``subsky -auto`` written again), on synthetic skies."""
+"""The automatic sky model (stages/gradient_auto.py, the reference program's ``subsky -auto`` written again), on synthetic skies."""
 from __future__ import annotations
 
 import numpy as np

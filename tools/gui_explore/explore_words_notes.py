@@ -123,8 +123,8 @@ NOTES = [
         "14_galerie_apercu.png", ["Nouveau projet à 1366×768"]),
     rec("question", "Noms de logiciels externes dans l'interface",
         "Infobulle « Balance des blancs de l'appareil » (panneau Empilement) : « l'option « Use camera white balance » "
-        "de a reference stacking program » (et en anglais). À propos > Sources des données : « another processing program Astrometry Catalogue … another processing program » "
-        "(citation du catalogue réellement lu). Paramètres > Catalogues (mode spécification ◇) : « a reference plate solver », "
+        "du logiciel d'empilement de référence » (et en anglais). À propos > Sources des données : « le programme de référence Astrometry Catalogue … le programme de référence » "
+        "(citation du catalogue réellement lu). Paramètres > Catalogues (mode spécification ◇) : « le résolveur astrométrique de référence », "
         "« astrometry.net (local) ». Infobulle de la résolution à l'aveugle : « comme astrometry.net ».",
         "15_panneau_empilement.png", ["Projet mono, cliquer Empilement, survoler « Balance des blancs de l'appareil »"]),
     rec("question", "Mots internes et de banc d'essai dans des textes",

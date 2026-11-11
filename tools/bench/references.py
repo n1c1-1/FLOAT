@@ -1,14 +1,14 @@
-"""Give each bench project another processing program's results for the same frames as comparison images ("another processing program (reference)").
+"""Give each bench project the reference program's results for the same frames as comparison images ("the reference program (reference)").
 
     python tools/bench/references.py [CASE ...]          (every case by default)
 
-For every <case>/ours_<level>* project of the bench (F:/astro_essais/bench), the files another processing program wrote for that level in
+For every <case>/ours_<level>* project of the bench (F:/astro_essais/bench), the files the reference program wrote for that level in
 <case>/siril_<level>/ are listed in the project's definition (``post["references"]``, read by
 ``client/model.ProjectModel.references``): every viewer of the client then offers them in its Compare with list, the
-block's own first. Only the list is written; the images stay where another processing program put them. A file another processing program did not write is left
+block's own first. Only the list is written; the images stay where the reference program put them. A file the reference program did not write is left
 out. Running it again replaces the list.
 
-What another processing program's post-processing script saves, in its order (siril_<level>/post.ssf): the stack (stack_linear.fit, the
+What the reference program's post-processing script saves, in its order (siril_<level>/post.ssf): the stack (stack_linear.fit, the
 camera's colours), the background extracted (bkg_linear.fit, still the camera's colours), the colour calibrated
 (color_linear.fit, PCC), the stretched picture (final.tif / final.png).
 """
@@ -24,13 +24,13 @@ import cases as C  # noqa: E402
 C.engine_home(False, os.environ.get("ASTRO_GPU_HOME"))      # before astro_gpu is imported: nothing of the user's
 sys.path.insert(0, str(C.REPO))
 
-#: Another processing program's file, what it is (English, the client translates it), how to show it, the blocks it compares with first.
+#: The reference program's file, what it is (English, the client translates it), how to show it, the blocks it compares with first.
 #: stack and gradient removed are in the camera's colours (linear), colour-calibrated is linear, final is the picture
 FILES = [
-    ("stack_linear.fit", "another processing program (reference) · stack", "camera", ["empilement", "astrometrie"]),
-    ("bkg_linear.fit", "another processing program (reference) · gradient removed", "camera", ["fond"]),
-    ("color_linear.fit", "another processing program (reference) · colour-calibrated", "linear", ["couleur", "fond"]),
-    ("final.tif", "another processing program (reference) · final image", "picture", ["post"]),
+    ("stack_linear.fit", "the reference program (reference) · stack", "camera", ["empilement", "astrometrie"]),
+    ("bkg_linear.fit", "the reference program (reference) · gradient removed", "camera", ["fond"]),
+    ("color_linear.fit", "the reference program (reference) · colour-calibrated", "linear", ["couleur", "fond"]),
+    ("final.tif", "the reference program (reference) · final image", "picture", ["post"]),
 ]
 
 
@@ -82,7 +82,7 @@ def main(names: list[str]) -> int:
             post["references"] = refs
             p.post = post
             project2.save(p)
-            print(f"{case}/{proj.name}: {len(refs)} Siril images" + (" (none: Another processing program has no result at this level)"
+            print(f"{case}/{proj.name}: {len(refs)} The reference program images" + (" (none: The reference program has no result at this level)"
                                                                        if not refs else ""))
     return 0
 

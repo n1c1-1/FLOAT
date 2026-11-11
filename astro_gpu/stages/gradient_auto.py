@@ -1,7 +1,7 @@
-"""The automatic (sample-free) sky model of another processing program 1.5 (``subsky -auto``), written again for our engine.
+"""The automatic (sample-free) sky model of the reference program 1.5 (``subsky -auto``), written again for our engine.
 
-Source: Another processing program's documentation (Background extraction, "Automatic (sample-free) method") and, for what it leaves out
-(the rejection bounds, the stopping rule, the scale in pixels, the protection mask), the values of another processing program's
+Source: The reference program's documentation (Background extraction, "Automatic (sample-free) method") and, for what it leaves out
+(the rejection bounds, the stopping rule, the scale in pixels, the protection mask), the values of the reference program's
 ``src/algos/background_extraction.c`` (development version of 2026-11-02, the ``ag_*`` functions). The method:
 
 * each channel apart, on a copy reduced ``downsample`` times (block means; the last incomplete blocks are dropped);
@@ -19,7 +19,7 @@ Source: Another processing program's documentation (Background extraction, "Auto
 
 The image beyond its edges: the published source replicates the edge pixels, which makes the surface sag at the
 borders; the rejection then drops the border pixels round after round and the model drifts (on a smooth synthetic sky,
-the source's own functions compiled apart leave 2.5 % of the sky's level at the edges). The program another processing program distributes
+the source's own functions compiled apart leave 2.5 % of the sky's level at the edges). The program the reference program distributes
 (1.5.0-489c8be, 2026-11-02) does not: it follows a linear ramp to the edge. Extending each box blur point-symmetrically
 (the image continued along its slope) reproduces that program: on a synthetic sky, the backgrounds differ by 0.3 % of
 their spread (RMS), against 27 % with replicated edges.
@@ -29,10 +29,10 @@ as if they were taken over the whole image (on Heart with an injected corner glo
 RMS from it this way, 5.4 % the source's way; the source's way drops a strong gradient round after round). The whole
 image is taken here.
 
-Another processing program's thresholds are in units of an image scaled to 0..1; ``sky_model`` takes the image so scaled. Another processing program fits the
+The reference program's thresholds are in units of an image scaled to 0..1; ``sky_model`` takes the image so scaled. The reference program fits the
 whole frame and asks for the uncovered borders to be cropped first; here a ``valid`` map can be given instead: the
 pixels outside it are never kept, the surface is filled across them like across any rejected area. With every pixel
-valid, the result is another processing program's.
+valid, the result is the reference program's.
 """
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ FILL_ROUNDS = 10              # low-pass rounds that fill the rejected areas
 
 @dataclass
 class AutoSettings:
-    """Another processing program's settings and their defaults (``subsky -auto``)."""
+    """the reference program's settings and their defaults (``subsky -auto``)."""
     scale: float = 5.0               # 1..10: the low-pass radius, in % of the reduced image's shorter side
     smoothness: float = 1.0          # the last low-pass, in units of that radius (0: none)
     protect: bool = True             # mask the extended bright structures
@@ -62,7 +62,7 @@ class AutoSettings:
     simplified: bool = False         # a stiff polynomial first
     degree: int = 1                  # its degree (1: a plane)
     downsample: int = 4              # 1, 2, 4 or 8
-    protect_sigmas: float = 0.0      # not 0: the protection threshold in sigmas of the residual (not another processing program's)
+    protect_sigmas: float = 0.0      # not 0: the protection threshold in sigmas of the residual (not the reference program's)
 
 
 def _round(x: float) -> int:
@@ -117,13 +117,13 @@ def structure_mask(res: np.ndarray, radius: int, threshold: float, amount: float
 
 
 def _median(x: np.ndarray) -> float:
-    """The median as another processing program's quickselect gives it: the element of rank n // 2."""
+    """The median as the reference program's quickselect gives it: the element of rank n // 2."""
     k = x.size // 2
     return float(np.partition(x, k)[k])
 
 
 def _histogram_median(x: np.ndarray) -> float:
-    """The median as another processing program's MAD takes it (RawTherapee's percentile search, rt_algo.cc): a histogram of up to 65536
+    """The median as the reference program's MAD takes it (RawTherapee's percentile search, rt_algo.cc): a histogram of up to 65536
     bins between the minimum and the maximum, the bin where half of the values are reached, interpolated."""
     x = x.astype(np.float32, copy=False)
     lo, hi = float(x.min()), float(x.max())

@@ -20,7 +20,8 @@ number of records up to and including it, then the records grouped by pixel in p
   archive spectra of the user's cache: equal within 0.03 %).
 
 Where (the first found, per file): the folders of ``ASTRO_GPU_GAIA_EXTRACTS`` (separated by ``os.pathsep``; the older
-name ``ASTRO_GPU_SIRIL_CATALOGUES`` is still accepted), then our own folder, then the one of the default state folder
+name ``ASTRO_GPU_SIRIL_CATALOGUES`` is still accepted), then our own folder, then the ``sky`` folder of the
+installation (``install_dir``: the star catalogue the setup fetched), then the one of the default state folder
 ``~/.astro_gpu`` when ASTRO_GPU_HOME points elsewhere (as the cache of earlier downloads, ``skycache.legacy_dirs``:
 a run with a state folder of its own, a test, a bench, saw no catalogue although it was installed, and downloaded);
 and, as an extra place only, never required, a copy that another program already put on this computer: the files
@@ -255,11 +256,21 @@ def own_dir() -> Path:
     return cache_dir() / "gaia_extracts"
 
 
+def install_dir(here: Path | None = None) -> Path | None:
+    """The ``sky`` folder of an installed FLOAT: beside ``app``, the folder the installer puts the code in, where its setup
+    fetches the star catalogue (none in a source checkout, whose parent folder is nobody's). It is not the state folder:
+    an update or a new state folder keeps it, and only the uninstaller removes it. ``here``: this file."""
+    app = Path(here or __file__).resolve().parents[2]
+    return app.parent / "sky" if app.name == "app" else None
+
+
 def _candidates() -> list[Path]:
     from .skycache import legacy_dirs
     env = [Path(p) for name in ("ASTRO_GPU_GAIA_EXTRACTS", "ASTRO_GPU_SIRIL_CATALOGUES")
            for p in os.environ.get(name, "").split(os.pathsep) if p.strip()]
-    return env + [own_dir()] + [d / "gaia_extracts" for d in legacy_dirs()] + _from_config() + _data_dirs()
+    inst = install_dir()
+    return (env + [own_dir()] + ([inst] if inst else []) + [d / "gaia_extracts" for d in legacy_dirs()] + _from_config()
+            + _data_dirs())
 
 
 def installed_folders() -> list[Path]:

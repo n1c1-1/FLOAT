@@ -94,7 +94,7 @@ que le réseau a vu à l'entraînement.
 - **Alnitak, l'étoile de NGC 2023 et le nœud de M33** sont des zones où le réseau n'apprend rien (ni bon ni mauvais
   exemple). Tu n'as donc pas à t'acharner sur Alnitak.
 - **Le set 53** (NGC 6934) : les taches de couleur sont déjà dans l'empilement. Ce sont des pixels chauds que la
-  dérive de la monture étire en traînées et que notre empilement ne rejette pas (another processing program les enlève avant, par sa
+  dérive de la monture étire en traînées et que notre empilement ne rejette pas (le programme de référence les enlève avant, par sa
   correction cosmétique). Le défaut vient donc de notre chaîne, à l'empilement. Les sets 14 et 15 ont le même. Le
   set 53 n'est pas utilisé pour l'entraînement.
 
@@ -106,7 +106,7 @@ que le réseau a vu à l'entraînement.
 - **Le Débruitage se compare à l'image dont le gradient est retiré** (ce que le bloc reçoit), et non plus à
   l'empilement brut. L'effet du débruitage se voit seul.
 - **FLOAT** : titre de la fenêtre, « À propos », fichiers FITS exportés, README sur GitHub. Une commande
-  `FLOAT` lance l'interface. Le nom interne du code et le dossier de tes réglages ne changent pas.
+  `float` lance l'interface. Le nom interne du code et le dossier de tes réglages ne changent pas.
 
 ## 4. Un défaut corrigé
 

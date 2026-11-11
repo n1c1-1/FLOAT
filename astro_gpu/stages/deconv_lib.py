@@ -29,6 +29,11 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+#: the noise is measured on at most this many pixels, drawn at random (``_robust_sigma``)
+SIGMA_SAMPLE = 2_000_000
+#: the seed of that draw: the same pixels at every run
+SIGMA_SEED = 0
+
 
 @dataclass
 class StackDeconvSettings:
@@ -87,9 +92,14 @@ def _blur(a: torch.Tensor, sigma: float) -> torch.Tensor:
 
 
 def _robust_sigma(x: torch.Tensor) -> float:
+    """The noise of ``x`` (1.4826 x the median absolute deviation), on a sample of SIGMA_SAMPLE pixels when it has more.
+    The sample is drawn by a generator of its own seeded with SIGMA_SEED: drawn from torch's global one, the noise, and
+    through it the whole restoration, changed a little from one run to the next, and the draw moved the global state
+    that other code reads."""
     v = x[torch.isfinite(x)]
-    if v.numel() > 2_000_000:
-        v = v[torch.randperm(v.numel(), device=v.device)[:2_000_000]]
+    if v.numel() > SIGMA_SAMPLE:
+        gen = torch.Generator(device=v.device).manual_seed(SIGMA_SEED)
+        v = v[torch.randperm(v.numel(), generator=gen, device=v.device)[:SIGMA_SAMPLE]]
     m = v.median()
     return float(1.4826 * (v - m).abs().median())
 

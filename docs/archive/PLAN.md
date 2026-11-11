@@ -11,7 +11,7 @@ that works for any instrument (no rule written for one telescope or one camera).
 Two references to beat:
 
 - **Refractor** (TS61EDPH + astro-modified Sony A7S), Heart & Soul nebulae: `F:\photos\heart_nebula\full.png`
-  (processed by hand with another processing program, the reference tool, a reference denoiser and a reference image editor).
+  (processed by hand with the reference program, the reference tool, the reference denoiser and the reference image editor).
 - **Newton 130/900** (same camera), Iris nebula: the user's manual image,
   `<user folder>\astro_gpu_scratch\projects\Iris\reference\iris_user_manual.webp`.
 
@@ -34,7 +34,7 @@ If it works, the project will be published on GitHub (not sold); its licence is 
 ## 3. Principles
 
 1. **Free tools only**: open-source code, or free tools whose trained network is closed (e.g. the reference tool). Nothing paid.
-   Paid tools (a reference tool maker, a reference denoiser) are mentioned only for comparison.
+   Paid tools (the reference tool maker, the reference denoiser) are mentioned only for comparison.
 2. **Reuse, and modify what we reuse.** Existing libraries can be changed (camera colour pattern, our image alignment,
    our noise model, our measured star shapes...).
 3. **Treat the processing as one chain.** No single all-in-one model is imposed. When one step destroys information the
@@ -90,21 +90,21 @@ How a method is judged:
 
 | # | Step | What is compared | Success criterion (written before testing) | Status |
 |---|---|---|---|---|
-| 1 | Test bench | our chain, the reference tool, nox | the bench reproduces known numbers; table "who wins what" | done |
+| 1 | Test bench | our chain, the reference tool, the reference denoiser | the bench reproduces known numbers; table "who wins what" | done |
 | 2 | Star-shape measurement | one shape for the whole image, per place, per frame, per colour | predicts stars kept aside | done |
 | 3 | Sharpening (deconvolution) | on the stack (classic filter, existing tools, our network with the measured blur); from all frames together | sharper on fake objects, closer to the truth, nothing invented, faint signal kept | in use: the sharpening network with the measured blur, a render setting (0 Faithful, 1 Artistic); per-frame deconvolution before stacking tried twice (11.9), no better; per-tile deconvolution of the stack proposed, not started |
-| 4 | Noise reduction | our network, a reference gradient tool, others | less noise, no loss of detail or faint signal, no over-brightening | in use: Noise2Noise network on the half-stacks, multi-scale Wiener step on the starless image |
-| 5 | Stars | our model of each star, the reference tool, nox, mixed | no ring and no hole around bright stars; faint nebula kept | in use: star model subtracted, or the learned removal (own network), chosen at rendering (11.7-11.10); open: glare of the brightest stars |
-| 6 | Sky background | our physical model, separation by motion, a reference gradient tool | faint nebula kept, even background | in use: star flat (optional) and sky anchored on the H-alpha survey and the unresolved starlight; open: a smooth object filling the frame (M31) |
-| 7 | Colour | our camera response from Gaia spectra, another processing program colour calibration | Gaia star colours recovered | in use: camera response from Gaia XP spectra with a physical check, matrix anchored on the measured emission colour |
+| 4 | Noise reduction | our network, the reference gradient tool, others | less noise, no loss of detail or faint signal, no over-brightening | in use: Noise2Noise network on the half-stacks, multi-scale Wiener step on the starless image |
+| 5 | Stars | our model of each star, the reference tool, the reference denoiser, mixed | no ring and no hole around bright stars; faint nebula kept | in use: star model subtracted, or the learned removal (own network), chosen at rendering (11.7-11.10); open: glare of the brightest stars |
+| 6 | Sky background | our physical model, separation by motion, the reference gradient tool | faint nebula kept, even background | in use: star flat (optional) and sky anchored on the H-alpha survey and the unresolved starlight; open: a smooth object filling the frame (M31) |
+| 7 | Colour | our camera response from Gaia spectra, the reference program colour calibration | Gaia star colours recovered | in use: camera response from Gaia XP spectra with a physical check, matrix anchored on the measured emission colour |
 | 8 | Final image | best chain from steps 2-7 | 100 % crops of all bright stars and fixed zones; comparison with full.png and the Iris reference | in use: Faithful and Artistic renders of each project, judged blind; open defects in 11.14 |
 
 ## 7. What we have measured so far
 
 **Test bench and star removal (step 1).** On the bright fake stars, our star model leaves far smaller rings than
-the reference tool and nox (typical / worst ring, in times the noise: Heart 0.2 / 0.9 for us, 0.6 / 3.4 the reference tool, 3 to 8 nox;
-Iris 0.2 / 0.6 for us, 1.1 / 14 the reference tool, 2 to 21 nox). On faint filaments and patches, the existing tools keep more
-(Heart filaments: 66 % for us, 53 % the reference tool, 83-94 % nox). Far from any object our chain fluctuates 15 times more than
+the reference tool and the reference denoiser (typical / worst ring, in times the noise: Heart 0.2 / 0.9 for us, 0.6 / 3.4 the reference tool, 3 to 8 the reference denoiser;
+Iris 0.2 / 0.6 for us, 1.1 / 14 the reference tool, 2 to 21 the reference denoiser). On faint filaments and patches, the existing tools keep more
+(Heart filaments: 66 % for us, 53 % the reference tool, 83-94 % the reference denoiser). Far from any object our chain fluctuates 15 times more than
 the reference tool (a "pepper" grain), probably because star brightnesses are refitted over the whole image.
 
 **Star shape (step 2).** Measured from Gaia stars with an error of 4-5 %. It varies mostly across the field, little
@@ -521,12 +521,12 @@ independent agent on aligned 100 % crops):
 | Lead | Branch / place | Idea | Status |
 |---|---|---|---|
 | 1b real stars | real-stars | stars brighter than G 12: spikes (and saturated cores, rays) shown as photographed = image minus the nebula under them, the nebula interpolated across the spikes; fainter star cores drawn as now | in test |
-| 2 the reference tool / nox | D:/astro_gpu_diag/starnet_test | off-the-shelf learned star removers on the problem stars | agent running |
-| 3 own network | star-net (fb150ed), D:/astro_gpu_diag/own_star_removal (REPORT.md) | a star remover trained on the project's own data (its real bright stars injected on clean nebula) | promising, not ready |
+| 2 the reference tool / the reference denoiser | the diagnostics folder | off-the-shelf learned star removers on the problem stars | agent running |
+| 3 own network | star-net (fb150ed), the diagnostics folder (REPORT.md) | a star remover trained on the project's own data (its real bright stars injected on clean nebula) | promising, not ready |
 | 1c | real-stars (342f578) | 1b with spikes only where they stand 5 x the noise above the light beside them | tested |
 | 1d / 1e | real-stars-drawn (54f0d78, 408c3d2) | under a spike strip only the spike comes from the image (core model of every star subtracted, star cores left out), the stars along the strips drawn; 1d at 5 x noise, 1e at 2 x | 1e retained for QC |
-| 2b | a reference star-removal tool-hybrid (9543916, 86441cd) | the reference tool's starless image (minus our far halo and sky) under the footprints and strips | rejected |
-| 2c | a reference star-removal tool-texture (e0f1d94) | 1d plus the reference tool's texture below 8 px under footprints and strips, the level ours | rejected |
+| 2b | The reference star-removal tool-hybrid (9543916, 86441cd) | the reference tool's starless image (minus our far halo and sky) under the footprints and strips | rejected |
+| 2c | L'outil de retrait d'étoiles de référence-texture (e0f1d94) | 1d plus the reference tool's texture below 8 px under footprints and strips, the level ours | rejected |
 
 Lead 1b, first findings on the Iris (G 6.9 star):
 * all stars G < 12 shown by their own light (discs + spikes): the medium stars came out large and soft (their
@@ -543,7 +543,7 @@ Lead 1b, first findings on the Iris (G 6.9 star):
   stays above twice the noise wherever star residues fill a nebula): reverted to the ring median. The secondary rays
   are left to the learned star removal (lead 2: the reference tool leaves only a faint fine-ray texture).
 
-Results 2026-10-14 23:00-23:50 (Rosette, Flaming Star, Horsehead, Iris; sheets D:/astro_gpu_diag/qc/leads):
+Results 2026-10-14 23:00-23:50 (Rosette, Flaming Star, Horsehead, Iris; sheets the diagnostics folder):
 * 1b (spikes of every star G < 12 from twice the noise, measured against zero): the strips ran 400 px through the
   nebula (a quarter of the field interpolated) - the spike is now what stands above the light beside it on both
   sides (5 hw away). Then: bright stars as good or better (Iris G 6.9 clean, Flaming Star G 5.9 without its beaded
@@ -563,7 +563,7 @@ Results 2026-10-14 23:00-23:50 (Rosette, Flaming Star, Horsehead, Iris; sheets D
   coloured noise in the strips in dark sky (the star light under a strip is the raw image, only faded below 1.5-3.5
   x noise), visible at x5. Strips: 10.75 % of the Iris field (the fine detail and colour layers off under them).
 
-Blind independent QC 2026-10-15 00:30 (versions shown as letters, key kept apart; sheets D:/astro_gpu_diag/qc/blind):
+Blind independent QC 2026-10-15 00:30 (versions shown as letters, key kept apart; sheets the diagnostics folder):
 current / 1b / 1c / 1e on the four objects. 1e first on all four (Rosette 1e > 1b > 1c > current; Flaming Star
 1e > current > 1b >= 1c; Horsehead 1e > 1b > 1c > current; Iris 1e > current > 1b > 1c). Current loses on the bright
 spikes (beads, shards, light bars along the spikes across the nebula, dark blobs), 1b / 1c on the medium stars (soft
@@ -572,13 +572,13 @@ Shared by all: Iris G 4.6 spikes weak with a sea-urchin halo, a dark depression 
 * 1f: the light under a strip averaged along the spike direction over the strip width (normalised by the weights
   that leave the star cores out): the blotches become smooth faint streaks of the star's colour.
 
-Second blind QC 2026-10-15 01:15 (current / 1e / 1f, sheets D:/astro_gpu_diag/qc/blind2): 1f first on all four
+Second blind QC 2026-10-15 01:15 (current / 1e / 1f, sheets the diagnostics folder): 1f first on all four
 objects, 1e second, current last on all four (its bright spikes: beads, white bars and slivers across the nebula,
 lumps at the spike ends, dark blobs). Remaining in 1e / 1f: the spikes of G 10-12 stars in dark sky appear as faint
 dashed fragments starting away from the core (fainter and greyer in 1f); current shows nothing there. Next: the
 same with real spikes only for stars brighter than G 10 (parameter real_g), for the user's choice.
 
-Lead 3 (own network, Iris only, report D:/astro_gpu_diag/own_star_removal/REPORT.md): five trainings. As first specified
+Lead 3 (own network, Iris only, report the diagnostics folder): five trainings. As first specified
 it dug a crater in the Iris core (it never saw bright nebula: 0.003 % of the trained pixels > 10 sigma) and blurred
 (trained towards a denoised target). Best version: far halo removed first, target keeps the input noise, half the
 patches with their nebula amplified 1-40x, no loss on the real star cores: bright stars removed far cleaner than
@@ -617,7 +617,7 @@ trace of the masking circle around the Rosette G 5.6.
   colour residue; the Iris core keeps its structure without the blue blotches; the dark disc in the dark lanes gone.
   Open: the own rays of dominant stars are subtracted before the network (the Flaming Star spokes may stay).
 * Stage 'Learned star removal network' (star_net, between 'stars' and 'starless', off by default): the own-data
-  network as a pipeline stage (recipe "run E" of experiments/own_star_removal, library stages/star_net_lib.py). Its
+  network as a pipeline stage (recipe "run E" of experiments/own_star_net, library stages/star_net_lib.py). Its
   training target is the model-based starless image, computed inside the stage by the same function as 'starless'
   (model_starless, shared; the refactor gives the same image within float rounding) with the default settings. It
   writes star_layer.npy (stack units, far halo excluded), the model and a preview; resumable (target, measurements
@@ -639,7 +639,7 @@ trace of the masking circle around the Rosette G 5.6.
   as missing data, as in the model's path; the Noise2Noise layer is unreliable around bright cores (12-64 in a nebula
   of 36): the fine detail layers keep the model's masks; in the filled cores the detail layer takes the Wiener
   result. (Also: 'astro-gpu render --set' takes several key=value after one --set; a second --set replaces the first.)
-* Blind QC (D:/astro_gpu_diag/qc/blind3): Rosette learned > learned + photographed stars > model (model: red-magenta
+* Blind QC (the diagnostics folder): Rosette learned > learned + photographed stars > model (model: red-magenta
   cast of the dark sky, weaker texture, a ridge erased next to G 5.6 north, red blobs at G 5.6); Iris learned > model >
   photographed (model: dark and red discs, a leftover ray, a blotch at the Iris star). The whitish glow around the
   Iris star in the learned version is in the user's own image too. Photographed stars: bloated and doubled at the
@@ -689,7 +689,7 @@ trace of the masking circle around the Rosette G 5.6.
 
 ### 11.9 The founding idea tried: per-frame deconvolution before stacking (2026-10-15)
 
-Done as asked (branch `frame-deconv`, not merged; report D:/astro_gpu_diag/frame_deconv/REPORT.md): each of the 100
+Done as asked (branch `frame-deconv`, not merged; report the diagnostics folder): each of the 100
 bench Heart frames deconvolved tile by tile in the sensor frame, per colour plane, with the star shape measured on
 that frame (per tile, per colour), Richardson-Lucy with damping, then the usual drizzle. Off by default and
 bit-identical to main when off.
@@ -705,7 +705,7 @@ Next if pursued: one sharp estimate per frame on the full sensor grid, seen thro
 planes constraining it together; stars between photosites become representable, no rings), the same deconvolution
 for faint and bright stars, star photometry measured after it; then re-judge the field-evening effect.
 
-Version 2 (branch `frame-deconv-sensor`, not merged; report D:/astro_gpu_diag/frame_deconv/v2/REPORT.md): one sharp
+Version 2 (branch `frame-deconv-sensor`, not merged; report the diagnostics folder): one sharp
 scene per frame and tile on the full sensor grid, seen through the colour mosaic, the same for faint and bright stars
 (no threshold), aim a 2.2 px Gaussian, each tile's star shrinks 15 % at most. It fixes version 1 (no rings: 4/0 of
 1,538 bright stars; flux kept; green -4.4 to -5.7 % in every brightness bin; star photometry back to normal) but does
@@ -725,7 +725,7 @@ them on the covered part of the crop (`_shown`).
 ### 11.10 The glare redesign (2026-10-15 evening)
 
 User's go: fix the far halo of the dominant stars, then a network that removes only the compact star light.
-Agent report: D:/astro_gpu_diag/halo2 (halo sheets, summary_old_new.md) and D:/astro_gpu_diag/own_star_removal/<project>/H.
+Agent report: the diagnostics folder (halo sheets, summary_old_new.md) and the diagnostics folder
 
 Far halo (stars 13, merged): the halos fitted on their own surroundings were least-squares fits with a free local
 level, so a nebula rising toward the star (IC 434 at sigma Ori, the Flame beside Alnitak) pulled the amplitude and
@@ -749,8 +749,8 @@ Proposed by the agent and implemented on branch `learned-starlight` (render_prep
 saturated stars' footprints, where the measured light (image minus nebula) sinks into the noise, take the learned
 layer the starless image was cut by (noise-free) instead of fading the light out. To be judged on data.
 
-Integration and blind QC (2026-10-15 night; renders of each deliverable's saved settings, D:/astro_gpu_diag/glare_int,
-sheets D:/astro_gpu_diag/qc/glare, keys in qc/blind_keys/glare_*):
+Integration and blind QC (2026-10-15 night; renders of each deliverable's saved settings, the diagnostics folder,
+sheets the diagnostics folder, keys in qc/blind_keys/glare_*):
 - Horsehead (faithful; current vs bound + run H2 vs the same at the current white point): bound + H2 at the current
   white point first, bound + H2 second, current last (grey cross with circles on NGC 2023 - the photographed-spike
   strips of HD 37903 -, violet mottled veil around sigma Ori). All fail: the glare of Alnitak and sigma Ori stays the
@@ -821,7 +821,7 @@ navigation is between ready results (decided with him: a bar of views above the 
 
 ### 11.13 Reproducible chain (2026-10-16 night)
 
-Report: D:/astro_gpu_diag/repro/REPORT.md (merged, commit bc0edef). Two full runs on the same data now give
+Report: the diagnostics folder (merged, commit bc0edef). Two full runs on the same data now give
 bit-identical results at every stage (final render 0 levels apart; before up to 212, mean 3.3). Causes: the optics
 star-shape fit had no single answer (background vs a flat pedestal of the model: star brightnesses scattered 8 % or
 29 % against the catalogue by run) - now a linear least-squares fit with one solution (optics version 2); GPU
@@ -837,11 +837,11 @@ the current deliverables before any re-rendering.
 
 - Blind QC of the five projects re-run with the reproducible chain against their deliverables: Flaming Star better
   (re-rendered); Rosette, Horsehead, Iris tied (kept); Heart worse by the star model (pink veil, flatter knots).
-- Heart veil (report D:/astro_gpu_diag/heart_full/REPORT.md): not the star wings (the removal model covers them) nor
+- Heart veil (report the diagnostics folder): not the star wings (the removal model covers them) nor
   new holes; the star flat of the background stage is built from star brightnesses measured with the star-shape
   model, whose captured share varies by a few percent across the field and changed with the new fit; on the Heart's
   150-250 ADU sky that is several ADU of false large-scale light, which moves the sky / nebula split and the stretch.
-- Redesign tried (report D:/astro_gpu_diag/flat_nonreg/REPORT.md): a star flat from aperture photometry, independent
+- Redesign tried (report the diagnostics folder): a star flat from aperture photometry, independent
   of the model (two fits agree within 1 %, better on the stars of all five objects) and a steadier sky / nebula
   split - both removed: applied to the sky and nebula they made four of five renders clearly worse (the stars'
   brightness across the field is not the instrument's response to diffuse light).

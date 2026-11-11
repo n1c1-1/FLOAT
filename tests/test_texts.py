@@ -453,17 +453,21 @@ def test_module_stays_light():
 
 
 def test_the_interface_names_no_other_software():
-    """2 November: no text that describes our methods names another processing program or a reference processing suite. The bench's own texts (the Home
+    """2 November: no text that describes our methods names the reference program or the reference processing suite. The bench's own texts (the Home
     section of the bench and its reference images) and the credits of the data we read (client/credits.py, the
-    names' source in Astrometry) do. The stored values keep their names ("another processing program" clamping, "integration" rejection),
+    names' source in Astrometry) do. The stored values keep their names ("bilinear_guide" clamping, "integration" rejection),
     shown in words; a reason an older result stored is reworded."""
     import re
 
     from astro_gpu.client.credits import DATA_SOURCES
-    bad = re.compile(r"(?i)siril|reference_suite|wbpp|spcc")
+    names = ["siril", "wbpp", "spcc"]               # the built-in list: free programs and the acronyms of the reference suite
+    local = Path(__file__).resolve().parent.parent / "tools" / "gui_explore" / "banned_words.txt"
+    if local.exists():                              # the owner's longer list, kept out of the repository
+        names += [n.strip() for n in local.read_text(encoding="utf-8").splitlines() if n.strip()]
+    bad = re.compile("(?i)" + "|".join(re.escape(n) for n in names))
     credits = {x for s in DATA_SOURCES for x in (s["use"], s.get("note")) if x}
-    bench = re.compile(r"(?i)bench against another processing program|both another processing program and astro_gpu|compared with another processing program|another processing program tutorial|"
-                       r"another processing program \(reference\)")
+    bench = re.compile(r"(?i)bench against siril|both siril and astro_gpu|compared with siril|siril tutorial|"
+                       r"siril \(reference\)")
     for f in sorted((texts.LOCALE / "fr").glob("*.json")):
         for k, v in json.loads(f.read_text(encoding="utf-8")).items():
             if bench.search(k) or k in credits:
@@ -474,8 +478,8 @@ def test_the_interface_names_no_other_software():
             assert not any(bad.search(t) for t in texts.param_texts(st, name).values()), (st, name)
     assert not [v for v in texts.CHOICE_TEXTS.values() if bad.search(v)]
     assert not [t for t in texts.reason_templates() if bad.search(t)]
-    assert texts.choice_label("siril", "fr") == "Guide bilinéaire" and texts.choice_label("own") == "On the raw pixels"
-    old = "{n} frames: linear fit clipping ({low:g} / {high:g} σ), as a reference processing suite's WBPP from 16 frames"
+    assert texts.choice_label("bilinear_guide", "fr") == "Guide bilinéaire" and texts.choice_label("own") == "On the raw pixels"
+    old = "{n} frames: linear fit clipping ({low:g} / {high:g} σ), as the reference processing suite's WBPP from 16 frames"
     args = {"n": 40, "low": 5, "high": 3.5}
     assert texts.format_reason(old, args) == "40 frames: linear fit clipping (5 / 3.5 σ), the usual choice from 16 frames"
     assert texts.format_reason(old, args, "fr").startswith("40 images : rejet par ajustement linéaire (5 / 3,5 σ)")

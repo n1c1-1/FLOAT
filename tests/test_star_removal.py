@@ -194,8 +194,8 @@ def test_blends_and_the_size_change():
 
 
 def test_smaller_stars_leave_the_grain_of_a_dense_field_as_it_is():
-    """Issue #18: the stars shrink through a star mask (a reference image editor's Minimum through a selection of the stars,
-    A reference processing suite's MorphologicalTransformation through a star mask): the faint grain between the stars of a dense
+    """Issue #18: the stars shrink through a star mask (the reference image editor's Minimum through a selection of the stars,
+    the reference processing suite's MorphologicalTransformation through a star mask): the faint grain between the stars of a dense
     field, above STAR_LEVEL but within its noise, is not eroded into a web of filaments."""
     g = torch.Generator().manual_seed(3)
     y = (0.04 + 0.03 * torch.randn((1, 96, 96), generator=g)).clamp(0, 1).repeat(3, 1, 1)

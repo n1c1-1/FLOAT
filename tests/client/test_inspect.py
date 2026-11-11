@@ -1332,7 +1332,7 @@ def test_the_tables_and_the_charts_of_the_blocks(qapp):
 
 def test_the_stacking_tabs_say_the_frames_left_out_the_rejection_rate_and_the_coverage(qapp):
     """Inspect > Stacking: each frame left out with the engine's reason (translated), the rejected pixels next to
-    Another processing program's 0.1-0.5 %, the drizzle's coverage variation per colour against DrizzlePac's 20 % (none for Classic)."""
+    the reference program's 0.1-0.5 %, the drizzle's coverage variation per colour against DrizzlePac's 20 % (none for Classic)."""
     from astro_gpu.client import i18n
     from astro_gpu.client.tune import coverage_text, rejection_rate_text, weight_rows
     rows = [api.FrameRow(i, f"p{i}", f"f{i}.ARW", 1, "2026-08-17T00:00:00", 3.0, 1.0, 0.4, 0.5, "", False)

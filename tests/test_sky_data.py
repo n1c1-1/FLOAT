@@ -47,7 +47,7 @@ def test_without_the_star_catalogue_the_astrometry_and_what_follows_are_left_out
     _use(monkeypatch, None)
     p, w, other = _project(offline_sky / "P", sky)
     plan = runner2.plan_all(p)
-    assert plan.left_out == {w.id: {"astrometry": sky_data.NO_STARS}}
+    assert plan.left_out == {w.id: {"astrometry": sky_data.NO_STARS, "catalogs": sky_data.NO_STARS}}
     mine = {j.stage for j in plan.jobs if w.id in j.wf}
     assert "image" in mine and not mine & {"astrometry", "catalogs", "surveys", "color", "render_simple"}
     assert {j.stage for j in plan.jobs if other.id in j.wf} >= {"image", "gradient", "render_simple"}

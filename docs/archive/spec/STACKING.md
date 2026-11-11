@@ -2,7 +2,7 @@
 
 Cette page remplace la version du 1er novembre (six changements derrière des interrupteurs). Elle suit les décisions de
 l'utilisateur après le banc croisé (docs/pilot/BENCH.md). Règle du projet : chaque choix repose sur une méthode
-publiée ; rien n'est réglé sur nos images de test. Another processing program est le plancher, a reference processing suite la référence.
+publiée ; rien n'est réglé sur nos images de test. Le programme de référence est le plancher, le logiciel de traitement de référence la référence.
 
 ## Deux méthodes, l'utilisateur choisit
 
@@ -11,7 +11,7 @@ publiée ; rien n'est réglé sur nos images de test. Another processing program
 - **Drizzle** (par défaut) : chaque pixel brut est déposé à sa place exacte sur la grille de sortie, sans dématriçage ni
   interpolation. Échelle 1 et goutte 1 sauf si la règle de couverture (plus bas) en décide autrement.
 - **Empilement classique** : dématriçage RCD, recalage Lanczos-4 écrêté, rejet choisi selon le nombre d'images (comme
-  A reference processing suite). Même principe que another processing program.
+  le logiciel de traitement de référence). Même principe que le programme de référence.
 
 Chaque méthode ne montre que ses propres réglages. La liste des méthodes vient du moteur : la monochrome s'ajoutera
 sans refaire l'écran.
@@ -22,9 +22,9 @@ Selon la série, le logiciel **conseille** une méthode. Il ne choisit jamais à
 
 | Série | Conseil | Source |
 |---|---|---|
-| couleur, assez d'images bien décalées (la couverture varie de moins de 20 %) | drizzle, échelle 1 | a reference processing suite ; règle des 20 % de DrizzlePac |
-| couleur, moins de 15 images ou peu de décalage (la couverture varie de plus de 20 %) | classique | a reference processing suite (drizzle utile dès 15 à 20 images décalées) ; DrizzlePac |
-| étoiles de moins de 2 px de FWHM et couverture qui tient | drizzle 1,5× ou 2× | doc de another processing program, DrizzlePac |
+| couleur, assez d'images bien décalées (la couverture varie de moins de 20 %) | drizzle, échelle 1 | Le logiciel de traitement de référence ; règle des 20 % de DrizzlePac |
+| couleur, moins de 15 images ou peu de décalage (la couverture varie de plus de 20 %) | classique | Le logiciel de traitement de référence (drizzle utile dès 15 à 20 images décalées) ; DrizzlePac |
+| étoiles de moins de 2 px de FWHM et couverture qui tient | drizzle 1,5× ou 2× | doc du programme de référence, DrizzlePac |
 | monochrome | classique ; drizzle seulement si étoiles < 2 px et assez d'images | même règle (sans matrice de Bayer, le drizzle n'ajoute que du détail) |
 
 **Comment c'est montré** : un cadre discret « Conseillé » autour de la méthode conseillée, avec une petite icône « i »
@@ -34,7 +34,7 @@ Le conseil est calculé sur les images que la sélection garde, pas sur toutes l
 ## Mesure des étoiles et règle de couverture : par défaut
 
 - **Taille des étoiles par ajustement d'un profil de Moffat**, en pleine résolution sur les pixels verts d'étoiles
-  isolées, comme another processing program et a reference processing suite. L'ancienne mesure (blocs de 2 × 2 pixels) donnait environ le double de la vraie
+  isolées, comme le programme de référence et le logiciel de traitement de référence. L'ancienne mesure (blocs de 2 × 2 pixels) donnait environ le double de la vraie
   taille des petites étoiles. L'ancienne mesure reste choisissable (« Version précédente »).
 - **Règle de couverture** pour l'échelle et la goutte : échelle 1 et goutte 1, sauf si les étoiles font moins de 2 px
   et si la couverture du rouge et du bleu varie encore de moins de 20 % à l'échelle plus fine ; la goutte est alors la
@@ -43,12 +43,12 @@ Le conseil est calculé sur les images que la sélection garde, pas sur toutes l
 ## Sélection des images : poids minimal
 
 Par défaut, **toutes les images alignées sont gardées**, sauf celles dont le poids est sous 5 % de celui de la
-meilleure (le poids minimal de a reference processing suite). Le poids fait le reste : une mauvaise image compte moins. C'est ce que font
-Another processing program et a reference processing suite par défaut. Chaque image écartée a sa raison affichée.
+meilleure (le poids minimal du logiciel de traitement de référence). Le poids fait le reste : une mauvaise image compte moins. C'est ce que font
+Le programme de référence et le logiciel de traitement de référence par défaut. Chaque image écartée a sa raison affichée.
 
 Deux autres règles restent au choix, dans le bloc Sélection :
 - **Filtres k × σ** : en plus, on écarte les images à plus de 2,5 σ robustes de la médiane de la nuit en taille des
-  étoiles, rondeur ou transparence (les filtres de another processing program). Le filtre de transparence peut être coupé.
+  étoiles, rondeur ou transparence (les filtres du programme de référence). Le filtre de transparence peut être coupé.
 - **Version précédente** : seuils fixes de transparence et de taille d'étoile.
 
 Le bloc Sélection dit en clair la règle active. Les deux curseurs (transparence minimale, taille d'étoile maximale)
@@ -72,15 +72,15 @@ projet qui garde l'un des réglages retirés est lu sans lui.
 Le dématriçage RCD tirait de la lumière verte vers le rouge et le bleu des petites étoiles, ce qui donnait une dominante
 orange sur Heart après notre étape de couleur. Comme le font dcraw, RawTherapee et darktable, on **équilibre les
 couleurs avant le dématriçage et on retire cet équilibre après**. Réglage « Balance des blancs avant dématriçage »,
-activé par défaut ; désactivé, on retrouve exactement another processing program. Le rejet winsorisé travaille maintenant sur des masques
+activé par défaut ; désactivé, on retrouve exactement le programme de référence. Le rejet winsorisé travaille maintenant sur des masques
 (plus d'écriture indexée sur la carte graphique, qui plantait avec peu d'images).
 
 L'étape de couleur (version 4) fixe le point blanc par un ajustement robuste des rapports de couleur mesurés des étoiles
-contre ceux du catalogue, comme la calibration spectrophotométrique de a reference processing suite et de another processing program.
+contre ceux du catalogue, comme la calibration spectrophotométrique du logiciel de traitement de référence et du programme de référence.
 
 ## À l'essai, pas par défaut
 
-- Rejet du drizzle issu de l'intégration des images dématricées et recalées (la méthode de a reference processing suite) : option du
+- Rejet du drizzle issu de l'intégration des images dématricées et recalées (la méthode du logiciel de traitement de référence) : option du
   drizzle, évaluée sur le banc avant tout changement de défaut.
 
 ## Dans le logiciel
@@ -89,7 +89,7 @@ Réglages visibles de l'empilement : la méthode (deux cartes), puis pour le dri
 classique le dématriçage, l'interpolation, l'écrêtage et le rejet. La règle de sélection est dans le bloc Sélection. En
 « Avancé » : noyau, seuils de rejet, modèle de bruit du capteur, motif fixe, règle d'échelle.
 
-**Dans Inspection › Empilement** : la méthode utilisée, le taux de rejet à côté du repère de another processing program (0,1 à 0,5 %), les
+**Dans Inspection › Empilement** : la méthode utilisée, le taux de rejet à côté du repère du programme de référence (0,1 à 0,5 %), les
 cartes de couverture rouge, vert et bleu avec le repère de 20 % de DrizzlePac, les images gardées et écartées avec leur
 raison.
 

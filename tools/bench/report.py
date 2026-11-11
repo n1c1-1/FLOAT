@@ -7,7 +7,7 @@
                                                  <!-- vtable:LEVEL:CASE -->, <!-- vdurations:CASE -->,
                                                  <!-- darkcheck:CASE --> and copy its sheets
 
-Writes docs/pilot/bench/tables_<level>.md (one table per case: ours, another processing program, which is better) and copies
+Writes docs/pilot/bench/tables_<level>.md (one table per case: ours, the reference program, which is better) and copies
 <case>/sheet_<level>.jpg to docs/pilot/bench/ (a folder kept out of git). Also prints the durations.
 """
 from __future__ import annotations
@@ -39,7 +39,7 @@ def better(o, s, higher: bool, tol: float, rel: bool = False, abs_tol: float = 0
     d = (o - s) / abs(s) if rel and s else (o - s)
     if abs(d) <= tol or abs(o - s) <= abs_tol:
         return "égal"
-    return "**nous**" if (d > 0) == higher else "Siril"
+    return "**nous**" if (d > 0) == higher else "reference"
 
 
 def durations(case: str, level: str, variant: str = "", siril_variant: str | None = None) -> dict:
@@ -149,7 +149,7 @@ def table(case: str, level: str) -> str:
                     f"{_f(tg.get('noise_sb_ours'))} | {_f(tg.get('signal_sb_siril'))} / "
                     f"{_f(tg.get('noise_sb_siril'))} | |")
     rows.append(f"| Durée (min) | {_f(du.get('ours_min'), '{:.1f}')} | {_f(du.get('siril_min'), '{:.1f}')} | |")
-    head = "| Mesure | astro_gpu | another processing program | Meilleur |\n|---|---|---|---|\n"
+    head = "| Mesure | astro_gpu | The reference program | Meilleur |\n|---|---|---|---|\n"
     return head + "\n".join(rows) + "\n"
 
 
@@ -161,7 +161,7 @@ def _fr(v: float, fmt: str, sign: bool = True) -> str:
 
 
 def overall() -> str:
-    """Our gap to another processing program on every case: Base, (Express) in brackets; a case whose Base is its Express shows one."""
+    """Our gap to the reference program on every case: Base, (Express) in brackets; a case whose Base is its Express shows one."""
     def load(case, level):
         f = C.BENCH / case / f"measures_{level}.json"
         return json.loads(f.read_text(encoding="utf-8")) if f.exists() else None
@@ -197,15 +197,15 @@ def overall() -> str:
                                             "{:.2f}")),
         ("Planéité du fond (mag/arcsec²)", lambda m: _fr(m["flatness"][o]["spread_sb"] - m["flatness"][s]["spread_sb"],
                                                          "{:.2f}")),
-        ("Erreur de couleur B−R (nous / another processing program)", lambda m: _fr(m["colours"][o]["b_r"]["scatter_bp_rp"], "{:.3f}",
+        ("Erreur de couleur B−R (nous / le programme de référence)", lambda m: _fr(m["colours"][o]["b_r"]["scatter_bp_rp"], "{:.3f}",
                                                                False) + " / " +
          _fr(m["colours"][s]["b_r"]["scatter_bp_rp"], "{:.3f}", False)),
-        ("Erreur de couleur V−R (nous / another processing program)", lambda m: _fr(m["colours"][o]["g_r"]["scatter_bp_rp"], "{:.3f}",
+        ("Erreur de couleur V−R (nous / le programme de référence)", lambda m: _fr(m["colours"][o]["g_r"]["scatter_bp_rp"], "{:.3f}",
                                                                False) + " / " +
          _fr(m["colours"][s]["g_r"]["scatter_bp_rp"], "{:.3f}", False)),
-        ("Points d'une seule couleur par degré² (nous / another processing program)",
+        ("Points d'une seule couleur par degré² (nous / le programme de référence)",
          lambda m: f"{m['coloured_spots'][o]['all_per_deg2']:.0f} / {m['coloured_spots'][s]['all_per_deg2']:.0f}"),
-        ("Traînées le long de la dérive (nous / another processing program ; 1 = aucune)",
+        ("Traînées le long de la dérive (nous / le programme de référence ; 1 = aucune)",
          lambda m: _fr(m["streaks"][o]["ratio_along"], "{:.2f}", False) + " / " +
          _fr(m["streaks"][s]["ratio_along"], "{:.2f}", False)),
     ]
@@ -246,13 +246,13 @@ def calcheck_table() -> str:
 
 def _vcols(case: str, level: str) -> list[tuple[str, str, dict]]:
     """The columns of a variant table, from the measures of every image of the level on the same sky
-    (measures_<level>_all.json): (label, image name, its measures) — ours for every variant, then another processing program's."""
+    (measures_<level>_all.json): (label, image name, its measures) — ours for every variant, then the reference program's."""
     f = C.BENCH / case / f"measures_{level}_all.json"
     if not f.exists():
         return []
     m = json.loads(f.read_text(encoding="utf-8"))
     cols = []
-    for side, lab in (("ours", "nous"), ("siril", "Siril")):
+    for side, lab in (("ours", "nous"), ("siril", "reference")):
         for n in m["images"]:
             if n.startswith(side + "_"):
                 v = n.split("_", 1)[1]
@@ -325,7 +325,7 @@ def vtable(case: str, level: str) -> str:
         return "(mesures pas encore faites)\n"
     vals = [(lab, _get(e)) for lab, _n, e in cols]
     by = dict(vals)
-    pairs = [("B face à A (nous)", "nous A", "nous B"), ("B face à A (another processing program)", "another processing program A", "another processing program B")]
+    pairs = [("B face à A (nous)", "nous A", "nous B"), ("B face à A (le programme de référence)", "reference A", "reference B")]
     pairs = [p for p in pairs if p[1] in by and p[2] in by]
     head = "| Mesure | " + " | ".join(lab for lab, _ in vals) + "".join(f" | {p[0]}" for p in pairs) + " |\n"
     head += "|---|" + "---|" * (len(vals) + len(pairs)) + "\n"
@@ -334,7 +334,7 @@ def vtable(case: str, level: str) -> str:
         cells = []
         for lab, v in vals:
             x = v.get(key)
-            if key == "frames" and lab.startswith("Siril"):
+            if key == "frames" and lab.startswith("reference"):
                 x = siril_frames(case, level, lab.split()[-1])
             cells.append(_f(x, fmt) if x is not None else "–")
         cmp = [_cmp(by[a].get(key), by[b].get(key), higher, tol, rel) for _, a, b in pairs]
@@ -387,7 +387,7 @@ def darkcheck_table(case: str) -> str:
 
 
 def vdurations(case: str) -> str:
-    rows = ["| Niveau | Variante | another processing program (préparation + fin) | Nous (tout) | dont astrométrie + catalogues | "
+    rows = ["| Niveau | Variante | Le programme de référence (préparation + fin) | Nous (tout) | dont astrométrie + catalogues | "
             "Nous sans le réseau |", "|---|---|---|---|---|---|"]
     for level in C.LEVELS:
         for v in C.variants_of(case):
@@ -430,7 +430,7 @@ def fill_variants(case: str) -> int:
 
 
 def durations_table() -> str:
-    rows = ["| Cas | Niveau | another processing program (préparation + fin) | Nous (tout) | dont astrométrie + catalogues (réseau) | "
+    rows = ["| Cas | Niveau | Le programme de référence (préparation + fin) | Nous (tout) | dont astrométrie + catalogues (réseau) | "
             "Nous sans le réseau |", "|---|---|---|---|---|---|"]
     for case in C.CASES:
         for level in C.LEVELS:

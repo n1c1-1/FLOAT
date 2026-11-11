@@ -6,7 +6,7 @@ obsolètes.
 ## Chantiers, dans l'ordre
 
 Le débruitage est fait (4 novembre, `docs/chantiers/debruitage.md`) : un réseau pré-entraîné, adapté à l'image en
-option ; meilleur que notre ancien apprentissage sur chaque image, que a reference gradient tool et que a reference denoiser sur le banc.
+option ; meilleur que notre ancien apprentissage sur chaque image, que l'outil de gradient de référence et que le débruiteur de référence sur le banc.
 
 1. **Le retrait des étoiles** (état de l'art : `docs/chantiers/etoiles_etat_de_lart.md` ; échantillons l'outil de référence et
    notre méthode : `tools/bench/stars_samples.py`, `F:\astro_essais\stars_compare`). Deux sujets : la séparation en
@@ -27,8 +27,8 @@ option ; meilleur que notre ancien apprentissage sur chaque image, que a referen
   pixels défectueux sur la DWARF mini ; un alignement moins précis sur le Celestron Origin (0,94 px).
 
 - **La couleur** (fiche : `docs/chantiers/couleur.md`) : c'est désormais une balance des blancs photométrique, comme
-  Another processing program (la matrice qui produisait le magenta est sortie du code, la sortie simple prend le niveau du ciel du bloc
-  Gradient). Mesurée face à another processing program le 4 novembre sur 5 cas (fiche, §5) : d'accord à 0,5 % avec SPCC, PCC s'écarte de 3
+  le programme de référence (la matrice qui produisait le magenta est sortie du code, la sortie simple prend le niveau du ciel du bloc
+  Gradient). Mesurée face au programme de référence le 4 novembre sur 5 cas (fiche, §5) : d'accord à 0,5 % avec SPCC, PCC s'écarte de 3
   à 15 %. M8 (SPCC) fait le 4 novembre au soir : d'accord à 2 % près.
 - **Les tests de l'interface** sur Heart express : 42 rouges (aucun défaut du code). Écarter ceux du débruitage, des
   étoiles et du workflow Complet (« à réintroduire avec leur chantier »), recaler les chiffres de l'ancien petit projet

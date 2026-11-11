@@ -43,9 +43,19 @@ INTERNAL = re.compile(r"\b(legacy|v1|v2|render_simple|star_removal|debruitage|et
                       r"traceback|none|null|true|false|nan|keyerror|valueerror|typeerror|attributeerror|runtimeerror|"
                       r"bench|banc|issue|rosette|heart|iris|m8|pilot|todo|fixme)\b|#\d+|"
                       r"\w~\d|[a-z]+_[a-z_]+|\.py\b|[A-Za-z]:[/\\]|/cache/|\.astroproj", re.I)
-EXTERNAL = re.compile(r"\b(star_removal|star_removal\+\+|siril|reference_suite|reference_editor|reference_photo_editor|reference_gradient|deepsnr|reference_denoiser|"
-                      r"a reference deconvolution tool|a reference star-removal tool|a reference tool maker|a reference stacking program|dss|a reference processing program|sequator|a reference plate solver|"
-                      r"cosmic clarity|a reference denoiser|an image editor|affinity|nina|sharpcap|astrometry\.net|seti astro)\b", re.I)
+
+
+def _banned_words() -> re.Pattern:
+    """The names the interface must not use come from a local file (one per line, untracked): without it the check is skipped."""
+    f = Path(__file__).with_name("banned_words.txt")
+    names = [n.strip() for n in f.read_text(encoding="utf-8").splitlines() if n.strip()] if f.exists() else []
+    if not names:
+        print(f"{f.name} is absent: the check of external names is skipped")
+        return re.compile(r"(?!)")
+    return re.compile(r"\b(" + "|".join(re.escape(n) for n in names) + r")\b", re.I)
+
+
+EXTERNAL = _banned_words()
 PH = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)(?:[:!][^}]*)?\}")
 
 

@@ -1,9 +1,9 @@
 """Rejection of the Classic stacking method (astro_gpu/core/rejection_classic.py: WBPP's rule by the number of frames,
-Another processing program's percentile / winsorized / GESDT, a reference processing suite's linear fit), and the whole Classic path
+The reference program's percentile / winsorized / GESDT, the reference processing suite's linear fit), and the whole Classic path
 (astro_gpu/core/stack_classic.py) on synthetic frames.
 
-The vectorised methods are checked against straight ports of the tools' loops for one pixel (another processing program's
-apply_rejection_float, a reference processing suite's LinearFitRejectionThread with an exact L1 line) and against the NIST worked
+The vectorised methods are checked against straight ports of the tools' loops for one pixel (the reference program's
+apply_rejection_float, the reference processing suite's LinearFitRejectionThread with an exact L1 line) and against the NIST worked
 example of the generalized ESD test (Rosner 1983). The whole path stacks synthetic CFA frames of a known sky (stars,
 gradients), registered by shifts and turns, with a satellite trail, a cosmic ray and bad pixels.
 """
@@ -65,7 +65,7 @@ def _med(x):
 
 
 def siril_winsorized(vals, low, high):
-    """Another processing program's WINSORIZED branch of apply_rejection_float for one pixel (rejected values, low and high)."""
+    """the reference program's WINSORIZED branch of apply_rejection_float for one pixel (rejected values, low and high)."""
     stack, N, r = list(vals), len(vals), 0
     lows, highs = [], []
     while True:
@@ -116,8 +116,8 @@ def test_winsorized_keeps_sirils_guard_of_four_values():
 def test_winsorized_takes_every_column_a_classic_band_can_hold():
     """A band as M8's classic stack gave it (14 frames, where the bench stopped on a CUDA bound check): columns with
     0 to 14 values (registration edges), plateaus of equal values (sigma 0 once winsorized), infinities, outliers.
-    Nothing outside the values is rejected, at least four values are kept (another processing program's guard), and every column is
-    Another processing program's loop on its values."""
+    Nothing outside the values is rejected, at least four values are kept (the reference program's guard), and every column is
+    the reference program's loop on its values."""
     rng = np.random.default_rng(9)
     N, P = 14, 1500
     v = rng.normal(0.0, 0.01, (N, P))
@@ -143,7 +143,7 @@ def test_winsorized_takes_every_column_a_classic_band_can_hold():
             assert not bool(rej[:, j].any())
             continue
         el, eh = siril_winsorized(v[ok, j], 3.0, 3.0)
-        if len(el) + len(eh) <= ok.sum() - 4:                    # where another processing program's guard does not bind (its order)
+        if len(el) + len(eh) <= ok.sum() - 4:                    # where the reference program's guard does not bind (its order)
             assert sorted(v[lo[:, j].numpy(), j]) == el and sorted(v[hi[:, j].numpy(), j]) == eh, j
 
 
@@ -178,8 +178,8 @@ def test_the_median_line_fit_minimises_the_mean_absolute_deviation():
         assert np.all(adev.numpy() <= best * (1 + 2e-3) + 1e-12)
 
 
-def pixinsight_linear_fit(vals, low, high):
-    """A reference processing suite's LinearFitRejectionThread for one pixel (2016 code), with the exact L1 line."""
+def reference_linear_fit(vals, low, high):
+    """the reference processing suite's LinearFitRejectionThread for one pixel (2016 code), with the exact L1 line."""
     r = sorted(vals)
     lows, highs = [], []
     if len(r) < 5:
@@ -209,7 +209,7 @@ def pixinsight_linear_fit(vals, low, high):
     return sorted(lows), sorted(highs)
 
 
-def test_linear_fit_is_pixinsights_loop():
+def test_linear_fit_is_the_reference_loop():
     rng = np.random.default_rng(9)
     N, P = 16, 150
     v = rng.normal(1000, 20, (N, P))
@@ -220,7 +220,7 @@ def test_linear_fit_is_pixinsights_loop():
     lo, hi = rc.linear_fit_clip(torch.from_numpy(v), 5.0, 3.5)
     same = 0
     for j in range(P):
-        el, eh = pixinsight_linear_fit(v[:, j], 5.0, 3.5)
+        el, eh = reference_linear_fit(v[:, j], 5.0, 3.5)
         same += sorted(v[lo[:, j].numpy(), j]) == el and sorted(v[hi[:, j].numpy(), j]) == eh
     assert same >= 0.97 * P                     # the L1 line is not always unique: rare ties at a threshold
 

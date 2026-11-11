@@ -703,3 +703,26 @@ def test_every_new_text_has_its_french():
         assert api is not None
     finally:
         i18n.set_language("en")
+
+
+def test_a_progress_never_goes_back_nor_reaches_100_before_the_end(tmp_path):
+    """#158: a job's own estimate runs out before it ends and the time left clamped at 0 (100 %), then the next ETA
+    raised it (Calibration 100 -> 69 %). A running job stays under 100 %, its time left above 0, and no shown figure,
+    of the block or of the run, is ever lower than the one before."""
+    jobs = [runner2.Job("k1", "calibrate", "calibration", [1], 1, {}, 10.0),
+            runner2.Job("k2", "stack", "stacking", [1], 1, {"calibrate": "k1"}, 10.0)]
+    t = RunTrack(jobs, "r1")
+    t.apply([{"type": "run_start", "t": 0.0}, {"type": "stage_start", "t": 0.0, "key": "k1", "stage": "calibrate"}])
+    # events: none for 40 s (the estimate of 10 s is long gone), then an ETA of 60 s more at 50 %, later one of 5 s
+    events = {40: {"frac": 0.5, "eta": 60.0}, 70: {"frac": 0.6, "eta": 5.0}}
+    block, whole, seen = [], [], []
+    for now in range(1, 101):
+        if now in events:
+            t.apply([{"type": "progress", "t": float(now), "key": "k1", "stage": "calibrate", **events[now]}])
+        block.append(t.progress([t.by_key["k1"]], float(now)))
+        whole.append(t.fraction(float(now)))
+        seen.append(RunTrack.left(t.by_key["k1"], float(now)))
+    assert block == sorted(block) and whole == sorted(whole)
+    assert max(block) < 1.0 and max(whole) < 1.0 and min(seen) > 0.0
+    t.apply([{"type": "stage_end", "t": 101.0, "key": "k1", "stage": "calibrate", "status": "done", "duration": 101.0}])
+    assert t.progress([t.by_key["k1"]], 101.0) == 1.0

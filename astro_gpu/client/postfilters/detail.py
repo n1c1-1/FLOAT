@@ -3,20 +3,20 @@
 * **The starlet transform** (the isotropic undecimated wavelet transform, B3 spline a trous: J.-L. Starck, F. Murtagh
   and J. Fadili, "Sparse Image and Signal Processing", 2010, ch. 3; J.-L. Starck and F. Murtagh, "Astronomical Image and
   Data Analysis", 2006): c(j+1) = h(j) * c(j) with h = [1, 4, 6, 4, 1] / 16 dilated by 2^j, w(j+1) = c(j) - c(j+1); the
-  image is the sum of its layers and the residual. Layer j holds the structures of about 2^(j-1) pixels. Another processing program's
-  Wavelets tool and a reference processing suite's MultiscaleLinearTransform use it.
-* **Multiscale sharpening** (a reference processing suite MultiscaleLinearTransform "bias", another processing program Wavelets): each layer multiplied by
-  (1 + bias). On the CIE L* lightness (a reference processing suite's default target: the colours kept) or on each RGB channel.
-* **Multiscale noise reduction** (a reference processing suite MultiscaleLinearTransform noise reduction; Starck and Murtagh 2006, 2.3:
+  image is the sum of its layers and the residual. Layer j holds the structures of about 2^(j-1) pixels. The reference program's
+  Wavelets tool and the reference processing suite's MultiscaleLinearTransform use it.
+* **Multiscale sharpening** (the reference processing suite MultiscaleLinearTransform "bias", the reference program Wavelets): each layer multiplied by
+  (1 + bias). On the CIE L* lightness (the reference processing suite's default target: the colours kept) or on each RGB channel.
+* **Multiscale noise reduction** (the reference processing suite MultiscaleLinearTransform noise reduction; Starck and Murtagh 2006, 2.3:
   soft thresholding): each layer's coefficients shrunk towards zero by k sigma(j), sigma(j) = sigma(1) e(j) / e(1) with
   sigma(1) the MAD of the first layer / 0.6745 and e(j) the noise of each starlet layer for a unit Gaussian noise
   (0.889, 0.200, 0.086, 0.041, 0.020), then mixed with the layer by the amount. On the lightness, the chrominance
   (CIE a* b*) or each RGB channel.
-* **CLAHE** (K. Zuiderveld, "Contrast Limited Adaptive Histogram Equalization", Graphics Gems IV, 1994; another processing program's CLAHE,
-  A reference processing suite's LocalHistogramEqualization): on the CIE L* lightness, histograms of 256 levels per tile (a reference processing suite's
+* **CLAHE** (K. Zuiderveld, "Contrast Limited Adaptive Histogram Equalization", Graphics Gems IV, 1994; the reference program's CLAHE,
+  the reference processing suite's LocalHistogramEqualization): on the CIE L* lightness, histograms of 256 levels per tile (the reference processing suite's
   default resolution), clipped at the contrast limit times the mean and redistributed as OpenCV's ``createCLAHE`` does,
   the tables interpolated bilinearly between tile centres and linearly between levels (no posterisation of smooth
-  gradients), then mixed with the original lightness by the amount (a reference processing suite's Amount).
+  gradients), then mixed with the original lightness by the amount (the reference processing suite's Amount).
 
 * **Highlight compression** (a base and its detail by the guided filter: K. He, J. Sun, X. Tang, "Guided Image
   Filtering", IEEE TPAMI 35(6), 2013, section 4.1 "detail enhancement and HDR compression"): the lightness split into a

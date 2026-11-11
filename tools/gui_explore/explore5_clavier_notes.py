@@ -204,7 +204,7 @@ def keys():
         sh = ex.shot(f"note_keys_{rep}")
         hit("keys", has and not redo_shift and right == s0, sh)
     note("keys", "question", "Raccourcis attendus absents : Ctrl+Maj+Z, flèches entre blocs, F2",
-         "Ctrl+Maj+Z (rétablir dans a reference image editor et a reference photo editor) ne fait rien : seul Ctrl+Y rétablit. Avec un bloc "
+         "Ctrl+Maj+Z (rétablir dans l'éditeur d'images de référence et l'éditeur photo de référence) ne fait rien : seul Ctrl+Y rétablit. Avec un bloc "
          "sélectionné, les flèches ne passent pas au bloc voisin et F2 ne renomme rien (Windows). Ctrl+C / Ctrl+V / "
          "Ctrl+D ne font rien non plus (aucun copier-coller ou dupliquer de bloc). À décider : lesquels ajouter.",
          ST + ["Clic sur Gradient, Suppr, Ctrl+Z", "Ctrl+Maj+Z : Gradient reste là",

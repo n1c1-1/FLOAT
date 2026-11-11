@@ -265,6 +265,9 @@ class Planner:
             why = self.need(w, d, as_input=True)
             if why:                                     # a result it reads cannot be made here: neither can it
                 self.blocked[k] = why
+                own = self.lacks(w, stage)              # and it needs data of the sky itself: said for it too, so that
+                if own:                                 # its block is marked, not only the earlier one (#161: Color)
+                    self.left_out.setdefault(w.id, {})[stage] = own
                 return why
         why = self.lacks(w, stage)
         if why:                                         # its data of the sky is not here: left out, said for it

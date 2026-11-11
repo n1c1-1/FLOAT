@@ -2,7 +2,9 @@
 ; /DStageDir=<the staged files> /DOutputDir=<where the .exe goes> /DAppVersion=<version> /DMaxRootLen=<characters>.
 ; The files are copied here; the libraries are fetched right after by setup\setup_env.py (its own window, or text when
 ; the installer runs silently). The Asterion plate solver and its index come inside, in {app}\asterion (nothing of it is
-; fetched). The uninstaller removes only this program's own folders: the user's projects and settings live elsewhere and
+; fetched). The star catalogue (1.85 GB) is fetched by that same step into {app}\sky, which is neither in the staged
+; files nor in [InstallDelete]: an update reinstalls the program over it and the setup finds every file whole, so it
+; fetches nothing again. The uninstaller removes only this program's own folders: the user's projects and settings live elsewhere and
 ; are never touched.
 
 #ifndef StageDir
@@ -43,8 +45,8 @@ LanguageDetectionMethod=uilanguage
 UsePreviousAppDir=yes
 CloseApplications=yes
 RestartApplications=no
-; the CPU case; the NVIDIA case is checked with the exact figures before anything is downloaded
-ExtraDiskSpaceRequired=3221225472
+; the CPU case plus the star catalogue (2 GB); the NVIDIA case is checked with the exact figures before downloading
+ExtraDiskSpaceRequired=5368709120
 
 [Languages]
 ; the notices of the data and programs FLOAT carries (build.py writes them from the credits of About), shown before
@@ -91,6 +93,8 @@ Type: filesandordirs; Name: "{app}\app"
 Type: filesandordirs; Name: "{app}\setup"
 ; the plate solver and its index; with the wide-field file Asterion may have written beside the index
 Type: filesandordirs; Name: "{app}\asterion"
+; the star catalogue the setup fetched, with the .part files of a fetch that was cut
+Type: filesandordirs; Name: "{app}\sky"
 Type: filesandordirs; Name: "{app}\downloads"
 Type: filesandordirs; Name: "{app}\cache"
 Type: filesandordirs; Name: "{app}\logs"

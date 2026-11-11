@@ -16,7 +16,7 @@ The bench homes:
   catalogue items of the user's cache that do not depend on the field (XP spectra by Gaia id, the blind-solve quads,
   Hipparcos cones). The Gaia cones are fetched by the first run of each case and level (their cache key is the exact
   cell centre, which moves with the stack's astrometric solution).
-- _siril/config.ini: a copy of the user's another processing program settings, for another processing program-cli -i (another processing program never writes the user's own).
+- _siril/config.ini: a copy of the user's the reference program settings, for siril-cli -i (the reference program never writes the user's own).
 """
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ def copy(files: list[Path], dst: Path) -> list[dict]:
         if not t.exists() or t.stat().st_size != f.stat().st_size:
             shutil.copy2(f, t)
         out.append({"name": f.name, "size": f.stat().st_size, "source": f.as_posix()})
-    # anything else in the folder would be read by another processing program's convert: refuse it
+    # anything else in the folder would be read by the reference program's convert: refuse it
     extra = sorted(set(p.name for p in dst.iterdir()) - {f.name for f in files})
     if extra:
         raise SystemExit(f"{dst} holds files that are not in the frozen list: {extra[:5]}")
@@ -76,7 +76,7 @@ def expected_calibration(c: dict, black: float) -> str:
     if "bias" in have:
         parts.append("master bias (offset) subtracted from flats and lights")
     else:
-        parts.append(f"no bias frames: Siril uses a synthetic offset at the raw black level ({black:g} ADU)")
+        parts.append(f"no bias frames: The reference program uses a synthetic offset at the raw black level ({black:g} ADU)")
     if "darks" in have:
         parts.append("master dark subtracted from the lights (with its bias), hot pixels from the dark")
     if "flats" in have:
@@ -147,7 +147,7 @@ def build_case(name: str) -> dict:
 
 
 def homes() -> None:
-    """The bench home of our runs and the another processing program settings copy (the user's are only read)."""
+    """The bench home of our runs and the reference program settings copy (the user's are only read)."""
     prof = C.AG_HOME / "camera_profiles"
     prof.mkdir(parents=True, exist_ok=True)
     for f in sorted((C.USER_AG / "camera_profiles").iterdir()):
@@ -172,7 +172,7 @@ def homes() -> None:
     C.SIRIL_CFG.parent.mkdir(parents=True, exist_ok=True)
     if not C.SIRIL_CFG.exists() and C.SIRIL_CFG_USER.is_file():
         shutil.copy2(C.SIRIL_CFG_USER, C.SIRIL_CFG)
-        print(f"Siril settings copied to {C.SIRIL_CFG}")
+        print(f"The reference program settings copied to {C.SIRIL_CFG}")
 
 
 def main() -> int:

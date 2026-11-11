@@ -222,7 +222,7 @@ def test_removed_settings_stored_in_a_project_are_ignored(tmp_path):
 def test_the_thresholds_selection_keeps_its_keys_under_its_old_name(tmp_path):
     """``selection = thresholds`` was stored as "legacy": both read the same, with the key such results always had
     (the previous default, out of the key); the default (minimum weight) is another result."""
-    from astro_gpu.stages.stack import StackParams
+    from astro_gpu.stages.stack import CHOICE_ALIASES, StackParams
     assert StackParams(selection="legacy").selection == "thresholds"
     p = _project2(tmp_path)
     w = p.workflows[1]
@@ -509,7 +509,7 @@ def test_drizzle_with_the_integrations_rejection(small_night):
 
 
 def test_choice_values_are_checked():
-    from astro_gpu.stages.stack import StackParams
+    from astro_gpu.stages.stack import CHOICE_ALIASES, StackParams
     for name in ("selection", "classic_rejection", "drizzle_rejection", "classic_cfa_balance"):
         with pytest.raises(ValueError, match=name):
             StackParams(**{name: "wrong"})
@@ -585,3 +585,12 @@ def test_the_crop_zone_stacks_the_image_of_the_whole_field_cut(night, tmp_path, 
     cut = whole[:, y:y + part.shape[1], x:x + part.shape[2]]
     m = 12
     assert np.median(np.abs(part - cut)[:, m:-m, m:-m]) < 0.02 * np.std(cut)
+
+
+def test_a_project_saved_with_the_old_clamping_names_opens_with_the_new_ones():
+    """The clamping values once named the program each came from; saved projects still carry them."""
+    from astro_gpu.stages.stack import CHOICE_ALIASES, StackParams
+    for old, new in CHOICE_ALIASES["classic_clamping"].items():
+        assert StackParams(classic_clamping=old).classic_clamping == new
+        assert StackParams(classic_clamping=old).model_dump() == StackParams(classic_clamping=new).model_dump()
+    assert StackParams().classic_clamping == "bilinear_guide"

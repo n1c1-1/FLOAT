@@ -64,6 +64,7 @@ STATE_TIP = {WAITING: "Waiting", RUNNING: "Running", DONE: "Done", FAILED: "Fail
              SKIPPED: "Not run", NOT_STARTED: "Not run"}
 ROW_H = 28
 WARN_NOTE = "⚠ "                  # a note of the plan that opens with it: drawn with the warning icon
+INFO_NOTE = "ⓘ "                  # one that opens with this: information, drawn with the information icon
 #: why nothing can be computed yet (the status bar's words; exploration 6.7 and #36)
 NO_DATA = "Nothing to compute: add lights or image"
 ROWS_MAX_H = 440
@@ -596,6 +597,20 @@ class RunDialog(QDialog):
         views = [v for v in views.values() if v is not None]
         return all(self.s.has_data(v) for v in views) if views else self.s.has_data()
 
+    def _asterion_note(self) -> list[str]:
+        """Information, not a warning: the plan has an Astrometry and the plate solver of its first solution is not
+        there or cannot run, so the field is found by FLOAT's own search (the run's log and Inspect's checks say it)."""
+        if self.plan is None or not any(j.stage.split("@")[0].split("~")[0] == "astrometry" for j in self.plan.jobs):
+            return []
+        from ..core import asterion
+        st = asterion.status()
+        if st.ok:
+            return []
+        if st.missing:
+            return [_("Astrometry: Asterion is not installed, the field is found by FLOAT's own search (minutes rather "
+                      "than a second when the focal length is unknown).")]
+        return [_("Astrometry: Asterion cannot run ({why}), the field is found by FLOAT's own search.").format(why=st.why)]
+
     def _file_warnings(self) -> list[str]:
         """The files that may be mistakes in the sessions the plan reads (issue #58, exploration 6.10: said on the
         Session block and in its panel, and before the run)."""
@@ -636,6 +651,7 @@ class RunDialog(QDialog):
                              'Catalogs & astrometry').format(name=v.name if v is not None else self.names.get(wid, "?"),
                                                             block=block_title(None, b) if b else stage,
                                                             why=_(why).rstrip(".")))
+        out += [INFO_NOTE + text for text in self._asterion_note()]
         if self.plan is not None and self.plan.jobs and self.has_data():      # no disk need without data (6.7)
             free = self.c.free_gb() if self.c is not None else None
             if free is None and sync and self.c is not None:
@@ -666,6 +682,7 @@ class RunDialog(QDialog):
         if ph == "plan":
             for text in self.warnings():
                 self.warn.addWidget(IconText("warning", text[len(WARN_NOTE):], "warning", "warn") if text.startswith(WARN_NOTE)
+                                    else IconText("info", text[len(INFO_NOTE):], "normal", "small") if text.startswith(INFO_NOTE)
                                     else label(text, "warn", wrap=True))
                 self.warn.itemAt(self.warn.count() - 1).widget().show()
         data = self.has_data()

@@ -1,14 +1,14 @@
 """The Curves editor of Post, and the graph of a stretch's transfer function.
 
-As a reference processing suite's CurvesTransformation, another processing program 1.4's Curves and a reference image editor's Curves: a curve per channel over the live
+As the reference processing suite's CurvesTransformation, the reference program 1.4's Curves and the reference image editor's Curves: a curve per channel over the live
 histogram of the filter's input (sent by the render worker), control points added, moved and deleted by hand.
 
 * Click on the graph: a point there; drag a point to move it (it stays between its neighbours; the end points move too,
-  A reference image editor's black and white points); Ctrl+click, a right-click or a drag out of the graph deletes it (a reference processing suite's and
-  A reference image editor's gestures); the arrow keys nudge the selected point by one 8-bit level (Shift: ten), Delete deletes it.
+  the reference image editor's black and white points); Ctrl+click, a right-click or a drag out of the graph deletes it (the reference processing suite's and
+  the reference image editor's gestures); the arrow keys nudge the selected point by one 8-bit level (Shift: ten), Delete deletes it.
 * Input and Output give the selected point's coordinates; Interpolation is the current curve's (Akima, cubic spline,
-  linear); Presets apply a whole set of curves (a reference image editor's, the astrophotography classics, the user's own); Save…
-  keeps the curves as a preset of the user's; Import… reads a a reference image editor .acv or a .json, Export… writes one.
+  linear); Presets apply a whole set of curves (the reference image editor's, the astrophotography classics, the user's own); Save…
+  keeps the curves as a preset of the user's; Import… reads a reference image editor .acv or a .json, Export… writes one.
 * ``changed`` is emitted while a point moves (the view sends a draft), ``committed`` when it is let go (one undo step
   and the exact render).
 
@@ -124,7 +124,7 @@ class CurveGraph(QWidget):
         self._bars(p, r)
         self._histogram(p, r)
         p.setPen(QPen(QColor("#2c323d"), 1))
-        for k in range(1, 4):                         # a reference image editor's 4 x 4 grid
+        for k in range(1, 4):                         # The reference image editor's 4 x 4 grid
             x = r.left() + r.width() * k / 4
             y = r.top() + r.height() * k / 4
             p.drawLine(QPointF(x, r.top()), QPointF(x, r.bottom()))
@@ -182,11 +182,11 @@ class CurveGraph(QWidget):
         if not arrs:
             return
         tr = (np.log1p if self.log else (lambda a: a))
-        # the tallest bin but the two ends (the clipped black and white would flatten the rest), as a reference image editor
+        # the tallest bin but the two ends (the clipped black and white would flatten the rest), as the reference image editor
         top = max(float(tr(a[1:-1]).max()) if len(a) > 2 else float(tr(a).max()) for a in arrs) or 1.0
         p.save()
         p.setPen(Qt.NoPen)
-        if len(keys) > 1:                               # the channels added: grey where they overlap, as a reference image editor
+        if len(keys) > 1:                               # the channels added: grey where they overlap, as the reference image editor
             p.setCompositionMode(QPainter.CompositionMode_Plus)
         for k, a in zip(keys, arrs):
             v = np.clip(tr(a) / top, 0, 1)

@@ -16,7 +16,7 @@ from astro_gpu.core import gaia_archive, online, sirilcat, skycache
 
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
-    """A private ASTRO_GPU_HOME and user home (the earlier versions' cache is ~/.astro_gpu/cache), no another processing program found,
+    """A private ASTRO_GPU_HOME and user home (the earlier versions' cache is ~/.astro_gpu/cache), no other processing program found,
     offline unless a test says otherwise, fresh verdicts on the services."""
     home = tmp_path / "userhome"
     home.mkdir()
@@ -516,7 +516,7 @@ def test_a_query_over_its_budget_is_abandoned_and_the_service_set_aside(monkeypa
 # ------------------------------------------------------------------ the offline extracts
 
 def _write_siril(path: Path, kind: int, level: int, stars: dict, chunk: tuple[int, int] | None = None):
-    """A another processing program catalogue file (format 1.0.0) of the given stars (ra, dec, g, and flux / e for xp_sampled)."""
+    """A reference program catalogue file (format 1.0.0) of the given stars (ra, dec, g, and flux / e for xp_sampled)."""
     import astropy.units as u
     from astropy_healpix import HEALPix
     hp = HEALPix(nside=2 ** level, order="nested")

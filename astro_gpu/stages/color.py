@@ -4,7 +4,7 @@ The colours of a few thousand isolated stars of the field are measured on the st
 background) and compared with the colours their Gaia XP spectra give in the output's RGB (linear sRGB, the white
 reference ``white_temp`` rendered neutral). For red and blue, a robust straight line through the stars (measured
 colour ratio against the catalogue's) gives the factor that brings the white reference to neutral; green is 1. The
-camera's channels are not mixed: this is the white balance of the photometric calibrations of another processing program and a reference processing suite
+camera's channels are not mixed: this is the white balance of the photometric calibrations of the reference program and the reference processing suite
 (PCC, SPCC). An earlier version also reconstructed the sensor's sensitivity curves from the stars and fitted a colour
 matrix on them; the matrix mixed the channels arbitrarily where the stars do not constrain it (emission lines: the
 H-alpha of the Rosette and of the Heart came out magenta) and was taken out.
@@ -97,8 +97,8 @@ class Color(Stage):
 
 
 def star_white_balance(measured, expected) -> dict:
-    """The white balance of the stars, as the spectrophotometric colour calibrations make it (a reference processing suite's SPCC
-    [P21], another processing program's SPCC [S13]): for red and blue, a robust straight line through the stars' measured colour ratio
+    """The white balance of the stars, as the spectrophotometric colour calibrations make it (the reference processing suite's SPCC
+    [P21], the reference program's SPCC [S13]): for red and blue, a robust straight line through the stars' measured colour ratio
     (c / green) against the ratio their catalogue spectrum gives, evaluated at the ratio of the white reference; the
     factor brings that value to the white reference's. Here the ratios are taken after the colour matrix, against the
     Gaia XP spectra put in the same output space (``measured``, ``expected`` (N, 3); the white reference is (1, 1, 1)
@@ -108,8 +108,8 @@ def star_white_balance(measured, expected) -> dict:
     (the median of the pairwise slopes, Sen 1968), robust to the per-star scatter. Returns {"k": (3,) factors (green
     1), "stars": the stars used, "at_white": the measured red and blue ratios at the white reference}.
 
-    [P21] a reference processing suite SpectrophotometricColorCalibration documentation (2022): the calibration factors are the
-    fitted functions evaluated at the white reference; [S13] another processing program 1.2 documentation, Spectrophotometric Color
+    [P21] the reference processing suite SpectrophotometricColorCalibration documentation (2022): the calibration factors are the
+    fitted functions evaluated at the white reference; [S13] the reference program 1.2 documentation, Spectrophotometric Color
     Calibration."""
     from scipy.stats import theilslopes
     m, e = np.asarray(measured, float), np.asarray(expected, float)

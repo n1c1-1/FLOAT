@@ -1,15 +1,15 @@
 """The Gradient block's samples and excluded areas, edited on the image in Inspect (``GradientEditor``).
 
 The usual tools of the background extractions: the samples of the polynomial and of the RBF on a generated grid, then
-placed, moved and removed by hand (left click adds or moves, right click removes, as in another processing program), outlined in cyan when
+placed, moved and removed by hand (left click adds or moves, right click removes, as in the reference program), outlined in cyan when
 the model uses them and in red when it leaves them out (as DynamicBackgroundExtraction), in white while not computed;
-the areas left out of every model painted with a brush or drawn as ellipses, under a red veil at 50 % (a reference image editor's
+the areas left out of every model painted with a brush or drawn as ellipses, under a red veil at 50 % (the reference image editor's
 quick mask). The brush is Post's: the same size and paint / erase controls, the same keys ([ ] size, X paint / erase),
 the line of the gestures under the image. Space held, the middle button or (with the brush) a right drag move the
-image, as in Post and a reference image editor; M or Marks hides what is drawn over the image.
+image, as in Post and the reference image editor; M or Marks hides what is drawn over the image.
 
 Each edit is a setting of the block, saved as soon as the mouse is let go (``sample_points``, ``exclude_ellipses``,
-``exclude_brush``, in the workflows the panel's changes go to), as Post's mask and a reference photo editor's: one step of the
+``exclude_brush``, in the workflows the panel's changes go to), as Post's mask and the reference photo editor's: one step of the
 window's Undo (Ctrl+Z), the block Outdated (its previous result shown, Run to here), the result it had back with an
 Undo, without computing. What the edits give is seen on a reduced copy of the stack (about a million pixels, whatever
 the sensor), with the stack before them behind the curtain: one computation at a time in a thread of its own, 0.3 s
@@ -19,7 +19,7 @@ field, the RBF: the generated grid), drawn as the last run used them; Generate t
 
 The H-alpha survey (R, or its toggle in the image's bar): the professional H-alpha map of the field (NSNS, else
 Finkbeiner), the chain's Surveys stage when it ran, else fetched from the solved field (cached on disk), drawn under the
-samples in amber, the way a reference photo editor shows a mask: it shows where the faint nebulosity is, which no sample should sit on
+samples in amber, the way the reference photo editor shows a mask: it shows where the faint nebulosity is, which no sample should sit on
 (the rule of DBE's users). Away from emission (the block's ``avoid_emission``, on by default) leaves those cells out of
 Generate the grid and of the samples the block chooses, in the preview as in the run. A guide only: the sky model
 never reads the survey.
@@ -570,7 +570,7 @@ class GradientEditor(QObject):
         self._commit()
 
     def generate(self):
-        """Another processing program's Generate: a grid of samples, the brighter areas left out (and, Away from emission, the survey's
+        """the reference program's Generate: a grid of samples, the brighter areas left out (and, Away from emission, the survey's
         emission: the survey fetched first when it is not yet); they become placed samples."""
         if self.avoid and (self.survey is None or self.survey["pid"] != self.p.pid):
             self._grid_after_survey = True

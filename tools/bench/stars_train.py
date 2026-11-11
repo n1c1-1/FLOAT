@@ -1,7 +1,7 @@
 """Star removal, path B: a network trained once, on our stacks, to take the stars off (docs/chantiers/etoiles.md).
 
 The pairs: each stack of the training set (stars_dataset.py: gradient removed, denoised by the shipped network, colours
-balanced, in noise sigmas, background 0) and its starless image, a reference star-removal tool's corrected by hand in a reference image editor (the review
+balanced, in noise sigmas, background 0) and its starless image, the reference star-removal tool's corrected by hand in the reference image editor (the review
 TIFFs). Two kinds of examples, mixed in each batch:
 
 - **real**: the stack with its own stars -> the corrected starless image;
@@ -87,8 +87,8 @@ def field_of(name: str) -> str:
 
 # ---------------------------------------------------------------------------------------------- fixes
 def fixes() -> int:
-    """The review TIFFs back to the data: the retouched pixels (more than 4 codes from a reference star-removal tool's) take the TIFF's value
-    with the stretch undone, the others keep a reference star-removal tool's at full precision."""
+    """The review TIFFs back to the data: the retouched pixels (more than 4 codes from the reference star-removal tool's) take the TIFF's value
+    with the stretch undone, the others keep the reference star-removal tool's at full precision."""
     import tifffile
     from scipy import ndimage
     st = json.loads((REVIEW / "stretch.json").read_text())
@@ -332,7 +332,7 @@ def centre(v, size: int = PATCH):
 
 # ---------------------------------------------------------------------------------------------- the bench
 def bench_case(case: str):
-    """A bench case's common original (stars_samples.export) and a reference star-removal tool's starless image, in the training set's units:
+    """A bench case's common original (stars_samples.export) and the reference star-removal tool's starless image, in the training set's units:
     each colour minus its sky, over the mean of the colours' noise (measured on the half-stacks before denoising, carried
     through the colour matrix)."""
     import os
@@ -354,7 +354,7 @@ def bench_case(case: str):
     unit = float(np.mean(np.sqrt((M ** 2) @ (np.asarray(sg, float) ** 2))))
     O = read_fits(OUT / case / "input.fits") * meta["scale"]
     bk = np.array([np.median(O[c][nm > 0][::7]) for c in range(3)], np.float32)[:, None, None]
-    S = read_fits(OUT / case / "starnet_starless.fits") * meta["scale"] if (OUT / case / "starnet_starless.fits").exists() \
+    S = read_fits(OUT / case / "reference_starless.fits") * meta["scale"] if (OUT / case / "reference_starless.fits").exists() \
         else None
     to = lambda img: (img - bk) / unit   # noqa: E731
     return to(O), (to(S) if S is not None else None), (bk, unit, meta["scale"], nm)
@@ -379,7 +379,7 @@ def train(tag: str, hours: float, device: str, synthetic: float, batch: int, lr:
     data = Tiles(pairs, seed=0)
     gen = torch.Generator(device=dev)
     gen.manual_seed(0)
-    # validation: synthetic stars on a reference star-removal tool's starless images of the bench (a truth known exactly), fixed tiles
+    # validation: synthetic stars on the reference star-removal tool's starless images of the bench (a truth known exactly), fixed tiles
     vgen = torch.Generator(device=dev)
     vgen.manual_seed(123)
     vrng = np.random.default_rng(7)

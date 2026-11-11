@@ -4,8 +4,8 @@
 
 The project is F:/astro_essais/bench/<case>/ours_<level>/ (ours_<level>_<V> for a case with variants; created once
 through the engine API; afterwards it is only re-run: the store recomputes what changed, e.g. after engine fixes).
-Its single session reads the same frozen copies as another processing program (data/lights_<level>, data/darks, flats, bias; a variant's
-own darks from data/darks_<V>); the target carries the same approximate centre and focal length another processing program is given.
+Its single session reads the same frozen copies as the reference program (data/lights_<level>, data/darks, flats, bias; a variant's
+own darks from data/darks_<V>); the target carries the same approximate centre and focal length the reference program is given.
 Everything stays at the engine's suggested settings.
 
 Environment of the run: USERPROFILE = bench/_home (the engine's catalogue cache, ~/.astro_gpu/cache, lands in

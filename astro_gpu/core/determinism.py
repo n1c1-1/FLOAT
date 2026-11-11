@@ -11,11 +11,15 @@ PyTorch is imported by the functions, not by this module: the runner imports it 
 workers of the Calibration and Registration pools, which import the runner's module again when they start (a
 spawned process imports its parent's main module) and never use PyTorch: about 700 MB reserved each for nothing
 (issue #125; measured on 16 threads, pools of 12 through the runner: 956 MB a worker, 242 MB without PyTorch).
+
+Random draws inside a result come from generators of their own seeded with a fixed value (``seeded_match`` for the
+triangle matcher's RANSAC), never from the global ones: the same draws at every run, and no other code sees a change.
 """
 from __future__ import annotations
 
 import contextlib
 import os
+import threading
 
 os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
@@ -45,3 +49,58 @@ def warm_up() -> None:
     import torch
     torch.use_deterministic_algorithms(torch.are_deterministic_algorithms_enabled(),
                                        warn_only=torch.is_deterministic_algorithms_warn_only_enabled())
+
+
+#: the seed of the triangle matcher's random draws, the same at every match (``seeded_match``)
+MATCH_SEED = 0
+_SEED = threading.local()       # the generators of the match running in this thread (``seeded_match``), else none
+
+
+class _SeededRandom:
+    """``numpy.random`` as astroalign sees it: itself, but inside ``seeded_match`` (in that thread only) an unseeded
+    ``default_rng()`` gives the block's generator and the legacy global draws (``shuffle``, ``rand``...) come from the
+    block's own ``RandomState``, both seeded with MATCH_SEED. Nothing else changes, and numpy's global state is never
+    read nor moved, so no other code sees a difference."""
+
+    def __init__(self, random):
+        self._random = random
+
+    def __getattr__(self, name):
+        state = getattr(_SEED, "state", None)
+        if state is None:
+            return getattr(self._random, name)
+        gen, legacy = state
+        if name == "default_rng":
+            return lambda seed=None: gen if seed is None else self._random.default_rng(seed)
+        if not name.startswith("_") and hasattr(legacy, name):
+            return getattr(legacy, name)
+        return getattr(self._random, name)
+
+
+class _SeededNumpy:
+    """numpy as astroalign's module holds it (its ``_np``), with ``_SeededRandom`` for its ``random``."""
+
+    def __init__(self, np_):
+        self._np, self.random = np_, _SeededRandom(np_.random)
+
+    def __getattr__(self, name):
+        return getattr(self._np, name)
+
+
+@contextlib.contextmanager
+def seeded_match(aa):
+    """The triangle match of this block (``aa``: the astroalign module) draws from generators seeded with MATCH_SEED:
+    the same stars give the same transform at every run. astroalign 2.6 shuffles the RANSAC's triangle matches with
+    ``np.random.default_rng()``, unseeded, and has no parameter for a seed: the same stack solved twice used 7770 then
+    7771 stars, its WCS a little different. Its module's numpy is seen through ``_SeededNumpy`` (set once, inert outside
+    this block), not a change of numpy's global state or functions that other code and threads would see; it holds as
+    long as astroalign draws through its ``_np``, by ``default_rng()`` or by the legacy global functions."""
+    import numpy as np
+    if getattr(aa, "_np", None) is np:
+        aa._np = _SeededNumpy(np)
+    old = getattr(_SEED, "state", None)
+    _SEED.state = (np.random.default_rng(MATCH_SEED), np.random.RandomState(MATCH_SEED))
+    try:
+        yield
+    finally:
+        _SEED.state = old

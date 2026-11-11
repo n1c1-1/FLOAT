@@ -1,4 +1,4 @@
-"""The drizzle with the integration's rejection (stages/stack.py ``drizzle_rejection = integration``): A reference processing suite's
+"""The drizzle with the integration's rejection (stages/stack.py ``drizzle_rejection = integration``): The reference processing suite's
 method for a CFA drizzle. The rejection runs on the debayered, registered frames (core/stack_classic ``masks``), and
 ``drizzle_deposit`` leaves a frame's raw samples out of the output pixels whose reference pixel was rejected in their
 colour, and out of no other (PCL DrizzleIntegrationInstance.cpp: ``Reject(q, c)``, q the reference pixel holding the

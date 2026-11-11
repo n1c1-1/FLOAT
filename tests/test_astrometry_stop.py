@@ -121,3 +121,22 @@ def test_the_blind_solver_looks_at_the_stop_between_its_candidates():
     with pytest.raises(Interrupted):
         bs.solve(xy, W, H, index, check=check)
     assert len(calls) == 3
+
+
+def test_a_stop_asked_in_the_blind_solve_ends_the_stage_as_stopped_not_failed(tmp_path, monkeypatch):
+    """#159: the stop came while the blind solver ran; the triangle match after it met the stop inside astroalign, took
+    it for a hypothesis without a match, and the stage ended "match no star of the catalogue" (failed)."""
+    _field(monkeypatch)
+    stop = _Stop(10**9)
+
+    def blind(ctx, xy, W_, H_, at=0.05):
+        stop.asked = time.perf_counter()    # Stop pressed 2 s into the solver; its solution comes all the same
+        return RA, DEC, SCALE
+    monkeypatch.setattr(am, "_blind", blind)
+    monkeypatch.setattr(am, "STOP_EVERY", 0.0)
+    ctx = SimpleNamespace(load_json=lambda stage, name: {"scale": 1.0},
+                          load=lambda *a, **k: np.zeros((3, H, W), np.float32), log=lambda m, level="info": None,
+                          progress=lambda *a, **k: None, metric=lambda k, v: None, out=lambda n: tmp_path / n,
+                          metric_of=lambda *a, **k: None, check_stop=stop.check_stop)
+    with pytest.raises(Interrupted):
+        am.Astrometry().run(ctx, AstrometryParams(search_offsets=0.0, blind=True))

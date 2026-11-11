@@ -22,7 +22,7 @@ from ..i18n import _, number
 
 
 class ExtractsJob(QObject):
-    progress = Signal(int, int, str)
+    progress = Signal(object, object, str)        # done, total: byte counts, past 2^31 for the big extracts (a C int would raise)
     finished = Signal(str, str)
 
     def __init__(self, parent=None):

@@ -13,7 +13,7 @@ Post-traitement et Export. Les écrans ont été relus dans les deux langues. Le
 - **Réglages des étoiles**
   - Les groupes portent le nom de l'image sur laquelle ils agissent : « Étoiles seules », « Image sans étoiles ».
   - Le menu s'appelle « Mode de fusion des étoiles ».
-  - Les curseurs affichent leur valeur comme a reference photo editor : « 0 », « −1,0 », avec un vrai signe moins. Le mot
+  - Les curseurs affichent leur valeur comme l'éditeur photo de référence : « 0 », « −1,0 », avec un vrai signe moins. Le mot
     « suggéré » disparaît, et avec lui sa faute d'accord.
 - **Panneau du bloc Étoiles**
   - Les sorties sont en tête, une destination par ligne.
@@ -33,7 +33,7 @@ Post-traitement et Export. Les écrans ont été relus dans les deux langues. Le
   remplace « Pas d'adaptation ».
 - **Rejet** : la méthode est dite une seule fois, avec ses seuils et le nombre d'images.
 - **Divers**
-  - « Réglages avancés » devient un triangle qui déplie, comme dans a reference photo editor.
+  - « Réglages avancés » devient un triangle qui déplie, comme dans l'éditeur photo de référence.
   - La couverture est montrée dans l'ordre R, V, B.
   - Le double symbole « ≈ ≤ » est corrigé.
   - À l'export, une option que le format ne prend pas apparaît décochée.
@@ -46,7 +46,7 @@ Post-traitement et Export. Les écrans ont été relus dans les deux langues. Le
   Post-traitement), et elle tient en entier en français.
 - 8 : règle majeure, aucun nom de logiciel externe dans l'interface, sauf un logiciel réellement utilisé. Les
   Courbes, les Niveaux, les préréglages « Courbes de tons classiques », les fichiers .acv et l'aide de la taille des
-  étoiles ne nomment plus aucun logiciel. Les crédits des catalogues Gaia de another processing program restent, car ces données sont
+  étoiles ne nomment plus aucun logiciel. Les crédits des catalogues Gaia du programme de référence restent, car ces données sont
   réellement utilisées.
 
 ## À décider
@@ -56,7 +56,7 @@ Post-traitement et Export. Les écrans ont été relus dans les deux langues. Le
 2. **La portée par défaut d'un changement.** Aujourd'hui, un changement s'applique par défaut à « tous les N
    workflows » qui partagent le bloc. Je propose par défaut « ce workflow seulement », avec l'autre choix à un clic.
 3. **La barre d'outils d'Inspect est coupée en français.** On ne lit que « Co… ». Je propose de regrouper Exporter,
-   Copier l'image et Envoyer au Post-traitement dans un seul menu « Exporter ▾ », comme a reference image editor.
+   Copier l'image et Envoyer au Post-traitement dans un seul menu « Exporter ▾ », comme l'éditeur d'images de référence.
 4. **La case « Ciel neutre (affichage seulement) » apparaît en double** au-dessus de l'image, en plus de celle du
    panneau d'étirement. Je l'ai gardée, parce qu'elle rend visible une option utile sur les images encore en couleurs
    de l'appareil. Faut-il l'enlever ?
@@ -69,9 +69,9 @@ Post-traitement et Export. Les écrans ont été relus dans les deux langues. Le
    - Un étirement ajouté sur un calque déjà étiré donne un double étirement sans prévenir. Il faut soit avertir,
      soit remplacer l'étirement automatique.
    - Le JPEG n'a pas de réglage de qualité.
-   - La visibilité d'un calque est une case à cocher. A reference image editor utilise un œil.
-8. **Courbes.** La description cite a reference image editor, et des préréglages s'appellent « a reference image editor ». Ta règle vise another processing program et
-   A reference processing suite. Faut-il les garder ?
+   - La visibilité d'un calque est une case à cocher. L'éditeur d'images de référence utilise un œil.
+8. **Courbes.** La description cite l'éditeur d'images de référence, et des préréglages s'appellent « l'éditeur d'images de référence ». Ta règle vise le programme de référence et
+   the reference processing suite. Faut-il les garder ?
 9. **Graphe au zoom par défaut.** Le texte des blocs est petit.
 
 ## Tests

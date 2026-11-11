@@ -13,20 +13,20 @@ output scale" (DrizzlePac's output scale is our 1 / scale). Hence, per colour, t
 weight map, and for red and blue (a quarter of the samples each) it must stay under 20 %:
 
 * scale 1.5 or 2 is suggested only if the stars are undersampled (Moffat FWHM under 2 px, the Nyquist sampling:
-  drizzle restores detail only then, Fruchter & Hook 2002 [L1], another processing program's drizzle page [S5]) AND the rule holds at that
+  drizzle restores detail only then, Fruchter & Hook 2002 [L1], the reference program's drizzle page [S5]) AND the rule holds at that
   scale; of the scales that hold, the smallest that samples the stars at 2 px or more, else the largest;
 * the drop size is then the smallest value of 0.05 steps from 1 / scale up that keeps the rule;
-* at scale 1, a drop of 1 (another processing program, WBPP and APP for colour sensors [S5][P15][A8]);
+* at scale 1, a drop of 1 (the reference program, WBPP and APP for colour sensors [S5][P15][A8]);
 * the method advice (``advise_method``), on the frames the selection keeps:
 
   ===========================================================  ===========================  ========================
   series                                                       advice                       source
   ===========================================================  ===========================  ========================
-  colour sensor, fewer than 15 frames                          Classic                      a reference processing suite [P12]: drizzle
+  colour sensor, fewer than 15 frames                          Classic                      the reference processing suite [P12]: drizzle
                                                                                             from 15-20 dithered frames
   colour, red / blue coverage varies by 20 % or more at 1×     Classic                      DrizzlePac 20 % rule [L2]
-  colour, enough well-dithered frames                          drizzle (scale: the rule)    a reference processing suite [P12], [L2]
-  colour, stars under 2 px and the coverage holds at 1.5×/2×   drizzle 1.5× or 2×           another processing program [S5], [L1][L2]
+  colour, enough well-dithered frames                          drizzle (scale: the rule)    the reference processing suite [P12], [L2]
+  colour, stars under 2 px and the coverage holds at 1.5×/2×   drizzle 1.5× or 2×           le programme de référence [S5], [L1][L2]
   monochrome                                                   Classic; drizzle only with   the same rules (no CFA:
                                                                stars under 2 px, 15 frames  drizzle only adds detail
                                                                and the coverage holding     when undersampled)
@@ -66,10 +66,10 @@ Pure numpy; no torch.
 Sources:
 [L1] Fruchter & Hook 2002, PASP 114, 144 (drizzle): https://arxiv.org/abs/astro-ph/9808087
 [L2] DrizzlePac Handbook v3: https://hst-docs.stsci.edu/drizzpac
-[S5] another processing program, drizzle: https://another processing program.readthedocs.io/en/latest/preprocessing/drizzle.html
-[P12] a reference processing suite Debayer documentation: https://gitlab.com/a reference processing suite/Reference-Documentation/-/raw/master/tools/Debayer/Debayer.pidoc
-[P15] a reference processing suite WBPP source (BPP-Global.js, BPP-FrameGroup.js): https://gitlab.com/a reference processing suite/PJSR/-/tree/master/src/scripts/BatchPreprocessing
-[A8] a reference processing program forum, Bayer drizzle: https://www.astropixelprocessor.com/community/tutorials-workflows/bayer-drizzle/
+[S5] the reference program, drizzle: https://siril.readthedocs.io/en/latest/preprocessing/drizzle.html
+[P12] the reference processing suite's Debayer documentation (no link)
+[P15] the reference processing suite's batch preprocessing script source (no link)
+[A8] the reference processing program forum, Bayer drizzle: https://www.astropixelprocessor.com/community/tutorials-workflows/bayer-drizzle/
 """
 from __future__ import annotations
 
@@ -91,7 +91,7 @@ GRID = (4, 4)
 PATCH = 32
 #: a patch covered by fewer than this share of the frames is not used
 MIN_PATCH_FRAMES = 0.5
-#: fewer kept frames than this: Classic advised (a reference processing suite: drizzle pays from 15 to 20 well-dithered frames [P12])
+#: fewer kept frames than this: Classic advised (the reference processing suite: drizzle pays from 15 to 20 well-dithered frames [P12])
 MIN_DRIZZLE_FRAMES = 15
 #: the values of ``cfa`` that mean a monochrome sensor
 MONO = ("", "MONO", "L", "NONE")

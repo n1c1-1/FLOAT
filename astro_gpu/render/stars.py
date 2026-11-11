@@ -2,9 +2,9 @@
 recombined (the Stars and background block of Post).
 
 The usual way (docs/chantiers/etoiles.md): the stars are taken off the linear image, each image is stretched on its
-own, then the stars go back on top in Screen mode. Another processing program's star recomposition tool stretches the starless image and
-the star mask apart before combining them; a reference tool maker advises stretching both and recombining in Screen (Add only while
-linear); in a reference image editor the stars layer goes over the starless one in Screen or Linear Dodge (Add). With the stars apart,
+own, then the stars go back on top in Screen mode. The reference program's star recomposition tool stretches the starless image and
+the star mask apart before combining them; the reference tool maker advises stretching both and recombining in Screen (Add only while
+linear); in the reference image editor the stars layer goes over the starless one in Screen or Linear Dodge (Add). With the stars apart,
 stretching them less is the star reduction: no reduction is needed on the recombined image.
 
 * the starless image: the Output block's automatic stretch (render/simple.py) with the whole image's statistics (its
@@ -14,7 +14,7 @@ stretching them less is the star reduction: no reduction is needed on the recomb
   midtone moved by ``star_strength``; the small stars faded out (``star_small``: the star reduction of photo editors'
   tutorials, the stars selected and the small ones removed, then Minimum; here the stars' support opened by
   reconstruction, L. Vincent 1993, so that the wider stars stay exactly as they were; on the stars alone, so the
-  nebula's texture is never touched); their size by a round grey erosion (smaller) or dilation (larger), as a reference image editor's
+  nebula's texture is never touched); their size by a round grey erosion (smaller) or dilation (larger), as the reference image editor's
   Minimum and Maximum filters with Preserve roundness (an octagon: a cross and a square in turn, the usual
   approximation of a disc), never a square; smaller through a star mask (``star_mask``: the stars standing above
   their local background's noise), as those tutorials select the stars first, so that the grain between the stars of
@@ -37,7 +37,7 @@ from ..core.params import P, check_choice
 from . import ops
 from .simple import Layers, SimpleRenderEngine, SimpleSettings, continuum_ratio, emission, mtf, mtf_midtone
 
-#: how the stars go back on the starless image (the names of a reference image editor's modes)
+#: how the stars go back on the starless image (the names of the reference image editor's modes)
 BLENDS = ("Screen", "Linear dodge (add)", "Lighten")
 #: what a rendering shows: the starless image, the stars alone, the two recombined
 PARTS = ("starless", "stars", "combined")
@@ -268,8 +268,8 @@ def resize_stars(y: torch.Tensor, r: float) -> torch.Tensor:
     out = lo if t < 1e-3 else (1 - t) * lo + t * _morph(y, n + 1, r > 0)
     if r > 0:
         return out
-    # shrunk through a star mask, as the published star reductions do (a reference image editor: the Minimum filter through a
-    # selection of the stars; a reference processing suite: MorphologicalTransformation through a star mask): an erosion of the faint
+    # shrunk through a star mask, as the published star reductions do (the reference image editor: the Minimum filter through a
+    # selection of the stars; the reference processing suite: MorphologicalTransformation through a star mask): an erosion of the faint
     # background between the stars draws a web of filaments on a dense field (issue #18)
     return y + (out - y) * star_mask(y, n + 1)
 

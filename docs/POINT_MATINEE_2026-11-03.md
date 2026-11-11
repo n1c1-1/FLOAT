@@ -44,7 +44,7 @@ Pense à relancer **client.bat** pour avoir tout cela.
 
 ## 3. Gaia
 
-- **Les extraits Gaia hors ligne sont installés** (positions et spectres, ceux du projet another processing program) : 2 min pour les
+- **Les extraits Gaia hors ligne sont installés** (positions et spectres, ceux du projet le programme de référence) : 2 min pour les
   positions, 29 min pour les spectres.
 - **Une précision sur ce que je t'avais dit** : ces extraits servent à l'astrométrie et aux spectres, mais ils ne
   gardent que les étoiles les plus brillantes de chaque zone. Les étoiles faibles, dont nos catalogues ont besoin,
@@ -60,7 +60,7 @@ Pense à relancer **client.bat** pour avoir tout cela.
 - C'est le cas de tes projets depuis le 2 novembre (la mesure des étoiles a changé).
 - Quand l'alignement est à jour, le cadre « Conseillé » et son (i) s'affichent (vérifié sur le banc Iris).
 
-## 5. Le banc face à another processing program
+## 5. Le banc face au programme de référence
 
 - Les projets « base » (100 images) étaient arrêtés à l'empilement depuis le 2 novembre au matin, quand les réglages
   par défaut de l'empilement ont changé. Les deux workflows de référence des projets « express » (le drizzle et le

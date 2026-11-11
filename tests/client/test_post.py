@@ -1149,7 +1149,7 @@ def test_filters_on_one_layer_and_on_everything_below(post):
     assert sat["target"] == full["id"]
     assert [lay["name"] for lay in v.layers] == ["Classic", "Saturation", "Full"]     # just above the layer it applies to
     rows = {r.lay["id"]: r for r in v.rows}
-    # the panel (a reference image editor's): the filter is a child of its layer, indented under it
+    # the panel (the reference image editor's): the filter is a child of its layer, indented under it
     assert [(r.lay["name"], r.depth) for r in v.rows] == [("Classic", 0), ("Full", 0), ("Saturation", 1)]
     assert rows[sat["id"]].sub.full_text() == "Normal · 100%" and rows[sat["id"]].toolTip() == 'Applies to "Full" only'
     assert rows[full["id"]].toggle is not None and rows[full["id"]].toggle.property("iconRole") == "chevron_down"
@@ -1325,9 +1325,9 @@ def test_the_brush_paints_erases_and_is_one_undo_step(post):
 
 
 def test_spot_healing_is_a_brush_healed_on_release_with_nothing_left_on_the_image(post):
-    """Issue #20, a reference image editor's Spot Healing Brush: a click or a stroke heals when let go (one Undo step); a stroke is
+    """Issue #20, the reference image editor's Spot Healing Brush: a click or a stroke heals when let go (one Undo step); a stroke is
     spots every half radius, none healed from the stroke itself; Alt+click sets the source by hand for the strokes
-    that follow (a reference image editor's Healing Brush); nothing is drawn on the image afterwards."""
+    that follow (the reference image editor's Healing Brush); nothing is drawn on the image afterwards."""
     from PySide6.QtGui import QImage, QPainter
     v = post.view
     f = v.add_filter("heal")
@@ -1353,7 +1353,7 @@ def test_spot_healing_is_a_brush_healed_on_release_with_nothing_left_on_the_imag
     assert len(trail) == 9 and len(v.undo) == n0 + 2
     assert all(abs(y + dy - 300.0) >= 2 * r - 1 or not (100.0 - r <= x + dx <= 100.0 + 5 * r)
                for x, y, _r, dx, dy in trail)
-    # Alt+click: the source by hand; the next stroke keeps the offset (a reference image editor's Aligned)
+    # Alt+click: the source by hand; the next stroke keeps the offset (the reference image editor's Aligned)
     v._heal_press(400.0, 100.0, left, True)
     assert len(f["params"]["spots"]) == 10                                              # sets the source only
     v._heal_press(300.0, 100.0, left, False)
@@ -1590,7 +1590,7 @@ def _drag(v, row, target_row, rel=0.5, x=None):
 
 
 def test_dragging_a_row_nests_or_unnests_a_filter_with_clear_hints(post):
-    """A reference image editor's drops: onto a layer nests a filter (the row is framed), between top-level rows it applies to
+    """the reference image editor's drops: onto a layer nests a filter (the row is framed), between top-level rows it applies to
     everything below (a full-width line), between a layer's children it joins them (an indented line); a short label
     says which. A layer moves with its children and is never nested."""
     v = post.view
@@ -1788,7 +1788,7 @@ def test_sliders_are_greyed_with_their_reason_and_double_click_resets(post):
     assert lay["sliders"]["sky"] == pytest.approx(3.0)
     sky.name.mouseDoubleClickEvent(None)
     assert "sky" not in lay["sliders"] and sky.val.text() == "0"
-    # issue #16: a double-click on the slider itself too (a reference photo editor's)
+    # issue #16: a double-click on the slider itself too (the reference photo editor's)
     from PySide6.QtCore import QPoint
     from PySide6.QtTest import QTest
     sky = sliders()["Sky"]
@@ -2352,7 +2352,7 @@ def test_the_export_writes_only_into_the_folder_chosen_and_it_reads_back(exporti
     with fits.open(s.out / "heart.fits") as h:                                               # 32-bit float with the WCS
         assert h[0].data.dtype.kind == "f" and h[0].data.dtype.itemsize == 4 and h[0].data.shape == (3, cv[1], cv[0])
         w2 = WCS(h[0].header, naxis=2).celestial
-        # the rows bottom up (FITS, another processing program), the history of the composition in the header
+        # the rows bottom up (FITS, the reference program), the history of the composition in the header
         assert h[0].header["ROWORDER"] == "BOTTOM-UP"
         assert np.abs(np.moveaxis(h[0].data[:, ::-1], 0, -1) - np.clip(expect, 0, 1)).max() < 1e-6
         hist_lines = [str(x) for x in h[0].header["HISTORY"]]

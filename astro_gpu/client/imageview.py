@@ -4,7 +4,7 @@ One widget, ``ImageView``, shows an image of any size (up to 6384 x 4272 RGB flo
 
 * zoom (wheel, Fit, 1:1, presets), pan, a minimap, and a pixel readout (x, y, the values in ADU or 0-1, RA / Dec
   when the image has an astrometric solution);
-* a display stretch as in another processing program: automatic (channels linked or not), linear, midtones (MTF), asinh or histogram
+* a display stretch as in the reference program: automatic (channels linked or not), linear, midtones (MTF), asinh or histogram
   equalisation, black / mid / white handles on a live histogram, per channel or linked, "Neutral sky" for an image
   still in the camera's colours, Reset. The stretch is display only: the data are never changed;
 * compare with the previous steps of the workflow: the caller gives named images, the view a selector; split slider
@@ -1110,7 +1110,7 @@ class ImageCanvas(QWidget):
         #: an editing tool (the Gradient block's samples and areas): press(canvas, x, y, button) -> bool (taken),
         #: move(canvas, x, y), release(canvas), hover(canvas, x, y), cursor (a Qt cursor), in image coordinates
         self.tool = None
-        self._space = False                         # Space held: the hand, whatever the tool (as in a reference image editor)
+        self._space = False                         # Space held: the hand, whatever the tool (as in the reference image editor)
         self.frame_ms: list[float] = []             # paint times (the measurements)
         self._drag = None
         self._rect = None

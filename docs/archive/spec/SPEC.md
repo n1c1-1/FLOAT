@@ -121,7 +121,7 @@ and the stacking mode (all sessions together, or one stack per session).
   project.
 
 ### 3.5 Post
-Layers as in a reference image editor, masks made of parts as in a reference photo editor, filter layers, continuous sliders: see POST.md. The Graph
+Layers as in the reference image editor, masks made of parts as in the reference photo editor, filter layers, continuous sliders: see POST.md. The Graph
 panel of the Post block lists the layers with their state and source, and has "Open Post".
 
 ### 3.6 Settings (Edit > Settings…, Ctrl+,): application preferences, kept between sessions
@@ -131,7 +131,7 @@ panel of the Post block lists the layers with their state and source, and has "O
 | General | Language (English, Français), applied at once; Spec mode. |
 | Folders & disk | Workspace, Cache (calibrated frames), Temporary files, Cache limit (GB), disk use bars, "Clear cache of closed projects". |
 | Compute | Device (Automatic / the GPU by name / CPU only), CPU threads (0 = automatic), Memory limit (GB), Benchmark (7). |
-| Catalogs & astrometry | Gaia DR3 local copy or online (VizieR); its folder; "Download Gaia DR3 extract (12 GB)…"; plate solver Internal (Gaia), a reference plate solver or astrometry.net (local); H-alpha survey cache. |
+| Catalogs & astrometry | Gaia DR3 local copy or online (VizieR); its folder; "Download Gaia DR3 extract (12 GB)…"; plate solver Internal (Gaia), the reference plate solver or astrometry.net (local); H-alpha survey cache. |
 | File formats | Intermediate files FITS or XISF; 32-bit float or 16-bit integer; compression None, Rice (FITS) or Gzip; keep the calibrated and registered frames. |
 | Master library | Folder; temperature tolerance (°C); maximum age of a dark (days); the masters (type, exposure, ISO, sensor, frames, date, used here); "Build masters from a folder…". |
 | Display | Auto-stretch linear images by default; angular units (arcsec or px). |
@@ -244,7 +244,7 @@ erase), [ ] (brush size), Ctrl+J (duplicate).
   the menus, Home and the project screen at once.
 - The engine's labels, help and reasons are English keys, translated the same way. Names typed by the user are never
   translated; names the client builds ("<layer> · stars", "(copy)") are translated piece by piece.
-- Style (GLOSSARY.md): names a another processing program or a reference processing suite user recognises; one name per object; a neutral tone (no "you",
+- Style (GLOSSARY.md): names a reference program or the reference processing suite user recognises; one name per object; a neutral tone (no "you",
   no "tu"); numbers with their unit; a decimal comma in French.
 
 ### 5.9 Undo

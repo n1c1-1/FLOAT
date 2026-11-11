@@ -1,22 +1,22 @@
-"""The Curves tool: A reference processing suite's CurvesTransformation, another processing program 1.4's Curves Transformation, a reference image editor's Curves.
+"""The Curves tool: The reference processing suite's CurvesTransformation, the reference program 1.4's Curves Transformation, the reference image editor's Curves.
 
-* **Curves**, one per channel, each a list of control points (x, y) in [0, 1], sorted by x, 2 to 100 of them (another processing program's
-  limits). Outside its end points a curve is flat (a reference image editor: the end points can move inwards; a reference processing suite keeps them at
+* **Curves**, one per channel, each a list of control points (x, y) in [0, 1], sorted by x, 2 to 100 of them (the reference program's
+  limits). Outside its end points a curve is flat (the reference image editor: the end points can move inwards; the reference processing suite keeps them at
   0 and 1). Outputs are clipped to [0, 1].
-* **Interpolation**, as in another processing program and a reference processing suite: Akima (the default; H. Akima, "A new method of interpolation and smooth
+* **Interpolation**, as in the reference program and the reference processing suite: Akima (the default; H. Akima, "A new method of interpolation and smooth
   curve fitting based on local procedures", J. ACM 17(4), 1970: the slope at a point is
   (|m(i+1) - m(i)| m(i-1) + |m(i-1) - m(i-2)| m(i)) / (|m(i+1) - m(i)| + |m(i-1) - m(i-2)|), the end slopes extended
   as Akima's paper does; two points give a line), the natural cubic spline (zero second derivative at both ends), or
   linear.
-* **Channels**, applied in this order (another processing program's, then the hue): RGB/K (the same curve on R, G and B), R, G, B, L* (CIE
-  L*/100, a* and b* kept: A reference processing suite's and another processing program's L), S (the HSV saturation, the original CIE L* put back: A reference processing suite's
-  "HSVL*" S curve), c* (CIE chroma c*/128, hue and lightness kept: Another processing program's C, a reference processing suite's c), H (CIE hue h/360, the
-  lightness and the chroma kept: A reference processing suite's H).
+* **Channels**, applied in this order (the reference program's, then the hue): RGB/K (the same curve on R, G and B), R, G, B, L* (CIE
+  L*/100, a* and b* kept: Le logiciel de traitement de référence's and le programme de référence's L), S (the HSV saturation, the original CIE L* put back: Le logiciel de traitement de référence's
+  "HSVL*" S curve), c* (CIE chroma c*/128, hue and lightness kept: The reference program's C, the reference processing suite's c), H (CIE hue h/360, the
+  lightness and the chroma kept: The reference processing suite's H).
 * **Speed**: while a point is dragged (a draft) each curve is a 4096-entry table; on release it is evaluated exactly
   (the piecewise polynomial of each pixel's value).
-* **Presets**: Linear, the nine of a reference image editor (their points read from the .acv files a reference image editor 2026 ships in
+* **Presets**: Linear, the nine of the reference image editor (their points read from the .acv files the reference image editor 2026 ships in
   Presets/Curves), and four astrophotography classics built from documented functions; the user's own presets, kept
-  in a file beside the settings; a reference image editor's .acv files read and written (Adobe a reference image editor File Formats Specification,
+  in a file beside the settings; the reference image editor's .acv files read and written (Adobe the reference image editor File Formats Specification,
   "Curves file format": a version, a count, then for each curve its points as (output, input) in 0-255).
 
 ``Spline`` interpolates one curve; ``apply`` applies a set of curves to an image.
@@ -273,8 +273,8 @@ _GRID = [0, 0.04, 0.12, 0.25, 0.45, 0.7, 1]
 
 
 def builtin_presets() -> list[dict]:
-    """The presets, in the menu's order: {"name", "source", "curves"}. A reference image editor's are the points of its .acv files
-    (input, output in 0-255), drawn with the natural cubic spline (a reference image editor does not document its interpolation)."""
+    """The presets, in the menu's order: {"name", "source", "curves"}. The reference image editor's are the points of its .acv files
+    (input, output in 0-255), drawn with the natural cubic spline (the reference image editor does not document its interpolation)."""
     out = [{"name": "Linear", "source": "The identity: no change", "curves": {}}]
     ps = [
         ("Medium Contrast", {"RGB/K": _ps((0, 0), (73, 56), (163, 164), (255, 255))}),
@@ -374,7 +374,7 @@ ACV_CHANNELS = ["RGB/K", "R", "G", "B"]
 
 
 def read_acv(data: bytes) -> dict:
-    """A a reference image editor .acv file: its RGB, R, G and B curves (the points 0-255; drawn with the natural cubic spline)."""
+    """A reference image editor .acv file: its RGB, R, G and B curves (the points 0-255; drawn with the natural cubic spline)."""
     if len(data) < 4:
         raise ValueError("not a curves file (.acv)")
     _version, n = struct.unpack(">hh", data[:4])
@@ -396,7 +396,7 @@ def read_acv(data: bytes) -> dict:
 
 
 def write_acv(curves: dict) -> bytes:
-    """The RGB/K, R, G and B curves as a a reference image editor .acv file (version 4, five curves as a reference image editor writes them; the
+    """The RGB/K, R, G and B curves as a reference image editor .acv file (version 4, five curves as the reference image editor writes them; the
     points rounded to 0-255, 19 at most per curve)."""
     blobs = [struct.pack(">hh", 4, 5)]
     for ch in ACV_CHANNELS + [None]:
@@ -410,7 +410,7 @@ def write_acv(curves: dict) -> bytes:
 
 
 def read_preset_file(path) -> dict:
-    """Curves from a file: a a reference image editor .acv, or a .json of this program (one preset)."""
+    """Curves from a file: a reference image editor .acv, or a .json of this program (one preset)."""
     path = Path(path)
     if path.suffix.lower() == ".acv":
         return read_acv(path.read_bytes())

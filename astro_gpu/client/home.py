@@ -723,19 +723,7 @@ class HomeView(QWidget):
         lv = QVBoxLayout(left)
         lv.setContentsMargins(18, 20, 18, 18)
         lv.setSpacing(8)
-        buttons = []
-        for text, fn, primary, role in ((_("New project"), self.newProject.emit, True, "new"),
-                                        (_("Open images…"), self.openImages.emit, False, "block_image"),
-                                        (_("Open project…"), self.open_other, False, "open")):
-            b = QPushButton(text)                    # compact names (decision 12)
-            set_icon(b, role, 16, "on_accent" if primary else "normal")
-            if primary:
-                b.setObjectName("primary")
-            b.clicked.connect(lambda _x=False, f=fn: f())
-            lv.addWidget(b)
-            buttons.append(b)
-        lv.addStretch(1)
-        # the offline star catalogue, said where a new user starts (a run never downloads it: core/online.py)
+        # the offline star catalogue, said first in the column, where it is seen (a run never downloads it: core/online.py)
         self.sky_box = QWidget()
         sv = QVBoxLayout(self.sky_box)
         sv.setContentsMargins(0, 0, 0, 0)
@@ -750,6 +738,18 @@ class HomeView(QWidget):
         inst.clicked.connect(lambda: open_catalogs(self))
         sv.addWidget(inst, 0, Qt.AlignLeft)
         lv.addWidget(self.sky_box)
+        buttons = []
+        for text, fn, primary, role in ((_("New project"), self.newProject.emit, True, "new"),
+                                        (_("Open images…"), self.openImages.emit, False, "block_image"),
+                                        (_("Open project…"), self.open_other, False, "open")):
+            b = QPushButton(text)                    # compact names (decision 12)
+            set_icon(b, role, 16, "on_accent" if primary else "normal")
+            if primary:
+                b.setObjectName("primary")
+            b.clicked.connect(lambda _x=False, f=fn: f())
+            lv.addWidget(b)
+            buttons.append(b)
+        lv.addStretch(1)
         self.sky_changed()
         left.setFixedWidth(max([300] + [b.sizeHint().width() + 40 for b in buttons]))   # wider only for a long text
         root.addWidget(left)

@@ -1897,7 +1897,7 @@ class Panel(QWidget):
                 self.add_row(r)
         if hidden:
             self.bv.addSpacing(8)
-            # a disclosure, as a reference photo editor's panels have: the chevron shows the advanced rows in their groups, or hides them
+            # a disclosure, as the reference photo editor's panels have: the chevron shows the advanced rows in their groups, or hides them
             ex = QPushButton(_("Advanced settings ({n})").format(n=hidden))
             set_icon(ex, "chevron_down" if self.expert else "chevron_right", 16, "dim")
             ex.setObjectName("disclosure")

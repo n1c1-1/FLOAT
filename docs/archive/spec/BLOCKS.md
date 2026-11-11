@@ -40,13 +40,13 @@ Five engine parameters are not in the catalogue:
 | Block | Method | Short name | Runs on | Stage | Status |
 |---|---|---|---|---|---|
 | Gradient | H-alpha survey | H-alpha survey | CPU | `background` (+ `surveys`) | existing |
-| Gradient | Polynomial (as in another processing program) | polynomial | CPU | `fond_simple` | **NEW** |
+| Gradient | Polynomial (as in the reference program) | polynomial | CPU | `fond_simple` | **NEW** |
 | Deconvolution | Measured PSF (Richardson-Lucy) | Richardson-Lucy | CPU or GPU | `deconv` | **NEW** |
-| Deconvolution | Neural (a reference deconvolution tool-like) | neural | CPU or GPU | `deconv` | **NEW** |
+| Deconvolution | Neural (the reference deconvolution tool-like) | neural | CPU or GPU | `deconv` | **NEW** |
 | Denoise | Noise2Noise on this image | Noise2Noise | GPU | `denoise` | existing |
 | Denoise | Pretrained + fine-tuned | fine-tuned | CPU or GPU | `denoise_ft` | **NEW** |
-| Denoise | Pretrained (a reference gradient tool-like) | pretrained | CPU or GPU | `denoise_ai` | **NEW** |
-| Denoise | NL-Bayes (as in another processing program) | NL-Bayes | CPU | `denoise_cl` | **NEW** |
+| Denoise | Pretrained (the reference gradient tool-like) | pretrained | CPU or GPU | `denoise_ai` | **NEW** |
+| Denoise | NL-Bayes (as in the reference program) | NL-Bayes | CPU | `denoise_cl` | **NEW** |
 | Stars | PSF model (Gaia) | PSF model | CPU or GPU | `optics`, `stars`, `starless` | existing |
 | Stars | PSF model + neural removal | PSF + neural | GPU | the same + `star_net` | existing |
 
@@ -368,7 +368,7 @@ uses Denoise.
 
 **Purpose.**
 - Removes the sky gradient (light pollution, the Moon, what is left of the vignetting).
-- The spec places it **before** Color and Stars, as in another processing program and a reference processing suite, and computes it from the stack and the
+- The spec places it **before** Color and Stars, as in the reference program and the reference processing suite, and computes it from the stack and the
   catalogue. The engine today computes it after, from the starless image.
 
 **Stages.**
@@ -475,7 +475,7 @@ uses Denoise.
 
 **Purpose.**
 - Sharpens the image with the point spread function measured on the stars.
-- It goes after Color and before Denoise, as a reference deconvolution tool goes before a reference denoiser.
+- It goes after Color and before Denoise, as the reference deconvolution tool goes before the reference denoiser.
 - It is applied to both half-stacks, so that Denoise still works.
 
 **Stages.** `deconv` (NEW, ≈ 2 min 30 s; × 6 on the CPU).
@@ -485,7 +485,7 @@ uses Denoise.
 **Images and measurements.** None in the mockup: Inspect says "No image for this block". To define. A
 before / after view at 100 % and a FWHM before and after would match the other blocks.
 
-**Methods.** Measured PSF (Richardson-Lucy) and Neural (a reference deconvolution tool-like). Both are NEW and run on the CPU or the
+**Methods.** Measured PSF (Richardson-Lucy) and Neural (the reference deconvolution tool-like). Both are NEW and run on the CPU or the
 GPU.
 
 **Settings.**
@@ -549,7 +549,7 @@ fine-tuned method.
 | Fine-tuning | Fine-tuning iterations | `denoise_ft.steps` | int | 100–3000 step 100 | 600 | normal | **NEW** |
 | Fine-tuning | Starting network | `denoise_ft.start` | choice | Closest earlier project / Bundled generic network | Closest earlier project | normal | **NEW** |
 | Pretrained network | Strength | `denoise_ai.force` | float | 0–1 step 0.05 | 0.8 | normal | **NEW** |
-| Pretrained network | Model | `denoise_ai.model` | choice | Bundled / a reference gradient tool (licence to check) | Bundled | normal | **NEW** |
+| Pretrained network | Model | `denoise_ai.model` | choice | Bundled / the reference gradient tool (licence to check) | Bundled | normal | **NEW** |
 | NL-Bayes | Strength | `denoise_cl.force` | float | 0–3 step 0.05 | 1.0 | normal | **NEW** |
 | NL-Bayes | Stabilise photon noise | `denoise_cl.vst` | bool | — | yes | normal | **NEW** |
 | NL-Bayes | DA3D refinement | `denoise_cl.da3d` | bool | — | no | expert | **NEW** |

@@ -1,8 +1,8 @@
-"""Debayering for the Classic stacking method (astro_gpu/core/debayer.py: RCD as another processing program runs it, bilinear).
+"""Debayering for the Classic stacking method (astro_gpu/core/debayer.py: RCD as the reference program runs it, bilinear).
 
 Synthetic CFA frames (RGGB) whose full-colour truth is known: flat colour fields, grey edges and stars, a frame larger
 than one RCD tile. And, when the files of the validation are there (F:/astro_essais/classic_check/rcd, made by its
-prep.py and another processing program 1.4's own debayering of the same frame), the real check against another processing program.
+prep.py and the reference program 1.4's own debayering of the same frame), the real check against the reference program.
 """
 from pathlib import Path
 
@@ -190,7 +190,7 @@ VALID = Path("F:/astro_essais/classic_check/rcd")
 @pytest.mark.slow
 @pytest.mark.skipif(not (VALID / "pp_cfa_real.fit").exists(), reason="the validation files are not there")
 def test_rcd_matches_sirils_own_debayering_of_a_real_frame():
-    """A calibrated frame of heart (Sony A7S, RGGB) debayered by another processing program 1.4 (calibrate_single -debayer, RCD) and here:
+    """A calibrated frame of heart (Sony A7S, RGGB) debayered by the reference program 1.4 (calibrate_single -debayer, RCD) and here:
     the same to float precision but for a few hundred pixels where a rounding flips a direction choice."""
     from astropy.io import fits
     x = np.load(VALID / "cfa_real.npy") / 65535.0

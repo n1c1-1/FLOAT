@@ -402,7 +402,7 @@ def test_our_folder_is_searched_and_the_environment_comes_first(tmp_path, monkey
 
 
 def test_another_programs_copy_is_an_extra_place_only(tmp_path, monkeypatch):
-    share = tmp_path / "nowhere" / "siril"                  # where that program keeps its data (LOCALAPPDATA/another processing program)
+    share = tmp_path / "nowhere" / "siril"                  # where that program keeps its data (LOCALAPPDATA/siril)
     share.mkdir(parents=True)
     (share / ASTRO_NAME).write_bytes(_astro_file(n=10))
     found = sirilcat.locate()

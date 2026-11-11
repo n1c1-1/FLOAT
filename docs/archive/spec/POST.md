@@ -4,8 +4,8 @@ Taken from `mockup/alt3/app/post3.py` (the screen) and `postengine.py` (the mode
 2026-10-31.
 
 Post combines the outputs of the workflows:
-- layers, as in a reference image editor;
-- masks made of parts, as in a reference photo editor;
+- layers, as in the reference image editor;
+- masks made of parts, as in the reference photo editor;
 - filter layers, applied to one layer or to everything below;
 - continuous sliders.
 
@@ -84,7 +84,7 @@ position}, mask}`
 `{id, kind: "filter", filter, name, visible, opacity, mode, params, mask, target}`
 
 - **Applies to.**
-  - "X" only: `target` is that workflow layer. The filter sits just above it, as a a reference image editor clipping mask.
+  - "X" only: `target` is that workflow layer. The filter sits just above it, as a reference image editor clipping mask.
   - Everything below: `target` is None. The filter acts on the composite of all the layers under it.
 - **A new filter** applies to the selected workflow layer, or to whatever the selected filter applies to. It goes on
   top of that layer's own filters.

@@ -1,25 +1,25 @@
 """The Classic stacking method: debayer every frame, put it on the reference
-grid, normalise it, reject outliers pixel by pixel, average what is kept. It is how another processing program (its OSC_Preprocessing
-script) and a reference processing suite (WBPP without drizzle) stack colour frames, and the method core/coverage.py advises when the
+grid, normalise it, reject outliers pixel by pixel, average what is kept. It is how the reference program (its OSC_Preprocessing
+script) and the reference processing suite (WBPP without drizzle) stack colour frames, and the method core/coverage.py advises when the
 frames are too few or too little dithered for a Bayer drizzle (the weight map varies by more than 20 %, DrizzlePac's
 rule).
 
 The steps, each a published method (sources in the modules named):
 
-1. **Debayering by RCD** (core/debayer.py: librtprocess's rcd_demosaic as another processing program runs it; bilinear as an option),
-   after another processing program's cosmetic fill of the bad samples and with the saturated samples at the saturation level; the frame
+1. **Debayering by RCD** (core/debayer.py: librtprocess's rcd_demosaic as the reference program runs it; bilinear as an option),
+   after the reference program's cosmetic fill of the bad samples and with the saturated samples at the saturation level; the frame
    white-balanced before RCD and the balance taken off after, as raw converters do (``cfa_balance``; without it RCD
    moved green flux into the weak blue channel of the stars: +46 % on heart, an orange cast after the colour stage).
-2. **Resampling onto the reference grid by Lanczos-4 with another processing program's clamping** (core/resample.py; a reference processing suite's clamping
+2. **Resampling onto the reference grid by Lanczos-4 with the reference program's clamping** (core/resample.py; the reference processing suite's clamping
    or none as options), through the registration polynomial the drizzle uses. Output at sensor resolution: pixel
    (j, i) is the reference sensor position (j, i), the drizzle's grid at scale 1.
 3. **Normalisation** (the drizzle's: stages/stack.py ``frame_norm``, an additive sky difference to the reference, a
    quadratic per colour, and the frame's transparency as its scale): every colour c of a frame becomes
    (value - Q_c(X, Y)) / scale_c at its reference position (X, Y) = the output pixel.
-4. **Rejection by the number of frames, a reference processing suite's WBPP rule** (core/rejection_classic.py): percentile 0.2 / 0.1
+4. **Rejection by the number of frames, the reference processing suite's WBPP rule** (core/rejection_classic.py): percentile 0.2 / 0.1
    for 3 to 5 frames, winsorized sigma clipping 3 / 3 for 6 to 15, linear fit clipping 5 / 3.5 from 16, the
    generalized ESD test as an option above 50; per frame, colour and pixel.
-5. **The weighted mean** of the kept values, with the frame weights of the drizzle (one per frame), as another processing program's
+5. **The weighted mean** of the kept values, with the frame weights of the drizzle (one per frame), as the reference program's
    ``mean_and_reject``; and the two half-stacks A and B (frames dealt by blocks of ``half_block``, as the drizzle),
    with the same rejection, for the noise measure.
 
@@ -27,9 +27,9 @@ Outputs (``ClassicResult``), the drizzle's files and keys: ``full``, ``A``, ``B`
 covers; ``weight`` (3, H, W), the summed weight of the kept values (drz_weight.npy); the rejection maps (low, high
 counts of rejected values, the three colours together, on the grid reduced by a whole factor until its longer side
 is at most 4096: rejection.npz as stack.RejectionMap writes it); the rejection rate in % of the values tested (next to
-Another processing program's 0.1-0.5 % mark [S12]) and per colour; per frame its rejected values; the noise of the result from the two
+The reference program's 0.1-0.5 % mark [S12]) and per colour; per frame its rejected values; the noise of the result from the two
 halves (stack.halves_noise's formula); the saturation shares (saturation.npy, as stack.py). With ``masks=True``, also
-what was rejected in each frame, per pixel and colour (``masks``): the rejection data of a reference processing suite's drizzle
+what was rejected in each frame, per pixel and colour (``masks``): the rejection data of the reference processing suite's drizzle
 integration, which stages/stack.py applies to a Bayer drizzle (``drizzle_rejection = integration``).
 
 How stages/stack.py calls it (for the integration agent; ``mm``, ``fpn``, ``dev``, ``reg``, ``info``, ``satval``,
@@ -69,12 +69,12 @@ result unchanged to the bit (issue #125): the resampled frames go to a file in `
 core: a memory-mapped array, its file deleted when closed), and on the CPU each band is cut into pieces of a multiple
 of PIECE_ALIGN pixels that do (``_parts``).
 
-With another processing program's own recipe (global IKSS normalisation, no weights, winsorized 3 / 3) it gives another processing program's stack of the same
+With the reference program's own recipe (global IKSS normalisation, no weights, winsorized 3 / 3) it gives the reference program's stack of the same
 frames: the same star FWHM, roundness and background noise, within a few hundredths. Time: about 1 s per 12 Mpx
 frame on a mid-range GPU for debayering and resampling, then the rejection and the means.
 
-Sources: see core/debayer.py, core/resample.py, core/rejection_classic.py; [S7] another processing program's OSC_Preprocessing.ssf;
-[S12] https://another processing program.org/tutorials/tuto-manual/ ; [P15] WBPP.
+Sources: see core/debayer.py, core/resample.py, core/rejection_classic.py; [S7] the reference program's OSC_Preprocessing.ssf;
+[S12] https://siril.org/tutorials/tuto-manual/ ; [P15] WBPP.
 """
 from __future__ import annotations
 
@@ -122,9 +122,9 @@ DISK_MARGIN = 2 * 2 ** 30
 class ClassicParams:
     """The settings of the Classic method, each with its published default (the modules give the sources)."""
     debayer: str = "rcd"                 # debayer.METHODS
-    cfa_balance: bool = True             # white balance before RCD, as raw converters do (debayer.py); False: as another processing program
+    cfa_balance: bool = True             # white balance before RCD, as raw converters do (debayer.py); False: as the reference program
     interpolation: str = "lanczos4"      # resample.METHODS
-    clamping: str = "siril"              # resample.CLAMPINGS
+    clamping: str = "bilinear_guide"              # resample.CLAMPINGS
     clamp_threshold: float = rs.PCL_CLAMPING_THRESHOLD
     rejection: str = "auto"              # "auto" (WBPP's rule) or rejection_classic.METHODS
     low: float | None = None             # None: the method's published thresholds
@@ -135,7 +135,7 @@ class ClassicParams:
     band_pixels: int = 1 << 20           # pixels per rejection band on the device
 
 
-#: ``masks``: bit c (0-2) = rejected low in colour c (R, G, B), bit HIGH_SHIFT + c = rejected high (a reference processing suite's
+#: ``masks``: bit c (0-2) = rejected low in colour c (R, G, B), bit HIGH_SHIFT + c = rejected high (the reference processing suite's
 #: rejection map keeps the low and high rejections apart too; any bit excludes the sample from the drizzle)
 HIGH_SHIFT = 3
 
