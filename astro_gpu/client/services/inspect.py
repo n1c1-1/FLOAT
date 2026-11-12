@@ -668,9 +668,13 @@ def calib_checks(row: SessionRow, camera: dict) -> dict:
     (darks far under the bias, or the black level: their bias was taken off) and "flat_under" (flats that are not a
     master go under the level they will be corrected with: their bias was taken off already), each with the reference
     level {"ref": ADU, "what": "bias" | "black level" | "dark level"}; {} for none. "darks_by_exposure": which dark the
-    lights of each exposure get (``dark_lines``), when the lights or the darks are of several exposures."""
-    from ...stages.calibrate import dark_far, flat_under
+    lights of each exposure get (``dark_lines``), when the lights or the darks are of several exposures;
+    "mixed_exposures": the exposure times of lights of several (information)."""
+    from ...stages.calibrate import dark_far, flat_under, mixed_exposures
     out: dict = {}
+    mixed = mixed_exposures(row.light_keys)
+    if mixed:
+        out["mixed_exposures"] = mixed
     by = dark_lines(row, camera)
     if by:
         out["darks_by_exposure"] = by

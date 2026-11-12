@@ -232,6 +232,14 @@ def exposure_groups(keys: list[tuple]) -> list[dict]:
     return out
 
 
+def mixed_exposures(frames: list[dict]) -> list[float]:
+    """The exposure times (s, longest first) of lights of several exposures (groups within SAME_EXPOSURE, whatever
+    their gain, as ``exposure_groups`` makes them); [] for one exposure, or none recorded."""
+    groups = exposure_groups([(_key(f)[0], None) for f in frames])
+    times = sorted({g["exposure"] for g in groups if g["exposure"]}, reverse=True)
+    return times if len(times) > 1 else []
+
+
 def dark_plan(lights: list[dict], darks: list[dict], base: bool) -> list[tuple[str, int | None]]:
     """How each group of lights (``exposure_groups``) is calibrated against the groups of darks, by the usual practice
     of calibration: ("same", j) with the darks of group j, of its exposure and gain, as they are; ("scaled", j) when no

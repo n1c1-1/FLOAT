@@ -1102,9 +1102,21 @@ def health_checks(p: Project2, dates: dict[int, list[tuple[str, str]]] | None = 
             g = grouped.setdefault((round(x["sep"]), x["object"]), {**x, "sep": float(round(x["sep"])), "sessions": []})
             g["sessions"].append(x["session"])
         for (sep, obj), g in grouped.items():
-            out.append(Check("warn", "target_far", f"Target: the frames point {sep}° away from {g['target']}"
+            out.append(Check("info", "target_far", f"Target: the frames point {sep}° away from {g['target']}"
                              + (f" (their header says {obj})" if obj else "") + ": check the project's target.", g))
     except Exception:  # noqa: BLE001 - a hint: headers that cannot be read are said elsewhere
+        pass
+    try:                                             # lights of several exposure times in one session: information
+        from .stages.calibrate import mixed_exposures
+        for s in keys.project.sessions:
+            times = mixed_exposures(light_facts([f for f, _size in keys.scan.session_frames(keys.project, s)["lights"]],
+                                                limit=400).get("keys") or [])
+            if times:
+                names = [f"{t:g} s" for t in times]
+                listed = " and ".join([", ".join(names[:-1]), names[-1]])
+                out.append(Check("info", "mixed_exposures", f"{s.name}: this session mixes lights of {listed}: put each "
+                                 "exposure time in a session of its own, with its darks.", {"session": s.name, "times": times}))
+    except Exception:  # noqa: BLE001 - information: headers that cannot be read are said elsewhere
         pass
     for w in p.workflows:                            # two filters in one stack: a mistake, said before the run
         flts = sorted({s.filter for s in p.sessions_of(w) if s.lights} - {""}) if w.source is None else []

@@ -84,7 +84,7 @@ def test_the_model_gives_the_nights_of_a_session(tmp_path):
     assert ProjectModel.nights_text(m, 1) == "8 nights · 29/06 to 22/07" and ProjectModel.nights_text(m, 2) == ""
 
 
-def test_lights_far_from_the_target_are_a_warning_in_the_matching_lines_and_the_checks(tmp_path):
+def test_lights_far_from_the_target_are_information_in_the_matching_lines_and_the_checks(tmp_path):
     p = _project(tmp_path, Target(name="NGC 602", ra=314.14, dec=-73.6))
     d = project_frames(p, None)
     row = d.sessions[0]
@@ -92,9 +92,9 @@ def test_lights_far_from_the_target_are_a_warning_in_the_matching_lines_and_the_
     view = SimpleNamespace(data=d, s=SimpleNamespace(frames_excluded=[]), _row=lambda: row, black=lambda: 0.0)
     want = ("Target: the frames point 105° away from NGC 602 (their header says NGC 6995): check the project's "
             "target.")
-    assert (False, want) in SourcesView.checks(view)
+    assert (None, want) in SourcesView.checks(view)
     checks = [c for c in d.checks if c.key == "target_far"]
-    assert len(checks) == 1 and checks[0].level == "warn" and checks[0].args["sessions"] == ["SII"], d.checks
+    assert len(checks) == 1 and checks[0].level == "info" and checks[0].args["sessions"] == ["SII"], d.checks
     assert check_text(checks[0]) == want
     assert "Target:" in checks[0].text
 
@@ -110,22 +110,19 @@ def test_no_object_name_in_the_header_and_lights_near_the_target(tmp_path):
     assert d.sessions[0].target_far is None and not any(c.key == "target_far" for c in d.checks)
 
 
-def test_the_project_block_is_orange_with_the_reason(tmp_path):
+def test_the_project_block_is_not_orange_for_a_far_target(tmp_path):
     p = _project(tmp_path, Target(name="NGC 602", ra=314.14, dec=-73.6))
     files = sorted((tmp_path / "L").glob("*.fits"))
     full = {k: "x" for k in project2.ACQUISITION}
     p.acquisition.update(full)
     m = SimpleNamespace(p=p, _facts=SimpleNamespace(lights={1: light_facts(files)}),
                         target_state=lambda: SimpleNamespace(name="NGC 602"))
-    m.target_far_texts = lambda: ProjectModel.target_far_texts(m)
     st = ProjectModel.project_state(m)
-    assert st.level == "partial" and not st.missing
-    assert "105° away from NGC 602" in st.line and not st.line.startswith("Complete")
+    assert st.level == "complete" and not st.missing and st.line.startswith("Complete")
     right = _project(tmp_path / "r", Target(name="NGC 6995", ra=314.2, dec=31.6))
     right.acquisition.update(full)
     m2 = SimpleNamespace(p=right, _facts=SimpleNamespace(lights={1: light_facts(files)}),
                          target_state=lambda: SimpleNamespace(name="NGC 6995"))
-    m2.target_far_texts = lambda: ProjectModel.target_far_texts(m2)
     st2 = ProjectModel.project_state(m2)
     assert st2.level == "complete" and st2.line.startswith("Complete")
     assert api.target_far(right, {1: light_facts(files)}) == []

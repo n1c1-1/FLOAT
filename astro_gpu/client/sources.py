@@ -44,7 +44,17 @@ from PySide6.QtWidgets import (
 
 from . import icons as ic
 from . import prefs
-from .frames import clock_text, colour_note_text, fexp, iso_word, night_start, nights_text, target_far_text, type_warning_text
+from .frames import (
+    clock_text,
+    colour_note_text,
+    fexp,
+    iso_word,
+    mixed_exposures_text,
+    night_start,
+    nights_text,
+    target_far_text,
+    type_warning_text,
+)
 from .i18n import _, hours_text, number, plural
 from .imageview import ImageView, ViewImage, quick_thumbnail
 from .services.inspect import FrameItem, ProjectFrames, calib_checks, flat_pct, light_thumb, service_of, set_calibration_excluded
@@ -832,8 +842,10 @@ class SourcesView(QWidget):
         bad = calib_checks(ref, d.camera) if ref is not None else {}
         where = {"bias": _("the bias"), "black level": _("the black level"), "dark level": _("the darks' level")}
         far = getattr(ref, "target_far", None)
-        if far:                                      # the typed target against where the frames point: a warning, once
-            out.append((False, target_far_text(far)))
+        if far:                                      # the typed target against where the frames point: information
+            out.append((None, target_far_text(far)))
+        if bad.get("mixed_exposures"):               # lights of several exposure times: information, nothing blocked
+            out.append((None, mixed_exposures_text(bad["mixed_exposures"])))
         dk = c.get("darks")
         by = bad.get("darks_by_exposure")
         if dk and not (by and by[0]["several"]):

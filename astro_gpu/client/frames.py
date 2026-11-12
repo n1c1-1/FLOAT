@@ -85,6 +85,13 @@ def target_far_text(a: dict) -> str:
         sep=int(round(a["sep"])), target=a["target"])
 
 
+def mixed_exposures_text(times) -> str:
+    """A session of lights of several exposure times (``stages.calibrate.mixed_exposures``), said as information."""
+    names = [f"{t:g} s" for t in times]
+    return _("This session mixes lights of {times}: put each exposure time in a session of its own, with its "
+             "darks.").format(times=(", ".join(names[:-1]) + _(" and ") + names[-1]) if len(names) > 1 else names[0])
+
+
 def day_text(iso: str) -> str:
     """A day as the night's text writes it ("17 Jun 2025", "17 juin 2025"); the ISO text itself when it cannot be read."""
     try:
@@ -173,6 +180,9 @@ def check_text(c, data: ProjectFrames | None = None) -> str:
             f"{a.get('session', '')}: " + clock_text(a)
     if c.key == "target_far":                             # the typed target against where the lights point
         return target_far_text(a)
+    if c.key == "mixed_exposures":                        # lights of several exposure times in one session
+        colon = " :" if language() == "fr" else ":"
+        return f"{a.get('session', '')}{colon} " + mixed_exposures_text(a["times"])
     if c.key == "unreadable":                             # GUI exploration 6.10: a light that cannot be read
         return _("{session}: {name} cannot be read (damaged, or not a frame): take it out of the session.").format(
             session=a.get("session", ""), name=a.get("name", ""))

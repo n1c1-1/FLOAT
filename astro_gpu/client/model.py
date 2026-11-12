@@ -1337,19 +1337,9 @@ class ProjectModel(QObject):
         by_session = bool(self.p.sessions) and all(s.filter for s in self.p.sessions)
         missing = ([] if has_target else [_("target")]) + [words[k] for k in ACQUISITION if not self.p.acquisition.get(k)
                                                            and not (k == "filter" and by_session)]
-        warnings = self.target_far_texts() if has_target else []
-        return ProjectState("none" if not has_target else "partial" if missing or warnings else "complete", missing,
-                            warnings)
-
-    def target_far_texts(self) -> list[str]:
-        """The project's target against where its lights point (``api.target_far``, from the headers the worker read):
-        one sentence per case, in the language of the interface; none when they agree or when nothing is known."""
-        from .frames import target_far_text
-        try:
-            far = api.target_far(self.p, self._facts.lights)
-        except Exception:  # noqa: BLE001 - a hint: the catalogues of names not installed, nothing said
-            return []
-        return list(dict.fromkeys(target_far_text(x) for x in far))
+        # the target against where the lights point is information (the matching lines, the checks): Astrometry finds
+        # the field, the target only helps it
+        return ProjectState("none" if not has_target else "partial" if missing else "complete", missing)
 
     def nights_text(self, sid: int) -> str:
         """The nights a session's lights were taken in, when several ("8 nights · 28/06 to 21/07"); "" otherwise."""

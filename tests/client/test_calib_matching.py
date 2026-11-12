@@ -111,3 +111,26 @@ def test_the_matching_lines_say_which_dark_the_lights_of_each_exposure_get(tmp_p
                    "300 s).") in lines, lines
     lines = _mixed(tmp_path / "c", (300.0,), bias=True)
     assert (None, "Lights of 60 s: no dark of 60 s, the darks of 300 s with their thermal signal scaled.") in lines
+
+
+def test_a_session_mixing_exposure_times_says_so_as_information(tmp_path):
+    from astro_gpu import api
+    from astro_gpu.client import i18n
+    from astro_gpu.client.frames import check_text
+    p = _project(tmp_path, 1, 508.0, np.full((H, W), 8400 / 65535, np.float32), {"STACKCNT": 30})
+    _fits(tmp_path / "L0" / "l2.fits", np.full((H, W), 900, np.uint16), EXPTIME=60.0, PEDESTAL=512, DATAMAX=16383,
+          **{"DATE-OBS": "2026-06-10T23:05:00"})
+    want = ("This session mixes lights of 300 s and 60 s: put each exposure time in a session of its own, with its "
+            "darks.")
+    assert (None, want) in _lines(p, 1)
+    c = [x for x in api.health_checks(p) if x.key == "mixed_exposures"]
+    assert len(c) == 1 and c[0].level == "info" and c[0].args["times"] == [300.0, 60.0]
+    assert check_text(c[0]) == "night 1: " + want
+    try:
+        i18n.set_language("fr")
+        assert check_text(c[0]).startswith("night 1 : Cette session mélange des lights de 300 s et 60 s")
+    finally:
+        i18n.set_language("en")
+    one = _project(tmp_path / "o", 1, 508.0, np.full((H, W), 8400 / 65535, np.float32), {"STACKCNT": 30})
+    assert not any("mixes" in t for _ok, t in _lines(one, 1))
+    assert not any(x.key == "mixed_exposures" for x in api.health_checks(one))
