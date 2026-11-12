@@ -138,7 +138,10 @@ class StarRemoval(Stage):
         ctx.save_json("prep_stars.json", {"crop": prep["crop"], "M": prep["M"],
                                           "drizzle_scale": prep.get("drizzle_scale", 1.0), "width": prep.get("width"),
                                           "height": prep.get("height"), "unit": 1.0, "background": [0.0, 0.0, 0.0],
-                                          "stats_full": whole_stats(lin, stars, valid, prep["crop"]), "fused": True})
+                                          "stats_full": whole_stats(lin, stars, valid, prep["crop"]), "fused": True,
+                                          # the Output's origin (a palette fusion), for Post's defaults and sliders:
+                                          # only a fusion's result gains it, and a fusion's change recomputes it
+                                          "origin": prep.get("origin", "")})
         ctx.metric("grid_peaks", 0)
         ctx.log("the fusion's starless image and its star layer (the stars were taken off in each channel)")
         x0, x1, y0, y1 = prep["crop"]

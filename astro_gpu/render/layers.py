@@ -67,11 +67,12 @@ def has_denoise(folder: str | Path) -> bool:
 
 
 def origin_of(folder: str | Path) -> str:
-    """Where the layer's image comes from (render/sliders.ORIGINS), as render_simple wrote it ("" for a folder made
-    before it did)."""
+    """Where the layer's image comes from (render/sliders.ORIGINS), as render_simple wrote it, or a fusion's Split
+    stars block after it ("" for a folder made before they did)."""
     d = Path(folder)
-    if (d / "prep_simple.json").exists():
-        return str(json.loads((d / "prep_simple.json").read_text(encoding="utf-8")).get("origin") or "")
+    for name in ("prep_simple.json", "prep_stars.json"):
+        if (d / name).exists():
+            return str(json.loads((d / name).read_text(encoding="utf-8")).get("origin") or "")
     return ""
 
 

@@ -175,6 +175,8 @@ class RenderSimple(Stage):
                            # 8: the frame of a fusion is the largest rectangle where every channel has data;
                            # prep_simple.json says the image's origin (mono, palette) for Post's H-alpha slider;
                            # 9: a fusion whose channels' sky is at 0 keeps it there (no median of the frame taken off)
+                           # (an SHO Hubble fusion's origin is now "palette", #163: only those fusions' results change,
+                           # and the fusion's version 7 recomputes them)
 
     def run(self, ctx: Context, p: RenderSimpleParams) -> None:
         from ..render.simple import SimpleRenderEngine, SimpleSettings, image_stats
