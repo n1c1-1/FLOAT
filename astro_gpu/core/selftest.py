@@ -94,7 +94,8 @@ def op_sampling(dev: str) -> dict[str, np.ndarray]:
     rng = np.random.default_rng(2)
     den = torch.from_numpy(rng.uniform(0.8, 1.2, (3, Ho, Wo)).astype(np.float32)).to(d).reshape(-1)
     num = den * torch.from_numpy(rng.normal(1.0, 0.1, (3, Ho, Wo)).astype(np.float32)).to(d).reshape(-1)
-    model = Prediction(num, den, 20, Ho, Wo, d)
+    sq = den * torch.from_numpy(rng.normal(1.1, 0.1, (3, Ho, Wo)).astype(np.float32)).to(d).reshape(-1)
+    model = Prediction(num, den, sq, 20, Ho, Wo, d, torch.zeros(3, device=d))
     H, W = 1200, 1800
     yy, xx = torch.meshgrid(torch.arange(H, device=d, dtype=torch.float32),
                             torch.arange(W, device=d, dtype=torch.float32), indexing="ij")

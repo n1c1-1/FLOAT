@@ -348,7 +348,7 @@ def test_frames_at_two_orientations_stack_into_one_image(tmp_path, method):
     proj, truth = two_orientations(tmp_path / "p")
     Hs, Ws = truth.size
     p = copy_project(proj.root, tmp_path / method)
-    params = {"scale": 1.0, "pixfrac": 1.0, "gain": 1.0, "read_noise": 6.0, "half_block": 2}
+    params = {"scale": 1.0, "pixfrac": 1.0, "half_block": 2}
     run_stage(p, Stack(), StackParams(**params, **({"method": "classic"} if method == "classic" else {})))
     img, wt = np.load(p.stage_dir("stack") / "drz_full.npy"), np.load(p.stage_dir("stack") / "drz_weight.npy")
     yy, xx = np.mgrid[-5:6, -5:6]
@@ -445,7 +445,7 @@ def test_a_session_with_turned_frames_stacks_the_same_on_one_core_or_all(tmp_pat
 
     from astro_gpu.stages import stack
     proj, _truth = two_orientations(tmp_path / "p", n=6, turned=3, ang=ang, n_stars=120)
-    params = stack.StackParams(scale=1.5, pixfrac=0.7, gain=1.0, read_noise=6.0, half_block=2, **settings)
+    params = stack.StackParams(scale=1.5, pixfrac=0.7, half_block=2, **settings)
     monkeypatch.setattr(stack, "PARALLEL_SAMPLES", 1)
     rows = stack.row_cuts
     monkeypatch.setattr(stack, "row_cuts", lambda *a: None)     # a turned frame on one core

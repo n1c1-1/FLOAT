@@ -4,10 +4,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import torch
-import torch.nn.functional as F
 
 from astro_gpu.stages import stack
-from astro_gpu.stages.stack import Prediction, drizzle_deposit, touching
+from astro_gpu.stages.stack import Prediction, drizzle_deposit
 
 
 def frame(H=480, W=640, seed=1):
@@ -47,21 +46,16 @@ def test_the_compiled_sampling_is_grid_sample(monkeypatch):
     X, Y, _val, ch, _k, _h, _w = frame(H, W)
     num = torch.from_numpy(rng.uniform(1, 9, 3 * H * W).astype(np.float32)) * 5
     den = torch.from_numpy(rng.uniform(0, 5, 3 * H * W).astype(np.float32)) * (torch.rand(3 * H * W) > 0.05)
-    model = Prediction(num, den, 10, H, W, torch.device("cpu"))
+    sq = num * 1.2
+    model = Prediction(num, den, sq, 10, H, W, torch.device("cpu"), torch.zeros(3))
 
     def run(limit):
         monkeypatch.setattr(stack, "PARALLEL_SAMPLES", limit)
         return model.sample(X - 3.0, Y + 2.0, ch)
 
     a, b = run(10 ** 12), run(1)
-    for k in ("pred", "cover", "bkg", "floor"):
+    for k in ("pred", "dev", "cover"):
         assert torch.allclose(a[k], b[k], rtol=2e-5, atol=2e-5), k
-
-
-def test_touching_is_a_three_by_three_dilation():
-    m = torch.from_numpy(np.random.default_rng(3).random((60, 80)) < 0.02)
-    want = F.max_pool2d(m.float()[None, None], 3, 1, 1)[0, 0] > 0
-    assert torch.equal(touching(m), want)
 
 
 def test_the_compiled_polynomial_gives_the_same_bits():

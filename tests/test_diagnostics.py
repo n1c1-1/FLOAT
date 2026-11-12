@@ -337,14 +337,16 @@ def test_a_star_whose_background_ring_is_all_bad_pixels_is_left_out(tmp_path):
 
 # ---------------------------------------------------------------------------------------------- stacking
 
-def stack_project(root: Path, n: int = 8, H: int = 192, W: int = 256):
+def stack_project(root: Path, n: int = 80, H: int = 192, W: int = 256):
     """A v1 project with done inventory, calibrate (a float16 cache) and register results: a flat sky of 100 ADU
     with stars, frame 2 crossed by a satellite at sensor row 60, frame 4 with a dark hole, frame 3 with a sky 50 ADU
-    higher; the frames shifted by a pixel or two, so that each half-stack (blocks of one frame) has every colour at
-    every output pixel."""
+    higher; the frames shifted by a pixel or two (eight shifts in turn), so that each half-stack (blocks of one frame)
+    has every colour at every output pixel. Eighty frames: a sigma clipping judging against the spread measured at a
+    point cannot reject one outlier among a few samples (the largest deviation of one value among N is (N - 1) /
+    sqrt(N) standard deviations, 2.8 for ten): the colours of a point hold about a fourth of the frames."""
     rng = np.random.default_rng(7)
     proj = Project.create(root, "s", Inputs())
-    shifts = [(0, 0), (1, 1), (1, 0), (0, 1), (0, 1), (1, 0), (1, 1), (2, 2)][:n]
+    shifts = ([(0, 0), (1, 1), (1, 0), (0, 1), (0, 1), (1, 0), (1, 1), (2, 2)] * (n // 8 + 1))[:n]
     yy, xx = np.mgrid[0:H, 0:W]
     stars = [(40, 20), (200, 25), (130, 100), (60, 140), (220, 160), (150, 175)]   # away from the trail and hole
     cache = root / "lights.f16"
@@ -363,7 +365,7 @@ def stack_project(root: Path, n: int = 8, H: int = 192, W: int = 256):
         coef[i, 1, :3] = [H / 2 - dy, 0, H / 2]
     mm.flush()
     del mm
-    lights = [{"path": f"L{i}.fits", "time": f"2026-01-01T00:0{i}:00"} for i in range(n)]
+    lights = [{"path": f"L{i}.fits", "time": f"2026-01-01T{i // 60:02d}:{i % 60:02d}:00"} for i in range(n)]
 
     def stage(name, files, metrics=None):
         d = proj.stage_dir(name)
@@ -393,7 +395,7 @@ def stacked(tmp_path_factory):
     from astro_gpu.stages.stack import Stack, StackParams
     proj, shifts = stack_project(tmp_path_factory.mktemp("stack") / "p")
     ctx = Context(proj, Stack(), Journal(proj.logs, echo=False), "cpu")
-    Stack().run(ctx, StackParams(scale=1.0, half_block=1, min_transparency=0.0, gain=1.0, read_noise=10.0))
+    Stack().run(ctx, StackParams(scale=1.0, half_block=1, min_transparency=0.0))
     return proj, ctx.dir, shifts
 
 
@@ -410,16 +412,13 @@ def test_the_stack_keeps_its_rejection_maps_low_and_high(stacked):
     assert sum(x["rejected_outside"] for x in frames) == 0
     row = 60 - shifts[2][1]                                         # the satellite, on the reference grid
     along = high[row - 1:row + 2].sum(0)
-    assert (along[5:-5] > 0).mean() > 0.9                           # the whole trail, with its edges
+    assert (along[5:-5] > 0).mean() > 0.9                           # the whole trail
     hy, hx = 30 - shifts[4][1], 90 - shifts[4][0]                   # the hole of frame 4
-    assert low[hy:hy + 6, hx:hx + 6].sum() >= 20 and low.sum() - low[hy:hy + 6, hx:hx + 6].sum() < 20
-    # no high rejection elsewhere, not on the outer rows and columns of the grid (the prediction there was half zero
-    # padding before version 4); only around the hole, where with these whole-pixel shifts a colour of a pixel holds
-    # the samples of two frames only, the hole's and one other (with real dithering the cleaned prediction holds there)
+    assert low[hy:hy + 6, hx:hx + 6].sum() >= 30 and low.sum() - low[hy:hy + 6, hx:hx + 6].sum() < 0.01 * 80 * 192 * 256   # the rest: noise
+    # elsewhere only the noise's tail is rejected high (a few samples in a thousand at three deviations)
     inner = high.astype(int)
     inner[row - 1:row + 2] = 0
-    inner[hy - 6:hy + 12, hx - 6:hx + 12] = 0
-    assert inner.sum() == 0
+    assert inner.sum() < 0.01 * 80 * 192 * 256
 
 
 def test_the_stack_keeps_the_normalisation_of_each_frame_and_the_noise_of_the_result(stacked):
@@ -427,10 +426,10 @@ def test_the_stack_keeps_the_normalisation_of_each_frame_and_the_noise_of_the_re
     _, d, _ = stacked
     diag = json.loads((d / DIAG).read_text())
     fr = {f["index"]: f for f in diag["frames"]}
-    assert sorted(fr) == list(range(8)) and [fr[i]["half"] for i in range(8)] == list("ABABABAB")
+    assert sorted(fr) == list(range(80)) and [fr[i]["half"] for i in range(8)] == list("ABABABAB")
     assert fr[3]["offset"] == [pytest.approx(50, abs=6)] * 3        # frame 3's sky, 50 ADU above the reference's
     assert all(abs(v) < 6 for i in (1, 2, 5) for v in fr[i]["offset"]) and fr[0]["scale"] == [1.0] * 3
-    assert fr[2]["rejected_high"] > 300 and fr[4]["rejected_low"] >= 20
+    assert fr[2]["rejected_high"] >= 250 and fr[4]["rejected_low"] >= 20
     drz, wt = np.load(d / "drz_full.npy"), np.load(d / "drz_weight.npy")
     for c, name in enumerate("RGB"):
         v = drz[c][wt[c] > 0]

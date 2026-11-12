@@ -97,7 +97,7 @@ def test_the_stack_stage_short_of_memory_gives_the_same_files(small_night, monke
     from astro_gpu.stages.stack import REJECTION, Stack, StackParams
     root, proj = small_night
     name = "_".join(settings.values())
-    params = StackParams(scale=1.0, pixfrac=1.0, gain=1.0, read_noise=6.0, half_block=2, **settings)
+    params = StackParams(scale=1.0, pixfrac=1.0, half_block=2, **settings)
     roomy = copy_project(proj.root, root / f"roomy_{name}")
     run_stage(roomy, Stack(), params)
     monkeypatch.setattr(devices, "memory_budget", lambda: SHORT)

@@ -357,10 +357,6 @@ PATTERNS: list[tuple[re.Pattern, str, tuple]] = [
         # issue #125: the threads of the stack on the processor, the time of each of its passes (stages/stack.PassClock,
         # core/stack_classic.py)
         (r"^stacking on the processor with (\d+) threads$", "stacking on the processor with {0} threads", ()),
-        # the stack's automatic gain, when the frames give none (stages/stack.sky_gain): why, translated
-        (r"^automatic gain not measurable on these frames \((.+)\): the noise model with its default gain of "
-         r"([\d.]+) e-/ADU$",
-         "automatic gain not measurable on these frames ({0}): the noise model with its default gain of {1} e-/ADU", (0,)),
         (r"^pass (\d) done in ([\d.]+) min, of which (\d+) s reading the frames$",
          "pass {0} done in {1} min, of which {2} s reading the frames", ()),
         (r"^normalisation done in ([\d.]+) min, of which (\d+) s reading the frames$",

@@ -68,7 +68,7 @@ def _mapped(monkeypatch) -> None:
 def test_read_or_mapped_the_stack_writes_the_same_files(night, monkeypatch, settings):
     root, proj = night
     name = "_".join(settings.values()) or "drizzle"
-    params = st.StackParams(scale=1.5, pixfrac=0.7, gain=1.0, read_noise=6.0, half_block=2, **settings)
+    params = st.StackParams(scale=1.5, pixfrac=0.7, half_block=2, **settings)
     read = copy_project(proj.root, root / f"read_{name}")
     run_stage(read, st.Stack(), params)
     _mapped(monkeypatch)

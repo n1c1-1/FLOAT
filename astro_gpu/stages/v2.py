@@ -13,7 +13,7 @@ from ..core.stage import Stage
 AUTO_FIELDS: dict[str, frozenset[str]] = {
     "calibrate": frozenset({"workers"}),
     "register": frozenset({"workers"}),
-    "stack": frozenset({"scale", "pixfrac", "min_transparency", "half_block", "read_noise", "gain"}),
+    "stack": frozenset({"scale", "pixfrac", "min_transparency", "half_block"}),
     "astrometry": frozenset({"ra", "dec", "target", "pixel_um", "focal_mm"}),
     "color": frozenset({"aperture"}),
     "denoise": frozenset({"adaptation"}),                # long when the half-stacks' noise is not dithered
@@ -26,7 +26,9 @@ KEY_BASELINE: dict[str, dict[str, object]] = {
 }
 #: settings removed from a stage: a definition that still stores one is read without it
 RETIRED: dict[str, frozenset[str]] = {
-    "stack": frozenset({"rejection", "weighting", "normalisation", "scale_rule"}),
+    # gain, read_noise, core_tolerance: the drizzle rejection measures the spread, it has no noise model
+    "stack": frozenset({"rejection", "weighting", "normalisation", "scale_rule", "gain", "read_noise",
+                        "core_tolerance"}),
     "register": frozenset({"channel_align", "fwhm_method"}),
     "color": frozenset({"correction", "hii_weight", "camera_profile", "synthetic_weight", "profile_tolerance"}),
     "background": frozenset({"sky_order", "large_scale_px"}),

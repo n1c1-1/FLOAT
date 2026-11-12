@@ -834,7 +834,7 @@ def test_the_panel_lists_the_settings_of_the_engine(world, model, page):
     page.panel.expert = True
     page.panel.refresh(page.panel.node)
     keys = {r.r["key"] for r in live_rows(page)}
-    assert {"stack.kappa", "stack.gain", "stack.half_block", "stack.read_noise"} <= keys
+    assert {"stack.kappa", "stack.half_block"} <= keys
     assert "stack.exclude" not in keys and "stack.min_transparency" not in keys    # set by the project / Selection
     # the Details of a clicked setting: range bar, "Suggested: v · reason", help
     rows = {r.r["key"]: r for r in live_rows(page)}
@@ -954,7 +954,7 @@ def test_the_stacking_method_is_chosen_on_cards_and_shows_only_its_own_settings(
     keys = {r.r["key"] for r in live_rows(page)}
     assert {"stack.classic_debayer", "stack.classic_interpolation", "stack.classic_clamping",
             "stack.classic_rejection"} <= keys
-    assert not keys & {"stack.scale", "stack.pixfrac", "stack.kappa", "stack.scale_rule", "stack.gain"}
+    assert not keys & {"stack.scale", "stack.pixfrac", "stack.kappa", "stack.scale_rule"}
     labels = {r.r["name"]: r.r["label"] for r in live_rows(page)}
     assert labels["classic_debayer"] == "Debayering" and labels["classic_clamping"] == "Clamping"
     # the register's per-block colour alignment is withdrawn too: not in Registration

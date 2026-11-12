@@ -169,7 +169,7 @@ def stack_with(night, name: str, **settings):
     from astro_gpu.stages.stack import Stack, StackParams
     root, proj, truth = night
     p = copy_project(proj.root, root / name)
-    params = {"scale": 1.0, "pixfrac": 1.0, "gain": 1.0, "read_noise": 6.0, "half_block": 2, **settings}
+    params = {"scale": 1.0, "pixfrac": 1.0, "half_block": 2, **settings}
     ctx = run_stage(p, Stack(), StackParams(**params))
     return p, ctx
 
@@ -327,7 +327,7 @@ def test_the_default_selection_keeps_every_frame_above_the_minimum_weight(night,
     z["transp"] = z["transp"].copy()
     z["transp"][9] = 0.15                                              # a cloud on frame 9: weight about 2 %
     np.savez(p.stage_dir("register") / "reg.npz", **z)
-    ctx = run_stage(p, Stack(), StackParams(scale=1.0, pixfrac=1.0, gain=1.0, read_noise=6.0, half_block=2))
+    ctx = run_stage(p, Stack(), StackParams(scale=1.0, pixfrac=1.0, half_block=2))
     rows = json.loads((p.stage_dir("stack") / "frames.json").read_text())
     assert [i for i, r in enumerate(rows) if r["weight"] == 0] == [9]
     assert rows[9]["exclusion_codes"] == "weight" and rows[9]["exclusions"][0]["template"] == fwm.LOW_WEIGHT
@@ -352,7 +352,7 @@ def test_selection_at_k_sigma_with_reasons(night, tmp_path):
     fm[2] = 2.0 * truth.fwhm                                           # wind on frame 2
     z["fwhm_moffat"], z["roundness_moffat"] = fm, np.full(truth.n, 0.95)
     np.savez(p.stage_dir("register") / "reg.npz", **z)
-    params = dict(scale=1.0, pixfrac=1.0, gain=1.0, read_noise=6.0, half_block=2, selection="sota")
+    params = dict(scale=1.0, pixfrac=1.0, half_block=2, selection="sota")
     ctx = run_stage(p, Stack(), StackParams(**params))
     rows = json.loads((p.stage_dir("stack") / "frames.json").read_text())
     assert rows[2]["weight"] == 0 and "fwhm" in rows[2]["exclusion_codes"]
@@ -381,7 +381,7 @@ def test_selection_by_thresholds_with_reasons(night, tmp_path):
     z["transp"] = z["transp"].copy()
     z["transp"][5] = 0.3                                               # haze on frame 5
     np.savez(p.stage_dir("register") / "reg.npz", **z)
-    ctx = run_stage(p, Stack(), StackParams(scale=1.0, pixfrac=1.0, gain=1.0, read_noise=6.0, half_block=2,
+    ctx = run_stage(p, Stack(), StackParams(scale=1.0, pixfrac=1.0, half_block=2,
                                             selection="thresholds", min_transparency=0.6, exclude=["L01.fits"]))
     rows = json.loads((p.stage_dir("stack") / "frames.json").read_text())
     out = {i: r["exclusion_codes"] for i, r in enumerate(rows) if r["weight"] == 0}
@@ -569,7 +569,7 @@ def test_the_crop_zone_stacks_the_image_of_the_whole_field_cut(night, tmp_path, 
     """The Crop block (issue #79): the zone comes out as the same pixels as the whole field's, cut."""
     from astro_gpu.stages.stack import Stack, StackParams
     root, proj, truth = night
-    params = dict(scale=scale, pixfrac=1.0, gain=1.0, read_noise=6.0, half_block=2)
+    params = dict(scale=scale, pixfrac=1.0, half_block=2)
     whole_p = copy_project(proj.root, tmp_path / "whole")
     run_stage(whole_p, Stack(), StackParams(**params))
     whole = np.load(whole_p.stage_dir("stack") / "drz_full.npy")

@@ -133,7 +133,6 @@
  "{0} frame(s) aligned after turns of the camera of {1} to {2} degrees": "{0} image(s) alignée(s) après des rotations de la caméra de {1} à {2} degrés",
  "drizzle {0}x{1} from {2} frames in {3} min, {4} % pixels rejected": "drizzle {0}x{1} à partir de {2} images en {3} min, {4} % de pixels rejetés",
  "stacking on the processor with {0} threads": "empilement sur le processeur avec {0} fils d'exécution",
- "automatic gain not measurable on these frames ({0}): the noise model with its default gain of {1} e-/ADU": "gain automatique non mesurable sur ces images ({0}) : le modèle de bruit prend son gain par défaut de {1} e-/ADU",
  "mixed exposures": "poses mélangées",
  "sky level not above zero": "niveau du ciel pas au-dessus de zéro",
  "outside the range of a sensor": "hors de la plage d'un capteur",

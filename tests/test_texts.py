@@ -180,9 +180,7 @@ def test_stack_gives_the_same_english_and_the_same_values(tmp_path, monkeypatch,
         assert auto[name].args is not None or auto[name].template == text
     assert auto["half_block"].value == int(max(1, min(20, n // 4)))
     assert auto["min_transparency"].value == (0.3 if low / n > 0.5 else 0.6)
-    assert {"read_noise", "gain"} <= set(auto)
-    assert auto["read_noise"].reason == "noise of a single dark frame"
-    assert auto["gain"].reason == "sky level vs sky noise of the light frames, read noise removed"
+    assert not {"read_noise", "gain"} & set(auto)          # the rejection has no noise model any more
     # and in French, with the decimal comma
     fr = {k: a.text("fr") for k, a in auto.items()}
     assert fr["half_block"].startswith(f"{n} images : des blocs de ")
@@ -190,17 +188,6 @@ def test_stack_gives_the_same_english_and_the_same_values(tmp_path, monkeypatch,
         if a.template == "rule":
             continue
         assert a.text("fr") != a.reason or not any(c.isalpha() for c in a.reason), k
-
-
-def test_stack_without_darks_reason(tmp_path, monkeypatch):
-    from astro_gpu.stages.stack import Stack
-    _no_coverage_rule(monkeypatch)
-    ctx = _stack_ctx(tmp_path, 100, 4.5, 0)
-    ctx.metrics.clear()
-    auto = Stack().auto(ctx)
-    assert "read_noise" not in auto
-    assert auto["gain"].reason == "sky level vs sky noise of the light frames (no darks: read noise ignored)"
-    assert texts.has_translation(auto["gain"].template, "fr")
 
 
 def test_the_other_stages(tmp_path):

@@ -165,24 +165,17 @@ CATALOG = {
               "How outlier pixels (satellites, planes, cosmic rays) are removed.",
               choices=["Automatic: around the median", "Sigma clipping", "Winsorized sigma clipping",
                        "Linear fit clipping", "Generalized ESD"], reason=AS_TODAY, method="drizzle"),
-            E("stack", "kappa", help="A pixel farther from the median than this threshold (in noise sigmas) is "
-                                     "rejected.", method="drizzle"),
+            E("stack", "kappa", help="A sample farther from the mean of the samples at its point than this many "
+                                     "measured standard deviations is rejected.", method="drizzle"),
             N("stack", "split_thresholds", "Separate thresholds", "bool", False,
               "By default the same threshold applies to too bright and too dark pixels. Separate, bright trails can "
               "be rejected harder.", method="drizzle"),
-            E("stack", "core_tolerance", "expert", help="Margin left at the core of bright stars, which varies from "
-                                                        "frame to frame with the seeing.", method="drizzle"),
         ]),
         ("Normalization", [
             N("stack", "normalization", "Frame normalization", "choice", "Automatic: offset and scale",
               "Brings all the frames to the same background level and scale before combining them, despite a "
               "changing Moon or haze.",
               choices=["Automatic: offset and scale", "Offset only", "None"], reason=AS_TODAY),
-        ]),
-        ("Sensor", [
-            E("stack", "gain", "expert", help="Electrons per digital unit: used by the noise model.",
-              method="drizzle"),
-            E("stack", "read_noise", "expert", help="Read noise of the sensor, in ADU.", method="drizzle"),
         ]),
         ("Fixed sensor pattern", [
             E("stack", "pattern_removal", "expert", help="Removes a fixed pattern estimated on the frames (bands, "
@@ -352,7 +345,8 @@ TIPS = {
                         "adds noise.",
     ("stack", "pixfrac"): "Smaller, the image is sharper but noisier, with a risk of holes; 0.6 to 0.8 is the usual "
                           "range.",
-    ("stack", "kappa"): "Lower (3 to 4), it removes more trails, but can eat into the star cores in poor seeing.",
+    ("stack", "kappa"): "Higher, it rejects less; lower (2 to 3), it removes more trails, but can eat into the "
+                       "star cores in poor seeing.",
     ("stack", "pattern_removal"): "Off by default: on some stacks the estimate also held the traces of the faint "
                                   "stars, and subtracting it drew the streaks it was meant to remove.",
 }
