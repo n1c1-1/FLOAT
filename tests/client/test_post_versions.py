@@ -3,6 +3,7 @@ import json
 import random
 
 import pytest
+from PySide6.QtCore import QEvent
 from PySide6.QtWidgets import QApplication
 
 from astro_gpu import api
@@ -32,6 +33,7 @@ def two(qapp, tmp_path_factory):
     m = ProjectModel(p, w, readonly=True)
     assert w.wait(120) and m.ready, m.error
     yield m
+    m.close(save=False)                 # its timers go with it: left running they hold the event loop of the later tests
     w.stop()
 
 
@@ -157,6 +159,9 @@ def test_the_bin_is_one_step_of_undo_and_ctrl_z_brings_the_version_back(model):
     finally:
         page.shutdown()
         page.deleteLater()
+        # the thousands of widgets the page's rebuilds scheduled for deletion go now: left queued they were deleted
+        # in the next test that spins the event loop, which starved its timers for seconds
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 def test_the_save_says_when_the_versions_disagree_and_writes_all_the_same(model, monkeypatch):
