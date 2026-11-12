@@ -20,6 +20,7 @@
  "recorded in the files": "lu dans les fichiers",
  "sky level vs sky noise of the light frames (no darks: read noise ignored)": "niveau du ciel comparé à son bruit sur les brutes (pas de darks : bruit de lecture ignoré)",
  "sky level vs sky noise of the light frames, read noise removed": "niveau du ciel comparé à son bruit sur les brutes, bruit de lecture retiré",
+ "sky noise vs sky level of the light frames, within each exposure (photon transfer)": "bruit du ciel comparé à son niveau sur les brutes, dans chaque temps de pose (transfert de photons)",
  "star FWHM {fwhm:.1f} px x drizzle {scale}": "FWHM des étoiles {fwhm:.1f} px × drizzle {scale}",
  "telescope pointing in the FITS headers": "pointage du télescope dans les en-têtes FITS",
  "transparency is stable: no frame falls below 60 %": "la transparence est stable : aucune image ne tombe sous 60 %",

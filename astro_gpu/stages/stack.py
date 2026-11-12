@@ -252,9 +252,11 @@ class Stack(Stage):
     # 2: fixed pattern (walking noise) removal; 3: off by default (it drew walking noise); 4: the rejection judged
     # against a prediction cleaned of the strong outliers, with a noise model calibrated on each frame's sky and
     # the star-core allowance on the signal above the background (it was on the sky too); 5: without the
-    # cross-colour fine detail of version 4's builds (withdrawn: not a published method). The Classic part has a
-    # revision of its own (CLASSIC_VERSION, ``key_version``).
-    version = "5"
+    # cross-colour fine detail of version 4's builds (withdrawn: not a published method); 6: the automatic gain of
+    # sessions of several exposures from the photon transfer slope within each (it was negative and stopped the
+    # stack), and no automatic gain where none can be measured (the default instead): single-exposure sessions keep
+    # theirs. The Classic part has a revision of its own (CLASSIC_VERSION, ``key_version``).
+    version = "6"
 
     def key_version(self, values: dict) -> str:
         """The version in the store key of a stack with these (validated) settings: ``version``, and the Classic part's
@@ -301,18 +303,17 @@ class Stack(Stage):
         if cache.get("rgb_path"):                  # frames already in colour (issue #57): no mosaic to drizzle, applied
             a["method"] = Auto("classic", "frames already in colour: Classic stack, no Bayer drizzle (no mosaic of raw "
                                        "colour samples to drop)")
-        st = np.load(ctx.input("calibrate", "frame_stats.npy"))
-        m, s_ = st[:, :, 0].mean(1), st[:, :, 1].mean(1)
         rn = ctx.metric_of("calibrate", "dark_frame_noise")
-        scale = float(ctx.metric_of("calibrate", "cache_scale", 1.0))
         if rn:
-            rn_c = rn * scale
-            g = float(np.nanmedian(m / np.maximum(s_ ** 2 - rn_c ** 2, 1e-3)))
-            a["read_noise"] = Auto(round(rn_c, 2), "noise of a single dark frame")
-            a["gain"] = Auto(round(g, 4), "sky level vs sky noise of the light frames, read noise removed")
-        else:
-            g = float(np.nanmedian(m / np.maximum(s_ ** 2, 1e-3)))
-            a["gain"] = Auto(round(g, 4), "sky level vs sky noise of the light frames (no darks: read noise ignored)")
+            a["read_noise"] = Auto(round(rn * float(ctx.metric_of("calibrate", "cache_scale", 1.0)), 2),
+                                   "noise of a single dark frame")
+        g, how = sky_gain(ctx)                     # None: the default gain, which run() says in the log
+        if g is not None and how == "transfer":
+            a["gain"] = Auto(g, "sky noise vs sky level of the light frames, within each exposure (photon transfer)")
+        elif g is not None and rn:
+            a["gain"] = Auto(g, "sky level vs sky noise of the light frames, read noise removed")
+        elif g is not None:
+            a["gain"] = Auto(g, "sky level vs sky noise of the light frames (no darks: read noise ignored)")
         return a
 
     def run(self, ctx: Context, p: StackParams) -> None:
@@ -360,6 +361,7 @@ class Stack(Stage):
                     "warning")
         if "fwhm_moffat" not in reg.files:
             ctx.log("the registration result has no Moffat star size: run the registration again", "warning")
+        log_unmeasured_gain(ctx, p)
         sel = frame_selection(p, reg, stats, excl)
         weight = sel.weight
         used = np.where(weight > 0)[0]
@@ -1368,6 +1370,87 @@ def raw_template(meta: list[dict], used, ch_of_k) -> str | None:
     from ..core.project import frame_kind
     path = Path(meta[int(used[0])]["path"])
     return str(path) if path.is_file() and frame_kind(path) == "raw" else None
+
+
+#: the gains of real sensors, in electrons per ADU of their raw frames: from a small-pixel CMOS at its highest gain with
+#: its 12 bits written on 16 (about 0.005) to a large-well CCD (about 20). An automatic estimate outside is not a gain
+GAIN_RANGE = (1e-3, 100.0)
+#: the photon transfer slope must stand this many standard errors above 0 to be a measure
+GAIN_SLOPE_SIGMAS = 3.0
+
+
+def sky_gain(ctx) -> tuple[float | None, str]:
+    """(gain in electrons per ADU of the calibrated cache, how it was measured: "transfer" or "ratio") from the light
+    frames' sky level and noise (calibrate's frame_stats); (None, why it cannot be, in words) when they give none.
+
+    Photon transfer (Janesick, Photon Transfer, SPIE Press 2007, ch. 5): the sky's shot noise has a variance of
+    level / gain, above the read noise. One exposure: each frame gives level / (noise² - read noise²), the gain is their
+    median (as before). Several exposures: each group of frames has its own dark match, and so its own zero of the
+    level: a dark above the lights' own (masters of several exposures merged and scaled, data set 59) puts every level
+    below 0 and that ratio is negative, but the slope of the variance against the level, from frame to frame of a
+    group (the sky changes with the moon, the altitude, the haze), does not depend on that zero: the gain is the
+    inverse of the slope fitted on all groups at once, one intercept a group (read noise, dark current, the zero)."""
+    st = np.load(ctx.input("calibrate", "frame_stats.npy"))
+    m, s = st[:, :, 0].mean(1), st[:, :, 1].mean(1)
+    scale = float(ctx.metric_of("calibrate", "cache_scale", 1.0))
+    groups = exposure_groups(ctx, len(m))
+    rn = ctx.metric_of("calibrate", "dark_frame_noise")
+    if groups.max(initial=0) > 0:
+        slope, se = transfer_slope(m, s ** 2, groups)
+        if not slope > GAIN_SLOPE_SIGMAS * se:                  # NaN too: too few frames, or a sky too even
+            return None, "mixed exposures"
+        g, how = 1 / slope, "transfer"
+    elif rn:
+        g, how = float(np.nanmedian(m / np.maximum(s ** 2 - (rn * scale) ** 2, 1e-3))), "ratio"
+    else:
+        g, how = float(np.nanmedian(m / np.maximum(s ** 2, 1e-3))), "ratio"
+    g = round(g, 4)
+    if not g > 0:                                               # NaN too
+        return None, "sky level not above zero"
+    if not GAIN_RANGE[0] <= g * scale <= GAIN_RANGE[1]:         # the cache's ADU are the raw ones x scale
+        return None, "outside the range of a sensor"
+    return g, how
+
+
+def log_unmeasured_gain(ctx, p: StackParams) -> None:
+    """When the frames give no automatic gain (``sky_gain``) and none was set, the line that says so: said once, by the
+    run (``auto()`` runs at each look at the stage's state)."""
+    if "gain" in _given(ctx, "stack"):
+        return
+    g, why = sky_gain(ctx)
+    if g is None:
+        ctx.log(f"automatic gain not measurable on these frames ({why}): the noise model with its default gain of "
+                f"{p.gain:g} e-/ADU", "warning")
+
+
+def exposure_groups(ctx, n: int) -> np.ndarray:
+    """The exposure group of each of the ``n`` light frames (0, 1, ... by exposure time; to the millisecond): all 0
+    when the inventory does not give every frame's exposure."""
+    try:
+        e = np.array([float(f["exposure"]) for f in ctx.load_json("inventory", "frames.json")["lights"]])
+    except (OSError, KeyError, TypeError, ValueError):
+        return np.zeros(n, int)
+    if len(e) != n or not np.isfinite(e).all():
+        return np.zeros(n, int)
+    return np.unique(np.round(e, 3), return_inverse=True)[1].reshape(-1)
+
+
+def transfer_slope(level: np.ndarray, var: np.ndarray, groups: np.ndarray) -> tuple[float, float]:
+    """(slope, its standard error) of ``var`` against ``level`` by least squares, with one intercept per group (the
+    deviations from each group's means); NaN with fewer than 3 degrees of freedom or no spread of the levels."""
+    ok = np.isfinite(level) & np.isfinite(var)
+    x, y, gr = level[ok].astype(float), var[ok].astype(float), groups[ok]
+    for k in np.unique(gr):
+        i = gr == k
+        x[i] -= x[i].mean()
+        y[i] -= y[i].mean()
+    dof = len(x) - len(np.unique(gr)) - 1
+    sxx = float(x @ x)
+    if dof < 3 or not sxx > 0:
+        return float("nan"), float("nan")
+    b = float(x @ y) / sxx
+    r = y - b * x
+    return b, float(np.sqrt(r @ r / dof / sxx))
 
 
 def _given(ctx, stage: str) -> dict:
