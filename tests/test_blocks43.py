@@ -285,7 +285,7 @@ def test_the_definition_checks_the_new_fields(tmp_path, nights):
     assert project2.load(p.root).sessions[0].filter == "Ha"
     for bad in (lambda q: setattr(q.sessions[0], "filter", "Z"),
                 lambda q: setattr(q.workflow(1), "source", {"path": 3}),
-                lambda q: setattr(q.workflow(1), "source", {"fusion": {"palette": "XYZ", "inputs": []}}),
+                lambda q: setattr(q.workflow(1), "source", {"fusion": {"type": "XYZ", "inputs": []}}),
                 lambda q: q.workflow(1).options.update(cut=["output"])):
         q = project2.load(p.root)
         bad(q)
@@ -293,7 +293,8 @@ def test_the_definition_checks_the_new_fields(tmp_path, nights):
             q.validate()
 
 
-# ---------------------------------------------------------------------------------------------- monochrome, fusion
+# ---------------------------------------------------------------------------------------------- monochrome
+# (the combinations of filters: tests/test_combine.py)
 
 def test_a_monochrome_workflow_has_no_colour_and_stacks_its_filter_only(tmp_path, nights):
     p = project(tmp_path / "p", nights, "per_session")
@@ -369,171 +370,6 @@ def _star(H, W, x0, y0):
     return np.exp(-((xx - x0) ** 2 + (yy - y0) ** 2) / 4.0)
 
 
-def test_the_fusion_aligns_its_channels_through_their_plate_solutions(tmp_path):
-    from astro_gpu.stages.fusion import Fusion, FusionParams, fuse
-    H, W = 60, 80
-    ha = np.repeat((10 * _star(H, W, 40, 30))[None], 3, 0) + 0.01
-    oiii = np.repeat((5 * _star(H, W, 43, 28))[None], 3, 0) + 0.01     # the same star, 3 px right, 2 px up
-    _output(tmp_path / "ha", ha, _wcs([41.0, 31.0]))
-    _output(tmp_path / "oiii", oiii, _wcs([44.0, 29.0]))
-    pr = _Project(tmp_path, {"fusion": tmp_path / "out"}, ["fusion"])
-    st = Fusion()
-    ctx = Context(pr, st, Journal(pr.logs), "cpu")
-    ins = [{"role": "Ha", "channel": "L", "dir": str(tmp_path / "ha"), "wcs": str(tmp_path / "ha" / "wcs.fits")},
-           {"role": "OIII", "channel": "L", "dir": str(tmp_path / "oiii"),
-            "wcs": str(tmp_path / "oiii" / "wcs.fits")}]
-    st.run(ctx, FusionParams(palette="HOO", inputs=ins))
-    rgb = np.load(tmp_path / "out" / "drz_full.npy")
-    assert rgb.shape == (3, H, W)
-    for c in range(3):                                    # every channel peaks on the first one's star
-        assert np.unravel_index(np.argmax(rgb[c]), (H, W)) == (30, 40)
-    assert np.allclose(rgb[1], rgb[2])                    # HOO: O III green and blue
-    assert json.loads((tmp_path / "out" / "drz_meta.json").read_text())["source"] == "fusion"
-    ch = {"Ha": np.ones((2, 2), np.float32), "SII": np.zeros((2, 2), np.float32),
-          "OIII": np.full((2, 2), 0.5, np.float32)}
-    assert np.allclose(fuse(ch, "SHO")[:, 0, 0], [0, 1, 0.5]) and np.allclose(fuse(ch, "HSO")[:, 0, 0], [1, 0, 0.5])
-    one = np.ones((1, 1), np.float32)
-    lrgb = fuse({"L": 2 * one, "R": one, "G": one, "B": one}, "LRGB")
-    assert np.allclose(lrgb, 2.0)                         # the colour of RGB, the luminance of L
-    with pytest.raises(StageError, match="SII"):
-        fuse({"Ha": ch["Ha"]}, "SHO")
-
-
-def test_the_sho_hubble_palette_keeps_grey_grey_and_gives_each_filter_its_hue(tmp_path, nights):
-    """The SHO Hubble palette (Rector et al. 2007): equal channels give a grey; S II alone is red-orange, H-alpha alone
-    copper, O III alone blue (their HSV hues, measured: tests/test_fusion_hubble.py); it is the default of S II,
-    H-alpha and O III; a project that chose the plain SHO keeps it."""
-    import colorsys
-
-    from astro_gpu.stages.fusion import HUBBLE_HUES, PALETTES, SHO_DEFAULT, FusionParams, fuse, hue_palette
-    assert SHO_DEFAULT == "SHO Hubble" and FusionParams().palette == SHO_DEFAULT
-    roles, mat = PALETTES[SHO_DEFAULT]
-    assert roles == ("SII", "Ha", "OIII") and PALETTES["SHO"][1] == [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
-    one, nil = np.ones((1, 1), np.float32), np.zeros((1, 1), np.float32)
-    assert np.allclose(fuse({"SII": one, "Ha": one, "OIII": one}, SHO_DEFAULT)[:, 0, 0], 1.0)     # neutral stays
-
-    def hue(rgb):
-        return 360 * colorsys.rgb_to_hsv(*(float(v) for v in rgb))[0]
-    alone = {r: fuse({x: one if x == r else nil for x in roles}, SHO_DEFAULT)[:, 0, 0] for r in roles}
-    assert 0 <= hue(alone["SII"]) < 30                   # red-orange
-    assert 30 <= hue(alone["Ha"]) < 60                   # copper: H-alpha never reads green
-    assert 180 <= hue(alone["OIII"]) < 240               # blue
-    assert [round(hue(alone[r])) for r in roles] == [round(h) for h in HUBBLE_HUES]   # the hues exactly
-    assert (np.asarray(mat) >= 0).all()
-    for hues in ((0.0, 30.0, 60.0), (15.0, 45.0, 180.0)):   # no blue at all; a cyan that outweighs H-alpha's gold
-        with pytest.raises(ValueError, match="grey"):
-            hue_palette(hues)
-    p = project(tmp_path / "p", nights, "per_session")  # a saved project's plain SHO stays SHO
-    f = p.add_workflow("SHO", CLASSIC)
-    f.source = {"fusion": {"palette": "SHO", "inputs": [{"pid": 1, "role": "Ha", "channel": "L"}]}}
-    project2.save(p)
-    assert project2.load(p.root).workflow(f.id).source["fusion"]["palette"] == "SHO"
-
-
-def _sky_field(offsets: dict[str, float], noise: dict[str, float], H: int = 160, W: int = 192, seed: int = 3):
-    """Narrow-band channels on a sky of their own level and noise, a nebula (a wide blob, a different strength in each
-    filter) in the middle: {role: (H, W)}, the nebula's mask."""
-    rng = np.random.default_rng(seed)
-    yy, xx = np.mgrid[0:H, 0:W]
-    neb = np.exp(-((xx - W / 2) ** 2 + (yy - H / 2) ** 2) / (2 * 22.0 ** 2)).astype(np.float32)
-    amp = {"SII": 20.0, "Ha": 300.0, "OIII": 150.0, "L": 100.0, "R": 60.0, "G": 80.0, "B": 50.0}
-    ch = {r: (offsets[r] + amp[r] * neb + rng.normal(0, noise[r], (H, W))).astype(np.float32) for r in offsets}
-    return ch, neb > 0.02
-
-
-def test_the_fusion_takes_each_channels_sky_to_zero_so_that_an_empty_sky_is_grey_in_every_palette():
-    """Background neutralisation: channels whose skies differ in level and noise (a weak S II, whose balance factor is
-    the largest) give a fused sky at 0 in red, green and blue, whatever the palette."""
-    from astro_gpu.stages.fusion import PALETTES, balance, fuse, neutralise_sky
-    valid = np.ones((160, 192), bool)
-    for palette, roles in (("SHO Hubble", ("SII", "Ha", "OIII")), ("SHO", ("SII", "Ha", "OIII")),
-                           ("HSO", ("Ha", "SII", "OIII")), ("HOO", ("Ha", "OIII"))):
-        assert PALETTES[palette][0] == roles
-        off = {"SII": -0.7, "Ha": 2.5, "OIII": -0.3}
-        sig = {"SII": 0.09, "Ha": 0.4, "OIII": 0.2}
-        ch, neb = _sky_field({r: off[r] for r in roles}, {r: sig[r] for r in roles})
-        sky = neutralise_sky(ch, valid)
-        assert all(abs(sky[r][0] - off[r]) < 3 * sig[r] / 10 + 0.05 for r in roles)      # the levels found
-        bal = {r: balance(ch[r], valid, 99.5)[0] for r in roles}
-        rgb = fuse(bal, palette)
-        far = ~neb
-        far[:, 60:132] = False                                               # the frame's two sides, no nebula
-        for c in range(3):
-            assert abs(float(np.mean(rgb[c][far]))) < 0.02 * float(rgb[c].max()), (palette, c)
-    # without it the same channels carry the cast of their own offsets
-    ch, neb = _sky_field(off, sig)
-    raw = fuse({r: balance(ch[r], valid, 99.5)[0] for r in off}, "SHO Hubble")
-    assert abs(float(np.mean(raw[0][~neb]))) > 0.005 * float(raw[0].max())
-
-
-def test_the_neutralised_sky_keeps_a_nebula_that_was_neutral_already_and_lrgb_stays_grey():
-    """Channels whose sky is at 0 already (Wing's) come out as they were: the nebula's colours do not move; the colour
-    of an LRGB fusion on a sky at 0 does not blow its noise up through the luminance ratio."""
-    from astro_gpu.stages.fusion import balance, fuse, neutralise_sky
-    valid = np.ones((160, 192), bool)
-    roles = ("SII", "Ha", "OIII")
-    ch, neb = _sky_field({r: 0.0 for r in roles}, {"SII": 0.09, "Ha": 0.4, "OIII": 0.2})
-    before = {r: balance(ch[r].copy(), valid, 99.5)[0] for r in roles}
-    neutralise_sky(ch, valid)
-    after = {r: balance(ch[r], valid, 99.5)[0] for r in roles}
-    a, b = fuse(before, "SHO Hubble"), fuse(after, "SHO Hubble")
-    core = np.zeros_like(neb)
-    core[70:90, 86:106] = True
-    ra, rb = a[:, core].mean(1), b[:, core].mean(1)
-    assert np.allclose(ra / ra.sum(), rb / rb.sum(), atol=0.01)              # the nebula's hue as before
-    chans, _ = _sky_field({r: 0.0 for r in "LRGB"}, {"L": 0.2, "R": 0.3, "G": 0.3, "B": 0.3}, seed=5)
-    neutralise_sky(chans, valid)
-    bal = {r: balance(chans[r], valid, 99.5)[0] for r in chans}
-    rgb = fuse(bal, "LRGB")
-    far = ~neb
-    far[:, 60:132] = False
-    assert float(np.abs(rgb[:, far]).max()) < 0.25 * float(rgb.max())         # no speckle where the sky is noise
-
-
-def test_the_fusion_stage_removes_the_skies_and_says_so_to_the_output_preparation(tmp_path):
-    from astro_gpu.stages.fusion import Fusion, FusionParams
-    off = {"SII": -0.7, "Ha": 2.5, "OIII": -0.3}
-    ch, _ = _sky_field(off, {"SII": 0.09, "Ha": 0.4, "OIII": 0.2})
-    ins = []
-    for r in off:
-        _output(tmp_path / r, np.repeat(ch[r][None], 3, 0))
-        ins.append({"role": r, "channel": "L", "dir": str(tmp_path / r), "pid": 1})      # one grid: no alignment
-    pr = _Project(tmp_path, {"fusion": tmp_path / "out"}, ["fusion"])
-    st = Fusion()
-    st.run(Context(pr, st, Journal(pr.logs), "cpu"), FusionParams(palette="SHO Hubble", inputs=ins))
-    rgb = np.load(tmp_path / "out" / "drz_full.npy")
-    assert json.loads((tmp_path / "out" / "drz_meta.json").read_text())["sky_neutral"] is True
-    assert abs(float(np.median(rgb[:, :, :40]))) < 0.05 * float(rgb.max())     # the side, away from the nebula
-
-
-def test_a_fusion_workflow_reads_its_channels_outputs(tmp_path, nights):
-    p = project(tmp_path / "p", nights, "per_session")
-    p.sessions[0].filter, p.sessions[1].filter = "Ha", "OIII"
-    p.workflow(1).sessions = [1]
-    o = p.add_workflow("OIII", CLASSIC)
-    o.sessions = [2]
-    f = p.add_workflow("HOO", CLASSIC)
-    f.source = {"fusion": {"palette": "HOO", "inputs": [{"pid": 1, "role": "Ha", "channel": "L"},
-                                                        {"pid": o.id, "role": "OIII", "channel": "L"}]}}
-    project2.save(p)
-    q = project2.load(p.root)
-    k = Keys(q)
-    assert k.chain(f.id) == ["fusion", "render_simple"] and k.deps(f.id, "render_simple") == ("fusion",)
-    assert k.fusion_inputs(f.id) == [(1, "render_simple"), (1, "astrometry"), (o.id, "render_simple"),
-                                     (o.id, "astrometry")]
-    ov = k.overrides(f.id, "fusion")
-    assert ov["palette"] == "HOO" and ov["inputs"][1]["dir"].endswith(k.key(o.id, "render_simple"))
-    before = k.key(f.id, "fusion")
-    q.workflow(o.id).params["stack"] = {"kappa": 6}                         # a channel's workflow changes
-    assert Keys(q).key(f.id, "fusion") != before
-    from astro_gpu.core import runner2
-    stages = [j.stage for j in runner2.plan_workflows(q, [f.id]).jobs]
-    assert stages[-2:] == ["fusion", "render_simple"] and stages.count("render_simple") == 3
-    q.workflow(f.id).source = {"fusion": {"palette": "HOO", "inputs": [{"pid": 99, "role": "Ha"}]}}
-    with pytest.raises(ValueError):                                          # a fusion of a workflow that is not there
-        q.validate()
-
-
 def test_an_already_stretched_image_goes_to_post_as_it_is(tmp_path, nights):
     import cv2
 
@@ -564,13 +400,11 @@ def test_an_already_stretched_image_goes_to_post_as_it_is(tmp_path, nights):
     assert Keys(q).key(w.id, "image") != before                             # linear or stretched: two results
 
 
-def test_a_linear_image_has_its_stars_taken_off_and_gives_them_to_a_fusion(tmp_path):
+def test_a_linear_image_has_its_stars_taken_off_and_gives_its_starless_image_to_a_combination(tmp_path):
     """Issue #55, a real run on the CPU: an Image (a FITS file, no half-stack, no Denoise), its Output, its stars taken
-    off by the network, its noise unit read on its own sky; the fusion aligns those stars through the plate solutions,
-    and refuses them without one."""
+    off by the network, its noise unit read on its own sky; a combination's port reads its starless image."""
     from astropy.io import fits
 
-    from astro_gpu.stages.fusion import STARS_FILE, Fusion, FusionParams
     from astro_gpu.stages.image import ImageParams, ImageSource
     from astro_gpu.stages.render_simple import RenderSimple, RenderSimpleParams
     from astro_gpu.stages.star_removal import StarRemoval, StarRemovalParams
@@ -595,128 +429,19 @@ def test_a_linear_image_has_its_stars_taken_off_and_gives_them_to_a_fusion(tmp_p
     assert starless[:, 66, 67].max() < 0.2 * lin[:, 66, 67].min()           # the star is gone
     assert stars[:, 66, 67].min() > 0.8 * lin[:, 66, 67].min()
 
-    # the fusion's channels on their own grid: the same star 3 px left and 2 px up there
-    _wcs([68.0, 67.0]).to_fits().writeto(tmp_path / "image_wcs.fits")
-    neb = np.repeat((500 * _star(H, W, 30, 30))[None], 3, 0) + 1.0
-    _output(tmp_path / "ch_out", neb, _wcs([65.0, 65.0]))
-    _split(tmp_path / "ch_split", neb, np.zeros((3, H, W)))
-    ins = [{"role": r, "channel": "L", "pid": 1, "dir": str(tmp_path / "ch_out"), "stars_dir": str(tmp_path / "ch_split"),
-            "wcs": str(tmp_path / "ch_out" / "wcs.fits")} for r in ("Ha", "OIII")]
-    source = {"mode": "workflow", "pid": 2, "dir": str(tmp_path / "split")}
-    out = tmp_path / "fused"
-    pr = _Project(tmp_path, {"fusion": out}, ["fusion"])
-    st = Fusion()
-    st.run(Context(pr, st, Journal(pr.logs), "cpu"),
-           FusionParams(palette="HOO", inputs=ins, stars={**source, "wcs": str(tmp_path / "image_wcs.fits")}))
-    layer = np.load(out / STARS_FILE)
-    y, x = np.unravel_index(np.argmax(layer.sum(0)), (H, W))
-    assert abs(int(y) - 64) <= 1 and abs(int(x) - 64) <= 1                  # aligned on the channels' grid
-    with pytest.raises(StageError, match="Astrometry"):
-        st.run(Context(pr, st, Journal(pr.logs), "cpu"), FusionParams(palette="HOO", inputs=ins, stars=source))
+    # a combination's port reads that starless image (the palette made on starless channels: stages/combine.py)
+    from astro_gpu.stages.combine import CombineHO
+    ins = [{"role": r, "channel": "L", "pid": 1, "image": "starless", "dir": str(tmp_path / "split"), "wcs": ""}
+           for r in ("Ha", "OIII")]
+    pr = _Project(tmp_path, {"combine_ho": tmp_path / "combined"}, ["combine_ho"])
+    st = CombineHO()
+    st.run(Context(pr, st, Journal(pr.logs), "cpu"), CombineHO.Params(inputs=ins))
+    combined = np.load(tmp_path / "combined" / "drz_full.npy")
+    assert combined.shape == (3, H, W) and np.isfinite(combined).all()
 
-
-# ---------------------------------------------------------------------------------------------- option A: stars
 
 def _split(folder: Path, starless: np.ndarray, stars: np.ndarray):
     folder.mkdir(parents=True)
     np.save(folder / "starless.npy", starless.astype(np.float32))
     np.save(folder / "stars.npy", stars.astype(np.float32))
     np.save(folder / "valid.npy", np.ones(starless.shape[1:], bool))
-
-
-def test_option_a_fuses_the_starless_channels_and_makes_a_star_layer(tmp_path):
-    from astro_gpu.stages.fusion import STARS_FILE, Fusion, FusionParams, star_support
-    H, W = 40, 50
-    rng = np.random.default_rng(0)
-    neb = np.repeat((3 * _star(H, W, 25, 20) * 20)[None], 3, 0)
-    star = np.repeat((8 * _star(H, W, 10, 10))[None], 3, 0)
-    noise = lambda: rng.normal(0, 0.01, (3, H, W))                       # noqa: E731
-    for role, k in (("Ha", 1.0), ("OIII", 0.5)):
-        _output(tmp_path / f"{role}_out", neb * k + star)
-        _split(tmp_path / f"{role}_split", neb * k + 0.001, star * k + noise())
-    ins = [{"role": r, "channel": "L", "pid": i, "dir": str(tmp_path / f"{r}_out"),
-            "stars_dir": str(tmp_path / f"{r}_split"), "wcs": ""} for i, r in ((1, "Ha"), (2, "OIII"))]
-    for mode, extra in (("palette", {}), ("channel", {"role": "Ha"})):
-        out = tmp_path / f"out_{mode}"
-        pr = _Project(tmp_path, {"fusion": out}, ["fusion"])
-        st = Fusion()
-        ctx = Context(pr, st, Journal(pr.logs), "cpu")
-        ins2 = [dict(i, pid=1) for i in ins]                               # one grid: no plate solution needed
-        st.run(ctx, FusionParams(palette="HOO", inputs=ins2, stars={"mode": mode, **extra}))
-        starless = np.load(out / "drz_full.npy")
-        stars = np.load(out / STARS_FILE)
-        assert starless[:, 10, 10].max() < 0.05 * starless.max()          # no star in the starless fusion
-        assert stars[:, 10, 10].min() > 0 and stars[:, 30, 45].max() == 0  # the star kept, the noise left out
-        assert json.loads((out / "drz_meta.json").read_text())["starless"]
-        if mode == "channel":
-            assert np.allclose(stars[0], stars[1])                        # neutral stars
-    s = np.zeros((20, 20), np.float32) + np.random.default_rng(1).normal(0, 1, (20, 20)).astype(np.float32)
-    s[10, 10] = 50
-    kept = star_support(s)
-    assert kept[10, 10] > 40 and np.count_nonzero(kept) < 40
-
-
-def test_a_starless_fusion_is_stretched_on_the_whole_image_with_its_stars(tmp_path):
-    """A bright coloured nebula over a quarter of the field, its stars apart (option A): Post stretches the starless
-    fusion and its star layer on the statistics of the two together, as a workflow's Split stars block does; the
-    starless fusion's own put the white point on the nebula's top, which burnt its brightest part (the Faint tones
-    off: the white point alone)."""
-    from astro_gpu.render.simple import image_stats
-    from astro_gpu.render.stars import StarSettings, StarsRenderEngine
-    from astro_gpu.stages.fusion import STARS_FILE
-    from astro_gpu.stages.star_removal import StarRemoval, StarRemovalParams
-    H, W = 96, 96
-    rng = np.random.default_rng(5)
-    yy, xx = np.mgrid[0:H, 0:W]
-    r = np.hypot(xx - 48, yy - 48)
-    neb = 40.0 / (1 + np.exp((r - 22) / 3)) + rng.normal(0, 1, (H, W))       # a quarter of the field, its sky at 0
-    starless = (neb[None] * np.array([1.0, 0.5, 0.8])[:, None, None]).astype(np.float32)   # SII, Ha, OIII
-    stars = np.zeros((3, H, W), np.float32)
-    for y, x in rng.integers(4, H - 4, (25, 2)):
-        stars += np.float32(3000 * rng.uniform(0.05, 1)) * _star(H, W, x, y).astype(np.float32)[None]
-    fused, out, split = tmp_path / "fused", tmp_path / "out", tmp_path / "split"
-    fused.mkdir()
-    np.save(fused / STARS_FILE, stars)
-    (fused / "drz_meta.json").write_text(json.dumps({"starless": True, "source": "fusion"}))
-    _output(out, starless)
-    own = image_stats(starless, np.ones((H, W), bool))
-    (out / "prep_simple.json").write_text(json.dumps({"M": np.eye(3).tolist(), "crop": [0, W, 0, H], "stats": own}))
-    pr = _Project(tmp_path, {"stack": fused, "render_simple": out, "star_removal": split}, ["star_removal"])
-    st = StarRemoval()
-    st.run(Context(pr, st, Journal(pr.logs), "cpu"), StarRemovalParams())
-    prep = json.loads((split / "prep_stars.json").read_text())
-    assert prep["fused"] and prep["stats_full"] == image_stats(starless + stars, np.ones((H, W), bool))
-
-    def clipped() -> float:
-        y = StarsRenderEngine(split, device="cpu").render(StarSettings(faint=0), 1.0, part="starless").final.numpy()
-        return float((y >= 254 / 255).any(0).mean())
-    assert clipped() < 0.01                                                   # the nebula's core keeps its tones
-    prep["stats_full"] = own
-    (split / "prep_stars.json").write_text(json.dumps(prep))
-    assert clipped() > 0.05                                                  # on its own statistics: burnt
-
-
-def test_a_starless_fusion_chain_ends_with_its_split_block(tmp_path, nights):
-    p = project(tmp_path / "p", nights, "per_session")
-    p.sessions[0].filter, p.sessions[1].filter = "Ha", "OIII"
-    p.workflow(1).sessions = [1]
-    o = p.add_workflow("OIII", FULL)
-    o.sessions = [2]
-    f = p.add_workflow("HOO", FULL)
-    f.source = {"fusion": {"palette": "HOO", "stars": {"mode": "channel", "role": "Ha"}, "weights": {"OIII": 0.5},
-                           "inputs": [{"pid": 1, "role": "Ha", "channel": "L"},
-                                      {"pid": o.id, "role": "OIII", "channel": "L"}]}}
-    project2.save(p)
-    q = project2.load(p.root)
-    k = Keys(q)
-    assert k.chain(f.id) == ["fusion", "render_simple", "star_removal"]
-    assert (1, "star_removal") in k.fusion_inputs(f.id)
-    ov = k.overrides(f.id, "fusion")
-    assert ov["stars"] == {"mode": "channel", "role": "Ha"} and ov["weights"] == {"OIII": 0.5}
-    assert ov["inputs"][0]["stars_dir"].endswith(k.key(1, "star_removal"))
-    before = k.key(f.id, "fusion")
-    q.workflow(f.id).source["fusion"]["weights"] = {"OIII": 0.6}
-    assert Keys(q).key(f.id, "fusion") != before
-    q.workflow(f.id).source["fusion"]["stars"] = {"mode": "workflow"}                   # no pid
-    with pytest.raises(ValueError):
-        q.validate()

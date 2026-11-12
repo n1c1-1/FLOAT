@@ -67,7 +67,7 @@ def test_the_graph_of_a_workflow_made_before_has_its_chain_and_its_keys(tmp_path
     assert Keys(q).keys(w.id) == before and q.workflow(w.id).blocks == g
 
 
-def test_an_image_source_and_a_fusion_keep_their_keys_as_graphs(tmp_path, nights):
+def test_an_image_source_and_a_combination_keep_their_keys_as_graphs(tmp_path, nights):
     p = project(tmp_path / "p", nights)
     a = p.add_workflow("A", TEMPLATES["Full"])
     img = tmp_path / "m42.fits"
@@ -75,7 +75,7 @@ def test_an_image_source_and_a_fusion_keep_their_keys_as_graphs(tmp_path, nights
     i = p.add_workflow("I", TEMPLATES["Classic stack"])
     i.source = {"path": str(img), "stretched": False}
     f = p.add_workflow("F", {**TEMPLATES["Full"]})
-    f.source = {"fusion": {"palette": "HOO", "stars": {"mode": "palette"},
+    f.source = {"fusion": {"type": "ho",
                            "inputs": [{"pid": a.id, "role": "Ha", "channel": "R"},
                                       {"pid": a.id, "role": "OIII", "channel": "GB"}]}}
     for w in (i, f):

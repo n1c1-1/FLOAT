@@ -307,9 +307,10 @@ class Project2:
         if w.blocks is not None:
             return wfl.chains().sequence(wfl.sequence_chain(w.blocks, wfl.source_of(w),
                                                             reference=bool(self.reference_image),
-                                                            sessions=self.separate_sessions(w)))
+                                                            sessions=self.separate_sessions(w),
+                                                            combine=wfl.combine_stage(w)))
         return wfl.chain(w.options, w.end, reference=bool(self.reference_image), sessions=self.separate_sessions(w),
-                         image=is_image(w), mono=self.is_mono(w) and w.source is None, fusion=is_fusion(w),
+                         image=is_image(w), mono=self.is_mono(w) and w.source is None, fusion=wfl.combine_stage(w),
                          stretched=is_stretched(w))
 
     def set_blocks(self, wid: int | Workflow, blocks: list[dict[str, Any]]) -> None:
@@ -365,10 +366,7 @@ class Project2:
                 except ValueError as e:
                     raise ValueError(f"workflow {w.id}: {e}") from None
             if is_fusion(w) and any(i["pid"] not in wids or i["pid"] == w.id for i in w.source["fusion"]["inputs"]):
-                raise ValueError(f"workflow {w.id}: its fusion reads workflows the project does not have")
-            st = (w.source or {}).get("fusion", {}).get("stars") if is_fusion(w) else None
-            if st and st.get("mode") == "workflow" and (st["pid"] not in wids or st["pid"] == w.id):
-                raise ValueError(f"workflow {w.id}: its fusion's stars come from a workflow the project does not have")
+                raise ValueError(f"workflow {w.id}: its combination reads workflows the project does not have")
             if w.sessions is not None and (not w.sessions or any(x not in sids for x in w.sessions)):
                 raise ValueError(f"workflow {w.id}: its sessions {w.sessions} are not sessions of the project")
             check_calibration(w.calibration, sids, f"workflow {w.id}")
@@ -398,6 +396,7 @@ class Project2:
                             left_out={k: list(v) for k, v in (s.get("left_out") or {}).items()},
                             **{k: list(s.get(k) or []) for k in KINDS})
                     for s in d.get("sessions") or []]
+        from ..stages.combine import upgraded_workflow
         workflows = [Workflow(id=w["id"], name=w.get("name", ""), options=wfl.check_options(w.get("options") or {}),
                               params=_copy_params(w.get("params") or {}), end=w.get("end"),
                               variant_of=w.get("variant_of"),
@@ -406,7 +405,7 @@ class Project2:
                               sessions=list(w["sessions"]) if w.get("sessions") is not None else None,
                               blocks=copy.deepcopy(w["blocks"]) if w.get("blocks") is not None else None,
                               calibration=copy.deepcopy(w.get("calibration")))      # absent in older projects
-                     for w in d.get("workflows") or []]
+                     for w in (upgraded_workflow(copy.deepcopy(x)) for x in d.get("workflows") or [])]
         nxt = d.get("next_workflow_id") or (max((w.id for w in workflows), default=0) + 1)
         p = cls(name=d.get("name", ""), description=d.get("description", ""), created=d.get("created", ""),
                 target=_target(d.get("target") or {}), scratch_dir=d.get("scratch_dir", ""),
@@ -433,31 +432,25 @@ def _copy_params(params: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]
 
 def check_source(source: Any, where: str = "source") -> dict[str, Any] | None:
     """A workflow's source as it is stored (issue #43): None (the sessions' frames); {"path": a file, "stretched":
-    bool, "align": the workflow whose image it is aligned on, if any} (an image: linear, or already stretched); or {"fusion": {"palette", "inputs": [{"pid", "role",
-    "channel"}]}} (other workflows' outputs combined, stages/fusion.py)."""
+    bool, "align": the workflow whose image it is aligned on, if any} (an image: linear, or already stretched); or {"fusion":
+    {"type", "inputs": [{"pid", "role", "channel", "image"}]}} (other workflows' images combined, stages/combine.py:
+    "role" is the port fed, "image" the workflow's Output or its starless image; a port may wait for its workflow)."""
     if source is None:
         return None
     if isinstance(source, dict) and "fusion" in source:
-        from ..stages.fusion import CHANNELS, PALETTES
+        from ..stages.combine import BY_KIND, CHANNELS, IMAGES
         f = source["fusion"]
-        if set(source) != {"fusion"} or not isinstance(f, dict) or f.get("palette") not in PALETTES:
-            raise ValueError(f"{where}: a fusion is {{'fusion': {{'palette': one of {list(PALETTES)}, 'inputs': "
+        if set(source) != {"fusion"} or not isinstance(f, dict) or f.get("type") not in BY_KIND:
+            raise ValueError(f"{where}: a combination is {{'fusion': {{'type': one of {list(BY_KIND)}, 'inputs': "
                              f"[...]}}}}, not {source!r}")
-        wg = f.get("weights")
-        if wg is not None and (not isinstance(wg, dict) or not all(
-                isinstance(k, str) and isinstance(v, (int, float)) and 0 <= v <= 5 for k, v in wg.items())):
-            raise ValueError(f"{where}: a fusion's weights are {{role: 0 to 5}}, not {wg!r}")
-        st = f.get("stars")
-        if st is not None and (not isinstance(st, dict) or st.get("mode") not in ("palette", "channel", "workflow")
-                               or (st["mode"] == "workflow" and not isinstance(st.get("pid"), int))
-                               or (st["mode"] == "channel" and not isinstance(st.get("role"), str))):
-            raise ValueError(f"{where}: a fusion's stars are {{'mode': 'palette' | 'channel' (with 'role') | 'workflow' "
-                             f"(with 'pid')}}, not {st!r}")
+        ports = BY_KIND[f["type"]].ports
         ins = f.get("inputs")
-        if not isinstance(ins, list) or not ins or not all(
-                isinstance(i, dict) and isinstance(i.get("pid"), int) and isinstance(i.get("role"), str)
-                and i.get("channel", "L") in CHANNELS for i in ins):
-            raise ValueError(f"{where}: the fusion's inputs are [{{'pid', 'role', 'channel'}}], not {ins!r}")
+        if not isinstance(ins, list) or not all(
+                isinstance(i, dict) and isinstance(i.get("pid"), int) and i.get("role") in ports
+                and i.get("channel", "L") in CHANNELS and i.get("image", "output") in IMAGES for i in ins) or \
+                len({i["role"] for i in ins}) != len(ins):
+            raise ValueError(f"{where}: a combination's inputs are [{{'pid', 'role': one of {list(ports)}, 'channel', "
+                             f"'image'}}], one per port, not {ins!r}")
         return source
     # path "": an Image block placed from the palette, its file still to choose (it is not run)
     if not isinstance(source, dict) or not isinstance(source.get("path"), str):
@@ -485,7 +478,7 @@ def check_calibration(own: Any, sids: list[int], where: str = "calibration") -> 
 
 
 def is_fusion(w: Workflow) -> bool:
-    """A workflow that combines other workflows' outputs (issue #43)."""
+    """A workflow that combines other workflows' images (issue #43: a combination block, stages/combine.py)."""
     return isinstance(w.source, dict) and "fusion" in w.source
 
 

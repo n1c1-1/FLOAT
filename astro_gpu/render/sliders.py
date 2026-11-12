@@ -38,12 +38,9 @@ WHY_EXIT_DENOISE = "this layer leaves the graph before the Denoise block"
 WHY_PALETTE = "Only for colour cameras: in a palette fusion, Hα is its own channel"
 WHY_MONO = "Only for colour cameras: a monochrome image has no red channel over a continuum"
 #: where a layer's image comes from (``origin``, written by render_simple and read from the project): "" unknown or a
-#: colour camera, "mono" a monochrome sensor, "palette" a fusion of narrow-band filters (SHO, HSO, HOO)
+#: colour camera, "mono" a monochrome sensor, "palette" a combination of narrow-band filters (S-H-O, H-O:
+#: stages/combine.py, ``narrowband``)
 ORIGINS = ("", "mono", "palette")
-#: the palettes of narrow-band filters (stages/fusion.NARROWBAND; not imported here, that module loads the stages'):
-#: the SHO Hubble palette is the default of S II, H-alpha and O III, and its fusions were taken for a colour camera's
-#: (the H-alpha slider offered on them, #163)
-NARROWBAND_PALETTES = ("SHO Hubble", "SHO", "HSO", "HOO")
 
 
 @dataclass(frozen=True)

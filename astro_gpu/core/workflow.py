@@ -41,6 +41,9 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
+from ..stages.combine import COMBINATIONS
+from ..stages.combine import STAGES as COMBINE
+
 # ---------------------------------------------------------------------------------------------- options
 
 #: the allowed values of each option
@@ -207,7 +210,7 @@ def implied(options: dict[str, Any], stage: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------------------------- the chain table
 
 #: the global order of the v2 stages (each stage only reads stages before it)
-ORDER = ["fusion", "image", "inventory", "calibrate", "sessions", "register", "stack", "astrometry", "reference", "catalogs",
+ORDER = [*COMBINE, "image", "inventory", "calibrate", "sessions", "register", "stack", "astrometry", "reference", "catalogs",
          "surveys", "gradient", "deconv", "denoise", "color", "render_simple", "star_removal", "synth_stars"]
 #: the stages that read the image the blocks before them made (issue #47), and which of those blocks they apply: all
 #: of them, or only the sky gradients (Color measures its stars on the stack, its sky removed, and the Color blocks
@@ -221,7 +224,7 @@ READ_KINDS: dict[str, tuple[str, ...]] = {"all": ("gradient", "deconv", "denoise
 #: stages that stand for others in a chain (issue #43): the sessions' join for each session's frames and calibration,
 #: the image of an image source for the stack
 PROVIDES: dict[str, tuple[str, ...]] = {"sessions": ("inventory", "calibrate"), "image": ("stack", "render_simple"),
-                                         "fusion": ("stack",)}
+                                         **{st: ("stack",) for st in COMBINE}}
 #: dependencies a stage has beyond its declared ``deps``
 EXTRA: dict[str, tuple[str, ...]] = {}
 #: dependencies that may be absent from a chain (the stage then runs without them); the stages that read the stack
@@ -240,7 +243,7 @@ OPTIONAL: dict[str, tuple[str, ...]] = {
 }
 #: the blocks of the graph and their stages; Selection has no stage of its own (it follows register)
 BLOCKS: dict[str, tuple[str, ...]] = {
-    "fusion": ("fusion",),
+    **{st: (st,) for st in COMBINE},                # the combinations of filters: each its block, its stage
     "image": ("image",),
     "calibration": ("inventory", "calibrate"),
     "registration": ("sessions", "register"),       # the sessions join where they are registered together
@@ -256,8 +259,8 @@ BLOCKS: dict[str, tuple[str, ...]] = {
     "synth": ("synth_stars",),                      # placed by hand after Stars/background (issue #77)
     "output": ("render_simple",),
 }
-BLOCK_TITLES = {"fusion": "Combine channels", "image": "Image", "calibration": "Calibration", "registration": "Registration",
-                "selection": "Selection", "crop": "Crop",
+BLOCK_TITLES = {**{c.name: c.title for c in COMBINATIONS}, "image": "Image", "calibration": "Calibration",
+                "registration": "Registration", "selection": "Selection", "crop": "Crop",
                 "stacking": "Stacking", "astrometry": "Astrometry", "color": "Color", "deconv": "Deconvolution", "denoise": "Denoise",
                 "synth": "Synthetic stars", "stars": "Stars/background", "gradient": "Gradient", "output": "Output"}
 #: what Run to here runs for a block without stages of its own
@@ -288,15 +291,16 @@ def session_of(name: str) -> str | None:
 
 def chain_stages(options: dict[str, Any], end: str | None = None, reference: bool = False,
                  sessions: Sequence[int] = (), image: bool = False, mono: bool = False,
-                 fusion: bool = False, stretched: bool = False) -> list[str]:
+                 fusion: str = "", stretched: bool = False) -> list[str]:
     """The stages of a workflow, in the global order. ``reference``: the project has a reference image (the stage sits
     in the Astrometry block). ``sessions``: the ids of the sessions calibrated each on its own (two or more; else the
-    sessions are one frame list, as before issue #43). ``image``: the workflow starts from an image file."""
+    sessions are one frame list, as before issue #43). ``image``: the workflow starts from an image file. ``fusion``:
+    the stage of the combination the workflow starts from (``combine_stage``), "" for none."""
     o = check_options(options)
     cut = set(cuts(o))
-    if fusion:                      # other workflows' outputs combined (stages/fusion.py): then its Output block,
-        # and with stars (option A: the channels' starless images fused) the Split block that gives the star layer back
-        return _ordered(["fusion", "render_simple"] + (["star_removal"] if o["stars"] else []))
+    if fusion:                      # other workflows' images combined (stages/combine.py): then its Output block, and
+        # the Stars/background block placed after it
+        return _ordered([fusion, "render_simple"] + (["star_removal"] if o["stars"] else []))
     if stretched:                   # an image already stretched: its stars taken off, or Post at once
         return _ordered(["image"] + (["star_removal"] if o["stars"] else []))
     if image:
@@ -366,7 +370,7 @@ class Chains:
     # ------------------------------------------------------------------ chains
     def chain(self, options: dict[str, Any], end: str | None = None, *, reference: bool = False,
               sessions: Sequence[int] = (), image: bool = False, mono: bool = False,
-              fusion: bool = False, stretched: bool = False) -> list[str]:
+              fusion: str = "", stretched: bool = False) -> list[str]:
         """The stages of a workflow, ordered and checked."""
         if self.rule is None:
             raise TypeError("these Chains have no rule: use ordered() with the stage names")
@@ -825,14 +829,15 @@ def options_of(blocks: Sequence[dict], source: str = "frames") -> dict[str, Any]
 
 
 def sequence_chain(blocks: Sequence[dict], source: str = "frames", *, reference: bool = False,
-                   sessions: Sequence[int] = ()) -> list[str]:
+                   sessions: Sequence[int] = (), combine: str = "") -> list[str]:
     """The chain of a graph, in the graph's order: the source's stages, then each active node's (an image block's
-    entry is its node's name). Calibration and Registration absent or switched off still run, as a pass-through."""
+    entry is its node's name). Calibration and Registration absent or switched off still run, as a pass-through.
+    ``combine``: the stage of a combination source (``combine_stage``)."""
     act = _active(blocks)
     has = {n["block"] for n in act}
     out: list[str] = []
     if source == "fusion":
-        out.append("fusion")
+        out.append(combine or COMBINE[0])
     elif source in ("image", "stretched"):
         out.append("image")
     elif not act:
@@ -980,6 +985,16 @@ def source_of(w: Any) -> str:
     return "stretched" if src.get("stretched") else "image"
 
 
+def combine_stage(w: Any) -> str:
+    """The stage of the combination a workflow starts from ("combine_sho"), "" when it does not start from one."""
+    f = (getattr(w, "source", None) or {}).get("fusion")
+    return BLOCKS_OF_KIND.get(f.get("type"), "") if isinstance(f, dict) else ""
+
+
+#: a combination's type → its block and stage
+BLOCKS_OF_KIND = {c.kind: c.name for c in COMBINATIONS}
+
+
 def graph_of(w: Any) -> list[dict[str, Any]]:
     """A workflow's graph: its blocks, or the graph of its options (a workflow made before issue #47)."""
     if getattr(w, "blocks", None) is not None:
@@ -1000,7 +1015,7 @@ def chains() -> Chains:
 
 
 def chain(options: dict[str, Any], end: str | None = None, *, reference: bool = False,
-          sessions: Sequence[int] = (), image: bool = False, mono: bool = False, fusion: bool = False,
+          sessions: Sequence[int] = (), image: bool = False, mono: bool = False, fusion: str = "",
           stretched: bool = False) -> list[str]:
     """The checked chain of a workflow on the v2 stages."""
     return chains().chain(options, end, reference=reference, sessions=sessions, image=image, mono=mono,

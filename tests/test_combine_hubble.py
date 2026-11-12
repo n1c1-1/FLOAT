@@ -1,7 +1,7 @@
-"""Issue #163: the SHO Hubble palette's hues measured on reference images, and the narrow-band fusions composed as
-lightness (the channels weighted by their noise) and colour. On synthetic channels: a filter's signal alone lands, in
-Post's rendering with the colours kept, on its measured Oklch hue; a neutral input stays grey; a weak, noisy channel
-no longer paints the sky; a colour camera's rendering is what it was; the SHO Hubble palette is a narrow-band one."""
+"""Issue #163: the S-H-O block's default hues measured on reference images, and the narrow-band combinations composed
+as lightness (the channels weighted by their noise) and colour. On synthetic channels: a filter's signal alone lands,
+in Post's rendering with the colours kept, on its measured Oklch hue; a neutral input stays grey; a weak, noisy channel
+no longer paints the sky; a colour camera's rendering is what it was; S-H-O and H-O are the narrow-band types."""
 from __future__ import annotations
 
 import numpy as np
@@ -9,8 +9,11 @@ import pytest
 
 from astro_gpu.render import sliders
 from astro_gpu.render.simple import SimpleRenderEngine, SimpleSettings
-from astro_gpu.stages import fusion
-from astro_gpu.stages.fusion import HUBBLE_OKLCH, NARROWBAND, PALETTES, SHO_DEFAULT, compose, fuse
+from astro_gpu.stages import combine as fusion
+from astro_gpu.stages.combine import COMBINATIONS, HUBBLE_HUES, HUBBLE_OKLCH, CombineSHO, compose, hue_palette, mix
+
+SHO = CombineSHO.ports
+MAT = hue_palette(HUBBLE_HUES)                    # the S-H-O block's default hues
 
 
 def oklch(rgb: np.ndarray) -> np.ndarray:
@@ -40,13 +43,13 @@ def channels(n: int = 192, sigma: dict | None = None, seed: int = 0) -> tuple[di
 
 
 def test_each_filter_alone_lands_on_its_measured_hue_and_neutral_stays_grey():
-    """Through the fusion's composition and Post's rendering with the colours of the linear image kept (Keep the
+    """Through the S-H-O composition and Post's rendering with the colours of the linear image kept (Keep the
     colours 1, saturation 1: the mapping the hues were placed on), S II alone, H-alpha alone and O III alone have the
     Oklch hues measured on the Hubble teams' images (the warm areas' lower quartile and median, the blue areas'
     median); equal channels stay grey, in the default rendering too."""
     ch, cut = channels()
     noise = {r: 0.002 for r in ch}
-    rgb, _ = compose(ch, SHO_DEFAULT, noise, smooth=False)
+    rgb, _ = compose(ch, SHO, MAT, noise, sigma=0)
     eng = SimpleRenderEngine.from_array(rgb, "cpu")
     s = SimpleSettings(keep_colours=1.0, saturation=1.0)
     y = eng.render(s, 1.0).final.numpy().transpose(1, 2, 0)
@@ -61,11 +64,14 @@ def test_each_filter_alone_lands_on_its_measured_hue_and_neutral_stays_grey():
 def test_the_lightness_is_the_noise_weighted_mean_and_a_neutral_input_keeps_its_level():
     ch = {"SII": np.full((8, 8), 0.5, np.float32), "Ha": np.full((8, 8), 0.5, np.float32),
           "OIII": np.full((8, 8), 0.5, np.float32)}
-    rgb, _ = compose(ch, SHO_DEFAULT, {"SII": 0.02, "Ha": 0.001, "OIII": 0.003}, smooth=True)
+    rgb, _ = compose(ch, SHO, MAT, {"SII": 0.02, "Ha": 0.001, "OIII": 0.003})
     assert np.allclose(rgb, 0.5, atol=1e-5)                           # grey, at the channels' level
     L, nl = fusion.lightness({"a": np.ones((2, 2), np.float32), "b": np.zeros((2, 2), np.float32)},
                              {"a": 1.0, "b": 2.0})
     assert np.allclose(L, 0.8) and nl == pytest.approx(1 / np.sqrt(1.25))      # weights 1 and 1/4
+    L, nl = fusion.lightness({"a": np.ones((2, 2), np.float32), "b": np.zeros((2, 2), np.float32)},
+                             {"a": 1.0, "b": 2.0}, equal=True)
+    assert np.allclose(L, 0.5) and nl == pytest.approx(np.sqrt(5) / 2)          # the plain mean, its noise
     assert fusion.chroma_sigma({"a": 1.0, "b": 1.0}, 1.0) == 0.0               # no channel noisier: no smoothing
     s = fusion.chroma_sigma({"a": 15.0, "b": 1.0}, 1.0)                         # M27's S II against its H-alpha
     assert s == pytest.approx(15 / (2 * np.sqrt(np.pi)))
@@ -79,19 +85,21 @@ def test_a_weak_noisy_channel_no_longer_paints_the_sky():
     ch, cut = channels(sigma=sig, seed=1)
     sky = np.zeros((192, 192), bool)
     sky[130:, :] = True
-    plain = fuse(ch, SHO_DEFAULT)
-    comp, notes = compose(ch, SHO_DEFAULT, sig, smooth=True, sky=sky)
+    plain = mix(ch, SHO, MAT)
+    comp, notes = compose(ch, SHO, MAT, sig, sky=sky)
     assert notes["sigma"] > 1
 
     def chroma(rgb):
         return np.abs(rgb - rgb.mean(0, keepdims=True)).max(0)[sky]
     assert chroma(comp).std() < 0.05 * chroma(plain).std()
     assert comp[:, sky].std() < 0.2 * plain[:, sky].std()
+    fixed, notes = compose(ch, SHO, MAT, sig, sigma=2.5, sky=sky)               # a radius set by hand: that one
+    assert notes["sigma"] == 2.5 and not np.array_equal(fixed, comp)
 
 
 def test_a_colour_camera_keeps_its_rendering_and_the_palettes_agree():
-    """A colour camera's settings and image are what they were; an RGB or LRGB fusion keeps the plain palette (no
-    composition). The SHO Hubble palette is a narrow-band one everywhere: Post greys its H-alpha slider."""
+    """A colour camera's settings and image are what they were; an RGB or LRGB combination is no narrow-band one (no
+    composition); S-H-O and H-O are: Post greys their H-alpha slider."""
     for kind in sliders.KINDS:
         assert sliders.settings_at(kind, None, {}, True, "") == sliders.base_settings(kind)
     assert sliders.settings_at("simple", None, {}) == SimpleSettings()
@@ -101,18 +109,17 @@ def test_a_colour_camera_keeps_its_rendering_and_the_palettes_agree():
     a = eng.render(SimpleSettings(), 1.0).final.numpy()
     b = eng.render(sliders.settings_at("simple", None, {}, True, ""), 1.0).final.numpy()
     assert np.array_equal(a, b)
-    assert set(NARROWBAND) == set(sliders.NARROWBAND_PALETTES) and SHO_DEFAULT in NARROWBAND
-    assert set(PALETTES) - set(NARROWBAND) == {"RGB", "LRGB"}
+    assert [c.kind for c in COMBINATIONS if c.narrowband] == ["sho", "ho"]
     assert sliders.availability("combined", True, "palette")["halpha"] == sliders.WHY_PALETTE
 
 
-def test_a_fusions_star_layer_says_its_origin(tmp_path):
-    """The Split stars block of a fusion writes the Output's origin; Post reads it there (the recombined layer of an
-    SHO fusion offered the H-alpha slider of a colour camera)."""
+def test_a_split_layer_says_its_origin(tmp_path):
+    """The Stars/background block after a narrow-band combination writes the Output's origin; Post reads it there (the
+    recombined layer of an SHO fusion offered the H-alpha slider of a colour camera)."""
     import json
 
     from astro_gpu.render.layers import origin_of
-    (tmp_path / "prep_stars.json").write_text(json.dumps({"fused": True, "origin": "palette"}), encoding="utf-8")
+    (tmp_path / "prep_stars.json").write_text(json.dumps({"origin": "palette"}), encoding="utf-8")
     assert origin_of(tmp_path) == "palette"
-    (tmp_path / "prep_stars.json").write_text(json.dumps({"fused": True}), encoding="utf-8")
+    (tmp_path / "prep_stars.json").write_text(json.dumps({}), encoding="utf-8")
     assert origin_of(tmp_path) == ""

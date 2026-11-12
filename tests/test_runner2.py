@@ -1039,11 +1039,11 @@ def test_a_three_filter_fusion_is_estimated_near_its_real_run(monkeypatch):
                 render_simple=9, star_removal=33),
         3: dict(inventory=1, calibrate=59, register=13, stack=82, astrometry=141, surveys=1, gradient=1, denoise=32,
                 render_simple=9, star_removal=24),
-        4: dict(fusion=11, render_simple=5, star_removal=5),
+        4: dict(combine_sho=11, render_simple=5, star_removal=5),
     }
     sess = {i: SimpleNamespace(id=i, filter=f) for i, f in ((1, "SII"), (2, "Ha"), (3, "OIII"))}
     wfs = [SimpleNamespace(id=i, source=None, options={"denoise": "pretrained"}, sessions=[i]) for i in (1, 2, 3)]
-    wfs.append(SimpleNamespace(id=4, source={"fusion": {"palette": "SHO"}}, options={}, sessions=None))
+    wfs.append(SimpleNamespace(id=4, source={"fusion": {"type": "sho"}}, options={}, sessions=None))
 
     def sessions_of(w):
         return list(sess.values()) if w.sessions is None else [sess[i] for i in w.sessions]

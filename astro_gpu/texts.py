@@ -186,14 +186,10 @@ _METRIC_ROWS: list[tuple] = [
     ("sessions", "Sessions", "", "d", "Number of sessions, each calibrated with its own frames, stacked together."),
     # an image source (issue #43)
     ("factor", "Value factor", "", "g", "Factor the image's values were multiplied by (65535 for values in 0-1)."),
-    # the channels' fusion (issue #43)
-    ("palette", "Palette", "", "", "How the filters became red, green and blue (SHO Hubble, SHO, HSO, HOO, RGB, "
-                                   "LRGB)."),
+    # the combinations of filters (issue #43, stages/combine.py)
     ("channels", "Channels", "", "", "The filters combined.", ", "),
     ("chroma_sigma", "Colour smoothing", "px", ".1f", "Radius the colour was smoothed at, from the filters' noise; the "
                                                       "lightness keeps its full detail."),
-    ("star_source", "Star source", "", "", "Where the stars put back on the starless fusion came from (palette, channel "
-                                           "or workflow)."),
     # register
     ("reference_frame", "Reference frame", "", "", "The frame all the others are aligned on."),
     ("aligned", "Aligned frames", "", "d", "Frames that could be aligned."),
@@ -475,8 +471,8 @@ CHOICE_TEXTS: dict[str, str] = {
     "full": "Full correction", "per_colour": "One factor per colour",
     # the Gradient block's methods (stages/gradient.py)
     "polynomial": "Polynomial", "rbf": "RBF", "automatic": "Automatic",
-    # the fusion's palettes (stages/fusion.py)
-    "SHO Hubble": "SHO Hubble", "SHO": "SHO", "HSO": "HSO", "HOO": "HOO", "RGB": "RGB", "LRGB": "LRGB",
+    # the combinations' lightness and colour smoothing (stages/combine.py)
+    "noise": "By noise", "equal": "Equal", "radius": "Radius",
     # the Denoise block's methods and adaptation lengths (stages/denoise.py)
     "measured": "Image shape", "instrument": "Instrument PSF", "newton": "Newtonian", "refractor": "Refractor",
     "sct": "Schmidt-Cassegrain", "lens": "Photo lens",

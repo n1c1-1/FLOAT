@@ -275,7 +275,7 @@ class Planner:
             self.blocked[k] = why
             return why
         others = {}
-        if base(stage) == "fusion":                 # a fusion reads other workflows' results: computed first
+        if base(stage) in wfl.COMBINE:              # a combination reads other workflows' results: computed first
             for pid, st in self.keys.fusion_inputs(w):
                 why = self.need(pid, st, as_input=True)
                 if why:

@@ -68,7 +68,7 @@ class StarRemoval(Stage):
     deps = ("render_simple", "stack")
     Params = StarRemovalParams
     version = f"4-{MODEL_ID}"            # 2: the network's grid notched (core/periodic.py, issue #28); 3: big tiles (#45);
-    #                                      4: a starless fusion's stretch on the whole image's statistics (whole_stats)
+    #                                      4: a starless fusion's stretch (gone with the fusion's star layer, 2026-11-12)
 
     def run(self, ctx: Context, p: StarRemovalParams) -> None:
         from .denoise import norm_params
@@ -77,9 +77,6 @@ class StarRemoval(Stage):
         prep = ctx.load_json("render_simple", "prep_simple.json")
         lin = ctx.load("render_simple", "lin.npy").astype(np.float32)
         valid = ctx.load("render_simple", "valid.npy")
-        if ctx.load_json("stack", "drz_meta.json").get("starless"):
-            self.fused(ctx, prep, lin, valid)          # a starless fusion (option A): its star layer, no network
-            return
         M = np.asarray(prep["M"], np.float64)
         x0, x1, y0, y1 = prep["crop"]
         shown = np.zeros_like(valid)
@@ -116,6 +113,8 @@ class StarRemoval(Stage):
         out = {"crop": prep["crop"], "M": prep["M"], "drizzle_scale": prep.get("drizzle_scale", 1.0),
                "width": prep.get("width"), "height": prep.get("height"), "unit": unit, "background": bk.ravel().tolist(),
                "stats_full": prep["stats"]}
+        if prep.get("origin") == "palette":              # a narrow-band combination's: Post's sliders know it (#163)
+            out["origin"] = "palette"
         ctx.save_json("prep_stars.json", out)
         ctx.progress(0.95, "preview")
         h, w = lin.shape[1:]
@@ -125,32 +124,6 @@ class StarRemoval(Stage):
         a, b = lin[box], starless[box]                   # one stretch for both: before and after side by side
         ctx.preview("starless", asinh_preview(np.concatenate([a, np.zeros((3, a.shape[1], 6), np.float32), b], 2)))
 
-
-    def fused(self, ctx: Context, prep: dict, lin: np.ndarray, valid: np.ndarray) -> None:
-        """A starless fusion of filters (stages/fusion.py, option A): the starless image is the fusion's output, the
-        stars the fusion's star layer; written as this block writes its result, for Post and the Combine layers block."""
-        from .fusion import STARS_FILE
-        stars = ctx.load("stack", STARS_FILE).astype(np.float32)
-        stars[:, ~valid] = 0
-        ctx.save("starless.npy", lin)
-        ctx.save("stars.npy", stars)
-        np.save(ctx.out("valid.npy"), valid)
-        ctx.save_json("prep_stars.json", {"crop": prep["crop"], "M": prep["M"],
-                                          "drizzle_scale": prep.get("drizzle_scale", 1.0), "width": prep.get("width"),
-                                          "height": prep.get("height"), "unit": 1.0, "background": [0.0, 0.0, 0.0],
-                                          "stats_full": whole_stats(lin, stars, valid, prep["crop"]), "fused": True,
-                                          # the Output's origin (a palette fusion), for Post's defaults and sliders:
-                                          # only a fusion's result gains it, and a fusion's change recomputes it
-                                          "origin": prep.get("origin", "")})
-        ctx.metric("grid_peaks", 0)
-        ctx.log("the fusion's starless image and its star layer (the stars were taken off in each channel)")
-        x0, x1, y0, y1 = prep["crop"]
-        h, w = lin.shape[1:]
-        cy, cx = (y0 + y1) // 2, (x0 + x1) // 2
-        s = min(800, h, w) // 2
-        box = (slice(None), slice(max(0, cy - s), cy + s), slice(max(0, cx - s), cx + s))
-        a, b = (lin + stars)[box], lin[box]
-        ctx.preview("starless", asinh_preview(np.concatenate([a, np.zeros((3, a.shape[1], 6), np.float32), b], 2)))
 
 
 class _LayerNorm2d(nn.Module):
@@ -251,20 +224,6 @@ class NAFNet(nn.Module):
         for d, up, sk in zip(self.decs, self.ups, reversed(skips)):
             x = self._run(d, up(x) + sk)
         return (self.ending(x) + x0)[:, :, :H, :W]
-
-
-def whole_stats(starless: np.ndarray, stars: np.ndarray, valid: np.ndarray, crop) -> dict:
-    """The statistics of the stretch (render/simple.image_stats) of a starless fusion with its star layer put back, on
-    the shown pixels: what a workflow's Split stars block keeps from its Output block (the whole image's, stars
-    included; render/stars.py stretches both images with them). The starless fusion's own put the white point on the
-    nebula's brightest 0.005 %: on a nebula filling the field 5 to 7 % of the pixels clipped, the stars stretched as
-    hard (NGC 6995 in SHO: 7.2 % against 0.05 % on a colour workflow)."""
-    from ..render.simple import image_stats
-    x0, x1, y0, y1 = crop
-    shown = np.zeros_like(valid)
-    shown[y0:y1, x0:x1] = True
-    shown &= valid
-    return image_stats(starless + stars, shown)
 
 
 def sky_unit(lin: np.ndarray, shown: np.ndarray) -> float:

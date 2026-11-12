@@ -2,7 +2,7 @@
 image's grid, whatever its size, rotation or scale. It differs from Registration: finished images, possibly stretched and
 of different instruments, not the frames of a night.
 
-Both images with a plate solution in their FITS header: through the sky (fusion.reprojection_map). Otherwise through their
+Both images with a plate solution in their FITS header: through the sky (combine.reprojection_map). Otherwise through their
 stars: the triangle matching of V. Valdes et al. (PASP 107, 1119, 1995) and E. Groth (AJ 91, 1244, 1986), with the triangles
 of M. Beroiz, J. Cabral, B. Sanchez, "Astroalign" (Astronomy and Computing 32, 100384, 2020), then the cubic polynomial of
 Registration on every star it matched (a similarity alone with too few of them). The positions come from sep, on each
@@ -19,7 +19,7 @@ from scipy.interpolate import RectBivariateSpline
 from scipy.spatial import cKDTree
 
 from ..core.stage import StageError
-from .fusion import reprojection_map, warp
+from .combine import reprojection_map, warp
 from .register import SPARSE_MIN_MATCHES, TRIANGLE_STARS, _fit_from, _matched, _similarity, apply_poly, triangle_similarities
 
 #: the scale two images may differ by (a triangle fitted to a far smaller one maps every star onto one point)

@@ -2825,10 +2825,10 @@ def _bounded_by_spectra(infos: list[ParamInfo]) -> None:
 def _origin(p: Project2, w: Workflow) -> str:
     """Where a workflow's image comes from (render/sliders.ORIGINS): a palette fusion of narrow-band filters, a
     monochrome sensor, else a colour camera or an opened image ("")."""
-    from .render.sliders import NARROWBAND_PALETTES
+    from .stages.combine import BY_KIND
     fusion = (w.source or {}).get("fusion")
     if fusion:
-        return "palette" if fusion.get("palette") in NARROWBAND_PALETTES else ""
+        return "palette" if BY_KIND[fusion["type"]].narrowband else ""
     return "mono" if w.source is None and p.is_mono(w) else ""
 
 

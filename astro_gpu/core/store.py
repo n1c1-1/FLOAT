@@ -62,7 +62,7 @@ from . import workflow as wfl
 from .params import StageParams
 from .project import Inputs, ProjectConfig, list_frames
 from .project2 import KINDS, Project2, Workflow
-from .workflow import Chains, base, session_of
+from .workflow import COMBINE, Chains, base, session_of
 
 #: the target's fields added after the first keys were made: left out of the astrometry's key while unset (#38)
 LATER_TARGET_FIELDS = ("pixel_um",)
@@ -369,14 +369,15 @@ class Keys:
         if id(w) not in self._chains and getattr(w, "blocks", None) is not None:      # a graph (issue #47)
             self._chains[id(w)] = self.rules.chains.sequence(wfl.sequence_chain(
                 w.blocks, wfl.source_of(w), reference=bool(self.project.reference_image),
-                sessions=self.project.separate_sessions(w)))
+                sessions=self.project.separate_sessions(w), combine=wfl.combine_stage(w)))
         if id(w) not in self._chains:
             from .project2 import is_fusion, is_image, is_stretched
             src = getattr(w, "source", None)
             self._chains[id(w)] = self.rules.chains.chain(
                 w.options, w.end, reference=bool(self.project.reference_image),
                 sessions=self.project.separate_sessions(w), image=is_image(w) if src else False,
-                mono=self.project.is_mono(w) if src is None else False, fusion=is_fusion(w) if src else False,
+                mono=self.project.is_mono(w) if src is None else False,
+                fusion=wfl.combine_stage(w) if src and is_fusion(w) else "",
                 stretched=is_stretched(w) if src else False)
         return self._chains[id(w)]
 
@@ -484,43 +485,32 @@ class Keys:
             if onto:                                     # aligned on another image: that file is part of the result
                 fid = fid + ["align", *self.scan.image_id(onto)]
             return fid + ["stretched"] if src.get("stretched") else fid
-        if stage == "fusion" and src:
-            f = src["fusion"]
-            stars = f.get("stars")
-            part = {"palette": f["palette"], "weights": dict(f.get("weights") or {}), "inputs": [
-                {"role": i["role"], "channel": i.get("channel", "L"), "out": self._input_key(i["pid"], "render_simple"),
-                 "wcs": self._input_key(i["pid"], "astrometry")}
-                | ({"stars": self._input_key(i["pid"], "star_removal")} if stars else {})
-                for i in f["inputs"]]}
-            if stars:                                # option A: the starless channels, the star source
-                part["star_source"] = dict(stars) | (
-                    {"stars": self._input_key(stars["pid"], "star_removal"),
-                     "wcs": self._input_key(stars["pid"], "astrometry")} if stars["mode"] == "workflow" else {})
-            return part
+        if base(stage) in COMBINE and src:
+            # each port's channel and the keys of what it reads: the workflow's Output or its starless image (its
+            # Stars/background), and its plate solution; a change in a channel's workflow makes the combination Outdated
+            return {"inputs": [
+                {"role": i["role"], "channel": i.get("channel", "L"), "out": self._input_key(i["pid"], _read(i)),
+                 "wcs": self._input_key(i["pid"], "astrometry")} | ({"image": i["image"]} if _read(i) != "render_simple"
+                                                                    else {})
+                for i in src["fusion"]["inputs"]]}
         return None
 
     def _input_key(self, pid: int, stage: str) -> str | None:
-        """The key of a stage of another workflow (a fusion's input), None when its chain has none."""
+        """The key of a stage of another workflow (a combination's input), None when its chain has none."""
         try:
             return self.key(pid, stage) if stage in self.chain(pid) else None
         except (KeyError, ValueError):
             return None
 
     def fusion_inputs(self, wf: int | Workflow) -> list[tuple[int, str]]:
-        """(workflow id, stage) of what a fusion reads: each input's Output and, when it has one, its Astrometry."""
+        """(workflow id, stage) of what a combination reads: each input's image (its Output, or its Stars/background's
+        starless image) and, when it has one, its Astrometry."""
         w = self._wf(wf)
-        f = w.source["fusion"]
-        want = ("render_simple", "astrometry") + (("star_removal",) if f.get("stars") else ())
         out = []
-        for i in f["inputs"]:
-            for st in want:
+        for i in w.source["fusion"]["inputs"]:
+            for st in (_read(i), "astrometry"):
                 if st in self.chain(i["pid"]) and (i["pid"], st) not in out:
                     out.append((i["pid"], st))
-        stars = f.get("stars") or {}
-        if stars.get("mode") == "workflow":
-            for st in ("star_removal", "astrometry"):
-                if st in self.chain(stars["pid"]) and (stars["pid"], st) not in out:
-                    out.append((stars["pid"], st))
         return out
 
     def key_parts(self, wf: int | Workflow, stage: str) -> dict[str, Any]:
@@ -528,7 +518,7 @@ class Keys:
         w = self._wf(wf)
         p, m = self._key_values(w, stage)
         b = base(stage)
-        x = self.source_part(w, stage) if b in ("image", "fusion") else self.project_part(stage, w)
+        x = self.source_part(w, stage) if b == "image" or b in COMBINE else self.project_part(stage, w)
         sid = session_of(stage)
         # an instance reads its session's instances under the stages' names: keyed so, as in a one-session project
         u = {(base(d) if sid is not None and session_of(d) == sid else d): self.key(w, d) for d in self.deps(w, stage)}
@@ -590,24 +580,15 @@ class Keys:
             v["path"] = _absolute(self.project, w.source["path"]) if w.source["path"] else ""
             v["stretched"] = bool(w.source.get("stretched"))
             v["align_to"] = self._aligned_on(w)
-        if base(stage) == "fusion" and getattr(w, "source", None):
+        if base(stage) in COMBINE and getattr(w, "source", None):
             store = Store(self.project.root) if self.project.root is not None else None
-            v["palette"] = w.source["fusion"]["palette"]
-            ins = []
 
             def folder(pid, st, file=""):
                 k = self._input_key(pid, st)
                 return str(store.dir(st, k) / file) if store and k else ""
-            for i in w.source["fusion"]["inputs"]:
-                ins.append({"role": i["role"], "channel": i.get("channel", "L"), "pid": i["pid"],
-                            "dir": folder(i["pid"], "render_simple"), "stars_dir": folder(i["pid"], "star_removal"),
-                            "wcs": folder(i["pid"], "astrometry", "wcs.fits")})
-            v["inputs"] = ins
-            stars = dict(w.source["fusion"].get("stars") or {})
-            if stars.get("mode") == "workflow":
-                stars.update(dir=folder(stars["pid"], "star_removal"), wcs=folder(stars["pid"], "astrometry", "wcs.fits"))
-            v["stars"] = stars
-            v["weights"] = dict(w.source["fusion"].get("weights") or {})
+            v["inputs"] = [{"role": i["role"], "channel": i.get("channel", "L"), "pid": i["pid"],
+                            "image": i.get("image", "output"), "dir": folder(i["pid"], _read(i)),
+                            "wcs": folder(i["pid"], "astrometry", "wcs.fits")} for i in w.source["fusion"]["inputs"]]
         m = self._validated(w, stage, v)
         return {k: m[k] for k in v}
 
@@ -753,3 +734,9 @@ class StoreProject:
         if stage == base(self.stage):
             stage = self.stage                           # the job's own stage, an instance's settings included
         return self.keys.overrides(self.workflow, stage) if stage in self.chain else {}
+
+
+def _read(i: dict) -> str:
+    """The stage of its workflow a combination's input reads: its Output's, or its Stars/background's (stages/combine)."""
+    from ..stages.combine import IMAGES
+    return IMAGES[i.get("image", "output")][0]

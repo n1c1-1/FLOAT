@@ -139,8 +139,8 @@ def test_the_halpha_slider_is_for_colour_cameras_only():
     assert S.settings_at("simple", None, {"halpha": 4}, True, "palette").halpha == 0.0
     assert S.settings_at("simple", None, {"halpha": 4}, True, "").halpha > 0.0
     # where the project says it
-    sho = SimpleNamespace(source={"fusion": {"palette": "SHO"}})
-    rgb = SimpleNamespace(source={"fusion": {"palette": "LRGB"}})
+    sho = SimpleNamespace(source={"fusion": {"type": "sho"}})
+    rgb = SimpleNamespace(source={"fusion": {"type": "lrgb"}})
     mono = SimpleNamespace(source=None)
     p = SimpleNamespace(is_mono=lambda w: w is mono)
     assert api._origin(p, sho) == "palette" and api._origin(p, rgb) == ""

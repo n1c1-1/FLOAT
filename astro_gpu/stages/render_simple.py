@@ -22,7 +22,6 @@ from pydantic import field_validator
 
 from ..core.params import P, StageParams
 from ..core.stage import Context, Stage, StageError
-from ..render.sliders import NARROWBAND_PALETTES
 from .gradient import LUM, GradientParams, coverage, fit_poly_sky, image_in, poly_sky
 
 STRETCHES = ["auto"]                       # the other stretches of the spec (GHS, arcsinh, STF, none) are not in the engine
@@ -198,7 +197,7 @@ class RenderSimple(Stage):
         lin = src
         # where the image comes from, for Post's H-alpha slider (render/sliders.availability): in a palette fusion of
         # narrow-band filters red is not an H-alpha over a continuum, nor is a monochrome sensor's one channel
-        origin = ("palette" if meta.get("palette") in NARROWBAND_PALETTES else "") if fused else (
+        origin = ("palette" if meta.get("narrowband") else "") if fused else (
             "mono" if ctx.has("inventory") and ctx.metric_of("inventory", "mono") else "")
         ctx.progress(0.2, "sky")
         sky_name = "channel medians"
