@@ -67,6 +67,9 @@ class Color(Stage):
 
     def run(self, ctx: Context, p: ColorParams) -> None:
         import colour
+        from ..core.workflow import MONO_NO_COLOUR
+        if ctx.has("inventory") and ctx.metric_of("inventory", "mono"):
+            raise StageError(MONO_NO_COLOUR)
         img = image_in(ctx).img                       # its sky removed, the Color blocks before it applied (#47)
         xp = np.load(ctx.input("catalogs", "gaia_xp.npz"))
         table, star_why = colour_star_table(img, xp["x"], xp["y"], p.aperture, saturation_map(ctx))

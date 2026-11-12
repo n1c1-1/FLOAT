@@ -32,3 +32,22 @@ def test_the_stars_white_balance_brings_the_white_reference_to_white():
     assert wb["k"][1] == 1.0
     assert abs(wb["k"][0] * 1.15 - 1) < 0.03 and abs(wb["k"][2] * 0.9 - 1) < 0.03, wb
     assert star_white_balance(m[:10], e[:10])["k"].tolist() == [1.0, 1.0, 1.0]           # too few stars: none
+
+
+def test_a_mono_image_has_no_colours_to_calibrate_before_any_star_count(tmp_path):
+    import pytest
+    from astro_gpu.core.stage import StageError
+    from astro_gpu.core.workflow import MONO_NO_COLOUR
+    from astro_gpu.stages.color import Color, ColorParams
+
+    class Ctx:
+        def has(self, stage):
+            return True
+
+        def metric_of(self, stage, key, default=None):
+            return True if (stage, key) == ("inventory", "mono") else default
+
+    for st, p in ((Color(), ColorParams()),):   # the catalogues stay: an aligned colour workflow reads a mono reference's
+        with pytest.raises(StageError, match="mono image has no colours"):
+            st.run(Ctx(), p)
+    assert "mono image" in MONO_NO_COLOUR

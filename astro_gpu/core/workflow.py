@@ -133,7 +133,7 @@ def cuts(options: dict[str, Any]) -> list[str]:
 #: why a block cannot run (the user reads it on the greyed block; English, translated by the client)
 NEEDS_ASTROMETRY = "needs Astrometry"
 NEEDS_HALF_STACKS = "needs half-stacks"
-MONO_NO_COLOUR = "monochrome: colours from filters"
+MONO_NO_COLOUR = "a mono image has no colours to calibrate"
 
 
 def greyed(options: dict[str, Any], image: bool = False, mono: bool = False) -> dict[str, str]:

@@ -178,6 +178,21 @@ def test_a_filters_template_on_a_new_project_makes_its_empty_sessions(qapp, tmp_
         w.stop()
 
 
+def test_a_color_block_of_a_mono_workflow_is_greyed_with_its_reason(qapp, tmp_path, monkeypatch):
+    w, m, page = open_page(tmp_path, monkeypatch)
+    try:
+        p = m.paths[0]
+        assert m.greyed(p) == {}
+        m.set_session_filter(1, "L")
+        settle(w, page)
+        assert m.greyed(p) == {"color": "a mono image has no colours to calibrate"}
+        assert m.greyed_reason(p, "couleur") == "a mono image has no colours to calibrate"
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
 def test_what_the_play_test_found_stays_fixed(qapp, tmp_path, monkeypatch):
     """The play-test of issue #47: an empty workflow from sessions, a template that takes its place, no Color in
     monochrome, a refused delete keeps the selection, a fusion's channels are not Post layers by themselves."""
@@ -203,7 +218,7 @@ def test_what_the_play_test_found_stays_fixed(qapp, tmp_path, monkeypatch):
         m.set_session_filter(1, "Ha")
         settle(w, page)
         ha = m.paths[0]
-        assert m.palette_reason(ha, "color").startswith("monochrome") and m.place_indices(ha, "color") == []
+        assert m.palette_reason(ha, "color").startswith("a mono image") and m.place_indices(ha, "color") == []
     finally:
         page.close()
         m.close(save=False)

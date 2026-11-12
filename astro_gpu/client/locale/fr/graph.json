@@ -243,7 +243,7 @@
   "Already stretched image": "Image déjà étirée",
   "Planned: an image already stretched (not linear) enters before Stars/background: its stars are taken off and the two images come to Post as layers.": "Prévu : une image déjà étirée (non linéaire) entre avant le bloc Étoiles/fond : ses étoiles sont retirées et les deux images arrivent dans Post en calques.",
   "Not in this version yet: planned.": "Pas encore dans cette version : prévu.",
-  "monochrome: colours from filters": "monochrome : couleurs par filtres",
+  "a mono image has no colours to calibrate": "une image mono n'a pas de couleurs à calibrer",
   "stretched": "étirée",
   "No filter: set it in Session": "Aucun filtre : le régler dans Session",
   "Dual band": "Bi-bande",

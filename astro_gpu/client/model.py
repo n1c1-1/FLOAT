@@ -1649,7 +1649,10 @@ class ProjectModel(QObject):
         return [n["block"] for n in self.graph(p) if n["off"]]
 
     def greyed(self, p: WorkflowView) -> dict[str, str]:
-        """Issue #47: none. A block that cannot run where it is cannot be placed there (the palette says why)."""
+        """Issue #47: a block that cannot run where it is cannot be placed there (the palette says why). One that
+        is placed all the same: a Color block of a mono image has no colours to calibrate."""
+        if self.is_mono(p) and any(n["block"] == "color" for n in self.graph(p)):
+            return {"color": wfl.MONO_NO_COLOUR}
         return {}
 
     # ------------------------------------------------------------ issue #47: the graph of a workflow
