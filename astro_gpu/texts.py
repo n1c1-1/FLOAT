@@ -190,6 +190,8 @@ _METRIC_ROWS: list[tuple] = [
     ("palette", "Palette", "", "", "How the filters became red, green and blue (SHO Hubble, SHO, HSO, HOO, RGB, "
                                    "LRGB)."),
     ("channels", "Channels", "", "", "The filters combined.", ", "),
+    ("chroma_sigma", "Colour smoothing", "px", ".1f", "Radius the colour was smoothed at, from the filters' noise; the "
+                                                      "lightness keeps its full detail."),
     ("star_source", "Star source", "", "", "Where the stars put back on the starless fusion came from (palette, channel "
                                            "or workflow)."),
     # register
