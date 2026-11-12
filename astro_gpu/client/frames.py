@@ -98,6 +98,25 @@ def long_bias_text(a: dict) -> str:
             _("Bias: {n} frames last {t:g} s, not near zero: are they really bias?")).format(n=a["n"], t=a["exposure"])
 
 
+def wrong_types_text(kind: str, found: dict) -> str:
+    """Files given as a kind whose header's image type says another (``stages.calibrate.wrong_types``), as information:
+    "Darks: 1 file's header says Light"."""
+    names = {"light": _("Light"), "dark": _("Dark"), "flat": _("Flat"), "bias": _("Bias")}
+    kinds = {"lights": _("Lights"), "darks": _("Darks"), "flats": _("Flats"), "bias": _("Bias"),
+             "flat_darks": _("Flat darks")}
+    n = sum(found.values())
+    what = ", ".join(f"{c} {names[t]}" if len(found) > 1 else names[t] for t, c in sorted(found.items()))
+    return ((_("{kind}: {n} file's header says {what}") if n == 1 else _("{kind}: {n} files' headers say {what}"))
+            .format(kind=kinds[kind], n=n, what=what))
+
+
+def flat_filter_text(a: dict) -> str:
+    """Flats whose header names another filter than the session's (``stages.calibrate.other_filter``), as information."""
+    from .blocks import port_name
+    return _("Flats: filter {flats}, the session's is {session}").format(
+        flats=", ".join(port_name(x) for x in a["filters"]), session=port_name(a["session"]))
+
+
 def day_text(iso: str) -> str:
     """A day as the night's text writes it ("17 Jun 2025", "17 juin 2025"); the ISO text itself when it cannot be read."""
     try:
@@ -186,6 +205,12 @@ def check_text(c, data: ProjectFrames | None = None) -> str:
             f"{a.get('session', '')}: " + clock_text(a)
     if c.key == "target_far":                             # the typed target against where the lights point
         return target_far_text(a)
+    if c.key == "wrong_type":                             # files whose header names another kind of frame
+        colon = " :" if language() == "fr" else ":"
+        return f"{a.get('session', '')}{colon} " + wrong_types_text(a["kind"], a["found"])
+    if c.key == "flat_filter":                            # flats of another filter than the session's
+        colon = " :" if language() == "fr" else ":"
+        return f"{a.get('session', '')}{colon} " + flat_filter_text(a)
     if c.key == "long_bias":                              # bias frames that are not near zero: flat darks?
         colon = " :" if language() == "fr" else ":"
         return f"{a.get('session', '')}{colon} " + long_bias_text(a)

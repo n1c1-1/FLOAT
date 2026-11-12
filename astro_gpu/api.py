@@ -1104,6 +1104,21 @@ def health_checks(p: Project2, dates: dict[int, list[tuple[str, str]]] | None = 
                                  "exposure time in a session of its own, with its darks.", {"session": s.name, "times": times}))
     except Exception:  # noqa: BLE001 - information: headers that cannot be read are said elsewhere
         pass
+    try:                                             # a header names another kind of frame or filter: information
+        from .client.frames import flat_filter_text, wrong_types_text
+        from .stages.calibrate import other_filter, wrong_types
+        for s in keys.project.sessions:
+            fr = keys.scan.session_frames(keys.project, s)
+            ks = {k: light_facts([f for f, _size in fr[k]], limit=400).get("keys") or []
+                  for k in ("lights", "darks", "flats", "bias", "flat_darks")}
+            for kind, found in wrong_types(ks).items():
+                out.append(Check("info", "wrong_type", f"{s.name}: {wrong_types_text(kind, found)}",
+                                 {"session": s.name, "kind": kind, "found": found}))
+            of = other_filter(ks["flats"], s.filter)
+            if of:
+                out.append(Check("info", "flat_filter", f"{s.name}: {flat_filter_text(of)}", {"session": s.name, **of}))
+    except Exception:  # noqa: BLE001 - information: headers that cannot be read are said elsewhere
+        pass
     try:                                             # bias frames that are not near zero: information, nothing reclassified
         from .client.frames import long_bias_text
         from .stages.calibrate import long_bias

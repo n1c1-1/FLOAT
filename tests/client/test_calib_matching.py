@@ -159,3 +159,41 @@ def test_bias_frames_lasting_seconds_say_so_as_information(tmp_path):
     ok = _project(tmp_path / "o", 1, 508.0, np.full((H, W), 8400 / 65535, np.float32), {"STACKCNT": 30})
     assert not any("Bias:" in t and "frames last" in t for _ok, t in _lines(ok, 1))
     assert not any(x.key == "long_bias" for x in api.health_checks(ok))
+
+
+def test_headers_naming_another_kind_or_filter_say_so_as_information(tmp_path):
+    from astro_gpu import api
+    from astro_gpu.client import i18n
+    from astro_gpu.client.frames import check_text
+    p = project2.create(tmp_path / "P", "P", Target(name="NGC 7000"))
+    img = np.full((H, W), 900, np.uint16)
+    for i in range(2):
+        _fits(tmp_path / "L" / f"l{i}.fits", img, EXPTIME=300.0, IMAGETYP="Light Frame", FILTER="SII")
+    _fits(tmp_path / "L" / "wrong.fits", img, EXPTIME=300.0, IMAGETYP="Dark Frame", FILTER="SII")
+    _fits(tmp_path / "D" / "d0.fits", img, EXPTIME=300.0, IMAGETYP="Light Frame", FILTER="Ha")   # a light named dark
+    _fits(tmp_path / "D" / "d1.fits", img, EXPTIME=300.0, IMAGETYP="Dark Frame")
+    _fits(tmp_path / "FL" / "f0.fits", img, EXPTIME=1.0, IMAGETYP="Light Frame", FILTER="Ha")
+    _fits(tmp_path / "FL" / "f1.fits", img, EXPTIME=1.0, IMAGETYP="Flat Frame", FILTER="SII")
+    _fits(tmp_path / "B" / "b0.fits", img, EXPTIME=0.001)                                         # no image type
+    _fits(tmp_path / "FD" / "x.fits", img, EXPTIME=1.0, IMAGETYP="Dark Flat")                     # ambiguous: none
+    p.sessions.append(project2.Session(1, "night 1", lights=[str(tmp_path / "L")], darks=[str(tmp_path / "D")],
+                                       flats=[str(tmp_path / "FL")], bias=[str(tmp_path / "B")],
+                                       flat_darks=[str(tmp_path / "FD")], filter="SII"))
+    project2.save(p)
+    lines = [t for _ok, t in _lines(p, 1)]
+    assert "Darks: 1 file's header says Light" in lines
+    assert "Flats: 1 file's header says Light" in lines
+    assert "Lights: 1 file's header says Dark" in lines
+    assert "Flats: filter Hα, the session's is S II" in lines
+    assert not any(t.startswith(("Bias:", "Flat darks:")) and "header" in t for t in lines)
+    cs = {x.key: x for x in api.health_checks(p) if x.key in ("wrong_type", "flat_filter")}
+    assert cs["flat_filter"].level == "info" and check_text(cs["flat_filter"]) == \
+        "SII: Flats: filter Hα, the session's is S II"
+    assert sum(x.key == "wrong_type" for x in api.health_checks(p)) == 3
+    try:
+        i18n.set_language("fr")
+        assert "l'en-tête de 1 fichier indique Brute" in " ".join(check_text(x) for x in api.health_checks(p))
+    finally:
+        i18n.set_language("en")
+    ok = _project(tmp_path / "o", 1, 508.0, np.full((H, W), 8400 / 65535, np.float32), {"STACKCNT": 30})
+    assert not any("header" in t or "the session's is" in t for _o, t in _lines(ok, 1))
