@@ -967,6 +967,46 @@ class GraphView(QGraphicsView):
             prev = at - SROW
         return rel, rows
 
+    @staticmethod
+    def place_joins(g: Graph) -> None:
+        """A join block stands at the mean height of the rows it reads (issue #165): a combination between its inputs'
+        (S-H-O level with the Hα row, between S II and O III), the Stars/background after it level with it, a Combine layers
+        block between its starless source and its stars source, so that its wires are short, parallel to the rows, and
+        none runs over a block's text. The combinations in the order of their rank (one reading another comes after it)."""
+        for n in sorted((n for n in g.nodes if n.key == "fusion" and n.paths), key=lambda n: n.slot):
+            ys = [a.y for a, _r, _i in g.fusion_inputs.get(id(n), [])]
+            if ys:
+                n.y = sum(ys) / len(ys)
+            for m in g.nodes:                            # its Stars/background, if one is placed after it
+                if m.key == "etoiles" and m.after >= 0 and m.paths and m.paths[0] is n.paths[0]:
+                    m.y = n.y
+        for n in g.compositions:
+            ys = [a.y for a, _w in g.composition_inputs.get(id(n), []) if a is not None]
+            if ys:
+                n.y = sum(ys) / len(ys)
+
+    @staticmethod
+    def _own_lane(g: Graph, p, lanes: dict) -> float | None:
+        """The height a workflow's image runs on to Post: its lane; a combination's, the height its block was placed at."""
+        leaf = g.leaves.get(p.pid)
+        if isinstance(getattr(p, "source", None), dict) and "fusion" in p.source and leaf is not None:
+            return leaf.y
+        return lanes.get(p.pid)
+
+    @staticmethod
+    def place_post(g: Graph) -> None:
+        """Post level with what feeds it (the mean height of the blocks whose image or layers it gets)."""
+        feeders = [n for n in g.compositions if n.paths]
+        for p in g.s.paths:
+            if p.pid in g.to_post or p.pid in g.awaits_post:
+                n = g.leaves.get(p.pid)
+                if n is not None:
+                    feeders.append(n)
+        feeders += [src for src, _what in g.direct]
+        ys = [n.y for n in feeders if n is not None]
+        if ys:
+            g.final.y = sum(ys) / len(ys)
+
     def rebuild(self):
         sc = self.scene()
         # issue #24: a change (or a stage event of a run) builds the graph again; where the user had scrolled stays,
@@ -989,6 +1029,7 @@ class GraphView(QGraphicsView):
             k = len(self._inputs_of(g, n, False)) if n.key in ("fusion", "composition") else 0
             n.h = max(float(BH), k * IN_ROW + 10.0) if k else 0.0
         self.wire_log: list[tuple] = []                   # every wire drawn between two nodes: (from, to, "vertical" or "")
+        self.route_log: list[tuple] = []                  # the path of every wire into a join: (from, to, QPainterPath)
         cols = self.columns(g)
         # issue #47: while a palette block is dragged, a column opens before each block it can go in front of (and
         # after the last one): its places, shown as the block itself, the blocks after them moved aside
@@ -1050,6 +1091,7 @@ class GraphView(QGraphicsView):
             col = self.col_of(n)
             n.col = cx.get(col, 0.0)
             n.w = cw.get(col, BW)
+        self.place_joins(g)
         seen: dict[int, int] = {}
         for n in g.compositions:                   # two blocks of one workflow: one a little below the other
             k = seen.get(n.paths[0].pid, 0)
@@ -1062,6 +1104,7 @@ class GraphView(QGraphicsView):
                 if low is not None and n.y - hgt(n) / 2 < low:
                     n.y = low + hgt(n) / 2
                 low = n.y + hgt(n) / 2 + 6
+        self.place_post(g)
         self._lanes, self._cx, self._cw = lanes, cx, cw
         # what a wire that skips columns keeps out of (_route): every block's rectangle, placed now, drawn below
         self._rects = [(n, QRectF(n.col, n.y - hgt(n) / 2, n.w, hgt(n))) for n in g.nodes if self._drawn(g, n)]
@@ -1136,10 +1179,10 @@ class GraphView(QGraphicsView):
                 self._wire(g.leaves[p.pid], g.final, cur is not None and p is cur,
                            on_remove=lambda q=p: self.postLinkRemoved.emit(q.pid),
                            tip=_("“{name}”: its image to Post as a layer").format(name=p.name), pid=p.pid,
-                           via_y=lanes.get(p.pid))
+                           via_y=self._own_lane(g, p, lanes))
             elif p.pid in g.awaits_post and p.pid in g.leaves:   # the same wire, dashed until the image exists
                 grey = next((n for n in g.nodes if n.key == "composition" and n.grey and p in n.paths), None)
-                self._wire(grey or g.leaves[p.pid], g.final, False, via_y=None if grey else lanes.get(p.pid),
+                self._wire(grey or g.leaves[p.pid], g.final, False, via_y=None if grey else self._own_lane(g, p, lanes),
                            waiting=True, tip=_("“{name}”: its image comes to Post with the lights").format(name=p.name))
         # the Stars block's images: into its Stars and background blocks, or straight to Post
         for n in g.compositions:
@@ -1785,6 +1828,8 @@ class GraphView(QGraphicsView):
             rows.append(dict(key=("reference",), name=_("Reference"), src=g.align_refs.get(id(n)),
                              wired=getattr(s, "align_reference", lambda q: None)(n.paths[0]) is not None, image="output",
                              remove=(lambda p=n.paths[0]: s.set_align_reference(p, None)) if with_remove else None))
+        if n.key in ("fusion", "composition"):          # the inputs in the order of the rows they read, top to bottom, so
+            rows.sort(key=lambda d: (d["src"] is None, getattr(d["src"], "y", 0.0)))   # that no two wires cross (#165)
         k, h = len(rows), hgt(n)
         for i, d in enumerate(rows):
             d["y"] = 12.0 if n.key == "align_on" else (h - IN_ROW * k) / 2 + IN_ROW * i + IN_ROW / 2
@@ -1821,6 +1866,7 @@ class GraphView(QGraphicsView):
             else:
                 path = self._route(a.col + a.w, a.y, n.col, y2, (a, n), up=True, extra=extra)
             self.wire_log.append((a, n, "vertical" if same else ""))
+            self.route_log.append((a, n, path))
             pen = QPen(QColor("#9aa3b2" if strong else "#3d4452"), 2.2 if strong else 1.6)
             tip = _("{port} input of “{block}”").format(port=d["name"], block=n.paths[0].name)
             if d["remove"] is not None:
@@ -1864,6 +1910,7 @@ class GraphView(QGraphicsView):
         x2, y2 = b.col, b.y - hgt(b) / 2 + yb
         self.wire_log.append((a, b, ""))
         path = self._route(x1, y1, x2, y2, (a, b), up=what == "starless", extra=extra)
+        self.route_log.append((a, b, path))
         col = QColor(IMAGE_COL[what])
         if not strong:
             col.setAlpha(110)

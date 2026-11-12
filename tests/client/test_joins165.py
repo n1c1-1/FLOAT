@@ -323,3 +323,69 @@ def test_the_names_are_french_with_aligner_sur(world):
         assert i18n._("SHO + RGB stars") != "SHO + RGB stars"
     finally:
         i18n.set_language("en")
+
+
+def _crossing(p, q) -> bool:
+    """Whether two wires (paths) cross: a proper crossing of two of their segments (sampled), not a shared end."""
+    def poly(path):
+        n = 80
+        pts = [path.pointAtPercent(i / n) for i in range(n + 1)]
+        return [(a.x(), a.y(), b.x(), b.y()) for a, b in zip(pts, pts[1:])]
+
+    def cut(s, t):
+        d = (s[2] - s[0]) * (t[3] - t[1]) - (s[3] - s[1]) * (t[2] - t[0])
+        if abs(d) < 1e-9:
+            return False
+        u = ((t[0] - s[0]) * (t[3] - t[1]) - (t[1] - s[1]) * (t[2] - t[0])) / d
+        v = ((t[0] - s[0]) * (s[3] - s[1]) - (t[1] - s[1]) * (s[2] - s[0])) / d
+        return 0.02 < u < 0.98 and 0.02 < v < 0.98
+    return any(cut(s, t) for s in poly(p) for t in poly(q))
+
+
+def _joins_are_placed(page):
+    """No two wires into a join cross; the join's centre lies between the rows of its inputs."""
+    page.graph.rebuild()
+    gv = page.graph
+    g = gv.graph
+    checked = 0
+    for n in g.nodes:
+        if n.key not in ("fusion", "composition") or not n.paths:
+            continue
+        srcs = [a for a, _r, _i in g.fusion_inputs.get(id(n), [])] if n.key == "fusion" else \
+            [a for a, _w in g.composition_inputs.get(id(n), []) if a is not None]
+        if len(srcs) < 2:
+            continue
+        ys = [a.y for a in srcs]
+        assert min(ys) - 1e-6 <= n.y <= max(ys) + 1e-6, (n.key, n.y, ys)
+        wires = [path for a, b, path in gv.route_log if b is n]
+        assert len(wires) == len(srcs)
+        for i, p in enumerate(wires):
+            for q in wires[i + 1:]:
+                assert not _crossing(p, q), (n.key, "two wires cross")
+        rows = [d["src"].y for d in gv._inputs_of(g, n) if d["src"] is not None]
+        assert rows == sorted(rows)                                       # the inputs in the order of the rows they read
+        checked += 1
+    return checked
+
+
+def test_a_join_stands_between_the_rows_it_reads_and_its_wires_never_cross(world):
+    m, page = world["m"], world["page"]
+    template(world, "sho_rgb")
+    assert _joins_are_placed(page) == 2                                        # S-H-O, and Combine layers
+    g = page.graph.graph
+    sho = g.node_of(by_name(m, "S-H-O"), "fusion")
+    rows = [g.node_of(by_name(m, n), "etoiles").y for n in ("SII", "Ha", "OIII")]
+    assert abs(sho.y - rows[1]) < 1.0                                          # the Ha row, between S II and O III
+    comp = g.compositions[0]
+    assert abs(comp.y - (sho.y + g.node_of(by_name(m, "RGB"), "etoiles").y) / 2) < 1.0
+    assert abs(g.final.y - comp.y) < 1.0                                       # Post level with what feeds it
+    # the filters wired in another order: the inputs follow the rows they read, still no crossing
+    m.set_fusion_input(by_name(m, "S-H-O"), "SII", by_name(m, "OIII").pid)
+    m.set_fusion_input(by_name(m, "S-H-O"), "OIII", by_name(m, "SII").pid)
+    settle(world)
+    assert _joins_are_placed(page) == 2
+
+
+def test_the_filters_template_places_its_combination_level_with_the_middle_filter(world):
+    template(world, "filters_full")
+    assert _joins_are_placed(world["page"]) == 1
