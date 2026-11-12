@@ -20,6 +20,10 @@ Output block renders as any stack (core/workflow.PROVIDES).
    SHO (S II red, H-alpha green, O III blue: the plain mapping, whose H-alpha reads green), HSO, HOO (H-alpha red,
    O III green and blue), RGB, and LRGB (the colour of RGB, the luminance of L: each pixel's RGB scaled so that its
    luminance is L's).
+5. A narrow-band palette (SHO Hubble, SHO, HSO, HOO) is composed as lightness and colour (``compose``): the lightness
+   is the channels' mean weighted by their noise, the palette gives only the colour, smoothed in a starless fusion
+   where the noisiest channel's grain would show: the noise of a weak filter, raised by the balance (M27's S II 15
+   times noisier than its H-alpha), no longer makes coloured blotches over the sky.
 
 The SHO Hubble palette follows Rector, Levay, Frattare, English & Pu'uohau-Pummill 2007, AJ 133, 598, "Image-processing
 techniques for the creation of presentation-quality astronomical images": each filter's greyscale image is given its
@@ -257,6 +261,67 @@ def star_support(s: np.ndarray, k: float = 3.0, grow: int = 2) -> np.ndarray:
     return np.where(m > 0, np.maximum(s - med, 0), 0).astype(np.float32)
 
 
+#: the palettes of narrow-band filters: their lightness and their colour composed apart (``compose``)
+NARROWBAND = ("SHO Hubble", "SHO", "HSO", "HOO")
+#: the colour's floor, in units of its luminance's noise: below it the colour is grey, from 1 to 2 floors it comes in
+CHROMA_FLOOR = 3.0
+
+
+def lightness(chans: dict[str, np.ndarray], noise: dict[str, float]) -> tuple[np.ndarray, float]:
+    """(the lightness, its noise): the inverse-variance weighted mean of the balanced channels (each weighed by 1 over
+    its sky noise squared, the minimum-variance combination of measures of one quantity: the noise-weighted luminance
+    of narrow-band and LRGB work). Equal channels give that same value: a neutral source keeps its level."""
+    w = {r: 1.0 / max(noise[r], 1e-12) ** 2 for r in chans}
+    tot = sum(w.values())
+    L = sum(np.float32(w[r] / tot) * chans[r] for r in chans)
+    return L.astype(np.float32), float(tot ** -0.5)
+
+
+def chroma_sigma(noise: dict[str, float], noise_l: float) -> float:
+    """The Gaussian radius (px) of the colour's smoothing: where the noisiest channel's noise, averaged by the
+    Gaussian (white noise: its standard deviation divided by 2 sqrt(pi) sigma), comes down to the lightness's own.
+    The colour is then no noisier than the lightness that carries the detail; 0 below half a pixel."""
+    s = max(noise.values()) / (2 * np.sqrt(np.pi) * max(noise_l, 1e-12))
+    return float(s) if s >= 0.5 else 0.0
+
+
+def compose(chans: dict[str, np.ndarray], palette: str, noise: dict[str, float], smooth: bool,
+            sky: np.ndarray | None = None) -> tuple[np.ndarray, dict]:
+    """(3, H, W) of a narrow-band palette composed as luminance and chrominance (issue #163; the LRGB composition, the
+    colour of one image and the lightness of another, R. Gendler, "Lessons from the Masters", Springer 2013, and
+    Rector et al. 2007 for the colour layers): the lightness is the noise-weighted mean of the channels
+    (``lightness``), the palette gives only the colour, its ratios to its own luminance. With ``smooth`` (a starless
+    fusion: the stars come back after, in their layer) the colour is smoothed at ``chroma_sigma``, the lightness keeping
+    every detail: the luminance-chrominance noise reduction, as the eye resolves colour much more coarsely than
+    lightness (K. T. Mullen 1985, J. Physiol. 359, 381: the chromatic contrast sensitivity falls off at a few times lower
+    spatial frequencies; the reason of the chroma subsampling of JPEG and video). Where the colour's luminance is under
+    CHROMA_FLOOR times its noise (the sky at 0) the pixel is grey, from one to two floors the colour comes in: the noise of
+    a weak filter, raised by the balance, no longer paints the sky. That noise is measured on the ``sky`` pixels (the
+    channels' common sky, ``sky_mask``) of the smoothed colour's luminance: the residues of the channels' skies and
+    their noise's grain, wider than one pixel, are what a white noise's formula would miss; without sky pixels, the
+    formula. Returns (the image, notes for the log)."""
+    rgb = fuse(chans, palette)
+    L, noise_l = lightness(chans, noise)
+    roles, mat = PALETTES[palette]
+    m = np.asarray(mat, np.float64)
+    lum_w = LUM.astype(np.float64) @ m                 # each channel's share of the palette's luminance
+    noise_c = float(np.sqrt(sum((lum_w[i] * noise[r]) ** 2 for i, r in enumerate(roles))))
+    sig = chroma_sigma({r: noise[r] for r in roles}, noise_l) if smooth else 0.0
+    if sig > 0:
+        rgb = np.stack([cv2.GaussianBlur(c, (0, 0), sig) for c in rgb])
+        noise_c /= 2 * np.sqrt(np.pi) * sig
+    lum = np.tensordot(LUM, rgb, 1)
+    if sky is not None and sky.sum() > 1000:
+        med, spread = sky_level(lum, sky)
+        floor = abs(med) + CHROMA_FLOOR * max(spread, 1e-12)
+    else:
+        floor = CHROMA_FLOOR * max(noise_c, 1e-12)
+    t = np.clip(lum / floor - 1, 0, 1)
+    t = t * t * (3 - 2 * t)                             # from one to two floors, smoothly
+    ratio = 1 + t[None] * (rgb / np.maximum(lum, floor)[None] - 1)
+    return (ratio * L[None]).astype(np.float32), {"sigma": sig, "noise_l": noise_l, "floor": floor}
+
+
 def fuse(chans: dict[str, np.ndarray], palette: str) -> np.ndarray:
     """(3, H, W) of the balanced channels by role through a palette."""
     roles, mat = PALETTES[palette]
@@ -284,12 +349,14 @@ class Fusion(Stage):
                    "one colour image with a palette (SHO Hubble, SHO, HSO, HOO, RGB, LRGB), aligned through their "
                    "plate solutions.")
     Params = FusionParams
-    version = "6"                  # 2: option A, the starless channels and a star layer; 3: the stars kept on
+    version = "7"                  # 2: option A, the starless channels and a star layer; 3: the stars kept on
     #                                  their support (the noise of the subtraction left out); the channels' weights;
     #                                  4: the SHO Hubble palette (hues, Rector et al. 2007), the SHO default: the
     #                                  colours of new results change; 5: the channels' sky taken to 0 before the
     #                                  balance (background neutralisation): the sky of the result is grey; 6: the SHO
     #                                  Hubble hues measured on the Hubble teams' images (#163): H-alpha copper, O III blue
+    #                                  7: a narrow-band palette's lightness from the channels weighted by their noise,
+    #                                  the palette giving the colour, smoothed in a starless fusion (#163)
 
     def run(self, ctx: Context, p: FusionParams) -> None:
         from astropy.io import fits
@@ -348,7 +415,17 @@ class Fusion(Stage):
                 tops[role] /= wgt
                 ctx.log(f"{role}: weight {wgt:g}")
         level = np.float32(level or 1.0)
-        rgb = fuse(chans, p.palette) * level
+        if p.palette in NARROWBAND:
+            # each balanced channel's sky noise: the sky's, divided as the channel was (the weight included)
+            noise = {r: skies[r][1] / tops[r] for r in chans}
+            rgb, notes = compose(chans, p.palette, noise, smooth=starless, sky=sky_mask(chans, valid_all))
+            rgb *= level
+            ctx.log("lightness from the channels weighted by their noise (" + ", ".join(
+                f"{r} {(notes['noise_l'] / noise[r]) ** 2:.2f}" for r in chans) + "), colour from the palette"
+                + (f", smoothed over {notes['sigma']:.1f} px" if notes["sigma"] else ""))
+            ctx.metric("chroma_sigma", round(notes["sigma"], 2))
+        else:
+            rgb = fuse(chans, p.palette) * level
         rgb[:, ~valid_all] = 0
         H, W = ref["shape"]
         ctx.save("drz_full.npy", rgb.astype(np.float32))
