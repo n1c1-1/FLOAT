@@ -77,8 +77,9 @@ class Calibrate(Stage):
     # with a master dark of each got their mean, of 180 s, scaled by 1.667 with the camera's offset (no bias, a black
     # level of 0): every calibrated sky below 0. A dark of another exposure is scaled only above a bias or a known
     # black level, else the lights go without dark, said (scaled with the offset before). A session of one exposure
-    # with darks of its exposure gets the same frames, to the byte
-    version = "7"
+    # with darks of its exposure gets the same frames, to the byte. 8: a flat with no bias nor flat darks loses the black
+    # level only, no longer the level of a dark (its thermal signal: a 300 s dark's 848 ADU taken off a 1 s flat)
+    version = "8"
 
     def auto(self, ctx: Context) -> dict[str, Auto]:
         n = max(1, min(12, (os.cpu_count() or 4) - 2))
@@ -115,14 +116,10 @@ class Calibrate(Stage):
         # mean, of 180 s, scaled with its offset: every calibrated sky below 0)
         darks, rank, dark_noise, real = match_darks(ctx, frames["lights"], frames["darks"], bias, H, W, black)
         dark = darks[0]
-        # without bias nor flat darks the flats lose the darks' level (their dark current is negligible): the lowest
-        # of the darks when they are of several exposures (the nearest to the offset), the main group's dark else
-        used = [d for d, r in zip(darks, real) if r]
-        level = min(float(np.median(d)) for d in used) if len(used) > 1 else float(np.median(dark))
         kept: dict = {}
         fd = flat_darks_of(ctx, frames["flat_darks"], frames["flats"])
         flat = master_flat([f["path"] for f in frames["flats"]], [f["path"] for f in fd], bias,
-                           level, H, W, p.flat_scale_px, ctx, keep=kept,
+                           black, H, W, p.flat_scale_px, ctx, keep=kept,
                            cfa=ctx.metric_of("inventory", "cfa") or "RGGB", master="flats" in ms,
                            fd_masters=[f for f in fd if f.get("stacked") is not None] or None)
         if "flat_dark" in kept:
@@ -452,7 +449,7 @@ def check_dark(ctx: Context, dark: np.ndarray, bias: np.ndarray | None, black: f
                 "warning")
 
 
-def master_flat(paths: list[str], flat_dark_paths: list[str], bias: np.ndarray | None, dark_level: float, H: int,
+def master_flat(paths: list[str], flat_dark_paths: list[str], bias: np.ndarray | None, black: float, H: int,
                 W: int, flat_scale_px: float, ctx: Context, keep: dict | None = None, cfa: str = "RGGB",
                 master: bool = False, fd_masters: list[dict] | None = None) -> np.ndarray:
     """Master flat normalised to 1 at the centre of each position of the colour pattern (``cfa``: its 4 Bayer
@@ -475,11 +472,11 @@ def master_flat(paths: list[str], flat_dark_paths: list[str], bias: np.ndarray |
         elif bias is not None:
             fdark = bias
         else:
-            fdark = np.full((H, W), dark_level, np.float32)   # flats are short: dark current negligible
+            fdark = np.full((H, W), black, np.float32)   # the black level only: never a dark's thermal signal
         flat = _master_flat(paths, fdark, ctx)
         low = float(np.percentile(flat[::2, ::2], LOW_PCT))
         if not master and flat_under(low):
-            ctx.log(f"the flats go under the {'flat darks' if flat_dark_paths else 'bias' if bias is not None else 'dark level'}"
+            ctx.log(f"the flats go under the {'flat darks' if flat_dark_paths else 'bias' if bias is not None else 'black level'}"
                     f" they are corrected with ({100 * low:.1f} % of their level): their bias was taken off already, "
                     "and is taken off again", "warning")
         if flat_scale_px > 0:
@@ -496,7 +493,11 @@ def master_flat(paths: list[str], flat_dark_paths: list[str], bias: np.ndarray |
     for k in range(P * P):
         v = _plane(flat, k, P)
         c = v[v.shape[0] // 2 - r:v.shape[0] // 2 + r, v.shape[1] // 2 - r:v.shape[1] // 2 + r]
-        v /= np.median(c)
+        m = np.median(c)
+        if not m > 0:
+            raise ValueError(f"the master flat has no light at the centre of its colour position {k} (it reads {m:.3g})")
+        v /= m
+    _flat_finite(flat, "master flat")
     return flat
 
 
@@ -754,11 +755,28 @@ def _master_flat(paths: list[str], fdark: np.ndarray, ctx: Context) -> np.ndarra
     fl = np.empty((len(paths), H, W), np.float32)
 
     def put(i, a):
+        _flat_finite(a, paths[i])
         fl[i] = a - fdark
 
     _read_frames(paths, put, 0, lambda c: _tick(ctx, f"reading flats {c}/{len(paths)}"))
-    fl /= np.median(fl[:, H // 2 - 200:H // 2 + 200, W // 2 - 200:W // 2 + 200], axis=(1, 2), keepdims=True)
+    level = np.median(fl[:, H // 2 - 200:H // 2 + 200, W // 2 - 200:W // 2 + 200], axis=(1, 2), keepdims=True)
+    for i, v in enumerate(level.ravel()):
+        if not v > 0:                       # nothing divides by it: a flat is its own light over its centre's
+            raise ValueError(f"the flat {Path(paths[i]).name} has no light left at its centre once the level it is "
+                             f"corrected with ({float(np.median(fdark)):.0f} ADU) is taken off (it reads "
+                             f"{float(v):.3g} ADU): a flat already calibrated (a master) must be given as a master, "
+                             "otherwise give its flat darks or a bias")
+    fl /= level
+    _flat_finite(fl, paths[0] if len(paths) == 1 else f"{len(paths)} flats")
     return _flats_mean(fl)
+
+
+def _flat_finite(a: np.ndarray, what: str) -> None:
+    """A flat with a value that is not a number (NaN, infinite) would turn the lights it divides into holes, said later
+    by a stage that cannot say why: it stops here, naming the flat."""
+    if not np.isfinite(a).all():
+        raise ValueError(f"the flat {Path(what).name} holds values that are not numbers "
+                         f"({int((~np.isfinite(a)).sum())} pixels): it cannot correct the lights")
 
 
 def _flats_mean(fl: np.ndarray) -> np.ndarray:
