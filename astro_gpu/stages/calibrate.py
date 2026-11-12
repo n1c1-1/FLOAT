@@ -273,15 +273,6 @@ def wrong_types(keys: dict[str, list[dict]]) -> dict[str, dict[str, int]]:
     return out
 
 
-def other_filter(flats: list[dict], session_filter: str) -> dict | None:
-    """Flats whose header names a filter other than the session's: {"n": how many, "filters": those filters, sorted,
-    "session": the session's}; None for none (or when the session names no filter). Information only."""
-    if not session_filter:
-        return None
-    other = [f["filter"] for f in flats if f.get("filter") and f["filter"] != session_filter]
-    return {"n": len(other), "filters": sorted(set(other)), "session": session_filter} if other else None
-
-
 def dark_plan(lights: list[dict], darks: list[dict], base: bool) -> list[tuple[str, int | None]]:
     """How each group of lights (``exposure_groups``) is calibrated against the groups of darks, by the usual practice
     of calibration: ("same", j) with the darks of group j, of its exposure and gain, as they are; ("scaled", j) when no

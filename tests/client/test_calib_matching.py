@@ -161,7 +161,7 @@ def test_bias_frames_lasting_seconds_say_so_as_information(tmp_path):
     assert not any(x.key == "long_bias" for x in api.health_checks(ok))
 
 
-def test_headers_naming_another_kind_or_filter_say_so_as_information(tmp_path):
+def test_headers_naming_another_kind_says_so_as_information(tmp_path):
     from astro_gpu import api
     from astro_gpu.client import i18n
     from astro_gpu.client.frames import check_text
@@ -184,11 +184,8 @@ def test_headers_naming_another_kind_or_filter_say_so_as_information(tmp_path):
     assert "Darks: 1 file's header says Light" in lines
     assert "Flats: 1 file's header says Light" in lines
     assert "Lights: 1 file's header says Dark" in lines
-    assert "Flats: filter Hα, the session's is S II" in lines
     assert not any(t.startswith(("Bias:", "Flat darks:")) and "header" in t for t in lines)
-    cs = {x.key: x for x in api.health_checks(p) if x.key in ("wrong_type", "flat_filter")}
-    assert cs["flat_filter"].level == "info" and check_text(cs["flat_filter"]) == \
-        "SII: Flats: filter Hα, the session's is S II"
+    assert not any(x.key == "flat_filter" for x in api.health_checks(p))
     assert sum(x.key == "wrong_type" for x in api.health_checks(p)) == 3
     try:
         i18n.set_language("fr")
@@ -196,4 +193,4 @@ def test_headers_naming_another_kind_or_filter_say_so_as_information(tmp_path):
     finally:
         i18n.set_language("en")
     ok = _project(tmp_path / "o", 1, 508.0, np.full((H, W), 8400 / 65535, np.float32), {"STACKCNT": 30})
-    assert not any("header" in t or "the session's is" in t for _o, t in _lines(ok, 1))
+    assert not any("header" in t for _o, t in _lines(ok, 1))

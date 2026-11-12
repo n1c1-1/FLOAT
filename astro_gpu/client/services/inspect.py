@@ -675,14 +675,11 @@ def calib_checks(row: SessionRow, camera: dict) -> dict:
     "mixed_exposures": the exposure times of lights of several (information)."""
     from ...stages.calibrate import dark_far, flat_under, long_bias, mixed_exposures
     out: dict = {}
-    from ...stages.calibrate import other_filter, wrong_types
+    from ...stages.calibrate import wrong_types
     wt = wrong_types({"lights": row.light_keys, "darks": row.dark_keys, "flats": row.flat_keys, "bias": row.bias_keys,
                       "flat_darks": row.flat_dark_keys})
     if wt:
         out["wrong_types"] = wt
-    of = other_filter(row.flat_keys, row.filter)
-    if of:
-        out["flat_filter"] = of
     lb = long_bias(row.bias_keys, row.flat_keys)
     if lb:
         out["long_bias"] = lb

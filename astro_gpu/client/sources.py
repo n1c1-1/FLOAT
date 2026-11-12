@@ -49,7 +49,6 @@ from .frames import (
     colour_note_text,
     fexp,
     iso_word,
-    flat_filter_text,
     long_bias_text,
     mixed_exposures_text,
     night_start,
@@ -851,8 +850,6 @@ class SourcesView(QWidget):
             out.append((None, mixed_exposures_text(bad["mixed_exposures"])))
         for kind, found in (bad.get("wrong_types") or {}).items():   # a header names another kind: information
             out.append((None, wrong_types_text(kind, found)))
-        if bad.get("flat_filter"):                   # flats of another filter than the session's: information
-            out.append((None, flat_filter_text(bad["flat_filter"])))
         if bad.get("long_bias"):                     # bias frames not near zero: information, nothing reclassified
             out.append((None, long_bias_text(bad["long_bias"])))
         dk = c.get("darks")

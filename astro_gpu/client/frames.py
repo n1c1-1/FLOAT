@@ -110,13 +110,6 @@ def wrong_types_text(kind: str, found: dict) -> str:
             .format(kind=kinds[kind], n=n, what=what))
 
 
-def flat_filter_text(a: dict) -> str:
-    """Flats whose header names another filter than the session's (``stages.calibrate.other_filter``), as information."""
-    from .blocks import port_name
-    return _("Flats: filter {flats}, the session's is {session}").format(
-        flats=", ".join(port_name(x) for x in a["filters"]), session=port_name(a["session"]))
-
-
 def day_text(iso: str) -> str:
     """A day as the night's text writes it ("17 Jun 2025", "17 juin 2025"); the ISO text itself when it cannot be read."""
     try:
@@ -208,9 +201,6 @@ def check_text(c, data: ProjectFrames | None = None) -> str:
     if c.key == "wrong_type":                             # files whose header names another kind of frame
         colon = " :" if language() == "fr" else ":"
         return f"{a.get('session', '')}{colon} " + wrong_types_text(a["kind"], a["found"])
-    if c.key == "flat_filter":                            # flats of another filter than the session's
-        colon = " :" if language() == "fr" else ":"
-        return f"{a.get('session', '')}{colon} " + flat_filter_text(a)
     if c.key == "long_bias":                              # bias frames that are not near zero: flat darks?
         colon = " :" if language() == "fr" else ":"
         return f"{a.get('session', '')}{colon} " + long_bias_text(a)
