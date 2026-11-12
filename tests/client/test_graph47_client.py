@@ -165,12 +165,12 @@ def test_a_filters_template_on_a_new_project_makes_its_empty_sessions(qapp, tmp_
     try:
         d = page.new_workflow()
         d.pick(next(c.t for c in d.cards if c.t["key"] == "filters_full"))
-        d.palette.setCurrentText("HOO")
+        d.palette.setCurrentIndex(d.palette.findData("H-O"))
         assert d.ok.isEnabled()
         d.ok.click()
         settle(w, page)
         assert sorted(s.filter for s in m.p.sessions if s.filter) == ["Ha", "OIII"]
-        assert [q.name for q in m.paths][-1] == "HOO" and all("couleur" not in m.display_keys(q)
+        assert [q.name for q in m.paths][-1] == "H-O" and all("couleur" not in m.display_keys(q)
                                                                for q in m.paths if m.is_mono(q))
     finally:
         page.close()
@@ -216,7 +216,7 @@ def test_a_template_takes_the_place_of_an_empty_workflow_and_channels_are_not_po
         assert m.ensure_frames_workflow() is not None and m.p.workflows[0].blocks == []
         d = page.new_workflow()
         d.pick(next(c.t for c in d.cards if c.t["key"] == "filters_full"))
-        d.palette.setCurrentText("HOO")
+        d.palette.setCurrentIndex(d.palette.findData("H-O"))
         page.make_workflow(d)
         settle(w, page)
         assert not any(x.blocks == [] for x in m.p.workflows)     # the empty workflow made room
@@ -359,7 +359,7 @@ def test_a_fusion_channel_session_removed_keeps_the_project_valid_and_the_fusion
         assert m.ensure_frames_workflow() is not None
         d = page.new_workflow()
         d.pick(next(c.t for c in d.cards if c.t["key"] == "filters_full"))
-        d.palette.setCurrentText("HOO")
+        d.palette.setCurrentIndex(d.palette.findData("H-O"))
         page.make_workflow(d)
         settle(w, page)
         hoo = next(q for q in m.paths if (q.source or {}).get("fusion"))
@@ -1046,12 +1046,12 @@ def test_after_the_start_no_block_opens_the_template_window(qapp, tmp_path, monk
     try:
         page.graph.rebuild()
         assert page.graph.new_flow_ghost.on_click is None
-        page.palette_action("fusion:new")
+        page.palette_action("fusion:ho")
         settle(w, page)
         assert getattr(page, "_gallery", None) is None
         fu = m.paths[-1]
         f = fu.source["fusion"]
-        assert f["palette"] == "HOO" and [i["channel"] for i in f["inputs"]] == ["R", "GB"] and m.sel_step == "fusion"
+        assert f["type"] == "ho" and [i["channel"] for i in f["inputs"]] == ["R", "GB"] and m.sel_step == "fusion"
         n = len(m.paths)
         page.workflow_action("duplicate", m.paths[0].pid)
         settle(w, page)
@@ -1260,7 +1260,7 @@ def test_control_round_the_fusion_card_waits_for_the_channels_lights(qapp, tmp_p
         settle(w, page)
         assert page.palette_reason("fusion", m.view(p.pid), None) == "lights first in “Workflow”"
         n = len(m.paths)
-        page.place_fusion()                                         # refused: nothing placed
+        page.place_fusion("ho")                                     # refused: nothing placed
         assert len(m.paths) == n
     finally:
         page.close()
@@ -1594,33 +1594,42 @@ def _drop(view, block: str, pos):
     return drop
 
 
-def test_fusion_is_dropped_in_the_composition_column_not_on_the_new_flow_band(qapp, tmp_path, monkeypatch):
-    """Issue #53: Combine channels's drop zone is in the Composition column; the new-flow band refuses it (it starts the flow of
-    a Session or an Image only)."""
+def test_the_palette_has_one_combination_entry_whose_types_unfold_beside_it(qapp, tmp_path, monkeypatch):
+    """The owner's palette: one Combination entry; a click unfolds its four types in a row beside it (as the tool groups
+    of the reference image editors), each with its tooltip; one chosen places its block and closes the row; Escape
+    closes it; nothing waits on it (no dialog). The former Combine channels entry is gone."""
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtTest import QTest
+
+    from astro_gpu.client.graph import PALETTE_GROUPS, GroupFlyout
     w, m, page = open_page(tmp_path, monkeypatch)
     try:
-        view = page.graph
-        view.rebuild()
+        page.build_tools()
+        comp = dict(PALETTE_GROUPS)["Composition"]
+        assert comp == ["fusion", "composition"] and page.cards["fusion"].title == "Combination"
+        assert not any(c.title == "Combine channels" for c in page.cards.values())
+        card = page.cards["fusion"]
+        height = page.tools_box.sizeHint().height() if hasattr(page, "tools_box") else None
+        pos = QPointF(10, 10)
+        for kind in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
+            card.event(QMouseEvent(kind, pos, card.mapToGlobal(pos), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
+        fly = page.combine_flyout
+        assert isinstance(fly, GroupFlyout) and fly.isVisible() and not fly.isModal()
+        assert [b.text() for b in fly.buttons.values()] == ["S-H-O", "H-O", "RGB", "LRGB"]
+        assert all(b.toolTip() for b in fly.buttons.values())                  # each type says what it is
+        assert fly.buttons["ho"].isEnabled() and not fly.buttons["lrgb"].isEnabled()   # a colour stack: dual band only
+        assert "L" in fly.buttons["lrgb"].toolTip()                              # why it is greyed
+        assert fly.x() >= card.mapToGlobal(card.rect().topRight()).x()          # beside the entry
+        QTest.keyClick(fly, Qt.Key_Escape)
+        assert not fly.isVisible() and len(m.paths) == 1
+        fly = page.open_combinations(card)
         n = len(m.paths)
-
-        def band():
-            return view.mapFromScene(view.new_flow_ghost.rect.center())
-
-        def place():
-            return view.mapFromScene(view.ghosts[0].rect.center())
-        move = _drag_over(view, "fusion", band)
-        assert not move.isAccepted() and not view.new_flow_ghost.hot
-        _drop(view, "fusion", band())
+        fly.buttons["ho"].click()
         settle(w, page)
-        assert len(m.paths) == n                                    # refused on the band
-        move = _drag_over(view, "fusion", place)
-        ghost = view.ghosts[0]
-        assert move.isAccepted() and ghost.text == "Combine channels" and ghost.hot
-        assert view._cx["fusion"] <= ghost.rect.left() and ghost.rect.right() <= view._cx["fusion"] + view._cw["fusion"]
-        assert _drop(view, "fusion", place()).isAccepted()
-        settle(w, page)
-        assert len(m.paths) == n + 1 and m.paths[-1].source.get("fusion") and m.sel_step == "fusion"
-        assert view.col_of(Graph(m).node_of(m.paths[-1], "fusion")) == "fusion"
+        assert not fly.isVisible() and len(m.paths) == n + 1 and m.sel_step == "fusion"
+        assert m.paths[-1].source["fusion"]["type"] == "ho" and m.paths[-1].name == "H-O"
+        assert height is None or page.tools_box.sizeHint().height() == height    # the palette keeps its height
     finally:
         page.close()
         m.close(save=False)
@@ -1650,14 +1659,13 @@ def test_a_linear_image_is_chosen_as_a_fusion_channel_on_its_row(qapp, tmp_path,
         page.place_block("astrometry", img.pid)
         stretched = m.add_image_workflow("Done", _a_fits(tmp_path / "done.fits"), stretched=True)
         settle(w, page)
-        page.place_fusion()
+        page.place_fusion("ho")
         settle(w, page)
         fu = m.paths[-1]
-        assert fu.source["fusion"]["stars"]["mode"] == "workflow"     # as for a colour stack: its starless image
+        assert "stars" not in fu.source["fusion"]                        # a combination has no stars of its own
         offered = {q.pid: why for q, why in m.channel_choices(fu, "OIII")}
         assert offered[img.pid] == "" and "stretch" in offered[stretched.pid]
         assert not m.set_fusion_channel(fu, "OIII", stretched.pid)
-        assert m.set_fusion_stars(m.view(fu.pid), None)
         page.select(index=m.paths.index(m.view(fu.pid)), step="fusion")
         settle(w, page)
         rows = [c for c in page.panel.findChildren(QComboBox) if c.findData(img.pid) >= 0]
@@ -1672,20 +1680,10 @@ def test_a_linear_image_is_chosen_as_a_fusion_channel_on_its_row(qapp, tmp_path,
         assert [x["pid"] for x in fu.source["fusion"]["inputs"]] == [m.paths[0].pid, img.pid]
         assert m.fusion_problem(fu) == ""
         k = Keys(m.p)
-        got = next(x for x in k.overrides(fu.pid, "fusion")["inputs"] if x["role"] == "OIII")
+        got = next(x for x in k.overrides(fu.pid, "combine_ho")["inputs"] if x["role"] == "OIII")
         assert "render_simple" in k.chain(img.pid) and got["dir"] and got["wcs"]
         g = Graph(m)
-        assert g.leaves[img.pid] in g.fusion_inputs[id(g.node_of(fu, "fusion"))]
-        page.select(index=m.paths.index(fu), step="fusion")
-        settle(w, page)
-        stars = next(c for c in page.panel.findChildren(QComboBox) if c.itemText(0) == "With channels (no split)")
-        j = next(k for k in range(stars.count()) if stars.itemData(k) == {"mode": "palette"})
-        assert stars.model().item(j).isEnabled()
-        stars.activated.emit(j)
-        settle(w, page)
-        assert m.view(fu.pid).source["fusion"]["stars"] == {"mode": "palette"}
-        assert "star_removal" in m.all_stages(m.view(img.pid))        # it gets its Stars/background, as a stack does
-        assert m.fusion_problem(m.view(fu.pid)) == ""
+        assert (g.leaves[img.pid], "OIII") in [(a, r) for a, r, _i in g.fusion_inputs[id(g.node_of(fu, "fusion"))]]
     finally:
         page.close()
         m.close(save=False)
@@ -1704,7 +1702,7 @@ def test_a_fusion_can_start_from_a_linear_image_alone(qapp, tmp_path, monkeypatc
         m.set_image_file(img, _a_fits(tmp_path / "stack.fits"))
         settle(w, page)
         assert page.palette_reason("fusion", m.view(img.pid), None) == ""
-        page.place_fusion()
+        page.place_fusion("ho")
         settle(w, page)
         f = m.paths[-1].source["fusion"]
         assert [(i["pid"], i["channel"]) for i in f["inputs"]] == [(img.pid, "R"), (img.pid, "GB")] and "stars" not in f
@@ -1734,86 +1732,6 @@ def test_a_linear_image_takes_stars_without_denoise(qapp, tmp_path, monkeypatch)
         with pytest.raises(wfl.BlockRefused, match="Denoise"):
             wfl.check_blocks([wfl.node("calibration"), wfl.node("registration"), wfl.node("selection"),
                               wfl.node("stacking"), wfl.node("output"), wfl.node("stars")], "frames")
-    finally:
-        page.close()
-        m.close(save=False)
-        w.stop()
-
-
-def test_a_linear_image_chosen_in_a_starless_fusion_gets_its_stars(qapp, tmp_path, monkeypatch):
-    """Issue #55: a channel set to a linear Image while the Combine channels takes starless images: the Image gets its
-    Stars/background (taken back with the Combine channels, decision 2)."""
-    w, m, page = open_page(tmp_path, monkeypatch)
-    try:
-        page.palette_action("image:new")
-        settle(w, page)
-        img = m.paths[-1]
-        m.set_image_file(img, _a_fits(tmp_path / "stack.fits"))
-        page.place_block("astrometry", img.pid)
-        settle(w, page)
-        page.place_fusion()
-        settle(w, page)
-        fu = m.paths[-1]
-        assert fu.source["fusion"]["stars"]["mode"] == "workflow"
-        assert m.set_fusion_channel(fu, "OIII", img.pid)
-        settle(w, page)
-        assert "star_removal" in m.all_stages(m.view(img.pid)) and m.fusion_problem(m.view(fu.pid)) == ""
-        m.remove_fusion(m.view(fu.pid))
-        settle(w, page)
-        assert "star_removal" not in m.all_stages(m.view(img.pid))
-    finally:
-        page.close()
-        m.close(save=False)
-        w.stop()
-
-
-def test_a_linear_image_is_a_fusion_star_source_once_it_has_its_astrometry(qapp, tmp_path, monkeypatch):
-    """Issue #55: the Combine channels's Stars list offers a linear Image: choosing it gives it its Stars/background, and until
-    it has its Astrometry the Combine channels says so (as for a channel) and Run is refused; then the engine reads its starless
-    result and its plate solution. An image already stretched is listed greyed, with its reason, and refused."""
-    from PySide6.QtWidgets import QComboBox
-
-    from astro_gpu.core.store import Keys
-    w, m, page = open_page(tmp_path, monkeypatch)
-    try:
-        page.palette_action("image:new")
-        settle(w, page)
-        img = m.paths[-1]
-        m.set_image_file(img, _a_fits(tmp_path / "stack.fits"))
-        stretched = m.add_image_workflow("Done", _a_fits(tmp_path / "done.fits"), stretched=True)
-        settle(w, page)
-        page.place_fusion()
-        settle(w, page)
-        fu = m.paths[-1]
-        page.select(index=m.paths.index(fu), step="fusion")
-        settle(w, page)
-        stars = next(c for c in page.panel.findChildren(QComboBox) if c.itemText(0) == "With channels (no split)")
-        at = {stars.itemData(k).get("pid"): k for k in range(stars.count()) if stars.itemData(k)}
-        grey = stars.model().item(at[stretched.pid])
-        assert not grey.isEnabled() and "stretch" in grey.toolTip()
-        assert stars.model().item(at[img.pid]).isEnabled()
-        assert not m.set_fusion_stars(m.view(fu.pid), {"mode": "workflow", "pid": stretched.pid})
-        i18n.set_language("fr")
-        try:
-            assert "étirement" in next(why for q, why in m.star_choices(m.view(fu.pid)) if q.pid == stretched.pid)
-        finally:
-            i18n.set_language("en")
-        stars.activated.emit(at[img.pid])
-        settle(w, page)
-        fu = m.view(fu.pid)
-        assert fu.source["fusion"]["stars"] == {"mode": "workflow", "pid": img.pid}
-        assert "star_removal" in m.all_stages(m.view(img.pid))        # the Stars block it needs, as for a stack
-        assert m.fusion_problem(fu) == "Stars: needs Astrometry"
-        assert (fu.name, "Stars: needs Astrometry") in m.run_problems()
-        page.place_block("astrometry", img.pid)
-        settle(w, page)
-        fu = m.view(fu.pid)
-        assert m.fusion_problem(fu) == ""
-        k = Keys(m.p)
-        got = k.overrides(fu.pid, "fusion")["stars"]
-        assert k.key(img.pid, "star_removal") in got["dir"] and got["wcs"].endswith("wcs.fits")
-        v = m.view(img.pid)                                            # a star source keeps what the Combine channels reads
-        assert "needed by" in m.removal_problem(v, "astrometrie") and fu.name in m.channel_problem(v)
     finally:
         page.close()
         m.close(save=False)

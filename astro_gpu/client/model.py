@@ -69,8 +69,6 @@ EXTRA_SECONDS: dict[str, float] = {}
 NOT_IN_ENGINE = "Not in the engine yet."
 #: the block of the views → the engine's block of ``api.methods``, and the option each method sets
 METHOD_BLOCK = {"synth": "synth", "debruitage": "denoise", "fond": "gradient", "etoiles": "stars", "deconv": "deconvolution"}
-#: a Combine channels's stars are chosen in its panel: a Stars block in its graph was never drawn (GUI exploration 4)
-FUSION_STARS = "Combine channels: its stars in its panel"
 METHOD_OPT = {"synth": "synth_m", "debruitage": "dn", "fond": "fond", "etoiles": "etoiles", "deconv": "deconv_m"}
 #: the engine's method keys → the views'
 METHOD_KEY = {"debruitage": {"pretrained": "generique", "adapted": "affine"},
@@ -1569,8 +1567,12 @@ class ProjectModel(QObject):
         """The blocks the graph draws for a workflow, in order (issue #47): the nodes of its graph, those switched off
         included (drawn so); a block the graph does not have is not drawn. Each session's Calibration is drawn
         before the chain when the sessions are calibrated each on its own."""
-        if is_fusion_view(p):                              # a fusion: one block, in the Composition section
-            return ["fusion"]
+        if is_fusion_view(p):                              # a combination: its block, in the Composition section (its
+            try:                                           # Output in it), and a Stars/background placed after it
+                stars = any(n["block"] == "stars" for n in wfl.graph_of(self.p.workflow(p.pid)))
+            except (KeyError, ValueError):
+                stars = False
+            return ["fusion"] + (["etoiles"] if stars else [])
         try:
             w = self.p.workflow(p.pid)
             g = wfl.graph_of(w) if w.blocks is not None else None      # a workflow made before: as it was drawn
@@ -1644,8 +1646,6 @@ class ProjectModel(QObject):
             return refused_text(e) if e is not None else ""
         if block == "color" and self.is_mono(p):
             return _(wfl.MONO_NO_COLOUR)
-        if block == "stars" and is_fusion_view(p):
-            return _(FUSION_STARS)
         e = wfl.palette_problem(self.graph(p), self.source_kind(p), block)
         if e is not None and block == "calibration" and self._nights_as_one(p):
             return _("calibrate per night first")   # one Calibration of all the nights: none to set beside it
@@ -1748,16 +1748,10 @@ class ProjectModel(QObject):
         """The fusions that read a workflow's output (it is one of their channels)."""
         return [q for q in self.paths if is_fusion_view(q) and p.pid in [i["pid"] for i in q.source["fusion"]["inputs"]]]
 
-    def star_fusions(self, p) -> list[WorkflowView]:
-        """The fusions whose stars come from a workflow (mode "workflow", issue #55)."""
-        return [q for q in self.paths
-                if is_fusion_view(q) and (q.source["fusion"].get("stars") or {}).get("pid") == p.pid]
-
     @staticmethod
     def _fusion_pids(f: dict) -> set[int]:
-        """The workflows a fusion reads: its channels', and the one its stars come from."""
-        st = f.get("stars") or {}
-        return {i["pid"] for i in f.get("inputs") or []} | ({st["pid"]} if st.get("pid") else set())
+        """The workflows a combination reads: its ports'."""
+        return {i["pid"] for i in f.get("inputs") or []}
 
     def channel_problem(self, p) -> str:
         """Why a fusion's channel or star source cannot go (its workflow, its only Session, its Image), translated; ""
@@ -1765,23 +1759,23 @@ class ProjectModel(QObject):
         project)."""
         fs = self.fusions_of(p)
         if not fs:
-            st = self.star_fusions(p)
-            return _("stars of “{fusion}”").format(fusion=st[0].name) if st else ""
+            return ""
         role = next(i["role"] for i in fs[0].source["fusion"]["inputs"] if i["pid"] == p.pid)
         return _("channel {role} of “{fusion}”").format(role=role, fusion=fs[0].name)
 
     def _fusion_need(self, p, blocks) -> str:
         """Why a channel's graph ``blocks`` (a block taken out, or switched off) would leave a fusion unable to run:
-        the Astrometry that aligns the channels, the Stars/background of a fusion that takes their starless images
-        (decision 3); "" when every fusion reading it still can."""
+        the Astrometry that aligns the channels, the Stars/background whose starless image a port reads (decision 3);
+        "" when every combination reading it still can."""
         on = {n["block"] for n in blocks if not n.get("off")}
-        for q in self.fusions_of(p) + self.star_fusions(p):
+        for q in self.fusions_of(p):
             f = q.source["fusion"]
             several = len(self._fusion_pids(f)) > 1
             if several and "astrometry" not in on and any(
                     n["block"] == "astrometry" and not n.get("off") for n in self.graph(p)):
                 return _("needed by “{fusion}”").format(fusion=q.name)
-            if f.get("stars") and "stars" not in on and any(
+            starless = any(i["pid"] == p.pid and i.get("image") == "starless" for i in f["inputs"])
+            if starless and "stars" not in on and any(
                     n["block"] == "stars" and not n.get("off") for n in self.graph(p)):
                 return _("needed by “{fusion}”").format(fusion=q.name)
         return ""
@@ -1791,17 +1785,20 @@ class ProjectModel(QObject):
         and the run refused); "" when it can, or for a workflow that is not a fusion. A channel's own block names it."""
         if not is_fusion_view(p):
             return ""
+        from ..stages.combine import BY_KIND
         f = p.source["fusion"]
         ins = f.get("inputs") or []
         if not ins:
             return _("channels to choose")
         views = {q.pid: q for q in self.paths}
-        several = len(self._fusion_pids(f)) > 1              # a star source elsewhere is aligned too (issue #55)
-        st = f.get("stars") or {}
+        several = len(self._fusion_pids(f)) > 1
         found: list[tuple[str, tuple, list[str]]] = []      # (template, its other fields, the channels): every channel
         #                                                     said at once (round 2: "Ha" only, then "OIII" once fixed)
-        for i, role in [(i, i.get("role") or "") for i in ins] + ([(st, _("Stars"))] if st.get("mode") == "workflow"
-                                                                  else []):
+        wired = {i["role"] for i in ins}
+        for r in BY_KIND[f["type"]].ports:                 # a named input without its workflow
+            if r not in wired:
+                found.append(("{role}: no workflow", (), [r]))
+        for i, role in [(i, i.get("role") or "") for i in ins]:
             q = views.get(i["pid"])
             why = self._channel_problem(q, i, role, f, several)
             if why is None:
@@ -1837,7 +1834,7 @@ class ProjectModel(QObject):
         blocks = [n["block"] for n in self.graph(q) if not n.get("off")]
         if several and self.is_graph(q) and "astrometry" not in blocks:
             return "{role}: needs Astrometry", ()
-        if f.get("stars") and self.is_graph(q) and "stars" not in blocks:
+        if i.get("image") == "starless" and self.is_graph(q) and "stars" not in blocks:
             return "{role}: needs Stars/background", ()
         return None
 
@@ -1919,7 +1916,7 @@ class ProjectModel(QObject):
 
     def place_indices(self, p: WorkflowView, block: str) -> list[int]:
         """Where a block can be inserted in a workflow's graph."""
-        if block == "color" and self.is_mono(p) or block == "stars" and is_fusion_view(p):
+        if block == "color" and self.is_mono(p):
             return []
         return wfl.places(self.graph(p), self.source_kind(p), block)
 
@@ -1929,8 +1926,6 @@ class ProjectModel(QObject):
         g, src = self.graph(p), self.source_kind(p)
         if block == "color" and self.is_mono(p):
             raise ValueError(_(wfl.MONO_NO_COLOUR))
-        if block == "stars" and is_fusion_view(p):
-            raise ValueError(_(FUSION_STARS))
         if index is None:
             index = wfl.insert_place(g, src, block)
             if index is None:
@@ -2316,67 +2311,33 @@ class ProjectModel(QObject):
             self.p.validate()
         return self._view_of(w.id)
 
-    def add_fusion(self, name: str, palette: str, inputs: list[dict], stars: dict | None = None) -> WorkflowView:
-        """A fusion workflow (issue #43): the outputs of ``inputs`` [{"pid", "role", "channel"}] combined with a
-        palette, in the Composition section; its Output is a layer of Post. ``stars`` (option A): the channels'
-        starless images fused, and the star layer's source ({"mode": "palette" | "channel" + "role" | "workflow" +
-        "pid"}); the channels' workflows get Stars/background."""
+    def add_fusion(self, name: str, kind: str, inputs: list[dict], stars: bool = False) -> WorkflowView:
+        """A combination workflow (issue #43; stages/combine.py): the images of ``inputs`` [{"pid", "role" (the port),
+        "channel", "image"}] combined by the block of type ``kind`` ("sho", "ho", "rgb", "lrgb"), in the Composition
+        section; its Output is a layer of Post. ``stars``: a Stars/background block after it (the stars taken off the
+        combined image, for a Combine layers block)."""
         with self._edit():
             o = {"debruitage": bool(stars), "etoiles": "retirer" if stars else "garder", "fond": "simple"}
             w = api.add_workflow(self.p, self.unique_name(name), wfl.check_options(to_engine(o)), {})
-            f = {"palette": palette, "inputs": [
-                {"pid": int(i["pid"]), "role": str(i["role"]), "channel": str(i.get("channel", "L"))} for i in inputs]}
-            if stars:
-                f["stars"] = dict(stars)
-                added = self._with_stars([i["pid"] for i in inputs] + ([stars["pid"]] if stars.get("pid") else []))
-                if added:                                 # what it added, taken back when it goes (decision 2)
-                    f["added"] = added
-            self.p.workflow(w.id).source = {"fusion": f}
+            self.p.workflow(w.id).source = {"fusion": {"type": kind, "inputs": [
+                {"pid": int(i["pid"]), "role": str(i["role"]), "channel": str(i.get("channel", "L"))}
+                | ({"image": i["image"]} if i.get("image", "output") != "output" else {}) for i in inputs]}}
             self.p.validate()
         return self._view_of(w.id)
 
-    def _with_stars(self, pids) -> list[dict]:
-        """These workflows get Stars/background (and Denoise, which it needs). Returns what each changed one had
-        before: [{"pid", "denoise", "stars"}] (the fusion keeps it, the engine does not read it)."""
-        out = []
-        for pid in dict.fromkeys(pids):
-            w = self.p.workflow(int(pid))
-            if not w.options.get("stars"):
-                out.append({"pid": int(pid), "denoise": w.options.get("denoise"), "stars": w.options.get("stars")})
-                w.options = wfl.check_options({**w.options, "denoise": w.options.get("denoise") or "pretrained",
-                                               "stars": "neural"})
-        return out
-
     def remove_fusion(self, p: WorkflowView):
-        """A Combine channels taken out (GUI exploration 2, decision 2): its workflow, and what placing it added to its channels
-        (their Denoise and Stars/background), unless another fusion still takes their starless images: the channels
-        come back as they were before it."""
-        f = (p.source or {}).get("fusion") or {}
+        """A combination block taken out (GUI exploration 2): its workflow; its channels' workflows stay as they are."""
         with self._edit():
             api.delete_workflow(self.p, p.pid)
-            still = {}                                    # channel id: a fusion left that takes its starless image
-            for w in self.p.workflows:
-                g = (w.source or {}).get("fusion") if isinstance(w.source, dict) else None
-                if g and g.get("stars"):
-                    for pid in [i["pid"] for i in g["inputs"]] + ([g["stars"]["pid"]] if g["stars"].get("pid") else []):
-                        still.setdefault(pid, g)
-            for a in f.get("added") or []:
-                if a.get("pid") in still:                 # that fusion takes it back when it goes
-                    g = still[a["pid"]]
-                    g["added"] = list(g.get("added") or []) + [a]
-                    continue
-                if a.get("pid") not in {w.id for w in self.p.workflows}:
-                    continue
-                w = self.p.workflow(a["pid"])
-                w.options = wfl.check_options({**w.options, "denoise": a.get("denoise"), "stars": a.get("stars")})
             self.p.validate()
         self.current = min(self.current, len(self.paths) - 1)
         self.currentChanged.emit()
 
     def set_fusion_weight(self, p: WorkflowView, role: str, weight: float) -> bool:
-        """A channel's weight in a fusion (1: as balanced)."""
+        """A channel's weight in a combination (1: as balanced): a setting of its block."""
         w = self.p.workflow(p.pid)
-        cur = dict(w.source["fusion"].get("weights") or {})
+        st = wfl.combine_stage(w)
+        cur = dict((w.params.get(st) or {}).get("weights") or {})
         weight = round(float(weight), 3)
         if cur.get(role, 1.0) == weight:
             return False
@@ -2384,27 +2345,24 @@ class ProjectModel(QObject):
             ws = api.workflows(self.p)
             x = next(v for v in ws if v.id == p.pid)
             cur[role] = weight
-            x.source = {"fusion": {**x.source["fusion"], "weights": {k: v for k, v in cur.items() if v != 1.0}}}
+            own = {k: v for k, v in (x.params.get(st) or {}).items() if k != "weights"}
+            weights = {k: v for k, v in cur.items() if v != 1.0}
+            own |= {"weights": weights} if weights else {}
+            x.params = {k: v for k, v in x.params.items() if k != st} | ({st: own} if own else {})
             api.set_workflows(self.p, ws, self.p.current)
         return True
 
     def _source_refused(self, q) -> str:
-        """Why a workflow cannot feed a fusion, as a channel or as its star source ("" when it can; issue #55)."""
+        """Why a workflow cannot feed a combination's port ("" when it can; issue #55)."""
         return _("An image already stretched: a stretch cannot be undone faithfully") \
             if self.source_kind(q) == "stretched" else ""
 
-    def star_choices(self, p: WorkflowView) -> list[tuple[WorkflowView, str]]:
-        """The workflows the stars of the fusion ``p`` can come from, each with why it cannot be chosen ("" when it can;
-        issue #55): the colour stacks and the linear images; an image already stretched is listed greyed."""
-        return [(q, self._source_refused(q)) for q in self.paths
-                if q.pid != p.pid and not is_fusion_view(q) and not self.is_mono(q)]
-
     def channel_choices(self, p: WorkflowView, role: str) -> list[tuple[WorkflowView, str]]:
-        """The workflows a channel of the fusion ``p`` can read, each with why it cannot be chosen now ("" when it can;
-        issue #55): the stacks of its filter and the linear images; an image already stretched is listed greyed; never
-        a fusion or a workflow that ends early."""
+        """The workflows a port of the combination ``p`` can read, each with why it cannot be chosen now ("" when it
+        can; issue #55): the stacks of its filter and the linear images; an image already stretched is listed greyed;
+        never a combination or a workflow that ends early."""
         f = p.source["fusion"]
-        i = next(x for x in f["inputs"] if x["role"] == role)
+        i = next((x for x in f["inputs"] if x["role"] == role), {"pid": None, "role": role, "channel": "L"})
         out = []
         for q in self.paths:
             if q.pid != i["pid"]:
@@ -2417,75 +2375,36 @@ class ProjectModel(QObject):
         return out
 
     def set_fusion_channel(self, p: WorkflowView, role: str, pid: int) -> bool:
-        """The workflow a channel of a fusion reads (issue #55), its colour kept. A starless fusion gives it its
-        Stars/background, as when it is placed."""
+        """The workflow a port of a combination reads (issue #55), its colour kept; a port without one gets it."""
         f = self.p.workflow(p.pid).source["fusion"]
-        if not is_fusion_view(p) or next(i for i in f["inputs"] if i["role"] == role)["pid"] == int(pid) or \
+        cur = next((i for i in f["inputs"] if i["role"] == role), None)
+        if not is_fusion_view(p) or (cur is not None and cur["pid"] == int(pid)) or \
                 self._source_refused(self.view(int(pid))):
             return False
         with self._edit():
             ws = api.workflows(self.p)
             x = next(v for v in ws if v.id == p.pid)
-            x.source = {"fusion": {**x.source["fusion"], "inputs": [
-                {**i, "pid": int(pid)} if i["role"] == role else i for i in x.source["fusion"]["inputs"]]}}
+            ins = [{**i, "pid": int(pid)} if i["role"] == role else i for i in x.source["fusion"]["inputs"]]
+            if cur is None:
+                ins.append({"pid": int(pid), "role": role, "channel": "L"})
+            x.source = {"fusion": {**x.source["fusion"], "inputs": ins}}
             api.set_workflows(self.p, ws, self.p.current)
-            added = self._with_stars([int(pid)]) if f.get("stars") else []
-            if added:                                     # taken back when the fusion goes (decision 2)
-                g = self.p.workflow(p.pid).source["fusion"]
-                g["added"] = list(g.get("added") or []) + added
-                self.p.validate()
         return True
 
-    def set_fusion_stars(self, p: WorkflowView, stars: dict | None) -> bool:
-        """The star source of a fusion (option A), or None: the channels combined with their stars."""
-        w = self.p.workflow(p.pid)
-        if not is_fusion_view(p) or (w.source["fusion"].get("stars") or None) == (stars or None) or \
-                ((stars or {}).get("pid") and self._source_refused(self.view(stars["pid"]))):
+    def set_fusion_image(self, p: WorkflowView, role: str, image: str) -> bool:
+        """What a port reads of its workflow: its Output ("output") or its Stars/background's starless image
+        ("starless": the palette made on starless channels; stages/combine.IMAGES). False when nothing changes."""
+        f = self.p.workflow(p.pid).source["fusion"]
+        cur = next((i for i in f["inputs"] if i["role"] == role), None)
+        if cur is None or cur.get("image", "output") == image:
             return False
         with self._edit():
             ws = api.workflows(self.p)
             x = next(v for v in ws if v.id == p.pid)
-            f = {k: v for k, v in x.source["fusion"].items() if k != "stars"}
-            if stars:
-                f["stars"] = dict(stars)
-            x.source = {"fusion": f}
-            x.options = wfl.check_options({**x.options, "denoise": "pretrained" if stars else None,
-                                           "stars": "neural" if stars else None})
+            ins = [({k: v for k, v in i.items() if k != "image"} | ({"image": image} if image != "output" else {}))
+                   if i["role"] == role else i for i in x.source["fusion"]["inputs"]]
+            x.source = {"fusion": {**x.source["fusion"], "inputs": ins}}
             api.set_workflows(self.p, ws, self.p.current)
-            if stars:
-                added = self._with_stars([i["pid"] for i in f["inputs"]] + ([stars["pid"]] if stars.get("pid") else []))
-                if added:                                 # taken back when the fusion goes (decision 2)
-                    g = self.p.workflow(p.pid).source["fusion"]
-                    g["added"] = list(g.get("added") or []) + added
-                self.p.validate()
-        return True
-
-    def set_fusion_palette(self, p: WorkflowView, palette: str) -> bool:
-        """Another palette for a fusion (its channels kept when the new one reads the same roles). Its name follows
-        while it is the one its palette gave it ("SHO" → "HSO"); a name the user gave stays (GUI
-        exploration 4: an HSO fusion kept saying SHO)."""
-        w = self.p.workflow(p.pid)
-        if not is_fusion_view(p) or w.source["fusion"]["palette"] == palette:
-            return False
-        from ..texts import choice_label
-        from .gallery import GALLERY
-        from .i18n import language
-
-        def given(pal):                                   # the names a palette gives: its own, its templates'
-            names = {pal, choice_label(pal, "en")} | {t["name"] for t in GALLERY if t.get("palette") == pal}
-            if pal == "SHO":                              # the label the plain SHO had before the SHO Hubble palette
-                names |= {"SHO (Hubble palette)", "SHO (palette Hubble)"}
-            return names | {_(x) for x in names}
-        base, _sp, num = w.name.rpartition(" ")           # "HSO 2": a second one, numbered by unique_name
-        follow = w.name in given(w.source["fusion"]["palette"]) or \
-            (num.isdigit() and base in given(w.source["fusion"]["palette"]))
-        with self._edit():
-            ws = api.workflows(self.p)
-            x = next(v for v in ws if v.id == p.pid)
-            x.source = {"fusion": {**x.source["fusion"], "palette": palette}}
-            api.set_workflows(self.p, ws, self.p.current)
-            if follow:
-                self._rename(p.pid, self.unique_name(choice_label(palette, language())))
         return True
 
     def set_node_method(self, paths, key: str, method: str) -> bool:
@@ -3228,8 +3147,7 @@ class ProjectModel(QObject):
                 keep.append(x)
                 continue
             w = ws.get(x.get("pid"))
-            split = w is not None and (bool((w.options or {}).get("stars")) or (
-                isinstance(w.source, dict) and bool((w.source.get("fusion") or {}).get("stars"))))
+            split = w is not None and bool((w.options or {}).get("stars"))
             if w is None or (x.get("part") is not None and not split):
                 gone.add(x.get("id"))
                 changed = True

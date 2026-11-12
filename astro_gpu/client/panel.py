@@ -996,13 +996,14 @@ class Panel(QWidget):
         return True
 
     def fusion_panel(self, node):
-        """A Combine channels block (issue #43): its workflow's name, its palette, its channels and the workflows they come
-        from; its output is a layer of Post."""
-        from ..stages.fusion import PALETTES
-        from .gallery import PALETTE_TIPS
+        """A combination block (issue #43; stages/combine.py): its workflow's name, its type, its named inputs (the
+        workflow each reads, its Output or its starless image, its weight), then its settings as any block's; its
+        output is a layer of Post."""
+        from .blocks import COMBINE_KINDS, combine_kind, combine_title, port_name
         s = self.s
         p = node.paths[0]
         f = (p.source or {}).get("fusion") or {}
+        kind = combine_kind(p)
         top = QHBoxLayout()
         ed = QLineEdit(p.name)
         ed.setStyleSheet("QLineEdit { font-size: 13pt; font-weight: 600; background: transparent; border: none; "
@@ -1015,7 +1016,7 @@ class Panel(QWidget):
         chip.setStyleSheet(f"color: {STATE_COLOR[st]}; font-size: 9pt;")
         top.addWidget(chip)
         self.hv.addLayout(top)
-        self.hv.addWidget(label(_("Combine channels"), "small"))
+        self.hv.addWidget(label(combine_title(kind), "small"))
         acts = QHBoxLayout()                             # as the Image block: its Delete under its name (#34)
         x = QPushButton(_("Delete"))
         x.setToolTip(_("Take this block out, with the blocks after it (Del)"))
@@ -1026,110 +1027,78 @@ class Panel(QWidget):
         if node.broken:                                  # why Run is refused, as the graph's red circle says (round 3)
             why = label(_("Run refused: {why}").format(why=node.broken.rstrip(".")), "warn", wrap=True)
             self.hv.addWidget(why)
-        self.bv.addWidget(self.group_title(_("Palette")))
-        roles = [i["role"] for i in f.get("inputs") or []]
-        read = PALETTES.get(f.get("palette"), (tuple(roles), None))[0]     # the channels its palette reads (7.6)
-        row = QHBoxLayout()
-        for pal, (need, _m) in PALETTES.items():
-            b = QPushButton(_(pal) if pal in ("RGB", "LRGB") else pal)    # RVB, LRVB in French; SHO... as they are
-            b.setCheckable(True)
-            b.setObjectName("face")
-            # they fit the panel: they shrink below the style's 80 px, never below their text ("SHO Hubble" was cut)
-            b.setMinimumWidth(max(48, b.fontMetrics().horizontalAdvance(b.text()) + 16))
-            b.setChecked(pal == f.get("palette"))
-            ok = set(need) <= set(roles)
-            b.setEnabled(ok)
-            b.setToolTip(_("Needs the {roles} channels").format(roles=", ".join(need)) if not ok else
-                         _(PALETTE_TIPS[pal]) if pal in PALETTE_TIPS else "")
-            b.clicked.connect(lambda _c=False, x=pal: s.set_fusion_palette(p, x))
-            row.addWidget(b)
-        row.addStretch(1)
-        self.bv.addLayout(row)
-        self.bv.addWidget(self.group_title(_("Channels")))
+        self.bv.addWidget(self.group_title(_("Inputs")))
         words = {"L": _("grey"), "R": _("red"), "G": _("green"), "B": _("blue"),
                  "GB": _("green + blue")}
-        weights = f.get("weights") or {}
-        for i in [i for i in f.get("inputs") or [] if i["role"] in read]:
-            q = s.view(i["pid"])
+        weights = (s.p.workflow(p.pid).params.get(COMBINE_KINDS[kind].name) or {}).get("weights") or {} \
+            if kind in COMBINE_KINDS else {}
+        by_role = {i["role"]: i for i in f.get("inputs") or []}
+        for role in (COMBINE_KINDS[kind].ports if kind in COMBINE_KINDS else ()):
+            i = by_role.get(role, {"pid": None, "role": role, "channel": "L"})
+            q = s.view(i["pid"]) if i["pid"] is not None else None
             row = QHBoxLayout()
-            row.setSpacing(10)                             # the channel's name apart from its text (#27)
-            role = label(f"<b>{html.escape(i['role'])}</b>", None)
-            role.setMinimumWidth(36)
-            row.addWidget(role, 0)
+            row.setSpacing(10)                             # the input's name apart from its text (#27)
+            name = label(f"<b>{html.escape(port_name(role))}</b>", None)
+            name.setMinimumWidth(36)
+            row.addWidget(name, 0)
             row.addWidget(self.channel_source(p, i, q, words.get(i.get("channel", "L"), "")), 1)
             sp = QDoubleSpinBox()
             sp.setRange(0.0, 5.0)
             sp.setSingleStep(0.05)
             sp.setDecimals(2)
-            sp.setValue(float(weights.get(i["role"], 1.0)))
-            sp.setToolTip(_("The channel's weight in the palette, after the balance (1: as balanced). Lower a "
-                            "channel too faint, whose noise the balance raised."))
-            sp.editingFinished.connect(lambda r=i["role"], b=sp: s.set_fusion_weight(p, r, b.value()))
+            sp.setValue(float(weights.get(role, 1.0)))
+            sp.setToolTip(_("The channel's weight, after the balance (1: as balanced). Lower a channel too faint, "
+                            "whose noise the balance raised."))
+            sp.setEnabled(q is not None)
+            sp.editingFinished.connect(lambda r=role, b=sp: s.set_fusion_weight(p, r, b.value()))
             row.addWidget(sp)
             self.bv.addLayout(row)
-        unread = [r for r in roles if r not in read]
-        if unread:
-            self.bv.addWidget(label(_("Unused by {palette}: {roles}").format(
-                palette=f.get("palette", ""), roles=", ".join(unread)), "small", wrap=True))
-        self.fusion_stars(p, f, [r for r in roles if r in read])
+            if q is not None and any(n["block"] == "stars" and not n.get("off") for n in s.graph(q)):
+                self.bv.addWidget(self.image_choice(p, i))
         self.bv.addSpacing(6)
-        self.bv.addWidget(label(_("Each channel is its workflow's output, aligned on the first channel through the "
-                                  "plate solutions (each channel's workflow needs its Astrometry) and brought to the "
-                                  "same scale; the palette makes the colours. Its output is a layer of Post."),
-                                "small", wrap=True))
+        self.settings(p, "fusion")
+        self.bv.addSpacing(6)
+        self.bv.addWidget(label(_("Each input is its workflow's image, aligned on the first one through the plate "
+                                  "solutions (each workflow needs its Astrometry) and brought to the same scale. Its "
+                                  "stars stay: a Stars/background after this block takes them off. Its output is a "
+                                  "layer of Post."), "small", wrap=True))
         self.bv.addStretch(1)
 
+    def image_choice(self, p, i: dict):
+        """What an input reads of a workflow that has Stars/background: its Output (with its stars), or its starless
+        image (the palette made on starless channels)."""
+        s = self.s
+        cb = QComboBox()
+        cb.addItem(_("Output image"), "output")
+        cb.addItem(_("Starless image"), "starless")
+        cb.setCurrentIndex(cb.findData(i.get("image", "output")))
+        cb.setToolTip(_("The image this input reads: its workflow's Output, or the starless image of its "
+                        "Stars/background block"))
+        cb.activated.connect(lambda k, r=i["role"]: s.set_fusion_image(p, r, cb.itemData(k)))
+        return cb
+
     def channel_source(self, p, i: dict, q, word: str):
-        """What a channel reads (issue #55): its workflow, chosen on its row among the stacks of its filter and the
+        """What an input reads (issue #55): its workflow, chosen on its row among the stacks of its filter and the
         linear images; said only, when there is no other."""
         s = self.s
         choices = s.channel_choices(p, i["role"])
-        if len(choices) < 2:
-            return label(_("{workflow} · {channel}").format(workflow=html.escape(q.name if q is not None else "?"),
-                                                            channel=word), "small")
+        if len(choices) < 2 and q is not None:
+            return label(_("{workflow} · {channel}").format(workflow=html.escape(q.name), channel=word), "small")
         cb = QComboBox()
-        cb.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)     # as the Stars list below
+        cb.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         cb.setMinimumContentsLength(10)
+        if q is None:                                    # a named input waiting for its workflow
+            cb.addItem(_("to choose"), None)
         for x, why in choices:
             cb.addItem(_("{workflow} · {channel}").format(workflow=x.name, channel=word), x.pid)
             if why:
                 item = cb.model().item(cb.count() - 1)
                 item.setEnabled(False)
                 item.setToolTip(why)
-        cb.setCurrentIndex(cb.findData(i["pid"]))
+        cb.setCurrentIndex(max(0, cb.findData(i["pid"])))
         cb.setToolTip(_("The workflow this channel reads: a stack of its filter, or a linear image's output"))
-        cb.activated.connect(lambda k, r=i["role"]: s.set_fusion_channel(p, r, cb.itemData(k)))
+        cb.activated.connect(lambda k, r=i["role"]: cb.itemData(k) is not None and s.set_fusion_channel(p, r, cb.itemData(k)))
         return cb
-
-    def fusion_stars(self, p, f: dict, roles: list[str]):
-        """Option A: the palette on the channels' starless images, then the stars from a source, put back by the
-        Combine layers block."""
-        s = self.s
-        cur = f.get("stars") or {}
-        self.bv.addWidget(self.group_title(_("Stars")))
-        choices = [(_("With channels (no split)"), None, ""),
-                   (_("Channel stars, same palette"), {"mode": "palette"}, "")]
-        choices += [(_("{channel} stars (neutral)").format(channel=r), {"mode": "channel", "role": r}, "")
-                    for r in roles]
-        choices += [(_("“{workflow}” stars (own colours)").format(workflow=q.name),
-                     {"mode": "workflow", "pid": q.pid}, why) for q, why in s.star_choices(p)]
-        cb = QComboBox()
-        cb.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)     # a long workflow name: elided,
-        cb.setMinimumContentsLength(20)                                              # never wider than the panel
-        for text, val, why in choices:
-            cb.addItem(text, val)
-            if why:                                      # issue #55: an image already stretched, greyed with its reason
-                item = cb.model().item(cb.count() - 1)
-                item.setEnabled(False)
-                item.setToolTip(why)
-        cb.setCurrentIndex(next((i for i, (_t, v, _w) in enumerate(choices) if (v or {}) == cur), 0))
-        cb.setToolTip(_("The palette is made on the channels' starless images; these stars are put back by the "
-                        "Combine layers block. Each channel's workflow gets Stars/background."))
-        cb.activated.connect(lambda i: s.set_fusion_stars(p, cb.itemData(i)))
-        self.bv.addWidget(cb)
-        if cur:
-            self.bv.addWidget(label(_("The stars are taken off in each channel first: stars of different sizes from "
-                                      "one filter to another leave no coloured rings."), "small", wrap=True))
 
     def survey_row(self, p):
         """The H-alpha survey the Gradient block keeps its samples away from, when the field's is not on this computer:

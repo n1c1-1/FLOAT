@@ -62,6 +62,7 @@ from PySide6.QtWidgets import (
     QGraphicsItem,
     QGraphicsPathItem,
     QGraphicsScene,
+    QGraphicsSimpleTextItem,
     QGraphicsView,
     QHBoxLayout,
     QLabel,
@@ -81,6 +82,7 @@ from . import prefs
 from .blocks import (
     BREAK_COL,
     BY_KEY,
+    COMBINE_KINDS,
     FRAME_KEYS,
     IMAGE_KEYS,
     PAUSE_COL,
@@ -191,8 +193,6 @@ class BlockItem(QGraphicsItem):
         self.ports = PORTS.get(node.key, ()) if node.key not in EXITS else ()
         if self.exit and not self.ports:                  # its image, pulled onto Post: a layer (issue #47)
             self.ports = ((None, BH / 2),)
-        if node.key == "fusion" and node.paths and ((node.paths[0].source or {}).get("fusion") or {}).get("stars"):
-            self.ports = PORTS["etoiles"]                 # a starless fusion: its two images, as the Split block's
         self.port = bool(self.ports)
         self.setAcceptHoverEvents(True)
         # a block switched off is not computed: never "Up to date" (round 2), its line below says what it is
@@ -1105,10 +1105,10 @@ class GraphView(QGraphicsView):
                 self._join(src, [t], cur)
             elif src:
                 self._wire(src[0], t, cur is not None and cur in t.paths)
-        # issue #43: the fusions, from the outputs of the workflows they combine
+        # issue #43: the combinations, a wire from each channel's image into its named input
         for n in g.nodes:
-            for a in g.fusion_inputs.get(id(n), []):
-                self._wire(a, n, cur is not None and (cur in n.paths or cur in a.paths))
+            if n.key == "fusion" and n.paths:
+                self._ports_of(n, g.fusion_inputs.get(id(n), []), cur)
         # issue #43: "+ Session" under the sessions (or under the one Session block), where a session goes
         self.plus_session_ghost = None
         self.plus_session_pid = None                      # the flow it joins: the one it is drawn with
@@ -1693,6 +1693,36 @@ class GraphView(QGraphicsView):
         else:
             it = self._chain_wire(path, pen)
         it.setZValue(1)
+
+    def _ports_of(self, n: Node, inputs, cur):
+        """A combination's named inputs (stages/combine.py ports): each one's name on the block's left edge, at its
+        port, and the wire from the block that gives its image (a channel's Output, or its Stars/background's starless
+        image, in that image's colour); a port without its workflow shows its name alone."""
+        from .blocks import COMBINE_KINDS, combine_kind, port_name
+        kind = combine_kind(n.paths[0])
+        ports = COMBINE_KINDS[kind].ports if kind in COMBINE_KINDS else ()
+        for k, role in enumerate(ports):
+            y = BH * (k + 1) / (len(ports) + 1)
+            t = QGraphicsSimpleTextItem(port_name(role))
+            f = t.font()
+            f.setPointSizeF(7)
+            t.setFont(f)
+            t.setBrush(QColor("#c9d1dc"))
+            t.setPos(n.col - t.boundingRect().width() - 3, n.y - BH / 2 + y - t.boundingRect().height())
+            t.setZValue(6)
+            t.setToolTip(_("{port} input of “{block}”").format(port=port_name(role), block=n.paths[0].name))
+            self.scene().addItem(t)
+            for a, r, image in inputs:
+                if r != role:
+                    continue
+                strong = cur is not None and (cur in n.paths or cur in a.paths)
+                if image == "starless":
+                    self._image_wire(a, PORTS["etoiles"][0][1], n, y, "starless", port_name(role), strong)
+                    continue
+                x1, y1 = a.col + a.w, a.y
+                path = self._route(x1, y1, n.col, n.y - BH / 2 + y, (a, n), up=True)
+                self._chain_wire(path, QPen(QColor("#9aa3b2" if strong else "#3d4452"), 2.2 if strong else 1.6),
+                                 port_name(role)).setZValue(1)
 
     def _join(self, sources: list[Node], targets: list[Node], cur):
         """The sessions' Calibration blocks into the first blocks of the chain (issue #43): a wire from each to one
@@ -2652,7 +2682,40 @@ PALETTE_GROUPS = [("Sources", ["session", "image", "align_images"]),
                   ("Image", ["astrometry", "gradient", "deconv", "denoise", "color"]),
                   ("Post", ["stars", "synth"]),
                   ("Composition", ["fusion", "composition"])]
-PALETTE_TITLES = {"session": "Session", "image": "Image", "fusion": "Combine channels", "align_images": "Align images"}
+PALETTE_TITLES = {"session": "Session", "image": "Image", "fusion": "Combination", "align_images": "Align images"}
+
+
+class GroupFlyout(QFrame):
+    """A row of choices that unfolds beside a palette entry, as the tool groups of the reference image editors: one
+    click on a choice does it and closes the row; Escape or a click elsewhere closes it (a popup window, never a
+    dialog: nothing waits on it). ``items``: (key, text, tooltip, why it is greyed or ""); ``chosen(key)`` is called
+    with the choice. Reusable by any group of the palette."""
+
+    def __init__(self, parent, items, chosen):
+        super().__init__(parent, Qt.Popup | Qt.FramelessWindowHint)
+        self.setObjectName("flyout")
+        self.setStyleSheet(f"QFrame#flyout {{ background: #232831; border: 1px solid {ACCENT}; border-radius: 6px; }}"
+                           "QToolButton { padding: 4px 10px; font-weight: 600; border: 1px solid #353b47; "
+                           "border-radius: 4px; background: #2b3040; } "
+                           f"QToolButton:hover {{ border-color: {ACCENT}; }} QToolButton:disabled {{ color: #555b66; }}")
+        row = QHBoxLayout(self)
+        row.setContentsMargins(6, 4, 6, 4)
+        row.setSpacing(4)
+        self.buttons: dict[str, QToolButton] = {}
+        for key, text, tip, why in items:
+            b = QToolButton()
+            b.setText(text)
+            b.setToolTip("\n".join(x for x in (tip, why[:1].upper() + why[1:] if why else "") if x))
+            b.setEnabled(not why)
+            b.clicked.connect(lambda _c=False, k=key: (self.close(), chosen(k)))
+            row.addWidget(b)
+            self.buttons[key] = b
+
+    def show_beside(self, w: QWidget):
+        """Opened to the right of ``w``, at its height."""
+        self.adjustSize()
+        self.move(w.mapToGlobal(QPoint(w.width() + 4, (w.height() - self.height()) // 2)))
+        self.show()
 
 
 class PaletteCard(QFrame):
@@ -2721,7 +2784,7 @@ class PaletteCard(QFrame):
 
     def mouseMoveEvent(self, e):                                      # noqa: N802
         if self._press is None or not (e.buttons() & Qt.LeftButton) or (self.reason and not self.branch) or \
-                self.block not in wfl.IO and self.block not in ("session", "image", "composition", "fusion"):
+                self.block not in wfl.IO and self.block not in ("session", "image", "composition"):
             return
         if (e.position().toPoint() - self._press).manhattanLength() < QApplication.startDragDistance():
             return
@@ -2736,8 +2799,13 @@ class PaletteCard(QFrame):
         self.page.hide_templates()
         drag.exec(Qt.CopyAction)
 
+    def mouseReleaseEvent(self, e):                                   # noqa: N802
+        if self.block == "fusion" and self._press is not None and e.button() == Qt.LeftButton and not self.reason:
+            self.page.open_combinations(self)           # a group: its types unfold beside it
+        self._press = None
+
     def mouseDoubleClickEvent(self, e):                               # noqa: N802
-        if not self.reason:
+        if not self.reason and self.block != "fusion":
             self.page.palette_action(self.block)
 
 
@@ -3243,29 +3311,46 @@ class GraphPage(QWidget):
             return s.palette_reason(None, block)          # sessions without a workflow: the block starts one
         if block in ("session", "image"):
             return ""
-        if block == "fusion":                             # question 6: something to combine, said what to do (8.5)
-            ok = len([q for q in s.paths if s.is_mono(q)]) >= 2 or any(
-                q.source is None and not s.is_mono(q) and any(n["block"] == "stacking" for n in s.graph(q))
-                for q in s.paths) or bool(self.linear_images())
-            if not ok:
-                return _("needs 2 filter workflows, a colour stack or image")
-            got = self.fusion_choice()                    # decision 2: greyed until each channel has what it needs
-            if got is not None:                           # its frames (control round: a template's colour project
-                empty = []                                # without frames made a Combine channels of channels with nothing)
-                for i in got[1]:
-                    q = s.view(i["pid"])
-                    if q.source is None and not any(x.lights for x in s.p.sessions_of(q.pid)):
-                        empty.append((i["role"], q))
-                if empty and len({i["pid"] for i in got[1]}) == 1:       # a colour image's channels: its workflow
-                    return _("lights first in “{name}”").format(name=empty[0][1].name)
-                if empty:
-                    return _("lights first in {channels}").format(channels=", ".join(r for r, _q in empty))
-            if got is not None and len({i["pid"] for i in got[1]}) > 1:
-                miss = [i["role"] for i in got[1] if s.is_graph(s.view(i["pid"])) and not any(
-                    n["block"] == "astrometry" and not n["off"] for n in s.graph(s.view(i["pid"])))]
-                if miss:
-                    return _("Astrometry first in {channels}").format(channels=", ".join(miss))
-            return ""
+        if block == "fusion":                             # the group: available when one of its types is
+            whys = [self.combine_reason(k) for k in COMBINE_KINDS]     # none can: said for the type closest
+            near = [x for x in whys if not x.startswith(_("needs workflows of {filters}").split("{")[0])]
+            return "" if "" in whys else (near or whys)[0]
+        return self._palette_reason(block, p, split)
+
+    def combine_reason(self, kind: str) -> str:
+        """Why a combination of this type cannot be placed now (translated), "" when it can (question 6: something to
+        combine, said what to do, 8.5)."""
+        s = self.s
+        if not s.ready:
+            return _("reading the project…")
+        ok = len([q for q in s.paths if s.is_mono(q)]) >= 2 or any(
+            q.source is None and not s.is_mono(q) and any(n["block"] == "stacking" for n in s.graph(q))
+            for q in s.paths) or bool(self.linear_images())
+        if not ok:
+            return _("needs 2 filter workflows, a colour stack or image")
+        got = self.fusion_choice(kind)                # decision 2: greyed until each channel has what it needs
+        if got is None:
+            from .blocks import port_name
+            return _("needs workflows of {filters}").format(
+                filters=", ".join(port_name(r) for r in COMBINE_KINDS[kind].ports))
+        empty = []                                    # its frames (control round: a template's colour project
+        for i in got:                                 # without frames made a combination of channels with nothing)
+            q = s.view(i["pid"])
+            if q.source is None and not any(x.lights for x in s.p.sessions_of(q.pid)):
+                empty.append((i["role"], q))
+        if empty and len({i["pid"] for i in got}) == 1:           # a colour image's channels: its workflow
+            return _("lights first in “{name}”").format(name=empty[0][1].name)
+        if empty:
+            return _("lights first in {channels}").format(channels=", ".join(r for r, _q in empty))
+        if len({i["pid"] for i in got}) > 1:
+            miss = [i["role"] for i in got if s.is_graph(s.view(i["pid"])) and not any(
+                n["block"] == "astrometry" and not n["off"] for n in s.graph(s.view(i["pid"])))]
+            if miss:
+                return _("Astrometry first in {channels}").format(channels=", ".join(miss))
+        return ""
+
+    def _palette_reason(self, block: str, p, split) -> str:
+        s = self.s
         if block == "composition":
             return "" if split is not None else _("needs Stars/background")
         if p is None:
@@ -3343,8 +3428,10 @@ class GraphPage(QWidget):
             q = s.view(q.pid)
             s.log('Workflow "{name}" created', name=q.name)
             self.select(index=s.paths.index(q), step="image")
-        elif block == "fusion":                            # placed at once: its palette and channels in its panel
-            self.place_fusion()
+        elif block == "fusion" and where in COMBINE_KINDS:  # a type chosen in its group: placed at once, its channels
+            self.place_fusion(where)                       # and settings in its panel
+        elif block == "fusion":
+            self.open_combinations(self.cards.get("fusion"))
         elif block == "composition":
             g = Graph(s)
             split = g.node_of(s.path, "etoiles") if s.path is not None else None
@@ -3354,70 +3441,61 @@ class GraphPage(QWidget):
             p = self.palette_path()
             self.place_block(block, p.pid if p is not None else NEW_FRAMES)
 
-    def place_fusion(self):
-        """A Combine channels block placed from the palette (no template window once the project is made): the filters'
-        workflows combined with the first palette they make (SHO, HOO, LRGB, RGB...), else a colour workflow's
-        channels as H-alpha and OIII (dual band); its palette and channels are changed in its panel. Refused, with
-        what to do, until each channel has what it needs; what it adds to the channels is said (decision 2)."""
-        s = self.s
-        why = self.palette_reason("fusion", s.path, None)
-        got = self.fusion_choice()
-        if why or got is None:
-            self.toast(_("Combine channels: {why}").format(why=why or _("place its workflows first")))
-            return
-        pal, inputs, stars = got
-        chans = {i["pid"]: s.view(i["pid"]) for i in inputs}
-        before = {pid: [n["block"] for n in s.graph(q)] for pid, q in chans.items()}
-        q = s.add_fusion(pal, pal, inputs, stars=stars)
-        s.log('Combine channels "{name}" placed', name=q.name)
-        self.select(index=s.paths.index(q), step="fusion")
-        added, where = [], []
-        for pid, old in before.items():
-            new = [n["block"] for n in s.graph(s.view(pid))]
-            more = [b for b in new if b not in old]
-            if more:
-                added += [b for b in more if b not in added]
-                where.append(s.view(pid).name)
-        if added:                                         # the blocks it put in the channels: said, Ctrl+Z
-            self.toast(_("Combine channels “{block}” placed · {blocks} added to {where} · Ctrl+Z").format(
-                block=q.name, blocks=", ".join(block_title(None, view_key(b)) for b in added),
-                where=", ".join(where)))
+    def open_combinations(self, card):
+        """The Combination entry's types (S-H-O, H-O, RGB, LRGB) in a row beside it; one chosen is placed."""
+        from .blocks import combine_title
+        items = [(k, combine_title(k), _(c.description), self.combine_reason(k)) for k, c in COMBINE_KINDS.items()]
+        self.combine_flyout = GroupFlyout(self, items, lambda k: self.palette_action(f"fusion:{k}"))
+        if card is not None:
+            self.combine_flyout.show_beside(card)
         else:
-            self.toast(_("Combine channels “{block}” placed · Ctrl+Z").format(block=q.name))
+            self.combine_flyout.move(QCursor.pos())
+            self.combine_flyout.show()
+        return self.combine_flyout
+
+    def place_fusion(self, kind: str):
+        """A combination block of this type placed from the palette (no template window once the project is made):
+        each named input reads the workflow of its filter, else (H-O) a colour workflow's channels as H-alpha and O III
+        (dual band); its channels and settings are changed in its panel. Refused, with what to do, until each channel
+        has what it needs."""
+        from .blocks import combine_title
+        s = self.s
+        why = self.combine_reason(kind)
+        got = self.fusion_choice(kind)
+        title = combine_title(kind)
+        if why or got is None:
+            self.toast(_("{block}: {why}").format(block=title, why=why or _("place its workflows first")))
+            return
+        q = s.add_fusion(title, kind, got)
+        s.log('Combination "{name}" placed', name=q.name)
+        self.select(index=s.paths.index(q), step="fusion")
+        self.toast(_("“{block}” placed · Ctrl+Z").format(block=q.name))
 
     def linear_images(self) -> list:
-        """The Image workflows a Combine channels can read (issue #55): a linear image whose file is chosen."""
+        """The Image workflows a combination can read (issue #55): a linear image whose file is chosen."""
         return [q for q in self.s.paths if self.s.source_kind(q) == "image" and q.source.get("path")]
 
-    def fusion_choice(self):
-        """What a Combine channels placed now combines: (palette, inputs, stars), or None when there is nothing to combine."""
-        from ..stages.fusion import PALETTES, SHO_DEFAULT
+    def fusion_choice(self, kind: str):
+        """The inputs a combination of this type placed now reads, [{"pid", "role", "channel"}], or None when there is
+        nothing to combine: each port the workflow of its filter; an H-O without them, a colour workflow's (or a
+        linear image's) red as H-alpha and its green and blue as O III (a dual-band filter)."""
         s = self.s
+        ports = COMBINE_KINDS[kind].ports
         by_filter = {}
         for f, sids in s.filters().items():
             q = next((q for q in s.paths if q.source is None and q.sessions is not None and not q.end
                       and sorted(q.sessions) == sorted(sids)), None)
             if q is not None:
                 by_filter[f] = q
-        first = [SHO_DEFAULT, "HSO", "HOO", "LRGB", "RGB"]          # S II, H-alpha and O III: the Hubble look
-        order = first + [x for x in PALETTES if x not in first]
-        pal = next((x for x in order if x in PALETTES and set(PALETTES[x][0]) <= set(by_filter)), None)
-        # #39: the stars as its template makes them (option A): the channels' for RGB and LRGB, else H-alpha's;
-        # a dual band's, of the colour image itself
-        if pal is not None:
-            inputs = [{"pid": by_filter[f].pid, "role": f, "channel": "L"} for f in PALETTES[pal][0]]
-            stars = {"mode": "palette"} if pal in ("RGB", "LRGB") or "Ha" not in PALETTES[pal][0] else \
-                {"mode": "channel", "role": "Ha"}
-        else:
-            colour = next((q for q in s.paths if q.source is None and not s.is_mono(q) and not q.end), None)
-            image = next(iter(self.linear_images()), None) if colour is None else None     # issue #55: no stack to read
-            if colour is None and image is None:
-                return None
-            pal = "HOO"                                   # a dual-band filter on a colour camera
-            src = colour or image
-            inputs = [{"pid": src.pid, "role": "Ha", "channel": "R"}, {"pid": src.pid, "role": "OIII", "channel": "GB"}]
-            stars = {"mode": "workflow", "pid": src.pid} if image is None else None      # an image keeps its stars
-        return pal, inputs, stars
+        if set(ports) <= set(by_filter):
+            return [{"pid": by_filter[f].pid, "role": f, "channel": "L"} for f in ports]
+        if kind != "ho":
+            return None
+        colour = next((q for q in s.paths if q.source is None and not s.is_mono(q) and not q.end), None)
+        src = colour or next(iter(self.linear_images()), None)            # issue #55: no stack to read
+        if src is None:
+            return None
+        return [{"pid": src.pid, "role": "Ha", "channel": "R"}, {"pid": src.pid, "role": "OIII", "channel": "GB"}]
 
     def place_block(self, block: str, pid=None, index=None):
         """Place a block in a workflow (issue #47): at ``index`` of its graph, or at its usual place. ``NEW_FRAMES``:
@@ -3620,7 +3698,7 @@ class GraphPage(QWidget):
 
     def template_chosen(self, t: dict):
         from .gallery import _view_opts
-        self.make_from_template(t, self.s.unique_name(t["palette"] if t.get("kind") == "fusion" else _(t["name"])),
+        self.make_from_template(t, self.s.unique_name(_(t["palette"]) if t.get("kind") == "fusion" else _(t["name"])),
                                 _view_opts(t))
 
     def new_workflow(self, start=None, tab=None):
@@ -3740,13 +3818,11 @@ class GraphPage(QWidget):
                 return None
             if t["kind"] == "filters":
                 return made[0][1]
-            # option A: each channel's stars taken off, the starless palette; the stars: of the channels (RGB, LRGB:
-            # their own colours), else of H-alpha, neutral (narrowband stars in a palette come out magenta)
-            roles = [f for f, _q in made]
-            stars = {"mode": "palette"} if t["palette"] in ("RGB", "LRGB") or "Ha" not in roles else \
-                {"mode": "channel", "role": "Ha"}
-            return s.add_fusion(name, t["palette"], [{"pid": q.pid, "role": f, "channel": "L"} for f, q in made],
-                                stars=stars)
+            # the block of the template's type reads each filter's Output; a Stars/background after it takes the stars
+            # off the combined image, for the Combine layers block in Post
+            from .gallery import palette_kind
+            return s.add_fusion(name, palette_kind(t["palette"]), [{"pid": q.pid, "role": f, "channel": "L"}
+                                                                   for f, q in made], stars=True)
 
     def toggle_cut(self, node, pids):
         """Switch a block off, or on again (issue #47): in ``pids`` only, else in every workflow going through it. Its
@@ -3973,7 +4049,7 @@ class GraphPage(QWidget):
         s = self.s
         src = s.source_kind(p)
         if src == "fusion":
-            self.toast(_("Combine channels: no template"))
+            self.toast(_("Combination: no template"))
             return
         got = template_dialog(self, p.name)
         if got is None:

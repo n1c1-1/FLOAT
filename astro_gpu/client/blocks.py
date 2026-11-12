@@ -36,6 +36,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import texts
+from ..stages.combine import BY_KIND as COMBINE_KINDS
+from ..stages.combine import STAGES as COMBINE
 from .i18n import _, hm, language, number, plural
 
 # the columns of the graph, left to right; optional columns only appear when a workflow uses them
@@ -46,12 +48,33 @@ PHASES = [("Pre-processing", "calibration", "empilement"), ("Linear processing",
           ("Composition", "fusion", "composition")]
 TOOL_COLUMN = {"debruitage": "debruitage", "etoiles": "etoiles", "deconv": "deconv",
                "auto": "fond", "rbf": "fond", "simple": "fond"}
-TITLES = {"align_images": "Align images", "sources": "Frames", "final": "Post", "image": "Image", "session": "Session", "fusion": "Combine channels",
+TITLES = {"align_images": "Align images", "sources": "Frames", "final": "Post", "image": "Image", "session": "Session",
+          "fusion": "Combination",
           "calibration": "Calibration",
           "alignement": "Registration",
           "selection": "Selection", "crop": "Crop", "empilement": "Stacking", "astrometrie": "Astrometry", "fond": "Gradient",
           "couleur": "Color", "debruitage": "Denoise", "deconv": "Deconvolution", "etoiles": "Stars/background", "synth": "Synthetic stars",
           "post": "Output", "demi_piles": "Half-stacks", "composition": "Combine layers"}
+#: a combination's named inputs as the user reads them (stages/combine.py ports)
+PORT_NAMES = {"SII": "S II", "Ha": "Hα", "OIII": "O III", "L": "L", "R": "R", "G": "G", "B": "B"}
+
+
+def combine_kind(q) -> str:
+    """The type of the combination a workflow starts from ("sho"...), "" for another workflow."""
+    f = (getattr(q, "source", None) or {}).get("fusion") if isinstance(getattr(q, "source", None), dict) else None
+    return str(f.get("type") or "") if isinstance(f, dict) else ""
+
+
+def combine_title(kind: str) -> str:
+    """A type of combination's block name (S-H-O, H-O, RGB, LRGB), translated; the group's for none."""
+    return _(COMBINE_KINDS[kind].title) if kind in COMBINE_KINDS else _("Combination")
+
+
+def port_name(role: str) -> str:
+    """A named input's name (S II, Hα, O III, R...), translated (G is V in French)."""
+    return _(PORT_NAMES.get(role, role))
+
+
 # the optional blocks, in the toolbar's order
 TOOLBOX = ["debruitage", "deconv", "etoiles"]
 WARN_MARK = "⚠ "                       # a summary that opens with it: the block draws a warning icon (issue #58)
@@ -134,10 +157,11 @@ STEPS = [
               "Automatic: a more flexible surface that follows complex gradients."),
     dict(key="post", phase=5, title="Output", kind="fixed", stages=["render_simple"],
          what="Prepares the render: what this workflow gives in Post, its image and its sliders."),
-    dict(key="fusion", phase=6, title="Combine channels", kind="slot", stages=["fusion", "render_simple"],
-         what="Combines the outputs of several workflows (one per filter, or a dual-band image's channels) into one "
-              "colour image with a palette (SHO Hubble, SHO, HSO, HOO, RGB, LRGB), aligned through their plate "
-              "solutions."),
+    # the combinations of filters (stages/combine.py): one block per type, its title and its settings its stage's
+    dict(key="fusion", phase=6, title="Combination", kind="slot", stages=list(COMBINE),
+         what="Combines the images of several workflows (one per filter, or a dual-band image's channels) into one "
+              "colour image, aligned through their plate solutions: S-H-O, H-O, RGB or LRGB, by what was "
+              "photographed."),
     dict(key="composition", phase=6, title="Combine layers", kind="slot", stages=[],
          what="Combines the Stars/background block's two images: the starless image and the stars, each stretched, the stars "
               "put back on top (Screen, Linear dodge or Lighten). Its settings are those of its layer in Post."),
@@ -251,16 +275,17 @@ def node_title(s, n) -> str:
         return f"{block_title(None, n.key)} {n.num}"
     if n.key == "image" and n.paths and n.paths[0].name:   # its workflow's name, which carries the number (#155: one
         return n.paths[0].name                              # source; numbered by place, a deletion shifted them)
-    if n.key == "fusion" and n.paths:                 # several Fusions: numbered in the project's order (exploration 2,
-        bk = getattr(s, "block_key", None)                         # control round); a branch shares its source's
-        ident = (lambda q: bk(q, n.key)) if bk is not None else (lambda q: q.pid)   # block: counted once (round 4)
+    if n.key == "fusion" and n.paths:                 # a combination: its type's name (S-H-O...); several of a type:
+        kind = combine_kind(n.paths[0])               # numbered in the project's order (exploration 2, control round);
+        bk = getattr(s, "block_key", None)            # a branch shares its source's block: counted once (round 4)
+        ident = (lambda q: bk(q, n.key)) if bk is not None else (lambda q: q.pid)
         same = []
         for q in getattr(s, "paths", []):
-            if isinstance(q.source, dict) and "fusion" in q.source and ident(q) not in same:
+            if combine_kind(q) == kind and ident(q) not in same:
                 same.append(ident(q))
         mine = ident(n.paths[0])
-        if len(same) > 1 and mine in same:
-            return f"{block_title(None, n.key)} {same.index(mine) + 1}"
+        title = combine_title(kind)
+        return f"{title} {same.index(mine) + 1}" if len(same) > 1 and mine in same else title
     if n.paths and "~" in n.key or (n.paths and n.key in ("fond", "couleur", "debruitage")):
         # issue #47: a block placed twice, numbered left to right; shared by a branch that has it twice: numbered
         # as in that branch ("Gradient 1" before its "Gradient 2", control round)
@@ -448,9 +473,9 @@ class Graph:
                     rank += 1
                 cur = nxt
             self.leaves[p.pid] = cur
-        # issue #43: a fusion's block holds its workflow (its Output: no block of its own); its inputs, the outputs of
-        # the workflows it combines
-        self.fusion_inputs: dict[int, list[Node]] = {}
+        # issue #43: a combination's block holds its workflow (its Output: no block of its own); its named inputs,
+        # each from the block of its channel's workflow that gives the image it reads: (that block, the port, the image)
+        self.fusion_inputs: dict[int, list[tuple[Node, str, str]]] = {}
         # a session whose data cannot be computed (a folder not there, a frame that cannot be read, darks of another
         # size): its block circled in red with the reason, Run refused (round 2)
         why = getattr(project, "session_problem", None)
@@ -470,8 +495,6 @@ class Graph:
                     n.handle = True
                     n.broken = getattr(project, "fusion_problem", lambda q: "")(p)   # circled in red (1.1)
                     self.by_path[p.pid]["post"] = n
-                    if src["fusion"].get("stars"):       # option A: its starless image and its star layer
-                        self.by_path[p.pid]["etoiles"] = n
         # the data of the sky a block needs and this computer has not (the offline catalogue not installed): marked
         # with the reason; the runs leave it out with what follows it, and run the rest
         sky = getattr(project, "sky_missing", None)
@@ -543,13 +566,18 @@ class Graph:
                         if n.lid is not None and hasattr(project, "post_layer") else ""
                     tail = name.rpartition(" ")[2]
                     n.num = int(tail) if tail.isdigit() else 1
-        for p in project.paths:                       # a fusion's inputs: its channels' last blocks (after the fold)
+        for p in project.paths:                       # a combination's ports: its channels' blocks (after the fold)
             src = getattr(p, "source", None)
             n = self.by_path[p.pid].get("fusion") if isinstance(src, dict) and "fusion" in src else None
             if n is not None:
-                self.fusion_inputs[id(n)] = list({id(self.leaves[i["pid"]]): self.leaves[i["pid"]]
-                                                  for i in src["fusion"]["inputs"]
-                                                  if i["pid"] in self.leaves and self.leaves[i["pid"]] is not n}.values())
+                ins = []
+                for i in src["fusion"]["inputs"]:
+                    image = i.get("image", "output")
+                    a = self.by_path.get(i["pid"], {}).get("etoiles") if image == "starless" else None
+                    a = a or self.leaves.get(i["pid"])     # its Output: the workflow's last block (#17: Stars holds it)
+                    if a is not None and a is not n:
+                        ins.append((a, i["role"], image))
+                self.fusion_inputs[id(n)] = ins
         self.nodes.append(self.final)
 
     def _number_parallel(self, model):
@@ -694,11 +722,14 @@ class Graph:
             if not src.get("path"):
                 return _("file to choose")
             return Path(str(src.get("path") or "")).name + ("  · " + _("stretched") if src.get("stretched") else "")
-        if node.key == "fusion":
+        if node.key == "fusion":                       # its workflow's name (when its own) and its ports
             f = (node.paths[0].source or {}).get("fusion") or {}
-            text = f"{f.get('palette', '')} · " + ", ".join(i["role"] for i in f.get("inputs") or [])
+            cls = COMBINE_KINDS.get(f.get("type"))
+            text = ", ".join(port_name(r) for r in cls.ports) if cls is not None else ""
             name = node.paths[0].name
-            return text if name == f.get("palette") else f"{name} · {text}"
+            head, _sp, num = name.rpartition(" ")
+            given = head if num.isdigit() else name        # "H-O 2": a second one, numbered by unique_name
+            return text if cls is not None and given in (combine_title(cls.kind), cls.title) else f"{name} · {text}"
         if node.key == "sources":
             if not s.sources_loaded:
                 return session_summary(s, s.sessions[0]["id"]) if len(s.sessions) == 1 else _("to add")

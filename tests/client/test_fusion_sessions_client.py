@@ -120,7 +120,7 @@ def test_a_session_joining_a_filter_flow_takes_its_filter_and_a_fusion_chosen_st
         assert m.sessions_of(m.view(ha.pid)) == [1, new] and m.p.session(new).filter == "Ha"
         assert m.sessions_of(m.view(oiii.pid)) == [2]
         assert any("joins" in t and "Ha" in t for t in page.toasts)
-        page.place_fusion()
+        page.place_fusion("ho")
         settle(w, page)
         fus = next(q for q in m.paths if (q.source or {}).get("fusion"))
         page.select(index=m.paths.index(fus), step="fusion")
@@ -173,28 +173,27 @@ def test_a_fusion_is_greyed_until_its_channels_have_astrometry_and_says_what_it_
         why = page.palette_reason("fusion", m.path, None)
         assert "Astrometry" in why and "Ha" in why and "OIII" in why
         n = len(m.paths)
-        page.place_fusion()                                       # refused, with the same reason
+        page.place_fusion("ho")                                       # refused, with the same reason
         assert len(m.paths) == n and "Astrometry" in page.toasts[-1]
         for q in list(m.paths):
             m.insert_block(m.view(q.pid), "astrometry")
         before = {n: blocks_of(m, n) for n in ("Ha", "OIII")}
         assert page.palette_reason("fusion", m.path, None) == ""
-        page.place_fusion()
+        page.place_fusion("ho")
         settle(w, page)
-        assert "Denoise" in page.toasts[-1] and "Ha, OIII" in page.toasts[-1] and "Ctrl+Z" in page.toasts[-1]
-        assert all("stars" in blocks_of(m, n) for n in ("Ha", "OIII"))
-        page.place_fusion()                                       # a second Combine channels: its own block
+        assert "H-O" in page.toasts[-1] and "Ctrl+Z" in page.toasts[-1]
+        assert {n: blocks_of(m, n) for n in ("Ha", "OIII")} == before            # it adds nothing to its channels
+        page.place_fusion("ho")                                       # a second combination: its own block
         settle(w, page)
         fusions = [q for q in m.paths if (q.source or {}).get("fusion")]
         g = Graph(m)
         assert len(fusions) == 2 and len({id(g.node_of(q, "fusion")) for q in fusions}) == 2
-        assert [node_title(m, g.node_of(q, "fusion")) for q in fusions] == ["Combine channels 1", "Combine channels 2"]
-        page.remove_tool(g.node_of(fusions[0], "fusion"), None)   # the first goes: the second still needs the stars
+        assert [node_title(m, g.node_of(q, "fusion")) for q in fusions] == ["H-O 1", "H-O 2"]
+        page.remove_tool(g.node_of(fusions[0], "fusion"), None)
         settle(w, page)
-        assert all("stars" in blocks_of(m, n) for n in ("Ha", "OIII"))
         page.remove_tool(Graph(m).node_of(m.view(fusions[1].pid), "fusion"), None)
         settle(w, page)
-        assert {n: blocks_of(m, n) for n in ("Ha", "OIII")} == before            # as before the first Combine channels
+        assert {n: blocks_of(m, n) for n in ("Ha", "OIII")} == before            # as before the first combination
         assert not [n for n in Graph(m).nodes if n.key == "composition"]
     finally:
         done(w, m, page)
@@ -226,42 +225,22 @@ def test_one_image_sent_to_post_from_a_block_is_not_numbered(qapp, tmp_path, mon
         done(w, m, page)
 
 
-def test_a_fusion_named_by_its_palette_follows_it_and_a_name_given_stays(qapp, tmp_path, monkeypatch):
-    """GUI exploration 4: an SHO fusion switched to HSO kept "SHO (Hubble palette)" as its name (workflow, panel, block
-    summary, Post layer). Its palette's name follows, Ctrl+Z takes it back; a name the user gave stays."""
-    w, m, page = open_page(tmp_path, monkeypatch, filters=("SII", "Ha", "OIII"))
-    try:
-        chans = [{"pid": q.pid, "role": q.name, "channel": "L"} for q in m.paths]
-        f = m.add_fusion("SHO (Hubble palette)", "SHO", chans)
-        assert m.set_fusion_palette(m.view(f.pid), "HSO")
-        assert m.view(f.pid).name == "HSO"
-        m.undo()
-        assert m.view(f.pid).name == "SHO (Hubble palette)"
-        assert m.rename(f.pid, "My nebula")
-        assert m.set_fusion_palette(m.view(f.pid), "HOO")
-        assert m.view(f.pid).name == "My nebula"
-    finally:
-        done(w, m, page)
-
-
-def test_no_stars_block_is_placed_in_a_fusion_where_it_would_not_be_drawn(qapp, tmp_path, monkeypatch):
-    """GUI exploration 4: dragging Stars/background lit a place on each Combine channels's lane; dropped there, the block went
-    into the fusion's graph, never drawn (a Combine channels is one block; its stars are chosen in its panel). No place, the
-    palette says why, a placing is refused."""
+def test_a_stars_block_after_a_combination_is_drawn_after_it(qapp, tmp_path, monkeypatch):
+    """One block, one function: a combination has no stars of its own; a Stars/background placed after it takes them
+    off the combined image, drawn after its block (its Combine layers in Post)."""
     w, m, page = open_page(tmp_path, monkeypatch, filters=("Ha", "OIII"))
     try:
         chans = [{"pid": q.pid, "role": q.name, "channel": "L"} for q in m.paths]
-        f = m.add_fusion("HOO", "HOO", chans)
+        f = m.add_fusion("H-O", "ho", chans)
         settle(w, page)
         fv = m.view(f.pid)
-        assert m.place_indices(fv, "stars") == [] and m.palette_reason(fv, "stars")
-        page.graph.drag_block = "stars"
-        page.graph.rebuild()
-        assert not [g for g in page.graph.ghosts if g.pid == f.pid]
-        page.graph.drag_block = None
-        n = len(m._undo)
-        page.place_block("stars", f.pid, 0)
-        assert len(m._undo) == n and "panel" in page.toasts[-1]
+        assert m.place_indices(fv, "stars") and not m.palette_reason(fv, "stars")
+        page.place_block("stars", f.pid)
+        settle(w, page)
+        fv = m.view(f.pid)
+        assert m.display_keys(fv) == ["fusion", "etoiles"] and m.all_stages(fv)[-1] == "star_removal"
+        g = Graph(m)
+        assert g.node_of(fv, "etoiles").parent is g.node_of(fv, "fusion")
     finally:
         done(w, m, page)
 
@@ -271,7 +250,7 @@ def test_a_fusion_channel_keeps_what_the_fusion_needs(qapp, tmp_path, monkeypatc
     Python error on Ctrl+Y any more); its session set to another filter: the Combine channels red with the reason."""
     w, m, page = open_page(tmp_path, monkeypatch, filters=("Ha", "OIII"))
     try:
-        page.place_fusion()
+        page.place_fusion("ho")
         settle(w, page)
         hoo = next(q for q in m.paths if (q.source or {}).get("fusion"))
         ha = next(q for q in m.paths if q.name == "Ha")

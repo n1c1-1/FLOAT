@@ -177,7 +177,7 @@ def test_one_workflow_per_filter_works_on_a_new_project(qapp, tmp_path, monkeypa
     try:
         d = window(page)
         d.pick(next(c.t for c in d.cards if c.t["key"] == "filters_min"))
-        assert d.palette_row.isVisibleTo(d) and d.palette.currentText() == "HOO"
+        assert d.palette_row.isVisibleTo(d) and d.palette.currentData() == "H-O"
         assert d.ok.isEnabled() and "Ha, OIII" in d.duration.text()
         d.ok.click()
         settle(w, page)
@@ -285,13 +285,14 @@ def test_the_session_files_are_added_taken_out_and_said_kind_by_kind(qapp, tmp_p
 
 
 def test_the_fusion_panel_lists_its_palette_s_channels_and_can_delete(qapp, tmp_path, monkeypatch):
-    """7.6, #27, #34: in HOO, SII is not listed with a weight; a Delete block button as the Image block's."""
+    """7.6, #27, #34: an H-O lists its two named inputs, each with its workflow; a Delete block button as the Image
+    block's."""
     w, m, page = open_page(tmp_path, monkeypatch)
     try:
         for f in ("SII", "Ha", "OIII"):
             m.add_filter_session(f)
         made = {f: m.filter_workflow(f) for f in ("SII", "Ha", "OIII")}
-        q = m.add_fusion("Nebula", "HOO", [{"pid": made[f].pid, "role": f, "channel": "L"} for f in made])
+        q = m.add_fusion("Nebula", "ho", [{"pid": made[f].pid, "role": f, "channel": "L"} for f in ("Ha", "OIII")])
         settle(w, page)
         page.select(index=m.paths.index(m.view(q.pid)), step="fusion")
         page.refresh()
@@ -299,7 +300,7 @@ def test_the_fusion_panel_lists_its_palette_s_channels_and_can_delete(qapp, tmp_
         tx = texts(page.panel) + [c.currentText() for c in page.panel.findChildren(QComboBox)]    # #55: a channel's list
         assert "Delete" in tx
         assert not any(t.startswith("SII ·") for t in tx) and any(t.startswith("Ha ·") for t in tx)
-        assert "Unused by HOO: SII" in tx
+        assert {"<b>Hα</b>", "<b>O III</b>"} <= set(tx)                         # its named inputs
     finally:
         close(w, m, page)
 

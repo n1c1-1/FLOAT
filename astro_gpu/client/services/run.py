@@ -34,6 +34,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 
 from ... import api
 from ...core.project2 import Project2
+from ...stages.combine import COMBINATIONS
 from ..i18n import _, hm, is_raw_error, number, plain_error, plural
 from .worker import ApiWorker
 
@@ -66,7 +67,7 @@ def size_text(gb: float) -> str:
 
 
 #: the stages the model's titles do not name (exploration 6.1: "sessions", "inventory@2" were shown as they are)
-STAGE_TITLES = {"sessions": "Sessions joined", "image": "Image", "fusion": "Combine channels"}
+STAGE_TITLES = {"sessions": "Sessions joined", "image": "Image", **{c.name: c.title for c in COMBINATIONS}}
 
 
 def stage_title(model, stage: str) -> str:

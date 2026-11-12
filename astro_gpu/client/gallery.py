@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core import workflow as wfl
+from ..stages.combine import COMBINATIONS, FORMER_PALETTES, CombineSHO
 from . import prefs
 from .blocks import KEY_ENGINE_BLOCK, TITLES, TRUNK
 from .i18n import _, hm
@@ -56,22 +57,24 @@ TABS = (("frames", "Templates"), ("mine", "My templates"), ("copy", "Workflow co
 #: a user's template file (Export / Import)
 TEMPLATE_SUFFIX = ".sftemplate"
 
-#: the default palette of S II, H-alpha and O III: stages/fusion.SHO_DEFAULT (not imported here: that module loads
-#: OpenCV, which the gallery does not need)
-SHO_DEFAULT = "SHO Hubble"
-#: the palettes the Filters templates offer, and their filters: S II, H-alpha and O III in the Hubble look first (the
-#: default), the plain SHO kept as a choice
-PALETTES = {SHO_DEFAULT: ("SII", "Ha", "OIII"), "SHO": ("SII", "Ha", "OIII"), "HOO": ("Ha", "OIII"),
-            "RGB": ("R", "G", "B"), "LRGB": ("L", "R", "G", "B")}
-#: what each palette of a fusion does, in a sentence (the tooltip of its choice, here and in the block's panel)
-PALETTE_TIPS = {
-    SHO_DEFAULT: "S II in red-orange, H-alpha in copper, O III in blue: the look of the Hubble images.",
-    "SHO": "S II in red, H-alpha in green, O III in blue: each filter straight to one colour.",
-    "HSO": "H-alpha in red, S II in green, O III in blue.",
-    "HOO": "H-alpha in red, O III in green and blue: the usual palette of a dual-band filter.",
-    "RGB": "The red, green and blue filters as they are.",
-    "LRGB": "The colours of the red, green and blue filters, the detail of the luminance filter.",
-}
+#: the filters a Filters template is for, by the type of combination they make (stages/combine.py: its block's
+#: name and its named inputs); S II, H-alpha and O III first
+PALETTES = {c.title: c.ports for c in COMBINATIONS}
+SHO_DEFAULT = CombineSHO.title
+#: what each type does, in a sentence (the tooltip of its choice)
+PALETTE_TIPS = {c.title: c.description for c in COMBINATIONS}
+
+
+def palette_kind(name: str) -> str:
+    """The type of combination ("sho"...) of a template's choice: a type's name, or a palette of the former Combine
+    channels block that a saved template may still name ("SHO Hubble": S-H-O)."""
+    by_title = {c.title: c.kind for c in COMBINATIONS}
+    return by_title.get(name) or FORMER_PALETTES.get(name, ("sho",))[0]
+
+
+def palette_name(name: str) -> str:
+    """A template's choice as a type's name (a former palette's name becomes its type's)."""
+    return next(c.title for c in COMBINATIONS if c.kind == palette_kind(name))
 #: the templates: key, tab, name, what it is for, the workflow's options (the views'), and: kind and palette (Filters),
 #: source ("image"), plain (each image straight to Post), images (several files), recommended
 GALLERY: list[dict] = [
@@ -83,13 +86,13 @@ GALLERY: list[dict] = [
               "come to Post as two layers."),
     dict(key="image", tab="frames", name="Image", opts=CLASSIC, source="image", plain=True, blocks=[],
          text="One image to Post as a layer, a FITS, TIFF, PNG or JPEG file: blocks are added from the palette."),
-    dict(key="filters_min", tab="frames", name="Filters minimal", opts=CLASSIC, kind="filters", palette="HOO",
-         filters=PALETTES["HOO"],
+    dict(key="filters_min", tab="frames", name="Filters minimal", opts=CLASSIC, kind="filters", palette="H-O",
+         filters=PALETTES["H-O"],
          text="A monochrome camera: each filter gets its own workflow, and each result is a layer of Post."),
     dict(key="filters_full", tab="frames", name="Filters full", opts=CLASSIC_DN, kind="fusion", palette=SHO_DEFAULT,
          filters=PALETTES[SHO_DEFAULT],
-         text="Each filter's workflow with denoise and its stars taken off, then a Combine channels block makes the "
-              "colour image with the palette chosen here; the stars come back by a Combine layers block."),
+         text="Each filter's workflow with denoise, then the combination of the filters chosen here makes the colour "
+              "image; a Stars/background after it takes its stars off, a Combine layers block puts them back."),
     dict(key="images", tab="frames", name="Several images", opts=CLASSIC, source="image", plain=True, blocks=[], images=3,
          text="Several images to Post, one layer each: each Image block takes its file in the graph."),
 ]
@@ -130,10 +133,7 @@ def template_blocks(t: dict, mono: bool = False) -> list[dict]:
     drop = set(t.get("drop") or ())
     if mono or t.get("kind") in ("filters", "fusion"):
         drop.add("color")
-    g = [n for n in g if n["block"] not in drop and not n["off"]]
-    if t.get("kind") == "fusion" and not any(n["block"] == "stars" for n in g):
-        g.append(wfl.node("stars"))               # option A: each channel's stars taken off
-    return g
+    return [n for n in g if n["block"] not in drop and not n["off"]]
 
 
 def chain_of(t: dict) -> list[tuple[str, str]]:
@@ -152,7 +152,6 @@ def chain_of(t: dict) -> list[tuple[str, str]]:
     if t.get("kind") in ("filters", "fusion"):                 # each filter's own workflow (draw_filters)
         keys = ["calibration", "empilement", "astrometrie", "fond"]
         keys += ["debruitage"] if o.get("debruitage") else []
-        keys += ["etoiles"] if t["kind"] == "fusion" else []       # option A: the stars off in each
         return [(k, "") for k in keys + ["post"]]
     if t.get("stretched"):
         return [("post", "")]
@@ -336,7 +335,7 @@ def draw_graph(t: dict, w: int, h: int, names: bool = False) -> QPixmap:
 
 def draw_filters(t: dict, w: int, h: int, names: bool = False) -> QPixmap:
     """A filters template's graph: a row per filter (its session, then its own workflow up to its Output), the rows
-    joined into a Combine channels block (a fusion's palette)."""
+    joined into the block of their combination, its Stars/background and the Combine layers that puts its stars back."""
     pm = QPixmap(w, h)
     pm.fill(QColor("#15171c"))
     p = QPainter(pm)
@@ -344,7 +343,7 @@ def draw_filters(t: dict, w: int, h: int, names: bool = False) -> QPixmap:
     chain = [k for k, _h in chain_of(t)]
     rows = list(t["filters"])
     fusion = t["kind"] == "fusion"
-    n = 1 + len(chain) + (2 if fusion else 0)
+    n = 1 + len(chain) + (3 if fusion else 0)
     gap = max(4.0, w * (0.008 if names else 0.012))      # with the names: narrower gaps, wider blocks
     bw = (w - 2 * gap - (n - 1) * gap - (gap * 2 if fusion else 0)) / n
     pitch_max = (h - 8) / max(len(rows), 1)
@@ -386,9 +385,11 @@ def draw_filters(t: dict, w: int, h: int, names: bool = False) -> QPixmap:
     if fusion:
         yf = h / 2
         x = ends[0][0] + 3 * gap
-        r = block(x, yf, _("Combine channels") + " " + t.get("palette", ""), "#c9a227")
-        r2 = block(r.right() + gap, yf, _("Combine layers"), "#c9a227")     # the stars put back (option A)
-        wire(r.right(), yf, r2.left(), yf)
+        r = block(x, yf, _(palette_name(t.get("palette", SHO_DEFAULT))), "#c9a227")
+        r1 = block(r.right() + gap, yf, _("Stars/background"), "#5fbf7f")   # the stars taken off the combined image
+        r2 = block(r1.right() + gap, yf, _("Combine layers"), "#c9a227")    # and put back
+        wire(r.right(), yf, r1.left(), yf)
+        wire(r1.right(), yf, r2.left(), yf)
         for ex, ey in ends:
             wire(ex, ey, r.left(), h / 2)
     p.end()
@@ -400,7 +401,8 @@ CARD_W = 232
 
 
 def with_palette(t: dict, palette: str) -> dict:
-    """A Filters template with this palette, and its filters."""
+    """A Filters template with this type of combination, and its filters."""
+    palette = palette_name(palette)
     return {**t, "palette": palette, "filters": PALETTES[palette]}
 
 
@@ -443,12 +445,12 @@ class TemplateCard(QFrame):
 
 
 def palette_box(current: str) -> QComboBox:
-    """The palette of a Filters template."""
+    """The filters of a Filters template, by their type of combination (its name translated, its key as data)."""
     cb = QComboBox()
-    cb.addItems(list(PALETTES))
-    for i, pal in enumerate(PALETTES):                 # what each palette does, on its item
+    for i, pal in enumerate(PALETTES):                 # what each type does, on its item
+        cb.addItem(_(pal), pal)
         cb.setItemData(i, _(PALETTE_TIPS[pal]), Qt.ToolTipRole)
-    cb.setCurrentText(current)
+    cb.setCurrentIndex(max(0, cb.findData(palette_name(current))))
     cb.setToolTip(_("The filters shot: each gets its Session block and its workflow"))
     return cb
 
@@ -533,7 +535,7 @@ class TemplatePage(QWidget):
             c.layout().addWidget(what)
             if t.get("kind"):
                 box = palette_box(t["palette"])
-                box.currentTextChanged.connect(c.set_palette)
+                box.currentIndexChanged.connect(lambda i, b=box, card=c: card.set_palette(b.itemData(i)))
                 c.layout().addWidget(box)
             # issue #133: its stretch made the cards, and the grid, take the page's whole height. A card is as tall as
             # the tallest of its row (_reflow), never taller: the room left goes below its content, which keeps its
@@ -618,7 +620,7 @@ class TemplateGallery(QDialog):
         flr.setContentsMargins(0, 0, 0, 0)
         flr.addWidget(label(_("Palette"), "dim"))
         self.palette = palette_box(SHO_DEFAULT)
-        self.palette.currentTextChanged.connect(self._palette)
+        self.palette.currentIndexChanged.connect(lambda i: self._palette(self.palette.itemData(i)))
         flr.addWidget(self.palette)
         flr.addStretch(1)
         sv.addWidget(self.palette_row)
@@ -694,7 +696,7 @@ class TemplateGallery(QDialog):
         self.text.setText(_(t["text"]) if not t.get("copy") else t["text"])
         self.palette_row.setVisible(self._asks_filters(t))
         self.palette.blockSignals(True)
-        self.palette.setCurrentText(t.get("palette", SHO_DEFAULT))
+        self.palette.setCurrentIndex(max(0, self.palette.findData(palette_name(t.get("palette", SHO_DEFAULT)))))
         self.palette.blockSignals(False)
         mine = bool(t.get("user"))
         self.export_b.setVisible(mine)
@@ -708,7 +710,7 @@ class TemplateGallery(QDialog):
             except Exception:  # noqa: BLE001 - an estimate is a hint
                 dur = ""
         self.duration.setText(dur)
-        base = t["name"] if t.get("copy") else t["palette"] if t.get("kind") == "fusion" else _(t["name"])
+        base = t["name"] if t.get("copy") else _(palette_name(t["palette"])) if t.get("kind") == "fusion" else _(t["name"])
         if t.get("copy"):
             base = _("{name} (copy)").format(name=t["copy"].name)
         self.name.setText(self.s.unique_name(base) if hasattr(self.s, "unique_name") else base)
@@ -720,7 +722,7 @@ class TemplateGallery(QDialog):
         self.choice = t
         self.preview.setPixmap(draw_graph(t, PREVIEW_W, 190, names=True))
         if t.get("kind") == "fusion":
-            self.name.setText(self.s.unique_name(palette) if hasattr(self.s, "unique_name") else palette)
+            self.name.setText(self.s.unique_name(_(t["palette"])) if hasattr(self.s, "unique_name") else _(t["palette"]))
         self._update()
 
     def needs(self, t: dict) -> list[str]:
@@ -739,7 +741,7 @@ class TemplateGallery(QDialog):
         return []
 
     def _asks_filters(self, t: dict) -> bool:
-        """A palette is chosen for a Combine channels block, or for filter workflows of a project without filters yet."""
+        """A type is chosen for a combination block, or for filter workflows of a project without filters yet."""
         return t.get("kind") == "fusion" or (t.get("kind") == "filters" and
                                              not (self.s.filters() if hasattr(self.s, "filters") else {}))
 

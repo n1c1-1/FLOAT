@@ -101,7 +101,7 @@ def test_filter_workflows_and_their_fusion_draw_no_output_block(qapp, tmp_path, 
     try:
         settle(w, page)
         no_output_block(m, page, "two filters")
-        page.place_fusion()
+        page.place_fusion("ho")
         settle(w, page)
         no_output_block(m, page, "their fusion")
     finally:
