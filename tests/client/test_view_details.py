@@ -124,7 +124,7 @@ def test_the_before_follows_the_main_pictures_neutral_sky_or_its_own_option(qapp
     assert not v._cmp.stretch.neutral
 
 
-def test_the_handle_between_the_curves_and_the_frames_moves_on_a_laptop_window(qapp):
+def test_the_handle_between_the_curves_and_the_frames_moves_on_a_laptop_window(qapp, request):
     """Issue #118: on Selection the drift path (a chart asking 300 px) above the frames' viewer (220 px) asked more
     than a laptop's window holds: the handle, held between the two minimums, only made the display flicker. In a tab
     split in two the charts are as small as the handle makes them; where the user leaves it is kept."""
@@ -150,6 +150,14 @@ def test_the_handle_between_the_curves_and_the_frames_moves_on_a_laptop_window(q
         sp = host._split("selection", top, v, (2, 5))
         host.show()
         QApplication.processEvents()
+
+        def end():                                             # moving the handle armed the 700 ms save of the splits: left
+            t = host.__dict__.get("_split_t")                  # armed it fired in a later test, whose Selection then found
+            if t is not None:                                  # this handle's place in the settings instead of its default
+                t.stop()
+            host.hide()
+            host.deleteLater()
+        request.addfinalizer(end)
         return host, sp
 
     host, sp = page()
