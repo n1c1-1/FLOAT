@@ -254,25 +254,6 @@ def long_bias(bias: list[dict], flats: list[dict]) -> dict | None:
             "flats": any(f.get("exposure") and _same_exposure(t, f["exposure"]) for f in flats)}
 
 
-#: the kind of frame a header's image type must name in each kind of file of a session (a flat dark is a dark)
-TYPE_OF_KIND = {"lights": "light", "darks": "dark", "flats": "flat", "bias": "bias", "flat_darks": "dark"}
-
-
-def wrong_types(keys: dict[str, list[dict]]) -> dict[str, dict[str, int]]:
-    """The files of a session whose header's image type names another kind than the one they are given as, from the
-    frames' keys of each kind ({kind: [{"type": ...}]}): {kind: {the type they say: how many}}; {} for none. Only a
-    header with an image type counts (nothing from a file's or a folder's name). Information only: nothing is
-    reclassified."""
-    out: dict[str, dict[str, int]] = {}
-    for kind, frames in keys.items():
-        for f in frames:
-            t = f.get("type")
-            if t and t != TYPE_OF_KIND[kind]:
-                got = out.setdefault(kind, {})
-                got[t] = got.get(t, 0) + 1
-    return out
-
-
 def dark_plan(lights: list[dict], darks: list[dict], base: bool) -> list[tuple[str, int | None]]:
     """How each group of lights (``exposure_groups``) is calibrated against the groups of darks, by the usual practice
     of calibration: ("same", j) with the darks of group j, of its exposure and gain, as they are; ("scaled", j) when no

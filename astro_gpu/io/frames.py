@@ -76,13 +76,10 @@ class FrameInfo:
     #: ``iso`` is a gain (a FITS frame of an astro camera: GAIN), not an ISO speed: the interface says "Gain" then.
     #: Not in ``to_dict`` either
     iso_is_gain: bool = False
-    #: the kind of frame its FITS header's image type names (``image_kind``: "light" | "dark" | "flat" | "bias"; "" for
-    #: none, a raw file or an ambiguous name). Not in ``to_dict`` either
-    imagetyp: str = ""
 
     def to_dict(self) -> dict:
         d = asdict(self)
-        del d["time_from_file"], d["iso_is_gain"], d["imagetyp"]
+        del d["time_from_file"], d["iso_is_gain"]
         return d
 
 
@@ -461,7 +458,7 @@ def light_facts(paths, limit: int = 400) -> dict:
         except Exception:  # noqa: BLE001 - a damaged or foreign file: said by the checks
             continue
         like = like or info
-        out["keys"].append({"exposure": info.exposure, "iso": info.iso, "type": info.imagetyp, "filter": info.filter})
+        out["keys"].append({"exposure": info.exposure, "iso": info.iso, "filter": info.filter})
         if info.time and not info.time_from_file:
             out["times"].append(info.time)
         if "ra" not in out and info.ra is not None and info.dec is not None:
@@ -554,16 +551,6 @@ def frame_filter(path: str | Path) -> str:
         return ""
 
 
-def image_kind(text) -> str:
-    """The kind of frame an image type of a header names (IMAGETYP: 'Light Frame', 'MasterFlat', 'Dark', 'Bias Frame',
-    'Object'...): "light" | "dark" | "flat" | "bias"; "" for no type, one that is none of them, or both ('Dark Flat',
-    'Flat Dark': a flat dark is a dark, a flat's dark, said both ways)."""
-    t = str(text or "").lower()
-    found = {k for k, words in (("bias", ("bias", "offset", "zero")), ("dark", ("dark",)), ("flat", ("flat",)),
-                                ("light", ("light", "object", "science"))) if any(w in t for w in words)}
-    return found.pop() if len(found) == 1 else ""
-
-
 def _filter_of(hd) -> str:
     return FILTER_NAMES.get(str(hd.get("FILTER", "")).strip().lower(), "")
 
@@ -646,7 +633,6 @@ def _fits_info(path: Path) -> FrameInfo:
     info.object = str(hd.get("OBJECT", "")).strip()
     info.pixel_scale = _num(hd.get("PIXSCALE", hd.get("SECPIX")))
     info.filter = _filter_of(hd)
-    info.imagetyp = image_kind(hd.get("IMAGETYP", hd.get("FRAMETYP")))
     info.stacked = master_count(hd)
     try:
         if "RA" in hd and "DEC" in hd and isinstance(hd["RA"], (int, float)):

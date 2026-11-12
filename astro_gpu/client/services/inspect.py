@@ -556,7 +556,6 @@ class SessionRow:
     dark_keys: list = field(default_factory=list)
     bias_keys: list = field(default_factory=list)      # the same for its bias and its flats (``long_bias``)
     flat_keys: list = field(default_factory=list)
-    flat_dark_keys: list = field(default_factory=list)
     #: its frames' own date against the one their file names say, when they disagree (io/frames.clock_disagreement:
     #: {"camera", "names"} ISO dates), from the first and last lights' headers read for ``first`` and ``last`` when
     #: the date is their own (EXIF, DATE-OBS), never the file's date on disk
@@ -626,7 +625,7 @@ def _keys_of(files: list, hdr: dict, limit: int = 400) -> list[dict]:
         if k not in hdr:
             try:
                 info = read_info(f)
-                hdr[k] = {"exposure": info.exposure, "iso": info.iso, "type": info.imagetyp, "filter": info.filter}
+                hdr[k] = {"exposure": info.exposure, "iso": info.iso, "filter": info.filter}
             except Exception:  # noqa: BLE001 - an unreadable frame is said by the import, not here
                 hdr[k] = None
         if hdr[k] is not None:
@@ -675,11 +674,6 @@ def calib_checks(row: SessionRow, camera: dict) -> dict:
     "mixed_exposures": the exposure times of lights of several (information)."""
     from ...stages.calibrate import dark_far, flat_under, long_bias, mixed_exposures
     out: dict = {}
-    from ...stages.calibrate import wrong_types
-    wt = wrong_types({"lights": row.light_keys, "darks": row.dark_keys, "flats": row.flat_keys, "bias": row.bias_keys,
-                      "flat_darks": row.flat_dark_keys})
-    if wt:
-        out["wrong_types"] = wt
     lb = long_bias(row.bias_keys, row.flat_keys)
     if lb:
         out["long_bias"] = lb
@@ -792,9 +786,8 @@ def project_frames(p, wid: int | None, headers: dict | None = None) -> ProjectFr
         try:
             row.bias_keys = _keys_of(_files(p, s.bias), hdr)
             row.flat_keys = _keys_of(_files(p, s.flats), hdr)
-            row.flat_dark_keys = _keys_of(_files(p, s.flat_darks), hdr)
         except Exception:  # noqa: BLE001 - a hint, as the levels above
-            row.bias_keys = row.flat_keys = row.flat_dark_keys = []
+            row.bias_keys = row.flat_keys = []
         out.sessions.append(row)
     far = {x["sid"]: x for x in api.target_far(p, points)}
     for row in out.sessions:
