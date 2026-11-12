@@ -1765,6 +1765,15 @@ class ProjectModel(QObject):
             self.p.set_blocks(p.pid, g)
         return True
 
+    def align_without_astrometry(self, p, reference: int) -> None:
+        """What a template does for a workflow it aligns on the reference (#165): the Align on block, and no Astrometry
+        block of its own, as the blocks after Align on read the reference's plate solution (same grid, same solution)."""
+        self.set_align_on(p, reference)
+        g = self.graph(p)
+        if any(n["block"] == "astrometry" for n in g):
+            with self._edit():
+                self.p.set_blocks(p.pid, [n for n in g if n["block"] != "astrometry"])
+
     def add_sho_rgb(self, name: str, kind: str, filters: list[str], opts: dict) -> WorkflowView:
         """The "SHO + RGB stars" template (issue #165): one workflow per filter (the first is the reference), a colour
         workflow of its own, each with Stars/background; the others on the reference's grid (Align on after Stacking); the
@@ -1786,8 +1795,8 @@ class ProjectModel(QObject):
             self.set_graph(rgb, [dict(n) for n in wfl.from_options(to_engine(dict(opts)), None, "frames") if not n["off"]])
             rgb = self.view(rgb.pid)
             for _f, q in made[1:]:
-                self.set_align_on(q, ref.pid)
-            self.set_align_on(rgb, ref.pid)
+                self.align_without_astrometry(q, ref.pid)
+            self.align_without_astrometry(rgb, ref.pid)
             fus = self.add_fusion(name, kind, [{"pid": q.pid, "role": f, "channel": "L", "image": "starless"}
                                                for f, q in made])
             lid = self.add_post_layer(fus.pid, "combined", None)

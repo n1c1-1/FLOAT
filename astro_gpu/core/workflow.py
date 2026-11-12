@@ -230,6 +230,9 @@ PROVIDES: dict[str, tuple[str, ...]] = {"sessions": ("inventory", "calibrate"), 
                                          **{st: ("stack",) for st in COMBINE}}
 #: dependencies a stage has beyond its declared ``deps``
 EXTRA: dict[str, tuple[str, ...]] = {}
+#: the stages of the Astrometry block: a workflow that aligns on another (Align on) has the plate solution of the grid it
+#: was brought onto, so its blocks read these in the reference workflow when it has no Astrometry block of its own (#165)
+ASTROMETRY_STAGES = ("astrometry", "reference", "catalogs", "surveys")
 #: dependencies that may be absent from a chain (the stage then runs without them); the stages that read the stack
 #: read it with the sky gradient removed when the chain has the Gradient block (gradient.stack_image)
 OPTIONAL: dict[str, tuple[str, ...]] = {
@@ -450,11 +453,17 @@ class Chains:
             if r is not None:
                 if r not in out:
                     out.append(r)
-            elif d not in self.optional.get(b, ()):
+            elif d not in self.optional.get(b, ()) and not self.borrows(chain, stage, d):
                 raise ValueError(f"stage '{stage}' needs the {self.block_title(self.block_of(d))} block "
                                  f"(stage '{d}')")
         out += [x for x in prior if x not in out]
         return tuple(out)
+
+    @staticmethod
+    def borrows(chain: Sequence[str], stage: str, dep: str) -> bool:
+        """The stage reads ``dep`` (a stage of the Astrometry block) in another workflow: it comes after the Align on
+        block and its chain has no such block (``Keys.borrowed`` says which workflow)."""
+        return dep in ASTROMETRY_STAGES and "align_on" in chain and stage in chain             and list(chain).index(stage) > list(chain).index("align_on")
 
     def ancestors(self, chain: Sequence[str], stage: str) -> list[str]:
         """Every stage this one reads, directly or not, in the chain, in the chain's order."""
@@ -696,7 +705,7 @@ def graph_problem(blocks: Sequence[dict], source: str, raise_it: bool = False) -
                 other = next(x for x in FRAME_BLOCKS[r + 1:] if x in seen)
                 return bad(WHY_FRAME_ORDER, block=_title(b), where="before", other=_title(other))
             frame_rank = r
-        if b == "color" and "astrometry" not in seen:
+        if b == "color" and "astrometry" not in seen and "align_on" not in seen:
             return bad(WHY_NEEDS, need=_title("astrometry"))
         if b in ("denoise", "deconv") and (source != "frames" or "stacking" not in seen):
             return bad(WHY_HALVES)
@@ -856,10 +865,11 @@ def options_of(blocks: Sequence[dict], source: str = "frames") -> dict[str, Any]
 
 
 def sequence_chain(blocks: Sequence[dict], source: str = "frames", *, reference: bool = False,
-                   sessions: Sequence[int] = (), combine: str = "") -> list[str]:
+                   sessions: Sequence[int] = (), combine: str = "", catalogs: bool = False) -> list[str]:
     """The chain of a graph, in the graph's order: the source's stages, then each active node's (an image block's
     entry is its node's name). Calibration and Registration absent or switched off still run, as a pass-through.
-    ``combine``: the stage of a combination source (``combine_stage``)."""
+    ``combine``: the stage of a combination source (``combine_stage``). ``catalogs``: a workflow aligned on this one has a
+    Color block, which reads the catalogues of this one's Astrometry (#165)."""
     act = _active(blocks)
     has = {n["block"] for n in act}
     out: list[str] = []
@@ -886,7 +896,7 @@ def sequence_chain(blocks: Sequence[dict], source: str = "frames", *, reference:
         if b in FRAME_BLOCKS:
             continue                                  # in the source's stages above
         if b == "astrometry":
-            out += ["astrometry"] + (["reference"] if reference else []) + (["catalogs"] if "color" in has else []) \
+            out += ["astrometry"] + (["reference"] if reference else []) + (["catalogs"] if "color" in has or catalogs else []) \
                 + ["surveys"]
         elif b == "align_on":
             out.append("align_on")

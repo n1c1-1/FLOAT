@@ -138,6 +138,8 @@ def warp(a: np.ndarray, wp, nearest: bool = False) -> np.ndarray:
 
 #: why a block has no reference yet (the runner leaves it and what follows out; the graph greys it)
 NO_REFERENCE = "reference to wire"
+#: why a block that reads the plate solution has none: its workflow has no Astrometry block and the workflow it aligns on has none
+NO_REFERENCE_ASTROMETRY = "needs Astrometry in the reference workflow"
 NO_PLATE_STACK = "the stack has no plate solution yet (Astrometry comes after)"
 #: the files of a stack the block resamples: (name, nearest neighbour)
 RESAMPLED = (("drz_full.npy", False), ("drz_A.npy", False), ("drz_B.npy", False), ("drz_weight.npy", True))

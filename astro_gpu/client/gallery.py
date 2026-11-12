@@ -396,7 +396,7 @@ def draw_filters(t: dict, w: int, h: int, names: bool = False) -> QPixmap:
     for i, (row, y) in enumerate(zip(rows, ys)):
         r = block(gap, y, row, "#7aa2d6")
         for j, k in enumerate(cols):
-            if (k == "align_on" and i == 0) or (k == "couleur" and not (rgb and row == "RGB")) or \
+            if (k == "align_on" and i == 0) or (k == "astrometrie" and i > 0) or (k == "couleur" and not (rgb and row == "RGB")) or \
                     (k == "etoiles" and not rgb and "etoiles" not in base):
                 continue
             wire(r.right(), y, xs[j], y)

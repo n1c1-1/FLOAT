@@ -369,7 +369,7 @@ class Keys:
         if id(w) not in self._chains and getattr(w, "blocks", None) is not None:      # a graph (issue #47)
             self._chains[id(w)] = self.rules.chains.sequence(wfl.sequence_chain(
                 w.blocks, wfl.source_of(w), reference=bool(self.project.reference_image),
-                sessions=self.project.separate_sessions(w), combine=wfl.combine_stage(w)))
+                sessions=self.project.separate_sessions(w), combine=wfl.combine_stage(w), catalogs=self.project.catalogs_wanted(w)))
         if id(w) not in self._chains:
             from .project2 import is_fusion, is_image, is_stretched
             src = getattr(w, "source", None)
@@ -541,6 +541,25 @@ class Keys:
             return self._plate_file(ref, (*_seen, w.id)) if ref is not None and ref not in _seen else ""
         return self._image_file(w)
 
+    def borrowed(self, wf: int | Workflow, stage: str) -> dict[str, tuple[int, str]]:
+        """{stage of the Astrometry block: (workflow, stage)} for what a stage after Align on reads of the plate
+        solution in the workflow it aligns on (or the one that one aligns on), when its own workflow has no Astrometry
+        block: same grid, same solution (#165). An Astrometry block of its own is used as it is."""
+        w = self._wf(wf)
+        ch = self.chain(w)
+        out: dict[str, tuple[int, str]] = {}
+        if stage not in ch or "align_on" not in ch:
+            return out
+        for d in wfl.ASTROMETRY_STAGES:
+            if d in self.rules.chains.deps2[base(stage)] and self.rules.chains.borrows(ch, stage, d) and d not in ch:
+                pid, seen = self.reference_of(w), {w.id}
+                while pid is not None and pid not in seen and d not in self.chain(pid):
+                    seen.add(pid)
+                    pid = self.reference_of(pid) if "align_on" in self.chain(pid) else None
+                if pid is not None and pid not in seen and d in self.chain(pid):
+                    out[d] = (pid, d)
+        return out
+
     def cross_inputs(self, wf: int | Workflow, stage: str) -> list[tuple[int, str]]:
         """(workflow id, stage) of what a stage reads in other workflows: a combination's inputs (each port's image,
         its Output or its Stars/background's starless image, and its Astrometry when it has one), an Align on block's
@@ -557,6 +576,7 @@ class Keys:
             st = self.read_stage(pid) if pid is not None else None
             if st:
                 out.append((pid, st))
+        out += [x for x in self.borrowed(w, stage).values() if x not in out]
         return out
 
     def wiring_problem(self, wf: int | Workflow, stage: str) -> str:
@@ -575,6 +595,14 @@ class Keys:
         if base(stage) == "align_on" and self.reference_of(w) is None:
             from ..stages.align_on import NO_REFERENCE
             return NO_REFERENCE
+        ch = self.chain(w)
+        if "align_on" in ch and stage in ch and base(stage) != "align_on":
+            # a block that reads the plate solution of a workflow aligned on another: the reference's, which must have one
+            lack = [d for d in self.rules.chains.stages[base(stage)].deps if self.rules.chains.borrows(ch, stage, d)
+                    and d not in ch and d not in self.borrowed(w, stage)]
+            if lack:
+                from ..stages.align_on import NO_REFERENCE, NO_REFERENCE_ASTROMETRY
+                return NO_REFERENCE if self.reference_of(w) is None else NO_REFERENCE_ASTROMETRY
         return ""
 
     def _input_key(self, pid: int, stage: str) -> str | None:
@@ -592,7 +620,8 @@ class Keys:
         x = self.source_part(w, stage) if b in ("image", "align_on") or b in COMBINE else self.project_part(stage, w)
         sid = session_of(stage)
         # an instance reads its session's instances under the stages' names: keyed so, as in a one-session project
-        u = {(base(d) if sid is not None and session_of(d) == sid else d): self.key(w, d) for d in self.deps(w, stage)}
+        u = {d: self.key(pid, st) for d, (pid, st) in self.borrowed(w, stage).items()}    # the reference's solution (#165)
+        u |= {(base(d) if sid is not None and session_of(d) == sid else d): self.key(w, d) for d in self.deps(w, stage)}
         # a block placed twice ("gradient~2") is keyed by its stage, not by its number: the same computation has the
         # same key whatever the graph numbered it (GUI exploration 2). Only "~" names change: no other key moves.
         u = {(k.split("~", 1)[0] if "~" in k and k.split("~", 1)[0] not in u else k): x for k, x in u.items()}
@@ -782,6 +811,8 @@ class StoreProject:
             description=p.description, devices={k: v for k, v in devs.items() if v}, created=p.created)
         self.dirs: dict[str, Path] = {a: self.store.dir(a, keys.key(self.workflow, a))
                                       for a in keys.ancestors(self.workflow, stage)}
+        for d, (pid, st) in keys.borrowed(self.workflow, stage).items():      # the reference's plate solution (#165)
+            self.dirs[d] = self.store.dir(d, keys.key(pid, st))
         self.dirs[stage] = Path(own_dir) if own_dir is not None else self.store.tmp_dir(stage, self.key)
         # the names the stage code reads (issue #43): an instance reads its session's instances under the stages'
         # names, and itself under its stage's; later stages read what stands for a stage (the join, the image)

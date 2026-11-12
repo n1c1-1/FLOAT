@@ -3858,7 +3858,7 @@ class GraphPage(QWidget):
                 return None
             first = made[0][1]
             for _f, q in made[1:]:                          # the others on the first one's grid, while their stars are there
-                s.set_align_on(q, first.pid)
+                s.align_without_astrometry(q, first.pid)
             if t["kind"] == "filters":
                 return first
             return s.add_fusion(name, palette_kind(t["palette"]), [{"pid": q.pid, "role": f, "channel": "L"}

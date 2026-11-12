@@ -88,12 +88,16 @@ def test_the_sho_rgb_stars_template_makes_the_graph_of_the_issue(world):
     names = [q.name for q in m.paths]
     assert names == ["SII", "Ha", "OIII", "RGB", "S-H-O"]
     a, b, c, rgb, sho = (by_name(m, n) for n in names)
-    for q in (a, b, c, rgb):                          # each: ... Stacking, [Align on], Astrometry, Gradient, Denoise, Stars
+    for q in (a, b, c, rgb):          # each: Stacking, [Align on], Gradient, Denoise, Stars; Astrometry in the reference only
         blocks = [n["block"] for n in m.graph(q)]
-        assert blocks[blocks.index("stacking") + (2 if q is not a else 1)] == "astrometry"
+        assert blocks[blocks.index("stacking") + 1] == ("astrometry" if q is a else "align_on")
+        assert ("astrometry" in blocks) == (q is a)
+        assert "gradient" in blocks
         assert blocks[-1] == "stars" and blocks.index("gradient") < blocks.index("denoise") < blocks.index("stars")
         assert ("align_on" in blocks) == (q is not a)
         assert (m.align_reference(q) == a.pid) == (q is not a)                       # B, C and RGB on A
+    assert "catalogs" in m.p.chain(a.pid) and "color" in m.p.chain(rgb.pid)       # the colour reads the reference's catalogues
+    assert "astrometry" not in m.p.chain(rgb.pid) and "catalogs" not in m.p.chain(b.pid)
     assert "color" in [n["block"] for n in m.graph(rgb)] and "color" not in [n["block"] for n in m.graph(b)]
     f = m.p.workflow(sho.pid).source["fusion"]
     assert f["type"] == "sho"
@@ -199,6 +203,7 @@ def test_the_filters_templates_align_the_others_on_the_first(world):
     first, second, third, fusion = m.paths[-4:]
     assert m.align_reference(first) is None and m.align_reference(second) == first.pid == m.align_reference(third)
     assert [q.pid for q in m.paths if q.source and q.source.get("fusion")] == [fusion.pid]
+    assert ["astrometry" in [n["block"] for n in m.graph(q)] for q in (first, second, third)] == [True, False, False]
     assert [n["block"] for n in m.graph(fusion)] == []                                  # no Stars/background after it
     g = Graph(m)
     assert "to wire" not in g.node_of(fusion, "fusion").waits             # nothing to wire (it waits for lights)

@@ -308,10 +308,28 @@ class Project2:
             return wfl.chains().sequence(wfl.sequence_chain(w.blocks, wfl.source_of(w),
                                                             reference=bool(self.reference_image),
                                                             sessions=self.separate_sessions(w),
-                                                            combine=wfl.combine_stage(w)))
+                                                            combine=wfl.combine_stage(w),
+                                                            catalogs=self.catalogs_wanted(w)))
         return wfl.chain(w.options, w.end, reference=bool(self.reference_image), sessions=self.separate_sessions(w),
                          image=is_image(w), mono=self.is_mono(w) and w.source is None, fusion=wfl.combine_stage(w),
                          stretched=is_stretched(w))
+
+    def catalogs_wanted(self, wid: int | Workflow) -> bool:
+        """A workflow aligned on this one (Align on, directly or through others) has a Color block: it reads the
+        catalogues of this workflow's Astrometry, which then makes them (#165)."""
+        w = self.workflow(wid)
+        todo, seen = [w.id], {w.id}
+        while todo:
+            t = todo.pop()
+            for x in self.workflows:
+                n = next((b for b in x.blocks or [] if b["block"] == "align_on" and not b.get("off")), None)
+                if n is None or n.get("reference") != t or x.id in seen:
+                    continue
+                if any(b["block"] == "color" and not b.get("off") for b in x.blocks):
+                    return True
+                seen.add(x.id)
+                todo.append(x.id)
+        return False
 
     def set_blocks(self, wid: int | Workflow, blocks: list[dict[str, Any]]) -> None:
         """Give a workflow its graph (checked, issue #47); its options follow (what the code reading them sees)."""

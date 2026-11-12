@@ -594,6 +594,7 @@
  "The workflow whose image this one is aligned on.": "Le workflow sur l'image duquel celle-ci est alignée.",
  "Stars of the image matched to the reference's, to align it.": "Étoiles de l'image appariées à celles de la référence, pour l'aligner.",
  "reference to wire": "référence à brancher",
+ "needs Astrometry in the reference workflow": "Astrométrie requise dans le workflow de référence",
  "the stack has no plate solution yet (Astrometry comes after)": "l'empilement n'a pas encore de solution astrométrique (l'Astrométrie vient après)",
  "{names} to wire": "{names} à brancher",
  "{names} is not on the grid of {first}: place Align on after its Stacking": "{names} n'est pas sur la grille de {first} : placez Aligner sur après son Empilement",
