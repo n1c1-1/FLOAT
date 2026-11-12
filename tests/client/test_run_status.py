@@ -591,7 +591,7 @@ def test_the_project_reopens_on_its_recombine_block(env):
     stars = GRAPH[:3] + [{"block": "denoise"}, {"block": "stars"}]
     p = project(env, blocks=stars, current_block="composition")
     wid = p.workflows[0].id
-    p.post = project2.upgraded_post({"layers": [{"kind": "workflow", "pid": wid, "part": "combined", "id": 7, "name": "Workflow · Combine layers"}]})
+    p.post = project2.upgraded_post({"layers": [{"kind": "workflow", "pid": wid, "part": "combined", "starless": "starless", "stars_pid": wid, "id": 7, "name": "Workflow · Combine layers"}]})
     project2.save(p)
     w = World(p)
     try:

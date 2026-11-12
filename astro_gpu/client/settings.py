@@ -411,6 +411,11 @@ def _reason_text(s, info, stage: str) -> str:
     return _("engine default") if info.suggested == info.default else _("computed from the data")
 
 
+def _is_image(w) -> bool:
+    from ..core.project2 import is_image
+    return is_image(w)
+
+
 def resolve(s, p, step: str, it: dict, stage: str | None = None) -> dict | None:
     """The setting as shown: label, help, tip, value, suggestion, reason, bounds; None when not in this workflow (or
     when the worker has not described its stage yet). The texts are translated here, at display time."""
@@ -439,6 +444,11 @@ def resolve(s, p, step: str, it: dict, stage: str | None = None) -> dict | None:
                  # an automatic value the engine sets from the data, not known yet: "auto", never the default it would
                  # replace (round 3: drizzle 1,50 before the run, 1,00 after, as the block said "auto")
                  pending_auto=info.origin != "user" and not getattr(info, "suggestion_known", True))
+        if stage == "align_on" and it["name"] == "method" and not _is_image(s.p.workflow(p.pid)):
+            # issue #165: a stack has no plate solution at this point (Astrometry comes after it); an imported image
+            # that carries one can be aligned through it
+            from ..stages.align_on import NO_PLATE_STACK
+            r["disabled_choices"] = {"plate": texts.translate(NO_PLATE_STACK, language())}
     else:
         r.update(label=_(it["label"]), help=_(it["help"]), unit=_(it["unit"]), suggested=it["default"], tip="",
                  reason=_(it.get("reason") or "proposed value"), value=it["default"], changed=False,
@@ -705,6 +715,11 @@ class SettingRow(QFrame):
             e = QComboBox()
             for val, shown in r["choices"]:
                 e.addItem(shown, val)
+                why = (r.get("disabled_choices") or {}).get(val)
+                if why:                                  # greyed, with its reason on hover
+                    item = e.model().item(e.count() - 1)
+                    item.setEnabled(False)
+                    item.setToolTip(why)
             e.setCurrentIndex(max(e.findData(cur), 0))
             e.setMinimumWidth(220)
             e.currentIndexChanged.connect(lambda i: self.changed.emit(self.r, e.itemData(i)))

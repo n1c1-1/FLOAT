@@ -218,3 +218,30 @@ def test_inspect_reads_the_aligned_image_after_align_on(world):
     assert st.read_stage(v, "stack") == "align_on" and st.read_stage(s.view(a.pid), "stack") == "stack"
     assert [x.stage for x in st.visuals(v, "astrometrie") if x.kind == "array"] == ["align_on"]
     assert [x.stage for x in st.visuals(v, "align_on")] == ["align_on"]
+
+
+def _method_combo(w):
+    return next((x for x in w.graph.panel.findChildren(QComboBox) if x.findData("plate") >= 0), None)
+
+
+def test_plate_is_greyed_for_a_stack_with_its_reason_and_open_for_an_image(world, monkeypatch):
+    """Amendment A: no plate solution on a stack at that point (Astrometry comes after it); an imported image that
+    carries one can use it."""
+    from astro_gpu.client import settings
+    w = world
+    s = w.s
+    c = s.paths[2]
+    w.graph.place_block("align_on", c.pid)
+    settle(w)
+    for stack in (False, True):
+        if stack:
+            monkeypatch.setattr(settings, "_is_image", lambda _w: False)
+        w.graph.select(index=s.paths.index(s.view(c.pid)), step="align_on")
+        settle(w)
+        cb = _method_combo(w)
+        assert cb is not None
+        item = cb.model().item(cb.findData("plate"))
+        assert item.isEnabled() is not stack
+        if stack:
+            assert item.toolTip() == "the stack has no plate solution yet (Astrometry comes after)"
+        assert cb.model().item(cb.findData("stars")).isEnabled()

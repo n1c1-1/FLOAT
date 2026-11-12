@@ -579,6 +579,9 @@ class Main(QMainWindow):
         except project2.LegacyProject:
             self.offer_import(root)
             return False
+        except project2.EarlierVersionProject:
+            self.banner.say(_("This project was saved by an earlier version of FLOAT: convert it first."))
+            return False
         except FileNotFoundError:
             self.banner.say(_("No project in this folder: {folder}").format(folder=root.as_posix()))
             return False                                  # still in the recents: its disk may only be unplugged

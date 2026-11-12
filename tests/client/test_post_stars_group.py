@@ -192,7 +192,7 @@ def saved_before_93(gid=7):
          "mask": {"parts": [{"id": 30, "src": "brush", "op": "add", "strokes": [[6.0, 6.0, 14.0, 50.0, True]],
                              "size": 60.0, "hardness": 50.0, "paint": True}],
                   "feather": 2.0, "density": 100.0, "invert": False}},
-        {"id": gid, "kind": "workflow", "pid": 1, "part": "combined", "name": "Full · Combine layers", "visible": True,
+        {"id": gid, "kind": "workflow", "pid": 1, "part": "combined", "starless": "starless", "stars_pid": 1, "name": "Full · Combine layers", "visible": True,
          "opacity": 100.0, "mode": "Normal", "base": None, "sliders": {}, "mask": None, "blend": "Screen",
          "shown": {"stars": True, "starless": True}},
     ]

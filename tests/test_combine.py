@@ -16,6 +16,7 @@ from astro_gpu.core.journal import Journal
 from astro_gpu.core.stage import Context, StageError
 from astro_gpu.core.store import Keys
 from astro_gpu.stages import combine as C
+from tests.joins import add_align_on
 from tests.test_blocks43 import CLASSIC, FULL, _output, _Project, _split, _star, _wcs, nights, project  # noqa: F401
 
 SHO = C.CombineSHO.ports
@@ -213,7 +214,7 @@ def _channels(tmp_path, nights, options=CLASSIC):  # noqa: F811 (the fixture's v
 
 def test_a_combination_workflow_reads_its_channels_images_by_port(tmp_path, nights):  # noqa: F811 (the fixture)
     p, o = _channels(tmp_path, nights, FULL)
-    project2._add_align_on(p, o, 1, "stars")                                # the second channel on the first one's grid
+    add_align_on(p, o, 1, "stars")                                # the second channel on the first one's grid
     f = p.add_workflow("H-O", CLASSIC)
     f.source = {"fusion": {"type": "ho", "inputs": [{"pid": 1, "role": "Ha", "channel": "L"},
                                                     {"pid": o.id, "role": "OIII", "channel": "L"}]}}
@@ -269,7 +270,7 @@ def test_inputs_not_on_one_grid_leave_the_combination_out_with_what_follows_and_
     k2 = Keys(q)
     assert k2.wiring_problem(f.id, "combine_ho") == "O III to wire"
     q.validate()
-    project2._add_align_on(q, q.workflow(o.id), 1, "stars")                  # the block on the first one: one grid
+    add_align_on(q, q.workflow(o.id), 1, "stars")                  # the block on the first one: one grid
     q.workflow(f.id).source["fusion"]["inputs"].append({"pid": o.id, "role": "OIII", "channel": "L"})
     assert Keys(q).wiring_problem(f.id, "combine_ho") == ""
     two = q.workflow(1)                                                      # a variant sharing its Registration shares its grid
@@ -289,71 +290,6 @@ def test_a_combination_with_its_stars_taken_off_after_it(tmp_path, nights):  # n
     assert k.deps(f.id, "star_removal") == ("render_simple", "combine_sho")
 
 
-# ---------------------------------------------------------------------------------------------- saved projects
-
-#: the former block's palettes → the type, and the settings the block gets (beside the smoothing)
-EXPECTED = {"SHO Hubble": ("combine_sho", {}), "SHO": ("combine_sho", {"hue_sii": 0.0, "hue_ha": 120.0, "hue_oiii": 240.0}),
-            "HSO": ("combine_sho", {"hue_sii": 120.0, "hue_ha": 0.0, "hue_oiii": 240.0}),
-            "HOO": ("combine_ho", {}), "RGB": ("combine_rgb", {}), "LRGB": ("combine_lrgb", {})}
-
-
-@pytest.mark.parametrize("palette", list(EXPECTED))
-@pytest.mark.parametrize("stars", [None, {"mode": "palette"}, {"mode": "channel", "role": "Ha"}])
-@pytest.mark.parametrize("graph", [False, True])
-def test_a_saved_fusion_opens_as_the_block_of_its_palette(tmp_path, nights, palette, stars, graph):  # noqa: F811 (the fixture)
-    """Each palette × option A (stars or not) × a workflow made before the graphs or after: the project opens with the
-    block of its palette's type, the settings that reproduce it, its graph valid; the keys of the blocks before the
-    combination (its channels' workflows) are those of the project without it."""
-    p, o = _channels(tmp_path, nights, FULL if stars else CLASSIC)
-    roles = C.FORMER_PALETTES[palette]
-    ports = C.BY_KIND[roles[0]].ports
-    for r in ports:                                                          # one channel workflow per port
-        if r not in ("Ha", "OIII"):
-            w = p.add_workflow(r, FULL if stars else CLASSIC)
-            w.sessions = [1]
-    pids = {"Ha": 1, "OIII": o.id} | {w.name: w.id for w in p.workflows if w.name in ports}
-    project2.save(p)
-    before = {pid: Keys(project2.load(p.root)).keys(pid) for pid in pids.values()}
-    d = json.loads((p.root / "project.astroproj").read_text(encoding="utf-8"))
-    old = {"palette": palette, "inputs": [{"pid": pids[r], "role": r, "channel": "L"} for r in ports],
-           "weights": {ports[-1]: 0.5}}
-    opts = wfl.check_options({**CLASSIC, "denoise": "pretrained", "stars": "neural"} if stars else CLASSIC)
-    if stars:
-        old |= {"stars": stars, "added": [{"pid": 1, "denoise": None, "stars": None}]}
-    fid = d["next_workflow_id"]
-    d["workflows"].append({"id": fid, "name": palette, "options": opts, "params": {"fusion": {"percentile": 99.0}},
-                           "source": {"fusion": old},
-                           "blocks": wfl.from_options(opts, None, "fusion") if graph else None})
-    d["next_workflow_id"] = fid + 1
-    (p.root / "project.astroproj").write_text(json.dumps(d), encoding="utf-8")
-    q = project2.load(p.root)
-    w = q.workflow(fid)
-    stage, values = EXPECTED[palette]
-    # option A (stars from a workflow or a channel): the inputs read their starless images, the stars side is a layer
-    reads_starless = bool(stars) and stars["mode"] != "palette" and "Ha" in ports       # (the role must be a port)
-    ins = [dict(i, image="starless") if reads_starless else i for i in old["inputs"]]
-    assert w.source == {"fusion": {"type": stage.split("_")[1], "inputs": ins}}
-    smooth = {"smoothing": "radius", "radius": 0.0} if C.BY_KIND[stage.split("_")[1]].narrowband and not stars else {}
-    assert w.params == {stage: {"percentile": 99.0, **values, "weights": {ports[-1]: 0.5}, **smooth}}
-    k = Keys(q)
-    assert k.chain(fid) == [stage, "render_simple"] + (["star_removal"] if stars else [])
-    k.key(fid, "render_simple")                                              # its settings valid, its key made
-    assert {pid: k.keys(pid) for pid in pids.values()} == before            # the channels' results stay valid
-    project2.save(q)                                                         # saved in the new form, opened again
-    assert project2.load(p.root).workflow(fid).source == w.source
-
-
-def test_a_former_fusion_reading_more_channels_than_its_palette_keeps_its_ports_only(tmp_path, nights):  # noqa: F811 (the fixture)
-    p, o = _channels(tmp_path, nights)
-    project2.save(p)
-    d = json.loads((p.root / "project.astroproj").read_text(encoding="utf-8"))
-    d["workflows"].append({"id": 9, "name": "HOO", "options": CLASSIC, "params": {}, "source": {"fusion": {
-        "palette": "HOO", "inputs": [{"pid": 1, "role": "SII"}, {"pid": 1, "role": "Ha"}, {"pid": o.id, "role": "OIII"}]}}})
-    d["next_workflow_id"] = 10
-    (p.root / "project.astroproj").write_text(json.dumps(d), encoding="utf-8")
-    assert [i["role"] for i in project2.load(p.root).workflow(9).source["fusion"]["inputs"]] == ["Ha", "OIII"]
-
-
 # ---------------------------------------------------------------------------------------------- saved projects (#165)
 
 def _saved(p, mutate):
@@ -364,90 +300,61 @@ def _saved(p, mutate):
     return project2.load(p.root)
 
 
-def test_option_a_of_a_former_fusion_becomes_a_two_sided_layer(tmp_path, nights):  # noqa: F811 (the fixture)
-    p, o = _channels(tmp_path, nights, FULL)
+def _former_fusion(d):
+    d["workflows"].append({"id": 9, "name": "HOO", "options": CLASSIC, "params": {}, "source": {"fusion": {
+        "palette": "HOO", "inputs": [{"pid": 1, "role": "Ha"}, {"pid": 1, "role": "OIII"}]}}})
+    d["next_workflow_id"] = 10
+
+
+def _aligned_image(d):
+    d["workflows"][0]["source"] = {"path": "a.fits", "align": 2}
+
+
+def _layer_without_sides(d):
+    d["post"] = {"versions": [{"id": 1, "name": "V", "layers": [{"kind": "workflow", "pid": 1, "part": "combined", "id": 7}]}],
+                 "active": 1}
+
+
+@pytest.mark.parametrize("old", [_former_fusion, _aligned_image, _layer_without_sides])
+def test_a_project_of_an_earlier_format_does_not_open_changed(tmp_path, nights, old):  # noqa: F811 (the fixture)
+    """No conversion inside the program (issue #165): a former Combine channels, an image aligned by its source, a
+    Combine layers layer without its stars side fail with a message that says to convert the project first; the file is
+    left as it was."""
+    p, _ = _channels(tmp_path, nights)
     project2.save(p)
-    fid = p.next_workflow_id
-
-    def old(d):
-        d["workflows"].append({"id": fid, "name": "HOO", "options": CLASSIC, "params": {}, "source": {"fusion": {
-            "palette": "HOO", "stars": {"mode": "channel", "role": "Ha"},
-            "inputs": [{"pid": 1, "role": "Ha"}, {"pid": o.id, "role": "OIII"}]}}})
-        d["next_workflow_id"] = fid + 1
-        d["post"] = {"versions": [{"id": 1, "name": "V", "layers": [
-            {"kind": "workflow", "pid": fid, "part": "combined", "id": 7},
-            {"kind": "workflow", "pid": 1, "part": "combined", "id": 8}]}], "active": 1}
-    q = _saved(p, old)
-    assert [i["image"] for i in q.workflow(fid).source["fusion"]["inputs"]] == ["starless", "starless"]
-    layers = {x["pid"]: x for x in q.post["versions"][0]["layers"]}
-    assert (layers[fid]["starless"], layers[fid]["stars_pid"]) == ("output", 1)       # the combination's Output, Ha's stars
-    assert (layers[1]["starless"], layers[1]["stars_pid"]) == ("starless", 1)         # migration 5: its own two sides
-    again = project2.Project2.from_dict(q.to_dict(), q.root)                           # nothing moves a second time
-    assert again.post == q.post and again.workflow(fid).source == q.workflow(fid).source
+    d = json.loads((p.root / "project.astroproj").read_text(encoding="utf-8"))
+    old(d)
+    f = p.root / "project.astroproj"
+    f.write_text(json.dumps(d), encoding="utf-8")
+    before = f.read_bytes()
+    with pytest.raises(project2.EarlierVersionProject, match="saved by an earlier version of FLOAT: convert it first"):
+        project2.load(p.root)
+    assert f.read_bytes() == before
+    from astro_gpu import texts
+    assert texts.has_translation(project2.EarlierVersionProject.MESSAGE, "fr")      # the catalogue the window reads
 
 
-def test_the_alignment_a_combination_did_alone_is_made_explicit_once(tmp_path, nights):  # noqa: F811 (the fixture)
+def test_a_saved_project_opens_again_as_it_was(tmp_path, nights):  # noqa: F811 (the fixture)
     p, o = _channels(tmp_path, nights)
     f = p.add_workflow("H-O", CLASSIC)
     f.source = {"fusion": {"type": "ho", "inputs": [{"pid": 1, "role": "Ha"}, {"pid": o.id, "role": "OIII"}]}}
     project2.save(p)
-    q = _saved(p, lambda d: d.pop("join_format"))                                      # saved before the joins were free
-    blocks = q.workflow(o.id).blocks
-    assert [n["block"] for n in blocks][:5] == ["calibration", "registration", "selection", "stacking", "align_on"]
-    align = blocks[4]
-    assert (align["reference"], align["method"], align["off"]) == (1, "stars", False)
-    assert q.workflow(1).blocks is None and Keys(q).grid(o.id) == Keys(q).grid(1)
-    assert Keys(q).chain(o.id)[:6] == ["inventory", "calibrate", "register", "stack", "align_on", "astrometry"]
-    project2.save(q)                                                                   # saved with the marker: free
-    q.workflow(o.id).blocks = [n for n in q.workflow(o.id).blocks if n["block"] != "align_on"]
-    project2.save(q)
-    assert not any(n["block"] == "align_on" for n in project2.load(p.root).workflow(o.id).blocks)
-    # a combination whose inputs come from one workflow (a dual-band image's channels) needs none
-    r = p.add_workflow("one", CLASSIC)
-    r.source = {"fusion": {"type": "ho", "inputs": [{"pid": 1, "role": "Ha"}, {"pid": 1, "role": "OIII"}]}}
-    project2.save(p)
-    assert _saved(p, lambda d: d.pop("join_format")).workflow(1).blocks is None
-
-
-def test_align_images_of_an_earlier_version_becomes_an_align_on_block(tmp_path):
-    from astropy.io import fits
-    from astropy.wcs import WCS
-    wcs = WCS(naxis=2)
-    wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
-    wcs.wcs.crval, wcs.wcs.crpix, wcs.wcs.cdelt = [83.8, -5.4], [10, 10], [-0.001, 0.001]
-    solved, plain = tmp_path / "a.fits", tmp_path / "b.fits"
-    fits.PrimaryHDU(np.zeros((20, 20), np.float32), wcs.to_header()).writeto(solved)
-    fits.PrimaryHDU(np.zeros((20, 20), np.float32)).writeto(plain)
-    p = project2.create(tmp_path / "proj", "p")
-    for name, path in (("ref", solved), ("onto solved", solved), ("onto plain", plain)):
-        w = p.add_workflow(name, CLASSIC)
-        w.source = {"path": str(path)}
-    w1, w2, w3 = p.workflows
-    w2.source["align"], w3.source["align"], w1.source["align"] = w1.id, w1.id, w1.id
-    d = p.to_dict()
-    d.pop("join_format")
-    q = project2.Project2.from_dict(d, p.root)
-    assert "align" not in q.workflow(w2.id).source
-    first = lambda w: q.workflow(w.id).blocks[0]  # noqa: E731
-    assert (first(w2)["block"], first(w2)["reference"], first(w2)["method"]) == ("align_on", w1.id, "plate")
-    assert (first(w3)["reference"], first(w3)["method"]) == (w1.id, "stars")           # one header without a solution
-    assert q.workflow(w1.id).blocks is None                                            # the reference itself: as it is
-    with pytest.raises(ValueError, match="unknown keys"):
-        project2.check_source({"path": "x.fits", "align": 1})
+    q = project2.load(p.root)
+    assert q.to_dict() == p.to_dict() and q.workflow(o.id).blocks is None          # nothing is added to it
 
 
 def test_a_loop_between_workflows_is_refused_and_a_combination_is_no_reference(tmp_path, nights):  # noqa: F811 (the fixture)
     p, o = _channels(tmp_path, nights)
     f = p.add_workflow("H-O", CLASSIC)
     f.source = {"fusion": {"type": "ho", "inputs": [{"pid": 1, "role": "Ha"}, {"pid": o.id, "role": "OIII"}]}}
-    project2._add_align_on(p, o, 1, "stars")
+    add_align_on(p, o, 1, "stars")
     p.validate()
     assert project2.join_problem(p, 1, o.id) == project2.JOIN_LOOP.format(src=o.name, target=p.workflow(1).name)
     assert project2.join_problem(p, 1, 1) == project2.JOIN_SELF
     assert project2.join_problem(p, 1, f.id, reference=True) == project2.JOIN_NO_STACK
     assert project2.join_problem(p, f.id, 1) == "" and project2.join_problem(p, 1, f.id) == project2.JOIN_LOOP.format(
         src=f.name, target=p.workflow(1).name)
-    project2._add_align_on(p, p.workflow(1), o.id, "stars")                             # 1 on o, o on 1
+    add_align_on(p, p.workflow(1), o.id, "stars")                             # 1 on o, o on 1
     with pytest.raises(ValueError, match="loop"):
         p.validate()
     p.workflow(1).blocks = None

@@ -11,6 +11,7 @@ from astropy.io import fits
 from astro_gpu.core.journal import Journal
 from astro_gpu.core.stage import Context, StageError
 from astro_gpu.stages import align_on as ai
+from tests.joins import add_align_on
 from tests.test_blocks43 import _Project
 
 H, W = 400, 600
@@ -190,7 +191,7 @@ def test_two_image_workflows_run_through_the_store_with_the_second_aligned_on_th
     a = p.add_workflow("ref", TEMPLATES["Classic stack"])
     b = p.add_workflow("img", TEMPLATES["Classic stack"])
     a.source, b.source = {"path": str(tmp_path / "ref.fits")}, {"path": str(tmp_path / "img.fits")}
-    project2._add_align_on(p, b, a.id, "stars")
+    add_align_on(p, b, a.id, "stars")
     keys = Keys(p)
     store = Store(p.root)
 

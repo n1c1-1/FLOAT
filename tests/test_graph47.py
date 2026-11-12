@@ -14,6 +14,7 @@ from astro_gpu.core.project import Target
 from astro_gpu.core.project2 import Session
 from astro_gpu.core.store import Keys
 from astro_gpu.core.workflow import TEMPLATES, BlockRefused, node
+from tests.joins import add_align_on
 
 
 def frames(folder: Path, names: dict[str, int]) -> Path:
@@ -271,7 +272,7 @@ def test_the_blocks_after_align_on_read_the_aligned_image_and_its_keys_follow_th
     b = p.add_workflow("B", TEMPLATES["Classic stack"])
     b.sessions = [2]
     assert Keys(p).grid(b.id) != Keys(p).grid(a.id)                          # other frames: another grid
-    project2._add_align_on(p, b, a.id, "stars")
+    add_align_on(p, b, a.id, "stars")
     k = Keys(p)
     chain = k.chain(b.id)
     assert chain[chain.index("stack") + 1] == "align_on" and "align_on" not in k.chain(a.id)
@@ -305,7 +306,7 @@ def test_a_stage_after_align_on_is_handed_the_aligned_folder_and_the_block_itsel
     p = project(tmp_path / "p", nights)
     a = p.add_workflow("A", TEMPLATES["Classic stack"])
     b = p.add_workflow("B", TEMPLATES["Classic stack"])
-    project2._add_align_on(p, b, a.id, "stars")
+    add_align_on(p, b, a.id, "stars")
     k = Keys(p)
     store = project2.Path(p.root) / "store"
     mine = StoreProject(k, b.id, "astrometry")

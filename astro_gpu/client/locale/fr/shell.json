@@ -70,6 +70,7 @@
  "The project cannot be created: {why}": "Impossible de créer le projet : {why}",
  "The project cannot be saved: {why}": "Impossible d'enregistrer le projet : {why}",
  "This folder already holds a project.": "Ce dossier contient déjà un projet.",
+ "This project was saved by an earlier version of FLOAT: convert it first.": "Ce projet a été enregistré par une version antérieure de FLOAT : convertissez-le d'abord.",
  "This project cannot be opened: {why}": "Impossible d'ouvrir ce projet : {why}",
  "{n} workflow": "{n} workflow",
  "{n} workflows": "{n} workflows",

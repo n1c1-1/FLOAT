@@ -36,9 +36,6 @@ from .project import Inputs, Target
 
 FORMAT = 2
 FILE = "project.astroproj"
-#: 1: the joins are free (issue #165): a combination aligns nothing, the Align on block does. A project saved without it
-#: has the alignment a combination did by itself made explicit when it is opened (``_make_alignment_explicit``), once
-JOIN_FORMAT = 1
 STATE_FILE = "state.json"
 V1_FILE = "project.json"
 KINDS = ("lights", "darks", "flats", "bias", "flat_darks")
@@ -397,7 +394,7 @@ class Project2:
                 "workflows": [asdict(w) for w in self.workflows], "current": self.current,
                 "current_block": self.current_block, "show_all": self.show_all, "next_workflow_id": self.next_workflow_id,
                 "render_bases": copy.deepcopy(self.render_bases), "post": copy.deepcopy(self.post),
-                "acquisition": dict(self.acquisition), "join_format": JOIN_FORMAT}
+                "acquisition": dict(self.acquisition)}
 
     @classmethod
     def from_dict(cls, d: dict[str, Any], root: str | Path | None = None) -> Project2:
@@ -408,8 +405,9 @@ class Project2:
                             left_out={k: list(v) for k, v in (s.get("left_out") or {}).items()},
                             **{k: list(s.get(k) or []) for k in KINDS})
                     for s in d.get("sessions") or []]
-        from ..stages.combine import upgraded_workflow
-        d = _stars_of_former_fusions(d)
+        problem = earlier_version_problem(d)
+        if problem:
+            raise EarlierVersionProject(problem)
         workflows = [Workflow(id=w["id"], name=w.get("name", ""), options=wfl.check_options(w.get("options") or {}),
                               params=_copy_params(w.get("params") or {}), end=w.get("end"),
                               variant_of=w.get("variant_of"),
@@ -418,7 +416,7 @@ class Project2:
                               sessions=list(w["sessions"]) if w.get("sessions") is not None else None,
                               blocks=copy.deepcopy(w["blocks"]) if w.get("blocks") is not None else None,
                               calibration=copy.deepcopy(w.get("calibration")))      # absent in older projects
-                     for w in (upgraded_workflow(copy.deepcopy(x)) for x in d.get("workflows") or [])]
+                     for w in (copy.deepcopy(x) for x in d.get("workflows") or [])]
         nxt = d.get("next_workflow_id") or (max((w.id for w in workflows), default=0) + 1)
         p = cls(name=d.get("name", ""), description=d.get("description", ""), created=d.get("created", ""),
                 target=_target(d.get("target") or {}), scratch_dir=d.get("scratch_dir", ""),
@@ -430,10 +428,6 @@ class Project2:
                 post=upgraded_post(d.get("post")), acquisition=dict(d.get("acquisition") or {}),
                 next_workflow_id=nxt,
                 root=Path(root) if root is not None else None)
-        _align_images_to_blocks(p)
-        if d.get("join_format") != JOIN_FORMAT:          # saved before the joins were free (issue #165)
-            _make_alignment_explicit(p)
-        _combined_layers_name_their_sides(p)
         p.validate()
         return p
 
@@ -711,116 +705,35 @@ def from_v1(root: str | Path) -> Project2:
     return p
 
 
-# ---------------------------------------------------------------------------------------------- saved projects (#165)
+# ---------------------------------------------------------------------------------------------- earlier versions (#165)
 
-def _stars_of_former_fusions(d: dict[str, Any]) -> dict[str, Any]:
-    """A project's JSON with the former Combine channels block's option A made into what it stands for now: its stars
-    from a workflow (``stars.mode`` "workflow") or from a channel's workflow ("channel") are the stars side of a Combine
-    layers layer, and the starless side is the combination's own Output; the inputs that have a Stars/background read
-    their starless image. Mode "palette" has no equivalent: the inputs read their Outputs, as before. Returns a copy when
-    it changes anything."""
-    flows = d.get("workflows") or []
-    changes = []
-    for w in flows:
-        f = (w.get("source") or {}).get("fusion") if isinstance(w.get("source"), dict) else None
-        st = f.get("stars") if isinstance(f, dict) else None
-        if not isinstance(st, dict) or st.get("mode") not in ("workflow", "channel"):
+class EarlierVersionProject(ValueError):
+    """A project saved in a format this version no longer converts when it opens (issue #165): a script converts it
+    once, outside the program."""
+
+    MESSAGE = "This project was saved by an earlier version of FLOAT: convert it first."
+
+    def __init__(self, detail: str = ""):
+        super().__init__(self.MESSAGE)
+        self.detail = detail
+
+
+def earlier_version_problem(d: dict[str, Any]) -> str:
+    """What in a project's JSON is of the earlier formats of the joins ("" when nothing is): a source that aligns
+    (``align``), a Combine channels of the former single block (a ``palette``), a Combine layers layer without its two
+    sides named."""
+    for w in d.get("workflows") or []:
+        src = w.get("source")
+        if not isinstance(src, dict):
             continue
-        pid = st.get("pid") if st["mode"] == "workflow" else next(
-            (i.get("pid") for i in f.get("inputs") or [] if i.get("role") == st.get("role")), None)
-        if isinstance(pid, int) and any(x.get("id") == pid for x in flows):
-            changes.append((w["id"], pid))
-    if not changes:
-        return d
-    d = copy.deepcopy(d)
-    by_id = {w["id"]: w for w in d["workflows"]}
-    for fid, pid in changes:
-        for i in by_id[fid]["source"]["fusion"].get("inputs") or []:
-            src = by_id.get(i.get("pid"))
-            if src is not None and (src.get("options") or {}).get("stars"):
-                i["image"] = "starless"
-        post = d.get("post") or {}
-        versions = post.get("versions") or ([{"layers": post.get("layers") or []}] if post.get("layers") else [])
-        for v in versions:
-            for lay in v.get("layers") or []:
-                if lay.get("kind") == "workflow" and lay.get("pid") == fid and lay.get("part") == "combined":
-                    lay.update(starless="output", stars_pid=pid)
-    return d
-
-
-def _ensure_graph(p: Project2, w: Workflow) -> None:
-    """A workflow made before the graphs (issue #47) gets its graph made real, as its options gave it."""
-    if w.blocks is None:
-        w.blocks = wfl.check_blocks(wfl.with_output(wfl.from_options(w.options, w.end, wfl.source_of(w)), wfl.source_of(w)),
-                                    wfl.source_of(w))
-        w.end = None
-
-
-def _add_align_on(p: Project2, w: Workflow, reference: int, method: str) -> None:
-    """An Align on block on ``reference`` right after the workflow's Stacking (or first, from an image)."""
-    _ensure_graph(p, w)
-    at = 0
-    if wfl.source_of(w) == "frames":
-        at = next(i for i, n in enumerate(w.blocks) if n["block"] == "stacking") + 1
-    w.blocks.insert(at, wfl.node("align_on", method, reference=reference))
-    w.options = wfl.options_of(w.blocks, wfl.source_of(w))
-
-
-def _align_images_to_blocks(p: Project2) -> None:
-    """The Align images of earlier versions (an image source aligned on another workflow's image: ``source["align"]``)
-    made visible: an Align on block first in the graph, on that workflow. The method is decided once, from the two
-    files' headers, as the old run did: the plate solutions when both have one, else the stars."""
-    ids = {w.id for w in p.workflows}
-    for w in p.workflows:
-        if not isinstance(w.source, dict) or "align" not in w.source:
-            continue
-        ref = w.source.pop("align")
-        if not _is_int(ref) or ref == w.id or ref not in ids or any(n["block"] == "align_on" for n in w.blocks or []):
-            continue
-        method = "stars"
-        try:
-            from ..stages.align_on import plate_solution
-            other = p.workflow(ref)
-            if is_image(other) and other.source.get("path") and w.source.get("path") \
-                    and plate_solution(p.abspath(w.source["path"])) is not None \
-                    and plate_solution(p.abspath(other.source["path"])) is not None:
-                method = "plate"
-        except (ValueError, OSError):
-            method = "stars"                           # a file that cannot be read
-        _add_align_on(p, w, ref, method)
-
-
-def _make_alignment_explicit(p: Project2) -> None:
-    """The alignment a combination did by itself made visible (issue #165): in each combination whose inputs are not on
-    one grid, every input workflow off the first input's grid gets an Align on block on the first input's workflow,
-    through the stars, unless it already has one. Their results after it change: the clean change."""
-    from .store import Keys
-    for f in p.workflows:
-        if not is_fusion(f):
-            continue
-        ins = f.source["fusion"]["inputs"]
-        if len({i["pid"] for i in ins}) < 2:
-            continue
-        first = ins[0]["pid"]
-        try:
-            keys = Keys(p)
-            grid = keys.grid(first)
-            off = [pid for pid in dict.fromkeys(i["pid"] for i in ins[1:])
-                   if pid != first and keys.grid(pid) != grid]
-        except (ValueError, KeyError, OSError):
-            continue                                   # a definition whose keys cannot be made: left as it is
-        for pid in off:
-            w = p.workflow(pid)
-            if is_fusion(w) or any(n["block"] == "align_on" for n in w.blocks or []) or reads(p, first, pid):
-                continue
-            _add_align_on(p, w, first, "stars")
-
-
-def _combined_layers_name_their_sides(p: Project2) -> None:
-    """The Combine layers layers made before their two sides were named: the starless side is the workflow's starless
-    image and the stars side the same workflow's stars."""
-    for v in p.post.get("versions") or []:
+        if "align" in src:
+            return f"workflow {w.get('id')}: an image aligned by its source"
+        f = src.get("fusion")
+        if isinstance(f, dict) and ("palette" in f or "stars" in f):
+            return f"workflow {w.get('id')}: a Combine channels of the former block"
+    post = upgraded_post(d.get("post"))
+    for v in post.get("versions") or []:
         for lay in v.get("layers") or []:
             if lay.get("kind") == "workflow" and lay.get("part") == "combined" and "stars_pid" not in lay:
-                lay["starless"] = lay.get("starless", "starless")
-                lay["stars_pid"] = lay.get("pid")
+                return f"Post layer {lay.get('id')}: a Combine layers without its stars side"
+    return ""

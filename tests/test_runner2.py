@@ -27,6 +27,7 @@ from astro_gpu.core.project2 import Session
 from astro_gpu.core.stage import Stage, StageError
 from astro_gpu.core.store import KeyRules, Keys, Store
 from astro_gpu.core.workflow import TEMPLATES, Chains
+from tests.joins import add_align_on
 
 
 def _gpu_hidden() -> bool:
@@ -451,7 +452,7 @@ def test_align_on_waits_for_its_reference_which_is_computed_first_and_an_unwired
     p.sessions = [Session(1, "night", lights=proj.sessions[0].lights)]
     ref = p.add_workflow("ref", TEMPLATES["Classic stack"])
     w = p.add_workflow("w", TEMPLATES["Classic stack"])
-    project2._add_align_on(p, w, ref.id, "stars")
+    add_align_on(p, w, ref.id, "stars")
     k = Keys(p)
     plan = runner2.plan_workflows(p, [w.id], history={})
     stages = [(j.stage, tuple(j.wf)) for j in plan.jobs]
