@@ -117,8 +117,56 @@ def test_the_sho_rgb_stars_template_makes_the_graph_of_the_issue(world):
                                                         (True, "OIII", "starless")]
     stack_a = g.node_of(a, "empilement")
     assert [g.align_refs[id(g.node_of(q, "align_on"))] is stack_a for q in (b, c, rgb)] == [True] * 3
-    assert not fn.waits and not comp.waits and not [n for n in g.nodes if n.key == "align_on" and n.waits]
+    assert not fn.broken and not comp.waits and not [n for n in g.nodes if n.key == "align_on" and n.waits]
     assert [n["block"] for n in m.graph(rgb)].count("stars") == 1                     # the stars are taken off once only
+
+
+def test_the_sho_rgb_template_shows_no_ghost_combine_layers_and_names_its_colour_workflow_rgb(world):
+    m = world["m"]
+    template(world, "sho_rgb")
+    g = Graph(m)
+    assert len(g.compositions) == 1 and not g.awaits_post                  # the issue's Combine layers, nothing else
+    assert [n for n in g.nodes if n.key == "composition" and n.paths[0].name in ("SII", "Ha", "OIII")] == []
+    assert m.post_defaults() == []
+    assert [s.name for s in m.p.sessions][-1] == "RGB"
+
+
+def test_a_combination_waiting_for_frames_is_greyed_never_red(world):
+    m = world["m"]
+    template(world, "sho_rgb")
+    fn = Graph(m).node_of(by_name(m, "S-H-O"), "fusion")
+    assert fn.waits and not fn.broken and "no lights" in fn.waits
+
+
+def test_the_names_of_the_inputs_never_sit_under_the_title_nor_the_subtitle(world):
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QFont, QFontMetricsF
+    page = world["page"]
+    template(world, "sho_rgb")
+    page.graph.rebuild()
+    items = [it for it in page.graph.scene().items() if hasattr(it, "inputs") and getattr(it, "inputs", None)]
+    assert {it.node.key for it in items} >= {"fusion", "composition", "align_on"}
+    for it in items:
+        names = [QRectF(9, d["y"] - 9, it.name_w, 18) for d in it.inputs]
+        assert all(a.bottom() <= b.top() + 1e-6 for a, b in zip(names, names[1:]))        # one line each
+        f = QFont("Segoe UI", 10)
+        f.setBold(True)
+        x0 = 11 + it.name_w
+        full = QFontMetricsF(f).horizontalAdvance(it.title)
+        title = QRectF(x0, 6, full, 20)
+        sub = QRectF(x0, 28, 10, 18)
+        assert it.w - 7 - x0 >= full, (it.node.key, it.title, it.w)                      # the title whole, right of the names
+        for r in names:
+            assert not r.intersects(title) and not r.intersects(sub)
+            assert r.right() <= x0
+
+
+def test_the_wires_into_a_join_each_bend_at_their_own_place(world):
+    page = world["page"]
+    template(world, "sho_rgb")
+    page.graph.rebuild()
+    from astro_gpu.client.graph import stagger
+    assert len({stagger(i, 3, True) for i in range(3)}) == 3 and stagger(0, 1, True) == 0
 
 
 def test_no_wire_goes_right_to_left(world):
@@ -153,7 +201,7 @@ def test_the_filters_templates_align_the_others_on_the_first(world):
     assert [q.pid for q in m.paths if q.source and q.source.get("fusion")] == [fusion.pid]
     assert [n["block"] for n in m.graph(fusion)] == []                                  # no Stars/background after it
     g = Graph(m)
-    assert not g.node_of(fusion, "fusion").waits
+    assert "to wire" not in g.node_of(fusion, "fusion").waits             # nothing to wire (it waits for lights)
     assert [name for name, _pid in g.post_layers] == [fusion.name]                      # inputs feed it; it goes to Post
 
 
@@ -198,7 +246,7 @@ def test_a_wire_dropped_on_an_input_wires_it_one_step_each_and_undo_takes_it_bac
     settle(world)
     assert len(m._undo) == n0 + 2
     g = Graph(m)
-    assert not g.node_of(m.view(fu.pid), "fusion").waits.startswith("Hα")                # one input left to wire at most
+    assert not g.node_of(m.view(fu.pid), "fusion").waits.startswith("Hα") or "no lights" in g.node_of(m.view(fu.pid), "fusion").waits                # one input left to wire at most
     assert m.undo()
     settle(world)
     assert [i["role"] for i in m.view(fu.pid).source["fusion"]["inputs"]] == ["Ha"]

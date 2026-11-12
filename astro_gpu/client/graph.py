@@ -131,6 +131,19 @@ EDGE_WAIT = 0.35            # s held near the edge before it scrolls (a drag tha
 TITLE_PAD = 22              # a block's title, its state stripe and its padding
 IN_ROW = 18                 # a named input's row: the height it needs inside its block (issue #165)
 NAME_W = 46                 # a join block's names, left of its title ("Reference", "Starless", "O III")
+STAGGER = 9                 # the gap before a join widens by this much per wire entering it: each has its own vertical
+
+
+def names_w(names) -> float:
+    """The width a join block keeps left of its title for its inputs' names, each on a line of its own (#165)."""
+    names = list(names)
+    return max(QFontMetricsF(QFont("Segoe UI", 8.5)).horizontalAdvance(n) for n in names) + 14 if names else 0.0
+
+
+def stagger(i: int, k: int, above: bool) -> float:
+    """How far left of the join its ``i``-th input's last vertical runs, of ``k``: a wire from above bends the later the
+    higher its input, one from below the reverse, so that wires never cross on the way in."""
+    return STAGGER * (i if above else k - 1 - i) if k > 1 else 0.0
 STAR_MAX = 260               # the star blocks' columns: as wide as their long names (issue #36)
 OUT_MAX = BW + 30           # the widest Output column: a longer workflow name loses its middle (whole in the tooltip)
 STATE_COL = {"done": OK, "pending": "#5d6470", "stale": WARN, "running": ACCENT, "failed": BAD,
@@ -193,8 +206,7 @@ class BlockItem(QGraphicsItem):
         #: a join's named inputs (GraphView._inputs_of): each a hollow dot when empty, its whole name beside it
         self.inputs = list(inputs)
         self.hot_input: tuple | None = None            # (the input's key, whether a wire pulled may land on it)
-        self.name_w = (max(QFontMetricsF(QFont("Segoe UI", 8.5)).horizontalAdvance(d["name"]) for d in self.inputs) + 14
-                       if self.inputs else 0.0)
+        self.name_w = names_w(d["name"] for d in self.inputs)
         # a warning at the head of the summary (issue #58) is its mark, drawn as an icon
         self.warned = summary.startswith(WARN_MARK)
         summary = summary[len(WARN_MARK):] if self.warned else summary
@@ -351,16 +363,16 @@ class BlockItem(QGraphicsItem):
         p.drawText(QRectF(x0, 6, tw, 20) if readable else QRectF(x0, 0, tw, self.h), Qt.AlignLeft | Qt.AlignVCenter,
                    QFontMetrics(f).elidedText(self.title, mode, int(tw)))
         if mark:
-            draw(p, QRectF(11, 8 if readable else (self.h - 16) / 2, 16, 16), mark[0], mark[1])
+            draw(p, QRectF(11 + self.name_w, 8 if readable else (self.h - 16) / 2, 16, 16), mark[0], mark[1])
         # issue #44: below the readable size the subtitles go, so that a zoomed-out graph is still a map of titles
         if readable:
             f2 = QFont("Segoe UI", 8.5)
             p.setFont(f2)
             p.setPen(QColor("#8b93a1"))
-            sx = 11 + (20 if self.warned else 0)
+            sx = 11 + self.name_w + (20 if self.warned else 0)
             p.drawText(QRectF(sx, 28, w - 4 - sx, 18), Qt.AlignLeft | Qt.AlignVCenter, elide(self.summary, f2, w - 4 - sx))
             if self.warned:
-                draw(p, QRectF(11, 29, 16, 16), "warning", "warning")
+                draw(p, QRectF(11 + self.name_w, 29, 16, 16), "warning", "warning")
         if self.removable and self.hover:
             draw(p, self._x_rect(), "remove", "error")
         if self.inputs:                                    # the named inputs: a hollow dot while empty, the name whole
@@ -876,7 +888,7 @@ class GraphView(QGraphicsView):
         return out + [c for c in ("composition",) if c in used] + ["final"]
 
     @staticmethod
-    def column_width(key: str, names=()) -> float:
+    def column_width(key: str, names=(), inw: float | None = None) -> float:
         """A column is as wide as a block, or wider when its title needs it in the language shown ("Post-traitement").
         The outputs carry the workflows' names: their column widens to the longest name, up to OUT_MAX; a longer name
         loses its middle ("Classic stack…adapted") and is whole in the tooltip."""
@@ -890,8 +902,9 @@ class GraphView(QGraphicsView):
             return max(BW, min(OUT_MAX, need))
         # the star blocks' names are long (issue #36): their columns widen to them, as the outputs' do
         cap = STAR_MAX if key in ("etoiles", "composition") else BW + 40
-        names = NAME_W if key in ("composition", "align_on") else 0       # the inputs' names, left of the title (#165)
-        return max(BW, min(cap + names, fm.horizontalAdvance(block_title(None, key)) + TITLE_PAD + names))
+        if inw is None:                                  # the inputs' names, left of the title (#165)
+            inw = {"composition": names_w([_("Starless"), _("Stars")]), "align_on": names_w([_("Reference")])}.get(key, 0.0)
+        return max(BW, min(cap + inw, fm.horizontalAdvance(block_title(None, key)) + TITLE_PAD + inw + (20 if inw else 0)))
 
     @staticmethod
     def lane_order(g: Graph) -> list[int]:
@@ -988,14 +1001,18 @@ class GraphView(QGraphicsView):
             if c.startswith("g:"):                          # an opened column: a block's width
                 cw[c] = BW
             elif c[:1] == "i" and c[1:].isdigit():          # an image rank: as wide as its widest block's name
-                cw[c] = max((self.column_width(n.key) for n in g.nodes if n.paths and self.col_of(n) == c),
-                            default=BW)
+                cw[c] = max((self.column_width(n.key, inw=self._names_of(g, n)) for n in g.nodes
+                             if n.paths and self.col_of(n) == c), default=BW)
             elif c[:1] in "fs" and c[1:].isdigit():          # a combination's rank: its widest block
-                cw[c] = max((self.column_width(n.key) for n in g.nodes if n.paths and self.col_of(n) == c), default=BW)
+                cw[c] = max((self.column_width(n.key, inw=self._names_of(g, n)) for n in g.nodes
+                             if n.paths and self.col_of(n) == c), default=BW)
             else:
                 cw[c] = self.column_width(c, [p.name for p in s.paths])
         cx, x = {}, 0.0
         for c in cols:
+            if cx and not c.startswith("g:"):                 # a join's inputs each bend in the gap before it (#165)
+                x += STAGGER * max((len(self._inputs_of(g, n, False)) - 1 for n in g.nodes
+                                    if n.paths and self.col_of(n) == c and n.key in ("fusion", "composition")), default=0)
             cx[c] = x
             x += cw[c] + GAP
         self._next_x = {c: cx[c] + cw[c] + GAP for c in cols}       # where the column after it starts
@@ -1736,6 +1753,10 @@ class GraphView(QGraphicsView):
             it = self._chain_wire(path, pen)
         it.setZValue(1)
 
+    def _names_of(self, g: Graph, n: Node) -> float:
+        """The width a block keeps for its named inputs, left of its title."""
+        return names_w(d["name"] for d in self._inputs_of(g, n, False))
+
     def _inputs_of(self, g: Graph, n: Node, with_remove: bool = True) -> list[dict]:
         """The named inputs of a join block (issue #165), top to bottom: {"key", "name", "y" (from the block's top), "src"
         (the node the wire leaves, None while empty), "wired", "remove" (what unwires it, None when it cannot)}. A
@@ -1780,14 +1801,17 @@ class GraphView(QGraphicsView):
         """A join's wires into its named inputs (issue #165): from the output that gives each image, in the colour of the
         starless image when it is that. An Align on block aligned on another of its own column is joined by a vertical
         wire; every other wire goes left to right (no wire ever goes back)."""
-        for d in self._inputs_of(g, n):
+        rows = self._inputs_of(g, n)
+        for i, d in enumerate(rows):
             a = d["src"]
             if a is None or a is n:
                 continue
             strong = cur is not None and (cur in n.paths or cur in a.paths)
             y2 = n.y - hgt(n) / 2 + d["y"]
+            extra = stagger(i, len(rows), a.y <= y2)
             if d["image"] == "starless" and a.key == "etoiles":
-                self._image_wire(a, PORTS["etoiles"][0][1], n, d["y"], "starless", d["name"], strong, remove=d["remove"])
+                self._image_wire(a, PORTS["etoiles"][0][1], n, d["y"], "starless", d["name"], strong, remove=d["remove"],
+                                 extra=extra)
                 continue
             same = self.col_of(a) == self.col_of(n)
             if same:                                            # the reference wire between two Align on of one column
@@ -1795,7 +1819,7 @@ class GraphView(QGraphicsView):
                 down = a.y < n.y
                 path = _line(x, a.y + (hgt(a) / 2 if down else -hgt(a) / 2), x, n.y + (-hgt(n) / 2 if down else hgt(n) / 2))
             else:
-                path = self._route(a.col + a.w, a.y, n.col, y2, (a, n), up=True)
+                path = self._route(a.col + a.w, a.y, n.col, y2, (a, n), up=True, extra=extra)
             self.wire_log.append((a, n, "vertical" if same else ""))
             pen = QPen(QColor("#9aa3b2" if strong else "#3d4452"), 2.2 if strong else 1.6)
             tip = _("{port} input of “{block}”").format(port=d["name"], block=n.paths[0].name)
@@ -1832,14 +1856,14 @@ class GraphView(QGraphicsView):
                 .setZValue(1)
 
     def _image_wire(self, a: Node, ya: float, b: Node, yb: float, what: str, word: str, strong: bool,
-                    direct: bool = False, remove=None):
+                    direct: bool = False, remove=None, extra: float = 0.0):
         """A wire of one of the Stars block's images, from its port to a Stars and background block, a Synthetic stars
         block or straight to Post (dashed), in the image's colour, its name in its tooltip; routed clear of the blocks
         on its way (_route), over them for the starless image, under them for the stars."""
         x1, y1 = a.col + a.w, a.y - hgt(a) / 2 + ya
         x2, y2 = b.col, b.y - hgt(b) / 2 + yb
         self.wire_log.append((a, b, ""))
-        path = self._route(x1, y1, x2, y2, (a, b), up=what == "starless")
+        path = self._route(x1, y1, x2, y2, (a, b), up=what == "starless", extra=extra)
         col = QColor(IMAGE_COL[what])
         if not strong:
             col.setAlpha(110)
@@ -1858,12 +1882,12 @@ class GraphView(QGraphicsView):
             it = self._chain_wire(path, pen, word)
         it.setZValue(4 if direct else 2)                  # behind the blocks (their text stays readable)
 
-    def _route(self, x1: float, y1: float, x2: float, y2: float, ends, up: bool) -> QPainterPath:
+    def _route(self, x1: float, y1: float, x2: float, y2: float, ends, up: bool, extra: float = 0.0) -> QPainterPath:
         """A wire's path from (x1, y1) to (x2, y2) that never passes under a block other than its ``ends`` (11 November:
         two arcs went behind the Synthetic stars block, drawn over them): an S-curve when no block stands in its way;
         else it bends in the gap after the block it leaves onto the nearest line clear of the blocks on its way, above
         (``up``) or below them, runs along it and bends again in the gap before the block it enters."""
-        mid = (x1 + x2) / 2
+        mid = (x1 + x2) / 2 - extra                      # ``extra``: how far left of the last vertical others use
         path = QPainterPath(QPointF(x1, y1))
         path.cubicTo(QPointF(mid, y1), QPointF(mid, y2), QPointF(x2, y2))
         way = [r for n, r in getattr(self, "_rects", ()) if all(n is not e for e in ends) and r.right() > x1 and
@@ -1879,8 +1903,9 @@ class GraphView(QGraphicsView):
         g = min(GAP, (x2 - x1) / 2)                       # the bends stay in the gaps between the columns
         path = QPainterPath(QPointF(x1, y1))
         path.cubicTo(QPointF(x1 + g / 2, y1), QPointF(x1 + g / 2, yc), QPointF(x1 + g, yc))
-        path.lineTo(QPointF(x2 - g, yc))
-        path.cubicTo(QPointF(x2 - g / 2, yc), QPointF(x2 - g / 2, y2), QPointF(x2, y2))
+        ge = min(g + extra, (x2 - x1) / 2)               # the bend into the block: its own width per wire
+        path.lineTo(QPointF(x2 - ge, yc))
+        path.cubicTo(QPointF(x2 - ge / 2, yc), QPointF(x2 - ge / 2, y2), QPointF(x2, y2))
         return path
 
     def _synth_of(self, g: Graph, n: Node) -> Node | None:

@@ -504,7 +504,7 @@ class Graph:
                 if n is not None:
                     n.handle = True
                     n.broken = getattr(project, "fusion_problem", lambda q: "")(p)   # circled in red (1.1)
-                    n.waits = getattr(project, "wiring_reason", lambda q, k: "")(p, "fusion")     # greyed (#165)
+                    n.waits = getattr(project, "wiring_reason", lambda q, k: "")(p, "fusion") or                         getattr(project, "fusion_waiting", lambda q: "")(p)     # greyed, never red (#165)
                     self.by_path[p.pid]["post"] = n
         # the data of the sky a block needs and this computer has not (the offline catalogue not installed): marked
         # with the reason; the runs leave it out with what follows it, and run the rest

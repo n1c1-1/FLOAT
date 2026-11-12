@@ -1780,8 +1780,8 @@ class ProjectModel(QObject):
             for _f, q in made:
                 if self.p.workflow(q.pid).blocks is None:
                     self.set_graph(q, self.mono_blocks(opts))
-            sid = self.add_filter_session("")
-            rgb = self.add_path(self.unique_name("RGB"), opts)
+            sid = self.add_filter_session("", _("RGB"))
+            rgb = self.add_path(self.unique_name(_("RGB")), opts)
             self.p.workflow(rgb.pid).sessions = [sid]
             self.set_graph(rgb, [dict(n) for n in wfl.from_options(to_engine(dict(opts)), None, "frames") if not n["off"]])
             rgb = self.view(rgb.pid)
@@ -1795,7 +1795,7 @@ class ProjectModel(QObject):
             self.set_layer_side(lid, "stars", rgb.pid, "starless")
             self.remove_post_part(fus.pid, None, None)           # Post shows the issue's picture and nothing else
             self.remove_post_part(rgb.pid, "combined", None)
-            gone = {(int(a), b) for a, b in self.p.post.get("removed") or []} | {(fus.pid, None), (rgb.pid, "combined")}
+            gone = {(int(a), b) for a, b in self.p.post.get("removed") or []} | {(fus.pid, None), (rgb.pid, "combined")}                 | {(q.pid, self.post_default_part(q)) for _f, q in made}     # the filters' own default layers too
             self.p.post = {**self.p.post, "removed": sorted([list(x) for x in gone], key=str)}   # also before its lights
         return self.view(fus.pid)
 
@@ -1998,10 +1998,20 @@ class ProjectModel(QObject):
                 return _("needed by “{fusion}”").format(fusion=self.view(lay["pid"]).name)
         return ""
 
+    def fusion_waiting(self, p) -> str:
+        """What a combination waits for without failing: the lights of the workflows it reads, not added yet (the
+        block is greyed with this reason, never circled in red); "" when it waits for nothing."""
+        if not is_fusion_view(p):
+            return ""
+        views = {q.pid: q for q in self.paths}
+        roles = [i.get("role") or "" for i in p.source["fusion"].get("inputs") or []
+                 if (self._channel_problem(views.get(i["pid"]), i, i.get("role") or "") or ("",))[0] == "{role}: no lights"]
+        return _("{role}: no lights").format(role=", ".join(port_name(r) for r in roles)) if roles else ""
+
     def fusion_problem(self, p) -> str:
         """Why a combination cannot run whatever is wired (said before Run: the block is circled in red and the run
-        refused); "" when it can, or for a workflow that is not a combination. An empty input or inputs not on one grid
-        are not here: the block waits, greyed (``wiring_reason``)."""
+        refused); "" when it can, or for a workflow that is not a combination. An empty input, inputs not on one grid
+        or lights not added yet are not here: the block waits, greyed (``wiring_reason``, ``fusion_waiting``)."""
         if not is_fusion_view(p):
             return ""
         views = {q.pid: q for q in self.paths}
@@ -2009,7 +2019,7 @@ class ProjectModel(QObject):
         for i in p.source["fusion"].get("inputs") or []:       # said at once
             role = i.get("role") or ""
             why = self._channel_problem(views.get(i["pid"]), i, role)
-            if why is None:
+            if why is None or why[0] == "{role}: no lights":
                 continue
             same = next((x for x in found if x[0] == why[0] and x[1] == why[1]), None)
             if same is None:
@@ -2210,12 +2220,13 @@ class ProjectModel(QObject):
             return None
         return self.add_graph_workflow(_("Workflow"), [])
 
-    def add_filter_session(self, flt: str) -> int:
-        """An empty Session block for a filter (a template's, before its frames are known, issue #47)."""
+    def add_filter_session(self, flt: str, name: str = "") -> int:
+        """An empty Session block for a filter (a template's, before its frames are known, issue #47); ``name``: the
+        name of a session that has no filter (the colour workflow's "RGB")."""
         with self._edit():
             sid = max((s.id for s in self.p.sessions), default=0) + 1
             from ..core.project2 import Session
-            name = api.unique_session_name(self.p, flt) if flt else self.new_session_name(sid)
+            name = api.unique_session_name(self.p, flt or name) if flt or name else self.new_session_name(sid)
             self.p.sessions.append(Session(sid, name, filter=flt))
             if len(self.p.sessions) >= 2 and self.p.stack_mode == "together":
                 self.p.stack_mode = "per_session"
