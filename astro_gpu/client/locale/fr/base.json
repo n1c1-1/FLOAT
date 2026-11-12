@@ -816,6 +816,8 @@
   "Target: the frames point {sep}° away from {target}: check the project's target.": "Cible : les images pointent à {sep}° de {target} : vérifiez la cible du projet.",
   "This session mixes lights of {times}: put each exposure time in a session of its own, with its darks.": "Cette session mélange des lights de {times} : mettez chaque temps de pose dans une session à part, avec ses darks.",
   " and ": " et ",
+  "Bias: {n} frames last {t:g} s, as the flats: flat darks?": "Offsets : {n} images durent {t:g} s, comme les flats : des darks de flat ?",
+  "Bias: {n} frames last {t:g} s, not near zero: are they really bias?": "Offsets : {n} images durent {t:g} s, loin de zéro : sont-ce vraiment des offsets ?",
   "Dates: the camera says {camera}, the file names say {names}: the camera's clock was probably never set. The star positions are computed for the camera's date.": "Dates : l'appareil indique le {camera}, les noms des fichiers le {names} : son horloge n'a sans doute jamais été réglée. Les positions des étoiles sont calculées pour la date de l'appareil.",
   "No bias, no dark flats: the flats are corrected with the camera black level ({black} ADU).": "Ni offsets ni darks de flat : les flats sont corrigés du niveau noir de l'appareil ({black} ADU).",
   "No bias, no dark flats: the flats are corrected with the darks' level ({level} ADU).": "Ni offsets ni darks de flat : les flats sont corrigés du niveau des darks ({level} ADU).",

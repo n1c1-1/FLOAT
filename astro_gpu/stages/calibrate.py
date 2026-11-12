@@ -240,6 +240,23 @@ def mixed_exposures(frames: list[dict]) -> list[float]:
     return times if len(times) > 1 else []
 
 
+#: A bias frame is the shortest exposure the camera can make; one longer than this is not "near zero" (0.1 s: far above
+#: the 1/4000 s to 1/1000 s of a camera's shortest exposures, below the shortest flat or dark anyone takes).
+BIAS_MAX_EXPOSURE = 0.1
+
+
+def long_bias(bias: list[dict], flats: list[dict]) -> dict | None:
+    """Bias frames whose exposure is not near zero (over ``BIAS_MAX_EXPOSURE``), which are often flat darks or darks named
+    bias: {"n": how many, "exposure": the median one (s), "flats": whether the flats have that exposure (within
+    SAME_EXPOSURE)}; None for none. Information only: nothing is reclassified."""
+    long = sorted(f["exposure"] for f in bias if (f.get("exposure") or 0) > BIAS_MAX_EXPOSURE)
+    if not long:
+        return None
+    t = long[len(long) // 2]
+    return {"n": len(long), "exposure": t,
+            "flats": any(f.get("exposure") and _same_exposure(t, f["exposure"]) for f in flats)}
+
+
 def dark_plan(lights: list[dict], darks: list[dict], base: bool) -> list[tuple[str, int | None]]:
     """How each group of lights (``exposure_groups``) is calibrated against the groups of darks, by the usual practice
     of calibration: ("same", j) with the darks of group j, of its exposure and gain, as they are; ("scaled", j) when no

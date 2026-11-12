@@ -92,6 +92,12 @@ def mixed_exposures_text(times) -> str:
              "darks.").format(times=(", ".join(names[:-1]) + _(" and ") + names[-1]) if len(names) > 1 else names[0])
 
 
+def long_bias_text(a: dict) -> str:
+    """Bias frames that last long (``stages.calibrate.long_bias``), said as information."""
+    return (_("Bias: {n} frames last {t:g} s, as the flats: flat darks?") if a["flats"] else
+            _("Bias: {n} frames last {t:g} s, not near zero: are they really bias?")).format(n=a["n"], t=a["exposure"])
+
+
 def day_text(iso: str) -> str:
     """A day as the night's text writes it ("17 Jun 2025", "17 juin 2025"); the ISO text itself when it cannot be read."""
     try:
@@ -180,6 +186,9 @@ def check_text(c, data: ProjectFrames | None = None) -> str:
             f"{a.get('session', '')}: " + clock_text(a)
     if c.key == "target_far":                             # the typed target against where the lights point
         return target_far_text(a)
+    if c.key == "long_bias":                              # bias frames that are not near zero: flat darks?
+        colon = " :" if language() == "fr" else ":"
+        return f"{a.get('session', '')}{colon} " + long_bias_text(a)
     if c.key == "mixed_exposures":                        # lights of several exposure times in one session
         colon = " :" if language() == "fr" else ":"
         return f"{a.get('session', '')}{colon} " + mixed_exposures_text(a["times"])

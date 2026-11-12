@@ -1104,6 +1104,17 @@ def health_checks(p: Project2, dates: dict[int, list[tuple[str, str]]] | None = 
                                  "exposure time in a session of its own, with its darks.", {"session": s.name, "times": times}))
     except Exception:  # noqa: BLE001 - information: headers that cannot be read are said elsewhere
         pass
+    try:                                             # bias frames that are not near zero: information, nothing reclassified
+        from .client.frames import long_bias_text
+        from .stages.calibrate import long_bias
+        for s in keys.project.sessions:
+            fr = keys.scan.session_frames(keys.project, s)
+            lb = long_bias(light_facts([f for f, _size in fr["bias"]], limit=400).get("keys") or [],
+                           light_facts([f for f, _size in fr["flats"]], limit=400).get("keys") or [])
+            if lb:
+                out.append(Check("info", "long_bias", f"{s.name}: {long_bias_text(lb)}", {"session": s.name, **lb}))
+    except Exception:  # noqa: BLE001 - information: headers that cannot be read are said elsewhere
+        pass
     for w in p.workflows:                            # two filters in one stack: a mistake, said before the run
         flts = sorted({s.filter for s in p.sessions_of(w) if s.lights} - {""}) if w.source is None else []
         if len(flts) > 1:

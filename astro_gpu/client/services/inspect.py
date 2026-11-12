@@ -554,6 +554,8 @@ class SessionRow:
     #: Calibration groups by exposure to give each light the dark of its own (stages/calibrate.match_darks)
     light_keys: list = field(default_factory=list)
     dark_keys: list = field(default_factory=list)
+    bias_keys: list = field(default_factory=list)      # the same for its bias and its flats (``long_bias``)
+    flat_keys: list = field(default_factory=list)
     #: its frames' own date against the one their file names say, when they disagree (io/frames.clock_disagreement:
     #: {"camera", "names"} ISO dates), from the first and last lights' headers read for ``first`` and ``last`` when
     #: the date is their own (EXIF, DATE-OBS), never the file's date on disk
@@ -670,8 +672,11 @@ def calib_checks(row: SessionRow, camera: dict) -> dict:
     level {"ref": ADU, "what": "bias" | "black level" | "dark level"}; {} for none. "darks_by_exposure": which dark the
     lights of each exposure get (``dark_lines``), when the lights or the darks are of several exposures;
     "mixed_exposures": the exposure times of lights of several (information)."""
-    from ...stages.calibrate import dark_far, flat_under, mixed_exposures
+    from ...stages.calibrate import dark_far, flat_under, long_bias, mixed_exposures
     out: dict = {}
+    lb = long_bias(row.bias_keys, row.flat_keys)
+    if lb:
+        out["long_bias"] = lb
     mixed = mixed_exposures(row.light_keys)
     if mixed:
         out["mixed_exposures"] = mixed
@@ -778,6 +783,11 @@ def project_frames(p, wid: int | None, headers: dict | None = None) -> ProjectFr
             row.dark_keys = _keys_of(_files(p, s.darks), hdr)
         except Exception:  # noqa: BLE001 - a hint, as the levels above
             row.dark_keys = []
+        try:
+            row.bias_keys = _keys_of(_files(p, s.bias), hdr)
+            row.flat_keys = _keys_of(_files(p, s.flats), hdr)
+        except Exception:  # noqa: BLE001 - a hint, as the levels above
+            row.bias_keys = row.flat_keys = []
         out.sessions.append(row)
     far = {x["sid"]: x for x in api.target_far(p, points)}
     for row in out.sessions:

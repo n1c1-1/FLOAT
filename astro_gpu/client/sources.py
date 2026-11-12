@@ -49,6 +49,7 @@ from .frames import (
     colour_note_text,
     fexp,
     iso_word,
+    long_bias_text,
     mixed_exposures_text,
     night_start,
     nights_text,
@@ -846,6 +847,8 @@ class SourcesView(QWidget):
             out.append((None, target_far_text(far)))
         if bad.get("mixed_exposures"):               # lights of several exposure times: information, nothing blocked
             out.append((None, mixed_exposures_text(bad["mixed_exposures"])))
+        if bad.get("long_bias"):                     # bias frames not near zero: information, nothing reclassified
+            out.append((None, long_bias_text(bad["long_bias"])))
         dk = c.get("darks")
         by = bad.get("darks_by_exposure")
         if dk and not (by and by[0]["several"]):

@@ -134,3 +134,28 @@ def test_a_session_mixing_exposure_times_says_so_as_information(tmp_path):
     one = _project(tmp_path / "o", 1, 508.0, np.full((H, W), 8400 / 65535, np.float32), {"STACKCNT": 30})
     assert not any("mixes" in t for _ok, t in _lines(one, 1))
     assert not any(x.key == "mixed_exposures" for x in api.health_checks(one))
+
+
+def test_bias_frames_lasting_seconds_say_so_as_information(tmp_path):
+    from astro_gpu import api
+    from astro_gpu.client import i18n
+    from astro_gpu.client.frames import check_text
+    p = _project(tmp_path, 1, 508.0, np.full((H, W), 8400 / 65535, np.float32), {"STACKCNT": 30})
+    s = p.sessions[0]
+    for i in range(3):                                       # flat darks named bias: 3 s, as the flats
+        _fits(tmp_path / "B" / f"b{i}.fits", np.full((H, W), 520, np.uint16), EXPTIME=3.0)
+        _fits(tmp_path / "FL" / f"f{i}.fits", np.full((H, W), 9000, np.uint16), EXPTIME=3.0)
+    s.bias, s.flats = [str(tmp_path / "B")], [str(tmp_path / "FL")]
+    want = "Bias: 3 frames last 3 s, as the flats: flat darks?"
+    assert (None, want) in _lines(p, 1)
+    c = [x for x in api.health_checks(p) if x.key == "long_bias"]
+    assert len(c) == 1 and c[0].level == "info" and c[0].args["n"] == 3
+    assert check_text(c[0]) == "night 1: " + want
+    try:
+        i18n.set_language("fr")
+        assert "des darks de flat ?" in check_text(c[0])
+    finally:
+        i18n.set_language("en")
+    ok = _project(tmp_path / "o", 1, 508.0, np.full((H, W), 8400 / 65535, np.float32), {"STACKCNT": 30})
+    assert not any("Bias:" in t and "frames last" in t for _ok, t in _lines(ok, 1))
+    assert not any(x.key == "long_bias" for x in api.health_checks(ok))
