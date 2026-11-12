@@ -256,10 +256,11 @@ def test_branches_parallel_flows_removable_wires_and_the_palette_taking_a_block_
         # the wires to Post can be taken away; the chain's are not items
         wires = [it for it in page.graph.scene().items() if isinstance(it, WireItem)]
         assert wires
-        page.graph.select_wire(wires[0])
+        page.graph.select_wire(next(x for x in wires if x.pid is not None))      # a link to Post (the others are joins)
         page._delete_selected()
         settle(w, page)
-        assert len([it for it in page.graph.scene().items() if isinstance(it, WireItem)]) < len(wires)
+        assert len([it for it in page.graph.scene().items() if isinstance(it, WireItem) and it.pid is not None]) < len(
+            [x for x in wires if x.pid is not None])               # the links to Post (a join's wire is unwired apart)
         # a placed block dragged onto the palette: removed
         n = Graph(m).node_of(m.view(full.pid), "couleur")
         page.graph._dragged = n
@@ -581,7 +582,7 @@ def test_a_blank_page_has_a_link_to_the_templates_in_place_of_the_graph(qapp, tm
         QTest.mouseClick(page.graph.viewport(), Qt.LeftButton, pos=page.graph.mapFromScene(link.sceneBoundingRect().center()))
         assert page.templates.isVisibleTo(page) and not page.graph.isVisibleTo(page)
         assert [c.t["key"] for c in page.templates.cards] == ["colour_min", "colour_full", "image", "filters_min",
-                                                              "filters_full", "images"]
+                                                              "filters_full", "sho_rgb", "images"]
         page.templates.back_b.click()
         assert page.graph.isVisibleTo(page) and not page.templates.isVisibleTo(page) and page.is_blank()
         assert page.new_workflow() is None and page.templates.isVisibleTo(page)   # the menu: no window on a blank page
@@ -658,7 +659,7 @@ def test_the_template_cards_take_the_height_of_their_content_in_a_grid_that_wrap
         room = page.templates.scroll.viewport().width()
         assert len({c.x() for c in cards}) == min(6, (room + 12) // (cards[0].width() + 12)) > 3, room   # as many as fit
         bottom = max(c.geometry().bottom() for c in cards)
-        assert bottom < page.templates.scroll.viewport().height() / 2      # the page's room left below them
+        assert bottom < page.templates.scroll.viewport().height() * 0.6    # the page's room left below them
         page.resize(700, 1000)
         settle(w, page)
         cards = check()
@@ -1051,7 +1052,8 @@ def test_after_the_start_no_block_opens_the_template_window(qapp, tmp_path, monk
         assert getattr(page, "_gallery", None) is None
         fu = m.paths[-1]
         f = fu.source["fusion"]
-        assert f["type"] == "ho" and [i["channel"] for i in f["inputs"]] == ["R", "GB"] and m.sel_step == "fusion"
+        assert f["type"] == "ho" and f["inputs"] == [] and m.sel_step == "fusion"      # placed empty: the user wires it
+        assert "to wire" in Graph(m).node_of(fu, "fusion").waits
         n = len(m.paths)
         page.workflow_action("duplicate", m.paths[0].pid)
         settle(w, page)
@@ -1252,16 +1254,18 @@ def test_control_round_a_fusion_channel_sent_to_post_keeps_the_channels_apart(qa
 
 
 def test_control_round_the_fusion_card_waits_for_the_channels_lights(qapp, tmp_path, monkeypatch):
-    """2: a colour project without lights: the Combine channels card greyed, saying what to do."""
+    """Issue #165: a combination is placed whatever the project holds (no filter is read, no lights are asked): its
+    inputs are empty and the block waits, greyed with the reason."""
     w, m, page, p = graph_page(tmp_path, monkeypatch, ["calibration", "registration", "stacking"])
     try:
         assert page.palette_reason("fusion", m.view(p.pid), None) == ""
         assert m.remove_session_entry(1, "lights", m.session(1).lights[0])
         settle(w, page)
-        assert page.palette_reason("fusion", m.view(p.pid), None) == "lights first in “Workflow”"
+        assert page.palette_reason("fusion", m.view(p.pid), None) == ""
         n = len(m.paths)
-        page.place_fusion("ho")                                     # refused: nothing placed
-        assert len(m.paths) == n
+        page.place_fusion("ho")                                     # placed empty
+        settle(w, page)
+        assert len(m.paths) == n + 1 and m.paths[-1].source["fusion"]["inputs"] == []
     finally:
         page.close()
         m.close(save=False)
@@ -1618,8 +1622,7 @@ def test_the_palette_has_one_combination_entry_whose_types_unfold_beside_it(qapp
         assert isinstance(fly, GroupFlyout) and fly.isVisible() and not fly.isModal()
         assert [b.text() for b in fly.buttons.values()] == ["S-H-O", "H-O", "RGB", "LRGB"]
         assert all(b.toolTip() for b in fly.buttons.values())                  # each type says what it is
-        assert fly.buttons["ho"].isEnabled() and not fly.buttons["lrgb"].isEnabled()   # a colour stack: dual band only
-        assert "L" in fly.buttons["lrgb"].toolTip()                              # why it is greyed
+        assert all(b.isEnabled() for b in fly.buttons.values())                  # any type: its inputs are wired after
         assert fly.x() >= card.mapToGlobal(card.rect().topRight()).x()          # beside the entry
         QTest.keyClick(fly, Qt.Key_Escape)
         assert not fly.isVisible() and len(m.paths) == 1
@@ -1662,10 +1665,12 @@ def test_a_linear_image_is_chosen_as_a_fusion_channel_on_its_row(qapp, tmp_path,
         page.place_fusion("ho")
         settle(w, page)
         fu = m.paths[-1]
-        assert "stars" not in fu.source["fusion"]                        # a combination has no stars of its own
-        offered = {q.pid: why for q, why in m.channel_choices(fu, "OIII")}
+        assert "stars" not in fu.source["fusion"] and fu.source["fusion"]["inputs"] == []   # placed empty
+        offered = {q.pid: why for q, why in m.input_choices(fu, "OIII")}
         assert offered[img.pid] == "" and "stretch" in offered[stretched.pid]
-        assert not m.set_fusion_channel(fu, "OIII", stretched.pid)
+        with pytest.raises(ValueError):
+            m.set_fusion_input(fu, "OIII", stretched.pid)
+        assert m.set_fusion_input(fu, "Ha", m.paths[0].pid)
         page.select(index=m.paths.index(m.view(fu.pid)), step="fusion")
         settle(w, page)
         rows = [c for c in page.panel.findChildren(QComboBox) if c.findData(img.pid) >= 0]
@@ -1698,13 +1703,16 @@ def test_a_fusion_can_start_from_a_linear_image_alone(qapp, tmp_path, monkeypatc
         page.palette_action("image")
         settle(w, page)
         img = m.paths[-1]
-        assert page.palette_reason("fusion", img, None) == "needs 2 filter workflows, a colour stack or image"
+        assert page.palette_reason("fusion", img, None) == ""
         m.set_image_file(img, _a_fits(tmp_path / "stack.fits"))
         settle(w, page)
-        assert page.palette_reason("fusion", m.view(img.pid), None) == ""
         page.place_fusion("ho")
         settle(w, page)
-        f = m.paths[-1].source["fusion"]
+        fu = m.paths[-1]
+        assert fu.source["fusion"]["inputs"] == []
+        m.set_fusion_input(fu, "Ha", img.pid)                        # a colour image's channels: dual band by default
+        m.set_fusion_input(m.view(fu.pid), "OIII", img.pid)
+        f = m.view(fu.pid).source["fusion"]
         assert [(i["pid"], i["channel"]) for i in f["inputs"]] == [(img.pid, "R"), (img.pid, "GB")] and "stars" not in f
         assert m.fusion_problem(m.paths[-1]) == ""
     finally:

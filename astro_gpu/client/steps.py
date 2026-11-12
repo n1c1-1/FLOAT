@@ -112,6 +112,8 @@ COLOR_NOTE = ("Before, left of the divider: the stack output as it is, in the ca
 DECONV_NOTE = "Before (what the block reads) and after (deconvolved), with the same stretch."
 DENOISE_NOTE = ("Before (the stack, its gradient removed: what the block reads) and after (denoised), with the same "
                 "stretch on both. Drag the divider.")
+ALIGNED_NOTE = ("The image brought onto the grid of its reference: the size and framing of the reference, what overflows is "
+              "cut. Compare it with the stack it comes from.")
 STACK_NOTE = "The stack output in the camera's colours, before colour calibration: its green cast is normal."
 CAMERA_NOTE = "In the camera's colours, before colour calibration."
 GRADIENT_NOTE = ("The stack with its sky gradient removed, in the camera's colours, as every later block reads it (the "
@@ -227,10 +229,30 @@ class Steps(QObject):
         return got
 
     # ------------------------------------------------------------ the pictures
+    def read_stage(self, p, stage: str) -> str:
+        """The stage whose result a block after Align on shows where it would show the stack: Chains.resolve gives the
+        aligned image where a stage reads what the entry Align on itself reads (issue #165). Stacking keeps the stack."""
+        chain = self.s.all_stages(p)
+        if stage != "stack" or "align_on" not in chain:
+            return stage
+        return "align_on"
+
     def visuals(self, p, k: str) -> list[VisualSpec]:
         """The tabs of a block of a workflow, in their order: pictures (shown in the common viewer), charts, tables,
-        sequences of frames. The ◇ ones (not in the engine yet) are marked."""
+        sequences of frames. The ◇ ones (not in the engine yet) are marked. After Align on, the stack is the aligned
+        image (``read_stage``)."""
+        out = self._visuals(p, k)
+        if k in ("calibration", "alignement", "selection", "crop", "empilement", "demi_piles"):
+            return out
+        return [dataclasses.replace(v, stage=self.read_stage(p, v.stage),
+                                    base=(self.read_stage(p, v.base[0]), *v.base[1:]) if v.base else v.base)
+                for v in out]
+
+    def _visuals(self, p, k: str) -> list[VisualSpec]:
         V = VisualSpec
+        if k == "align_on":
+            return [V("aligned", "Aligned image", "array", "align_on", "drz_full", True, True, camera=True,
+                      compare=("raw_stack",), note=ALIGNED_NOTE)]
         if k == "calibration":
             out = [V("masters", "Masters", "masters", "calibrate")]
             counts = {"darks": 0, "flats": 0, "bias": 0, "flat_darks": 0}
@@ -251,7 +273,7 @@ class Steps(QObject):
                     V("table", "Frames", "regtable", "register")]
         if k == "empilement":
             return [V("stack", "Stack", "array", "stack", "drz_full", True, True, camera=True,
-                      compare=("calibrated_ref", "half_a", "half_b"), note=STACK_NOTE),
+                      compare=("calibrated_ref", "raw_half_a", "raw_half_b"), note=STACK_NOTE),
                     V("rejection", "Rejection map", "rejection", "stack", note=REJECTION_NOTE),
                     V("coverage", "Coverage", "coverage", "stack", "drz_weight", True, True, camera=False, channel=1,
                       units="", note=COVERAGE_NOTE),
@@ -303,10 +325,14 @@ class Steps(QObject):
         does not make it."""
         stages = set(self.s.all_stages(p))
         V = VisualSpec
+        raw = key.startswith("raw_")                  # the stack itself, before Align on (the Stacking block's own)
+        key = key[len("raw_"):] if raw else key
+        stk = "stack" if raw else self.read_stage(p, "stack")
         if key == "stack":
-            return V("stack", "Stack", "array", "stack", "drz_full", True, True, camera=True)
+            return V("stack", "Stack" if stk == "stack" else "Aligned image", "array", stk, "drz_full", True, True,
+                     camera=True)
         if key in ("half_a", "half_b"):
-            return V(key, "Half-stack A" if key == "half_a" else "Half-stack B", "array", "stack",
+            return V(key, "Half-stack A" if key == "half_a" else "Half-stack B", "array", stk,
                      "drz_A" if key == "half_a" else "drz_B", True, True, camera=True)
         if key == "denoised" and "denoise" in stages:
             return V("denoised", "Denoised stack", "array", "denoise", "n2n_full", True, True, camera=True)
@@ -314,7 +340,7 @@ class Steps(QObject):
             return V("whole", "Image with stars", "array", "render_simple", "lin", True, True, camera=False)
         if key == "color" and "color" in stages:
             return V("color", "Colour-calibrated stack", "color", "color", "", True, True, camera=False,
-                     base=("stack", "drz_full"))
+                     base=(stk, "drz_full"))
         if key == "color_denoised" and "color" in stages and "denoise" in stages:
             return V("color_denoised", "Colour-calibrated denoised stack", "color", "color", "", True, True,
                      camera=False, base=("denoise", "n2n_full"))
@@ -348,7 +374,7 @@ class Steps(QObject):
         if spec.kind == "calibrated":
             return ["color", spec.base[0]]
         if spec.kind in ("gradient", "removed"):
-            return ["gradient", "stack"]
+            return ["gradient", self.read_stage(p, "stack")]
         return [spec.stage]
 
     def view_image(self, p, spec: VisualSpec, prefix: str = "") -> ViewImage | None:
@@ -385,8 +411,9 @@ class Steps(QObject):
         # where it sits for the compare: every picture on the stack grid (and a reduced copy of it, an engine preview)
         # is placed on the registration's reference frame at the drizzle scale (services/inspect.stack_place)
         place = None
-        if spec.grid and "stack" in self.s.all_stages(p) and self.key_of(p, "stack", self.which_for(p, "stack")):
-            place = si.stack_place(P, p.pid, self.which_for(p, "stack"))
+        pst = self.read_stage(p, "stack") if spec.stage != "stack" else "stack"
+        if spec.grid and pst in self.s.all_stages(p) and self.key_of(p, pst, self.which_for(p, pst)):
+            place = si.stack_place(P, p.pid, self.which_for(p, pst), pst)
         ident = ("inspect", spec.kind, spec.name, spec.channel, spec.base, tuple(zip(stages, keys)))
         name = (prefix + "  ·  " if prefix else "") + _(spec.shown or spec.caption)
         # an array in the camera's colours is shown as it is (its green cast and all): Neutral sky is a display

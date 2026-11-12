@@ -128,7 +128,7 @@ def fusion_with_stars_plan(f: Findings):
         return {"set": f"{type(e).__name__}: {e}"}
     project2.save(p)
     k = Keys(p)
-    out = {"chain": k.chain(fu.id), "inputs": k.fusion_inputs(fu.id)}
+    out = {"chain": k.chain(fu.id), "inputs": k.cross_inputs(fu.id, wfl.combine_stage(fu))}
     plan = runner2.plan_all(p)
     out["jobs"] = [j.stage for j in plan.jobs]
     for e in plan_problems(p, plan):

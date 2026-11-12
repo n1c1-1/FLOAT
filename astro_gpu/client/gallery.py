@@ -88,11 +88,17 @@ GALLERY: list[dict] = [
          text="One image to Post as a layer, a FITS, TIFF, PNG or JPEG file: blocks are added from the palette."),
     dict(key="filters_min", tab="frames", name="Filters minimal", opts=CLASSIC, kind="filters", palette="H-O",
          filters=PALETTES["H-O"],
-         text="A monochrome camera: each filter gets its own workflow, and each result is a layer of Post."),
+         text="A monochrome camera: each filter gets its own workflow, the others aligned on the first one, and each "
+              "result is a layer of Post."),
     dict(key="filters_full", tab="frames", name="Filters full", opts=CLASSIC_DN, kind="fusion", palette=SHO_DEFAULT,
          filters=PALETTES[SHO_DEFAULT],
-         text="Each filter's workflow with denoise, then the combination of the filters chosen here makes the colour "
-              "image; a Stars/background after it takes its stars off, a Combine layers block puts them back."),
+         text="Each filter's workflow with denoise, the others aligned on the first one, then the combination of the "
+              "filters chosen here makes the colour image."),
+    dict(key="sho_rgb", tab="frames", name="SHO + RGB stars", opts=FULL, kind="fusion", palette=SHO_DEFAULT,
+         filters=PALETTES[SHO_DEFAULT], rgb_stars=True,
+         text="The nebula from the narrow bands, the stars from a colour camera: each filter's workflow and a colour "
+              "workflow take their stars off, the others aligned on the first filter; the combination reads the "
+              "starless images, and a Combine layers block puts the colour stars back on its image."),
     dict(key="images", tab="frames", name="Several images", opts=CLASSIC, source="image", plain=True, blocks=[], images=3,
          text="Several images to Post, one layer each: each Image block takes its file in the graph."),
 ]
@@ -334,16 +340,27 @@ def draw_graph(t: dict, w: int, h: int, names: bool = False) -> QPixmap:
 
 
 def draw_filters(t: dict, w: int, h: int, names: bool = False) -> QPixmap:
-    """A filters template's graph: a row per filter (its session, then its own workflow up to its Output), the rows
-    joined into the block of their combination, its Stars/background and the Combine layers that puts its stars back."""
+    """A filters template's graph: a row per filter (its session, then its own workflow), the others aligned on the first
+    one by an Align on block, the rows joined into the block of their combination (issue #165); the "SHO + RGB stars"
+    template adds a colour row whose stars a Combine layers block puts on the combination's image."""
     pm = QPixmap(w, h)
     pm.fill(QColor("#15171c"))
     p = QPainter(pm)
     p.setRenderHint(QPainter.Antialiasing)
-    chain = [k for k, _h in chain_of(t)]
-    rows = list(t["filters"])
+    rgb = bool(t.get("rgb_stars"))
     fusion = t["kind"] == "fusion"
-    n = 1 + len(chain) + (3 if fusion else 0)
+    rows = list(t["filters"]) + (["RGB"] if rgb else [])
+    base = [k for k, _h in chain_of(t)]
+    base = base[:-1] if fusion else base                 # the last block (Post) is the combination's, not a row's
+    cols = []
+    for k in base:                                       # Align on right after Stacking, a Stars block at the end
+        cols.append(k)
+        if k == "empilement":
+            cols.append("align_on")
+    if rgb:
+        cols.insert(cols.index("fond") + 1, "couleur")
+        cols.append("etoiles")
+    n = 1 + len(cols) + (1 if fusion else 0) + (1 if rgb else 0)
     gap = max(4.0, w * (0.008 if names else 0.012))      # with the names: narrower gaps, wider blocks
     bw = (w - 2 * gap - (n - 1) * gap - (gap * 2 if fusion else 0)) / n
     pitch_max = (h - 8) / max(len(rows), 1)
@@ -373,25 +390,35 @@ def draw_filters(t: dict, w: int, h: int, names: bool = False) -> QPixmap:
 
     pitch = min(pitch_max, bh + max(4.0, h * 0.06))
     ys = [h / 2 + (i - (len(rows) - 1) / 2) * pitch for i in range(len(rows))]
+    xs = [gap + (bw + gap) * (j + 1) for j in range(len(cols))]            # a column per block name, shared by the rows
     ends = []
-    for row, y in zip(rows, ys):
-        x = gap
-        r = block(x, y, row, "#7aa2d6")
-        for k in chain:
-            x = r.right() + gap
-            wire(r.right(), y, x, y)
-            r = block(x, y, picture_name(k), "#5fbf7f")
-        ends.append((r.right(), y))
+    first_stack = None
+    for i, (row, y) in enumerate(zip(rows, ys)):
+        r = block(gap, y, row, "#7aa2d6")
+        for j, k in enumerate(cols):
+            if (k == "align_on" and i == 0) or (k == "couleur" and not (rgb and row == "RGB")) or \
+                    (k == "etoiles" and not rgb and "etoiles" not in base):
+                continue
+            wire(r.right(), y, xs[j], y)
+            r = block(xs[j], y, picture_name(k), "#c9a227" if k == "align_on" else "#5fbf7f")
+            if k == "empilement" and i == 0:
+                first_stack = (r.right(), y)
+            if k == "align_on" and first_stack is not None:           # the reference: a wire from the first Stacking
+                p.setPen(QPen(QColor("#c9a227"), 1.0, Qt.DashLine))
+                p.drawLine(QPointF(first_stack[0] - bw / 2, ys[0] + bh / 2), QPointF(r.center().x(), y - bh / 2))
+        ends.append((r.right(), y, row))
     if fusion:
-        yf = h / 2
-        x = ends[0][0] + 3 * gap
+        yf = ys[0] + (ys[len(rows) - 1 - int(rgb)] - ys[0]) / 2 if len(rows) > 1 else h / 2
+        x = max(e[0] for e in ends) + 3 * gap
         r = block(x, yf, _(palette_name(t.get("palette", SHO_DEFAULT))), "#c9a227")
-        r1 = block(r.right() + gap, yf, _("Stars/background"), "#5fbf7f")   # the stars taken off the combined image
-        r2 = block(r1.right() + gap, yf, _("Combine layers"), "#c9a227")    # and put back
-        wire(r.right(), yf, r1.left(), yf)
-        wire(r1.right(), yf, r2.left(), yf)
-        for ex, ey in ends:
-            wire(ex, ey, r.left(), h / 2)
+        for ex, ey, row in ends:
+            if row != "RGB":
+                wire(ex, ey, r.left(), yf)
+        if rgb:                                           # the colour stars put back on the combination's image
+            r2 = block(r.right() + gap, h / 2, _("Combine layers"), "#c9a227")
+            wire(r.right(), yf, r2.left(), h / 2)
+            ex, ey, _row = ends[-1]
+            wire(ex, ey, r2.left(), h / 2)
     p.end()
     return pm
 

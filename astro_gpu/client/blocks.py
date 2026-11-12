@@ -41,14 +41,14 @@ from ..stages.combine import STAGES as COMBINE
 from .i18n import _, hm, language, number, plural
 
 # the columns of the graph, left to right; optional columns only appear when a workflow uses them
-COLUMNS = ["sources", "calibration", "alignement", "selection", "crop", "empilement", "astrometrie", "fond", "couleur",
+COLUMNS = ["sources", "calibration", "alignement", "selection", "crop", "empilement", "align_on", "astrometrie", "fond", "couleur",
            "deconv", "debruitage", "etoiles", "synth", "post", "fusion", "composition", "final"]
 OPTIONAL = {"crop", "debruitage", "deconv", "etoiles", "synth", "post", "fusion", "composition"}
 PHASES = [("Pre-processing", "calibration", "empilement"), ("Linear processing", "astrometrie", "etoiles"),
           ("Composition", "fusion", "composition")]
 TOOL_COLUMN = {"debruitage": "debruitage", "etoiles": "etoiles", "deconv": "deconv",
                "auto": "fond", "rbf": "fond", "simple": "fond"}
-TITLES = {"align_images": "Align images", "sources": "Frames", "final": "Post", "image": "Image", "session": "Session",
+TITLES = {"align_on": "Align on", "sources": "Frames", "final": "Post", "image": "Image", "session": "Session",
           "fusion": "Combination",
           "calibration": "Calibration",
           "alignement": "Registration",
@@ -81,7 +81,7 @@ WARN_MARK = "⚠ "                       # a summary that opens with it: the blo
 #: the two images of the Stars block (the parts of Post's layers) and their words on the wires
 STAR_OUTPUTS = (("starless", "Starless image"), ("stars", "Stars alone"))
 # the engine's block names (core/workflow.BLOCKS) and the views' keys
-ENGINE_BLOCK = {"fusion": "fusion", "image": "image", "calibration": "calibration", "registration": "alignement",
+ENGINE_BLOCK = {"fusion": "fusion", "align_on": "align_on", "image": "image", "calibration": "calibration", "registration": "alignement",
                 "selection": "selection", "crop": "crop",
                 "stacking": "empilement", "astrometry": "astrometrie", "color": "couleur", "denoise": "debruitage",
                 "deconv": "deconv", "synth": "synth", "stars": "etoiles", "gradient": "fond", "output": "post"}
@@ -93,7 +93,7 @@ SIDE_INPUTS = {
 }
 TRUNK = ["inventory", "calibrate", "register", "stack"]
 #: the image blocks: placed in any order and more than once (issue #47), drawn in columns by their rank
-IMAGE_KEYS = {"align_images", "astrometrie", "fond", "couleur", "debruitage", "deconv"}
+IMAGE_KEYS = {"align_on", "astrometrie", "fond", "couleur", "debruitage", "deconv"}
 #: the frame blocks, in their columns
 FRAME_KEYS = ["calibration", "alignement", "selection", "crop", "empilement"]
 
@@ -115,9 +115,10 @@ STEPS = [
          what="One night: its light frames and the dark, flat and bias frames chosen for it, and the filter."),
     dict(key="image", phase=0, title="Image", kind="fixed", stages=["image"],
          what="An image file (a linear stack) this workflow starts from: the blocks after it read it as a stack."),
-    dict(key="align_images", phase=0, title="Align images", kind="slot", stages=["image"],
-         what="Brings several images onto one of them, through their plate solutions or their stars: each image keeps its "
-              "own wire, the others follow the reference's frame, what overflows is cut."),
+    dict(key="align_on", phase=3, title="Align on", kind="slot", stages=["align_on"],
+         what="Brings this workflow's image onto the grid of another workflow's image, through their stars or their plate "
+              "solutions: it takes the size and framing of its reference, what overflows is cut. Placed right after "
+              "Stacking, while the stars are there."),
     dict(key="calibration", phase=1, title="Calibration", kind="fixed", stages=["inventory", "calibrate"],
          what="Dark and flat masters, then each light calibrated: thermal signal, vignetting and defective pixels "
               "removed."),
@@ -385,7 +386,12 @@ class Node:
     broken: str = ""                           # why it cannot run at all (a fusion's channel gone...): circled in red
     missing: str = ""                          # why it cannot run on this computer: the data of the sky it needs is
     #                                            not on the disk (core/sky_data.py); left out of the runs, the rest runs
-    slot: int = -1                             # an image block: its rank among its workflow's image blocks (#47)
+    slot: int = -1                             # an image block: its rank among its workflow's image blocks (#47); a
+    #                                            combination: its rank among the combinations it reads (#165)
+    h: float = 0.0                             # its height when it is not the standard one (a join with many inputs)
+    after: int = -1                            # a Stars/background after a combination: that combination's rank (#165)
+    waits: str = ""                            # a join with an input to wire (or inputs not on one grid): why, translated;
+    #                                            the block is greyed, left out of the runs with what follows, never red
     num: int = 0                               # a Combine layers block among several, or a frame block among those
     #                                            placed in parallel: its number (control round)
     _bk: object = None
@@ -476,6 +482,10 @@ class Graph:
         # issue #43: a combination's block holds its workflow (its Output: no block of its own); its named inputs,
         # each from the block of its channel's workflow that gives the image it reads: (that block, the port, the image)
         self.fusion_inputs: dict[int, list[tuple[Node, str, str]]] = {}
+        #: an Align on block's reference: the block that gives the image its workflow's later blocks read (None: not wired)
+        self.align_refs: dict[int, Node | None] = {}
+        #: a Combine layers block's two inputs: [(the block giving the starless image, "starless"), (the stars', "stars")]
+        self.composition_inputs: dict[int, list[tuple[Node | None, str]]] = {}
         # a session whose data cannot be computed (a folder not there, a frame that cannot be read, darks of another
         # size): its block circled in red with the reason, Run refused (round 2)
         why = getattr(project, "session_problem", None)
@@ -494,6 +504,7 @@ class Graph:
                 if n is not None:
                     n.handle = True
                     n.broken = getattr(project, "fusion_problem", lambda q: "")(p)   # circled in red (1.1)
+                    n.waits = getattr(project, "wiring_reason", lambda q, k: "")(p, "fusion")     # greyed (#165)
                     self.by_path[p.pid]["post"] = n
         # the data of the sky a block needs and this computer has not (the offline catalogue not installed): marked
         # with the reason; the runs leave it out with what follows it, and run the rest
@@ -503,6 +514,7 @@ class Graph:
                 if n.paths and n.key not in ("sources", "final", "session") and not n.cut and not n.grey:
                     n.missing = next((w for q in n.paths if (w := sky(q, n.key))), "")
         self.compositions: list[Node] = []
+        self._sides: dict[int, dict] = {}                 # a Combine layers block -> its layer (its two sides)
         self.direct: list[tuple[Node, str]] = []
         self.to_post: set[int] = set()
         #: the layers of Post, top first: (name, workflow id or None for an image sent from Inspect)
@@ -534,6 +546,8 @@ class Graph:
                 self.to_post.add(p.pid)
                 continue
             src = self.node_of(p, "etoiles")
+            if src is None and part == "combined" and lay.get("starless") == "output":
+                src = self.leaves.get(p.pid)               # a combination's Output is the starless side (#165)
             if src is None:
                 continue
             if part == "combined":
@@ -541,6 +555,7 @@ class Graph:
                 n._bk = ("composition", lay.get("id"), p.pid)
                 self.nodes.append(n)
                 self.compositions.append(n)
+                self._sides[id(n)] = lay
             elif (src, part) not in self.direct:
                 self.direct.append((src, part))
         #: the workflows whose image comes to Post with their lights: no layer yet, their wire drawn dashed
@@ -578,7 +593,60 @@ class Graph:
                     if a is not None and a is not n:
                         ins.append((a, i["role"], image))
                 self.fusion_inputs[id(n)] = ins
+        self._ranks()
+        waits = getattr(project, "wiring_reason", lambda q, k: "")
+        for n in self.nodes:                          # an Align on block: the block its reference gives the image from
+            if n.key == "align_on" and n.paths and not n.cut:
+                ref = (getattr(project, "align_reference", lambda q: None))(n.paths[0])
+                self.align_refs[id(n)] = self._read_node(ref)
+                n.waits = waits(n.paths[0], "align_on")
+        for n in self.compositions:                   # a Combine layers block: the starless side and the stars side
+            p = n.paths[0]
+            lay = self._sides.get(id(n)) or {}
+            starless = self.leaves.get(p.pid) if lay.get("starless") == "output" else self.node_of(p, "etoiles")
+            q = lay.get("stars_pid", p.pid)
+            stars = self.node_of(project.view(q), "etoiles") if q is not None and any(
+                x.pid == q for x in project.paths) else None
+            self.composition_inputs[id(n)] = [(starless, "starless"), (stars, "stars")]
+            if starless is not None:
+                n.parent = starless
+            missing = [w for w, a in (("Starless", starless), ("Stars", stars)) if a is None]
+            if missing:
+                n.waits = _("{names} to wire").format(names=", ".join(_(m) for m in missing))
         self.nodes.append(self.final)
+
+    def _read_node(self, pid) -> Node | None:
+        """The block that gives a workflow's image to what reads it as a reference: its Align on when it has one, else its
+        Stacking, else its Image block."""
+        if pid is None:
+            return None
+        by = self.by_path.get(pid, {})
+        a = by.get("align_on")
+        if a is not None and not a.cut:
+            return a
+        return by.get("empilement") or by.get("image")
+
+    def _ranks(self):
+        """A combination's rank: 1 + the highest rank of a combination it reads (0 for one that reads none), and the
+        Stars/background after it follows that rank (their columns, left to right: no wire goes back)."""
+        flows = {q.pid: q for q in self.s.paths}
+
+        def rank(pid, seen=()):
+            q = flows.get(pid)
+            f = (getattr(q, "source", None) or {}).get("fusion") if q is not None else None
+            if not isinstance(f, dict) or pid in seen:
+                return -1
+            return 1 + max([rank(i["pid"], (*seen, pid)) for i in f.get("inputs", [])] + [-1])
+        for q in flows.values():
+            r = rank(q.pid)
+            if r < 0:
+                continue
+            f = self.by_path[q.pid].get("fusion")
+            if f is not None:
+                f.slot = r
+            e = self.by_path[q.pid].get("etoiles")
+            if e is not None:
+                e.after = r
 
     def _number_parallel(self, model):
         """Frame blocks placed in parallel: all of a kind numbered, as a block placed twice in a chain, so that two
@@ -744,6 +812,10 @@ class Graph:
             return plural(len(self.post_layers), "{n} layer", "{n} layers")
         p = node.paths[0]
         k = kbase(node.key)
+        if k == "align_on":                            # its reference (#165), else what it waits for
+            ref = getattr(s, "align_reference", lambda q: None)(p)
+            q = next((x for x in s.paths if x.pid == ref), None)
+            return _("on {name}").format(name=q.name) if q is not None else _("reference to wire")
         if k == "post":
             if p.end:
                 return _("from {block}").format(block=block_title(p, p.end))

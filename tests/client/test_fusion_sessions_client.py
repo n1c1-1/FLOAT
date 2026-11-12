@@ -163,26 +163,30 @@ def test_a_session_added_to_a_filter_flow_follows_the_filter_of_its_frames(qapp,
         done(w, m, page)
 
 
-def test_a_fusion_is_greyed_until_its_channels_have_astrometry_and_says_what_it_adds(qapp, tmp_path, monkeypatch):
-    """Decision 2: the card says what is missing in each channel; placed, the toast names the blocks it added and
-    where; removed, the channels come back as they were; a second Combine channels is a block of its own."""
+def test_a_combination_is_placed_empty_and_waits_for_its_wires_and_one_grid(qapp, tmp_path, monkeypatch):
+    """Issue #165: a combination placed from the palette has empty inputs (no filter is read), the block waits with the
+    reason; wired on workflows that are not on one grid it waits for an Align on block; removed, the workflows it read
+    are as they were; a second combination is a block of its own."""
     w, m, page = open_page(tmp_path, monkeypatch, filters=("Ha", "OIII"))
     try:
-        for q in list(m.paths):
-            m.remove_node(q, "astrometrie")
-        why = page.palette_reason("fusion", m.path, None)
-        assert "Astrometry" in why and "Ha" in why and "OIII" in why
-        n = len(m.paths)
-        page.place_fusion("ho")                                       # refused, with the same reason
-        assert len(m.paths) == n and "Astrometry" in page.toasts[-1]
-        for q in list(m.paths):
-            m.insert_block(m.view(q.pid), "astrometry")
+        ha, oiii = (next(q for q in m.paths if q.name == n) for n in ("Ha", "OIII"))
         before = {n: blocks_of(m, n) for n in ("Ha", "OIII")}
-        assert page.palette_reason("fusion", m.path, None) == ""
+        n = len(m.paths)
         page.place_fusion("ho")
         settle(w, page)
-        assert "H-O" in page.toasts[-1] and "Ctrl+Z" in page.toasts[-1]
-        assert {n: blocks_of(m, n) for n in ("Ha", "OIII")} == before            # it adds nothing to its channels
+        assert len(m.paths) == n + 1 and "H-O" in page.toasts[-1] and "Ctrl+Z" in page.toasts[-1]
+        hoo = m.paths[-1]
+        assert hoo.source["fusion"]["inputs"] == []
+        assert Graph(m).node_of(hoo, "fusion").waits == "Hα, O III to wire"
+        m.set_fusion_input(hoo, "Ha", ha.pid)
+        m.set_fusion_input(m.view(hoo.pid), "OIII", oiii.pid)
+        settle(w, page)
+        why = Graph(m).node_of(m.view(hoo.pid), "fusion").waits
+        assert "O III is not on the grid of Hα" in why and "Align on" in why
+        m.set_align_on(oiii, ha.pid)                                    # the other on the first one's grid
+        settle(w, page)
+        assert Graph(m).node_of(m.view(hoo.pid), "fusion").waits == ""
+        assert {n: blocks_of(m, n) for n in ("Ha", "OIII")}["Ha"] == before["Ha"]      # it adds nothing to its inputs
         page.place_fusion("ho")                                       # a second combination: its own block
         settle(w, page)
         fusions = [q for q in m.paths if (q.source or {}).get("fusion")]
@@ -193,11 +197,10 @@ def test_a_fusion_is_greyed_until_its_channels_have_astrometry_and_says_what_it_
         settle(w, page)
         page.remove_tool(Graph(m).node_of(m.view(fusions[1].pid), "fusion"), None)
         settle(w, page)
-        assert {n: blocks_of(m, n) for n in ("Ha", "OIII")} == before            # as before the first combination
         assert not [n for n in Graph(m).nodes if n.key == "composition"]
+        assert [q.pid for q in m.paths if (q.source or {}).get("fusion")] == []
     finally:
         done(w, m, page)
-
 
 def test_one_image_sent_to_post_from_a_block_is_not_numbered(qapp, tmp_path, monkeypatch):
     """Round 4: a block of an Image's chain sent to Post (a branch with the same source) made the only Image block
@@ -245,19 +248,17 @@ def test_a_stars_block_after_a_combination_is_drawn_after_it(qapp, tmp_path, mon
         done(w, m, page)
 
 
-def test_a_fusion_channel_keeps_what_the_fusion_needs(qapp, tmp_path, monkeypatch):
-    """Decision 3: a channel's Astrometry cannot be deleted nor switched off, its workflow cannot be deleted (no
-    Python error on Ctrl+Y any more); its session set to another filter: the Combine channels red with the reason."""
+def test_a_fusion_input_keeps_its_workflow(qapp, tmp_path, monkeypatch):
+    """Decision 3: a workflow wired to an input cannot be deleted (no Python error on Ctrl+Y any more); a reference
+    of an Align on block neither; the filters of the sessions are never read."""
     w, m, page = open_page(tmp_path, monkeypatch, filters=("Ha", "OIII"))
     try:
         page.place_fusion("ho")
         settle(w, page)
         hoo = next(q for q in m.paths if (q.source or {}).get("fusion"))
-        ha = next(q for q in m.paths if q.name == "Ha")
-        assert hoo.name in m.removal_problem(ha, "astrometrie") and hoo.name in m.can_switch_off(ha, "astrometrie")
-        node = Graph(m).node_of(ha, "astrometrie")
-        page.remove_tool(node, None)
-        assert "astrometry" in blocks_of(m, "Ha") and hoo.name in page.toasts[-1]
+        ha, oiii = (next(q for q in m.paths if q.name == n) for n in ("Ha", "OIII"))
+        m.set_fusion_input(hoo, "Ha", ha.pid)
+        m.set_fusion_input(m.view(hoo.pid), "OIII", oiii.pid)
         n = len(m._undo)
         page.workflow_action("delete", ha.pid)
         settle(w, page)
@@ -265,18 +266,14 @@ def test_a_fusion_channel_keeps_what_the_fusion_needs(qapp, tmp_path, monkeypatc
         assert m.redo() is False                                  # nothing to redo, nothing broken
         m.p.validate()
         assert m.fusion_problem(m.view(hoo.pid)) == ""
-        m.set_session_filter(1, "SII")
-        assert "SII" in m.fusion_problem(m.view(hoo.pid)) and m.run_problems()
-        assert Graph(m).node_of(m.view(hoo.pid), "fusion").broken
-        m.undo()
-        assert m.fusion_problem(m.view(hoo.pid)) == ""
-        # round 2: every channel that lacks something is named at once (it said Ha only, then OIII once fixed); Run to
-        # here on a channel is not refused for the fusion it does not compute
-        m.set_session_filter(1, "SII")
+        m.set_session_filter(1, "SII")                            # the filters are never read (#165)
         m.set_session_filter(2, "SII")
-        why = m.fusion_problem(m.view(hoo.pid))
-        assert why == "Ha, OIII: session filter SII", why
-        assert m.run_problems({hoo.pid}) and not [x for x in m.run_problems({ha.pid}) if x[0] == hoo.name]
+        assert m.fusion_problem(m.view(hoo.pid)) == "" and not Graph(m).node_of(m.view(hoo.pid), "fusion").broken
+        m.set_align_on(oiii, ha.pid)
+        assert "channel Ha" in m.channel_problem(m.view(ha.pid))
+        with pytest.raises(ValueError, match="no stack"):
+            m.set_align_reference(m.view(oiii.pid), hoo.pid)        # a combination is no reference: no stack
+        assert m.join_problem(ha.pid, hoo.pid)                      # the combination reads Ha: a loop
     finally:
         done(w, m, page)
 

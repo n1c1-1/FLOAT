@@ -62,7 +62,6 @@ from PySide6.QtWidgets import (
     QGraphicsItem,
     QGraphicsPathItem,
     QGraphicsScene,
-    QGraphicsSimpleTextItem,
     QGraphicsView,
     QHBoxLayout,
     QLabel,
@@ -73,6 +72,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QStyleOptionGraphicsItem,
     QToolButton,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -98,6 +98,7 @@ from .blocks import (
     block_title,
     kbase,
     node_title,
+    port_name,
 )
 from .gallery import TemplateGallery, TemplatePage
 from .i18n import _, hm, number, plural
@@ -128,6 +129,8 @@ MAP_W, MAP_H = 190.0, 130.0  # the minimap, as the Inspect viewer's (issue #44)
 EDGE = 40                   # a drag this near the view's edge scrolls it
 EDGE_WAIT = 0.35            # s held near the edge before it scrolls (a drag that only crosses the edge moves nothing)
 TITLE_PAD = 22              # a block's title, its state stripe and its padding
+IN_ROW = 18                 # a named input's row: the height it needs inside its block (issue #165)
+NAME_W = 46                 # a join block's names, left of its title ("Reference", "Starless", "O III")
 STAR_MAX = 260               # the star blocks' columns: as wide as their long names (issue #36)
 OUT_MAX = BW + 30           # the widest Output column: a longer workflow name loses its middle (whole in the tooltip)
 STATE_COL = {"done": OK, "pending": "#5d6470", "stale": WARN, "running": ACCENT, "failed": BAD,
@@ -141,6 +144,11 @@ PORTS = {"empilement": ((None, BH / 2),), "etoiles": (("starless", BH * 0.32), (
 #: the colours of the Stars block's two images: their ports and their wires
 IMAGE_COL = {"starless": "#7aa2d6", "stars": "#e0c45c"}
 NO_PORT = "-"
+
+
+def hgt(n) -> float:
+    """A block's height: the standard one, or taller when its named inputs need the room (a join with three or more)."""
+    return n.h or BH
 
 
 def elide(text, font, width):
@@ -177,9 +185,16 @@ def block_what(node: Node, nights: str = "") -> str:
 
 
 class BlockItem(QGraphicsItem):
-    def __init__(self, view, node: Node, title, summary, state, selected, dim, removable, w: float = BW, bp=None):
+    def __init__(self, view, node: Node, title, summary, state, selected, dim, removable, w: float = BW, bp=None,
+                 inputs=()):
         super().__init__()
         self.view, self.node, self.w = view, node, w
+        self.h = hgt(node)
+        #: a join's named inputs (GraphView._inputs_of): each a hollow dot when empty, its whole name beside it
+        self.inputs = list(inputs)
+        self.hot_input: tuple | None = None            # (the input's key, whether a wire pulled may land on it)
+        self.name_w = (max(QFontMetricsF(QFont("Segoe UI", 8.5)).horizontalAdvance(d["name"]) for d in self.inputs) + 14
+                       if self.inputs else 0.0)
         # a warning at the head of the summary (issue #58) is its mark, drawn as an icon
         self.warned = summary.startswith(WARN_MARK)
         summary = summary[len(WARN_MARK):] if self.warned else summary
@@ -192,7 +207,7 @@ class BlockItem(QGraphicsItem):
         self.exit = view.has_port(node) if hasattr(view, "has_port") else node.key in EXITS
         self.ports = PORTS.get(node.key, ()) if node.key not in EXITS else ()
         if self.exit and not self.ports:                  # its image, pulled onto Post: a layer (issue #47)
-            self.ports = ((None, BH / 2),)
+            self.ports = ((None, self.h / 2),)
         self.port = bool(self.ports)
         self.setAcceptHoverEvents(True)
         # a block switched off is not computed: never "Up to date" (round 2), its line below says what it is
@@ -205,6 +220,12 @@ class BlockItem(QGraphicsItem):
         # a reason is a sentence of its own: its full stop is not doubled by the one after {why}
         if node.broken:
             tip += "\n" + _("Cannot run: {why}. Run is refused until it is fixed.").format(why=node.broken.rstrip("."))
+        if node.waits:                                    # a join with an input to wire: greyed, left out of the runs
+            tip += "\n" + _("Cannot run: {why}. The runs leave this block out, with the blocks after it.").format(
+                why=node.waits.rstrip("."))
+        for d in self.inputs:
+            tip += "\n" + (_("{name} input: wired") if d["wired"] else _("{name} input: empty, drag a wire here")).format(
+                name=d["name"])
         if node.missing:                                  # its data of the sky is not here: left out, the rest runs
             tip += "\n" + _("Cannot run: {why}. Install it: Settings › Catalogs & astrometry. The "
                             "runs leave this block out, with the blocks after it.").format(why=node.missing.rstrip("."))
@@ -228,10 +249,17 @@ class BlockItem(QGraphicsItem):
 
     def boundingRect(self):                                           # noqa: N802 - Qt's name
         left = 12 if self.bp is not None else 2         # the review dot sits on the corner
-        return QRectF(-left, -left, self.w + left + (10 if self.port else 2), BH + left + 2)
+        return QRectF(-left, -left, self.w + left + (10 if self.port else 2), self.h + left + 2)
 
     def _x_rect(self):
         return QRectF(self.w - 20, 4, 16, 16)
+
+    def input_at(self, pos):
+        """The key of the named input under ``pos`` (item coordinates), or None."""
+        for d in self.inputs:
+            if QRectF(-9, d["y"] - 9, self.name_w + 18, 18).contains(pos):
+                return d["key"]
+        return None
 
     def _on_port(self, pos):
         """The port under ``pos`` (what it sends: None for an exit), or NO_PORT."""
@@ -273,7 +301,7 @@ class BlockItem(QGraphicsItem):
         p.setRenderHint(QPainter.Antialiasing)
         p.setOpacity(0.55 if self.dim or self.node.cut else 1.0)
         w = self.w
-        r = QRectF(0, 0, w, BH)
+        r = QRectF(0, 0, w, self.h)
         ghost = self.node.key == "sources" and self.state == "pending"
         fill = "#1d2129" if ghost else ("#2b3446" if self.selected or self.target else
                                         ("#272c36" if self.hover else "#22262e"))
@@ -287,12 +315,12 @@ class BlockItem(QGraphicsItem):
             p.save()
             p.setClipPath(_rounded(r))
             p.setPen(QPen(QColor("#3a4150"), 1.0))
-            for x in range(-int(BH), int(w) + 1, 9):
-                p.drawLine(QPointF(x, BH), QPointF(x + BH, 0))
+            for x in range(-int(self.h), int(w) + 1, 9):
+                p.drawLine(QPointF(x, self.h), QPointF(x + self.h, 0))
             p.restore()
             p.setPen(QPen(QColor("#9aa3b2"), 1.8))
-            p.drawLine(QPointF(0, BH / 2), QPointF(w, BH / 2))
-        if self.node.grey or self.node.missing:        # greyed by a cut upstream, or no data here: dashed amber
+            p.drawLine(QPointF(0, self.h / 2), QPointF(w, self.h / 2))
+        if self.node.grey or self.node.missing or self.node.waits:   # greyed by a cut, no data, a join to wire: amber
             p.setPen(QPen(QColor(GREY_COL), 1.4, Qt.DashLine))
             p.setBrush(Qt.NoBrush)
             p.drawRoundedRect(r.adjusted(1, 1, -1, -1), 7, 7)
@@ -302,28 +330,28 @@ class BlockItem(QGraphicsItem):
             p.drawRoundedRect(r.adjusted(-2, -2, 2, 2), 8, 8)
         if self.node.key not in ("sources", "final", "session") or self.state != "pending":
             p.setPen(Qt.NoPen)
-            p.setBrush(QColor(CUT_COL if self.node.cut else (GREY_COL if self.node.grey else STATE_COL[self.state])))
+            p.setBrush(QColor(CUT_COL if self.node.cut else (GREY_COL if self.node.grey or self.node.waits else STATE_COL[self.state])))
             path = QPainterPath()
-            path.addRoundedRect(QRectF(0, 0, 8, BH), 4, 4)
+            path.addRoundedRect(QRectF(0, 0, 8, self.h), 4, 4)
             clip = QPainterPath()
-            clip.addRect(QRectF(0, 0, 4, BH))
+            clip.addRect(QRectF(0, 0, 4, self.h))
             p.drawPath(path.intersected(clip))
         f = QFont("Segoe UI", 10)
         f.setBold(True)
         p.setFont(f)
         p.setPen(QColor("#e8ebf0"))
         mark = ("failed", "error") if self.node.broken else ("off", "dim") if self.node.cut else \
-            ("not_computable", "warning") if self.node.grey or self.node.missing else None
-        x0 = 11 + (20 if mark else 0)                     # the block's state, before its title
+            ("not_computable", "warning") if self.node.grey or self.node.missing or self.node.waits else None
+        x0 = 11 + (20 if mark else 0) + self.name_w       # the block's state and its inputs' names, before its title
         tw = w - 7 - x0 - (18 if self.removable and self.hover else 0)
         # a workflow's name loses its middle (two variants differ at their end; the whole name is in the tooltip), the
         # engine's words their end
         mode = Qt.ElideMiddle if self.node.key == "post" else Qt.ElideRight
         readable = QStyleOptionGraphicsItem.levelOfDetailFromTransform(p.worldTransform()) >= MIN_SCALE - 1e-6
-        p.drawText(QRectF(x0, 6, tw, 20) if readable else QRectF(x0, 0, tw, BH), Qt.AlignLeft | Qt.AlignVCenter,
+        p.drawText(QRectF(x0, 6, tw, 20) if readable else QRectF(x0, 0, tw, self.h), Qt.AlignLeft | Qt.AlignVCenter,
                    QFontMetrics(f).elidedText(self.title, mode, int(tw)))
         if mark:
-            draw(p, QRectF(11, 8 if readable else (BH - 16) / 2, 16, 16), mark[0], mark[1])
+            draw(p, QRectF(11, 8 if readable else (self.h - 16) / 2, 16, 16), mark[0], mark[1])
         # issue #44: below the readable size the subtitles go, so that a zoomed-out graph is still a map of titles
         if readable:
             f2 = QFont("Segoe UI", 8.5)
@@ -335,11 +363,19 @@ class BlockItem(QGraphicsItem):
                 draw(p, QRectF(11, 29, 16, 16), "warning", "warning")
         if self.removable and self.hover:
             draw(p, self._x_rect(), "remove", "error")
-        if self.node.key == "composition":                 # its two inputs, in the colours of the Stars block's outputs
-            for what, y in PORTS["etoiles"]:
-                p.setPen(QPen(QColor(IMAGE_COL[what]), 1.5))
-                p.setBrush(QColor(IMAGE_COL[what]))
-                p.drawEllipse(QPointF(0, y), 4.5, 4.5)
+        if self.inputs:                                    # the named inputs: a hollow dot while empty, the name whole
+            f3 = QFont("Segoe UI", 8.5)
+            for d in self.inputs:
+                col = QColor(IMAGE_COL.get(d["key"][-1], "#9aa3b2"))
+                hot = self.hot_input is not None and self.hot_input[0] == d["key"]
+                ok = hot and self.hot_input[1]
+                p.setPen(QPen(QColor(BAD if hot and not ok else ACCENT if hot else col), 1.6))
+                p.setBrush(QColor(ACCENT if ok else col) if d["wired"] or ok else QColor("#15171c"))
+                r = 6.5 if hot else 4.5
+                p.drawEllipse(QPointF(0, d["y"]), r, r)
+                p.setFont(f3)
+                p.setPen(QColor("#c9d1dc" if d["wired"] else "#8b93a1"))
+                p.drawText(QRectF(9, d["y"] - 9, self.name_w, 18), Qt.AlignLeft | Qt.AlignVCenter, d["name"])
         for what, y in self.ports:
             big = self.hover or self.selected or self._wire
             col = IMAGE_COL.get(what, ACCENT)
@@ -666,74 +702,6 @@ class ProjectItem(QGraphicsItem):
         e.accept()
 
 
-class AlignItem(QGraphicsItem):
-    """The Align images block: one block across the lanes of its images, a wire in and a wire out on each lane."""
-
-    def __init__(self, view, nodes: list[Node], rect: QRectF, title: str, summary: str, state: str, selected: bool):
-        super().__init__()
-        self.view, self.nodes, self.rect, self.title, self.summary, self.state, self.selected = \
-            view, nodes, rect, title, summary, state, selected
-        self.hover = False
-        self.setAcceptHoverEvents(True)
-        self.setZValue(5)
-        self.setToolTip(f"{title}\n{block_what(nodes[0])}")
-
-    def boundingRect(self):                                           # noqa: N802
-        return self.rect.adjusted(-2, -2, 2, 2)
-
-    def _x_rect(self):
-        return QRectF(self.rect.right() - 20, self.rect.top() + 4, 16, 16)
-
-    def paint(self, p, opt, widget=None):
-        p.setRenderHint(QPainter.Antialiasing)
-        p.setPen(QPen(QColor(ACCENT if self.selected else "#3a4150"), 2 if self.selected else 1))
-        p.setBrush(QColor("#2b3446" if self.selected else "#22262e"))
-        p.drawRoundedRect(self.rect, 7, 7)
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor(STATE_COL.get(self.state, "#5d6470")))
-        p.drawRoundedRect(QRectF(self.rect.x(), self.rect.y() + 3, 4, self.rect.height() - 6), 2, 2)
-        c = self.rect.center()
-        f = QFont("Segoe UI", 10)
-        f.setBold(True)
-        p.setFont(f)
-        p.setPen(QColor("#e8ebf0"))
-        p.drawText(QRectF(self.rect.x() + 10, c.y() - 22, self.rect.width() - 14, 22), Qt.AlignCenter | Qt.TextWordWrap, self.title)
-        f2 = QFont("Segoe UI", 8.5)
-        p.setFont(f2)
-        p.setPen(QColor("#8b93a1"))
-        p.drawText(QRectF(self.rect.x() + 6, c.y() + 2, self.rect.width() - 10, 18), Qt.AlignCenter,
-                   elide(self.summary, f2, self.rect.width() - 10))
-        if self.hover:
-            draw(p, self._x_rect(), "remove", "error")
-
-    def hoverEnterEvent(self, e):                                     # noqa: N802
-        self.hover = True
-        self.update()
-
-    def hoverLeaveEvent(self, e):                                     # noqa: N802
-        self.hover = False
-        self.update()
-
-    def mousePressEvent(self, e):                                     # noqa: N802
-        if e.button() == Qt.LeftButton and self._x_rect().contains(e.pos()):
-            self.view.remove_block(self.nodes[0], None)
-        elif e.button() == Qt.LeftButton:
-            self.view.blockClicked.emit(self.nodes[0])
-        e.accept()
-
-    def mouseDoubleClickEvent(self, e):                               # noqa: N802
-        self.view.blockOpened.emit(self.nodes[0])
-        e.accept()
-
-    def contextMenuEvent(self, e):                                    # noqa: N802
-        self.view.blockClicked.emit(self.nodes[0])
-        m = QMenu(self.view)
-        m.addAction(_("Delete") + "\t" + _("Del")).triggered.connect(lambda: self.view.remove_block(self.nodes[0], None))
-        m.exec(e.screenPos())
-        m.deleteLater()
-        e.accept()
-
-
 class BandItem(QGraphicsItem):
     def __init__(self, rect, text):
         super().__init__()
@@ -777,6 +745,8 @@ class GraphView(QGraphicsView):
     partToPost = Signal(object, str)       # a Stars node's image (starless | stars) pulled onto Post
     partOutOfPost = Signal(object, str)    # a Stars node's image sent as it is: taken out of Post (#29)
     newComposition = Signal(object)        # a Stars node's port pulled onto Composition: a new Stars and background block
+    wireToInput = Signal(object, object, object, object)   # a wire dropped on a named input: source node, its port,
+    #                                                        the join block's node, the input's key (issue #165)
     layerRemoved = Signal(int)             # a Stars and background block, or an image sent as it is: its Post layer
     openLayer = Signal(int)                # Open in Post (a Post layer's id)
     cutToggled = Signal(object, object)    # Node, list of pids (None: every workflow of the block): cut or restore it
@@ -883,20 +853,27 @@ class GraphView(QGraphicsView):
             return "sources"
         if kbase(n.key) in IMAGE_KEYS:
             return f"i{max(n.slot, 0)}"
+        if n.key == "fusion":                             # the combinations by rank (issue #165): none before those it reads
+            return f"f{max(n.slot, 0)}"
+        if n.key == "etoiles" and n.after >= 0:           # a Stars/background after a combination: after its rank
+            return f"s{n.after}"
         return n.key
 
     def columns(self, g: Graph):
         """The columns the graph uses, left to right: a block the workflows do not have has no column (issue #47)."""
         used = {self.col_of(n) for n in g.nodes if n.paths}
         if self.drag_block == "fusion":             # issue #53: its place is in the Composition section
-            used.add("fusion")
-        if "etoiles" in used or "fusion" in used:   # the Composition section: the stars recombined, the fusions
+            used.add("f0")
+        joins = {c for c in used if c[:1] in "fs" and c[1:].isdigit()}
+        if "etoiles" in used or joins:              # the Composition section: the stars recombined, the fusions
             used.add("composition")
         slots = [int(c[1:]) for c in used if c[:1] == "i" and c[1:].isdigit()]
         out = ["sources"] + [c for c in FRAME_KEYS if c in used]
         out += [f"i{k}" for k in range(max(slots) + 1 if slots else 0)]
-        out += [c for c in ("etoiles", "synth", "post", "fusion", "composition") if c in used]
-        return out + ["final"]
+        out += [c for c in ("etoiles", "synth", "post") if c in used]
+        for k in sorted({int(c[1:]) for c in joins}):   # a combination, then the Stars/background after it
+            out += [c for c in (f"f{k}", f"s{k}") if c in used]
+        return out + [c for c in ("composition",) if c in used] + ["final"]
 
     @staticmethod
     def column_width(key: str, names=()) -> float:
@@ -906,12 +883,15 @@ class GraphView(QGraphicsView):
         f = QFont("Segoe UI", 10)
         f.setBold(True)
         fm = QFontMetricsF(f)
+        if key[:1] in "fs" and key[1:].isdigit():          # a rank's column (issue #165): its blocks' own width
+            key = "fusion" if key[0] == "f" else "etoiles"
         if key == "post":
             need = max((fm.horizontalAdvance(n) for n in names), default=0.0) + TITLE_PAD
             return max(BW, min(OUT_MAX, need))
         # the star blocks' names are long (issue #36): their columns widen to them, as the outputs' do
         cap = STAR_MAX if key in ("etoiles", "composition") else BW + 40
-        return max(BW, min(cap, fm.horizontalAdvance(block_title(None, key)) + TITLE_PAD))
+        names = NAME_W if key in ("composition", "align_on") else 0       # the inputs' names, left of the title (#165)
+        return max(BW, min(cap + names, fm.horizontalAdvance(block_title(None, key)) + TITLE_PAD + names))
 
     @staticmethod
     def lane_order(g: Graph) -> list[int]:
@@ -992,6 +972,10 @@ class GraphView(QGraphicsView):
         s = self.s
         g = Graph(s)
         self.graph = g
+        for n in g.nodes:                                 # a join with many named inputs is taller (issue #165)
+            k = len(self._inputs_of(g, n, False)) if n.key in ("fusion", "composition") else 0
+            n.h = max(float(BH), k * IN_ROW + 10.0) if k else 0.0
+        self.wire_log: list[tuple] = []                   # every wire drawn between two nodes: (from, to, "vertical" or "")
         cols = self.columns(g)
         # issue #47: while a palette block is dragged, a column opens before each block it can go in front of (and
         # after the last one): its places, shown as the block itself, the blocks after them moved aside
@@ -1006,6 +990,8 @@ class GraphView(QGraphicsView):
             elif c[:1] == "i" and c[1:].isdigit():          # an image rank: as wide as its widest block's name
                 cw[c] = max((self.column_width(n.key) for n in g.nodes if n.paths and self.col_of(n) == c),
                             default=BW)
+            elif c[:1] in "fs" and c[1:].isdigit():          # a combination's rank: its widest block
+                cw[c] = max((self.column_width(n.key) for n in g.nodes if n.paths and self.col_of(n) == c), default=BW)
             else:
                 cw[c] = self.column_width(c, [p.name for p in s.paths])
         cx, x = {}, 0.0
@@ -1053,21 +1039,21 @@ class GraphView(QGraphicsView):
             seen[n.paths[0].pid] = k + 1
             n.y += k * (BH + 6)
         # 2nd round: two blocks of one column (a fusion's Combine layers and a workflow's) never drawn over each other
-        for c in ("composition", "fusion"):
-            low = None
+        for c in [x for x in cols if x == "composition" or (x[:1] in "fs" and x[1:].isdigit())]:
+            low = None                                    # (centres: each block clear of the one above by both heights)
             for n in sorted((n for n in g.nodes if n.paths and self.col_of(n) == c), key=lambda n: n.y):
-                if low is not None and n.y < low:
-                    n.y = low
-                low = n.y + BH + 6
+                if low is not None and n.y - hgt(n) / 2 < low:
+                    n.y = low + hgt(n) / 2
+                low = n.y + hgt(n) / 2 + 6
         self._lanes, self._cx, self._cw = lanes, cx, cw
         # what a wire that skips columns keeps out of (_route): every block's rectangle, placed now, drawn below
-        self._rects = [(n, QRectF(n.col, n.y - BH / 2, n.w, BH)) for n in g.nodes if self._drawn(g, n)]
+        self._rects = [(n, QRectF(n.col, n.y - hgt(n) / 2, n.w, hgt(n))) for n in g.nodes if self._drawn(g, n)]
         bottom = max(top + n_lanes * LANE, max(lanes.values(), default=top) + LANE,
                      s_last + SROW if g.sessions else fmid + SROW / 2) + LANE
         # phase bands
         bands = [("Pre-processing", [c for c in cols if c in FRAME_KEYS]),
                  ("Linear processing", [c for c in cols if (c[:1] == "i" and c[1:].isdigit()) or c in ("etoiles", "synth")]),
-                 ("Composition", [c for c in cols if c in ("fusion", "composition")])]
+                 ("Composition", [c for c in cols if c == "composition" or (c[:1] in "fs" and c[1:].isdigit())])]
         for title, span in bands:
             if not span:
                 continue
@@ -1105,10 +1091,10 @@ class GraphView(QGraphicsView):
                 self._join(src, [t], cur)
             elif src:
                 self._wire(src[0], t, cur is not None and cur in t.paths)
-        # issue #43: the combinations, a wire from each channel's image into its named input
+        # issue #165: the joins, a wire from an output into each named input (a combination's, an Align on's reference)
         for n in g.nodes:
-            if n.key == "fusion" and n.paths:
-                self._ports_of(n, g.fusion_inputs.get(id(n), []), cur)
+            if n.key in ("fusion", "align_on") and n.paths and self._drawn(g, n):
+                self._input_wires(g, n, cur)
         # issue #43: "+ Session" under the sessions (or under the one Session block), where a session goes
         self.plus_session_ghost = None
         self.plus_session_pid = None                      # the flow it joins: the one it is drawn with
@@ -1142,13 +1128,17 @@ class GraphView(QGraphicsView):
         for n in g.compositions:
             strong = cur is not None and cur in n.paths
             synth = self._synth_of(g, n)
-            for i, (what, word) in enumerate(STAR_OUTPUTS):
-                yb = BH * (0.32 + 0.36 * i)
+            for d in self._inputs_of(g, n):
+                a, what = d["src"], d["key"][-1]
+                if a is None:
+                    continue                                  # an empty input: a hollow dot, the block greyed
+                word = _(dict(STAR_OUTPUTS)[what])
                 # with Synthetic stars two wires enter the stars input: the real stars and the synthetic ones, the two
                 # layers of the Stars group of its layer in Post (#93), the real ones routed clear of the block
-                self._image_wire(n.parent, PORTS["etoiles"][i][1], n, yb, what, _(word), strong)
+                ya = PORTS["etoiles"][("starless", "stars").index(what)][1] if a.key == "etoiles" else hgt(a) / 2
+                self._image_wire(a, ya, n, d["y"], what, word, strong, remove=d.get("remove"))
                 if what == "stars" and synth is not None:
-                    self._image_wire(synth, BH / 2, n, yb, what, _("Synthetic stars"), strong)
+                    self._image_wire(synth, BH / 2, n, d["y"], what, _("Synthetic stars"), strong)
             self._wire(n, g.final, strong)
         for src, what in g.direct:
             i = [w for w, _y in PORTS["etoiles"]].index(what)
@@ -1162,7 +1152,6 @@ class GraphView(QGraphicsView):
             for src, lab in g.side_inputs(sel):
                 self._side_wire(src, sel, lab)
         # blocks
-        self._add_align_blocks(g, sel)
         for n in g.nodes:
             if not self._drawn(g, n):
                 continue
@@ -1174,8 +1163,8 @@ class GraphView(QGraphicsView):
                 and cur not in n.paths
             it = BlockItem(self, n, title, g.summary(n), g.state(n), n is sel or (sel is not None and n.key ==
                            "composition" and sel.key == "composition" and n.lid == sel.lid), dim, removable, n.w,
-                           g.breakpoint(n))
-            it.setPos(n.col, n.y - BH / 2)
+                           g.breakpoint(n), self._inputs_of(g, n) if n.key in ("fusion", "composition", "align_on") else ())
+            it.setPos(n.col, n.y - hgt(n) / 2)
             it.setZValue(5)
             sc.addItem(it)
             if n is g.final:
@@ -1185,7 +1174,7 @@ class GraphView(QGraphicsView):
         # the next workflow
         y = max(TOP + len(s.paths) * LANE, max(lanes.values(), default=TOP) + LANE) - BH / 2 if s.paths \
             else mid - BH / 2
-        inner = [c for c in cols if c not in ("sources", "final", "fusion", "composition")] or []
+        inner = [c for c in cols if c not in ("sources", "final", "composition") and not (c[:1] in "fs" and c[1:].isdigit())] or []
         if inner:
             x0, x1 = cx[inner[0]], cx[inner[-1]] + cw[inner[-1]]
         else:                                          # a blank page (issue #47): the palette's blocks start it
@@ -1194,7 +1183,7 @@ class GraphView(QGraphicsView):
             y = mid + BH
         # the templates only when the project is made: here, blocks dropped one by one
         if s.paths or s.p.sessions:                      # under every block and "+ Session", never over them (8.1)
-            low = [n.y + BH / 2 for n in g.nodes if getattr(n, "y", None) is not None and (n.paths or n.key == "session")]
+            low = [n.y + hgt(n) / 2 for n in g.nodes if getattr(n, "y", None) is not None and (n.paths or n.key == "session")]
             ps = self.plus_session_ghost
             if ps is not None:
                 low.append(ps.rect.bottom())
@@ -1252,9 +1241,9 @@ class GraphView(QGraphicsView):
                     sc.addItem(gh)
                     self.ghosts.append(gh)
         if self.drag_block == "fusion":                  # issue #53: in the Composition column, under its Combine channels blocks
-            below = [n.y for n in g.nodes if n.paths and self.col_of(n) == "fusion"]
-            yc = max(below) + BH + 6 if below else mid
-            r = QRectF(cx["fusion"] + 4, yc - BH / 2 + 4, cw["fusion"] - 8, BH - 8)
+            below = [n.y + hgt(n) / 2 for n in g.nodes if n.paths and self.col_of(n) == "f0"]
+            yc = max(below) + BH / 2 + 6 if below else mid
+            r = QRectF(cx["f0"] + 4, yc - BH / 2 + 4, cw["f0"] - 8, BH - 8)
             gh = GhostItem(r, block_title(None, "fusion"), None)
             gh.setZValue(8)
             sc.addItem(gh)
@@ -1299,31 +1288,11 @@ class GraphView(QGraphicsView):
     def _drawn(self, g: Graph, n: Node) -> bool:
         """Whether a node is drawn as a block of its own (BlockItem)."""
         s = self.s
-        if n.key == "align_images":
-            return False                                  # drawn together, across their lanes
         if n.key not in ("sources", "final", "session") and not n.paths:
             return False                                  # a Session is drawn even when no workflow reads it (1.8)
         if n.key == "sources" and (g.sessions or (s.paths and not g.root.paths and not s.p.sessions)):
             return False                                  # the sessions' blocks stand for it; or only image workflows
         return not (n.key in ("sources", "final") and not s.paths and not s.p.sessions)   # a blank page is empty (#47)
-
-    def _add_align_blocks(self, g: Graph, sel):
-        """Each group of aligned images: one block across their lanes (each lane's node keeps its wires)."""
-        s = self.s
-        groups: dict[int, list[Node]] = {}
-        for n in g.nodes:
-            if n.key == "align_images":
-                groups.setdefault(n.paths[0].source["align"], []).append(n)
-        for ref, nodes in groups.items():
-            nodes.sort(key=lambda n: n.y)
-            r = QRectF(nodes[0].col, nodes[0].y - BH / 2, nodes[0].w, nodes[-1].y - nodes[0].y + BH)
-            name = next((n.paths[0].name for n in nodes if n.paths[0].pid == ref), "")
-            nodes.sort(key=lambda n: n.paths[0].pid == ref)   # a click shows an image that moves, not the reference
-            state = g.state(next(n for n in nodes if n.paths[0].pid != ref))
-            self.scene().addItem(AlignItem(self, nodes, r, _("Align images"), _("on {name}").format(name=name), state,
-                                           sel is not None and any(n is sel for n in nodes)))
-            if any(n is sel for n in nodes):
-                self._sel_item = None
 
     def _add_project(self, g: Graph, sel, cx: dict, cw: dict, gh_top: float):
         """The Project block, above the first object (the blank page: above its start zone); its wire to Astrometry only
@@ -1446,6 +1415,72 @@ class GraphView(QGraphicsView):
             self._comp_ghost.setZValue(8)
             self.scene().addItem(self._comp_ghost)
 
+    def _input_at(self, pos):
+        """(the block item, the key) of the named input under a scene position, or (None, None)."""
+        for it in self.scene().items(pos):
+            if isinstance(it, BlockItem) and it.inputs:
+                key = it.input_at(it.mapFromScene(pos))
+                if key is not None:
+                    return it, key
+        return None, None
+
+    def _clear_hot(self):
+        for it in self.scene().items():
+            if isinstance(it, BlockItem) and it.hot_input is not None:
+                it.hot_input = None
+                it.update()
+        QToolTip.hideText()
+
+    def _hot_input(self, pos):
+        """The input under the wire's end lights up, or is marked refused with its reason as a tooltip at the cursor."""
+        it, key = self._input_at(pos)
+        cur = next((i for i in self.scene().items() if isinstance(i, BlockItem) and i.hot_input is not None), None)
+        if it is None:
+            if cur is not None:
+                self._clear_hot()
+            return
+        _plan, why = self.plan_wire(self._pull.node, self._pull_port, it.node, key)
+        if cur is not None and cur is not it:
+            self._clear_hot()
+        state = (key, not why)
+        if it.hot_input != state:
+            it.hot_input = state
+            it.update()
+        if why:
+            QToolTip.showText(QCursor.pos(), why, self)
+        else:
+            QToolTip.hideText()
+
+    def plan_wire(self, src: Node, port, dst: Node, key) -> tuple:
+        """What a wire pulled from ``src``'s port onto the named input ``key`` of the join block ``dst`` does: (a function
+        that does it, "") or (None, why it is refused, translated). Wires never make a loop (the model refuses)."""
+        s = self.s
+        if not src.paths or not dst.paths:
+            return None, ""
+        q = s.path if s.path in src.paths else src.paths[0]
+        p = dst.paths[0]
+        kind = key[0]
+        image = "starless" if port == "starless" else "output"
+        if kind == "port":
+            if port == "stars":
+                return None, _("The stars alone cannot be combined: pull a starless image or an Output")
+            why = s.input_problem(p, key[1], q.pid, image)
+            return (None if why else (lambda: s.set_fusion_input(p, key[1], q.pid, image))), why
+        if kind == "reference":
+            why = s.join_problem(p.pid, q.pid, True)
+            return (None if why else (lambda: s.set_align_reference(p, q.pid))), why
+        side = key[1]                                     # a Combine layers block's Starless or Stars side
+        if side == "stars" and port != "stars":
+            return None, _("Pull the Stars/background block's stars alone here")
+        if side == "starless" and port == "stars":
+            return None, _("The stars alone go to the Stars input")
+        why = s.layer_side_problem(side, q.pid, image)
+
+        def go():
+            lid = dst.lid if dst.lid is not None else s.default_post_layer(p.pid)
+            return s.set_layer_side(lid, side, q.pid, image)
+        return (None if why else go), why
+
     def _on_post(self, pos):
         fi = self.final_item
         return fi is not None and fi.sceneBoundingRect().adjusted(-16, -16, 16, 16).contains(pos)
@@ -1461,6 +1496,7 @@ class GraphView(QGraphicsView):
         dx = max(30.0, (pos.x() - a.x()) * 0.5)
         path.cubicTo(QPointF(a.x() + dx, a.y()), QPointF(pos.x() - dx, pos.y()), pos)
         self._pull_path.setPath(path)
+        self._hot_input(pos)
         hot = self._on_post(pos)
         if self.final_item.target != hot:
             self.final_item.target = hot
@@ -1483,7 +1519,11 @@ class GraphView(QGraphicsView):
         if self._comp_ghost is not None:
             self.scene().removeItem(self._comp_ghost)
             self._comp_ghost = None
-        if self._on_post(pos):
+        target, key = self._input_at(pos)
+        self._clear_hot()
+        if target is not None:                             # a wire dropped on a named input (issue #165)
+            QTimer.singleShot(0, lambda: self.wireToInput.emit(node, port, target.node, key))
+        elif self._on_post(pos):
             if port is None:
                 QTimer.singleShot(0, lambda: self.sendToPost.emit(node))
             else:
@@ -1557,6 +1597,7 @@ class GraphView(QGraphicsView):
         self.scene().removeItem(self._pull_path)
         self.final_item.target = False
         self.final_item.update()
+        self._clear_hot()
         if self._comp_ghost is not None:
             self.scene().removeItem(self._comp_ghost)
             self._comp_ghost = None
@@ -1606,7 +1647,7 @@ class GraphView(QGraphicsView):
         pos = e.position().toPoint()
         left = e.button() == Qt.LeftButton
         it = self.itemAt(pos) if left else None
-        empty = left and not isinstance(it, (BlockItem, WireItem, GhostItem, LinkItem, ProjectItem, AlignItem))  # bands, chain wires
+        empty = left and not isinstance(it, (BlockItem, WireItem, GhostItem, LinkItem, ProjectItem))  # bands, chain wires
         # issue #44: the middle button, Space + drag, or a left drag on an empty area moves the graph; a press on a
         # chain wire says what it says, a left click on a block still selects it
         if e.button() == Qt.MiddleButton or (left and (self._space or (empty and not isinstance(it, ChainWireItem)))):
@@ -1668,6 +1709,7 @@ class GraphView(QGraphicsView):
         leaves (the last one its workflows share), then runs straight on its own lane past the columns it skips."""
         x1, y1 = a.col + a.w, a.y
         x2, y2 = b.col, b.y
+        self.wire_log.append((a, b, ""))
         path = QPainterPath(QPointF(x1, y1))
         if via_y is not None and x2 - x1 > 4 * BEND:  # a workflow's image to Post: on its own lane past the blocks
             if abs(via_y - y1) > 1:                   # of the others, bent only at both ends (control round: it
@@ -1694,35 +1736,76 @@ class GraphView(QGraphicsView):
             it = self._chain_wire(path, pen)
         it.setZValue(1)
 
-    def _ports_of(self, n: Node, inputs, cur):
-        """A combination's named inputs (stages/combine.py ports): each one's name on the block's left edge, at its
-        port, and the wire from the block that gives its image (a channel's Output, or its Stars/background's starless
-        image, in that image's colour); a port without its workflow shows its name alone."""
+    def _inputs_of(self, g: Graph, n: Node, with_remove: bool = True) -> list[dict]:
+        """The named inputs of a join block (issue #165), top to bottom: {"key", "name", "y" (from the block's top), "src"
+        (the node the wire leaves, None while empty), "wired", "remove" (what unwires it, None when it cannot)}. A
+        combination's are its type's ports, a Combine layers block's its Starless and Stars sides, an Align on block's
+        its Reference."""
         from .blocks import COMBINE_KINDS, combine_kind, port_name
-        kind = combine_kind(n.paths[0])
-        ports = COMBINE_KINDS[kind].ports if kind in COMBINE_KINDS else ()
-        for k, role in enumerate(ports):
-            y = BH * (k + 1) / (len(ports) + 1)
-            t = QGraphicsSimpleTextItem(port_name(role))
-            f = t.font()
-            f.setPointSizeF(7)
-            t.setFont(f)
-            t.setBrush(QColor("#c9d1dc"))
-            t.setPos(n.col - t.boundingRect().width() - 3, n.y - BH / 2 + y - t.boundingRect().height())
-            t.setZValue(6)
-            t.setToolTip(_("{port} input of “{block}”").format(port=port_name(role), block=n.paths[0].name))
-            self.scene().addItem(t)
-            for a, r, image in inputs:
-                if r != role:
-                    continue
-                strong = cur is not None and (cur in n.paths or cur in a.paths)
-                if image == "starless":
-                    self._image_wire(a, PORTS["etoiles"][0][1], n, y, "starless", port_name(role), strong)
-                    continue
-                x1, y1 = a.col + a.w, a.y
-                path = self._route(x1, y1, n.col, n.y - BH / 2 + y, (a, n), up=True)
-                self._chain_wire(path, QPen(QColor("#9aa3b2" if strong else "#3d4452"), 2.2 if strong else 1.6),
-                                 port_name(role)).setZValue(1)
+        s = self.s
+        rows: list[dict] = []
+        if not n.paths:
+            return rows
+        if n.key == "fusion":
+            kind = combine_kind(n.paths[0])
+            have = {i["role"]: i for i in (n.paths[0].source or {}).get("fusion", {}).get("inputs", [])}
+            src = {r: a for a, r, _image in g.fusion_inputs.get(id(n), [])}
+            for r in COMBINE_KINDS[kind].ports if kind in COMBINE_KINDS else ():
+                rows.append(dict(key=("port", r), name=port_name(r), src=src.get(r), wired=r in have, image=(have.get(r) or {}).get(
+                    "image", "output"), remove=(lambda p=n.paths[0], role=r: self.unwire(p, ("port", role))) if with_remove else None))
+        elif n.key == "composition":
+            for (a, what), name in zip(g.composition_inputs.get(id(n), [(None, "starless"), (None, "stars")]),
+                                       (_("Starless"), _("Stars"))):
+                wired = a is not None
+                rows.append(dict(key=("side", what), name=name, src=a, wired=wired, image=what,
+                                 remove=(lambda lid=n.lid: s.set_layer_side(lid, "stars", None)) if with_remove and what == "stars"
+                                 and wired and n.lid is not None else None))
+        elif n.key == "align_on":
+            rows.append(dict(key=("reference",), name=_("Reference"), src=g.align_refs.get(id(n)),
+                             wired=getattr(s, "align_reference", lambda q: None)(n.paths[0]) is not None, image="output",
+                             remove=(lambda p=n.paths[0]: s.set_align_reference(p, None)) if with_remove else None))
+        k, h = len(rows), hgt(n)
+        for i, d in enumerate(rows):
+            d["y"] = 12.0 if n.key == "align_on" else (h - IN_ROW * k) / 2 + IN_ROW * i + IN_ROW / 2
+        return rows
+
+    def unwire(self, p, key):
+        """An input unwired by its wire's Del (one Undo step)."""
+        s = self.s
+        if key[0] == "port":
+            return s.clear_fusion_input(p, key[1])
+        return False
+
+    def _input_wires(self, g: Graph, n: Node, cur):
+        """A join's wires into its named inputs (issue #165): from the output that gives each image, in the colour of the
+        starless image when it is that. An Align on block aligned on another of its own column is joined by a vertical
+        wire; every other wire goes left to right (no wire ever goes back)."""
+        for d in self._inputs_of(g, n):
+            a = d["src"]
+            if a is None or a is n:
+                continue
+            strong = cur is not None and (cur in n.paths or cur in a.paths)
+            y2 = n.y - hgt(n) / 2 + d["y"]
+            if d["image"] == "starless" and a.key == "etoiles":
+                self._image_wire(a, PORTS["etoiles"][0][1], n, d["y"], "starless", d["name"], strong, remove=d["remove"])
+                continue
+            same = self.col_of(a) == self.col_of(n)
+            if same:                                            # the reference wire between two Align on of one column
+                x = n.col + n.w / 2
+                down = a.y < n.y
+                path = _line(x, a.y + (hgt(a) / 2 if down else -hgt(a) / 2), x, n.y + (-hgt(n) / 2 if down else hgt(n) / 2))
+            else:
+                path = self._route(a.col + a.w, a.y, n.col, y2, (a, n), up=True)
+            self.wire_log.append((a, n, "vertical" if same else ""))
+            pen = QPen(QColor("#9aa3b2" if strong else "#3d4452"), 2.2 if strong else 1.6)
+            tip = _("{port} input of “{block}”").format(port=d["name"], block=n.paths[0].name)
+            if d["remove"] is not None:
+                it = WireItem(self, path, pen, d["remove"], tip, None)
+                self.scene().addItem(it)
+                self._keep_selected(it, ("in", n.paths[0].pid, d["key"][-1], n.lid))
+            else:
+                it = self._chain_wire(path, pen, tip)
+            it.setZValue(1)
 
     def _join(self, sources: list[Node], targets: list[Node], cur):
         """The sessions' Calibration blocks into the first blocks of the chain (issue #43): a wire from each to one
@@ -1749,12 +1832,13 @@ class GraphView(QGraphicsView):
                 .setZValue(1)
 
     def _image_wire(self, a: Node, ya: float, b: Node, yb: float, what: str, word: str, strong: bool,
-                    direct: bool = False):
+                    direct: bool = False, remove=None):
         """A wire of one of the Stars block's images, from its port to a Stars and background block, a Synthetic stars
         block or straight to Post (dashed), in the image's colour, its name in its tooltip; routed clear of the blocks
         on its way (_route), over them for the starless image, under them for the stars."""
-        x1, y1 = a.col + a.w, a.y - BH / 2 + ya
-        x2, y2 = b.col, b.y - BH / 2 + yb
+        x1, y1 = a.col + a.w, a.y - hgt(a) / 2 + ya
+        x2, y2 = b.col, b.y - hgt(b) / 2 + yb
+        self.wire_log.append((a, b, ""))
         path = self._route(x1, y1, x2, y2, (a, b), up=what == "starless")
         col = QColor(IMAGE_COL[what])
         if not strong:
@@ -1766,6 +1850,10 @@ class GraphView(QGraphicsView):
             it.part = (a.paths[0].pid if a.paths else None, what)     # the layer it makes (its panel)
             self.scene().addItem(it)
             self._keep_selected(it, ("part", a.paths[0].pid if a.paths else None, what))
+        elif remove is not None:                           # a join's wire: selected, Del unwires the input (issue #165)
+            it = WireItem(self, path, pen, remove, word)
+            self.scene().addItem(it)
+            self._keep_selected(it, ("in", b.paths[0].pid if b.paths else None, what, b.lid))
         else:
             it = self._chain_wire(path, pen, word)
         it.setZValue(4 if direct else 2)                  # behind the blocks (their text stays readable)
@@ -2233,6 +2321,8 @@ class GraphView(QGraphicsView):
         the wire back)."""
         if self.can_exit(node):
             return True
+        if node.key == "fusion" and node.paths:           # a combination's Output: to Post, or onto an input (#165)
+            return True
         if not node.paths or node.sid is not None or node.cut or node.grey or \
                 node.key in ("sources", "final", "session", "composition", "etoiles", "fusion", "image"):
             return False
@@ -2677,12 +2767,12 @@ PALETTE_UNFOLD_MS, PALETTE_FOLD_MS = 200, 300   # automatic: the mouse only cros
 NEW_FRAMES = -1        # a block placed "in the workflow from the frames" of sessions that have none yet: it starts one
 #: the palette (issue #47): every block, by group; the sources and the composition blocks are not graph nodes. The
 #: headings are one word, shown in capitals ("FRAMES": its own entry, "Frames" being the frames' block, "Images")
-PALETTE_GROUPS = [("Sources", ["session", "image", "align_images"]),
-                  ("FRAMES", ["calibration", "registration", "selection", "crop", "stacking"]),
+PALETTE_GROUPS = [("Sources", ["session", "image"]),
+                  ("FRAMES", ["calibration", "registration", "selection", "crop", "stacking", "align_on"]),
                   ("Image", ["astrometry", "gradient", "deconv", "denoise", "color"]),
                   ("Post", ["stars", "synth"]),
                   ("Composition", ["fusion", "composition"])]
-PALETTE_TITLES = {"session": "Session", "image": "Image", "fusion": "Combination", "align_images": "Align images"}
+PALETTE_TITLES = {"session": "Session", "image": "Image", "fusion": "Combination"}
 
 
 class GroupFlyout(QFrame):
@@ -2733,8 +2823,7 @@ class PaletteCard(QFrame):
         self.setMaximumWidth(PALETTE_FOLDED_W - 12 if folded else PALETTE_W - 26)
         on = not reason or branch
         self.setObjectName("tool")
-        self.setCursor(Qt.ForbiddenCursor if not on else Qt.ArrowCursor if block == "align_images" else
-                       Qt.OpenHandCursor)
+        self.setCursor(Qt.ForbiddenCursor if not on else Qt.OpenHandCursor)
         # available: a filled card; not available: the same card faint (a disabled tool), never dashed: dashed is
         # for the places a block can be dropped on
         self.setStyleSheet(f"QFrame#tool {{ background: {'#232831' if on else '#1e2128'}; border: 1px solid "
@@ -2944,6 +3033,7 @@ class GraphPage(QWidget):
         gv.partToPost.connect(self.part_to_post)
         gv.partOutOfPost.connect(self.part_out_of_post)
         gv.newComposition.connect(self.new_composition)
+        gv.wireToInput.connect(self.wire_to_input)
         gv.layerRemoved.connect(self.remove_layer)
         gv.openLayer.connect(self.openLayer.emit)
         gv.cutToggled.connect(self.toggle_cut)
@@ -3305,49 +3395,13 @@ class GraphPage(QWidget):
         s = self.s
         if not s.ready:
             return _("reading the project…")
-        if block == "align_images":
-            return s.align_problem()
         if p is None and s.p.sessions and block not in ("session", "image", "fusion", "composition"):
             return s.palette_reason(None, block)          # sessions without a workflow: the block starts one
         if block in ("session", "image"):
             return ""
-        if block == "fusion":                             # the group: available when one of its types is
-            whys = [self.combine_reason(k) for k in COMBINE_KINDS]     # none can: said for the type closest
-            near = [x for x in whys if not x.startswith(_("needs workflows of {filters}").split("{")[0])]
-            return "" if "" in whys else (near or whys)[0]
+        if block == "fusion":                             # the group: a combination is placed empty, wired afterwards
+            return ""
         return self._palette_reason(block, p, split)
-
-    def combine_reason(self, kind: str) -> str:
-        """Why a combination of this type cannot be placed now (translated), "" when it can (question 6: something to
-        combine, said what to do, 8.5)."""
-        s = self.s
-        if not s.ready:
-            return _("reading the project…")
-        ok = len([q for q in s.paths if s.is_mono(q)]) >= 2 or any(
-            q.source is None and not s.is_mono(q) and any(n["block"] == "stacking" for n in s.graph(q))
-            for q in s.paths) or bool(self.linear_images())
-        if not ok:
-            return _("needs 2 filter workflows, a colour stack or image")
-        got = self.fusion_choice(kind)                # decision 2: greyed until each channel has what it needs
-        if got is None:
-            from .blocks import port_name
-            return _("needs workflows of {filters}").format(
-                filters=", ".join(port_name(r) for r in COMBINE_KINDS[kind].ports))
-        empty = []                                    # its frames (control round: a template's colour project
-        for i in got:                                 # without frames made a combination of channels with nothing)
-            q = s.view(i["pid"])
-            if q.source is None and not any(x.lights for x in s.p.sessions_of(q.pid)):
-                empty.append((i["role"], q))
-        if empty and len({i["pid"] for i in got}) == 1:           # a colour image's channels: its workflow
-            return _("lights first in “{name}”").format(name=empty[0][1].name)
-        if empty:
-            return _("lights first in {channels}").format(channels=", ".join(r for r, _q in empty))
-        if len({i["pid"] for i in got}) > 1:
-            miss = [i["role"] for i in got if s.is_graph(s.view(i["pid"])) and not any(
-                n["block"] == "astrometry" and not n["off"] for n in s.graph(s.view(i["pid"])))]
-            if miss:
-                return _("Astrometry first in {channels}").format(channels=", ".join(miss))
-        return ""
 
     def _palette_reason(self, block: str, p, split) -> str:
         s = self.s
@@ -3393,9 +3447,6 @@ class GraphPage(QWidget):
         s = self.s
         block, _sep, where = block.partition(":")
         new = where == "new"
-        if block == "align_images":
-            self.align_images()
-            return
         if block == "session" and new and any(q.source is None for q in s.paths):
             q = s.add_parallel_flow()                      # issue #47: a second flow, its own night
             sid = s.sessions_of(q)[0]
@@ -3444,7 +3495,7 @@ class GraphPage(QWidget):
     def open_combinations(self, card):
         """The Combination entry's types (S-H-O, H-O, RGB, LRGB) in a row beside it; one chosen is placed."""
         from .blocks import combine_title
-        items = [(k, combine_title(k), _(c.description), self.combine_reason(k)) for k, c in COMBINE_KINDS.items()]
+        items = [(k, combine_title(k), _(c.description), "") for k, c in COMBINE_KINDS.items()]
         self.combine_flyout = GroupFlyout(self, items, lambda k: self.palette_action(f"fusion:{k}"))
         if card is not None:
             self.combine_flyout.show_beside(card)
@@ -3454,48 +3505,19 @@ class GraphPage(QWidget):
         return self.combine_flyout
 
     def place_fusion(self, kind: str):
-        """A combination block of this type placed from the palette (no template window once the project is made):
-        each named input reads the workflow of its filter, else (H-O) a colour workflow's channels as H-alpha and O III
-        (dual band); its channels and settings are changed in its panel. Refused, with what to do, until each channel
-        has what it needs."""
+        """A combination block of this type placed from the palette (issue #165): its named inputs are empty, the block
+        greyed with the reason; the user wires them (a wire onto each input, or the workflow in its panel's list). The
+        graph never reads the filters to choose them."""
         from .blocks import combine_title
         s = self.s
-        why = self.combine_reason(kind)
-        got = self.fusion_choice(kind)
         title = combine_title(kind)
-        if why or got is None:
-            self.toast(_("{block}: {why}").format(block=title, why=why or _("place its workflows first")))
+        if not s.ready:
+            self.toast(_("{block}: {why}").format(block=title, why=_("reading the project…")))
             return
-        q = s.add_fusion(title, kind, got)
+        q = s.add_fusion(title, kind)
         s.log('Combination "{name}" placed', name=q.name)
         self.select(index=s.paths.index(q), step="fusion")
-        self.toast(_("“{block}” placed · Ctrl+Z").format(block=q.name))
-
-    def linear_images(self) -> list:
-        """The Image workflows a combination can read (issue #55): a linear image whose file is chosen."""
-        return [q for q in self.s.paths if self.s.source_kind(q) == "image" and q.source.get("path")]
-
-    def fusion_choice(self, kind: str):
-        """The inputs a combination of this type placed now reads, [{"pid", "role", "channel"}], or None when there is
-        nothing to combine: each port the workflow of its filter; an H-O without them, a colour workflow's (or a
-        linear image's) red as H-alpha and its green and blue as O III (a dual-band filter)."""
-        s = self.s
-        ports = COMBINE_KINDS[kind].ports
-        by_filter = {}
-        for f, sids in s.filters().items():
-            q = next((q for q in s.paths if q.source is None and q.sessions is not None and not q.end
-                      and sorted(q.sessions) == sorted(sids)), None)
-            if q is not None:
-                by_filter[f] = q
-        if set(ports) <= set(by_filter):
-            return [{"pid": by_filter[f].pid, "role": f, "channel": "L"} for f in ports]
-        if kind != "ho":
-            return None
-        colour = next((q for q in s.paths if q.source is None and not s.is_mono(q) and not q.end), None)
-        src = colour or next(iter(self.linear_images()), None)            # issue #55: no stack to read
-        if src is None:
-            return None
-        return [{"pid": src.pid, "role": "Ha", "channel": "R"}, {"pid": src.pid, "role": "OIII", "channel": "GB"}]
+        self.toast(_("“{block}” placed: wire its inputs · Ctrl+Z").format(block=q.name))
 
     def place_block(self, block: str, pid=None, index=None):
         """Place a block in a workflow (issue #47): at ``index`` of its graph, or at its usual place. ``NEW_FRAMES``:
@@ -3720,17 +3742,6 @@ class GraphPage(QWidget):
         if d.choice is not None:
             self.make_from_template(d.choice, d.name.text().strip() or _("New workflow"), d.opts)
 
-    def align_images(self) -> bool:
-        """Every image in the Align images block (the palette, Post's button), which is selected; False when it cannot."""
-        s = self.s
-        first = s.align_images()
-        if first is None:
-            self.toast(_("Align images: {why}").format(why=s.align_problem()))
-            return False
-        moved = s.align_group(first)[1]                   # the first that moves: what Inspect shows, and computes
-        self.select(index=s.paths.index(moved), step="align_images")
-        return True
-
     def place_images(self, files: list):
         """One Image workflow per file, each a layer of Post, as a file's Inspect sends it; the first, or None."""
         from ..stages.image import image_problem, stretched_by_nature
@@ -3796,11 +3807,15 @@ class GraphPage(QWidget):
             self.select(index=s.paths.index(p), step="post")
 
     def make_filters(self, t: dict, name: str, opts: dict):
-        """A filters template (issue #43): one workflow per filter (made when the filter has none yet), then for the
-        full one the Combine channels block of their outputs. Returns the workflow shown (the fusion, or the first
-        filter's)."""
+        """A filters template (issues #43, #165): one workflow per filter (made when the filter has none yet), the first
+        the reference, every other aligned on it by an Align on block after its Stacking; for the full one the block of
+        the chosen type reads their Outputs, no Stars/background after it. Returns the workflow shown (the combination,
+        or the first filter's)."""
         s = self.s
-        from .gallery import template_blocks
+        from .gallery import palette_kind, template_blocks
+        if t.get("rgb_stars"):                              # the narrow bands and a colour workflow's stars (issue #165)
+            with s.batch():
+                return s.add_sho_rgb(name, palette_kind(t["palette"]), list(t["filters"]), {**opts})
         with s.batch():
             # One workflow per filter: the project's filters, else those chosen in the gallery (GUI exploration 7.2)
             filters = (sorted(s.filters()) or list(t["filters"])) if t["kind"] == "filters" \
@@ -3816,20 +3831,19 @@ class GraphPage(QWidget):
             if not made:
                 self.toast(_("No filter: set it in Session"))
                 return None
+            first = made[0][1]
+            for _f, q in made[1:]:                          # the others on the first one's grid, while their stars are there
+                s.set_align_on(q, first.pid)
             if t["kind"] == "filters":
-                return made[0][1]
-            # the block of the template's type reads each filter's Output; a Stars/background after it takes the stars
-            # off the combined image, for the Combine layers block in Post
-            from .gallery import palette_kind
+                return first
             return s.add_fusion(name, palette_kind(t["palette"]), [{"pid": q.pid, "role": f, "channel": "L"}
-                                                                   for f, q in made], stars=True)
+                                                                   for f, q in made])
 
     def toggle_cut(self, node, pids):
         """Switch a block off, or on again (issue #47): in ``pids`` only, else in every workflow going through it. Its
         settings and results stay, the data passes through it; Undo takes it back."""
         s = self.s
         why = {"session": "a source: Del removes it", "sources": "a source: Del removes it",
-               "align_images": "Del removes it",
                "image": "a source: Del removes it",      # a Combine channels reads its channels (control round: not a source)
                "fusion": "it combines its channels: Del removes it; to leave it out of Post, remove its wire to Post",
                "composition": "hide its layer in Post, or Del removes it"}.get(node.key if node is not None else "")
@@ -3901,12 +3915,6 @@ class GraphPage(QWidget):
             return
         if node.key == "composition":
             self.remove_layer(node.lid, node)
-            return
-        if node.key == "align_images":
-            s.remove_alignment(node.paths[0])
-            s.log("Align images removed")
-            s.select(step="image")
-            self.toast(_("Align images removed · Ctrl+Z"))
             return
         if node.key in ("fusion", "image"):              # a source block: it goes with the blocks it feeds
             gone = [q for q in node.paths if pids is None or q.pid in pids]
@@ -4144,6 +4152,28 @@ class GraphPage(QWidget):
         lay = s.post_layer(lid) or {}                     # said, with its name (2nd round, decision 11)
         self.toast(_('Layer "{name}" ({block}) to Post').format(
             name=tr_name(str(lay.get("name") or p.name)), block=block_title(None, "composition")) + " · Ctrl+Z")
+
+    def wire_to_input(self, src, port, dst, key):
+        """A wire dropped on a named input of a join block (a combination's, a Combine layers block's, an Align on
+        block's reference): the model's setter, one Undo step; a refusal is a toast with its reason, never a pop-up."""
+        s = self.s
+        go, why = self.graph.plan_wire(src, port, dst, key)
+        if go is None:
+            self.toast(why or _("Nothing to wire"))
+            return
+        q = s.path if s.path in src.paths else src.paths[0]
+        try:
+            with s.batch():
+                done = go()
+        except ValueError as e:
+            self.toast(str(e))
+            return
+        name = {"reference": _("Reference")}.get(key[0]) or (port_name(key[1]) if key[0] == "port" else
+                                                             _("Starless") if key[1] == "starless" else _("Stars"))
+        if done:
+            s.log('{input} of "{block}" wired to "{name}"', input=name, block=dst.paths[0].name, name=q.name)
+            self.toast(_("{input} · “{block}” reads “{name}” · Ctrl+Z").format(input=name, block=dst.paths[0].name,
+                                                                                 name=q.name))
 
     def remove_layer(self, lid, node=None):
         """A Stars and background block taken out of Post (its layer, with its settings); the one Post gives by

@@ -1,4 +1,6 @@
-"""The Align images block: one block across its images' lanes, its reference, removed at once; Post's button."""
+"""The Align on block (issue #165): placed right after Stacking or an Image, on a reference workflow wired on the graph or
+picked in its panel's list; empty it is a hollow dot and the block is greyed with the reason; a loop is refused; one
+Ctrl+Z per wire; Inspect reads through it."""
 from __future__ import annotations
 
 import os
@@ -13,13 +15,11 @@ if Path("C:/Windows/Fonts").is_dir():
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication, QComboBox, QMessageBox  # noqa: E402
 
-from astro_gpu import api  # noqa: E402
 from astro_gpu.client import app as appmod  # noqa: E402
 from astro_gpu.client import prefs  # noqa: E402
 from astro_gpu.client.blocks import Graph  # noqa: E402
-from astro_gpu.client.graph import AlignItem  # noqa: E402
+from astro_gpu.client.graph import BlockItem  # noqa: E402
 from astro_gpu.client.services.worker import Gpu, Machine  # noqa: E402
-from astro_gpu.core import project2  # noqa: E402
 
 MACHINE = Machine([Gpu("cuda:0", "RTX", 16.0)], 16, 64.0)
 
@@ -58,6 +58,8 @@ def world(tmp_path, monkeypatch, qapp):
     settle(w)
     w.graph.place_images([str(png), str(fit), str(fit2)])
     settle(w)
+    w.said = []
+    w.graph.toasted.connect(w.said.append)
     yield w
     w.close()
     w.deleteLater()
@@ -71,135 +73,148 @@ def settle(w, n=12):
     QApplication.processEvents()
 
 
-def item(w) -> AlignItem:
-    return next(x for x in w.graph.graph.scene().items() if isinstance(x, AlignItem))
+def item_of(w, pid: int, key: str = "align_on") -> BlockItem:
+    node = Graph(w.s).node_of(w.s.view(pid), key)
+    return next(x for x in w.graph.graph.scene().items() if isinstance(x, BlockItem) and x.node.key == node.key
+                and x.node.paths and x.node.paths[0].pid == pid)
 
 
-def test_one_block_across_the_lanes_and_a_wire_each(world):
-    w = world
-    assert w.graph.align_images()
-    settle(w)
-    s = w.s
-    assert w.s.sel_step == "align_images"
-    assert all(s.display_keys(q)[:2] == ["image", "align_images"] for q in s.paths)
-    it = item(w)
-    g = w.graph.graph.graph
-    lanes = [g.node_of(q, "align_images") for q in s.paths]
-    assert len({id(n) for n in lanes}) == 3 and len(it.nodes) == 3 and it.selected
-    assert it.rect.top() <= min(n.y for n in lanes) and it.rect.bottom() >= max(n.y for n in lanes)
-    assert len({n.col for n in lanes}) == 1
-
-
-def test_the_first_image_is_the_reference_by_default_and_it_can_change(world):
-    w = world
-    w.graph.align_images()
-    settle(w)
-    s = w.s
-    first = s.paths[0].pid
-    assert {q.source["align"] for q in s.paths} == {first}
-    assert s.p.workflow(s.paths[1].pid).source["path"].endswith("b.fits")
-    cb = next(c for c in w.graph.panel.findChildren(QComboBox) if c.itemData(0) == first)
-    cb.setCurrentIndex(2)
-    cb.activated.emit(2)
-    settle(w)
-    assert {q.source["align"] for q in s.paths} == {s.paths[2].pid}
-
-
-def test_the_reference_is_untouched_and_the_others_change_key_and_read_its_file(world):
+def test_align_on_is_a_palette_block_placed_empty_and_greyed_with_its_reason(world):
     w = world
     s = w.s
-    before = [api.stage_key(s.p, q.pid, "image") for q in s.paths]
-    w.graph.align_images()
+    _a, b, _c = s.paths
+    assert not s.palette_reason(b, "align_on") and "align_on" in w.graph.cards
+    w.graph.place_block("align_on", b.pid)
     settle(w)
-    after = [api.stage_key(s.p, q.pid, "image") for q in s.paths]
-    assert after[0] == before[0] and after[1] != before[1] and after[2] != before[2]
-    from astro_gpu.core.store import Keys
-    keys = Keys(s.p) if callable(Keys) else None
-    if keys is not None:
-        v = keys.overrides(s.paths[1].pid, "image")
-        assert v["align_to"].endswith("a.png")
-        assert keys.overrides(s.paths[0].pid, "image")["align_to"] == ""
+    assert s.display_keys(s.view(b.pid))[:2] == ["image", "align_on"] and s.align_reference(s.view(b.pid)) is None
+    g = Graph(s)
+    n = g.node_of(s.view(b.pid), "align_on")
+    assert n.waits == "reference to wire" and g.summary(n).endswith("reference to wire")
+    it = item_of(w, b.pid)
+    assert [(d["name"], d["wired"]) for d in it.inputs] == [("Reference", False)]      # a hollow dot
+    assert "empty" in it.toolTip() and "reference to wire" in it.toolTip()
+    assert s.palette_reason(s.view(b.pid), "align_on")                                  # once per workflow
 
 
-def test_the_cross_removes_the_whole_block_and_ctrl_z_brings_it_back(world):
+def test_a_wire_dropped_on_the_reference_input_wires_it_in_one_undo_step(world):
     w = world
-    w.graph.align_images()
-    settle(w)
     s = w.s
-    n = item(w).nodes[0]
-    w.graph.remove_tool(n, None)
+    a, b, _c = s.paths
+    w.graph.place_block("align_on", b.pid)
     settle(w)
-    assert all("align" not in q.source for q in s.paths)
-    assert not [x for x in w.graph.graph.scene().items() if isinstance(x, AlignItem)]
+    n_undo = len(s._undo)
+    gv = w.graph.graph
+    src = Graph(s).node_of(s.view(a.pid), "image")
+    dst = Graph(s).node_of(s.view(b.pid), "align_on")
+    go, why = gv.plan_wire(src, None, dst, ("reference",))
+    assert go is not None and why == ""
+    w.graph.wire_to_input(src, None, dst, ("reference",))
+    settle(w)
+    assert s.align_reference(s.view(b.pid)) == a.pid and len(s._undo) == n_undo + 1       # one wire, one step
+    assert Graph(s).node_of(s.view(b.pid), "align_on").waits == ""
     assert s.undo()
     settle(w)
-    assert all("align" in q.source for q in s.paths)
+    assert s.align_reference(s.view(b.pid)) is None
 
 
-def test_a_workflow_deleted_leaves_a_valid_block_or_none(world):
-    w = world
-    w.graph.align_images()
-    settle(w)
-    s = w.s
-    s.remove_path(s.paths.index(s.paths[0]))                      # the reference goes
-    settle(w)
-    assert all("align" not in (q.source or {}) for q in s.paths)
-    project2.Project2.from_dict(s.p.to_dict(), None).validate()
-
-
-def test_post_button_is_greyed_with_its_reason_under_two_images_and_opens_inspect(world):
-    w = world
-    w.set_mode(2)
-    settle(w)
-    view = w.post_holder.page.view
-    assert view.b_align.isEnabled()
-    view.alignAsked.emit()
-    settle(w)
-    assert w.mode == 1 and w.s.sel_step == "align_images" and all("align" in q.source for q in w.s.paths)
-    w.s.remove_path(1)
-    w.s.remove_path(1)
-    settle(w)
-    w.set_mode(2)
-    settle(w)
-    view.rebuild()
-    assert not view.b_align.isEnabled() and "needs 2 images" in view.b_align.toolTip()
-
-
-def test_the_layers_stay_the_same_workflows_so_their_settings_stay(world):
-    w = world
-    pids = [q.pid for q in w.s.paths]
-    w.graph.align_images()
-    settle(w)
-    assert [q.pid for q in w.s.paths] == pids
-    g = Graph(w.s)
-    assert set(pids) <= set(g.to_post)
-
-
-def test_the_palette_card_is_greyed_without_two_images(world):
-    w = world
-    assert not w.graph.cards["align_images"].reason
-    w.graph.cards["align_images"].mouseDoubleClickEvent(None)
-    settle(w)
-    assert all("align" in q.source for q in w.s.paths)
-    w.s.remove_path(1)
-    w.s.remove_path(1)
-    settle(w)
-    w.graph.build_tools()
-    assert w.graph.cards["align_images"].reason == "needs 2 images"
-
-
-def test_a_real_click_selects_the_block_and_its_cross_removes_it(world):
+def test_a_real_drag_from_an_output_onto_the_reference_dot(world):
     from PySide6.QtCore import QPointF, Qt
     from PySide6.QtTest import QTest
     w = world
-    w.show()
-    w.graph.align_images()
+    s = w.s
+    a, b, _c = s.paths
+    w.graph.place_block("align_on", a.pid)               # the source image has blocks after it: its output ● is there
+    w.graph.place_block("align_on", b.pid)
     settle(w)
     gv = w.graph.graph
-    QTest.mouseClick(gv.viewport(), Qt.LeftButton, pos=gv.mapFromScene(item(w).sceneBoundingRect().center()))
+    src_it = item_of(w, a.pid, "image")
+    dst_it = item_of(w, b.pid)
+    assert src_it.ports                                                           # the Image block has its output ●
+    start = src_it.mapToScene(QPointF(src_it.w, src_it.ports[0][1]))
+    dot = dst_it.mapToScene(QPointF(0, dst_it.inputs[0]["y"]))
+    vp = gv.viewport()
+    QTest.mousePress(vp, Qt.LeftButton, pos=gv.mapFromScene(start))
+    QTest.mouseMove(vp, gv.mapFromScene(dot))
+    QTest.mouseRelease(vp, Qt.LeftButton, pos=gv.mapFromScene(dot))
     settle(w)
-    assert item(w).selected
-    x = item(w).mapToScene(item(w)._x_rect().center())
-    QTest.mouseClick(gv.viewport(), Qt.LeftButton, pos=gv.mapFromScene(QPointF(x)))
+    assert s.align_reference(s.view(b.pid)) == a.pid
+
+
+def test_a_loop_is_refused_with_its_reason_and_nothing_changes(world):
+    w = world
+    s = w.s
+    a, b, _c = s.paths
+    w.graph.place_block("align_on", a.pid)
+    w.graph.place_block("align_on", b.pid)
     settle(w)
-    assert not [i for i in gv.scene().items() if isinstance(i, AlignItem)]
+    assert s.set_align_reference(s.view(b.pid), a.pid)
+    n_undo = len(s._undo)
+    g = Graph(s)
+    src, dst = g.node_of(s.view(b.pid), "image"), g.node_of(s.view(a.pid), "align_on")
+    go, why = w.graph.graph.plan_wire(src, None, dst, ("reference",))
+    assert go is None and "loop" in why                                                  # b aligned on a, a on b
+    with pytest.raises(ValueError, match="loop"):
+        s.set_align_reference(s.view(a.pid), b.pid)
+    w.graph.wire_to_input(src, None, dst, ("reference",))                                # a toast, no pop-up
+    assert "loop" in w.said[-1]
+    assert s.align_reference(s.view(a.pid)) is None and len(s._undo) == n_undo
+    assert s.join_problem(a.pid, a.pid, True)                                            # itself
+
+
+def test_the_panel_lists_every_workflow_for_the_reference_and_picks_it(world):
+    w = world
+    s = w.s
+    a, b, c = s.paths
+    w.graph.place_block("align_on", c.pid)
+    settle(w)
+    w.graph.select(index=s.paths.index(s.view(c.pid)), step="align_on")
+    settle(w)
+    cb = next(x for x in w.graph.panel.findChildren(QComboBox) if x.findData(a.pid) >= 0 and x.findData(b.pid) >= 0)
+    assert cb.findData(c.pid) < 0 and cb.findData(None) >= 0                           # every other workflow, or none
+    i = cb.findData(b.pid)
+    cb.setCurrentIndex(i)
+    cb.activated.emit(i)
+    settle(w)
+    assert s.align_reference(s.view(c.pid)) == b.pid
+    assert s.p.workflow(c.pid).blocks[0]["block"] == "align_on" and s.p.workflow(c.pid).blocks[0]["method"] == "stars"
+    assert s.channel_problem(s.view(b.pid)).startswith("reference of")                 # a reference cannot be deleted
+
+
+def test_the_cross_removes_the_block_and_ctrl_z_brings_it_back(world):
+    w = world
+    s = w.s
+    a, b, _c = s.paths
+    w.graph.place_block("align_on", b.pid)
+    settle(w)
+    s.set_align_reference(s.view(b.pid), a.pid)
+    node = Graph(s).node_of(s.view(b.pid), "align_on")
+    w.graph.remove_tool(node, None)
+    settle(w)
+    assert s.align_node(s.view(b.pid)) is None and "align_on" not in s.display_keys(s.view(b.pid))
+    assert s.undo()
+    settle(w)
+    assert s.align_reference(s.view(b.pid)) == a.pid
+
+
+def test_align_images_is_gone_everywhere(world):
+    w = world
+    s = w.s
+    assert not hasattr(s, "align_images") and not hasattr(s, "align_group") and not hasattr(s, "plan_align")
+    assert "align_images" not in w.graph.cards and all("align" not in (q.source or {}) for q in s.paths)
+    from astro_gpu.client import blocks
+    assert "align_images" not in blocks.BY_KEY and "align_on" in blocks.BY_KEY
+
+
+def test_inspect_reads_the_aligned_image_after_align_on(world):
+    w = world
+    s = w.s
+    a, b, _c = s.paths
+    w.graph.place_block("align_on", b.pid)
+    w.graph.place_block("astrometry", b.pid)
+    settle(w)
+    from astro_gpu.client.steps import Steps
+    st = Steps(s)
+    v = s.view(b.pid)
+    assert st.read_stage(v, "stack") == "align_on" and st.read_stage(s.view(a.pid), "stack") == "stack"
+    assert [x.stage for x in st.visuals(v, "astrometrie") if x.kind == "array"] == ["align_on"]
+    assert [x.stage for x in st.visuals(v, "align_on")] == ["align_on"]

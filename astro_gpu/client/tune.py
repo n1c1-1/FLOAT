@@ -1060,7 +1060,6 @@ class TuneView(QWidget):
 
     def visuals(self, p, k) -> list[VisualSpec]:
         """The tabs of a block; the ◇ ones (not in the engine yet) only in Spec mode."""
-        k = "image" if k == "align_images" else k         # what it computes is its image's stage
         return [v for v in self.steps.visuals(p, k) if not v.spec or prefs.spec()]
 
     def _has_previous(self, p, k) -> bool:

@@ -46,7 +46,7 @@ from PySide6.QtWidgets import (
 from .. import texts
 from ..core import workflow as wfl
 from . import prefs
-from .blocks import BY_KEY, STATE_WORD, block_state, block_title
+from .blocks import STATE_WORD, block_state, block_title, kbase
 from .i18n import _, all_workflows, hm, language, number
 from .icons import IconLabel, IconText, icon_only, set_icon
 from .layout import Sections
@@ -635,8 +635,6 @@ class Panel(QWidget):
         k = node.key
         if k == "project":
             self.project_panel()
-        elif k == "align_images":
-            self.align_panel(node)
         elif k == "session" or (k == "sources" and len(self.s.sessions) == 1):      # #48: even empty, its lists
             self.session_panel(node.sid if node.sid is not None else self.s.sessions[0]["id"])
         elif k == "sources" and self.s.sources_loaded and self.s.stack_mode == "together":
@@ -693,24 +691,45 @@ class Panel(QWidget):
         alive = {q.pid for q in self.s.paths}
         return bool(node.paths) and all(q.pid in alive for q in node.paths)
 
-    def align_panel(self, node):
-        """Align images: the reference among its images, the images it takes."""
-        s = self.s
-        group = s.align_group(s.view(node.paths[0].pid))
-        self.hv.addWidget(label(_("Align images"), "h1"))
-        self.bv.addWidget(label(_(BY_KEY["align_images"]["what"]), "small", wrap=True))
-        self.bv.addWidget(self.group_title(_("Reference")))
+    def workflow_choice(self, choices, current, none: str | None, tip: str, chosen) -> QComboBox:
+        """The list of workflows a join's input can read (issue #165): every workflow, each refused one greyed with its
+        reason on hover, and ``none`` (a text) to leave the input empty; ``chosen(pid or None)`` runs the change, a
+        refusal is said in the page's toast, never a window."""
         cb = QComboBox()
-        for q in group:
+        cb.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        cb.setMinimumContentsLength(10)
+        if none is not None:
+            cb.addItem(none, None)
+        for q, why in choices:
             cb.addItem(q.name, q.pid)
-        cb.setCurrentIndex(cb.findData(group[0].source["align"]) if group else -1)
-        cb.setToolTip(_("The image the others are brought onto: they take its size and framing"))
-        cb.activated.connect(lambda _i: s.set_align_reference(group[0], cb.currentData()))
-        self.bv.addWidget(cb)
-        self.bv.addWidget(self.group_title(_("Images")))
-        for q in group:
-            self.bv.addWidget(label(q.name, "dim"))
-        self.bv.addStretch(1)
+            if why:
+                item = cb.model().item(cb.count() - 1)
+                item.setEnabled(False)
+                item.setToolTip(why)
+        cb.setCurrentIndex(max(0, cb.findData(current)))
+        cb.setToolTip(tip)
+
+        def pick(k):
+            try:
+                chosen(cb.itemData(k))
+            except ValueError as e:
+                self.toast.emit(str(e))
+                self.refresh(self.node)
+        cb.activated.connect(pick)
+        return cb
+
+    def reference_row(self, node):
+        """Align on: the workflow whose image it brings this one onto (its reference), chosen in a list of every other
+        workflow; the wire on the graph does the same."""
+        s = self.s
+        p = node.paths[0]
+        self.bv.addWidget(self.group_title(_("Reference")))
+        self.bv.addWidget(self.workflow_choice(
+            s.reference_choices(p), s.align_reference(p), _("none"),
+            _("The workflow whose image this one is brought onto: it takes its size and framing"),
+            lambda pid: s.set_align_reference(p, pid)))
+        if not s.align_reference(p):
+            self.bv.addWidget(label(_("reference to wire"), "warn", wrap=True))
 
     def project_panel(self):
         """The Project block: what it misses to be complete, the target and what is known of the capture, the comments;
@@ -1027,6 +1046,8 @@ class Panel(QWidget):
         if node.broken:                                  # why Run is refused, as the graph's red circle says (round 3)
             why = label(_("Run refused: {why}").format(why=node.broken.rstrip(".")), "warn", wrap=True)
             self.hv.addWidget(why)
+        if node.waits:                                   # an input to wire, or inputs not on one grid: the block waits
+            self.hv.addWidget(label(_("Waiting: {why}").format(why=node.waits.rstrip(".")), "warn", wrap=True))
         self.bv.addWidget(self.group_title(_("Inputs")))
         words = {"L": _("grey"), "R": _("red"), "G": _("green"), "B": _("blue"),
                  "GB": _("green + blue")}
@@ -1042,6 +1063,15 @@ class Panel(QWidget):
             name.setMinimumWidth(36)
             row.addWidget(name, 0)
             row.addWidget(self.channel_source(p, i, q, words.get(i.get("channel", "L"), "")), 1)
+            if q is not None:                              # the channel of its image this input reads: a setting
+                ch = QComboBox()
+                for c, word in words.items():
+                    ch.addItem(word, c)
+                ch.setCurrentIndex(max(0, ch.findData(i.get("channel", "L"))))
+                ch.setToolTip(_("The channel of the image this input reads: grey for a stack of a filter, red or "
+                                "green + blue for a dual-band colour image"))
+                ch.activated.connect(lambda k, r=role, b=ch: s.set_fusion_channel(p, r, b.itemData(k)))
+                row.addWidget(ch)
             sp = QDoubleSpinBox()
             sp.setRange(0.0, 5.0)
             sp.setSingleStep(0.05)
@@ -1058,10 +1088,9 @@ class Panel(QWidget):
         self.bv.addSpacing(6)
         self.settings(p, "fusion")
         self.bv.addSpacing(6)
-        self.bv.addWidget(label(_("Each input is its workflow's image, aligned on the first one through the plate "
-                                  "solutions (each workflow needs its Astrometry) and brought to the same scale. Its "
-                                  "stars stay: a Stars/background after this block takes them off. Its output is a "
-                                  "layer of Post."), "small", wrap=True))
+        self.bv.addWidget(label(_("Each input is any workflow's image, wired on the graph or picked here. They must be on "
+                                  "one grid: an Align on block after the Stacking of the others brings them there. Its "
+                                  "output is a layer of Post."), "small", wrap=True))
         self.bv.addStretch(1)
 
     def image_choice(self, p, i: dict):
@@ -1078,27 +1107,16 @@ class Panel(QWidget):
         return cb
 
     def channel_source(self, p, i: dict, q, word: str):
-        """What an input reads (issue #55): its workflow, chosen on its row among the stacks of its filter and the
-        linear images; said only, when there is no other."""
+        """What an input reads (issue #165): any workflow, picked in a list of all of them (the refused ones greyed with
+        their reason: a loop, an image already stretched) or none; the same as a wire dropped on the input."""
         s = self.s
-        choices = s.channel_choices(p, i["role"])
-        if len(choices) < 2 and q is not None:
-            return label(_("{workflow} · {channel}").format(workflow=html.escape(q.name), channel=word), "small")
-        cb = QComboBox()
-        cb.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
-        cb.setMinimumContentsLength(10)
-        if q is None:                                    # a named input waiting for its workflow
-            cb.addItem(_("to choose"), None)
-        for x, why in choices:
-            cb.addItem(_("{workflow} · {channel}").format(workflow=x.name, channel=word), x.pid)
-            if why:
-                item = cb.model().item(cb.count() - 1)
-                item.setEnabled(False)
-                item.setToolTip(why)
-        cb.setCurrentIndex(max(0, cb.findData(i["pid"])))
-        cb.setToolTip(_("The workflow this channel reads: a stack of its filter, or a linear image's output"))
-        cb.activated.connect(lambda k, r=i["role"]: cb.itemData(k) is not None and s.set_fusion_channel(p, r, cb.itemData(k)))
-        return cb
+        role = i["role"]
+        return self.workflow_choice(
+            s.input_choices(p, role), i["pid"], _("none"),
+            _("The workflow this input reads: its Output, or its starless image (any workflow, none leaves the input "
+              "empty and the block waits)"),
+            lambda pid: s.clear_fusion_input(p, role) if pid is None else s.set_fusion_input(
+                p, role, pid, i.get("image", "output")))
 
     def survey_row(self, p):
         """The H-alpha survey the Gradient block keeps its samples away from, when the field's is not on this computer:
@@ -1260,6 +1278,8 @@ class Panel(QWidget):
                               "Nothing is downloaded during a run: the runs leave this block out until then."))
             inst.clicked.connect(lambda: open_catalogs(self))
             self.hv.addWidget(inst, 0, Qt.AlignLeft)
+        if kbase(k) == "align_on":                        # issue #165: its reference, then its settings
+            self.reference_row(node)
         # which workflows a change goes to (the Stars block has no setting: nothing to apply)
         if node.shared and k != "etoiles":
             self.hv.addWidget(label(_("Apply to:"), "dim"))
@@ -1633,6 +1653,7 @@ class Panel(QWidget):
         here (the one Post would give it)."""
         from ..render.sliders import STARS as STARS_GROUP
         from ..render.sliders import group_title
+        from .model import is_fusion_view
         from .post3 import BLENDS, ContSlider, offset_text
         s = self.s
         p = node.paths[0]
@@ -1662,6 +1683,25 @@ class Panel(QWidget):
         if st != "done":
             self.bv.addWidget(label(_("To compute: Stars/background"),
                                     "warn", wrap=True))
+        if node.waits:                                    # a side to wire: the block waits (issue #165)
+            self.bv.addWidget(label(_("Waiting: {why}").format(why=node.waits.rstrip(".")), "warn", wrap=True))
+        self.bv.addWidget(self.group_title(_("Inputs")))
+        stars_pid = lay.get("stars_pid", p.pid) if lay else p.pid
+        first = QHBoxLayout()                              # the starless side: a Stars/background's, or a combination's
+        first.addWidget(label(f"<b>{html.escape(_('Starless'))}</b>", None), 0)
+        first.addWidget(self.workflow_choice(
+            [(q, s.layer_side_problem("starless", q.pid, "output" if is_fusion_view(q) else "starless"))
+             for q in s.paths], lay.get("pid", p.pid) if lay else p.pid, None,
+            _("The workflow whose starless image (or whose Output, for a combination) this block combines"),
+            lambda pid: s.set_layer_side(lid(), "starless", pid, "output" if is_fusion_view(s.view(pid)) else "starless")), 1)
+        self.bv.addLayout(first)
+        second = QHBoxLayout()                             # the stars side: another workflow's Stars/background
+        second.addWidget(label(f"<b>{html.escape(_('Stars'))}</b>", None), 0)
+        second.addWidget(self.workflow_choice(
+            [(q, s.layer_side_problem("stars", q.pid)) for q in s.paths], stars_pid, _("none"),
+            _("The workflow whose stars this block puts back (its Stars/background block's stars alone)"),
+            lambda pid: s.set_layer_side(lid(), "stars", pid)), 1)
+        self.bv.addLayout(second)
         sliders = dict(lay.get("sliders") or {})
 
         def commit(key, v):

@@ -45,8 +45,8 @@ images from; ``FILTERS`` lists the filters and their settings.
 from __future__ import annotations
 
 import copy
-import itertools
 import hashlib
+import itertools
 import json
 import math
 from collections import OrderedDict
@@ -604,7 +604,8 @@ def new_workflow_layer(pid: int, name: str, visible=False, part=None, base=None)
         raise ValueError(f"unknown layer part {part!r} (allowed: {PARTS})")
     return {"id": new_id(), "kind": "workflow", "pid": pid, "part": part, "name": name, "visible": visible,
             "opacity": 100.0, "mode": "Screen" if part == "stars" else "Normal", "base": base, "sliders": {},
-            "mask": None, **({"blend": BLENDS[0], "shown": {k: True for k in SUBS}} if part == "combined" else {})}
+            "mask": None, **({"blend": BLENDS[0], "shown": {k: True for k in SUBS}, "starless": "starless",
+                              "stars_pid": pid} if part == "combined" else {})}
 
 
 def new_image_layer(key: str, name: str, visible: bool = True) -> dict:
@@ -626,10 +627,33 @@ def is_pixel(lay: dict) -> bool:
 
 def source_id(lay: dict):
     """What the composition asks the provider for: a workflow's id (its Output block's image), ("stars", id) for its
-    Stars block's images, or ("image", key)."""
+    Stars block's images, or ("image", key). A Combine layers layer asks for its stars side's (``sub_layer``)."""
     if lay["kind"] == "workflow":
+        if lay.get("part") == "combined" and "stars_pid" in lay:
+            return ("stars", lay["stars_pid"]) if lay["stars_pid"] is not None else ("stars", lay["pid"])
         return ("synth" if lay.get("part") == "synth" else "stars", lay["pid"]) if lay.get("part") else lay["pid"]
     return ("image", lay["key"])
+
+
+def sub_layer(lay: dict, sub: str) -> dict:
+    """The layer to render for one image of a Combine layers layer (issue #165, two branches): its stars are its stars
+    side's workflow's stars (``stars_pid``); its starless image is its first workflow's Stars/background starless image,
+    or its Output (a combination's: ``starless`` "output"). A part of any other layer is the layer's own."""
+    if sub == "stars" or sub == "synth":
+        return dict(lay, pid=lay["stars_pid"] if lay.get("stars_pid") is not None else lay["pid"], part=sub)
+    return dict(lay, part=None if lay.get("starless") == "output" and sub == "starless" else sub)
+
+
+def source_ids(lay: dict) -> list:
+    """Everything the provider must have for a layer: a Combine layers layer's two sides (the shown ones, the stars
+    side when it has a workflow), else its own."""
+    if is_group(lay):
+        shown = lay.get("shown") or {}
+        subs = [x for x in ("starless", "stars") if shown.get(x, True)]
+        if lay.get("stars_pid", lay["pid"]) is None and "stars" in subs:
+            subs.remove("stars")
+        return [source_id(sub_layer(lay, x)) for x in subs]
+    return [source_id(lay)]
 
 
 def new_filter_layer(key: str, target=None, sub=None) -> dict:
@@ -829,6 +853,9 @@ def load_layers(raw, alive: set[int]) -> list[dict]:
             lay = new_workflow_layer(int(d["pid"]), name, bool(d.get("visible")), d.get("part"),
                                      d.get("base"))
             if lay.get("part") == "combined":
+                lay["starless"] = d.get("starless") if d.get("starless") in ("starless", "output") else "starless"
+                sp = d["stars_pid"] if "stars_pid" in d else d["pid"]      # the stars side: its workflow, else none
+                lay["stars_pid"] = int(sp) if sp is not None and int(sp) in alive else None
                 lay["blend"] = d.get("blend") if d.get("blend") in BLENDS else BLENDS[0]
                 shown = d.get("shown") if isinstance(d.get("shown"), dict) else {}
                 lay["shown"] = {k: bool(shown.get(k, True)) for k in SUBS}
@@ -1051,7 +1078,10 @@ class Composer:
 
     # ------------------------------------------------------------ geometry
     def canvas_of(self, layers: list[dict]) -> Canvas | None:
-        pids = [source_id(lay) for lay in reversed(layers) if is_pixel(lay) and self.provider.available(source_id(lay))]
+        pids = []
+        for lay in reversed(layers):
+            if is_pixel(lay):
+                pids += [x for x in source_ids(lay) if self.provider.available(x) and x not in pids]
         if not pids:
             return None
         key = (tuple(pids), tuple(self.provider.version(p) for p in pids))
@@ -1081,14 +1111,15 @@ class Composer:
         """The image of a pixel layer over the whole canvas at a level if it is in the cache (level > 0); a Stars and
         background layer's from its two images."""
         if is_group(lay):
-            got = [self.images.get(self._key(dict(lay, part=sub), level, None, canvas)) for sub in self._shown(lay)]
+            got = [self.images.get(self._key(sub_layer(lay, sub), level, None, canvas)) for sub in self._shown(lay)]
             return None if any(a is None for a in got) else self._together(lay, got, canvas.size(level)[::-1])
         return self.images.get(self._key(lay, level, None, canvas))
 
     @staticmethod
     def _shown(lay: dict) -> list[str]:
         """A Stars and background layer's images put together, the starless image first."""
-        return [sub for sub in reversed(SUBS) if (lay.get("shown") or {}).get(sub, True)]
+        empty = lay.get("stars_pid", lay.get("pid")) is None            # its stars side has no workflow (#165)
+        return [sub for sub in reversed(SUBS) if (lay.get("shown") or {}).get(sub, True) and not (empty and sub == "stars")]
 
     def _together(self, lay: dict, got: list, hw) -> np.ndarray:
         """A Stars and background layer's images put together as its ``blend`` says (render/stars.blend: the same
@@ -1103,7 +1134,7 @@ class Composer:
         draft takes the exact image when it is cached, else a quick look. A Stars and background layer's two images
         are rendered and cached apart, then put together (issue #19)."""
         if is_group(lay):
-            got = [self.layer_rgb(dict(lay, part=sub), level, abox, canvas, cache, draft, stop)
+            got = [self.layer_rgb(sub_layer(lay, sub), level, abox, canvas, cache, draft, stop)
                    for sub in self._shown(lay)]
             return self._together(lay, got, (abox[3] - abox[1], abox[2] - abox[0]))
         W, H = canvas.size(level)
@@ -1292,7 +1323,7 @@ class Composer:
                     keep_mask(lay, self.mask(lay, level, abox, comp, canvas, ctx))
                 continue
             if is_pixel(lay):
-                if not self.provider.available(source_id(lay)):
+                if not all(self.provider.available(x) for x in source_ids(lay)):
                     continue
                 own = [fl for fl in stack if fl["kind"] == "filter" and fl.get("target") == lay["id"]]
                 if is_group(lay):
@@ -1338,7 +1369,7 @@ class Composer:
         under it); the real stars' eye off, the group starts from black."""
         got, sigs = [], [_settings_of(lay)]
         for sub in self._shown(lay):                                      # the starless image first, then the stars
-            part = dict(lay, part=sub)
+            part = sub_layer(lay, sub)
             if sub == "stars" and not (lay.get("shown") or {}).get("real", True) and \
                     any(is_synth(fl) and fl.get("sub") == "stars" for fl in own):
                 hw = (abox[3] - abox[1], abox[2] - abox[0])
@@ -1346,7 +1377,7 @@ class Composer:
             else:
                 x = self.layer_rgb(part, level, abox, canvas, cache, draft, check)
                 sig = _sig(self._key(part, level, abox, canvas))
-            synth = dict(lay, part="synth")
+            synth = sub_layer(lay, "synth")
             ctx.synth = None
             if sub == "stars" and self.provider.available(source_id(synth)):
                 ctx.synth = lambda: self.layer_rgb(synth, level, abox, canvas, cache, draft, check)

@@ -211,7 +211,10 @@ def test_a_composition_saved_before_the_group_opens_as_it_with_the_same_image():
     row = next(x for x in layers if pe.is_synth(x))
     assert row["opacity"] == 80.0 and row["mask"]["feather"] == 2.0 and row["mask"]["parts"][0]["strokes"] == [
         (6.0, 6.0, 14.0, 50.0, True)]
-    assert json.dumps(pe.save_layers(layers), sort_keys=True) == json.dumps(raw, sort_keys=True)
+    # the two sides of a Combine layers layer are named now (issue #165): its starless image and its stars are its
+    # workflow's, as they were; the rest of the saved text is the same
+    sides = [dict(x, starless="starless", stars_pid=x["pid"]) if x.get("part") == "combined" else x for x in raw]
+    assert json.dumps(pe.save_layers(layers), sort_keys=True) == json.dumps(sides, sort_keys=True)
     # the image: the levels on the stars after the synthetic ones replaced them through their mask at 80 %
     parts = images()
     got = compose(layers, parts, want=[row["id"]])

@@ -160,12 +160,12 @@ def run_key(key: str) -> str:
     """The block Run to here plans for a block of the views: its own, a block placed twice included ("fond~2"); for
     Combine layers, the Split block it reads (exploration #21: it answered "Nothing to run"); for Crop, which computes
     nothing, the Registration its frame comes from (the night test pass: "Crop is no longer in the graph")."""
-    return {"composition": "etoiles", "align_images": "image", "crop": "alignement"}.get(key, key)
+    return {"composition": "etoiles", "crop": "alignement"}.get(key, key)
 
 
 def plan_to(model, p, key: str):
     """The plan of Run to here for a block of the views (``run_key``)."""
-    return model.plan_align(p) if key == "align_images" else model.plan_to_block(p, run_key(key))
+    return model.plan_to_block(p, run_key(key))
 
 
 def run_here_refusal(model, key: str | None) -> str:
@@ -1108,12 +1108,10 @@ class RunController(QObject):
         if p is None or run_here_refusal(m, key) or not self.before_run():   # a Session block is not computed (#29)
             return None
         pid, name = p.pid, self.block_name(p, key)
-        self.scope = {q.pid for q in m.align_group(p)} if key == "align_images" else {pid}
+        self.scope = {pid}
 
         def planner():
             q = m.view(pid)                                  # the window follows the graph: Ctrl+Z may take it away
-            if q is not None and key == "align_images":      # every image of the block
-                return m.plan_align(q), None
             if q is not None and m.ready and m.is_cut(q, run_key(key)):   # drawn, but switched off: not computed
                 raise PlanRefused(_("{block} is switched off: D switches it on again").format(block=name))
             if q is None or (m.ready and run_key(key) not in m.pause_keys(q) + ["post", "etoiles"]):

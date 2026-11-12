@@ -918,7 +918,6 @@ class Main(QMainWindow):
         page.openImages.connect(self.open_images)
         page.view.openImages.connect(self.open_images)
         page.view.runAsked.connect(self.launch)
-        page.view.alignAsked.connect(self.align_layers)
         page.view.goResults.connect(self._go_results)
         page.view.card_source = self.report              # the night card, for its Export
         page.view.toasted.connect(self.flash)            # what a change of Post did beyond Post (a branch removed)
@@ -1259,11 +1258,6 @@ class Main(QMainWindow):
         if self.project is not None and self.graph.place_images(files) is not None:
             self.set_mode(2)
             self._launch_when_ready()
-
-    def align_layers(self):
-        """Post's Aligner: the Align images block in the graph, its Inspect, where Run to here computes it."""
-        if self.graph is not None and self.graph.align_images():
-            self.set_mode(1)
 
     def _launch_when_ready(self):
         if self.s is None:

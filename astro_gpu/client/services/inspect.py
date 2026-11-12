@@ -1133,7 +1133,7 @@ def gradient_source(p, wid: int, stage: str = "gradient", which: str = "current"
     """The stack with its sky gradient removed, in the camera's colours, as the later blocks read it: the stack minus
     the Gradient block's sky variation (the level stays)."""
     def load():
-        stack = _array(p, wid, "stack", "drz_full", which).astype(np.float32)
+        stack = _array(p, wid, _stk(p, wid, which), "drz_full", which).astype(np.float32)
         stack -= _sky_model(p, wid, which, *stack.shape[1:])[0]
         return stack
     return load
@@ -1143,7 +1143,7 @@ def removed_source(p, wid: int, stage: str = "gradient", which: str = "current")
     """What the Gradient block took away: its sky model (the variation, on the level it keeps), in the camera's
     colours."""
     def load():
-        stack = _array(p, wid, "stack", "drz_full", which)
+        stack = _array(p, wid, _stk(p, wid, which), "drz_full", which)
         var, level = _sky_model(p, wid, which, *stack.shape[1:])
         var += level[:, None, None]
         return var
@@ -1275,15 +1275,24 @@ class ScaledWcs:
 
 
 # ---------------------------------------------------------------------------------------------- where a picture sits
-def _stack_meta(p, wid: int, which: str) -> tuple[str, float, int, int]:
+def _stk(p, wid: int, which="current") -> str:
+    """The stage whose image the blocks after Stacking read (Chains.resolve): the aligned image when the workflow has an
+    Align on block done, else the stack (issue #165)."""
+    return "align_on" if api.stage_outputs(p, wid, "align_on", _w(which, "align_on")) is not None else "stack"
+
+
+def _stack_meta(p, wid: int, which: str, stage: str | None = None) -> tuple[str, float, int, int]:
     """(the registration's key, the drizzle scale, the stack grid's width and height) of a workflow's stack result:
     its grid is the reference frame of that registration enlarged by the scale (stage stack: X = (x + 0.5) s - 0.5)."""
     import json
-    st = api.stage_outputs(p, wid, "stack", which) or api.stage_outputs(p, wid, "stack")
+    stage = stage or _stk(p, wid, which)
+    st = api.stage_outputs(p, wid, stage, which) or api.stage_outputs(p, wid, stage)
     if st is None:
         raise LookupError("no stack result")
     meta = json.loads((Path(st.dir) / "drz_meta.json").read_text(encoding="utf-8"))
     reg = (st.manifest.get("inputs") or {}).get("register") or ""
+    if stage == "align_on":                           # the reference's grid: a frame of its own, its zone is none
+        return str(st.key), float(meta.get("scale") or 1.0), int(meta["width"]), int(meta["height"])
     if not reg:
         out = api.stage_outputs(p, wid, "register", which) or api.stage_outputs(p, wid, "register")
         reg = out.key if out is not None else ""
@@ -1293,10 +1302,13 @@ def _stack_meta(p, wid: int, which: str) -> tuple[str, float, int, int]:
     return str(reg or st.key), s, W, H
 
 
-def _stack_zone(p, wid: int, which: str) -> tuple[int, int]:
+def _stack_zone(p, wid: int, which: str, stage: str | None = None) -> tuple[int, int]:
     """Where the stack starts on the reference frame (a Crop block's zone: issue #79), in its pixels."""
     import json
-    st = api.stage_outputs(p, wid, "stack", which)
+    stage = stage or _stk(p, wid, which)
+    if stage == "align_on":
+        return 0, 0
+    st = api.stage_outputs(p, wid, stage, which)
     meta = json.loads((Path(st.dir) / "drz_meta.json").read_text(encoding="utf-8")) if st is not None else {}
     zone = meta.get("zone") or [0, 0]
     return int(zone[0]), int(zone[1])
@@ -1335,7 +1347,7 @@ def crop_frame(p, wid: int) -> dict:
             "sky": blocks <= low + 3 * max(noise, 1e-6)}
 
 
-def stack_place(p, wid: int, which="current"):
+def stack_place(p, wid: int, which="current", stage: str | None = None):
     """Where a picture on the stack grid of a workflow sits (``imageview.Placement``), read in the viewer's thread: on
     the grid of the registration's reference frame, at the drizzle scale. Its size (w, h) tells a reduced copy of the
     grid (an engine preview of it) from the grid itself."""
@@ -1343,9 +1355,9 @@ def stack_place(p, wid: int, which="current"):
     which = _w(which, "stack")
 
     def place(w: int, h: int):
-        reg, s, W, H = _stack_meta(p, wid, which)
+        reg, s, W, H = _stack_meta(p, wid, which, stage)
         fx, fy = (W / float(w), H / float(h)) if (w, h) != (W, H) else (1.0, 1.0)
-        x0, y0 = _stack_zone(p, wid, which)
+        x0, y0 = _stack_zone(p, wid, which, stage)
         return Placement.scaled(("reference frame", reg), fx / s, float(x0), float(y0), fy=fy / s)
     return place
 

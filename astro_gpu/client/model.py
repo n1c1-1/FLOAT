@@ -39,10 +39,21 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from .. import api
 from ..core import workflow as wfl
 from ..core.project import Target
+from ..core.project2 import (
+    ACQUISITION,
+    JOIN_LOOP,
+    JOIN_NO_STACK,
+    JOIN_SELF,
+    Workflow,
+    active_version,
+    read_state,
+    versions_problem,
+    workflow_images,
+    write_state,
+)
 from ..core.project2 import FILE as PROJECT_FILE
-from ..core.project2 import (ACQUISITION, FILTERS, Workflow, active_version, read_state, versions_problem,
-                            workflow_images, write_state)
-from .blocks import COLUMNS, KEY_ENGINE_BLOCK, TOOLS, TRUNK, block_state, kbase, knum  # noqa: F401  (TOOLS: test_model_surface)
+from ..core.project2 import join_problem as engine_join_problem
+from .blocks import COLUMNS, KEY_ENGINE_BLOCK, TOOLS, TRUNK, block_state, kbase, knum, port_name  # noqa: F401  (TOOLS: test_model_surface)
 from .blocks import ENGINE_BLOCK as ENGINE_KEY
 from .i18n import _, hm
 from .services.worker import ApiWorker, norm_path
@@ -107,6 +118,29 @@ def engine_name(key: str) -> str:
 def node_key(n: dict) -> str:
     """The views' key of a graph node: its name for an image block (repeated ones are numbered), its block else."""
     return view_key(n["name"] if n["block"] in wfl.IMAGE_OPS else n["block"])
+
+
+def _wiring_patterns() -> list:
+    import re
+
+    from .. import texts
+    out = []
+    for t in texts.WIRING_TEXTS:
+        parts = re.split(r"(\{names\}|\{first\})", t)
+        rx = "".join("(?P<%s>.+?)" % x[1:-1] if x in ("{names}", "{first}") else re.escape(x) for x in parts)
+        out.append((re.compile("^" + rx + "$"), t))
+    return out
+
+
+def wiring_text(why: str) -> str:
+    """A reason the planner gives for a join that waits (``texts.WIRING_TEXTS``: "S II, Hα to wire"), translated with the
+    port names translated too; "" for any other reason."""
+    for rx, template in _wiring_patterns():
+        m = rx.match(why or "")
+        if m:
+            fields = {k: ", ".join(_(x) for x in v.split(", ")) for k, v in m.groupdict().items()}
+            return _(template).format(**fields)
+    return ""
 
 
 def refused_text(e: Exception) -> str:
@@ -1263,7 +1297,6 @@ class ProjectModel(QObject):
             if top:
                 self._sync_graphs()
                 self._prune_breakpoints()
-                self._prune_alignment()
                 self._follow_branch_names()
                 self._prune_post()
                 if self._snapshot() != before:
@@ -1580,7 +1613,6 @@ class ProjectModel(QObject):
             g = None
         if g is not None and p.pid in self._chains:      # once the worker has read the project
             keys = ["image"] if p.source is not None else []
-            keys += ["align_images"] if (p.source or {}).get("align") is not None else []
             sep = bool(self.separate_sessions()) and p.source is None
             keys += [node_key(n) for n in g if not (sep and n["block"] == "calibration")]
             if "etoiles" in keys and "post" in keys:     # drawn as always: the Stars/background block holds the Output (#17)
@@ -1666,56 +1698,240 @@ class ProjectModel(QObject):
             return True
         return any(n["block"] == "output" and not n["off"] for n in w.blocks)
 
-    # ------------------------------------------------------------ the Align images block
-    def image_flows(self) -> list[WorkflowView]:
-        """The workflows that start from an image with its file: what Align images can take."""
-        return [q for q in self.paths if isinstance(q.source, dict) and q.source.get("path")]
+    # ------------------------------------------------------------ the joins (issue #165)
+    # Inside a workflow the blocks connect by their order. At a join (the named inputs of a combination, the two sides of a
+    # Combine layers block, the reference of an Align on block) a wire is drawn from an output onto the input, or the
+    # workflow is picked in the panel's list: the setters below, one Undo step each.
+    def align_node(self, p) -> dict | None:
+        """The Align on node of a workflow's graph (None: it has none)."""
+        return next((n for n in self.graph(p) if n["block"] == "align_on"), None)
 
-    def align_problem(self) -> str:
-        """Why Align images cannot be used (translated), "" when it can."""
-        return "" if len(self.image_flows()) >= 2 else _("needs 2 images")
+    def align_reference(self, p) -> int | None:
+        """The workflow an Align on block aligns its workflow's image on (None: no block, or not wired yet)."""
+        n = self.align_node(p)
+        return n.get("reference") if n is not None else None
 
-    def align_group(self, p) -> list[WorkflowView]:
-        """The images aligned together with ``p`` (its block's wires), the reference's first."""
-        ref = (p.source or {}).get("align") if isinstance(p.source, dict) else None
-        if ref is None:
-            return []
-        group = [q for q in self.paths if isinstance(q.source, dict) and q.source.get("align") == ref]
-        return sorted(group, key=lambda q: q.pid != ref)
+    def join_problem(self, target: int, src: int, reference: bool = False) -> str:
+        """Why workflow ``target`` cannot read workflow ``src`` (as a combination's input, or as the reference of its Align
+        on block when ``reference``), translated; "" when it can. A loop, itself, a combination as a reference."""
+        why = engine_join_problem(self.p, target, src, reference)
+        if not why:
+            return ""
+        if why in (JOIN_SELF, JOIN_NO_STACK):
+            return _(why)
+        return _(JOIN_LOOP).format(src=self.p.workflow(src).name, target=self.p.workflow(target).name)
 
-    def align_images(self) -> WorkflowView | None:
-        """Every image in the Align images block, on the reference of one already there, else on the first; the first
-        image, or None when there are not two."""
-        flows = self.image_flows()
-        if len(flows) < 2:
-            return None
-        ref = next((q.source["align"] for q in flows if q.source.get("align") is not None), flows[0].pid)
+    def reference_choices(self, p) -> list[tuple[WorkflowView, str]]:
+        """Every other workflow with why it cannot be the reference of ``p``'s Align on block ("" when it can)."""
+        return [(q, self.join_problem(p.pid, q.pid, True)) for q in self.paths if q.pid != p.pid]
+
+    def set_align_reference(self, p, pid: int | None) -> bool:
+        """Wire (or, with None, unwire) the reference of a workflow's Align on block: one Undo step. ValueError
+        (translated) when it would make a loop; False when nothing changes."""
+        n = self.align_node(p)
+        if n is None or n.get("reference") == pid:
+            return False
+        if pid is not None:
+            why = self.join_problem(p.pid, int(pid), True)
+            if why:
+                raise ValueError(why)
         with self._edit():
-            for q in flows:
-                w = self.p.workflow(q.pid)
-                w.source = {**w.source, "align": ref}
-        return self.view(flows[0].pid)
+            g = self.graph(p)
+            i = next(j for j, x in enumerate(g) if x["block"] == "align_on")
+            g[i] = dict(g[i], reference=None if pid is None else int(pid))
+            self.p.set_blocks(p.pid, g)
+        return True
 
-    def set_align_reference(self, p, pid: int) -> None:
+    def set_align_on(self, p, reference: int | None, method: str = "stars") -> bool:
+        """An Align on block in a workflow, right after its Stacking (or its Image), wired to ``reference`` (or empty);
+        its reference changed when the workflow has one. One Undo step; ValueError (translated) when it cannot go
+        there or would make a loop."""
+        if self.align_node(p) is not None:
+            return self.set_align_reference(p, reference)
+        if reference is not None:
+            why = self.join_problem(p.pid, int(reference), True)
+            if why:
+                raise ValueError(why)
+        g, src = self.graph(p), self.source_kind(p)
+        index = wfl.insert_place(g, src, "align_on")
+        if index is None:
+            raise ValueError(self.palette_reason(p, "align_on"))
+        e = wfl.place_problem(g, src, "align_on", index)
+        if e is not None:
+            raise ValueError(refused_text(e))
+        g.insert(index, wfl.node("align_on", method, name=wfl.new_name(g, "align_on"),
+                                 reference=None if reference is None else int(reference)))
         with self._edit():
-            for q in self.align_group(p):
-                w = self.p.workflow(q.pid)
-                w.source = {**w.source, "align": pid}
+            self.p.set_blocks(p.pid, g)
+        return True
 
-    def remove_alignment(self, p) -> None:
+    def add_sho_rgb(self, name: str, kind: str, filters: list[str], opts: dict) -> WorkflowView:
+        """The "SHO + RGB stars" template (issue #165): one workflow per filter (the first is the reference), a colour
+        workflow of its own, each with Stars/background; the others on the reference's grid (Align on after Stacking); the
+        combination reads the filters' starless images; one Combine layers layer puts the colour workflow's stars back on
+        the combination's Output, and Post shows nothing else. One Undo step. Returns the combination."""
         with self._edit():
-            for q in self.align_group(p):
-                w = self.p.workflow(q.pid)
-                w.source = {k: v for k, v in w.source.items() if k != "align"}
+            made = []
+            for f in filters:
+                if f not in self.filters():
+                    self.add_filter_session(f)
+                made.append((f, self.filter_workflow(f, opts)))
+            ref = made[0][1]
+            for _f, q in made:
+                if self.p.workflow(q.pid).blocks is None:
+                    self.set_graph(q, self.mono_blocks(opts))
+            sid = self.add_filter_session("")
+            rgb = self.add_path(self.unique_name("RGB"), opts)
+            self.p.workflow(rgb.pid).sessions = [sid]
+            self.set_graph(rgb, [dict(n) for n in wfl.from_options(to_engine(dict(opts)), None, "frames") if not n["off"]])
+            rgb = self.view(rgb.pid)
+            for _f, q in made[1:]:
+                self.set_align_on(q, ref.pid)
+            self.set_align_on(rgb, ref.pid)
+            fus = self.add_fusion(name, kind, [{"pid": q.pid, "role": f, "channel": "L", "image": "starless"}
+                                               for f, q in made])
+            lid = self.add_post_layer(fus.pid, "combined", None)
+            self.set_layer_side(lid, "starless", fus.pid, "output")
+            self.set_layer_side(lid, "stars", rgb.pid, "starless")
+            self.remove_post_part(fus.pid, None, None)           # Post shows the issue's picture and nothing else
+            self.remove_post_part(rgb.pid, "combined", None)
+            gone = {(int(a), b) for a, b in self.p.post.get("removed") or []} | {(fus.pid, None), (rgb.pid, "combined")}
+            self.p.post = {**self.p.post, "removed": sorted([list(x) for x in gone], key=str)}   # also before its lights
+        return self.view(fus.pid)
 
-    def _prune_alignment(self):
-        """A block of one image, or on a workflow gone, has nothing to do: it goes."""
-        ws = {w.id: w for w in self.p.workflows}
-        marked = [w for w in ws.values() if isinstance(w.source, dict) and w.source.get("align") is not None]
-        for w in marked:
-            mates = [x for x in marked if x.source.get("align") == w.source["align"]]
-            if w.source["align"] not in ws or len(mates) < 2:
-                w.source = {k: v for k, v in w.source.items() if k != "align"}
+    @staticmethod
+    def mono_blocks(opts: dict) -> list[dict]:
+        """The graph of a monochrome workflow made from these options (no Color block)."""
+        return [dict(n) for n in wfl.from_options(to_engine(dict(opts)), None, "frames") if n["block"] != "color" and not n["off"]]
+
+    def wiring_reason(self, p, kind: str) -> str:
+        """Why the join block of a workflow (``kind``: "fusion", "align_on") waits for a wire, translated: an input empty,
+        inputs not on one grid, a reference not wired (the plan's, which leaves the block out); "" when it does not."""
+        from ..stages.combine import STAGES as COMBINE_STAGES
+        try:
+            left = (self.cost().left_out or {}).get(p.pid) or {}
+        except Exception:  # noqa: BLE001 - a project that cannot be planned: nothing to say here
+            return ""
+        for st, why in left.items():
+            b = st.split("@")[0].split("~")[0]
+            if (b in COMBINE_STAGES if kind == "fusion" else b == kind):
+                got = wiring_text(why)
+                if got:
+                    return got
+        return ""
+
+    def input_problem(self, p, role: str, pid: int, image: str = "output") -> str:
+        """Why a combination's input cannot read this workflow's image (translated), "" when it can."""
+        q = self.view(int(pid))
+        if q is None:
+            return _("no workflow")
+        why = self.join_problem(p.pid, q.pid) or self._source_refused(q)
+        if not why and image == "starless" and not any(n["block"] == "stars" and not n.get("off") for n in self.graph(q)) \
+                and not is_fusion_view(q):
+            why = _("needs Stars/background")
+        return why
+
+    def input_choices(self, p, role: str) -> list[tuple[WorkflowView, str]]:
+        """Every other workflow with why a combination's input cannot read it ("" when it can): none is hidden by its filter."""
+        return [(q, self.input_problem(p, role, q.pid)) for q in self.paths if q.pid != p.pid]
+
+    def set_fusion_input(self, p, role: str, pid: int, image: str = "output") -> bool:
+        """Wire a combination's named input to a workflow's image (its Output, or its Stars/background's starless
+        image); its channel setting kept. One Undo step; ValueError (translated) when refused; False when nothing
+        changes."""
+        f = self.p.workflow(p.pid).source["fusion"]
+        cur = next((i for i in f["inputs"] if i["role"] == role), None)
+        if cur is not None and cur["pid"] == int(pid) and cur.get("image", "output") == image:
+            return False
+        why = self.input_problem(p, role, int(pid), image)
+        if why:
+            raise ValueError(why)
+        with self._edit():
+            ws = api.workflows(self.p)
+            x = next(v for v in ws if v.id == p.pid)
+            new = {"pid": int(pid), "role": role,
+                   "channel": (cur or {}).get("channel") or self._default_channel(p, role, self.view(int(pid)))} \
+                | ({"image": image} if image != "output" else {})
+            ins = [new if i["role"] == role else i for i in x.source["fusion"]["inputs"]]
+            if cur is None:
+                ins.append(new)
+            x.source = {"fusion": {**x.source["fusion"], "inputs": ins}}
+            api.set_workflows(self.p, ws, self.p.current)
+        return True
+
+    def _default_channel(self, p, role: str, q) -> str:
+        """The channel of a colour workflow's image a new input reads: the H-O combination reads its red as H-alpha and
+        its green and blue as O III (a dual-band filter), else the grey; a setting of the input, changed in the panel."""
+        f = self.p.workflow(p.pid).source["fusion"]
+        if f["type"] == "ho" and q is not None and not is_fusion_view(q) and not self.is_mono(q):
+            return {"Ha": "R", "OIII": "GB"}.get(role, "L")
+        return "L"
+
+    def set_fusion_channel(self, p, role: str, channel: str) -> bool:
+        """The channel of its workflow's image an input reads (L, R, G, B, GB), a setting of the input: one Undo step."""
+        from ..stages.combine import CHANNELS
+        f = self.p.workflow(p.pid).source["fusion"]
+        cur = next((i for i in f["inputs"] if i["role"] == role), None)
+        if cur is None or channel not in CHANNELS or cur.get("channel", "L") == channel:
+            return False
+        with self._edit():
+            ws = api.workflows(self.p)
+            x = next(v for v in ws if v.id == p.pid)
+            ins = [{**i, "channel": channel} if i["role"] == role else i for i in x.source["fusion"]["inputs"]]
+            x.source = {"fusion": {**x.source["fusion"], "inputs": ins}}
+            api.set_workflows(self.p, ws, self.p.current)
+        return True
+
+    def clear_fusion_input(self, p, role: str) -> bool:
+        """An input unwired (it shows empty, the block waits): one Undo step."""
+        f = self.p.workflow(p.pid).source["fusion"]
+        if not any(i["role"] == role for i in f["inputs"]):
+            return False
+        with self._edit():
+            ws = api.workflows(self.p)
+            x = next(v for v in ws if v.id == p.pid)
+            x.source = {"fusion": {**x.source["fusion"], "inputs": [i for i in x.source["fusion"]["inputs"]
+                                                                   if i["role"] != role]}}
+            api.set_workflows(self.p, ws, self.p.current)
+        return True
+
+    def layer_side_problem(self, side: str, pid: int, image: str = "starless") -> str:
+        """Why a Combine layers block's side cannot read this workflow (translated), "" when it can: the stars come from a
+        Stars/background block; the starless side from one, or from a combination's Output."""
+        q = self.view(int(pid))
+        if q is None:
+            return _("no workflow")
+        has = any(n["block"] == "stars" and not n.get("off") for n in self.graph(q))
+        if side == "stars" and not has:
+            return _("needs Stars/background")
+        if side == "starless" and not has and not (is_fusion_view(q) and image == "output"):
+            return _("needs Stars/background")
+        return ""
+
+    def set_layer_side(self, lid: int, side: str, pid: int | None, image: str = "starless") -> bool:
+        """Wire one side of a Combine layers block (its layer in Post): ``side`` "starless" (the workflow whose
+        Stars/background starless image, or whose Output for a combination, it combines) or "stars" (the workflow whose
+        stars it puts back); None unwires the stars side. One Undo step; ValueError (translated) when refused."""
+        lay = self.post_layer(lid)
+        if lay is None or side not in ("starless", "stars"):
+            return False
+        if pid is not None:
+            why = self.layer_side_problem(side, int(pid), image)
+            if why:
+                raise ValueError(why)
+        if side == "starless" and (lay.get("pid"), lay.get("starless", "starless")) == (pid, image):
+            return False
+        if side == "stars" and lay.get("stars_pid", lay.get("pid")) == pid:
+            return False
+
+        def change(layers):
+            x = next(v for v in layers if v["id"] == lid)
+            if side == "starless":
+                x["pid"], x["starless"] = int(pid), ("output" if image == "output" else "starless")
+            else:
+                x["stars_pid"] = None if pid is None else int(pid)
+        self._post_edit(change, None, scope="all")
+        return True
 
     def is_plain_image(self, p) -> bool:
         """An image going to Post as it is: an Image block with a file, no block placed after it."""
@@ -1758,49 +1974,41 @@ class ProjectModel(QObject):
         for a workflow no fusion reads (GUI exploration 2, decision 3: refused with the reason, never a broken
         project)."""
         fs = self.fusions_of(p)
-        if not fs:
-            return ""
-        role = next(i["role"] for i in fs[0].source["fusion"]["inputs"] if i["pid"] == p.pid)
-        return _("channel {role} of “{fusion}”").format(role=role, fusion=fs[0].name)
+        if fs:
+            role = next(i["role"] for i in fs[0].source["fusion"]["inputs"] if i["pid"] == p.pid)
+            return _("channel {role} of “{fusion}”").format(role=role, fusion=fs[0].name)
+        for q in self.paths:                              # the reference of an Align on block (#165)
+            if q.pid != p.pid and self.align_reference(q) == p.pid:
+                return _("reference of “{block}”").format(block=q.name)
+        return ""
 
     def _fusion_need(self, p, blocks) -> str:
-        """Why a channel's graph ``blocks`` (a block taken out, or switched off) would leave a fusion unable to run:
-        the Astrometry that aligns the channels, the Stars/background whose starless image a port reads (decision 3);
-        "" when every combination reading it still can."""
+        """Why a workflow's graph ``blocks`` (a block taken out, or switched off) would leave a join reading it unable to
+        run: the Stars/background whose starless image a combination's input or a Combine layers block reads (decision 3);
+        "" when everything reading it still can."""
         on = {n["block"] for n in blocks if not n.get("off")}
+        if "stars" in on or not any(n["block"] == "stars" and not n.get("off") for n in self.graph(p)):
+            return ""
         for q in self.fusions_of(p):
-            f = q.source["fusion"]
-            several = len(self._fusion_pids(f)) > 1
-            if several and "astrometry" not in on and any(
-                    n["block"] == "astrometry" and not n.get("off") for n in self.graph(p)):
+            if any(i["pid"] == p.pid and i.get("image") == "starless" for i in q.source["fusion"]["inputs"]):
                 return _("needed by “{fusion}”").format(fusion=q.name)
-            starless = any(i["pid"] == p.pid and i.get("image") == "starless" for i in f["inputs"])
-            if starless and "stars" not in on and any(
-                    n["block"] == "stars" and not n.get("off") for n in self.graph(p)):
-                return _("needed by “{fusion}”").format(fusion=q.name)
+        for lay in self.post_layers():
+            if lay.get("kind") == "workflow" and lay.get("part") == "combined" and lay.get("stars_pid") == p.pid \
+                    and lay.get("pid") != p.pid:
+                return _("needed by “{fusion}”").format(fusion=self.view(lay["pid"]).name)
         return ""
 
     def fusion_problem(self, p) -> str:
-        """Why a fusion cannot run, said before Run (GUI exploration 1.1, 7.6, question 8: the block is circled in red
-        and the run refused); "" when it can, or for a workflow that is not a fusion. A channel's own block names it."""
+        """Why a combination cannot run whatever is wired (said before Run: the block is circled in red and the run
+        refused); "" when it can, or for a workflow that is not a combination. An empty input or inputs not on one grid
+        are not here: the block waits, greyed (``wiring_reason``)."""
         if not is_fusion_view(p):
             return ""
-        from ..stages.combine import BY_KIND
-        f = p.source["fusion"]
-        ins = f.get("inputs") or []
-        if not ins:
-            return _("channels to choose")
         views = {q.pid: q for q in self.paths}
-        several = len(self._fusion_pids(f)) > 1
-        found: list[tuple[str, tuple, list[str]]] = []      # (template, its other fields, the channels): every channel
-        #                                                     said at once (round 2: "Ha" only, then "OIII" once fixed)
-        wired = {i["role"] for i in ins}
-        for r in BY_KIND[f["type"]].ports:                 # a named input without its workflow
-            if r not in wired:
-                found.append(("{role}: no workflow", (), [r]))
-        for i, role in [(i, i.get("role") or "") for i in ins]:
-            q = views.get(i["pid"])
-            why = self._channel_problem(q, i, role, f, several)
+        found: list[tuple[str, tuple, list[str]]] = []      # (template, its other fields, the inputs): every input
+        for i in p.source["fusion"].get("inputs") or []:       # said at once
+            role = i.get("role") or ""
+            why = self._channel_problem(views.get(i["pid"]), i, role)
             if why is None:
                 continue
             same = next((x for x in found if x[0] == why[0] and x[1] == why[1]), None)
@@ -1810,21 +2018,17 @@ class ProjectModel(QObject):
                 same[2].append(role)
         out = []
         for t, more, roles in found:
-            who = ", ".join(roles)
+            who = ", ".join(port_name(r) for r in roles)
             out.append(_(t).format(role=who, **dict(more)) if t else f"{who}: {dict(more)['text']}")
         return " · ".join(out)
 
-    def _channel_problem(self, q, i, role, f, several) -> tuple[str, tuple] | None:
-        """What a fusion's channel lacks: (English template with {role}, its other fields as pairs); the template
-        '' for a text made already (``text``). None when it has what the fusion needs."""
+    def _channel_problem(self, q, i, role) -> tuple[str, tuple] | None:
+        """What a wired input of a combination lacks: (English template with {role}, its other fields as pairs); the
+        template '' for a text made already (``text``). None when it has what the combination needs."""
         if q is None:
             return "{role}: no workflow", ()
         if q.source is None and not any(s.lights for s in self.p.sessions_of(q.pid)):
             return "{role}: no lights", ()
-        flts = {s.filter for s in self.p.sessions_of(q.pid)} if q.source is None else set()
-        if i.get("channel", "L") == "L" and role in FILTERS and flts and flts != {role}:
-            # decision 3: a channel's session set to another filter: refused with the reason
-            return "{role}: session filter {filter}", (("filter", ", ".join(sorted(x or _("none") for x in flts - {role}))),)
         if q.source is not None and "fusion" not in q.source and not q.source.get("path"):
             return "{role}: no image file", ()
         if self.image_problem(q):
@@ -1832,8 +2036,6 @@ class ProjectModel(QObject):
         if self.source_kind(q) == "stretched":             # marked so after it was chosen
             return "{role}: stretched image", ()
         blocks = [n["block"] for n in self.graph(q) if not n.get("off")]
-        if several and self.is_graph(q) and "astrometry" not in blocks:
-            return "{role}: needs Astrometry", ()
         if i.get("image") == "starless" and self.is_graph(q) and "stars" not in blocks:
             return "{role}: needs Stars/background", ()
         return None
@@ -2311,17 +2513,17 @@ class ProjectModel(QObject):
             self.p.validate()
         return self._view_of(w.id)
 
-    def add_fusion(self, name: str, kind: str, inputs: list[dict], stars: bool = False) -> WorkflowView:
-        """A combination workflow (issue #43; stages/combine.py): the images of ``inputs`` [{"pid", "role" (the port),
-        "channel", "image"}] combined by the block of type ``kind`` ("sho", "ho", "rgb", "lrgb"), in the Composition
-        section; its Output is a layer of Post. ``stars``: a Stars/background block after it (the stars taken off the
-        combined image, for a Combine layers block)."""
+    def add_fusion(self, name: str, kind: str, inputs: list[dict] | None = None) -> WorkflowView:
+        """A combination workflow (issue #43; stages/combine.py): a block of type ``kind`` ("sho", "ho", "rgb", "lrgb")
+        in the Composition section; its Output is a layer of Post. Placed from the palette its inputs are empty (``inputs``
+        None: [{"pid", "role" (the port), "channel", "image"}] only for a template, which comes wired); no Stars/background
+        after it: a template does not place one."""
         with self._edit():
-            o = {"debruitage": bool(stars), "etoiles": "retirer" if stars else "garder", "fond": "simple"}
+            o = {"debruitage": False, "etoiles": "garder", "fond": "simple"}
             w = api.add_workflow(self.p, self.unique_name(name), wfl.check_options(to_engine(o)), {})
             self.p.workflow(w.id).source = {"fusion": {"type": kind, "inputs": [
                 {"pid": int(i["pid"]), "role": str(i["role"]), "channel": str(i.get("channel", "L"))}
-                | ({"image": i["image"]} if i.get("image", "output") != "output" else {}) for i in inputs]}}
+                | ({"image": i["image"]} if i.get("image", "output") != "output" else {}) for i in inputs or []]}}
             self.p.validate()
         return self._view_of(w.id)
 
@@ -2357,55 +2559,11 @@ class ProjectModel(QObject):
         return _("An image already stretched: a stretch cannot be undone faithfully") \
             if self.source_kind(q) == "stretched" else ""
 
-    def channel_choices(self, p: WorkflowView, role: str) -> list[tuple[WorkflowView, str]]:
-        """The workflows a port of the combination ``p`` can read, each with why it cannot be chosen now ("" when it
-        can; issue #55): the stacks of its filter and the linear images; an image already stretched is listed greyed;
-        never a combination or a workflow that ends early."""
-        f = p.source["fusion"]
-        i = next((x for x in f["inputs"] if x["role"] == role), {"pid": None, "role": role, "channel": "L"})
-        out = []
-        for q in self.paths:
-            if q.pid != i["pid"]:
-                if q.pid == p.pid or is_fusion_view(q) or q.end:
-                    continue
-                why = self._channel_problem(q, {**i, "pid": q.pid}, role, f, False)
-                if why is not None and "filter" in dict(why[1]):
-                    continue
-            out.append((q, self._source_refused(q)))
-        return out
-
-    def set_fusion_channel(self, p: WorkflowView, role: str, pid: int) -> bool:
-        """The workflow a port of a combination reads (issue #55), its colour kept; a port without one gets it."""
-        f = self.p.workflow(p.pid).source["fusion"]
-        cur = next((i for i in f["inputs"] if i["role"] == role), None)
-        if not is_fusion_view(p) or (cur is not None and cur["pid"] == int(pid)) or \
-                self._source_refused(self.view(int(pid))):
-            return False
-        with self._edit():
-            ws = api.workflows(self.p)
-            x = next(v for v in ws if v.id == p.pid)
-            ins = [{**i, "pid": int(pid)} if i["role"] == role else i for i in x.source["fusion"]["inputs"]]
-            if cur is None:
-                ins.append({"pid": int(pid), "role": role, "channel": "L"})
-            x.source = {"fusion": {**x.source["fusion"], "inputs": ins}}
-            api.set_workflows(self.p, ws, self.p.current)
-        return True
-
     def set_fusion_image(self, p: WorkflowView, role: str, image: str) -> bool:
-        """What a port reads of its workflow: its Output ("output") or its Stars/background's starless image
-        ("starless": the palette made on starless channels; stages/combine.IMAGES). False when nothing changes."""
-        f = self.p.workflow(p.pid).source["fusion"]
-        cur = next((i for i in f["inputs"] if i["role"] == role), None)
-        if cur is None or cur.get("image", "output") == image:
-            return False
-        with self._edit():
-            ws = api.workflows(self.p)
-            x = next(v for v in ws if v.id == p.pid)
-            ins = [({k: v for k, v in i.items() if k != "image"} | ({"image": image} if image != "output" else {}))
-                   if i["role"] == role else i for i in x.source["fusion"]["inputs"]]
-            x.source = {"fusion": {**x.source["fusion"], "inputs": ins}}
-            api.set_workflows(self.p, ws, self.p.current)
-        return True
+        """What an input reads of its workflow: its Output ("output") or its Stars/background's starless image
+        ("starless"; stages/combine.IMAGES). False when nothing changes."""
+        cur = next((i for i in self.p.workflow(p.pid).source["fusion"]["inputs"] if i["role"] == role), None)
+        return cur is not None and self.set_fusion_input(p, role, cur["pid"], image)
 
     def set_node_method(self, paths, key: str, method: str) -> bool:
         """The method of a block placed twice ("fond~2", the engine's ``method``): its own, stored on its node (the
@@ -2784,8 +2942,6 @@ class ProjectModel(QObject):
         # a Calibration or another frame block placed in parallel is a block of its own, and what follows it too, even
         # while they compute the same (one result): the user set it there
         own = (self.node_fork(p, key), self._forks(p))
-        if key == "align_images":                          # one per image, drawn together
-            return ("align_images", p.pid)
         if key == "crop":
             zone = (p.params.get("stack") or {}).get("zone")
             return ("crop", tuple(zone) if zone else None) + own
@@ -3147,11 +3303,14 @@ class ProjectModel(QObject):
                 keep.append(x)
                 continue
             w = ws.get(x.get("pid"))
-            split = w is not None and bool((w.options or {}).get("stars"))
+            split = w is not None and (bool((w.options or {}).get("stars")) or (
+                x.get("part") == "combined" and x.get("starless") == "output"))     # a combination's Output (#165)
             if w is None or (x.get("part") is not None and not split):
                 gone.add(x.get("id"))
                 changed = True
                 continue
+            if x.get("part") == "combined" and x.get("stars_pid") is not None and x["stars_pid"] not in ws:
+                x["stars_pid"] = None                     # its stars side's workflow is gone: the side shows empty
             keep.append(x)
         if changed:
             v["layers"] = [x for x in keep if not (x.get("kind") == "filter" and x.get("target") in gone)]
@@ -3303,12 +3462,6 @@ class ProjectModel(QObject):
                 else:
                     plans.append(pl)
         return self._one_plan(plans)
-
-    def plan_align(self, p: WorkflowView) -> api.Plan:
-        """Run to here on Align images: every image of the block; one going straight to Post, its Output too (Post shows
-        it aligned at once)."""
-        return self._one_plan([self.plan_to_block(q, "post" if self.is_plain_image(q) and "render_simple" in self.all_stages(q)
-                                                  else "image") for q in self.align_group(p)])
 
     @staticmethod
     def _one_plan(plans: list) -> api.Plan:

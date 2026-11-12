@@ -34,16 +34,18 @@ from PySide6.QtCore import QThread, Signal
 from ..i18n import _
 from ..postengine import (
     ALIGN,
+    SUBS,
     Canvas,
     Composer,
     Provider,
-    SUBS,
     Superseded,
     has_synth,
     is_group,
     is_pixel,
     only_layer,
     source_id,
+    source_ids,
+    sub_layer,
     thumb_of,
 )
 
@@ -620,7 +622,7 @@ class Renderer:
         """The bottom pixel layer alone: its base, every slider at the suggestion, no filter, no mask. The others stay
         in the list, hidden, so that the canvas is the same as the composition's. Its id is its own (negative), so that
         its image is cached beside the composition's, not instead of it."""
-        wl = [lay for lay in layers if is_pixel(lay) and self.source.available(source_id(lay))]
+        wl = [lay for lay in layers if is_pixel(lay) and self._ready(lay)]
         if not wl:
             return []
         bottom = wl[-1]
@@ -634,24 +636,30 @@ class Renderer:
         if canvas is None:
             return out
         for lay in layers:
-            if not is_pixel(lay) or not self.source.available(source_id(lay)):
+            if not is_pixel(lay) or not self._ready(lay):
                 continue
             a = self.composer.cached(lay, 2, canvas)
             if a is not None:
                 out[lay["id"]] = thumb_of(a)
             for sub in self._thumb_subs(layers, lay):     # its two images, each its own (issue #70)
-                b = self.composer.cached(dict(lay, part=sub), 2, canvas)
+                b = self.composer.cached(sub_layer(lay, sub), 2, canvas)
                 if b is not None:
                     out[(lay["id"], sub)] = thumb_of(b)
         return out
+
+    def _ready(self, lay) -> bool:
+        """Whether everything a layer reads is there: a Combine layers layer reads two workflows (issue #165), its starless
+        side's and its stars side's (when it has one)."""
+        return all(self.source.available(x) for x in source_ids(lay))
 
     def _thumb_subs(self, layers, lay) -> tuple:
         """The images of a Combine layers layer that have a thumbnail of their own: its two, and the synthetic stars of
         its Stars group once computed (#93)."""
         if not is_group(lay):
             return ()
-        synth = has_synth(layers, lay["id"]) and self.source.available(source_id(dict(lay, part="synth")))
-        return SUBS + (("synth",) if synth else ())
+        synth = has_synth(layers, lay["id"]) and self.source.available(source_id(sub_layer(lay, "synth")))
+        subs = tuple(x for x in SUBS if not (x == "stars" and lay.get("stars_pid", lay["pid"]) is None))
+        return subs + (("synth",) if synth else ())
 
     def _thumbs(self, req: Request, stop, t0) -> Result:
         res = Result(req.seq, "thumbs", 2, None, None, None, device=self.device, tag=req.tag)
@@ -663,11 +671,11 @@ class Renderer:
         for lay in req.layers:
             if stop and stop():
                 raise Superseded()
-            if lay["id"] in req.need_thumbs and is_pixel(lay) and self.source.available(source_id(lay)):
+            if lay["id"] in req.need_thumbs and is_pixel(lay) and self._ready(lay):
                 res.layer_thumbs[lay["id"]] = thumb_of(self.composer.layer_rgb(lay, 2, (0, 0, W, H), cv))
                 for sub in self._thumb_subs(req.layers, lay):
                     res.layer_thumbs[(lay["id"], sub)] = thumb_of(
-                        self.composer.layer_rgb(dict(lay, part=sub), 2, (0, 0, W, H), cv))
+                        self.composer.layer_rgb(sub_layer(lay, sub), 2, (0, 0, W, H), cv))
         res.notes = self.source.notes()
         res.ms = 1000 * (time.perf_counter() - t0)
         return res
@@ -792,8 +800,8 @@ def run_export(renderer: Renderer, job: ExportJob, progress, stop=None,
     # the solution of the bottom layer's grid (the canvas is in its pixels): a workflow's astrometry; an image layer of
     # the stack grid has none of its own, the first workflow's then (the same grid when the drizzle scales agree)
     pids = [lay["pid"] for lay in reversed(layers) if lay["kind"] == "workflow"
-            and renderer.source.available(source_id(lay))]
-    bottom = next((lay for lay in reversed(layers) if is_pixel(lay) and renderer.source.available(source_id(lay))), None)
+            and renderer._ready(lay)]
+    bottom = next((lay for lay in reversed(layers) if is_pixel(lay) and renderer._ready(lay)), None)
     ref_pid = pids[0] if pids else None
     if bottom is not None and bottom["kind"] == "image" and ref_pid is not None:
         ga = renderer.source.grid(next(source_id(x) for x in reversed(layers) if x["kind"] == "workflow"
