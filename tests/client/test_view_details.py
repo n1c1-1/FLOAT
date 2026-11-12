@@ -225,7 +225,7 @@ def test_the_curves_at_their_smallest_are_whole_and_their_part_scrolls(qapp):
     assert isinstance(sa, QScrollArea) and sa.verticalScrollBar().maximum() > 0          # the rest: scrolled to
 
 
-def test_the_curves_of_selection_scroll_only_when_they_do_not_fit(qapp):
+def test_the_curves_of_selection_scroll_only_when_they_do_not_fit(qapp, monkeypatch):
     """Issue #148: at 1920 x 1150, the handle at its first place, the curves showed a scroll bar for 4 px: the drift
     path's title on a line of its own above an empty head row asked 19 px more than the frames beside it. Built as
     Selection builds it, the part scrolls when the window is too small for its charts, never when they fit."""
@@ -236,6 +236,9 @@ def test_the_curves_of_selection_scroll_only_when_they_do_not_fit(qapp):
     from astro_gpu.client.charts import FramesChart, RegistrationData
     from astro_gpu.client.tune import TuneView, scrolled_part
     from astro_gpu.client.widgets import label
+    from astro_gpu.client import prefs
+    get = prefs.get                                    # the handle at its first place: never one another test saved
+    monkeypatch.setattr(prefs, "get", lambda k, *a, **kw: None if k == "inspect_splits" else get(k, *a, **kw))
     n = 30
     rows = [SimpleNamespace(name=f"L_{i:03d}.fits", time=f"2026-01-01T22:{i:02d}:00", fwhm=3 + (i % 5) * 0.3,
                             transparency=0.6 + (i % 7) * 0.05, status="", excluded=False, session=1) for i in range(n)]
