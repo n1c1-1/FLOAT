@@ -198,6 +198,8 @@ PATTERNS: list[tuple[re.Pattern, str, tuple]] = [
         # issue #129: a field's first run downloads its sky tiles and spectra, counted
         (r"^XP spectra: (\d+) of (\d+)$", "XP spectra: {0} of {1}", ()),
         (r"^(Gaia stars|Gaia bright stars): tile (\d+) of (\d+)$", "{0}: tile {1} of {2}", (0,)),
+        # data set 20: the Denoise bar moves with the network's tiles (a 62 Mpx stack has 3000 of them)
+        (r"^(denoising the half-stacks|denoising the full stack): tile (\d+) of (\d+)$", "{0}: tile {1} of {2}", (0,)),
         (r"^(Gaia stars|Gaia bright stars): (\d+) sky tiles downloaded in ([\d.]+) min$",
          "{0}: {1} sky tiles downloaded in {2} min", (0,)),
         (r"^refining star positions \(pass (\d+)\)$", "refining star positions (pass {0})", ()),

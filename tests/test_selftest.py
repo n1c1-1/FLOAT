@@ -365,6 +365,75 @@ def test_the_fast_pass_of_the_denoise_block_is_the_network_once(monkeypatch):
     assert dn.DenoiseParams().fast is False
 
 
+# ---------------------------------------------------------------------------------------------- a very large stack
+def test_denoise_sends_the_card_one_tile_at_a_time_whatever_the_image(monkeypatch):
+    """Data set 20 (a 62 Mpx stack): the whole image went to the card at each pass, after a Stack that had filled it.
+    Now only the tiles with their margins do, two arrays a tile (the image's, the noise map's), the same at the first
+    tile and the last, and the cache of the blocks before is given back first."""
+    calls, made = [], []
+    orig = dn.torch.from_numpy
+    monkeypatch.setattr(dn.devices, "empty_cache", lambda d=None: calls.append("empty"))
+    monkeypatch.setattr(dn.devices, "free_memory", lambda d: calls.append("free") or 4 * 2 ** 30)
+    monkeypatch.setattr(dn.torch, "from_numpy", lambda a: made.append(a.shape) or orig(a))
+
+    class Counting(EchoUNet):
+        def forward(self, x):
+            calls.append(len(made))
+            return super().forward(x)
+    x, nm, bk, sg = _denoise_input()
+    out = dn.apply_net(Counting(), x, nm, bk, sg, torch.device("cpu"), tile=128, pad=16)
+    assert calls[:2] == ["empty", "free"] and np.allclose(out, x, atol=1e-5)
+    per_tile = np.diff([0] + [c for c in calls if isinstance(c, int)])
+    assert len(per_tile) == 4 * 3 * 4 and set(per_tile) == {2}           # 4 passes of 3 x 4 tiles (300 x 400, +1 px)
+    assert max(s[-2] for s in made) <= 128 + 2 * 16 and max(s[-1] for s in made) <= 128 + 2 * 16
+
+
+def test_the_denoise_progress_counts_the_tiles_and_never_goes_back():
+    x, nm, bk, sg = _denoise_input()
+    seen = []
+    dn.apply_net(EchoUNet(), x, nm, bk, sg, torch.device("cpu"), tile=128, progress=lambda d, t: seen.append(d / t))
+    assert len(seen) == 4 * 3 * 4 and seen == sorted(seen) and seen[-1] == 1.0
+    seen.clear()                                     # a memory error starts again with smaller tiles: the bar waits
+    dn.apply_net(EchoUNet(limit=320), x, nm, bk, sg, torch.device("cpu"), progress=lambda d, t: seen.append(d / t))
+    assert seen and all(b > a for a, b in zip(seen, seen[1:])) and seen[-1] == 1.0
+
+
+def _apply_net_before(net, x, nm, bk, sg, dev, tile=512, pad=48):
+    """The passes as they were until data set 20: the whole image a tensor, the passes summed out of place."""
+    total = 0
+    for dy, dx in dn.PASSES:
+        sx = torch.from_numpy(np.pad(x, ((0, 0), (dy, 0), (dx, 0)), mode="reflect"))
+        sn = torch.from_numpy(np.pad(nm, ((dy, 0), (dx, 0)), mode="reflect"))[None]
+        Hh, Ww = sx.shape[1:]
+        out = np.zeros(sx.shape, np.float32)
+        bk_t, sg_t = torch.as_tensor(bk), torch.as_tensor(sg)
+        for y in range(0, Hh, tile):
+            for x0 in range(0, Ww, tile):
+                y1, x1, y2, x2 = max(0, y - pad), max(0, x0 - pad), min(Hh, y + tile + pad), min(Ww, x0 + tile + pad)
+                ph, pw = y2 - y1, x2 - x1
+                ph8, pw8 = (ph + 7) // 8 * 8, (pw + 7) // 8 * 8
+                pt = torch.nn.functional.pad(sx[None, :, y1:y2, x1:x2], (0, pw8 - pw, 0, ph8 - ph), mode="reflect")
+                pn = torch.nn.functional.pad(sn[None, :, y1:y2, x1:x2], (0, pw8 - pw, 0, ph8 - ph), mode="reflect")
+                o = net(dn.to_input(pt, pn, bk_t, sg_t)).float()
+                res = (((pt - bk_t.view(1, 3, 1, 1)) / sg_t.view(1, 3, 1, 1) + o) * sg_t.view(1, 3, 1, 1)
+                       + bk_t.view(1, 3, 1, 1))[0, :, :ph, :pw]
+                out[:, y:min(y + tile, Hh), x0:min(x0 + tile, Ww)] = \
+                    res[:, y - y1:y - y1 + min(tile, Hh - y), x0 - x1:x0 - x1 + min(tile, Ww - x0)].numpy()
+        total = total + out[:, dy:, dx:]
+    return (total / len(dn.PASSES)).astype(x.dtype)
+
+
+def test_denoise_gives_the_numbers_of_before():
+    torch.manual_seed(0)
+    net = dn.UNet(w=(8, 16, 16, 16)).eval()                  # a small network of random weights: every pixel moves
+    x, nm, bk, sg = _denoise_input()
+    nm = nm * np.random.default_rng(1).uniform(0.8, 1.2, nm.shape).astype(np.float32)
+    with torch.no_grad():
+        want = _apply_net_before(net, x, nm, bk, sg, torch.device("cpu"), tile=128, pad=16)
+    out = dn.apply_net(net, x, nm, bk, sg, torch.device("cpu"), tile=128, pad=16)
+    assert np.abs(out - x).max() > 1e-3 and np.array_equal(out, want)
+
+
 class EchoNaf(torch.nn.Module):
     """Stands for the star network: the stretched input unchanged, a memory error above ``limit`` tiles in a batch."""
 

@@ -289,8 +289,11 @@ def test_held_out_cases_are_found_from_the_store(tmp_path, monkeypatch):
     assert c["pretrained"].name == "dp" and c["adapted"].name == "da" and c["gradient"].name == "gr1"
 
 
-def test_the_measures_take_any_network_and_images():
+def test_the_measures_take_any_network_and_images(monkeypatch):
     import mono_models
+    # the bench's card, read when torch loaded: with the cards hidden from the tests (CUDA_VISIBLE_DEVICES="") torch may
+    # still say one is there, and the network then failed on "Invalid device id"; the measures are the same anywhere
+    monkeypatch.setattr(mono_models, "DEV", torch.device("cpu"))
     img = np.random.default_rng(0).normal(1.0, 0.01, (3, 400, 400)).astype(np.float32)
     img[:, 100:103, 100:103] += 2.0                     # a star, compact
     bk, sg, nm = dn.norm_params(img, np.ones((3, 400, 400), np.float32))

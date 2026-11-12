@@ -147,18 +147,26 @@ class Denoise(Stage):
                         "method (long) denoises it much better", "warning")
         torch.save({"net": net.state_dict(), "bk": bk, "sg": sg}, ctx.out("n2n_model.pt"))
         net.eval()
-        ctx.progress(0.92, "denoising the half-stacks")
         shifts = PASSES[:1] if p.fast else PASSES
-        dA = apply_net(net, A, nm, bk, sg, dev, shifts=shifts, check=ctx.check_stop)
-        dB = apply_net(net, B, nm, bk, sg, dev, shifts=shifts, check=ctx.check_stop)
-        ctx.progress(0.96, "denoising the full stack")
+        # the bar moves with the tiles: the three images (two half-stacks, the stack) have as many, from the end of the
+        # adaptation (0.9 of the bar, adapt) or from 0, to 0.98. It stood at 0.92 from the first second on data set
+        # 20, so the run window's time left stayed at its estimate for the 4 h the stage took
+        lo = 0.9 if p.method == "adapted" else 0.0
+
+        def bar(k: int, what: str):                  # (the run window translates the message: services/run.PATTERNS)
+            return lambda done, total: ctx.progress(lo + (0.98 - lo) * (k + done / total) / 3,
+                                                    f"{what}: tile {done} of {total}")
+        dA = apply_net(net, A, nm, bk, sg, dev, shifts=shifts, check=ctx.check_stop,
+                       progress=bar(0, "denoising the half-stacks"))
+        dB = apply_net(net, B, nm, bk, sg, dev, shifts=shifts, check=ctx.check_stop,
+                       progress=bar(1, "denoising the half-stacks"))
         # a monochrome stack: the network moves the three channels a little apart; their mean, in the three, keeps it
         # grey (issue #43)
         grey = (lambda a: np.repeat(a.mean(0, keepdims=True), 3, axis=0)) if mono else (lambda a: a)
         dA, dB = keep_level(grey(dA), A, Wt), keep_level(grey(dB), B, Wt)
         ctx.save("n2n_avg.npy", 0.5 * (dA + dB))
         dF = keep_level(grey(apply_net(net, full, (nm / np.sqrt(2)).astype(np.float32), bk, sg, dev, shifts=shifts,
-                                         check=ctx.check_stop)), full, Wt)
+                                         check=ctx.check_stop, progress=bar(2, "denoising the full stack"))), full, Wt)
         ctx.save("n2n_full.npy", dF)
         if p.keep_halves:                            # for a later Denoise block (issue #47)
             ctx.save("n2n_A.npy", dA)
@@ -369,33 +377,56 @@ def adapt(ctx, net, A, B, nm, bk, sg, dev, steps: int, lr: float, seed: int) -> 
 
 
 @torch.no_grad()
-def apply_net(net, x, nm, bk, sg, dev, tile=512, pad=48, shifts=PASSES, check=None):
+def apply_net(net, x, nm, bk, sg, dev, tile=512, pad=48, shifts=PASSES, check=None, progress=None):
     """Denoise a (3, H, W) linear image tile by tile with overlap, as the mean of ``shifts``. On a card with little free
     memory the tile is smaller (``devices.tile_that_fits``; a memory error halves it, ``shrink_on_memory``): only then
     does the result differ, by a fraction of the noise, at the seams of the tiles. ``check``: called at each row of
-    tiles (the run's Stop: a pass takes minutes on the processor)."""
+    tiles (the run's Stop: a pass takes minutes on the processor). ``progress(done, total)``: after each tile, the tiles
+    of all the passes done and to do, never going back (a memory error starts the passes again with smaller tiles).
+
+    The image stays in the machine's memory and only a tile with its margin goes to the card: what the card holds is a
+    tile's worth whatever the size of the image (before, each pass put the whole image and its noise map there, 1 GB at
+    62 Mpx, and torch's cache kept one at each of the passes' four sizes)."""
+    # what the blocks before left in torch's cache goes back to the driver first: nothing empties it between the stages
+    # of a run, and after the Stack of a 62 Mpx stack (its accumulators of 0.73 GB each) the card read as full, so the
+    # tiles fell to 128 (16 times as many) on memory that Windows may have put in the machine's (data set 20: Denoise
+    # not done in 4 h; on a card with nothing left in it, 0.026 s a tile, 80 s for the 3000 tiles of the stage)
+    devices.empty_cache(dev)
     tile = devices.tile_that_fits(tile, dev, TILE_GB * (tile / 512) ** 2)
+    shown = [0.0]
 
     def passes(t):
-        total = 0
+        sizes = [(x.shape[1] + dy, x.shape[2] + dx) for dy, dx in shifts]
+        total, done = sum(-(-h // t) * -(-w // t) for h, w in sizes), [0]
+
+        def step():
+            done[0] += 1
+            if progress is not None and done[0] / total > shown[0]:
+                shown[0] = done[0] / total
+                progress(done[0], total)
+        acc = None
         for dy, dx in shifts:
             sx = np.pad(x, ((0, 0), (dy, 0), (dx, 0)), mode="reflect")
-            total = total + _apply_net(net, sx, np.pad(nm, ((dy, 0), (dx, 0)), mode="reflect"), bk, sg, dev, t, pad, check)[
-                :, dy:, dx:]
-        return (total / len(shifts)).astype(x.dtype)
+            one = _apply_net(net, sx, np.pad(nm, ((dy, 0), (dx, 0)), mode="reflect"), bk, sg, dev, t, pad, check, step)
+            del sx
+            if acc is None:                          # summed in place: the sums of before, in the same order
+                acc = np.array(one[:, dy:, dx:])
+            else:
+                acc += one[:, dy:, dx:]
+            del one
+        acc /= len(shifts)
+        return acc.astype(x.dtype, copy=False)
 
     return devices.shrink_on_memory(passes, tile, dev)
 
 
 @torch.no_grad()
-def _apply_net(net, x, nm, bk, sg, dev, tile, pad, check=None):
+def _apply_net(net, x, nm, bk, sg, dev, tile, pad, check=None, step=None):
+    """One pass of the network over (3, H, W) ``x``, tile by tile: each tile with its margin of ``pad`` goes from the
+    machine's memory to the card and its centre comes back, so the card never holds more than a tile. ``step``: called
+    after each tile."""
     Hh, Ww = x.shape[1:]
     out = np.zeros_like(x)
-    # the image goes to the card when it has the room; otherwise each tile does (the same numbers, only slower)
-    free = devices.free_memory(dev)
-    home = dev if free is None or (x.nbytes + nm.nbytes) * 2 < free else torch.device("cpu")
-    tx = torch.from_numpy(np.ascontiguousarray(x)).to(home)
-    tn = torch.from_numpy(np.ascontiguousarray(nm)).to(home)[None]
     bk_t = torch.as_tensor(np.asarray(bk), device=dev)
     sg_t = torch.as_tensor(np.asarray(sg), device=dev)
     for y in range(0, Hh, tile):
@@ -406,8 +437,10 @@ def _apply_net(net, x, nm, bk, sg, dev, tile, pad, check=None):
             y2, x2 = min(Hh, y + tile + pad), min(Ww, x0 + tile + pad)
             ph, pw = (y2 - y1), (x2 - x1)
             ph8, pw8 = (ph + 7) // 8 * 8, (pw + 7) // 8 * 8
-            pt = F.pad(tx[None, :, y1:y2, x1:x2].to(dev), (0, pw8 - pw, 0, ph8 - ph), mode="reflect")
-            pn = F.pad(tn[None, :, y1:y2, x1:x2].to(dev), (0, pw8 - pw, 0, ph8 - ph), mode="reflect")
+            pt = F.pad(torch.from_numpy(np.ascontiguousarray(x[None, :, y1:y2, x1:x2])).to(dev),
+                       (0, pw8 - pw, 0, ph8 - ph), mode="reflect")
+            pn = F.pad(torch.from_numpy(np.ascontiguousarray(nm[None, None, y1:y2, x1:x2])).to(dev),
+                       (0, pw8 - pw, 0, ph8 - ph), mode="reflect")
             with torch.autocast(dev.type, dtype=torch.bfloat16, enabled=dev.type == "cuda"):
                 o = net(to_input(pt, pn, bk_t, sg_t)).float()
             a = (pt - bk_t.view(1, 3, 1, 1)) / sg_t.view(1, 3, 1, 1) + o
@@ -415,6 +448,8 @@ def _apply_net(net, x, nm, bk, sg, dev, tile, pad, check=None):
             yy, xx = y - y1, x0 - x1
             out[:, y:min(y + tile, Hh), x0:min(x0 + tile, Ww)] = \
                 res[:, yy:yy + min(tile, Hh - y), xx:xx + min(tile, Ww - x0)].cpu().numpy()
+            if step is not None:
+                step()
     return out
 
 
