@@ -1492,7 +1492,11 @@ class Panel(QWidget):
             if k == "synth" and m["key"] == "instrument" and not on and hasattr(s, "state_info") and \
                     s.state_info(p, "astrometry") is None:      # the night test pass: chosen, it failed in 1 s
                 ok, why = False, _("Needs the image's scale: place the Astrometry block in this workflow.")
+            if k == "deconv" and m["key"] == "neural" and not on:      # stable branch: the network waits for a later version
+                ok, why = False, _("Coming in a later version")
             card = MethodCard(m, on, ok, times, "gpu" if s.gpu else "cpu", why)
+            if why and not ok:
+                card.setToolTip(why)
             if not on and ok and again:
                 card.clicked.connect(lambda ek=m["engine_key"], nm=m["name"]: self._node_method(ek, _(nm)))
             elif not on and ok:

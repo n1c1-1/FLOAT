@@ -550,10 +550,11 @@ def test_the_template_gallery_on_the_model(qapp, tmp_path):
     assert d.text.text().startswith("Calibration, registration")
     d.pick(next(c.t for c in d.cards if c.t["key"] == "image"))   # from an image: no file asked (issue #114)
     assert d.ok.isEnabled()
-    d.pick(next(c.t for c in d.cards if c.t["key"] == "filters_full"))  # the project's sessions have none: made empty
-    assert d.ok.isEnabled() and "Empty Session blocks are made for SII, Ha, OIII" in d.duration.text()
-    d.palette.setCurrentIndex(d.palette.findData("H-O"))
-    assert "made for Ha, OIII" in d.duration.text() and d.name.text() == "H-O"
+    d.pick(next(c.t for c in d.cards if c.t["key"] == "filters_full"))  # stable branch: greyed, never created
+    assert not d.ok.isEnabled()
+    assert not next(c for c in d.cards if c.t["key"] == "filters_full").isEnabled()
+    d.pick(next(c.t for c in d.cards if c.t["key"] == "filters_min"))
+    assert d.ok.isEnabled() and "Empty Session blocks are made for Ha, OIII" in d.duration.text()
     d.tabs.setCurrentIndex(1)
     assert [c.t["copy"].name for c in d.cards] == ["Classic stack", "Full"] and d.name.text() == "Classic stack (copy)"
     # the graphs drawn from the templates: only their blocks; the mono ones' channels combined

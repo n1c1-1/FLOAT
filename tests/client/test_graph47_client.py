@@ -160,22 +160,6 @@ def test_a_workflow_saved_as_a_template_comes_back_in_the_gallery_and_as_a_file(
         w.stop()
 
 
-def test_a_filters_template_on_a_new_project_makes_its_empty_sessions(qapp, tmp_path, monkeypatch):
-    w, m, page = open_page(tmp_path, monkeypatch, workflows=())
-    try:
-        d = page.new_workflow()
-        d.pick(next(c.t for c in d.cards if c.t["key"] == "filters_full"))
-        d.palette.setCurrentIndex(d.palette.findData("H-O"))
-        assert d.ok.isEnabled()
-        d.ok.click()
-        settle(w, page)
-        assert sorted(s.filter for s in m.p.sessions if s.filter) == ["Ha", "OIII"]
-        assert [q.name for q in m.paths][-1] == "H-O" and all("couleur" not in m.display_keys(q)
-                                                               for q in m.paths if m.is_mono(q))
-    finally:
-        page.close()
-        m.close(save=False)
-        w.stop()
 
 
 def test_what_the_play_test_found_stays_fixed(qapp, tmp_path, monkeypatch):
@@ -491,7 +475,7 @@ def test_the_answers_to_the_design_questions(qapp, tmp_path, monkeypatch):
         settle(w, page)
         assert m.p.workflow(full.pid).params.get("gradient", {}).get("degree") is None
         # question 6: nothing to combine yet in a project of one colour workflow without Stacking? it has one: placeable
-        assert page.palette_reason("fusion", m.view(full.pid), None) == ""
+        assert page.palette_reason("fusion", m.view(full.pid), None) == "Coming in a later version"   # stable branch
         # 4.4: Registration switched off is not placed a second time
         page.toggle_cut(Graph(m).node_of(m.view(full.pid), "alignement"), None)
         settle(w, page)
@@ -669,16 +653,16 @@ def test_the_template_cards_take_the_height_of_their_content_in_a_grid_that_wrap
         w.stop()
 
 
-def test_the_filters_card_makes_the_palette_chosen_on_it(qapp, tmp_path, monkeypatch):
+def test_the_filters_card_with_a_combination_is_greyed_in_the_stable_branch(qapp, tmp_path, monkeypatch):
     w, m, page = _blank_page(tmp_path, monkeypatch)
     try:
         page.show_templates()
         card = next(c for c in page.templates.cards if c.t["key"] == "filters_full")
-        card.set_palette("LRGB")
+        assert not card.isEnabled() and card.toolTip() == "Coming in a later version"
+        n = len(m.paths)
         card.mousePressEvent(None)
         settle(w, page)
-        assert sorted(x.filter for x in m.p.sessions) == ["B", "G", "L", "R"]
-        assert m.paths[-1].name == "LRGB" and (m.paths[-1].source or {}).get("fusion")
+        assert len(m.paths) == n and not m.p.sessions
     finally:
         page.close()
         m.close(save=False)
@@ -713,7 +697,11 @@ def test_no_template_asks_for_a_file_it_only_places_its_blocks(qapp, tmp_path, m
     try:
         for t in GALLERY:
             page.show_templates()                         # the blank page's link
-            next(c for c in page.templates.cards if c.t["key"] == t["key"]).mousePressEvent(None)
+            card = next(c for c in page.templates.cards if c.t["key"] == t["key"])
+            if t.get("kind") == "fusion":                 # stable branch: greyed, with its reason, never placed
+                assert not card.isEnabled() and card.toolTip() == "Coming in a later version"
+                continue
+            card.mousePressEvent(None)
             settle(w, page)
             placed(t["key"], "blank page")
             d = TemplateGallery(m, None, page)            # the window, as a project with workflows opens it
@@ -1046,12 +1034,9 @@ def test_after_the_start_no_block_opens_the_template_window(qapp, tmp_path, monk
     try:
         page.graph.rebuild()
         assert page.graph.new_flow_ghost.on_click is None
-        page.palette_action("fusion:ho")
+        page.palette_action("fusion:ho")                 # stable branch: greyed, nothing placed
         settle(w, page)
-        assert getattr(page, "_gallery", None) is None
-        fu = m.paths[-1]
-        f = fu.source["fusion"]
-        assert f["type"] == "ho" and [i["channel"] for i in f["inputs"]] == ["R", "GB"] and m.sel_step == "fusion"
+        assert getattr(page, "_gallery", None) is None and len(m.paths) == 1
         n = len(m.paths)
         page.workflow_action("duplicate", m.paths[0].pid)
         settle(w, page)
@@ -1251,21 +1236,6 @@ def test_control_round_a_fusion_channel_sent_to_post_keeps_the_channels_apart(qa
         w.stop()
 
 
-def test_control_round_the_fusion_card_waits_for_the_channels_lights(qapp, tmp_path, monkeypatch):
-    """2: a colour project without lights: the Combine channels card greyed, saying what to do."""
-    w, m, page, p = graph_page(tmp_path, monkeypatch, ["calibration", "registration", "stacking"])
-    try:
-        assert page.palette_reason("fusion", m.view(p.pid), None) == ""
-        assert m.remove_session_entry(1, "lights", m.session(1).lights[0])
-        settle(w, page)
-        assert page.palette_reason("fusion", m.view(p.pid), None) == "lights first in “Workflow”"
-        n = len(m.paths)
-        page.place_fusion("ho")                                     # refused: nothing placed
-        assert len(m.paths) == n
-    finally:
-        page.close()
-        m.close(save=False)
-        w.stop()
 
 
 def test_control_round_undo_selects_the_block_before_and_a_file_taken_out_is_one_undo_step(qapp, tmp_path,
@@ -1594,46 +1564,24 @@ def _drop(view, block: str, pos):
     return drop
 
 
-def test_the_palette_has_one_combination_entry_whose_types_unfold_beside_it(qapp, tmp_path, monkeypatch):
-    """The owner's palette: one Combination entry; a click unfolds its four types in a row beside it (as the tool groups
-    of the reference image editors), each with its tooltip; one chosen places its block and closes the row; Escape
-    closes it; nothing waits on it (no dialog). The former Combine channels entry is gone."""
-    from PySide6.QtCore import QEvent, QPointF, Qt
-    from PySide6.QtGui import QMouseEvent
-    from PySide6.QtTest import QTest
-
-    from astro_gpu.client.graph import PALETTE_GROUPS, GroupFlyout
+def test_stable_branch_the_combination_entry_and_its_types_are_greyed_with_the_reason(qapp, tmp_path, monkeypatch):
+    """Stable branch: every combination waits for a later version: the entry is greyed, never hidden, the reason on
+    hover; no type can be placed."""
     w, m, page = open_page(tmp_path, monkeypatch)
     try:
         page.build_tools()
-        comp = dict(PALETTE_GROUPS)["Composition"]
-        assert comp == ["fusion", "composition"] and page.cards["fusion"].title == "Combination"
-        assert not any(c.title == "Combine channels" for c in page.cards.values())
-        card = page.cards["fusion"]
-        height = page.tools_box.sizeHint().height() if hasattr(page, "tools_box") else None
-        pos = QPointF(10, 10)
-        for kind in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
-            card.event(QMouseEvent(kind, pos, card.mapToGlobal(pos), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
-        fly = page.combine_flyout
-        assert isinstance(fly, GroupFlyout) and fly.isVisible() and not fly.isModal()
-        assert [b.text() for b in fly.buttons.values()] == ["S-H-O", "H-O", "RGB", "LRGB"]
-        assert all(b.toolTip() for b in fly.buttons.values())                  # each type says what it is
-        assert fly.buttons["ho"].isEnabled() and not fly.buttons["lrgb"].isEnabled()   # a colour stack: dual band only
-        assert "L" in fly.buttons["lrgb"].toolTip()                              # why it is greyed
-        assert fly.x() >= card.mapToGlobal(card.rect().topRight()).x()          # beside the entry
-        QTest.keyClick(fly, Qt.Key_Escape)
-        assert not fly.isVisible() and len(m.paths) == 1
-        fly = page.open_combinations(card)
+        assert page.cards["fusion"].title == "Combination"
+        assert page.palette_reason("fusion", m.view(m.paths[0].pid), None) == "Coming in a later version"
+        from astro_gpu.client.blocks import COMBINE_KINDS
+        assert all(page.combine_reason(k) == "Coming in a later version" for k in COMBINE_KINDS)
         n = len(m.paths)
-        fly.buttons["ho"].click()
-        settle(w, page)
-        assert not fly.isVisible() and len(m.paths) == n + 1 and m.sel_step == "fusion"
-        assert m.paths[-1].source["fusion"]["type"] == "ho" and m.paths[-1].name == "H-O"
-        assert height is None or page.tools_box.sizeHint().height() == height    # the palette keeps its height
+        page.place_fusion("ho")
+        assert len(m.paths) == n
     finally:
         page.close()
         m.close(save=False)
         w.stop()
+
 
 
 def _a_fits(path: Path) -> str:
@@ -1643,74 +1591,8 @@ def _a_fits(path: Path) -> str:
     return str(path)
 
 
-def test_a_linear_image_is_chosen_as_a_fusion_channel_on_its_row(qapp, tmp_path, monkeypatch):
-    """Issue #55: the two meet in a Combine channels: a channel's row chooses a linear Image's output (with its Astrometry the
-    channels align); the starless modes work with it, it gets its Stars/background; an image already stretched is
-    listed greyed, with its reason."""
-    from PySide6.QtWidgets import QComboBox
-
-    from astro_gpu.core.store import Keys
-    w, m, page = open_page(tmp_path, monkeypatch)
-    try:
-        page.palette_action("image:new")
-        settle(w, page)
-        img = m.paths[-1]
-        m.set_image_file(img, _a_fits(tmp_path / "stack.fits"))
-        page.place_block("astrometry", img.pid)
-        stretched = m.add_image_workflow("Done", _a_fits(tmp_path / "done.fits"), stretched=True)
-        settle(w, page)
-        page.place_fusion("ho")
-        settle(w, page)
-        fu = m.paths[-1]
-        assert "stars" not in fu.source["fusion"]                        # a combination has no stars of its own
-        offered = {q.pid: why for q, why in m.channel_choices(fu, "OIII")}
-        assert offered[img.pid] == "" and "stretch" in offered[stretched.pid]
-        assert not m.set_fusion_channel(fu, "OIII", stretched.pid)
-        page.select(index=m.paths.index(m.view(fu.pid)), step="fusion")
-        settle(w, page)
-        rows = [c for c in page.panel.findChildren(QComboBox) if c.findData(img.pid) >= 0]
-        assert len(rows) == 2                                        # Ha, OIII
-        grey = rows[1].model().item(rows[1].findData(stretched.pid))
-        assert not grey.isEnabled() and "stretch" in grey.toolTip()
-        i = rows[1].findData(img.pid)
-        rows[1].setCurrentIndex(i)
-        rows[1].activated.emit(i)
-        settle(w, page)
-        fu = m.view(fu.pid)
-        assert [x["pid"] for x in fu.source["fusion"]["inputs"]] == [m.paths[0].pid, img.pid]
-        assert m.fusion_problem(fu) == ""
-        k = Keys(m.p)
-        got = next(x for x in k.overrides(fu.pid, "combine_ho")["inputs"] if x["role"] == "OIII")
-        assert "render_simple" in k.chain(img.pid) and got["dir"] and got["wcs"]
-        g = Graph(m)
-        assert (g.leaves[img.pid], "OIII") in [(a, r) for a, r, _i in g.fusion_inputs[id(g.node_of(fu, "fusion"))]]
-    finally:
-        page.close()
-        m.close(save=False)
-        w.stop()
 
 
-def test_a_fusion_can_start_from_a_linear_image_alone(qapp, tmp_path, monkeypatch):
-    """Issue #55: no stack in the project: once its file is chosen, a linear Image gives the Combine channels its channels (dual
-    band), with its stars (a star source is chosen in the Combine channels panel)."""
-    w, m, page = open_page(tmp_path, monkeypatch, workflows=())
-    try:
-        page.palette_action("image")
-        settle(w, page)
-        img = m.paths[-1]
-        assert page.palette_reason("fusion", img, None) == "needs 2 filter workflows, a colour stack or image"
-        m.set_image_file(img, _a_fits(tmp_path / "stack.fits"))
-        settle(w, page)
-        assert page.palette_reason("fusion", m.view(img.pid), None) == ""
-        page.place_fusion("ho")
-        settle(w, page)
-        f = m.paths[-1].source["fusion"]
-        assert [(i["pid"], i["channel"]) for i in f["inputs"]] == [(img.pid, "R"), (img.pid, "GB")] and "stars" not in f
-        assert m.fusion_problem(m.paths[-1]) == ""
-    finally:
-        page.close()
-        m.close(save=False)
-        w.stop()
 
 
 def test_a_linear_image_takes_stars_without_denoise(qapp, tmp_path, monkeypatch):

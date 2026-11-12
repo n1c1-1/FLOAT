@@ -427,6 +427,11 @@ class TemplateCard(QFrame):
         lb = QLabel(name)
         lb.setStyleSheet("font-weight: 600; background: transparent;")
         v.addWidget(lb)
+        self.later = t.get("kind") == "fusion"              # stable branch: combinations wait for a later version
+        if self.later:
+            self.setEnabled(False)
+            self.setCursor(Qt.ArrowCursor)
+            self.setToolTip(_("Coming in a later version"))
         self.set_selected(False)
 
     def set_selected(self, on: bool):
@@ -438,10 +443,12 @@ class TemplateCard(QFrame):
         self.pic.setPixmap(draw_graph(self.t, 214, 76))
 
     def mousePressEvent(self, e):                                     # noqa: N802 - Qt's name
-        self.clicked.emit(self.t)
+        if not self.later:
+            self.clicked.emit(self.t)
 
     def mouseDoubleClickEvent(self, e):                               # noqa: N802
-        self.chosen.emit(self.t)
+        if not self.later:
+            self.chosen.emit(self.t)
 
 
 def palette_box(current: str) -> QComboBox:
@@ -753,7 +760,7 @@ class TemplateGallery(QDialog):
             self.duration.setText((_("Uses: {what}").format(what=", ".join(used)) if used else "") +
                                   ("\n" + _("Empty Session blocks are made for {what}: add their frames there.").format(
                                       what=", ".join(new)) if new else ""))
-        self.ok.setEnabled(bool(t))                        # nothing to fill first (issue #114): a template is placed
+        self.ok.setEnabled(bool(t) and t.get("kind") != "fusion")      # nothing to fill first (issue #114): a template is placed
 
     def _create(self):
         if not self.ok.isEnabled():

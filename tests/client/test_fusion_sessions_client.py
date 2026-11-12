@@ -106,32 +106,6 @@ def test_a_second_session_joins_the_chosen_flow_never_in_place_of_its_nights(qap
         done(w, m, page)
 
 
-def test_a_session_joining_a_filter_flow_takes_its_filter_and_a_fusion_chosen_starts_a_flow(qapp, tmp_path,
-                                                                                             monkeypatch):
-    """Decision 1: Ha chosen, the new session joins Ha with the Ha filter (OIII untouched); a Combine channels chosen: a flow of
-    its own, said."""
-    w, m, page = open_page(tmp_path, monkeypatch, filters=("Ha", "OIII"))
-    try:
-        ha, oiii = (next(q for q in m.paths if q.name == n) for n in ("Ha", "OIII"))
-        page.select(index=m.paths.index(ha), step=f"session@{m.sessions_of(ha)[0]}")
-        page.palette_action("session")
-        settle(w, page)
-        new = max(s.id for s in m.p.sessions)
-        assert m.sessions_of(m.view(ha.pid)) == [1, new] and m.p.session(new).filter == "Ha"
-        assert m.sessions_of(m.view(oiii.pid)) == [2]
-        assert any("joins" in t and "Ha" in t for t in page.toasts)
-        page.place_fusion("ho")
-        settle(w, page)
-        fus = next(q for q in m.paths if (q.source or {}).get("fusion"))
-        page.select(index=m.paths.index(fus), step="fusion")
-        page.palette_action("session")
-        settle(w, page)
-        new2 = max(s.id for s in m.p.sessions)
-        mine = [q for q in m.paths if q.source is None and m.sessions_of(q) == [new2]]
-        assert len(mine) == 1 and "of its own" in page.toasts[-1]
-        assert m.sessions_of(m.view(ha.pid)) == [1, new]                       # nothing else changed
-    finally:
-        done(w, m, page)
 
 
 def fits_of(folder: Path, flt: str) -> Path:
@@ -163,40 +137,6 @@ def test_a_session_added_to_a_filter_flow_follows_the_filter_of_its_frames(qapp,
         done(w, m, page)
 
 
-def test_a_fusion_is_greyed_until_its_channels_have_astrometry_and_says_what_it_adds(qapp, tmp_path, monkeypatch):
-    """Decision 2: the card says what is missing in each channel; placed, the toast names the blocks it added and
-    where; removed, the channels come back as they were; a second Combine channels is a block of its own."""
-    w, m, page = open_page(tmp_path, monkeypatch, filters=("Ha", "OIII"))
-    try:
-        for q in list(m.paths):
-            m.remove_node(q, "astrometrie")
-        why = page.palette_reason("fusion", m.path, None)
-        assert "Astrometry" in why and "Ha" in why and "OIII" in why
-        n = len(m.paths)
-        page.place_fusion("ho")                                       # refused, with the same reason
-        assert len(m.paths) == n and "Astrometry" in page.toasts[-1]
-        for q in list(m.paths):
-            m.insert_block(m.view(q.pid), "astrometry")
-        before = {n: blocks_of(m, n) for n in ("Ha", "OIII")}
-        assert page.palette_reason("fusion", m.path, None) == ""
-        page.place_fusion("ho")
-        settle(w, page)
-        assert "H-O" in page.toasts[-1] and "Ctrl+Z" in page.toasts[-1]
-        assert {n: blocks_of(m, n) for n in ("Ha", "OIII")} == before            # it adds nothing to its channels
-        page.place_fusion("ho")                                       # a second combination: its own block
-        settle(w, page)
-        fusions = [q for q in m.paths if (q.source or {}).get("fusion")]
-        g = Graph(m)
-        assert len(fusions) == 2 and len({id(g.node_of(q, "fusion")) for q in fusions}) == 2
-        assert [node_title(m, g.node_of(q, "fusion")) for q in fusions] == ["H-O 1", "H-O 2"]
-        page.remove_tool(g.node_of(fusions[0], "fusion"), None)
-        settle(w, page)
-        page.remove_tool(Graph(m).node_of(m.view(fusions[1].pid), "fusion"), None)
-        settle(w, page)
-        assert {n: blocks_of(m, n) for n in ("Ha", "OIII")} == before            # as before the first combination
-        assert not [n for n in Graph(m).nodes if n.key == "composition"]
-    finally:
-        done(w, m, page)
 
 
 def test_one_image_sent_to_post_from_a_block_is_not_numbered(qapp, tmp_path, monkeypatch):
@@ -245,40 +185,6 @@ def test_a_stars_block_after_a_combination_is_drawn_after_it(qapp, tmp_path, mon
         done(w, m, page)
 
 
-def test_a_fusion_channel_keeps_what_the_fusion_needs(qapp, tmp_path, monkeypatch):
-    """Decision 3: a channel's Astrometry cannot be deleted nor switched off, its workflow cannot be deleted (no
-    Python error on Ctrl+Y any more); its session set to another filter: the Combine channels red with the reason."""
-    w, m, page = open_page(tmp_path, monkeypatch, filters=("Ha", "OIII"))
-    try:
-        page.place_fusion("ho")
-        settle(w, page)
-        hoo = next(q for q in m.paths if (q.source or {}).get("fusion"))
-        ha = next(q for q in m.paths if q.name == "Ha")
-        assert hoo.name in m.removal_problem(ha, "astrometrie") and hoo.name in m.can_switch_off(ha, "astrometrie")
-        node = Graph(m).node_of(ha, "astrometrie")
-        page.remove_tool(node, None)
-        assert "astrometry" in blocks_of(m, "Ha") and hoo.name in page.toasts[-1]
-        n = len(m._undo)
-        page.workflow_action("delete", ha.pid)
-        settle(w, page)
-        assert m.view(ha.pid) is not None and len(m._undo) == n and "kept" in page.toasts[-1]
-        assert m.redo() is False                                  # nothing to redo, nothing broken
-        m.p.validate()
-        assert m.fusion_problem(m.view(hoo.pid)) == ""
-        m.set_session_filter(1, "SII")
-        assert "SII" in m.fusion_problem(m.view(hoo.pid)) and m.run_problems()
-        assert Graph(m).node_of(m.view(hoo.pid), "fusion").broken
-        m.undo()
-        assert m.fusion_problem(m.view(hoo.pid)) == ""
-        # round 2: every channel that lacks something is named at once (it said Ha only, then OIII once fixed); Run to
-        # here on a channel is not refused for the fusion it does not compute
-        m.set_session_filter(1, "SII")
-        m.set_session_filter(2, "SII")
-        why = m.fusion_problem(m.view(hoo.pid))
-        assert why == "Ha, OIII: session filter SII", why
-        assert m.run_problems({hoo.pid}) and not [x for x in m.run_problems({ha.pid}) if x[0] == hoo.name]
-    finally:
-        done(w, m, page)
 
 
 def test_two_images_without_a_file_are_two_blocks(qapp, tmp_path, monkeypatch):

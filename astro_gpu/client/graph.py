@@ -3320,6 +3320,7 @@ class GraphPage(QWidget):
     def combine_reason(self, kind: str) -> str:
         """Why a combination of this type cannot be placed now (translated), "" when it can (question 6: something to
         combine, said what to do, 8.5)."""
+        return _("Coming in a later version")          # stable branch: combinations wait for a later version
         s = self.s
         if not s.ready:
             return _("reading the project…")

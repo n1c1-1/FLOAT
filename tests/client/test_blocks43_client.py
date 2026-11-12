@@ -149,42 +149,6 @@ def test_a_workflow_from_an_image_starts_on_its_own_lane(world):
     page.graph.rebuild()                                                      # drawn without error, its lane last
 
 
-def test_filters_make_one_workflow_each_and_a_combination_in_the_composition_section(world):
-    m, page = world["m"], world["page"]
-    m.set_session_filter(1, "Ha")
-    m.set_session_filter(2, "OIII")
-    assert m.filters() == {"Ha": [1], "OIII": [2]}
-    d = page.new_workflow()
-    d.pick(next(c.t for c in d.cards if c.t["key"] == "filters_full"))
-    assert d.ok.isEnabled() and "Empty Session blocks are made for SII" in d.duration.text()   # #47: made empty
-    from astro_gpu.client.gallery import PALETTE_TIPS, SHO_DEFAULT
-    from astro_gpu.stages import combine
-    assert d.palette.currentData() == SHO_DEFAULT == combine.CombineSHO.title     # S II, H-alpha, O III first
-    assert [d.palette.itemData(i) for i in range(d.palette.count())] == ["S-H-O", "H-O", "RGB", "LRGB"]   # no presets
-    assert set(PALETTE_TIPS) == {c.title for c in combine.COMBINATIONS}           # each type says what it does
-    d.palette.setCurrentIndex(d.palette.findData("H-O"))
-    assert d.ok.isEnabled() and "Ha" in d.duration.text()
-    d.ok.click()
-    settle(world)
-    names = [q.name for q in m.paths]
-    assert names[-3:] == ["Ha", "OIII", "H-O"]
-    ha, oiii, ho = m.paths[-3:]
-    assert ha.sessions == [1] and oiii.sessions == [2] and m.is_mono(ha) and not m.is_mono(ho)
-    assert ho.source["fusion"]["type"] == "ho" and "stars" not in ho.source["fusion"]
-    assert m.display_keys(ho) == ["fusion", "etoiles"] and "couleur" not in m.display_keys(ha)   # its Stars after it
-    assert "etoiles" not in m.display_keys(ha)                               # the channels keep their stars
-    g = Graph(m)
-    fn = g.node_of(ho, "fusion")
-    assert fn.handle and g.node_of(ho, "post") is fn and g.node_of(ho, "etoiles").parent is fn
-    assert [(id(a), r) for a, r, _i in g.fusion_inputs[id(fn)]] == [(id(g.leaves[ha.pid]), "Ha"),
-                                                                    (id(g.leaves[oiii.pid]), "OIII")]   # named inputs
-    page.graph.rebuild()
-    assert page.graph.graph.node_of(ho, "fusion").col == page.graph._cx["fusion"]          # before Combine
-    d = page.new_workflow()                                                   # the same filters again: reused
-    d.pick(next(c.t for c in d.cards if c.t["key"] == "filters_min"))
-    d.ok.click()
-    settle(world)
-    assert [q.name for q in m.paths].count("Ha") == 1
 
 
 def test_an_already_stretched_image_workflow_goes_to_post(world):
@@ -201,35 +165,3 @@ def test_an_already_stretched_image_workflow_goes_to_post(world):
     assert g.summary(g.node_of(v, "image")).endswith("stretched")
 
 
-def test_a_combination_panel_shows_its_named_inputs_and_its_settings(world):
-    import re
-
-    from PySide6.QtWidgets import QDoubleSpinBox, QLabel
-    m, page = world["m"], world["page"]
-    m.set_session_filter(1, "Ha")
-    m.set_session_filter(2, "OIII")
-    d = page.new_workflow()
-    d.pick(next(c.t for c in d.cards if c.t["key"] == "filters_full"))
-    d.palette.setCurrentIndex(d.palette.findData("H-O"))
-    d.ok.click()
-    settle(world)
-    ha, oiii, ho = m.paths[-3:]
-    assert m.all_stages(ho) == ["combine_ho", "render_simple", "star_removal"]          # its stars taken off after it
-    page.graph.rebuild()
-    page.select(index=m.paths.index(ho), step="fusion")
-    page.refresh()
-    settle(world)
-    page.refresh()
-    shown = {re.sub("<[^>]+>", "", x.text()) for x in page.panel.findChildren(QLabel)}
-    assert {"Hα", "O III", "H-O"} <= shown                                               # its named inputs, its type
-    assert {"Hα hue", "O III hue", "Colour smoothing"} <= shown                          # its settings, as any block's
-    assert m.set_fusion_weight(m.view(ho.pid), "OIII", 0.5) is True                    # a setting of its block
-    assert m.p.workflow(ho.pid).params["combine_ho"]["weights"] == {"OIII": 0.5}
-    assert m.set_fusion_weight(m.view(ho.pid), "OIII", 1.0) is True                    # 1: as balanced, not stored
-    assert "combine_ho" not in m.p.workflow(ho.pid).params
-    page.refresh()
-    assert len([s for s in page.panel.findChildren(QDoubleSpinBox) if s.maximum() == 5.0]) >= 2
-    assert not any(c.findData("starless") >= 0 for c in page.panel.findChildren(QComboBox))   # no Split in a channel
-    assert m.set_fusion_image(m.view(ho.pid), "Ha", "starless")                       # the palette on starless channels
-    assert m.view(ho.pid).source["fusion"]["inputs"][0]["image"] == "starless"
-    assert "Stars/background" in m.fusion_problem(m.view(ho.pid))                       # its channel needs its Split
