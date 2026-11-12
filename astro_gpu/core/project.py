@@ -27,6 +27,7 @@ import json
 import os
 import re
 import shutil
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -361,12 +362,27 @@ STATE = Path(os.environ.get("ASTRO_GPU_HOME") or Path.home() / ".astro_gpu")
 REGISTRY = STATE / "projects.json"
 
 
+def _read_registry() -> dict | None:
+    """The recent-projects list: {} when there is none yet, None when it exists but stays unreadable (a few tries:
+    another process may be replacing it, which locks it for an instant on Windows)."""
+    for attempt in range(5):
+        if not REGISTRY.exists():
+            return {}
+        try:
+            reg = json.loads(REGISTRY.read_text(encoding="utf-8"))
+            if isinstance(reg, dict):
+                return reg
+        except (OSError, ValueError):
+            pass
+        time.sleep(0.05 * (attempt + 1))
+    return None
+
+
 def remember(project: Project) -> None:
     """Record a project as recently used (shared by the command line and the interface)."""
-    try:
-        reg = json.loads(REGISTRY.read_text(encoding="utf-8")) if REGISTRY.exists() else {}
-    except (OSError, ValueError):
-        reg = {}
+    reg = _read_registry()
+    if reg is None:             # the list exists but cannot be read now (locked by another process, damaged): it is
+        return                  # never replaced by a list of one project; the next call records this one
     key = str(project.root.resolve())
     reg[key] = {"name": project.config.name, "used": datetime.now().isoformat(timespec="seconds"),
                 "description": project.config.description}

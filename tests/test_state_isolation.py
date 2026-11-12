@@ -53,3 +53,18 @@ def test_the_users_folder_is_untouched_so_far(guard):
     """Nothing before this test wrote the user's real state folder (the conftest checks again at the end)."""
     hard, _live = guard.changes()
     assert not hard and not guard.violations, (hard, guard.violations)
+
+
+def test_an_unreadable_list_of_projects_is_never_replaced_by_a_list_of_one(tmp_path, monkeypatch):
+    """A list that cannot be read at this instant (locked by another process, damaged) keeps what it holds: a project
+    created meanwhile is not recorded over it (a registry of two test projects once replaced the user's)."""
+    import astro_gpu.core.project as project
+    monkeypatch.setattr(project, "REGISTRY", tmp_path / "projects.json")
+    monkeypatch.setattr(project.time, "sleep", lambda s: None)
+    (tmp_path / "projects.json").write_text('{"a": {"name": "a", "used": "2026-01-01T00:00:00", "description": ""}', "utf-8")
+    before = (tmp_path / "projects.json").read_bytes()
+    project.Project.create(tmp_path / "p", "p", project.Inputs())
+    assert (tmp_path / "projects.json").read_bytes() == before
+    (tmp_path / "projects.json").unlink()
+    project.Project.create(tmp_path / "q", "q", project.Inputs())
+    assert len(project.json.loads((tmp_path / "projects.json").read_text("utf-8"))) == 1
