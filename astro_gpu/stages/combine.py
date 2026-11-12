@@ -48,7 +48,7 @@ filter's usual mapping (H-alpha red, O III cyan: hues 0 and 180).
 Background neutralisation (step 3): an empty sky must map to (0, 0, 0) whatever the hues, so each channel's sky level
 is measured on the same sky pixels in every channel and subtracted in the linear data, before the balance. It is the
 first step of the narrow-band compositions (Rector et al. 2007 set the background of each filter's image to zero
-before the layers are coloured and added; PixInsight's and Siril's "background neutralization" is the same operation
+before the layers are coloured and added; the background neutralisation of the usual processing programs is the same operation
 on the colour channels). The input's own sky level is not enough: it is the median of the whole shown frame,
 nebulosity included, so it differs from one filter to the other by what the nebula adds, and the balance divides it by
 a factor ten to twenty times larger for a weak S II than for an H-alpha: a few tenths of a percent of offset in the S II
