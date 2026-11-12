@@ -49,7 +49,8 @@ def _run(tmp_path, monkeypatch, gaia=None, stop_on=None, **par):
                           log=lambda m, level="info": logs.append(m), progress=progress, metric=lambda k, v: None,
                           out=lambda n: tmp_path / n, metric_of=lambda *a, **k: None)
     try:
-        am.Astrometry().run(ctx, AstrometryParams(ra=RA, dec=DEC, **par))
+        # Stop: a field not identified fails, as these tests of the search expect (Continue: tests/test_fallback.py)
+        am.Astrometry().run(ctx, AstrometryParams(ra=RA, dec=DEC, **{"on_failure": "stop", **par}))
     finally:
         _run.events, _run.logs = events, logs
     return events, logs

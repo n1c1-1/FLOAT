@@ -111,6 +111,10 @@ class ToyStack(Stage):
 class BParams(StageParams):
     steps: int = P(10, label="steps", help="", ge=1)
     fail: bool = P(False, label="fail", help="")
+    fallback: bool = P(False, label="fallback", help="")    # its data allow only its declared fallback
+
+
+B_FALLBACK = "Too few stars: fallback used"
 
 
 class B(Stage):
@@ -124,6 +128,8 @@ class B(Stage):
         _ran(ctx)
         if p.fail:
             raise StageError("b failed on purpose")
+        if p.fallback:
+            ctx.fallback(B_FALLBACK)
         ck = ctx.ckpt / "i.json"
         start = json.loads(ck.read_text())["i"] if ck.exists() else 0
         for i in range(start, p.steps):
@@ -354,6 +360,36 @@ def test_a_failed_job_skips_only_its_downstream_and_an_independent_workflow_comp
     assert all(store.done(s, key) for s, key in k.keys(CLASSIC).items())
     assert evs[-1]["status"] == "failed" and evs[-1]["skipped"] == [k.key(DENOISE, "c"), k.key(DENOISE, "e")]
     assert [j.stage for j in plan_all(proj).jobs] == ["b", "c", "e"]
+
+
+def test_a_stage_done_with_its_fallback_says_why_and_the_run_still_ends_done(proj, monkeypatch):
+    """A stage that took its declared fallback (Context.fallback) is done: the run ends done, everything after it runs;
+    the reason is a warning line of the log, the stage's end and manifest carry it, the journal says it, a run that
+    finds it done says it again, and the API's state of the stage keeps it."""
+    from astro_gpu import api
+    proj.workflow(DENOISE).params["b"] = {"fallback": True}
+    plan = plan_all(proj)
+    status, info = run(proj, plan)
+    assert status == "done" and RUNS == {"inventory": 1, "stack": 1, "b": 1, "c": 2, "e": 2}
+    k = K(proj)
+    kb = k.key(DENOISE, "b")
+    evs = events(proj, info)
+    ends = {e["key"]: e for e in evs if e["type"] == "stage_end"}
+    assert ends[kb]["status"] == "done" and ends[kb]["fallback"] == B_FALLBACK
+    assert not any("fallback" in e for key, e in ends.items() if key != kb)
+    assert [e["msg"] for e in evs if e["type"] == "log" and e.get("fallback")] == [B_FALLBACK]
+    assert next(e for e in evs if e["type"] == "log" and e.get("fallback"))["level"] == "warning"
+    assert Store(proj.root).manifest("b", kb)["fallback"] == B_FALLBACK
+    assert "fallback" not in Store(proj.root).manifest("c", k.key(DENOISE, "c"))
+    md = "".join(f.read_text(encoding="utf-8") for f in (proj.root / "logs").rglob("journal.md"))
+    assert "with fallback in" in md and f"({B_FALLBACK})" in md
+    status, info = run(proj, plan)                                    # the same plan again: every job found done
+    ends = {e["key"]: e for e in events(proj, info) if e["type"] == "stage_end"}
+    assert ends[kb]["reused"] and ends[kb]["fallback"] == B_FALLBACK
+    monkeypatch.setattr(api, "_keys", lambda p: K(p))
+    st = api.states(proj, update=False)
+    assert st[(DENOISE, "b")].state == "done" and st[(DENOISE, "b")].fallback == B_FALLBACK
+    assert st[(DENOISE, "c")].state == "done" and st[(DENOISE, "c")].fallback == ""
 
 
 def test_stop_interrupts_and_the_next_run_resumes_from_the_tmp_checkpoint(proj):

@@ -3,7 +3,8 @@
 The worker process writes events; the client tails ``logs/events.jsonl``. Event types:
 
     run_start, run_end            a pipeline run (``stages``, ``status``)
-    stage_start, stage_end        ``stage``, ``status`` (done | failed | interrupted | skipped), ``duration``
+    stage_start, stage_end        ``stage``, ``status`` (done | failed | interrupted | skipped), ``duration``;
+                                  ``fallback``: why a done stage took its declared fallback (core/stage.Context)
     progress                      ``stage``, ``frac`` (0..1), ``msg``, ``eta`` (seconds, optional)
     log                           ``stage``, ``level``, ``msg``
     metric                        ``stage``, ``key``, ``value``
@@ -75,7 +76,8 @@ def _md_line(ev: dict) -> str:
         return f"- {ts} **{st}** started"
     if t == "stage_end":
         dur = ev.get("duration")
-        return f"- {ts} **{st}** {ev.get('status')}" + (f" in {dur / 60:.1f} min" if dur else "")
+        return f"- {ts} **{st}** {ev.get('status')}" + (" with fallback" if ev.get("fallback") else "") + \
+            (f" in {dur / 60:.1f} min" if dur else "") + (f" ({ev['fallback']})" if ev.get("fallback") else "")
     if t == "log":
         return f"- {ts} [{st}] {ev.get('msg')}"
     if t == "metric":

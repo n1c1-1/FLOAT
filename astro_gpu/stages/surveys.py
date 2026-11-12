@@ -58,6 +58,11 @@ class Surveys(Stage):
             ctx.metric("survey", "none")
             ctx.log("no H-alpha survey (set to none): the Gradient block chooses its samples on the image alone")
             return
+        if ctx.metric_of("astrometry", "solved") is False:      # Astrometry went on without a plate solution
+            ctx.save_json("survey.json", {"survey": "none", "why": NO_SOLUTION, "solved": False})
+            ctx.metric("survey", "none")
+            ctx.log(f"no H-alpha survey: {NO_SOLUTION}; the Gradient block chooses its samples on the image alone")
+            return
         wd = WCS(fits.getheader(ctx.input("astrometry", "wcs.fits")))
         meta = ctx.load_json("stack", "drz_meta.json")
         W, H = meta["width"], meta["height"]
@@ -88,6 +93,8 @@ class SurveyMissing(StageError):
 
 
 MISSING = "the H-alpha survey of this field is not on this computer (Get survey in the Gradient block)"
+#: why there is no survey when Astrometry went on without a plate solution (its fallback)
+NO_SOLUTION = "no plate solution, the field was not identified"
 
 
 def survey_on_grid(wd, W: int, H: int, scale: float, which: str = "auto", min_coverage: float = 0.95, log=print,

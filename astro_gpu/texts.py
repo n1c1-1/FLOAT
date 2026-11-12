@@ -245,6 +245,8 @@ _METRIC_ROWS: list[tuple] = [
     ("first_solver", "First solution", "", "", "What found the field before the fine fit: Asterion, or FLOAT's own search."),
     ("first_solution_s", "First solution time", "s", ".2f", "Time Asterion took to find the field."),
     ("centre_from", "Field found around", "", "", "The typed target or the frames' header pointing, when the two disagree."),
+    ("solved", "Field identified", "", "", "Whether the stars identified the field on the sky; No: the run went on "
+                                           "without plate solution."),
     # reference
     ("orientation", "Orientation", "", "", "Mirror and quarter turns that bring the reference image onto the stack."),
     ("stars_matched", "Stars matched", "", "d", "Stars found in both the stack and the reference image."),
@@ -465,6 +467,8 @@ CHOICE_TEXTS: dict[str, str] = {
     "main": "Main GPU", "aux": "Second GPU",
     # the Align on block's methods (stages/align_on.py)
     "stars": "Stars", "plate": "Plate solutions",
+    # what the Color and Astrometry blocks do when the stars cannot calibrate or identify (stages/color.py, astrometry.py)
+    "fallback": "Fallback balance", "continue": "Continue without solution", "stop": "Stop",
     # the stacking settings (stages/stack.py)
     "thresholds": "Thresholds", "sota": "k × σ filters", "on": "On", "off": "Off",
     "min_weight": "Automatic", "own": "On the raw pixels", "integration": "From the classic stack's rejection",

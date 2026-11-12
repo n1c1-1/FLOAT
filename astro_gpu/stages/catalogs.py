@@ -52,6 +52,12 @@ class Catalogs(Stage):
     def run(self, ctx: Context, p: CatalogsParams) -> None:
         from astropy.io import fits
         from astropy.wcs import WCS
+        if ctx.metric_of("astrometry", "solved") is False:
+            # Astrometry went on without a plate solution (its fallback): no star of the field can be placed; the
+            # blocks that read them take their own fallback (Color: its fallback balance)
+            ctx.metric("solved", False)
+            ctx.log("no plate solution (the field was not identified): no Gaia star placed on the image")
+            return
         w = WCS(fits.getheader(ctx.input("astrometry", "wcs.fits")))
         meta = ctx.load_json("stack", "drz_meta.json")
         W, H = meta["width"], meta["height"]
@@ -96,14 +102,13 @@ class Catalogs(Stage):
         sel = _isolated_xp(d, p, W, H, scale)
         ctx.log(f"{len(sel)} isolated stars with an XP spectrum selected for the colour calibration")
         rows = _xp_spectra(ctx, d["source"][sel].astype(np.int64), 0.85, 1.0, pos16[sel], d["g"][sel])
-        n_ok = sum(r is not None for r in rows)
-        if n_ok < 50:
-            raise StageError(f"only {n_ok} star spectra of this field are on this computer: the colour calibration "
-                             "needs at least 50 (install the star spectra: Settings › Catalogs & astrometry)")
-        keep = np.array([i for i, r in zip(sel, rows) if r is not None])
-        lam = next(r for r in rows if r is not None)[0]
-        flux = np.stack([r[1] for r in rows if r is not None])
-        xyz = _xyz(lam, flux)
+        # however few they are, the Color block judges them (its Minimum stars): it says why there are few, and takes
+        # its fallback or stops
+        keep = np.array([i for i, r in zip(sel, rows) if r is not None], int)
+        got = [r for r in rows if r is not None]
+        lam = got[0][0] if got else np.zeros(0)
+        flux = np.stack([r[1] for r in got]) if got else np.zeros((0, 0))
+        xyz = _xyz(lam, flux) if got else np.zeros((0, 3))
         np.savez(ctx.out("gaia_xp.npz"), source=d["source"][keep], x=d["x"][keep], y=d["y"][keep], g=d["g"][keep],
                  lam=lam, flux=flux, xyz=xyz)
         ctx.metric("xp_spectra", int(len(keep)))

@@ -93,6 +93,9 @@ class SynthStars(Stage):
         if scale:
             focal = float(pixel) * 206.265 / float(scale)
         if not focal:
+            if ctx.has("astrometry") and ctx.metric_of("astrometry", "solved") is False:   # no fallback without it
+                raise StageError("the field was not identified (Astrometry continued without plate solution) and the "
+                                 "focal length is not known: the instrument's star needs the scale of the image")
             raise StageError("the instrument's star needs the scale of the image: place the Astrometry block")
         newton = p.instrument == "newton"
         return lib.Instrument(diameter_mm=p.diameter_mm, focal_mm=float(focal), pixel_um=float(pixel),

@@ -917,7 +917,9 @@ class _Worker:
         self.journal.job = job
         self.store.forget()
         if self.store.done(job.stage, job.key) and self.store.usable_as_input(job.stage, job.key):
-            self.journal.emit("stage_end", stage=job.stage, status="done", reused=True, duration=0.0)
+            why = self.store.manifest(job.stage, job.key).get("fallback")      # found done with its fallback: said again
+            self.journal.emit("stage_end", stage=job.stage, status="done", reused=True, duration=0.0,
+                              **({"fallback": why} if why else {}))
             return "done"
         try:
             if job.key in self.cpu_jobs and self.device != "cpu":

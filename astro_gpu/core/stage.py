@@ -64,6 +64,8 @@ class Context:
         self._t0 = time.time()
         self._last_progress = 0.0
         self.metrics: dict[str, Any] = {}
+        #: why the stage ended on its declared fallback ("" when it did not): ``fallback``
+        self.fallback_reason = ""
 
     # ------------------------------------------------------------------ files
     def out(self, name: str) -> Path:
@@ -128,6 +130,14 @@ class Context:
     def metric(self, key: str, value: Any) -> None:
         self.metrics[key] = value
         self.journal.emit("metric", stage=self.stage.name, key=key, value=value)
+
+    def fallback(self, reason: str) -> None:
+        """The stage could not do its usual work on these data and took its declared fallback (a setting of the
+        block chose it over a failure): it ends done "with fallback". The reason ("Field not identified: continued
+        without plate solution") is said as a warning of the log, kept in the manifest (``fallback``) and carried by
+        the stage's end, so that the graph draws the block in orange and the run's recap lists it."""
+        self.fallback_reason = "; ".join(x for x in (self.fallback_reason, reason) if x)
+        self.journal.emit("log", stage=self.stage.name, level="warning", msg=reason, fallback=True)
 
     def phase(self, start: float, end: float) -> None:
         """The share of the bar the next progress reports fill (issue #50: a stage's phases each move the bar, from

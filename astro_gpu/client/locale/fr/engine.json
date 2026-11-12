@@ -599,5 +599,18 @@
  "{names} to wire": "{names} à brancher",
  "{names} is not on the grid of {first}: place Align on after its Stacking": "{names} n'est pas sur la grille de {first} : placez Aligner sur après son Empilement",
  "{names} are not on the grid of {first}: place Align on after their Stacking": "{names} ne sont pas sur la grille de {first} : placez Aligner sur après leur Empilement",
- "Plate solutions": "Solutions astrométriques"
+ "Plate solutions": "Solutions astrométriques",
+ "If calibration fails": "Si échec calibration",
+ "Minimum stars": "Étoiles minimum",
+ "If the field is not identified": "Si champ non identifié",
+ "Fallback balance": "Balance de repli",
+ "Continue without solution": "Continuer sans solution",
+ "What the block does when the stars cannot calibrate the colours (too few stars with a spectrum in the field, or the field not identified by Astrometry). Fallback balance: the sky background is made neutral and the field's stars white on average, and the run goes on (the block drawn in orange, the reason in its tooltip). Stop: the block fails.": "Ce que fait le bloc quand les étoiles ne peuvent pas calibrer les couleurs (trop peu d'étoiles avec un spectre dans le champ, ou champ non identifié par l'Astrométrie). Balance de repli : le fond de ciel est rendu neutre et les étoiles du champ blanches en moyenne, et l'exécution continue (le bloc dessiné en orange, la raison dans son info-bulle). Arrêter : le bloc échoue.",
+ "Fallback balance for a run left alone (a night's run); Stop when only calibrated colours will do.": "Balance de repli pour une exécution sans surveillance (une nuit) ; Arrêter quand seules des couleurs calibrées conviennent.",
+ "The fewest measured stars with a Gaia spectrum the calibration accepts; with fewer, the block takes its fallback or stops.": "Le plus petit nombre d'étoiles mesurées avec un spectre Gaia que la calibration accepte ; en dessous, le bloc prend son repli ou s'arrête.",
+ "50 gives each colour factor about 1 % of uncertainty; lower it for a narrow field only when its colours can be checked.": "50 donne à chaque facteur de couleur environ 1 % d'incertitude ; ne le baissez pour un champ étroit que si ses couleurs peuvent être vérifiées.",
+ "What the block does when the stars of the image identify no field of the sky. Continue without solution: the run goes on with no plate solution (the block drawn in orange, the reason in its tooltip); the blocks that need one take their own fallback (Color its fallback balance, Gradient its samples without the survey). Stop: the block fails.": "Ce que fait le bloc quand les étoiles de l'image n'identifient aucun champ du ciel. Continuer sans solution : l'exécution continue sans solution astrométrique (le bloc dessiné en orange, la raison dans son info-bulle) ; les blocs qui en ont besoin prennent leur propre repli (Couleur sa balance de repli, Gradient ses échantillons sans le relevé). Arrêter : le bloc échoue.",
+ "Continue for a run left alone (a night's run); Stop when only a solved field will do.": "Continuer pour une exécution sans surveillance (une nuit) ; Arrêter quand seul un champ résolu convient.",
+ "Field identified": "Champ identifié",
+ "Whether the stars identified the field on the sky; No: the run went on without plate solution.": "Si les étoiles ont identifié le champ sur le ciel ; Non : l'exécution a continué sans solution astrométrique."
 }

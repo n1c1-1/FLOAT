@@ -184,7 +184,8 @@ def _line(e: dict, last: dict[str, float]) -> str:
     if t == "stage_end":
         d = e.get("duration")
         extra = f" in {_hm(d)}" if d else (f" ({e['reason']})" if e.get("reason") else "")
-        return f"  {st} {e.get('status')}{extra}" + (f": {e['error']}" if e.get("error") else "")
+        return f"  {st} {e.get('status')}{extra}" + (f": {e['error']}" if e.get("error") else "") + \
+            (f", with fallback: {e['fallback']}" if e.get("fallback") else "")
     if t == "progress":
         now = time.time()
         if now - last.get(st, 0) < 5 and e.get("frac", 0) < 1:

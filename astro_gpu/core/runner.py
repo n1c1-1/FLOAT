@@ -211,11 +211,13 @@ class Pipeline:
             print(tb, flush=True)
             return "failed"
         dur = time.time() - t0
+        # done with its declared fallback (Context.fallback): the manifest and the stage's end say why
+        why = {"fallback": ctx.fallback_reason} if ctx.fallback_reason else {}
         m.update(status="done", run_id=run_id or uuid.uuid4().hex, duration=dur, metrics=ctx.metrics,
-                 finished=datetime.now().isoformat(timespec="seconds"))
+                 finished=datetime.now().isoformat(timespec="seconds"), **why)
         _write_manifest(self.project, st.name, m)
         ctx.clear_ckpt()
-        self.journal.emit("stage_end", stage=st.name, status="done", duration=dur)
+        self.journal.emit("stage_end", stage=st.name, status="done", duration=dur, **why)
         return "done"
 
 

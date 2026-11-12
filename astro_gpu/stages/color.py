@@ -11,14 +11,20 @@ H-alpha of the Rosette and of the Heart came out magenta) and was taken out.
 
 Outputs: M.npy (3, 3) camera -> linear sRGB (diagonal), color_stars.npz (every catalogue star: measured, expected,
 used or why not, for the Inspect mode).
+
+When the stars cannot calibrate the colours (fewer measured stars with a spectrum than ``min_stars``, or the field not
+identified by Astrometry), ``on_failure`` chooses: the fallback balance (``fallback_balance``: the sky background made
+neutral and the field's stars white on average, the classic calibration without photometry), the block then ending in
+orange with its reason (core/stage.Context.fallback), or a failure.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
 import numpy as np
+from pydantic import field_validator
 
-from ..core.params import ADVANCED, Auto, P, StageParams
+from ..core.params import ADVANCED, Auto, P, StageParams, check_choice
 from ..core.stage import Context, Stage, StageError
 from .gradient import image_in
 
@@ -29,9 +35,31 @@ XYZ_TO_SRGB = np.array([[3.2404542, -1.5371385, -0.4985314],
 STARS = "color_stars.npz"
 #: what the stage applies
 APPLIED = "one factor per colour"
+#: what the block does when the stars cannot calibrate the colours (``on_failure``)
+ON_FAILURE = ("fallback", "stop")
+#: the measured stars with a spectrum the calibration needs by default (``min_stars``): the factors' standard error is
+#: about the per-star scatter of the colour ratios over the square root of the stars (Theil-Sen is about as efficient
+#: as least squares on a normal scatter, Sen 1968): with the 5-7 % scatter of the stars' measured ratios, 50 stars
+#: give each factor 0.7-1 %, under the 2 % at which a cast of the sky background begins to show
+MIN_STARS = 50
+#: the fallback's reasons (the block's tooltip, the run's log and recap)
+FALLBACK_STARS = "Star calibration impossible ({n} stars, {m} needed): fallback balance used"
+FALLBACK_FIELD = "Field not identified: fallback balance used"
 
 
 class ColorParams(StageParams):
+    on_failure: str = P("fallback", label="If calibration fails", choices=list(ON_FAILURE),
+                        help="What the block does when the stars cannot calibrate the colours (too few stars with a "
+                             "spectrum in the field, or the field not identified by Astrometry). Fallback balance: "
+                             "the sky background is made neutral and the field's stars white on average, and the run "
+                             "goes on (the block drawn in orange, the reason in its tooltip). Stop: the block fails.",
+                        tip="Fallback balance for a run left alone (a night's run); Stop when only calibrated colours "
+                            "will do.")
+    min_stars: int = P(MIN_STARS, label="Minimum stars", ge=20, le=2000,
+                       help="The fewest measured stars with a Gaia spectrum the calibration accepts; with fewer, the "
+                            "block takes its fallback or stops.",
+                       tip="50 gives each colour factor about 1 % of uncertainty; lower it for a narrow field only "
+                           "when its colours can be checked.")
     aperture: float = P(5.0, label="Photometry aperture", level=ADVANCED, ge=1.5, le=30, step=0.5, unit="px",
                         help="Radius of the circular aperture used to measure the colour stars on the stack.",
                         tip="About twice the star FWHM; larger apertures are safer with poor seeing but noisier.")
@@ -40,6 +68,11 @@ class ColorParams(StageParams):
                                "white, hotter stars blue, cooler stars orange, as in professional colour images.",
                           tip="This is the physical calibration; the final rendering tab can still warm or cool "
                               "the image without touching this.")
+
+    @field_validator("on_failure")
+    @classmethod
+    def _on_failure(cls, v: str) -> str:
+        return check_choice("on_failure", v, ON_FAILURE)
 
 
 class Color(Stage):
@@ -71,12 +104,19 @@ class Color(Stage):
         if ctx.has("inventory") and ctx.metric_of("inventory", "mono"):
             raise StageError(MONO_NO_COLOUR)
         img = image_in(ctx).img                       # its sky removed, the Color blocks before it applied (#47)
+        if ctx.metric_of("catalogs", "solved") is False:          # Astrometry went on without a plate solution
+            self.fall_back(ctx, p, img, FALLBACK_FIELD, NO_FIELD)
+            return
         xp = np.load(ctx.input("catalogs", "gaia_xp.npz"))
-        table, star_why = colour_star_table(img, xp["x"], xp["y"], p.aperture, saturation_map(ctx))
+        n_xp = len(xp["x"])
+        table, star_why = (colour_star_table(img, xp["x"], xp["y"], p.aperture, saturation_map(ctx)) if n_xp
+                           else (np.zeros((0, 3)), np.zeros(0, str)))
         idx = np.where(star_why == "")[0]
         cam = table[idx]
-        if len(idx) < 50:
-            raise StageError(f"only {len(idx)} colour stars could be measured (need 50)")
+        if len(idx) < p.min_stars:
+            self.fall_back(ctx, p, img, FALLBACK_STARS.format(n=len(idx), m=p.min_stars),
+                           too_few_stars(n_xp, len(idx), p.min_stars))
+            return
         ctx.progress(0.5, f"white balance on {len(idx)} stars")
         W_ref = white_xyz(p.white_temp)
         W_d65 = colour.xy_to_XYZ(colour.CCS_ILLUMINANTS["CIE 1931 2 Degree Standard Observer"]["D65"])
@@ -97,6 +137,118 @@ class Color(Stage):
         ctx.metric("matrix", np.round(M, 4).tolist())
         ctx.log(f"white balance from {wb['stars']} Gaia XP stars: red x {wb['k'][0]:.3f}, blue x {wb['k'][2]:.3f} "
                 f"(green 1); colour residual {np.median(rs):.4f}")
+
+    @staticmethod
+    def fall_back(ctx: Context, p: ColorParams, img: np.ndarray, reason: str, failure: str) -> None:
+        """The stars cannot calibrate the colours (``failure`` says why): with ``on_failure`` "stop" the block fails
+        with it, as it always did; else the fallback balance (``fallback_balance``) gives the factors and the block ends
+        done with its fallback (``reason``)."""
+        if p.on_failure == "stop":
+            raise StageError(failure)
+        ctx.log(failure)
+        ctx.progress(0.5, "fallback balance")
+        bal = fallback_balance(img, p.aperture, saturation_map(ctx))
+        k = bal["k"]
+        M = np.diag(k) / float(np.mean(1.0 / k))                # a grey of the camera keeps its brightness
+        ctx.save("M.npy", M)
+        ctx.metric("white_balance", [round(float(v), 4) for v in k])
+        ctx.metric("white_balance_stars", bal["stars"])
+        ctx.metric("matrix", np.round(M, 4).tolist())
+        if bal["stars"] < FALLBACK_MIN_STARS:
+            ctx.log(f"only {bal['stars']} stars measurable in the image: the camera's colours are kept", "warning")
+        ctx.log(f"fallback balance: sky background neutral (levels {bal['background'][0]:.5f}, "
+                f"{bal['background'][1]:.5f}, {bal['background'][2]:.5f}), white balance on {bal['stars']} field "
+                f"stars: red x {k[0]:.3f}, blue x {k[2]:.3f} (green 1)")
+        ctx.fallback(reason)
+
+
+#: why the colour stars cannot be had: the field not identified (``on_failure`` "stop")
+NO_FIELD = ("the field was not identified (Astrometry continued without plate solution): no star with a spectrum to "
+            "calibrate the colours on")
+
+
+def too_few_stars(n_xp: int, n: int, m: int) -> str:
+    """Why ``n`` measured stars of the ``n_xp`` with a spectrum cannot calibrate the colours (``m`` needed): too few
+    spectra on this computer while the star spectra are not installed, too few stars with one in this field (a narrow
+    field) while they are, or too few of them measurable (saturated, at the edge)."""
+    from ..core import sirilcat
+    if n_xp >= m:
+        return f"only {n} of the {n_xp} stars with spectra in this field could be measured (minimum {m})"
+    if not sirilcat.locate()["xp"]:
+        return (f"only {n_xp} star spectra of this field are on this computer (minimum {m}): install the star "
+                "spectra: Settings › Catalogs & astrometry")
+    return f"only {n_xp} stars with spectra in this field (minimum {m})"
+
+
+#: the fewest field stars the fallback balance sets the colours on; with fewer, the camera's colours are kept
+FALLBACK_MIN_STARS = 10
+#: the field stars the fallback balance measures at most (the brightest unsaturated ones)
+FALLBACK_STARS_MAX = 2000
+
+
+def fallback_balance(img: np.ndarray, aperture: float = 5.0, sat: np.ndarray | None = None,
+                     max_stars: int = FALLBACK_STARS_MAX) -> dict:
+    """The classic colour balance without photometry, on a linear image (3, H, W): the sky background made neutral,
+    then the field's stars white on average, the white balance of the grey world (Buchsbaum 1980, "A spatial processor
+    model for object colour perception", J. Franklin Inst. 310) taken on the stars, as the colour calibrations without
+    a catalogue do it.
+
+    1. Background: the sky level of each channel, the median of its pixels after 3-sigma clipping of what stands above
+       the sky (stars, nebulae); taken off, the background is neutral (``background``).
+    2. Stars: detected on the mean of the channels, measured in an aperture over their own local background (the
+       background neutral under each one), unsaturated and positive in every channel (``colour_star_table``), the
+       ``max_stars`` brightest.
+    3. White: red and blue scaled so that the stars' median colour ratio to green is 1 (``k``, green 1); with fewer
+       than FALLBACK_MIN_STARS stars, no factor (1, 1, 1).
+
+    The balanced image is ``k * (img - background)``. Returns {"k": (3,), "background": (3,), "stars": stars used}."""
+    a = np.nan_to_num(np.asarray(img, np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+    step = max(1, int(np.sqrt(a.shape[1] * a.shape[2] / 4e6)))       # some 4 Mpx are enough for a level
+    bg = np.array([_sky_level(a[c, ::step, ::step]) for c in range(3)])
+    k = np.ones(3)
+    a -= bg.astype(np.float32)[:, None, None]                        # the background neutral
+    xy = _field_stars(a, 4 * max_stars)
+    if not len(xy):
+        return {"k": k, "background": bg, "stars": 0}
+    flux, why = colour_star_table(a, xy[:, 0], xy[:, 1], aperture, sat)
+    f = flux[why == ""][:max_stars]
+    if len(f) >= FALLBACK_MIN_STARS:
+        for c in (0, 2):
+            r = float(np.median(f[:, c] / f[:, 1]))
+            if np.isfinite(r) and r > 0:
+                k[c] = 1.0 / r
+    return {"k": k, "background": bg, "stars": int(len(f))}
+
+
+def _sky_level(v: np.ndarray, iters: int = 5) -> float:
+    """The sky level of a channel: the median of its non-empty pixels, those more than 3 sigma above it (1.4826 x
+    the median absolute deviation) clipped, again until it settles."""
+    v = v[v != 0].ravel()
+    if not v.size:
+        return 0.0
+    keep = v
+    for _ in range(iters):
+        med = float(np.median(keep))
+        sig = 1.4826 * float(np.median(np.abs(keep - med)))
+        nxt = keep[keep <= med + 3 * sig] if sig > 0 else keep
+        if nxt.size == keep.size or not nxt.size:
+            break
+        keep = nxt
+    return float(np.median(keep))
+
+
+def _field_stars(a: np.ndarray, n: int) -> np.ndarray:
+    """(x, y) of the image's stars (3, H, W), the brightest first, at most ``n``; none in an image the detection
+    refuses (flat)."""
+    from .astrometry import detect
+    g = np.ascontiguousarray(a.mean(0), np.float32)
+    try:
+        o = detect(g)
+    except Exception:  # noqa: BLE001 - sep refuses a flat image: no star in it
+        return np.zeros((0, 2))
+    o = o[o["flag"] == 0]
+    o = o[np.argsort(-o["flux"], kind="stable")][:n]
+    return np.c_[o["x"], o["y"]].astype(float)
 
 
 def star_white_balance(measured, expected) -> dict:

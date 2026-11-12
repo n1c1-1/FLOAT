@@ -112,7 +112,8 @@ def _stage(tmp_path, monkeypatch, det, gs, gm, **par):
                           log=lambda m, level="info": logs.append(m), progress=lambda *a, **k: None,
                           metric=lambda k, v: metrics.__setitem__(k, v), out=lambda n: tmp_path / n,
                           metric_of=lambda *a, **k: None)
-    am.Astrometry().run(ctx, AstrometryParams(ra=RA, dec=DEC, scale=SCALE, blind=False, search_offsets=0.0, **par))
+    am.Astrometry().run(ctx, AstrometryParams(ra=RA, dec=DEC, scale=SCALE, blind=False, search_offsets=0.0,
+                                              **{"on_failure": "stop", **par}))
     return logs, metrics
 
 

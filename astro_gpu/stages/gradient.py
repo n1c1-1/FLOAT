@@ -581,6 +581,18 @@ def survey_emission(ctx: Context, p: GradientParams) -> np.ndarray | None:
     return emission_level(ctx.load("surveys", "ref_ha.npy"))
 
 
+#: the Gradient block's fallback when its samples should avoid the survey's emission and the field was not identified
+FALLBACK_NO_SURVEY = "Field not identified: sky samples chosen without the survey"
+
+
+def survey_unsolved(ctx: Context, p: GradientParams) -> bool:
+    """Whether the samples would avoid the H-alpha survey's emission (``survey_emission``) but there is no survey because
+    Astrometry went on without a plate solution: the block then chooses them on the image alone, its fallback."""
+    if not p.avoid_emission or p.method == "automatic" or p.sample_points or not ctx.has("surveys"):
+        return False
+    return ctx.load_json("surveys", "survey.json").get("solved") is False
+
+
 class Gradient(Stage):
     name = "gradient"
     title = "Sky gradient"
@@ -608,6 +620,8 @@ class Gradient(Stage):
                     ctx.metric_of("register", "registration_cut"):
                 raise StageError(NOT_ALIGNED) from e
             raise
+        if survey_unsolved(ctx, p):
+            ctx.fallback(FALLBACK_NO_SURVEY)
         if m["info"].get("away_from_emission"):
             ctx.log("the samples leave out the nebulosity the H-alpha survey sees")
         elif m["info"].get("away_note"):

@@ -8,9 +8,10 @@ import time
 from contextlib import contextmanager
 
 import numpy as np
+from pydantic import field_validator
 
 from ..core.determinism import seeded_match
-from ..core.params import ADVANCED, Auto, P, StageParams
+from ..core.params import ADVANCED, Auto, P, StageParams, check_choice
 from ..core.stage import Context, Interrupted, Stage, StageError
 
 GOOD_PAIRS = 15     # matched star pairs that make a triangle match certain (false matches raise instead)
@@ -24,6 +25,10 @@ SPARSE_TRIANGLE_STARS = 30
 #: the published decision on a solution (D. Lang et al., "Astrometry.net", AJ 139, 1782, 2010, and the defaults of its
 #: solver): the Bayes factor it must reach, the stars' position error (px), the share of stars with no counterpart
 ODDS_TO_SOLVE, VERIFY_PX, DISTRACTORS = 1e9, 1.0, 0.25
+#: what the block does when the field is not identified (``on_failure``)
+ON_FAILURE = ("continue", "stop")
+#: the fallback's reason (the block's tooltip, the run's log and recap)
+FALLBACK_FIELD = "Field not identified: continued without plate solution"
 #: seconds between two looks at a stop in the search's long loops (``_between``): a look reads the disk, a loop's step
 #: takes a millisecond or less, a stop is answered within about a second
 STOP_EVERY = 0.25
@@ -108,6 +113,22 @@ class AstrometryParams(StageParams):
     sip_order: int = P(3, label="Distortion order", level=ADVANCED, ge=0, le=5,
                        help="Order of the SIP polynomial describing the optical distortion.",
                        tip="3 for refractors with reducers / wide fields; 2 for small fields; 0 = pure tangent plane.")
+    on_failure: str = P("continue", label="If the field is not identified", choices=list(ON_FAILURE),
+                        help="What the block does when the stars of the image identify no field of the sky. Continue "
+                             "without solution: the run goes on with no plate solution (the block drawn in orange, the "
+                             "reason in its tooltip); the blocks that need one take their own fallback (Color its "
+                             "fallback balance, Gradient its samples without the survey). Stop: the block fails.",
+                        tip="Continue for a run left alone (a night's run); Stop when only a solved field will do.")
+
+    @field_validator("on_failure")
+    @classmethod
+    def _on_failure(cls, v: str) -> str:
+        return check_choice("on_failure", v, ON_FAILURE)
+
+
+class FieldNotIdentified(StageError):
+    """The stars of the image identify no field of the sky (too few stars, no match, no solution beyond doubt): with
+    ``on_failure`` "continue", the stage goes on without plate solution."""
 
 
 class Astrometry(Stage):
@@ -159,6 +180,19 @@ class Astrometry(Stage):
         return a
 
     def run(self, ctx: Context, p: AstrometryParams) -> None:
+        try:
+            self._run(ctx, p)
+        except FieldNotIdentified as e:
+            if p.on_failure == "stop":
+                raise
+            # the declared fallback: done with no plate solution (no wcs.fits); Catalogs and the H-alpha survey say
+            # none, Color takes its fallback balance, Gradient its samples without the survey
+            ctx.out("wcs.fits").unlink(missing_ok=True)
+            ctx.metric("solved", False)
+            ctx.log(str(e))
+            ctx.fallback(FALLBACK_FIELD)
+
+    def _run(self, ctx: Context, p: AstrometryParams) -> None:
         with _stoppable(ctx):
             far = _header_far(ctx, p)
             if far is None:                      # they agree, or one is not known: the centre given, as it always was
@@ -210,11 +244,13 @@ class Astrometry(Stage):
         det = np.c_[o["x"], o["y"]]
         ctx.log(f"{len(det)} stars detected in the stack")
         if len(det) < SPARSE_MIN_STARS:
-            raise StageError(f"only {len(det)} stars found in the stack, at least {SPARSE_MIN_STARS} are needed to "
-                             f"identify the field: add light frames, or take Astrometry out of this workflow")
+            raise FieldNotIdentified(f"only {len(det)} stars found in the stack, at least {SPARSE_MIN_STARS} are "
+                                     "needed to identify the field: add light frames, or take Astrometry out of this "
+                                     "workflow")
         sparse = len(det) < SPARSE_FIELD
-        unproved = StageError(f"the {len(det)} stars of this sparse field do not identify it on the sky beyond doubt, so "
-                              "no solution is given rather than a wrong one: take Astrometry out of this workflow")
+        unproved = FieldNotIdentified(f"the {len(det)} stars of this sparse field do not identify it on the sky beyond "
+                                      "doubt, so no solution is given rather than a wrong one: take Astrometry out of "
+                                      "this workflow")
         odds = 0.0
         # Asterion's first solution when it is installed: the scale search, the triangle match and the blind solver
         # below are then skipped and the fine fit starts from it (``first``); else, or without a solution, FLOAT's own
@@ -224,7 +260,7 @@ class Astrometry(Stage):
             p = p if p.scale else p.model_copy(update={"scale": first.scale})
         if ra0 is None or dec0 is None:
             if not p.blind:
-                raise StageError("the approximate field centre is unknown: enter the target name or its RA/Dec")
+                raise FieldNotIdentified("the approximate field centre is unknown: enter the target name or its RA/Dec")
             ra0, dec0, sc_b = _blind(ctx, brightdet, W, H)
             p = p.model_copy(update={"scale": sc_b})
 
@@ -385,8 +421,8 @@ class Astrometry(Stage):
                 ctx.check_stop()            # a stop asked meanwhile ends the stage as stopped, whatever the search made of it
             if sparse:
                 raise unproved
-            raise StageError("the stars of the image match no star of the catalogue: check the target or its "
-                             "coordinates, and the focal length and pixel size")
+            raise FieldNotIdentified("the stars of the image match no star of the catalogue: check the target or "
+                                     "its coordinates, and the focal length and pixel size")
         flip, T, nm, crval, sc, glim, radius = best
         w0 = _tan(crval[0], crval[1], sc, W, H)
         if T is not None:
@@ -564,7 +600,9 @@ def _blind(ctx, xy, W, H, at: float = 0.05):
     ctx.progress(at, "all-sky blind solving (first use builds the star index, a few minutes)")
     r = solve_any(xy[:80], W, H, check=_between)
     if r is None:
-        raise StageError("the field could not be identified on the sky: enter the target name or its coordinates, or take Astrometry out of the graph (with the blocks that need it, such as Color)")
+        raise FieldNotIdentified("the field could not be identified on the sky: enter the target name or its "
+                                 "coordinates, or take Astrometry out of the graph (with the blocks that need it, such "
+                                 "as Color)")
     ctx.log(f"blind solve: centre RA {r['ra']:.3f} Dec {r['dec']:+.3f}, {r['scale']:.2f}\"/px, "
             f"{r['matches']} catalogue stars matched (chance level {r['chance']})")
     ctx.metric("blind_solved", True)

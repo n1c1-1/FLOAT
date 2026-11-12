@@ -206,12 +206,14 @@ class BlockRef:
 
 @dataclass
 class StageState:
-    """``state`` is one of STATES. ``previous_key``: the result an Outdated stage had, still in the store."""
+    """``state`` is one of STATES. ``previous_key``: the result an Outdated stage had, still in the store.
+    ``fallback``: why a done stage took its declared fallback ("" when it did its usual work; core/stage.Context)."""
 
     state: str
     reason: str = ""
     key: str = ""
     previous_key: str | None = None
+    fallback: str = ""
 
 
 @dataclass
@@ -1768,8 +1770,9 @@ def states(p: Project2, update: bool = True) -> dict[tuple[int, str], StageState
                 out[(w.id, s)] = StageState("failed", str(e))
                 bad.add(s)
                 continue
-            if store is not None and store.done(s, k):
-                out[(w.id, s)] = StageState("done", "", k)
+            m = store.manifest(s, k) if store is not None else {}
+            if m.get("status") == "done" and m.get("key", k) == k:          # store.done, its manifest read once
+                out[(w.id, s)] = StageState("done", "", k, fallback=str(m.get("fallback") or ""))
                 new_last.setdefault(str(w.id), {})[s] = k
                 continue
             prev = prev_keys.get(s)
@@ -2103,6 +2106,8 @@ def fetch_survey(p: Project2, wf: int | Workflow, progress: Callable[[float, str
     if ast is None or stk is None:
         raise ValueError("the field is not solved yet (Astrometry)")
     m = json.loads((ast / "manifest.json").read_text(encoding="utf-8"))
+    if (m.get("metrics") or {}).get("solved") is False:            # Astrometry continued without one (its fallback)
+        raise ValueError("the field was not identified: no plate solution")
     meta = json.loads((stk / "drz_meta.json").read_text(encoding="utf-8"))
     scale = float((m.get("metrics") or {})["scale_arcsec"])
     which = (json.loads((_dir(p, wf, "surveys") / "manifest.json").read_text(encoding="utf-8")).get("params") or {}
@@ -2197,6 +2202,8 @@ def spectral_response(p: Project2, wf: int | Workflow, which: str = "current"):
 def pixel_to_sky(p: Project2, wf: int | Workflow, x: float, y: float, which: str = "current") -> tuple[float, float]:
     """(RA, Dec) in degrees of a pixel of the stack grid (0-based), from the astrometric solution."""
     f = _need(p, wf, "astrometry", which) / "wcs.fits"
+    if not f.is_file():                                            # Astrometry continued without one (its fallback)
+        raise NotDone(f"the astrometry result of workflow {_wid(wf)} has no solution ({which})")
     mt = f.stat().st_mtime
     hit = _WCS.get(str(f))
     if hit is None or hit[0] != mt:

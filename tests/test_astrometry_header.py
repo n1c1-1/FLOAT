@@ -40,7 +40,7 @@ def _run(tmp_path, monkeypatch, target, header, **par):
                           metric_of=lambda stage, key, *a: point.get(key), scratch=tmp_path, check_stop=lambda: None)
     try:
         am.Astrometry().run(ctx, AstrometryParams(ra=target[0], dec=target[1], target="NGC 602", scale=SCALE,
-                                                  blind=False, **par))
+                                                  blind=False, on_failure="stop", **par))
     finally:
         _run.logs, _run.metrics, _run.asked = logs, metrics, asked
     return logs, metrics

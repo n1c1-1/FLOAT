@@ -77,7 +77,8 @@ def _run(tmp_path, monkeypatch, solve, ok=True, missing=True, check_stop=None, *
                           metric=metrics.__setitem__, out=lambda n: tmp_path / n, metric_of=lambda *a, **k: None,
                           scratch=tmp_path, check_stop=check_stop or (lambda: None))
     try:
-        am.Astrometry().run(ctx, AstrometryParams(**{"ra": RA + 0.3, "dec": DEC - 0.2, **par}))
+        # Stop: a field not identified fails, as these tests of the search expect (Continue: tests/test_fallback.py)
+        am.Astrometry().run(ctx, AstrometryParams(**{"ra": RA + 0.3, "dec": DEC - 0.2, "on_failure": "stop", **par}))
     finally:
         _run.logs, _run.metrics = logs, metrics
     return logs, metrics, _written(tmp_path / "wcs.fits")
