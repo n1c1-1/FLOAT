@@ -1394,8 +1394,8 @@ class ProjectModel(QObject):
         if found is None:
             if t.ra is not None and t.dec is not None:
                 return TargetState("known", typed, _("Coordinates entered"))
-            return TargetState("unknown", typed, _("Not in the catalogues here: it will be looked up online, else the "
-                                                   "field is solved from its stars alone"))
+            return TargetState("unknown", typed, _("Not in the catalogues here: the field is solved from its "
+                                                   "stars alone"))
         if field_ and not any(_norm(typed) in {_norm(x) for x in (o.name, o.common_name, *o.aliases) if x} for o in field_):
             return TargetState("unknown", typed, _("Not in the solved field, which shows {name}").format(name=main.name),
                                main.name)

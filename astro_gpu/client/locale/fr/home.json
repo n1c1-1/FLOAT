@@ -20,5 +20,5 @@
  "focal length, mm (optional)": "focale, mm (facultatif)",
  "pixel size, µm (optional)": "taille des pixels, µm (facultatif)",
  "Found: RA {ra}°, Dec {dec}°": "Trouvée : AD {ra}°, Déc {dec}°",
- "Not in the catalogues here: it will be looked up online, else the field is solved from its stars alone": "Absente des catalogues ici : elle sera cherchée en ligne, sinon le champ sera résolu à partir de ses étoiles seules"
+ "Not in the catalogues here: the field is solved from its stars alone": "Absente des catalogues ici : le champ est résolu à partir de ses étoiles seules"
 }

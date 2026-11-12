@@ -564,7 +564,7 @@ def _blind(ctx, xy, W, H, at: float = 0.05):
     ctx.progress(at, "all-sky blind solving (first use builds the star index, a few minutes)")
     r = solve_any(xy[:80], W, H, check=_between)
     if r is None:
-        raise StageError("the field could not be identified on the sky: enter the target name or its coordinates")
+        raise StageError("the field could not be identified on the sky: enter the target name or its coordinates, or take Astrometry out of the graph (with the blocks that need it, such as Color)")
     ctx.log(f"blind solve: centre RA {r['ra']:.3f} Dec {r['dec']:+.3f}, {r['scale']:.2f}\"/px, "
             f"{r['matches']} catalogue stars matched (chance level {r['chance']})")
     ctx.metric("blind_solved", True)
