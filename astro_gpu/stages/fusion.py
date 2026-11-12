@@ -421,7 +421,7 @@ class Fusion(Stage):
             rgb, notes = compose(chans, p.palette, noise, smooth=starless, sky=sky_mask(chans, valid_all))
             rgb *= level
             ctx.log("lightness from the channels weighted by their noise (" + ", ".join(
-                f"{r} {(notes['noise_l'] / noise[r]) ** 2:.2f}" for r in chans) + "), colour from the palette"
+                f"{r} {(notes['noise_l'] / max(noise[r], 1e-12)) ** 2:.2f}" for r in chans) + "), colour from the palette"
                 + (f", smoothed over {notes['sigma']:.1f} px" if notes["sigma"] else ""))
             ctx.metric("chroma_sigma", round(notes["sigma"], 2))
         else:
