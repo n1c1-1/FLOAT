@@ -361,3 +361,37 @@ def test_a_loop_between_workflows_is_refused_and_a_combination_is_no_reference(t
     p.workflow(o.id).blocks[4]["reference"] = f.id                                       # a combination as a reference
     with pytest.raises(ValueError, match="no stack"):
         p.validate()
+
+
+def test_a_combinations_output_frame_is_the_rectangle_where_every_input_has_data(tmp_path):
+    """The combination is valid where every input has data (module docstring), and the Output of the workflow it starts
+    shows the largest rectangle of that: no band, no ragged corner of one filter's edge stays in the frame (#165)."""
+    from astro_gpu.stages.render_simple import RenderSimple, RenderSimpleParams
+    H, W = 90, 120
+    star = 10 * _star(H, W, 60, 45)
+    ha = np.repeat(star[None], 3, 0) + 0.01
+    oiii = np.repeat(0.5 * star[None], 3, 0) + 0.02
+    _output(tmp_path / "ha", ha, _wcs([61.0, 46.0]))
+    _output(tmp_path / "oiii", oiii, _wcs([61.0, 46.0]))
+    va = np.ones((H, W), bool)
+    va[:, :7] = False                                  # Hα: no data at the left
+    va[H - 3:, W - 4:] = False                         # and a ragged corner at the bottom right
+    va[H - 2, W - 3] = True
+    vo = np.ones((H, W), bool)
+    vo[:5] = False                                     # O III: no data at the top
+    vo[:, W - 6:] = False                              # and at the right
+    np.save(tmp_path / "ha" / "valid.npy", va)
+    np.save(tmp_path / "oiii" / "valid.npy", vo)
+    ins = [{"role": r, "channel": "L", "pid": i, "dir": str(tmp_path / r.lower()), "wcs": str(tmp_path / r.lower() / "wcs.fits"),
+            "grid": ["g", 1]} for i, r in ((1, "Ha"), (2, "OIII"))]
+    out = _run(tmp_path, C.CombineHO, C.CombineHO.Params(inputs=ins))
+    rend = tmp_path / "render"
+    pr = _Project(tmp_path, {"stack": out, "render_simple": rend}, ["combine_ho", "render_simple"])
+    st = RenderSimple()
+    ctx = Context(pr, st, Journal(pr.logs), "cpu")
+    st.run(ctx, RenderSimpleParams())
+    x0, x1, y0, y1 = ctx.metrics["crop"]
+    both = va & vo
+    assert both[y0:y1, x0:x1].all()                                   # data everywhere in the frame
+    assert x0 == 7 and y0 == 5 and x1 <= W - 6                          # the left of Hα, the top of O III, the right of O III
+    assert (x1 - x0) * (y1 - y0) >= 0.9 * (W - 13) * (H - 8)           # and it is the large rectangle, not a sliver

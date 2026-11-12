@@ -171,13 +171,13 @@ def test_filters_make_one_workflow_each_and_a_combination_in_the_composition_sec
     ha, oiii, ho = m.paths[-3:]
     assert ha.sessions == [1] and oiii.sessions == [2] and m.is_mono(ha) and not m.is_mono(ho)
     assert ho.source["fusion"]["type"] == "ho" and "stars" not in ho.source["fusion"]
-    assert m.display_keys(ho) == ["fusion"] and "couleur" not in m.display_keys(ha)   # no Stars after it (#165)
+    assert m.display_keys(ho) == ["fusion", "etoiles"] and "couleur" not in m.display_keys(ha)   # the stars off once, after it (#165)
     assert "etoiles" not in m.display_keys(ha)
     assert m.align_reference(oiii) == ha.pid and m.align_reference(ha) is None      # the others on the first one's grid
     assert "align_on" in m.display_keys(oiii) and "align_on" not in m.display_keys(ha)
     g = Graph(m)
     fn = g.node_of(ho, "fusion")
-    assert fn.handle and g.node_of(ho, "post") is fn and g.node_of(ho, "etoiles") is None and not fn.waits
+    assert fn.handle and g.node_of(ho, "post") is fn and g.node_of(ho, "etoiles") is not None and not fn.waits
     assert [(id(a), r) for a, r, _i in g.fusion_inputs[id(fn)]] == [(id(g.leaves[ha.pid]), "Ha"),
                                                                     (id(g.leaves[oiii.pid]), "OIII")]   # named inputs
     page.graph.rebuild()
@@ -216,7 +216,7 @@ def test_a_combination_panel_shows_its_named_inputs_and_its_settings(world):
     d.ok.click()
     settle(world)
     ha, oiii, ho = m.paths[-3:]
-    assert m.all_stages(ho) == ["combine_ho", "render_simple"]                          # no Stars/background after it
+    assert m.all_stages(ho) == ["combine_ho", "render_simple", "star_removal"]          # the stars taken off once, after it
     page.graph.rebuild()
     page.select(index=m.paths.index(ho), step="fusion")
     page.refresh()

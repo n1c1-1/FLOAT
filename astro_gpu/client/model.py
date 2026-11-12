@@ -1809,8 +1809,9 @@ class ProjectModel(QObject):
     def add_sho_rgb(self, name: str, kind: str, filters: list[str], opts: dict) -> WorkflowView:
         """The "SHO + RGB stars" template (issue #165): one workflow per filter (the first is the reference), a colour
         workflow of its own, each with Stars/background; the others on the reference's grid (Align on after Stacking); the
-        combination reads the filters' starless images; one Combine layers layer puts the colour workflow's stars back on
-        the combination's Output, and Post shows nothing else. One Undo step. Returns the combination."""
+        combination reads the filters' Outputs (linear channels) and takes the stars off once, with a Stars/background
+        of its own; one Combine layers layer puts the colour workflow's stars back on the combination's starless image,
+        and Post shows nothing else. One Undo step. Returns the combination."""
         with self._edit():
             made = []
             for f in filters:
@@ -1829,21 +1830,20 @@ class ProjectModel(QObject):
             for _f, q in made[1:]:
                 self.align_without_astrometry(q, ref.pid)
             self.align_without_astrometry(rgb, ref.pid)
-            fus = self.add_fusion(name, kind, [{"pid": q.pid, "role": f, "channel": "L", "image": "starless"}
-                                               for f, q in made])
-            lid = self.add_post_layer(fus.pid, "combined", None)
-            self.set_layer_side(lid, "starless", fus.pid, "output")
+            fus = self.add_fusion(name, kind, [{"pid": q.pid, "role": f, "channel": "L"} for f, q in made], stars=True)
+            lid = self.default_post_layer(fus.pid)               # the combination's own Combine layers, made a layer
             self.set_layer_side(lid, "stars", rgb.pid, "starless")
-            self.remove_post_part(fus.pid, None, None)           # Post shows the issue's picture and nothing else
-            self.remove_post_part(rgb.pid, "combined", None)
-            gone = {(int(a), b) for a, b in self.p.post.get("removed") or []} | {(fus.pid, None), (rgb.pid, "combined")}                 | {(q.pid, self.post_default_part(q)) for _f, q in made}     # the filters' own default layers too
+            self.remove_post_part(rgb.pid, "combined", None)     # Post shows the issue's picture and nothing else
+            gone = {(int(a), b) for a, b in self.p.post.get("removed") or []} | {(rgb.pid, "combined")}                 | {(q.pid, self.post_default_part(q)) for _f, q in made}     # the filters' own default layers too
             self.p.post = {**self.p.post, "removed": sorted([list(x) for x in gone], key=str)}   # also before its lights
         return self.view(fus.pid)
 
     @staticmethod
     def mono_blocks(opts: dict) -> list[dict]:
-        """The graph of a monochrome workflow made from these options (no Color block)."""
-        return [dict(n) for n in wfl.from_options(to_engine(dict(opts)), None, "frames") if n["block"] != "color" and not n["off"]]
+        """The graph of a monochrome workflow made from these options: no Color block, and no Stars/background, which a
+        combination takes off once, after it (a filter's linear channel is what a combination combines)."""
+        return [dict(n) for n in wfl.from_options(to_engine(dict(opts)), None, "frames")
+                if n["block"] not in ("color", "stars") and not n["off"]]
 
     def wiring_reason(self, p, kind: str) -> str:
         """Why the join block of a workflow (``kind``: "fusion", "align_on") waits for a wire, translated: an input empty,
@@ -2565,17 +2565,19 @@ class ProjectModel(QObject):
             self.p.validate()
         return self._view_of(w.id)
 
-    def add_fusion(self, name: str, kind: str, inputs: list[dict] | None = None) -> WorkflowView:
+    def add_fusion(self, name: str, kind: str, inputs: list[dict] | None = None, stars: bool = False) -> WorkflowView:
         """A combination workflow (issue #43; stages/combine.py): a block of type ``kind`` ("sho", "ho", "rgb", "lrgb")
         in the Composition section; its Output is a layer of Post. Placed from the palette its inputs are empty (``inputs``
-        None: [{"pid", "role" (the port), "channel", "image"}] only for a template, which comes wired); no Stars/background
-        after it: a template does not place one."""
+        None: [{"pid", "role" (the port), "channel", "image"}] only for a template, which comes wired); ``stars``: a
+        Stars/background after it (a template's: the stars are taken off once, on the combined image)."""
         with self._edit():
             o = {"debruitage": False, "etoiles": "garder", "fond": "simple"}
             w = api.add_workflow(self.p, self.unique_name(name), wfl.check_options(to_engine(o)), {})
             self.p.workflow(w.id).source = {"fusion": {"type": kind, "inputs": [
                 {"pid": int(i["pid"]), "role": str(i["role"]), "channel": str(i.get("channel", "L"))}
                 | ({"image": i["image"]} if i.get("image", "output") != "output" else {}) for i in inputs or []]}}
+            if stars:
+                self.p.set_blocks(w.id, [wfl.node("stars")])
             self.p.validate()
         return self._view_of(w.id)
 

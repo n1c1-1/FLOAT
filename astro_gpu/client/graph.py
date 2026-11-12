@@ -3893,7 +3893,8 @@ class GraphPage(QWidget):
     def make_filters(self, t: dict, name: str, opts: dict):
         """A filters template (issues #43, #165): one workflow per filter (made when the filter has none yet), the first
         the reference, every other aligned on it by an Align on block after its Stacking; for the full one the block of
-        the chosen type reads their Outputs, no Stars/background after it. Returns the workflow shown (the combination,
+        the chosen type reads their Outputs (no Stars/background in their rows) and, when the options remove the stars, takes them off once,
+        with its own Stars/background after it. Returns the workflow shown (the combination,
         or the first filter's)."""
         s = self.s
         from .gallery import palette_kind, template_blocks
@@ -3907,11 +3908,13 @@ class GraphPage(QWidget):
             for f in filters:                               # a missing filter: an empty Session block (issue #47)
                 if f not in s.filters():
                     s.add_filter_session(f)
-            made = [(f, s.filter_workflow(f, opts)) for f in filters]
+            fused = t["kind"] == "fusion"                   # a combination takes the stars off once, after it: its
+            row_opts = {**opts, "etoiles": "garder"} if fused else opts          # filters' workflows keep theirs
+            made = [(f, s.filter_workflow(f, row_opts)) for f in filters]
             made = [(f, q) for f, q in made if q is not None]
             for _f, q in made:                              # a filter's workflow: no Color block (issue #47)
                 if s.p.workflow(q.pid).blocks is None:
-                    s.set_graph(q, template_blocks(t, mono=True))
+                    s.set_graph(q, [n for n in template_blocks(t, mono=True) if not (fused and n["block"] == "stars")])
             if not made:
                 self.toast(_("No filter: set it in Session"))
                 return None
@@ -3921,7 +3924,7 @@ class GraphPage(QWidget):
             if t["kind"] == "filters":
                 return first
             return s.add_fusion(name, palette_kind(t["palette"]), [{"pid": q.pid, "role": f, "channel": "L"}
-                                                                   for f, q in made])
+                                                                   for f, q in made], stars=opts.get("etoiles") == "retirer")
 
     def toggle_cut(self, node, pids):
         """Switch a block off, or on again (issue #47): in ``pids`` only, else in every workflow going through it. Its
