@@ -256,7 +256,7 @@
   "Combine channels": "Combiner canaux",
   "Each channel is its workflow's output, aligned on the first channel through the plate solutions (each channel's workflow needs its Astrometry) and brought to the same scale; the palette makes the colours. Its output is a layer of Post.": "Chaque canal est la sortie de son workflow, alignée sur le premier canal par l'astrométrie (le workflow de chaque canal a besoin de son Astrométrie) et ramenée à la même échelle ; la palette fait les couleurs. Sa sortie est un calque de Post.",
   "Needs the {roles} channels": "A besoin des canaux {roles}",
-  "S II in red-orange, H-alpha in gold, O III in cyan-blue: the look of the Hubble images.": "S II en rouge orangé, H-alpha en or, O III en bleu cyan : l'aspect des images de Hubble.",
+  "S II in red-orange, H-alpha in copper, O III in blue: the look of the Hubble images.": "S II en rouge orangé, H-alpha en cuivre, O III en bleu : l'aspect des images de Hubble.",
   "S II in red, H-alpha in green, O III in blue: each filter straight to one colour.": "S II en rouge, H-alpha en vert, O III en bleu : chaque filtre droit dans une couleur.",
   "H-alpha in red, S II in green, O III in blue.": "H-alpha en rouge, S II en vert, O III en bleu.",
   "H-alpha in red, O III in green and blue: the usual palette of a dual-band filter.": "H-alpha en rouge, O III en vert et bleu : la palette habituelle d'un filtre bi-bande.",

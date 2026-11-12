@@ -65,7 +65,7 @@ PALETTES = {SHO_DEFAULT: ("SII", "Ha", "OIII"), "SHO": ("SII", "Ha", "OIII"), "H
             "RGB": ("R", "G", "B"), "LRGB": ("L", "R", "G", "B")}
 #: what each palette of a fusion does, in a sentence (the tooltip of its choice, here and in the block's panel)
 PALETTE_TIPS = {
-    SHO_DEFAULT: "S II in red-orange, H-alpha in gold, O III in cyan-blue: the look of the Hubble images.",
+    SHO_DEFAULT: "S II in red-orange, H-alpha in copper, O III in blue: the look of the Hubble images.",
     "SHO": "S II in red, H-alpha in green, O III in blue: each filter straight to one colour.",
     "HSO": "H-alpha in red, S II in green, O III in blue.",
     "HOO": "H-alpha in red, O III in green and blue: the usual palette of a dual-band filter.",

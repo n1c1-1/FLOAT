@@ -503,7 +503,7 @@
  "The filters combined.": "Les filtres combinés.",
  "Combine channels": "Combiner canaux",
  "Combines the outputs of several workflows (one per filter, or a dual-band image's channels) into one colour image with a palette (SHO Hubble, SHO, HSO, HOO, RGB, LRGB), aligned through their plate solutions.": "Combine les sorties de plusieurs workflows (un par filtre, ou les canaux d'une image bi-bande) en une image couleur avec une palette (SHO Hubble, SHO, HSO, HOO, RVB, LRVB), alignées par leur astrométrie.",
- "How the filters become red, green and blue: SHO Hubble (S II red-orange, H-alpha gold, O III cyan-blue), SHO (S II red, H-alpha green, O III blue), HSO, HOO (H-alpha red, O III green and blue), RGB, LRGB (the luminance of L).": "Comment les filtres deviennent rouge, vert et bleu : SHO Hubble (S II en rouge orangé, H-alpha en or, O III en bleu cyan), SHO (S II en rouge, H-alpha en vert, O III en bleu), HSO, HOO (H-alpha en rouge, O III en vert et bleu), RVB, LRVB (la luminance de L).",
+ "How the filters become red, green and blue: SHO Hubble (S II red-orange, H-alpha copper, O III blue), SHO (S II red, H-alpha green, O III blue), HSO, HOO (H-alpha red, O III green and blue), RGB, LRGB (the luminance of L).": "Comment les filtres deviennent rouge, vert et bleu : SHO Hubble (S II en rouge orangé, H-alpha en cuivre, O III en bleu), SHO (S II en rouge, H-alpha en vert, O III en bleu), HSO, HOO (H-alpha en rouge, O III en vert et bleu), RVB, LRVB (la luminance de L).",
  "Inputs": "Entrées",
  "The Output folders of the workflows combined, their roles and channels.": "Les dossiers de Sortie des workflows combinés, leurs rôles et leurs canaux.",
  "Channel balance": "Équilibre canaux",

@@ -25,14 +25,23 @@ The SHO Hubble palette follows Rector, Levay, Frattare, English & Pu'uohau-Pummi
 techniques for the creation of presentation-quality astronomical images": each filter's greyscale image is given its
 own hue and the colourised layers are added (their screen), the hues in the chromatic order of the filters'
 wavelengths (the longest the reddest), the colour balance then set on the whole. The familiar look of the SHO images
-(gold where H-alpha dominates, cyan-blue where O III does, red-orange for S II) comes from those hues, not from
-H-alpha mapped straight to green. In linear data, a channel tinted with a hue and the layers added is a 3x3 matrix
-whose columns are the hues' colours (``hue_palette``). The hues (on the HSV colour wheel of the linear RGB):
-S II (672 nm) 15 degrees, red-orange; H-alpha (656 nm) 45 degrees, gold: the next one in the chromatic order, warm so
-that the dominant signal does not read green; O III (501 nm) 210 degrees, cyan-blue: the complement of the warm pair's
-mean (30 + 180), so that the three balance to grey with S II and H-alpha weighing alike. The colour balance is each
-column's weight, solved so that equal channels (as step 3 makes a source that every filter sees alike) give a grey:
-the hue of a single filter's signal is exactly its own, and a neutral input stays neutral.
+(copper where H-alpha dominates, blue where O III does, red-orange for S II) comes from those hues, not from H-alpha
+mapped straight to green. In linear data, a channel tinted with a hue and the layers added is a 3x3 matrix whose
+columns are the hues' colours (``hue_palette``). The colour balance is each column's weight, solved so that equal
+channels (as step 3 makes a source that every filter sees alike) give a grey: the hue of a single filter's signal is
+exactly its own, and a neutral input stays neutral.
+
+The hues are measured, not chosen (issue #163): five public SHO composites of the Hubble teams (ESA/Hubble heic1501a,
+opo9544a, heic1007a, heic1520a, heic0707a: the Pillars of Creation 2014 and 1995, Mystic Mountain, the Veil, Carina),
+their nebula's pixels (the sky and the stars masked) in Oklch (B. Ottosson 2020, the perceptual space of hue,
+chroma and lightness): the warm areas' hue has its median at 57.1 degrees and its lower quartile at 36.0, the blue
+areas' its median at 244.7 (pooled; the per-image medians 13-88 and 176-278). An H-alpha signal alone lands on the warm
+median, an S II alone on the warm lower quartile (the S II-rich areas are the reddest of the warm ones), an O III alone
+on the blue median. A hue here is on the HSV wheel of the linear RGB; Post shows the fusion's linear colour ratios as
+display values (render/simple: the colours kept), read as sRGB, so each target is the HSV hue whose colour, at a
+display level of 0.6, has that Oklch hue: S II 15.5 degrees (Oklch 36.0), H-alpha 31.4 (57.1), O III 202.2 (244.7);
+from 0.3 to 0.9 they move by 4 degrees or less. The earlier hues (15, 45, 210 by principle) put H-alpha at Oklch 85,
+yellow-gold, and O III at 255.
 
 Background neutralisation (step 3): an empty sky must map to (0, 0, 0) whatever the palette, so each channel's sky
 level is measured on the same sky pixels in every channel and subtracted in the linear data, before the balance and the
@@ -82,8 +91,11 @@ def hue_palette(hues: tuple[float, ...]) -> list[list[float]]:
     return (cols * w[None]).round(6).tolist()
 
 
-#: the SHO Hubble palette's hues (module docstring): S II red-orange, H-alpha gold, O III cyan-blue
-HUBBLE_HUES = (15.0, 45.0, 210.0)
+#: the SHO Hubble palette's hues (module docstring: measured on the Hubble teams' images): S II red-orange, H-alpha
+#: copper, O III blue; and the Oklch hues they land on in Post's display (the pooled measures: the warm areas' lower
+#: quartile and median, the blue areas' median)
+HUBBLE_HUES = (15.5, 31.4, 202.2)
+HUBBLE_OKLCH = (36.0, 57.1, 244.7)
 #: the default palette of S II, H-alpha and O III (the SHO templates', and a fusion placed on those filters)
 SHO_DEFAULT = "SHO Hubble"
 #: palettes: the roles a palette reads, and its matrix (rows R, G, B; columns the roles, in that order)
@@ -105,8 +117,8 @@ STAR_SOURCES = ("palette", "channel", "workflow")
 
 class FusionParams(StageParams):
     palette: str = P(SHO_DEFAULT, label="Palette", choices=list(PALETTES),
-                     help="How the filters become red, green and blue: SHO Hubble (S II red-orange, H-alpha gold, "
-                          "O III cyan-blue), SHO (S II red, H-alpha green, O III blue), HSO, HOO (H-alpha red, O III "
+                     help="How the filters become red, green and blue: SHO Hubble (S II red-orange, H-alpha copper, "
+                          "O III blue), SHO (S II red, H-alpha green, O III blue), HSO, HOO (H-alpha red, O III "
                           "green and blue), RGB, LRGB (the luminance of L).")
     #: the inputs, set by the project (not keyed: their workflows' keys are): [{"role", "channel", "dir",
     #: "stars_dir", "wcs", "pid"}]
@@ -272,11 +284,12 @@ class Fusion(Stage):
                    "one colour image with a palette (SHO Hubble, SHO, HSO, HOO, RGB, LRGB), aligned through their "
                    "plate solutions.")
     Params = FusionParams
-    version = "5"                    # 2: option A, the starless channels and a star layer; 3: the stars kept on
+    version = "6"                  # 2: option A, the starless channels and a star layer; 3: the stars kept on
     #                                  their support (the noise of the subtraction left out); the channels' weights;
     #                                  4: the SHO Hubble palette (hues, Rector et al. 2007), the SHO default: the
     #                                  colours of new results change; 5: the channels' sky taken to 0 before the
-    #                                  balance (background neutralisation): the sky of the result is grey
+    #                                  balance (background neutralisation): the sky of the result is grey; 6: the SHO
+    #                                  Hubble hues measured on the Hubble teams' images (#163): H-alpha copper, O III blue
 
     def run(self, ctx: Context, p: FusionParams) -> None:
         from astropy.io import fits
