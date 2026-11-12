@@ -348,7 +348,7 @@ def test_a_failed_job_skips_only_its_downstream_and_an_independent_workflow_comp
     proj.workflow(DENOISE).params["b"] = {"fail": True}
     plan = plan_all(proj)
     status, info = run(proj, plan)
-    assert status == "failed"
+    assert status == "done"                 # the independent workflow was computed: never failed as a whole
     k = K(proj)
     evs = events(proj, info)
     ends = {e["key"]: e for e in evs if e["type"] == "stage_end"}
@@ -358,7 +358,7 @@ def test_a_failed_job_skips_only_its_downstream_and_an_independent_workflow_comp
         assert e["status"] == "skipped" and e["reason"] == "upstream failed" and e["wf"] == [DENOISE]
     store = Store(proj.root)
     assert all(store.done(s, key) for s, key in k.keys(CLASSIC).items())
-    assert evs[-1]["status"] == "failed" and evs[-1]["skipped"] == [k.key(DENOISE, "c"), k.key(DENOISE, "e")]
+    assert evs[-1]["status"] == "done" and evs[-1]["skipped"] == [k.key(DENOISE, "c"), k.key(DENOISE, "e")]
     assert [j.stage for j in plan_all(proj).jobs] == ["b", "c", "e"]
 
 
@@ -708,7 +708,7 @@ def test_without_a_fresh_worker_the_run_ends_failed_and_a_plain_failure_is_uncha
     status, info = run(proj, plan)
     k = K(proj)
     end = events(proj, info)[-1]
-    assert status == "failed" and end["failed"] == [k.key(DENOISE, "b")]
+    assert status == "done" and end["failed"] == [k.key(DENOISE, "b")]   # computed blocks: never failed as a whole
     assert end["skipped"] == [k.key(DENOISE, "c"), k.key(DENOISE, "e")] and sorted(end["done"]) == sorted(
         [k.key(CLASSIC, "c"), k.key(CLASSIC, "e")])
     assert not [e for e in events(proj, info) if e.get("gpu_lost")]

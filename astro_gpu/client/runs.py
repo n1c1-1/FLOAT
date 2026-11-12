@@ -784,6 +784,8 @@ class RunDialog(QDialog):
 
     def _fill_end(self, t: RunTrack):
         color = {"done": OK, "failed": BAD, "interrupted": WARN}[t.status]
+        if t.status == "done" and t.count()[FAILED]:
+            color = BAD
         text = {"done": _("Done in {t}").format(t=hm(t.elapsed())),
                 "failed": _("Failed"), "interrupted": _("Run stopped")}[t.status]
         if t.never_started:                                  # 6.4: it did not fail, it never began
@@ -809,10 +811,14 @@ class RunDialog(QDialog):
         stopped = [r for r, js in by_row if any(j.state == INTERRUPTED for j in js)]
         notrun = [(r, js) for r, js in by_row if js and all(j.state in (SKIPPED, NOT_STARTED) for j in js)]
         col = {"done": OK, "interrupted": WARN}.get(t.status, BAD)
+        if t.status == "done" and failed:
+            col = BAD                                      # done, but blocks could not run: red
         named = self._named()
         if t.status == "done":
             lines.append((plural(t.block_count()["computed"], "{n} block computed · {t}",
                                  "{n} blocks computed · {t}", t=hm(t.elapsed())), OK))
+            if failed:
+                lines.append((plural(len(failed), "{n} block failed", "{n} blocks failed"), BAD))
         elif t.never_started:                              # 6.4: why, in plain words (the details are in the Log)
             from .services.run import start_failure
             lines.append((_("Run not started: {why}").format(why=_(start_failure(t.error))), BAD))

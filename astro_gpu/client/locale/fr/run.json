@@ -284,5 +284,8 @@
  "fallback balance": "balance de repli",
  "fallback: {why}": "repli : {why}",
  "{n} block with fallback": "{n} bloc avec repli",
- "{n} blocks with fallback": "{n} blocs avec repli"
+ "{n} blocks with fallback": "{n} blocs avec repli",
+ "{n} block failed": "{n} bloc en échec",
+ "{n} blocks failed": "{n} blocs en échec",
+ "Blocks failed: {n}": "Blocs en échec : {n}"
 }

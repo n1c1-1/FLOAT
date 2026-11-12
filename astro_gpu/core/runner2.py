@@ -840,8 +840,8 @@ class _Worker:
         finally:
             self.journal.job = None
             if status != "handover":
-                if status == "done" and (out["failed"] or out["skipped"]):
-                    status = "failed"
+                if status == "done" and (out["failed"] or out["skipped"]) and not out["done"]:
+                    status = "failed"         # never failed as a whole while a block was computed
                 j.emit("run_end", status=status, **out)
         return status
 

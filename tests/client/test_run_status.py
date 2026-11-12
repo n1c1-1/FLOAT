@@ -811,3 +811,37 @@ def test_the_run_log_and_recap_list_the_blocks_done_with_fallback(world):
     assert f"Gradient 2: {why}" in shown and WARN in shown[f"Gradient 2: {why}"], shown
     assert not any(x.startswith("Gradient 1:") for x in shown)
     d.close()
+
+
+def test_a_run_with_a_failed_block_ends_done_and_the_recap_and_log_list_it(world):
+    """One branch cannot run: the run ends done (a block was computed), the recap and the log list the failed block with
+    its reason in red, the other blocks are done (Post shows their layers); only a run that computed nothing is failed."""
+    from astro_gpu.client.services.run import FAILED
+    from astro_gpu.client.widgets import BAD
+    w = world()
+    plan = w.m.plan_all()
+    t = RunTrack.of_plan(plan, "r1")
+    t.plan, t.groups = plan, w.ctl.groups(plan)
+    why = "ValueError: no plate solution and no focal length"
+    bad = next(j.stage for j in plan.jobs if j.stage == "gradient~2")
+    evs = [{"t": 1.0, "type": "run_start", "run": "r1", "device": "cpu", "pid": 1}]
+    failed, done = [], []
+    for i, j in enumerate(plan.jobs):
+        evs.append({"t": 2.0 + i, "type": "stage_start", "run": "r1", "stage": j.stage, "key": j.key})
+        ok = j.stage != bad
+        (done if ok else failed).append(j.key)
+        evs.append({"t": 2.5 + i, "type": "stage_end", "run": "r1", "stage": j.stage, "key": j.key,
+                    "status": "done" if ok else "failed", "duration": 0.5, **({} if ok else {"error": why})})
+    evs.append({"t": 50.0, "type": "run_end", "run": "r1", "status": "done", "done": done, "failed": failed})
+    t.apply(evs)
+    assert t.status == "done" and t.block_count()[FAILED] == 1 and t.block_count()[DONE] == len(t.groups) - 1
+    assert t.by_key[failed[0]].state == FAILED
+    lines = [render_line(x) for x in t.lines]
+    assert any("failed" in x and why.split(":")[0] in x for x in lines[:-1])
+    assert "Run finished" in lines[-1] and "1 block failed" in lines[-1]
+    d = RunDialog(w.m, plan, "Run", track=t)
+    d.refresh()
+    shown = {lb.text(): lb.styleSheet() for lb in d.recap_area.widget().findChildren(QLabel)}
+    row = next(x for x in shown if x.startswith("Gradient 2 failed"))
+    assert BAD in shown[row] and "1 block failed" in shown, shown
+    d.close()

@@ -834,6 +834,8 @@ def render_line(line: Line, title=lambda stage: stage) -> str:
             text = plural(b[DONE], "Run stopped: {n} block done", "Run stopped: {n} blocks done")
         else:
             text = _("Run failed: {failed} failed, {skipped} not run").format(failed=b[FAILED], skipped=b["notrun"])
+        if st == "done" and b[FAILED]:           # done, but blocks could not run (each has its failed line above)
+            text += " · " + plural(b[FAILED], "{n} block failed", "{n} blocks failed")
         if b.get("fallback"):                    # the blocks done with their declared fallback, for the morning
             text += " · " + plural(b["fallback"], "{n} block with fallback", "{n} blocks with fallback")
     elif kind == "paused":
@@ -1383,6 +1385,9 @@ class RunController(QObject):
         elif t.status == "done":
             text = plural(c[DONE], "Run finished: {n} block in {t}", "Run finished: {n} blocks in {t}", t=hm(n))
             self.model.log("Run finished in {t}", t=hm(n))
+            if c[FAILED]:                                    # done: what could be computed is in Post; the rest is said
+                text += " · " + plural(c[FAILED], "{n} block failed", "{n} blocks failed")
+                self.model.log("Blocks failed: {n}", n=c[FAILED])
         elif t.status == "interrupted":
             text = plural(c[DONE], "Run stopped: {n} block done", "Run stopped: {n} blocks done")
             self.model.log("Run stopped")
