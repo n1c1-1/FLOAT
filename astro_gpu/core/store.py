@@ -481,9 +481,6 @@ class Keys:
         if stage == "image" and src:
             # 7.7: with a sample of its content, so that two images alike by name, size and date differ
             fid = self.scan.image_id(_absolute(self.project, src["path"])) if src["path"] else ["", None, None]
-            onto = self._aligned_on(w)
-            if onto:                                     # aligned on another image: that file is part of the result
-                fid = fid + ["align", *self.scan.image_id(onto)]
             return fid + ["stretched"] if src.get("stretched") else fid
         if base(stage) in COMBINE and src:
             # each port's channel and the keys of what it reads: the workflow's Output or its starless image (its
@@ -493,7 +490,92 @@ class Keys:
                  "wcs": self._input_key(i["pid"], "astrometry")} | ({"image": i["image"]} if _read(i) != "render_simple"
                                                                     else {})
                 for i in src["fusion"]["inputs"]]}
+        if stage == "align_on":
+            # the keys of what it reads on the reference's side (its image); the reference's id is not part of it
+            pid = self.reference_of(w)
+            st = self.read_stage(pid) if pid is not None else None
+            return {"reference": self._input_key(pid, st) if st else None}
         return None
+
+    def reference_of(self, wf: int | Workflow) -> int | None:
+        """The workflow an Align on block of this workflow aligns it on (None: no such block, or not wired)."""
+        w = self._wf(wf)
+        n = next((x for x in getattr(w, "blocks", None) or [] if x["block"] == "align_on" and not x.get("off")), None)
+        return n.get("reference") if n is not None else None
+
+    def read_stage(self, wf: int | Workflow) -> str | None:
+        """The stage of a workflow whose image the blocks after its Stacking (or Image) read, and so what an Align on
+        block takes as the reference's image: its own Align on, else its Stacking or its Image; None for a workflow
+        with no image of that kind (a combination)."""
+        ch = self.chain(wf)
+        return next((s for s in ("align_on", "stack", "image") if s in ch), None)
+
+    def grid(self, wf: int | Workflow, _seen: tuple = ()) -> Any:
+        """The pixel grid of a workflow's image, as a value that is equal for two workflows exactly when their images
+        are on the same grid: that of its reference when it has an active Align on; else the Registration it stacks
+        from with the stack's scale and zone, the Image block's file, or the combination it starts from. Two variants
+        that share a Registration share a grid."""
+        w = self._wf(wf)
+        ch = self.chain(w)
+        if "align_on" in ch:
+            ref = self.reference_of(w)
+            return ["unwired", w.id] if ref is None or ref in _seen else self.grid(ref, (*_seen, w.id))
+        if "image" in ch:
+            return ["image", self._input_key(w, "image")]
+        if "register" in ch and "stack" in ch:
+            p = self.key_params(w, "stack")
+            return ["frames", self.key(w, "register"), p.get("scale"), p.get("zone")]
+        return ["workflow", w.id]
+
+    def _image_file(self, w: Workflow) -> str:
+        """The file of the Image block a workflow starts from (absolute), "" for any other workflow."""
+        src = getattr(w, "source", None)
+        return _absolute(self.project, src["path"]) if isinstance(src, dict) and src.get("path") else ""
+
+    def _plate_file(self, wf: int | Workflow, _seen: tuple = ()) -> str:
+        """The file whose header holds the plate solution of a workflow's grid: its Image block's file, or, when its
+        image is aligned on another, that workflow's (the grid is the reference's); "" for a stack."""
+        w = self._wf(wf)
+        if "align_on" in self.chain(w):
+            ref = self.reference_of(w)
+            return self._plate_file(ref, (*_seen, w.id)) if ref is not None and ref not in _seen else ""
+        return self._image_file(w)
+
+    def cross_inputs(self, wf: int | Workflow, stage: str) -> list[tuple[int, str]]:
+        """(workflow id, stage) of what a stage reads in other workflows: a combination's inputs (each port's image,
+        its Output or its Stars/background's starless image, and its Astrometry when it has one), an Align on block's
+        reference (the image its workflow's later blocks read)."""
+        w = self._wf(wf)
+        out: list[tuple[int, str]] = []
+        if base(stage) in COMBINE:
+            for i in w.source["fusion"]["inputs"]:
+                for st in (_read(i), "astrometry"):
+                    if st in self.chain(i["pid"]) and (i["pid"], st) not in out:
+                        out.append((i["pid"], st))
+        elif base(stage) == "align_on":
+            pid = self.reference_of(w)
+            st = self.read_stage(pid) if pid is not None else None
+            if st:
+                out.append((pid, st))
+        return out
+
+    def wiring_problem(self, wf: int | Workflow, stage: str) -> str:
+        """Why a stage that reads other workflows cannot run yet ("" when it can): the combination's empty ports, or its
+        inputs not on one grid; an Align on block's reference not wired. The graph greys the block with this reason; the
+        runner leaves the block and what follows out."""
+        w = self._wf(wf)
+        if base(stage) in COMBINE:
+            from ..stages.combine import BY_KIND, PORT_NAMES, TO_WIRE, grid_problem
+            f = w.source["fusion"]
+            empty = [PORT_NAMES.get(r, r) for r in BY_KIND[f["type"]].ports if r not in {i["role"] for i in f["inputs"]}]
+            if empty:
+                return TO_WIRE.format(names=", ".join(empty))
+            return grid_problem([{"role": i["role"], "grid": self.grid(i["pid"])} for i in f["inputs"]],
+                                BY_KIND[f["type"]].ports)
+        if base(stage) == "align_on" and self.reference_of(w) is None:
+            from ..stages.align_on import NO_REFERENCE
+            return NO_REFERENCE
+        return ""
 
     def _input_key(self, pid: int, stage: str) -> str | None:
         """The key of a stage of another workflow (a combination's input), None when its chain has none."""
@@ -502,23 +584,12 @@ class Keys:
         except (KeyError, ValueError):
             return None
 
-    def fusion_inputs(self, wf: int | Workflow) -> list[tuple[int, str]]:
-        """(workflow id, stage) of what a combination reads: each input's image (its Output, or its Stars/background's
-        starless image) and, when it has one, its Astrometry."""
-        w = self._wf(wf)
-        out = []
-        for i in w.source["fusion"]["inputs"]:
-            for st in (_read(i), "astrometry"):
-                if st in self.chain(i["pid"]) and (i["pid"], st) not in out:
-                    out.append((i["pid"], st))
-        return out
-
     def key_parts(self, wf: int | Workflow, stage: str) -> dict[str, Any]:
         """What a stage's key hashes (the manifest keeps it as ``key_parts``)."""
         w = self._wf(wf)
         p, m = self._key_values(w, stage)
         b = base(stage)
-        x = self.source_part(w, stage) if b == "image" or b in COMBINE else self.project_part(stage, w)
+        x = self.source_part(w, stage) if b in ("image", "align_on") or b in COMBINE else self.project_part(stage, w)
         sid = session_of(stage)
         # an instance reads its session's instances under the stages' names: keyed so, as in a one-session project
         u = {(base(d) if sid is not None and session_of(d) == sid else d): self.key(w, d) for d in self.deps(w, stage)}
@@ -562,12 +633,6 @@ class Keys:
         ks = tuple(self.key(w, s) for s in self.rules.chains.key_stages(block, self.chain(w)))
         return ks + ((f"workflow {w.id}",) if block == "output" else ())
 
-    def _aligned_on(self, w) -> str:
-        """The file of the image a workflow's image is aligned on; "" when none (the reference itself: as it is)."""
-        pid = w.source.get("align")
-        ref = next((x for x in self.project.workflows if x.id == pid), None) if pid != w.id else None
-        return _absolute(self.project, ref.source["path"]) if ref is not None and (ref.source or {}).get("path") else ""
-
     # ------------------------------------------------------------------ what a job gets
     def overrides(self, wf: int | Workflow, stage: str) -> dict[str, Any]:
         """The values a job of the stage runs with over the automatic ones: stored, implied and injected (the
@@ -579,7 +644,6 @@ class Keys:
         if base(stage) == "image" and getattr(w, "source", None):
             v["path"] = _absolute(self.project, w.source["path"]) if w.source["path"] else ""
             v["stretched"] = bool(w.source.get("stretched"))
-            v["align_to"] = self._aligned_on(w)
         if base(stage) in COMBINE and getattr(w, "source", None):
             store = Store(self.project.root) if self.project.root is not None else None
 
@@ -588,7 +652,16 @@ class Keys:
                 return str(store.dir(st, k) / file) if store and k else ""
             v["inputs"] = [{"role": i["role"], "channel": i.get("channel", "L"), "pid": i["pid"],
                             "image": i.get("image", "output"), "dir": folder(i["pid"], _read(i)),
-                            "wcs": folder(i["pid"], "astrometry", "wcs.fits")} for i in w.source["fusion"]["inputs"]]
+                            "wcs": folder(i["pid"], "astrometry", "wcs.fits"), "grid": self.grid(i["pid"])}
+                           for i in w.source["fusion"]["inputs"]]
+        if base(stage) == "align_on":
+            ref = self.reference_of(w)
+            if ref is not None:
+                st = self.read_stage(ref)
+                store = Store(self.project.root) if self.project.root is not None else None
+                k = self._input_key(ref, st) if st else None
+                v["reference"] = {"pid": ref, "dir": str(store.dir(st, k)) if store and k else "",
+                                  "wcs": self._plate_file(ref), "path": self._image_file(w)}
         m = self._validated(w, stage, v)
         return {k: m[k] for k in v}
 
@@ -719,12 +792,22 @@ class StoreProject:
         for a in self.dirs:
             for d in wfl.PROVIDES.get(base(a), ()):
                 self.alias.setdefault(d, a)
+        # issue #165: a stage after the Align on block reads the aligned image where it would have read the entry that
+        # block reads (the stack, or the image and what it stands for)
+        self.redirect: dict[str, str] = {}
+        if "align_on" in self.chain and stage != "align_on" and stage in self.chain \
+                and self.chain.index(stage) > self.chain.index("align_on"):
+            entry = keys.deps(self.workflow, "align_on")[0]
+            self.redirect = {n: "align_on" for n in (entry, *(d for d in wfl.PROVIDES.get(entry, ()) if d not in self.chain),
+                                                     "stack")}
 
     def own_dir(self) -> Path:
         """The job's own folder (a graph's later node, "denoise~2", reads the first one as "denoise", issue #47)."""
         return self.dirs[self.stage]
 
     def stage_dir(self, stage: str) -> Path:
+        if stage in self.redirect:
+            return self.dirs["align_on"]
         d = self.dirs.get(stage)
         if d is None and stage in self.alias:
             d = self.dirs.get(self.alias[stage])

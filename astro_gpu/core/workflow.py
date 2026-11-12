@@ -24,6 +24,9 @@ Issue #43, the blocks redesign:
 - Image source: a workflow may start from an image file (``image``): the ``image`` stage stands for the stack
   (``PROVIDES``); the blocks before it are absent, and Denoise, which needs a real stack (its half-stacks), is greyed.
 - Mono is planned, not built: a session has a filter; sessions of one filter will stack together.
+- Align on (issue #165): a workflow's image brought onto the grid of another workflow's (its ``reference``, set on its
+  graph node), right after Stacking or Image; the stages after it read the aligned image (``Chains.resolve``). A
+  combination aligns nothing itself: its inputs must be on one grid (``Keys.grid``).
 
 The Gradient block comes right after stacking: its method models the sky gradient, which every later stage reads
 removed (stages/gradient.py). The Stars block takes the stars off the Output block's image (stages/star_removal.py):
@@ -210,8 +213,8 @@ def implied(options: dict[str, Any], stage: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------------------------- the chain table
 
 #: the global order of the v2 stages (each stage only reads stages before it)
-ORDER = [*COMBINE, "image", "inventory", "calibrate", "sessions", "register", "stack", "astrometry", "reference", "catalogs",
-         "surveys", "gradient", "deconv", "denoise", "color", "render_simple", "star_removal", "synth_stars"]
+ORDER = [*COMBINE, "image", "inventory", "calibrate", "sessions", "register", "stack", "align_on", "astrometry", "reference",
+         "catalogs", "surveys", "gradient", "deconv", "denoise", "color", "render_simple", "star_removal", "synth_stars"]
 #: the stages that read the image the blocks before them made (issue #47), and which of those blocks they apply: all
 #: of them, or only the sky gradients (Color measures its stars on the stack, its sky removed, and the Color blocks
 #: before it applied: a second one measures what the first left; the star removal takes its noise from the
@@ -250,6 +253,7 @@ BLOCKS: dict[str, tuple[str, ...]] = {
     "selection": (),
     "crop": (),                                     # a zone of the Stacking block (issue #79), as Selection its thresholds
     "stacking": ("stack",),
+    "align_on": ("align_on",),                      # a workflow's image brought onto another's grid, right after Stacking
     "astrometry": ("astrometry", "reference", "catalogs", "surveys"),
     "gradient": ("gradient",),
     "deconv": ("deconv",),
@@ -261,7 +265,7 @@ BLOCKS: dict[str, tuple[str, ...]] = {
 }
 BLOCK_TITLES = {**{c.name: c.title for c in COMBINATIONS}, "image": "Image", "calibration": "Calibration",
                 "registration": "Registration", "selection": "Selection", "crop": "Crop",
-                "stacking": "Stacking", "astrometry": "Astrometry", "color": "Color", "deconv": "Deconvolution", "denoise": "Denoise",
+                "stacking": "Stacking", "align_on": "Align on", "astrometry": "Astrometry", "color": "Color", "deconv": "Deconvolution", "denoise": "Denoise",
                 "synth": "Synthetic stars", "stars": "Stars/background", "gradient": "Gradient", "output": "Output"}
 #: what Run to here runs for a block without stages of its own
 RUN_TO: dict[str, tuple[str, ...]] = {"selection": ("register",), "crop": ("register",)}
@@ -404,7 +408,17 @@ class Chains:
 
     def resolve(self, chain: Sequence[str], reader: str, dep: str) -> str | None:
         """The chain entry a stage reads as ``dep`` (issue #43): ``dep`` itself; for an instance, the instance of
-        ``dep`` of its own session; else the stage that stands for ``dep`` (``PROVIDES``); None when absent."""
+        ``dep`` of its own session; else the stage that stands for ``dep`` (``PROVIDES``); None when absent. A stage
+        after the Align on block reads the aligned image where it would have read the entry Align on itself reads (the
+        stack, or the image): issue #165."""
+        r = self._resolve(chain, reader, dep)
+        if r is not None and "align_on" in chain and reader in chain and base(reader) != "align_on" \
+                and list(chain).index(reader) > list(chain).index("align_on") \
+                and r == self._resolve(chain, "align_on", "stack"):
+            return "align_on"
+        return r
+
+    def _resolve(self, chain: Sequence[str], reader: str, dep: str) -> str | None:
         if dep in chain:
             return dep
         sid = session_of(reader)
@@ -522,21 +536,23 @@ FRAMES, IMAGE, PAIR = "frames", "image", "pair"
 IO: dict[str, tuple[str, str]] = {
     "calibration": (FRAMES, FRAMES), "registration": (FRAMES, FRAMES), "selection": (FRAMES, FRAMES),
     "crop": (FRAMES, FRAMES), "stacking": (FRAMES, IMAGE),
+    "align_on": (IMAGE, IMAGE),
     "astrometry": (IMAGE, IMAGE), "gradient": (IMAGE, IMAGE), "color": (IMAGE, IMAGE), "denoise": (IMAGE, IMAGE),
     "deconv": (IMAGE, IMAGE),
     "output": (IMAGE, IMAGE), "stars": (IMAGE, PAIR), "synth": (PAIR, PAIR)}
 #: the palette's blocks after the sources, in their usual order
-PALETTE = ("calibration", "registration", "selection", "crop", "stacking", "astrometry", "gradient", "deconv", "denoise",
+PALETTE = ("calibration", "registration", "selection", "crop", "stacking", "align_on", "astrometry", "gradient", "deconv",
+           "denoise",
            "color", "output", "stars", "synth")
 #: the frame blocks keep this order among themselves (a calibration after the registration means nothing)
 FRAME_BLOCKS = ("calibration", "registration", "selection", "crop", "stacking")
 #: the image blocks that change the image: any order, any number
 IMAGE_OPS = ("gradient", "color", "deconv", "denoise")
 #: the blocks with a method, and their methods
-METHODS: dict[str, tuple[str, ...]] = {"gradient": OPTION_VALUES["gradient"], "denoise": ("pretrained", "adapted"),
+METHODS: dict[str, tuple[str, ...]] = {"align_on": ("stars", "plate"), "gradient": OPTION_VALUES["gradient"], "denoise": ("pretrained", "adapted"),
                                        "deconv": ("rl", "neural"), "synth": ("measured", "instrument"),
                                        "stars": ("neural",)}
-DEFAULT_METHOD = {"synth": "measured", "gradient": "polynomial", "deconv": "rl", "denoise": "pretrained", "stars": "neural"}
+DEFAULT_METHOD = {"align_on": "stars", "synth": "measured", "gradient": "polynomial", "deconv": "rl", "denoise": "pretrained", "stars": "neural"}
 #: the sources of a workflow
 SOURCES = ("frames", "image", "stretched", "fusion")
 #: what a source gives
@@ -556,6 +572,7 @@ WHY_OUTPUT_AUTO = "Output is automatic"
 WHY_OUTPUT_LAST = "Output ends the chain"
 WHY_REMOVE_NEEDED = "needed by {other}"
 WHY_OFF_NEEDED = "needed by {other}: switch {other} off first"      # the same, said for a switch-off
+WHY_ALIGN_PLACE = "Align on comes right after {where}"
 WHY_REMOVE_BRIDGE = "the next blocks need its {takes}"
 WHY_OFF_KIND = "{block}: {takes} → {gives}, needed"
 KIND_WORDS = {FRAMES: "frames", IMAGE: "image", PAIR: "starless + stars"}
@@ -578,15 +595,23 @@ def _title(b: str) -> str:
 
 
 def node(block: str, method: str | None = None, off: bool = False, name: str | None = None,
-         fork: int | None = None) -> dict[str, Any]:
+         fork: int | None = None, reference: int | None = None) -> dict[str, Any]:
     """A node of a workflow's graph. ``fork``: a frame block placed in parallel with another (its identity: drawn as a
-    block of its own even while its settings, so its result, are the same; no key reads it)."""
+    block of its own even while its settings, so its result, are the same; no key reads it). ``reference``: the
+    workflow an Align on block aligns its image on (None: not wired yet); it is not a setting, as a combination's
+    inputs are not: the keys read the reference's keys, not its id."""
     if block not in IO:
         raise ValueError(f"unknown block {block!r} (allowed: {list(IO)})")
     m = method if method is not None else DEFAULT_METHOD.get(block)
     if block in METHODS and m not in METHODS[block]:
         raise ValueError(f"block {block!r}: method {m!r} is not in the engine (allowed: {list(METHODS[block])})")
     out = {"block": block, "name": name or block, "method": m if block in METHODS else None, "off": bool(off)}
+    if block == "align_on":
+        if reference is not None and (isinstance(reference, bool) or not isinstance(reference, int)):
+            raise ValueError(f"an Align on block's reference is a workflow's id, not {reference!r}")
+        out["reference"] = reference
+    elif reference is not None:
+        raise ValueError(f"block {block!r} has no reference")
     return out | {"fork": int(fork)} if fork is not None else out
 
 
@@ -613,7 +638,7 @@ def check_blocks(blocks: Any, source: str = "frames") -> list[dict[str, Any]]:
     for n in blocks:
         if not isinstance(n, dict) or "block" not in n:
             raise ValueError(f"a block is {{'block', 'name', 'method', 'off'}}, not {n!r}")
-        nn = node(n["block"], n.get("method"), n.get("off", False), n.get("name"), n.get("fork"))
+        nn = node(n["block"], n.get("method"), n.get("off", False), n.get("name"), n.get("fork"), n.get("reference"))
         if nn["block"] not in IMAGE_OPS and nn["name"] != nn["block"] or \
                 nn["block"] in IMAGE_OPS and base(nn["name"]) != nn["block"]:
             raise ValueError(f"block {nn['block']!r} cannot be named {nn['name']!r}")
@@ -653,12 +678,14 @@ def graph_problem(blocks: Sequence[dict], source: str, raise_it: bool = False) -
             return bad(WHY_ONCE, block=_title(b))
         if source in ("image", "stretched", "fusion") and b in FRAME_BLOCKS:
             return bad(WHY_SOURCE, source=SOURCE_WORDS[source], block=_title(b))
-        if source == "stretched" and b != "stars":
+        if source == "stretched" and b not in ("stars", "align_on"):
             return bad(WHY_SOURCE, source=SOURCE_WORDS[source], block=_title(b))
         if source == "fusion" and b not in ("output", "stars"):
             return bad(WHY_SOURCE, source=SOURCE_WORDS[source], block=_title(b))
         if after_output and b not in ("stars", "synth"):
             return bad(WHY_AFTER_OUTPUT)
+        if b == "align_on" and not (before == _title("stacking") if source == "frames" else before == "the source"):
+            return bad(WHY_ALIGN_PLACE, where=_title("stacking") if source == "frames" else "the image")
         if takes != kind and takes == IMAGE and kind == FRAMES:      # what to do, not only why (8.5)
             return bad(WHY_STACK_FIRST, block=_title(b))
         if takes != kind:
@@ -861,6 +888,8 @@ def sequence_chain(blocks: Sequence[dict], source: str = "frames", *, reference:
         if b == "astrometry":
             out += ["astrometry"] + (["reference"] if reference else []) + (["catalogs"] if "color" in has else []) \
                 + ["surveys"]
+        elif b == "align_on":
+            out.append("align_on")
         elif b in IMAGE_OPS:
             out.append(n["name"])
         elif b == "output":
@@ -894,6 +923,9 @@ def node_implied(blocks: Sequence[dict], entry: str, source: str = "frames") -> 
         return {"align": False}
     if b == "stack" and "crop" not in has:
         return {"zone": None}                         # the block taken off: the whole field again
+    if b == "align_on":
+        n = next((x for x in act if x["block"] == "align_on"), None)
+        return {"method": n["method"]} if n is not None and n.get("method") else {}
     if b == "synth_stars":
         n = next((x for x in act if x["block"] == "synth"), None)
         return {"method": n["method"]} if n is not None and n.get("method") else {}

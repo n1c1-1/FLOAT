@@ -99,8 +99,6 @@ class ImageParams(StageParams):
     stretched: bool = P(False, label="Already stretched", level="internal",
                         help="The image is already stretched (not linear): it goes to Post, or to Split stars, as "
                              "it is.")
-    align_to: str = P("", label="Aligned on", level="internal",
-                      help="The image file this one is aligned on (Align images); empty: as it is.")
 
 
 def read_image(path: str | Path) -> np.ndarray:
@@ -154,13 +152,8 @@ class ImageSource(Stage):
             raise StageError(f"the image file is not there: {p.path}")
         a = read_image(p.path)
         a = np.nan_to_num(a, nan=0.0, posinf=0.0, neginf=0.0)
-        valid = None
-        if p.align_to:
-            from .align_images import align_onto
-            ref = np.nan_to_num(read_image(p.align_to), nan=0.0, posinf=0.0, neginf=0.0)
-            a, valid = align_onto(a, p.path, ref, p.align_to, ctx.log)
         if p.stretched:
-            self.stretched(ctx, p, a, valid)
+            self.stretched(ctx, p, a)
             return
         top = float(np.percentile(a, 99.99)) if a.size else 0.0
         factor = 65535.0 if 0 < top <= 1.5 else 1.0
@@ -168,8 +161,7 @@ class ImageSource(Stage):
             a = a * np.float32(factor)
         _c, H, W = a.shape
         ctx.save("drz_full.npy", a.astype(np.float32))
-        ctx.save("drz_weight.npy", np.ones((3, H, W), np.float32) if valid is None else
-                 np.repeat(valid[None].astype(np.float32), 3, axis=0))
+        ctx.save("drz_weight.npy", np.ones((3, H, W), np.float32))
         ctx.save_json("drz_meta.json", {"scale": 1.0, "source": "image", "file": Path(p.path).name,
                                         "factor": factor, "height": H, "width": W})
         ctx.metric("width", W)
@@ -180,31 +172,39 @@ class ImageSource(Stage):
         lo, hi = np.percentile(v, 1), np.percentile(v, 99.5)
         ctx.preview("image", np.clip((v - lo) / max(hi - lo, 1e-6), 0, 1) ** 0.5)
 
-    def stretched(self, ctx: Context, p: ImageParams, a: np.ndarray, valid: np.ndarray | None = None) -> None:
+    def stretched(self, ctx: Context, p: ImageParams, a: np.ndarray) -> None:
         """An image already stretched: its values in 0-1 (an integer file by its type's range, a float one by its
-        maximum when above 1), written as the Output block writes (lin.npy, valid.npy, prep_simple.json, flagged
-        stretched: Post shows it as it is) and as a stack (for Split stars, which reads its noise there)."""
-        from ..render.simple import image_stats
+        maximum when above 1), written as the Output block writes (``save_stretched``)."""
         top = float(a.max()) if a.size else 1.0
         scale = 65535.0 if top > 255.5 else (255.0 if top > 1.5 else 1.0)
         a = np.clip(a / np.float32(scale), 0, 1).astype(np.float32)
-        _c, H, W = a.shape
-        valid = np.ones((H, W), bool) if valid is None else valid
-        stats = image_stats(a, valid)
-        stats["stretched"] = True
-        ctx.save("lin.npy", a)
-        np.save(ctx.out("valid.npy"), valid)
-        for name in ("drz_full.npy", "drz_A.npy", "drz_B.npy"):
-            ctx.save(name, a)
-        ctx.save("drz_weight.npy", np.repeat(valid[None].astype(np.float32), 3, axis=0))
-        ctx.save_json("drz_meta.json", {"scale": 1.0, "source": "image", "stretched": True, "width": W, "height": H})
-        ctx.save_json("prep_simple.json", {
-            "M": np.eye(3).tolist(), "crop": [0, W, 0, H], "median": stats["lum"]["median"], "mad": stats["lum"]["mad"],
-            "p99995": stats["lum"]["p99995"], "stats": stats, "stretch": "auto", "linked": True, "denoised": False,
-            "color": True, "sky": "as stretched", "source": Path(p.path).name, "gains": [1.0, 1.0, 1.0], "exit": None,
-            "width": W, "height": H, "drizzle_scale": 1.0, "stretched": True})
-        ctx.metric("width", W)
-        ctx.metric("height", H)
-        ctx.metric("factor", scale)
-        ctx.log(f"image {Path(p.path).name}: {W} x {H}, already stretched (values / {scale:g})")
-        ctx.preview("image", np.moveaxis(a, 0, -1))
+        save_stretched(ctx, a, None, Path(p.path).name, scale)
+
+
+def save_stretched(ctx: Context, a: np.ndarray, valid: np.ndarray | None, source: str, scale: float,
+                   meta: dict | None = None) -> None:
+    """The files of a stretched image (values 0-1, (3, H, W)) as the Output block writes them (lin.npy, valid.npy,
+    prep_simple.json, flagged stretched: Post shows it as it is) and as a stack (for Stars/background, which reads its
+    noise there). ``meta``: the stack metadata to write (the Align on block's, with its grid); ``scale`` is the factor
+    the file's values were divided by."""
+    from ..render.simple import image_stats
+    _c, H, W = a.shape
+    valid = np.ones((H, W), bool) if valid is None else valid
+    stats = image_stats(a, valid)
+    stats["stretched"] = True
+    ctx.save("lin.npy", a)
+    np.save(ctx.out("valid.npy"), valid)
+    for name in ("drz_full.npy", "drz_A.npy", "drz_B.npy"):
+        ctx.save(name, a)
+    ctx.save("drz_weight.npy", np.repeat(valid[None].astype(np.float32), 3, axis=0))
+    ctx.save_json("drz_meta.json", meta or {"scale": 1.0, "source": "image", "stretched": True, "width": W, "height": H})
+    ctx.save_json("prep_simple.json", {
+        "M": np.eye(3).tolist(), "crop": [0, W, 0, H], "median": stats["lum"]["median"], "mad": stats["lum"]["mad"],
+        "p99995": stats["lum"]["p99995"], "stats": stats, "stretch": "auto", "linked": True, "denoised": False,
+        "color": True, "sky": "as stretched", "source": source, "gains": [1.0, 1.0, 1.0], "exit": None,
+        "width": W, "height": H, "drizzle_scale": 1.0, "stretched": True})
+    ctx.metric("width", W)
+    ctx.metric("height", H)
+    ctx.metric("factor", scale)
+    ctx.log(f"image {source}: {W} x {H}, already stretched (values / {scale:g})")
+    ctx.preview("image", np.moveaxis(a, 0, -1))

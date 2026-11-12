@@ -1,6 +1,4 @@
 {
- "Aligned on": "Aligné sur",
- "The image file this one is aligned on (Align images); empty: as it is.": "Le fichier image sur lequel celle-ci est alignée (Aligner images) ; vide : telle quelle.",
  "With no sample placed. Polynomial: the field is cut into 4 times this many blocks per side, the blocks of sky (not the objects) are the samples of the fit. RBF: this many samples along the shorter side.": "Sans échantillon placé. Polynôme : le champ est découpé en 4 fois ce nombre de blocs par côté, les blocs de ciel (pas les objets) sont les échantillons de l'ajustement. RBF : ce nombre d'échantillons sur le petit côté.",
  "Areas left out of the sky model: centre x, y, half axes and angle (degrees).": "Zones écartées du modèle de ciel : centre x, y, demi-axes et angle (degrés).",
  "Brush dabs x, y, radius, 1 to exclude / 0 to erase, in order.": "Touches de pinceau x, y, rayon, 1 pour exclure / 0 pour effacer, dans l'ordre.",
@@ -588,5 +586,17 @@
  "Draws the detected stars again, with the shape measured in the image or the instrument's.": "Redessine les étoiles détectées, avec la forme mesurée dans l'image ou celle de l'instrument.",
  "Richardson-Lucy: iterations with the star shape measured across the field. Neural network: beta, it also removes the noise.": "Richardson-Lucy : des itérations avec la forme d'étoile mesurée dans le champ. Réseau de neurones : bêta, il retire aussi le bruit.",
  "Neural network": "Réseau de neurones",
- "The star spectra installed on this computer go no fainter than this.": "Les spectres d'étoiles installés sur cet ordinateur ne vont pas plus faible que cette limite."
+ "The star spectra installed on this computer go no fainter than this.": "Les spectres d'étoiles installés sur cet ordinateur ne vont pas plus faible que cette limite.",
+ "Align on": "Aligner sur",
+ "Brings this workflow's image onto the grid of another workflow's image, through their stars or their plate solutions; the blocks after it read the aligned image.": "Amène l'image de ce workflow sur la grille de l'image d'un autre workflow, par leurs étoiles ou leurs solutions astrométriques ; les blocs qui suivent lisent l'image alignée.",
+ "Align method": "Méthode d'alignement",
+ "How the image is brought onto the reference's grid: through their stars (the default, whatever the images), or through their plate solutions (both images must carry one in their file).": "Comment l'image est amenée sur la grille de la référence : par leurs étoiles (par défaut, quelles que soient les images) ou par leurs solutions astrométriques (les deux images doivent en porter une dans leur fichier).",
+ "The workflow whose image this one is aligned on.": "Le workflow sur l'image duquel celle-ci est alignée.",
+ "Stars of the image matched to the reference's, to align it.": "Étoiles de l'image appariées à celles de la référence, pour l'aligner.",
+ "reference to wire": "référence à brancher",
+ "the stack has no plate solution yet (Astrometry comes after)": "l'empilement n'a pas encore de solution astrométrique (l'Astrométrie vient après)",
+ "{names} to wire": "{names} à brancher",
+ "{names} is not on the grid of {first}: place Align on after its Stacking": "{names} n'est pas sur la grille de {first} : placez Aligner sur après son Empilement",
+ "{names} are not on the grid of {first}: place Align on after their Stacking": "{names} ne sont pas sur la grille de {first} : placez Aligner sur après leur Empilement",
+ "Plate solutions": "Solutions astrométriques"
 }

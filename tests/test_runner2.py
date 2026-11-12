@@ -444,6 +444,30 @@ def test_real_stage_graph_plans_each_key_once_and_cheap_workflows_first(proj):
     assert plan.seconds > 300 and not plan.measured
 
 
+def test_align_on_waits_for_its_reference_which_is_computed_first_and_an_unwired_block_is_left_out(proj):
+    """Issue #165: the reference workflow's image is planned before the Align on block; the block with no reference, and
+    everything after it, are left out with the reason, the rest of the workflow's plan is made."""
+    p = project2.create(proj.root.parent / "align", "align")
+    p.sessions = [Session(1, "night", lights=proj.sessions[0].lights)]
+    ref = p.add_workflow("ref", TEMPLATES["Classic stack"])
+    w = p.add_workflow("w", TEMPLATES["Classic stack"])
+    project2._add_align_on(p, w, ref.id, "stars")
+    k = Keys(p)
+    plan = runner2.plan_workflows(p, [w.id], history={})
+    stages = [(j.stage, tuple(j.wf)) for j in plan.jobs]
+    assert ("align_on", (w.id,)) in stages and ("stack", (ref.id, w.id)) in stages        # shared Registration: one stack
+    j = next(j for j in plan.jobs if j.stage == "align_on")
+    assert j.deps == {"stack": k.key(w.id, "stack"), f"stack#{ref.id}": k.key(ref.id, "stack")}
+    assert plan.keys.index(k.key(w.id, "align_on")) > plan.keys.index(k.key(w.id, "stack"))
+    assert plan.keys.index(k.key(w.id, "astrometry")) > plan.keys.index(k.key(w.id, "align_on"))
+    assert not plan.left_out
+    next(n for n in w.blocks if n["block"] == "align_on")["reference"] = None
+    plan = runner2.plan_workflows(p, [w.id], history={})
+    assert plan.left_out == {w.id: {s: "reference to wire" for s in
+                                    ("align_on", "astrometry", "catalogs", "surveys", "gradient", "color", "render_simple")}}
+    assert (w.id, "render_simple") not in plan.targets and any(j.stage == "stack" for j in plan.jobs)
+
+
 # ---------------------------------------------------------------------------------------------- the lock
 
 def test_run_lock_is_created_with_o_excl_and_a_stale_lock_is_replaced(proj, monkeypatch):

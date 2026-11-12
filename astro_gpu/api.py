@@ -2098,7 +2098,8 @@ def fetch_survey(p: Project2, wf: int | Workflow, progress: Callable[[float, str
     from astropy.wcs import WCS
 
     from .stages.surveys import SURVEYS, survey_on_grid
-    ast, stk = _dir(p, wf, "astrometry"), _dir(p, wf, "stack")
+    ast = _dir(p, wf, "astrometry")
+    stk = _dir(p, wf, "align_on") or _dir(p, wf, "stack")        # the grid the field was solved on
     if ast is None or stk is None:
         raise ValueError("the field is not solved yet (Astrometry)")
     m = json.loads((ast / "manifest.json").read_text(encoding="utf-8"))

@@ -10,10 +10,9 @@ taken off; or its Stars/background's starless image, when the user wants the pal
 writes a stack, which its Output block renders as any stack (core/workflow.PROVIDES). The combination handles no star:
 a Stars/background block after it, and the Combine layers block in Post, do (one block, one function).
 
-1. Alignment: every input is resampled onto the first one's grid through their plate solutions (each workflow's
-   astrometry: wcs.fits): a pixel of the first grid goes to the sky, then into the other image (the reprojection of
-   the FITS World Coordinate System, Calabretta & Greisen 2002; the map computed on a coarse grid and interpolated,
-   then a bicubic resampling). Inputs of the same workflow (a dual-band image's channels) need none.
+1. Grid: the inputs must be on one pixel grid (those of the same workflow, a dual-band image's channels, are; images
+   of other workflows are once an Align on block, placed after their Stacking, brought them onto the first one's). The
+   combination aligns nothing itself: inputs not on one grid are refused, naming them.
 2. Each channel is its input's luminance (a monochrome image's grey), or one of its colours (``R``, ``G``, ``B``), or
    ``GB`` (the mean of green and blue: the O III of a dual-band filter on a colour sensor, whose green and blue pixels
    both see the 501 nm line).
@@ -54,7 +53,8 @@ nebulosity included, so it differs from one filter to the other by what the nebu
 a factor ten to twenty times larger for a weak S II than for an H-alpha: a few tenths of a percent of offset in the S II
 became a red or cyan cast of the whole sky (set 56: 8 times the sky's own noise).
 
-The result's valid area is where every input has data. Its scale: the first input's (its level kept).
+The result's valid area is where every input has data. Its scale: the first input's (its level kept). Any workflow may
+feed any port; a port with no workflow is the empty state, and the block waits for it.
 """
 from __future__ import annotations
 
@@ -105,6 +105,30 @@ def hue_palette(hues: tuple[float, ...]) -> list[list[float]]:
     return (cols * w[None]).round(6).tolist()
 
 
+#: the ports' names as the interface writes them
+PORT_NAMES = {"SII": "S II", "Ha": "Hα", "OIII": "O III"}
+
+
+#: the reasons a combination waits (the interface translates the templates, filling the names in)
+TO_WIRE = "{names} to wire"
+GRID_ONE = "{names} is not on the grid of {first}: place Align on after its Stacking"
+GRID_MANY = "{names} are not on the grid of {first}: place Align on after their Stacking"
+
+
+def grid_problem(inputs: list[dict], ports: tuple[str, ...]) -> str:
+    """Why a combination's inputs cannot be combined as they are ("" when they can): every input must be on the grid
+    of the first port's (``inputs``: dicts with a ``role`` and a ``grid``, equal for two images on one grid). The
+    combination aligns nothing: an Align on block placed after the Stacking of the others does."""
+    ins = sorted((i for i in inputs if i["role"] in ports), key=lambda i: ports.index(i["role"]))
+    if len(ins) < 2:
+        return ""
+    name = lambda r: PORT_NAMES.get(r, r)  # noqa: E731
+    off = [name(i["role"]) for i in ins[1:] if i.get("grid") != ins[0].get("grid")]
+    if not off:
+        return ""
+    return (GRID_MANY if len(off) > 1 else GRID_ONE).format(names=", ".join(off), first=name(ins[0]["role"]))
+
+
 def channel_of(lin: np.ndarray, channel: str) -> np.ndarray:
     """One channel of an input's linear image (3, H, W): its luminance (L), a colour, or the mean of green and blue."""
     if channel == "L":
@@ -112,30 +136,6 @@ def channel_of(lin: np.ndarray, channel: str) -> np.ndarray:
     if channel == "GB":
         return (0.5 * (lin[1] + lin[2])).astype(np.float32)
     return lin["RGB".index(channel)].astype(np.float32)
-
-
-def reprojection_map(wcs_ref, wcs_in, shape: tuple[int, int], step: int = 32):
-    """(map_x, map_y) float32 of the reference grid's pixels in the input image (cv2.remap): through the sky, on a
-    coarse grid spanning the image, interpolated by a bicubic spline."""
-    from scipy.interpolate import RectBivariateSpline
-    H, W = shape
-    ys = np.linspace(0, H - 1, max(4, int(np.ceil(H / step)) + 1))
-    xs = np.linspace(0, W - 1, max(4, int(np.ceil(W / step)) + 1))
-    gx, gy = np.meshgrid(xs, ys)
-    ra, dec = wcs_ref.all_pix2world(gx, gy, 0)
-    ix, iy = wcs_in.all_world2pix(ra, dec, 0)
-    yy, xx = np.arange(H, dtype=np.float64), np.arange(W, dtype=np.float64)
-    mx = RectBivariateSpline(ys, xs, ix, kx=3, ky=3)(yy, xx).astype(np.float32)
-    my = RectBivariateSpline(ys, xs, iy, kx=3, ky=3)(yy, xx).astype(np.float32)
-    return mx, my
-
-
-def warp(a: np.ndarray, wp, nearest: bool = False) -> np.ndarray:
-    """An image resampled through a reprojection map (reprojection_map)."""
-    import cv2  # OpenCV loaded when an image is resampled, not with the table
-    mx, my = wp
-    return cv2.remap(np.ascontiguousarray(a, np.float32), mx, my, cv2.INTER_NEAREST if nearest else cv2.INTER_CUBIC,
-                     borderMode=cv2.BORDER_CONSTANT, borderValue=0)
 
 
 def balance(ch: np.ndarray, valid: np.ndarray, pct: float) -> tuple[np.ndarray, float]:
@@ -269,7 +269,7 @@ def compose(chans: dict[str, np.ndarray], roles: tuple[str, ...], mat, noise: di
 
 class CombinationParams(StageParams):
     #: the inputs, set by the project (not keyed: their workflows' keys are): [{"role" (the port), "channel", "pid",
-    #: "image", "dir", "wcs"}], the first one the reference grid
+    #: "image", "dir", "wcs", "grid"}], the first one the reference grid
     inputs: list[dict] = P([], label="Inputs", level="internal",
                            help="The images of the workflows combined, the port each one feeds, and its channel.")
     #: the user's weight of each channel ({port: weight}, 1 by default): a channel too faint for the balance (its noise
@@ -321,7 +321,11 @@ class Combination(Stage):
         chans: dict[str, np.ndarray] = {}
         valid_all = None
         tops: dict[str, float] = {}
+        shapes: dict[str, list[int]] = {}
         inputs = [i for i in p.inputs if i["role"] in self.ports]
+        bad = grid_problem(inputs, self.ports)
+        if bad:
+            raise StageError(bad)
         for n, inp in enumerate(inputs):
             d = Path(inp["dir"])
             image = inp.get("image", "output")
@@ -333,22 +337,16 @@ class Combination(Stage):
             valid = np.load(d / "valid.npy")
             ch = channel_of(np.asarray(np.load(d / name, mmap_mode="r")), inp.get("channel", "L"))
             wcs_f = Path(inp.get("wcs") or "")
-            src = str(inp.get("pid", d))
             if not ref:
-                ref = {"shape": ch.shape, "wcs": WCS(fits.getheader(wcs_f)) if wcs_f.is_file() else None, "dir": d,
-                       "src": src}
-            wp = None
-            if src != ref["src"]:                          # another stack: through the plate solutions
-                if ref["wcs"] is None or not wcs_f.is_file():
-                    raise StageError("the channels come from different stacks: each needs its Astrometry (its plate "
-                                     "solution aligns it on the first channel)")
-                wp = reprojection_map(ref["wcs"], WCS(fits.getheader(wcs_f)), ref["shape"])
-                ch = warp(ch, wp)
-                ctx.log(f"{inp['role']}: aligned on the first channel through the plate solutions")
-            out_valid = valid if wp is None else warp(valid.astype(np.float32), wp, nearest=True) > 0.5
-            valid_all = out_valid if valid_all is None else (valid_all & out_valid)
+                ref = {"shape": ch.shape, "wcs": WCS(fits.getheader(wcs_f)) if wcs_f.is_file() else None, "dir": d}
+            shapes[inp["role"]] = list(ch.shape)
+            valid_all = valid if valid_all is None else (valid_all & valid)
             chans[inp["role"]] = ch
             ctx.progress(0.6 * (n + 1) / len(inputs), f"channel {inp['role']}")
+        # a safety net: the grids said alike, the sizes did not
+        bad = grid_problem([{"role": r, "grid": s} for r, s in shapes.items()], self.ports)
+        if bad:
+            raise StageError(bad)
         if not valid_all.any():
             raise StageError("the channels do not overlap: no pixel where every one has data")
         skies = neutralise_sky(chans, valid_all)
@@ -515,9 +513,10 @@ def upgraded_workflow(w: dict) -> dict:
     The source keeps its inputs that are ports of the type (in their order: the first stays the reference grid); the
     palette becomes the hues; the weights and the stored settings go to the block's parameters; a fusion without its
     stars taken off had no colour smoothing (smoothing Radius, 0), one with them had it from the noise (Auto, the
-    default). Its option A (the channels' starless images, a star layer from the channels or another workflow) goes:
-    the block reads the channels' Outputs, and its Stars/background block, already after it, takes the stars off the
-    combined image with its network, for the Combine layers block that took them."""
+    default). Its option A (the channels' starless images, a star layer from the channels or another workflow) is
+    made into inputs reading the starless images and a Combine layers layer with its stars side
+    (core/project2._stars_of_former_fusions, which runs before this); a Stars/background block already after the
+    combination stays."""
     f = (w.get("source") or {}).get("fusion") if isinstance(w.get("source"), dict) else None
     if not isinstance(f, dict) or "palette" not in f or f["palette"] not in FORMER_PALETTES:
         return w
@@ -534,7 +533,8 @@ def upgraded_workflow(w: dict) -> dict:
     if mine:
         params[cls.name] = mine
     w["params"] = params
-    ins = [{"pid": i["pid"], "role": i["role"], "channel": i.get("channel", "L")} for i in f.get("inputs") or []
+    ins = [{"pid": i["pid"], "role": i["role"], "channel": i.get("channel", "L")}
+           | ({"image": i["image"]} if i.get("image") in IMAGES else {}) for i in f.get("inputs") or []
            if i.get("role") in cls.ports]
     w["source"] = {"fusion": {"type": kind, "inputs": ins}}
     return w

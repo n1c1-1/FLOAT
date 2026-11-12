@@ -188,6 +188,8 @@ _METRIC_ROWS: list[tuple] = [
     ("factor", "Value factor", "", "g", "Factor the image's values were multiplied by (65535 for values in 0-1)."),
     # the combinations of filters (issue #43, stages/combine.py)
     ("channels", "Channels", "", "", "The filters combined.", ", "),
+    # the Align on block (issue #165)
+    ("matched_stars", "Stars matched", "", "d", "Stars of the image matched to the reference's, to align it."),
     ("chroma_sigma", "Colour smoothing", "px", ".1f", "Radius the colour was smoothed at, from the filters' noise; the "
                                                       "lightness keeps its full detail."),
     # register
@@ -328,7 +330,11 @@ VALUE_TEXTS: dict[str, str] = {
 #: texts of the interface the formatting needs
 #: the hover of a colour stars' magnitude limit bounded by the star spectra installed (api._bounded_by_spectra)
 SPECTRA_CUT_TIP = "The star spectra installed on this computer go no fainter than this."
-UI_TEXTS = ("Yes", "No", "{n} values", SPECTRA_CUT_TIP)
+#: why a block waits for an input (issue #165): the reasons the planner gives for a combination or an Align on block
+WIRING_TEXTS = ("reference to wire", "{names} to wire", "{names} is not on the grid of {first}: place Align on after its "
+                "Stacking", "{names} are not on the grid of {first}: place Align on after their Stacking",
+                "the stack has no plate solution yet (Astrometry comes after)")
+UI_TEXTS = ("Yes", "No", "{n} values", SPECTRA_CUT_TIP, *WIRING_TEXTS)
 #: values with a number in them: (regular expression, English template, names of the numeric groups)
 VALUE_PATTERNS: list[tuple[re.Pattern, str, tuple[str, ...]]] = [
     (re.compile(r"^camera profile \((?P<project>.*)\)$"), "camera profile ({project})", ()),
@@ -457,6 +463,8 @@ def format_metric(key: str, value: Any, lang: str = "en") -> str:
 CHOICE_TEXTS: dict[str, str] = {
     "auto": "Automatic", "none": "None", "nsns": "NSNS", "finkbeiner": "Finkbeiner",
     "main": "Main GPU", "aux": "Second GPU",
+    # the Align on block's methods (stages/align_on.py)
+    "stars": "Stars", "plate": "Plate solutions",
     # the stacking settings (stages/stack.py)
     "thresholds": "Thresholds", "sota": "k × σ filters", "on": "On", "off": "Off",
     "min_weight": "Automatic", "own": "On the raw pixels", "integration": "From the classic stack's rejection",

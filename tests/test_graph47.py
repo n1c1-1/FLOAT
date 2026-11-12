@@ -236,3 +236,94 @@ def test_a_block_placed_twice_runs_for_real_each_in_its_own_folder(tmp_path, sec
         m = json.loads((store.dir(stage, key) / "manifest.json").read_text(encoding="utf-8"))
         assert m["status"] == "done" and m["key"] == key
     assert not (p.root / "store" / "_absent").exists()
+
+
+# ---------------------------------------------------------------------------------------------- Align on (issue #165)
+
+def test_align_on_is_placed_right_after_stacking_or_the_image_and_once():
+    g = wfl.with_output(wfl.from_options(TEMPLATES["Classic stack"], None, "frames"))
+    names = [n["block"] for n in g]
+    at = names.index("stacking") + 1
+    assert wfl.places(g, "frames", "align_on") == [at]                    # only right after Stacking
+    assert wfl.place_problem(g, "frames", "align_on", at + 1).template == wfl.WHY_ALIGN_PLACE
+    with_it = g[:at] + [node("align_on", reference=3)] + g[at:]
+    wfl.check_blocks(with_it, "frames")
+    assert wfl.place_problem(with_it, "frames", "align_on", at + 1).template == wfl.WHY_ONCE
+    assert wfl.default_place(g, "align_on") == at
+    for source in ("image", "stretched"):                                  # first in the graph, also from a stretched image
+        assert wfl.places([], source, "align_on") == [0]
+    assert wfl.places([node("stars")], "stretched", "align_on") == [0]
+    assert wfl.place_problem([], "fusion", "align_on", 0).template == wfl.WHY_SOURCE   # never in a combination
+    for bad in (True, "x", 1.5):
+        with pytest.raises(ValueError, match="workflow's id"):
+            node("align_on", reference=bad)
+    with pytest.raises(ValueError, match="no reference"):
+        node("gradient", reference=2)
+    n = node("align_on")
+    assert n["reference"] is None and n["method"] == "stars" and wfl.node("align_on", "plate")["method"] == "plate"
+    with pytest.raises(ValueError, match="method"):
+        node("align_on", "magic")
+
+
+def test_the_blocks_after_align_on_read_the_aligned_image_and_its_keys_follow_the_reference(tmp_path, nights):
+    p = project(tmp_path / "p", nights)
+    a = p.add_workflow("A", TEMPLATES["Classic stack"])
+    b = p.add_workflow("B", TEMPLATES["Classic stack"])
+    b.sessions = [2]
+    assert Keys(p).grid(b.id) != Keys(p).grid(a.id)                          # other frames: another grid
+    project2._add_align_on(p, b, a.id, "stars")
+    k = Keys(p)
+    chain = k.chain(b.id)
+    assert chain[chain.index("stack") + 1] == "align_on" and "align_on" not in k.chain(a.id)
+    assert k.deps(b.id, "align_on") == ("stack",)
+    for later in ("astrometry", "gradient", "color", "render_simple"):      # they read the aligned image, not the stack
+        assert "align_on" in k.deps(b.id, later) and "stack" not in k.deps(b.id, later), later
+    assert k.deps(a.id, "astrometry") == ("inventory", "stack")             # a workflow without the block: as before
+    assert k.cross_inputs(b.id, "align_on") == [(a.id, "stack")] and k.cross_inputs(a.id, "stack") == []
+    assert k.wiring_problem(b.id, "align_on") == "" and k.reference_of(b.id) == a.id
+    assert k.grid(b.id) == k.grid(a.id)                                       # the reference's grid
+    before = k.key(b.id, "align_on")
+    a.params["stack"] = {"kappa": 6}                                          # the reference's image changes
+    assert Keys(p).key(b.id, "align_on") != before
+    a.params.pop("stack")
+    assert Keys(p).key(b.id, "align_on") == before
+    next(n for n in b.blocks if n["block"] == "align_on")["method"] = "plate"       # its own method, set on its node
+    assert Keys(p).key(b.id, "align_on") != before
+    ov = Keys(p).overrides(b.id, "align_on")
+    assert ov["method"] == "plate" and ov["reference"]["pid"] == a.id
+    assert ov["reference"]["dir"].endswith(Keys(p).key(a.id, "stack"))
+    assert ov["reference"]["wcs"] == "" and ov["reference"]["path"] == ""          # stacks: no plate solution in a file
+    # a block not wired yet: nothing to read, said plainly; the graph is valid
+    b.blocks[b.blocks.index(next(n for n in b.blocks if n["block"] == "align_on"))]["reference"] = None
+    k2 = Keys(p)
+    assert k2.wiring_problem(b.id, "align_on") == "reference to wire" and k2.cross_inputs(b.id, "align_on") == []
+    p.validate()
+
+
+def test_a_stage_after_align_on_is_handed_the_aligned_folder_and_the_block_itself_the_entry(tmp_path, nights):
+    from astro_gpu.core.store import StoreProject
+    p = project(tmp_path / "p", nights)
+    a = p.add_workflow("A", TEMPLATES["Classic stack"])
+    b = p.add_workflow("B", TEMPLATES["Classic stack"])
+    project2._add_align_on(p, b, a.id, "stars")
+    k = Keys(p)
+    store = project2.Path(p.root) / "store"
+    mine = StoreProject(k, b.id, "astrometry")
+    assert mine.stage_dir("stack") == mine.dirs["align_on"] and mine.stage_dir("align_on") == mine.dirs["align_on"]
+    assert mine.dirs["align_on"].parent == store / "align_on"
+    own = StoreProject(k, b.id, "align_on")
+    assert own.stage_dir("stack") == own.dirs["stack"] and own.redirect == {}      # the block reads the entry itself
+    before = StoreProject(k, b.id, "register")
+    assert before.redirect == {}
+    other = StoreProject(k, a.id, "astrometry")
+    assert other.stage_dir("stack") == other.dirs["stack"]                           # a workflow without the block
+    # from an image file, also a stretched one: the stage that stands for the stack and the output reads it
+    im = p.add_workflow("I", TEMPLATES["Classic stack"])
+    im.source = {"path": str(tmp_path / "x.fits"), "stretched": True}
+    im.blocks = wfl.check_blocks([node("align_on", reference=a.id), node("stars")], "stretched")
+    kk = Keys(p)
+    assert kk.chain(im.id) == ["image", "align_on", "star_removal"]
+    assert kk.deps(im.id, "star_removal") == ("align_on",)
+    sp = StoreProject(kk, im.id, "star_removal")
+    assert sp.stage_dir("stack") == sp.dirs["align_on"] and sp.stage_dir("render_simple") == sp.dirs["align_on"]
+    assert sp.stage_dir("image") == sp.dirs["align_on"]

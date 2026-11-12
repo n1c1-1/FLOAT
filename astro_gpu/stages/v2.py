@@ -46,17 +46,20 @@ KEY_CONSTANTS: dict[str, dict[str, object]] = {
 NON_KEY: dict[str, frozenset[str]] = {
     "calibrate": frozenset({"workers"}),
     "register": frozenset({"workers"}),
-    "image": frozenset({"path", "align_to"}),                    # the file is keyed by its name, size and date (core/store.py)
+    "image": frozenset({"path"}),                                # the file is keyed by its name, size and date (core/store.py)
+    "align_on": frozenset({"reference"}),                        # the reference workflow's keys stand for it (core/store.py)
 }
 from .combine import STAGES as _COMBINE  # noqa: E402 (the combinations' stages)
 
 # a combination's inputs' folders: their workflows' keys stand for them (core/store.source_part)
 NON_KEY.update({st: frozenset({"inputs"}) for st in _COMBINE})
 #: the stages only v2 workflows have (issue #43: the sessions' join and the image source)
-NEW_STAGES = ("gradient", "render_simple", "star_removal", "sessions", "image", *_COMBINE, "deconv", "synth_stars")
+NEW_STAGES = ("gradient", "render_simple", "star_removal", "sessions", "image", "align_on", *_COMBINE, "deconv",
+              "synth_stars")
 
 
 def new_stages() -> list[Stage]:
+    from .align_on import AlignOn
     from .combine import COMBINATIONS
     from .deconv import Deconv
     from .gradient import Gradient
@@ -65,8 +68,8 @@ def new_stages() -> list[Stage]:
     from .sessions import Sessions
     from .star_removal import StarRemoval
     from .synth_stars import SynthStars
-    return [Gradient(), RenderSimple(), StarRemoval(), Sessions(), ImageSource(), *(c() for c in COMBINATIONS), Deconv(),
-            SynthStars()]
+    return [Gradient(), RenderSimple(), StarRemoval(), Sessions(), ImageSource(), AlignOn(), *(c() for c in COMBINATIONS),
+            Deconv(), SynthStars()]
 
 
 def V2_STAGES() -> list[Stage]:            # noqa: N802 (a table, built on first use: it imports every stage)

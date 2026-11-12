@@ -189,6 +189,7 @@ class Planner:
         #: the keys that cannot run here (their data of the sky, or a result they read, is missing) and why;
         #: {workflow: {stage: why}} of the steps that lack the data themselves (core/sky_data.py)
         self.blocked: dict[str, str] = {}
+        self.wiring: set[str] = set()         # the reasons that are an input to wire (said for every block after it)
         self.left_out: dict[int, dict[str, str]] = {}
 
     @property
@@ -265,6 +266,8 @@ class Planner:
             why = self.need(w, d, as_input=True)
             if why:                                     # a result it reads cannot be made here: neither can it
                 self.blocked[k] = why
+                if why in self.wiring:                  # an input to wire is left out with everything after it
+                    self.left_out.setdefault(w.id, {})[stage] = why
                 own = self.lacks(w, stage)              # and it needs data of the sky itself: said for it too, so that
                 if own:                                 # its block is marked, not only the earlier one (#161: Color)
                     self.left_out.setdefault(w.id, {})[stage] = own
@@ -275,13 +278,18 @@ class Planner:
             self.blocked[k] = why
             return why
         others = {}
-        if base(stage) in wfl.COMBINE:              # a combination reads other workflows' results: computed first
-            for pid, st in self.keys.fusion_inputs(w):
-                why = self.need(pid, st, as_input=True)
-                if why:
-                    self.blocked[k] = why
-                    return why
-                others[f"{st}#{pid}"] = self.keys.key(pid, st)
+        why = self.keys.wiring_problem(w, stage)
+        if why:                                         # an input to wire: left out with what follows (issue #165)
+            self.left_out.setdefault(w.id, {})[stage] = why
+            self.blocked[k] = why
+            self.wiring.add(why)
+            return why
+        for pid, st in self.keys.cross_inputs(w, stage):    # other workflows' results are computed first
+            why = self.need(pid, st, as_input=True)
+            if why:
+                self.blocked[k] = why
+                return why
+            others[f"{st}#{pid}"] = self.keys.key(pid, st)
         e = est.estimate(base(stage), self._facts_of(w), self.gpu, self.history)
         part = 1.0
         if session_of(stage) is not None:                # one session's share of the project's frames (issue #43)
