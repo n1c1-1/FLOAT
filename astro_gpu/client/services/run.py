@@ -380,6 +380,17 @@ PATTERNS: list[tuple[re.Pattern, str, tuple]] = [
         (r"^Asterion cannot run \((.+)\): FLOAT's own search finds the field$",
          "Asterion cannot run ({0}): FLOAT's own search finds the field", ()),
         (r"^(\d+) Gaia stars G < ([\d.]+) in the field$", "{0} Gaia stars G < {1} in the field", ()),
+        # the Color block's fallback and why the stars cannot calibrate the colours (stages/color.py)
+        (r"^Star calibration impossible \((\d+) stars, (\d+) needed\): fallback balance used$",
+         "Star calibration impossible ({0} stars, {1} needed): fallback balance used", ()),
+        (r"^only (\d+) of the (\d+) stars with spectra in this field could be measured \(minimum (\d+)\)$",
+         "only {0} of the {1} stars with spectra in this field could be measured (minimum {2})", ()),
+        (r"^only (\d+) star spectra of this field are on this computer \(minimum (\d+)\): install the star spectra: "
+         r"Settings › Catalogs & astrometry$",
+         "only {0} star spectra of this field are on this computer (minimum {1}): install the star spectra: Settings › "
+         "Catalogs & astrometry", ()),
+        (r"^only (\d+) stars with spectra in this field \(minimum (\d+)\)$",
+         "only {0} stars with spectra in this field (minimum {1})", ()),
         (r"^background noise divided by ([\d.]+)$", "background noise divided by {0}", ()),
         (r"^resuming the training at step (\d+)/(\d+)$", "resuming the training at step {0}/{1}", ()),
         (r"^training done in ([\d.]+) min, final loss ([\d.]+)$", "training done in {0} min, final loss {1}", ()),
@@ -439,6 +450,7 @@ class JobState:
     duration: float | None = None
     error: str = ""
     reused: bool = False                         # found done and usable: nothing was computed
+    fallback: str = ""                           # done with its declared fallback: why (core/stage.Context.fallback)
     upstream: list[str] = field(default_factory=list)        # stages whose failure skipped it
     last_norm: str | None = None                 # what the last console line of its progress said
     last_decile: int = -1
@@ -567,7 +579,9 @@ class RunTrack:
                 j.duration = float(e["duration"])
             if status == "done":
                 j.state, j.frac, j.reused = DONE, 1.0, bool(e.get("reused"))
-                self._say(out, t, "stage_reused" if j.reused else "stage_done", stage=j.stage, sec=j.duration or 0.0)
+                j.fallback = str(e.get("fallback") or "")
+                self._say(out, t, "stage_reused" if j.reused else "stage_done", stage=j.stage, sec=j.duration or 0.0,
+                          fallback=j.fallback)
             elif status == "failed":
                 j.state, j.error = FAILED, str(e.get("error") or j.error or "")
                 self._say(out, t, "stage_failed", stage=j.stage, error=j.error)
@@ -638,13 +652,14 @@ class RunTrack:
         for j in self.jobs:
             c[j.state] += 1
         c["reused"] = sum(1 for j in self.jobs if j.reused)
+        c["fallback"] = sum(1 for j in self.jobs if j.state == DONE and j.fallback)
         c["computed"] = c[DONE] - c["reused"]
         return c
 
     def block_count(self) -> dict[str, int]:
         """What ``count`` says, by block (``groups``; #3): a block is done when all its jobs are (computed when one of
         them was), failed when one of them failed, not run when none of them ran, stopped when one was stopped."""
-        c = {DONE: 0, FAILED: 0, INTERRUPTED: 0, "notrun": 0, "computed": 0}
+        c = {DONE: 0, FAILED: 0, INTERRUPTED: 0, "notrun": 0, "computed": 0, "fallback": 0}
         for keys in self.groups or [[j.key] for j in self.jobs]:
             js = [self.by_key[k] for k in keys if k in self.by_key]
             st = {j.state for j in js}
@@ -657,6 +672,7 @@ class RunTrack:
             elif st == {DONE}:
                 c[DONE] += 1
                 c["computed"] += any(not j.reused for j in js)
+                c["fallback"] += any(j.fallback for j in js)      # done, one of its jobs with its fallback
             elif st <= {SKIPPED, NOT_STARTED}:
                 c["notrun"] += 1
         return c
@@ -788,10 +804,11 @@ def render_line(line: Line, title=lambda stage: stage) -> str:
     elif kind == "log":
         what = {"error": "{stage} · error: {msg}", "warning": "{stage} · warning: {msg}"}.get(d["level"], "{stage} · {msg}")
         text = _(what).format(stage=stage, msg=engine_text(d["msg"])) if stage else d["msg"]
-    elif kind == "stage_done":
-        text = _("{stage} · done in {t}").format(stage=stage, t=hm(d["sec"]))
-    elif kind == "stage_reused":
-        text = _("{stage} · already computed").format(stage=stage)
+    elif kind in ("stage_done", "stage_reused"):
+        text = (_("{stage} · done in {t}").format(stage=stage, t=hm(d["sec"])) if kind == "stage_done"
+                else _("{stage} · already computed").format(stage=stage))
+        if d.get("fallback"):                    # done with its declared fallback: why
+            text += " · " + _("fallback: {why}").format(why=engine_text(d["fallback"]))
     elif kind == "stage_failed":                 # in plain words; a program error keeps its own words after (2)
         err = (d["error"] or "").strip()
         plain = engine_text(err.splitlines()[0]) if err else ""
@@ -817,6 +834,8 @@ def render_line(line: Line, title=lambda stage: stage) -> str:
             text = plural(b[DONE], "Run stopped: {n} block done", "Run stopped: {n} blocks done")
         else:
             text = _("Run failed: {failed} failed, {skipped} not run").format(failed=b[FAILED], skipped=b["notrun"])
+        if b.get("fallback"):                    # the blocks done with their declared fallback, for the morning
+            text += " · " + plural(b["fallback"], "{n} block with fallback", "{n} blocks with fallback")
     elif kind == "paused":
         from ..blocks import review_title
         text = _("Review pause: {block} · Inspect, then Continue").format(

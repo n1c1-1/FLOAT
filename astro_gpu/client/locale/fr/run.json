@@ -270,5 +270,19 @@
  "first solution by Asterion in {0} s: {1}\"/px, {2} stars matched": "première solution par Asterion en {0} s : {1}\"/px, {2} étoiles appariées",
  "Asterion is not installed: FLOAT's own search finds the field": "Asterion n'est pas installé : la recherche propre à FLOAT trouve le champ",
  "Asterion found no solution in {0} s: FLOAT's own search finds the field": "Asterion n'a pas trouvé de solution en {0} s : la recherche propre à FLOAT trouve le champ",
- "Asterion cannot run ({0}): FLOAT's own search finds the field": "Asterion ne peut pas tourner ({0}) : la recherche propre à FLOAT trouve le champ"
+ "Asterion cannot run ({0}): FLOAT's own search finds the field": "Asterion ne peut pas tourner ({0}) : la recherche propre à FLOAT trouve le champ",
+ "Star calibration impossible ({0} stars, {1} needed): fallback balance used": "Calibration par les étoiles impossible ({0} étoiles, {1} nécessaires) : balance de repli utilisée",
+ "Field not identified: fallback balance used": "Champ non identifié : balance de repli utilisée",
+ "Field not identified: continued without plate solution": "Champ non identifié : poursuite sans solution astrométrique",
+ "Field not identified: sky samples chosen without the survey": "Champ non identifié : échantillons de ciel choisis sans le relevé",
+ "the field was not identified (Astrometry continued without plate solution): no star with a spectrum to calibrate the colours on": "le champ n'a pas été identifié (l'Astrométrie a continué sans solution astrométrique) : aucune étoile avec un spectre sur laquelle calibrer les couleurs",
+ "only {0} of the {1} stars with spectra in this field could be measured (minimum {2})": "seules {0} des {1} étoiles avec spectre de ce champ ont pu être mesurées (minimum {2})",
+ "only {0} star spectra of this field are on this computer (minimum {1}): install the star spectra: Settings › Catalogs & astrometry": "seuls {0} spectres d'étoiles de ce champ sont sur cet ordinateur (minimum {1}) : installez les spectres d'étoiles : Réglages › Catalogues et astrométrie",
+ "only {0} stars with spectra in this field (minimum {1})": "seulement {0} étoiles avec spectre dans ce champ (minimum {1})",
+ "the field was not identified (Astrometry continued without plate solution) and the focal length is not known: the instrument's star needs the scale of the image": "le champ n'a pas été identifié (l'Astrométrie a continué sans solution astrométrique) et la focale n'est pas connue : l'étoile de l'instrument a besoin de l'échelle de l'image",
+ "no plate solution (the field was not identified): no Gaia star placed on the image": "pas de solution astrométrique (le champ n'a pas été identifié) : aucune étoile Gaia placée sur l'image",
+ "fallback balance": "balance de repli",
+ "fallback: {why}": "repli : {why}",
+ "{n} block with fallback": "{n} bloc avec repli",
+ "{n} blocks with fallback": "{n} blocs avec repli"
 }

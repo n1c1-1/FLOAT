@@ -1706,6 +1706,8 @@ class PostView(QWidget):
                      "has one at the bottom")
         if st.state not in ("done", "stale"):
             return _("Astrometry is not computed yet for the image at the bottom")
+        if st.state == "done" and getattr(st, "fallback", ""):      # it continued without a solution (its fallback)
+            return _("The field of the image at the bottom was not identified: no plate solution to draw")
         return ""
 
     def _ann_buttons(self):

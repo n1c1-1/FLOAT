@@ -845,6 +845,13 @@ class RunDialog(QDialog):
                            else _("Not started: {blocks}")).format(blocks=", ".join(named[id(r)] for r in other)), ""))
         if failed and c[DONE]:
             lines.append((_("Independent blocks computed"), ""))
+        # the blocks done with their declared fallback (core/stage.Context.fallback), each with its reason: what the
+        # morning's reading must not miss
+        for r, js in by_row:
+            for why in dict.fromkeys(j.fallback for j in js if j.state == DONE and j.fallback):
+                lines.append((_("{block}: {why}").format(block=named[id(r)], why=engine_text(why)), WARN))
+                if t.status == "done":
+                    col = WARN
         if t.status == "failed" and not failed and t.error and not t.never_started:
             from .services.run import start_failure
             lines.append((_(start_failure(t.error)), BAD))     # never the worker's raw words (6.4)

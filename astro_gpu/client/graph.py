@@ -83,6 +83,7 @@ from .blocks import (
     BREAK_COL,
     BY_KEY,
     COMBINE_KINDS,
+    FALLBACK_WORD,
     FRAME_KEYS,
     IMAGE_KEYS,
     PAUSE_COL,
@@ -147,7 +148,7 @@ def stagger(i: int, k: int, above: bool) -> float:
 STAR_MAX = 260               # the star blocks' columns: as wide as their long names (issue #36)
 OUT_MAX = BW + 30           # the widest Output column: a longer workflow name loses its middle (whole in the tooltip)
 STATE_COL = {"done": OK, "pending": "#5d6470", "stale": WARN, "running": ACCENT, "failed": BAD,
-             "interrupted": WARN, "skipped": "#5d6470"}
+             "interrupted": WARN, "skipped": "#5d6470", "fallback": WARN}     # fallback: done with its declared fallback
 # the blocks whose output can go straight to the post: only where it gives an image no workflow already gives
 # (before the background step, an output still carries the sky gradient; astrometry does not change the image)
 EXITS = {"empilement"}
@@ -199,7 +200,7 @@ def block_what(node: Node, nights: str = "") -> str:
 
 class BlockItem(QGraphicsItem):
     def __init__(self, view, node: Node, title, summary, state, selected, dim, removable, w: float = BW, bp=None,
-                 inputs=()):
+                 inputs=(), fallback=()):
         super().__init__()
         self.view, self.node, self.w = view, node, w
         self.h = hgt(node)
@@ -211,6 +212,8 @@ class BlockItem(QGraphicsItem):
         self.warned = summary.startswith(WARN_MARK)
         summary = summary[len(WARN_MARK):] if self.warned else summary
         self.title, self.summary, self.state = title, summary, state
+        #: done with its declared fallback (Graph.fallback: the engine's reasons): drawn in orange, the reasons on hover
+        self.fallback = list(fallback) if state == "done" else []
         self.selected, self.dim, self.removable = selected, dim, removable
         self.bp = bp                           # None, or Graph.breakpoint: (state, workflows that pause here, of how many)
         self.hover = False
@@ -227,8 +230,12 @@ class BlockItem(QGraphicsItem):
         if node.key == "session" or (node.key == "sources" and len(view.s.sessions) == 1):
             sid = node.sid if node.sid is not None else view.s.sessions[0]["id"]
             nights = view.s.nights_text(sid) if hasattr(view.s, "nights_text") else ""
-        tip = f"{title}\n{block_what(node, nights)}{summary}" +("\n" + _(STATE_WORD[state]) if node.key not in
+        word = _(FALLBACK_WORD) if self.fallback else _(STATE_WORD[state])
+        tip = f"{title}\n{block_what(node, nights)}{summary}" +("\n" + word if node.key not in
                                                           ("sources", "final", "session") and not node.cut else "")
+        if self.fallback:                                 # why, in the engine's words translated
+            from .services.run import engine_text
+            tip += "".join("\n" + engine_text(w) for w in self.fallback)
         # a reason is a sentence of its own: its full stop is not doubled by the one after {why}
         if node.broken:
             tip += "\n" + _("Cannot run: {why}. Run is refused until it is fixed.").format(why=node.broken.rstrip("."))
@@ -342,7 +349,8 @@ class BlockItem(QGraphicsItem):
             p.drawRoundedRect(r.adjusted(-2, -2, 2, 2), 8, 8)
         if self.node.key not in ("sources", "final", "session") or self.state != "pending":
             p.setPen(Qt.NoPen)
-            p.setBrush(QColor(CUT_COL if self.node.cut else (GREY_COL if self.node.grey or self.node.waits else STATE_COL[self.state])))
+            p.setBrush(QColor(CUT_COL if self.node.cut else (GREY_COL if self.node.grey or self.node.waits else
+                                                             STATE_COL["fallback" if self.fallback else self.state])))
             path = QPainterPath()
             path.addRoundedRect(QRectF(0, 0, 8, self.h), 4, 4)
             clip = QPainterPath()
@@ -353,7 +361,8 @@ class BlockItem(QGraphicsItem):
         p.setFont(f)
         p.setPen(QColor("#e8ebf0"))
         mark = ("failed", "error") if self.node.broken else ("off", "dim") if self.node.cut else \
-            ("not_computable", "warning") if self.node.grey or self.node.missing or self.node.waits else None
+            ("not_computable", "warning") if self.node.grey or self.node.missing or self.node.waits else \
+            ("warning", "warning") if self.fallback else None
         x0 = 11 + (20 if mark else 0) + self.name_w       # the block's state and its inputs' names, before its title
         tw = w - 7 - x0 - (18 if self.removable and self.hover else 0)
         # a workflow's name loses its middle (two variants differ at their end; the whole name is in the tooltip), the
@@ -1223,7 +1232,8 @@ class GraphView(QGraphicsView):
                 and cur not in n.paths
             it = BlockItem(self, n, title, g.summary(n), g.state(n), n is sel or (sel is not None and n.key ==
                            "composition" and sel.key == "composition" and n.lid == sel.lid), dim, removable, n.w,
-                           g.breakpoint(n), self._inputs_of(g, n) if n.key in ("fusion", "composition", "align_on") else ())
+                           g.breakpoint(n), self._inputs_of(g, n) if n.key in ("fusion", "composition", "align_on") else (),
+                           g.fallback(n))
             it.setPos(n.col, n.y - hgt(n) / 2)
             it.setZValue(5)
             sc.addItem(it)

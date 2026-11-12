@@ -208,6 +208,7 @@ CATALOG = {
             E("astrometry", "pixel_um", "expert", help="Pixel size of the sensor; empty = read from the files."),
             E("astrometry", "scale", "expert", help="Arcseconds per pixel; empty = computed."),
         ]),
+        ("Fallback", [E("astrometry", "on_failure")]),
         ("H-alpha survey", [
             E("surveys", "survey", help="The professional H-alpha map of the field: where the faint nebulosity is, so "
                                         "that the Gradient block takes no sky sample there."),
@@ -232,6 +233,7 @@ CATALOG = {
         ("Color measurement", [
             E("color", "aperture", "expert", help="Radius of the light measurement of each star."),
         ]),
+        ("Fallback", [E("color", "on_failure"), E("color", "min_stars")]),
         ("Color stars (Gaia)", [
             E("catalogs", "xp_gmin", "expert", help="Magnitude of the brightest star used for the color."),
             E("catalogs", "xp_gmax", "expert", help="Magnitude of the faintest."),

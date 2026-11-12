@@ -571,5 +571,7 @@
   "A monochrome camera: each filter gets its own workflow, the others aligned on the first one, and each result is a layer of Post.": "Une caméra monochrome : chaque filtre a son workflow, les autres alignés sur le premier, et chaque résultat est un calque de Post.",
   "Each filter's workflow with denoise, the others aligned on the first one, then the combination of the filters chosen here makes the colour image.": "Le workflow de chaque filtre avec réduction du bruit, les autres alignés sur le premier, puis la combinaison des filtres choisis ici fait l'image couleur.",
   "The nebula from the narrow bands, the stars from a colour camera: each filter's workflow and a colour workflow take their stars off, the others aligned on the first filter; the combination reads the starless images, and a Combine layers block puts the colour stars back on its image.": "La nébuleuse des bandes étroites, les étoiles d'une caméra couleur : le workflow de chaque filtre et un workflow couleur retirent leurs étoiles, les autres alignés sur le premier filtre ; la combinaison lit les images sans étoiles, et un bloc Combiner calques remet les étoiles couleur sur son image.",
-  "Starless": "Sans étoiles"
+  "Starless": "Sans étoiles",
+  "Done with fallback": "Fait avec repli",
+  "not identified · no solution": "non identifié · sans solution"
 }

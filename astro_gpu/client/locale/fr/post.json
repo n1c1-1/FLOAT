@@ -259,5 +259,6 @@
   "Magenta · luminance": "Magenta · luminance",
   "Colour mixer": "Mélangeur de couleurs",
   "Background protection": "Protection fond",
-  "Hue, saturation and luminance of eight colour ranges in CIE L*c*h*, as the colour mixers of photo editors; the grey background and white star cores left alone": "Teinte, saturation et luminance de huit plages de couleur en CIE L*c*h*, comme les mélangeurs de couleurs des logiciels photo ; le fond gris et le cœur blanc des étoiles laissés tels quels"
+  "Hue, saturation and luminance of eight colour ranges in CIE L*c*h*, as the colour mixers of photo editors; the grey background and white star cores left alone": "Teinte, saturation et luminance de huit plages de couleur en CIE L*c*h*, comme les mélangeurs de couleurs des logiciels photo ; le fond gris et le cœur blanc des étoiles laissés tels quels",
+  "The field of the image at the bottom was not identified: no plate solution to draw": "Le champ de l'image du bas n'a pas été identifié : aucune solution astrométrique à dessiner"
 }

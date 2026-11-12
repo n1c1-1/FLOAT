@@ -726,3 +726,88 @@ def test_a_progress_never_goes_back_nor_reaches_100_before_the_end(tmp_path):
     assert max(block) < 1.0 and max(whole) < 1.0 and min(seen) > 0.0
     t.apply([{"type": "stage_end", "t": 101.0, "key": "k1", "stage": "calibrate", "status": "done", "duration": 101.0}])
     assert t.progress([t.by_key["k1"]], 101.0) == 1.0
+
+
+# ---------------------------------------------------------------------------------------------- done with fallback
+FIELD_WHY = "Field not identified: continued without plate solution"
+
+
+def test_a_block_done_with_its_fallback_is_orange_with_its_reason_and_never_a_failure(qapp):
+    """A block whose stage took its declared fallback (the API's state "done", with its reason): the graph draws its bar
+    in orange with the warning mark, its tooltip says "Done with fallback" and why, in French too; a block done the
+    usual way, or not done, keeps its state."""
+    from PySide6.QtGui import QColor, QImage, QPainter
+
+    from astro_gpu.api import StageState
+    from astro_gpu.client.blocks import Graph, Node, block_fallback
+    from astro_gpu.client.graph import STATE_COL, BlockItem
+    from astro_gpu.client.widgets import OK, WARN
+    p = SimpleNamespace(pid=1)
+    states = {"astrometry": StageState("done", "", "k1", fallback=FIELD_WHY), "reference": StageState("done", "", "k2"),
+              "catalogs": StageState("done", "", "k3"), "color": StageState("done", "", "k4")}
+    s = SimpleNamespace(all_stages=lambda q: list(states), state_info=lambda q, st: states.get(st))
+    assert block_fallback(s, p, "astrometrie") == [FIELD_WHY] and block_fallback(s, p, "couleur") == []
+    node = Node("astrometrie", [p])
+    assert Graph.fallback(SimpleNamespace(s=s, state=lambda n: "done"), node) == [FIELD_WHY]
+    assert Graph.fallback(SimpleNamespace(s=s, state=lambda n: "stale"), node) == []          # not done: its state
+
+    def bar(item) -> QColor:
+        img = QImage(int(item.w) + 20, int(item.h) + 20, QImage.Format_ARGB32)
+        img.fill(0)
+        pt = QPainter(img)
+        item.paint(pt, None)
+        pt.end()
+        return img.pixelColor(1, int(item.h / 2))
+    item = BlockItem(SimpleNamespace(), node, "Astrometry", "not identified · no solution", "done", False, False, False,
+                     fallback=[FIELD_WHY])
+    tip = item.toolTip()
+    assert "Done with fallback" in tip and FIELD_WHY in tip and "Up to date" not in tip
+    assert bar(item).name() == QColor(WARN).name() == QColor(STATE_COL["fallback"]).name()
+    plain = BlockItem(SimpleNamespace(), node, "Astrometry", "solved", "done", False, False, False)
+    assert bar(plain).name() == QColor(OK).name() and "Up to date" in plain.toolTip()
+    stale = BlockItem(SimpleNamespace(), node, "Astrometry", "", "stale", False, False, False, fallback=[FIELD_WHY])
+    assert not stale.fallback and "Outdated" in stale.toolTip()
+    i18n.set_language("fr")
+    try:
+        tip = BlockItem(SimpleNamespace(), node, "Astrométrie", "", "done", False, False, False,
+                        fallback=[FIELD_WHY, "Star calibration impossible (42 stars, 50 needed): fallback balance used"]
+                        ).toolTip()
+        assert "Fait avec repli" in tip and "Champ non identifié : poursuite sans solution astrométrique" in tip
+        assert "Calibration par les étoiles impossible (42 étoiles, 50 nécessaires) : balance de repli utilisée" in tip
+    finally:
+        i18n.set_language("en")
+
+
+def test_the_run_log_and_recap_list_the_blocks_done_with_fallback(world):
+    """The night's run: a block done with its fallback is a warning line of the log, its end says why, the run's last
+    line counts it, and the recap the user reads in the morning lists it with its reason, in orange; the run is done,
+    never failed, and no window pops up (the recap is in the run window)."""
+    from astro_gpu.client.widgets import WARN
+    w = world()
+    plan = w.m.plan_all()
+    k = {j.stage: j.key for j in plan.jobs}
+    t = RunTrack.of_plan(plan, "r1")
+    t.plan, t.groups = plan, w.ctl.groups(plan)
+    why = "Field not identified: sky samples chosen without the survey"
+    evs = [{"t": 1.0, "type": "run_start", "run": "r1", "device": "cpu", "pid": 1}]
+    for i, j in enumerate(plan.jobs):
+        evs.append({"t": 2.0 + i, "type": "stage_start", "run": "r1", "stage": j.stage, "key": j.key})
+        if j.stage == "gradient~2":
+            evs.append({"t": 2.1 + i, "type": "log", "run": "r1", "stage": "gradient", "key": j.key, "level": "warning",
+                        "msg": why, "fallback": True})
+        evs.append({"t": 2.5 + i, "type": "stage_end", "run": "r1", "stage": j.stage, "key": j.key, "status": "done",
+                    "duration": 0.5, **({"fallback": why} if j.stage == "gradient~2" else {})})
+    evs.append({"t": 50.0, "type": "run_end", "run": "r1", "status": "done"})
+    t.apply(evs)
+    assert t.status == "done" and t.by_key[k["gradient~2"]].fallback == why and t.count()["fallback"] == 1
+    assert t.block_count()["fallback"] == 1 and t.block_count()[DONE] == len(t.groups)
+    lines = [render_line(x) for x in t.lines]
+    assert any(x.endswith(f"warning: {why}") for x in lines)
+    assert any(x.endswith(f"done in 0 min · fallback: {why}") or f"· fallback: {why}" in x for x in lines)
+    assert lines[-1].endswith("· 1 block with fallback") and "Run finished" in lines[-1]
+    d = RunDialog(w.m, plan, "Run", track=t)
+    d.refresh()
+    shown = {lb.text(): lb.styleSheet() for lb in d.recap_area.widget().findChildren(QLabel)}
+    assert f"Gradient 2: {why}" in shown and WARN in shown[f"Gradient 2: {why}"], shown
+    assert not any(x.startswith("Gradient 1:") for x in shown)
+    d.close()

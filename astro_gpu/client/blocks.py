@@ -100,6 +100,8 @@ FRAME_KEYS = ["calibration", "alignement", "selection", "crop", "empilement"]
 # every state a block can be in: up to date, pending, outdated, and what a run adds
 STATE_WORD = {"done": "Up to date", "pending": "Not computed yet", "stale": "Outdated", "running": "Running",
               "failed": "Failed", "interrupted": "Interrupted", "skipped": "Skipped"}
+#: a block done with its declared fallback (Graph.fallback): drawn in orange, its reasons after this
+FALLBACK_WORD = "Done with fallback"
 # worst first: a block is as bad as its worst stage in any of its workflows
 STATE_ORDER = ["running", "failed", "interrupted", "stale", "skipped", "pending", "done"]
 
@@ -343,6 +345,19 @@ def block_state(s, p, key: str) -> str:
         return "done"
     states = {s.state(p, x) for x in st}
     return next((w for w in STATE_ORDER if w in states), "pending")
+
+
+def block_fallback(s, p, key: str) -> list[str]:
+    """Why the stages of a block, done, took their declared fallback in one workflow (core/stage.Context.fallback: the
+    engine's words, each once); [] when they did their usual work."""
+    info = getattr(s, "state_info", None)
+    out: list[str] = []
+    for x in run_stages(s, p, key) if info is not None else ():
+        st = info(p, x)
+        why = getattr(st, "fallback", "") if st is not None and st.state == "done" else ""
+        if why and why not in out:
+            out.append(why)
+    return out
 
 
 def block_seconds(s, p, key: str) -> float:
@@ -757,6 +772,17 @@ class Graph:
                    if st != "skipped"}                    # skipped for a failure elsewhere: the block itself is done
         return next((w for w in STATE_ORDER if w in states), "pending")
 
+    def fallback(self, node: Node) -> list[str]:
+        """Why a block done took its declared fallback, in any workflow going through it (the engine's words, each
+        once): the graph draws it in orange with these reasons in its tooltip; [] for a block that did its usual work."""
+        if node.key in ("sources", "final", "session", "composition") or node.sid is not None or node.grey or \
+                node.cut or self.state(node) != "done":
+            return []
+        out: list[str] = []
+        for p in node.paths:
+            out += [w for w in block_fallback(self.s, p, node.key) if w not in out]
+        return out
+
     def session_stages(self, p, sid) -> list[str]:
         """The stages of a session's Calibration in a workflow: its instances, or the workflow's own when it stacks
         that session alone (one filter's)."""
@@ -898,9 +924,11 @@ class Graph:
         if k in ("fond", "etoiles", "deconv", "synth"):
             return method_summary(s, p, node.key)
         if k == "astrometrie":                  # a result once computed; before, what it will do (round 3)
-            return _("solved · Gaia DR3") if block_state(s, p, k) == "done" else _("solves the field · Gaia DR3")
-        if k == "couleur":
-            return _("Gaia stars · white balance")
+            if block_state(s, p, k) != "done":
+                return _("solves the field · Gaia DR3")
+            return _("not identified · no solution") if block_fallback(s, p, k) else _("solved · Gaia DR3")
+        if k == "couleur":                      # its fallback taken: what it did instead (its reason in the tooltip)
+            return _("fallback balance") if block_fallback(s, p, k) else _("Gaia stars · white balance")
         return ""
 
     def side_inputs(self, node: Node):
@@ -920,5 +948,6 @@ class Graph:
 __all__ = ["session_summary", "node_title", "COLUMNS", "OPTIONAL", "PHASES", "TOOL_COLUMN", "TITLES", "TOOLBOX", "STEPS",
            "BY_KEY", "TOOLS",
            "STATE_WORD", "STATE_ORDER", "ENGINE_BLOCK", "Graph", "Node", "block_title", "chain", "stages_of",
-           "run_stages", "block_state", "block_seconds", "hm", "BREAK_COL", "PAUSE_COL", "REVIEWED_COL", "review_title",
+           "run_stages", "block_state", "block_fallback", "FALLBACK_WORD",
+           "block_seconds", "hm", "BREAK_COL", "PAUSE_COL", "REVIEWED_COL", "review_title",
            "IMAGE_KEYS", "FRAME_KEYS", "kbase", "knum"]

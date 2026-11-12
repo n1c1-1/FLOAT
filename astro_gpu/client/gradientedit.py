@@ -27,6 +27,7 @@ never reads the survey.
 from __future__ import annotations
 
 import math
+import os
 
 import numpy as np
 from PySide6.QtCore import QObject, QPointF, QRectF, QRunnable, Qt, QThreadPool, QTimer, Signal
@@ -1035,6 +1036,8 @@ def _survey_small(project, pid: int, sm: dict) -> dict:
         out = stage_outputs(project, pid, "astrometry")
         if out is None:
             raise ValueError(_("the field is not solved yet (Astrometry)"))
+        if not os.path.isfile(f"{out.dir}/wcs.fits"):        # Astrometry continued without a solution (its fallback)
+            raise ValueError(_("the field was not identified: no plate solution"))
         wd = WCS(fits.getheader(f"{out.dir}/wcs.fits"))
         scale = float(np.mean(proj_plane_pixel_scales(wd.celestial))) * 3600.0
         # the survey guide turned on by the user: an explicit action outside a run, what is missing is fetched
