@@ -174,7 +174,7 @@ def main(argv: list[str] | None = None) -> int:
         log(f"updated in {(time.time() - t0) / 60:.1f} min: {out}")
         return 0 if ok else 1
     p = api.create_project(out, "heart_small", TARGET)
-    scan = api.scan_folder(a.data / "lights")
+    scan = api.scan_files({k: [a.data / k] for k in ("lights", "darks", "flats") if (a.data / k).is_dir()})
     counts = {k: len(v) for k, v in scan.frames.items()}
     log(f"scan: {counts}, errors {len(scan.errors)}")
     api.add_frames(p, scan)

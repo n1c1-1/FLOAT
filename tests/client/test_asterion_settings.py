@@ -113,7 +113,7 @@ def test_the_health_check_says_asterion_is_missing_as_information(env, tmp_path,
     for i in range(2):
         write_fits(tmp_path / "raw" / f"L{i}.fits", 200, f"2026-08-16T22:0{i}:00")
     p = api.create_project(tmp_path / "p", "p")
-    api.add_frames(p, api.scan_folder(tmp_path / "raw"))
+    api.add_frames(p, api.scan_files({"lights": [tmp_path / "raw"]}))
     api.add_workflow(p, "Classic", "Classic stack")
     keys = api._keys(p)
     assert any("astrometry" in keys.chain(w) for w in p.workflows)

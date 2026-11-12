@@ -134,7 +134,8 @@ def stack(only: list[str] | None, device: str) -> int:
                         p = api.open_project(root)
                     else:
                         p = api.create_project(root, d.name, d.name.split("_", 3)[-1])
-                        scan = api.scan_folder(d / "lights")
+                        scan = api.scan_files({k: [d / k] for k in ("lights", "darks", "flats", "bias")
+                                               if (d / k).is_dir()})
                         log(f"{d.name}: {({k: len(v) for k, v in scan.frames.items()})}, "
                             f"{len(scan.errors)} unreadable")
                         api.add_frames(p, scan)

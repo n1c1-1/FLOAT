@@ -19,7 +19,6 @@ from astro_gpu import api  # noqa: E402
 from astro_gpu.client.model import ProjectModel  # noqa: E402
 from astro_gpu.client.services.worker import ApiWorker  # noqa: E402
 from astro_gpu.core import project2  # noqa: E402
-from astro_gpu.core.newproject import guess_names  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -59,7 +58,7 @@ def test_group_sessions_split_filters_and_names_are_unique(tmp_path):
     folder = tmp_path / "mix"
     fits_frame(folder / "a.fits", "Ha")
     fits_frame(folder / "b.fits", "OIII")
-    scan = api.scan_folder(folder)
+    scan = api.scan_files({"lights": [folder]})
     gs = api.group_sessions(scan.frames["lights"])
     assert [(g.name, g.filter, g.count) for g in gs] == [("2026-11-06 · Ha", "Ha", 1), ("2026-11-06 · OIII", "OIII", 1)]
     p = project2.create(tmp_path / "P", "P")
@@ -67,12 +66,6 @@ def test_group_sessions_split_filters_and_names_are_unique(tmp_path):
     assert [(s.name, s.filter, len(s.lights)) for s in made] == [("2026-11-06 · Ha", "Ha", 1),
                                                                  ("2026-11-06 · OIII", "OIII", 1)]
     assert api.add_session(p, name="2026-11-06 · Ha").name == "2026-11-06 · Ha (2)"
-
-
-def test_a_folder_named_after_its_filter_names_the_project_from_its_parent(tmp_path):
-    assert guess_names(str(tmp_path / "NGC7000 2026-08-01" / "Ha"))["name"] == "NGC7000 2026-08-01"
-    assert guess_names(str(tmp_path / "NGC7000 2026-08-01" / "Ha"))["target"] == "NGC7000"
-    assert guess_names(str(tmp_path / "M81 2026-03-01" / "lights"))["name"] == "M81 2026-03-01"
 
 
 def test_the_selected_block_is_kept_without_an_edit(qapp, tmp_path, monkeypatch):

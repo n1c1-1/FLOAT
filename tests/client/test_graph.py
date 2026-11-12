@@ -1209,7 +1209,7 @@ def test_nothing_slow_runs_in_the_gui_thread(qapp, monkeypatch):
             calls.append((name, threading.current_thread() is threading.main_thread()))
             return orig(*a, **k)
         monkeypatch.setattr(mod, name, f)
-    for name in ("warm", "describe", "stage_outputs", "selection_preview", "frame_table", "scan_folder"):
+    for name in ("warm", "describe", "stage_outputs", "selection_preview", "frame_table", "scan_files"):
         watch(api, name)
     for name in ("list_frames", "file_id"):
         watch(store, name)

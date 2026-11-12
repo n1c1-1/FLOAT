@@ -14,7 +14,7 @@ needs them. The calls fall into four groups:
   frame files of the sessions, the reference image) come from an ``InputScan`` cached per project, so only the first
   call after ``open_project`` (or after ``refresh(p, scan=True)``) scans. Call ``warm(p)`` from the worker thread
   when a project opens; the GUI thread then finds everything cached. ``states`` reads manifests (small files);
-* worker thread only (they scan, load arrays or compute): ``warm``, ``scan_folder``, ``add_frames``, ``health_checks``,
+* worker thread only (they scan, load arrays or compute): ``warm``, ``add_frames``, ``health_checks``,
   ``frame_table``, ``selection_preview``, ``frame_thumb``, ``describe``, ``stage_outputs``, ``stage_array``,
   ``cache_usage``, ``clear_unused``, ``machine``, ``list_projects``, ``import_v1`` (preview and import), and the
   diagnostics of the basic stages: ``calibration_frames``, ``calibrated_light``, ``registration_table``,
@@ -111,8 +111,7 @@ class ProjectSummary:
 
 @dataclass
 class ScanResult:
-    """What a folder holds: the frames of each kind (the folder itself holds the lights) and the calibration folders
-    found next to it."""
+    """What the user chose to read: the frames of each kind and the folders they were named by."""
 
     folder: str
     name: str = ""
@@ -803,33 +802,20 @@ def import_v1(old_root: str | Path, new_root: str | Path, path_map: dict[str, An
 
 # ---------------------------------------------------------------------------------------------- frames and sessions
 
-def scan_folder(folder: str | Path, progress: Callable[[float, str], None] | None = None) -> ScanResult:
-    """Read a folder of light frames and the calibration folders found next to it (darks, flats, bias, dark flats,
-    by their usual names): every frame with its header. Slow on a big card: worker thread. ``progress(fraction,
-    text)`` may raise to stop. What it finds is a suggestion: ``scan_files`` reads what the user chooses instead."""
-    from .core.newproject import guess_calibration
-    folder = Path(folder)
-    if not folder.is_dir():
-        raise FileNotFoundError(f"not a folder: {folder}")
-    return scan_files({"lights": [str(folder)], **guess_calibration(str(folder))}, progress)
-
-
 def scan_files(chosen: dict[str, list[str | Path]], progress: Callable[[float, str], None] | None = None) -> ScanResult:
     """Read the frames the user chose, kind by kind (``KINDS``: lights, darks, flats, bias, flat_darks), each a list of
-    folders (every frame in them) or of files: every frame with its header. The files that make up a whole folder are
-    kept as that folder (the project lists folders, as an import of folders makes). Worker thread; ``progress`` as
-    ``scan_folder``."""
+    folders (every frame in them) or of files: every frame with its header. No frame is taken from a folder's name:
+    what is not named is not read. The files that make up a whole folder are kept as that folder (the project lists
+    folders, as an import of folders makes). Worker thread; ``progress(fraction, text)`` may raise to stop."""
     from concurrent.futures import ThreadPoolExecutor
 
-    from .core.newproject import guess_names
     from .core.project import list_frames
     from .io.frames import read_info
     say = progress or (lambda f, m: None)
     entries = {k: [str(x) for x in (chosen.get(k) or [])] for k in KINDS}
     first_light = next((Path(x) for x in entries["lights"]), None)
     where = first_light if first_light is None or first_light.is_dir() else first_light.parent
-    names = guess_names(str(where)) if where is not None else {"name": "", "target": ""}
-    res = ScanResult(str(where or ""), names["name"], names["target"])
+    res = ScanResult(str(where or ""))
     res.folders = {k: _whole_folders(v) for k, v in entries.items()}
     files = {k: list_frames(fs) for k, fs in res.folders.items()}
     total, done = max(sum(len(v) for v in files.values()), 1), 0

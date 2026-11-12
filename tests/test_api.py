@@ -426,7 +426,8 @@ def card(tmp_path):
 
 def test_scan_group_and_add_frames_make_one_session_per_night(tmp_path, card):
     seen = []
-    scan = api.scan_folder(card, lambda f, m: seen.append((f, m)))
+    scan = api.scan_files({"lights": [card], "darks": [card.parent / "dark"], "flats": [card.parent / "flat"]},
+                          lambda f, m: seen.append((f, m)))
     assert [len(scan.frames[k]) for k in ("lights", "darks", "flats", "bias")] == [5, 2, 2, 0]
     assert scan.folders["darks"] == [str(card.parent / "dark")] and not scan.errors and seen[-1][0] == 1.0
     groups = api.group_sessions(scan.frames["lights"])
@@ -444,7 +445,7 @@ def test_scan_group_and_add_frames_make_one_session_per_night(tmp_path, card):
     assert made[1].flats == [str(card.parent / "flat")] and made[0].flats == []          # the flats of 19 Aug
     # one night: the folder itself
     q = api.create_project(tmp_path / "q", "q")
-    api.add_frames(q, api.scan_folder(card.parent / "dark"))
+    api.add_frames(q, api.scan_files({"lights": [card.parent / "dark"]}))
     assert q.sessions[0].lights == [str(card.parent / "dark")]
 
 
@@ -456,7 +457,7 @@ def write_info(folder: Path, name: str, exposure: float):
 def test_health_checks_flats_of_two_sessions_are_merged(tmp_path, card):
     p = api.create_project(tmp_path / "p", "p")
     assert [c.key for c in api.health_checks(p)] == ["no_lights"]
-    api.add_frames(p, api.scan_folder(card))
+    api.add_frames(p, api.scan_files({"lights": [card], "darks": [card.parent / "dark"], "flats": [card.parent / "flat"]}))
     got = {c.key: c for c in api.health_checks(p)}
     assert "flats_merged" not in got and got["no_bias"].level == "info" and got["disk"].level == "ok"
     assert got["disk"].args["need_gb"] >= 0 and got["ok"].level == "ok"
@@ -464,7 +465,7 @@ def test_health_checks_flats_of_two_sessions_are_merged(tmp_path, card):
     extra = card.parent / "second"
     write_fits(extra / "lights" / "S0.fits", 210, "2026-08-21T22:00:00")
     write_fits(extra / "flat" / "SF0.fits", 880, "2026-08-21T19:00:00")
-    api.add_frames(p, api.scan_folder(extra / "lights"))
+    api.add_frames(p, api.scan_files({"lights": [extra / "lights"], "flats": [extra / "flat"]}))
     got = {c.key: c for c in api.health_checks(p)}
     assert got["flats_merged"].level == "warn" and got["flats_merged"].args["n"] == 2 and "ok" not in got
     # a bigger need than the disk has is a warning
@@ -477,7 +478,7 @@ def test_health_checks_flats_of_two_sessions_are_merged(tmp_path, card):
 
 def test_exclusions_are_session_and_name_pairs_and_change_only_the_stack(tmp_path, card, state):
     p = api.create_project(tmp_path / "p", "p")
-    api.add_frames(p, api.scan_folder(card))
+    api.add_frames(p, api.scan_files({"lights": [card], "darks": [card.parent / "dark"], "flats": [card.parent / "flat"]}))
     api.add_workflow(p, "Full", "Full")
     inv, reg, stack = (api.stage_key(p, 1, s) for s in ("inventory", "register", "stack"))
     api.set_excluded(p, [(1, "L0.fits"), (2, "L3.fits")])
@@ -497,7 +498,7 @@ def test_exclusions_are_session_and_name_pairs_and_change_only_the_stack(tmp_pat
 
 def test_frame_thumb_shares_one_stretch_per_session(tmp_path, card):
     p = api.create_project(tmp_path / "p", "p")
-    api.add_frames(p, api.scan_folder(card))
+    api.add_frames(p, api.scan_files({"lights": [card], "darks": [card.parent / "dark"], "flats": [card.parent / "flat"]}))
     s1 = p.sessions[0]
     dim, bright = s1.lights[0], s1.lights[1]                               # level 200 and 260 in one session
     a, b = api.frame_thumb(p, dim, 8), api.frame_thumb(p, bright, 8)
