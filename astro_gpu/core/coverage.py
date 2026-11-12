@@ -255,6 +255,31 @@ def weight_map(coef, W: int, H: int, cfa: str, scale: float, pixfrac: float, wei
     return out
 
 
+def frame_reach(cfa, scale: float, pixfrac: float, offsets: int = 12) -> dict[str, float]:
+    """The share of the output points one frame's drops touch, per colour: the drops of a frame (square, ``pixfrac`` x
+    ``scale`` output pixels, one per raw sample of the colour) leave points of the grid untouched where the colour's
+    samples are far apart. The mean over ``offsets`` x ``offsets`` sub-pixel positions of the frame on the grid, on an
+    interior patch (no border), by the same ``_deposit`` as the maps. The number of values a point of the stack holds
+    in a colour is the number of frames times this share (frames dithered by unrelated sub-pixel shifts)."""
+    ch_of_k = _channels_of(cfa)
+    P = _period(cfa)
+    side = 12 * P + 4
+    yy, xx = np.mgrid[0:side, 0:side]
+    ch = ch_of_k[P * (yy % P) + (xx % P)].ravel()
+    xx, yy = xx.ravel().astype(float), yy.ravel().astype(float)
+    Ho = Wo = int(round(side * scale))
+    m = int(np.ceil(2 * P * scale)) + 1
+    h = pixfrac * scale / 2.0
+    got = np.zeros(3)
+    for a in range(offsets):
+        for b in range(offsets):
+            wmap = _deposit(((xx + (a + 0.5) / offsets) + 0.5) * scale - 0.5, ((yy + (b + 0.5) / offsets) + 0.5) * scale - 0.5, ch, 1.0,
+                            h, 3, Ho, Wo)
+            got += (wmap[:, m:Ho - m, m:Wo - m] > 1e-9).mean((1, 2))
+    got /= offsets * offsets
+    return {CHANNELS[c]: float(got[c]) for c in range(3) if (ch_of_k == c).any()}
+
+
 def variation(m: np.ndarray) -> float:
     """std / median of the weights ``m`` (DrizzlePac's statistic); inf when the median is 0 (holes in half the map)."""
     m = np.asarray(m, float).ravel()

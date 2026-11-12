@@ -250,8 +250,8 @@ def test_the_classic_part_has_a_revision_of_its_own_in_the_keys(tmp_path):
         assert Keys(p).key(w.id, "stack") != Keys(p).key(p.workflows[0].id, "stack")
         for k in kv:
             del w.params["stack"][k]
-    w.params["stack"]["drizzle_rejection"] = "own"           # the default stored: the drizzle's key
-    assert Keys(p).key_parts(w.id, "stack") == drizzle
+    w.params["stack"]["drizzle_rejection"] = "own"           # stored: an override of the automatic value, in the key
+    assert Keys(p).key_parts(w.id, "stack")["p"] == {**drizzle["p"], "drizzle_rejection": "own"}
 
 
 def test_pixfrac_is_automatic(tmp_path):

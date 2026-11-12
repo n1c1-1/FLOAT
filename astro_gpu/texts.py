@@ -226,6 +226,7 @@ _METRIC_ROWS: list[tuple] = [
      "atmospheric dispersion), corrected in the stack."),
     ("near_saturation_pct", "Near saturation", "%", ".4f",
      "Share of the pixels of the stack with samples near saturation (star cores)."),
+    ("peak_gpu_gb", "Peak GPU memory", "GB", ".2f", "The most memory the stack held on the graphics card."),
     ("coverage_variation_pct", "Coverage variation", "%", ".1f",
      "How much the weight of the pixels of the stack varies, red / green / blue (under 20 % is even enough)."),
     # astrometry
@@ -472,7 +473,7 @@ CHOICE_TEXTS: dict[str, str] = {
     "fallback": "Fallback balance", "continue": "Continue without solution", "stop": "Stop",
     # the stacking settings (stages/stack.py)
     "thresholds": "Thresholds", "sota": "k × σ filters", "on": "On", "off": "Off",
-    "min_weight": "Automatic", "own": "On the raw pixels", "integration": "From the classic stack's rejection",
+    "min_weight": "Automatic", "own": "On the raw pixels", "by_count": "By frame count", "integration": "From the classic stack's rejection",
     "drizzle": "Bayer drizzle", "classic": "Classic",
     "rcd": "RCD", "bilinear": "Bilinear", "lanczos4": "Lanczos-4",
     # the Classic method's clamping (core/resample.CLAMPINGS): the stored values name where each comes from, the

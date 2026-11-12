@@ -874,6 +874,8 @@
   "transparency ≥ {t} % · stars ≤ {f} px": "transparence ≥ {t} % · étoiles ≤ {f} px",
   "drizzle ×{scale} · rejection at {kappa} σ": "drizzle ×{scale} · rejet à {kappa} σ",
   "drizzle auto · rejection at {kappa} σ": "drizzle auto · rejet à {kappa} σ",
+  "drizzle auto · rejection by frame count": "drizzle auto · rejet selon les poses",
+  "drizzle ×{scale} · rejection by frame count": "drizzle ×{scale} · rejet selon les poses",
   "Master flat": "Master de flat",
   "Identified objects": "Objets identifiés",
   "Defective pixels": "Pixels défectueux",

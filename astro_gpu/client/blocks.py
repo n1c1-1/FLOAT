@@ -904,12 +904,15 @@ class Graph:
                 txt = _("classic stack · {how}").format(how=texts.choice_label(
                     str(s.param_value(p, "stack", "classic_debayer") or "rcd"), language()))
             else:
-                kappa = number(s.param_value(p, "stack", "kappa") or 5, 0)
+                kappa = number(s.param_value(p, "stack", "kappa") or 3, 0)
+                by_count = s.param_value(p, "stack", "drizzle_rejection") == "by_count"
                 if drizzle_auto(s, p):          # the engine sets it from the frames once they are aligned
-                    txt = _("drizzle auto · rejection at {kappa} σ").format(kappa=kappa)
+                    txt = (_("drizzle auto · rejection by frame count") if by_count else
+                           _("drizzle auto · rejection at {kappa} σ").format(kappa=kappa))
                 else:
                     sc = number(s.param_value(p, "stack", "scale") or 1.0, 2).rstrip("0").rstrip(",.")
-                    txt = _("drizzle ×{scale} · rejection at {kappa} σ").format(scale=sc, kappa=kappa)
+                    txt = (_("drizzle ×{scale} · rejection by frame count").format(scale=sc) if by_count else
+                           _("drizzle ×{scale} · rejection at {kappa} σ").format(scale=sc, kappa=kappa))
             if any(q.opts["debruitage"] for q in node.paths):
                 txt += " · " + _("+ half-stacks")
             return txt

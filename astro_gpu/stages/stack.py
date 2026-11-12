@@ -18,6 +18,13 @@ or the Classic method (debayering and interpolated registration, ``stack_classic
   deposits the kept ones. No noise model, no allowance: the dispersion is the one the frames show at that point
   (a star core that varies with the seeing widens its own d). Saturated samples are judged like the others. Where
   fewer than MIN_COVER frames cover a point, nothing is rejected.
+  ``by_count`` is Siril's way [S1] when the values are few: with N values one outlier can reach at most (N - 1) /
+  sqrt(N) sigmas, under 3 below 11 values, and in a Bayer drizzle red and blue hold about a fourth of the frames at a
+  point (times the share of the points one frame's drops reach). So the values of every frame are kept per output point (value and drop
+  weight), by bands of rows within the memory, and the rejection of core/rejection_classic.py runs on them, chosen
+  for each colour by the median number of values per point (``choose``: percentile, winsorized, linear fit); the
+  kept values are deposited as the others. The engine suggests it (``rejection_suggestion``) when the colours hold
+  fewer values per point than the sigma clipping needs.
   ``integration`` is the method for a CFA drizzle of [P18][P19]: the rejection of an image integration (the Classic
   method's, chosen by the number of frames) runs on the debayered, registered frames, and what it rejects in a frame
   is left out of that frame's drops on the same output pixels (``integration_rejection``, ``deposit``'s ``rej``).
@@ -87,7 +94,7 @@ COVERAGE = "coverage.npz"
 METHODS = ("drizzle", "classic")
 SELECTIONS = ("min_weight", "sota", "thresholds")
 ON_OFF = ("on", "off")
-DRIZZLE_REJECTIONS = ("own", "integration")
+DRIZZLE_REJECTIONS = ("own", "integration", "by_count")
 SWITCHES = {"method": METHODS, "selection": SELECTIONS, "selection_transparency": ON_OFF,
             "drizzle_rejection": DRIZZLE_REJECTIONS}
 #: older names of choices, read as the current ones
@@ -216,10 +223,14 @@ class StackParams(StageParams):
                                       "debayering without balance.")
     drizzle_rejection: str = P("own", label="Rejection (drizzle)", level=ADVANCED, choices=list(DRIZZLE_REJECTIONS),
                                help="With the Bayer drizzle: how outliers (hot pixels, satellites, cosmic rays) are "
-                                    "found. On the raw pixels: each raw pixel is compared with a prediction of the "
-                                    "sky made from all frames. From the classic stack's rejection: the Classic "
-                                    "method's rejection runs on the debayered, registered frames, and what it "
-                                    "rejects in a frame is left out of that frame's drops on the same pixels.")
+                                    "found. On the raw pixels: each sample is compared with the mean and spread "
+                                    "measured at its point (a sigma clipping, which needs about 11 values per "
+                                    "point). By frame count: the values of every frame are kept per point and the "
+                                    "rejection the Classic method chooses by their number runs on them. From the "
+                                    "classic stack's rejection: the Classic method's rejection runs on the "
+                                    "debayered, registered frames, and what it rejects in a frame is left out of "
+                                    "that frame's drops on the same pixels. Automatic: by frame count when the "
+                                    "colours hold too few values per point for the sigma clipping.")
     exclude: list[str] = P([], label="Excluded frames", level=INTERNAL,
                            help="Light frames left out of the stack whatever their quality (their files). Set by the "
                                 "project from the frames the user excluded; not a setting of its own.")
@@ -309,6 +320,11 @@ class Stack(Stage):
         s = drizzle_suggestion(reg, cache, use=use, weights=w)
         a["scale"], a["pixfrac"] = s.scale, s.pixfrac
         a["method"] = s.method                     # an advice (Auto.advice): shown, never applied
+        if cache.get("cfa") and not cache.get("rgb_path"):
+            pf = float(given["pixfrac"]) if "pixfrac" in given else float(a["pixfrac"].value)
+            sc = float(given["scale"]) if "scale" in given else float(a["scale"].value)
+            kappa = float(given["kappa"]) if "kappa" in given else StackParams.model_fields["kappa"].default
+            a["drizzle_rejection"] = rejection_suggestion(int(np.count_nonzero(use)), sc, pf, cache["cfa"], kappa)
         if cache.get("rgb_path"):                  # frames already in colour (issue #57): no mosaic to drizzle, applied
             a["method"] = Auto("classic", "frames already in colour: Classic stack, no Bayer drizzle (no mosaic of raw "
                                        "colour samples to drop)")
@@ -316,6 +332,8 @@ class Stack(Stage):
 
     def run(self, ctx: Context, p: StackParams) -> None:
         t0 = time.time()
+        if ctx.device.type == "cuda":
+            torch.cuda.reset_peak_memory_stats(ctx.device)
         if p.method == "classic" and classic_missing():
             raise StageError(CLASSIC_NOT_YET)
         dev = ctx.device
@@ -539,15 +557,18 @@ class Stack(Stage):
             drizzle_deposit(num, den, val, Xo, Yo, w, keep, chmap, h, S, Ho, Wo, rej, tally)
 
         chan_fix = None
+        by_count = p.drizzle_rejection == "by_count"
+
         def deposit_moments(num, den, sq, val, Xo, Yo, w, keep):
             """The kept samples into the weighted sum, the weight sum and the weighted sum of squares (about c0)."""
             deposit(num, den, val, Xo, Yo, w, keep)
-            deposit(sq, None, (val - c0[chmap]) ** 2, Xo, Yo, w, keep)
+            if sq is not None:
+                deposit(sq, None, (val - c0[chmap]) ** 2, Xo, Yo, w, keep)
 
         # ---------------- pass 1: weighted mean and standard deviation of the samples at each point
         num = torch.zeros(3 * Ho * Wo, device=dev)
         den = torch.zeros(3 * Ho * Wo, device=dev)
-        sq = torch.zeros(3 * Ho * Wo, device=dev)
+        sq = None if by_count else torch.zeros(3 * Ho * Wo, device=dev)      # by_count: the mean only (colour offsets)
         clock.start()
         for c_, i in enumerate(used):
             val, Xo, Yo, sat, bad, _, _, _ = frame_model(i)
@@ -578,7 +599,10 @@ class Stack(Stage):
             return val, Xo, Yo, bad, hi, lo, inside, near, sat
 
         integ = None
-        if p.drizzle_rejection == "integration":
+        if by_count:
+            del model                             # the rejection runs on the values of every frame, by bands (below)
+            model = None
+        elif p.drizzle_rejection == "integration":
             # ------------ the reference processing suite's CFA drizzle: the rejection of the integration of the debayered, registered
             # frames (the Classic method's), applied to the drops (deposit's ``rej``); no rejection of its own
             del model
@@ -606,13 +630,19 @@ class Stack(Stage):
         accA = [torch.zeros(3 * Ho * Wo, device=dev) for _ in range(2)]
         accB = [torch.zeros(3 * Ho * Wo, device=dev) for _ in range(2)]
         rej_tot = tested = 0
+        rej = None
         rmap = RejectionMap(Ho, Wo, dev)
         rej_frames: dict[int, tuple[int, int, int]] = {}
         near_acc = torch.zeros(3 * Ho * Wo, device=dev)     # the weight of the samples near saturation
         clip_acc = torch.zeros(3 * Ho * Wo, device=dev)     # and of the clipped ones
         tally = [0.0, 0.0]                                  # integration: drop weight excluded, deposited
         clock.start()
-        for c_, i in enumerate(used):
+        by_count_info = None
+        if by_count:
+            by_count_info = count_pass(ctx, p, frame_model, used, weight, chmap, h, S, Ho, Wo, dev, accA, accB, near_acc,
+                                       clip_acc, rmap, rej_frames, (Ho * Wo, H * W))
+            rej_tot, tested = by_count_info["rejected"], by_count_info["tested"]
+        for c_, i in enumerate([] if by_count else used):
             rej = None
             if integ is None:
                 val, Xo, Yo, bad, hi, lo, inside, near, sat = judge(i, model)
@@ -635,7 +665,7 @@ class Stack(Stage):
                     f"{100 * tally[0] / max(tally[1], 1e-12):.2f} % of the drops left out")
             ctx.progress((0.6 if integ is None else 0.7) + (0.4 if integ is None else 0.3) * (c_ + 1) / len(used),
                          f"pass 3: {c_ + 1}/{len(used)} frames, {done}")
-        clock.done("pass 3")
+        clock.done("pass 3" if not by_count else "rejection by frame count")
         del model, rej
 
         def finish(a):
@@ -666,6 +696,8 @@ class Stack(Stage):
             excluded_pct = 100 * tally[0] / max(tally[1], 1e-12)
             ctx.metric("drizzle_excluded_pct", round(excluded_pct, 3))
         ctx.metric("rejected_pct", round(rej_pct, 3))
+        if dev.type == "cuda":
+            ctx.metric("peak_gpu_gb", round(torch.cuda.max_memory_allocated(dev) / 2 ** 30, 2))
         meta_d = {"scale": S, "pixfrac": PIX, "n": int(len(used)), "reject_pct": rej_pct,
                   "width": Wo, "height": Ho, "sensor": [W, H], **({"zone": zone} if zone else {})}
         # the coverage per colour, measured and as the rule estimates it
@@ -699,7 +731,10 @@ class Stack(Stage):
                 "kappa": p.kappa,
                 "rejection": {"file": REJECTION, "factor": rmap.f, "grid": [Wo, Ho], "shape": [rmap.Hr, rmap.Wr]}}
         diag["switches"] = meta_d["switches"]
-        diag["rejection"]["method"] = "own"
+        diag["rejection"]["method"] = "by_count" if by_count else "own"
+        if by_count_info is not None:
+            diag["rejection"]["by_count"] = {"band_rows": by_count_info["band_rows"],
+                                             "choices": by_count_info["choices"]}
         if integ is not None:                       # the CFA drizzle's rejection from an image integration
             diag["rejection"].update(
                 method="integration", classic=integ.choice.method,
@@ -899,7 +934,7 @@ class Prediction:
     median, times the number of frames) and the smooth background of the mean (for the colour offsets); sampled where
     a frame's samples land (``sample``)."""
 
-    def __init__(self, num: torch.Tensor, den: torch.Tensor, sq: torch.Tensor, n: int, Ho: int, Wo: int, dev,
+    def __init__(self, num: torch.Tensor, den: torch.Tensor, sq: torch.Tensor | None, n: int, Ho: int, Wo: int, dev,
                  c0: torch.Tensor):
         d = den.view(3, Ho, Wo)
         self.Ho, self.Wo, self.c0 = Ho, Wo, c0.view(3, 1, 1).to(d.device)
@@ -915,14 +950,16 @@ class Prediction:
                 self.cover[c] = n * d[c] / med
         self.bkg, _ = smooth_background(self.M, self.valid)
 
-    def _moments(self, num: torch.Tensor, den: torch.Tensor, sq: torch.Tensor) -> None:
-        """Mean and standard deviation where the weight ``den`` is positive (the others keep theirs)."""
+    def _moments(self, num: torch.Tensor, den: torch.Tensor, sq: torch.Tensor | None) -> None:
+        """Mean and standard deviation where the weight ``den`` is positive (the others keep theirs); ``sq`` None: the
+        mean only (the deviation stays 0)."""
         d = den.view(3, self.Ho, self.Wo)
         dd = d.clamp(min=1e-12)
         m = num.view(3, self.Ho, self.Wo) / dd
-        var = sq.view(3, self.Ho, self.Wo) / dd - (m - self.c0) ** 2
         self.M = torch.where(d > 0, m, self.M)
-        self.D = torch.where(d > 0, var.clamp(min=0).sqrt(), self.D)
+        if sq is not None:
+            var = sq.view(3, self.Ho, self.Wo) / dd - (m - self.c0) ** 2
+            self.D = torch.where(d > 0, var.clamp(min=0).sqrt(), self.D)
 
     def shift_channels(self, fix: ChannelOffsets) -> None:
         """The red and blue images of the mean and of the deviation moved onto the green one (``fix``), where the
@@ -1120,6 +1157,16 @@ class RejectionMap:
         lo, out_lo = self._count(self.low, Xo, Yo, low)
         hi, out_hi = self._count(self.high, Xo, Yo, high)
         return lo, hi, out_lo + out_hi
+
+    def add_counts(self, r0: int, low: torch.Tensor, high: torch.Tensor) -> None:
+        """Count rejected values given on the output grid itself: ``low`` / ``high`` (rows, Wo) counts per output pixel
+        for the rows from ``r0`` (the rejection by frame count)."""
+        nr = low.shape[0]
+        iy = (torch.arange(nr, device=low.device) + r0) // self.f
+        ix = torch.arange(self.Wo, device=low.device) // self.f
+        idx = (iy[:, None] * self.Wr + ix[None, :]).reshape(-1)
+        self.low.index_add_(0, idx, low.reshape(-1).to(torch.int64))
+        self.high.index_add_(0, idx, high.reshape(-1).to(torch.int64))
 
     def add_masks(self, Xr: torch.Tensor, Yr: torch.Tensor, rej: torch.Tensor) -> tuple[int, int, int]:
         """Count one frame's values the integration rejected (``rej`` (H, W) uint8 on the reference grid,
@@ -1327,6 +1374,133 @@ def integration_rejection(ctx: Context, p: StackParams, load, coef, used, weight
                            **within_memory(ctx))
     res.full = res.A = res.B = res.weight = None            # only the rejection is used: free the images
     return res
+
+
+def clipping_min_values(kappa: float) -> int:
+    """The fewest values for which one outlier can reach ``kappa`` sigmas: among N values the largest deviation of one
+    from their mean, in their own standard deviation, is (N - 1) / sqrt(N), so N >= ((2 + k^2) + k sqrt(k^2 + 4)) / 2."""
+    k = float(kappa)
+    return int(math.ceil(((2 + k * k) + k * math.sqrt(k * k + 4)) / 2))
+
+
+def values_per_point(n: int, scale: float, pixfrac: float, cfa: str) -> tuple[float, float]:
+    """(the values a point of the output holds in the scarcest colour of ``n`` frames, the share of the points one
+    frame reaches in it): the colours the coverage rule reads (red and blue; the one plane of a monochrome sensor),
+    each frame giving a point a value where its drops touch it (core/coverage.frame_reach)."""
+    from ..core import coverage
+    reach = coverage.frame_reach(cfa, scale, pixfrac)
+    share = min(reach.get(c, 1.0) for c in coverage.rule_channels(cfa))
+    return n * share, share
+
+
+def rejection_suggestion(n: int, scale: float, pixfrac: float, cfa: str, kappa: float) -> Auto:
+    """The automatic ``drizzle_rejection``: by frame count when the scarcest colour holds fewer values per point than
+    the sigma clipping of the own rejection needs (``clipping_min_values``), else that sigma clipping."""
+    v, share = values_per_point(n, scale, pixfrac, cfa)
+    need = clipping_min_values(kappa)
+    if v < need:
+        return Auto("by_count", "{n} frames x {share:.0f} % of the points reached in the scarcest colour = "
+                                "{values:.1f} values per point, under the {need} a sigma clipping at {kappa:g} σ "
+                                "needs ((N - 1) / √N > {kappa:g}): rejection by frame count",
+                    {"n": n, "share": 100 * share, "values": v, "need": need, "kappa": kappa})
+    return Auto("own", "{n} frames x {share:.0f} % of the points reached in the scarcest colour = {values:.1f} "
+                       "values per point, at least the {need} a sigma clipping at {kappa:g} σ needs "
+                       "((N - 1) / √N > {kappa:g}): sigma clipping on the raw pixels",
+                {"n": n, "share": 100 * share, "values": v, "need": need, "kappa": kappa})
+
+
+def count_pass(ctx, p: StackParams, frame_model, used, weight, chmap, h: float, S: float, Ho: int, Wo: int, dev,
+               accA, accB, near_acc, clip_acc, rmap, rej_frames: dict, sizes: tuple[int, int]) -> dict:
+    """The rejection by frame count (``drizzle_rejection = by_count``): Siril's way [S1]. The output is cut into bands of
+    rows; for each band every frame's drops are deposited apart (the frame's value and drop weight at each point, none
+    where it gives nothing), so that each point holds the values of all the frames, and the rejection of
+    core/rejection_classic.py runs on them, per colour, chosen by the median number of values per point of the colour
+    (``choose``: the Classic method's table, decided on the middle band so that the whole image has one method per
+    colour). What is kept is deposited into the half-stacks as the other modes do, and the near-saturation and
+    clipped accumulators. Memory: a band holds N frames x 3 colours x rows x width of four float buffers (value
+    sum, weight sum, near, clipped) and the rejection's own working copies. Returns the counts and the choices."""
+    from ..core import devices
+    from ..core import rejection_classic as rc
+    N = len(used)
+    half_a = np.array([(int(i) // p.half_block) % 2 == 0 for i in used])
+    # bytes per output row of a band: the four buffers, the masks and the rejection's double-precision copies
+    per_row = N * 3 * Wo * 64
+    if dev.type == "cuda":
+        free = torch.cuda.mem_get_info(dev)[0]
+        budget = int(0.5 * free) - 14 * 4 * sizes[1]                      # the frame's own working tensors
+    else:
+        mb = devices.memory_budget()
+        budget = (mb[0] if mb else 4 * 2 ** 30) // 2 - 14 * 4 * sizes[1]
+    rows = int(max(4, min(Ho, budget // per_row)))
+    starts = list(range(0, Ho, rows))
+    mid = len(starts) // 2
+    order = [mid] + [b for b in range(len(starts)) if b != mid]
+    ctx.log(f"rejection by frame count: {len(starts)} band(s) of {rows} rows, {N} frames")
+    choice: list = [None, None, None]
+    low_f, high_f = np.zeros(N, np.int64), np.zeros(N, np.int64)
+    rej_tot = tested = 0
+    m = 2 * h + 1
+    A, B = accA, accB
+    for n_done, b in enumerate(order):
+        r0 = starts[b]
+        nr = min(rows, Ho - r0)
+        Pn = nr * Wo
+        Vn = torch.zeros(N, 3 * Pn, device=dev)
+        Vd = torch.zeros_like(Vn)
+        Vnear = torch.zeros_like(Vn)
+        Vclip = torch.zeros_like(Vn)
+        for k, i in enumerate(used):
+            val, Xo, Yo, sat, bad, _, _, near = frame_model(i)
+            Yb = Yo - r0
+            keep = ~bad & (Yb > -m) & (Yb < nr + m) & (Xo > -m) & (Xo < Wo + m)
+            w_i = float(weight[i])
+            drizzle_deposit(Vn[k], Vd[k], val, Xo, Yb, w_i, keep, chmap, h, S, nr, Wo)
+            kn = keep & near
+            if kn.any():
+                drizzle_deposit(Vnear[k], None, near.float(), Xo, Yb, w_i, kn, chmap, h, S, nr, Wo)
+                drizzle_deposit(Vclip[k], None, sat.float(), Xo, Yb, w_i, keep & sat, chmap, h, S, nr, Wo)
+            del val, Xo, Yo, Yb, sat, bad, near, keep, kn
+            ctx.progress(0.3 + 0.7 * (n_done + (k + 1) / N) / len(starts),
+                         f"rejection by frame count: band {n_done + 1}/{len(starts)}, frame {k + 1}/{N}")
+        Vn, Vd = Vn.view(N, 3, Pn), Vd.view(N, 3, Pn)
+        keepv = torch.zeros(N, 3, Pn, dtype=torch.bool, device=dev)
+        low_c = torch.zeros(Pn, dtype=torch.int64, device=dev)
+        high_c = torch.zeros_like(low_c)
+        for c in range(3):
+            valid = Vd[:, c] > 0
+            if not valid.any():
+                continue
+            if choice[c] is None:                       # the middle band's median count of values per point
+                cnt = valid.sum(0)
+                choice[c] = rc.choose(int(torch.median(cnt[cnt > 0]).item()))
+                ctx.log(f"colour {'RGB'[c]}: {choice[c].reason}")
+            v = torch.where(valid, Vn[:, c] / Vd[:, c].clamp(min=1e-12), torch.full_like(Vd[:, c], float("nan")))
+            lo, hi = rc.reject(v, choice[c], valid)
+            del v
+            keepv[:, c] = valid & ~lo & ~hi
+            low_c += lo.sum(0)
+            high_c += hi.sum(0)
+            low_f += lo.sum(1).cpu().numpy()
+            high_f += hi.sum(1).cpu().numpy()
+            rej_tot += int((lo | hi).sum())
+            tested += int(valid.sum())
+            del lo, hi, valid
+        rmap.add_counts(r0, low_c.view(nr, Wo), high_c.view(nr, Wo))
+        sl = slice(r0, r0 + nr)
+        for acc, mask in ((A, half_a), (B, ~half_a)):
+            sel = torch.from_numpy(np.nonzero(mask)[0]).to(dev)
+            if not len(sel):
+                continue
+            kk = keepv[sel]
+            acc[0].view(3, Ho, Wo)[:, sl] += (Vn[sel] * kk).sum(0).view(3, nr, Wo)
+            acc[1].view(3, Ho, Wo)[:, sl] += (Vd[sel] * kk).sum(0).view(3, nr, Wo)
+            near_acc.view(3, Ho, Wo)[:, sl] += (Vnear.view(N, 3, Pn)[sel] * kk).sum(0).view(3, nr, Wo)
+            clip_acc.view(3, Ho, Wo)[:, sl] += (Vclip.view(N, 3, Pn)[sel] * kk).sum(0).view(3, nr, Wo)
+        del Vn, Vd, Vnear, Vclip, keepv
+    for k, i in enumerate(used):
+        rej_frames[int(i)] = (int(low_f[k]), int(high_f[k]), 0)
+    return {"rejected": rej_tot, "tested": tested, "band_rows": rows,
+            "choices": {"RGB"[c]: (choice[c].as_dict() if choice[c] is not None else None) for c in range(3)}}
 
 
 def within_memory(ctx: Context) -> dict:
