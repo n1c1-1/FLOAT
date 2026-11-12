@@ -835,7 +835,8 @@ class SourcesView(QWidget):
         if far:                                      # the typed target against where the frames point: a warning, once
             out.append((False, target_far_text(far)))
         dk = c.get("darks")
-        if dk:
+        by = bad.get("darks_by_exposure")
+        if dk and not (by and by[0]["several"]):
             # a value one side does not record is no mismatch (a master dark without GAIN was read as gain 0 and said
             # different from lights of gain 90); the exposures are compared as numbers, to the microsecond
             de, le, dg, lg = dk.get("exposure"), ref.exposure, dk.get("iso"), ref.iso
@@ -848,6 +849,24 @@ class SourcesView(QWidget):
                 t = (_("Darks: exposure {exp}, {word} {iso}, same as the lights.") if same else
                      _("Darks: exposure {exp}, {word} {iso}, different from the lights."))
             out.append((same, t.format(exp=fexp(de), word=word, iso=int(dg or 0))))
+        # the dark the lights of each exposure get, by the Calibration's own rule (a dark of another exposure scaled
+        # only above a bias or a black level; without, no dark rather than a wrong one: the two masters of 300 and 60 s
+        # of M101 averaged into one of 180 s and scaled with the offset put its sky under 0)
+        for g in by or []:
+            e = fexp(g["lights"]) if g["lights"] else _("an exposure not recorded")
+            if g["how"] == "same":
+                out.append((True, _("Lights of {exp}: the darks of {dark}.").format(
+                    exp=e, dark=fexp(g["dark"]) if g["dark"] else _("an exposure not recorded"))))
+            elif g["how"] == "scaled":
+                out.append((None, _("Lights of {exp}: no dark of {exp}, the darks of {dark} with their thermal signal "
+                                    "scaled.").format(exp=e, dark=fexp(g["dark"]))))
+            elif g["others"]:
+                out.append((False, _("Lights of {exp}: no dark of {exp}, calibrated without dark (no bias to scale "
+                                     "those of {others}).").format(exp=e, others=", ".join(map(fexp, g["others"])))))
+            else:
+                out.append((False, _("Lights of {exp}: no dark of their exposure and gain, calibrated without "
+                                     "dark.").format(exp=e)))
+        if dk:
             if dk.get("stacked") is not None:
                 out.append((None, master_text("Darks", dk["stacked"])))
             far = bad.get("dark_far")

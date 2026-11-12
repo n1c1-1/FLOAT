@@ -436,7 +436,8 @@ _LIGHT_FACTS: dict = {}
 def light_facts(paths, limit: int = 400) -> dict:
     """What the headers of a session's lights say of when and where: {"times": the frames' own times (ISO; never a
     file's date on disk), "ra", "dec": the pointing of the first frame that gives one (degrees, FITS only), "object":
-    the first OBJECT name} ({} for none). At most ``limit`` frames are read, evenly spread (the nights are blocks of
+    the first OBJECT name, "keys": each frame's {"exposure", "iso"}, the Calibration's groups (stages/calibrate
+    ``match_darks``)} ({} for none). At most ``limit`` frames are read, evenly spread (the nights are blocks of
     frames: a sample finds them all); a frame that cannot be read is passed over (the checks say so)."""
     paths = [Path(p) for p in paths]
     if not paths:
@@ -449,7 +450,7 @@ def light_facts(paths, limit: int = 400) -> dict:
         return {}
     if key in _LIGHT_FACTS:
         return _LIGHT_FACTS[key]
-    out: dict = {"times": [], "object": ""}
+    out: dict = {"times": [], "object": "", "keys": []}
     like = None
     for f in paths:
         try:
@@ -457,6 +458,7 @@ def light_facts(paths, limit: int = 400) -> dict:
         except Exception:  # noqa: BLE001 - a damaged or foreign file: said by the checks
             continue
         like = like or info
+        out["keys"].append({"exposure": info.exposure, "iso": info.iso})
         if info.time and not info.time_from_file:
             out["times"].append(info.time)
         if "ra" not in out and info.ra is not None and info.dec is not None:

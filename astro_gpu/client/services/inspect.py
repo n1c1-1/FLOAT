@@ -550,6 +550,10 @@ class SessionRow:
     #: its own calibration frames, by kind (darks, flats, bias), as the middle one of them says (``_calib_of``):
     #: exposure, iso, time, file, median and low (0.01 % percentile) levels in ADU, stacked (a master: its frames)
     calib: dict = field(default_factory=dict)
+    #: {"exposure", "iso"} of its lights (a sample: io/frames.light_facts) and of each of its darks, which the
+    #: Calibration groups by exposure to give each light the dark of its own (stages/calibrate.match_darks)
+    light_keys: list = field(default_factory=list)
+    dark_keys: list = field(default_factory=list)
     #: its frames' own date against the one their file names say, when they disagree (io/frames.clock_disagreement:
     #: {"camera", "names"} ISO dates), from the first and last lights' headers read for ``first`` and ``last`` when
     #: the date is their own (EXIF, DATE-OBS), never the file's date on disk
@@ -607,6 +611,49 @@ def _calib_of(files: list, hdr: dict) -> dict | None:
     return hdr[k]
 
 
+def _keys_of(files: list, hdr: dict, limit: int = 400) -> list[dict]:
+    """{"exposure", "iso"} of each of a session's calibration frames of a kind (headers only, remembered in ``hdr`` by
+    path; at most ``limit``, evenly spread)."""
+    from ...io.frames import read_info
+    if len(files) > limit:
+        files = [files[i] for i in sorted({int(i) for i in np.linspace(0, len(files) - 1, limit)})]
+    out = []
+    for f in files:
+        k = ("key", str(f))
+        if k not in hdr:
+            try:
+                info = read_info(f)
+                hdr[k] = {"exposure": info.exposure, "iso": info.iso}
+            except Exception:  # noqa: BLE001 - an unreadable frame is said by the import, not here
+                hdr[k] = None
+        if hdr[k] is not None:
+            out.append(hdr[k])
+    return out
+
+
+def dark_lines(row: SessionRow, camera: dict) -> list[dict]:
+    """Which dark the Calibration gives the lights of each exposure (stages/calibrate.dark_plan, its own rule): one
+    {"lights": exposure s, "gain", "how": "same" | "scaled" | "none", "dark": exposure s of the darks used or None,
+    "others": the exposures of the darks of the lights' gain, "several": the lights or the darks are of several
+    exposures} a group of lights, when they are, or when the lights get no dark of theirs; [] else (the one line of
+    the darks says it)."""
+    from ...stages.calibrate import _key, dark_plan, exposure_groups
+    if not row.light_keys or not row.dark_keys:
+        return []
+    lg = exposure_groups([_key(f) for f in row.light_keys])
+    dg = exposure_groups([_key(f) for f in row.dark_keys])
+    plan = dark_plan(lg, dg, bool(row.bias) or float(camera.get("black") or 0) > 0)
+    if len(lg) < 2 and len(dg) < 2 and plan[0][0] == "same":
+        return []
+    out = []
+    for L, (how, j) in sorted(zip(lg, plan), key=lambda x: -(x[0]["exposure"] or 0)):
+        others = sorted({D["exposure"] for D in dg if D["exposure"] and (L["gain"] is None or D["gain"] is None
+                                                                          or D["gain"] == L["gain"])}, reverse=True)
+        out.append({"lights": L["exposure"], "gain": L["gain"], "how": how, "others": others,
+                    "dark": dg[j]["exposure"] if j is not None else None, "several": len(lg) > 1 or len(dg) > 1})
+    return out
+
+
 def flat_pct(c: dict, camera: dict) -> float:
     """A flat's level as % of the sensor's range: above the camera's black level (a master flat, already calibrated:
     above zero), over the range of the lights' sensor (a master in floats is read up to 65535 ADU, a 14-bit camera
@@ -620,9 +667,13 @@ def calib_checks(row: SessionRow, camera: dict) -> dict:
     """What a session's calibration frames contradict, by the Calibration's own rules (stages/calibrate): "dark_far"
     (darks far under the bias, or the black level: their bias was taken off) and "flat_under" (flats that are not a
     master go under the level they will be corrected with: their bias was taken off already), each with the reference
-    level {"ref": ADU, "what": "bias" | "black level" | "dark level"}; {} for none."""
+    level {"ref": ADU, "what": "bias" | "black level" | "dark level"}; {} for none. "darks_by_exposure": which dark the
+    lights of each exposure get (``dark_lines``), when the lights or the darks are of several exposures."""
     from ...stages.calibrate import dark_far, flat_under
     out: dict = {}
+    by = dark_lines(row, camera)
+    if by:
+        out["darks_by_exposure"] = by
     bias, black = row.calib.get("bias"), float(camera.get("black") or 0)
     ref, what = (bias["level"], "bias") if bias else (black, "black level")
     d = row.calib.get("darks")
@@ -702,6 +753,7 @@ def project_frames(p, wid: int | None, headers: dict | None = None) -> ProjectFr
                 row.clock = clock_disagreement(dates[s.id])
                 facts = light_facts(frames)
                 row.nights = nights_of(facts.get("times") or [])
+                row.light_keys = facts.get("keys") or []
                 points[s.id] = facts
         rows = by_session.get(s.id)
         if rows:
@@ -718,6 +770,10 @@ def project_frames(p, wid: int | None, headers: dict | None = None) -> ProjectFr
                 c = None
             if c is not None:
                 row.calib[kind] = c
+        try:
+            row.dark_keys = _keys_of(_files(p, s.darks), hdr)
+        except Exception:  # noqa: BLE001 - a hint, as the levels above
+            row.dark_keys = []
         out.sessions.append(row)
     far = {x["sid"]: x for x in api.target_far(p, points)}
     for row in out.sessions:

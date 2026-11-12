@@ -82,3 +82,32 @@ def test_darks_without_their_bias_and_flats_under_the_bias_are_warnings(tmp_path
     assert (None, "Flats: 1 frame at 16 % of saturation, exposure 1/20 s.") in lines                 # its own: one
     assert (False, "Flats: their lowest levels (100 ADU) are under the bias (509 ADU): their bias was taken off "
                    "already, and would be taken off again.") in lines
+
+
+def _mixed(root: Path, darks: tuple, bias: bool = False) -> list[tuple]:
+    """A monochrome session of lights of 300 and 60 s (GAIN 139, a black level of 0), a master dark of each of
+    ``darks``, a master bias with ``bias`` (M101 in R, G and B)."""
+    p = project2.create(root / "P", "P", Target(name="M101"))
+    for t in (300.0, 60.0):
+        for j in range(2):
+            _fits(root / "L" / f"l{t:05.0f}_{j}.fits", np.full((H, W), 900, np.uint16), EXPTIME=t, GAIN=139,
+                  BAYERPAT="", **{"DATE-OBS": f"2026-04-1{j}T23:0{int(t) % 7}:00"})
+    ds = [str(_fits(root / "cal" / f"dark_{t:g}.fit", np.full((H, W), 0.005, np.float32), EXPTIME=t, GAIN=139,
+                    STACKCNT=20, BAYERPAT="")) for t in darks]
+    b = [str(_fits(root / "cal" / "bias.fit", np.full((H, W), 0.004, np.float32), STACKCNT=50, BAYERPAT=""))] if bias \
+        else []
+    p.sessions.append(project2.Session(1, "R", lights=[str(root / "L")], darks=ds, bias=b, filter="R"))
+    project2.save(p)
+    return _lines(p, 1)
+
+
+def test_the_matching_lines_say_which_dark_the_lights_of_each_exposure_get(tmp_path):
+    lines = _mixed(tmp_path / "a", (300.0, 60.0))
+    assert (True, "Lights of 300 s: the darks of 300 s.") in lines, lines
+    assert (True, "Lights of 60 s: the darks of 60 s.") in lines
+    assert not any(t.startswith("Darks: exposure") for _ok, t in lines)          # one exposure's line: not the case
+    lines = _mixed(tmp_path / "b", (300.0,))
+    assert (False, "Lights of 60 s: no dark of 60 s, calibrated without dark (no bias to scale those of "
+                   "300 s).") in lines, lines
+    lines = _mixed(tmp_path / "c", (300.0,), bias=True)
+    assert (None, "Lights of 60 s: no dark of 60 s, the darks of 300 s with their thermal signal scaled.") in lines

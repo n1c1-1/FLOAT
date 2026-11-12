@@ -227,7 +227,7 @@ def test_calibrate_keeps_the_master_bias_and_flat_dark_and_a_rebuild_copies_them
     (inv / "manifest.json").write_text(json.dumps({"status": "done", "metrics": {
         "height": 64, "width": 96, "black_level": 0.0, "cfa": "RGGB", "white_level": 65535.0}}))
     seen = {}
-    monkeypatch.setattr(cal, "calibrate_lights", lambda ctx, *a: seen.setdefault("full", True))
+    monkeypatch.setattr(cal, "calibrate_lights", lambda ctx, *a, **k: seen.setdefault("full", True))
     monkeypatch.setattr(cal, "rebuild_cache", lambda ctx, p, l, given, *a: seen.setdefault("given", given))
     ctx = Context(proj, cal.Calibrate(), Journal(proj.logs, echo=False), "cpu")
     cal.Calibrate().run(ctx, cal.CalibrateParams(workers=1))

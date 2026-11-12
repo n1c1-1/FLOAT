@@ -472,6 +472,12 @@ def test_the_guard_on_a_copy_of_heart_a7s(tmp_path, monkeypatch):
     changes nothing."""
     copy = tmp_path / "heart_a7s"
     _light_copy(HEART, copy)
+    # the guard is the subject, not the stages' versions: the Calibration of the copy is taken as of the version it
+    # was made with (a later fix of the stage, 7: each light with the dark of its exposure, would leave nothing after
+    # it up to date, and no settings to check against it)
+    from astro_gpu.stages.calibrate import Calibrate
+    made = json.loads((copy / "work" / "calibrate" / "manifest.json").read_text(encoding="utf-8")).get("version")
+    monkeypatch.setattr(Calibrate, "version", made or Calibrate.version)
     up_to_date = _up_to_date(copy, FULL_CHAIN, tmp_path / "logs")
     assert up_to_date[:3] == ["inventory", "calibrate", "register"]
     watched = iv.folders_of(copy)

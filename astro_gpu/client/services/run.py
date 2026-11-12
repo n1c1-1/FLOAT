@@ -324,6 +324,26 @@ PATTERNS: list[tuple[re.Pattern, str, tuple]] = [
          "{0} light frame(s) with a different size or pattern are ignored", ()),
         (r"^master dark level ([\d.]+) ADU, flat min ([\d.]+), ([\d.]+) % pixels excluded, sky noise ([\d.]+) ADU$",
          "master dark level {0} ADU, flat min {1}, {2} % pixels excluded, sky noise {3} ADU", ()),
+        # each light with the dark of its exposure (stages/calibrate.match_darks); a group: "300 s", "60 s at gain 139"
+        (r"^([\d.]+) s at (gain|ISO) ([\d.]+)$", "{0} s at {1} {2}", (1,)),
+        (r"^the lights of (.+?) are calibrated with the darks of (.+)$",
+         "the lights of {0} are calibrated with the darks of {1}", (0, 1)),
+        (r"^no dark of (.+?): the lights of (.+?) are calibrated with the darks of (.+?), their thermal signal scaled "
+         r"by ([\d.]+) \(no bias frames: above the black level\)$",
+         "no dark of {0}: the lights of {1} are calibrated with the darks of {2}, their thermal signal scaled by {3} "
+         "(no bias frames: above the black level)", (0, 1, 2)),
+        (r"^no dark of (.+?): the lights of (.+?) are calibrated with the darks of (.+?), their thermal signal scaled "
+         r"by ([\d.]+)$",
+         "no dark of {0}: the lights of {1} are calibrated with the darks of {2}, their thermal signal scaled by {3}",
+         (0, 1, 2)),
+        (r"^no dark of (.+?): the lights of (.+?) are calibrated without dark \((.+)\)$",
+         "no dark of {0}: the lights of {1} are calibrated without dark ({2})", (0, 1, 2)),
+        (r"^no dark of (.+?): the lights of (.+?) are calibrated without dark$",
+         "no dark of {0}: the lights of {1} are calibrated without dark", (0, 1)),
+        (r"^no bias frames nor black level: the darks of (.+) would scale the offset with their thermal signal$",
+         "no bias frames nor black level: the darks of {0} would scale the offset with their thermal signal", ()),
+        (r"^the flats are corrected with the flat darks of (.+?)(, the nearest to theirs)?$",
+         "the flats are corrected with the flat darks of {0}{1}", (0, 1)),
         (r"^resuming calibration: (\d+)/(\d+) frames already done$", "resuming calibration: {0}/{1} frames already done", ()),
         (r"^(\d+) frames calibrated in ([\d.]+) min \(cache ([\d.]+) GB\)$",
          "{0} frames calibrated in {1} min (cache {2} GB)", ()),

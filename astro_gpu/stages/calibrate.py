@@ -73,7 +73,12 @@ class Calibrate(Stage):
     # FITS mosaic in floats on the 0-1 scale read in ADU (io/frames.fits_adu): a master dark of another program was read
     # as 0.008 for 508 ADU, so the lights kept their black level, which the flat then turned into an inverted vignetting.
     # 6: a master given (io/frames.master_count) is used as it is: a master flat had the bias taken off a second time
-    version = "6"
+    # 7: each light is calibrated with the dark of its exposure (``match_darks``): a session of lights of 300 and 60 s
+    # with a master dark of each got their mean, of 180 s, scaled by 1.667 with the camera's offset (no bias, a black
+    # level of 0): every calibrated sky below 0. A dark of another exposure is scaled only above a bias or a known
+    # black level, else the lights go without dark, said (scaled with the offset before). A session of one exposure
+    # with darks of its exposure gets the same frames, to the byte
+    version = "7"
 
     def auto(self, ctx: Context) -> dict[str, Auto]:
         n = max(1, min(12, (os.cpu_count() or 4) - 2))
@@ -106,19 +111,25 @@ class Calibrate(Stage):
         bias = master_bias([f["path"] for f in frames["bias"]], ctx, ms.get("bias"))
         if bias is not None:
             ctx.save("master_bias.npy", bias)
-        dark, dark_noise = master_dark([f["path"] for f in frames["darks"]], bias, H, W, black, ctx, ms.get("darks"))
-        if frames["darks"]:
-            check_dark(ctx, dark, bias, black)
-        dark = scaled_dark(ctx, dark, bias, black, frames)
+        # each light with the dark of its exposure (a session of lights of 300 and 60 s with a master of each got their
+        # mean, of 180 s, scaled with its offset: every calibrated sky below 0)
+        darks, rank, dark_noise, real = match_darks(ctx, frames["lights"], frames["darks"], bias, H, W, black)
+        dark = darks[0]
+        # without bias nor flat darks the flats lose the darks' level (their dark current is negligible): the lowest
+        # of the darks when they are of several exposures (the nearest to the offset), the main group's dark else
+        used = [d for d, r in zip(darks, real) if r]
+        level = min(float(np.median(d)) for d in used) if len(used) > 1 else float(np.median(dark))
         kept: dict = {}
-        flat = master_flat([f["path"] for f in frames["flats"]], [f["path"] for f in frames["flat_darks"]], bias,
-                           float(np.median(dark)), H, W, p.flat_scale_px, ctx, keep=kept,
+        fd = flat_darks_of(ctx, frames["flat_darks"], frames["flats"])
+        flat = master_flat([f["path"] for f in frames["flats"]], [f["path"] for f in fd], bias,
+                           level, H, W, p.flat_scale_px, ctx, keep=kept,
                            cfa=ctx.metric_of("inventory", "cfa") or "RGGB", master="flats" in ms,
-                           fd_masters=ms.get("flat_darks"))
+                           fd_masters=[f for f in fd if f.get("stacked") is not None] or None)
         if "flat_dark" in kept:
             ctx.save("master_flat_dark.npy", kept.pop("flat_dark"))
-        calibrate_lights(ctx, p, frames["lights"], dark, flat, bool(frames["darks"]), dark_noise,
-                         ctx.metric_of("inventory", "cfa"), float(ctx.metric_of("inventory", "white_level")))
+        calibrate_lights(ctx, p, frames["lights"], dark, flat, real[0], dark_noise,
+                         ctx.metric_of("inventory", "cfa"), float(ctx.metric_of("inventory", "white_level")),
+                         darks=darks, rank=rank)
 
 
 def pass_through(ctx: Context, p: CalibrateParams, lights: list[dict], H: int, W: int, black: float) -> None:
@@ -153,8 +164,14 @@ def given_masters_of(ctx: Context, frames: dict) -> dict[str, list[dict]]:
         ms = [f for f in frames.get(kind) or [] if f.get("stacked") is not None]
         if not ms:
             continue
-        left = len(frames[kind]) - len(ms)
-        frames[kind] = out[kind] = ms
+        # a master dark holds the darks of its exposure only: single darks of another one (and gain) are kept, for
+        # the lights of theirs (``match_darks``)
+        mk = [_key(m) for m in ms]
+        own = [f for f in frames[kind] if f.get("stacked") is None and kind == "darks"
+               and not any(_same_key(k, _key(f)) for k in mk)]
+        left = len(frames[kind]) - len(ms) - len(own)
+        out[kind] = ms
+        frames[kind] = ms + own
         n = sum(int(f["stacked"]) for f in ms)
         what = (("a master" if len(ms) == 1 else f"{len(ms)} masters") +
                 (f" of {n} frames" if n and all(f["stacked"] for f in ms) else ""))
@@ -165,6 +182,156 @@ def given_masters_of(ctx: Context, frames: dict) -> dict[str, list[dict]]:
             ctx.log(f"{left} single {word} given beside the master are left out (it holds its frames already)",
                     "warning")
     return out
+
+
+#: two exposures within this share of the lights' are one (a camera writes 299.99 s for 300 s)
+SAME_EXPOSURE = 0.05
+
+
+def _key(f: dict) -> tuple[float | None, float | None]:
+    """(exposure s, ISO or gain) of a frame of the inventory, None for what its header does not record."""
+    e, g = f.get("exposure"), f.get("iso")
+    return (float(e) if e else None, float(g) if g is not None else None)
+
+
+def _same_exposure(t_l: float | None, t_d: float | None) -> bool:
+    """Darks of ``t_d`` s fit lights of ``t_l`` s (an exposure not recorded is no mismatch)."""
+    return t_l is None or t_d is None or abs(t_d - t_l) <= SAME_EXPOSURE * t_l
+
+
+def _same_gain(a: float | None, b: float | None) -> bool:
+    return a is None or b is None or a == b
+
+
+def _same_key(a: tuple, b: tuple) -> bool:
+    return _same_exposure(a[0], b[0]) and _same_gain(a[1], b[1])
+
+
+def exposure_groups(keys: list[tuple]) -> list[dict]:
+    """Frames by exposure and gain (``keys``: their ``_key``): [{"exposure": the median of its frames' exposures, or
+    None, "gain", "of": the frames' ranks}], in the order of their first frame; exposures within SAME_EXPOSURE of a
+    group's first are one. Frames whose exposure is not recorded join the largest group of their gain (they were
+    calibrated with the darks of the others: the lights of one exposure stay one group)."""
+    out: list[dict] = []
+    for i, (e, g) in enumerate(keys):
+        grp = next((x for x in out if x["gain"] == g and (x["first"] is None) == (e is None)
+                    and (e is None or _same_exposure(x["first"], e))), None)
+        if grp is None:
+            out.append({"first": e, "gain": g, "of": [i]})
+        else:
+            grp["of"].append(i)
+    for grp in [x for x in out if x["first"] is None]:
+        known = [x for x in out if x["first"] is not None and x["gain"] == grp["gain"]]
+        if known:
+            big = max(known, key=lambda x: len(x["of"]))
+            big["of"] = sorted(big["of"] + grp["of"])
+            out.remove(grp)
+    for grp in out:
+        t = [keys[i][0] for i in grp["of"] if keys[i][0]]
+        grp["exposure"] = float(np.median(t)) if t else None
+    return out
+
+
+def dark_plan(lights: list[dict], darks: list[dict], base: bool) -> list[tuple[str, int | None]]:
+    """How each group of lights (``exposure_groups``) is calibrated against the groups of darks, by the usual practice
+    of calibration: ("same", j) with the darks of group j, of its exposure and gain, as they are; ("scaled", j) when no
+    dark is of its exposure, with those of group j (of its gain, the nearest exposure), their thermal signal scaled,
+    only when ``base`` (a bias, or a known black level) tells it from the offset; ("none", None) without dark, rather
+    than with a wrong one: a dark of another exposure scaled with its offset, or not scaled (the two masters of 300 and
+    60 s of M101 averaged into one of 180 s and scaled by 1.667 with a black level of 0 put the calibrated sky at -260
+    ADU). Darks are never averaged across exposures. A gain or an exposure one side does not record is no mismatch."""
+    out: list[tuple[str, int | None]] = []
+    for L in lights:
+        ok = [j for j, D in enumerate(darks) if _same_gain(L["gain"], D["gain"])]
+        same = [j for j in ok if _same_exposure(L["exposure"], darks[j]["exposure"])]
+        if same:               # a recorded exposure before one not recorded, then the most frames
+            out.append(("same", max(same, key=lambda j: (darks[j]["exposure"] is not None, len(darks[j]["of"])))))
+        elif base and ok:
+            out.append(("scaled", min(ok, key=lambda j: abs(np.log(darks[j]["exposure"] / L["exposure"])))))
+        else:
+            out.append(("none", None))
+    return out
+
+
+def _group_name(grp: dict, gains: bool, word: str) -> str:
+    """A group of frames in a sentence: "300 s", "60 s at gain 139" (``gains``: the session's groups differ in gain)."""
+    t = f"{grp['exposure']:g} s" if grp["exposure"] else "an exposure not recorded"
+    return t + (f" at {word} {grp['gain']:g}" if gains and grp["gain"] is not None else "")
+
+
+def match_darks(ctx: Context, lights: list[dict], darks: list[dict], bias: np.ndarray | None, H: int, W: int,
+                black: float) -> tuple[list[np.ndarray], np.ndarray, float | None, list[bool]]:
+    """The dark of each group of lights of one exposure and gain (``dark_plan``): (the darks, the main group's first:
+    the group of the most lights, whose dark is master_dark.npy and finds the hot pixels; each light's rank in them;
+    the noise of one dark of the main group, or None; whether each has a dark). The masters made by
+    another program (``stacked``) stand for their group's darks, as they are. A session of one exposure gets the dark
+    it got before, to the byte (the same files, in the same order, the same scaling)."""
+    n = len(lights)
+    lg = exposure_groups([_key(f) for f in lights])
+    lg.insert(0, lg.pop(max(range(len(lg)), key=lambda i: len(lg[i]["of"]))))
+    rank = np.zeros(n, int)
+    for i, grp in enumerate(lg):
+        rank[grp["of"]] = i
+    if not darks:
+        dark, _ = master_dark([], bias, H, W, black, ctx)
+        return [dark], np.zeros(n, int), None, [False]
+    dg = exposure_groups([_key(f) for f in darks])
+    plan = dark_plan(lg, dg, bias is not None or black > 0)
+    mixed = len(lg) > 1 or len(dg) > 1
+    from ..core.project import frame_kind
+    word = "ISO" if frame_kind(lights[0]["path"]) == "raw" else "gain"
+    gains = len({g["gain"] for g in lg + dg if g["gain"] is not None}) > 1
+    made: dict[int, tuple[np.ndarray, float | None]] = {}
+    base = bias if bias is not None else np.float32(black)
+    out, noise = [], None
+    for i, (L, (how, j)) in enumerate(zip(lg, plan)):
+        name = _group_name(L, gains, word)
+        if how == "none":
+            others = sorted({_group_name(dg[k], gains, word) for k in range(len(dg)) if _same_gain(L["gain"], dg[k]["gain"])})
+            why = (" (only the master bias taken off)" if bias is not None else
+                   " (only the black level taken off)" if black > 0 else
+                   f" (no bias frames nor black level: the darks of {', '.join(others)} would scale the offset with "
+                   "their thermal signal)" if others else "")
+            ctx.log(f"no dark of {name}: the lights of {name} are calibrated without dark{why}", "warning")
+            out.append(bias.copy() if bias is not None else np.full((H, W), black, np.float32))
+            continue
+        if j not in made:
+            fs = [darks[k] for k in dg[j]["of"]]
+            ms = [f for f in fs if f.get("stacked") is not None]
+            made[j] = master_dark([f["path"] for f in fs], bias, H, W, black, ctx, ms or None)
+            check_dark(ctx, made[j][0], bias, black)
+        dark = made[j][0]
+        if i == 0:
+            noise = made[j][1]
+        if how == "scaled":           # the classic dark scaling of the reduction guides (``scaled_dark``)
+            r = L["exposure"] / dg[j]["exposure"]
+            ctx.log(f"no dark of {name}: the lights of {name} are calibrated with the darks of "
+                    f"{_group_name(dg[j], gains, word)}, their thermal signal scaled by {r:.3f}"
+                    + ("" if bias is not None else " (no bias frames: above the black level)"))
+            if i == 0:
+                ctx.metric("dark_scale", round(r, 4))
+            dark = (base + (dark - base) * np.float32(r)).astype(np.float32)
+        elif mixed:
+            ctx.log(f"the lights of {name} are calibrated with the darks of {_group_name(dg[j], gains, word)}")
+        out.append(dark)
+    return out, rank, noise, [how != "none" for how, _j in plan]
+
+
+def flat_darks_of(ctx: Context, flat_darks: list[dict], flats: list[dict]) -> list[dict]:
+    """The flat darks of the flats' exposure: all of them when they are of one (the same files as before); of several,
+    those of the flats' exposure and gain, else of the nearest one, said (never averaged across exposures)."""
+    groups = exposure_groups([_key(f) for f in flat_darks])
+    if len(groups) < 2:
+        return flat_darks
+    t = exposure_groups([_key(f) for f in flats])
+    want = max(t, key=lambda x: len(x["of"])) if t else {"exposure": None, "gain": None}
+    ok = [g for g in groups if _same_gain(want["gain"], g["gain"])] or groups
+    same = [g for g in ok if _same_exposure(want["exposure"], g["exposure"])]
+    pick = (max(same, key=lambda g: len(g["of"])) if same else
+            min(ok, key=lambda g: abs(np.log((g["exposure"] or 1.0) / (want["exposure"] or 1.0)))))
+    e = f"{pick['exposure']:g} s" if pick["exposure"] else "an exposure not recorded"
+    ctx.log(f"the flats are corrected with the flat darks of {e}" + ("" if same else ", the nearest to theirs"))
+    return [flat_darks[i] for i in pick["of"]]
 
 
 def _masters_mean(ms: list[dict], ctx: Context, label: str, read=None) -> np.ndarray:
@@ -309,13 +476,18 @@ def master_flat(paths: list[str], flat_dark_paths: list[str], bias: np.ndarray |
 
 
 def calibrate_lights(ctx: Context, p: CalibrateParams, lights: list[dict], dark: np.ndarray, flat: np.ndarray,
-                     have_darks: bool, dark_noise: float | None, cfa: str, white: float) -> None:
+                     have_darks: bool, dark_noise: float | None, cfa: str, white: float,
+                     darks: list[np.ndarray] | None = None, rank: np.ndarray | None = None) -> None:
     """Bad pixel map and calibrated cache of the light frames from the given masters (saved with them in the
-    stage's folder: master_dark, master_flat, badmask, frame_stats, cache.json)."""
+    stage's folder: master_dark, master_flat, badmask, frame_stats, cache.json). ``darks``, ``rank``: the darks of
+    the lights' exposures (``match_darks``; ``dark`` the main group's, the first) and each light's; one dark for all
+    without. The hot pixels are those of the main group's dark, the sky noise that of one of its lights."""
     H, W = dark.shape
     t0 = time.time()
     level = float(np.median(dark))
     ctx.save("master_dark.npy", dark)
+    darks, rank = _one_dark(dark, darks, rank, len(lights))
+    _save_darks(ctx, darks, rank)
     ctx.metric("dark_level", round(level, 1))
     if dark_noise:
         ctx.metric("dark_frame_noise", round(dark_noise, 2))
@@ -324,7 +496,8 @@ def calibrate_lights(ctx: Context, p: CalibrateParams, lights: list[dict], dark:
 
     # ---------------- bad pixels: hot (dark), cold / dust (flat)
     P = cfa_mod.period(cfa)
-    sky_noise = _sky_noise(lights[len(lights) // 2]["path"], dark, flat, P)
+    main = np.flatnonzero(rank == 0)
+    sky_noise = _sky_noise(lights[int(main[len(main) // 2])]["path"], dark, flat, P)
     bad = np.zeros((H, W), bool)
     if have_darks:
         bad |= (dark - level) > p.hot_sigma * sky_noise
@@ -340,7 +513,8 @@ def calibrate_lights(ctx: Context, p: CalibrateParams, lights: list[dict], dark:
     if p.hot_from_lights and len(lights) >= 15:
         n0 = int(bad.sum())
         msg, moved = _hot_from_lights([f["path"] for f in lights], dark, flat, bad, median_filter, cfa=cfa,
-                                      tick=lambda what: _tick(ctx, what))
+                                      tick=lambda what: _tick(ctx, what),
+                                      dark_of=(lambda i: darks[rank[i]]) if len(darks) > 1 else None)
         ctx.metric("hot_pixels_from_lights", int(bad.sum()) - n0)
         ctx.log(msg)
     # the sky did not move: a pixel left out would be a hole in the stack, it is filled from its neighbours instead
@@ -352,7 +526,28 @@ def calibrate_lights(ctx: Context, p: CalibrateParams, lights: list[dict], dark:
     ctx.metric("sky_noise_adu", round(sky_noise, 2))
     ctx.log(f"master dark level {level:.1f} ADU, flat min {flat.min():.3f}, {100 * bad.mean():.2f} % pixels "
             f"excluded, sky noise {sky_noise:.1f} ADU")
-    _calibrated_cache(ctx, p, lights, dark, flat, bad, cfa, white, t0, not moved)
+    _calibrated_cache(ctx, p, lights, dark, flat, bad, cfa, white, t0, not moved, darks, rank)
+
+
+#: the darks of the lights of each exposure when they are of several (``match_darks``): "darks" (G, H, W), the main
+#: group's first (master_dark.npy), and "rank" (each light's); not there for a session of one exposure
+GROUP_DARKS = "master_darks.npz"
+
+
+def _one_dark(dark: np.ndarray, darks: list | None, rank, n: int) -> tuple[list[np.ndarray], np.ndarray]:
+    if not darks or rank is None or len(rank) != n:
+        return [dark], np.zeros(n, int)
+    return list(darks), np.asarray(rank, int)
+
+
+def _save_darks(ctx: Context, darks: list[np.ndarray], rank: np.ndarray) -> None:
+    """GROUP_DARKS in the stage's folder for a session of several exposures (the cache-only rebuild reads it back),
+    none else."""
+    f = ctx.out(GROUP_DARKS)
+    if len(darks) < 2:
+        f.unlink(missing_ok=True)
+        return
+    np.savez(f, darks=np.stack(darks).astype(np.float32), rank=rank)
 
 
 #: what a v2 runner copies from an earlier result whose calibrated cache was lost, with MASTERS (their settings
@@ -400,26 +595,36 @@ def rebuild_cache(ctx: Context, p: CalibrateParams, lights: list[dict], given: d
     so the same cache as a full run), their metrics restored."""
     t0 = time.time()
     dark, flat, bad = (np.load(ctx.out(n)) for n in MASTER_FILES)
+    src = Path(str(given.get("from") or ""))
+    if given.get("from") and (src / GROUP_DARKS).is_file() and not ctx.out(GROUP_DARKS).is_file():
+        shutil.copy2(src / GROUP_DARKS, ctx.out(GROUP_DARKS))      # a session of several exposures: each its dark
+    darks = rank = None
+    if ctx.out(GROUP_DARKS).is_file():
+        with np.load(ctx.out(GROUP_DARKS)) as z:
+            darks, rank = list(z["darks"]), z["rank"]
     for k, v in (given.get("metrics") or {}).items():
         if k not in ("cache_scale", "cache_gb"):
             ctx.metric(k, v)
     ctx.log("calibrated frames rebuilt with the masters of the earlier result (same settings)")
     fill = bool((given.get("metrics") or {}).get("bad_pixels_filled", False))
-    src = Path(str(given.get("from") or ""))
     for n in EXTRA_MASTERS:
         if given.get("from") and (src / n).is_file() and not ctx.out(n).is_file():
             shutil.copy2(src / n, ctx.out(n))
-    _calibrated_cache(ctx, p, lights, dark, flat, bad, cfa, white, t0, fill)
+    _calibrated_cache(ctx, p, lights, dark, flat, bad, cfa, white, t0, fill, darks, rank)
     (ctx.dir / MASTERS).unlink(missing_ok=True)
 
 
 def _calibrated_cache(ctx: Context, p: CalibrateParams, lights: list[dict], dark: np.ndarray, flat: np.ndarray,
-                      bad: np.ndarray, cfa: str, white: float, t0: float, fill: bool = False) -> None:
+                      bad: np.ndarray, cfa: str, white: float, t0: float, fill: bool = False,
+                      darks: list[np.ndarray] | None = None, rank: np.ndarray | None = None) -> None:
     """The calibrated cache of the light frames (float16 memmap on the scratch disk), its frame statistics and
     cache.json, from the masters and the bad pixel map; the bad pixels left out (NaN), or with ``fill`` (the sky did
-    not move on the sensor) filled with the median of their same-colour neighbours that are not bad."""
+    not move on the sensor) filled with the median of their same-colour neighbours that are not bad. ``darks``,
+    ``rank``: each light's dark among the darks of the lights' exposures (``match_darks``), ``dark`` for all without."""
     H, W = dark.shape
-    level = float(np.median(dark))
+    darks, rank = _one_dark(dark, darks, rank, len(lights))
+    # the lowest dark's level: the widest range above it, which the cache's scale keeps in the float16 range
+    level = min(float(np.median(d)) for d in darks) if len(darks) > 1 else float(np.median(dark))
     # values are scaled so that the brightest valid value stays below the float16 range
     scale = float(min(1.0, 16000.0 / max(white - level, 1.0)))
     n = len(lights)
@@ -438,12 +643,14 @@ def _calibrated_cache(ctx: Context, p: CalibrateParams, lights: list[dict], dark
         del mm
     paths_dir = ctx.ckpt
     np.save(paths_dir / "dark.npy", dark)
+    for g in range(1, len(darks)):
+        np.save(paths_dir / f"dark_{g}.npy", darks[g])
     np.save(paths_dir / "flat.npy", flat)
     np.save(paths_dir / "bad.npy", bad)
-    todo = [(i, lights[i]["path"]) for i in range(n) if not done[i]]
+    todo = [(i, lights[i]["path"], int(rank[i])) for i in range(n) if not done[i]]
     sat_raw = p.saturation * white
     plain = plain_writes(ctx, n * H * W * 2, p.workers, H * W)
-    init = (str(cache), n, H, W, str(paths_dir), sat_raw, scale, fill, cfa, plain)
+    init = (str(cache), n, H, W, str(paths_dir), sat_raw, scale, fill, cfa, plain, len(darks))
     ctx.phase(getattr(ctx, "_lights_from", 0.0), 1.0)          # issue #50: the lights' share of the bar
     ctx.progress(done.mean(), f"calibrating {len(todo)} frames ({p.workers} processes)", force=True)
     with devices.one_maths_thread():                           # issue #125: 1 GB less reserved a worker
@@ -456,7 +663,7 @@ def _calibrated_cache(ctx: Context, p: CalibrateParams, lights: list[dict], dark
                 np.save(done_p, done)
                 np.save(stats_p, stats)
             ctx.progress(done.mean(), f"{int(done.sum())}/{n} frames calibrated")
-    for f in ("dark.npy", "flat.npy", "bad.npy"):
+    for f in ("dark.npy", "flat.npy", "bad.npy", *(f"dark_{g}.npy" for g in range(1, len(darks)))):
         (paths_dir / f).unlink(missing_ok=True)
     ctx.save("frame_stats.npy", stats)
     ctx.save_json("cache.json", {"path": str(cache), "n": n, "height": H, "width": W, "scale": scale,
@@ -556,20 +763,24 @@ def _tick(ctx: Context, what: str) -> None:
     ctx.progress(min(1.0, ctx._files_read / tot) if tot else 0.0, what, force=ctx._files_read == 1)
 
 
-def _hot_from_lights(paths, dark, flat, bad, median_filter, n=40, k=5.0, cfa: str = "RGGB", tick=None) -> str:
+def _hot_from_lights(paths, dark, flat, bad, median_filter, n=40, k=5.0, cfa: str = "RGGB", tick=None,
+                     dark_of=None) -> str:
     """Flag in ``bad`` the pixels that stand out from their same-colour neighbours in the lower quartile of ``n``
     light frames spread over the session, in sensor coordinates: a defect is bright in every frame. When the sky
     drifted by three star widths or more between the first and the last frame, a star covers a given pixel in a
     small part of the frames only, so that is enough. When it did not, the stars stand still too: a defect is then
     also a lone pixel: its four nearest neighbours (the other colours) within LONE_SIGMA of their sky, where a star
     or a nebula lights them too. Returns (message, whether the sky moved). Each position of the pattern (``cfa``)
-    is a plane of its own: its neighbours in the plane are of its colour."""
+    is a plane of its own: its neighbours in the plane are of its colour. ``dark_of(i)``: the dark of the light of
+    rank i (a session of several exposures), ``dark`` for all without."""
     P = cfa_mod.period(cfa)
-    sub = [paths[i] for i in np.linspace(0, len(paths) - 1, min(n, len(paths))).astype(int)]
+    picks = np.linspace(0, len(paths) - 1, min(n, len(paths))).astype(int)
+    sub = [paths[i] for i in picks]
+    dk = [dark_of(i) for i in picks] if dark_of is not None else [dark] * len(picks)
     # the pixels already flagged (an unlit edge of the flat, nearly 0: values of 1e8 once divided) make the
     # correlation's peak fall anywhere (a still sky read as moved by 1000 px, its stars then flagged as hot pixels)
-    a, b = (np.where(bad, 0.0, np.nan_to_num((read_cfa(q) - dark) / flat, nan=0.0, posinf=0.0, neginf=0.0))
-            for q in (sub[0], sub[-1]))
+    a, b = (np.where(bad, 0.0, np.nan_to_num((read_cfa(q) - d) / flat, nan=0.0, posinf=0.0, neginf=0.0))
+            for q, d in ((sub[0], dk[0]), (sub[-1], dk[-1])))
     g0 = cfa_mod.green_position(cfa)
     ga, gb = (cv2.resize(np.ascontiguousarray(_plane(x, g0, P)), None, fx=0.5, fy=0.5,
                          interpolation=cv2.INTER_AREA).astype(np.float32) for x in (a, b))
@@ -583,7 +794,7 @@ def _hot_from_lights(paths, dark, flat, bad, median_filter, n=40, k=5.0, cfa: st
     st = np.empty((len(sub), *dark.shape), np.float32)          # one array, the quartile in bands: the frames once
 
     def put(i, a, st=st):
-        st[i] = (a - dark) / flat
+        st[i] = (a - dk[i]) / flat
 
     _read_frames(sub, put, 0, (lambda c: tick(f"hot pixels: frame {c}/{len(sub)}")) if tick is not None else None)
     q = np.empty(dark.shape, np.float32)
@@ -632,10 +843,11 @@ def _flat_view(flat: np.ndarray, cfa: str) -> np.ndarray:
 _G: dict = {}
 
 
-def _init(cache, n, H, W, paths_dir, sat_raw, scale, fill=False, cfa="RGGB", plain=False):
+def _init(cache, n, H, W, paths_dir, sat_raw, scale, fill=False, cfa="RGGB", plain=False, n_darks=1):
     d = Path(paths_dir)
     bad = np.load(d / "bad.npy")
-    _G.update(dark=np.load(d / "dark.npy"), flat=np.load(d / "flat.npy"), bad=bad,
+    darks = [np.load(d / "dark.npy")] + [np.load(d / f"dark_{g}.npy") for g in range(1, n_darks)]
+    _G.update(darks=darks, flat=np.load(d / "flat.npy"), bad=bad,
               mm=FrameWriter(cache, n, (H, W), plain), sat=sat_raw, scale=scale,
               fill=_neighbours(bad, cfa) if fill else None, cfa=cfa)
 
@@ -668,10 +880,10 @@ def _neighbours(bad: np.ndarray, cfa: str = "RGGB"):
 
 
 def _calib_one(args):
-    idx, path = args
+    idx, path, g = args                     # g: the light's dark among those of the session's exposures
     raw = read_cfa(path)
     sat = raw >= _G["sat"]
-    x = (raw - _G["dark"]) / _G["flat"] * _G["scale"]
+    x = (raw - _G["darks"][g]) / _G["flat"] * _G["scale"]
     x = np.minimum(x, VALID_MAX - 1)
     # a bad pixel stays excluded even when it saturates: marked saturated, the stack took a hot pixel for the core
     # of a bright star and drew the drift of the mount with it (green dotted trails on the Flaming Star)
