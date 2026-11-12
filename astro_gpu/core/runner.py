@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from . import online
+from . import devices, online
 from .determinism import deterministic
 from .files import write_json
 from .journal import Journal
@@ -189,7 +189,13 @@ class Pipeline:
         try:
             # nothing is downloaded while a stage runs (core/online.py): what it needs is on the disk, or it fails
             with deterministic(), online.forbid(f"the {st.title} step"):
-                st.run(ctx, p)
+                try:
+                    st.run(ctx, p)
+                finally:
+                    # the card's memory a step cached goes back before the next one measures what is free: the
+                    # stages run in one process, and a 62 Mpx stack left about 6 GB cached, the next step then saw
+                    # a full card and crawled (night of 11 November)
+                    devices.empty_cache(ctx.device)
         except Interrupted:
             m.update(status="interrupted", error="stopped by user", duration=time.time() - t0)
             _write_manifest(self.project, st.name, m)
