@@ -224,15 +224,16 @@ READERS: dict[str, str] = {"gradient": "all", "deconv": "all", "denoise": "all",
 #: the image blocks each rule of READERS applies
 READ_KINDS: dict[str, tuple[str, ...]] = {"all": ("gradient", "deconv", "denoise", "color"), "skies": ("gradient",),
                                          "colours": ("gradient", "color")}
+#: the stages of the Astrometry block: an Align on block wired from the reference workflow's Astrometry (or a block after
+#: it) outputs the reference's plate solution with the aligned image (same grid), which is what these stages stand for
+#: after it, in the workflow that has no Astrometry block of its own (#165)
+ASTROMETRY_STAGES = ("astrometry", "reference", "catalogs", "surveys")
 #: stages that stand for others in a chain (issue #43): the sessions' join for each session's frames and calibration,
 #: the image of an image source for the stack
 PROVIDES: dict[str, tuple[str, ...]] = {"sessions": ("inventory", "calibrate"), "image": ("stack", "render_simple"),
-                                         **{st: ("stack",) for st in COMBINE}}
+                                         **{st: ("stack",) for st in COMBINE}, "align_on": ASTROMETRY_STAGES}
 #: dependencies a stage has beyond its declared ``deps``
 EXTRA: dict[str, tuple[str, ...]] = {}
-#: the stages of the Astrometry block: a workflow that aligns on another (Align on) has the plate solution of the grid it
-#: was brought onto, so its blocks read these in the reference workflow when it has no Astrometry block of its own (#165)
-ASTROMETRY_STAGES = ("astrometry", "reference", "catalogs", "surveys")
 #: dependencies that may be absent from a chain (the stage then runs without them); the stages that read the stack
 #: read it with the sky gradient removed when the chain has the Gradient block (gradient.stack_image)
 OPTIONAL: dict[str, tuple[str, ...]] = {
@@ -453,17 +454,11 @@ class Chains:
             if r is not None:
                 if r not in out:
                     out.append(r)
-            elif d not in self.optional.get(b, ()) and not self.borrows(chain, stage, d):
+            elif d not in self.optional.get(b, ()):
                 raise ValueError(f"stage '{stage}' needs the {self.block_title(self.block_of(d))} block "
                                  f"(stage '{d}')")
         out += [x for x in prior if x not in out]
         return tuple(out)
-
-    @staticmethod
-    def borrows(chain: Sequence[str], stage: str, dep: str) -> bool:
-        """The stage reads ``dep`` (a stage of the Astrometry block) in another workflow: it comes after the Align on
-        block and its chain has no such block (``Keys.borrowed`` says which workflow)."""
-        return dep in ASTROMETRY_STAGES and "align_on" in chain and stage in chain             and list(chain).index(stage) > list(chain).index("align_on")
 
     def ancestors(self, chain: Sequence[str], stage: str) -> list[str]:
         """Every stage this one reads, directly or not, in the chain, in the chain's order."""
@@ -604,11 +599,13 @@ def _title(b: str) -> str:
 
 
 def node(block: str, method: str | None = None, off: bool = False, name: str | None = None,
-         fork: int | None = None, reference: int | None = None) -> dict[str, Any]:
+         fork: int | None = None, reference: int | None = None, reference_block: str | None = None) -> dict[str, Any]:
     """A node of a workflow's graph. ``fork``: a frame block placed in parallel with another (its identity: drawn as a
     block of its own even while its settings, so its result, are the same; no key reads it). ``reference``: the
     workflow an Align on block aligns its image on (None: not wired yet); it is not a setting, as a combination's
-    inputs are not: the keys read the reference's keys, not its id."""
+    inputs are not: the keys read the reference's keys, not its id. ``reference_block``: the name of the reference workflow's node
+    the wire leaves from (None: its Stacking or Image); from its Astrometry or a block after it, the wire carries the
+    plate solution too (#165)."""
     if block not in IO:
         raise ValueError(f"unknown block {block!r} (allowed: {list(IO)})")
     m = method if method is not None else DEFAULT_METHOD.get(block)
@@ -619,6 +616,10 @@ def node(block: str, method: str | None = None, off: bool = False, name: str | N
         if reference is not None and (isinstance(reference, bool) or not isinstance(reference, int)):
             raise ValueError(f"an Align on block's reference is a workflow's id, not {reference!r}")
         out["reference"] = reference
+        if reference_block is not None and not isinstance(reference_block, str):
+            raise ValueError(f"an Align on block's reference_block is a block's name, not {reference_block!r}")
+        if reference_block is not None:
+            out["reference_block"] = reference_block
     elif reference is not None:
         raise ValueError(f"block {block!r} has no reference")
     return out | {"fork": int(fork)} if fork is not None else out
@@ -647,7 +648,7 @@ def check_blocks(blocks: Any, source: str = "frames") -> list[dict[str, Any]]:
     for n in blocks:
         if not isinstance(n, dict) or "block" not in n:
             raise ValueError(f"a block is {{'block', 'name', 'method', 'off'}}, not {n!r}")
-        nn = node(n["block"], n.get("method"), n.get("off", False), n.get("name"), n.get("fork"), n.get("reference"))
+        nn = node(n["block"], n.get("method"), n.get("off", False), n.get("name"), n.get("fork"), n.get("reference"), n.get("reference_block"))
         if nn["block"] not in IMAGE_OPS and nn["name"] != nn["block"] or \
                 nn["block"] in IMAGE_OPS and base(nn["name"]) != nn["block"]:
             raise ValueError(f"block {nn['block']!r} cannot be named {nn['name']!r}")

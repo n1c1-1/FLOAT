@@ -594,11 +594,13 @@ class Graph:
                         ins.append((a, i["role"], image))
                 self.fusion_inputs[id(n)] = ins
         self._ranks()
+        self._after_sources(project)
         waits = getattr(project, "wiring_reason", lambda q, k: "")
         for n in self.nodes:                          # an Align on block: the block its reference gives the image from
             if n.key == "align_on" and n.paths and not n.cut:
                 ref = (getattr(project, "align_reference", lambda q: None))(n.paths[0])
-                self.align_refs[id(n)] = self._read_node(ref)
+                key = (getattr(project, "align_source", lambda q: None))(n.paths[0])
+                self.align_refs[id(n)] = (self.by_path.get(ref, {}).get(key) if key else None) or self._read_node(ref)
                 n.waits = waits(n.paths[0], "align_on")
         for n in self.compositions:                   # a Combine layers block: the starless side and the stars side
             p = n.paths[0]
@@ -625,6 +627,29 @@ class Graph:
         if a is not None and not a.cut:
             return a
         return by.get("empilement") or by.get("image")
+
+    def _after_sources(self, project):
+        """An Align on block stands in a column after the block of the reference workflow its wire leaves from (its
+        Astrometry, which gives it the plate solution): the wire never goes back; the blocks after it follow (#165)."""
+        src = getattr(project, "align_source", lambda q: None)
+        ref = getattr(project, "align_reference", lambda q: None)
+        for _ in range(len(self.nodes) + 1):
+            moved = False
+            for p in project.paths:
+                a = self.by_path[p.pid].get("align_on")
+                key = src(p) if a is not None else None
+                r = self.by_path.get(ref(p)) if key else None
+                b = r.get(key) if r else None
+                if b is None or b.slot < 0 or a.slot > b.slot:
+                    continue
+                old, shift = a.slot, b.slot + 1 - a.slot
+                for k in chain(p):                       # this block and the image blocks after it, in the order they are in
+                    n = self.by_path[p.pid][k]
+                    if n.slot >= old and kbase(k) in IMAGE_KEYS:
+                        n.slot += shift
+                        moved = True
+            if not moved:
+                break
 
     def _ranks(self):
         """A combination's rank: 1 + the highest rank of a combination it reads (0 for one that reads none), and the

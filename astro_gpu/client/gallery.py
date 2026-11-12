@@ -353,9 +353,10 @@ def draw_filters(t: dict, w: int, h: int, names: bool = False) -> QPixmap:
     base = [k for k, _h in chain_of(t)]
     base = base[:-1] if fusion else base                 # the last block (Post) is the combination's, not a row's
     cols = []
-    for k in base:                                       # Align on right after Stacking, a Stars block at the end
+    after = "astrometrie" if "astrometrie" in base else "empilement"   # Align on after the reference's Astrometry (its wire
+    for k in base:                                       # leaves from it), a Stars block at the end
         cols.append(k)
-        if k == "empilement":
+        if k == after:
             cols.append("align_on")
     if rgb:
         cols.insert(cols.index("fond") + 1, "couleur")
@@ -401,9 +402,9 @@ def draw_filters(t: dict, w: int, h: int, names: bool = False) -> QPixmap:
                 continue
             wire(r.right(), y, xs[j], y)
             r = block(xs[j], y, picture_name(k), "#c9a227" if k == "align_on" else "#5fbf7f")
-            if k == "empilement" and i == 0:
+            if k == after and i == 0:
                 first_stack = (r.right(), y)
-            if k == "align_on" and first_stack is not None:           # the reference: a wire from the first Stacking
+            if k == "align_on" and first_stack is not None:           # the reference: a wire from the first Astrometry
                 p.setPen(QPen(QColor("#c9a227"), 1.0, Qt.DashLine))
                 p.drawLine(QPointF(first_stack[0] - bw / 2, ys[0] + bh / 2), QPointF(r.center().x(), y - bh / 2))
         ends.append((r.right(), y, row))

@@ -138,8 +138,11 @@ def warp(a: np.ndarray, wp, nearest: bool = False) -> np.ndarray:
 
 #: why a block has no reference yet (the runner leaves it and what follows out; the graph greys it)
 NO_REFERENCE = "reference to wire"
-#: why a block that reads the plate solution has none: its workflow has no Astrometry block and the workflow it aligns on has none
-NO_REFERENCE_ASTROMETRY = "needs Astrometry in the reference workflow"
+#: why a block that reads the plate solution has none: its workflow has no Astrometry block and the reference wire leaves
+#: from a block before the reference's Astrometry
+NO_PLATE_REFERENCE = "the reference brings no plate solution"
+#: the files of a plate solution's stages the block hands on with the aligned image
+SOLUTION_SUFFIXES = (".fits", ".json", ".npz", ".npy")
 NO_PLATE_STACK = "the stack has no plate solution yet (Astrometry comes after)"
 #: the files of a stack the block resamples: (name, nearest neighbour)
 RESAMPLED = (("drz_full.npy", False), ("drz_A.npy", False), ("drz_B.npy", False), ("drz_weight.npy", True))
@@ -151,7 +154,8 @@ class AlignOnParams(StageParams):
                          "whatever the images), or through their plate solutions (both images must carry one in "
                          "their file).")
     #: set by the project (not keyed: the reference workflow's keys are): {"pid": the reference workflow, "dir": the
-    #: folder of the image it reads, "wcs": the file holding its plate solution, "path": this image's own file}
+    #: folder of the image it reads, "wcs": the file holding its plate solution, "path": this image's own file,
+    #: "solution": {stage of the reference's Astrometry block: its folder} when the wire carries the plate solution}
     reference: dict = P({}, label="Reference", level="internal",
                         help="The workflow whose image this one is aligned on.")
 
@@ -163,7 +167,7 @@ class AlignOn(Stage):
                    "plate solutions; the blocks after it read the aligned image.")
     deps = ("stack",)
     Params = AlignOnParams
-    version = "1"
+    version = "2"
 
     def run(self, ctx: Context, p: AlignOnParams) -> None:
         ref = p.reference or {}
@@ -218,8 +222,24 @@ class AlignOn(Stage):
             save_stretched(ctx, lin, valid, str(prep.get("source", meta.get("file", ""))), 1.0, out_meta)
         else:
             ctx.save_json("drz_meta.json", out_meta)
+        self.hand_on_solution(ctx, ref.get("solution") or {})
         ctx.metric("width", W)
         ctx.metric("height", H)
         v = np.moveaxis(np.load(ctx.out("drz_full.npy")), 0, -1)
         lo, hi = np.percentile(v, 1), np.percentile(v, 99.5)
         ctx.preview("image", np.clip((v - lo) / max(hi - lo, 1e-6), 0, 1) ** 0.5)
+
+    @staticmethod
+    def hand_on_solution(ctx: Context, folders: dict) -> None:
+        """The reference's plate solution (the files and metrics of the stages of its Astrometry block), output beside the
+        aligned image: the image is on the reference's grid, so the solution is the same, and the blocks after this one
+        read it where they would read an Astrometry block (core/workflow.PROVIDES, issue #165)."""
+        import shutil
+        for d in folders.values():
+            d = Path(d)
+            for f in sorted(d.iterdir()) if d.is_dir() else ():
+                if f.is_file() and f.suffix.lower() in SOLUTION_SUFFIXES and f.name != "manifest.json":
+                    shutil.copy2(f, ctx.out(f.name))
+            mf = d / "manifest.json"
+            for k, v in (json.loads(mf.read_text(encoding="utf-8")).get("metrics") or {}).items() if mf.is_file() else ():
+                ctx.metric(k, v)

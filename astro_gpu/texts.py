@@ -333,7 +333,7 @@ SPECTRA_CUT_TIP = "The star spectra installed on this computer go no fainter tha
 #: why a block waits for an input (issue #165): the reasons the planner gives for a combination or an Align on block
 WIRING_TEXTS = ("reference to wire", "{names} to wire", "{names} is not on the grid of {first}: place Align on after its "
                 "Stacking", "{names} are not on the grid of {first}: place Align on after their Stacking",
-                "the stack has no plate solution yet (Astrometry comes after)")
+                "the stack has no plate solution yet (Astrometry comes after)", "the reference brings no plate solution")
 UI_TEXTS = ("Yes", "No", "{n} values", SPECTRA_CUT_TIP, *WIRING_TEXTS)
 #: values with a number in them: (regular expression, English template, names of the numeric groups)
 VALUE_PATTERNS: list[tuple[re.Pattern, str, tuple[str, ...]]] = [

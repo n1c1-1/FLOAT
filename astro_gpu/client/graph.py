@@ -1528,7 +1528,9 @@ class GraphView(QGraphicsView):
             return (None if why else (lambda: s.set_fusion_input(p, key[1], q.pid, image))), why
         if kind == "reference":
             why = s.join_problem(p.pid, q.pid, True)
-            return (None if why else (lambda: s.set_align_reference(p, q.pid))), why
+            # the wire leaves from the block it was pulled from (the reference's Astrometry gives the plate solution too)
+            block = src.key if kbase(src.key) in IMAGE_KEYS or src.key in ("empilement", "image") else "auto"
+            return (None if why else (lambda: s.set_align_reference(p, q.pid, block))), why
         side = key[1]                                     # a Combine layers block's Starless or Stars side
         if side == "stars" and port != "stars":
             return None, _("Pull the Stars/background block's stars alone here")

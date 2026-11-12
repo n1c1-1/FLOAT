@@ -119,8 +119,9 @@ def test_the_sho_rgb_stars_template_makes_the_graph_of_the_issue(world):
     assert [(a_ is g.node_of(q, "etoiles"), role, image) for (a_, role, image), q in
             zip(g.fusion_inputs[id(fn)], (a, b, c))] == [(True, "SII", "starless"), (True, "Ha", "starless"),
                                                         (True, "OIII", "starless")]
-    stack_a = g.node_of(a, "empilement")
-    assert [g.align_refs[id(g.node_of(q, "align_on"))] is stack_a for q in (b, c, rgb)] == [True] * 3
+    astro_a = g.node_of(a, "astrometrie")      # the reference wire leaves from the reference's Astrometry
+    assert [g.align_refs[id(g.node_of(q, "align_on"))] is astro_a for q in (b, c, rgb)] == [True] * 3
+    assert all(g.node_of(q, "align_on").slot > astro_a.slot for q in (b, c, rgb))               # Align on in a column after it
     assert not fn.broken and not comp.waits and not [n for n in g.nodes if n.key == "align_on" and n.waits]
     assert [n["block"] for n in m.graph(rgb)].count("stars") == 1                     # the stars are taken off once only
 

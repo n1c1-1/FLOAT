@@ -1714,6 +1714,22 @@ class ProjectModel(QObject):
         n = self.align_node(p)
         return n.get("reference") if n is not None else None
 
+    def align_source(self, p) -> str | None:
+        """The view key of the block of the reference workflow the Align on wire leaves from (None: the reference's
+        Stacking or Image, or no such block any more)."""
+        n = self.align_node(p)
+        name = n.get("reference_block") if n is not None else None
+        ref = self.view(n.get("reference")) if n is not None and n.get("reference") is not None else None
+        if not name or ref is None or not any(x["name"] == name for x in self.graph(ref)):
+            return None
+        return view_key(name)
+
+    def default_align_source(self, pid: int | None) -> str | None:
+        """The block the Align on wire leaves from when only the workflow is picked: the reference's Astrometry when it
+        has one (the aligned image then comes with its plate solution), else its Stacking or Image."""
+        q = self.view(pid) if pid is not None else None
+        return next((n["name"] for n in self.graph(q) if n["block"] == "astrometry" and not n.get("off")), None)             if q is not None else None
+
     def join_problem(self, target: int, src: int, reference: bool = False) -> str:
         """Why workflow ``target`` cannot read workflow ``src`` (as a combination's input, or as the reference of its Align
         on block when ``reference``), translated; "" when it can. A loop, itself, a combination as a reference."""
@@ -1728,11 +1744,16 @@ class ProjectModel(QObject):
         """Every other workflow with why it cannot be the reference of ``p``'s Align on block ("" when it can)."""
         return [(q, self.join_problem(p.pid, q.pid, True)) for q in self.paths if q.pid != p.pid]
 
-    def set_align_reference(self, p, pid: int | None) -> bool:
-        """Wire (or, with None, unwire) the reference of a workflow's Align on block: one Undo step. ValueError
-        (translated) when it would make a loop; False when nothing changes."""
+    def set_align_reference(self, p, pid: int | None, block: str | None = "auto") -> bool:
+        """Wire (or, with None, unwire) the reference of a workflow's Align on block: one Undo step. ``block``: the view
+        key of the reference's block the wire leaves from (None: its Stacking or Image; "auto": its Astrometry when it has
+        one). ValueError (translated) when it would make a loop; False when nothing changes."""
         n = self.align_node(p)
-        if n is None or n.get("reference") == pid:
+        if block == "auto":
+            block = self.default_align_source(pid)
+        elif block is not None:
+            block = engine_name(block)
+        if n is None or (n.get("reference") == pid and n.get("reference_block") == block):
             return False
         if pid is not None:
             why = self.join_problem(p.pid, int(pid), True)
@@ -1741,16 +1762,22 @@ class ProjectModel(QObject):
         with self._edit():
             g = self.graph(p)
             i = next(j for j, x in enumerate(g) if x["block"] == "align_on")
-            g[i] = dict(g[i], reference=None if pid is None else int(pid))
+            g[i] = {k: v for k, v in g[i].items() if k != "reference_block"} | {"reference": None if pid is None else int(pid)}
+            if pid is not None and block is not None:
+                g[i]["reference_block"] = block
             self.p.set_blocks(p.pid, g)
         return True
 
-    def set_align_on(self, p, reference: int | None, method: str = "stars") -> bool:
+    def set_align_on(self, p, reference: int | None, method: str = "stars", block: str | None = "auto") -> bool:
         """An Align on block in a workflow, right after its Stacking (or its Image), wired to ``reference`` (or empty);
         its reference changed when the workflow has one. One Undo step; ValueError (translated) when it cannot go
         there or would make a loop."""
         if self.align_node(p) is not None:
-            return self.set_align_reference(p, reference)
+            return self.set_align_reference(p, reference, block)
+        if block == "auto":
+            block = self.default_align_source(reference)
+        elif block is not None:
+            block = engine_name(block)
         if reference is not None:
             why = self.join_problem(p.pid, int(reference), True)
             if why:
@@ -1763,14 +1790,16 @@ class ProjectModel(QObject):
         if e is not None:
             raise ValueError(refused_text(e))
         g.insert(index, wfl.node("align_on", method, name=wfl.new_name(g, "align_on"),
-                                 reference=None if reference is None else int(reference)))
+                                 reference=None if reference is None else int(reference),
+                                 reference_block=None if reference is None else block))
         with self._edit():
             self.p.set_blocks(p.pid, g)
         return True
 
     def align_without_astrometry(self, p, reference: int) -> None:
-        """What a template does for a workflow it aligns on the reference (#165): the Align on block, and no Astrometry
-        block of its own, as the blocks after Align on read the reference's plate solution (same grid, same solution)."""
+        """What a template does for a workflow it aligns on the reference (#165): the Align on block, wired from the
+        reference's Astrometry, and no Astrometry block of its own: the blocks after Align on receive the plate solution
+        it outputs (same grid, same solution)."""
         self.set_align_on(p, reference)
         g = self.graph(p)
         if any(n["block"] == "astrometry" for n in g):

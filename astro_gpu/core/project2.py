@@ -314,22 +314,26 @@ class Project2:
                          image=is_image(w), mono=self.is_mono(w) and w.source is None, fusion=wfl.combine_stage(w),
                          stretched=is_stretched(w))
 
-    def catalogs_wanted(self, wid: int | Workflow) -> bool:
-        """A workflow aligned on this one (Align on, directly or through others) has a Color block: it reads the
-        catalogues of this workflow's Astrometry, which then makes them (#165)."""
+    def plate_reference(self, wid: int | Workflow) -> int | None:
+        """The workflow whose plate solution the Align on block of this one outputs with the aligned image: its reference
+        when the wire leaves from its Astrometry block or a block after it (#165); None otherwise (no Align on block, not
+        wired, wired from the Stacking or the Image: the reference brings no plate solution)."""
         w = self.workflow(wid)
-        todo, seen = [w.id], {w.id}
-        while todo:
-            t = todo.pop()
-            for x in self.workflows:
-                n = next((b for b in x.blocks or [] if b["block"] == "align_on" and not b.get("off")), None)
-                if n is None or n.get("reference") != t or x.id in seen:
-                    continue
-                if any(b["block"] == "color" and not b.get("off") for b in x.blocks):
-                    return True
-                seen.add(x.id)
-                todo.append(x.id)
-        return False
+        n = next((b for b in w.blocks or [] if b["block"] == "align_on" and not b.get("off")), None)
+        ref = next((x for x in self.workflows if n is not None and x.id == n.get("reference")), None)
+        if ref is None or not n.get("reference_block"):
+            return None
+        act = [b for b in ref.blocks or [] if not b.get("off")]
+        names = [b["name"] for b in act]
+        a = next((i for i, b in enumerate(act) if b["block"] == "astrometry"), None)
+        return ref.id if a is not None and n["reference_block"] in names and names.index(n["reference_block"]) >= a else None
+
+    def catalogs_wanted(self, wid: int | Workflow) -> bool:
+        """A workflow whose Align on block takes this one's plate solution has a Color block: it reads the catalogues of
+        this workflow's Astrometry, which then makes them (#165)."""
+        w = self.workflow(wid)
+        return any(self.plate_reference(x) == w.id and any(b["block"] == "color" and not b.get("off") for b in x.blocks)
+                   for x in self.workflows if x.id != w.id)
 
     def set_blocks(self, wid: int | Workflow, blocks: list[dict[str, Any]]) -> None:
         """Give a workflow its graph (checked, issue #47); its options follow (what the code reading them sees)."""
