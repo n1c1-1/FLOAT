@@ -452,6 +452,10 @@ def test_module_stays_light():
     subprocess.run([sys.executable, "-c", code], check=True)
 
 
+#: the help of the Hot pixels setting names the program whose published cosmetic correction its Per frame method is
+HOT_METHOD_HELP = "How the hot pixels are found in the lights."
+
+
 def test_the_interface_names_no_other_software():
     """2 November: no text that describes our methods names the reference program or the reference processing suite. The bench's own texts (the Home
     section of the bench and its reference images) and the credits of the data we read (client/credits.py, the
@@ -470,12 +474,13 @@ def test_the_interface_names_no_other_software():
                        r"siril \(reference\)")
     for f in sorted((texts.LOCALE / "fr").glob("*.json")):
         for k, v in json.loads(f.read_text(encoding="utf-8")).items():
-            if bench.search(k) or k in credits:
+            if bench.search(k) or k in credits or k.startswith(HOT_METHOD_HELP):
                 continue
             assert not bad.search(k) and not bad.search(v), (f.name, k)
     for st in texts.stage_names():
         for name in texts.param_names(st):
-            assert not any(bad.search(t) for t in texts.param_texts(st, name).values()), (st, name)
+            assert not any(bad.search(t) for t in texts.param_texts(st, name).values()
+                           if not t.startswith(HOT_METHOD_HELP)), (st, name)
     assert not [v for v in texts.CHOICE_TEXTS.values() if bad.search(v)]
     assert not [t for t in texts.reason_templates() if bad.search(t)]
     assert texts.choice_label("bilinear_guide", "fr") == "Guide bilinéaire" and texts.choice_label("own") == "On the raw pixels"

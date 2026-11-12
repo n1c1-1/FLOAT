@@ -669,32 +669,6 @@ def test_a_crowded_object_that_sep_cannot_deblend_is_extracted_with_a_higher_thr
         sep_extract(np.zeros((4, 4), np.float32), 10.0)
 
 
-def test_an_unlit_flat_edge_does_not_make_a_still_sky_look_moved(monkeypatch):
-    """A sensor's overscan (a band the flat's light never reached, ~0): the band is a bad pixel, and the sky's drift is
-    measured without it; a still sky stays still, so its stars are not taken for hot pixels (a set of 20 s frames on
-    one field read as moved by 1000 px had 70 000 star pixels flagged)."""
-    from scipy.ndimage import median_filter
-
-    from astro_gpu.stages import calibrate as cal
-    rng = np.random.default_rng(3)
-    H, W = 256, 320
-    yy, xx = np.mgrid[0:H, 0:W]
-    sky = np.zeros((H, W), np.float32)
-    stars = rng.uniform(20, [H - 20, W - 60], (40, 2))
-    for y, x in stars:
-        sky += 3000 * np.exp(-0.5 * (((xx - x) / 1.5) ** 2 + ((yy - y) / 1.5) ** 2))
-    frames = {f"f{i}": 100 + sky + rng.normal(0, 5, (H, W)).astype(np.float32) for i in range(16)}
-    monkeypatch.setattr(cal, "read_cfa", lambda p: frames[p].copy())
-    flat = np.ones((H, W), np.float32)
-    flat[:, -30:] = 1e-5                                                     # the unlit overscan band
-    dark = np.full((H, W), 100, np.float32)
-    bad = flat < cal.FLAT_UNLIT * float(np.median(flat))                     # as the calibration flags it
-    msg, moved = cal._hot_from_lights(list(frames), dark, flat, bad, median_filter, cfa="GGGG")
-    assert not moved and "lone pixels" in msg
-    cores = [(int(round(y)), int(round(x))) for y, x in stars]
-    assert not any(bad[y, x] for y, x in cores)                              # no star taken for a hot pixel
-
-
 def test_the_master_frames_are_read_in_their_place_whichever_is_read_first(monkeypatch):
     """The files of the masters are read on several threads: each lands at its own rank, and every one is counted."""
     import time

@@ -172,10 +172,8 @@ _METRIC_ROWS: list[tuple] = [
     ("dark_frame_noise", "Dark noise", "ADU", ".2f", "Noise of a single dark frame (read noise)."),
     ("vignetting_min", "Flat minimum", "", ".3f", "Lowest value of the master flat (1 is the centre)."),
     ("hot_pixels_from_lights", "Hot pixels in the lights", "", "d",
-     "Hot pixels found in the light frames that the darks missed."),
+     "Hot pixels found in the light frames that the darks missed (with Per frame, the average per light)."),
     ("bad_pixels_pct", "Excluded pixels", "%", ".2f", "Share of the sensor pixels left out (hot, cold, dusty)."),
-    ("bad_pixels_filled", "Pixels filled", "", "",
-     "Whether the excluded pixels were filled from their neighbours (the sky did not move on the sensor)."),
     ("sky_noise_adu", "Sky noise", "ADU", ".2f", "Noise of the sky background in one light frame."),
     ("cache_scale", "Cache scale", "", ".2f", "Size of the calibrated frames kept on disk (1 is full size)."),
     ("cache_gb", "Cache size", "GB", ".1f", "Disk space taken by the calibrated frames."),
@@ -306,7 +304,8 @@ METRICS: dict[str, Metric] = {r[0]: Metric(*r) for r in _METRIC_ROWS}
 #: metrics no stage writes any more, kept for the results computed before (the colour stage's reconstructed
 #: sensitivity curves and matrix, taken out; the faint stars of the catalogue, for the star model that is gone)
 RETIRED_METRICS = frozenset({"response_source", "correction", "fit_agreement_pct", "profile_agreement_pct",
-                             "generic_agreement_pct", "fit_residual", "response_at_lines", "stars_faint"})
+                             "generic_agreement_pct", "fit_residual", "response_at_lines", "stars_faint",
+                             "bad_pixels_filled"})
 #: how some metrics read on screen, beyond their number format (display only: the stored values are unchanged):
 #: "hours" a duration given in hours, in minutes under one hour (0.17 -> "10 min", 3.02 -> "3.0 h"); "sig2" two
 #: significant digits (1.821 -> "1.8", 0.0123 -> "0.012")
@@ -467,6 +466,8 @@ CHOICE_TEXTS: dict[str, str] = {
     "main": "Main GPU", "aux": "Second GPU",
     # the Align on block's methods (stages/align_on.py)
     "stars": "Stars", "plate": "Plate solutions",
+    # the Calibration block's hot pixel methods (stages/calibrate.py)
+    "persistence": "Persistence", "per_frame": "Per frame",
     # what the Color and Astrometry blocks do when the stars cannot calibrate or identify (stages/color.py, astrometry.py)
     "fallback": "Fallback balance", "continue": "Continue without solution", "stop": "Stop",
     # the stacking settings (stages/stack.py)

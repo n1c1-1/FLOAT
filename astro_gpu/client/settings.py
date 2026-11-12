@@ -60,6 +60,7 @@ CATALOG = {
                                              "drizzle fills the hole with the other frames."),
             E("calibrate", "hot_from_lights", help="Also looks for hot pixels in the lights themselves, not only in "
                                                    "the darks."),
+            E("calibrate", "hot_method"),
             N("calibrate", "cold_pixels", "Cold pixels", "bool", False,
               "Excludes pixels that are too dark (dead) the same way as hot pixels."),
         ]),
@@ -336,7 +337,6 @@ TIPS = {
     ("calibrate", "hot_sigma"): "Low values (0.5 to 1) exclude more pixels; with many frames this costs nothing. "
                                 "Raise it if more than about 5 % of the pixels are excluded.",
     ("calibrate", "flat_defect"): "0.3 = 30 %. Lower it if dust remains visible after calibration.",
-    ("calibrate", "hot_from_lights"): "Skipped on its own when the sky did not move on the sensor during the night.",
     ("calibrate", "flat_scale_px"): "About 40 px removes the dust and keeps the vignetting.",
     ("calibrate", "saturation"): "Keep the default, unless the star cores look clipped or rings appear around the "
                                  "bright stars.",

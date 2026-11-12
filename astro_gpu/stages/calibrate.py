@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import time
+import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from multiprocessing import get_context
 from pathlib import Path
@@ -24,6 +25,14 @@ VALID_MAX = 60000.0     # anything above is treated as saturated downstream
 MIN_USABLE = 0.5        # the share of a frame's samples below which it has no statistics (issue #64)
 
 
+#: how the hot pixels are found in the lights: "persistence" (the pixels that stand out in the lower quartile of the
+#: session's frames) or "per_frame" (Siril's cosmetic correction without darks, on each light)
+HOT_METHODS = ("persistence", "per_frame")
+#: Siril's cosmetic correction, "Hot Sigma" (src/gui-gtk4/uifiles/cosmetic_dialog.ui, adjSigCosmeHot, value 3) and
+#: "Amount" 1 (adjCosmeAmount): the defaults of the dialog, of the documentation's "use the default settings"
+SIRIL_HOT_SIGMA = 3.0
+
+
 class CalibrateParams(StageParams):
     hot_sigma: float = P(0.6, label="Hot pixel threshold", level=ADVANCED, ge=0.1, le=10, step=0.1, unit="x sky noise",
                          help="A pixel whose dark current exceeds this fraction of the sky noise of a light frame is "
@@ -35,11 +44,20 @@ class CalibrateParams(StageParams):
                                 "(dust specks, dead pixels) are excluded.",
                            tip="0.3 = 30 %. Lower it if dust donuts remain visible after calibration.")
     hot_from_lights: bool = P(True, label="Hot pixels (lights)", level=ADVANCED,
-                              help="Also flag the pixels that stand out from their neighbours in many light frames "
-                                   "taken at different sky positions (the sky drifts across the sensor, a defect "
-                                   "does not). Darks taken at another temperature miss pixels that are hot only "
-                                   "when the sensor is warmer; in the stack they draw the drift path of the mount.",
-                              tip="Skipped automatically when the sky did not move on the sensor during the night.")
+                              help="Also flag the pixels that stand out from their neighbours in the light frames "
+                                   "themselves, besides the darks'. Darks taken at another temperature miss pixels "
+                                   "that are hot only when the sensor is warmer; in the stack they draw the drift "
+                                   "path of the mount. Each flagged pixel is replaced by the mean of its "
+                                   "same-colour neighbours.",
+                              tip="The method is chosen by Hot pixels.")
+    hot_method: str = P("persistence", label="Hot pixels", level=ADVANCED, choices=list(HOT_METHODS),
+                        help="How the hot pixels are found in the lights. Persistence: a pixel that stands out from "
+                             "its neighbours in the lower quartile of 40 frames spread over the session (a defect is "
+                             "bright in every frame; a star covers a given pixel in some frames only). Per frame: "
+                             "Siril's cosmetic correction without darks, applied to each light "
+                             "(https://siril.readthedocs.io/en/stable/processing/cc.html).",
+                        tip="Persistence needs 15 frames or more. Per frame works on any session; it needs a Bayer "
+                            "sensor.")
     flat_scale_px: float = P(0.0, label="Flat scale", level=ADVANCED, ge=0, le=500, step=5, unit="px",
                              help="Keep only the scales of the master flat larger than this (Gaussian sigma, sensor "
                                   "pixels). 0 = the whole flat. For flat frames borrowed from another night of the "
@@ -79,7 +97,11 @@ class Calibrate(Stage):
     # black level, else the lights go without dark, said (scaled with the offset before). A session of one exposure
     # with darks of its exposure gets the same frames, to the byte. 8: a flat with no bias nor flat darks loses the black
     # level only, no longer the level of a dark (its thermal signal: a 300 s dark's 848 ADU taken off a 1 s flat)
-    version = "8"
+    # 9: the hot pixels of the lights: the persistence's movement test and lone-pixel condition taken out (a saturated
+    # defect lights its four nearest neighbours by crosstalk, which the condition took for a star), Siril's cosmetic
+    # correction per frame as the other method, and every excluded pixel filled with the mean of its same-colour
+    # neighbours (the sky moved or not)
+    version = "9"
 
     def auto(self, ctx: Context) -> dict[str, Auto]:
         n = max(1, min(12, (os.cpu_count() or 4) - 2))
@@ -103,7 +125,8 @@ class Calibrate(Stage):
             return
         ms = given_masters_of(ctx, frames)            # a master given: used as it is, its kind's single frames left out
         # issue #50: the masters' phase moves the bar too, file by file (its share: its files against the lights)
-        n_hot = min(40, len(frames["lights"])) + 2 if p.hot_from_lights and len(frames["lights"]) >= 15 else 0
+        cfa0 = ctx.metric_of("inventory", "cfa")
+        n_hot = min(40, len(frames["lights"])) if hot_method(p, cfa0, len(frames["lights"]))[0] == "persistence" else 0
         nm = sum(len(frames[k]) for k in ("bias", "darks", "flats", "flat_darks")) \
             + (1 if frames["darks"] and "darks" not in ms else 0) + n_hot
         share = nm / max(nm + len(frames["lights"]), 1)
@@ -535,24 +558,39 @@ def calibrate_lights(ctx: Context, p: CalibrateParams, lights: list[dict], dark:
     # a pixel the flat's light hardly reached (a sensor's overscan, a dead column: a band the local test above cannot
     # see) would be multiplied by ten or more
     bad |= flat < FLAT_UNLIT * float(np.median(flat))
-    moved = True
-    if p.hot_from_lights and len(lights) >= 15:
+    hot, why = hot_method(p, cfa, len(lights))
+    if why:
+        ctx.log(why, "warning")
+    if hot == "persistence":
         n0 = int(bad.sum())
-        msg, moved = _hot_from_lights([f["path"] for f in lights], dark, flat, bad, median_filter, cfa=cfa,
-                                      tick=lambda what: _tick(ctx, what),
-                                      dark_of=(lambda i: darks[rank[i]]) if len(darks) > 1 else None)
+        msg = _hot_from_lights([f["path"] for f in lights], dark, flat, bad, median_filter, cfa=cfa,
+                               tick=lambda what: _tick(ctx, what),
+                               dark_of=(lambda i: darks[rank[i]]) if len(darks) > 1 else None)
         ctx.metric("hot_pixels_from_lights", int(bad.sum()) - n0)
         ctx.log(msg)
-    # the sky did not move: a pixel left out would be a hole in the stack, it is filled from its neighbours instead
-    ctx.metric("bad_pixels_filled", not moved)
-    if not moved:
-        ctx.log("the sky did not move on the sensor: the excluded pixels are filled from their same-colour neighbours")
+    # a pixel left out would be a hole in the stack: every excluded pixel is filled from its same-colour neighbours
     ctx.save("badmask.npy", bad)
     ctx.metric("bad_pixels_pct", round(100 * float(bad.mean()), 2))
     ctx.metric("sky_noise_adu", round(sky_noise, 2))
     ctx.log(f"master dark level {level:.1f} ADU, flat min {flat.min():.3f}, {100 * bad.mean():.2f} % pixels "
             f"excluded, sky noise {sky_noise:.1f} ADU")
-    _calibrated_cache(ctx, p, lights, dark, flat, bad, cfa, white, t0, not moved, darks, rank)
+    _calibrated_cache(ctx, p, lights, dark, flat, bad, cfa, white, t0, darks, rank, hot)
+
+
+def hot_method(p: CalibrateParams, cfa: str, n_lights: int) -> tuple[str, str]:
+    """(the method that runs: "persistence", "per_frame" or "off", why it is not the one asked for, or ""). The
+    persistence needs a session of 15 lights or more; Siril's correction is made for a Bayer sensor ("It does not work
+    for X-Trans sensor", its documentation): an X-Trans session gets the persistence."""
+    if not p.hot_from_lights:
+        return "off", ""
+    if p.hot_method == "per_frame" and cfa_mod.is_xtrans(cfa):
+        if n_lights >= 15:
+            return "persistence", "Per frame hot pixels work on a Bayer sensor only: the persistence is used instead"
+        return "off", ("Per frame hot pixels work on a Bayer sensor only, and the session is too short for the "
+                       "persistence: no hot pixel search in the lights")
+    if p.hot_method == "persistence" and n_lights < 15:
+        return "off", ""
+    return p.hot_method, ""
 
 
 #: the darks of the lights of each exposure when they are of several (``match_darks``): "darks" (G, H, W), the main
@@ -632,21 +670,23 @@ def rebuild_cache(ctx: Context, p: CalibrateParams, lights: list[dict], given: d
         if k not in ("cache_scale", "cache_gb"):
             ctx.metric(k, v)
     ctx.log("calibrated frames rebuilt with the masters of the earlier result (same settings)")
-    fill = bool((given.get("metrics") or {}).get("bad_pixels_filled", False))
+    hot, why = hot_method(p, cfa, len(lights))
     for n in EXTRA_MASTERS:
         if given.get("from") and (src / n).is_file() and not ctx.out(n).is_file():
             shutil.copy2(src / n, ctx.out(n))
-    _calibrated_cache(ctx, p, lights, dark, flat, bad, cfa, white, t0, fill, darks, rank)
+    _calibrated_cache(ctx, p, lights, dark, flat, bad, cfa, white, t0, darks, rank, hot)
     (ctx.dir / MASTERS).unlink(missing_ok=True)
 
 
 def _calibrated_cache(ctx: Context, p: CalibrateParams, lights: list[dict], dark: np.ndarray, flat: np.ndarray,
-                      bad: np.ndarray, cfa: str, white: float, t0: float, fill: bool = False,
-                      darks: list[np.ndarray] | None = None, rank: np.ndarray | None = None) -> None:
+                      bad: np.ndarray, cfa: str, white: float, t0: float,
+                      darks: list[np.ndarray] | None = None, rank: np.ndarray | None = None,
+                      hot: str = "off") -> None:
     """The calibrated cache of the light frames (float16 memmap on the scratch disk), its frame statistics and
-    cache.json, from the masters and the bad pixel map; the bad pixels left out (NaN), or with ``fill`` (the sky did
-    not move on the sensor) filled with the median of their same-colour neighbours that are not bad. ``darks``,
-    ``rank``: each light's dark among the darks of the lights' exposures (``match_darks``), ``dark`` for all without."""
+    cache.json, from the masters and the bad pixel map; the bad pixels filled with the mean of their same-colour
+    neighbours that are not bad (Siril's replacement). ``hot``: "per_frame" corrects each light's hot pixels the way
+    Siril's cosmetic correction does (``siril_hot_pixels``). ``darks``, ``rank``: each light's dark among the darks of
+    the lights' exposures (``match_darks``), ``dark`` for all without."""
     H, W = dark.shape
     darks, rank = _one_dark(dark, darks, rank, len(lights))
     # the lowest dark's level: the widest range above it, which the cache's scale keeps in the float16 range
@@ -657,14 +697,17 @@ def _calibrated_cache(ctx: Context, p: CalibrateParams, lights: list[dict], dark
     cache = ctx.scratch / "lights.f16"
     done_p = ctx.ckpt / "done.npy"
     stats_p = ctx.ckpt / "stats.npy"
+    hot_p = ctx.ckpt / "hot.npy"
     resume = cache.exists() and done_p.exists() and cache.stat().st_size == n * H * W * 2
     if resume:
         done = np.load(done_p)
         stats = np.load(stats_p)
+        hots = np.load(hot_p) if hot_p.exists() else np.zeros(n, np.int64)
         ctx.log(f"resuming calibration: {int(done.sum())}/{n} frames already done")
     else:
         done = np.zeros(n, bool)
         stats = np.zeros((n, 4, 2), np.float32)
+        hots = np.zeros(n, np.int64)
         mm = np.memmap(cache, dtype=np.float16, mode="w+", shape=(n, H, W))
         del mm
     paths_dir = ctx.ckpt
@@ -676,22 +719,29 @@ def _calibrated_cache(ctx: Context, p: CalibrateParams, lights: list[dict], dark
     todo = [(i, lights[i]["path"], int(rank[i])) for i in range(n) if not done[i]]
     sat_raw = p.saturation * white
     plain = plain_writes(ctx, n * H * W * 2, p.workers, H * W)
-    init = (str(cache), n, H, W, str(paths_dir), sat_raw, scale, fill, cfa, plain, len(darks))
+    init = (str(cache), n, H, W, str(paths_dir), sat_raw, scale, hot, cfa, plain, len(darks))
     ctx.phase(getattr(ctx, "_lights_from", 0.0), 1.0)          # issue #50: the lights' share of the bar
     ctx.progress(done.mean(), f"calibrating {len(todo)} frames ({p.workers} processes)", force=True)
     with devices.one_maths_thread():                           # issue #125: 1 GB less reserved a worker
         pool = get_context("spawn").Pool(p.workers, initializer=_init, initargs=init)
     with pool:
-        for c, (idx, st) in enumerate(pool.imap_unordered(_calib_one, todo, chunksize=2)):
+        for c, (idx, st, nh) in enumerate(pool.imap_unordered(_calib_one, todo, chunksize=2)):
             stats[idx] = st
+            hots[idx] = nh
             done[idx] = True
             if (c + 1) % 20 == 0 or c + 1 == len(todo):
                 np.save(done_p, done)
                 np.save(stats_p, stats)
+                np.save(hot_p, hots)
             ctx.progress(done.mean(), f"{int(done.sum())}/{n} frames calibrated")
     for f in ("dark.npy", "flat.npy", "bad.npy", *(f"dark_{g}.npy" for g in range(1, len(darks)))):
         (paths_dir / f).unlink(missing_ok=True)
     ctx.save("frame_stats.npy", stats)
+    if hot == "per_frame":
+        ctx.metric("hot_pixels_from_lights", int(round(float(hots.mean()))))
+        ctx.log(f"hot pixels, per frame: {int(hots.sum())} pixels corrected in the {n} lights (between "
+                f"{int(hots.min())} and {int(hots.max())} in a light, {hots.mean():.0f} on average), each by the mean "
+                f"of its same-colour neighbours")
     ctx.save_json("cache.json", {"path": str(cache), "n": n, "height": H, "width": W, "scale": scale,
                                  "cfa": cfa, "sat_mark": SAT_MARK, "valid_max": VALID_MAX,
                                  "white_level": white, "dark_level": level})
@@ -793,12 +843,6 @@ def _flats_mean(fl: np.ndarray) -> np.ndarray:
     return out
 
 
-#: a pixel whose four nearest neighbours (the other colours) all stay within this many sigmas of their sky is a lone
-#: pixel: a star or a knot of nebula lights its neighbours too, even a red one in green (a test on the share of its
-#: rise flagged the red knots of M8's nebula)
-LONE_SIGMA = 3.0
-
-
 def _tick(ctx: Context, what: str) -> None:
     """One more file of the masters' phase read (issue #50): the bar moves by one file."""
     ctx._files_read = getattr(ctx, "_files_read", 0) + 1
@@ -808,32 +852,15 @@ def _tick(ctx: Context, what: str) -> None:
 
 def _hot_from_lights(paths, dark, flat, bad, median_filter, n=40, k=5.0, cfa: str = "RGGB", tick=None,
                      dark_of=None) -> str:
-    """Flag in ``bad`` the pixels that stand out from their same-colour neighbours in the lower quartile of ``n``
-    light frames spread over the session, in sensor coordinates: a defect is bright in every frame. When the sky
-    drifted by three star widths or more between the first and the last frame, a star covers a given pixel in a
-    small part of the frames only, so that is enough. When it did not, the stars stand still too: a defect is then
-    also a lone pixel: its four nearest neighbours (the other colours) within LONE_SIGMA of their sky, where a star
-    or a nebula lights them too. Returns (message, whether the sky moved). Each position of the pattern (``cfa``)
-    is a plane of its own: its neighbours in the plane are of its colour. ``dark_of(i)``: the dark of the light of
-    rank i (a session of several exposures), ``dark`` for all without."""
+    """The persistence: flag in ``bad`` the pixels that stand out from their same-colour neighbours in the lower
+    quartile of ``n`` light frames spread over the session, in sensor coordinates: a defect is bright in every frame,
+    a star covers a given pixel in some of them only. Returns the message of the log. Each position of the pattern
+    (``cfa``) is a plane of its own: its neighbours in the plane are of its colour. ``dark_of(i)``: the dark of the
+    light of rank i (a session of several exposures), ``dark`` for all without."""
     P = cfa_mod.period(cfa)
     picks = np.linspace(0, len(paths) - 1, min(n, len(paths))).astype(int)
     sub = [paths[i] for i in picks]
     dk = [dark_of(i) for i in picks] if dark_of is not None else [dark] * len(picks)
-    # the pixels already flagged (an unlit edge of the flat, nearly 0: values of 1e8 once divided) make the
-    # correlation's peak fall anywhere (a still sky read as moved by 1000 px, its stars then flagged as hot pixels)
-    a, b = (np.where(bad, 0.0, np.nan_to_num((read_cfa(q) - d) / flat, nan=0.0, posinf=0.0, neginf=0.0))
-            for q, d in ((sub[0], dk[0]), (sub[-1], dk[-1])))
-    g0 = cfa_mod.green_position(cfa)
-    ga, gb = (cv2.resize(np.ascontiguousarray(_plane(x, g0, P)), None, fx=0.5, fy=0.5,
-                         interpolation=cv2.INTER_AREA).astype(np.float32) for x in (a, b))
-    hp = [g - cv2.GaussianBlur(g, (0, 0), 8) for g in (ga, gb)]
-    (dx, dy), _ = cv2.phaseCorrelate(hp[0], hp[1])
-    drift = 2.0 * P * float(np.hypot(dx, dy))                 # sensor pixels (a green plane at half its resolution)
-    moved = drift >= 12.0
-    if tick is not None:
-        tick("hot pixels: the sky's drift")
-        tick("hot pixels: the sky's drift")
     st = np.empty((len(sub), *dark.shape), np.float32)          # one array, the quartile in bands: the frames once
 
     def put(i, a, st=st):
@@ -844,30 +871,65 @@ def _hot_from_lights(paths, dark, flat, bad, median_filter, n=40, k=5.0, cfa: st
     for r in range(0, q.shape[0], BAND):
         q[r:r + BAND] = np.percentile(st[:, r:r + BAND], 25, axis=0, overwrite_input=True)
     del st
-    lone = None
-    if not moved:
-        # each pixel's rise above its local sky, in sigmas of its plane; the four nearest are the other colours
-        z = np.zeros_like(q)
-        for c in range(P * P):
-            v = _plane(q, c, P)
-            r = v - cv2.blur(median_filter(v, size=9), (15, 15))
-            _plane(z, c, P)[...] = r / max(robust_sigma(r[::2, ::2])[1], 1e-6)
-        nb = np.stack([np.roll(z, sh, axis=ax) for ax in (0, 1) for sh in (1, -1)])
-        lone = np.max(nb, axis=0) < LONE_SIGMA
     n_new = 0
     for c in range(P * P):
         v = _plane(q, c, P)
         h = v - median_filter(v, size=5)
         s = robust_sigma(h[::2, ::2])[1]
         hot = (h > k * s) & ~_plane(bad, c, P)
-        if lone is not None:
-            hot &= _plane(lone, c, P)
         _plane(bad, c, P)[...] |= hot
         n_new += int(hot.sum())
-    how = (f"the sky moved by {drift:.0f} px on the sensor" if moved else
-           f"the sky moved by {drift:.0f} px only: lone pixels, not stars")
-    return (f"hot pixels from the lights: {n_new} more pixels flagged (lower quartile of {len(sub)} frames; {how})",
-            moved)
+    return (f"hot pixels, persistence: {n_new} more pixels flagged, standing out from their neighbours in the lower "
+            f"quartile of {len(sub)} frames spread over the session; each is replaced by the mean of its same-colour "
+            f"neighbours")
+
+
+def siril_hot_pixels(x: np.ndarray, P: int = 2, sigma: float = SIRIL_HOT_SIGMA):
+    """Siril's cosmetic correction without darks, hot pixels, on one light (src/filters/cosmetic_correction.c of Siril
+    1.5.0, ``autoDetect`` with the cold detection off, Amount 1; documented at
+    https://siril.readthedocs.io/en/stable/processing/cc.html). With the whole frame's median ``bkg`` and average
+    deviation from it ``avgDev`` (``statistics`` STATS_BASIC | STATS_AVGDEV, gsl_stats_absdev_m), a pixel is a candidate
+    above ``bkg + avgDev``; it is hot when it also exceeds ``m + max(avgDev, sigma * avgDev)``, ``m`` being the median
+    of the 24 pixels of the 5 x 5 block of its colour around it (the same-colour pixels, 2 apart: the CFA option), and
+    when the mean ``a`` of its 8 same-colour neighbours (in the frame) stays under ``m + avgDev / 2``: a star's core
+    lights its neighbours too. All is read in the frame as it comes (the corrections are made on a copy), and the pixel
+    is replaced by ``a``. Returns (rows, columns, the new values). A pattern of period ``P`` gives each of its
+    positions a plane of its own, whose pixels are the same colour. NaN pixels are neither read nor corrected."""
+    ok = np.isfinite(x)
+    bkg = float(np.median(x[ok]))
+    avg_dev = float(np.mean(np.abs(x[ok] - bkg)))
+    k2, k4 = avg_dev / 2, max(avg_dev, sigma * avg_dev)
+    ys, xs, vals = [], [], []
+    for c in range(P * P):
+        v = _plane(x, c, P)
+        cand = np.argwhere(v > bkg + avg_dev)                   # only these need the 24 neighbours
+        if not len(cand):
+            continue
+        pad = np.pad(v, 2, constant_values=np.nan)              # outside the frame: not a neighbour
+        for i in range(0, len(cand), 200_000):
+            cy, cx = cand[i:i + 200_000].T
+            win = np.stack([pad[cy + 2 + dy, cx + 2 + dx] for dy in range(-2, 3) for dx in range(-2, 3)
+                            if dy or dx], 1)                    # (n, 24)
+            full = ~np.isnan(win).any(1)
+            m = np.empty(len(cy), np.float32)
+            if full.any():
+                part = np.partition(win[full], (11, 12), axis=1)
+                m[full] = (part[:, 11] + part[:, 12]) / 2       # median24 (the mean of the two middle values)
+            if (~full).any():                                   # the 2 outer rows and columns, fewer neighbours
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", RuntimeWarning)
+                    m[~full] = np.nanmedian(win[~full], axis=1)
+            near = win[:, [6, 7, 8, 11, 12, 15, 16, 17]]        # the 8 nearest of the 24 (3 x 3 minus the centre)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                a = np.nanmean(near, axis=1)
+            hot = (v[cy, cx] > m + k4) & (a < m + k2)
+            ys.append(cy[hot] * P + c // P)
+            xs.append(cx[hot] * P + c % P)
+            vals.append(a[hot])
+    if not ys:
+        return np.zeros(0, int), np.zeros(0, int), np.zeros(0, np.float32)
+    return np.concatenate(ys), np.concatenate(xs), np.concatenate(vals).astype(np.float32)
 
 
 def _sky_noise(path: str, dark: np.ndarray, flat: np.ndarray, P: int = 2) -> float:
@@ -886,13 +948,13 @@ def _flat_view(flat: np.ndarray, cfa: str) -> np.ndarray:
 _G: dict = {}
 
 
-def _init(cache, n, H, W, paths_dir, sat_raw, scale, fill=False, cfa="RGGB", plain=False, n_darks=1):
+def _init(cache, n, H, W, paths_dir, sat_raw, scale, hot="off", cfa="RGGB", plain=False, n_darks=1):
     d = Path(paths_dir)
     bad = np.load(d / "bad.npy")
     darks = [np.load(d / "dark.npy")] + [np.load(d / f"dark_{g}.npy") for g in range(1, n_darks)]
     _G.update(darks=darks, flat=np.load(d / "flat.npy"), bad=bad,
               mm=FrameWriter(cache, n, (H, W), plain), sat=sat_raw, scale=scale,
-              fill=_neighbours(bad, cfa) if fill else None, cfa=cfa)
+              fill=_neighbours(bad, cfa), cfa=cfa, hot=hot)
 
 
 def _neighbours(bad: np.ndarray, cfa: str = "RGGB"):
@@ -928,21 +990,29 @@ def _calib_one(args):
     sat = raw >= _G["sat"]
     x = (raw - _G["darks"][g]) / _G["flat"] * _G["scale"]
     x = np.minimum(x, VALID_MAX - 1)
-    # a bad pixel stays excluded even when it saturates: marked saturated, the stack took a hot pixel for the core
-    # of a bright star and drew the drift of the mount with it (green dotted trails on the Flaming Star)
-    x[sat & ~_G["bad"]] = SAT_MARK
+    # an excluded pixel is filled with the mean of its same-colour neighbours that are not excluded nor saturated (a
+    # saturated one is marked below, read here as it is): Siril's replacement. NaN again when every neighbour is bad
+    ys, xs, ny, nx = _G["fill"]
     x[_G["bad"]] = np.nan
-    if _G.get("fill") is not None:
-        ys, xs, ny, nx = _G["fill"]
-        nb = x[ny, nx]
-        nb = np.where(nb > VALID_MAX, np.nan, nb)
-        with np.errstate(all="ignore"):
-            x[ys, xs] = np.nanmedian(nb, axis=1)          # NaN again when every neighbour is bad
+    nb = np.where(sat[ny, nx], np.nan, x[ny, nx])
+    n_ok = np.isfinite(nb).sum(1)
+    x[ys, xs] = np.where(n_ok > 0, np.nansum(nb, axis=1) / np.maximum(n_ok, 1), np.nan)
+    n_hot = 0
+    if _G.get("hot") == "per_frame":
+        # Siril's cosmetic correction, before the saturated pixels are marked: a saturated defect is corrected, not
+        # taken for the core of a star
+        hy, hx, hv = siril_hot_pixels(x, cfa_mod.period(_G.get("cfa") or "RGGB"))
+        x[hy, hx] = hv
+        sat[hy, hx] = False
+        n_hot = len(hy)
+    # a bad pixel stays out of the saturated ones even when it saturates: marked saturated, the stack took a hot pixel
+    # for the core of a bright star and drew the drift of the mount with it (green dotted trails on the Flaming Star)
+    x[sat & ~_G["bad"]] = SAT_MARK
     _G["mm"][idx] = x
     stats = []
     for v in _stat_samples(x, _G.get("cfa") or "RGGB"):
         stats.append(_frame_stat(v))
-    return idx, stats
+    return idx, stats, n_hot
 
 
 def _frame_stat(v: np.ndarray) -> tuple[float, float]:

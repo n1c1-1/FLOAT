@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 from astropy.io import fits
 
 from astro_gpu.core.project import Inputs, Project
@@ -131,9 +132,12 @@ def test_a_session_of_one_exposure_uses_its_one_dark_for_every_frame_as_before(t
     for i, f in enumerate(lights):
         raw = fits.getdata(f).astype(np.float32)
         x = np.minimum((raw - dark) / flat * c["scale"], cal.VALID_MAX - 1)
-        x[bad] = np.nan
         got = np.asarray(np.memmap(c["path"], dtype=np.float16, mode="r", shape=(c["n"], H, W))[i])
-        assert np.array_equal(got, x.astype(np.float16), equal_nan=True)
+        assert np.array_equal(got[~bad], x[~bad].astype(np.float16))
+        for y, c0 in zip(*np.nonzero(bad)):                      # an excluded pixel: the mean of its same-colour
+            near = [x[y + dy, c0 + dx] for dy in (-2, 0, 2) for dx in (-2, 0, 2)    # neighbours that are not excluded
+                    if (dy or dx) and 0 <= y + dy < H and 0 <= c0 + dx < W and not bad[y + dy, c0 + dx]]
+            assert got[y, c0] == pytest.approx(np.mean(near), rel=2e-3) if near else np.isnan(got[y, c0])
     assert not any("calibrated with" in t or "without dark" in t for _lv, t in said)     # nothing new said
 
 
