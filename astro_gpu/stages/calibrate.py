@@ -871,7 +871,7 @@ def sweep_frame_files() -> None:
 @contextlib.contextmanager
 def frame_stack(ctx: Context | None, n: int, shape: tuple, label: str):
     """The array (n, *shape) float32 the frames of a master are read into, for the pixel-wise statistic taken in bands
-    of rows after. In the memory when it fits twice in what the engine may fill now (core/devices.memory_budget): as
+    of rows after. In the memory when it fits 1.4 times in what the engine may fill now (core/devices.memory_budget): as
     before. When the memory is short (a low limit in Settings), a file of the run's scratch folder mapped into memory:
     the same values, read and written by the same code, only the system keeps the pages on the disk instead of in
     this process's memory. The file goes with the block."""
@@ -879,7 +879,7 @@ def frame_stack(ctx: Context | None, n: int, shape: tuple, label: str):
     need = n * int(np.prod(shape)) * 4
     m = devices.memory_budget()
     scratch = getattr(ctx, "scratch", None)
-    if m is None or scratch is None or 2 * need <= m[0]:
+    if m is None or scratch is None or 1.4 * need <= m[0]:
         yield np.empty((n, *shape), np.float32)
         return
     ctx.log(f"memory: the {n} {label} ({need / 2 ** 30:.1f} GB) are kept on the disk and read by bands of rows")
