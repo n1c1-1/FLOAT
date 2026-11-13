@@ -747,6 +747,7 @@ class PostView(QWidget):
         self.part_sel = None                            # the mask part being edited (its id)
         self.heal_size = 80.0                           # Spot healing: the next spot's diameter (px)
         self._heal_stroke = None                        # the stroke being painted: (its points, the layers before)
+        self._heal_hand: dict = {}                      # a version's source set by hand, while another is shown
         self._heal_src = None                           # Alt+click: the source set by hand (x, y), then its offset
         self._heal_off = None                           # (dx, dy) of the strokes since, as the reference image editor's Aligned
         self.show_mask = False
@@ -1351,6 +1352,8 @@ class PostView(QWidget):
     def _switch_version(self, version: dict):
         """Another version in the panel: its layers, its crop and its own Undo."""
         self._stacks[self._version] = (self.undo, self.redo)
+        self._heal_hand[self._version] = (self._heal_src, self._heal_off)    # the source set by hand is the version's own
+        self._heal_src, self._heal_off = self._heal_hand.get(version.get("id"), (None, None))
         self.undo, self.redo = self._stacks.get(version.get("id"), ([], []))
         self._version = version.get("id")
         self.layers = self._with_synth(load_layers(version.get("layers"), {p.pid for p in self.s.paths}))
@@ -1959,6 +1962,9 @@ class PostView(QWidget):
         return s
 
     def _restored(self):
+        if not any(x.get("kind") == "filter" and x.get("filter") == "heal" and x["params"].get("spots")
+                   for x in self.layers):
+            self._heal_src = self._heal_off = None          # every spot undone: the hand-set source goes with them
         self._show_crop(getattr(self.layers, "crop", self.crop))
         if self.sel and not self.layer(self.sel[0]):
             self.sel = (self.layers[-1]["id"], "layer") if self.layers else None

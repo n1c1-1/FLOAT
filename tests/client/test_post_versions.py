@@ -471,3 +471,116 @@ def test_the_enlarged_thumbnail_stays_on_the_screen():
     x, y = PostView._big_place(QPoint(60, 1050), 60, 180, 120, area)                       # none: right of the thumbnail
     assert x == 128 and y + 120 <= 1080
     assert PostView._big_place(QPoint(1900, 10), 60, 180, 120, area)[0] + 180 <= 1920
+
+
+def _two_versions(model):
+    """Two layers of workflows' images (one the way an image opened from a file is), the first with its own opacity and
+    a filter, then a second version; returns the page, the ids of the versions and the layers' state of the first."""
+    model.add_post_layer(by_name(model, "Full").pid, "stars")
+    model.add_post_layer(by_name(model, "Classic stack").pid, None)
+    page = _page_of(model)
+    v = page.view
+    v.select(v.layers[-1]["id"], "layer")
+    v.push()
+    v.layers[-1]["opacity"] = 40.0
+    v.add_filter("saturation")
+    v._save()
+    first = model.p.post["active"]
+    v._version_new()
+    return page, first, model.p.post["active"]
+
+
+def test_duplicate_then_undo_leaves_the_other_version_whole_in_both_directions(model):
+    page, first, second = _two_versions(model)
+    v = page.view
+    try:
+        one, two = _layers_of(model, first), _layers_of(model, second)
+        for lay in (v.layers[0], v.layers[-1]):                       # an image from a file, then the one with its filter
+            v.select(lay["id"], "layer")
+            v.duplicate()
+            v._save()
+            assert _layers_of(model, first) == one
+            v.do_undo()
+            v._save()
+            assert _layers_of(model, first) == one and _layers_of(model, second) == two
+        model.set_post_version(first)                                 # the other direction
+        v._post_changed(None)
+        v.select(v.layers[0]["id"], "layer")
+        v.duplicate()
+        v._save()
+        assert _layers_of(model, second) == two
+        v.do_undo()
+        v._save()
+        assert _layers_of(model, first) == one and _layers_of(model, second) == two
+    finally:
+        _done(page)
+
+
+def test_duplicate_delete_the_copy_and_two_undos_repair_both_versions_exactly(model):
+    page, first, second = _two_versions(model)
+    v = page.view
+    try:
+        one, two = _layers_of(model, first), _layers_of(model, second)
+        names = [x["name"] for x in v.layers]
+        v.select(v.layers[-1]["id"], "layer")
+        v.duplicate()
+        copy_ = next(x for x in v.layers if x["kind"] != "filter" and x["name"] not in names)
+        v.select(copy_["id"], "layer")
+        v.delete()
+        v._save()
+        assert _layers_of(model, first) == one
+        v.do_undo()
+        v.do_undo()
+        v._save()
+        assert _layers_of(model, first) == one and _layers_of(model, second) == two
+    finally:
+        _done(page)
+
+
+def test_a_layer_deleted_in_one_version_leaves_the_other_and_undo_puts_it_back_in_its_place(model):
+    page, first, second = _two_versions(model)
+    v = page.view
+    try:
+        one, two = _layers_of(model, first), _layers_of(model, second)
+        file_layer = v.layers[0]                                      # the image of a workflow, at the top
+        before = [x["id"] for x in v.layers]
+        v.select(file_layer["id"], "layer")
+        v.delete()
+        v._save()
+        assert _layers_of(model, first) == one
+        assert file_layer["id"] not in [x["id"] for x in v.layers]
+        v.do_undo()
+        v._save()
+        assert [x["id"] for x in v.layers] == before and _layers_of(model, second) == two
+        assert _layers_of(model, first) == one
+        # a layer under others: back under them, in its own version
+        low = v.layers[-1]
+        v.select(low["id"], "layer")
+        v.delete()
+        v._save()
+        v.do_undo()
+        v._save()
+        assert [x["id"] for x in v.layers] == before and _layers_of(model, first) == one
+    finally:
+        _done(page)
+
+
+def test_the_source_of_spot_healing_set_by_hand_belongs_to_its_version_and_its_undo(model):
+    page, first, second = _two_versions(model)
+    v = page.view
+    try:
+        model.set_post_version(first)
+        v._post_changed(None)
+        v._heal_src = (10.0, 12.0)                                    # Alt+click in the first version
+        model.set_post_version(second)
+        v._post_changed(None)
+        assert v._heal_src is None and v._heal_off is None            # nothing carried to the other version
+        model.set_post_version(first)
+        v._post_changed(None)
+        assert v._heal_src == (10.0, 12.0)
+        v._heal_off = (3.0, 4.0)                                      # a spot was healed with it, then undone
+        v.layers = [x for x in v.layers if x.get("filter") != "heal"]
+        v._restored()
+        assert v._heal_src is None and v._heal_off is None
+    finally:
+        _done(page)
