@@ -2883,7 +2883,7 @@ def export_image(p: Project2, rgb: np.ndarray, meta: dict[str, Any] | None = Non
     """Write a composed image (3, H, W), display sRGB in [0, 1]: TIFF 16 / 32f, PNG 16, JPEG, FITS 32f with the WCS, at
     full size or reduced, in a v1 orientation, with a history file. ``options``: ``ExportOptions`` or its fields.
     ``meta``: ``wf`` (the workflow whose solution goes in the FITS), ``origin`` (grid pixel of ``rgb[:, 0, 0]``),
-    ``history`` (dict), ``out_dir`` (default ``export/<name>/``). Returns the files."""
+    ``history`` (dict), ``facts`` (target, first light, total exposure for the FITS header), ``out_dir`` (default ``export/<name>/``). Returns the files."""
     from .render.layers import ExportOptions, export_rgb
     meta = dict(meta or {})
     o = options if isinstance(options, ExportOptions) else ExportOptions(**(options or {}))
@@ -2893,7 +2893,7 @@ def export_image(p: Project2, rgb: np.ndarray, meta: dict[str, Any] | None = Non
         f = _dir(p, meta["wf"], "astrometry")
         wcs = f / "wcs.fits" if f is not None and (f / "wcs.fits").is_file() else None
     return export_rgb(rgb, out_dir, o, wcs, tuple(meta.get("origin") or (0, 0)), meta.get("history"),
-                      progress or (lambda f, m: None))
+                      progress or (lambda f, m: None), facts=meta.get("facts"))
 
 
 def export_workflow(p: Project2, wf: int | Workflow, base: Any = None, sliders: dict[str, float] | None = None,

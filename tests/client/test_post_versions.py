@@ -2,6 +2,7 @@
 import json
 import random
 
+import numpy as np
 import pytest
 from PySide6.QtCore import QEvent
 from PySide6.QtWidgets import QApplication
@@ -584,3 +585,21 @@ def test_the_source_of_spot_healing_set_by_hand_belongs_to_its_version_and_its_u
         assert v._heal_src is None and v._heal_off is None
     finally:
         _done(page)
+
+
+def test_the_fits_export_through_the_render_service_carries_the_shots_facts(tmp_path):
+    """The service's writer dropped them: the header had no OBJECT, DATE-OBS or EXPTIME."""
+    from types import SimpleNamespace
+
+    from astropy.io import fits
+
+    from astro_gpu.client.services import render as rs
+    p = project2.create(tmp_path / "P", "P", Target(name="Rosette Nebula"))
+    cls = next(c for c in vars(rs).values() if isinstance(c, type) and "_write" in vars(c) and c.__module__ == rs.__name__)
+    me = SimpleNamespace(project=p)
+    rgb = np.random.default_rng(0).uniform(0, 1, (3, 8, 10)).astype(np.float32)
+    meta = {"origin": (0, 0), "history": None, "facts": {"target": "Rosette Nebula", "date_obs": "2026-11-01T21:00:00",
+                                                         "exposure_s": 3600.0}}
+    files = cls._write(me, rgb, tmp_path / "out", {"name": "x", "formats": ["fits32f"]}, meta)
+    h = fits.getheader(next(f for f in files if f.suffix == ".fits"))
+    assert h["OBJECT"] == "Rosette Nebula" and h["EXPTIME"] == 3600.0 and h["DATE-OBS"].startswith("2026-11-01")
