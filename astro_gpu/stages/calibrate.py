@@ -764,7 +764,7 @@ def _plane(a: np.ndarray, k: int, P: int = 2) -> np.ndarray:
 
 
 #: the files of the masters read at a time (their reading and decoding are what these phases wait for)
-READERS = 4
+READERS = max(4, min(os.cpu_count() or 4, 8))
 
 
 def _read_frames(paths: list[str], put, start: int = 0, tick=None, read=None) -> None:
@@ -790,14 +790,41 @@ def _median_stack(paths: list[str], ctx: Context, label: str) -> np.ndarray:
         stack[i] = a
 
     _read_frames(paths, put, 1, lambda c: _tick(ctx, f"reading {label} {c}/{len(paths)}"))
+    return _median_stack_of(stack)
+
+
+def _median_stack_of(stack: np.ndarray) -> np.ndarray:
+    """The pixel-wise median of the frames (n, H, W), by bands of rows on the machine's cores (the stack is sorted in
+    place, band by band)."""
     out = np.empty(stack.shape[1:], np.float32)
-    for r in range(0, out.shape[0], BAND):
-        out[r:r + BAND] = np.median(stack[:, r:r + BAND], axis=0, overwrite_input=True)
+
+    def band(r0, r1):
+        out[r0:r1] = np.median(stack[:, r0:r1], axis=0, overwrite_input=True)
+
+    by_bands(out.shape[0], band)
     return out
 
 
 #: the rows a pixel-wise statistic of a stack of frames is taken on at a time (its temporary arrays stay small)
 BAND = 256
+#: the same on several threads (numpy's sorts and scipy's filters let go of the interpreter): thinner bands, so that
+#: the threads' temporary arrays together stay as small as one band of BAND rows
+THREAD_BAND = 64
+
+
+def by_bands(H: int, work, threads: int | None = None) -> None:
+    """``work(r0, r1)`` for the bands of rows of 0..H, on the machine's cores: the pixel-wise statistics of the masters
+    were taken band after band on one core, which left a CPU-only machine at a tenth of its power. The bands are
+    independent, so the result does not depend on the threads."""
+    n = threads or max(1, min(os.cpu_count() or 1, 8))
+    cuts = [(r, min(r + THREAD_BAND, H)) for r in range(0, H, THREAD_BAND)]
+    if n == 1 or len(cuts) == 1:
+        for r0, r1 in cuts:
+            work(r0, r1)
+        return
+    with ThreadPoolExecutor(n) as pool:
+        for job in [pool.submit(work, r0, r1) for r0, r1 in cuts]:
+            job.result()
 #: a flat pixel under this share of the flat's median received no light: a bad pixel
 FLAT_UNLIT = 0.1
 
@@ -838,12 +865,15 @@ def _flats_mean(fl: np.ndarray) -> np.ndarray:
     median (by bands of rows)."""
     H, W = fl.shape[1:]
     out = np.empty((H, W), np.float32)
-    for r in range(0, H, BAND):
-        b = fl[:, r:r + BAND]
+
+    def band(r0, r1):
+        b = fl[:, r0:r1]
         med = np.median(b, axis=0)
         dev = np.abs(b - med)
         keep = dev < 3 * (1.4826 * np.median(dev, axis=0) + 1e-6)
-        out[r:r + BAND] = np.where(keep, b, 0).sum(0) / np.maximum(keep.sum(0), 1)
+        out[r0:r1] = np.where(keep, b, 0).sum(0) / np.maximum(keep.sum(0), 1)
+
+    by_bands(H, band)
     return out
 
 
@@ -873,12 +903,15 @@ def _hot_from_lights(paths, dark, flat, bad, median_filter, n=40, k=5.0, cfa: st
     _read_frames(sub, put, 0, (lambda c: tick(f"hot pixels: frame {c}/{len(sub)}")) if tick is not None else None)
     one = st[len(sub) // 2].copy()                    # a single frame: the unit of the threshold is ITS noise
     q = np.empty(dark.shape, np.float32)
-    for r in range(0, q.shape[0], BAND):
-        q[r:r + BAND] = np.percentile(st[:, r:r + BAND], 25, axis=0, overwrite_input=True)
+
+    def quartile(r0, r1):
+        q[r0:r1] = np.percentile(st[:, r0:r1], 25, axis=0, overwrite_input=True)
+
+    by_bands(q.shape[0], quartile)
     del st
     cand = np.zeros(dark.shape, bool)
     med_all = np.empty_like(q)
-    for c in range(P * P):
+    def position(c):
         v = _plane(q, c, P)
         med = median_filter(v, size=5)
         f = _plane(one, c, P)
@@ -889,6 +922,11 @@ def _hot_from_lights(paths, dark, flat, bad, median_filter, n=40, k=5.0, cfa: st
         hot = (v - med) > k * s
         _plane(cand, c, P)[...] = hot
         _plane(med_all, c, P)[...] = med
+    # the positions of the colour pattern are independent planes: one thread each (the filters let go of the
+    # interpreter)
+    with ThreadPoolExecutor(min(P * P, max(1, os.cpu_count() or 1))) as pool:
+        for job in [pool.submit(position, c) for c in range(P * P)]:
+            job.result()
     # a saturated defect lights its nearest neighbours by crosstalk: the candidates and their 8 neighbours are
     # replaced by the neighbours' median before the stars are looked for, else a defect would be taken for one
     qc = np.where(cv2.dilate(cand.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0, med_all, q)
@@ -1270,8 +1308,8 @@ def _colour_median(paths: list[str], ctx: Context, label: str) -> np.ndarray:
 
     _read_frames(paths, put, 1, lambda c: _tick(ctx, f"reading {label} {c}/{len(paths)}"), read_colour)
     out = np.empty(stack.shape[1:], np.float32)
-    for r in range(0, out.shape[1], BAND):
-        out[:, r:r + BAND] = np.median(stack[:, :, r:r + BAND], axis=0, overwrite_input=True)
+    by_bands(out.shape[1], lambda r0, r1: out.__setitem__((slice(None), slice(r0, r1)),
+                                                          np.median(stack[:, :, r0:r1], axis=0, overwrite_input=True)))
     return out
 
 

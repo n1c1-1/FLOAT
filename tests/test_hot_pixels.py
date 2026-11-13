@@ -178,3 +178,24 @@ def test_the_persistence_leaves_a_star_that_stayed_on_its_pixels_and_still_flags
     assert bad[150, 200]
     assert not bad[94:99, 126:131].any() and not bad[38:43, 38:43].any()
     assert "left to the stack's rejection" in msg
+
+
+def test_the_masters_and_the_persistence_give_the_same_result_on_one_thread_and_on_many(monkeypatch):
+    """The statistics of the masters are taken on bands of rows on the machine's cores: no thread count changes a value."""
+    from scipy.ndimage import median_filter
+    rng = np.random.default_rng(11)
+    frames, _, _, _ = _sequence(rng, n=20)
+    paths = _read_from(monkeypatch, frames)
+    fl = np.stack([f / f.mean() for f in frames]).astype(np.float32)
+
+    def run():
+        bad = np.zeros((H, W), bool)
+        cal._hot_from_lights(paths, np.full((H, W), 100, np.float32), np.ones((H, W), np.float32), bad, median_filter)
+        return bad, cal._flats_mean(fl.copy()), cal._median_stack_of(fl.copy())
+
+    monkeypatch.setattr(cal.os, "cpu_count", lambda: 1)
+    one = run()
+    monkeypatch.setattr(cal.os, "cpu_count", lambda: 8)
+    many = run()
+    assert (one[0] == many[0]).all() and (one[1] == many[1]).all() and (one[2] == many[2]).all()
+    assert (one[2] == np.median(fl, axis=0)).all()
