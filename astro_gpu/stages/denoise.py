@@ -148,29 +148,31 @@ class Denoise(Stage):
         torch.save({"net": net.state_dict(), "bk": bk, "sg": sg}, ctx.out("n2n_model.pt"))
         net.eval()
         shifts = PASSES[:1] if p.fast else PASSES
-        # the bar moves with the tiles: the three images (two half-stacks, the stack) have as many, from the end of the
-        # adaptation (0.9 of the bar, adapt) or from 0, to 0.98. It stood at 0.92 from the first second on data set
-        # 20, so the run window's time left stayed at its estimate for the 4 h the stage took
+        # the bar moves with the tiles: the full stack and, only when a later Denoise block takes the half-stacks, the
+        # two half-stacks, have as many, from the end of the adaptation (0.9 of the bar, adapt) or from 0, to 0.98. It
+        # stood at 0.92 from the first second on data set 20, so the run window's time left stayed at its estimate for
+        # the 4 h the stage took. The half-stacks were denoised and saved (n2n_avg, which nothing reads) on every run: two
+        # thirds of the stage's time, on a processor 250 s of 385, for nothing
         lo = 0.9 if p.method == "adapted" else 0.0
+        images = 3 if p.keep_halves else 1
 
         def bar(k: int, what: str):                  # (the run window translates the message: services/run.PATTERNS)
-            return lambda done, total: ctx.progress(lo + (0.98 - lo) * (k + done / total) / 3,
+            return lambda done, total: ctx.progress(lo + (0.98 - lo) * (k + done / total) / images,
                                                     f"{what}: tile {done} of {total}")
-        dA = apply_net(net, A, nm, bk, sg, dev, shifts=shifts, check=ctx.check_stop,
-                       progress=bar(0, "denoising the half-stacks"))
-        dB = apply_net(net, B, nm, bk, sg, dev, shifts=shifts, check=ctx.check_stop,
-                       progress=bar(1, "denoising the half-stacks"))
         # a monochrome stack: the network moves the three channels a little apart; their mean, in the three, keeps it
         # grey (issue #43)
         grey = (lambda a: np.repeat(a.mean(0, keepdims=True), 3, axis=0)) if mono else (lambda a: a)
-        dA, dB = keep_level(grey(dA), A, Wt), keep_level(grey(dB), B, Wt)
-        ctx.save("n2n_avg.npy", 0.5 * (dA + dB))
-        dF = keep_level(grey(apply_net(net, full, (nm / np.sqrt(2)).astype(np.float32), bk, sg, dev, shifts=shifts,
-                                         check=ctx.check_stop, progress=bar(2, "denoising the full stack"))), full, Wt)
-        ctx.save("n2n_full.npy", dF)
+        k = 0
         if p.keep_halves:                            # for a later Denoise block (issue #47)
-            ctx.save("n2n_A.npy", dA)
-            ctx.save("n2n_B.npy", dB)
+            for name, half in (("A", A), ("B", B)):
+                d = apply_net(net, half, nm, bk, sg, dev, shifts=shifts, check=ctx.check_stop,
+                              progress=bar(k, "denoising the half-stacks"))
+                ctx.save(f"n2n_{name}.npy", keep_level(grey(d), half, Wt))
+                del d
+                k += 1
+        dF = keep_level(grey(apply_net(net, full, (nm / np.sqrt(2)).astype(np.float32), bk, sg, dev, shifts=shifts,
+                                         check=ctx.check_stop, progress=bar(k, "denoising the full stack"))), full, Wt)
+        ctx.save("n2n_full.npy", dF)
         g0 = _noise(full[1])
         g1 = _noise(dF[1])
         ctx.metric("noise_before", round(g0, 3))
@@ -392,6 +394,8 @@ def apply_net(net, x, nm, bk, sg, dev, tile=512, pad=48, shifts=PASSES, check=No
     # tiles fell to 128 (16 times as many) on memory that Windows may have put in the machine's (data set 20: Denoise
     # not done in 4 h; on a card with nothing left in it, 0.026 s a tile, 80 s for the 3000 tiles of the stage)
     devices.empty_cache(dev)
+    if dev.type == "cpu":                            # the convolutions of a processor run in the channels-last layout
+        net.to(memory_format=torch.channels_last)    # 22 % faster (0.90 to 0.70 s a tile), the same values to 1e-6
     tile = devices.tile_that_fits(tile, dev, TILE_GB * (tile / 512) ** 2)
     shown = [0.0]
 
@@ -442,7 +446,10 @@ def _apply_net(net, x, nm, bk, sg, dev, tile, pad, check=None, step=None):
             pn = F.pad(torch.from_numpy(np.ascontiguousarray(nm[None, None, y1:y2, x1:x2])).to(dev),
                        (0, pw8 - pw, 0, ph8 - ph), mode="reflect")
             with torch.autocast(dev.type, dtype=torch.bfloat16, enabled=dev.type == "cuda"):
-                o = net(to_input(pt, pn, bk_t, sg_t)).float()
+                inp = to_input(pt, pn, bk_t, sg_t)
+                if dev.type == "cpu":
+                    inp = inp.contiguous(memory_format=torch.channels_last)
+                o = net(inp).float()
             a = (pt - bk_t.view(1, 3, 1, 1)) / sg_t.view(1, 3, 1, 1) + o
             res = (a * sg_t.view(1, 3, 1, 1) + bk_t.view(1, 3, 1, 1))[0, :, :ph, :pw]
             yy, xx = y - y1, x0 - x1
