@@ -2016,8 +2016,20 @@ class PostView(QWidget):
         self._big.setPixmap(self.thumb(lay).scaled(TW * 3, TH * 3, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         self._big.adjustSize()
         pos = at.mapToGlobal(QPoint(0, 0))
-        self._big.move(pos.x() - self._big.width() - 8, pos.y())
+        self._big.move(*self._big_place(pos, at.width(), self._big.width(), self._big.height(),
+                                        (at.screen() or QApplication.primaryScreen()).availableGeometry()))
         self._big.show()
+
+    @staticmethod
+    def _big_place(pos, at_w: int, w: int, h: int, area) -> tuple[int, int]:
+        """Where the enlarged thumbnail goes: left of the list, else right of the thumbnail when the screen has no room
+        on the left; never off the screen."""
+        x = pos.x() - w - 8
+        if x < area.left():
+            x = pos.x() + at_w + 8
+        x = max(area.left(), min(x, area.right() - w))
+        y = max(area.top(), min(pos.y(), area.bottom() - h))
+        return x, y
 
     def hide_big(self):
         if self._big is not None:

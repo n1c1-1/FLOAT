@@ -461,3 +461,13 @@ def test_a_versions_only_image_layer_hidden_with_its_eye_stays_hidden_after_swit
         assert _layers_of(model, first) == hidden and second != first
     finally:
         _done(page)
+
+
+def test_the_enlarged_thumbnail_stays_on_the_screen():
+    from PySide6.QtCore import QPoint, QRect
+    from astro_gpu.client.post3 import PostView
+    area = QRect(0, 0, 1920, 1080)
+    assert PostView._big_place(QPoint(300, 200), 60, 180, 120, area) == (112, 200)         # room on the left: there
+    x, y = PostView._big_place(QPoint(60, 1050), 60, 180, 120, area)                       # none: right of the thumbnail
+    assert x == 128 and y + 120 <= 1080
+    assert PostView._big_place(QPoint(1900, 10), 60, 180, 120, area)[0] + 180 <= 1920
