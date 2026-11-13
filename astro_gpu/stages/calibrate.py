@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import shutil
 import time
@@ -778,7 +779,42 @@ def _read_frames(paths: list[str], put, start: int = 0, tick=None, read=None) ->
                 tick(start + c + 1)
 
 
+def _shared(ctx: Context, kind: str, paths: list[str], build, extra: bytes = b"") -> np.ndarray:
+    """A master built once for identical inputs: the same files (name, size, date), the same ``extra`` (what else it
+    depends on) and the same code version give the same master, kept under the project's store and read by every
+    session that asks for it (three sessions sharing 48 darks read them three times, 45 s each). Without a store
+    (no project folder) it is simply built."""
+    store = getattr(getattr(ctx, "project", None), "store", None)
+    if store is None:
+        return build()
+    h = hashlib.blake2b(digest_size=16)
+    h.update(f"{kind}|{Calibrate.version}|".encode())
+    for q in paths:
+        st = os.stat(q)
+        h.update(f"{os.path.abspath(q)}|{st.st_size}|{st.st_mtime_ns};".encode())
+    h.update(extra)
+    d = Path(store.path) / "_masters"
+    f = d / f"{kind}_{h.hexdigest()}.npy"
+    if f.is_file():
+        try:
+            got = np.load(f)
+            ctx.log(f"the {kind.replace('_', ' ')} ({len(paths)} files) were already read by another session: master reused")
+            return got
+        except Exception:
+            pass
+    out = build()
+    d.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_name(f.name + f".{os.getpid()}.tmp.npy")
+    np.save(tmp, out)
+    tmp.replace(f)
+    return out
+
+
 def _median_stack(paths: list[str], ctx: Context, label: str) -> np.ndarray:
+    return _shared(ctx, "median_" + label.replace(" ", "_"), paths, lambda: _median_stack_built(paths, ctx, label))
+
+
+def _median_stack_built(paths: list[str], ctx: Context, label: str) -> np.ndarray:
     """The pixel-wise median of the frames. They are read into one array (no list then stack), and the median is taken
     in bands of rows, in place: the memory is the frames once, not three times (28 darks of 12 Mpx: 1.3 GB, not 4)."""
     first = read_cfa(paths[0])
@@ -830,6 +866,11 @@ FLAT_UNLIT = 0.1
 
 
 def _master_flat(paths: list[str], fdark: np.ndarray, ctx: Context) -> np.ndarray:
+    return _shared(ctx, "flat", paths, lambda: _master_flat_built(paths, fdark, ctx),
+                   hashlib.blake2b(np.ascontiguousarray(fdark).tobytes(), digest_size=16).digest())
+
+
+def _master_flat_built(paths: list[str], fdark: np.ndarray, ctx: Context) -> np.ndarray:
     """The flats, each over its central level, averaged without the values over 3 MAD from the pixel's median. Read
     into one array and reduced in bands of rows: the memory is the frames once (46 flats of 12 Mpx: 2 GB, not 10)."""
     H, W = fdark.shape
@@ -1297,6 +1338,10 @@ def calibrate_colour(ctx: Context, p: CalibrateParams, frames: dict) -> None:
 
 
 def _colour_median(paths: list[str], ctx: Context, label: str) -> np.ndarray:
+    return _shared(ctx, "colour_median_" + label.replace(" ", "_"), paths, lambda: _colour_median_built(paths, ctx, label))
+
+
+def _colour_median_built(paths: list[str], ctx: Context, label: str) -> np.ndarray:
     """The pixel-wise median (3, H, W) of frames already in colour, in bands of rows (as ``_median_stack``)."""
     first = read_colour(paths[0])
     stack = np.empty((len(paths), *first.shape), np.float32)

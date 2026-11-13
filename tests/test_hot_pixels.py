@@ -199,3 +199,28 @@ def test_the_masters_and_the_persistence_give_the_same_result_on_one_thread_and_
     many = run()
     assert (one[0] == many[0]).all() and (one[1] == many[1]).all() and (one[2] == many[2]).all()
     assert (one[2] == np.median(fl, axis=0)).all()
+
+
+def test_sessions_sharing_darks_build_the_master_once(tmp_path, monkeypatch):
+    """Two sessions with the same dark files: the master is read and built once, the second reuses it (and a changed
+    file builds a new one)."""
+    from types import SimpleNamespace
+    files = []
+    for i in range(3):
+        f = tmp_path / f"d{i}.fits"
+        f.write_bytes(b"x" * (10 + i))
+        files.append(str(f))
+    reads = []
+    monkeypatch.setattr(cal, "read_cfa", lambda q: (reads.append(q), np.full((4, 4), float(len(reads)), np.float32))[1])
+    logs = []
+    ctx = SimpleNamespace(project=SimpleNamespace(store=SimpleNamespace(path=tmp_path / "store")),
+                          log=lambda m, lv="info": logs.append(m), progress=lambda *a, **k: None,
+                          _files_total=0, _files_read=0)
+    monkeypatch.setattr(cal, "_tick", lambda *a, **k: None)
+    first = cal._median_stack(files, ctx, "darks")
+    n = len(reads)
+    second = cal._median_stack(files, ctx, "darks")
+    assert len(reads) == n and np.array_equal(first, second) and any("reused" in m for m in logs)
+    (tmp_path / "d1.fits").write_bytes(b"y" * 99)
+    cal._median_stack(files, ctx, "darks")
+    assert len(reads) > n
