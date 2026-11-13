@@ -438,3 +438,26 @@ def test_what_spreads_between_versions_is_the_workflows_images_not_the_layers_ma
     finally:
         _done(page)
 
+
+def test_a_versions_only_image_layer_hidden_with_its_eye_stays_hidden_after_switching_away_and_back(model):
+    page = _page_of(model)
+    v = page.view
+    try:
+        model.add_post_layer(by_name(model, "Full").pid, None)
+        first = model.p.post["active"]
+        v._post_changed(None)
+        for lay in v.layers:
+            if lay["kind"] == "workflow":
+                lay["visible"] = False
+        v._save()
+        hidden = _layers_of(model, first)
+        v._version_new()
+        second = model.p.post["active"]
+        model.set_post_version(first)
+        v._post_changed(None)
+        assert [x["visible"] for x in v.layers if x["kind"] == "workflow"] == [False] * sum(
+            1 for x in v.layers if x["kind"] == "workflow")
+        v._save()
+        assert _layers_of(model, first) == hidden and second != first
+    finally:
+        _done(page)

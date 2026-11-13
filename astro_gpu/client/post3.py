@@ -1272,6 +1272,7 @@ class PostView(QWidget):
             self._fill_versions()
         known = {lay["pid"] for lay in self.layers if lay["kind"] == "workflow"}
         fresh = not known
+        ids_before = {x["id"] for x in self.layers}
         removed = getattr(self.s, "post_removed", lambda: set())() | getattr(self.s, "version_removed", lambda: set())()
         for p in paths:
             # every workflow's image comes, except one the user took out (issues #10, #52: it does not come back)
@@ -1296,8 +1297,8 @@ class PostView(QWidget):
             self.layers.remove(base)
             self.layers.append(base)
             base["visible"] = True
-        elif wl and not any(lay["visible"] for lay in wl):
-            wl[-1]["visible"] = True
+        elif wl and {x["id"] for x in self.layers} != ids_before and not any(lay["visible"] for lay in wl):
+            wl[-1]["visible"] = True                       # (only when layers came or went: one hidden by the eye stays so)
         if not initial:
             # a layer gone, or none chosen yet (the night test pass: Post opened by Open images showed an empty panel):
             # the bottom one, as on reopening
@@ -3135,7 +3136,6 @@ class PostView(QWidget):
         p = self.path(pid)
         return p is not None and (bool(getattr(p, "provisional", False)) or (p.rendered and not p.computed))
 
-    def _update_stale(self):
     def _place_of(self, pid, paths) -> int:
         """Where a workflow's layer comes among the others: the later in the order the workflows have (the order the
         images were opened in), the higher, whichever was computed first."""
@@ -3148,6 +3148,7 @@ class PostView(QWidget):
             return below
         return flows[-1][0] + 1 if flows else 0
 
+    def _update_stale(self):
         """The strip over the picture: shown while a layer on screen comes from outdated results."""
         old = [x for x in self.layers if x["kind"] == "workflow" and x.get("visible") and self.is_preview(x["pid"])]
         self.stale.setVisible(bool(old))
