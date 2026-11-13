@@ -18,6 +18,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from astro_gpu import api  # noqa: E402
@@ -388,6 +389,31 @@ def test_both_images_of_the_group_hidden_leave_a_neutral_canvas_and_a_banner_tha
         g["shown"]["stars"] = True
         v.layers = [x for x in v.layers if x is not g]
         assert v._empty_banner() in ("No layers yet", "Every layer is hidden")
+    finally:
+        page.shutdown()
+        page.deleteLater()
+
+
+def test_multiply_and_soft_light_are_greyed_for_the_bottom_image_layer_with_their_reason(project):
+    from PySide6.QtWidgets import QComboBox, QVBoxLayout, QWidget
+    page = page_of(project)
+    v = page.view
+    try:
+        v.layers.insert(0, {**copy.deepcopy(v.layers[0]), "id": 10 ** 6, "name": "Above"})    # one layer over it
+        pix = [x for x in v.layers if pe.is_pixel(x)]
+        assert len(pix) >= 2
+        for lay, bottom in ((pix[-1], True), (pix[0], False)):
+            host, old = QWidget(), v.pbox
+            v.pbox = QVBoxLayout(host)                       # the properties of that layer, in a panel of the test's
+            try:
+                v.layer_props(lay)
+            finally:
+                v.pbox = old
+            cb = host.findChildren(QComboBox)[0]
+            i = [cb.itemText(k) for k in range(cb.count())].index("Multiply")
+            assert (not cb.model().item(i).isEnabled()) == bottom
+            if bottom:
+                assert "Nothing under" in cb.itemData(i, Qt.ToolTipRole)
     finally:
         page.shutdown()
         page.deleteLater()
