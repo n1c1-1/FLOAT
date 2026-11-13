@@ -2267,6 +2267,40 @@ def test_the_export_dialog_follows_the_spec_and_refuses_the_results_folder(expor
         d.deleteLater()
 
 
+def test_the_export_dialog_proposes_the_last_export_of_the_project(exporting):
+    """The format, size, content and folder of the last export come back at the next opening, per project; a first
+    export proposes TIFF 16-bit in the project's export folder."""
+    s = exporting
+    d = ExportDialog(s.view)
+    try:
+        assert d.format_key() == "tiff16" and d.dest.text().startswith((s.root / "export").as_posix())
+        s.out.mkdir(exist_ok=True)
+        d.fmt.setCurrentIndex(d.fmt.findData("jpeg"))
+        d.size_cb.setCurrentIndex(1)
+        d.c_layers.setChecked(True)
+        d.dest.setText((s.out / "pic.jpg").as_posix())
+        d._remember()
+    finally:
+        d.reject()
+        d.deleteLater()
+    d = ExportDialog(s.view)
+    try:
+        assert d.format_key() == "jpeg" and d.size_cb.currentData() == 2048 and d.c_layers.isChecked()
+        assert d.dest.text() == (s.out / "HeartSoul.jpg").as_posix()
+        assert d.go.isEnabled()
+    finally:
+        d.reject()
+        d.deleteLater()
+    other = (prefs.get("export_last") or {}).pop(s.root.as_posix())              # another project: the defaults
+    s.root = s.root.parent / "elsewhere"
+    d = ExportDialog(s.view)
+    try:
+        assert d.format_key() == "tiff16" and not d.c_layers.isChecked() and other["format"] == "jpeg"
+    finally:
+        d.reject()
+        d.deleteLater()
+
+
 def test_the_export_dialog_says_how_many_layers_are_previews(exporting):
     """GUI exploration 4, Q3: Export wrote an image made of outdated results without a word (only the history file
     said it): the dialog says how many shown layers are previews, without blocking."""

@@ -188,6 +188,7 @@ class ExportDialog(QDialog):
         self.browse.clicked.connect(self._browse)
         self.worker.progress.connect(self._progress)
         self.worker.exported.connect(self._done)
+        self._recall()
         self._format_changed()
 
     # ------------------------------------------------------------ the fields
@@ -217,6 +218,47 @@ class ExportDialog(QDialog):
             return 0
         return sum(1 for lay in getattr(view, "layers", []) or []
                    if lay.get("kind") == "workflow" and lay.get("visible", True) and view.is_preview(lay.get("pid")))
+
+    # ------------------------------------------------------------ the last export of this project
+    def _memory_key(self) -> str:
+        return (self.root.as_posix() if self.root is not None else "") or self.pname
+
+    def _recall(self):
+        """What this project's last export chose (format, size, content, folder) is proposed again; a first export
+        keeps the defaults."""
+        last = (prefs.get("export_last") or {}).get(self._memory_key())
+        if not isinstance(last, dict):
+            return
+        for combo, key in ((self.fmt, "format"), (self.size_cb, "size"), (self.prof, "profile")):
+            i = combo.findData(last.get(key))
+            if i >= 0:
+                combo.setCurrentIndex(i)
+        for box, key in ((self.c_wcs, "wcs"), (self.c_hist, "history"), (self.c_layers, "layers"),
+                         (self.c_masks, "masks"), (self.c_card, "card"), (self.c_grid, "grid"),
+                         (self.c_names, "names")):
+            if key in last:
+                box.setChecked(bool(last[key]))
+        folder = last.get("folder")
+        if folder and not (self.problem_of(folder)):
+            key = self.format_key()
+            self.dest.setText(f"{folder}/{slug(self.file_base)}{SUFFIX[key]}")
+
+    def problem_of(self, folder: str) -> str:
+        return "inside" if self.root is not None and inside(Path(folder), self.root / "store") else ""
+
+    def _remember(self):
+        """Called when an export starts: its choices become the next proposal for this project."""
+        folder, _name = split_file(self.dest.text())
+        job = self.job()
+        last = dict(format=job.format, size=job.size, profile=self.prof.currentData(), folder=folder,
+                    history=job.history, layers=job.each_layer, masks=job.masks, card=self.c_card.isChecked())
+        for key, box in (("wcs", self.c_wcs), ("grid", self.c_grid), ("names", self.c_names)):
+            if box.isEnabled():                          # a format that cannot take it keeps the earlier wish
+                last[key] = box.isChecked()
+        memory = dict(prefs.get("export_last") or {})
+        last = {**(memory.get(self._memory_key()) or {}), **last}
+        memory[self._memory_key()] = last
+        prefs.set("export_last", memory)
 
     def default_file(self, fmt: str) -> str:
         base = self.root if self.root is not None else Path(prefs.last_folder()) / slug(self.pname)
@@ -309,6 +351,7 @@ class ExportDialog(QDialog):
         if why:
             self._check_dest()
             return
+        self._remember()
         self.running = True
         self.error, self.files = "", []
         self.status.setText("")
