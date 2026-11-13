@@ -77,6 +77,16 @@ def test_too_few_stars_to_check_a_transform_are_rejected():
     assert fit_sparse(cat[:rg.SPARSE_MIN_MATCHES - 1], ref, cKDTree(ref[:, :2]), W, H) is None
 
 
+def test_the_minimum_of_star_pairs_is_a_setting():
+    """The Registration's "Min pairs": 10 by default; a frame matching fewer pairs than the setting is left out."""
+    assert rg.RegisterParams().min_pairs == rg.SPARSE_MIN_MATCHES == 10
+    ref = _sky(50)
+    cat, _ = _frame(ref)
+    tree = cKDTree(ref[:, :2])
+    assert fit_sparse(cat, ref, tree, W, H, 10) is not None
+    assert fit_sparse(cat, ref, tree, W, H, len(cat) + 1) is None
+
+
 # ---------------------------------------------------------------------------------------- the stage
 
 

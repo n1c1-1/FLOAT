@@ -440,6 +440,7 @@
   "Parallel workers": "Calculs parallèles",
   "Detection threshold": "Seuil détection",
   "Stars per frame": "Étoiles par image",
+ "Min pairs": "Paires min",
   "Drizzle scale": "Échelle drizzle",
   "Minimum transparency": "Transparence minimale",
   "Maximum star size": "Taille max étoiles",
