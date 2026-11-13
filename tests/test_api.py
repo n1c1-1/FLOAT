@@ -837,9 +837,9 @@ def test_describe_a_real_stack_from_faked_upstream_results(real, tmp_path):
     sc = info["scale"]
     assert sc.suggestion_known and sc.origin == "auto" and sc.value == sc.suggested == 1.0
     assert sc.reason_en == "star size not measured: 1×"                 # the coverage rule; no Moffat fit faked
-    # the method advice: given beside the choices, never applied (every frame at the same place: holes, Classic)
+    # the method: the engine's choice is applied (every frame at the same place: holes, Classic), with its reason
     m = info["method"]
-    assert m.value == "drizzle" and m.origin == "default" and m.advice == "classic" and m.advice_reason
+    assert m.value == "classic" and m.origin == "auto" and m.reason
     assert info["half_block"].origin == "auto" and info["min_transparency"].reason
     assert info["exclude"].level == "internal"
     # an exclusion reaches the stack's effective settings, locked

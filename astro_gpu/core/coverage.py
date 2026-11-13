@@ -33,7 +33,8 @@ weight map, and for red and blue (a quarter of the samples each) it must stay un
                                                                at 1.5× or 2×
   ===========================================================  ===========================  ========================
 
-  The advice is only shown: it never changes the method by itself (stages/stack.py exposes it as an advice ``Auto``).
+  The advice is applied by default (stages/stack.py exposes it as the automatic value of "method", with its reason);
+  the user can still choose the method by hand.
 
 A monochrome sensor (``cfa`` empty, None or "MONO") goes through the same code: every pixel is a sample of its one
 plane, deposited and read as the middle channel ("G").
@@ -449,7 +450,7 @@ def pixfrac_steps(scale: float) -> np.ndarray:
 def suggest_drizzle(coef, W: int, H: int, cfa, fwhm: float | None, *, weights=None, limit: float = LIMIT,
                     undersampled: float = UNDERSAMPLED, scales=SCALES, grid=GRID, patch=PATCH) -> DrizzleSuggestion:
     """The drizzle scale, drop size and method advice for these frames (see the module docstring), each an ``Auto``
-    with its reason; the method's is an advice (``Auto.advice``: shown, never applied). ``coef``: the polynomials of
+    with its reason; the method's is the automatic value of "method". ``coef``: the polynomials of
     the frames the selection keeps; ``weights``: their weights (None: equal); ``fwhm``: the stars' Moffat FWHM in
     sensor pixels (core/psf_moffat), None or NaN when not measured; ``cfa``: the Bayer pattern, or empty / None /
     "MONO" for a monochrome sensor."""
@@ -515,13 +516,13 @@ def suggest_drizzle(coef, W: int, H: int, cfa, fwhm: float | None, *, weights=No
 
 def advise_method(cfa, n: int, cov1: float, fwhm: float, scale: float, finer=None, *, limit: float = LIMIT,
                   undersampled: float = UNDERSAMPLED, min_frames: int = MIN_DRIZZLE_FRAMES) -> Auto:
-    """The method advice of the table in the module docstring, an advice ``Auto``
+    """The method advice of the table in the module docstring, an ``Auto``
     ("drizzle" or "classic", a short reason): ``n`` the frames kept, ``cov1`` the coverage variation the rule reads
     at scale 1 and drop 1 (red and blue; the one plane of a monochrome sensor), ``fwhm`` the Moffat FWHM (NaN: not
     measured), ``scale`` the scale the rule suggests, ``finer`` (scale, variation) at the finer scale it tried (None
     when it tried none)."""
     def advice(value, template, args=None):
-        return Auto(value, template, args, advice=True)
+        return Auto(value, template, args)
 
     if is_mono(cfa):
         # no CFA: at scale 1 every pixel is sampled, a drizzle only adds detail when the stars are undersampled

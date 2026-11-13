@@ -1,8 +1,8 @@
 """Stacking: weighted Bayer drizzle on the GPU with predictive outlier rejection and two independent half-stacks,
 or the Classic method (debayering and interpolated registration, ``stack_classic``).
 
-- ``method = drizzle | classic``. The engine advises one (the automatic value "method", an advice only:
-  core/coverage.advise_method, on the frames the selection keeps); it never changes the method by itself.
+- ``method = drizzle | classic``. The engine chooses one (the automatic value "method":
+  core/coverage.advise_method, on the frames the selection keeps); the user can still choose by hand.
 - The drizzle scale and drop size are suggested from register's Moffat FWHM and the coverage of the red and blue
   samples of the frames kept (core/coverage.py, DrizzlePac's 20 % rule).
 - ``selection``: ``min_weight`` (default) keeps every aligned frame unless its weight is under 5 % of the best one,
@@ -275,8 +275,9 @@ class Stack(Stage):
     # theirs. The Classic part has a revision of its own (CLASSIC_VERSION, ``key_version``).
     # 7: the drizzle's own rejection judged against the measured mean and standard deviation of the samples at each
     # point (sigma clipping, two iterations, thresholds 3), saturated samples included; no noise model (gain and read
-    # noise settings gone).
-    version = "7"
+    # noise settings gone). 8: the method is chosen by the engine's rule (core/coverage.advise_method) unless the
+    # user sets it (it was Bayer drizzle unless set).
+    version = "8"
 
     def key_version(self, values: dict) -> str:
         """The version in the store key of a stack with these (validated) settings: ``version``, and the Classic part's
@@ -319,7 +320,7 @@ class Stack(Stage):
         cache = ctx.load_json("calibrate", "cache.json")
         s = drizzle_suggestion(reg, cache, use=use, weights=w)
         a["scale"], a["pixfrac"] = s.scale, s.pixfrac
-        a["method"] = s.method                     # an advice (Auto.advice): shown, never applied
+        a["method"] = s.method                     # applied by default (the user can choose by hand)
         if cache.get("cfa") and not cache.get("rgb_path"):
             pf = float(given["pixfrac"]) if "pixfrac" in given else float(a["pixfrac"].value)
             sc = float(given["scale"]) if "scale" in given else float(a["scale"].value)

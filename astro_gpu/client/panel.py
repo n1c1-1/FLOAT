@@ -434,8 +434,8 @@ class InfoDot(IconLabel):
 
 
 class StackMethodCard(QFrame):
-    """A stacking method: its name, what it does; the engine's advice as a discreet "Recommended" outline in the accent
-    colour, with an "i" whose tooltip says why. ``clicked`` asks for this method (the advice never chooses it)."""
+    """A stacking method: its name, what it does; when the engine chose it, a discreet "Automatic" outline in the accent
+    colour, with an "i" whose tooltip says why. ``clicked`` asks for this method."""
     clicked = Signal()
 
     def __init__(self, key: str, on: bool, recommended: bool = False, why: str = "", enabled: bool = True,
@@ -461,7 +461,7 @@ class StackMethodCard(QFrame):
         top.addStretch(1)
         self.tag = self.info = None
         if recommended:
-            self.tag = QLabel(_("Recommended"))
+            self.tag = QLabel(_("Automatic"))
             self.tag.setObjectName("rec")
             self.tag.setStyleSheet(f"QLabel#rec {{ color: {ACCENT}; border: 1px solid {ACCENT}; border-radius: 8px; "
                                    "padding: 0px 7px; font-size: 8.5pt; }")
@@ -1532,8 +1532,8 @@ class Panel(QWidget):
         self.changed.emit()
 
     def stack_methods(self, p):
-        """The stacking methods the engine offers, as cards; the engine's advice marks one "Recommended" (with its
-        reason under an "i"), and never changes the method by itself. Below, only the settings of the method shown."""
+        """The stacking methods the engine offers, as cards; the method the engine chose is marked "Automatic" (with its
+        reason under an "i"). Below, only the settings of the method shown."""
         from .settings import STACK_METHOD, colour_frames, method_advice, method_text, stack_methods
         keys = stack_methods(self.s, p)
         if colour_frames(self.s, p):                       # issue #57: said, not silently left out
@@ -1559,7 +1559,7 @@ class Panel(QWidget):
             self.bv.addWidget(card)
         if advice is None and self.s.state(p, "register") != "done":
             # the advice reads the registration (star size, coverage of the frames kept): none without it
-            why = label(_("The recommended method shows once the registration is computed."), "small", wrap=True)
+            why = label(_("The automatic method shows once the registration is computed."), "small", wrap=True)
             why.setObjectName("advice_pending")
             self.bv.addWidget(why)
 

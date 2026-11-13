@@ -393,7 +393,7 @@ def test_selection_by_thresholds_with_reasons(night, tmp_path):
 
 def test_coverage_rule_and_method_advice_on_the_frames_kept(night, tmp_path):
     """The scale, the drop and the method advice judge the frames the selection keeps (not every aligned frame): the
-    advice counts them; it is an advice (never applied)."""
+    advice counts them; it is applied."""
     from astro_gpu.core import coverage as cv
     from astro_gpu.core.params import resolve
     from astro_gpu.stages.stack import Stack, StackParams
@@ -407,9 +407,9 @@ def test_coverage_rule_and_method_advice_on_the_frames_kept(night, tmp_path):
     assert a["scale"].template in cv.REASON_TEMPLATES and a["pixfrac"].template in cv.REASON_TEMPLATES
     assert a["scale"].value in (1.0, 1.5, 2.0) and 0.5 <= a["pixfrac"].value <= 1.0
     m = a["method"]
-    assert m.advice and m.value == "classic" and m.template == cv.M_FEW and m.args == {"n": truth.n}
+    assert m.value == "classic" and m.template == cv.M_FEW and m.args == {"n": truth.n}
     params, origin = resolve(StackParams, a, {})
-    assert params.method == "drizzle" and origin["method"] == "default"      # never applied
+    assert params.method == "classic" and origin["method"] == "auto"      # applied
     p.set_override("stack", "exclude", ["L00.fits", "L01.fits"])          # two frames out by hand: 10 judged
     assert Stack().auto(ctx)["method"].args == {"n": truth.n - 2}
 

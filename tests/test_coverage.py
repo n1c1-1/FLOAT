@@ -227,9 +227,9 @@ def test_advice_table_colour_rows():
     s = cv.suggest_drizzle(transforms(80, rot_deg=0.2, seed=11), W, H, "RGGB", 1.8)
     assert (s.method.value, s.method.template, s.scale.value) == ("drizzle", cv.M_DRIZZLE_FINE, 1.5)
     assert s.method.reason.endswith(": drizzle 1.5×") and s.method.args["cov"] < 20
-    # every advice is an advice (never applied) with a French
+    # every advice has its French
     for m in (s.method, cv.advise_method("RGGB", 20, float("inf"), 3.0, 1.0)):
-        assert m.advice and m.template in cv.REASON_TEMPLATES and m.text("fr") != m.reason
+        assert m.template in cv.REASON_TEMPLATES and m.text("fr") != m.reason
     assert cv.advise_method("RGGB", 20, float("inf"), 3.0, 1.0).template == cv.M_HOLES
 
 
@@ -256,16 +256,16 @@ def test_advice_table_monochrome_rows():
     assert cv.advise_method("", 30, 0.0, 1.8, 1.0, (1.5, float("inf"))).template == cv.M_MONO_HOLES
 
 
-def test_the_advice_is_never_applied():
-    """An advice ``Auto`` is shown, not used: ``resolve`` keeps the default or the user's value."""
+def test_the_advice_is_applied_unless_the_user_chooses():
+    """The method's ``Auto`` is applied by ``resolve``; the user's value wins."""
     from astro_gpu.core.params import resolve
     from astro_gpu.stages.stack import StackParams
     a = {"method": cv.advise_method("RGGB", 10, 0.1, 3.0, 1.0), "scale": Auto(1.0, "scale 1×: drops of a whole pixel")}
-    assert a["method"].value == "classic" and a["method"].advice
+    assert a["method"].value == "classic"
     p, origin = resolve(StackParams, a, {})
-    assert p.method == "drizzle" and origin["method"] == "default" and p.scale == 1.0 and origin["scale"] == "auto"
-    p, origin = resolve(StackParams, a, {"method": "classic"})
-    assert p.method == "classic" and origin["method"] == "user"
+    assert p.method == "classic" and origin["method"] == "auto" and p.scale == 1.0 and origin["scale"] == "auto"
+    p, origin = resolve(StackParams, a, {"method": "drizzle"})
+    assert p.method == "drizzle" and origin["method"] == "user"
 
 
 def test_fast_enough():

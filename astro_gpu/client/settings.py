@@ -520,15 +520,13 @@ def stack_method(s, p) -> str | None:
 
 
 def method_advice(s, p) -> tuple[str, str] | None:
-    """The engine's advice on the stacking method: (method, its reason in the language shown), or None when the engine
-    gives none (``ParamInfo.advice`` of ``method``: an automatic value the engine never applies). The advice never
-    changes the method."""
+    """The engine's automatic stacking method: (method, its reason in the language shown), or None when the method
+    is the user's or the default (``ParamInfo.origin`` of ``method`` is not "auto")."""
     info = s.param_info(p, *STACK_METHOD)
-    adv = getattr(info, "advice", None)
-    if adv is None or adv not in (info.choices or []):
+    if info is None or info.origin != "auto" or info.value not in (info.choices or []):
         return None
-    why = getattr(info, "advice_reason", "") or ""
-    return adv, texts.format_reason(why, getattr(info, "advice_args", None), language()) if why else ""
+    why = getattr(info, "reason", "") or ""
+    return info.value, texts.format_reason(why, getattr(info, "reason_args", None), language()) if why else ""
 
 
 def selection_rule_text(s, p) -> str:

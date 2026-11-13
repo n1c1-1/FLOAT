@@ -968,9 +968,10 @@ def test_the_stacking_method_is_chosen_on_cards_and_shows_only_its_own_settings(
     assert "method" not in (model.view(1).params.get("stack") or {})
 
 
-def test_the_engine_advice_is_a_recommended_outline_that_never_changes_the_method(world, model, page, monkeypatch):
-    """The engine's advice on "method" (ParamInfo.advice, here a fake one: Classic, with its reason) puts a discreet
-    "Recommended" outline and an "i" with the reason on that card; the method stays the user's."""
+def test_the_engines_method_is_an_automatic_outline_with_its_reason(world, model, page, monkeypatch):
+    """When the engine chose the method (ParamInfo.origin "auto", here a fake one: Classic, with its reason), that
+    card is selected and carries a discreet "Automatic" outline and an "i" with the reason; clicking the other one
+    is the user's choice."""
     import copy
 
     from astro_gpu.client import i18n
@@ -982,7 +983,7 @@ def test_the_engine_advice_is_a_recommended_outline_that_never_changes_the_metho
         info = real(p, stage, name)
         if (stage, name) == ("stack", "method") and info is not None:
             info = copy.copy(info)
-            info.advice, info.advice_reason, info.advice_args = "classic", reason, {"n": 12}
+            info.value, info.origin, info.reason, info.reason_args = "classic", "auto", reason, {"n": 12}
         return info
     monkeypatch.setattr(model, "param_info", fake)
     page.select_node(node(page, "empilement"))
@@ -990,9 +991,9 @@ def test_the_engine_advice_is_a_recommended_outline_that_never_changes_the_metho
     page.panel.refresh(page.panel.node)
     settle(world["w"], page)
     cards = {c.key: c for c in stack_cards(page)}
-    assert cards["drizzle"].on and not cards["drizzle"].recommended and cards["drizzle"].tag is None
+    assert not cards["drizzle"].on and not cards["drizzle"].recommended and cards["drizzle"].tag is None
     rec = cards["classic"]
-    assert rec.recommended and not rec.on and rec.tag.text() == "Recommended"
+    assert rec.recommended and rec.on and rec.tag.text() == "Automatic"
     assert ACCENT in rec.tag.styleSheet() and "border-radius" in rec.tag.styleSheet()
     assert rec.info.property("iconRole") == "info" and rec.info.toolTip() == "12 frames (drizzle needs 15): Classic"
     assert model.pending_change is None and "method" not in (model.view(1).params.get("stack") or {})
@@ -1002,17 +1003,18 @@ def test_the_engine_advice_is_a_recommended_outline_that_never_changes_the_metho
         page.panel.refresh(page.panel.node)
         settle(world["w"], page)
         rec = {c.key: c for c in stack_cards(page)}["classic"]
-        assert rec.tag.text() == "Conseillé" and rec.info.toolTip() == "12 images (le drizzle en demande 15) : Classique"
-        assert "Recommended" not in i18n.missing()
+        assert rec.tag.text() == "Automatique" and rec.info.toolTip() == "12 images (le drizzle en demande 15) : Classique"
+        assert "Automatic" not in i18n.missing()
     finally:
         appmod.apply_language("en")
-    # the engine's own advice (none: nothing is marked)
-    from astro_gpu.client.settings import method_advice
+    # the user's own value: nothing is marked
     monkeypatch.setattr(model, "param_info", real)
     page.panel.refresh(page.panel.node)
     settle(world["w"], page)
-    adv = method_advice(model, model.path)
-    assert [c.key for c in stack_cards(page) if c.recommended] == ([adv[0]] if adv else [])
+    from astro_gpu.client.settings import method_advice
+    info = real(model.path, "stack", "method")
+    assert [c.key for c in stack_cards(page) if c.recommended] == ([info.value] if info.origin == "auto" else [])
+    assert (method_advice(model, model.path) is not None) == (info.origin == "auto")
 
 
 def test_the_selection_rule_is_said_and_the_thresholds_act_only_with_the_thresholds_rule(world, model, page):

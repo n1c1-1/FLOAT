@@ -391,7 +391,7 @@ def test_every_auto_key_of_heart_a7s_is_in_auto_fields(tmp_path):
     for st in V2_STAGES():
         ctx = Context(proj, st, journal, "cpu")
         autos = st.auto(ctx)
-        keys = {k for k, a in autos.items() if not a.advice}      # an advice (the stack's method) is never applied
+        keys = set(autos)
         seen[st.name] = keys
         allowed = AUTO_FIELDS.get(st.name, frozenset())
         assert keys <= allowed, (st.name, keys)

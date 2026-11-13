@@ -295,10 +295,7 @@ class ParamInfo:
     ``suggested`` the value without the user's (``suggestion_known`` False: the stage cannot compute it yet, the
     upstream results are not done). ``reason`` / ``reason_args``: the engine's ``Auto.template`` and ``Auto.args``,
     unformatted (``reason_en`` is ``Auto.reason``). ``drift``: the done result used another value
-    (``result_value``); ``locked``: the workflow's options or the project's exclusions set it. ``advice``: the value
-    the engine advises without applying it (the stack's "method": "drizzle" or "classic"; None when it gives none or
-    cannot compute it yet), its reason in ``advice_reason`` / ``advice_args`` (template and arguments, as for
-    ``reason``) and ``advice_reason_en``."""
+    (``result_value``); ``locked``: the workflow's options or the project's exclusions set it."""
 
     name: str
     label: str
@@ -324,10 +321,6 @@ class ParamInfo:
     locked: bool = False
     drift: bool = False
     result_value: Any = None
-    advice: Any = None
-    advice_reason: str = ""
-    advice_args: Any = None
-    advice_reason_en: str = ""
 
 
 @dataclass
@@ -2790,17 +2783,13 @@ def describe(p: Project2, wf: int | Workflow, stage: str) -> list[ParamInfo]:
         a = r.autos.get(n) if r.origin[n] == "auto" else None
         drift = bool(used) and n in used and n not in skip and used[n] != r.values[n]
         english = getattr(a, "reason", "")
-        adv = r.autos.get(n)
-        adv = adv if getattr(adv, "advice", False) else None
         out.append(ParamInfo(
             n, d.get("label", n), d.get("help", ""), d.get("tip", ""), d["type"], d["default"], r.values[n],
             r.suggested[n], r.known[n], r.origin[n],
             reason=getattr(a, "template", english), reason_args=getattr(a, "args", None), reason_en=english,
             level=d.get("level", "basic"), unit=d.get("unit", ""), ge=d.get("ge"), le=d.get("le"), gt=d.get("gt"),
             lt=d.get("lt"), step=d.get("step"), choices=d.get("choices"), locked=n in locked, drift=drift,
-            result_value=used.get(n) if drift else None,
-            advice=None if adv is None else adv.value, advice_reason="" if adv is None else adv.template,
-            advice_args=None if adv is None else adv.args, advice_reason_en="" if adv is None else adv.reason))
+            result_value=used.get(n) if drift else None))
     if b == "catalogs":
         _bounded_by_spectra(out)
     return out

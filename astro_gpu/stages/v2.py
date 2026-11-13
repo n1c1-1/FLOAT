@@ -13,7 +13,7 @@ from ..core.stage import Stage
 AUTO_FIELDS: dict[str, frozenset[str]] = {
     "calibrate": frozenset({"workers"}),
     "register": frozenset({"workers"}),
-    "stack": frozenset({"scale", "pixfrac", "min_transparency", "half_block", "drizzle_rejection"}),
+    "stack": frozenset({"scale", "pixfrac", "min_transparency", "half_block", "drizzle_rejection", "method"}),
     "astrometry": frozenset({"ra", "dec", "target", "pixel_um", "focal_mm"}),
     "color": frozenset({"aperture"}),
     "denoise": frozenset({"adaptation"}),                # long when the half-stacks' noise is not dithered
