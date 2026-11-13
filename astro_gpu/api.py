@@ -2878,11 +2878,13 @@ def _slug(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_") or "image"
 
 
-def shot_facts(p: Project2, wf: int | Workflow, _seen: tuple = ()) -> dict:
-    """What a picture of this workflow says of its shot, exactly, from the frames its stack used (the stack's own
-    frames list, ``diagnostics.json``), never the inventory's rounded hours: ``frames`` (their number), ``seconds``
-    (the sum of their exposures), ``first`` / ``last`` (the first light, and the end of the last exposure, ISO) and
-    ``parts`` ([{"name", "frames", "seconds"}] per workflow). A combination sums the workflows it combines.
+def shot_facts(p: Project2, wfs: int | Workflow | list) -> dict:
+    """What a picture made of these workflows' images says of its shot, exactly, from the frames their stacks used (the
+    stack's own frames list, ``diagnostics.json``), never the inventory's rounded hours. The totals are over the
+    DISTINCT frames (by file): ``frames`` (their number), ``seconds`` (the sum of their exposures), ``first`` / ``last``
+    (the first light, and the end of the last exposure, ISO). A combination counts the workflows it combines. Rows that
+    share lights (two filters of one exposure) count each light once; ``parts`` ([{"name", "frames", "seconds",
+    "shared"}] per workflow) keeps each row's own count and says how many of its frames an earlier row had.
 
     Siril writes a stacked image's header the same way (stacking/sum.c, ``sum_stacking_image_hook`` and
     ``_finalize_hook``): LIVETIME = the sum of the exposures of the frames stacked, STACKCNT = how many frames were
@@ -2893,50 +2895,60 @@ def shot_facts(p: Project2, wf: int | Workflow, _seen: tuple = ()) -> dict:
     from datetime import datetime, timedelta
 
     from .io.frames import read_info
-    w = p.workflow(wf) if not isinstance(wf, Workflow) else wf
-    out = {"frames": 0, "seconds": 0.0, "first": "", "last": "", "parts": []}
-    if w.id in _seen:
-        return out
-    if p2.is_fusion(w):
-        done = set()
-        for i in w.source["fusion"]["inputs"]:
-            if i["pid"] in done:
-                continue
-            done.add(i["pid"])
-            sub = shot_facts(p, i["pid"], (*_seen, w.id))
-            out["frames"] += sub["frames"]
-            out["seconds"] += sub["seconds"]
-            out["parts"] += sub["parts"]
-            out["first"] = min([x for x in (out["first"], sub["first"]) if x], default="")
-            out["last"] = max([x for x in (out["last"], sub["last"]) if x], default="")
-        return out
-    d = _dir(p, w, "stack")
-    try:
-        frames = json.loads((d / "diagnostics.json").read_text(encoding="utf-8")).get("frames") or []
-    except (AttributeError, OSError, ValueError):
-        return out
-    like, secs, times, ends = None, 0.0, [], []
-    for f in frames:
-        if float(f.get("weight", 1.0)) <= 0:
-            continue
+    seen: dict[str, tuple] = {}                        # file -> (exposure s, time ISO or "")
+    parts: list[dict] = []
+    visited: set[int] = set()
+    info_cache: dict[str, tuple] = {}
+
+    def own(w: Workflow):
+        d = _dir(p, w, "stack")
         try:
-            info = read_info(f["path"], like=like) if like is not None else read_info(f["path"])
-        except Exception:  # noqa: BLE001 - a frame moved or damaged since: the sum has what could be read
-            continue
-        like = like or info
-        out["frames"] += 1
-        secs += float(info.exposure or 0.0)
-        if info.time and not info.time_from_file:
-            times.append(str(info.time)[:19])
+            frames = json.loads((d / "diagnostics.json").read_text(encoding="utf-8")).get("frames") or []
+        except (AttributeError, OSError, ValueError):
+            return
+        like, mine = None, {}
+        for f in frames:
+            if float(f.get("weight", 1.0)) <= 0:
+                continue
+            path = str(f["path"])
+            if path not in info_cache:
+                try:
+                    info = read_info(path, like=like) if like is not None else read_info(path)
+                except Exception:  # noqa: BLE001 - a frame moved or damaged since: the sum has what could be read
+                    continue
+                like = like or info
+                info_cache[path] = (float(info.exposure or 0.0),
+                                    str(info.time)[:19] if info.time and not info.time_from_file else "")
+            mine[path] = info_cache[path]
+        shared = sum(1 for k in mine if k in seen)
+        parts.append({"name": w.name, "frames": len(mine), "seconds": sum(v[0] for v in mine.values()),
+                      "shared": shared})
+        for k, v in mine.items():
+            seen.setdefault(k, v)
+
+    def walk(wf):
+        w = wf if isinstance(wf, Workflow) else p.workflow(wf)
+        if w.id in visited:
+            return
+        visited.add(w.id)
+        if p2.is_fusion(w):
+            for i in w.source["fusion"]["inputs"]:
+                walk(i["pid"])
+        else:
+            own(w)
+
+    for wf in (wfs if isinstance(wfs, (list, tuple, set)) else [wfs]):
+        walk(wf)
+    times = [v[1] for v in seen.values() if v[1]]
+    ends = []
+    for exp, t in seen.values():
+        if t:
             try:
-                ends.append((datetime.fromisoformat(str(info.time)[:19]) + timedelta(seconds=float(info.exposure or 0.0))
-                             ).isoformat(timespec="seconds"))
+                ends.append((datetime.fromisoformat(t) + timedelta(seconds=exp)).isoformat(timespec="seconds"))
             except ValueError:
                 pass
-    out["seconds"] = secs
-    out["first"], out["last"] = min(times, default=""), max(ends, default="")
-    out["parts"] = [{"name": w.name, "frames": out["frames"], "seconds": secs}]
-    return out
+    return {"frames": len(seen), "seconds": sum(v[0] for v in seen.values()), "first": min(times, default=""),
+            "last": max(ends, default=""), "parts": parts}
 
 
 def export_image(p: Project2, rgb: np.ndarray, meta: dict[str, Any] | None = None,

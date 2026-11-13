@@ -4284,13 +4284,13 @@ class ProjectModel(QObject):
                     camera=inv.get("camera", ""), fwhm_px=self._facts.register.get("fwhm_px"),
                     grid=self._facts.stack.get("grid"))
 
-    def export_facts(self, pid: int | None = None) -> dict:
+    def export_facts(self, pids=None) -> dict:
         """What a FITS export says of the shot: the target, the first light and the end of the last exposure, the total
-        exposure and the number of frames, each when known. From the frames the workflow's stack used (``api.shot_facts``;
+        exposure and the number of frames, each when known. From the distinct frames the stacks of ``pids`` used (``api.shot_facts``;
         a combination: those of its inputs); a workflow not stacked yet falls back on the inventory."""
         out = {"target": self.p.target.name or ""}
         try:
-            got = api.shot_facts(self.p, pid) if pid is not None else None
+            got = api.shot_facts(self.p, list(pids)) if pids else None
         except (KeyError, ValueError, OSError):
             got = None
         if got and got["frames"]:

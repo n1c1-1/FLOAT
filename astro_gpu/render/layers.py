@@ -436,7 +436,9 @@ def export_rgb(rgb: np.ndarray, out_dir: str | Path, options: ExportOptions | di
             if f.get("stackcnt"):
                 hdr["STACKCNT"] = (int(f["stackcnt"]), "frames stacked")
             for part in f.get("parts") or []:
-                hdr.add_history(_ascii(f"exposure {part['name']}: {part['frames']} frames, {float(part['seconds']):g} s"))
+                shared = f", {part['shared']} also in an earlier row" if part.get("shared") else ""
+                hdr.add_history(_ascii(f"exposure {part['name']}: {part['frames']} frames, {float(part['seconds']):g} s"
+                                       f"{shared}"))
             if history is not None:
                 hdr["DATE"] = (str(history.get("created") or "")[:19], "export date")
                 for line in history_lines(history):
