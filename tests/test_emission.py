@@ -8,14 +8,14 @@ import torch
 from astro_gpu.render.simple import SimpleRenderEngine, SimpleSettings, continuum_ratio, emission
 
 
-def field(seed=0):
+def field(seed=0, patch=1.0):
     """A linear (3, H, W) field: a sky, stars of a continuum colour (red / green = 1.2), and a patch of emission
     (red only)."""
     rng = np.random.default_rng(seed)
     a = np.full((3, 200, 260), 2.0, np.float32) + 0.05 * rng.standard_normal((3, 200, 260)).astype(np.float32)
     for y, x in rng.integers(10, 190, (60, 2)):
         a[:, y - 1:y + 2, x - 1:x + 2] += np.array([120.0, 100.0, 90.0], np.float32)[:, None, None]
-    a[0, 60:140, 150:230] += 1.0
+    a[0, 60:140, 150:230] += patch
     return a
 
 
@@ -38,7 +38,7 @@ def test_emission_adds_the_red_excess_only_where_there_is_one():
 
 
 def test_the_engine_renders_the_same_at_0_and_redder_above():
-    a = field()
+    a = field(patch=0.5)                  # an emission the default stretch (sky 0.25) does not whiten: a patch of 1 is white already
     eng = SimpleRenderEngine.from_array(a, "cpu")
     base = eng.render(SimpleSettings(faint=0.0), 1.0).final.numpy()       # the line, not the faint tones lifted
     same = eng.render(SimpleSettings(faint=0.0, halpha=0.0), 1.0).final.numpy()

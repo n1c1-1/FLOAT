@@ -1337,18 +1337,18 @@ def test_the_stacking_tabs_say_the_frames_left_out_the_rejection_rate_and_the_co
     from astro_gpu.client.tune import coverage_text, rejection_rate_text, weight_rows
     rows = [api.FrameRow(i, f"p{i}", f"f{i}.ARW", 1, "2026-08-17T00:00:00", 3.0, 1.0, 0.4, 0.5, "", False)
             for i in range(2)]
-    why = "stars {sigma:.1f} σ larger than the night's median ({value:.1f} px for {median:.1f} px): wind, focus or seeing?"
+    why = "stars {sigma:.1f} sigma larger than the night's median ({value:.1f} px for {median:.1f} px): wind, focus or seeing?"
 
     class Bundle:
         frames = api.FrameTable(rows, 2, 0.6, 2.0, "stack")
         diag = api.StackDiag(weights=[("f0.ARW", 0.0, None, None), ("f1.ARW", 0.7, None, None)],
-                             excluded={"f0.ARW": "stars 4.0 σ larger ..."},
+                             excluded={"f0.ARW": "stars 4.0 sigma larger ..."},
                              exclusions={"f0.ARW": [{"code": "fwhm", "template": why,
                                                      "args": {"sigma": 3.99, "value": 3.04, "median": 1.87}}]},
                              rejection={"rejected_pct": 0.83, "reference_pct": [0.1, 0.5]},
                              coverage={"variation": {"R": 0.26, "G": 0.08, "B": 0.19}, "estimate": {"limit": 0.2}})
     wr = weight_rows(Bundle())
-    assert wr[0]["why"] == "stars 4.0 σ larger than the night's median (3.0 px for 1.9 px): wind, focus or seeing?"
+    assert wr[0]["why"] == "stars 4.0 sigma larger than the night's median (3.0 px for 1.9 px): wind, focus or seeing?"
     assert wr[1]["why"] == ""
     t = rejection_rate_text(Bundle.diag)
     assert "Rejected pixels: 0.83 %" in t and "Usual range: 0.1 to 0.5 %" in t and "above it" in t

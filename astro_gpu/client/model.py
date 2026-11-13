@@ -1995,7 +1995,10 @@ class ProjectModel(QObject):
                 x["pid"], x["starless"] = int(pid), ("output" if image == "output" else "starless")
             else:
                 x["stars_pid"] = None if pid is None else int(pid)
-                x["stars_image"] = "output" if pid is not None and image == "output" else "stars"
+                if pid is not None and image == "output":      # the default ("stars": its Stars/background's) is not written
+                    x["stars_image"] = "output"
+                else:
+                    x.pop("stars_image", None)
         self._post_edit(change, None, scope="all")
         return True
 

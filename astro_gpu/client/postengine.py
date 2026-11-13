@@ -858,8 +858,8 @@ def load_layers(raw, alive: set[int]) -> list[dict]:
                 lay["starless"] = d.get("starless") if d.get("starless") in ("starless", "output") else "starless"
                 sp = d["stars_pid"] if "stars_pid" in d else d["pid"]      # the stars side: its workflow, else none
                 lay["stars_pid"] = int(sp) if sp is not None and int(sp) in alive else None
-                lay["stars_image"] = "output" if d.get("stars_image") == "output" and lay["stars_pid"] is not None \
-                    else "stars"
+                if d.get("stars_image") == "output" and lay["stars_pid"] is not None:   # written only when not the default
+                    lay["stars_image"] = "output"
                 lay["blend"] = d.get("blend") if d.get("blend") in BLENDS else BLENDS[0]
                 shown = d.get("shown") if isinstance(d.get("shown"), dict) else {}
                 lay["shown"] = {k: bool(shown.get(k, True)) for k in SUBS}

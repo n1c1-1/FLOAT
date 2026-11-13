@@ -374,13 +374,13 @@ PATTERNS: list[tuple[re.Pattern, str, tuple]] = [
         # core/stack_classic.py)
         (r"^drizzle rejection: (.+) \(set by hand\)$", "drizzle rejection: {0} (set by hand)", (0,)),
         (r"^drizzle rejection: (.+) \(automatic: ([\d.]+) values per point in the scarcest colour, under the (\d+) a "
-         r"sigma clipping at ([\d.]+) σ needs\)$",
+         r"sigma clipping at ([\d.]+) sigma needs\)$",
          "drizzle rejection: {0} (automatic: {1} values per point in the scarcest colour, under the {2} a sigma "
-         "clipping at {3} σ needs)", (0,)),
+         "clipping at {3} sigma needs)", (0,)),
         (r"^drizzle rejection: (.+) \(automatic: ([\d.]+) values per point in the scarcest colour, at least the (\d+) "
-         r"a sigma clipping at ([\d.]+) σ needs\)$",
+         r"a sigma clipping at ([\d.]+) sigma needs\)$",
          "drizzle rejection: {0} (automatic: {1} values per point in the scarcest colour, at least the {2} a sigma "
-         "clipping at {3} σ needs)", (0,)),
+         "clipping at {3} sigma needs)", (0,)),
         (r"^sigma clipping on the raw pixels$", "sigma clipping on the raw pixels", ()),
         (r"^by frame count$", "by frame count", ()),
         (r"^integration of the debayered frames$", "integration of the debayered frames", ()),

@@ -1430,7 +1430,7 @@ def rejection_line(mode: str, by_hand: bool, n: int, scale: float, pixfrac: floa
     v, _share = values_per_point(n, scale, pixfrac, cfa)
     need = clipping_min_values(kappa)
     return (f"drizzle rejection: {name} (automatic: {v:.1f} values per point in the scarcest colour, "
-            f"{'under' if v < need else 'at least'} the {need} a sigma clipping at {kappa:g} σ needs)")
+            f"{'under' if v < need else 'at least'} the {need} a sigma clipping at {kappa:g} sigma needs)")
 
 
 def count_pass(ctx, p: StackParams, frame_model, used, weight, chmap, h: float, S: float, Ho: int, Wo: int, dev,
