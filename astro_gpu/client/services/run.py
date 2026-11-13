@@ -318,6 +318,10 @@ PATTERNS: list[tuple[re.Pattern, str, tuple]] = [
                                                    "this workflow", ()),
 
         # the lines the stages log (the common ones: the rest of their free diagnostics stays in English)
+        (r"^(\d+) lights: (.+?) \(([\d.]+) h\), (\d+)x(\d+) (\w+), (\d+) darks, (\d+) flats, (\d+) bias, camera (.*)$",
+         "{0} lights: {1} ({2} h), {3}x{4} {5}, {6} darks, {7} flats, {8} bias, camera {9}", (1,)),
+        (r"^(\d+) of ([\d.]+) s, (.+)$", "{0} of {1} s, {2}", (2,)),
+        (r"^(\d+) of ([\d.]+) s$", "{0} of {1} s", ()),
         (r"^(\d+) lights of ([\d.]+) s \(([\d.]+) h\), (\d+)x(\d+) (\w+), (\d+) darks, (\d+) flats, (\d+) bias, camera (.*)$",
          "{0} lights of {1} s ({2} h), {3}x{4} {5}, {6} darks, {7} flats, {8} bias, camera {9}", ()),
         # the night test pass: the lines of a picture's first run, and the failures it met, were in English

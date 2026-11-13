@@ -120,7 +120,10 @@ class Inventory(Stage):
         ctx.metric("cfa", cfa)
         ctx.metric("camera", first["camera"])
         ctx.metric("exposure_s", texp)
-        ctx.metric("integration_h", round(texp * len(lights) / 3600, 2) if texp else None)
+        kinds = Counter(round(float(e), 3) for e in exp)
+        mixed = len(kinds) > 1 and len(exp) == len(lights)       # several exposure times: the sum, not a median's worth
+        ctx.metric("integration_h", round(sum(exp) / 3600, 2) if mixed else
+                   round(texp * len(lights) / 3600, 2) if texp else None)
         ctx.metric("iso_gain", first["iso"])
         ctx.metric("white_level", _clip_level(ctx, lights, float(first["white"])))
         ctx.metric("black_level", first["black"])
@@ -139,7 +142,9 @@ class Inventory(Stage):
             ctx.metric("object", objs.most_common(1)[0][0])
         pattern = ("X-Trans" if cfa_mod.is_xtrans(cfa) else "monochrome" if cfa_mod.is_mono(cfa) else
                    "colour" if cfa_mod.is_colour(cfa) else cfa)
-        ctx.log(f"{len(lights)} lights of {texp} s ({ctx.metrics['integration_h']} h), {w}x{h} {pattern}, "
+        what = (f"{len(lights)} lights: " + ", ".join(f"{k} of {e:g} s" for e, k in sorted(kinds.items()))
+                if mixed else f"{len(lights)} lights of {texp} s")
+        ctx.log(f"{what} ({ctx.metrics['integration_h']} h), {w}x{h} {pattern}, "
                 f"{len(out['darks'])} darks, {len(out['flats'])} flats, {len(out['bias'])} bias, "
                 f"camera {first['camera'] or 'unknown'}")
         if frame_kind(first["path"]) == "fits":

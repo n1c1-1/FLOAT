@@ -93,6 +93,11 @@ def test_two_exposures_with_a_master_dark_each_get_their_own(tmp_path):
         assert abs(_sky(fr[i]) - SKY * t) < 3, (t, _sky(fr[i]))            # 800 and 160 ADU, never under 0
     assert np.nanmin(fr) > 0
     msgs = [t for _lv, t in said]
+    ev = [json.loads(x) for x in (d.parents[1] / "logs" / "events.jsonl").read_text().splitlines()]
+    inv_line = next(e["msg"] for e in ev if e.get("type") == "log" and e.get("stage") == "inventory"
+                    and " lights" in e["msg"])
+    assert inv_line.split(" (")[0] == "{} lights: ".format(len(exp)) + ", ".join(
+        f"{exp.count(t)} of {t:g} s" for t in sorted(set(exp))), inv_line      # the real exposures, no median
     assert "the lights of 300 s are calibrated with the darks of 300 s" in msgs, msgs
     assert "the lights of 60 s are calibrated with the darks of 60 s" in msgs
     assert not any("180" in t or "scaled" in t for t in msgs) and "dark_scale" not in m["metrics"]
