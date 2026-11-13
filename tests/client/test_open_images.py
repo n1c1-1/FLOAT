@@ -154,3 +154,31 @@ def test_a_linear_image_alone_can_be_run(env):
     w.graph.place_images([str(env["fit"])])
     settle(w)
     assert not any(appmod.no_block(x) for x in w.s.p.workflows)
+
+
+def test_the_layers_of_images_opened_together_follow_the_order_chosen_whichever_is_computed_first(env):
+    from astro_gpu.client.post3 import PostPage3
+    from astro_gpu.client.services.render import RenderWorker
+    w = main(env)
+    w.new_project()
+    w.worker.wait()
+    settle(w, 12)
+    w.graph.place_images([str(env["png"]), str(env["fit"])])
+    settle(w)
+    s = w.s
+    page = PostPage3(s, worker=RenderWorker(None, resolver=lambda sid: None, device="cpu"))
+    try:
+        v = page.view
+        names = [q.name for q in s.paths]
+        assert names == ["a", "b"]
+        for first in (names, names[::-1]):                   # computed in the order chosen, then the other way round
+            v.layers = []
+            for q in s.paths:
+                q.rendered = False
+            for n in first:
+                next(q for q in s.paths if q.name == n).rendered = True
+                v.sync_paths()
+            assert [x["name"] for x in v.layers if x["kind"] == "workflow"] == ["b", "a"], first
+    finally:
+        page.shutdown()
+        page.deleteLater()

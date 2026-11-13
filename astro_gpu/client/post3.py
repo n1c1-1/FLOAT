@@ -1273,7 +1273,7 @@ class PostView(QWidget):
                 # a block's image sent to Post (a branch made for it) is shown at once, as the Split images are
                 sent = getattr(p, "end", None) is not None or getattr(self.s, "is_sent_branch", lambda q: False)(p) or \
                     getattr(self.s, "is_plain_image", lambda q: False)(p)
-                self.layers.insert(0, new_workflow_layer(
+                self.layers.insert(self._place_of(p.pid, paths), new_workflow_layer(
                     p.pid, p.name + (" · " + POST_PART_NAMES["combined"] if stars else ""), bool(sent),
                     part="combined" if stars else None))
         self.layers = [lay for lay in self.layers if lay["kind"] != "workflow" or lay["pid"] in alive]
@@ -3127,6 +3127,18 @@ class PostView(QWidget):
         return p is not None and (bool(getattr(p, "provisional", False)) or (p.rendered and not p.computed))
 
     def _update_stale(self):
+    def _place_of(self, pid, paths) -> int:
+        """Where a workflow's layer comes among the others: the later in the order the workflows have (the order the
+        images were opened in), the higher, whichever was computed first."""
+        order = {q.pid: i for i, q in enumerate(paths)}
+        mine = order.get(pid, len(order))
+        flows = [(j, order.get(x["pid"], -1)) for j, x in enumerate(self.layers)
+                 if x["kind"] == "workflow" and x.get("target") is None]
+        below = next((j for j, o in flows if o < mine), None)
+        if below is not None:
+            return below
+        return flows[-1][0] + 1 if flows else 0
+
         """The strip over the picture: shown while a layer on screen comes from outdated results."""
         old = [x for x in self.layers if x["kind"] == "workflow" and x.get("visible") and self.is_preview(x["pid"])]
         self.stale.setVisible(bool(old))
