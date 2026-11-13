@@ -1,6 +1,7 @@
 """Calibration of the raw Bayer frames (no debayering): master dark / bias / flat, bad pixel map, calibrated cache."""
 from __future__ import annotations
 
+import contextlib
 import json
 import hashlib
 import os
@@ -570,7 +571,7 @@ def calibrate_lights(ctx: Context, p: CalibrateParams, lights: list[dict], dark:
         n0 = int(bad.sum())
         msg = _hot_from_lights([f["path"] for f in lights], dark, flat, bad, median_filter, cfa=cfa,
                                tick=lambda what: _tick(ctx, what),
-                               dark_of=(lambda i: darks[rank[i]]) if len(darks) > 1 else None)
+                               dark_of=(lambda i: darks[rank[i]]) if len(darks) > 1 else None, ctx=ctx)
         ctx.metric("hot_pixels_from_lights", int(bad.sum()) - n0)
         ctx.log(msg)
     # a pixel left out would be a hole in the stack: every excluded pixel is filled from its same-colour neighbours
@@ -692,6 +693,7 @@ def _calibrated_cache(ctx: Context, p: CalibrateParams, lights: list[dict], dark
     neighbours that are not bad (Siril's replacement). ``hot``: "per_frame" corrects each light's hot pixels the way
     Siril's cosmetic correction does (``siril_hot_pixels``). ``darks``, ``rank``: each light's dark among the darks of
     the lights' exposures (``match_darks``), ``dark`` for all without."""
+    sweep_frame_files()                                # the masters' frames held on the disk are gone
     H, W = dark.shape
     darks, rank = _one_dark(dark, darks, rank, len(lights))
     # the lowest dark's level: the widest range above it, which the cache's scale keeps in the float16 range
@@ -827,15 +829,15 @@ def _median_stack_built(paths: list[str], ctx: Context, label: str) -> np.ndarra
     """The pixel-wise median of the frames. They are read into one array (no list then stack), and the median is taken
     in bands of rows, in place: the memory is the frames once, not three times (28 darks of 12 Mpx: 1.3 GB, not 4)."""
     first = read_cfa(paths[0])
-    stack = np.empty((len(paths), *first.shape), np.float32)
-    stack[0] = first
-    _tick(ctx, f"reading {label} 1/{len(paths)}")
+    with frame_stack(ctx, len(paths), first.shape, label) as stack:
+        stack[0] = first
+        _tick(ctx, f"reading {label} 1/{len(paths)}")
 
-    def put(i, a):
-        stack[i] = a
+        def put(i, a):
+            stack[i] = a
 
-    _read_frames(paths, put, 1, lambda c: _tick(ctx, f"reading {label} {c}/{len(paths)}"))
-    return _median_stack_of(stack)
+        _read_frames(paths, put, 1, lambda c: _tick(ctx, f"reading {label} {c}/{len(paths)}"))
+        return _median_stack_of(stack)
 
 
 def _median_stack_of(stack: np.ndarray) -> np.ndarray:
@@ -846,8 +848,61 @@ def _median_stack_of(stack: np.ndarray) -> np.ndarray:
     def band(r0, r1):
         out[r0:r1] = np.median(stack[:, r0:r1], axis=0, overwrite_input=True)
 
-    by_bands(out.shape[0], band)
+    by_bands(out.shape[0], band, band_threads(stack.shape[0], stack.shape[2]))
     return out
+
+
+_FRAME_FILES: list[Path] = []
+
+
+def sweep_frame_files() -> None:
+    """Delete the files of the frame stacks held on the disk (``frame_stack``) that no array maps any more. Windows
+    keeps a mapped file: the one a block's closures still reference goes at the next sweep."""
+    import gc
+    gc.collect()
+    for f in list(_FRAME_FILES):
+        try:
+            f.unlink(missing_ok=True)
+            _FRAME_FILES.remove(f)
+        except OSError:
+            pass
+
+
+@contextlib.contextmanager
+def frame_stack(ctx: Context | None, n: int, shape: tuple, label: str):
+    """The array (n, *shape) float32 the frames of a master are read into, for the pixel-wise statistic taken in bands
+    of rows after. In the memory when it fits twice in what the engine may fill now (core/devices.memory_budget): as
+    before. When the memory is short (a low limit in Settings), a file of the run's scratch folder mapped into memory:
+    the same values, read and written by the same code, only the system keeps the pages on the disk instead of in
+    this process's memory. The file goes with the block."""
+    sweep_frame_files()
+    need = n * int(np.prod(shape)) * 4
+    m = devices.memory_budget()
+    scratch = getattr(ctx, "scratch", None)
+    if m is None or scratch is None or 2 * need <= m[0]:
+        yield np.empty((n, *shape), np.float32)
+        return
+    ctx.log(f"memory: the {n} {label} ({need / 2 ** 30:.1f} GB) are kept on the disk and read by bands of rows")
+    Path(scratch).mkdir(parents=True, exist_ok=True)
+    f = Path(scratch) / f"_frames_{os.getpid()}_{label.replace(' ', '_')}.npy"
+    arr = np.lib.format.open_memmap(f, mode="w+", dtype=np.float32, shape=(n, *shape))
+    _FRAME_FILES.append(f)
+    try:
+        yield arr
+    finally:
+        del arr
+        sweep_frame_files()
+
+
+def band_threads(n: int, cols: int) -> int:
+    """The threads of a pixel-wise statistic over ``n`` frames of ``cols`` columns: the machine's cores, fewer when the
+    temporary arrays of that many bands (about four of the band's size each) do not fit in the memory the engine may
+    fill now (a low limit in Settings). The result does not depend on the number of threads."""
+    cores = max(1, min(os.cpu_count() or 1, 8))
+    m = devices.memory_budget()
+    if m is None:
+        return cores
+    return int(max(1, min(cores, m[0] // 2 // max(4 * 4 * n * THREAD_BAND * cols, 1))))
 
 
 #: the rows a pixel-wise statistic of a stack of frames is taken on at a time (its temporary arrays stay small)
@@ -883,23 +938,22 @@ def _master_flat_built(paths: list[str], fdark: np.ndarray, ctx: Context) -> np.
     """The flats, each over its central level, averaged without the values over 3 MAD from the pixel's median. Read
     into one array and reduced in bands of rows: the memory is the frames once (46 flats of 12 Mpx: 2 GB, not 10)."""
     H, W = fdark.shape
-    fl = np.empty((len(paths), H, W), np.float32)
+    with frame_stack(ctx, len(paths), (H, W), "flats") as fl:
+        def put(i, a):
+            _flat_finite(a, paths[i])
+            fl[i] = a - fdark
 
-    def put(i, a):
-        _flat_finite(a, paths[i])
-        fl[i] = a - fdark
-
-    _read_frames(paths, put, 0, lambda c: _tick(ctx, f"reading flats {c}/{len(paths)}"))
-    level = np.median(fl[:, H // 2 - 200:H // 2 + 200, W // 2 - 200:W // 2 + 200], axis=(1, 2), keepdims=True)
-    for i, v in enumerate(level.ravel()):
-        if not v > 0:                       # nothing divides by it: a flat is its own light over its centre's
-            raise ValueError(f"the flat {Path(paths[i]).name} has no light left at its centre once the level it is "
-                             f"corrected with ({float(np.median(fdark)):.0f} ADU) is taken off (it reads "
-                             f"{float(v):.3g} ADU): a flat already calibrated (a master) must be given as a master, "
-                             "otherwise give its flat darks or a bias")
-    fl /= level
-    _flat_finite(fl, paths[0] if len(paths) == 1 else f"{len(paths)} flats")
-    return _flats_mean(fl)
+        _read_frames(paths, put, 0, lambda c: _tick(ctx, f"reading flats {c}/{len(paths)}"))
+        level = np.median(fl[:, H // 2 - 200:H // 2 + 200, W // 2 - 200:W // 2 + 200], axis=(1, 2), keepdims=True)
+        for i, v in enumerate(level.ravel()):
+            if not v > 0:                   # nothing divides by it: a flat is its own light over its centre's
+                raise ValueError(f"the flat {Path(paths[i]).name} has no light left at its centre once the level it "
+                                 f"is corrected with ({float(np.median(fdark)):.0f} ADU) is taken off (it reads "
+                                 f"{float(v):.3g} ADU): a flat already calibrated (a master) must be given as a "
+                                 "master, otherwise give its flat darks or a bias")
+        fl /= level
+        _flat_finite(fl, paths[0] if len(paths) == 1 else f"{len(paths)} flats")
+        return _flats_mean(fl)
 
 
 def _flat_finite(a: np.ndarray, what: str) -> None:
@@ -923,7 +977,7 @@ def _flats_mean(fl: np.ndarray) -> np.ndarray:
         keep = dev < 3 * (1.4826 * np.median(dev, axis=0) + 1e-6)
         out[r0:r1] = np.where(keep, b, 0).sum(0) / np.maximum(keep.sum(0), 1)
 
-    by_bands(H, band)
+    by_bands(H, band, band_threads(fl.shape[0], W))
     return out
 
 
@@ -935,7 +989,7 @@ def _tick(ctx: Context, what: str) -> None:
 
 
 def _hot_from_lights(paths, dark, flat, bad, median_filter, n=40, k=5.0, cfa: str = "RGGB", tick=None,
-                     dark_of=None) -> str:
+                     dark_of=None, ctx: Context | None = None) -> str:
     """The persistence: flag in ``bad`` the pixels that stand out from their same-colour neighbours in the lower
     quartile of ``n`` light frames spread over the session, in sensor coordinates: a defect is bright in every frame,
     a star covers a given pixel in some of them only. Returns the message of the log. Each position of the pattern
@@ -945,20 +999,18 @@ def _hot_from_lights(paths, dark, flat, bad, median_filter, n=40, k=5.0, cfa: st
     picks = np.linspace(0, len(paths) - 1, min(n, len(paths))).astype(int)
     sub = [paths[i] for i in picks]
     dk = [dark_of(i) for i in picks] if dark_of is not None else [dark] * len(picks)
-    st = np.empty((len(sub), *dark.shape), np.float32)          # one array, the quartile in bands: the frames once
-
-    def put(i, a, st=st):
-        st[i] = (a - dk[i]) / flat
-
-    _read_frames(sub, put, 0, (lambda c: tick(f"hot pixels: frame {c}/{len(sub)}")) if tick is not None else None)
-    one = st[len(sub) // 2].copy()                    # a single frame: the unit of the threshold is ITS noise
     q = np.empty(dark.shape, np.float32)
+    with frame_stack(ctx, len(sub), dark.shape, "frames of the hot pixels") as st:   # one array: the frames once
+        def put(i, a, st=st):
+            st[i] = (a - dk[i]) / flat
 
-    def quartile(r0, r1):
-        q[r0:r1] = np.percentile(st[:, r0:r1], 25, axis=0, overwrite_input=True)
+        _read_frames(sub, put, 0, (lambda c: tick(f"hot pixels: frame {c}/{len(sub)}")) if tick is not None else None)
+        one = np.array(st[len(sub) // 2])             # a single frame: the unit of the threshold is ITS noise
 
-    by_bands(q.shape[0], quartile)
-    del st
+        def quartile(r0, r1):
+            q[r0:r1] = np.percentile(st[:, r0:r1], 25, axis=0, overwrite_input=True)
+
+        by_bands(q.shape[0], quartile, band_threads(len(sub), dark.shape[1]))
     cand = np.zeros(dark.shape, bool)
     med_all = np.empty_like(q)
     def position(c):
@@ -1371,18 +1423,18 @@ def _colour_median(paths: list[str], ctx: Context, label: str) -> np.ndarray:
 def _colour_median_built(paths: list[str], ctx: Context, label: str) -> np.ndarray:
     """The pixel-wise median (3, H, W) of frames already in colour, in bands of rows (as ``_median_stack``)."""
     first = read_colour(paths[0])
-    stack = np.empty((len(paths), *first.shape), np.float32)
-    stack[0] = first
-    _tick(ctx, f"reading {label} 1/{len(paths)}")
+    with frame_stack(ctx, len(paths), first.shape, label) as stack:
+        stack[0] = first
+        _tick(ctx, f"reading {label} 1/{len(paths)}")
 
-    def put(i, a):
-        stack[i] = a
+        def put(i, a):
+            stack[i] = a
 
-    _read_frames(paths, put, 1, lambda c: _tick(ctx, f"reading {label} {c}/{len(paths)}"), read_colour)
-    out = np.empty(stack.shape[1:], np.float32)
-    by_bands(out.shape[1], lambda r0, r1: out.__setitem__((slice(None), slice(r0, r1)),
-                                                          np.median(stack[:, :, r0:r1], axis=0, overwrite_input=True)))
-    return out
+        _read_frames(paths, put, 1, lambda c: _tick(ctx, f"reading {label} {c}/{len(paths)}"), read_colour)
+        out = np.empty(stack.shape[1:], np.float32)
+        by_bands(out.shape[1], lambda r0, r1: out.__setitem__((slice(None), slice(r0, r1)), np.median(
+            stack[:, :, r0:r1], axis=0, overwrite_input=True)), band_threads(3 * stack.shape[0], stack.shape[3]))
+        return out
 
 
 def _colour_flat(paths: list[str], fd_paths: list[str], bias: np.ndarray | None, dark: np.ndarray, H: int, W: int,
@@ -1399,15 +1451,14 @@ def _colour_flat(paths: list[str], fd_paths: list[str], bias: np.ndarray | None,
         fdark = bias
     else:
         fdark = np.broadcast_to(np.median(dark, axis=(1, 2), keepdims=True), (3, H, W)).astype(np.float32)
-    fl = np.empty((len(paths), 3, H, W), np.float32)
-
-    def put(i, a):
-        fl[i] = a - fdark
-
-    _read_frames(paths, put, 0, lambda c: _tick(ctx, f"reading flats {c}/{len(paths)}"), read_colour)
     y0, y1, x0, x1 = H // 2 - 200, H // 2 + 200, W // 2 - 200, W // 2 + 200
-    fl /= np.median(fl[:, :, max(y0, 0):y1, max(x0, 0):x1], axis=(2, 3), keepdims=True)
-    flat = np.stack([_flats_mean(fl[:, c]) for c in range(3)])
+    with frame_stack(ctx, len(paths), (3, H, W), "flats") as fl:
+        def put(i, a):
+            fl[i] = a - fdark
+
+        _read_frames(paths, put, 0, lambda c: _tick(ctx, f"reading flats {c}/{len(paths)}"), read_colour)
+        fl /= np.median(fl[:, :, max(y0, 0):y1, max(x0, 0):x1], axis=(2, 3), keepdims=True)
+        flat = np.stack([_flats_mean(fl[:, c]) for c in range(3)])
     for c in range(3):
         if flat_scale_px > 0:
             flat[c] = cv2.GaussianBlur(flat[c], (0, 0), flat_scale_px)
@@ -1422,6 +1473,7 @@ def _colour_cache(ctx: Context, p: CalibrateParams, lights: list[dict], dark: np
     """The calibrated frames already in colour: their luminance in ``lights.f16`` (N, H, W), what the registration
     reads as a monochrome mosaic, their three planes in ``lights_rgb.f16`` (N, 3, H, W), read by the stack; the masters
     colour by colour (MASTER_RGB) and their luminance under the usual names."""
+    sweep_frame_files()                                # the masters' frames held on the disk are gone
     _, H, W = dark.shape
     level = float(np.median(dark))
     scale = float(min(1.0, 16000.0 / max(white - level, 1.0)))

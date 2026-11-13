@@ -7,6 +7,7 @@ import subprocess
 import sys
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from astro_gpu.core import devices, runner2
@@ -107,3 +108,37 @@ def test_the_pools_shrink_to_what_the_budget_holds_and_say_so(machine, monkeypat
     assert cal.pool_size(ctx, 12, px) == 1
     monkeypatch.setattr(devices, "memory_budget", lambda: None)
     assert cal.pool_size(ctx, 12, px) == 12                               # memory unknown: as asked
+
+
+def _fake_frames(tmp_path, n=9, shape=(70, 40)):
+    rng = np.random.default_rng(3)
+    paths = []
+    for i in range(n):
+        f = tmp_path / f"f{i}.npy"
+        np.save(f, (rng.normal(1000, 30, shape) + (i == 4) * 5000 * (rng.random(shape) < 0.01)).astype(np.float32))
+        paths.append(str(f))
+    return paths
+
+
+def test_the_masters_of_a_low_limit_are_the_same_to_the_bit_read_by_bands_from_disk(tmp_path, monkeypatch):
+    """The darks' median and the flats' mean with the frames held whole, and with them on the disk (a limit that lets
+    no stack in memory): the same arrays, bit for bit, the file left no trace."""
+    paths = _fake_frames(tmp_path)
+    monkeypatch.setattr(cal, "read_cfa", lambda p: np.load(p))
+    logs: list[str] = []
+    scratch = tmp_path / "scratch"
+    ctx = SimpleNamespace(scratch=scratch, log=lambda m, level="info": logs.append(m),
+                          progress=lambda *a, **k: None, project=None)
+    fdark = np.full((70, 40), 100, np.float32)
+    monkeypatch.setattr(devices, "memory_budget", lambda: (64 * GB, 64 * GB))
+    dark_a = cal._median_stack_built(paths, ctx, "darks")
+    flat_a = cal._master_flat_built(paths, fdark, ctx)
+    assert logs == []
+    monkeypatch.setattr(devices, "memory_budget", lambda: (1000, 1000))            # not even one stack fits
+    dark_b = cal._median_stack_built(paths, ctx, "darks")
+    flat_b = cal._master_flat_built(paths, fdark, ctx)
+    assert dark_a.tobytes() == dark_b.tobytes() and flat_a.tobytes() == flat_b.tobytes()
+    assert any("kept on the disk and read by bands" in m for m in logs)
+    cal.sweep_frame_files()
+    assert list(scratch.iterdir()) == []
+    assert cal.band_threads(60, 4144) == 1                                          # one band at a time when short
