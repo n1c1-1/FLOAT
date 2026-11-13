@@ -51,8 +51,7 @@ class Surveys(Stage):
     network = True
 
     def run(self, ctx: Context, p: SurveysParams) -> None:
-        from astropy.io import fits
-        from astropy.wcs import WCS
+        from ..core.imgutil import read_wcs
         if p.survey == "none":
             ctx.save_json("survey.json", {"survey": "none"})
             ctx.metric("survey", "none")
@@ -63,7 +62,7 @@ class Surveys(Stage):
             ctx.metric("survey", "none")
             ctx.log(f"no H-alpha survey: {NO_SOLUTION}; the Gradient block chooses its samples on the image alone")
             return
-        wd = WCS(fits.getheader(ctx.input("astrometry", "wcs.fits")))
+        wd = read_wcs(ctx.input("astrometry", "wcs.fits"))
         meta = ctx.load_json("stack", "drz_meta.json")
         W, H = meta["width"], meta["height"]
         scale = float(ctx.metric_of("astrometry", "scale_arcsec"))
@@ -179,8 +178,7 @@ def prefetch_field(roots, which: str = "nsns", progress=None) -> dict:
     offline use, issue #39); returns {"fields": n solved, "tiles": n now in the cache, "failed": [why...]}."""
     import json as _json
 
-    from astropy.io import fits
-    from astropy.wcs import WCS
+    from ..core.imgutil import read_wcs
     out = {"fields": 0, "tiles": 0, "failed": []}
     url = HIPS_SERVERS.get(which)
     if url is None:
@@ -200,7 +198,7 @@ def prefetch_field(roots, which: str = "nsns", progress=None) -> dict:
                 continue
         for wcsf in sorted(store.glob("astrometry/*/wcs.fits")):
             try:
-                wd = WCS(fits.getheader(wcsf))
+                wd = read_wcs(wcsf)
                 man = _json.loads((wcsf.parent / "manifest.json").read_text(encoding="utf-8"))
                 scale = float((man.get("metrics") or {}).get("scale_arcsec") or 0) or None
                 if scale is None or not sizes:
@@ -227,9 +225,14 @@ def _cached_url(url: str, sub: str, service: str, budget: float, fetch: bool = F
     if skycache.find(rel + ".absent") is not None:
         return None
     try:
-        from astropy.utils.data import download_file, is_url_in_cache
-        if is_url_in_cache(url):
-            return open(download_file(url, cache=True), "rb").read()
+        import warnings
+
+        from astropy.utils.data import CacheMissingWarning, download_file, is_url_in_cache
+        with warnings.catch_warnings():          # no astropy cache folder yet: nothing in it, which is no warning
+            warnings.simplefilter("ignore", CacheMissingWarning)
+            cached = is_url_in_cache(url)        # a look into the cache only; the file is read from it, never fetched
+            if cached:
+                return open(download_file(url, cache=True), "rb").read()
     except Exception:  # noqa: BLE001 - astropy's cache unreadable: download
         pass
     if not fetch:

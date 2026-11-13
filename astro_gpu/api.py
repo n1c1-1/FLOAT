@@ -2207,9 +2207,8 @@ def pixel_to_sky(p: Project2, wf: int | Workflow, x: float, y: float, which: str
     mt = f.stat().st_mtime
     hit = _WCS.get(str(f))
     if hit is None or hit[0] != mt:
-        from astropy.io import fits
-        from astropy.wcs import WCS
-        hit = _WCS[str(f)] = (mt, WCS(fits.getheader(f)))
+        from .core.imgutil import read_wcs
+        hit = _WCS[str(f)] = (mt, read_wcs(f))
     ra, dec = hit[1].pixel_to_world_values(x, y)
     return float(ra), float(dec)
 

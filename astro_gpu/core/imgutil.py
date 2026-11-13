@@ -172,3 +172,15 @@ def asinh_preview(img: np.ndarray, M: np.ndarray | None = None, k: float = 60.0)
     hi = np.percentile(sub - bk, 99.7)
     v = np.clip((a - bk) / max(hi, 1e-6), 0, None)
     return np.clip(np.arcsinh(v * k) / np.arcsinh(k), 0, 1)
+
+
+def read_wcs(path):
+    """The WCS of a solution file (a header with no image, as Astrometry writes it). astropy notes that the transformation
+    has two axes against an image of none: expected here, so only that note is silenced, for this read."""
+    import warnings
+
+    from astropy.io import fits
+    from astropy.wcs import WCS, FITSFixedWarning
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=FITSFixedWarning, message=".*more axes.*than the image")
+        return WCS(fits.getheader(path))

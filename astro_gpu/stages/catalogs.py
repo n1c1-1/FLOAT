@@ -50,15 +50,14 @@ class Catalogs(Stage):
     network = True
 
     def run(self, ctx: Context, p: CatalogsParams) -> None:
-        from astropy.io import fits
-        from astropy.wcs import WCS
+        from ..core.imgutil import read_wcs
         if ctx.metric_of("astrometry", "solved") is False:
             # Astrometry went on without a plate solution (its fallback): no star of the field can be placed; the
             # blocks that read them take their own fallback (Color: its fallback balance)
             ctx.metric("solved", False)
             ctx.log("no plate solution (the field was not identified): no Gaia star placed on the image")
             return
-        w = WCS(fits.getheader(ctx.input("astrometry", "wcs.fits")))
+        w = read_wcs(ctx.input("astrometry", "wcs.fits"))
         meta = ctx.load_json("stack", "drz_meta.json")
         W, H = meta["width"], meta["height"]
         scale = float(ctx.metric_of("astrometry", "scale_arcsec"))
