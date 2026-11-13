@@ -3,7 +3,13 @@ undo then redo = same JSON, every row drawn. A failure prints its seed and the s
 Above 30 rows, 40 % of gestures prune (delete a row or a block) so graphs stay near the size people build.
 Each run prints a digest of its final state: the same seed gives the same digest (temp file per process).
 Also: apply never changes the graph it is given. Not part of pytest (the smoke is tests/graphcore/test_fuzz_smoke.py).
-Usage: python tools/fuzz/graph_fuzz.py [first_seed] [last_seed] [gestures] [start,start…]"""
+Usage: python tools/fuzz/graph_fuzz.py [first_seed] [last_seed] [gestures] [start,start…]
+
+``--engine`` (decision B, INTEGRATION §3): after every gesture the graph's compiled definition must be one the engine
+accepts (graphcore.compile.engine_problems: Project2.validate, the graph rules, the stage chain, the joins' wiring).
+Until the core's rules are the engine's (step 3) this does not stop a run: every class of violation is collected with
+the first gesture sequence that shows it, shrunk, and printed at the end (``--json <file>`` writes them).
+Usage: python tools/fuzz/graph_fuzz.py --engine [first_seed] [last_seed] [gestures] [start,start…] [--json <file>]"""
 import copy
 import hashlib
 import os
@@ -23,6 +29,7 @@ from astro_gpu.graphcore.placement import candidates, judge  # noqa: E402
 from astro_gpu.graphcore.msg import say  # noqa: E402
 from fixtures import Doc, templates  # noqa: E402
 import invariants as inv  # noqa: E402
+from astro_gpu.graphcore.compile import engine_problems  # noqa: E402
 
 PATHS = [f"D:/night{n}/IMG_{i:04d}.fit" for n in range(3) for i in range(8)]
 NAMES = ["M31", "Ha", "OIII", "", "  ", "Session 1", "SII", "RGB", "M31 2"]
@@ -325,9 +332,57 @@ def probe(rng, doc, d):
 
 
 STATS = []      # wire crossings of each state of the current run
+ENGINE = {}     # --engine: {(class, detail): {"start", "seed", "at", "gestures"}}, the first sequence showing each
 
 
-def fuzz(seed, key, n):
+def engine_classes(p):
+    return {(c, d) for c, d in engine_problems(p)}
+
+
+def light_replay(key, gestures):
+    """The gestures replayed without the drawing's invariants (shrinking only needs the final graph)."""
+    doc = start_doc(key)
+    for g in gestures:
+        if g[0] == "undo":
+            doc.undo()
+        elif g[0] == "redo":
+            doc.redo()
+        elif g[0] == "many":
+            doc.apply_many(g[1])
+        elif g[0] == "op":
+            doc.apply(g[1], **g[2])
+    return doc
+
+
+def shows(key, gestures, cls):
+    """Whether replaying the gestures ends on a state whose compiled definition shows the class."""
+    try:
+        doc = light_replay(key, gestures)
+    except Exception:  # noqa: BLE001
+        return False
+    return cls in engine_classes(doc.project)
+
+
+def shrink_engine(key, gestures, cls, budget=45.0):
+    t0 = time.time()
+    cur = list(gestures)
+    n = 2
+    while len(cur) > 1 and time.time() - t0 < budget:
+        chunk = max(1, len(cur) // n)
+        done = False
+        for i in range(0, len(cur), chunk):
+            cand = cur[:i] + cur[i + chunk:]
+            if cand and shows(key, cand, cls):
+                cur, n, done = cand, max(n - 1, 2), True
+                break
+        if not done:
+            if chunk == 1:
+                break
+            n = min(len(cur), n * 2)
+    return cur
+
+
+def fuzz(seed, key, n, engine=False):
     rng = random.Random(f"{seed}:{key}")
     doc = start_doc(key)
     d = layout(doc.project, doc.view)
@@ -341,6 +396,9 @@ def fuzz(seed, key, n):
             STATS.append(inv.crossings(d))
             if i % 10 == 0:
                 probe(rng, doc, d)
+            if engine:
+                for cls in engine_classes(doc.project) - set(ENGINE):
+                    ENGINE[cls] = {"start": key, "seed": seed, "at": i, "gestures": list(done)}
         except Exception as e:
             msg = e.args[0] if isinstance(e, Fail) else traceback.format_exc(limit=-6)
             print(f"FAIL seed={seed} start={key} gesture {i}: {msg}")
@@ -353,23 +411,47 @@ def fuzz(seed, key, n):
 
 
 def main():
-    a = int(sys.argv[1]) if len(sys.argv) > 1 else 1
-    b = int(sys.argv[2]) if len(sys.argv) > 2 else 5
-    n = int(sys.argv[3]) if len(sys.argv) > 3 else 2000
+    argv = list(sys.argv[1:])
+    engine = "--engine" in argv
+    out = argv[argv.index("--json") + 1] if "--json" in argv else None
+    argv = [x for i, x in enumerate(argv) if x != "--engine" and x != "--json" and (i == 0 or argv[i - 1] != "--json")]
+    a = int(argv[0]) if len(argv) > 0 else 1
+    b = int(argv[1]) if len(argv) > 1 else 5
+    n = int(argv[2]) if len(argv) > 2 else 2000
     keys = [k for k, _t, _d in templates()]
     keys = ["blank"] + [k for k in keys if k != "blank"]
-    if len(sys.argv) > 4:
-        keys = sys.argv[4].split(",")
+    if len(argv) > 3:
+        keys = argv[3].split(",")
     total, bad = 0, 0
     t0 = time.time()
     for seed in range(a, b + 1):
         for key in keys:
-            ok = fuzz(seed, key, n)
+            ok = fuzz(seed, key, n, engine)
             total += 1
             bad += not ok
             cr = f"crossings mean {sum(STATS) / max(1, len(STATS)):.1f} max {max(STATS or [0])}"
             print(f"seed {seed} {key}: {'ok ' + ok if ok else 'FAILED'} {cr} ({time.time() - t0:.0f} s)", flush=True)
     print(f"{total - bad}/{total} runs clean, {n} gestures each")
+    if engine:
+        found = []
+        if out:
+            import json
+            with open(out, "w", encoding="utf-8") as f:      # first unshrunk: a long shrink may be cut short
+                json.dump([{"class": c, "detail": d, "start": e["start"], "seed": e["seed"],
+                            "gestures": [show(x) for x in e["gestures"][:e["at"] + 1]]}
+                           for (c, d), e in sorted(ENGINE.items())], f, indent=1, ensure_ascii=False)
+        for (cls, detail), e in sorted(ENGINE.items()):
+            small = shrink_engine(e["start"], e["gestures"][:e["at"] + 1], (cls, detail))
+            found.append({"class": cls, "detail": detail, "start": e["start"], "seed": e["seed"],
+                          "gestures": [show(x) for x in small]})
+            print(f"ENGINE REFUSES [{cls}] {detail}  (from {e['start']}, {len(small)} gestures)")
+            for x in small:
+                print("   ", show(x))
+        print(f"{len(ENGINE)} classes the engine refuses in states the core accepts")
+        if out:
+            import json
+            with open(out, "w", encoding="utf-8") as f:
+                json.dump(found, f, indent=1, ensure_ascii=False)
     return bad == 0
 
 
