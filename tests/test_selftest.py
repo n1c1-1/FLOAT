@@ -473,3 +473,46 @@ def test_the_stars_network_retries_with_a_smaller_batch_after_a_memory_error():
     assert 4 in net.batches and np.allclose(out, img, atol=1e-3)
 
 
+
+
+# ---------------------------------------------------------------------------------------------- the estimate of the stack's grid
+def _register_result(tmp_path, fwhm):
+    d = tmp_path / f"register{len(fwhm)}"
+    d.mkdir()
+    np.savez(d / "reg.npz", fwhm_moffat=np.array(fwhm, float), rms=np.ones(len(fwhm)))
+
+    class Keys:
+        def key(self, wf, stage):
+            return "k"
+
+    class Store:
+        def done(self, stage, key):
+            return True
+
+        def dir(self, stage, key):
+            return d
+    return Keys(), Store()
+
+
+def test_well_sampled_stars_measured_by_the_registration_make_the_stack_estimate_a_grid_of_scale_one(tmp_path):
+    from astro_gpu.core import estimate as est
+    keys, store = _register_result(tmp_path, [2.6, 2.4, 2.8])
+    assert est._stars_well_sampled(keys, 1, store, ["register", "stack"])
+    assert not est._stars_well_sampled(keys, 1, store, ["stack"])            # no registration in the chain
+    assert not est._stars_well_sampled(keys, 1, None, ["register"])          # results not read
+    keys, store = _register_result(tmp_path, [1.6, 1.7])
+    assert not est._stars_well_sampled(keys, 1, store, ["register"])        # under-sampled: the stack may drizzle
+
+
+def test_the_same_rows_are_rejected_on_every_device():
+    from astro_gpu.core import rejection_classic as rc
+    if not torch.cuda.is_available():
+        pytest.skip("no card")
+    g = torch.Generator().manual_seed(3)
+    v = torch.randn(7, 3000, generator=g) * 0.05 + 1.0
+    v[torch.rand(7, 3000, generator=g) < 0.03] += 1.0
+    valid = torch.rand(7, 3000, generator=g) < 0.9
+    ch = rc.choose(7)
+    a = rc.reject(v, ch, valid)
+    b = rc.reject(v.cuda(), ch, valid.cuda())
+    assert all(bool((x == y.cpu()).all()) for x, y in zip(a, b))

@@ -164,9 +164,102 @@ def percentile_clip(v: torch.Tensor, low: float, high: float, valid: torch.Tenso
     return lo, hi
 
 
+#: the columns a compaction pays off for: the working set is cut to the unfinished columns once they are fewer than
+#: this share of it (and the set is at least COMPACT_MIN columns)
+COMPACT_SHARE = 0.5
+COMPACT_MIN = 4096
+
+
+def _winsor_sigma(w, act, m, sigma, todo, max_winsor: int):
+    """(P,) sigma of the winsorizing steps (see ``winsorized_clip``) of the columns ``todo``; the others keep ``sigma``.
+    The columns that have converged leave the working set (a gather of the unfinished ones, their sigma written back
+    by ``index_copy_``): every column is computed alone, so the result does not depend on which columns are with it."""
+    out, idx = sigma, None
+    for _ in range(max_winsor):
+        a, b = (m - 1.5 * sigma)[None], (m + 1.5 * sigma)[None]
+        w2 = torch.where(todo[None], torch.minimum(torch.maximum(w, a), b), w)
+        w = torch.where(torch.isfinite(w), w2, w)
+        s0 = sigma
+        s1 = 1.134 * std(w, act)
+        sigma = torch.where(todo, s1, sigma)
+        todo = todo & ((sigma - s0).abs() > s0 * 0.0005)
+        left = int(todo.sum())
+        if left == 0:
+            break
+        width = todo.numel()
+        if width >= COMPACT_MIN and left < COMPACT_SHARE * width:
+            if idx is None:
+                out = sigma.clone()
+            else:
+                out = out.index_copy(0, idx, sigma)
+            sel = torch.nonzero(todo)[:, 0]
+            idx = sel if idx is None else idx[sel]
+            w, act, m, sigma, todo = w[:, sel], act[:, sel], m[sel], sigma[sel], todo[sel]
+    return sigma if idx is None else out.index_copy(0, idx, sigma)
+
+
 def winsorized_clip(v: torch.Tensor, low: float, high: float, valid: torch.Tensor | None = None,
                     max_rounds: int = 100, max_winsor: int = 200):
     """(low, high) rejected (N, P): The reference program's winsorized sigma clipping (see the module's docstring).
+
+    Each column is clipped alone, so the work follows the columns still going: the rounds and the winsorizing steps
+    work on the whole band while most columns are unfinished, and on the unfinished ones only once they are fewer than
+    half of it (a gather of columns, read-only on the data; the results written back with ``index_copy``), where
+    ``winsorized_clip_dense`` keeps every finished column in every step. The same rejections, the sums of a column taken
+    in the same order, a band of many columns finishing at the pace of its slowest one being the time lost."""
+    valid = torch.isfinite(v) if valid is None else valid
+    N, P = v.shape
+    x = v.double()
+    nan = torch.full_like(x, float("nan"))
+    lo = torch.zeros_like(valid)
+    hi = torch.zeros_like(valid)
+    active = valid.clone()
+    r = torch.zeros(P, dtype=torch.long, device=v.device)
+    go = _count(active) >= 2
+    idx = None                                      # the columns of the working set in the band (None: all of them)
+    for _ in range(max_rounds):
+        left = int(go.sum())
+        if left == 0:
+            break
+        if x.shape[1] >= COMPACT_MIN and left < COMPACT_SHARE * x.shape[1]:
+            sel = torch.nonzero(go)[:, 0]
+            if idx is not None:                     # the finished columns' rejections go home
+                lo_full = lo_full.index_copy(1, idx, lo)
+                hi_full = hi_full.index_copy(1, idx, hi)
+                idx = idx[sel]
+            else:
+                lo_full, hi_full, idx = lo, hi, sel
+            x, active, lo, hi, r, go = x[:, sel], active[:, sel], lo[:, sel], hi[:, sel], r[sel], go[sel]
+            nan = nan[:, sel]
+        act = active & go[None]
+        n = _count(act)
+        sigma = std(x, act)
+        m = median(x, act)
+        w = torch.where(act, x, nan)
+        sigma = _winsor_sigma(w, act, m, sigma, go.clone(), max_winsor)
+        cl = act & (m[None] - x > sigma[None] * low)
+        ch = act & (x - m[None] > sigma[None] * high)
+        cand = cl | ch
+        allowed = (n - r - 4).clamp(min=0)
+        if bool((cand.sum(0) > allowed).any()):     # The reference program's guard: the most deviant first
+            cand = _guard_most_deviant(cand, (x - m[None]).abs(), allowed)
+            cl, ch = cl & cand, ch & cand
+        nrej = cand.sum(0)
+        lo |= cl
+        hi |= ch
+        active &= ~cand
+        r += nrej
+        go &= (nrej > 0) & (n - nrej > 3)
+    if idx is not None:
+        lo, hi = lo_full.index_copy(1, idx, lo), hi_full.index_copy(1, idx, hi)
+    return lo, hi
+
+
+def winsorized_clip_dense(v: torch.Tensor, low: float, high: float, valid: torch.Tensor | None = None,
+                    max_rounds: int = 100, max_winsor: int = 200):
+    """The same as ``winsorized_clip`` with every round and every winsorizing step on the whole band (kept to check it).
+
+    (low, high) rejected (N, P): The reference program's winsorized sigma clipping (see the module's docstring).
 
     Each round runs on the whole band with the finished columns masked out, not on the columns ``torch.nonzero``
     picks: an index_put on such indices in deterministic mode trips PyTorch's bound check when the GPU misbehaves.

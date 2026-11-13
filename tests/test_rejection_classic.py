@@ -356,3 +356,35 @@ def test_few_frames_take_the_percentile_and_two_frames_no_rejection():
     res = sc.stack_classic(lambda i: frames[i], coef, None, norm, None, sc.ClassicParams(), "cpu",
                            used=[0, 1], ch_of_k="RGGB", H=H, W=W)
     assert res.choice.method == "none" and res.rejected_pct == 0
+
+
+def _noisy_stack(n, p, seed, device="cpu"):
+    g = torch.Generator().manual_seed(seed)
+    v = torch.randn(n, p, generator=g, dtype=torch.float64) * 0.05 + 1.0
+    v[torch.rand(n, p, generator=g) < 0.05] += 0.6
+    v[torch.rand(n, p, generator=g) < 0.03] -= 0.5
+    v[torch.rand(n, p, generator=g) < 0.1] = float("nan")
+    return v.float().to(device)
+
+
+@pytest.mark.parametrize("n", [6, 7, 15])
+def test_the_compacting_winsorized_clipping_gives_the_dense_one_s_rejections(n):
+    v = _noisy_stack(n, 20000, n)
+    a = rc.winsorized_clip_dense(v, 3.0, 3.0)
+    b = rc.winsorized_clip(v, 3.0, 3.0)
+    assert all(bool((x == y).all()) for x, y in zip(a, b))
+    assert int(a[0].sum() + a[1].sum()) > 0
+
+
+def test_the_compacting_winsorized_clipping_gives_the_same_rejections_on_the_card_and_the_means_agree():
+    if not torch.cuda.is_available():
+        pytest.skip("no card")
+    v = _noisy_stack(7, 30000, 5)
+    a = rc.winsorized_clip_dense(v, 3.0, 3.0)
+    b = rc.winsorized_clip(v.cuda(), 3.0, 3.0)
+    assert all(bool((x == y.cpu()).all()) for x, y in zip(a, b))
+    keep = torch.isfinite(v) & ~a[0] & ~a[1]
+    w = torch.ones(7)
+    m0 = rc.combine(v, keep, w)[0]
+    m1 = rc.combine(v, torch.isfinite(v) & ~b[0].cpu() & ~b[1].cpu(), w)[0]
+    assert torch.allclose(m0, m1, rtol=1e-6, equal_nan=True)

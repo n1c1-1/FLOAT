@@ -628,14 +628,17 @@ class Stack(Stage):
             del num, den, sq
 
         # ---------------- pass 3: the second clipping iteration (or the integration's rejection) + half-stacks
-        accA = [torch.zeros(3 * Ho * Wo, device=dev) for _ in range(2)]
-        accB = [torch.zeros(3 * Ho * Wo, device=dev) for _ in range(2)]
+        # by frame count the half-stacks are added band by band: they stay in the machine's memory, the card's memory
+        # being for the bands (a band's rows grow with what the card has free)
+        adev = torch.device("cpu") if by_count else dev
+        accA = [torch.zeros(3 * Ho * Wo, device=adev) for _ in range(2)]
+        accB = [torch.zeros(3 * Ho * Wo, device=adev) for _ in range(2)]
         rej_tot = tested = 0
         rej = None
         rmap = RejectionMap(Ho, Wo, dev)
         rej_frames: dict[int, tuple[int, int, int]] = {}
-        near_acc = torch.zeros(3 * Ho * Wo, device=dev)     # the weight of the samples near saturation
-        clip_acc = torch.zeros(3 * Ho * Wo, device=dev)     # and of the clipped ones
+        near_acc = torch.zeros(3 * Ho * Wo, device=adev)    # the weight of the samples near saturation
+        clip_acc = torch.zeros(3 * Ho * Wo, device=adev)    # and of the clipped ones
         tally = [0.0, 0.0]                                  # integration: drop weight excluded, deposited
         clock.start()
         by_count_info = None
@@ -1427,8 +1430,9 @@ def count_pass(ctx, p: StackParams, frame_model, used, weight, chmap, h: float, 
     # bytes per output row of a band: the four buffers, the masks and the rejection's double-precision copies
     per_row = N * 3 * Wo * 64
     if dev.type == "cuda":
+        torch.cuda.empty_cache()                                          # what the earlier passes left cached is free
         free = torch.cuda.mem_get_info(dev)[0]
-        budget = int(0.5 * free) - 14 * 4 * sizes[1]                      # the frame's own working tensors
+        budget = int(0.8 * free) - 14 * 4 * sizes[1]                      # the frame's own working tensors
     else:
         mb = devices.memory_budget()
         budget = (mb[0] if mb else 4 * 2 ** 30) // 2 - 14 * 4 * sizes[1]
@@ -1493,10 +1497,10 @@ def count_pass(ctx, p: StackParams, frame_model, used, weight, chmap, h: float, 
             if not len(sel):
                 continue
             kk = keepv[sel]
-            acc[0].view(3, Ho, Wo)[:, sl] += (Vn[sel] * kk).sum(0).view(3, nr, Wo)
-            acc[1].view(3, Ho, Wo)[:, sl] += (Vd[sel] * kk).sum(0).view(3, nr, Wo)
-            near_acc.view(3, Ho, Wo)[:, sl] += (Vnear.view(N, 3, Pn)[sel] * kk).sum(0).view(3, nr, Wo)
-            clip_acc.view(3, Ho, Wo)[:, sl] += (Vclip.view(N, 3, Pn)[sel] * kk).sum(0).view(3, nr, Wo)
+            acc[0].view(3, Ho, Wo)[:, sl] += (Vn[sel] * kk).sum(0).view(3, nr, Wo).to(acc[0].device)
+            acc[1].view(3, Ho, Wo)[:, sl] += (Vd[sel] * kk).sum(0).view(3, nr, Wo).to(acc[1].device)
+            near_acc.view(3, Ho, Wo)[:, sl] += (Vnear.view(N, 3, Pn)[sel] * kk).sum(0).view(3, nr, Wo).to(near_acc.device)
+            clip_acc.view(3, Ho, Wo)[:, sl] += (Vclip.view(N, 3, Pn)[sel] * kk).sum(0).view(3, nr, Wo).to(clip_acc.device)
         del Vn, Vd, Vnear, Vclip, keepv
     for k, i in enumerate(used):
         rej_frames[int(i)] = (int(low_f[k]), int(high_f[k]), 0)

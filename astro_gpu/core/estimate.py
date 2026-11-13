@@ -268,6 +268,29 @@ def expects_no_drizzle(sampling: float | None) -> bool:
     return bool(sampling) and TYPICAL_FWHM_ARCSEC / sampling >= UNDERSAMPLED
 
 
+def _stars_well_sampled(keys: Any, wf: Any, store: Any, chain: Any) -> bool:
+    """Whether the registration's own measure of the stars (their median Moffat FWHM, in sensor pixels) is at least
+    ``coverage.UNDERSAMPLED``: the stack's automatic drizzle scale is then 1 (core/coverage.suggest_drizzle). False
+    when the registration is not done or measured no FWHM."""
+    if store is None or "register" not in chain:
+        return False
+    try:
+        k = keys.key(wf, "register")
+        if not store.done("register", k):
+            return False
+        import numpy as np
+        from .coverage import UNDERSAMPLED
+        with np.load(store.dir("register", k) / "reg.npz") as z:
+            if "fwhm_moffat" not in z.files:
+                return False
+            fw = np.asarray(z["fwhm_moffat"], float)
+            ok = np.isfinite(z["rms"]) if "rms" in z.files else np.ones(len(fw), bool)
+        fw = fw[ok & np.isfinite(fw)]
+        return bool(fw.size) and float(np.median(fw)) >= UNDERSAMPLED
+    except (ValueError, OSError, KeyError):
+        return False
+
+
 def denoise_steps(method: str | None, adaptation: str | None) -> int:
     """The adaptation steps of a Denoise job: 0 for the pretrained network, else those of its adaptation length."""
     return DENOISE_ADAPT_STEPS.get(adaptation or "short", 500) if method == "adapted" else 0
@@ -340,6 +363,9 @@ def facts(keys: Any, wf: Any, store: Any = None) -> Facts:
     f.scale = float(scale or f.scale)
     if not (stack.get("params") or {}).get("scale") and not given("stack").get("scale") and expects_no_drizzle(sampling):
         f.scale = 1.0              # not asked for, and fine stars: the rule will not drizzle (Wing: 3 grids of 16 Mpx, not 37)
+    if f.scale != 1.0 and not (stack.get("params") or {}).get("scale") and not given("stack").get("scale"):
+        if _stars_well_sampled(keys, wf, store, chain):
+            f.scale = 1.0          # the stack will not drizzle: its grid is the sensor's, not 1.5 x 1.5 of it
     grid = (stack.get("metrics") or {}).get("grid")
     f.grid_mpx = grid[0] * grid[1] / 1e6 if grid else f.mpx * f.scale ** 2
     dn = {**given("denoise"), **(done("denoise").get("params") or {})}
