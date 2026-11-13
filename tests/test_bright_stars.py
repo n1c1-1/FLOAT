@@ -133,7 +133,10 @@ def test_the_planner_leaves_out_an_astrometry_that_could_not_find_its_field(serv
     w.source = {"path": str(sky["image"]), "stretched": False}
     p.set_blocks(w.id, [node("astrometry"), node("color")])
     project2.save(p)
-    assert runner2.plan_all(p).left_out == {w.id: {"astrometry": sky_data.NO_INDEX}}
+    # Astrometry and the steps that read its result are named; Color takes its fallback balance and still runs
+    left = runner2.plan_all(p).left_out
+    assert left == {w.id: {"astrometry": sky_data.NO_INDEX, "catalogs": sky_data.NO_INDEX,
+                           "surveys": sky_data.NO_INDEX}}
     bright_stars.download()
     sky_data.reset()
     assert runner2.plan_all(p).left_out == {}

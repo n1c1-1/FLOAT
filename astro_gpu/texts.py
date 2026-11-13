@@ -241,6 +241,8 @@ _METRIC_ROWS: list[tuple] = [
     ("stars_used", "Stars used", "", "d", "Stars matched to the catalogue in the solution."),
     ("focal_estimate_mm", "Focal length found", "mm", ".1f", "Focal length deduced from the solution."),
     ("blind_solved", "Blind solved", "", "", "Whether the field was found on the whole sky, with no starting point."),
+    ("focal_ignored", "Focal length ignored", "", "", "Whether the field was not found at the scale of the entered focal "
+     "length and was searched again without it."),
     ("first_solver", "First solution", "", "", "What found the field before the fine fit: Asterion, or FLOAT's own search."),
     ("first_solution_s", "First solution time", "s", ".2f", "Time Asterion took to find the field."),
     ("centre_from", "Field found around", "", "", "The typed target or the frames' header pointing, when the two disagree."),

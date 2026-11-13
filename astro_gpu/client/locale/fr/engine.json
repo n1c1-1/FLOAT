@@ -612,5 +612,7 @@
  "How the hot pixels are found in the lights. Persistence: a pixel that stands out from its neighbours in the lower quartile of 40 frames spread over the session (a defect is bright in every frame; a star covers a given pixel in some frames only). Per frame: Siril's cosmetic correction without darks, applied to each light (https://siril.readthedocs.io/en/stable/processing/cc.html).": "Comment les pixels chauds sont trouvés dans les brutes. Persistance : un pixel qui se détache de ses voisins dans le quartile bas de 40 images réparties sur la séance (un défaut est brillant dans chaque image ; une étoile ne couvre un pixel donné que dans certaines). Pose par pose : la correction cosmétique de Siril sans darks, appliquée à chaque brute (https://siril.readthedocs.io/en/stable/processing/cc.html).",
  "Persistence": "Persistance",
  "Per frame": "Pose par pose",
- "Persistence needs 15 frames or more. Per frame works on any session; it needs a Bayer sensor.": "La persistance demande 15 images ou plus. Pose par pose marche sur toute séance ; elle demande un capteur Bayer."
+ "Persistence needs 15 frames or more. Per frame works on any session; it needs a Bayer sensor.": "La persistance demande 15 images ou plus. Pose par pose marche sur toute séance ; elle demande un capteur Bayer.",
+ "Focal length ignored": "Focale ignorée",
+ "Whether the field was not found at the scale of the entered focal length and was searched again without it.": "Si le champ n'a pas été trouvé à l'échelle de la focale saisie et a été cherché de nouveau sans elle."
 }
