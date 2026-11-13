@@ -671,9 +671,9 @@ class Main(QMainWindow):
 
     def ask_save(self) -> str:
         """The project has edits not saved: "save", "discard" or "cancel", as the user answers (offscreen, a test
-        harness: "save", as before Save existed; nothing asked of a project without a name)."""
+        harness: nobody can answer, and a project changes on the disk only when Save is chosen: "discard")."""
         if QApplication.platformName() == "offscreen":
-            return "discard" if drafts.is_untitled(self.project.root) else "save"
+            return "discard"
         box = QMessageBox(QMessageBox.Warning, _("Unsaved changes"),
                           _('Save the changes made to "{name}"?').format(name=self.project.name), parent=self)
         box.setInformativeText(_("Without saving, the changes since the last save are lost (the computed results "

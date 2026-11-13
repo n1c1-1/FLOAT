@@ -643,3 +643,22 @@ def test_the_session_panel_says_add_lights_while_it_has_none(env, has, word):
     panel.session_panel(1)
     settle(w)
     assert any(b.text() == word for b in panel.findChildren(QPushButton) if b.isVisibleTo(panel))
+
+
+def test_post_edits_are_written_by_save_only_not_by_closing_or_reopening(env):
+    """No autosave: a Post edit (a new version of the composition) is the project's unsaved state, closing with nobody
+    to answer drops it, Save writes it."""
+    w = project_with_a_chain(env)
+    root = w.project.root
+    w.s.new_post_version()
+    w._flush_post()
+    assert w.s.dirty and w.windowTitle().endswith(" *") and len(w.s.p.post["versions"]) == 2
+    assert w.close_project() is not False                          # offscreen: nobody answers, the edit is not kept
+    assert len(project2.load(root).post["versions"]) == 1
+    w.open_project(root)
+    w.worker.wait()
+    settle(w, 12)
+    assert len(w.s.p.post["versions"]) == 1 and not w.s.dirty
+    w.s.new_post_version()
+    w.save()
+    assert not w.s.dirty and len(project2.load(root).post["versions"]) == 2
