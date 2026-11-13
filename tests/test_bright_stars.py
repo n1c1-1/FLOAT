@@ -146,3 +146,24 @@ def test_the_planner_leaves_out_an_astrometry_that_could_not_find_its_field(serv
         assert i18n._(sky_data.NO_INDEX).startswith("la position de la cible est inconnue")
     finally:
         i18n.set_language("en")
+
+
+def test_the_processors_morphology_steps_give_the_values_of_the_padded_max_pool():
+    """The star sliders' CPU path (OpenCV's filters) is the same as the pooled steps the card runs."""
+    import torch
+    import torch.nn.functional as F
+
+    from astro_gpu.render import stars as S
+    g = torch.Generator().manual_seed(3)
+    y = torch.rand(3, 37, 41, generator=g)
+    for grow in (True, False):
+        for cross in (True, False):
+            z = y if grow else -y
+            if cross:
+                p = F.pad(z[None], (1, 1, 1, 1), mode="replicate")[0]
+                want = torch.stack([z, p[..., :-2, 1:-1], p[..., 2:, 1:-1], p[..., 1:-1, :-2], p[..., 1:-1, 2:]]).amax(0)
+            else:
+                want = F.max_pool2d(F.pad(z[None], (1, 1, 1, 1), mode="replicate"), 3, 1, 0)[0]
+            want = want if grow else -want
+            assert torch.equal(S._step(y, grow, cross), want)
+            assert torch.equal(S._step(y[0], grow, cross), want[0])

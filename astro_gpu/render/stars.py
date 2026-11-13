@@ -27,6 +27,7 @@ import json
 import math
 from pathlib import Path
 
+import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -233,8 +234,28 @@ def measure_fwhm(stars: torch.Tensor, n: int = 300) -> float:
     return float(np.median(widths)) if len(widths) >= 10 else DEFAULT_FWHM
 
 
+_CROSS = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], np.uint8)
+_SQUARE = np.ones((3, 3), np.uint8)
+
+
+def _step_cpu(y: torch.Tensor, grow: bool, cross: bool) -> torch.Tensor:
+    """``_step`` on the processor by OpenCV's dilation / erosion (the borders replicated): the same values as the
+    padded max_pool2d, which the processor runs far slower (the star sliders' renders took 15 to 25 s)."""
+    a = np.ascontiguousarray(y.numpy())
+    k = _CROSS if cross else _SQUARE
+    op = cv2.dilate if grow else cv2.erode
+    if a.ndim == 2:
+        return torch.from_numpy(op(a, k, borderType=cv2.BORDER_REPLICATE))
+    out = np.empty_like(a.reshape(-1, *a.shape[-2:]))
+    for i, plane in enumerate(a.reshape(-1, *a.shape[-2:])):
+        out[i] = op(plane, k, borderType=cv2.BORDER_REPLICATE)
+    return torch.from_numpy(out.reshape(a.shape))
+
+
 def _step(y: torch.Tensor, grow: bool, cross: bool) -> torch.Tensor:
     """One pixel of grey dilation (grow) or erosion: by a cross (the 4 neighbours) or a 3 x 3 square."""
+    if y.device.type == "cpu" and y.dtype == torch.float32 and not y.requires_grad:
+        return _step_cpu(y, grow, cross)
     z = y if grow else -y
     if cross:
         p = F.pad(z[None], (1, 1, 1, 1), mode="replicate")[0]
