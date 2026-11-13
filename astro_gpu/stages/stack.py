@@ -1247,7 +1247,8 @@ def quality_weights(transp, fwhm, rms, stats, noise=None) -> tuple[np.ndarray, n
     on = np.isfinite(rms) & ~saturated_frames(stats)    # a frame left out anyway does not change the measure of the others
     if noise is not None and np.isfinite(np.asarray(noise)[on]).all() and (np.asarray(noise)[on] > 0).all():
         sig = np.asarray(noise, float)
-    weight = (transp / sig) ** 2 * (np.percentile(fwhm, 5) / fwhm) ** 2
+    with np.errstate(divide="ignore", invalid="ignore"):     # a saturated frame's noise of 0: left out just below
+        weight = (transp / sig) ** 2 * (np.percentile(fwhm, 5) / fwhm) ** 2
     weight = np.where(on & np.isfinite(weight), weight, 0.0)
     weight /= weight.max()
     return weight, sig
