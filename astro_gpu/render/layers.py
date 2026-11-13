@@ -423,10 +423,20 @@ def export_rgb(rgb: np.ndarray, out_dir: str | Path, options: ExportOptions | di
             hdr["COLORSPC"] = ("sRGB", "display-referred, non-linear")
             hdr["ROWORDER"] = ("BOTTOM-UP", "first row is the bottom of the image")
             hdr["PROGRAM"] = ("FLOAT", "Post export")
-            for key, name, comment in (("OBJECT", "target", "target"), ("DATE-OBS", "date_obs", "first light of the shot"),
-                                       ("EXPTIME", "exposure_s", "total exposure, s")):
-                if (facts or {}).get(name):
-                    hdr[key] = (_ascii(facts[name]) if isinstance(facts[name], str) else float(facts[name]), comment)
+            f = facts or {}
+            if f.get("target"):
+                hdr["OBJECT"] = (_ascii(f["target"]), "target")
+            if f.get("date_obs"):
+                hdr["DATE-OBS"] = (_ascii(f["date_obs"]), "first frame's date")
+            if f.get("date_end"):
+                hdr["DATE-END"] = (_ascii(f["date_end"]), "end of the last frame's exposure")
+            if f.get("exposure_s"):                     # the sum of the exposures of the frames stacked (as Siril's LIVETIME)
+                hdr["EXPTIME"] = (float(f["exposure_s"]), "[s] total exposure of the frames stacked")
+                hdr["LIVETIME"] = (float(f["exposure_s"]), "[s] sum of the frames' exposures")
+            if f.get("stackcnt"):
+                hdr["STACKCNT"] = (int(f["stackcnt"]), "frames stacked")
+            for part in f.get("parts") or []:
+                hdr.add_history(_ascii(f"exposure {part['name']}: {part['frames']} frames, {float(part['seconds']):g} s"))
             if history is not None:
                 hdr["DATE"] = (str(history.get("created") or "")[:19], "export date")
                 for line in history_lines(history):

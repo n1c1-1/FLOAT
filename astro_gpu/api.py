@@ -2878,6 +2878,67 @@ def _slug(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_") or "image"
 
 
+def shot_facts(p: Project2, wf: int | Workflow, _seen: tuple = ()) -> dict:
+    """What a picture of this workflow says of its shot, exactly, from the frames its stack used (the stack's own
+    frames list, ``diagnostics.json``), never the inventory's rounded hours: ``frames`` (their number), ``seconds``
+    (the sum of their exposures), ``first`` / ``last`` (the first light, and the end of the last exposure, ISO) and
+    ``parts`` ([{"name", "frames", "seconds"}] per workflow). A combination sums the workflows it combines.
+
+    Siril writes a stacked image's header the same way (stacking/sum.c, ``sum_stacking_image_hook`` and
+    ``_finalize_hook``): LIVETIME = the sum of the exposures of the frames stacked, STACKCNT = how many frames were
+    stacked; its DATE-OBS / DATE-END come from ``compute_date_time_keywords`` (stacking.c): the earliest frame's date,
+    and the latest frame's date plus its own exposure (not a sum). Its io/fits_keywords.c defines EXPTIME as the image's
+    exposure time (``keywords.exposure``) and says nothing of a sum for a stack, nor of one keyword per filter: the
+    total goes in EXPTIME and LIVETIME here, the frames in STACKCNT, and each filter's share in HISTORY."""
+    from datetime import datetime, timedelta
+
+    from .io.frames import read_info
+    w = p.workflow(wf) if not isinstance(wf, Workflow) else wf
+    out = {"frames": 0, "seconds": 0.0, "first": "", "last": "", "parts": []}
+    if w.id in _seen:
+        return out
+    if p2.is_fusion(w):
+        done = set()
+        for i in w.source["fusion"]["inputs"]:
+            if i["pid"] in done:
+                continue
+            done.add(i["pid"])
+            sub = shot_facts(p, i["pid"], (*_seen, w.id))
+            out["frames"] += sub["frames"]
+            out["seconds"] += sub["seconds"]
+            out["parts"] += sub["parts"]
+            out["first"] = min([x for x in (out["first"], sub["first"]) if x], default="")
+            out["last"] = max([x for x in (out["last"], sub["last"]) if x], default="")
+        return out
+    d = _dir(p, w, "stack")
+    try:
+        frames = json.loads((d / "diagnostics.json").read_text(encoding="utf-8")).get("frames") or []
+    except (AttributeError, OSError, ValueError):
+        return out
+    like, secs, times, ends = None, 0.0, [], []
+    for f in frames:
+        if float(f.get("weight", 1.0)) <= 0:
+            continue
+        try:
+            info = read_info(f["path"], like=like) if like is not None else read_info(f["path"])
+        except Exception:  # noqa: BLE001 - a frame moved or damaged since: the sum has what could be read
+            continue
+        like = like or info
+        out["frames"] += 1
+        secs += float(info.exposure or 0.0)
+        if info.time and not info.time_from_file:
+            times.append(str(info.time)[:19])
+            try:
+                ends.append((datetime.fromisoformat(str(info.time)[:19]) + timedelta(seconds=float(info.exposure or 0.0))
+                             ).isoformat(timespec="seconds"))
+            except ValueError:
+                pass
+    out["seconds"] = secs
+    out["first"], out["last"] = min(times, default=""), max(ends, default="")
+    out["parts"] = [{"name": w.name, "frames": out["frames"], "seconds": secs}]
+    return out
+
+
 def export_image(p: Project2, rgb: np.ndarray, meta: dict[str, Any] | None = None,
                  options: dict[str, Any] | Any = None, progress: Callable[[float, str], None] | None = None) -> list[Path]:
     """Write a composed image (3, H, W), display sRGB in [0, 1]: TIFF 16 / 32f, PNG 16, JPEG, FITS 32f with the WCS, at

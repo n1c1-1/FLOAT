@@ -341,7 +341,8 @@ class ExportDialog(QDialog):
                          size=int(self.size_cb.currentData() or 0), wcs=self.c_wcs.isEnabled() and self.c_wcs.isChecked(),
                          history=self.c_hist.isChecked(), each_layer=self.c_layers.isChecked(),
                          masks=self.c_masks.isChecked(), project_name=self.pname,
-                         facts=self.view.s.export_facts() if hasattr(getattr(self.view, "s", None), "export_facts") else None,
+                         facts=self.view.s.export_facts(self.view._ann_pid() if hasattr(self.view, "_ann_pid") else None)
+                         if hasattr(getattr(self.view, "s", None), "export_facts") else None,
                          annotations={"grid": self.c_grid.isEnabled() and self.c_grid.isChecked(),
                                       "objects": self.c_names.isEnabled() and self.c_names.isChecked()})
 
