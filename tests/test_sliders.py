@@ -133,7 +133,7 @@ def test_the_halpha_slider_is_for_colour_cameras_only():
     assert S.availability("simple", True)["halpha"] == ""
     assert S.availability("simple", True, "")["halpha"] == ""
     assert S.availability("simple", True, "palette")["halpha"] == S.WHY_PALETTE
-    assert S.WHY_PALETTE == "Only for colour cameras: in a palette fusion, Hα is its own channel"
+    assert S.WHY_PALETTE == "Only for colour cameras: in a palette combination, Hα is its own channel"
     assert "monochrome" in S.availability("simple", True, "mono")["halpha"]
     assert not S.availability("simple", True, "palette")["sky"]                        # the others stay
     # a greyed slider is ignored by the settings, wherever its position is

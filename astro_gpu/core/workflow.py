@@ -582,7 +582,7 @@ WHY_OFF_KIND = "{block}: {takes} → {gives}, needed"
 KIND_WORDS = {FRAMES: "frames", IMAGE: "image", PAIR: "starless + stars"}
 #: "from ..." as a whole: the French joins the preposition to the word ("de brutes", "d'un fichier image")
 SOURCE_WORDS = {"frames": "from frames", "image": "from image file", "stretched": "from stretched image",
-                "fusion": "from fusion"}
+                "fusion": "from combination"}
 
 
 class BlockRefused(ValueError):

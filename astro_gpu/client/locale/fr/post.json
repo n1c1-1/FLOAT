@@ -65,7 +65,7 @@
   "sRGB": "sRGB",
   "this layer leaves the graph before the Denoise block": "ce calque quitte le graphe avant le bloc Débruitage",
   "this layer leaves the graph before the Stars block": "ce calque quitte le graphe avant le bloc Étoiles",
-  "Only for colour cameras: in a palette fusion, Hα is its own channel": "Seulement pour les caméras couleur : dans une fusion en palette, l'Hα est un canal à part",
+  "Only for colour cameras: in a palette combination, Hα is its own channel": "Seulement pour les caméras couleur : dans une combinaison en palette, l'Hα est un canal à part",
   "Only for colour cameras: a monochrome image has no red channel over a continuum": "Seulement pour les caméras couleur : une image monochrome n'a pas de canal rouge sur un continuum",
   "{n} filter": "{n} filtre",
   "{n} filters": "{n} filtres",

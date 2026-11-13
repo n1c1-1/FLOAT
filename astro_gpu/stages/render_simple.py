@@ -189,7 +189,7 @@ class RenderSimple(Stage):
             sky, sky_name = raw_exit_sky(ctx, lin, valid)
         elif fused and meta.get("sky_neutral"):      # the fusion took each channel's sky to 0 on the sky pixels
             sky = np.zeros((3, 1, 1), np.float32)       # (stages/fusion.neutralise_sky): the median of the whole frame,
-            sky_name = "fusion's background neutralisation"      # nebulosity included, would put a cast back
+            sky_name = "combination's background neutralisation"      # nebulosity included, would put a cast back
         elif r.level is not None:                   # the level the Gradient block measured between the objects
             sky = r.level.astype(np.float32)[:, None, None]       # in the image's colours (image_in)
             sky_name = "sky level of the Gradient block"

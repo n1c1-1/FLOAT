@@ -35,7 +35,7 @@ WHY_DENOISE = "noise smoothing needs the Denoise block"
 WHY_WHOLE = "noise smoothing works on the whole image (the Output layer)"
 WHY_EXIT_STARS = "this layer leaves the graph before the Stars/background block"
 WHY_EXIT_DENOISE = "this layer leaves the graph before the Denoise block"
-WHY_PALETTE = "Only for colour cameras: in a palette fusion, Hα is its own channel"
+WHY_PALETTE = "Only for colour cameras: in a palette combination, Hα is its own channel"
 WHY_MONO = "Only for colour cameras: a monochrome image has no red channel over a continuum"
 #: where a layer's image comes from (``origin``, written by render_simple and read from the project): "" unknown or a
 #: colour camera, "mono" a monochrome sensor, "palette" a combination of narrow-band filters (S-H-O, H-O:
