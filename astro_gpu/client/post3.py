@@ -1634,7 +1634,7 @@ class PostView(QWidget):
         for lay in pixel:
             if is_group(lay) and lay.get("visible", True) and not any((lay.get("shown") or {}).values()):
                 return _("Both images of “{name}” are hidden").format(name=layer_name(lay))
-        return _("Every layer is hidden")
+        return _("Every image layer is hidden")
 
     def _on_result(self, res):
         if res.kind == "inspect":
@@ -1666,7 +1666,7 @@ class PostView(QWidget):
         if res.kind in ("half", "refine") and set(res.missing) != self._missing_images:
             self._missing_images = set(res.missing)
             self._refresh_rows()
-        if res.rgb is None:
+        if res.rgb is None or (self.layers and not any(is_pixel(x) and x.get("visible", True) for x in self.layers)):
             self.viewer.banner = self._empty_banner()
             self.src.img1 = self.src.img2 = self.src.full = None       # nothing to show: the neutral canvas, not the old picture
             self.src.version += 1

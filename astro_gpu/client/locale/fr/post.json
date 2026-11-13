@@ -282,7 +282,7 @@
   "Name refused: a version needs a name": "Nom refusé : une version a besoin d'un nom",
   "Name refused: another version is already named “{name}”": "Nom refusé : une autre version s'appelle déjà « {name} »",
   "Both images of “{name}” are hidden": "Les deux images de « {name} » sont masquées",
-  "Every layer is hidden": "Tous les calques sont masqués",
+  "Every image layer is hidden": "Tous les calques d'image sont masqués",
   "Nothing under this layer to blend with: shown as Normal": "Rien sous ce calque à fusionner : affiché en Normal",
   "Outdated: run to update": "Obsolète : exécuter pour mettre à jour",
   "Run the workflows that are out of date": "Exécuter les workflows obsolètes",
