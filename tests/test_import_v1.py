@@ -478,6 +478,9 @@ def test_the_guard_on_a_copy_of_heart_a7s(tmp_path, monkeypatch):
     from astro_gpu.stages.calibrate import Calibrate
     made = json.loads((copy / "work" / "calibrate" / "manifest.json").read_text(encoding="utf-8")).get("version")
     monkeypatch.setattr(Calibrate, "version", made or Calibrate.version)
+    from astro_gpu.stages.register import Register        # likewise the Registration (5: at least 10 star pairs)
+    made = json.loads((copy / "work" / "register" / "manifest.json").read_text(encoding="utf-8")).get("version")
+    monkeypatch.setattr(Register, "version", made or Register.version)
     up_to_date = _up_to_date(copy, FULL_CHAIN, tmp_path / "logs")
     assert up_to_date[:3] == ["inventory", "calibrate", "register"]
     watched = iv.folders_of(copy)

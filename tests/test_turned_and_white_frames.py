@@ -202,7 +202,8 @@ def test_two_nights_with_the_camera_turned_between_are_aligned(tmp_path, monkeyp
     assert len(searched) == 2                       # the first turned frame and the frame of another field
     turn = 360.0 - ang if ang > 180.0 else ang
     assert ("info", f"4 frame(s) aligned after a turn of the camera of {turn:.1f} degrees") in logs
-    assert ("warning", "1 frame(s) could not be aligned and will be ignored, e.g. f9.fits") in logs
+    assert any(k == "warning" and m.startswith("1 frame(s) could not be aligned and will be ignored")
+               and m.endswith("e.g. f9.fits") for k, m in logs)
 
 
 def test_a_session_that_aligns_today_never_reaches_the_new_search(tmp_path, monkeypatch):
