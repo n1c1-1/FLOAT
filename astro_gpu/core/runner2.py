@@ -485,7 +485,9 @@ def _spawn_worker(root: str | Path, plan_file: str | Path, visible: str, log_fil
                   python: str | None = None, notes: list[str] | None = None) -> int:
     """Start ``python -m astro_gpu.core.runner2 <root> <plan_file>`` detached (it survives the process that started
     it), in the project's folder, appending to the run's log, on the run's GPU. Returns its pid."""
-    env = {**os.environ, "CUDA_VISIBLE_DEVICES": str(visible), "PYTHONUNBUFFERED": "1"}
+    # the run's log is UTF-8 whatever launched the worker (without it, a console's code page wrote "›" and "σ" as
+    # cp1252 bytes when FLOAT was started otherwise than by its launcher)
+    env = {**os.environ, "CUDA_VISIBLE_DEVICES": str(visible), "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"}
     cmd = [python or sys.executable, "-m", "astro_gpu.core.runner2", str(root), str(plan_file)]
     kw: dict[str, Any] = {"cwd": str(root), "env": env, "stdin": subprocess.DEVNULL, "stderr": subprocess.STDOUT,
                           "close_fds": True}
