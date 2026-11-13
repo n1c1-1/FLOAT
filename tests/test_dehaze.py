@@ -47,3 +47,21 @@ def test_the_mesh_level_is_the_clipped_mode():
     g = mesh_levels(c, 64)
     assert g.shape == (1, 1) and abs(g[0, 0] - 0.1) < 0.003
     assert background_map(np.repeat(c[..., None], 3, 2).astype(np.float32), 32).shape == (64, 64, 3)
+
+
+def test_the_background_map_is_measured_once_for_an_image_whatever_the_amount():
+    """The veil does not depend on Amount: a drag of the slider on one image reads the map it kept, same pixels."""
+    from astro_gpu.client.postfilters import dehaze as D
+    x = np.random.default_rng(5).uniform(0, 1, (96, 128, 3)).astype(np.float32) ** 2
+    D._MAPS.clear()
+    first = D.dehaze(x, 0.4, 32)
+    assert len(D._MAPS) == 1
+    again = D.dehaze(x, 0.4, 32)
+    D.dehaze(x, 0.95, 32)
+    assert len(D._MAPS) == 1 and np.array_equal(first, again)
+    h = np.clip(0.95 * D.background_map(x, 32), 0, D.AMOUNT_MAX)
+    assert np.array_equal(D.dehaze(x, 0.95, 32), np.clip((x - h) / (1 - h), 0, 1).astype(np.float32))
+    y = x.copy()
+    y[0, 0, 0] += 0.5                                      # another image: its own map
+    D.dehaze(y, 0.4, 32)
+    assert len(D._MAPS) == 2

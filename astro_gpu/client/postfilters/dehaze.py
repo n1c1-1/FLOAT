@@ -16,6 +16,10 @@ control.
 """
 from __future__ import annotations
 
+import hashlib
+from collections import OrderedDict
+from threading import Lock
+
 import cv2
 import numpy as np
 
@@ -55,6 +59,31 @@ def background_map(x: np.ndarray, m: int) -> np.ndarray:
     return out
 
 
+#: the last background maps by what they were measured on: the veil does not depend on Amount, so a drag of that slider
+#: (the same image, the same Scale) measures it once (the mesh levels took 4 s of the 4.4 s of each change)
+_MAPS: "OrderedDict[tuple, np.ndarray]" = OrderedDict()
+_MAPS_KEPT = 3
+_MAPS_LOCK = Lock()
+
+
+def cached_background_map(x: np.ndarray, m: int) -> np.ndarray:
+    """``background_map``, kept for the images it was last asked for (the key is the image's own bytes: nothing else
+    can make a map stale)."""
+    x = np.ascontiguousarray(x)
+    key = (x.shape, m, hashlib.blake2b(x.view(np.uint8), digest_size=16).digest())
+    with _MAPS_LOCK:
+        hit = _MAPS.get(key)
+        if hit is not None:
+            _MAPS.move_to_end(key)
+            return hit
+    out = background_map(x, m)
+    with _MAPS_LOCK:
+        _MAPS[key] = out
+        while len(_MAPS) > _MAPS_KEPT:
+            _MAPS.popitem(last=False)
+    return out
+
+
 def dehaze(x: np.ndarray, amount: float, scale_px: float) -> np.ndarray:
     """The image (h, w, 3, 0..1) with ``amount`` (0..AMOUNT_MAX) of its veil taken off; meshes of ``scale_px``
     pixels of this image."""
@@ -62,5 +91,5 @@ def dehaze(x: np.ndarray, amount: float, scale_px: float) -> np.ndarray:
     if a <= 0:
         return x
     m = max(8, int(round(scale_px)))
-    h = np.clip(a * background_map(x, m), 0.0, AMOUNT_MAX)
+    h = np.clip(a * cached_background_map(x, m), 0.0, AMOUNT_MAX)
     return np.clip((x - h) / (1.0 - h), 0.0, 1.0).astype(np.float32)
