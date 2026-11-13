@@ -122,7 +122,10 @@ class StarsRenderEngine(SimpleRenderEngine):
         the settings that make them are the same: the starless image's sliders, a blend or an export (the same
         image at full size) take them as they are instead of making them again, which is the longest step of a
         render. One entry (the last), never mutated by what reads it."""
-        key = (f, tuple(box) if box is not None else None, s.sky, s.star_strength, s.star_small, s.star_size,
+        # the Sky setting is in the stars' stretch (star_tone: the midtone puts the sky of the whole image there), except
+        # for an image already stretched, whose stars are only scaled
+        sky = None if self.prep["stats_full"].get("stretched") else s.sky
+        key = (f, tuple(box) if box is not None else None, sky, s.star_strength, s.star_small, s.star_size,
                s.star_saturation)
         hit = getattr(self, "_star_cache", None)
         if hit is not None and hit[0] == key:
