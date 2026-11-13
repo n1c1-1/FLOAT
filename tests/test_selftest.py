@@ -431,7 +431,9 @@ def test_denoise_gives_the_numbers_of_before():
     with torch.no_grad():
         want = _apply_net_before(net, x, nm, bk, sg, torch.device("cpu"), tile=128, pad=16)
     out = dn.apply_net(net, x, nm, bk, sg, torch.device("cpu"), tile=128, pad=16)
-    assert np.abs(out - x).max() > 1e-3 and np.array_equal(out, want)
+    # on the processor the network runs in the channels-last layout, which sums in another order: the same numbers to
+    # float rounding (under 1e-6 relative on a real stack), no longer bit for bit
+    assert np.abs(out - x).max() > 1e-3 and np.allclose(out, want, rtol=1e-5, atol=1e-6)
 
 
 class EchoNaf(torch.nn.Module):
