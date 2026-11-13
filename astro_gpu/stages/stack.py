@@ -332,7 +332,8 @@ class Stack(Stage):
 
     def run(self, ctx: Context, p: StackParams) -> None:
         t0 = time.time()
-        if ctx.device.type == "cuda":
+        if ctx.device.type == "cuda":                 # the allocator of a fresh worker exists only after a first tensor
+            torch.zeros(1, device=ctx.device)
             torch.cuda.reset_peak_memory_stats(ctx.device)
         if p.method == "classic" and classic_missing():
             raise StageError(CLASSIC_NOT_YET)
