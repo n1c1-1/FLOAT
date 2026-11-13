@@ -47,8 +47,9 @@ class Layers:
 class SimpleSettings(StageParams):
     """The settings of a simple rendering. The defaults are the suggested rendering (Post's sliders at 2)."""
 
-    sky: float = P(0.20, label="Sky brightness", ge=0.02, le=0.6, step=0.01,
-                   help="Display level of the median sky after the stretch (0 = black, 1 = white).",
+    sky: float = P(0.25, label="Sky brightness", ge=0.02, le=0.6, step=0.01,
+                   help="Display level of the median sky after the stretch (0 = black, 1 = white). 0.25 by default: "
+                        "the target of the published screen transfer function (the median brought to 0.25).",
                    tip="0.15-0.25 looks natural on screen.")
     contrast: float = P(0.0, label="Contrast", ge=-1.0, le=1.0, step=0.01,
                         help="S-curve after the stretch: above 0 the mid-tones are spread, below they are flattened.")
@@ -67,11 +68,11 @@ class SimpleSettings(StageParams):
                                  "and the three channels scaled with it (Lupton et al. 2004: the colours of the linear "
                                  "image kept). 0.5 by default: the nebulae keep their colour and the bright cores "
                                  "their structure, without the strong reds of 1.")    # bench of 5 November
-    faint: float = P(0.8, label="Faint tones", ge=-1.0, le=3.0, step=0.05,
+    faint: float = P(0.0, label="Faint tones", ge=-1.0, le=3.0, step=0.05,
                      help="Raises (above 0) or lowers (below 0) the faint tones just above the sky, without moving "
                           "the sky: a generalised hyperbolic stretch (D. Payne and M. Cranfield) of the range above the "
-                          "sky, its symmetry point at the sky. 0 = the automatic stretch as it is; 0.8 by "
-                          "default: the faint extensions and outer arms come up, no core burnt.",  # checked 5 Nov.
+                          "sky, its symmetry point at the sky. 0 = the automatic stretch as it is, "
+                          "by default; above 0 the faint extensions and outer arms come up.",
                      tip="The faint extensions of a nebula, the outer arms of a galaxy. Sky sets the black, this the "
                          "faint tones, as Blacks and Shadows are two controls in photo editors.")
     halpha: float = P(0.0, label="H-alpha", ge=-1.0, le=3.0, step=0.05,

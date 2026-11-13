@@ -161,7 +161,7 @@ class RenderSimple(Stage):
                    "renders it with its sliders (sky, contrast, saturation, noise).")
     deps = ("stack",)
     Params = RenderSimpleParams
-    version = "11"         # 2: the emission anchor of the output preparation (the H-alpha of Classic was violet on
+    version = "12"         # 2: the emission anchor of the output preparation (the H-alpha of Classic was violet on
                            # heart_a7s);
                            # 3: the Raw stack exit's sky made grey (it had the green of the light pollution);
                            # 4: the colour of the places near saturation from their surroundings (repair_saturated);
@@ -175,6 +175,8 @@ class RenderSimple(Stage):
                            # and the fusion's version 7 recomputes them)
                            # 10: a single stack is trimmed by the frames' footprint, not by the weight's sampling holes
                            # 11: a single stack is not cropped at all (the frame stays the reference frame's)
+                           # 12: the default rendering is the published screen transfer alone: the sky at 0.25, no faint
+                           # tones lift (they were 0.20 and 0.8)
 
     def run(self, ctx: Context, p: RenderSimpleParams) -> None:
         from ..render.simple import SimpleRenderEngine, SimpleSettings, image_stats
