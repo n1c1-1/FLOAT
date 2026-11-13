@@ -65,17 +65,17 @@ SATURATED = "saturated frame"                   # stack.SATURATED
 BY_HAND = "excluded by hand"                    # stack.EXCLUDED
 NO_MEASURE = "no measure of its weight"
 _K = {
-    "fwhm": "stars {sigma:.1f} σ larger than the night's median ({value:.1f} px for {median:.1f} px): "
+    "fwhm": "stars {sigma:.1f} sigma larger than the night's median ({value:.1f} px for {median:.1f} px): "
             "wind, focus or seeing?",
-    "roundness": "stars {sigma:.1f} σ less round than the night's median ({value:.2f} for {median:.2f}): "
+    "roundness": "stars {sigma:.1f} sigma less round than the night's median ({value:.2f} for {median:.2f}): "
                  "wind or tracking?",
-    "transparency": "transparency {sigma:.1f} σ below the night's median ({pct:.0f} % of it): clouds or haze?",
-    "background": "sky {sigma:.1f} σ brighter than the night's median ({pct:+.0f} %): moon, dawn or a light?",
+    "transparency": "transparency {sigma:.1f} sigma below the night's median ({pct:.0f} % of it): clouds or haze?",
+    "background": "sky {sigma:.1f} sigma brighter than the night's median ({pct:+.0f} %): moon, dawn or a light?",
 }
 #: the same without the ratio to the median, when the median is not above zero
 _K_PLAIN = {
-    "transparency": "transparency {sigma:.1f} σ below the night's median: clouds or haze?",
-    "background": "sky {sigma:.1f} σ brighter than the night's median: moon, dawn or a light?",
+    "transparency": "transparency {sigma:.1f} sigma below the night's median: clouds or haze?",
+    "background": "sky {sigma:.1f} sigma brighter than the night's median: moon, dawn or a light?",
 }
 _PCT = {
     "fwhm": "stars of {value:.1f} px: not among the {keep:g} % of frames with the finest stars",
@@ -92,19 +92,19 @@ _VALUE = {
 LOW_WEIGHT = "weight {pct:.1f} % of the best frame's, under the minimum of {min:.0f} %"
 
 _A_HIT = {
-    "fwhm": "{n} frame(s) with stars more than {k:g} σ larger than the night's median (above {limit:.1f} px): "
+    "fwhm": "{n} frame(s) with stars more than {k:g} sigma larger than the night's median (above {limit:.1f} px): "
             "excluded",
-    "roundness": "{n} frame(s) with stars more than {k:g} σ less round than the night's median (below "
+    "roundness": "{n} frame(s) with stars more than {k:g} sigma less round than the night's median (below "
                  "{limit:.2f}): excluded",
-    "transparency": "{n} frame(s) more than {k:g} σ below the night's median transparency (under {pct:.0f} % of "
+    "transparency": "{n} frame(s) more than {k:g} sigma below the night's median transparency (under {pct:.0f} % of "
                     "it): excluded",
-    "background": "{n} frame(s) with a sky more than {k:g} σ brighter than the night's median: excluded",
+    "background": "{n} frame(s) with a sky more than {k:g} sigma brighter than the night's median: excluded",
 }
 _A_NONE = {
-    "fwhm": "no frame with stars more than {k:g} σ larger than the night's median ({limit:.1f} px)",
-    "roundness": "no frame with stars more than {k:g} σ less round than the night's median ({limit:.2f})",
-    "transparency": "no frame more than {k:g} σ below the night's median transparency ({pct:.0f} % of it)",
-    "background": "no frame with a sky more than {k:g} σ brighter than the night's median",
+    "fwhm": "no frame with stars more than {k:g} sigma larger than the night's median ({limit:.1f} px)",
+    "roundness": "no frame with stars more than {k:g} sigma less round than the night's median ({limit:.2f})",
+    "transparency": "no frame more than {k:g} sigma below the night's median transparency ({pct:.0f} % of it)",
+    "background": "no frame with a sky more than {k:g} sigma brighter than the night's median",
 }
 A_OTHER_HIT = "{n} frame(s) excluded by this filter"
 A_OTHER_NONE = "no frame excluded by this filter"

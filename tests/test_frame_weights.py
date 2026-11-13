@@ -124,7 +124,7 @@ def test_k_sigma_filters_exclude_a_cloud_passage_with_its_reason():
     np.testing.assert_allclose(fs.weight[keep], weights(m)[keep])
     assert (fs.weight[~keep] == 0).all()
     assert fs.suggestion.reason == f"{N - 4} of {N} aligned frames kept"
-    assert fs.auto["filter_transparency"].reason.startswith("4 frame(s) more than 2.5 σ below the night's median")
+    assert fs.auto["filter_transparency"].reason.startswith("4 frame(s) more than 2.5 sigma below the night's median")
 
 
 def windy():
@@ -142,7 +142,7 @@ def test_k_sigma_filters_exclude_the_frames_with_large_stretched_stars():
     assert "wind, focus or seeing?" in fs.reasons[25] and "wind or tracking?" in fs.reasons[25]
     med = np.median(m["fwhm"])
     assert fs.reasons[25].startswith("stars ") and \
-        f" σ larger than the night's median ({m['fwhm'][25]:.1f} px for {med:.1f} px)" in fs.reasons[25]
+        f" sigma larger than the night's median ({m['fwhm'][25]:.1f} px for {med:.1f} px)" in fs.reasons[25]
     # the default (no filter) keeps them, with the lower weight their stars give them
     d = sel(m)
     assert d.kept[25:28].all() and (d.weight[25:28] < np.median(d.weight)).all()
@@ -254,7 +254,7 @@ def test_texts_are_templates_with_their_numbers():
     for r in fs.exclusions:
         by.setdefault(r.frame, []).append(r)
     fr = ["; ".join(r.text("fr") for r in by.get(i, [])) for i in range(len(fs.kept))]
-    assert fr[12].count(",") >= 1 and "," in fr[12].split(" σ")[0]     # decimal comma: "30,4 σ"
+    assert fr[12].count(",") >= 1 and "," in fr[12].split(" sigma")[0]     # decimal comma: "30,4 sigma"
     assert ["; ".join(r.text("en") for r in by.get(i, [])) for i in range(len(fs.kept))] == list(fs.reasons)
     json.dumps(fs.as_dict())
     assert K_SIGMA_FILTERS == {"fwhm": "2.5k", "roundness": "2.5k", "transparency": "2.5k", "background": ""}

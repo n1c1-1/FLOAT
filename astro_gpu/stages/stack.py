@@ -1408,12 +1408,12 @@ def rejection_suggestion(n: int, scale: float, pixfrac: float, cfa: str, kappa: 
     need = clipping_min_values(kappa)
     if v < need:
         return Auto("by_count", "{n} frames x {share:.0f} % of the points reached in the scarcest colour = "
-                                "{values:.1f} values per point, under the {need} a sigma clipping at {kappa:g} σ "
-                                "needs ((N - 1) / √N > {kappa:g}): rejection by frame count",
+                                "{values:.1f} values per point, under the {need} a sigma clipping at {kappa:g} sigma "
+                                "needs ((N - 1) / sqrt(N) > {kappa:g}): rejection by frame count",
                     {"n": n, "share": 100 * share, "values": v, "need": need, "kappa": kappa})
     return Auto("own", "{n} frames x {share:.0f} % of the points reached in the scarcest colour = {values:.1f} "
-                       "values per point, at least the {need} a sigma clipping at {kappa:g} σ needs "
-                       "((N - 1) / √N > {kappa:g}): sigma clipping on the raw pixels",
+                       "values per point, at least the {need} a sigma clipping at {kappa:g} sigma needs "
+                       "((N - 1) / sqrt(N) > {kappa:g}): sigma clipping on the raw pixels",
                 {"n": n, "share": 100 * share, "values": v, "need": need, "kappa": kappa})
 
 

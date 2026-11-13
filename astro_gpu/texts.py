@@ -99,9 +99,9 @@ REWORDED: dict[str, str] = {
         "{n} frames: percentile clipping ({low:g} / {high:g}), the usual choice under 6 frames",
     "{n} frames: winsorized sigma clipping ({low:g} / {high:g} σ), as the reference processing suite's WBPP from 6 to 15 frames, with "
     "the reference program's thresholds":
-        "{n} frames: winsorized sigma clipping ({low:g} / {high:g} σ), the usual choice from 6 to 15 frames",
+        "{n} frames: winsorized sigma clipping ({low:g} / {high:g} sigma), the usual choice from 6 to 15 frames",
     "{n} frames: linear fit clipping ({low:g} / {high:g} σ), as the reference processing suite's WBPP from 16 frames":
-        "{n} frames: linear fit clipping ({low:g} / {high:g} σ), the usual choice from 16 frames",
+        "{n} frames: linear fit clipping ({low:g} / {high:g} sigma), the usual choice from 16 frames",
     "{n} frames: generalized ESD test (up to {low:.0%} outliers, significance {high:g}), as the reference program advises above 50 "
     "frames":
         "{n} frames: generalized ESD test (up to {low:.0%} outliers, significance {high:g}), the usual advice above 50 "

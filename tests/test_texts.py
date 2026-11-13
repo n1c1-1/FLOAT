@@ -473,5 +473,5 @@ def test_the_interface_names_no_other_software():
     assert texts.choice_label("bilinear_guide", "fr") == "Guide bilinéaire" and texts.choice_label("own") == "On the raw pixels"
     old = "{n} frames: linear fit clipping ({low:g} / {high:g} σ), as the reference processing suite's WBPP from 16 frames"
     args = {"n": 40, "low": 5, "high": 3.5}
-    assert texts.format_reason(old, args) == "40 frames: linear fit clipping (5 / 3.5 σ), the usual choice from 16 frames"
+    assert texts.format_reason(old, args) == "40 frames: linear fit clipping (5 / 3.5 sigma), the usual choice from 16 frames"
     assert texts.format_reason(old, args, "fr").startswith("40 images : rejet par ajustement linéaire (5 / 3,5 σ)")
