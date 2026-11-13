@@ -559,6 +559,9 @@ class Stack(Stage):
 
         chan_fix = None
         by_count = p.drizzle_rejection == "by_count"
+        if not colour:
+            ctx.log(rejection_line(p.drizzle_rejection, "drizzle_rejection" in _given(ctx, "stack"), len(used), S,
+                                   p.pixfrac, info["cfa"], p.kappa))
 
         def deposit_moments(num, den, sq, val, Xo, Yo, w, keep):
             """The kept samples into the weighted sum, the weight sum and the weighted sum of squares (about c0)."""
@@ -1411,6 +1414,22 @@ def rejection_suggestion(n: int, scale: float, pixfrac: float, cfa: str, kappa: 
                        "values per point, at least the {need} a sigma clipping at {kappa:g} σ needs "
                        "((N - 1) / √N > {kappa:g}): sigma clipping on the raw pixels",
                 {"n": n, "share": 100 * share, "values": v, "need": need, "kappa": kappa})
+
+
+REJECTION_NAMES = {"own": "sigma clipping on the raw pixels", "by_count": "by frame count",
+                   "integration": "integration of the debayered frames"}
+
+
+def rejection_line(mode: str, by_hand: bool, n: int, scale: float, pixfrac: float, cfa: str, kappa: float) -> str:
+    """The log line saying which rejection the Bayer drizzle uses and why: set by hand, or the automatic choice's
+    figures (``rejection_suggestion``)."""
+    name = REJECTION_NAMES.get(mode, mode)
+    if by_hand:
+        return f"drizzle rejection: {name} (set by hand)"
+    v, _share = values_per_point(n, scale, pixfrac, cfa)
+    need = clipping_min_values(kappa)
+    return (f"drizzle rejection: {name} (automatic: {v:.1f} values per point in the scarcest colour, "
+            f"{'under' if v < need else 'at least'} the {need} a sigma clipping at {kappa:g} σ needs)")
 
 
 def count_pass(ctx, p: StackParams, frame_model, used, weight, chmap, h: float, S: float, Ho: int, Wo: int, dev,

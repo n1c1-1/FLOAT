@@ -372,6 +372,18 @@ PATTERNS: list[tuple[re.Pattern, str, tuple]] = [
          "drizzle {0}x{1} from {2} frames in {3} min, {4} % pixels rejected", ()),
         # issue #125: the threads of the stack on the processor, the time of each of its passes (stages/stack.PassClock,
         # core/stack_classic.py)
+        (r"^drizzle rejection: (.+) \(set by hand\)$", "drizzle rejection: {0} (set by hand)", (0,)),
+        (r"^drizzle rejection: (.+) \(automatic: ([\d.]+) values per point in the scarcest colour, under the (\d+) a "
+         r"sigma clipping at ([\d.]+) σ needs\)$",
+         "drizzle rejection: {0} (automatic: {1} values per point in the scarcest colour, under the {2} a sigma "
+         "clipping at {3} σ needs)", (0,)),
+        (r"^drizzle rejection: (.+) \(automatic: ([\d.]+) values per point in the scarcest colour, at least the (\d+) "
+         r"a sigma clipping at ([\d.]+) σ needs\)$",
+         "drizzle rejection: {0} (automatic: {1} values per point in the scarcest colour, at least the {2} a sigma "
+         "clipping at {3} σ needs)", (0,)),
+        (r"^sigma clipping on the raw pixels$", "sigma clipping on the raw pixels", ()),
+        (r"^by frame count$", "by frame count", ()),
+        (r"^integration of the debayered frames$", "integration of the debayered frames", ()),
         (r"^stacking on the processor with (\d+) threads$", "stacking on the processor with {0} threads", ()),
         (r"^pass (\d) done in ([\d.]+) min, of which (\d+) s reading the frames$",
          "pass {0} done in {1} min, of which {2} s reading the frames", ()),
