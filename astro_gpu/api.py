@@ -2090,9 +2090,7 @@ def fetch_survey(p: Project2, wf: int | Workflow, progress: Callable[[float, str
     computer, and the results computed after them in the workflows that read them, go to the store's trash (never
     deleted), so that the next run computes them with the survey (their keys do not change: the definition did not).
     Returns the survey's title. Raises when the field is not solved, no survey covers it, or no service answers."""
-    from astropy.io import fits
-    from astropy.wcs import WCS
-
+    from .core.imgutil import read_wcs
     from .stages.surveys import SURVEYS, survey_on_grid
     ast = _dir(p, wf, "astrometry")
     stk = _dir(p, wf, "align_on") or _dir(p, wf, "stack")        # the grid the field was solved on
@@ -2105,7 +2103,7 @@ def fetch_survey(p: Project2, wf: int | Workflow, progress: Callable[[float, str
     scale = float((m.get("metrics") or {})["scale_arcsec"])
     which = (json.loads((_dir(p, wf, "surveys") / "manifest.json").read_text(encoding="utf-8")).get("params") or {}
              ).get("survey", "auto") if _dir(p, wf, "surveys") is not None else "auto"
-    _img, used = survey_on_grid(WCS(fits.getheader(ast / "wcs.fits")), int(meta["width"]), int(meta["height"]), scale,
+    _img, used = survey_on_grid(read_wcs(ast / "wcs.fits"), int(meta["width"]), int(meta["height"]), scale,
                                 "auto" if which == "none" else which, log=lambda *a: None, progress=progress,
                                 fetch=True)
     keys, store = _keys(p), _store(p)
@@ -2214,8 +2212,6 @@ def sky_objects(p: Project2, wf: int | Workflow, which: str = "current") -> list
     is not computed; ``CatalogueUnavailable`` (a plain message) when the catalogue shipped with the package is
     incomplete. Where the names come from: ``core.skyobjects.catalogue_source()``. The first call of a session reads
     the catalogue (a few tens of ms from its cache, about a second the first time): worker thread."""
-    import warnings
-
     import numpy as np
 
     from .core import skyobjects as so
@@ -2226,11 +2222,8 @@ def sky_objects(p: Project2, wf: int | Workflow, which: str = "current") -> list
     mt = f.stat().st_mtime
     hit = _WCS.get(str(f))
     if hit is None or hit[0] != mt:
-        from astropy.io import fits
-        from astropy.wcs import WCS
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            hit = _WCS[str(f)] = (mt, WCS(fits.getheader(f)))
+        from .core.imgutil import read_wcs
+        hit = _WCS[str(f)] = (mt, read_wcs(f))
     st = _upstream(p, wf, d, "stack", which)
     if st is None:
         raise NotDone(f"the stack the astrometry of workflow {_wid(wf)} was solved on is gone ({which})")

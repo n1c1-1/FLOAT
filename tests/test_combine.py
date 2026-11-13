@@ -431,3 +431,19 @@ def test_each_filter_is_matched_linearly_to_the_halpha_on_the_pixels_between_the
     assert (C.MATCH_LOW, C.MATCH_HIGH, C.MATCH_REFERENCE) == (1e-7, 0.875, "Ha")
     with pytest.raises(StageError):
         C.linear_match(oiii, np.zeros_like(ha), valid)  # no reference pixel in the bounds
+
+
+def test_a_combination_reads_the_plate_solutions_without_an_astropy_note(tmp_path):
+    """The solution file is a header with no image: the combination reads it with core/imgutil.read_wcs, so no
+    "more axes than the image" note reaches the run's log."""
+    import warnings
+
+    from astropy.wcs import FITSFixedWarning
+    H, W = 60, 80
+    for name in ("ha", "oiii"):
+        _output(tmp_path / name, np.repeat((5 * _star(H, W, 40, 30))[None], 3, 0) + 0.01, _wcs([41.0, 31.0]))
+    ins = [{"role": r, "channel": "L", "pid": i, "dir": str(tmp_path / r.lower()), "wcs": str(tmp_path / r.lower() / "wcs.fits"),
+            "grid": ["g", 1]} for i, r in ((1, "Ha"), (2, "OIII"))]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", FITSFixedWarning)
+        _run(tmp_path, C.CombineHO, C.CombineHO.Params(inputs=ins))
