@@ -63,7 +63,11 @@ def _flows(g, ix, out: Compiled) -> list[_Flow]:
     for r in g.rows:
         root = ix.row[ix.root(r.id)]
         if root.blocks and g.blocks[root.blocks[0]].kind == "combine_layers":
-            continue                                   # a Post layer, not a workflow
+            rest = [g.blocks[b].kind for b in ix.effective(r.id)[1:]]
+            if rest:                                   # a Post layer, not a workflow: nothing runs after it
+                out.problems.append(f"“{r.name}”: {', '.join(rest)} after a Combine layers (a Post layer) is not "
+                                    "compiled")
+            continue
         flows.append(_Flow(r, r, ix.effective(r.id)))
     for t in g.taps:
         if t.block not in ix.row_of:
@@ -90,6 +94,11 @@ def _flows(g, ix, out: Compiled) -> list[_Flow]:
         if src not in ix.row_of or src in ends or (w.wid is not None and any(f.wid == w.wid for f in flows)):
             continue
         r = ix.row[ix.row_of[src]]
+        root = ix.row[ix.root(r.id)]
+        if root.blocks and g.blocks[root.blocks[0]].kind == "combine_layers":
+            out.problems.append(f"the wire {w.id} leaves a block after a Combine layers (a Post layer): its input "
+                                "is not compiled")
+            continue
         eff = ix.effective(r.id)
         f = _Flow(gm.Tap(f"~{src}", src, f"{r.name} · {g.blocks[src].kind}"), r, eff[:eff.index(src) + 1], True)
         f.wid, nxt = nxt, nxt + 1
@@ -135,7 +144,10 @@ def _source(g, ix, f, root, ports_wid, out: Compiled):
     for w in g.wires:
         if not w.active or w.dst[0] != head.id:
             continue
-        i = {"pid": ports_wid(w), "role": ROLE_OF_PORT.get(w.dst[1], w.dst[1])}
+        pid = ports_wid(w)
+        if pid < 0:
+            continue                                   # said by _flows
+        i = {"pid": pid, "role": ROLE_OF_PORT.get(w.dst[1], w.dst[1])}
         if w.channel is not None:
             i["channel"] = w.channel
         image = w.image if w.image is not None else IMAGE_OF_PORT.get(w.src[1])
@@ -178,7 +190,10 @@ def compile_into(g, p) -> Compiled:
     names = _names(g, flows, out)
 
     def engine(b):
-        return g.blocks[b].engine or names.get(b) or g.blocks[b].kind
+        blk = g.blocks[b]
+        if blk.kind == "combine":
+            return wfl.BLOCKS_OF_KIND.get(gm.combo_type(blk), "combine")
+        return blk.engine or names.get(b) or blk.kind
     # -- nights
     sids = [n["sid"] for n in g.nights]
     fresh = {}
@@ -351,27 +366,32 @@ _RULES = []
 
 
 def engine_problems(g, keys=True) -> list[tuple[str, str]]:
-    """What the engine refuses in the compiled definition of a graph: [(class, detail)], [] when it accepts it.
-    Classes: "validate" (Project2.validate), "graph" (wfl.graph_problem: its template), "chain" (the stage chain),
-    "wiring" (Keys.wiring_problem of a combination or an Align on), "compile" (what the compile had to decide)."""
+    """What the engine refuses in the compiled definition of a graph: [(class, detail)], [] when it accepts it. The
+    detail is a template (ids, numbers, names taken out), so that one rule broken twice is one class.
+    Classes: "graph" (wfl.graph_problem of a workflow: its template and the block), "validate" (Project2.validate, when
+    no graph rule is broken), "chain" (the stage chain), "wiring" (Keys.wiring_problem of a combination or an Align on
+    the core does not grey), "compile" (what the compile had to decide: something the engine has no form for)."""
     from ..core.project2 import Project2
     p = Project2(name="check")
     out: list[tuple[str, str]] = []
     try:
         c = compile_into(g, p)
     except Exception as e:  # noqa: BLE001
-        return [("compile-crash", f"{type(e).__name__}: {e}")]
-    out += [("compile", x) for x in c.problems]
-    try:
-        p.validate()
-    except ValueError as e:
-        out.append(("validate", _template(str(e))))
+        return [("compile-crash", f"{type(e).__name__}: {_template(str(e))}")]
+    out += [("compile", _template(x)) for x in c.problems]
+    graph = False
     for w in p.workflows:
         if w.blocks is not None:
             e = wfl.graph_problem(w.blocks, wfl.source_of(w))
             if e is not None:
-                out.append(("graph", f"{e.template} [{getattr(e, 'block', '')}]"))
-                continue
+                out.append(("graph", f"{e.template} [{getattr(e, 'block', '')}, from {wfl.source_of(w)}]"))
+                graph = True
+    if not graph:
+        try:
+            p.validate()
+        except ValueError as e:
+            out.append(("validate", _template(str(e))))
+    for w in p.workflows:
         try:
             p.chain(w)
         except (ValueError, KeyError) as e:
@@ -379,19 +399,24 @@ def engine_problems(g, keys=True) -> list[tuple[str, str]]:
     if keys and not any(k in ("validate", "chain", "graph") for k, _ in out):
         try:
             from ..core.store import Keys, key_rules
+            from .judge import evaluation
+            from .rules import greyed
             if not _RULES:
                 _RULES.append(key_rules())
             k = Keys(p, _RULES[0], _NoDisk())
+            info = evaluation(g)
+            head = {wid: b for b, rows in c.map.items() for wid, name in rows
+                    if g.blocks[b].kind == "combine"}
             for w in p.workflows:
-                ch = k.chain(w)
-                for st in ch:
+                for st in k.chain(w):
                     if wfl.base(st) in wfl.BLOCKS_OF_KIND.values() or wfl.base(st) == "align_on":
                         why = k.wiring_problem(w, st)
-                        if why:
-                            out.append(("wiring", f"{wfl.base(st)}: {_template(why)}"))
+                        b = head.get(w.id)
+                        if why and not (b is not None and greyed(g, b, info=info)):
+                            out.append(("wiring", f"{wfl.base(st).split('_')[0]}: {_template(why)}"))
         except Exception as e:  # noqa: BLE001
             out.append(("keys", f"{type(e).__name__}: {_template(str(e))}"))
-    return out
+    return sorted(set(out))
 
 
 def _template(text: str) -> str:
@@ -399,4 +424,7 @@ def _template(text: str) -> str:
     import re
     t = re.sub(r"'[^']*'|\"[^\"]*\"|“[^”]*”", "'…'", text)
     t = re.sub(r"\[[^\]]*\]", "[…]", t)
+    t = re.sub(r"^(?:[A-Za-zα ]+, )*[A-Za-zα ]+ to wire$", "… to wire", t)
+    t = re.sub(r"[A-Za-zα ]+ is not on the grid of [A-Za-zα ]+", "… is not on the grid of …", t)
+    t = re.sub(r"'…': [a-z_]+(, [a-z_]+)* after", "'…': … after", t)
     return re.sub(r"\d+", "n", t)
