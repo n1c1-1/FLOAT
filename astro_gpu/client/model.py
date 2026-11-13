@@ -1603,8 +1603,15 @@ class ProjectModel(QObject):
         api.set_workflows(self.p, ws, current)
         self.p.stack_mode = mode
         post_back = json.loads(post) != (getattr(self.p, "post", None) or {})
+        in_post = self.sel_step in ("final", "composition")        # Post is shown: it stays on its page and version
         if post_back:
-            self.p.post = json.loads(post)
+            here = getattr(self.p, "post", None) or {}
+            back = json.loads(post)
+            if in_post and here.get("active") is not None and {v["id"] for v in back.get("versions", [])} ==                     {v["id"] for v in here.get("versions", [])} and any(
+                    v["id"] == here["active"] for v in back.get("versions", [])):
+                back["active"] = here["active"]          # (a version brought back or taken out shows itself, #145)
+            self.p.post = back
+            post_back = back != here
         if frames_back:
             self.reload_sources()
         self.pending_change = None
@@ -1617,7 +1624,9 @@ class ProjectModel(QObject):
             back = [(i, k) for i, v in sorted(enumerate(self.paths), key=lambda iv: iv[0] != self.current)
                     for k in self.block_keys(v) if k != "post" and k not in had.get(v.pid, [])]
             keys = self.block_keys(self.path)
-            if back:
+            if in_post:
+                pass
+            elif back:
                 self.current, self.sel_step = back[0]
             elif self.sel_step and self.sel_step not in ("sources", "final") and self.sel_step not in keys and \
                     self.sel_step not in self._shown_keys(self.path):

@@ -241,3 +241,18 @@ def test_the_graphs_undo_leaves_a_step_made_in_post_and_posts_undo_names_what_it
         page.shutdown()
         page.deleteLater()
         QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_an_undo_taken_while_post_is_shown_leaves_post_on_its_page_and_version(model):
+    """A step undone from Post (a branch put back, say) must not select a block (Inspect opened empty) nor bring the
+    version a step was made in back on screen."""
+    full = by_name(model, "Full")
+    first = model.p.post["active"]
+    model.new_post_version()
+    second = model.p.post["active"]
+    model.add_post_layer(full.pid, "stars")                        # a step of the graph, made in the second version
+    model.set_post_version(first)
+    model.select(step="final")
+    assert model.undo() and model.sel_step == "final"
+    assert model.p.post["active"] == first
+    assert model.can_redo() and second in [v["id"] for v in model.p.post["versions"]]
