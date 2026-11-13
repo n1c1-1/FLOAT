@@ -946,8 +946,10 @@ class Provider:
     def available(self, pid) -> bool:
         raise NotImplementedError
 
-    def canvas(self, pids: list) -> Canvas:
-        """The canvas of these workflows and images (bottom first, see ``source_id``)."""
+    def canvas(self, pids: list, joint: tuple = ()) -> Canvas:
+        """The canvas of these workflows and images (bottom first, see ``source_id``). ``joint``: pairs of ids whose images
+        a Combine layers layer puts together (its starless side, its stars side): the canvas is also limited to where both
+        have data, as a combination's frame is. Only given when there is a pair, so a provider without it keeps its form."""
         raise NotImplementedError
 
     def layer(self, lay: dict, level: int, box: tuple[int, int, int, int], draft: bool = False,
@@ -1088,9 +1090,15 @@ class Composer:
                 pids += [x for x in source_ids(lay) if self.provider.available(x) and x not in pids]
         if not pids:
             return None
-        key = (tuple(pids), tuple(self.provider.version(p) for p in pids))
+        joint = []                                   # a Combine layers layer is a combination of two images (rule of the
+        for lay in layers:                           # combinations: the frame is where every input has data)
+            if is_pixel(lay) and is_group(lay):
+                ids = source_ids(lay)
+                if len(ids) == 2 and ids[0] != ids[1] and all(x in pids for x in ids) and (ids[0], ids[1]) not in joint:
+                    joint.append((ids[0], ids[1]))
+        key = (tuple(pids), tuple(self.provider.version(p) for p in pids), tuple(joint))
         if self._canvas is None or self._canvas[0] != key:
-            self._canvas = (key, self.provider.canvas(pids))
+            self._canvas = (key, self.provider.canvas(pids, tuple(joint)) if joint else self.provider.canvas(pids))
         return self._canvas[1]
 
     def forget(self):
