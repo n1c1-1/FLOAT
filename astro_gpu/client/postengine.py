@@ -642,7 +642,7 @@ def sub_layer(lay: dict, sub: str) -> dict:
     if sub == "stars" or sub == "synth":
         return dict(lay, pid=lay["stars_pid"] if lay.get("stars_pid") is not None else lay["pid"], part=sub)
     if sub == "stars" and lay.get("stars_image") == "output" and lay.get("stars_pid") is not None:
-        return dict(lay, pid=lay["stars_pid"], part=None)              # the Output of a combination of stars
+        return dict(lay, pid=lay["stars_pid"], part=None, stars_over=lay["pid"])   # a combination of stars' Output
     return dict(lay, part=None if lay.get("starless") == "output" and sub == "starless" else sub)
 
 

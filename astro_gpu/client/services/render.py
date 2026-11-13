@@ -419,6 +419,11 @@ class LayerSource(Provider):
         fi, region, size = self._window(sid, level, box)
         base = self.bases(lay.get("base"))
         kw = {"part": "stars" if lay.get("part") == "synth" else lay.get("part"), "blend": lay.get("blend")}
+        if lay.get("stars_over") is not None:           # the Output of a combination of stars, on a starless combination
+            over = self.folder(lay["stars_over"])
+            if over is None:
+                raise FileNotFoundError("the starless combination this one's stars go onto is not computed")
+            kw = {"stats_from": over.path, "blend": lay.get("blend")}
         if level == 0 and tuple(box) != (0, 0, *whole):
             li = self.service.render(f.path, base, lay.get("sliders"), 1.0, region=tuple(int(round(v)) for v in region),
                                      **kw)

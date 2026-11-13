@@ -150,6 +150,29 @@ class StarsRenderEngine(SimpleRenderEngine):
         return (L + s.star_saturation * (y - L)).clamp(0, 1)
 
 
+class CombinedStarsEngine(StarsRenderEngine):
+    """The stars alone of a combination of stars (a second combination block of the same type as the starless image's,
+    reading the filters' stars): its Output's linear image, stretched as ``star_tone`` stretches a Stars block's stars,
+    with the statistics of the whole image the starless combination's Output gives (``stats_folder``), so that the stars
+    go onto that image at their own level. ``render(..., part="stars")`` only."""
+
+    def __init__(self, folder: str | Path, stats_folder: str | Path, device: str = "cuda:0"):
+        self.dir = Path(folder)
+        self.dev = torch.device(devices.usable(device))
+        mine = json.loads((self.dir / "prep_simple.json").read_text(encoding="utf-8"))
+        theirs = json.loads((Path(stats_folder) / "prep_simple.json").read_text(encoding="utf-8"))
+        self.prep = {**mine, "stats_full": theirs["stats"], "linked": theirs.get("linked", True)}
+        self.M = np.array(mine["M"], np.float64)
+        self.SC = float(mine.get("drizzle_scale", 1.0))
+        self.crop = mine["crop"]
+        self._host = {"stars": torch.from_numpy(np.load(self.dir / "lin.npy"))}
+        self.H, self.W = self._host["stars"].shape[-2:]
+        self.valid_host = torch.from_numpy(np.load(self.dir / "valid.npy"))
+        self.has_raw = False
+        self._proxy = {}
+        self.last_fit = None
+
+
 #: Small stars: below this setting the small stars fade (by its share), above it they go and the size grows
 SMALL_START = 0.4
 #: a typical star width when the stars cannot be measured (full-resolution pixels)

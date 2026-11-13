@@ -32,7 +32,7 @@ from ..core.params import P, StageParams
 from . import ops
 from .simple import SimpleRenderEngine
 from .sliders import availability, settings_at
-from .stars import PARTS, StarsRenderEngine, is_stars_folder
+from .stars import PARTS, CombinedStarsEngine, StarsRenderEngine, is_stars_folder
 
 NOTE_CPU = "GPU memory full: rendered on the CPU"
 
@@ -127,6 +127,19 @@ class LayerService:
         self._eng[k], self._size[k] = eng, need
         return eng
 
+    def combined_stars_engine(self, folder, stats_folder) -> CombinedStarsEngine:
+        """The engine of a combination of stars' Output (``folder``) stretched with the statistics of the starless
+        combination's Output (``stats_folder``); kept by the pair."""
+        k = self._key(folder) + "|" + self._key(stats_folder)
+        if k in self._eng:
+            self._eng.move_to_end(k)
+            return self._eng[k]
+        need = folder_bytes(folder)
+        self._make_room(need)
+        eng = CombinedStarsEngine(folder, stats_folder, device=self.device)
+        self._eng[k], self._size[k] = eng, need
+        return eng
+
     def _make_room(self, need: int) -> None:
         import psutil
         while self._eng:
@@ -177,10 +190,14 @@ class LayerService:
         return s
 
     def render(self, folder, base: Any = None, sliders: dict[str, float] | None = None, scale: float = 0.25,
-               region=None, part: str | None = None, blend: str | None = None, **_kw) -> LayerImage:
+               region=None, part: str | None = None, blend: str | None = None, stats_from=None, **_kw) -> LayerImage:
         """A workflow layer at a scale (1, 1/2, 1/4...), or a region (x0, x1, y0, y1) of the full-resolution grid.
         ``part``: None (the Output block's image), or one of the Stars block's (from its folder): 'starless', 'stars',
-        'combined'; ``blend``: how a combined layer puts its stars back (render/stars.BLENDS)."""
+        'combined'; ``blend``: how a combined layer puts its stars back (render/stars.BLENDS). ``stats_from``: the folder
+        of a starless combination's Output, when ``folder`` is the Output of the combination of the stars (its stars
+        alone, stretched with that image's statistics)."""
+        if stats_from is not None:
+            return self._render_combined_stars(folder, stats_from, base, sliders, scale, region, blend)
         kind = layer_kind(folder, part)
         if (part is None) == is_stars_folder(folder):
             raise ValueError("the Stars block's images come from its folder, the others from the Output block's")
@@ -193,6 +210,20 @@ class LayerService:
         info = {"kind": kind, "scale": lay.scale, "region": lay.info.get("region"), "part": part,
                 "grid": [int(eng.W), int(eng.H)], "drizzle_scale": float(eng.SC), "device": str(eng.dev),
                 "render_ms": round(1000 * (time.perf_counter() - t0), 1), "note": note,
+                "settings": s.model_dump(mode="json")}
+        return LayerImage(rgb, tuple(int(v) for v in eng.crop), info)
+
+    def _render_combined_stars(self, folder, stats_from, base, sliders, scale, region, blend) -> LayerImage:
+        s = settings_at("stars", base, sliders, False, origin_of(folder))
+        if blend:
+            s = s.model_copy(update={"blend": type(s)(blend=blend).blend})
+        t0 = time.perf_counter()
+        eng = self.combined_stars_engine(folder, stats_from)
+        lay = eng.render(s, scale, region, part="stars")
+        rgb = lay.final.float().cpu().numpy()
+        info = {"kind": "stars", "scale": lay.scale, "region": lay.info.get("region"), "part": "stars",
+                "grid": [int(eng.W), int(eng.H)], "drizzle_scale": float(eng.SC), "device": str(eng.dev),
+                "render_ms": round(1000 * (time.perf_counter() - t0), 1), "note": "",
                 "settings": s.model_dump(mode="json")}
         return LayerImage(rgb, tuple(int(v) for v in eng.crop), info)
 

@@ -260,3 +260,26 @@ def test_budgets_are_reported(preps):
     t = time.perf_counter()
     li = svc.render(preps["stars"], None, {"sky": 3}, 0.25, part="combined")
     assert li.info["render_ms"] <= 1000 * (time.perf_counter() - t) + 1
+
+
+def test_the_stars_of_a_combination_are_stretched_with_the_starless_combinations_statistics(tmp_path):
+    """A combination of stars' Output is rendered as stars alone over the starless combination's Output (its stats)."""
+    import json
+
+    from astro_gpu.render.layers import LayerService
+    n = 64
+    rng = np.random.default_rng(1)
+    lin = rng.normal(0, 1, (3, n, n)).astype(np.float32) + 5
+    stars = np.zeros((3, n, n), np.float32)
+    stars[:, 30:33, 30:33] = 500
+    prep = {"M": np.eye(3).tolist(), "crop": [0, n, 0, n], "drizzle_scale": 1.0,
+            "stats": {"lum": {"median": 5.0, "mad": 1.5, "p99995": 400.0}, "channels": [], "lum_p40": 5.0, "lum_p85": 6.0}}
+    for name, img in (("main", lin), ("stars", stars)):
+        d = tmp_path / name
+        d.mkdir()
+        np.save(d / "lin.npy", img)
+        np.save(d / "valid.npy", np.ones((n, n), bool))
+        (d / "prep_simple.json").write_text(json.dumps(prep), encoding="utf-8")
+    out = LayerService("cpu").render(tmp_path / "stars", None, None, 1.0, stats_from=tmp_path / "main")
+    assert out.rgb.shape == (3, n, n) and out.info["part"] == "stars"
+    assert out.rgb[:, 31, 31].min() > 0.5 and out.rgb[:, 5, 5].max() < 0.05      # the star shows, the empty sky is black
