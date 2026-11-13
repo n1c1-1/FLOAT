@@ -42,7 +42,7 @@ def gaussian_blur(x: torch.Tensor, sigma: float) -> torch.Tensor:
     """
     if sigma <= 0:
         return x
-    if sigma > 24:
+    if sigma >= 24:
         f = int(sigma // 8)
         y4, nd = _as4(x)
         h, w = y4.shape[-2:]

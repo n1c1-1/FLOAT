@@ -113,9 +113,24 @@ class StarsRenderEngine(SimpleRenderEngine):
                     x = emission(x, self.continuum(), float(s.halpha), f)
                 a = self.tone(x, self.prep["stats_full"], s, linked)
             if part in ("stars", "combined"):
-                b = self.star_tone(self._layer("stars", f, box), s, f)
+                b = self._star_layer(s, f, box, part)
             y = a if b is None else b if a is None else blend(a, b, s.blend)
             return self._finish(y, f, reg, box, region, {"stretch": "auto", "linked": linked, "part": part})
+
+    def _star_layer(self, s: StarSettings, f: int, box, part: str) -> torch.Tensor:
+        """The stretched stars of the grid at this scale and box (``star_tone``), kept from one render to the next while
+        the settings that make them are the same: the starless image's sliders, a blend or an export (the same
+        image at full size) take them as they are instead of making them again, which is the longest step of a
+        render. One entry (the last), never mutated by what reads it."""
+        key = (f, tuple(box) if box is not None else None, s.sky, s.star_strength, s.star_small, s.star_size,
+               s.star_saturation)
+        hit = getattr(self, "_star_cache", None)
+        if hit is not None and hit[0] == key:
+            y = hit[1]
+        else:
+            y = self.star_tone(self._layer("stars", f, box), s, f)
+            self._star_cache = (key, y)
+        return y.clone() if part == "stars" else y
 
     def star_fwhm(self) -> float:
         """The image's typical star width at half height (full-resolution pixels), measured once on the stars alone

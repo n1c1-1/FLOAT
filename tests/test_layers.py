@@ -283,3 +283,24 @@ def test_the_stars_of_a_combination_are_stretched_with_the_starless_combinations
     out = LayerService("cpu").render(tmp_path / "stars", None, None, 1.0, stats_from=tmp_path / "main")
     assert out.rgb.shape == (3, n, n) and out.info["part"] == "stars"
     assert out.rgb[:, 31, 31].min() > 0.5 and out.rgb[:, 5, 5].max() < 0.05      # the star shows, the empty sky is black
+
+
+def test_the_stars_layer_is_kept_between_renders_while_its_settings_stand(preps, monkeypatch):
+    """A render, the next one of the same stars (another slider of the starless image, an export) and the stars alone
+    take the stretched stars made once; another star setting makes them again, and nobody changes the kept ones."""
+    svc = LayerService(device=DEV)
+    made = []
+    orig = StarsRenderEngine.star_tone
+
+    def counting(self, x, s, f):
+        made.append(f)
+        return orig(self, x, s, f)
+    monkeypatch.setattr(StarsRenderEngine, "star_tone", counting)
+    first = svc.render(preps["stars"], None, {"star_size": 0}, 0.5, part="combined").rgb
+    again = svc.render(preps["stars"], None, {"star_size": 0, "saturation": 4}, 0.5, part="combined").rgb
+    assert made == [2] and first.shape == again.shape
+    alone = svc.render(preps["stars"], None, {"star_size": 0}, 0.5, part="stars").rgb
+    alone[:] = 0                                                           # what a caller does with its copy
+    assert made == [2] and svc.render(preps["stars"], None, {"star_size": 0}, 0.5, part="stars").rgb.max() > 0.2
+    svc.render(preps["stars"], None, {"star_size": 3}, 0.5, part="combined")
+    assert made == [2, 2]

@@ -36,3 +36,13 @@ def test_percentile_like_numpy(img):
     t = torch.from_numpy(img).to(DEV)
     for q in (1, 30, 99.995):
         assert abs(ops.percentile(t, q) - np.percentile(img, q)) < 1e-6
+
+
+def test_gaussian_at_the_reduced_grid_threshold_is_fast_and_close(img):
+    """Sigma 24 (the star mask's scale) takes the reduced grid as sigma 24.001 does, and stays close to the full convolution."""
+    t = torch.from_numpy(np.tile(img, (3, 3))).to(DEV)
+    at = ops.gaussian_blur(t, 24.0)
+    full = ops._blur4(ops._as4(t)[0], 24.0)[0, 0]
+    assert float((at - full).abs().max()) < 5e-3
+    reduced = ops.gaussian_blur(t, 24.5)                                  # a reduced grid: no 193-tap kernel at full size
+    assert reduced.shape == t.shape
