@@ -401,8 +401,8 @@ def test_every_auto_key_of_heart_a7s_is_in_auto_fields(tmp_path):
 
 def test_the_frame_of_a_fusion_excludes_the_ragged_corner_of_any_channel():
     """Wing: the three channels' coverages end differently (each its own straight edges and a ragged corner), and the
-    fusion's coverage is their AND; the 99.5 % of the stack's crop left 545 black pixels of the corner in the frame."""
-    from astro_gpu.stages.render_simple import crop_box, whole_box
+    fusion's coverage is their AND; a 99.5 % threshold left 545 black pixels of the corner in the frame."""
+    from astro_gpu.stages.render_simple import whole_box
     H, W = 800, 1000
     cover = []
     for i in range(3):
@@ -415,8 +415,6 @@ def test_the_frame_of_a_fusion_excludes_the_ragged_corner_of_any_channel():
     cover[2][H - 2:, W - 1:] = False              # and a smaller one in another
     cover[0][200:210, 250:260] = False            # a hole inside the field: not a reason to cut the frame
     good = cover[0] & cover[1] & cover[2]
-    y0, y1, x0, x1 = crop_box(good, 0.995)
-    assert not good[y0:y1, x0:x1].all()           # what the old frame kept
     y0, y1, x0, x1 = whole_box(good)
     sub = good.copy()
     sub[200:210, 250:260] = True
