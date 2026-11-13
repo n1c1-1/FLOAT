@@ -100,8 +100,10 @@ class Calibrate(Stage):
     # 9: the hot pixels of the lights: the persistence's movement test and lone-pixel condition taken out (a saturated
     # defect lights its four nearest neighbours by crosstalk, which the condition took for a star), Siril's cosmetic
     # correction per frame as the other method, and every excluded pixel filled with the mean of its same-colour
-    # neighbours (the sky moved or not)
-    version = "9"
+    # neighbours (the sky moved or not). 10: the persistence's threshold is in sigmas of one frame's noise, no longer of
+    # the lower quartile's residual (a third of it): a Sony A7S session at ISO 4000 had 178,000 pixels flagged, 110,000
+    # of them within 2 to 5 sigmas of a frame
+    version = "10"
 
     def auto(self, ctx: Context) -> dict[str, Auto]:
         n = max(1, min(12, (os.cpu_count() or 4) - 2))
@@ -867,6 +869,7 @@ def _hot_from_lights(paths, dark, flat, bad, median_filter, n=40, k=5.0, cfa: st
         st[i] = (a - dk[i]) / flat
 
     _read_frames(sub, put, 0, (lambda c: tick(f"hot pixels: frame {c}/{len(sub)}")) if tick is not None else None)
+    one = st[len(sub) // 2].copy()                    # a single frame: the unit of the threshold is ITS noise
     q = np.empty(dark.shape, np.float32)
     for r in range(0, q.shape[0], BAND):
         q[r:r + BAND] = np.percentile(st[:, r:r + BAND], 25, axis=0, overwrite_input=True)
@@ -875,7 +878,11 @@ def _hot_from_lights(paths, dark, flat, bad, median_filter, n=40, k=5.0, cfa: st
     for c in range(P * P):
         v = _plane(q, c, P)
         h = v - median_filter(v, size=5)
-        s = robust_sigma(h[::2, ::2])[1]
+        f = _plane(one, c, P)
+        # the published thresholds (3 to 5 sigma) are in units of one exposure's noise, as Siril's per-frame test is;
+        # the quartile's own residual is a third of that (the frames' noise averaged out, the defects' fixed
+        # pattern kept), and 5 of its sigmas were 2 of a frame's: every warm pixel of the dark current was flagged
+        s = robust_sigma((f - median_filter(f, size=5))[::2, ::2])[1]
         hot = (h > k * s) & ~_plane(bad, c, P)
         _plane(bad, c, P)[...] |= hot
         n_new += int(hot.sum())

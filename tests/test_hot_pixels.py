@@ -144,3 +144,21 @@ def test_the_hot_pixel_method_is_a_choice_with_french_words():
     assert texts.choice_label("persistence", "fr") == "Persistance"
     assert texts.choice_label("per_frame", "fr") == "Pose par pose"
     assert texts.param_label("calibrate", "hot_method", "fr") == "Pixels chauds"
+
+
+def test_the_persistence_threshold_is_in_sigmas_of_one_frame_not_of_the_quartile(monkeypatch):
+    """A fixed pattern of 2.5 sigmas of one frame's noise (the dark current's spread) is no defect: averaged over the
+    frames the quartile's own noise is a third of a frame's, and 5 of its sigmas flagged every such pixel. A pixel 12
+    sigmas of a frame above its neighbours is."""
+    from scipy.ndimage import median_filter
+    rng = np.random.default_rng(5)
+    sigma = 10.0
+    pattern = np.where(rng.random((H, W)) < 0.05, 2.5 * sigma, 0.0).astype(np.float32)
+    hot = np.zeros((H, W), np.float32)
+    hot[60, 80] = hot[100, 150] = 12 * sigma
+    frames = [(1000 + pattern + hot + rng.normal(0, sigma, (H, W))).astype(np.float32) for _ in range(30)]
+    paths = _read_from(monkeypatch, frames)
+    bad = np.zeros((H, W), bool)
+    cal._hot_from_lights(paths, np.zeros((H, W), np.float32), np.ones((H, W), np.float32), bad, median_filter)
+    assert bad[60, 80] and bad[100, 150]
+    assert bad.sum() < 20                                              # not the 5 % of the pattern
