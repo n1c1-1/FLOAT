@@ -1179,7 +1179,7 @@ class PostView(QWidget):
                         ("-", lambda: self.viewer.zoom_by(1 / ZOOM_STEP)),
                         ("Ctrl+-", lambda: self.viewer.zoom_by(1 / ZOOM_STEP)), ("X", self.toggle_paint),
                         ("[", lambda: self.brush_size(1 / 1.25)), ("]", lambda: self.brush_size(1.25)),
-                        ("Ctrl+J", self.duplicate)):
+                        ("Ctrl+J", self.duplicate), ("Delete", self._delete_key)):
             sc = QShortcut(QKeySequence(seq), self)
             sc.setContext(Qt.WidgetWithChildrenShortcut)
             sc.activated.connect(fn)
@@ -1868,6 +1868,12 @@ class PostView(QWidget):
         self.undo.append(MODEL_STEP)
         self.redo.clear()
         self._undo_buttons()
+
+    def _delete_key(self):
+        """The Delete key: the selected layer taken out, as the bin does (Undo brings it back); fields keep the key for
+        their own text."""
+        if self.sel and self.sel[1] == "layer" and self.b_del.isEnabled():
+            self.delete()
 
     def do_undo(self) -> bool:
         """Post's last change undone, said in the status; with none left, the workflows' (a "To Post" made in the

@@ -284,3 +284,27 @@ def test_a_name_another_version_has_is_refused_with_its_reason_not_taken_for_a_p
         page.shutdown()
         page.deleteLater()
         QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_the_delete_key_takes_out_the_selected_layer_and_undo_brings_it_back(model):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeySequence, QShortcut
+    from astro_gpu.client.post3 import PostPage3
+    from astro_gpu.client.services.render import RenderWorker
+    model.add_post_layer(by_name(model, "Full").pid, "stars")
+    page = PostPage3(model, worker=RenderWorker(None, resolver=lambda pid: None, device="cpu"))
+    v = page.view
+    try:
+        n = len(v.layers)
+        assert n >= 2
+        v.select(v.layers[0]["id"], "layer")
+        keys = [sc for sc in v.findChildren(QShortcut) if sc.key() == QKeySequence("Delete")]
+        assert len(keys) == 1
+        keys[0].activated.emit()
+        assert len(v.layers) == n - 1
+        v.do_undo()
+        assert len(v.layers) == n
+    finally:
+        page.shutdown()
+        page.deleteLater()
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
