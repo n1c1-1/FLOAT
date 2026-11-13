@@ -2791,13 +2791,12 @@ class PostView(QWidget):
         for md in MODES:
             cb.addItem(_(md), md)
         cb.setCurrentIndex(MODES.index(lay["mode"]))
-        if is_pixel(lay) and lay in self.layers and not any(is_pixel(x) for x in self.layers[self.layers.index(lay) + 1:]):
-            # the bottom image layer: nothing under it to blend with (Multiply and Soft light would give black), as the
-            # reference editors leave a single layer's blend modes unavailable
-            for i, md in enumerate(MODES):
-                if md in ("Multiply", "Soft light"):
-                    cb.model().item(i).setEnabled(False)
-                    cb.setItemData(i, _("Nothing under this layer to blend with"), Qt.ToolTipRole)
+        if is_pixel(lay) and lay in self.layers and not any(
+                is_pixel(x) and x.get("visible", True) for x in self.layers[self.layers.index(lay) + 1:]):
+            # nothing under it to blend with (the bottom layer, or the ones under it hidden): its mode is kept but not
+            # applied, the layer is shown as Normal
+            cb.setEnabled(False)
+            cb.setToolTip(_("Nothing under this layer to blend with: shown as Normal"))
         cb.currentIndexChanged.connect(lambda i: self._set(lay, "mode", cb.itemData(i)))
         row.addWidget(cb, 1)
         self.pbox.addLayout(row)

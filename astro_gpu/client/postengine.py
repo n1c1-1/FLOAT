@@ -1318,6 +1318,7 @@ class Composer:
                 out.mask_thumbs[lay["id"]] = thumb_of(m)
 
         stack = list(reversed(layers))                                    # bottom first
+        under = False                                                     # an image layer drawn below the next one
         for lay in stack:
             checkpoint()
             if lay["kind"] == "filter" and lay.get("target"):
@@ -1349,7 +1350,10 @@ class Composer:
                 comp_sig = _sig(comp_sig, sig, _settings_of(lay))
                 m = self.mask(lay, level, abox, src, canvas, ctx)
                 keep_mask(lay, m)
-                src = self.blend(lay["mode"], comp, src)
+                # nothing under it: no mode to apply (never blended over a black that is not there); the mode stays
+                # stored on the layer and applies again as soon as an image layer is under it
+                src = self.blend(lay["mode"] if under else "Normal", comp, src)
+                under = True
                 a = lay["opacity"] / 100
                 if m is None and a >= 0.999:
                     comp = src

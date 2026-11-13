@@ -394,15 +394,14 @@ def test_both_images_of_the_group_hidden_leave_a_neutral_canvas_and_a_banner_tha
         page.deleteLater()
 
 
-def test_multiply_and_soft_light_are_greyed_for_the_bottom_image_layer_with_their_reason(project):
+def test_a_mode_with_nothing_under_the_layer_is_kept_but_not_applied_and_its_box_says_why(project):
     from PySide6.QtWidgets import QComboBox, QVBoxLayout, QWidget
     page = page_of(project)
     v = page.view
     try:
         v.layers.insert(0, {**copy.deepcopy(v.layers[0]), "id": 10 ** 6, "name": "Above"})    # one layer over it
-        pix = [x for x in v.layers if pe.is_pixel(x)]
-        assert len(pix) >= 2
-        for lay, bottom in ((pix[-1], True), (pix[0], False)):
+        top, low = v.layers[0], v.layers[1]
+        for lay, greyed in ((low, True), (top, False)):
             host, old = QWidget(), v.pbox
             v.pbox = QVBoxLayout(host)                       # the properties of that layer, in a panel of the test's
             try:
@@ -410,10 +409,44 @@ def test_multiply_and_soft_light_are_greyed_for_the_bottom_image_layer_with_thei
             finally:
                 v.pbox = old
             cb = host.findChildren(QComboBox)[0]
-            i = [cb.itemText(k) for k in range(cb.count())].index("Multiply")
-            assert (not cb.model().item(i).isEnabled()) == bottom
-            if bottom:
-                assert "Nothing under" in cb.itemData(i, Qt.ToolTipRole)
+            assert cb.isEnabled() != greyed
+            if greyed:
+                assert cb.toolTip() == "Nothing under this layer to blend with: shown as Normal"
+        low["visible"] = False                               # the only other layer hidden: nothing under it either
+        host, old = QWidget(), v.pbox
+        v.pbox = QVBoxLayout(host)
+        try:
+            v.layer_props(top)
+        finally:
+            v.pbox = old
+        assert not host.findChildren(QComboBox)[0].isEnabled()
     finally:
         page.shutdown()
         page.deleteLater()
+
+
+def test_the_mode_of_a_layer_with_nothing_under_it_renders_as_normal_and_applies_again_with_a_layer_under():
+    a = {"id": 1, "kind": "workflow", "pid": 1, "part": None, "name": "A", "visible": True, "opacity": 100.0,
+         "mode": "Normal", "base": None, "sliders": {}, "mask": None}
+    b = {**a, "id": 2, "pid": 2, "name": "B", "mode": "Multiply"}
+    rng = np.random.default_rng(2)
+    imgs = {1: rng.uniform(0.2, 1, (H, W, 3)).astype(np.float32), 2: rng.uniform(0.2, 1, (H, W, 3)).astype(np.float32)}
+
+    class P(Images):
+        def available(self, sid):
+            return True
+
+        def layer(self, lay, level, box, draft=False, stop=None):
+            x0, y0, x1, y1 = box
+            return imgs[lay["pid"]][y0:y1, x0:x1].copy()
+
+    cp = Composer(P({}))
+    normal = {**b, "mode": "Normal"}
+    both = cp.compose(pe.normalize([copy.deepcopy(b), copy.deepcopy(a)]), 0).rgb          # B (Multiply) over A
+    assert np.allclose(both, imgs[2] * imgs[1], atol=1e-5)
+    alone = cp.compose(pe.normalize([copy.deepcopy(b)]), 0).rgb                           # A deleted: B at the bottom
+    assert np.array_equal(alone, cp.compose(pe.normalize([copy.deepcopy(normal)]), 0).rgb)
+    hidden = cp.compose(pe.normalize([copy.deepcopy(b), {**copy.deepcopy(a), "visible": False}]), 0).rgb
+    assert np.array_equal(hidden, alone)                                                  # the lower one hidden: Normal
+    assert np.allclose(cp.compose(pe.normalize([copy.deepcopy(b), copy.deepcopy(a)]), 0).rgb, both)   # Undo: applies again
+    assert b["mode"] == "Multiply"                                                        # (stored on the layer)
