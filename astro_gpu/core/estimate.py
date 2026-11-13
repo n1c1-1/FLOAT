@@ -43,13 +43,18 @@ LOCK_STALE = 30.0                              # a lock file older than this was
 #: 4060 Ti, 5 November 2026, plus the reading and writing of its images)
 HEART: dict[str, tuple[float, float]] = {
     "inventory": (5.0, 0.0), "calibrate": (310.8, 0.11), "register": (121.4, 0.0), "stack": (2064.0, 1.31),
-    "astrometry": (6.0, 0.0), "align_on": (10.0, 0.3), "reference": (89.8, 0.0), "catalogs": (178.3, 0.07), "surveys": (42.5, 0.11),
-    "synth_stars": (60.0, 0.3), "color": (2.9, 0.0), "deconv": (85.0, 1.0), "denoise": (20.4, 0.68), "gradient": (60.0, 0.01), "render_simple": (30.0, 0.7),
-    "star_removal": (30.0, 0.66),
+    "astrometry": (6.0, 0.0), "align_on": (10.0, 0.3), "reference": (89.8, 0.0), "catalogs": (0.3, 0.07), "surveys": (0.1, 0.11),
+    "synth_stars": (60.0, 0.3), "color": (2.9, 0.0), "deconv": (85.0, 1.0), "denoise": (20.4, 0.68), "gradient": (3.0, 0.01),
+    "render_simple": (16.0, 0.7), "star_removal": (30.0, 0.66), "sessions": (1.2, 0.0), "combine": (18.0, 0.1),
 }
 #: astrometry and align_on measured on a CPU laptop on 12 November 2026: 3 s and 4 s for a grid of 12 Mpx (the 124 s of
 #: the reference were a blind solve; Asterion's first solution takes seconds), the 60 s of the toy stages' default
 #: announcing two minutes for each
+#: GPU figures from the run log of Wing (a GPU run, 16.4 Mpx grid, in tests/test_runner2.py), scaled to the reference's
+#: grid: gradient 2 s, Output 10 s, combine_sho 11 s (the 60 s and 30 s guessed before, and the 60 s of a stage the table did
+#: not know, announced minutes for seconds); catalogs and surveys are not downloaded in a run any more (the offline
+#: catalogue: 178 s and 42 s were downloads), 0.4 s together on the laptop below; sessions (the joint registration of a row's
+#: sessions) 1.2 s on the laptop
 #: a stage the table does not know (tests' toy stages): one minute at Heart size
 OTHER = (60.0, 0.0)
 #: without a GPU, each stage takes this many times longer (guesses, not measured; star_removal measured on 5 November
@@ -58,16 +63,27 @@ OTHER = (60.0, 0.0)
 #: measured on 11 November 2026 (issue #130) on a laptop of 8 cores, drizzle scale 1, 12 Mpx: 50 frames in 156 and
 #: 186 s, 754 frames in 2766 s, 2.5 to 2.9 times the reference; the 5 guessed before announced 80 minutes for 46
 CPU_FACTOR: dict[str, float] = {
-    "inventory": 1, "calibrate": 1.3, "register": 1.5, "stack": 2.7, "astrometry": 1, "align_on": 1, "catalogs": 1, "surveys": 1,
-    "synth_stars": 1, "color": 1.5, "deconv": 20, "denoise": 45, "gradient": 1, "render_simple": 2, "star_removal": 4,
+    "inventory": 1, "calibrate": 0.45, "register": 1.5, "stack": 2.0, "astrometry": 0.5, "align_on": 0.4, "catalogs": 1, "surveys": 1,
+    "synth_stars": 1, "color": 1.5, "deconv": 20, "denoise": 45, "gradient": 0.33, "render_simple": 0.3, "star_removal": 5.4,
+    "sessions": 1, "combine": 0.4,
 }
+#: First run of the "Dual-band x2" template on a CPU laptop (13 November 2026, 12 Mpx raws, no history, a grid of 27.3
+#: Mpx as the plan reads it): estimated 1 h 06, took 44.6 min. Per block, measured against estimated: astrometry 3 s (0.5),
+#: gradient under 1 s (0.33), Output 5 s (0.3), joint registration 1.2 s, a combination 7 s (0.4), align on 4 s (0.4),
+#: calibrate 68 s against 201 (1.3 to 0.45: the plan already counts a file shared between sessions once, the union of their
+#: frames lists a path once, so the rate was wrong; the masters are read by 8 threads now), stack of 20 lights at drizzle
+#: 1.5 87 s against 155 (2.7 to 2.0: between this run and the 156-186 s of 50 lights of November 11), star_removal 120
+#: against 161-164 s (4 to 5.4: 5.9 s per Mpx of the grid, the only one that was too short)
 DEFAULT_CPU_FACTOR = 2.0
 #: Denoise (stages/denoise.py): applying the pretrained network costs this many adaptation steps per Mpx of the stack
 #: grid; measured on the bench on 4 November 2026 (RTX 4060 Ti; 8 processor threads): seconds per adaptation step and
 #: per Mpx applied. Its two parts do not slow down alike without a GPU, so without a history of this kind of machine
 #: the estimate is these times, not the reference's x CPU_FACTOR.
 DENOISE_MPX_UNITS = 8.5
-DENOISE_SECONDS = {"gpu": {"step": 0.088, "mpx": 0.75}, "cpu": {"step": 3.6, "mpx": 3.3}}
+#: The processor's per-Mpx pass was 3.3 s for the three images Denoise treated (the stack and its two half-stacks; 357 to
+#: 376 s on a grid of 27.3 Mpx, 4 passes, 13 November 2026). Since 489d0fc it treats the stack only (a third) and runs
+#: channels-last (about 20 % less): 3.3 / 3 x 0.8 = 0.88 s per Mpx and pass
+DENOISE_SECONDS = {"gpu": {"step": 0.088, "mpx": 0.75}, "cpu": {"step": 3.6, "mpx": 0.88}}
 #: the adaptation lengths (stages/denoise.ADAPTATIONS: steps)
 DENOISE_ADAPT_STEPS = {"short": 500, "long": 4000}
 #: the network's passes over the image (stages/denoise.PASSES; the Fast pass setting: one). The times above are per pass
@@ -227,10 +243,10 @@ def estimate(stage: str, f: Facts, gpu: bool = True, history: dict | None = None
     """Seconds and disk of a stage job on this machine (``gpu``: the run has a GPU)."""
     u = units(stage, f)
     hist = load_history() if history is None else history
-    ref_s, ref_gb = HEART.get(stage, OTHER)
+    ref_s, ref_gb = HEART.get(stage) or HEART.get("combine" if stage.startswith("combine_") else stage, OTHER)
     ref_u = units(stage, HEART_FACTS)
     gb = ref_gb * u / ref_u + (cache_gb(f) if stage == "calibrate" else 0.0)
-    factor = CPU_FACTOR.get(stage, DEFAULT_CPU_FACTOR)
+    factor = CPU_FACTOR.get("combine" if stage.startswith("combine_") else stage, DEFAULT_CPU_FACTOR)
     own = _rates(hist, stage, _kind(gpu))
     if own:
         return Estimate(statistics.median(own) * u, True, gb)
