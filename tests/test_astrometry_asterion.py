@@ -257,3 +257,50 @@ def test_real_the_stage_starts_from_asterions_solution(tmp_path, monkeypatch):
     assert np.median(np.hypot(gx - x[keep], gy - y[keep])) < 0.3, logs
     assert metrics["first_solver"] == "asterion" and metrics["scale_arcsec"] == pytest.approx(sc, rel=2e-3)
     assert os.listdir(tmp_path / "scratch") == []
+
+
+def test_a_wrong_focal_length_asterion_is_asked_again_at_any_scale_and_the_scale_it_finds_is_used(tmp_path,
+                                                                                                    monkeypatch):
+    """The scale made of the entered focal length is a hint with bounds: no solution within it, once more without it
+    (as astrometry.net's scale is a hint); the field's own scale replaces the wrong one and is said."""
+    _no_search(monkeypatch)
+    asked = []
+
+    def solve(image, work, **kw):
+        asked.append(kw["scale"])
+        return None if kw["scale"] else _solution(_wcs())
+    logs, metrics, w = _run(tmp_path, monkeypatch, solve, focal_mm=135.0, pixel_um=5.7, scale=None)
+    assert len(asked) == 2 and asked[0] == pytest.approx(206.265 * 5.7 / 135.0) and asked[1] is None
+    assert _far(w, _wcs()) < 0.05
+    said = [m for _lv, m in logs]
+    assert any(m.startswith("Asterion found no solution at 8.709") for m in said)
+    assert metrics["first_solver"] == "asterion"
+
+
+def test_an_entered_scale_is_not_asked_again_without_it(tmp_path, monkeypatch):
+    asked = []
+
+    def solve(image, work, **kw):
+        asked.append(kw["scale"])
+        return None
+    _searched(monkeypatch)
+    with pytest.raises(StageError):
+        _run(tmp_path, monkeypatch, solve, scale=SCALE, blind=False)
+    assert asked == [SCALE]
+
+
+def test_the_blind_solvers_missing_index_is_not_asked_of_a_target_already_entered(tmp_path, monkeypatch):
+    """The target is entered: the message says that the index is not installed and where it comes from, and that the
+    focal length or the pixel size may be wrong; it does not ask for what is entered."""
+    from astro_gpu.core import blindsolve, skycache
+
+    def no_index(*a, **k):
+        raise skycache.SkyUnavailable("the star index of the blind solver (Hipparcos) is not on this computer: enter "
+                                      "the target or its coordinates")
+    monkeypatch.setattr(blindsolve, "solve_any", no_index)
+    monkeypatch.setattr(am, "_match", lambda *a, **k: None)
+    monkeypatch.setattr(am, "_match_sparse", lambda *a, **k: None)
+    with pytest.raises(am.FieldNotIdentified) as e:
+        _run(tmp_path, monkeypatch, lambda *a, **k: None, scale=SCALE, blind=True)
+    msg = str(e.value)
+    assert "not installed" in msg and "Catalogs" in msg and "focal length" in msg and "enter the target" not in msg

@@ -401,6 +401,16 @@ PATTERNS: list[tuple[re.Pattern, str, tuple]] = [
          "first solution by Asterion in {0} s: {1}\"/px, {2} stars matched", ()),
         (r"^Asterion found no solution in ([\d.]+) s: FLOAT's own search finds the field$",
          "Asterion found no solution in {0} s: FLOAT's own search finds the field", ()),
+        (r"^Asterion found no solution at ([\d.]+)\"/px: trying again at any scale$",
+         "Asterion found no solution at {0}\"/px: trying again at any scale", ()),
+        (r"^the field is at ([\d.]+)\"/px, not at the ([\d.]+)\"/px of the entered focal length: check the focal "
+         r"length and the pixel size$",
+         "the field is at {0}\"/px, not at the {1}\"/px of the entered focal length: check the focal length and the "
+         "pixel size", ()),
+        (r"^(.+): trying again without trusting the entered focal length of ([\d.]+) mm \(scale unknown\)$",
+         "{0}: trying again without trusting the entered focal length of {1} mm (scale unknown)", ()),
+        (r"^No star catalogue of the field: fallback balance used$", "No star catalogue of the field: fallback "
+         "balance used", ()),
         (r"^Asterion cannot run \((.+)\): FLOAT's own search finds the field$",
          "Asterion cannot run ({0}): FLOAT's own search finds the field", ()),
         (r"^(\d+) Gaia stars G < ([\d.]+) in the field$", "{0} Gaia stars G < {1} in the field", ()),

@@ -64,7 +64,7 @@ def test_the_block_without_its_catalogue_is_marked_and_says_why(qapp, tmp_path, 
         assert f"Cannot run: {NO_STARS}" in _texts(page.panel)
         # the run window says it before the run, and the plan runs the rest
         plan = m.plan_all()
-        assert plan.left_out == {q.pid: {"astrometry": NO_STARS, "catalogs": NO_STARS}}
+        assert plan.left_out == {q.pid: {"astrometry": NO_STARS, "catalogs": NO_STARS, "surveys": NO_STARS}}
         assert {"inventory", "stack"} <= {j.stage for j in plan.jobs}
         from astro_gpu.client.runs import RunDialog
         d = RunDialog(m, plan, "Run")
@@ -86,9 +86,10 @@ def test_the_block_without_its_catalogue_is_marked_and_says_why(qapp, tmp_path, 
         done(w, m, page)
 
 
-def test_the_positions_without_the_spectra_mark_the_color_block(qapp, tmp_path, monkeypatch, no_catalogue):  # noqa: F811
-    """The star positions installed alone (the spectra are the 10 GB part): Astrometry runs, the Color block, which
-    calibrates on the spectra, is marked with its reason and offers the way to Settings."""
+def test_the_positions_without_the_spectra_leave_the_color_block_to_its_fallback(qapp, tmp_path, monkeypatch,
+                                                                                no_catalogue):  # noqa: F811
+    """The star positions installed alone (the spectra are the 10 GB part): Astrometry runs, and so does the Color block,
+    which takes its fallback balance and says why when it runs: it is not marked as unable to run."""
     from tests import skyfield
     sky = skyfield.field(tmp_path / "sky", spectra=False)
     monkeypatch.setenv("ASTRO_GPU_GAIA_EXTRACTS", str(sky["extracts"]))
@@ -98,12 +99,9 @@ def test_the_positions_without_the_spectra_mark_the_color_block(qapp, tmp_path, 
         settle(w, page)
         q = m.paths[0]
         g = Graph(m)
-        assert g.node_of(q, "couleur").missing == sky_data.NO_SPECTRA
+        assert g.node_of(q, "couleur").missing == ""
         assert g.node_of(q, "astrometrie").missing == ""
-        page.select(step="couleur")
-        settle(w, page)
-        assert f"Cannot run: {sky_data.NO_SPECTRA}" in _texts(page.panel)
-        assert _button(page.panel, "Install catalogue").isEnabled()
+        assert m.plan_all().left_out == {}
     finally:
         done(w, m, page)
 

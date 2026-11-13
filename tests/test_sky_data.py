@@ -47,31 +47,36 @@ def test_without_the_star_catalogue_the_astrometry_and_what_follows_are_left_out
     _use(monkeypatch, None)
     p, w, other = _project(offline_sky / "P", sky)
     plan = runner2.plan_all(p)
-    assert plan.left_out == {w.id: {"astrometry": sky_data.NO_STARS, "catalogs": sky_data.NO_STARS}}
+    assert plan.left_out == {w.id: {"astrometry": sky_data.NO_STARS, "catalogs": sky_data.NO_STARS,
+                                    "surveys": sky_data.NO_STARS}}
     mine = {j.stage for j in plan.jobs if w.id in j.wf}
-    assert "image" in mine and not mine & {"astrometry", "catalogs", "surveys", "color", "render_simple"}
+    # Color takes its fallback balance without the star catalogue and the Output is made
+    assert "image" in mine and not mine & {"astrometry", "catalogs", "surveys"}
+    assert {"color", "render_simple"} <= mine
     assert {j.stage for j in plan.jobs if other.id in j.wf} >= {"image", "gradient", "render_simple"}
     assert (w.id, "astrometry") not in plan.targets
     again = runner2.Plan.from_dict(plan.to_dict())                   # frozen in the run's plan file as it is
     assert again.left_out == plan.left_out
 
 
-def test_without_the_spectra_only_the_colour_is_left_out(offline_sky, no_socket, monkeypatch):  # noqa: F811
+def test_without_the_spectra_the_colour_takes_its_fallback_and_the_rest_runs(offline_sky, no_socket,  # noqa: F811
+                                                                              monkeypatch):
     """The star extract alone (the spectra are the 10 GB part): the field is solved, its survey read, its gradient
-    removed; the Catalogues step, which the Color block needs, is left out with Color and the Output after it; the run
-    of what is planned is done, and nothing reached the network."""
+    removed; the Catalogues step runs with no spectrum, Color judges that and takes its fallback balance, and the
+    Output is made (it was left out with Color, silently); nothing reached the network."""
     sky = skyfield.field(offline_sky / "sky", spectra=False)
     _use(monkeypatch, sky["extracts"])
     p, w, other = _project(offline_sky / "P", sky, ("astrometry", "gradient", "color"))
     plan = runner2.plan_all(p)
-    assert plan.left_out == {w.id: {"catalogs": sky_data.NO_SPECTRA}}
+    assert plan.left_out == {}
     mine = {j.stage for j in plan.jobs if w.id in j.wf}
-    assert {"astrometry", "surveys", "gradient"} <= mine and not mine & {"catalogs", "color", "render_simple"}
+    assert {"astrometry", "catalogs", "surveys", "gradient", "color", "render_simple"} <= mine
     assert sky_data.NEEDED_BY["catalogs"] == "color"
     status = runner2.run_plan(p.root, runner2.prepare_run(p, plan, "cpu").plan_file, echo=False)
-    assert status == "done" and no_socket == []
+    assert no_socket == []
     ends = {e["stage"]: e["status"] for e in _events(p.root) if e.get("type") == "stage_end"}
-    assert ends.get("astrometry") == "done" and "catalogs" not in ends
+    assert status == "done" and ends.get("catalogs") == "done" and ends.get("color") == "done"
+    assert ends.get("render_simple") == "done"
 
 
 def test_a_field_already_solved_is_checked_where_it_is_and_cached_tiles_count(offline_sky, monkeypatch):  # noqa: F811

@@ -45,6 +45,7 @@ MIN_STARS = 50
 #: the fallback's reasons (the block's tooltip, the run's log and recap)
 FALLBACK_STARS = "Star calibration impossible ({n} stars, {m} needed): fallback balance used"
 FALLBACK_FIELD = "Field not identified: fallback balance used"
+FALLBACK_CATALOGS = "No star catalogue of the field: fallback balance used"
 
 
 class ColorParams(StageParams):
@@ -104,6 +105,9 @@ class Color(Stage):
         if ctx.has("inventory") and ctx.metric_of("inventory", "mono"):
             raise StageError(MONO_NO_COLOUR)
         img = image_in(ctx).img                       # its sky removed, the Color blocks before it applied (#47)
+        if not ctx.has("catalogs"):                               # the Catalogues step could not be made: left out of
+            self.fall_back(ctx, p, img, FALLBACK_CATALOGS, NO_CATALOGS)       # the run, or failed (the plan says why)
+            return
         if ctx.metric_of("catalogs", "solved") is False:          # Astrometry went on without a plate solution
             self.fall_back(ctx, p, img, FALLBACK_FIELD, NO_FIELD)
             return
@@ -162,6 +166,9 @@ class Color(Stage):
         ctx.fallback(reason)
 
 
+#: why the colour stars cannot be had: no Gaia stars of the field to place (the Catalogues step did not run)
+NO_CATALOGS = ("the Gaia stars of the field were not available (the Catalogues step did not run or failed): no star "
+               "with a spectrum to calibrate the colours on")
 #: why the colour stars cannot be had: the field not identified (``on_failure`` "stop")
 NO_FIELD = ("the field was not identified (Astrometry continued without plate solution): no star with a spectrum to "
             "calibrate the colours on")

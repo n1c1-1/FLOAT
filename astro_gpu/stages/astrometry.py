@@ -140,12 +140,14 @@ class Astrometry(Stage):
                    "typical residual is a few hundredths of a pixel.")
     deps = ("inventory", "stack")
     Params = AstrometryParams
-    version = "4"          # 2: the fine fit starts from Asterion's solution when it is installed: the corners can differ
+    version = "5"          # 2: the fine fit starts from Asterion's solution when it is installed: the corners can differ
                            # (NGC 7000 2 px, its Tycho-2 stars there 1.0 -> 0.5 px off; 10 frames 30 px, 6.2 -> 0.3)
                            # 3: the triangle match's random draws are seeded (``seeded_match``): a solution is the same at
                            # every run, and may differ a little from one computed before (a star used more or less)
                            # 4: a typed target far from the frames' header pointing that does not solve the field is
                            # followed by the header pointing as the centre: a field that failed now has a solution
+                           # 5: a field not found at the scale of the entered focal length is searched again without
+                           # it (Asterion first): a wrong focal length now has a solution
     network = True
 
     def auto(self, ctx: Context) -> dict[str, Auto]:
@@ -181,7 +183,18 @@ class Astrometry(Stage):
 
     def run(self, ctx: Context, p: AstrometryParams) -> None:
         try:
-            self._run(ctx, p)
+            try:
+                self._run(ctx, p)
+            except FieldNotIdentified as e:
+                if p.scale is not None or not (p.focal_mm and p.pixel_um):
+                    raise
+                # the scale came from the entered focal length and the field is not found at it: a wrong focal length
+                # must not hide the field, so the scale is searched without it (as astrometry.net takes a scale as a
+                # hint with bounds, not as a certainty)
+                ctx.log(f"{e}: trying again without trusting the entered focal length of {p.focal_mm:g} mm "
+                        "(scale unknown)", "warning")
+                ctx.metric("focal_ignored", True)
+                self._run(ctx, p.model_copy(update={"focal_mm": None}))
         except FieldNotIdentified as e:
             if p.on_failure == "stop":
                 raise
@@ -225,7 +238,8 @@ class Astrometry(Stage):
 
         ra0, dec0 = p.ra, p.dec
         S_drz = float(ctx.load_json("stack", "drz_meta.json")["scale"])
-        if p.scale is None and p.focal_mm and p.pixel_um:
+        from_focal = p.scale is None and bool(p.focal_mm and p.pixel_um)       # a scale that is only a hint
+        if from_focal:
             p = p.model_copy(update={"scale": 206.265 * p.pixel_um / p.focal_mm / S_drz})
             ctx.log(f"image scale {p.scale:.3f}\"/px from focal {p.focal_mm} mm and pixel {p.pixel_um} um")
         if (ra0 is None or dec0 is None) and p.target:
@@ -254,10 +268,14 @@ class Astrometry(Stage):
         odds = 0.0
         # Asterion's first solution when it is installed: the scale search, the triangle match and the blind solver
         # below are then skipped and the fine fit starts from it (``first``); else, or without a solution, FLOAT's own
-        first = _first_solution(ctx, p, g, ra0, dec0)
+        first = _first_solution(ctx, p, g, ra0, dec0, from_focal)
         if first is not None:
             ra0, dec0 = first.ra, first.dec
-            p = p if p.scale else p.model_copy(update={"scale": first.scale})
+            if not p.scale or (from_focal and abs(np.log(first.scale / p.scale)) > 0.15):
+                if p.scale:
+                    ctx.log(f"the field is at {first.scale:.3f}\"/px, not at the {p.scale:.3f}\"/px of the entered "
+                            "focal length: check the focal length and the pixel size", "warning")
+                p = p.model_copy(update={"scale": first.scale})
         if ra0 is None or dec0 is None:
             if not p.blind:
                 raise FieldNotIdentified("the approximate field centre is unknown: enter the target name or its RA/Dec")
@@ -402,7 +420,7 @@ class Astrometry(Stage):
                 break
         if best is None and p.blind:
             ctx.log("guided search failed: trying the all-sky blind solver", "warning")
-            ra0, dec0, sc_b = _blind(ctx, brightdet, W, H, at=0.6)
+            ra0, dec0, sc_b = _blind(ctx, brightdet, W, H, at=0.6, positioned=True)
             fw, fh = W * sc_b / 3600, H * sc_b / 3600
             glim = float(np.clip(12.5 - 1.25 * np.log10(max(fw * fh, 1e-3) / 37.0), 10.5, 16.0))
             radius = 0.5 * np.hypot(fw, fh) * (1 + 2 * p.search_offsets) + 0.2
@@ -592,13 +610,22 @@ def remember_instrument(camera, pix, focal: float | None, mirror: bool) -> None:
         pass
 
 
-def _blind(ctx, xy, W, H, at: float = 0.05):
+def _blind(ctx, xy, W, H, at: float = 0.05, positioned: bool = False):
     """All-sky blind solve of the brightest stars: (ra, dec, scale) of the field centre. ``at``: where the bar stands
     meanwhile, the end of the guided search when it comes after it (issue #139: the bar went back from 0.6 to 0.05,
     and the time left, a straight line through the bar, jumped to some twenty times the time already spent)."""
+    from ..core import skycache
     from ..core.blindsolve import solve_any
     ctx.progress(at, "all-sky blind solving (first use builds the star index, a few minutes)")
-    r = solve_any(xy[:80], W, H, check=_between)
+    try:
+        r = solve_any(xy[:80], W, H, check=_between)
+    except skycache.SkyUnavailable as e:
+        if not positioned:
+            raise FieldNotIdentified(f"{e}") from e
+        # the position is known: it is not the target that is missing, but the index of the all-sky solver
+        raise FieldNotIdentified("the stars of the image match no star of the catalogue around the target, and the "
+                                 "all-sky solver cannot try: its star index is not installed (Settings › Catalogs & "
+                                 "astrometry installs it); otherwise check the focal length and the pixel size") from e
     if r is None:
         raise FieldNotIdentified("the field could not be identified on the sky: enter the target name or its "
                                  "coordinates, or take Astrometry out of the graph (with the blocks that need it, such "
@@ -609,15 +636,15 @@ def _blind(ctx, xy, W, H, at: float = 0.05):
     return r["ra"], r["dec"], r["scale"]
 
 
-def _first_solution(ctx, p, g, ra0, dec0):
+def _first_solution(ctx, p, g, ra0, dec0, from_focal=False):
     """Asterion's solution of the stack or None, and what found the field written once (the metric said "float" then
     "asterion" in the log of a run that Asterion solved)."""
-    sol = _asterion_solution(ctx, p, g, ra0, dec0)
+    sol = _asterion_solution(ctx, p, g, ra0, dec0, from_focal)
     ctx.metric("first_solver", "asterion" if sol is not None else "float")
     return sol
 
 
-def _asterion_solution(ctx, p, g, ra0, dec0):
+def _asterion_solution(ctx, p, g, ra0, dec0, from_focal=False):
     """Asterion's solution of the stack (core/asterion.py) or None, said in one line: the plane the stage already holds
     (no second read of the stack), the target's position as a limit of the search (none: the whole sky) and the scale
     when it is known; 10 s at most, stopped with the stage. Not installed, no solution: FLOAT's own search, said as
@@ -640,6 +667,12 @@ def _asterion_solution(ctx, p, g, ra0, dec0):
     try:
         sol = asterion.solve(g, ctx.scratch, ra=ra0, dec=dec0, radius=None if ra0 is None else 10.0, scale=p.scale,
                              timeout=10.0, check=ctx.check_stop)
+        if sol is None and from_focal:
+            # no solution within the scale hint (--scale-low/--scale-high): the hint may be wrong (focal length
+            # entered wrongly), so once more without it, near the target when it is known
+            ctx.log(f"Asterion found no solution at {p.scale:.3f}\"/px: trying again at any scale")
+            sol = asterion.solve(g, ctx.scratch, ra=ra0, dec=dec0, radius=None if ra0 is None else 10.0, scale=None,
+                                 timeout=10.0, check=ctx.check_stop)
     except asterion.AsterionError as e:
         ctx.log(f"Asterion cannot run ({e}): FLOAT's own search finds the field", "warning")
         return None

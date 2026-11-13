@@ -84,7 +84,7 @@
  "XP spectra: {0} of {1}": "spectres XP : {0} sur {1}",
  "{0}: tile {1} of {2}": "{0} : tuile {1} sur {2}",
  "{0}: {1} sky tiles downloaded in {2} min": "{0} : {1} tuiles du ciel téléchargées en {2} min",
- "Gaia bright stars":"étoiles brillantes Gaia",
+ "Gaia bright stars": "étoiles brillantes Gaia",
  "Gaia bright stars: read": "étoiles brillantes Gaia lues",
  "Gaia bright stars: offline extract": "étoiles brillantes Gaia : extrait hors ligne",
  "refining star positions (pass {0})": "affinage de la position des étoiles (passe {0})",
@@ -151,7 +151,7 @@
  "mixed exposures": "poses mélangées",
  "sky level not above zero": "niveau du ciel pas au-dessus de zéro",
  "outside the range of a sensor": "hors de la plage d'un capteur",
- "pass {0} done in {1} min, of which {2} s reading the frames":"passe {0} terminée en {1} min, dont {2} s de lecture des images",
+ "pass {0} done in {1} min, of which {2} s reading the frames": "passe {0} terminée en {1} min, dont {2} s de lecture des images",
  "normalisation done in {0} min, of which {1} s reading the frames": "normalisation terminée en {0} min, dont {1} s de lecture des images",
  "classic: debayering and resampling done in {0} min, of which {1} s reading the frames": "classique : dématriçage et recalage terminés en {0} min, dont {1} s de lecture des images",
  "classic: rejection and means done in {0} min": "classique : rejet et moyennes terminés en {0} min",
@@ -301,5 +301,11 @@
  "{n} blocks with fallback": "{n} blocs avec repli",
  "{n} block failed": "{n} bloc en échec",
  "{n} blocks failed": "{n} blocs en échec",
- "Blocks failed: {n}": "Blocs en échec : {n}"
+ "Blocks failed: {n}": "Blocs en échec : {n}",
+ "Asterion found no solution at {0}\"/px: trying again at any scale": "Asterion n'a pas trouvé de solution à {0}\"/px : nouvel essai à n'importe quelle échelle",
+ "the field is at {0}\"/px, not at the {1}\"/px of the entered focal length: check the focal length and the pixel size": "le champ est à {0}\"/px, pas aux {1}\"/px de la focale saisie : vérifiez la focale et la taille du pixel",
+ "{0}: trying again without trusting the entered focal length of {1} mm (scale unknown)": "{0} : nouvel essai sans se fier à la focale saisie de {1} mm (échelle inconnue)",
+ "No star catalogue of the field: fallback balance used": "Pas de catalogue d'étoiles du champ : balance de repli utilisée",
+ "the stars of the image match no star of the catalogue around the target, and the all-sky solver cannot try: its star index is not installed (Settings › Catalogs & astrometry installs it); otherwise check the focal length and the pixel size": "les étoiles de l'image ne correspondent à aucune étoile du catalogue autour de la cible, et le solveur de tout le ciel ne peut pas essayer : son index d'étoiles n'est pas installé (Réglages › Catalogues et astrométrie l'installe) ; sinon vérifiez la focale et la taille du pixel",
+ "the Gaia stars of the field were not available (the Catalogues step did not run or failed): no star with a spectrum to calibrate the colours on": "les étoiles Gaia du champ n'étaient pas disponibles (l'étape Catalogues n'a pas tourné ou a échoué) : aucune étoile avec spectre pour calibrer les couleurs"
 }

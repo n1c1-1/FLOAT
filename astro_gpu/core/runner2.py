@@ -247,7 +247,11 @@ class Planner:
         found = sirilcat.locate()
         if found["astro"] is not None and found["xp"] and (base(stage) != "astrometry" or sky_data.blind_ready()):
             return ""
-        return sky_data.missing(base(stage), self._centre(w))
+        why = sky_data.missing(base(stage), self._centre(w))
+        # the star spectra alone are no reason to leave the Catalogues step out: it gives the positions, and the Color
+        # block, which judges the spectra it finds, takes its fallback balance and says why (the Output and the Stars
+        # after it run as they did; they were silently dropped with Color)
+        return "" if why == sky_data.NO_SPECTRA else why
 
     # ------------------------------------------------------------------ planning
     def need(self, wf: int | Workflow, stage: str, as_input: bool = False) -> str:
@@ -262,12 +266,14 @@ class Planner:
         if done and (not as_input or self.usable(stage, k)):
             return ""
         deps = self.keys.deps(w, stage)
+        opt = optional_of(self.chains, stage)
         for d in deps:
             why = self.need(w, d, as_input=True)
+            if why and base(d) in opt and why not in self.wiring:
+                continue                                # it does without that result (its fallback)
             if why:                                     # a result it reads cannot be made here: neither can it
                 self.blocked[k] = why
-                if why in self.wiring:                  # an input to wire is left out with everything after it
-                    self.left_out.setdefault(w.id, {})[stage] = why
+                self.left_out.setdefault(w.id, {})[stage] = why     # left out with what it reads, and said
                 own = self.lacks(w, stage)              # and it needs data of the sky itself: said for it too, so that
                 if own:                                 # its block is marked, not only the earlier one (#161: Color)
                     self.left_out.setdefault(w.id, {})[stage] = own
@@ -315,6 +321,18 @@ class Planner:
                 asked.append((w.id, stage))
         jobs = order_jobs(self.jobs.values(), self.chains.order, {w for w, _ in asked})
         return Plan(jobs, asked, dict(self.skipped), left_out={w: dict(v) for w, v in self.left_out.items()})
+
+
+#: the results a stage does without when they cannot be had (the data of the sky is not on this computer, or the step
+#: failed): Color takes its fallback balance, Gradient chooses its sky samples without the H-alpha survey; they run, and
+#: so do the Output and the Stars after them (a result that is optional in the chain, e.g. the denoising, is another
+#: matter: when it was asked and failed, what reads it is skipped)
+TOLERATES: dict[str, tuple[str, ...]] = {"color": ("catalogs",), "gradient": ("surveys",)}
+
+
+def optional_of(chains: Any, stage: str) -> tuple[str, ...]:
+    """The results a stage does without when they cannot be had (``TOLERATES``)."""
+    return TOLERATES.get(base(stage), ())
 
 
 def order_jobs(jobs: Any, order: list[str], targets: set[int] | None = None) -> list[Job]:
@@ -817,7 +835,10 @@ class _Worker:
                     out["not_started"] = [x.key for x in self.jobs[i:]]
                     status = "interrupted"
                     break
-                up = [s for s, k in job.deps.items() if k in bad]
+                # a result the stage has a fallback for (TOLERATES: Color without the catalogue, Gradient without the
+                # survey) that failed does not fail it: it runs without
+                opt = optional_of(self.rules.chains, job.stage)
+                up = [s for s, k in job.deps.items() if k in bad and base(s) not in opt]
                 if up:
                     out["skipped"].append(job.key)
                     bad.add(job.key)
