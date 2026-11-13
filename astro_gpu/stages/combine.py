@@ -53,6 +53,10 @@ nebulosity included, so it differs from one filter to the other by what the nebu
 a factor ten to twenty times larger for a weak S II than for an H-alpha: a few tenths of a percent of offset in the S II
 became a red or cyan cast of the whole sky (set 56: 8 times the sky's own noise).
 
+A narrow-band filter's scale is measured off the stars (``star_pixels``: the detections, with a disc of their size):
+the inputs are Outputs, stars included, and a weak filter's stars would set its scale (O III of IC 443: 22 with the
+stars, 4.5 without, against H-alpha's 28).
+
 The result's valid area is where every input has data. Its scale: the first input's (its level kept). Any workflow may
 feed any port; a port with no workflow is the empty state, and the block waits for it.
 """
@@ -138,9 +142,37 @@ def channel_of(lin: np.ndarray, channel: str) -> np.ndarray:
     return lin["RGB".index(channel)].astype(np.float32)
 
 
-def balance(ch: np.ndarray, valid: np.ndarray, pct: float) -> tuple[np.ndarray, float]:
-    """A channel divided by the given percentile of its valid pixels above 0 (its sky is at 0)."""
-    v = ch[valid]
+def star_pixels(chans: dict[str, np.ndarray], noise: dict[str, float], valid: np.ndarray) -> np.ndarray:
+    """(H, W) bool: the pixels the stars cover. SExtractor's detection (``sep``, as the registration and the plate
+    solving use it) on the channels' mean in units of their noise; each detection a disc of 3 times its measured size
+    (and 2 px) around it, those over 3 times the median size (a nebula's bright core, a few clipped stars: too few
+    pixels to move a high percentile) left out."""
+    import cv2
+    import sep
+    from ..core.imgutil import sep_extract
+    g = sum(ch / max(noise[r], 1e-12) for r, ch in chans.items()).astype(np.float32) / len(chans)
+    bad = ~(valid & np.isfinite(g))
+    g = np.ascontiguousarray(np.where(bad, 0, g), np.float32)
+    out = np.zeros(g.shape, np.uint8)
+    try:
+        bkg = sep.Background(g, mask=bad, bw=64, bh=64)
+        o = sep_extract(g - bkg.back(), 8.0, err=bkg.globalrms, minarea=4, mask=bad, deblend_cont=0.005)
+    except Exception:  # noqa: BLE001 - sep refuses a flat image: no star in it
+        return out.astype(bool)
+    if len(o) == 0:
+        return out.astype(bool)
+    keep = o["a"] <= 3 * np.median(o["a"])           # the stars are alike in size; a nebula's bright core is not one
+    for x, y, a in zip(o["x"][keep], o["y"][keep], o["a"][keep]):
+        cv2.circle(out, (int(round(x)), int(round(y))), int(np.ceil(3 * a + 2)), 1, -1)
+    return out.astype(bool)
+
+
+def balance(ch: np.ndarray, valid: np.ndarray, pct: float, stars: np.ndarray | None = None) -> tuple[np.ndarray, float]:
+    """A channel divided by the given percentile of its valid pixels above 0 (its sky is at 0). With ``stars`` (the
+    pixels they cover) the percentile is that of the others: the scale of a narrow-band filter is the nebula's,
+    whatever the stars add to the brightest pixels, the weak filters' above all (a filter whose nebula is faint but
+    whose stars are as bright as the others' would otherwise be scaled by its stars)."""
+    v = ch[valid & ~stars] if stars is not None and (valid & ~stars).any() else ch[valid]
     v = v[np.isfinite(v)]
     top = float(np.percentile(v, pct)) if v.size else 1.0
     top = top if top > 0 else 1.0
@@ -351,9 +383,11 @@ class Combination(Stage):
             raise StageError("the channels do not overlap: no pixel where every one has data")
         skies = neutralise_sky(chans, valid_all)
         ctx.log("sky removed (level, noise): " + ", ".join(f"{r} {a:.4g}, {b:.3g}" for r, (a, b) in skies.items()))
+        # a narrow-band filter's scale is the nebula's: measured off the stars the inputs now contain
+        covered = star_pixels(chans, {r: v[1] for r, v in skies.items()}, valid_all) if self.narrowband else None
         level = None
         for role in list(chans):
-            chans[role], tops[role] = balance(chans[role], valid_all, p.percentile)
+            chans[role], tops[role] = balance(chans[role], valid_all, p.percentile, covered)
             if level is None:
                 level = tops[role]
             wgt = float(p.weights.get(role, 1.0))
@@ -427,7 +461,7 @@ class CombineSHO(NarrowbandCombination):
     description = ("Combines the S II, H-alpha and O III filters into one colour image: each filter a hue, the lightness "
                    "from the filters weighted by their noise, aligned through their plate solutions.")
     Params = SHOParams
-    version = "1"
+    version = "2"
 
 
 class HOParams(NarrowbandParams):
@@ -445,7 +479,7 @@ class CombineHO(NarrowbandCombination):
     description = ("Combines the H-alpha and O III filters (two filters, or a dual-band image's channels) into one "
                    "colour image: each filter a hue, the lightness from the filters weighted by their noise.")
     Params = HOParams
-    version = "1"
+    version = "2"
 
 
 class CombineRGB(Combination):

@@ -395,3 +395,27 @@ def test_a_combinations_output_frame_is_the_rectangle_where_every_input_has_data
     assert both[y0:y1, x0:x1].all()                                   # data everywhere in the frame
     assert x0 == 7 and y0 == 5 and x1 <= W - 6                          # the left of Hα, the top of O III, the right of O III
     assert (x1 - x0) * (y1 - y0) >= 0.9 * (W - 13) * (H - 8)           # and it is the large rectangle, not a sliver
+
+
+def _stars_and_nebula(seed=3, n=256):
+    """Two filters over one frame: a wide nebula (bright in A, faint in B) and the same stars in both, B's as bright."""
+    rng = np.random.default_rng(seed)
+    yy, xx = np.mgrid[:n, :n].astype(np.float32)
+    neb = np.exp(-((yy - 128) ** 2 + (xx - 128) ** 2) / (2 * 50.0 ** 2)).astype(np.float32)
+    stars = np.zeros((n, n), np.float32)
+    for y, x in rng.integers(20, n - 20, (60, 2)):
+        stars += 60 * np.exp(-((yy - y) ** 2 + (xx - x) ** 2) / (2 * 1.5 ** 2))
+    a = 10 * neb + stars + rng.normal(0, 0.05, (n, n)).astype(np.float32)
+    b = 1 * neb + stars + rng.normal(0, 0.05, (n, n)).astype(np.float32)
+    return {"Ha": a, "OIII": b}, np.ones((n, n), bool), stars > 5
+
+
+def test_the_nebula_sets_the_scale_not_its_stars():
+    ch, valid, star_px = _stars_and_nebula()
+    noise = {r: 0.05 for r in ch}
+    covered = C.star_pixels(ch, noise, valid)
+    assert covered[star_px].mean() > 0.9 and covered.mean() < 0.5
+    tops = {r: C.balance(c.copy(), valid, 99.5, covered)[1] for r, c in ch.items()}
+    plain = {r: C.balance(c.copy(), valid, 99.5)[1] for r, c in ch.items()}
+    assert tops["Ha"] / tops["OIII"] > 6           # the nebula's ratio is 10 (the stars' are 1)
+    assert plain["Ha"] / plain["OIII"] < 3         # the stars' flux pulls the weak filter's scale up
