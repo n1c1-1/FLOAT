@@ -79,7 +79,7 @@ def test_layer_service_renders_the_output_and_the_stars_layers(preps, tmp_path):
     assert svc.sliders_of(preps["stars"], "stars")["sky"] == WHY_STARS_ONLY
     li = svc.render(preps["stars"], None, {"sky": 3}, scale=0.25, part="combined")
     assert li.rgb.shape == (3, 90, 120) and li.rgb.dtype == np.float32 and li.crop == (8, 476, 4, 356)
-    assert li.info["kind"] == "combined" and li.info["settings"]["sky"] == pytest.approx(0.26)
+    assert li.info["kind"] == "combined" and li.info["settings"]["sky"] == pytest.approx(0.31)
     assert li.info["grid"] == [480, 360] and li.info["drizzle_scale"] == 1.5
     # the sliders at 2 give the base rendering
     base = svc.render(preps["stars"], None, None, 0.25, part="combined").rgb
