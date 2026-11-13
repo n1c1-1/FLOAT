@@ -372,3 +372,22 @@ def test_a_project_saved_before_the_group_opens_unchanged(project):
     finally:
         page.shutdown()
         page.deleteLater()
+
+
+def test_both_images_of_the_group_hidden_leave_a_neutral_canvas_and_a_banner_that_says_so(project):
+    from types import SimpleNamespace
+    page = page_of(project)
+    v = page.view
+    try:
+        g = next(x for x in v.layers if pe.is_group(x))
+        v.src.img1 = np.full((4, 4, 3), 200, np.uint8)                 # the old picture
+        g["shown"]["stars"] = g["shown"]["starless"] = False
+        v._on_result(SimpleNamespace(kind="half", seq=10 ** 6, canvas=None, missing=(), rgb=None))
+        assert v.src.img1 is None
+        assert "Both images of" in v.viewer.banner and "No layers yet" not in v.viewer.banner
+        g["shown"]["stars"] = True
+        v.layers = [x for x in v.layers if x is not g]
+        assert v._empty_banner() in ("No layers yet", "Every layer is hidden")
+    finally:
+        page.shutdown()
+        page.deleteLater()

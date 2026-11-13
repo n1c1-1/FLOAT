@@ -1593,6 +1593,16 @@ class PostView(QWidget):
             return
         self.worker.request(Request(kind="region", layers=snapshot(self.layers), level=0, box=box))
 
+    def _empty_banner(self) -> str:
+        """Why the canvas is empty: nothing to show of the layers there are (hidden), or no layer at all."""
+        pixel = [x for x in self.layers if is_pixel(x)]
+        if not pixel:
+            return _("No layers yet")
+        for lay in pixel:
+            if is_group(lay) and lay.get("visible", True) and not any((lay.get("shown") or {}).values()):
+                return _("Both images of “{name}” are hidden").format(name=layer_name(lay))
+        return _("Every layer is hidden")
+
     def _on_result(self, res):
         if res.kind == "inspect":
             return                                              # Inspect's final image, rendered on the same worker
@@ -1624,7 +1634,10 @@ class PostView(QWidget):
             self._missing_images = set(res.missing)
             self._refresh_rows()
         if res.rgb is None:
-            self.viewer.banner = _("No layers yet")
+            self.viewer.banner = self._empty_banner()
+            self.src.img1 = self.src.img2 = self.src.full = None       # nothing to show: the neutral canvas, not the old picture
+            self.src.version += 1
+            self.viewer.refresh()
             self.viewer.update()
             return
         self.viewer.banner = ""
