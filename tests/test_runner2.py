@@ -835,7 +835,7 @@ def test_estimates_follow_units_history_and_the_cpu():
     heart = est.HEART_FACTS
     e = est.estimate("stack", f, history={})
     assert not e.measured and e.seconds == pytest.approx(2064.0 * 80 * 24.0 / (721 * heart.mpx * 2.25))
-    assert est.estimate("calibrate", f, history={}).disk_gb == pytest.approx(0.11 * 80 * 24 / (721 * heart.mpx)
+    assert est.estimate("calibrate", f, history={}).disk_gb == pytest.approx(0.11 * 100 * 24 / (795 * heart.mpx)
                                                                              + 80 * 24e6 * 2 / 1e9)
     # Denoise: its measured times per adaptation step and per Mpx applied, not the reference x the CPU factor
     assert est.estimate("denoise", f, gpu=False, history={}).seconds == pytest.approx(3.6 * 500 + 3.3 * 24.0 * 4)
@@ -1131,3 +1131,13 @@ def test_a_three_filter_fusion_is_estimated_near_its_real_run(monkeypatch):
         total += sum(est.estimate(st, f, history={}).seconds for st in real[w.id])
     done = sum(sum(v.values()) for v in real.values())
     assert 0.7 < total / done < 1.3, (total, done)
+
+
+def test_calibration_astrometry_and_align_on_are_estimated_near_a_cpu_laptop_run():
+    """A laptop (CPU), 20 lights of 12 Mpx with 48 darks and 62 flats, nothing in the history: Calibration took 70 s
+    (the calibration frames are read like the lights, 11 s announced), Astrometry 3 s (124), Align on 4 s (120)."""
+    mpx = 4256 * 2848 / 1e6
+    f = est.Facts(frames=130, lights=20, mpx=mpx, scale=1.0, grid_mpx=mpx)
+    got = lambda s: est.estimate(s, f, gpu=False, history={}).seconds      # noqa: E731
+    assert 0.7 < got("calibrate") / 72.0 < 1.4
+    assert got("astrometry") < 10 and got("align_on") < 10

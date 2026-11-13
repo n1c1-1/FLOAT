@@ -3,7 +3,9 @@
 A stage's cost grows with its *units*:
 
     inventory              frames (all kinds)
-    calibrate, register    light frames x sensor Mpx
+    calibrate              every frame (lights and calibration frames: each is decoded, the masters read them) x
+                           sensor Mpx
+    register               light frames x sensor Mpx
     stack                  light frames x sensor Mpx x drizzle scale²
     denoise                adaptation steps + DENOISE_MPX_UNITS x stack grid Mpx (applying the network)
     any other stage        stack grid Mpx
@@ -41,10 +43,13 @@ LOCK_STALE = 30.0                              # a lock file older than this was
 #: 4060 Ti, 5 November 2026, plus the reading and writing of its images)
 HEART: dict[str, tuple[float, float]] = {
     "inventory": (5.0, 0.0), "calibrate": (310.8, 0.11), "register": (121.4, 0.0), "stack": (2064.0, 1.31),
-    "astrometry": (124.1, 0.0), "reference": (89.8, 0.0), "catalogs": (178.3, 0.07), "surveys": (42.5, 0.11),
+    "astrometry": (6.0, 0.0), "align_on": (10.0, 0.3), "reference": (89.8, 0.0), "catalogs": (178.3, 0.07), "surveys": (42.5, 0.11),
     "synth_stars": (60.0, 0.3), "color": (2.9, 0.0), "deconv": (85.0, 1.0), "denoise": (20.4, 0.68), "gradient": (60.0, 0.01), "render_simple": (30.0, 0.7),
     "star_removal": (30.0, 0.66),
 }
+#: astrometry and align_on measured on a CPU laptop on 12 November 2026: 3 s and 4 s for a grid of 12 Mpx (the 124 s of
+#: the reference were a blind solve; Asterion's first solution takes seconds), the 60 s of the toy stages' default
+#: announcing two minutes for each
 #: a stage the table does not know (tests' toy stages): one minute at Heart size
 OTHER = (60.0, 0.0)
 #: without a GPU, each stage takes this many times longer (guesses, not measured; star_removal measured on 5 November
@@ -53,7 +58,7 @@ OTHER = (60.0, 0.0)
 #: measured on 11 November 2026 (issue #130) on a laptop of 8 cores, drizzle scale 1, 12 Mpx: 50 frames in 156 and
 #: 186 s, 754 frames in 2766 s, 2.5 to 2.9 times the reference; the 5 guessed before announced 80 minutes for 46
 CPU_FACTOR: dict[str, float] = {
-    "inventory": 1, "calibrate": 1.3, "register": 1.5, "stack": 2.7, "astrometry": 1, "catalogs": 1, "surveys": 1,
+    "inventory": 1, "calibrate": 1.3, "register": 1.5, "stack": 2.7, "astrometry": 1, "align_on": 1, "catalogs": 1, "surveys": 1,
     "synth_stars": 1, "color": 1.5, "deconv": 20, "denoise": 45, "gradient": 1, "render_simple": 2, "star_removal": 4,
 }
 DEFAULT_CPU_FACTOR = 2.0
@@ -95,7 +100,9 @@ class Estimate:
 def units(stage: str, f: Facts) -> float:
     if stage == "inventory":
         return float(f.frames)
-    if stage in ("calibrate", "register"):
+    if stage == "calibrate":                     # the darks, flats and bias are read and decoded like the lights (a laptop:
+        return max(f.frames, f.lights) * f.mpx   # 20 lights and 110 calibration frames took 70 s, not 11)
+    if stage == "register":
         return f.lights * f.mpx
     if stage == "stack":
         return f.lights * f.mpx * f.scale ** 2
