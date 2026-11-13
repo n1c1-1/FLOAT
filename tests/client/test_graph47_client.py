@@ -597,7 +597,7 @@ def test_a_blank_page_has_a_link_to_the_templates_in_place_of_the_graph(qapp, tm
         QTest.mouseClick(page.graph.viewport(), Qt.LeftButton, pos=page.graph.mapFromScene(link.sceneBoundingRect().center()))
         assert page.templates.isVisibleTo(page) and not page.graph.isVisibleTo(page)
         assert [c.t["key"] for c in page.templates.cards] == ["colour_min", "colour_full", "image", "filters_min",
-                                                              "filters_full", "sho_rgb", "images"]
+                                                              "filters_full", "sho_rgb", "images", "dual_x2"]
         page.templates.back_b.click()
         assert page.graph.isVisibleTo(page) and not page.templates.isVisibleTo(page) and page.is_blank()
         assert page.new_workflow() is None and page.templates.isVisibleTo(page)   # the menu: no window on a blank page

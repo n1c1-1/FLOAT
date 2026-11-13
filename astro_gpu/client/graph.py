@@ -3898,6 +3898,9 @@ class GraphPage(QWidget):
         Returns the workflow shown (the combination, or the first filter's)."""
         s = self.s
         from .gallery import palette_kind, template_blocks
+        if t.get("dual_x2"):                                # two dual-band filters and a session for the stars
+            with s.batch():
+                return s.add_dual_x2(name, {**opts})
         if t.get("rgb_stars"):                              # the narrow bands and a colour workflow's stars (issue #165)
             with s.batch():
                 return s.add_sho_rgb(name, palette_kind(t["palette"]), list(t["filters"]), {**opts})

@@ -1868,6 +1868,44 @@ class ProjectModel(QObject):
         """The graph of a monochrome workflow made from these options (no Color block)."""
         return [dict(n) for n in wfl.from_options(to_engine(dict(opts)), None, "frames") if n["block"] != "color" and not n["off"]]
 
+    def add_dual_x2(self, name: str, opts: dict) -> WorkflowView:
+        """The "Dual-band x2" template: a colour camera with two dual-band filters (O III / H-alpha, O III / S II) and a
+        session for the stars. Rows: S (session B), H (session A), O III (sessions A and B stacked together: the O III of
+        every frame of both filters) and Stars (session C, a colour row). The three narrow-band rows have no Color block
+        (a white balance before the combination would distort the filters' ratios) and take their stars off in the row;
+        S is the reference, H, O III and Stars are aligned on it without an Astrometry of their own; the S-H-O combination
+        reads S's red, H's red and O III's green and blue, all starless; the Stars row's stars come back on it in Post.
+        One Undo step. Returns the combination."""
+        from ..stages.combine import CombineSHO
+        a_f, b_f = "O III / H-alpha", "O III / S II"
+        with self._edit():
+            # a colour camera's sessions carry no filter value (the engine's list is the mono filters'): named instead
+            sa, sb = self.add_filter_session("", a_f), self.add_filter_session("", b_f)
+            sc = self.add_filter_session("", _("Stars"))
+            narrow = [dict(n) for n in wfl.from_options(to_engine(dict(opts)), None, "frames")
+                      if n["block"] != "color" and not n["off"]]
+            rows = {}
+            for key, label, sids, colour in (("S", "S", [sb], False), ("H", "H", [sa], False),
+                                             ("O", "O III", [sa, sb], False), ("RGB", _("Stars"), [sc], True)):
+                q = self.add_path(self.unique_name(label), opts)
+                self.p.workflow(q.pid).sessions = list(sids)
+                self.set_graph(q, [dict(n) for n in (wfl.from_options(to_engine(dict(opts)), None, "frames")
+                                                    if colour else narrow) if not n["off"]])
+                rows[key] = self.view(q.pid)
+            for key in ("H", "O", "RGB"):
+                self.align_without_astrometry(rows[key], rows["S"].pid)
+            ports = dict(zip(("S", "H", "O"), CombineSHO.ports))
+            fus = self.add_fusion(name, "sho", [{"pid": rows[k].pid, "role": ports[k], "channel": ch, "image": "starless"}
+                                                for k, ch in (("S", "R"), ("H", "R"), ("O", "GB"))])
+            lid = self.add_post_layer(fus.pid, "combined", None)
+            self.set_layer_side(lid, "starless", fus.pid, "output")      # the combination has no Stars block of its own
+            self.set_layer_side(lid, "stars", rows["RGB"].pid, "starless")
+            self.remove_post_part(fus.pid, None, None)                   # Post shows this picture and nothing else
+            self.remove_post_part(rows["RGB"].pid, "combined", None)
+            gone = {(int(a), b) for a, b in self.p.post.get("removed") or []} | {(fus.pid, None), (rows["RGB"].pid, "combined")}                 | {(rows[k].pid, self.post_default_part(rows[k])) for k in ("S", "H", "O")}
+            self.p.post = {**self.p.post, "removed": sorted([list(x) for x in gone], key=str)}
+        return self.view(fus.pid)
+
     def wiring_reason(self, p, kind: str) -> str:
         """Why the join block of a workflow (``kind``: "fusion", "align_on") waits for a wire, translated: an input empty,
         inputs not on one grid, a reference not wired (the plan's, which leaves the block out); "" when it does not."""

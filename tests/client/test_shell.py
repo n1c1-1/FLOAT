@@ -544,7 +544,7 @@ def test_the_template_gallery_on_the_model(qapp, tmp_path):
     assert d.choice["key"] == "colour_full" and d.name.text() == "Colour full"   # the recommended one first (#11)
     assert d.ok.isEnabled() and d.opts["etoiles"] == "retirer" and "cut" not in d.opts
     assert {c.t["key"] for c in d.cards} == {"colour_min", "colour_full", "image", "filters_min", "filters_full", "sho_rgb",
-                                               "images"}
+                                               "images", "dual_x2"}
     minimal = next(c.t for c in d.cards if c.t["key"] == "colour_min")
     d.pick(minimal)
     assert "calibration" in [n["block"] for n in template_blocks(minimal)]

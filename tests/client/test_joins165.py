@@ -413,3 +413,27 @@ def test_every_filters_combination_takes_the_stars_off_per_filter_and_combines_t
     assert {i["image"] for i in stars.source["fusion"]["inputs"]} == {"stars"}
     assert [i["pid"] for i in nebula.source["fusion"]["inputs"]] == [i["pid"] for i in stars.source["fusion"]["inputs"]]
     assert "to wire" not in Graph(m).node_of(nebula, "fusion").waits
+
+
+def test_the_dual_band_x2_template_makes_its_rows_and_its_combination(world):
+    m = world["m"]
+    t = next(c for c in GALLERY if c["key"] == "dual_x2")
+    world["page"].make_from_template(t, "S-H-O", _view_opts(t))
+    settle(world)
+    assert [q.name for q in m.paths] == ["S", "H", "O III", "Stars", "S-H-O"]
+    s_, h, o, st, sho = (by_name(m, n) for n in [q.name for q in m.paths])
+    assert [(x.name, x.filter) for x in m.p.sessions] == [("O III / H-alpha", ""), ("O III / S II", ""),
+                                                          ("Stars", "")]
+    sa, sb, sc = (x.id for x in m.p.sessions)
+    assert [sorted(m.p.workflow(q.pid).sessions) for q in (s_, h, o, st)] == [[sb], [sa], [sa, sb], [sc]]
+    for q in (s_, h, o, st):
+        blocks = [n["block"] for n in m.graph(q)]
+        assert ("color" in blocks) == (q is st) and blocks.count("stars") == 1
+        assert ("astrometry" in blocks) == (q is s_) and ("align_on" in blocks) == (q is not s_)
+        assert (m.align_reference(q) == s_.pid) == (q is not s_)
+    f = m.p.workflow(sho.pid).source["fusion"]
+    assert [(i["role"], i["pid"], i["channel"], i["image"]) for i in f["inputs"]] == [
+        ("SII", s_.pid, "R", "starless"), ("Ha", h.pid, "R", "starless"), ("OIII", o.pid, "GB", "starless")]
+    layers = [x for x in m.post_layers() if x.get("kind") == "workflow"]
+    assert len(layers) == 1 and (layers[0]["pid"], layers[0]["stars_pid"], layers[0]["starless"]) == (
+        sho.pid, st.pid, "output")

@@ -102,6 +102,9 @@ GALLERY: list[dict] = [
               "starless images, and a Combine layers block puts the colour stars back on its image."),
     dict(key="images", tab="frames", name="Several images", opts=CLASSIC, source="image", plain=True, blocks=[], images=3,
          text="Several images to Post, one layer each: each Image block takes its file in the graph."),
+    dict(key="dual_x2", tab="frames", name="Dual-band x2", opts=FULL, kind="fusion", palette=SHO_DEFAULT,
+         filters=["O III / H-alpha", "O III / S II"], dual_x2=True,
+         text="A colour camera with two dual-band filters (O III/H-alpha and O III/S II) and a session for the stars"),
 ]
 
 #: the template chosen first in the frames' tab
@@ -210,6 +213,8 @@ def _draw_name(p: QPainter, r: QRectF, text: str, font: QFont):
 def draw_graph(t: dict, w: int, h: int, names: bool = False) -> QPixmap:
     """A picture of a template's graph: its sources (a night with its Calibration, or image files), then its blocks; a
     cut block hatched, a greyed one outlined in amber."""
+    if t.get("dual_x2"):
+        return draw_dual_x2(t, w, h, names)
     if t.get("kind") in ("filters", "fusion"):
         return draw_filters(t, w, h, names)
     pm = QPixmap(w, h)
@@ -337,6 +342,64 @@ def draw_graph(t: dict, w: int, h: int, names: bool = False) -> QPixmap:
         r = block(x, mid, k, how)
         ends = [(r.right(), mid)]
         x += bw + gap
+    p.end()
+    return pm
+
+
+def draw_dual_x2(t: dict, w: int, h: int, names: bool = False) -> QPixmap:
+    """The "Dual-band x2" template's graph: four rows (S, H, O III from both filters, Stars), the three narrow-band rows
+    with their stars taken off, the last three aligned on the first, the first three joined into the S-H-O combination."""
+    pm = QPixmap(w, h)
+    pm.fill(QColor("#15171c"))
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    rows = [("S", False), ("H", False), ("O III", False), (_("Stars"), True)]
+    cols = ["calibration", "empilement", "astrometrie", "align_on", "fond", "couleur", "debruitage", "etoiles"]
+    n = 1 + len(cols) + 1
+    gap = max(4.0, w * (0.008 if names else 0.012))
+    bw = (w - 2 * gap - (n - 1) * gap) / n
+    bh = min(h * 0.18, bw * 0.62)
+    font = QFont("Segoe UI", min(10, max(6, int(bh * 0.3))))
+    font.setBold(True)
+    pitch = (h - 8) / len(rows)
+
+    def block(x, y, text, colour):
+        r = QRectF(x, y - bh / 2, bw, bh)
+        p.setPen(QPen(QColor("#3a4150"), 1))
+        p.setBrush(QColor("#22262e"))
+        p.drawRoundedRect(r, 4, 4)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(colour))
+        p.drawRect(QRectF(x, y - bh / 2 + 2, 3, bh - 4))
+        if names:
+            p.setPen(QColor("#e8ebf0"))
+            _draw_name(p, r, text, font)
+        return r
+
+    def wire(x1, y1, x2, y2):
+        p.setPen(QPen(QColor("#6f7888"), 1.4))
+        path = QPainterPath(QPointF(x1, y1))
+        mx = (x1 + x2) / 2
+        path.cubicTo(QPointF(mx, y1), QPointF(mx, y2), QPointF(x2, y2))
+        p.drawPath(path)
+
+    ys = [4 + pitch * (i + 0.5) for i in range(len(rows))]
+    xs = [gap + (bw + gap) * (j + 1) for j in range(len(cols))]
+    ends = []
+    for i, ((row, colour), y) in enumerate(zip(rows, ys)):
+        r = block(gap, y, row, "#7aa2d6")
+        for j, k in enumerate(cols):
+            if (k == "align_on" and i == 0) or (k == "astrometrie" and i > 0) or (k == "couleur" and not colour):
+                continue
+            wire(r.right(), y, xs[j], y)
+            r = block(xs[j], y, picture_name(k), "#c9a227" if k == "align_on" else "#5fbf7f")
+        ends.append((r.right(), y, colour))
+    x = xs[-1] + bw + gap * 2
+    yf = (ys[0] + ys[2]) / 2
+    r = block(x, yf, _(palette_name(t.get("palette", SHO_DEFAULT))), "#c9a227")
+    for ex, ey, colour in ends:
+        if not colour:
+            wire(ex, ey, r.left(), yf)
     p.end()
     return pm
 
@@ -784,7 +847,7 @@ class TemplateGallery(QDialog):
 
     def _asks_filters(self, t: dict) -> bool:
         """A type is chosen for a combination block, or for filter workflows of a project without filters yet."""
-        return t.get("kind") == "fusion" or (t.get("kind") == "filters" and
+        return (t.get("kind") == "fusion" and not t.get("dual_x2")) or (t.get("kind") == "filters" and
                                              not (self.s.filters() if hasattr(self.s, "filters") else {}))
 
     def _update(self):
