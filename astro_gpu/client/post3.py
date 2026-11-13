@@ -171,6 +171,41 @@ def layer_name(lay: dict) -> str:
     return tr_name(lay["name"], lay.get("kind") == "image")
 
 
+def step_words(old: list[dict], new: list[dict]) -> str:
+    """What changed between two states of the layers, in a few words ("Saturation of "Filter" changed"), for the
+    status line of an Undo / Redo. ``old``: the earlier state."""
+    a, b = {x["id"]: x for x in old}, {x["id"]: x for x in new}
+    kind = lambda lay: _("Filter") if lay.get("kind") == "filter" else _("Layer")  # noqa: E731
+    for i, lay in b.items():
+        if i not in a:
+            return _("{kind} “{name}” added").format(kind=kind(lay), name=layer_name(lay))
+    for i, lay in a.items():
+        if i not in b:
+            return _("{kind} “{name}” deleted").format(kind=kind(lay), name=layer_name(lay))
+    if [x["id"] for x in old] != [x["id"] for x in new]:
+        return _("Layers reordered")
+    for i, lay in b.items():
+        was = a[i]
+        if was == lay:
+            continue
+        name = layer_name(lay)
+        if was.get("name") != lay.get("name"):
+            return _("“{old}” renamed “{name}”").format(old=layer_name(was), name=name)
+        if was.get("visible") != lay.get("visible"):
+            return (_("“{name}” shown") if lay.get("visible") else _("“{name}” hidden")).format(name=name)
+        for key, word in (("opacity", _("opacity")), ("mode", _("blend mode")), ("blend", _("blend mode")),
+                          ("mask", _("mask"))):
+            if was.get(key) != lay.get(key):
+                return _("{what} of “{name}”").format(what=word.capitalize(), name=name)
+        for field in ("sliders", "params"):
+            ka, kb = was.get(field) or {}, lay.get(field) or {}
+            for k in kb:
+                if ka.get(k) != kb[k]:
+                    return _("{what} of “{name}”").format(what=_(str(k).replace("_", " ").capitalize()), name=name)
+        return _("“{name}” changed").format(name=name)
+    return _("Crop changed") if getattr(old, "crop", None) != getattr(new, "crop", None) else ""
+
+
 def _pieces(n: str, fn) -> str:
     """``fn`` applied to each piece of a name made of pieces joined by "·" (the separators kept as they are)."""
     parts = re.split(r"(\s*·\s*)", n)
@@ -1302,6 +1337,11 @@ class PostView(QWidget):
         if self.b_cmp.isChecked():
             self._send_before()
 
+    def _from_post(self):
+        """The changes of the model made inside are Post's steps: the graph's Undo leaves them to Post."""
+        from contextlib import nullcontext
+        return getattr(self.s, "from_post", nullcontext)()
+
     def _version_picked(self, i: int):
         vid = self.cb_version.itemData(i)
         if vid is not None and vid != self._version:
@@ -1310,7 +1350,8 @@ class PostView(QWidget):
 
     def _version_new(self):
         self._save()
-        self.s.new_post_version()
+        with self._from_post():
+            self.s.new_post_version()
 
     def _version_renamed(self):
         self.s.rename_post_version(self._version, self.cb_version.currentText())
@@ -1324,7 +1365,8 @@ class PostView(QWidget):
         if p is None or len(p.post["versions"]) < 2:
             return
         self._save()
-        self.s.delete_post_version(self._version)
+        with self._from_post():
+            self.s.delete_post_version(self._version)
         self.undo.append(MODEL_STEP)                     # (the delete showed the other version: its own Undo now)
         self.redo.clear()
         self._undo_buttons()
@@ -1789,34 +1831,46 @@ class PostView(QWidget):
     def _set_workflow_param(self, p, stage, name, value):
         """A setting of the workflow shown here (its Output's channels): a step of Post's Undo too (2.4), undone by the
         workflows' Undo."""
-        self.s.set_param(p, stage, name, value)
+        with self._from_post():
+            self.s.set_param(p, stage, name, value)
         self.undo.append(MODEL_STEP)
         self.redo.clear()
         self._undo_buttons()
 
     def do_undo(self) -> bool:
-        """Post's last change undone; with none left, the workflows' (a "To Post" made in the graph, say): one Undo
-        for the whole window. True when it was the workflows' step."""
+        """Post's last change undone, said in the status; with none left, the workflows' (a "To Post" made in the
+        graph, say): one Undo for the whole window. True when it was the workflows' step."""
         if self.undo and self.undo[-1] is not MODEL_STEP:
-            self.redo.append(self._step(snapshot(self.layers)))
+            before = self._step(snapshot(self.layers))
+            self.redo.append(before)
             self.layers = self.undo.pop()
             self._restored()
+            self._say_step("Undone", "Undone: {what}", step_words(self.layers, before))
             return False
         if self.undo:
             self.undo.pop()
-        return self._model_step(getattr(self.s, "undo", None), "redo")
+        return self._model_step(getattr(self.s, "undo", None), "redo", "Undone", "Undone: {what}")
 
     def do_redo(self) -> bool:
         if self.redo and self.redo[-1] is not MODEL_STEP:
-            self.undo.append(self._step(snapshot(self.layers)))
+            before = self._step(snapshot(self.layers))
+            self.undo.append(before)
             self.layers = self.redo.pop()
             self._restored()
+            self._say_step("Redone", "Redone: {what}", step_words(before, self.layers))
             return False
         if self.redo:
             self.redo.pop()
-        return self._model_step(getattr(self.s, "redo", None), "undo")
+        return self._model_step(getattr(self.s, "redo", None), "undo", "Redone", "Redone: {what}")
 
-    def _model_step(self, fn, other: str) -> bool:
+    def _say_step(self, plain: str, said: str, what: str):
+        """What an Undo / Redo of Post did, in the window's status line (and the Log of the workflows' step)."""
+        if what and not what.isspace():
+            self.toasted.emit(_(said).format(what=what))
+        else:
+            self.toasted.emit(_(plain))
+
+    def _model_step(self, fn, other: str, plain: str = "Undone", said: str = "Undone: {what}") -> bool:
         """A step of the workflows' Undo taken back or redone from here: the composition it puts back is not a step
         of Post's. ``other``: "undo" or "redo", the list that takes it back, the one of the version shown after the
         step (a deleted version brought back shows itself, with its own lists, #145)."""
@@ -1831,6 +1885,11 @@ class PostView(QWidget):
             self._restoring = False
         self.rebuild()
         self._undo_buttons()
+        if done:
+            what = getattr(self.s, "restored", "")
+            if hasattr(self.s, "log"):
+                self.s.log(said, what=what) if what else self.s.log(plain)
+            self._say_step(plain, said, what)
         return done
 
     def _step(self, layers) -> Step:
@@ -2298,7 +2357,8 @@ class PostView(QWidget):
         self.flush()
         self._restoring = True
         try:
-            fn()
+            with self._from_post():
+                fn()
         except ValueError as e:
             self.toasted.emit(str(e))
             return False
@@ -2448,7 +2508,8 @@ class PostView(QWidget):
             self._save()                                  # the layers shown into the project, then renamed there
             self._restoring = True
             try:
-                self.s.rename(p.pid, new)
+                with self._from_post():
+                    self.s.rename(p.pid, new)
                 self._post_changed(None)                  # and taken back here with their new names
             finally:
                 self._restoring = False
@@ -2586,7 +2647,8 @@ class PostView(QWidget):
             self.flush()
             self._restoring = True
             try:
-                self.s.remove_path(self.s.paths.index(p))
+                with self._from_post():
+                    self.s.remove_path(self.s.paths.index(p))
             finally:
                 self._restoring = False
             if hasattr(self.s, "log"):

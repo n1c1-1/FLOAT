@@ -528,6 +528,12 @@ def _sig(rows) -> tuple:
                   r.locked) for r in rows or [])
 
 
+class _Snap(tuple):
+    """What Undo puts back (``ProjectModel._snapshot``), with the page the change came from: Post's steps are undone
+    in Post, the graph's in the graph."""
+    from_post = False
+
+
 class SessionSet:
     """Which sessions a project has, for Undo (issue #47), with their names, filters and lists of files (control round,
     decision 7: a file taken out of a session, or added, is one gesture, one undo step; before, Ctrl+Z undid an older
@@ -624,6 +630,7 @@ class ProjectModel(QObject):
         self._reviewed: list[str] = []                     # "<block>:<fingerprint>" of the results marked as checked
         self._undo: list = []
         self._redo: list = []
+        self._post_depth = 0                               # inside from_post(): a step Post made
         self._undo_what: list = []                         # what each undo step did, in words (None: not said)
         self._redo_what: list = []
         self._naming = False                               # the last step still takes its words (the same gesture)
@@ -1016,6 +1023,7 @@ class ProjectModel(QObject):
             made = _copy.deepcopy(self.post_version())
             made.update(id=vid, name=f"Version {n}", layers=with_new_ids(made.get("layers") or []))
             self.p.post = {**post, "versions": [*post["versions"], made], "active": vid}
+        self.name_step(_("“{name}” made").format(name=made["name"]))
         self.postChanged.emit(None)
         return vid
 
@@ -1026,6 +1034,7 @@ class ProjectModel(QObject):
             return
         with self._edit():
             self.p.post = {**post, "versions": [{**v, "name": name} if v["id"] == vid else v for v in post["versions"]]}
+        self.name_step(_("Version renamed “{name}”").format(name=name))
         self.postChanged.emit(None)
 
     def delete_post_version(self, vid: int):
@@ -1036,6 +1045,7 @@ class ProjectModel(QObject):
             return
         with self._edit():
             self.p.post = {**post, "versions": rest, "active": post["active"] if post["active"] != vid else rest[-1]["id"]}
+        self.name_step(_("“{name}” deleted").format(name=next(v["name"] for v in post["versions"] if v["id"] == vid)))
         self.postChanged.emit(None)
 
     def _post_sync(self):
@@ -1300,6 +1310,7 @@ class ProjectModel(QObject):
                 self._follow_branch_names()
                 self._prune_post()
                 if self._snapshot() != before:
+                    before.from_post = self._post_depth > 0
                     self._undo.append(before)
                     del self._undo[:-200]
                     self._redo.clear()
@@ -1466,8 +1477,8 @@ class ProjectModel(QObject):
         removed, it comes back with what it had, issue #47), with their lists of files (``SessionSet``)."""
         post = json.dumps(getattr(self.p, "post", None) or {}, sort_keys=True)     # the composition too (2.1)
         # the Project block's form too (issue #89): its name and shooting details, as its target and comments
-        return (api.workflows(self.p), self.p.current, self.p.stack_mode, SessionSet(self.p), post,
-                asdict(self.p.target), self.p.description, self.p.name, dict(self.p.acquisition))
+        return _Snap((api.workflows(self.p), self.p.current, self.p.stack_mode, SessionSet(self.p), post,
+                      asdict(self.p.target), self.p.description, self.p.name, dict(self.p.acquisition)))
 
     def _extra(self):
         """What an edit may change besides the workflows: the sessions and the frames excluded by hand."""
@@ -1477,19 +1488,34 @@ class ProjectModel(QObject):
                  for s in self.p.sessions])
 
     # ------------------------------------------------------------ undo and redo
-    def can_undo(self) -> bool:
-        return bool(self._undo)
+    @contextmanager
+    def from_post(self):
+        """What is changed inside is a change made in Post (a version made, a layer's branch removed...): its step of
+        Undo belongs to Post's page, the graph's Undo leaves it."""
+        self._post_depth += 1
+        try:
+            yield
+        finally:
+            self._post_depth -= 1
 
-    def can_redo(self) -> bool:
-        return bool(self._redo)
+    def can_undo(self, graph: bool = False) -> bool:
+        """``graph``: for the graph's Undo, which leaves the steps Post made to Post's own."""
+        return bool(self._undo) and not (graph and self._undo[-1].from_post)
 
-    def undo(self) -> bool:
+    def can_redo(self, graph: bool = False) -> bool:
+        return bool(self._redo) and not (graph and self._redo[-1].from_post)
+
+    def undo(self, graph: bool = False) -> bool:
+        if not self.can_undo(graph):
+            return False
         what = self._move_what(self._undo, self._undo_what, self._redo_what)
         done = self._restore(self._undo, self._redo)
         self.restored = what if done else ""
         return done
 
-    def redo(self) -> bool:
+    def redo(self, graph: bool = False) -> bool:
+        if not self.can_redo(graph):
+            return False
         what = self._move_what(self._redo, self._redo_what, self._undo_what)
         done = self._restore(self._redo, self._undo)
         self.restored = what if done else ""
@@ -1541,7 +1567,9 @@ class ProjectModel(QObject):
         """Put the workflows back as an earlier snapshot had them (computed results are never removed)."""
         if not src:
             return False
-        dst.append(self._snapshot())
+        now = self._snapshot()
+        now.from_post = src[-1].from_post                   # a step keeps its page when undone and redone
+        dst.append(now)
         had = {v.pid: self.block_keys(v) for v in self.paths}      # decision 5: what comes back is selected
         old_keys = self.block_keys(self.path) if self.path is not None else []
         ws, current, mode, sessions, post, target, description, name, acquisition = src.pop()

@@ -390,7 +390,7 @@ class Main(QMainWindow):
         if s is None:
             return
         try:
-            self.a_undo.setEnabled(s.can_undo() or self._post_shown())
+            self.a_undo.setEnabled(s.can_undo() or self._post_shown())      # (greyed never: it says why when pressed)
             self.a_redo.setEnabled(s.can_redo() or self._post_shown())
             self.a_stop.setEnabled(self.run is not None and self.run.running)
             self.a_stop.setToolTip(_("Stop the run: what is computed is kept") if self.a_stop.isEnabled()
@@ -1426,19 +1426,22 @@ class Main(QMainWindow):
             self.run.stop()
 
     def undo(self):
-        """Undo: in Post, the composition's last change; elsewhere the workflows' last change."""
+        """Undo: in Post, the composition's last change (said by Post); in the graph, the workflows' last change,
+        leaving the steps Post made to Post; elsewhere the workflows' last change."""
         if self._post_shown():
-            if self.post_holder.page.view.do_undo():
-                self._say_restored("Undone", "Undone: {what}")
-        elif self.s is not None and self.s.undo():
+            self.post_holder.page.view.do_undo()
+        elif self.s is not None and self.s.undo(graph=True):
             self._say_restored("Undone", "Undone: {what}")
+        elif self.s is not None and self.s.can_undo():
+            self.flash(_("Nothing to undo here: Post's changes are undone in Post"))
 
     def redo(self):
         if self._post_shown():
-            if self.post_holder.page.view.do_redo():
-                self._say_restored("Redone", "Redone: {what}")
-        elif self.s is not None and self.s.redo():
+            self.post_holder.page.view.do_redo()
+        elif self.s is not None and self.s.redo(graph=True):
             self._say_restored("Redone", "Redone: {what}")
+        elif self.s is not None and self.s.can_redo():
+            self.flash(_("Nothing to redo here: Post's changes are redone in Post"))
 
     def _say_restored(self, plain: str, said: str):
         """The Undo / Redo message and Log line: what was undone or redone, in the words of its step."""

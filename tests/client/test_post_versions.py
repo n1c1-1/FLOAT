@@ -211,3 +211,33 @@ def test_long_random_sequences_keep_the_versions_true(model, seed):
             assert text(upgraded_post(json.loads(stored))) == stored, step
         assert versions_problem(m.p.post) is None, (step, act)
         active_version(m.p.post)
+
+
+def test_the_graphs_undo_leaves_a_step_made_in_post_and_posts_undo_names_what_it_undid(model):
+    """A version made in Post is one of Post's steps: Ctrl+Z in the graph leaves it (it took the version and its edits),
+    and every Undo says what it undid."""
+    from astro_gpu.client.post3 import PostPage3
+    from astro_gpu.client.services.render import RenderWorker
+    model.add_post_layer(by_name(model, "Full").pid, "stars")
+    page = PostPage3(model, worker=RenderWorker(None, resolver=lambda pid: None, device="cpu"))
+    v = page.view
+    said = []
+    v.toasted.connect(said.append)
+    try:
+        v._version_new()
+        assert len(model.p.post["versions"]) == 2
+        assert model.can_undo() and not model.can_undo(graph=True)
+        assert model.undo(graph=True) is False and len(model.p.post["versions"]) == 2
+        v.push()
+        v.layers[0]["opacity"] = 40.0
+        v.do_undo()
+        assert said[-1].startswith("Undone: ") and "Opacity" in said[-1]
+        v.do_redo()
+        assert said[-1].startswith("Redone: ")
+        v.do_undo()
+        v.do_undo()                                                # then the version, in Post
+        assert len(model.p.post["versions"]) == 1 and said[-1].startswith("Undone: ")
+    finally:
+        page.shutdown()
+        page.deleteLater()
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
