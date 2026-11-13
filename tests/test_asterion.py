@@ -355,3 +355,28 @@ def test_real_noise_has_no_solution_and_a_stop_ends_the_program(tmp_path, monkey
     with pytest.raises(Interrupted):
         A.solve(noise, tmp_path, timeout=10, check=stop)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_a_version_check_that_times_out_is_not_taken_for_not_installed(tmp_path, monkeypatch):
+    """A starved Asterion (a machine whose cores are all busy) that does not answer its version in time is said to be
+    late, not to be another program, and it is asked again next time (nothing remembered)."""
+    import subprocess
+    exe = tmp_path / "asterion.exe"
+    exe.write_bytes(b"x")
+
+    def late(*a, **k):
+        raise subprocess.TimeoutExpired(a[0], 30)
+    monkeypatch.setattr(A.subprocess, "run", late)
+    assert A.program_version(exe) is None
+    monkeypatch.setattr(A, "find_program", lambda e=None: exe)
+    s = A.status()
+    assert not s.ok and "did not answer in time" in s.why
+    monkeypatch.setattr(A.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a[0], 0, "Asterion 0.4.2", ""))
+    assert A.program_version(exe) == "0.4.2"                  # the late answer was not remembered
+
+
+def test_asterion_runs_at_the_normal_priority():
+    import subprocess
+    flags = A._hidden().get("creationflags", 0)
+    if sys.platform == "win32":
+        assert not flags & subprocess.BELOW_NORMAL_PRIORITY_CLASS and flags & subprocess.CREATE_NO_WINDOW

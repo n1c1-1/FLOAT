@@ -177,20 +177,21 @@ def find_catalogs(catalogs: str | os.PathLike | None = None, program: Path | Non
 
 
 def _hidden() -> dict:
-    """No console window on Windows (FLOAT's workers have one, hidden; a program they start would open its own), and a
-    priority under FLOAT's own work."""
+    """No console window on Windows (FLOAT's workers have one, hidden; a program they start would open its own). The
+    normal priority: under a below-normal one, a machine whose cores are all busy starved it, its version check went past
+    its 30 s and Asterion was taken for not installed, its solves for failed (the session inventorying raws, 13 November)."""
     if sys.platform != "win32":
         return {}
-    return {"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS}
+    return {"creationflags": subprocess.CREATE_NO_WINDOW}
 
 
 _VERSIONS: dict[tuple[str, float, int], str] = {}
 _VERSIONS_LOCK = threading.Lock()
 
 
-def program_version(exe: Path) -> str:
+def program_version(exe: Path) -> str | None:
     """``0.4.2`` from ``asterion --version`` (asked once per program file: its path, date and size), "" when it does not
-    answer as Asterion."""
+    answer as Asterion, None when it did not answer in time (a busy machine: not remembered, asked again next time)."""
     try:
         st = exe.stat()
     except OSError:
@@ -204,6 +205,8 @@ def program_version(exe: Path) -> str:
                            timeout=30, stdin=subprocess.DEVNULL, **_hidden())
         m = re.search(r"Asterion\D*(\d+)\.(\d+)\.(\d+)", r.stdout)
         v = ".".join(m.groups()) if m else ""
+    except subprocess.TimeoutExpired:
+        return None
     except (OSError, subprocess.SubprocessError):
         v = ""
     with _VERSIONS_LOCK:
@@ -217,6 +220,9 @@ def status(exe: str | os.PathLike | None = None, catalogs: str | os.PathLike | N
     if prog is None:
         return Status(False, why="the Asterion plate solver is not installed", missing=True)
     v = program_version(prog)
+    if v is None:
+        return Status(False, prog, why=f"{prog} did not answer in time (the computer is busy): it is asked again at the "
+                                       f"next run")
     if not v:
         return Status(False, prog, why=f"{prog} does not run as the Asterion plate solver")
     if tuple(int(x) for x in v.split(".")) < MIN_VERSION:
