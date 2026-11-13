@@ -308,3 +308,22 @@ def test_the_delete_key_takes_out_the_selected_layer_and_undo_brings_it_back(mod
         page.shutdown()
         page.deleteLater()
         QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_spot_healing_switched_on_then_off_with_no_stroke_leaves_nothing(model):
+    from astro_gpu.client.post3 import PostPage3
+    from astro_gpu.client.services.render import RenderWorker
+    model.add_post_layer(by_name(model, "Full").pid, "stars")
+    page = PostPage3(model, worker=RenderWorker(None, resolver=lambda pid: None, device="cpu"))
+    v = page.view
+    try:
+        n, steps = len(v.layers), len(v.undo)
+        v.b_heal.setChecked(True)
+        assert any(x.get("filter") == "heal" for x in v.layers)
+        v.b_heal.setChecked(False)
+        assert len(v.layers) == n and not any(x.get("filter") == "heal" for x in v.layers)
+        assert len(v.undo) == steps and v.sel is not None
+    finally:
+        page.shutdown()
+        page.deleteLater()
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)

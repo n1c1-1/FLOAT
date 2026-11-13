@@ -2952,6 +2952,7 @@ class PostView(QWidget):
             if self._heal_layer() is not None:
                 self.viewer.mode = "pan"
                 bottom = next((x for x in reversed(self.layers) if is_pixel(x)), None)
+                self._drop_empty_heal()
                 if bottom is not None:
                     self.select(bottom["id"], "layer")
             return
@@ -2959,7 +2960,7 @@ class PostView(QWidget):
         if lay is not None:
             self.select(lay["id"], "layer")
         else:
-            self.add_filter("heal")
+            self._heal_made = self.add_filter("heal")["id"]
 
     def _show_crop(self, crop):
         self.crop = list(crop) if crop else None
@@ -3368,6 +3369,24 @@ class PostView(QWidget):
                                         self.build_props()))
             src.addWidget(au)
         self.pbox.addLayout(src)
+
+    def _drop_empty_heal(self):
+        """The tool left with no spot healed: its layer goes (nothing is left in the list), and with it the Undo step
+        its making was."""
+        empty = [x for x in self.layers if x["kind"] == "filter" and x.get("filter") == "heal"
+                 and not x["params"].get("spots")]
+        if not empty:
+            return
+        gone = {x["id"] for x in empty}
+        self.layers = normalize([x for x in self.layers if x["id"] not in gone])
+        made = getattr(self, "_heal_made", None)
+        if made in gone and self.undo and self.undo[-1] is not MODEL_STEP and                 not any(x["id"] == made for x in self.undo[-1]):
+            self.undo.pop()                                  # (the step before its making: it was not a change)
+        self._heal_made = None
+        self.sel = None
+        self.rebuild()
+        self.request(final_only=True)
+        self._undo_buttons()
 
     def _heal_layer(self):
         lay = self.layer(self.sel[0]) if self.sel and self.sel[1] == "layer" else None
