@@ -43,9 +43,9 @@ LOCK_STALE = 30.0                              # a lock file older than this was
 #: 4060 Ti, 5 November 2026, plus the reading and writing of its images)
 HEART: dict[str, tuple[float, float]] = {
     "inventory": (5.0, 0.0), "calibrate": (310.8, 0.11), "register": (121.4, 0.0), "stack": (2064.0, 1.31),
-    "astrometry": (6.0, 0.0), "align_on": (10.0, 0.3), "reference": (89.8, 0.0), "catalogs": (0.3, 0.07), "surveys": (0.1, 0.11),
+    "astrometry": (6.8, 0.0), "align_on": (10.0, 0.3), "reference": (89.8, 0.0), "catalogs": (0.3, 0.07), "surveys": (0.1, 0.11),
     "synth_stars": (60.0, 0.3), "color": (2.9, 0.0), "deconv": (85.0, 1.0), "denoise": (20.4, 0.68), "gradient": (3.0, 0.01),
-    "render_simple": (16.0, 0.7), "star_removal": (30.0, 0.66), "sessions": (1.2, 0.0), "combine": (18.0, 0.1),
+    "render_simple": (16.0, 0.7), "star_removal": (30.0, 0.66), "sessions": (2.7, 0.0), "combine": (18.0, 0.1),
 }
 #: astrometry and align_on measured on a CPU laptop on 12 November 2026: 3 s and 4 s for a grid of 12 Mpx (the 124 s of
 #: the reference were a blind solve; Asterion's first solution takes seconds), the 60 s of the toy stages' default
@@ -63,27 +63,26 @@ OTHER = (60.0, 0.0)
 #: measured on 11 November 2026 (issue #130) on a laptop of 8 cores, drizzle scale 1, 12 Mpx: 50 frames in 156 and
 #: 186 s, 754 frames in 2766 s, 2.5 to 2.9 times the reference; the 5 guessed before announced 80 minutes for 46
 CPU_FACTOR: dict[str, float] = {
-    "inventory": 1, "calibrate": 0.45, "register": 1.5, "stack": 2.0, "astrometry": 0.5, "align_on": 0.4, "catalogs": 1, "surveys": 1,
-    "synth_stars": 1, "color": 1.5, "deconv": 20, "denoise": 45, "gradient": 0.33, "render_simple": 0.3, "star_removal": 5.4,
-    "sessions": 1, "combine": 0.4,
+    "inventory": 1, "calibrate": 0.45, "register": 1.5, "stack": 2.7, "astrometry": 1, "align_on": 0.9, "catalogs": 1, "surveys": 1,
+    "synth_stars": 1, "color": 1.5, "deconv": 20, "denoise": 45, "gradient": 0.5, "render_simple": 0.7, "star_removal": 12.2,
+    "sessions": 1, "combine": 0.9,
 }
-#: First run of the "Dual-band x2" template on a CPU laptop (13 November 2026, 12 Mpx raws, no history, a grid of 27.3
-#: Mpx as the plan reads it): estimated 1 h 06, took 44.6 min. Per block, measured against estimated: astrometry 3 s (0.5),
-#: gradient under 1 s (0.33), Output 5 s (0.3), joint registration 1.2 s, a combination 7 s (0.4), align on 4 s (0.4),
-#: calibrate 68 s against 201 (1.3 to 0.45: the plan already counts a file shared between sessions once, the union of their
-#: frames lists a path once, so the rate was wrong; the masters are read by 8 threads now), stack of 20 lights at drizzle
-#: 1.5 87 s against 155 (2.7 to 2.0: between this run and the 156-186 s of 50 lights of November 11), star_removal 120
-#: against 161-164 s (4 to 5.4: 5.9 s per Mpx of the grid, the only one that was too short)
+#: First run of the "Dual-band x2" template on a CPU laptop (13 November 2026, 12 Mpx raws, a grid of 12.1 Mpx, no
+#: history): estimated 1 h 06, took 44.6 min. Measured per block, at that grid: astrometry 3 s, gradient under 1 s, Output
+#: 5 s, joint registration 1.2 s, a combination 7 s, align on 4 s, calibrate 68 s against 201 (1.3 to 0.45: the plan
+#: already counts a file shared between sessions once, the union of their frames lists a path once, so the rate was
+#: wrong), stack of 20 lights at scale 1 87 s (2.7 stays, the 50 lights of November 11 took 156-186 s), star_removal
+#: 161-164 s (4 to 12.2: 13.4 s per Mpx of the grid, the only one that was too short)
 DEFAULT_CPU_FACTOR = 2.0
 #: Denoise (stages/denoise.py): applying the pretrained network costs this many adaptation steps per Mpx of the stack
 #: grid; measured on the bench on 4 November 2026 (RTX 4060 Ti; 8 processor threads): seconds per adaptation step and
 #: per Mpx applied. Its two parts do not slow down alike without a GPU, so without a history of this kind of machine
 #: the estimate is these times, not the reference's x CPU_FACTOR.
 DENOISE_MPX_UNITS = 8.5
-#: The processor's per-Mpx pass was 3.3 s for the three images Denoise treated (the stack and its two half-stacks; 357 to
-#: 376 s on a grid of 27.3 Mpx, 4 passes, 13 November 2026). Since 489d0fc it treats the stack only (a third) and runs
-#: channels-last (about 20 % less): 3.3 / 3 x 0.8 = 0.88 s per Mpx and pass
-DENOISE_SECONDS = {"gpu": {"step": 0.088, "mpx": 0.75}, "cpu": {"step": 3.6, "mpx": 0.88}}
+#: The processor's per-Mpx pass was 7.4 s for the three images Denoise treated (the stack and its two half-stacks: 357 to
+#: 376 s on a grid of 12.1 Mpx, 4 passes, 13 November 2026). Since 489d0fc it treats the stack only (a third) and runs
+#: channels-last: 95 to 100 s measured, 2.0 s per Mpx and pass
+DENOISE_SECONDS = {"gpu": {"step": 0.088, "mpx": 0.75}, "cpu": {"step": 3.6, "mpx": 2.0}}
 #: the adaptation lengths (stages/denoise.ADAPTATIONS: steps)
 DENOISE_ADAPT_STEPS = {"short": 500, "long": 4000}
 #: the network's passes over the image (stages/denoise.PASSES; the Fast pass setting: one). The times above are per pass
@@ -386,6 +385,10 @@ def facts(keys: Any, wf: Any, store: Any = None) -> Facts:
     f.scale = float(scale or f.scale)
     if not (stack.get("params") or {}).get("scale") and not given("stack").get("scale") and expects_no_drizzle(sampling):
         f.scale = 1.0              # not asked for, and fine stars: the rule will not drizzle (Wing: 3 grids of 16 Mpx, not 37)
+    if not sampling and not (stack.get("params") or {}).get("scale") and not given("stack").get("scale"):
+        f.scale = 1.0              # sampling unknown: the stack chooses its scale from the measured stars, and the run of 13
+                                   # November (12 Mpx Sony raws, no focal length) kept 1; a grid of 1.5 x 1.5 of the sensor's
+                                   # made every estimate with a history 2.2 times too long
     if f.scale != 1.0 and not (stack.get("params") or {}).get("scale") and not given("stack").get("scale"):
         if _stars_well_sampled(keys, wf, store, chain):
             f.scale = 1.0          # the stack will not drizzle: its grid is the sensor's, not 1.5 x 1.5 of it

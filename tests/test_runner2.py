@@ -478,7 +478,7 @@ def test_real_stage_graph_plans_each_key_once_and_cheap_workflows_first(proj):
     assert pos[("star_removal", (ids["Full"],))] > pos[("render_simple", tuple(sorted((ids["Full"],
                                                                                        ids["Classic + denoise"]))))]
     assert all(j.block == wf_block for j in plan.jobs for wf_block in [k.rules.chains.block_of(j.stage)])
-    assert plan.seconds > 100 and not plan.measured      # a stage nobody measured is not announced as seconds
+    assert plan.seconds > 50 and not plan.measured      # a stage nobody measured is not announced as seconds
 
 
 def test_align_on_waits_for_its_reference_which_is_computed_first_and_an_unwired_block_is_left_out(proj):
@@ -838,7 +838,7 @@ def test_estimates_follow_units_history_and_the_cpu():
     assert est.estimate("calibrate", f, history={}).disk_gb == pytest.approx(0.11 * 100 * 24 / (795 * heart.mpx)
                                                                              + 80 * 24e6 * 2 / 1e9)
     # Denoise: its measured times per adaptation step and per Mpx applied, not the reference x the CPU factor
-    assert est.estimate("denoise", f, gpu=False, history={}).seconds == pytest.approx(3.6 * 500 + 0.88 * 24.0 * 4)
+    assert est.estimate("denoise", f, gpu=False, history={}).seconds == pytest.approx(3.6 * 500 + 2.0 * 24.0 * 4)
     assert est.estimate("denoise", f, history={}).seconds == pytest.approx(0.088 * 500 + 0.75 * 24.0 * 4)
     assert est.units("denoise", f) == pytest.approx(500 + 8.5 * 24.0 * 4)
     fast = est.Facts(frames=100, lights=80, mpx=24.0, scale=1.0, grid_mpx=24.0, iterations=500, passes=1)
@@ -858,7 +858,7 @@ def test_stacking_on_the_processor_is_estimated_near_what_was_measured():
     for lights, measured in ((50, 156.0), (50, 186.0), (754, 2766.0)):
         f = est.Facts(frames=lights + 110, lights=lights, mpx=4256 * 2848 / 1e6, scale=1.0, grid_mpx=4256 * 2848 / 1e6)
         got = est.estimate("stack", f, gpu=False, history={}).seconds
-        assert 0.6 < got / measured < 1.4, (lights, got, measured)     # and 87 s for 20 lights at drizzle 1.5 on 13 November
+        assert 0.8 < got / measured < 1.25, (lights, got, measured)
 
 
 def test_an_image_opened_is_estimated_at_its_own_size(tmp_path):
@@ -1130,7 +1130,7 @@ def test_a_three_filter_fusion_is_estimated_near_its_real_run(monkeypatch):
         assert f.scale == 1.0 and f.grid_mpx == pytest.approx(4656 * 3520 / 1e6)     # 0.59 "/px: no drizzle expected
         total += sum(est.estimate(st, f, history={}).seconds for st in real[w.id] if st != "astrometry")
     done = sum(sum(v for k, v in x.items() if k != "astrometry") for x in real.values())   # blind solves that night: seconds now
-    assert 0.6 < total / done < 1.4, (total, done)
+    assert 0.7 < total / done < 1.3, (total, done)
 
 
 def test_calibration_astrometry_and_align_on_are_estimated_near_a_cpu_laptop_run():

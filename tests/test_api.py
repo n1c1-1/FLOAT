@@ -649,7 +649,7 @@ def test_the_toy_scenario_cost_equals_the_plan_after_each_change(real):
     p = real
     plan0 = cost_equals_plan(p)
     # 16: everything up to Color shared; Denoise and what follows by denoising
-    assert len(plan0) == 16 and plan0.seconds > 300 and not plan0.measured
+    assert len(plan0) == 16 and plan0.seconds > 100 and not plan0.measured
     # a setting on two workflows: the others still share the stack
     api.set_param(p, [3, 4], "stack", "kappa", 6)
     plan1 = cost_equals_plan(p)
