@@ -4250,6 +4250,8 @@ class ProjectModel(QObject):
     def slider_infos(self, p: WorkflowView, part: str | None = None) -> list:
         """The Post sliders of a workflow's layer (api.SliderInfo list: key, name, group, ends, available, reason).
         ``part``: None for its Output block's image, else one of its Stars block's ('starless', 'stars', 'combined')."""
+        if not self.ready:                                  # the worker is still reading the project (it holds the keys' lock:
+            return []                                       # asking here would freeze the window for seconds); asked again once ready
         return api.sliders_of(self.p, p.pid, part)
 
     def slider_state(self, p: WorkflowView, key: str, part: str | None = None):

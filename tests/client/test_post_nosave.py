@@ -97,3 +97,42 @@ def test_post_edits_dropped_on_close_without_saving(qapp, tmp_path):
     w.stop()
     assert "Screen" not in _post_on_disk(root)
     assert project2.active_version(project2.load(root).post).get("crop") is None
+
+
+def test_post_opens_at_once_while_the_worker_still_reads_the_project(qapp, tmp_path):
+    """The page asked the keys of the project (the sliders of each layer) from the window's thread while the worker held
+    their lock to read the project: the window froze for seconds with nothing computed. Before the model is ready,
+    the page is built without asking: it says "Nothing computed yet" at once."""
+    import threading
+    import time
+    root = tmp_path / "P"
+    p = project2.create(root, "P", Target(name="M 1"))
+    api.add_workflow(p, "Classic stack", "Classic stack")
+    project2.save(p)
+    w = ApiWorker()
+    m = ProjectModel(project2.load(root), w)
+    held, free = threading.Event(), threading.Event()
+
+    def hold():
+        with api._ctx(m.p).lock:                           # what the worker's reading of the project holds
+            held.set()
+            free.wait(10)
+    t = threading.Thread(target=hold)
+    t.start()
+    assert held.wait(5)
+    m.ready = False
+    for v in m.paths:
+        v.rendered = True
+    t0 = time.perf_counter()
+    try:
+        page = PostPage3(m, worker=RenderWorker(m.p), persist=False)
+        took = time.perf_counter() - t0
+        assert took < 3.0, took
+        assert m.slider_infos(m.paths[0]) == []
+    finally:
+        free.set()
+        t.join()
+    page.close()
+    w.wait(120)
+    m.close(save=False)
+    w.stop()
