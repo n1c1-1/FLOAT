@@ -24,6 +24,7 @@ its lines, so that a rebuilt panel is filled again (``set_console``) and a chang
 """
 from __future__ import annotations
 
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -944,7 +945,10 @@ def _start_job(snapshot: Project2, plan, device: str | None):
     stages the card test sends to the CPU go there."""
     from ...core import selftest
     from .. import prefs
+    from ...core import devices
     profile = selftest.profile_of(prefs.get("compute_profiles"), device)
+    # the memory limit of Settings reaches the worker, and through it the child processes of the heavy blocks
+    os.environ[devices.ENV_MEMORY_LIMIT] = str(prefs.get("memory_limit_gb"))
     return api.start_run(snapshot, plan, device, selftest.cpu_jobs(profile, plan))
 
 

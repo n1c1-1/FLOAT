@@ -453,7 +453,7 @@ def test_settings_hide_what_the_engine_lacks_outside_spec_mode(env, qapp):
     d.show_page("compute")
     page = d.pages.currentWidget()
     shown = _texts(page)
-    assert "Memory limit" not in shown and "Benchmark" not in shown and "Device" in shown
+    assert "Memory limit" in shown and "Benchmark" not in shown and "Device" in shown
     dev = page.findChildren(QComboBox)[0]
     assert [dev.itemText(i) for i in range(dev.count())] == ["Automatic", "NVIDIA RTX 4060 Ti", "NVIDIA RTX 3070",
                                                              "CPU only"]
@@ -465,7 +465,7 @@ def test_settings_hide_what_the_engine_lacks_outside_spec_mode(env, qapp):
     assert d.nav.count() == 7 and d.nav.item(4).text() == "File formats  ◇"
     d.show_page("compute")
     spins = [s for s in d.pages.currentWidget().findChildren(QWidget) if type(s).__name__ == "QSpinBox"]
-    assert spins and all(not s.isEnabled() and s.isVisibleTo(d) for s in spins)
+    assert len(spins) == 2 and [s.isEnabled() for s in spins] == [False, True]      # CPU threads: not yet; Memory limit: live
     d.show_page("formats")
     assert all(not c.isEnabled() for c in d.pages.currentWidget().findChildren(QComboBox))
     d.close()

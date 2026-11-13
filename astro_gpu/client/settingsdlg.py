@@ -389,7 +389,9 @@ class SettingsDialog(QDialog):
         self.row(v, _("CPU threads"), th, new=True)
         total = round(m.memory_gb) if m is not None and m.memory_gb else None      # None: not measured yet
         mem = self.spin(4, max(total, 4) if total else 1024, "memory_limit_gb")
-        self.row(v, _("Memory limit"), mem, _("GB of {t} GB").format(t=total) if total else _("GB"), new=True)
+        mem.setToolTip(_("The most memory a run may use. Lower it and the steps work in smaller parts, on the disk, "
+                         "so slower."))
+        self.row(v, _("Memory limit"), mem, _("GB of {t} GB").format(t=total) if total else _("GB"))
         head = label(spec_mark(_("Benchmark")), "h2")
         v.addWidget(head)
         text = label(_("Measures this machine on a small data set, so that the durations shown are real."),

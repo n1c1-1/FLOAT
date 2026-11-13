@@ -135,6 +135,9 @@ def free_memory(device: Any) -> int | None:
             return max(total - int(torch.xpu.memory_reserved(i)), 0) if total else None
         if t == "mps":
             return max(int(torch.mps.recommended_max_memory()) - int(torch.mps.driver_allocated_memory()), 0)
+        if t == "cpu" and memory_limit():                # the tiles of the processor stay within the user's limit
+            m = memory_budget()
+            return m[1] if m else None
     except Exception:  # noqa: BLE001 - not known
         return None
     return None
@@ -223,17 +226,65 @@ def stack_memory(grid_mpx: float) -> float:
     return float(grid_mpx) * STACK_GB_PER_MPX
 
 
+#: the environment variable that carries the user's memory limit (Settings > Compute > Memory limit, GB): the client
+#: sets it when a run starts, the worker and the child processes of its heavy blocks inherit it, and the command line
+#: may set it too. Unset or not a positive number: no limit beyond the machine's own memory.
+ENV_MEMORY_LIMIT = "ASTRO_GPU_MEMORY_LIMIT_GB"
+
+
+def memory_limit() -> int | None:
+    """The user's memory limit in bytes (ENV_MEMORY_LIMIT), None when none is set."""
+    try:
+        gb = float(os.environ.get(ENV_MEMORY_LIMIT, "") or 0)
+    except ValueError:
+        return None
+    return int(gb * 2 ** 30) if gb > 0 else None
+
+
+def _own_tree_bytes() -> int | None:
+    """What this run's processes hold now (private bytes): the worker and, below it, the child of the heavy block this
+    process may be, and the pools they started. Counted from the worker down, this process included. None when psutil
+    cannot tell."""
+    try:
+        import psutil
+        me = psutil.Process()
+        top = me
+        while "--job" in top.cmdline():                  # a heavy block's child: its parent is the worker
+            parent = top.parent()
+            if parent is None or "astro_gpu" not in " ".join(parent.cmdline()):
+                break
+            top = parent
+        total = 0
+        for q in [top, *top.children(recursive=True)]:
+            try:
+                mi = q.memory_info()
+                total += int(getattr(mi, "private", mi.rss))
+            except psutil.Error:
+                pass
+        return total
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def memory_budget() -> tuple[int, int] | None:
     """(bytes the engine may fill in the machine's memory now, bytes available): the available memory psutil reads
     (what the system can give without paging out), less MEMORY_MARGIN of the total and at least MEMORY_FLOOR_GB.
-    None when psutil cannot tell: the stages then size nothing by it."""
+    With the user's memory limit (``memory_limit``), the smaller of that and the limit less what this run's processes
+    hold already, so a low limit makes the stages take their low-memory ways. None when psutil cannot tell: the
+    stages then size nothing by it (the limit alone, when there is one)."""
+    limit = memory_limit()
     try:
         import psutil
         vm = psutil.virtual_memory()
     except Exception:  # noqa: BLE001 - no psutil, or a system it cannot read
-        return None
+        return (limit, limit) if limit else None
     margin = max(MEMORY_MARGIN * vm.total, MEMORY_FLOOR_GB * 2 ** 30)
-    return max(int(vm.available - margin), 0), int(vm.available)
+    fill, avail = max(int(vm.available - margin), 0), int(vm.available)
+    if limit:
+        used = _own_tree_bytes() or 0
+        room = max(limit - used, 0)
+        fill, avail = min(fill, room), min(avail, room)
+    return fill, avail
 
 
 @contextlib.contextmanager
