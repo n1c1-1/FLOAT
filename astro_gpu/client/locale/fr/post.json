@@ -278,5 +278,7 @@
   "Nothing to redo here: Post's changes are redone in Post": "Rien à rétablir ici : les changements de Post se rétablissent dans Post",
   "“{name}” made": "« {name} » créée",
   "Version renamed “{name}”": "Version renommée « {name} »",
-  "“{name}” deleted": "« {name} » supprimée"
+  "“{name}” deleted": "« {name} » supprimée",
+  "Name refused: a version needs a name": "Nom refusé : une version a besoin d'un nom",
+  "Name refused: another version is already named “{name}”": "Nom refusé : une autre version s'appelle déjà « {name} »"
 }

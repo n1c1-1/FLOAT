@@ -873,6 +873,8 @@ class PostView(QWidget):
         self.b_version_del = icon_only(QPushButton(), "delete", _("Delete this version"), 16)
         for w in (self.version_lab, self.cb_version, self.b_version_new, self.b_version_del):
             bar.addWidget(w)
+        self._entering = False
+        self.cb_version.lineEdit().installEventFilter(self)
         self.cb_version.activated.connect(self._version_picked)
         self.cb_version.lineEdit().editingFinished.connect(self._version_renamed)
         self.b_version_new.clicked.connect(self._version_new)
@@ -1042,6 +1044,9 @@ class PostView(QWidget):
         # buttons, the compact look's margins): the fit again (#142)
         if obj is getattr(self, "centre", None) and e.type() in (QEvent.Resize, QEvent.LayoutRequest):
             self._fit_bar()
+        if e.type() == QEvent.KeyPress and e.key() in (Qt.Key_Return, Qt.Key_Enter) and                 obj is self.cb_version.lineEdit():
+            self._entering = True                       # Enter typed in the version's name: a renaming, not a pick
+            QTimer.singleShot(0, lambda: setattr(self, "_entering", False))
         return super().eventFilter(obj, e)
 
     @staticmethod
@@ -1344,6 +1349,10 @@ class PostView(QWidget):
 
     def _version_picked(self, i: int):
         vid = self.cb_version.itemData(i)
+        if self._entering:                              # a name typed that another version has: refused, not a pick
+            if vid is not None and vid != self._version:
+                self._version_renamed()
+            return
         if vid is not None and vid != self._version:
             self._save()
             self.s.set_post_version(vid)
@@ -1354,7 +1363,17 @@ class PostView(QWidget):
             self.s.new_post_version()
 
     def _version_renamed(self):
-        self.s.rename_post_version(self._version, self.cb_version.currentText())
+        """The name typed for the version shown: refused with its reason when empty or already another version's, the
+        field back to the current name."""
+        name = self.cb_version.currentText().strip()
+        versions = getattr(getattr(self.s, "p", None), "post", {}).get("versions", [])
+        mine = next((v["name"] for v in versions if v["id"] == self._version), None)
+        if not name:
+            self.toasted.emit(_("Name refused: a version needs a name"))
+        elif name != mine and any(v["name"] == name and v["id"] != self._version for v in versions):
+            self.toasted.emit(_("Name refused: another version is already named “{name}”").format(name=name))
+        elif name != mine:
+            self.s.rename_post_version(self._version, name)
         self._fill_versions()
 
     def _version_delete(self):

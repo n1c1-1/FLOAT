@@ -256,3 +256,31 @@ def test_an_undo_taken_while_post_is_shown_leaves_post_on_its_page_and_version(m
     assert model.undo() and model.sel_step == "final"
     assert model.p.post["active"] == first
     assert model.can_redo() and second in [v["id"] for v in model.p.post["versions"]]
+
+
+def test_a_name_another_version_has_is_refused_with_its_reason_not_taken_for_a_pick(model):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    from astro_gpu.client.post3 import PostPage3
+    from astro_gpu.client.services.render import RenderWorker
+    model.add_post_layer(by_name(model, "Full").pid, "stars")
+    page = PostPage3(model, worker=RenderWorker(None, resolver=lambda pid: None, device="cpu"))
+    v = page.view
+    said = []
+    v.toasted.connect(said.append)
+    try:
+        v._version_new()
+        second = model.p.post["active"]
+        ed = v.cb_version.lineEdit()
+        ed.setFocus()
+        ed.setText("Version 1")
+        QTest.keyClick(ed, Qt.Key_Return)
+        QApplication.processEvents()
+        assert model.p.post["active"] == second and model.post_version()["name"] == "Version 2"
+        assert v.cb_version.currentText() == "Version 2"
+        assert said and said[-1].startswith("Name refused: ") and "Version 1" in said[-1]
+    finally:
+        page.shutdown()
+        page.deleteLater()
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
