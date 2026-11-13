@@ -177,6 +177,7 @@ class Pipeline:
         if not (ck_meta.exists() and json.loads(ck_meta.read_text()) == tag):
             ctx.clear_ckpt()
             _clear_outputs(ctx.dir)
+        ctx.origin, ctx.auto_reasons = dict(origin), dict(auto)
         ctx.ckpt  # noqa: B018  (creates the folder)
         ck_meta.write_text(json.dumps(tag))
         m = {"stage": st.name, "title": st.title, "version": st.version, "status": "running",

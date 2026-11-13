@@ -66,6 +66,10 @@ class Context:
         self.metrics: dict[str, Any] = {}
         #: why the stage ended on its declared fallback ("" when it did not): ``fallback``
         self.fallback_reason = ""
+        #: how the job's settings were chosen (core/runner.py): {name: "default" | "auto" | "user"} and the reason of
+        #: each automatic one; empty when the runner did not say (a test's stage)
+        self.origin: dict[str, str] = {}
+        self.auto_reasons: dict[str, Any] = {}
 
     # ------------------------------------------------------------------ files
     def out(self, name: str) -> Path:

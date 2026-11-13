@@ -372,6 +372,9 @@ PATTERNS: list[tuple[re.Pattern, str, tuple]] = [
          "drizzle {0}x{1} from {2} frames in {3} min, {4} % pixels rejected", ()),
         # issue #125: the threads of the stack on the processor, the time of each of its passes (stages/stack.PassClock,
         # core/stack_classic.py)
+        (r"^stacking method: (.+) \(set by hand\)$", "stacking method: {0} (set by hand)", (0,)),
+        (r"^stacking method: (.+) \(default\)$", "stacking method: {0} (default)", (0,)),
+        (r"^stacking method: (.+?) \(automatic: (.+)\)$", "stacking method: {0} (automatic: {1})", (0, 1)),
         (r"^drizzle rejection: (.+) \(set by hand\)$", "drizzle rejection: {0} (set by hand)", (0,)),
         (r"^drizzle rejection: (.+) \(automatic: ([\d.]+) values per point in the scarcest colour, under the (\d+) a "
          r"sigma clipping at ([\d.]+) sigma needs\)$",
@@ -453,7 +456,28 @@ def engine_text(msg: str) -> str:
                     a = " " + _("(shifted centres)")
                 args.append(a)
             return _(template).format(*args)
-    return _(msg)
+    return _advice_text(msg) or _(msg)
+
+
+_ADVICE: list = []
+
+
+def _advice_text(msg: str) -> str:
+    """The automatic stacking method's reason (core/coverage.REASON_TEMPLATES, its numbers filled in) in the client's
+    language, or '' when ``msg`` is none of them."""
+    from ...core.coverage import REASON_TEMPLATES
+    from ...texts import format_reason
+    from ..i18n import language
+    if not _ADVICE:
+        for t in REASON_TEMPLATES:
+            parts = re.split(r"\{(\w+)(?::[^}]*)?\}", t)
+            rx = "".join(re.escape(x) if i % 2 == 0 else r"([-+\d.]+)" for i, x in enumerate(parts))
+            _ADVICE.append((re.compile(rx + "$"), t, parts[1::2]))
+    for rx, t, names in _ADVICE:
+        m = rx.match(msg)
+        if m:
+            return format_reason(t, {n: float(v) for n, v in zip(names, m.groups())}, language())
+    return ""
 
 
 # ---------------------------------------------------------------------------------------------- the track of a run

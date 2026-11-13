@@ -26,3 +26,24 @@ def test_the_line_is_translated():
             assert fr.startswith("rejet du drizzle : ") and "drizzle rejection" not in fr and " frame count" not in fr, fr
     finally:
         i18n.set_language("en")
+
+
+def test_the_stacking_method_line_says_why_and_is_translated():
+    from astro_gpu.core.params import Auto
+    from astro_gpu.core import coverage as cv
+    from astro_gpu.stages.stack import method_line
+    auto = Auto("classic", cv.M_FEW, {"n": 9})
+    assert method_line("classic", "auto", auto) == "stacking method: Classic (automatic: 9 frames (drizzle needs 15): Classic)"
+    assert method_line("drizzle", "user", auto) == "stacking method: Bayer drizzle (set by hand)"
+    drz = Auto("drizzle", cv.M_DRIZZLE_FINE, {"fwhm": 1.8, "cov": 7.5, "scale": 2.0})
+    try:
+        i18n.set_language("fr")
+        fr = engine_text(method_line("classic", "auto", auto))
+        assert fr == "méthode d'empilement : Classique (automatique : 9 images (le drizzle en demande 15) : Classique)" \
+            or fr.startswith("méthode d'empilement : Classique (automatique : "), fr
+        assert "frames" not in fr and "automatic" not in fr, fr
+        fr = engine_text(method_line("drizzle", "auto", drz))
+        assert "stacking" not in fr and "," in fr, fr
+        assert engine_text(method_line("drizzle", "user", auto)) == "méthode d'empilement : Drizzle Bayer (réglée à la main)"
+    finally:
+        i18n.set_language("en")

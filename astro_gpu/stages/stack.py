@@ -338,6 +338,7 @@ class Stack(Stage):
             torch.cuda.reset_peak_memory_stats(ctx.device)
         if p.method == "classic" and classic_missing():
             raise StageError(CLASSIC_NOT_YET)
+        ctx.log(method_line(p.method, ctx.origin.get("method"), ctx.auto_reasons.get("method")))
         dev = ctx.device
         if dev.type == "cpu":                         # the threads its maths and compiled kernels run on (issue #125)
             ctx.log(f"stacking on the processor with {torch.get_num_threads()} threads")
@@ -1434,6 +1435,20 @@ def rejection_suggestion(n: int, scale: float, pixfrac: float, cfa: str, kappa: 
 
 REJECTION_NAMES = {"own": "sigma clipping on the raw pixels", "by_count": "by frame count",
                    "integration": "integration of the debayered frames"}
+
+
+METHOD_NAMES = {"drizzle": "Bayer drizzle", "classic": "Classic"}
+
+
+def method_line(method: str, origin: str | None, auto) -> str:
+    """The log line saying which stacking method runs and why: set by hand, or the automatic choice's reason
+    (core/coverage.advise_method, given as an ``Auto``; its text is the English reason, translated by the client)."""
+    name = METHOD_NAMES.get(method, method)
+    if origin == "user":
+        return f"stacking method: {name} (set by hand)"
+    if auto is None:
+        return f"stacking method: {name} (default)"
+    return f"stacking method: {name} (automatic: {auto.reason})"
 
 
 def rejection_line(mode: str, by_hand: bool, n: int, scale: float, pixfrac: float, cfa: str, kappa: float) -> str:
