@@ -2,6 +2,7 @@
 
     python tools/graph_golden.py record <root>... --out <dir> [--recent] [--guard <folder>]... [--origins <json>]
     python tools/graph_golden.py stable <dir>
+    python tools/graph_golden.py check <dir> [--out <json>] [--only <name part>]...
 
 It never writes in a project folder (nor in the folders of the frames a project reads). A later change of the
 graph model can be checked against this record: it must show zero difference.
@@ -20,6 +21,11 @@ Project folders are read-only. Three layers hold that:
   3. no worker, no warm-up (``api.warm`` and the model's jobs are not started), ``update=False`` everywhere, the
      settings file replaced by a temporary copy.
 ``stable`` records twice in two fresh processes and says what differs.
+``check`` takes every recorded project through the graph model (astro_gpu/graphcore: convert, then compile into a
+copy of the definition, in one process) and compares the definitions, the keys, the states, the review keys and the
+graph's rows against the recorded drawing; read-only under the same guard. A project is PROVEN when every session's
+frame list is non-empty on both sides (a project of images only: when its image files are there); else its
+definition is only shown equal.
 """
 from __future__ import annotations
 
@@ -343,10 +349,14 @@ def _stub_worker():
 def _drawing(folder: Path) -> dict:
     """What client/blocks.Graph infers from a project the model opened read-only, without facts (no warm-up: the
     frames' headers are not read, so no 'broken' reasons, no colour notes) and without the sky/cost lookups."""
+    from astro_gpu.core import project2
+    return drawing_of(project2.load(folder))
+
+
+def drawing_of(p) -> dict:
+    """The drawing of ``_drawing`` for a definition already loaded (or built in memory)."""
     from astro_gpu.client import blocks as cb
     from astro_gpu.client.model import ProjectModel
-    from astro_gpu.core import project2
-    p = project2.load(folder)
     m = ProjectModel(p, _stub_worker(), readonly=True, gpu=False)
     m.sky_missing = lambda *a, **k: ""                  # needs the cost plan: not part of the structure
     m.image_problem = lambda *a, **k: ""                # opens the image file
@@ -582,9 +592,146 @@ def cmd_stable(args) -> int:
     return 1 if diffs else 0
 
 
+# ---------------------------------------------------------------------------------------------- check
+def check_project(folder: Path, rec: dict) -> dict:
+    """One recorded project through the graph model, in this process: its definition loaded, converted, compiled
+    into a copy; then (a) the definitions, (b) every stage key, block key and override, (c) the states and the
+    review keys, (d) the graph's rows against the drawing recorded from today's client."""
+    from astro_gpu.core import project2
+    from astro_gpu.core.store import InputScan, key_rules
+    from astro_gpu.graphcore import proof
+    from astro_gpu.graphcore.convert import Client
+    from astro_gpu.graphcore.model import check as core_check, Invalid
+    from astro_gpu.graphcore.rules import structure
+    from astro_gpu.graphcore.msg import say
+    p = project2.load(folder)
+    g, q, log = proof.round_trip(p)
+    rules, scan = key_rules(), InputScan()
+    out: dict = {"workflows": len(p.workflows), "sessions": len(p.sessions), "convert_log": log}
+    out["definition"] = proof.definition_diff(p, q)
+    out["keys"] = proof.keys_diff(p, q, rules, scan)
+    out["states"] = proof.states_diff(p, q)
+    cl_p, cl_q = Client(p), Client(q)
+    ra, rb = proof.review_keys(p, cl_p), proof.review_keys(q, cl_q)
+    out["reviews"] = [f"review {k}: {ra.get(k)} -> {rb.get(k)}" for k in sorted(set(ra) | set(rb))
+                      if ra.get(k) != rb.get(k)]
+    dr = rec.get("drawing") or {}
+    if "nodes" in dr:
+        out["drawing"], out["drawn_blocks"] = proof.drawing_check(p, g, q, dr, cl_q)
+    else:
+        out["drawing"] = [f"no recorded drawing: {dr.get('error')}"]
+    frames_p = {s.id: scan.frames(p, s.id) for s in p.sessions}
+    frames_q = {s.id: scan.frames(q, s.id) for s in q.sessions}
+    images = [w.source["path"] for w in p.workflows if isinstance(w.source, dict) and w.source.get("path")]
+    out["frames_nonempty"] = bool(p.sessions) and all(frames_p.values()) and all(frames_q.values())
+    out["images_present"] = bool(images) and all(Path(p.abspath(x)).exists() for x in images)
+    out["frames_equal"] = frames_p == frames_q
+    try:
+        core_check(g)
+        out["core_check"] = ""
+    except Invalid as e:
+        out["core_check"] = str(e)
+    out["core_structure"] = [say(m) for m in structure(g)]
+    from astro_gpu.graphcore.rules import evaluate, need_greyed, title
+    try:
+        out["core_needs"] = [f"{title(g, b)}: {say(w)}" for b, w in need_greyed(evaluate(g)).items()]
+    except Exception as e:  # noqa: BLE001
+        out["core_needs"] = [f"{type(e).__name__}: {e}"]
+    return out
+
+
+def cmd_check(args) -> int:
+    gold = Path(args.golden).resolve()
+    index = json.loads((gold / "_index.json").read_text(encoding="utf-8"))
+    os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    tmp = gold / "_check_settings"
+    tmp.mkdir(exist_ok=True)
+    settings = Path(os.environ.get("APPDATA", "")) / "astro_gpu" / "settings.json"
+    if settings.exists():
+        shutil.copy2(settings, tmp / "settings.json")
+    os.environ["ASTRO_GPU_SETTINGS"] = str(tmp / "settings.json")
+    sys.path.insert(0, str(REPO))
+    try:
+        import psutil
+        psutil.Process().nice(psutil.IDLE_PRIORITY_CLASS)
+    except Exception:  # noqa: BLE001
+        pass
+    from astro_gpu import api  # noqa: F401
+    from astro_gpu.graphcore import compile as _c, convert as _v, proof as _p  # noqa: F401
+    from astro_gpu.stages import v2  # noqa: F401
+    todo = []
+    for src, row in index["projects"].items():
+        q = Path(src)
+        recf = gold / f"{row['name']}.json"
+        if args.only and not any(o in row["name"] for o in args.only):
+            continue
+        todo.append((q, recf))
+        GUARD.add(q)
+        for e in raw_entries(q):
+            GUARD.add(e)
+        try:
+            d = json.loads((q / "project.astroproj").read_text(encoding="utf-8"))
+            for w in d.get("workflows") or []:
+                s = w.get("source")
+                if isinstance(s, dict) and s.get("path"):
+                    GUARD.add(Path(s["path"]) if os.path.isabs(s["path"]) else q / s["path"])
+        except (OSError, ValueError):
+            pass
+    no = os.path.normcase(str(gold))
+    for g in GUARD.roots:
+        if no == g or no.startswith(g + os.sep):
+            print(f"refused: the golden folder {gold} is inside a read-only folder {g}", file=sys.stderr)
+            return 2
+    GUARD.install()
+    report: dict = {"projects": {}, "failed": {}}
+    for q, recf in todo:
+        before, before_state = snapshot(q), snapshot_state(q)
+        n_viol = len(GUARD.violations)
+        try:
+            rec = json.loads(recf.read_text(encoding="utf-8"))
+            report["projects"][q.as_posix()] = check_project(q, rec)
+        except BaseException as e:  # noqa: BLE001
+            import traceback
+            report["failed"][q.as_posix()] = {"error": f"{type(e).__name__}: {str(e)[:300]}",
+                                              "trace": traceback.format_exc()[-1500:]}
+        d = diff(before, snapshot(q)) + diff(before_state, snapshot_state(q))
+        if d or len(GUARD.violations) != n_viol:
+            report["ABORTED_AT"] = q.as_posix()
+            report["write_proof"] = {"differences": d, "violations": GUARD.violations[n_viol:]}
+            print(f"ABORT: the read-only project {q} changed or a write was attempted", file=sys.stderr)
+            break
+    report.setdefault("write_proof", {"differences": [], "violations": GUARD.violations})
+    gate = ("definition", "keys", "states", "reviews", "drawing")
+    summary = {"proven": [], "proven_images": [], "definition_equal_only": [], "differing": {}}
+    for src, r in report["projects"].items():
+        bad = {k: r[k][0] for k in gate if r[k]}
+        if bad:
+            summary["differing"][src] = bad
+        elif r["frames_nonempty"]:
+            summary["proven"].append(src)
+        elif not r["sessions"] and r["images_present"]:
+            summary["proven_images"].append(src)
+        else:
+            summary["definition_equal_only"].append(src)
+    report["summary"] = summary
+    out = Path(args.out) if args.out else gold / "_check.json"
+    GUARD.active = False
+    out.write_text(json.dumps(report, indent=1, ensure_ascii=False, default=str), encoding="utf-8")
+    print(json.dumps({"proven": len(summary["proven"]), "proven_images": len(summary["proven_images"]),
+                      "definition_equal_only": len(summary["definition_equal_only"]),
+                      "differing": len(summary["differing"]), "failed": len(report["failed"]),
+                      "aborted": "ABORTED_AT" in report}))
+    return 1 if summary["differing"] or report["failed"] or "ABORTED_AT" in report else 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
+    c = sub.add_parser("check", help="every recorded project converted to a graph and compiled back: no difference")
+    c.add_argument("golden")
+    c.add_argument("--out")
+    c.add_argument("--only", action="append", help="only the projects whose recorded name holds this text")
     r = sub.add_parser("record")
     r.add_argument("roots", nargs="*")
     r.add_argument("--out", required=True)
@@ -594,7 +741,7 @@ def main() -> int:
     s = sub.add_parser("stable")
     s.add_argument("out")
     a = ap.parse_args()
-    return cmd_record(a) if a.cmd == "record" else cmd_stable(a)
+    return {"record": cmd_record, "stable": cmd_stable, "check": cmd_check}[a.cmd](a)
 
 
 if __name__ == "__main__":
