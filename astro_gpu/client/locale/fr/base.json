@@ -253,6 +253,7 @@
   "Device": "Matériel",
   "CPU threads": "Fils d'exécution du processeur",
   "Memory limit": "Limite de mémoire",
+  "The most memory a run may use. Lower it and the steps work in smaller parts, on the disk, so slower.": "Mémoire maximale d'un calcul. Plus bas, les étapes travaillent par parties plus petites, sur le disque, donc plus lentement.",
   "Run benchmark": "Test de vitesse",
   "Gaia DR3": "Gaia DR3",
   "Plate solver": "Solveur astrométrique",

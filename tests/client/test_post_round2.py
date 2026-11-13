@@ -249,3 +249,17 @@ def test_a_picture_from_outdated_results_is_said_over_it_with_a_run_and_the_row_
     finally:
         page.shutdown()
         page.deleteLater()
+
+
+def test_the_linked_channels_box_says_it_is_an_output_setting_applied_by_a_run(m):
+    _rendered(m)
+    page = _page(m)
+    v = page.view
+    try:
+        lay = next(x for x in v.layers if x["kind"] == "workflow")
+        v.select(lay["id"], "layer")
+        v.build_props()
+        assert v.linked_box.toolTip().startswith("Needs a run") and v.linked_note.text() == "Output setting: applied by a run"
+    finally:
+        page.shutdown()
+        page.deleteLater()

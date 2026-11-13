@@ -18,7 +18,7 @@ from scipy.spatial import cKDTree
 from ..core import devices
 from ..core.params import ADVANCED, Auto, P, StageParams
 from ..core.stage import Context, Stage, StageError
-from .calibrate import VALID_MAX, CachedFrames, memory_short
+from .calibrate import VALID_MAX, CachedFrames, memory_short, pool_size
 
 #: stars fitted per frame for the Moffat FWHM (core/psf_moffat.py: about 0.1 to 0.2 s a frame)
 MOFFAT_STARS = 150
@@ -95,9 +95,10 @@ class Register(Stage):
             init = (info["path"], n, H, W, p.detect_sigma, p.max_stars, info["cfa"], plain)
             # said at once, and one frame per task: a dense field takes 10 s and more per frame, so that a batch of 4
             # per worker kept the progress at 0 % for minutes (North America: first result after 141 s, issue #34)
-            ctx.progress(0.0, f"detecting the stars of {len(todo)} frames ({p.workers} processes)")
+            workers = pool_size(ctx, p.workers, H * W)
+            ctx.progress(0.0, f"detecting the stars of {len(todo)} frames ({workers} processes)")
             with devices.one_maths_thread():                   # issue #125: 1 GB less reserved a worker
-                pool = get_context("spawn").Pool(p.workers, initializer=_init, initargs=init)
+                pool = get_context("spawn").Pool(workers, initializer=_init, initargs=init)
             with pool:
                 for c, res in enumerate(pool.imap_unordered(_catalog_moffat, todo, chunksize=1)):
                     idx, cat, fw, rb, rd, nz, psf[idx] = res

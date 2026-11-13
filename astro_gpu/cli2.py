@@ -6,7 +6,7 @@
     python -m astro_gpu.cli2 set PROJECT [--wf ID ...] [--option KEY=VALUE ...] [STAGE.NAME=VALUE ...]
     python -m astro_gpu.cli2 status PROJECT
     python -m astro_gpu.cli2 plan PROJECT [--wf ID ...] [--to BLOCK]
-    python -m astro_gpu.cli2 run PROJECT [--wf ID ...] [--to BLOCK] [--device cuda:1] [--detach]
+    python -m astro_gpu.cli2 run PROJECT [--wf ID ...] [--to BLOCK] [--device cuda:1] [--memory-limit GB] [--detach]
     python -m astro_gpu.cli2 events PROJECT [--run RUN_ID] [--offset N] [--follow]
     python -m astro_gpu.cli2 stop PROJECT
     python -m astro_gpu.cli2 export PROJECT --wf ID [--base NAME] [--slider KEY=POS ...] [--format tiff16 ...]
@@ -243,6 +243,10 @@ def cmd_run(a: argparse.Namespace) -> int:
     if not plan:
         print("nothing to run: everything is up to date")
         return 0
+    if getattr(a, "memory_limit", None):
+        import os
+        from .core import devices
+        os.environ[devices.ENV_MEMORY_LIMIT] = str(a.memory_limit)
     info = api.start_run(p, plan, a.device)
     print(f"run {info.run_id} started: {len(plan)} job(s), about {_hm(plan.seconds)}; pid {info.pid}; "
           f"offset {info.offset}; log {info.log_file}")
@@ -360,6 +364,8 @@ def _parser() -> argparse.ArgumentParser:
         r.add_argument("--device", help="cuda:N or cpu (default: the project's)")
         if name == "run":
             r.add_argument("--detach", action="store_true", help="start the worker and return")
+            r.add_argument("--memory-limit", type=float, metavar="GB",
+                           help="the most memory the run may use (ASTRO_GPU_MEMORY_LIMIT_GB)")
             r.add_argument("--timeout", type=float, help="stop following after this many seconds")
 
     ev = add("events", cmd_events, "the events of a run")

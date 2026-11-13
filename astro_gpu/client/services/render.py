@@ -988,7 +988,8 @@ class RenderWorker(QThread):
     def _write(self, rgb, out_dir, opts, meta):
         """The export through the engine API (api.export_image), into the folder chosen and nowhere else."""
         from ... import api
-        m = {"origin": meta.get("origin"), "history": meta.get("history"), "out_dir": str(out_dir)}
+        m = {"origin": meta.get("origin"), "history": meta.get("history"), "out_dir": str(out_dir),
+             "facts": meta.get("facts")}
         if meta.get("wcs") is not None:              # the solution's header as run_export read it (export_header)
             m["wcs"] = meta["wcs"]
         elif meta.get("wf") is not None:

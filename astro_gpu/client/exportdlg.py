@@ -341,9 +341,22 @@ class ExportDialog(QDialog):
                          size=int(self.size_cb.currentData() or 0), wcs=self.c_wcs.isEnabled() and self.c_wcs.isChecked(),
                          history=self.c_hist.isChecked(), each_layer=self.c_layers.isChecked(),
                          masks=self.c_masks.isChecked(), project_name=self.pname,
-                         facts=self.view.s.export_facts() if hasattr(getattr(self.view, "s", None), "export_facts") else None,
+                         facts=self.view.s.export_facts(self._image_pids())
+                         if hasattr(getattr(self.view, "s", None), "export_facts") else None,
                          annotations={"grid": self.c_grid.isEnabled() and self.c_grid.isChecked(),
                                       "objects": self.c_names.isEnabled() and self.c_names.isChecked()})
+
+    def _image_pids(self) -> list:
+        """The workflows the exported picture is made of: those of its visible layers, a Combine layers layer through
+        both its sides (its stars' workflow too)."""
+        out: list = []
+        for lay in getattr(self.view, "layers", []):
+            if lay.get("kind") != "workflow" or not lay.get("visible", True):
+                continue
+            for pid in (lay.get("pid"), lay.get("stars_pid") if lay.get("part") == "combined" else None):
+                if pid is not None and pid not in out:
+                    out.append(pid)
+        return out
 
     def _export(self):
         if self.go.text() == _("Close"):

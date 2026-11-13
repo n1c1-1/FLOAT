@@ -2878,12 +2878,85 @@ def _slug(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_") or "image"
 
 
+def shot_facts(p: Project2, wfs: int | Workflow | list) -> dict:
+    """What a picture made of these workflows' images says of its shot, exactly, from the frames their stacks used (the
+    stack's own frames list, ``diagnostics.json``), never the inventory's rounded hours. The totals are over the
+    DISTINCT frames (by file): ``frames`` (their number), ``seconds`` (the sum of their exposures), ``first`` / ``last``
+    (the first light, and the end of the last exposure, ISO). A combination counts the workflows it combines. Rows that
+    share lights (two filters of one exposure) count each light once; ``parts`` ([{"name", "frames", "seconds",
+    "shared"}] per workflow) keeps each row's own count and says how many of its frames an earlier row had.
+
+    Siril writes a stacked image's header the same way (stacking/sum.c, ``sum_stacking_image_hook`` and
+    ``_finalize_hook``): LIVETIME = the sum of the exposures of the frames stacked, STACKCNT = how many frames were
+    stacked; its DATE-OBS / DATE-END come from ``compute_date_time_keywords`` (stacking.c): the earliest frame's date,
+    and the latest frame's date plus its own exposure (not a sum). Its io/fits_keywords.c defines EXPTIME as the image's
+    exposure time (``keywords.exposure``) and says nothing of a sum for a stack, nor of one keyword per filter: the
+    total goes in EXPTIME and LIVETIME here, the frames in STACKCNT, and each filter's share in HISTORY."""
+    from datetime import datetime, timedelta
+
+    from .io.frames import read_info
+    seen: dict[str, tuple] = {}                        # file -> (exposure s, time ISO or "")
+    parts: list[dict] = []
+    visited: set[int] = set()
+    info_cache: dict[str, tuple] = {}
+
+    def own(w: Workflow):
+        d = _dir(p, w, "stack")
+        try:
+            frames = json.loads((d / "diagnostics.json").read_text(encoding="utf-8")).get("frames") or []
+        except (AttributeError, OSError, ValueError):
+            return
+        like, mine = None, {}
+        for f in frames:
+            if float(f.get("weight", 1.0)) <= 0:
+                continue
+            path = str(f["path"])
+            if path not in info_cache:
+                try:
+                    info = read_info(path, like=like) if like is not None else read_info(path)
+                except Exception:  # noqa: BLE001 - a frame moved or damaged since: the sum has what could be read
+                    continue
+                like = like or info
+                info_cache[path] = (float(info.exposure or 0.0),
+                                    str(info.time)[:19] if info.time and not info.time_from_file else "")
+            mine[path] = info_cache[path]
+        shared = sum(1 for k in mine if k in seen)
+        parts.append({"name": w.name, "frames": len(mine), "seconds": sum(v[0] for v in mine.values()),
+                      "shared": shared})
+        for k, v in mine.items():
+            seen.setdefault(k, v)
+
+    def walk(wf):
+        w = wf if isinstance(wf, Workflow) else p.workflow(wf)
+        if w.id in visited:
+            return
+        visited.add(w.id)
+        if p2.is_fusion(w):
+            for i in w.source["fusion"]["inputs"]:
+                walk(i["pid"])
+        else:
+            own(w)
+
+    for wf in (wfs if isinstance(wfs, (list, tuple, set)) else [wfs]):
+        walk(wf)
+    times = [v[1] for v in seen.values() if v[1]]
+    ends = []
+    for exp, t in seen.values():
+        if t:
+            try:
+                ends.append((datetime.fromisoformat(t) + timedelta(seconds=exp)).isoformat(timespec="seconds"))
+            except ValueError:
+                pass
+    return {"frames": len(seen), "seconds": sum(v[0] for v in seen.values()), "first": min(times, default=""),
+            "last": max(ends, default=""), "parts": parts}
+
+
 def export_image(p: Project2, rgb: np.ndarray, meta: dict[str, Any] | None = None,
                  options: dict[str, Any] | Any = None, progress: Callable[[float, str], None] | None = None) -> list[Path]:
     """Write a composed image (3, H, W), display sRGB in [0, 1]: TIFF 16 / 32f, PNG 16, JPEG, FITS 32f with the WCS, at
     full size or reduced, in a v1 orientation, with a history file. ``options``: ``ExportOptions`` or its fields.
     ``meta``: ``wf`` (the workflow whose solution goes in the FITS), ``origin`` (grid pixel of ``rgb[:, 0, 0]``),
-    ``history`` (dict), ``out_dir`` (default ``export/<name>/``). Returns the files."""
+    ``history`` (dict), ``facts`` (target, first light, total exposure for the FITS header), ``out_dir`` (default ``export/<name>/``). Returns the files."""
     from .render.layers import ExportOptions, export_rgb
     meta = dict(meta or {})
     o = options if isinstance(options, ExportOptions) else ExportOptions(**(options or {}))
@@ -2893,7 +2966,7 @@ def export_image(p: Project2, rgb: np.ndarray, meta: dict[str, Any] | None = Non
         f = _dir(p, meta["wf"], "astrometry")
         wcs = f / "wcs.fits" if f is not None and (f / "wcs.fits").is_file() else None
     return export_rgb(rgb, out_dir, o, wcs, tuple(meta.get("origin") or (0, 0)), meta.get("history"),
-                      progress or (lambda f, m: None))
+                      progress or (lambda f, m: None), facts=meta.get("facts"))
 
 
 def export_workflow(p: Project2, wf: int | Workflow, base: Any = None, sliders: dict[str, float] | None = None,

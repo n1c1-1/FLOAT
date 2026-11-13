@@ -4284,13 +4284,22 @@ class ProjectModel(QObject):
                     camera=inv.get("camera", ""), fwhm_px=self._facts.register.get("fwhm_px"),
                     grid=self._facts.stack.get("grid"))
 
-    def export_facts(self) -> dict:
-        """What a FITS export says of the shot: the target, the first frame's time and the total exposure, each when
-        known."""
+    def export_facts(self, pids=None) -> dict:
+        """What a FITS export says of the shot: the target, the first light and the end of the last exposure, the total
+        exposure and the number of frames, each when known. From the distinct frames the stacks of ``pids`` used (``api.shot_facts``;
+        a combination: those of its inputs); a workflow not stacked yet falls back on the inventory."""
+        out = {"target": self.p.target.name or ""}
+        try:
+            got = api.shot_facts(self.p, list(pids)) if pids else None
+        except (KeyError, ValueError, OSError):
+            got = None
+        if got and got["frames"]:
+            return {**out, "date_obs": got["first"], "date_end": got["last"], "exposure_s": round(got["seconds"], 3),
+                    "stackcnt": got["frames"], "parts": got["parts"]}
         inv = self._facts.inventory
         times = sorted(t for v in self._facts.lights.values() for t in (v.get("times") or []) if t)
         hours = inv.get("integration_h")
-        return {"target": self.p.target.name or "", "date_obs": str(times[0])[:19] if times else "",
+        return {**out, "date_obs": str(times[0])[:19] if times else "",
                 "exposure_s": round(float(hours) * 3600, 1) if hours else 0}
 
     def image_size(self) -> tuple[int, int] | None:

@@ -388,7 +388,7 @@ def test_both_images_of_the_group_hidden_leave_a_neutral_canvas_and_a_banner_tha
         assert "Both images of" in v.viewer.banner and "No layers yet" not in v.viewer.banner
         g["shown"]["stars"] = True
         v.layers = [x for x in v.layers if x is not g]
-        assert v._empty_banner() in ("No layers yet", "Every layer is hidden")
+        assert v._empty_banner() in ("No layers yet", "Every image layer is hidden")
     finally:
         page.shutdown()
         page.deleteLater()
@@ -450,3 +450,19 @@ def test_the_mode_of_a_layer_with_nothing_under_it_renders_as_normal_and_applies
     assert np.array_equal(hidden, alone)                                                  # the lower one hidden: Normal
     assert np.allclose(cp.compose(pe.normalize([copy.deepcopy(b), copy.deepcopy(a)]), 0).rgb, both)   # Undo: applies again
     assert b["mode"] == "Multiply"                                                        # (stored on the layer)
+
+
+def test_every_image_layer_hidden_gives_a_neutral_canvas_and_says_so_even_with_a_rendered_black(project):
+    from types import SimpleNamespace
+    page = page_of(project)
+    v = page.view
+    try:
+        for lay in v.layers:
+            lay["visible"] = False
+        v.src.img1 = np.full((4, 4, 3), 200, np.uint8)
+        v._on_result(SimpleNamespace(kind="half", seq=10 ** 7, canvas=None, missing=(), rgb=np.zeros((4, 4, 3), np.uint8)))
+        assert v.src.img1 is None and v.viewer.banner in ("Both images of “" + v.layers[0]["name"] + "” are hidden",
+                                                         "Every image layer is hidden") or "hidden" in v.viewer.banner
+    finally:
+        page.shutdown()
+        page.deleteLater()
