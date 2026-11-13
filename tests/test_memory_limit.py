@@ -93,3 +93,17 @@ def test_a_real_child_process_reads_the_limit(monkeypatch):
     out = subprocess.run([sys.executable, "-c", "from astro_gpu.core import devices; print(devices.memory_limit())"],
                          capture_output=True, text=True, env={**os.environ}).stdout.strip()
     assert out == str(8 * GB)
+
+
+def test_the_pools_shrink_to_what_the_budget_holds_and_say_so(machine, monkeypatch):
+    px = 2848 * 4256                                                      # 12 Mpx: 0.63 GB + 0.4 GB a worker
+    lines: list[str] = []
+    ctx = SimpleNamespace(log=lambda m, level="info": lines.append(m))
+    assert cal.pool_size(ctx, 12, px) == 12 and lines == []               # 50 GB available: all of them
+    monkeypatch.setenv(devices.ENV_MEMORY_LIMIT, "8")                     # 6 GB to fill: 6 workers
+    assert cal.pool_size(ctx, 12, px) == 6
+    assert lines == ["memory: 6 workers to stay within 6.0 GB (instead of 12)"]
+    monkeypatch.setenv(devices.ENV_MEMORY_LIMIT, "2.5")                   # 0.5 GB to fill: one worker, never none
+    assert cal.pool_size(ctx, 12, px) == 1
+    monkeypatch.setattr(devices, "memory_budget", lambda: None)
+    assert cal.pool_size(ctx, 12, px) == 12                               # memory unknown: as asked

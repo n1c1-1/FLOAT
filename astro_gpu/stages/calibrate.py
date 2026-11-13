@@ -726,9 +726,10 @@ def _calibrated_cache(ctx: Context, p: CalibrateParams, lights: list[dict], dark
     plain = plain_writes(ctx, n * H * W * 2, p.workers, H * W)
     init = (str(cache), n, H, W, str(paths_dir), sat_raw, scale, hot, cfa, plain, len(darks))
     ctx.phase(getattr(ctx, "_lights_from", 0.0), 1.0)          # issue #50: the lights' share of the bar
-    ctx.progress(done.mean(), f"calibrating {len(todo)} frames ({p.workers} processes)", force=True)
+    workers = pool_size(ctx, p.workers, H * W)
+    ctx.progress(done.mean(), f"calibrating {len(todo)} frames ({workers} processes)", force=True)
     with devices.one_maths_thread():                           # issue #125: 1 GB less reserved a worker
-        pool = get_context("spawn").Pool(p.workers, initializer=_init, initargs=init)
+        pool = get_context("spawn").Pool(workers, initializer=_init, initargs=init)
     with pool:
         for c, (idx, st, nh) in enumerate(pool.imap_unordered(_calib_one, todo, chunksize=2)):
             stats[idx] = st
@@ -1276,6 +1277,24 @@ def memory_short(cache_bytes: int, workers: int, pixels: int) -> float | None:
     return m[1] / 2 ** 30
 
 
+#: what a spawned worker holds before its first frame (the interpreter and the libraries it loads, one maths thread)
+WORKER_BASE_BYTES = 400 * 2 ** 20
+
+
+def pool_size(ctx: Context, workers: int, pixels: int) -> int:
+    """The workers a pool may have: ``workers`` when they fit in the memory the engine may fill now
+    (core/devices.memory_budget: the machine's room, or the user's limit less what the run holds), else as many as fit,
+    at least one, said in one line. The size of the pool changes no output: each frame is calibrated alone."""
+    m = devices.memory_budget()
+    if m is None:
+        return workers
+    each = WORKER_BYTES * pixels + WORKER_BASE_BYTES
+    n = int(max(1, min(workers, m[0] // each)))
+    if n < workers:
+        ctx.log(f"memory: {n} workers to stay within {m[0] / 2 ** 30:.1f} GB (instead of {workers})")
+    return n
+
+
 def plain_writes(ctx: Context, cache_bytes: int, workers: int, pixels: int) -> bool:
     """Whether Calibration's workers write the frames plainly (``memory_short``), said in one line when they do."""
     gb = memory_short(cache_bytes, workers, pixels)
@@ -1424,9 +1443,10 @@ def _colour_cache(ctx: Context, p: CalibrateParams, lights: list[dict], dark: np
     plain = plain_writes(ctx, n * H * W * 8, p.workers, 3 * H * W)        # the luminance and the three planes
     init = (str(cache), str(rgb), n, H, W, str(d), p.saturation * white, scale, plain)
     ctx.phase(getattr(ctx, "_lights_from", 0.0), 1.0)
-    ctx.progress(0.0, f"calibrating {n} frames ({p.workers} processes)", force=True)
+    workers = pool_size(ctx, p.workers, 3 * H * W)
+    ctx.progress(0.0, f"calibrating {n} frames ({workers} processes)", force=True)
     with devices.one_maths_thread():                           # issue #125: 1 GB less reserved a worker
-        pool = get_context("spawn").Pool(p.workers, initializer=_init_colour, initargs=init)
+        pool = get_context("spawn").Pool(workers, initializer=_init_colour, initargs=init)
     with pool:
         for c, (idx, st) in enumerate(pool.imap_unordered(_calib_colour, list(enumerate(f["path"] for f in lights)),
                                                           chunksize=2)):
