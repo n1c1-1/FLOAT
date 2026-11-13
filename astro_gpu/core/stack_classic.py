@@ -71,7 +71,8 @@ of PIECE_ALIGN pixels that do (``_parts``).
 
 With the reference program's own recipe (global IKSS normalisation, no weights, winsorized 3 / 3) it gives the reference program's stack of the same
 frames: the same star FWHM, roundness and background noise, within a few hundredths. Time: about 1 s per 12 Mpx
-frame on a mid-range GPU for debayering and resampling, then the rejection and the means.
+frame for debayering and resampling, on a mid-range GPU or on eight CPU cores (core/classic_kernels.py), then the
+rejection and the means.
 
 Sources: see core/debayer.py, core/resample.py, core/rejection_classic.py; [S7] the reference program's OSC_Preprocessing.ssf;
 [S12] https://siril.org/tutorials/tuto-manual/ ; [P15] WBPP.
@@ -109,6 +110,8 @@ REJECTION_BYTES = 320
 #: Lanczos-4 and normalised: measured 410 bytes on the CPU) and what pass 2 adds (the means, halves, weights,
 #: saturation shares and counts: 64 bytes)
 FRAME_BYTES = 420
+#: the same with the compiled kernels (core/classic_kernels.py) on the CPU: measured 95 bytes
+FRAME_BYTES_COMPILED = 110
 OUTPUT_BYTES = 64
 #: the pieces a band is cut into hold a multiple of this many pixels: the CPU sums a pixel's frames in an order set by
 #: its place in blocks of 32 (AVX2) or 64 (AVX-512) pixels of the band, which the pieces keep, so that the result
@@ -268,7 +271,7 @@ class MemoryPlan:
 
     @classmethod
     def of(cls, memory: tuple[int, int] | None, nu: int, H: int, W: int, itemsize: int, masks: bool, rows: int, dev,
-           disk: int) -> MemoryPlan:
+           disk: int, frame_bytes: int = FRAME_BYTES) -> MemoryPlan:
         """``disk``: the bytes free where the frames would go (0: nowhere; they then stay in memory, as before)."""
         band = rows * W
         if memory is None:
@@ -277,7 +280,7 @@ class MemoryPlan:
         cpu = torch.device(dev).type == "cpu"            # on a card, pass 1's frame and the rejection are in its memory
         frames = nu * H * W * (3 * itemsize + 1 + (1 if masks else 0))     # the resampled frames, flags and masks
         can_spill = frames + DISK_MARGIN <= disk
-        on_disk = can_spill and frames + ((FRAME_BYTES if cpu else 0) + OUTPUT_BYTES) * H * W > budget
+        on_disk = can_spill and frames + ((frame_bytes if cpu else 0) + OUTPUT_BYTES) * H * W > budget
         room = budget - OUTPUT_BYTES * H * W - (0 if on_disk else frames)
         piece = band
         if cpu and nu * band * REJECTION_BYTES > room:
@@ -367,7 +370,9 @@ def stack_classic(load: Callable, coef, bad=None, norm: Norm | None = None, weig
     dtype = np.float16 if p.store_dtype == "float16" else np.float32
     rows = max(1, p.band_pixels // W)
     disk = shutil.disk_usage(spill).free if spill is not None and memory is not None else 0
-    plan = MemoryPlan.of(memory, nu, H, W, np.dtype(dtype).itemsize, masks, rows, dev, disk)
+    fast = dev.type == "cpu" and rs.cpu_fast(p.interpolation, p.clamping)     # compiled kernels (core/classic_kernels.py)
+    plan = MemoryPlan.of(memory, nu, H, W, np.dtype(dtype).itemsize, masks, rows, dev, disk,
+                         FRAME_BYTES_COMPILED if fast and not colour else FRAME_BYTES)
     if plan.note and log is not None:
         log(plan.note)
     store = _array((nu, 3, H, W), dtype, plan.on_disk, spill, zero=False)
@@ -378,6 +383,13 @@ def stack_classic(load: Callable, coef, bad=None, norm: Norm | None = None, weig
     k_spread = torch.ones(1, 1, 2 * SAT_SPREAD + 1, 2 * SAT_SPREAD + 1, device=dev)
     bad_t = None if bad is None else torch.as_tensor(np.asarray(bad), device=dev).bool()
     t_load = t_deb = t_res = 0.0
+    if fast:
+        xa = (Xg / (W / 2) - 1.0).numpy()
+        ya = (Yg / (H / 2) - 1.0).numpy()
+        satmap = np.full((1, 1), VALID_MAX, np.float32)
+        if sat_t is not None:
+            satmap = np.asarray(sat_t.cpu().numpy(), np.float32)
+            satmap = np.ascontiguousarray(satmap.reshape((1, 1)) if satmap.ndim < 2 else satmap)
 
     # ---------------- pass 1: every frame debayered, on the reference grid, normalised
     for k, i in enumerate(used):
@@ -388,7 +400,14 @@ def stack_classic(load: Callable, coef, bad=None, norm: Norm | None = None, weig
         tb = time.time()
         sat = fr > VALID_MAX
         satv = sat_t if sat_t is not None else torch.tensor(VALID_MAX, device=dev)
-        near = sat | (fr > NEAR_SATURATION * satv)
+        if fast and not colour:             # the flags, from the frame as loaded (the saturated samples are replaced next)
+            from . import classic_kernels as ck
+            fl_np = np.empty((H, W), np.uint8)
+            ck.saturation_flags(np.ascontiguousarray(fr.numpy()), satmap, np.float32(VALID_MAX),
+                                np.float32(NEAR_SATURATION), SAT_SPREAD, fl_np)
+            near = None
+        else:
+            near = sat | (fr > NEAR_SATURATION * satv)
         fr = torch.where(sat, satv.expand_as(fr) if satv.dim() else satv, fr)
         badm = torch.isnan(fr)
         if bad_t is not None:
@@ -405,6 +424,29 @@ def stack_classic(load: Callable, coef, bad=None, norm: Norm | None = None, weig
             rgb = db.debayer(fr, ch_of_k, p.debayer, balance=bal, template=raw_template)
         del fr
         tc = time.time()
+        if fast:
+            if colour:
+                fl_np = ((F.conv2d(near.float()[None, None], k_spread, padding=SAT_SPREAD)[0, 0] > 0).to(torch.uint8)
+                         | ((F.conv2d(sat.float()[None, None], k_spread, padding=SAT_SPREAD)[0, 0] > 0)
+                            .to(torch.uint8) << 1)).numpy()
+            direct = dtype is np.float32
+            res_out = np.asarray(store[k]) if direct else np.empty((3, H, W), np.float32)
+            fo_np = np.asarray(flags[k])
+            Qk = np.ascontiguousarray(nm.Q[i], np.float32)
+            rs.resample_normalised_cpu(np.ascontiguousarray(rgb.numpy()), coef[i], fl_np, xa, ya, Qk,
+                                       np.asarray(nm.scale[i], np.float32), res_out, fo_np, clamping=p.clamping)
+            del rgb
+            if not direct:
+                store[k] = res_out.astype(dtype)
+            td = time.time()
+            t_load += tb - ta
+            t_deb += tc - tb
+            t_res += td - tc
+            frames.append({"index": i, "half": "A" if in_a[k] else "B", "scale": [float(v) for v in nm.scale[i]],
+                           "offset": [float(v) for v in nm.Q[i, :, 0]], "bad_filled": int(filled.sum()),
+                           "cfa_balance": None if bal is None else [round(float(v), 5) for v in bal]})
+            progress(0.6 * (k + 1) / nu, f"classic: {k + 1}/{nu} frames debayered and resampled")
+            continue
         x, y = rs.source_positions(coef[i], H, W, W, H, dev)
         out = rs.resample(rgb, x, y, method=p.interpolation, clamping=p.clamping, threshold=p.clamp_threshold)
         del rgb

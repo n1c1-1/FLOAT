@@ -36,10 +36,11 @@ the Pixel Class Library of the reference processing suite (LanczosInterpolation.
 """
 from __future__ import annotations
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .poly import poly_inverse
+from .poly import inverse_fit, poly_inverse
 
 METHODS = ("lanczos4", "bilinear")
 CLAMPINGS = ("bilinear_guide", "lobe_clamp", "none")
@@ -204,3 +205,28 @@ def to_reference(img: torch.Tensor, coef, W: int, H: int, *, Ho: int | None = No
     Wo = W if Wo is None else Wo
     x, y = source_positions(coef, Ho, Wo, W, H, img.device)
     return resample(img, x, y, method=method, clamping=clamping, threshold=threshold, chunk=chunk)
+
+
+def cpu_fast(method: str, clamping: str) -> bool:
+    """Whether ``resample_normalised_cpu`` does this interpolation (the compiled kernels: Lanczos-4 with the reference
+    program's clamping or none)."""
+    from . import classic_kernels as ck
+    return ck.ENABLED and method == "lanczos4" and clamping in ("bilinear_guide", "none")
+
+
+def resample_normalised_cpu(img: np.ndarray, coef, flags: np.ndarray, a: np.ndarray, b: np.ndarray, Q: np.ndarray,
+                            scale: np.ndarray, out: np.ndarray, fo: np.ndarray, *, clamping: str = "bilinear_guide"
+                            ) -> None:
+    """On the CPU, all cores, what stack_classic does to a debayered frame in four steps: ``source_positions``,
+    ``resample`` (Lanczos-4), the flags read at the source position, and the normalisation (value - Q_c(a, b)) / scale_c
+    (a, b: the quadratic's normalised X and Y; Q (3, 6), scale (3,), float32). ``img`` (3, h, w) float32 contiguous;
+    ``flags`` (h, w) uint8; results into ``out`` (3, Ho, Wo) float32 and ``fo`` (Ho, Wo) uint8."""
+    from . import classic_kernels as ck
+    c = np.asarray(coef, np.float64)
+    ix = inverse_fit(c, img.shape[2], img.shape[1])
+    on = clamping == "bilinear_guide"
+    low = np.zeros(out.shape if on else (3, 1, 1), np.uint8)
+    cx, cy, ixx, iyy = (np.ascontiguousarray(v) for v in (c[0], c[1], ix[0], ix[1]))
+    W, H = img.shape[2], img.shape[1]
+    ck.resample_pass1(img, cx, cy, ixx, iyy, W, H, on, np.float32(CLAMPING_FACTOR), out, low, flags, fo)
+    ck.resample_pass2(img, cx, cy, ixx, iyy, W, H, out, low, on, a, b, Q, scale)

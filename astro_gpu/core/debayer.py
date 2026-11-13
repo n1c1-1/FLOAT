@@ -146,6 +146,22 @@ def fill_bad(cfa: torch.Tensor, bad: torch.Tensor | None = None, rounds: int = 3
     todo = miss.clone()
     k = torch.ones(1, 1, 3, 3, device=x.device, dtype=x.dtype)
     k[0, 0, 1, 1] = 0
+    from . import classic_kernels as ck
+    if x.device.type == "cpu" and ck.ENABLED:        # only the missing samples are visited, not 12 million (compiled)
+        o, ok, m = out.numpy(), (~todo).numpy().copy(), todo.numpy()
+        idx = np.flatnonzero(m)
+        for r in range(rounds):
+            val, got = np.empty(len(idx), np.float32), np.empty(len(idx), np.uint8)
+            ck.fill_bad_round(o, ok, idx, 2 * (r + 1), val, got)
+            hit = got.astype(bool)
+            o.reshape(-1)[idx[hit]] = val[hit]
+            ok.reshape(-1)[idx[hit]] = True
+            idx = idx[~hit]
+            if not len(idx):
+                break
+        todo = torch.zeros_like(todo)
+        todo.numpy().reshape(-1)[idx] = True
+        rounds = 0
     for r in range(rounds):
         ok = (~todo).float()
         d = 2 * (r + 1)
@@ -395,8 +411,13 @@ def cfa_balance(cfa: torch.Tensor, ch_of_k) -> tuple[float, float, float] | None
     (green 1), the levels at which the three colours are the same; None when a colour's median is not positive (a
     dark-subtracted frame with no sky in a colour: nothing to balance on)."""
     x = cfa.float()
-    col = colour_of(ch_of_k, *x.shape, x.device)
-    med = [float(x[col == c].median()) for c in range(3)]
+    if x.device.type == "cpu" and not is_xtrans(ch_of_k):     # the colours are 2 x 2 positions: strided views, no map
+        pos = channel_map(ch_of_k)
+        med = [float(torch.cat([x[i // 2::2, i % 2::2].reshape(-1) for i in range(4) if pos[i] == c]).median())
+               for c in range(3)]
+    else:
+        col = colour_of(ch_of_k, *x.shape, x.device)
+        med = [float(x[col == c].median()) for c in range(3)]
     if not all(np.isfinite(m) and m > 0 for m in med):
         return None
     return (med[1] / med[0], 1.0, med[1] / med[2])
@@ -421,6 +442,12 @@ def rcd(cfa: torch.Tensor, ch_of_k, *, siril_range: bool = True, balance=None,
         k = torch.tensor([float(v) for v in balance], device=dev, dtype=torch.float32)
         if k.numel() != 3 or not bool(torch.isfinite(k).all() & (k > 0).all()):
             raise ValueError(f"white-balance multipliers must be three positive numbers, not {balance!r}")
+        from . import classic_kernels as ck
+        if dev.type == "cpu" and ck.ENABLED and not is_xtrans(ch_of_k):   # a strided multiply and divide, in place
+            xb, pos = x.clone(), channel_map(ch_of_k)
+            for i in range(4):
+                xb[i // 2::2, i % 2::2] *= k[pos[i]]
+            return rcd(xb, ch_of_k, siril_range=siril_range, tiles_per_batch=tiles_per_batch).div_(k[:, None, None])
         out = rcd(x * k[colour_of(ch_of_k, H, W, dev)], ch_of_k, siril_range=siril_range,
                   tiles_per_batch=tiles_per_batch)
         return out / k[:, None, None]
@@ -432,11 +459,20 @@ def rcd(cfa: torch.Tensor, ch_of_k, *, siril_range: bool = True, balance=None,
         raw = (x - lo) * (NORM / (hi - lo))
     else:
         raw = x
-    col_full = colour_of(ch_of_k, H, W, dev)
     nth, ntw = -(-H // STEP), -(-W // STEP)
     Hp, Wp = nth * STEP + 2 * TILE_BORDER, ntw * STEP + 2 * TILE_BORDER
     cn = torch.zeros((Hp, Wp), device=dev, dtype=torch.float32)
     cn[:H, :W] = (raw / SCALE).clamp(0.0, 1.0)
+    from . import classic_kernels as ck
+    if dev.type == "cpu" and ck.ENABLED and not is_xtrans(ch_of_k):     # compiled, all the cores (core/classic_kernels.py)
+        out = torch.zeros((3, H, W), dtype=torch.float32)
+        ck.rcd_tiles(cn.numpy(), colour_of(ch_of_k, TILE, TILE).numpy().astype(np.int8), nth, ntw, H, W, out.numpy())
+        del cn
+        ck.bayer_border(raw.numpy(), np.array(channel_map(ch_of_k), np.int8), RCD_BORDER, out.numpy())
+        if siril_range:
+            out.mul_((hi - lo) / NORM).add_(lo)
+        return out
+    col_full = colour_of(ch_of_k, H, W, dev)
     tiles = cn.unfold(0, TILE, STEP).unfold(1, TILE, STEP).reshape(nth * ntw, TILE, TILE)
     starts_r = torch.arange(nth, device=dev) * STEP
     starts_c = torch.arange(ntw, device=dev) * STEP

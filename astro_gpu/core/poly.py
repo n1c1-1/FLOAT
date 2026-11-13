@@ -27,15 +27,21 @@ def _poly_terms_np(x, y, W, H):
     return np.stack([np.ones_like(u), u, v, u * u, u * v, v * v, u ** 3, u * u * v, u * v * v, v ** 3], -1)
 
 
-def poly_inverse(coef, X: torch.Tensor, Y: torch.Tensor, W: int, H: int, iters: int = 3, chunk: int = 1 << 21):
-    """Reference positions (X, Y) -> the frame's sensor positions: an inverse cubic fitted on a grid, then Newton
-    steps on the polynomial itself (float64; 1e-6 px after three steps), by chunks of ``chunk`` positions."""
+def inverse_fit(coef, W: int, H: int) -> np.ndarray:
+    """(2, 10): the inverse cubic of the registration polynomial ``coef`` fitted on a grid, the start of the Newton steps."""
     c = np.asarray(coef, np.float64)
     gx, gy = np.meshgrid(np.linspace(-0.25 * W, 1.25 * W, 25), np.linspace(-0.25 * H, 1.25 * H, 25))
     gx, gy = gx.ravel(), gy.ravel()
     T = _poly_terms_np(gx, gy, W, H)
     A = _poly_terms_np(T @ c[0], T @ c[1], W, H)
-    inv = np.stack([np.linalg.lstsq(A, gx, rcond=None)[0], np.linalg.lstsq(A, gy, rcond=None)[0]])
+    return np.stack([np.linalg.lstsq(A, gx, rcond=None)[0], np.linalg.lstsq(A, gy, rcond=None)[0]])
+
+
+def poly_inverse(coef, X: torch.Tensor, Y: torch.Tensor, W: int, H: int, iters: int = 3, chunk: int = 1 << 21):
+    """Reference positions (X, Y) -> the frame's sensor positions: an inverse cubic fitted on a grid, then Newton
+    steps on the polynomial itself (float64; 1e-6 px after three steps), by chunks of ``chunk`` positions."""
+    c = np.asarray(coef, np.float64)
+    inv = inverse_fit(c, W, H)
     Xf, Yf = X.reshape(-1), Y.reshape(-1)
     xs, ys = [], []
     for s in range(0, Xf.numel(), chunk):
