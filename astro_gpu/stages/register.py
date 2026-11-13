@@ -648,8 +648,8 @@ def fit_sparse(cat, ref, tree, W, H, min_matches=SPARSE_MIN_MATCHES):
     1244, 1986), with the triangles from each star's nearest neighbours of M. Beroiz, J. Cabral, B. Sanchez, "Astroalign"
     (Astronomy and Computing 32, 100384, 2020). Each triangle of the frame similar to one of the reference proposes a
     similarity; all are tried and the one that brings the most stars is kept, so that the result does not depend on
-    any random draw. It is then refined on every star it matches, and stands only with ``min_matches`` stars (the Registration's "Min pairs") and a
-    residual under SPARSE_RMS. A similarity has four unknowns: with so few stars, a polynomial would follow their
+    any random draw. It is then refined on every star it matches, and stands only with ``min_matches`` stars (the
+    Registration's "Min pairs") and a residual under SPARSE_RMS. A similarity has four unknowns: with so few stars, a polynomial would follow their
     noise. Returns what ``fit_frame`` returns, the polynomial's terms above order 1 at zero; None when no transform
     stands."""
     if cat is None or min(len(cat), len(ref)) < min_matches:

@@ -17,9 +17,10 @@ a Stars/background block after it, and the Combine layers block in Post, do (one
    ``GB`` (the mean of green and blue: the O III of a dual-band filter on a colour sensor, whose green and blue pixels
    both see the 501 nm line).
 3. Each channel's sky is taken to 0 (``neutralise_sky``: the background neutralisation, below), then the channel is
-   brought to the same scale: divided by a high percentile of its signal (99.5 %, above its sky at 0), so that a faint
-   O III weighs as much as a strong H-alpha (the channels' balance of narrowband palettes, which every reference guide
-   sets by eye or by such a normalisation); the user's weight of a channel scales it after.
+   brought to the same scale. Narrow-band types: Siril's linear match (``linear_match``, below), each filter fitted
+   linearly to the H-alpha's, so that a faint O III weighs as much as a strong H-alpha. RGB and LRGB: each channel
+   divided by a high percentile of its signal (99.5 %, above its sky at 0). The user's weight of a channel scales it
+   after.
 4. The type's ``combine`` makes red, green and blue. The narrow-band types give each filter a hue (Rector, Levay,
    Frattare, English & Pu'uohau-Pummill 2007, AJ 133, 598, "Image-processing techniques for the creation of
    presentation-quality astronomical images": each filter's greyscale image is given its own hue and the colourised
@@ -53,9 +54,17 @@ nebulosity included, so it differs from one filter to the other by what the nebu
 a factor ten to twenty times larger for a weak S II than for an H-alpha: a few tenths of a percent of offset in the S II
 became a red or cyan cast of the whole sky (set 56: 8 times the sky's own noise).
 
-A narrow-band filter's scale is measured off the stars (``star_pixels``: the detections, with a disc of their size):
-the inputs are Outputs, stars included, and a weak filter's stars would set its scale (O III of IC 443: 22 with the
-stars, 4.5 without, against H-alpha's 28).
+Linear match (step 3 of the narrow-band types): Siril's, the ``linear_match reference low high`` command and the
+Linear match button of its RGB compositing tool (src/filters/linear_match.c and find_linear_coeff in
+src/algos/fitting.c of its source; siril.readthedocs.io, "Commands" and "RGB compositing"). For each channel, the
+pixels where the reference's value lies in [low, high] (and is not 0, nor the channel's) are kept and the channel is
+fitted to the reference by least squares, ``reference = a * channel + b``; the channel becomes ``a * channel + b``.
+low and high are the RGB compositing tool's own, 1e-7 and 0.875 (the command has none; its Linear match dialog has 0
+and 0.92), in the units of the image: fractions of the sensor's full scale above its dark level (``full_scale`` of the
+reference's input: Siril's images are 0 to 1, ours are in ADU). The reference is the H-alpha, the strongest
+signal: Siril's FAQ (siril.org/faq: linear match the other stacks, "pick the Ha stack as reference") and its
+compositing tool, which takes the top layer loaded as the reference, the H-alpha loaded first for narrow-band images.
+The fit's offset moves the sky, which is taken back to 0 after it (the compositions need an empty sky at 0).
 
 The result's valid area is where every input has data. Its scale: the first input's (its level kept). Any workflow may
 feed any port; a port with no workflow is the empty state, and the block waits for it.
@@ -89,6 +98,10 @@ SKY_SHARE = 0.2
 #: the side of the blocks whose medians find the sky (px): wide enough that a star or the noise does not move a block's
 #: median, narrow enough that a faint nebula leaves its own blocks
 SKY_BLOCK = 16
+#: the bounds of the linear match (module docstring): Siril's RGB compositing tool's own
+MATCH_LOW, MATCH_HIGH = 1e-7, 0.875
+#: the narrow-band types' reference of the linear match: the H-alpha
+MATCH_REFERENCE = "Ha"
 
 
 # ---------------------------------------------------------------------------------------------- the shared steps
@@ -142,37 +155,27 @@ def channel_of(lin: np.ndarray, channel: str) -> np.ndarray:
     return lin["RGB".index(channel)].astype(np.float32)
 
 
-def star_pixels(chans: dict[str, np.ndarray], noise: dict[str, float], valid: np.ndarray) -> np.ndarray:
-    """(H, W) bool: the pixels the stars cover. SExtractor's detection (``sep``, as the registration and the plate
-    solving use it) on the channels' mean in units of their noise; each detection a disc of 3 times its measured size
-    (and 2 px) around it, those over 3 times the median size (a nebula's bright core, a few clipped stars: too few
-    pixels to move a high percentile) left out."""
-    import cv2
-    import sep
-    from ..core.imgutil import sep_extract
-    g = sum(ch / max(noise[r], 1e-12) for r, ch in chans.items()).astype(np.float32) / len(chans)
-    bad = ~(valid & np.isfinite(g))
-    g = np.ascontiguousarray(np.where(bad, 0, g), np.float32)
-    out = np.zeros(g.shape, np.uint8)
-    try:
-        bkg = sep.Background(g, mask=bad, bw=64, bh=64)
-        o = sep_extract(g - bkg.back(), 8.0, err=bkg.globalrms, minarea=4, mask=bad, deblend_cont=0.005)
-    except Exception:  # noqa: BLE001 - sep refuses a flat image: no star in it
-        return out.astype(bool)
-    if len(o) == 0:
-        return out.astype(bool)
-    keep = o["a"] <= 3 * np.median(o["a"])           # the stars are alike in size; a nebula's bright core is not one
-    for x, y, a in zip(o["x"][keep], o["y"][keep], o["a"][keep]):
-        cv2.circle(out, (int(round(x)), int(round(y))), int(np.ceil(3 * a + 2)), 1, -1)
-    return out.astype(bool)
+def linear_match(ch: np.ndarray, ref: np.ndarray, valid: np.ndarray, low: float = MATCH_LOW,
+                 high: float = MATCH_HIGH) -> tuple[float, float, int]:
+    """(a, b, the pixels used): Siril's linear match of a channel to a reference (module docstring), the least squares
+    fit ``ref = a * ch + b`` on the pixels where ``ref`` lies in [low, high] and neither is 0."""
+    m = valid & (ref >= low) & (ref <= high) & (ref != 0) & (ch != 0) & np.isfinite(ref) & np.isfinite(ch)
+    n = int(m.sum())
+    if n < 2:
+        raise StageError("the channels cannot be matched: fewer than 2 pixels have a reference value between "
+                         f"{low:g} and {high:g}")
+    x, y = ch[m].astype(np.float64), ref[m].astype(np.float64)
+    mx, my = x.mean(), y.mean()
+    var = float(np.sum((x - mx) ** 2))
+    if var <= 0:
+        raise StageError("the channels cannot be matched: a channel is flat where the reference has data")
+    a = float(np.sum((x - mx) * (y - my)) / var)
+    return a, float(my - a * mx), n
 
 
-def balance(ch: np.ndarray, valid: np.ndarray, pct: float, stars: np.ndarray | None = None) -> tuple[np.ndarray, float]:
-    """A channel divided by the given percentile of its valid pixels above 0 (its sky is at 0). With ``stars`` (the
-    pixels they cover) the percentile is that of the others: the scale of a narrow-band filter is the nebula's,
-    whatever the stars add to the brightest pixels, the weak filters' above all (a filter whose nebula is faint but
-    whose stars are as bright as the others' would otherwise be scaled by its stars)."""
-    v = ch[valid & ~stars] if stars is not None and (valid & ~stars).any() else ch[valid]
+def balance(ch: np.ndarray, valid: np.ndarray, pct: float) -> tuple[np.ndarray, float]:
+    """A channel divided by the given percentile of its valid pixels above 0 (its sky is at 0)."""
+    v = ch[valid]
     v = v[np.isfinite(v)]
     top = float(np.percentile(v, pct)) if v.size else 1.0
     top = top if top > 0 else 1.0
@@ -308,6 +311,9 @@ class CombinationParams(StageParams):
     #: raised with it) is lowered by hand
     weights: dict = P({}, label="Channel weights", level="internal",
                       help="Each channel's weight, after the balance (1: as balanced).")
+
+
+class BalancedParams(CombinationParams):
     percentile: float = P(99.5, label="Channel balance", level="advanced", ge=90, le=99.99, step=0.1, unit="%",
                           help="Each channel is divided by this percentile of its signal before it is combined: the "
                                "filters weigh alike.")
@@ -383,20 +389,41 @@ class Combination(Stage):
             raise StageError("the channels do not overlap: no pixel where every one has data")
         skies = neutralise_sky(chans, valid_all)
         ctx.log("sky removed (level, noise): " + ", ".join(f"{r} {a:.4g}, {b:.3g}" for r, (a, b) in skies.items()))
-        # a narrow-band filter's scale is the nebula's: measured off the stars the inputs now contain
-        covered = star_pixels(chans, {r: v[1] for r, v in skies.items()}, valid_all) if self.narrowband else None
-        level = None
+        if self.narrowband:
+            # Siril's linear match of every filter to the H-alpha; the result keeps the H-alpha's scale (top 1)
+            ref_role = MATCH_REFERENCE if MATCH_REFERENCE in chans else next(iter(chans))
+            ref_ch = chans[ref_role]
+            full = float(next(i for i in inputs if i["role"] == ref_role).get("full_scale") or 1.0)
+            for role in list(chans):
+                tops[role] = 1.0
+                if role == ref_role:
+                    continue
+                a, b, used = linear_match(chans[role], ref_ch, valid_all, MATCH_LOW * full, MATCH_HIGH * full)
+                if not a > 0:
+                    raise StageError(f"the {role} channel does not follow the {ref_role} one (a negative fit): "
+                                     "check that they show the same field")
+                chans[role] = (chans[role] * np.float32(a) + np.float32(b)).astype(np.float32)
+                tops[role] = 1.0 / a
+                ctx.log(f"{role} matched to {ref_role} on its pixels between {MATCH_LOW * full:.3g} and "
+                        f"{MATCH_HIGH * full:.5g}: {a:.4g} x + {b:.3g} ({used} pixels)")
+            skies = neutralise_sky(chans, valid_all)           # the fits' offsets taken off: the sky at 0 again
+            level = 1.0
+        else:
+            level = None
+            for role in list(chans):
+                chans[role], tops[role] = balance(chans[role], valid_all, p.percentile)
+                if level is None:
+                    level = tops[role]
+            skies = {r: (skies[r][0], skies[r][1] / tops[r]) for r in chans}
         for role in list(chans):
-            chans[role], tops[role] = balance(chans[role], valid_all, p.percentile, covered)
-            if level is None:
-                level = tops[role]
             wgt = float(p.weights.get(role, 1.0))
             if wgt != 1.0:                           # the user's weight: the balance's divisor scaled with it
                 chans[role] *= np.float32(wgt)
                 tops[role] /= wgt
+                skies[role] = (skies[role][0], skies[role][1] * wgt)
                 ctx.log(f"{role}: weight {wgt:g}")
-        # each balanced channel's sky noise: the sky's, divided as the channel was (the weight included)
-        noise = {r: skies[r][1] / tops[r] for r in chans}
+        # each balanced channel's sky noise: the sky's, scaled as the channel was (the weight included)
+        noise = {r: skies[r][1] for r in chans}
         rgb = self.combine(ctx, p, chans, noise, valid_all) * np.float32(level or 1.0)
         rgb[:, ~valid_all] = 0
         H, W = ref["shape"]
@@ -461,7 +488,7 @@ class CombineSHO(NarrowbandCombination):
     description = ("Combines the S II, H-alpha and O III filters into one colour image: each filter a hue, the lightness "
                    "from the filters weighted by their noise, aligned through their plate solutions.")
     Params = SHOParams
-    version = "2"
+    version = "3"
 
 
 class HOParams(NarrowbandParams):
@@ -479,7 +506,7 @@ class CombineHO(NarrowbandCombination):
     description = ("Combines the H-alpha and O III filters (two filters, or a dual-band image's channels) into one "
                    "colour image: each filter a hue, the lightness from the filters weighted by their noise.")
     Params = HOParams
-    version = "2"
+    version = "3"
 
 
 class CombineRGB(Combination):
@@ -488,6 +515,7 @@ class CombineRGB(Combination):
     kind = "rgb"
     ports = ("R", "G", "B")
     description = "Combines the red, green and blue filters into one colour image, aligned through their plate solutions."
+    Params = BalancedParams
     version = "1"
 
     def combine(self, ctx, p, chans, noise, valid):
@@ -501,6 +529,7 @@ class CombineLRGB(Combination):
     ports = ("L", "R", "G", "B")
     description = ("Combines the red, green and blue filters into the colour, the luminance filter into the detail: "
                    "each pixel's colour scaled so that its luminance is L's.")
+    Params = BalancedParams
     version = "1"
 
     def combine(self, ctx, p, chans, noise, valid):

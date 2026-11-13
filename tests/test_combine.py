@@ -62,7 +62,8 @@ def test_four_blocks_on_one_base_class_each_with_its_named_inputs_parameters_and
     for c in C.COMBINATIONS:
         assert issubclass(c, C.Combination) and c.name == f"combine_{c.kind}" and c.version
         assert "run" not in vars(c)                                     # only its combine: the rest is shared
-        assert {"inputs", "weights", "percentile"} <= set(c.Params.model_fields)
+        assert {"inputs", "weights"} <= set(c.Params.model_fields)
+        assert ("percentile" in c.Params.model_fields) == (not c.narrowband)      # the narrow-band types match to Hα
     sho = C.CombineSHO.Params()
     assert (sho.hue_sii, sho.hue_ha, sho.hue_oiii) == C.HUBBLE_HUES        # the measured hues, by default
     assert sho.lightness == "noise" and sho.smoothing == "auto" and sho.radius == 0
@@ -176,6 +177,7 @@ def test_the_sho_block_composes_its_parameters_and_shows_the_smoothing_it_used(t
     radius set by hand is that radius, equal lightness changes the image; a port can read a starless image."""
     off = {"SII": -0.7, "Ha": 2.5, "OIII": -0.3}
     ch, _ = _sky_field(off, {"SII": 0.9, "Ha": 0.4, "OIII": 0.2})
+    ch = {r: v / 1000 for r, v in ch.items()}            # the units of an image: 0 to 1
     ins = []
     for r in off:
         _output(tmp_path / r, np.repeat(ch[r][None], 3, 0))
@@ -397,25 +399,38 @@ def test_a_combinations_output_frame_is_the_rectangle_where_every_input_has_data
     assert (x1 - x0) * (y1 - y0) >= 0.9 * (W - 13) * (H - 8)           # and it is the large rectangle, not a sliver
 
 
-def _stars_and_nebula(seed=3, n=256):
-    """Two filters over one frame: a wide nebula (bright in A, faint in B) and the same stars in both, B's as bright."""
-    rng = np.random.default_rng(seed)
+def test_the_bounds_of_the_match_are_fractions_of_the_inputs_full_scale(tmp_path):
+    """Siril's images are 0 to 1, ours are in ADU: the bounds 1e-7 and 0.875 are taken of the Hα input's full scale."""
+    ch, _ = _sky_field({"Ha": 0.0, "OIII": 0.0}, {"Ha": 0.4, "OIII": 0.2})        # amplitudes in the hundreds
+    ins = []
+    for r in ch:
+        _output(tmp_path / r, np.repeat(ch[r][None], 3, 0))
+        ins.append({"role": r, "channel": "L", "dir": str(tmp_path / r), "pid": 1, "full_scale": 1000.0})
+    said = []
+    _run(tmp_path, C.CombineHO, C.CombineHO.Params(inputs=ins), "scaled", said)
+    line = next(x for x in said if "matched to Ha" in str(x))
+    assert "between 0.0001 and 875:" in line and "x +" in line               # 1e-7 x 1000 and 0.875 x 1000
+    a = float(line.split(": ")[1].split(" x")[0])
+    assert 0.5 < a < 3.5                                                   # the nebulae are 300 and 150 high, the stars none
+
+
+def test_each_filter_is_matched_linearly_to_the_halpha_on_the_pixels_between_the_bounds():
+    """Siril's linear match: the fit ``Ha = a * filter + b`` on the pixels where the H-alpha lies in [low, high]; a
+    pixel of the reference above the high bound (a bright star) is ignored."""
+    rng = np.random.default_rng(4)
+    n = 256
     yy, xx = np.mgrid[:n, :n].astype(np.float32)
     neb = np.exp(-((yy - 128) ** 2 + (xx - 128) ** 2) / (2 * 50.0 ** 2)).astype(np.float32)
-    stars = np.zeros((n, n), np.float32)
-    for y, x in rng.integers(20, n - 20, (60, 2)):
-        stars += 60 * np.exp(-((yy - y) ** 2 + (xx - x) ** 2) / (2 * 1.5 ** 2))
-    a = 10 * neb + stars + rng.normal(0, 0.05, (n, n)).astype(np.float32)
-    b = 1 * neb + stars + rng.normal(0, 0.05, (n, n)).astype(np.float32)
-    return {"Ha": a, "OIII": b}, np.ones((n, n), bool), stars > 5
-
-
-def test_the_nebula_sets_the_scale_not_its_stars():
-    ch, valid, star_px = _stars_and_nebula()
-    noise = {r: 0.05 for r in ch}
-    covered = C.star_pixels(ch, noise, valid)
-    assert covered[star_px].mean() > 0.9 and covered.mean() < 0.5
-    tops = {r: C.balance(c.copy(), valid, 99.5, covered)[1] for r, c in ch.items()}
-    plain = {r: C.balance(c.copy(), valid, 99.5)[1] for r, c in ch.items()}
-    assert tops["Ha"] / tops["OIII"] > 6           # the nebula's ratio is 10 (the stars' are 1)
-    assert plain["Ha"] / plain["OIII"] < 3         # the stars' flux pulls the weak filter's scale up
+    ha = 0.4 * neb + rng.normal(0, 0.002, (n, n)).astype(np.float32) + 0.001
+    oiii = 0.04 * neb + rng.normal(0, 0.0005, (n, n)).astype(np.float32) + 0.0002
+    ha[100:110, 100:110] = 0.95                         # a clipped star in the reference (over 0.875)
+    oiii[100:110, 100:110] = 0.9                        # and a very different value in the other filter
+    valid = np.ones((n, n), bool)
+    a, b, used = C.linear_match(oiii, ha, valid)
+    assert abs(a - 10) < 0.3 and abs(b - 0.001) < 0.002
+    assert used < n * n - 100 + 1                       # the star's 100 pixels are out
+    a2, _, _ = C.linear_match(oiii, ha, valid, high=1.0)
+    assert a2 < 9                                       # with the star in, the fit is pulled away
+    assert (C.MATCH_LOW, C.MATCH_HIGH, C.MATCH_REFERENCE) == (1e-7, 0.875, "Ha")
+    with pytest.raises(StageError):
+        C.linear_match(oiii, np.zeros_like(ha), valid)  # no reference pixel in the bounds

@@ -37,6 +37,9 @@ RETIRED: dict[str, frozenset[str]] = {
     "denoise": frozenset({"iterations", "patch", "batch", "learning_rate", "reuse_model", "mono_adapt"}),
     # the deep catalogue and the faint stars of the star model (the Stars block before its network)
     "catalogs": frozenset({"deep_stars", "g_deep", "g_faint", "max_faint"}),
+    # the narrow-band combinations' balance is Siril's linear match to the H-alpha (stages/combine.py), not a percentile
+    "combine_sho": frozenset({"percentile"}),
+    "combine_ho": frozenset({"percentile"}),
 }
 #: removed settings whose last value stays in every key, so that the results computed with it keep their keys:
 #: {stage: {field: value}} (the Moffat star measure and the drizzle coverage rule are now the only behaviour)

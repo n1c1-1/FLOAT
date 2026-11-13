@@ -604,6 +604,20 @@ class Keys:
         except (KeyError, ValueError):
             return None
 
+    def full_scale(self, pid: int) -> float:
+        """The sensor's full scale above its dark level (ADU, from the Calibration's result) of a workflow's image: the
+        unit of its pixel values, which a combination's linear match needs to read Siril's bounds as fractions of it
+        (stages/combine.py). 1 for a workflow with no Calibration (an image file: its values are taken as 0 to 1)."""
+        st = next((s for s in self.chain(pid) if base(s) == "calibrate"), None)
+        k = self._input_key(pid, st) if st else None
+        if k and self.project.root is not None:
+            try:
+                info = json.loads((Store(self.project.root).dir(st, k) / "cache.json").read_text(encoding="utf-8"))
+                return max(float(info["white_level"]) - float(info.get("dark_level") or 0.0), 1.0)
+            except (OSError, KeyError, ValueError, TypeError):
+                pass
+        return 1.0
+
     def key_parts(self, wf: int | Workflow, stage: str) -> dict[str, Any]:
         """What a stage's key hashes (the manifest keeps it as ``key_parts``)."""
         w = self._wf(wf)
@@ -672,7 +686,8 @@ class Keys:
                 return str(store.dir(st, k) / file) if store and k else ""
             v["inputs"] = [{"role": i["role"], "channel": i.get("channel", "L"), "pid": i["pid"],
                             "image": i.get("image", "output"), "dir": folder(i["pid"], _read(i)),
-                            "wcs": folder(i["pid"], "astrometry", "wcs.fits"), "grid": self.grid(i["pid"])}
+                            "wcs": folder(i["pid"], "astrometry", "wcs.fits"), "grid": self.grid(i["pid"]),
+                            "full_scale": self.full_scale(i["pid"])}
                            for i in w.source["fusion"]["inputs"]]
         if base(stage) == "align_on":
             ref = self.reference_of(w)
