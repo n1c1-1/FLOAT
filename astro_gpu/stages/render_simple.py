@@ -61,6 +61,40 @@ def whole_box(good: np.ndarray):
     return crop_box(good, 1.0)
 
 
+def footprint(ctx: Context, meta: dict, shape: tuple, fallback: np.ndarray, cover_min: float = 0.6) -> np.ndarray:
+    """The pixels of the stack that most of its frames cover, by geometry: each kept frame's outline is carried by its
+    registration onto the stack's grid and the frames covering each pixel are counted. ``crop_box`` reads this and not
+    the stack's weight, whose sampling holes (a Bayer drizzle of a few frames leaves a third of the red and blue
+    pixels, and rejection more, without a sample) were taken for uncovered borders and peeled the image to a strip.
+    ``fallback`` (the weight's mask) when the stack has no registration (an image taken as it is, a resampled stack)."""
+    import cv2
+
+    from .register import apply_poly
+    try:
+        reg = np.load(ctx.input("register", "reg.npz"))
+        coef = reg["coef"]
+        used = [int(f["index"]) for f in ctx.load_json("stack", "diagnostics.json")["frames"]]
+        Ws, Hs = meta["sensor"]
+        S = float(meta["scale"])
+        ox, oy = (meta["zone"][0] * S, meta["zone"][1] * S) if meta.get("zone") else (0.0, 0.0)
+        if not used or len(coef) <= max(used):
+            return fallback
+    except (StageError, KeyError, OSError, ValueError, TypeError):
+        return fallback
+    t = np.linspace(0.0, 1.0, 65)
+    x = np.r_[t * (Ws - 1), np.full(65, Ws - 1.0), t[::-1] * (Ws - 1), np.zeros(65)]
+    y = np.r_[np.zeros(65), t * (Hs - 1), np.full(65, Hs - 1.0), t[::-1] * (Hs - 1)]
+    count = np.zeros(shape, np.uint8)
+    for i in used:
+        X, Y = apply_poly(coef[i], x, y, Ws, Hs)
+        pts = np.round(np.c_[(X + 0.5) * S - 0.5 - ox, (Y + 0.5) * S - 0.5 - oy]).astype(np.int32)
+        one = np.zeros(shape, np.uint8)
+        cv2.fillPoly(one, [pts], 1)
+        count += one
+    pos = count[count > 0]
+    return count > cover_min * float(np.median(pos)) if pos.size else fallback
+
+
 def sky_spread(v: np.ndarray) -> float:
     """Robust spread of the sky in a channel: 1.4826 x the median distance below the median (the stars and nebulae
     of the field, above the median, do not widen it)."""
@@ -164,7 +198,7 @@ class RenderSimple(Stage):
                    "renders it with its sliders (sky, contrast, saturation, noise).")
     deps = ("stack",)
     Params = RenderSimpleParams
-    version = "9"          # 2: the emission anchor of the output preparation (the H-alpha of Classic was violet on
+    version = "10"         # 2: the emission anchor of the output preparation (the H-alpha of Classic was violet on
                            # heart_a7s);
                            # 3: the Raw stack exit's sky made grey (it had the green of the light pollution);
                            # 4: the colour of the places near saturation from their surroundings (repair_saturated);
@@ -176,6 +210,7 @@ class RenderSimple(Stage):
                            # 9: a fusion whose channels' sky is at 0 keeps it there (no median of the frame taken off)
                            # (an SHO Hubble fusion's origin is now "palette", #163: only those fusions' results change,
                            # and the fusion's version 7 recomputes them)
+                           # 10: a single stack is trimmed by the frames' footprint, not by the weight's sampling holes
 
     def run(self, ctx: Context, p: RenderSimpleParams) -> None:
         from ..render.simple import SimpleRenderEngine, SimpleSettings, image_stats
@@ -189,7 +224,7 @@ class RenderSimple(Stage):
         valid = coverage(ctx)
         meta = ctx.load_json("stack", "drz_meta.json")
         fused = meta.get("source") == "fusion"
-        y0, y1, x0, x1 = whole_box(valid) if fused else crop_box(valid, 0.995)
+        y0, y1, x0, x1 = whole_box(valid) if fused else crop_box(footprint(ctx, meta, valid.shape, valid), 0.995)
         shown = np.zeros_like(valid)
         shown[y0:y1, x0:x1] = True
         shown &= valid

@@ -55,7 +55,8 @@ class Register(Stage):
     # left out), and a dense field's frame turned past 45 degrees no longer keeps a fit on chance pairs. 4: the turn's
     # triangles from more than the 50 brightest stars when those share none (the same frames, calibrated: their
     # brightest stars lay off the reference's field)
-    version = "4"
+    # 5: a frame matched on fewer than 10 star pairs is left out, as Siril does (it was 6)
+    version = "5"
 
     def auto(self, ctx: Context) -> dict[str, Auto]:
         n = max(1, min(12, (os.cpu_count() or 4) - 2))
@@ -191,7 +192,8 @@ class Register(Stage):
                     f"{len(turns)} frame(s) aligned after turns of the camera of {turns[0]:.1f} to {turns[-1]:.1f} "
                     "degrees")
         if failed:
-            ctx.log(f"{len(failed)} frame(s) could not be aligned and will be ignored, e.g. {failed[0]}", "warning")
+            ctx.log(f"{len(failed)} frame(s) could not be aligned and will be ignored (no trustworthy match: "
+                    f"under {SPARSE_MIN_MATCHES} star pairs, or a residual too large), e.g. {failed[0]}", "warning")
         # the transparency from the stars' flux in a fixed aperture (holding their light in every frame), not from
         # their flux above the detection threshold, which follows the seeing: on Iris a frame of 5.3 px stars read
         # 0.78 for 0.91 (its signal was scaled up 16 % too much, and its weight cut)
@@ -538,9 +540,10 @@ SPARSE_STARS = 100
 #: the triangle matching's stars (the brightest), its neighbours per star, its match radius in the space of the
 #: triangles' two shape ratios, and the distance (px) at which a star counts as matched: the values of Beroiz et al.
 TRIANGLE_STARS, TRIANGLE_NEIGHBOURS, TRIANGLE_RADIUS, STAR_TOL = 50, 5, 0.1, 2.0
-#: fewest matched stars for a transform: the triangle's 3, which any transform fits, and 3 more it did not use (a star
-#: falls within STAR_TOL of one of 50 others by chance once in 10 000 tries on a 6 Mpx frame, so three never do)
-SPARSE_MIN_MATCHES = 6
+#: fewest matched stars for a transform: the triangle's 3 and 7 more it did not use (a star falls within STAR_TOL of
+#: one of 50 others by chance once in 10 000 tries on a 6 Mpx frame, so three never do; ten, the minimum of star pairs
+#: Siril asks: a frame under it is dropped)
+SPARSE_MIN_MATCHES = 10
 #: largest residual (px) of a transform from few stars, as ``fit_frame`` asks of a turned fit; the largest change of
 #: scale between two frames of one instrument (a triangle fitted to a far smaller one maps every star onto one point)
 SPARSE_RMS, SPARSE_SCALE = 1.0, 0.05
