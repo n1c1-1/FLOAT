@@ -638,7 +638,7 @@ class TemplatePage(QWidget):
             c = TemplateCard(t)
             what = label(_(t["text"]), "small", wrap=True)
             c.layout().addWidget(what)
-            if t.get("kind"):
+            if t.get("kind") and not t.get("dual_x2"):     # S-H-O by construction: no choice that would do nothing
                 box = palette_box(t["palette"])
                 box.currentIndexChanged.connect(lambda i, b=box, card=c: card.set_palette(b.itemData(i)))
                 c.layout().addWidget(box)

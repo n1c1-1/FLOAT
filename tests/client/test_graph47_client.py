@@ -701,6 +701,21 @@ def test_the_filters_card_makes_the_palette_chosen_on_it(qapp, tmp_path, monkeyp
         w.stop()
 
 
+def test_the_dual_band_x2_card_offers_no_combination_choice(qapp, tmp_path, monkeypatch):
+    """The template is S-H-O by construction: its card has no list of combinations that would do nothing."""
+    from PySide6.QtWidgets import QComboBox
+    w, m, page = _blank_page(tmp_path, monkeypatch)
+    try:
+        page.show_templates()
+        by_key = {c.t["key"]: c for c in page.templates.cards}
+        assert not by_key["dual_x2"].findChildren(QComboBox)
+        assert by_key["filters_full"].findChildren(QComboBox)
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()
+
+
 def test_no_template_asks_for_a_file_it_only_places_its_blocks(qapp, tmp_path, monkeypatch):
     """Issue #114: the Image template asked for its file as soon as it was chosen. No template asks for anything, on the
     blank page as in the window: its blocks are placed, its Image blocks wait for their file (the first one selected,
