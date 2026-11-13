@@ -709,6 +709,8 @@ class ExportJob:
     annotations: dict | None = None
     #: the crop of the composition (x0, y0, x1, y1), canvas pixels, or None: what is written, never what is rendered
     crop: tuple | None = None
+    #: what the FITS header says of the shot ({"target", "date_obs", "exposure_s"}, each when known), or None
+    facts: dict | None = None
 
 
 def _slug(name: str) -> str:
@@ -787,7 +789,8 @@ def run_export(renderer: Renderer, job: ExportJob, progress, stop=None,
         if crop else canvas
     folder = Path(job.folder)
     write = writer or getattr(renderer, "writer", None) or (lambda rgb, out, opts, meta: export_rgb(
-        rgb, out, opts, meta.get("wcs"), tuple(meta.get("origin") or (0, 0)), meta.get("history")))
+        rgb, out, opts, meta.get("wcs"), tuple(meta.get("origin") or (0, 0)), meta.get("history"),
+        facts=meta.get("facts")))
     formats = [job.format] if isinstance(job.format, str) else list(job.format)
     opts = {"name": job.name, "formats": formats, "size": job.size, "jpeg_quality": job.jpeg_quality}
     ids_with_mask = [lay["id"] for lay in layers if lay.get("mask") is not None]
@@ -816,7 +819,7 @@ def run_export(renderer: Renderer, job: ExportJob, progress, stop=None,
             ref_pid = None
     sol = renderer.wcs_of(ref_pid) if ref_pid is not None and getattr(renderer, "wcs_of", None) else None
     wcs = export_header(sol) if job.wcs else None
-    meta = {"wcs": wcs, "origin": shown.origin, "wf": ref_pid if job.wcs else None,
+    meta = {"wcs": wcs, "facts": job.facts, "origin": shown.origin, "wf": ref_pid if job.wcs else None,
             "history": history_of(job, renderer, canvas) if job.history else None}
     rgb = np.ascontiguousarray(cut(np.moveaxis(comp.rgb, -1, 0)))
     show = dict(job.annotations or {})

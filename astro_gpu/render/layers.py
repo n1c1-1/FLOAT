@@ -363,10 +363,12 @@ def _safely(p: Path, write) -> None:
 
 
 def export_rgb(rgb: np.ndarray, out_dir: str | Path, options: ExportOptions | dict | None = None, wcs=None,
-               origin=(0, 0), history: dict | None = None, progress=lambda f, m: None) -> list[Path]:
+               origin=(0, 0), history: dict | None = None, progress=lambda f, m: None,
+               facts: dict | None = None) -> list[Path]:
     """Write a composed image (3, H, W), display sRGB in [0, 1]. ``wcs``: the grid's astrometric solution (a FITS
     header, a WCS or a wcs.fits path) for the FITS file; ``origin``: the grid pixel of rgb[:, 0, 0] (the crop);
-    ``history``: written beside the images as <name>_history.json. Returns the files written."""
+    ``history``: written beside the images as <name>_history.json. ``facts``: what the FITS header says of the shot
+    (``target``, ``date_obs``, ``exposure_s``: the total), each written when known. Returns the files written."""
     import cv2
     import tifffile
     from PIL import Image
@@ -420,7 +422,11 @@ def export_rgb(rgb: np.ndarray, out_dir: str | Path, options: ExportOptions | di
             hdr = flip_rows_wcs(hdr, img.shape[1]) if wcs is not None else hdr
             hdr["COLORSPC"] = ("sRGB", "display-referred, non-linear")
             hdr["ROWORDER"] = ("BOTTOM-UP", "first row is the bottom of the image")
-            hdr["PROGRAM"] = ("astro_gpu", "Post export")
+            hdr["PROGRAM"] = ("FLOAT", "Post export")
+            for key, name, comment in (("OBJECT", "target", "target"), ("DATE-OBS", "date_obs", "first light of the shot"),
+                                       ("EXPTIME", "exposure_s", "total exposure, s")):
+                if (facts or {}).get(name):
+                    hdr[key] = (_ascii(facts[name]) if isinstance(facts[name], str) else float(facts[name]), comment)
             if history is not None:
                 hdr["DATE"] = (str(history.get("created") or "")[:19], "export date")
                 for line in history_lines(history):
@@ -461,7 +467,7 @@ def flip_rows_wcs(header, H: int):
 def _ascii(text) -> str:
     """A FITS header holds ASCII only: accents dropped, the rest replaced."""
     import unicodedata
-    t = unicodedata.normalize("NFKD", str(text)).encode("ascii", "ignore").decode("ascii")
+    t = unicodedata.normalize("NFKD", str(text).replace("·", "-")).encode("ascii", "ignore").decode("ascii")
     return t if t.strip() else "?"
 
 
@@ -472,7 +478,7 @@ def history_lines(history: dict) -> list[str]:
         return ", ".join(f"{k}={v:g}" if isinstance(v, (int, float)) and not isinstance(v, bool) else f"{k}={v}"
                          for k, v in sorted((d or {}).items()))
 
-    lines = [f"astro_gpu Post export, {history.get('created', '')}", f"project: {history.get('project', '')}"]
+    lines = [f"FLOAT Post export, {history.get('created', '')}", f"project: {history.get('project', '')}"]
     cv = history.get("canvas")
     if cv:
         lines.append(f"canvas {cv['width']} x {cv['height']} px at {tuple(cv['origin'])} of the stack grid")
@@ -507,8 +513,9 @@ def history_lines(history: dict) -> list[str]:
         lines.append(f"layer {lay.get('name')}{state}: {src}, {blend}{mask}{extra}" + (f"; sliders {sl}" if sl else ""))
         for f in [x for x in layers if x.get("kind") == "filter" and x.get("target") == lay.get("id")][::-1]:
             fs = "" if f.get("visible", True) else " (hidden)"
-            lines.append(f"  its filter {f.get('name')}{fs}, {f.get('mode', 'Normal')} {float(f.get('opacity', 100)):g}%"
-                         f"{', masked' if f.get('mask') else ''}; {fmt(f.get('params'))}")
+            side = {"stars": "stars only", "starless": "starless image only", "real": "real stars only"}.get(f.get("sub"), "")
+            lines.append(f"  its filter {f.get('name')}{fs}{', ' + side if side else ''}, {f.get('mode', 'Normal')} "
+                         f"{float(f.get('opacity', 100)):g}%{', masked' if f.get('mask') else ''}; {fmt(f.get('params'))}")
     return [_ascii(x) for x in lines]
 
 

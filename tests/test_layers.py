@@ -304,3 +304,22 @@ def test_the_stars_layer_is_kept_between_renders_while_its_settings_stand(preps,
     assert made == [2] and svc.render(preps["stars"], None, {"star_size": 0}, 0.5, part="stars").rgb.max() > 0.2
     svc.render(preps["stars"], None, {"star_size": 3}, 0.5, part="combined")
     assert made == [2, 2]
+
+
+def test_the_fits_header_names_the_product_the_shot_and_the_history_keeps_where_a_filter_acts(tmp_path):
+    from astropy.io import fits
+
+    from astro_gpu.render.layers import export_rgb, history_lines
+    rgb = np.random.default_rng(0).uniform(0, 1, (3, 12, 16)).astype(np.float32)
+    layers = [{"id": 2, "kind": "filter", "name": "Saturation", "target": 1, "sub": "stars", "mode": "Normal",
+               "opacity": 100.0, "params": {"amount": 1.5}, "visible": True, "mask": {"parts": []}},
+              {"id": 1, "kind": "workflow", "pid": 1, "part": "combined", "name": "S-H-O \u00b7 Combine layers",
+               "mode": "Normal", "opacity": 100.0, "sliders": {}, "visible": True}]
+    hist = {"project": "P", "created": "2026-11-13T10:00:00", "layers": layers, "workflows": {}}
+    text = "\n".join(history_lines(hist))
+    assert "S-H-O - Combine layers" in text and "stars only" in text and "astro_gpu" not in text
+    files = export_rgb(rgb, tmp_path, {"name": "x", "formats": ["fits32f"]}, history=hist,
+                       facts={"target": "M 42", "date_obs": "2026-11-12T22:01:02", "exposure_s": 7200.0})
+    h = fits.getheader(next(f for f in files if f.suffix == ".fits"))
+    assert h["PROGRAM"] == "FLOAT" and h["OBJECT"] == "M 42" and h["EXPTIME"] == 7200.0
+    assert h["DATE-OBS"].startswith("2026-11-12T22:01") and "WCS" not in h.tostring() and "CTYPE1" not in h

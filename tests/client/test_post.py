@@ -3296,3 +3296,16 @@ def test_every_tool_has_a_named_control(post):
     if grp is not None:
         sm = v.layer_menu_of(sub_row(grp, "stars"))
         assert [a.text() for a in sm.actions()] == ["Add a filter"]
+
+
+def test_the_fits_export_greys_the_astrometry_box_with_its_reason_when_there_is_no_plate_solution(exporting, monkeypatch):
+    s = exporting
+    monkeypatch.setattr(s.view, "ann_problem", lambda: "no plate solution here")
+    d = ExportDialog(s.view)
+    try:
+        d.fmt.setCurrentIndex(d.fmt.findData("fits32f"))
+        assert not d.c_wcs.isEnabled() and not d.c_wcs.isChecked() and d.c_wcs.toolTip() == "no plate solution here"
+        assert d.job().wcs is False
+    finally:
+        d.reject()
+        d.deleteLater()

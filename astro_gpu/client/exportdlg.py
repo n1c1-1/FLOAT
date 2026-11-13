@@ -295,6 +295,11 @@ class ExportDialog(QDialog):
                 c.setChecked(False)
             c.setEnabled(on)
         self.c_wcs.setToolTip("" if fits else _("Only the FITS file has a header."))
+        why = self.view.ann_problem() if fits and hasattr(self.view, "ann_problem") else ""
+        if fits and why:                                  # no plate solution to write: greyed, unticked, the reason
+            self.c_wcs.setChecked(False)
+            self.c_wcs.setEnabled(False)
+            self.c_wcs.setToolTip(why)
         why = self.view.ann_problem() if hasattr(self.view, "ann_problem") else ""
         for c in (self.c_grid, self.c_names):
             c.setToolTip(_("A FITS file stays clean: its header holds the astrometric solution.") if key == "fits32f"
@@ -336,6 +341,7 @@ class ExportDialog(QDialog):
                          size=int(self.size_cb.currentData() or 0), wcs=self.c_wcs.isEnabled() and self.c_wcs.isChecked(),
                          history=self.c_hist.isChecked(), each_layer=self.c_layers.isChecked(),
                          masks=self.c_masks.isChecked(), project_name=self.pname,
+                         facts=self.view.s.export_facts() if hasattr(getattr(self.view, "s", None), "export_facts") else None,
                          annotations={"grid": self.c_grid.isEnabled() and self.c_grid.isChecked(),
                                       "objects": self.c_names.isEnabled() and self.c_names.isChecked()})
 
