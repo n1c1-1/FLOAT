@@ -1387,6 +1387,9 @@ class PostView(QWidget):
         self._save()
         with self._from_post():
             self.s.new_post_version()
+        self.undo.append(MODEL_STEP)                     # (the new version is the one shown: its own Undo takes it back)
+        self.redo.clear()
+        self._undo_buttons()
 
     def _version_renamed(self):
         """The name typed for the version shown: refused with its reason when empty or already another version's, the
@@ -1399,7 +1402,11 @@ class PostView(QWidget):
         elif name != mine and any(v["name"] == name and v["id"] != self._version for v in versions):
             self.toasted.emit(_("Name refused: another version is already named “{name}”").format(name=name))
         elif name != mine:
-            self.s.rename_post_version(self._version, name)
+            with self._from_post():
+                self.s.rename_post_version(self._version, name)
+            self.undo.append(MODEL_STEP)
+            self.redo.clear()
+            self._undo_buttons()
         self._fill_versions()
 
     def _version_delete(self):
@@ -1881,10 +1888,8 @@ class PostView(QWidget):
         self._save_t.start(0)
 
     def _undo_buttons(self):
-        can = getattr(self.s, "can_undo", None)          # with none of Post's, the workflows' (do_undo)
-        self.b_undo.setEnabled(bool(self.undo) or bool(can and can()))
-        can = getattr(self.s, "can_redo", None)
-        self.b_redo.setEnabled(bool(self.redo) or bool(can and can()))
+        self.b_undo.setEnabled(bool(self.undo))          # Post's own steps only: the graph's are undone in the graph
+        self.b_redo.setEnabled(bool(self.redo))
 
     def _set_workflow_param(self, p, stage, name, value):
         """A setting of the workflow shown here (its Output's channels): a step of Post's Undo too (2.4), undone by the
@@ -1902,8 +1907,8 @@ class PostView(QWidget):
             self.delete()
 
     def do_undo(self) -> bool:
-        """Post's last change undone, said in the status; with none left, the workflows' (a "To Post" made in the
-        graph, say): one Undo for the whole window. True when it was the workflows' step."""
+        """Post's last change undone, said in the status. Only Post's own steps (a "To Post" made in the graph is the
+        graph's, undone there); with none, it says so. True when it was a step of the workflows Post made."""
         if self.undo and self.undo[-1] is not MODEL_STEP:
             before = self._step(snapshot(self.layers))
             self.redo.append(before)
@@ -1911,8 +1916,10 @@ class PostView(QWidget):
             self._restored()
             self._say_step("Undone", "Undone: {what}", step_words(self.layers, before))
             return False
-        if self.undo:
-            self.undo.pop()
+        if not self.undo:
+            self.toasted.emit(_("Nothing to undo here: the Graph's changes are undone in the Graph"))
+            return False
+        self.undo.pop()
         return self._model_step(getattr(self.s, "undo", None), "redo", "Undone", "Undone: {what}")
 
     def do_redo(self) -> bool:
@@ -1923,8 +1930,10 @@ class PostView(QWidget):
             self._restored()
             self._say_step("Redone", "Redone: {what}", step_words(before, self.layers))
             return False
-        if self.redo:
-            self.redo.pop()
+        if not self.redo:
+            self.toasted.emit(_("Nothing to redo here: the Graph's changes are redone in the Graph"))
+            return False
+        self.redo.pop()
         return self._model_step(getattr(self.s, "redo", None), "undo", "Redone", "Redone: {what}")
 
     def _say_step(self, plain: str, said: str, what: str):

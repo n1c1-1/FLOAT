@@ -603,3 +603,25 @@ def test_the_fits_export_through_the_render_service_carries_the_shots_facts(tmp_
     files = cls._write(me, rgb, tmp_path / "out", {"name": "x", "formats": ["fits32f"]}, meta)
     h = fits.getheader(next(f for f in files if f.suffix == ".fits"))
     assert h["OBJECT"] == "Rosette Nebula" and h["EXPTIME"] == 3600.0 and h["DATE-OBS"].startswith("2026-11-01")
+
+
+def test_posts_undo_does_not_take_back_a_to_post_made_in_the_graph(model):
+    full, classic = by_name(model, "Full"), by_name(model, "Classic stack")
+    model.add_post_layer(full.pid, "stars")
+    page = _page_of(model)
+    v = page.view
+    said = []
+    v.toasted.connect(said.append)
+    try:
+        first = model.p.post["active"]
+        v._version_new()
+        model.add_post_layer(classic.pid, None)                   # "To Post" in the graph, Version 2 shown
+        v._post_changed(None)
+        model.set_post_version(first)
+        v._post_changed(None)
+        assert not v.undo
+        v.do_undo()
+        assert said[-1].startswith("Nothing to undo here") and any(
+            x.get("pid") == classic.pid for x in next(z for z in model.p.post["versions"] if z["id"] == first)["layers"])
+    finally:
+        _done(page)
