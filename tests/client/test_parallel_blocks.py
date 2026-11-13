@@ -154,7 +154,7 @@ def test_settings_of_a_block_in_parallel_stay_its_own(one):
     QApplication.processEvents()
     a, b = m.paths[0], m.paths[1]
     assert m.stage_key(a, "stack") == m.stage_key(b, "stack")       # the same computation, once
-    m.p.workflow(b.pid).params["stack"] = {"kappa": 3.0}
+    m.p.workflow(b.pid).params["stack"] = {"kappa": 2.5}                # not the default (3)
     from astro_gpu.core.store import Keys
     k = Keys(m.p)
     assert k.key(a.pid, "stack") != k.key(b.pid, "stack")

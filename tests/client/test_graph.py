@@ -493,7 +493,8 @@ def test_a_change_on_a_shared_done_block_offers_replace_or_variant(world, model,
     # nothing was changed yet
     assert all("kappa" not in (q.params.get("stack") or {}) for q in model.paths)
     button(page.panel, "Cancel").click()
-    assert model.pending_change is None and r["value"] == 5.0
+    from astro_gpu.stages.stack import StackParams
+    assert model.pending_change is None and r["value"] == StackParams.model_fields["kappa"].default
     # Replace: the change goes to the scope, their results downstream are Outdated
     _edit_kappa(page, 4.0)
     button(page.panel, "Replace").click()
