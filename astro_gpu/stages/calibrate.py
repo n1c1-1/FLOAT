@@ -103,7 +103,9 @@ class Calibrate(Stage):
     # neighbours (the sky moved or not). 10: the persistence's threshold is in sigmas of one frame's noise, no longer of
     # the lower quartile's residual (a third of it): a Sony A7S session at ISO 4000 had 178,000 pixels flagged, 110,000
     # of them within 2 to 5 sigmas of a frame
-    version = "10"
+    # 11: the persistence leaves the pixels under a star of the lower quartile to the stack's rejection (the frames
+    # hardly moved there: a Sony A7S series flagged cores of its bright stars, 10 to 26 % of their flux)
+    version = "11"
 
     def auto(self, ctx: Context) -> dict[str, Auto]:
         n = max(1, min(12, (os.cpu_count() or 4) - 2))
@@ -874,21 +876,54 @@ def _hot_from_lights(paths, dark, flat, bad, median_filter, n=40, k=5.0, cfa: st
     for r in range(0, q.shape[0], BAND):
         q[r:r + BAND] = np.percentile(st[:, r:r + BAND], 25, axis=0, overwrite_input=True)
     del st
-    n_new = 0
+    cand = np.zeros(dark.shape, bool)
+    med_all = np.empty_like(q)
     for c in range(P * P):
         v = _plane(q, c, P)
-        h = v - median_filter(v, size=5)
+        med = median_filter(v, size=5)
         f = _plane(one, c, P)
         # the published thresholds (3 to 5 sigma) are in units of one exposure's noise, as Siril's per-frame test is;
         # the quartile's own residual is a third of that (the frames' noise averaged out, the defects' fixed
         # pattern kept), and 5 of its sigmas were 2 of a frame's: every warm pixel of the dark current was flagged
         s = robust_sigma((f - median_filter(f, size=5))[::2, ::2])[1]
-        hot = (h > k * s) & ~_plane(bad, c, P)
-        _plane(bad, c, P)[...] |= hot
-        n_new += int(hot.sum())
+        hot = (v - med) > k * s
+        _plane(cand, c, P)[...] = hot
+        _plane(med_all, c, P)[...] = med
+    # a saturated defect lights its nearest neighbours by crosstalk: the candidates and their 8 neighbours are
+    # replaced by the neighbours' median before the stars are looked for, else a defect would be taken for one
+    qc = np.where(cv2.dilate(cand.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0, med_all, q)
+    # The published masks need shifted exposures: a defect stays on its pixel while the sky moves off it. Where a
+    # star is in the LOWER QUARTILE (it covers the pixel in at least three frames of four) the sky has not left, and
+    # a pixel there cannot be told from the star by persistence. Those pixels are not judged here; the stack's
+    # rejection, which works on the registered frames (shifted by construction), is left to them.
+    star = _star_footprints(qc, P)
+    held = cand & star & ~bad
+    hot = cand & ~star & ~bad
+    bad |= hot
+    n_new, n_held = int(hot.sum()), int(held.sum())
     return (f"hot pixels, persistence: {n_new} more pixels flagged, standing out from their neighbours in the lower "
             f"quartile of {len(sub)} frames spread over the session; each is replaced by the mean of its same-colour "
-            f"neighbours")
+            f"neighbours. {n_held} more stand out where a star covers the pixel in at least three frames of four (the "
+            f"frames hardly moved there): not judged by persistence, left to the stack's rejection")
+
+
+def _star_footprints(img: np.ndarray, P: int) -> np.ndarray:
+    """The pixels of the detected stars of ``img`` (the lower quartile of the lights, its isolated defects already
+    replaced by their neighbours' median): SExtractor's detection through sep at 5 sigma of the background's noise (the usual star detection level of
+    DAOFIND; at SExtractor's 1.5 the fixed pattern of the sensor's warm pixels is detected as objects), 5 pixels at
+    least, the 3 x 3 convolution, on the image averaged over the colour pattern's cell; the footprint is the objects' segmentation, holes filled."""
+    import sep
+    from scipy.ndimage import binary_fill_holes
+    lum = np.ascontiguousarray(cv2.blur(img, (P, P)), np.float32)
+    bkg = sep.Background(lum, bw=64, bh=64, fw=3, fh=3)
+    from ..core.imgutil import sep_extract
+    obj, seg = sep_extract(lum - bkg.back(), 5.0, err=bkg.globalrms, minarea=5, segmentation_map=True)
+    # a star is round: a line of hot pixels along a row or column of the sensor (a Canon 40D: elongation 70 to 150,
+    # half of its pixels flagged) is a defect pattern, not a sky that stayed (stars: 1.0 to 1.2). No source gives the
+    # limit; the two kinds are two orders of magnitude apart, so that 2 is no tuning
+    keep = np.zeros(len(obj) + 1, bool)
+    keep[1:] = obj["a"] < 2.0 * np.maximum(obj["b"], 1e-3)
+    return binary_fill_holes(keep[seg])
 
 
 def siril_hot_pixels(x: np.ndarray, P: int = 2, sigma: float = SIRIL_HOT_SIGMA):

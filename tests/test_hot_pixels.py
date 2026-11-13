@@ -162,3 +162,19 @@ def test_the_persistence_threshold_is_in_sigmas_of_one_frame_not_of_the_quartile
     cal._hot_from_lights(paths, np.zeros((H, W), np.float32), np.ones((H, W), np.float32), bad, median_filter)
     assert bad[60, 80] and bad[100, 150]
     assert bad.sum() < 20                                              # not the 5 % of the pattern
+
+
+def test_the_persistence_leaves_a_star_that_stayed_on_its_pixels_and_still_flags_the_defects(monkeypatch):
+    """Frames that hardly moved: the lower quartile holds the star, so its core is no defect; the isolated defect is."""
+    from scipy.ndimage import median_filter
+    rng = np.random.default_rng(7)
+    yy, xx = np.mgrid[0:H, 0:W]
+    sky = 100 + _star(yy, xx, 96, 128, 6000, 2.0) + _star(yy, xx, 40, 40, 3000, 1.6)
+    sky[150, 200] += 2000                                              # a defect, away from the stars
+    frames = [(sky + rng.normal(0, 5, (H, W))).astype(np.float32) for _ in range(24)]
+    paths = _read_from(monkeypatch, frames)
+    bad = np.zeros((H, W), bool)
+    msg = cal._hot_from_lights(paths, np.full((H, W), 100, np.float32), np.ones((H, W), np.float32), bad, median_filter)
+    assert bad[150, 200]
+    assert not bad[94:99, 126:131].any() and not bad[38:43, 38:43].any()
+    assert "left to the stack's rejection" in msg
