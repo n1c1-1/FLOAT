@@ -90,7 +90,7 @@ class StarRemoval(Stage):
         bk = np.array([np.median(lin[c][shown][::7]) for c in range(3)], np.float32)[:, None, None]
         ctx.log(f"noise unit {unit:.4g}, background {', '.join(f'{v:.3g}' for v in bk.ravel())}")
         dev = ctx.device
-        net = network(dev, inference=True)
+        net = network(dev)
         t0 = time.time()
         starless = apply(net, (lin - bk) / unit, dev, ctx) * unit + bk
         ctx.log(f"stars taken off in {time.time() - t0:.1f} s on {dev}")
@@ -132,8 +132,6 @@ class _LayerNorm2d(nn.Module):
         self.w, self.b = nn.Parameter(torch.ones(c)), nn.Parameter(torch.zeros(c))
 
     def forward(self, x):
-        if not self.training and x.device.type == "cpu":      # one fused kernel on the channels-last layout (the same
-            return nn.functional.layer_norm(x.permute(0, 2, 3, 1), (x.shape[1],), self.w, self.b, 1e-6)                 .permute(0, 3, 1, 2)                          # values to float rounding), not six passes over the tile
         mu = x.mean(1, keepdim=True)
         var = (x - mu).pow(2).mean(1, keepdim=True)
         return (x - mu) / (var + 1e-6).sqrt() * self.w[:, None, None] + self.b[:, None, None]
@@ -153,20 +151,6 @@ class _LocalPool(nn.Module):
         if self.training or (self.window >= h and self.window >= w):
             return x.mean((2, 3), keepdim=True)
         k1, k2 = min(self.window, h), min(self.window, w)
-        if not self.training and x.device.type == "cpu":
-            # the same box sum, the rows' difference taken before the columns are summed: the second sum runs over
-            # (h - k1 + 1) rows instead of h, and no padded copy of the whole integral image is made
-            y = x.float().permute(0, 2, 3, 1)             # the sums run along the positions with the channels last
-            c = y.cumsum(1)
-            d = c[:, k1 - 1:].clone()
-            d[:, 1:] -= c[:, :-k1]
-            c = d.cumsum(2)
-            o = c[:, :, k2 - 1:].clone()
-            o[:, :, 1:] -= c[:, :, :-k2]
-            o /= k1 * k2
-            o = o.permute(0, 3, 1, 2)
-            dh, dw = h - o.shape[2], w - o.shape[3]
-            return nn.functional.pad(o, (dw // 2, dw - dw // 2, dh // 2, dh - dh // 2), mode="replicate").to(x.dtype)
         s = nn.functional.pad(x.float().cumsum(2).cumsum(3), (1, 0, 1, 0))            # float32: bfloat16 cannot sum
         o = (s[:, :, k1:, k2:] + s[:, :, :-k1, :-k2] - s[:, :, :-k1, k2:] - s[:, :, k1:, :-k2]) / (k1 * k2)
         dh, dw = h - o.shape[2], w - o.shape[3]
@@ -185,25 +169,15 @@ class _NAFBlock(nn.Module):
         self.c5 = nn.Conv2d(c, c, 1)
         self.beta = nn.Parameter(torch.zeros(1, c, 1, 1))
         self.gamma = nn.Parameter(torch.zeros(1, c, 1, 1))
-        self.fused = False
 
     def forward(self, inp):
         x = self.c2(self.c1(self.n1(inp)))
         a, b = x.chunk(2, 1)
         x = a * b
         x = self.c3(x * self.sca(x))
-        y = inp + (x if self.fused else x * self.beta)
+        y = inp + x * self.beta
         a, b = self.c4(self.n2(y)).chunk(2, 1)
-        return y + (self.c5(a * b) if self.fused else self.c5(a * b) * self.gamma)
-
-    @torch.no_grad()
-    def fuse(self):
-        """Inference: beta and gamma (a scale per channel after a 1x1 convolution) are folded into that convolution's
-        weights, two passes over the tile fewer per block; the same values to float rounding."""
-        for conv, g in ((self.c3, self.beta), (self.c5, self.gamma)):
-            conv.weight.mul_(g.view(-1, 1, 1, 1))
-            conv.bias.mul_(g.view(-1))
-        self.fused = True
+        return y + self.c5(a * b) * self.gamma
 
 
 class NAFNet(nn.Module):
@@ -270,20 +244,14 @@ def inv(y):
     return mod.sinh(y * SCALE) * STRETCH
 
 
-def network(dev, inference: bool = False) -> NAFNet:
-    """The bundled network (resources/stars), in float32. ``inference``: on a processor, its scales folded into the
-    convolutions and its layout channels-last, to be applied and no longer trained from (see ``_NAFBlock.fuse``)."""
+def network(dev) -> NAFNet:
+    """The bundled network (resources/stars), in float32."""
     if not MODEL.exists():
         raise FileNotFoundError(f"the star removal network is missing: {MODEL}")
     net = NAFNet().to(dev)
     state = torch.load(MODEL, map_location=dev, weights_only=False)["net"]
     net.load_state_dict({k: v.float() for k, v in state.items()})
     net.eval()
-    if inference and dev.type == "cpu":                # a processor's shorter way (the card's numbers stay as they were)
-        for m in net.modules():
-            if isinstance(m, _NAFBlock):
-                m.fuse()
-        net.to(memory_format=torch.channels_last)     # its convolutions run in the channels-last layout
     return net
 
 
@@ -339,10 +307,7 @@ def _apply(net, img: np.ndarray, dev, ctx: Context | None, tile: int, overlap: i
         for j in range(0, len(batch), batch_size):
             b = torch.from_numpy(np.ascontiguousarray(np.stack(batch[j:j + batch_size]))).to(dev)
             with torch.autocast(dev.type, dtype=torch.bfloat16, enabled=dev.type == "cuda"):
-                b = fwd(b)
-                if dev.type == "cpu":
-                    b = b.contiguous(memory_format=torch.channels_last)
-                r = net(b).float()
+                r = net(fwd(b)).float()
             r = inv(r).cpu().numpy()
             for k, x in enumerate(xs[j:j + batch_size]):
                 out[:, y:y + tile, x:x + tile] += r[k] * win

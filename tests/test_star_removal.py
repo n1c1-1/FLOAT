@@ -81,19 +81,6 @@ def test_the_window_follows_each_level_of_the_network():
     assert not any("sca.0" in k for k in net.state_dict())                          # no weight added: the checkpoint loads
 
 
-@pytest.mark.skipif(not sr.MODEL.exists(), reason="the network's weights are not here")
-def test_the_processor_path_gives_the_same_numbers_as_the_plain_one():
-    """On a processor the network folds its scales into its convolutions, runs channels-last and sums its windows in a
-    cheaper order: the same values to float rounding."""
-    x = sr.fwd(torch.randn(1, 3, 320, 288) * 3)
-    plain = sr.network(torch.device("cpu"))
-    fast = sr.network(torch.device("cpu"), inference=True)
-    with torch.inference_mode():
-        a = plain(x)
-        b = fast(x.contiguous(memory_format=torch.channels_last))
-    assert float((a - b).abs().max()) < 1e-5
-
-
 class _Tiles(torch.nn.Module):
     """Stands for the network: the input unchanged, the tiles it was given noted."""
 
