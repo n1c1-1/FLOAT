@@ -175,6 +175,7 @@ def finish(q, style=None):
             w.active = True
         keep.append(w)
     q.wires = keep
+    q.taps = [t for t in q.taps if t.block in ix.row_of and q.blocks[t.block].kind not in ("session", "calibration")]
     ports = {}
     for w in q.wires:
         if q.blocks[w.dst[0]].kind != "post":

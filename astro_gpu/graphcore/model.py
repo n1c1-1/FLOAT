@@ -1,4 +1,10 @@
-"""Stored model (§1): blocks, rows, port wires, ids. Stored = drawn: nothing here is inferred."""
+"""Stored model (§1): blocks, rows, port wires, ids. Stored = drawn: nothing here is inferred.
+
+Beside what is drawn, the model holds what the engine's definition needs to be compiled back exactly (compile.py),
+filled by the converter of existing projects (convert.py): the workflow id of each row and tap, the engine's node
+names and methods, the owned engine settings of each block, the nights as the project stores them, the per-workflow
+leftovers. Each of these fields has a default that the operations of the core leave as it is."""
+import copy
 import json
 from dataclasses import dataclass, field
 
@@ -23,6 +29,13 @@ class Block:
     pause: bool = False
     name: object = None      # Session only: the night's name
     files: object = None     # Session only: {kind: [paths]}
+    engine: object = None    # chain block: the engine's node name ("gradient~2"); None: given by the compile
+    method: object = None    # chain block: the engine node's method; None: the block's default
+    fork: object = None      # frame block placed in parallel: its mark (no key reads it)
+    params: dict = field(default_factory=dict)   # the engine settings it owns: {stage entry: {param: value}}
+    sid: object = None       # Session / Calibration of a night: the session id (None: a night not compiled yet)
+    own: object = None       # Calibration of a night with its own files: {"fork": n, kind: [paths]}
+    source: object = None    # Image: {"path", "stretched"} as stored
 
 
 @dataclass
@@ -32,6 +45,49 @@ class Row:
     blocks: list = field(default_factory=list)   # chain, left to right (Session/Calibration excluded)
     nights: list = field(default_factory=list)   # [[session id, calibration id]], first = top
     fork: object = None                          # [row id, block id] for a variant
+    # -- the row's workflow (compile.py; see FLOW_FIELDS)
+    wid: object = None           # its workflow id (None: a row the compile numbers)
+    all_nights: bool = False     # its workflow stacks every night of the project, those added later too
+    sessions: object = None      # the workflow's session list when its order is not the row's nights' order
+    output: dict = field(default_factory=dict)    # its Output settings (render_simple)
+    extra: dict = field(default_factory=dict)     # settings its blocks do not give, verbatim {stage: {param: v}}
+    unset: list = field(default_factory=list)     # [stage, param] its blocks give and its workflow has not
+    pauses: object = None        # its breakpoints when the blocks' pauses do not give them
+    trial: object = None         # the workflow id it is a trial of (Replace or Try pending)
+    options: object = None       # its options when they are not those of its blocks
+    end: object = None           # its early exit when it has one beside its blocks
+    legacy: object = None        # a workflow made before the free graph: {"options", "end", "frozen"}
+    # -- the stack (a root frames row)
+    calib_node: bool = True      # its chain starts with the engine's Calibration node
+    calib_fork: object = None    # that node's mark
+    calib: dict = field(default_factory=dict)     # its settings (inventory, calibrate)
+    align: object = None         # {"ref": row or tap id, "from": block id, "from_name", "method", "off", "fork",
+    #                              "params"}: the Align on after its Stacking (or Image); None: none
+
+
+#: the per-workflow fields a row and a tap share
+FLOW_FIELDS = ("wid", "all_nights", "sessions", "output", "extra", "unset", "pauses", "trial", "options", "end",
+               "legacy")
+
+
+@dataclass
+class Tap:
+    """A workflow that is a row's chain up to one of its blocks, then its Output: a block's image sent to Post, a
+    workflow equal to another (a duplicate), a mid-row source of a combination (INTEGRATION 4.6)."""
+    id: str
+    block: str
+    name: str
+    wid: object = None
+    all_nights: bool = False
+    sessions: object = None
+    output: dict = field(default_factory=dict)
+    extra: dict = field(default_factory=dict)
+    unset: list = field(default_factory=list)
+    pauses: object = None
+    trial: object = None
+    options: object = None
+    end: object = None
+    legacy: object = None
 
 
 @dataclass
@@ -40,6 +96,9 @@ class Wire:
     src: list      # [block id, out port]
     dst: list      # [block id, in port]
     active: bool = True
+    wid: object = None       # the workflow whose image it carries (several end on one block); None: the block's
+    channel: object = None   # a combination's input: the channel read ("L", "R", ...); None: absent (L)
+    image: object = None     # a combination's input: "output" | "starless" | "stars"; None: absent (output)
 
 
 @dataclass
@@ -52,6 +111,13 @@ class Project:
     reference: object = None
     common: dict = field(default_factory=lambda: {"files": {}, "settings": {}})
     next_id: int = 1
+    # -- the engine's definition (compile.py)
+    nights: list = field(default_factory=list)    # [{"sid", "name", "filter", "files", "left_out"}], session order
+    excluded: list = field(default_factory=list)  # [[session id, file name]] left out of every stack
+    calibrate_together: bool = True               # one calibration for all the nights (else each night its own)
+    next_wid: int = 1                             # the next workflow id (ids are never reused)
+    order: list = field(default_factory=list)     # the workflow ids in the definition's order
+    taps: list = field(default_factory=list)      # [Tap]
 
 
 def new_id(p, prefix):
@@ -168,26 +234,42 @@ def row_kind(ix, rid):
 
 
 # ---------------------------------------------------------------------------------------------------- save / load
+_dc = copy.deepcopy
+
+
+def _flow_dict(f):
+    return {k: _dc(getattr(f, k)) for k in FLOW_FIELDS}
+
+
 def to_dict(p):
     """The dataclasses as plain dicts, fields in declaration order (same result as dataclasses.asdict)."""
     return {"name": p.name, "target": p.target,
             "rows": [{"id": r.id, "name": r.name, "blocks": list(r.blocks), "nights": [list(n) for n in r.nights],
-                      "fork": list(r.fork) if r.fork else r.fork} for r in p.rows],
+                      "fork": list(r.fork) if r.fork else r.fork, **_flow_dict(r),
+                      "calib_node": r.calib_node, "calib_fork": r.calib_fork, "calib": _dc(r.calib),
+                      "align": _dc(r.align)} for r in p.rows],
             "blocks": {k: {"id": b.id, "kind": b.kind, "settings": dict(b.settings), "off": b.off, "pause": b.pause,
                            "name": b.name, "files": {f: list(v) for f, v in b.files.items()}
-                           if b.files is not None else None} for k, b in p.blocks.items()},
-            "wires": [{"id": w.id, "src": list(w.src), "dst": list(w.dst), "active": w.active} for w in p.wires],
+                           if b.files is not None else None, "engine": b.engine, "method": b.method, "fork": b.fork,
+                           "params": _dc(b.params), "sid": b.sid, "own": _dc(b.own), "source": _dc(b.source)}
+                       for k, b in p.blocks.items()},
+            "wires": [{"id": w.id, "src": list(w.src), "dst": list(w.dst), "active": w.active, "wid": w.wid,
+                       "channel": w.channel, "image": w.image} for w in p.wires],
             "reference": p.reference,
             "common": {"files": {k: list(v) for k, v in p.common["files"].items()},
                        "settings": {k: dict(v) for k, v in p.common["settings"].items()}},
-            "next_id": p.next_id}
+            "next_id": p.next_id,
+            "nights": _dc(p.nights), "excluded": [list(x) for x in p.excluded],
+            "calibrate_together": p.calibrate_together, "next_wid": p.next_wid, "order": list(p.order),
+            "taps": [{"id": t.id, "block": t.block, "name": t.name, **_flow_dict(t)} for t in p.taps]}
 
 
 def from_dict(d):
-    p = Project(**{k: v for k, v in d.items() if k not in ("rows", "blocks", "wires")})
+    p = Project(**{k: v for k, v in d.items() if k not in ("rows", "blocks", "wires", "taps")})
     p.rows = [Row(**r) for r in d["rows"]]
     p.blocks = {k: Block(**b) for k, b in d["blocks"].items()}
     p.wires = [Wire(**w) for w in d["wires"]]
+    p.taps = [Tap(**t) for t in d.get("taps") or []]
     return p
 
 
@@ -195,17 +277,30 @@ def model_json(p):
     return json.dumps(to_dict(p), ensure_ascii=False, sort_keys=False)
 
 
+def _dcq(x):
+    """Deep copy, fast for the empty and plain values most blocks and rows hold."""
+    if x is None or isinstance(x, (str, int, float, bool)):
+        return x
+    return type(x)() if not x else _dc(x)
+
+
 def clone(p):
     """Fast deep copy of a project."""
     q = Project(p.name, p.target, reference=p.reference, next_id=p.next_id,
                 common={"files": {k: list(v) for k, v in p.common["files"].items()},
-                        "settings": {k: dict(v) for k, v in p.common["settings"].items()}})
-    q.rows = [Row(r.id, r.name, list(r.blocks), [list(n) for n in r.nights], list(r.fork) if r.fork else None)
+                        "settings": {k: dict(v) for k, v in p.common["settings"].items()}},
+                nights=_dcq(p.nights), excluded=[list(x) for x in p.excluded],
+                calibrate_together=p.calibrate_together, next_wid=p.next_wid, order=list(p.order))
+    q.rows = [Row(r.id, r.name, list(r.blocks), [list(n) for n in r.nights], list(r.fork) if r.fork else None,
+                  **{k: _dcq(getattr(r, k)) for k in FLOW_FIELDS}, calib_node=r.calib_node, calib_fork=r.calib_fork,
+                  calib=_dcq(r.calib), align=_dcq(r.align))
               for r in p.rows]
     q.blocks = {k: Block(b.id, b.kind, dict(b.settings), b.off, b.pause, b.name,
-                         {f: list(v) for f, v in b.files.items()} if b.files is not None else None)
+                         {f: list(v) for f, v in b.files.items()} if b.files is not None else None,
+                         b.engine, b.method, b.fork, _dcq(b.params), b.sid, _dcq(b.own), _dcq(b.source))
                 for k, b in p.blocks.items()}
-    q.wires = [Wire(w.id, list(w.src), list(w.dst), w.active) for w in p.wires]
+    q.wires = [Wire(w.id, list(w.src), list(w.dst), w.active, w.wid, w.channel, w.image) for w in p.wires]
+    q.taps = [Tap(t.id, t.block, t.name, **{k: _dcq(getattr(t, k)) for k in FLOW_FIELDS}) for t in p.taps]
     return q
 
 
@@ -283,7 +378,15 @@ def check(p):
     for port, acts in single.items():
         need(sum(acts) == 1, f"port {port}: {sum(acts)} active wires")
     need(not has_cycle(p, ix), "cycle")
-    ids = [int(x[1:]) for x in list(p.blocks) + [r.id for r in p.rows] + [w.id for w in p.wires]]
+    for t in p.taps:
+        need(t.block in ix.row_of and p.blocks[t.block].kind not in ("session", "calibration"),
+             f"tap {t.id} on {t.block}: not a chain block")
+        need(t.name and t.name.strip(), f"tap {t.id} unnamed")
+    wids = [f.wid for f in list(p.rows) + list(p.taps) if f.wid is not None]
+    need(len(wids) == len(set(wids)), "two workflows share an id")
+    need(not wids or max(wids) < p.next_wid, "next_wid behind")
+    ids = [int(x[1:]) for x in list(p.blocks) + [r.id for r in p.rows] + [w.id for w in p.wires] +
+           [t.id for t in p.taps]]
     need(not ids or max(ids) < p.next_id, "next_id behind")
     need(len(ids) == len(set(ids)), "id reused")
 
