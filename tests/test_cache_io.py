@@ -22,6 +22,9 @@ def _short(monkeypatch, short: bool) -> None:
     """The memory short (3 GB available) or not, whatever the machine's: plain writes and reads, or the maps."""
     for m in (cal, rg):
         monkeypatch.setattr(m, "memory_short", lambda *a: 3.0 if short else None)
+    # the stages run in this process, where the memory set here holds (a CPU job's child process would read the real one)
+    from astro_gpu.core import runner2
+    monkeypatch.setattr(runner2, "ISOLATED", frozenset())
 
 
 def test_plain_writes_give_the_same_cache_and_results(tmp_path, monkeypatch):
