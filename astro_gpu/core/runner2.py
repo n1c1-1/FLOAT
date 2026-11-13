@@ -73,6 +73,10 @@ STOP = "STOP"
 EVENTS = "events.jsonl"
 EVENTS_LIMIT = 64 * 1024 * 1024            # events.jsonl is rotated past this size when a run starts
 RUNS = "runs"
+#: the heavy stages of a job on the processor run in a child process of the worker that ends with the job: the
+#: allocators of the numerical libraries never give all their pages back to the system, and a worker that ran a
+#: Stars or a drizzle stack kept 4 to 6 GB of committed memory to the end of the run
+ISOLATED = ("calibrate", "stack", "denoise", "star_removal")
 
 # Windows process creation flags of the detached worker
 DETACHED_PROCESS = 0x00000008
@@ -795,6 +799,8 @@ class _Worker:
         self.resume: dict[str, Any] = d.get("resume") or {}      # set in the plan of a worker taking over a run
         self.part = int(self.resume.get("part") or 1)
         self.handed_to: int | None = None                        # the pid of the worker this one handed the run to
+        self.plan_file: Path | None = None                       # set by run_plan: what a job's child process reads
+        self.child_ok = rules is None                            # a child process finds the default rules only
 
     @property
     def gpu(self) -> bool:
@@ -944,6 +950,37 @@ class _Worker:
             self.journal.emit("stage_end", stage=job.stage, status="done", reused=True, duration=0.0,
                               **({"fallback": why} if why else {}))
             return "done"
+        if self.child_ok and base(job.stage) in ISOLATED and self.device_of(job) == "cpu":
+            res = self._run_in_child(job)
+            if res is not None:
+                return res
+        return self._run_job_here(job)
+
+    def _run_in_child(self, job: Job) -> str | None:
+        """Run the job in a child process that ends with it (its events go to the same journal, its result to the
+        store as ever): 'done', 'failed' or 'interrupted', None when the child could not be started (the job then runs
+        here). The worker itself stays small: what the job's libraries kept goes back to the system with the process."""
+        plan_file = self.plan_file
+        if plan_file is None or not plan_file.exists():
+            return None
+        cmd = [sys.executable, "-m", "astro_gpu.core.runner2", "--job", job.key, str(self.root), str(plan_file)]
+        kw: dict[str, Any] = {"cwd": str(self.root), "env": {**os.environ, "PYTHONUNBUFFERED": "1"},
+                              "stdin": subprocess.DEVNULL}
+        if os.name == "nt":
+            kw["creationflags"] = CREATE_NO_WINDOW
+        try:
+            code = subprocess.Popen(cmd, **kw).wait()
+        except OSError:
+            return None
+        self.store.forget()
+        if code not in (0, 1, 2):                                   # killed (out of memory...) before it could say why
+            msg = f"the process of {job.stage} ended abruptly (exit code {code})"
+            self._mark_failed(job, msg, "")
+            self.journal.emit("log", stage=job.stage, level="error", msg=msg)
+            self.journal.emit("stage_end", stage=job.stage, status="failed", error=msg)
+        return {0: "done", 2: "interrupted"}.get(code, "failed")
+
+    def _run_job_here(self, job: Job) -> str:
         try:
             if job.key in self.cpu_jobs and self.device != "cpu":
                 self.journal.emit("log", stage=job.stage, level="warning", msg=self.cpu_jobs[job.key])
@@ -1071,6 +1108,7 @@ def run_plan(root: str | Path, plan_file: str | Path, rules: KeyRules | None = N
                    failed=list(r.get("failed") or []), skipped=list(r.get("skipped") or []), interrupted=[],
                    not_started=[x["key"] for x in d.get("jobs") or []])
             return "failed"
+        worker.plan_file = Path(plan_file)
         status = worker.run()
         return status
     finally:
@@ -1081,8 +1119,19 @@ def run_plan(root: str | Path, plan_file: str | Path, rules: KeyRules | None = N
 EXIT = {"done": 0, "failed": 1, "interrupted": 2, "refused": 3, "handover": 4}
 
 
+def run_one_job(root: str | Path, plan_file: str | Path, key: str) -> str:
+    """The body of a job's child process: run the job ``key`` of a plan file as the worker would ('done', 'failed',
+    'interrupted'). The worker holds the run's lock; this process takes none."""
+    d = json.loads(Path(plan_file).read_text(encoding="utf-8"))
+    worker = _Worker(Path(os.path.abspath(root)), d, None, True)
+    job = next(j for j in worker.jobs if j.key == key)
+    worker.journal.job = job
+    return worker._run_job_here(job)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="astro_gpu.core.runner2", description="run the frozen plan of a v2 project")
+    ap.add_argument("--job", help="run only this job (key) of the plan: a worker's child process")
     ap.add_argument("project")
     ap.add_argument("plan")
     a = ap.parse_args(argv)
@@ -1090,6 +1139,8 @@ def main(argv: list[str] | None = None) -> int:
     # a run's worker never reaches the network, from its first line to its last (core/online.py): not even between
     # its stages
     online.forbid("this run").on()
+    if a.job:
+        return {"done": 0, "failed": 1, "interrupted": 2}.get(run_one_job(a.project, a.plan, a.job), 1)
     status = run_plan(a.project, a.plan)
     if status == "handover":
         # the CUDA context is dead: leave at once, without the interpreter's teardown (freeing CUDA memory on a dead

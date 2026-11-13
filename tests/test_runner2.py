@@ -1141,3 +1141,60 @@ def test_calibration_astrometry_and_align_on_are_estimated_near_a_cpu_laptop_run
     f = est.Facts(frames=130, lights=20, mpx=mpx, scale=1.0, grid_mpx=mpx)
     got = lambda s: est.estimate(s, f, gpu=False, history={}).seconds      # noqa: E731
     assert got("astrometry") < 10 and got("align_on") < 10
+
+
+def test_a_heavy_job_on_the_processor_runs_in_a_child_process_and_its_exit_code_is_its_result(tmp_path, monkeypatch):
+    """The heavy stages of the processor run in a child process of the worker that ends with the job (the libraries'
+    allocators keep committed memory the system never gets back otherwise); the GPU and the light stages stay in
+    the worker."""
+    started: list[list[str]] = []
+    code = {"v": 0}
+
+    class FakePopen:
+        def __init__(self, cmd, **kw):
+            started.append(cmd)
+
+        def wait(self):
+            return code["v"]
+
+    monkeypatch.setattr(runner2.subprocess, "Popen", FakePopen)
+
+    class Journal:
+        job = None
+        events: list = []
+
+        def emit(self, *a, **kw):
+            self.events.append((a, kw))
+
+    class Store:
+        def forget(self):
+            pass
+
+        def done(self, *a):
+            return False
+
+        def tmp_dir(self, stage, key):
+            return tmp_path / f"{stage}-{key}"
+
+    w = runner2._Worker.__new__(runner2._Worker)
+    w.root, w.journal, w.store, w.cpu_jobs, w.child_ok = tmp_path, Journal(), Store(), {}, True
+    w.device = "cpu"
+    plan = tmp_path / "x.plan.json"
+    plan.write_text("{}")
+    w.plan_file = plan
+    here: list[str] = []
+    monkeypatch.setattr(w, "_run_job_here", lambda job: here.append(job.key) or "done", raising=False)
+    job = runner2.Job(key="k1", stage="stack", block="stacking", wf=[1], run_wf=1, deps={})
+    assert w.run_job(job) == "done" and started and "--job" in started[0] and "k1" in started[0] and not here
+    code["v"] = 2
+    assert w.run_job(job) == "interrupted"
+    code["v"] = 1
+    assert w.run_job(job) == "failed"
+    code["v"] = -9                                          # killed: the job fails and says so
+    assert w.run_job(job) == "failed" and any("ended abruptly" in str(e) for e in w.journal.events)
+    started.clear()
+    w.device = "cuda:0"                                     # the GPU path is unchanged
+    assert w.run_job(runner2.Job(key="k2", stage="stack", block="stacking", wf=[1], run_wf=1, deps={})) == "done"
+    w.device = "cpu"
+    assert w.run_job(runner2.Job(key="k3", stage="gradient", block="gradient", wf=[1], run_wf=1, deps={})) == "done"
+    assert not started and here == ["k2", "k3"]
