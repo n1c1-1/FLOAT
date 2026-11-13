@@ -365,9 +365,9 @@ def test_a_loop_between_workflows_is_refused_and_a_combination_is_no_reference(t
         p.validate()
 
 
-def test_a_combinations_output_frame_is_the_rectangle_where_every_input_has_data(tmp_path):
-    """The combination is valid where every input has data (module docstring), and the Output of the workflow it starts
-    shows the largest rectangle of that: no band, no ragged corner of one filter's edge stays in the frame (#165)."""
+def test_a_combinations_output_frame_is_the_whole_frame(tmp_path):
+    """The Output of a combination is not cropped (his decision of 13 November: the parts one filter does not cover show
+    what happened; the user crops): the whole frame, as for a single stack."""
     from astro_gpu.stages.render_simple import RenderSimple, RenderSimpleParams
     H, W = 90, 120
     star = 10 * _star(H, W, 60, 45)
@@ -393,10 +393,7 @@ def test_a_combinations_output_frame_is_the_rectangle_where_every_input_has_data
     ctx = Context(pr, st, Journal(pr.logs), "cpu")
     st.run(ctx, RenderSimpleParams())
     x0, x1, y0, y1 = ctx.metrics["crop"]
-    both = va & vo
-    assert both[y0:y1, x0:x1].all()                                   # data everywhere in the frame
-    assert x0 == 7 and y0 == 5 and x1 <= W - 6                          # the left of Hα, the top of O III, the right of O III
-    assert (x1 - x0) * (y1 - y0) >= 0.9 * (W - 13) * (H - 8)           # and it is the large rectangle, not a sliver
+    assert (x0, x1, y0, y1) == (0, W, 0, H)                             # the whole frame, uncovered edges included
 
 
 def test_the_bounds_of_the_match_are_fractions_of_the_inputs_full_scale(tmp_path):

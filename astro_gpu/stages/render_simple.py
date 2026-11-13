@@ -27,37 +27,6 @@ from .gradient import LUM, GradientParams, coverage, fit_poly_sky, image_in, pol
 STRETCHES = ["auto"]                       # the other stretches of the spec (GHS, arcsinh, STF, none) are not in the engine
 
 
-def whole_box(good: np.ndarray):
-    """The frame of a fusion or a combination: the rectangle where every pixel has data. The coverage of a fusion is
-    the AND of its channels' (stages/fusion.py), 0 or 1: the least covered border is trimmed, a pixel at a time, until
-    the four borders are covered whole (a 99.5 % threshold left a ragged black blob of its corner, 545 pixels in the
-    bottom right of Wing, where the three channels' edges cross). The holes inside the field are taken for covered
-    first (as ``coverage`` does for a stack): only the places reaching the border cut the frame. A single stack is
-    not cropped (the user crops it); returns ``(y0, y1, x0, x1)``."""
-    from scipy import ndimage
-    lab, n_lab = ndimage.label(~good)
-    if n_lab:
-        border = np.unique(np.r_[lab[0], lab[-1], lab[:, 0], lab[:, -1]])
-        good = good | ((lab > 0) & ~np.isin(lab, border[border > 0]))
-    H, W = good.shape
-    y0, y1, x0, x1 = 0, H, 0, W
-    while y1 - y0 > 10 and x1 - x0 > 10:
-        sub = good[y0:y1, x0:x1]
-        e = {"t": sub[0].mean(), "b": sub[-1].mean(), "l": sub[:, 0].mean(), "r": sub[:, -1].mean()}
-        k_, v_ = min(e.items(), key=lambda kv: kv[1])
-        if v_ >= 1.0:
-            break
-        if k_ == "t":
-            y0 += 1
-        elif k_ == "b":
-            y1 -= 1
-        elif k_ == "l":
-            x0 += 1
-        else:
-            x1 -= 1
-    return y0, y1, x0, x1
-
-
 def sky_spread(v: np.ndarray) -> float:
     """Robust spread of the sky in a channel: 1.4826 x the median distance below the median (the stars and nebulae
     of the field, above the median, do not widen it)."""
@@ -161,7 +130,7 @@ class RenderSimple(Stage):
                    "renders it with its sliders (sky, contrast, saturation, noise).")
     deps = ("stack",)
     Params = RenderSimpleParams
-    version = "12"         # 2: the emission anchor of the output preparation (the H-alpha of Classic was violet on
+    version = "13"         # 2: the emission anchor of the output preparation (the H-alpha of Classic was violet on
                            # heart_a7s);
                            # 3: the Raw stack exit's sky made grey (it had the green of the light pollution);
                            # 4: the colour of the places near saturation from their surroundings (repair_saturated);
@@ -177,6 +146,7 @@ class RenderSimple(Stage):
                            # 11: a single stack is not cropped at all (the frame stays the reference frame's)
                            # 12: the default rendering is the published screen transfer alone: the sky at 0.25, no faint
                            # tones lift (they were 0.20 and 0.8)
+                           # 13: a fusion or a combination is not cropped either (the whole frame, the user crops)
 
     def run(self, ctx: Context, p: RenderSimpleParams) -> None:
         from ..render.simple import SimpleRenderEngine, SimpleSettings, image_stats
@@ -190,9 +160,9 @@ class RenderSimple(Stage):
         valid = coverage(ctx)
         meta = ctx.load_json("stack", "drz_meta.json")
         fused = meta.get("source") == "fusion"
-        # a fusion or a combination keeps the area where every channel has data; a single stack is not cropped at all
-        # (the frame stays the reference frame's; the user crops)
-        y0, y1, x0, x1 = whole_box(valid) if fused else (0, H, 0, W)
+        # nothing is cropped, a fusion or a combination no more than a single stack: the whole frame is shown and the
+        # user crops (the parts one channel does not cover show what happened)
+        y0, y1, x0, x1 = 0, H, 0, W
         shown = np.zeros_like(valid)
         shown[y0:y1, x0:x1] = True
         shown &= valid

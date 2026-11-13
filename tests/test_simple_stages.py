@@ -397,26 +397,3 @@ def test_every_auto_key_of_heart_a7s_is_in_auto_fields(tmp_path):
         assert keys <= allowed, (st.name, keys)
     assert seen["stack"] and seen["denoise"] == {"adaptation"} and seen["calibrate"] == {"workers"}
     assert {p: p.stat().st_mtime_ns for p in (HEART_A7S / "work").rglob("manifest.json")} == before
-
-
-def test_the_frame_of_a_fusion_excludes_the_ragged_corner_of_any_channel():
-    """Wing: the three channels' coverages end differently (each its own straight edges and a ragged corner), and the
-    fusion's coverage is their AND; a 99.5 % threshold left 545 black pixels of the corner in the frame."""
-    from astro_gpu.stages.render_simple import whole_box
-    H, W = 800, 1000
-    cover = []
-    for i in range(3):
-        v = np.ones((H, W), bool)
-        v[:, :10 * i] = False                     # each channel's own left edge
-        v[:5 + 3 * i] = False                     # and top edge
-        cover.append(v)
-    cover[1][H - 3:, W - 4:] = False              # a ragged blob in the bottom right of one channel: under 0.5 % of
-    cover[1][H - 2, W - 3] = True                 # the last row and column, which the old frame tolerated
-    cover[2][H - 2:, W - 1:] = False              # and a smaller one in another
-    cover[0][200:210, 250:260] = False            # a hole inside the field: not a reason to cut the frame
-    good = cover[0] & cover[1] & cover[2]
-    y0, y1, x0, x1 = whole_box(good)
-    sub = good.copy()
-    sub[200:210, 250:260] = True
-    assert sub[y0:y1, x0:x1].all()
-    assert x0 == 20 and y0 == 11 and (x1 - x0) * (y1 - y0) > 0.99 * (W - 20) * (H - 11)
