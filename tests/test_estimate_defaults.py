@@ -29,7 +29,7 @@ def test_the_astrometry_row_is_seconds_not_minutes():
 
 def test_the_processor_denoise_is_a_third_of_what_it_was():
     assert seconds("denoise") == pytest.approx(2.0 * 12.1 * 4)
-    assert est.estimate("denoise", GRID, gpu=True, history={}).seconds == pytest.approx(0.75 * 12.1 * 4)
+    assert est.estimate("denoise", GRID, gpu=True, history={}).seconds == pytest.approx(0.12 * 12.1 * 4)    # 5.6 s measured
 
 
 def test_stack_and_calibration_per_unit():

@@ -81,8 +81,9 @@ DEFAULT_CPU_FACTOR = 2.0
 DENOISE_MPX_UNITS = 8.5
 #: The processor's per-Mpx pass was 7.4 s for the three images Denoise treated (the stack and its two half-stacks: 357 to
 #: 376 s on a grid of 12.1 Mpx, 4 passes, 13 November 2026). Since 489d0fc it treats the stack only (a third) and runs
-#: channels-last: 95 to 100 s measured, 2.0 s per Mpx and pass
-DENOISE_SECONDS = {"gpu": {"step": 0.088, "mpx": 0.75}, "cpu": {"step": 3.6, "mpx": 2.0}}
+#: channels-last: 95 to 100 s measured, 2.0 s per Mpx and pass. On the card likewise a third: 5.6 s for the stack of
+#: 12 Mpx (RTX 4060 Ti, 13 November 2026), 0.12 s per Mpx and pass (it was 0.75 for the three images)
+DENOISE_SECONDS = {"gpu": {"step": 0.088, "mpx": 0.12}, "cpu": {"step": 3.6, "mpx": 2.0}}
 #: the adaptation lengths (stages/denoise.ADAPTATIONS: steps)
 DENOISE_ADAPT_STEPS = {"short": 500, "long": 4000}
 #: the network's passes over the image (stages/denoise.PASSES; the Fast pass setting: one). The times above are per pass
