@@ -1,0 +1,137 @@
+"""The contract of the graph core: everything a view or the client may call. Qt-free, pure functions on a stored
+graph (model.Project) and a view state (operations.new_view()); no history, no file format.
+
+Ids are strings: blocks "b<n>", rows "r<n>", wires "w<n>". A night is named by its Session block id.
+Block kinds (keys, the engine's block names): session calibration registration selection crop stacking image
+astrometry gradient deconv denoise color stars synth combine combine_layers post.
+Ports: out "image" (every block giving an image), Stars/background out "Starless" / "Stars only"; Combination in =
+its type's names ("S II", "Hα", "O III" | "Hα", "O III" | "R", "G", "B" | "L", "R", "G", "B"); Combine layers in
+"Background", "Stars"; Post in "layers" (many wires). Combination types: sho ho rgb lrgb.
+File kinds: lights darks flats bias flat_darks.
+
+Texts: Result.reason / .toast and Place.reason / .tip are messages (msg.py), written by `reason_text(tr)`,
+`toast_text(tr)`, `tip_text(tr)`; the query functions below that return text take `tr` (the client's translation
+function; English when None).
+
+Operations: apply(graph, name, **kwargs) -> (graph2, Result), argument names fixed:
+  add_block(kind, at=None, row=None)   at = a place spec (Place.op carries it); at None = natural place
+                                       (double-click) in `row` (or the first row)
+  move_block(block, at)                remove_block(block)            (alias delete_block)
+  add_row(kind, files=None, name=None) kind "session" | "image"       delete_row(row)
+  add_night(row, files=None, name=None)  files = {kind: [paths]}      remove_night(night)  (alias delete_night)
+  move_night(night, row=None, before=None)  row None = its own new row; before = a session of `row` (reorder)
+  merge_nights(a, b)                   split_night(night, lights)     lights = list of paths taken out
+  add_variant(block)                   take_alternative(wire)         set_reference(row)
+  set_combination_type(block, type)    type "sho" | "ho" | "rgb" | "lrgb"
+  wire(src, src_port, dst, dst_port)   unwire(wire)                   send_to_post(block)
+  switch_off(block)                    set_pause(block)
+  rename_row(row, name)                rename_night(night, name)      duplicate_row(row)
+  set_setting(block, key, value)       apply_to_rows(block, key)
+  add_files(session, kind, paths, mode="add")   mode "add" | "replace"; a following box starts from Common's list
+  remove_files(session, kind, paths)   use_for_all_nights(session, kind)
+  -- Common: Project.common = {"files": {kind: [paths]}, "settings": {block kind: {key: v}}}
+     Session.files[kind] absent = follows Common; [] = own "none". Effective = own, else Common, else default.
+  set_common_files(kind, paths, mode="add")      set_common_setting(kind, key, value)
+  reset_own(block, keys=None)          reset_own_files(session, kind)
+  move_files(src_session, src_kind, dst_session, dst_kind, paths=None, copy=False)
+                                       src_session/dst_session may be COMMON; paths None = the whole list
+  split_by(session, groups)            groups = [{"into": "here"|"common"|"night"|"row", "files": {kind: [paths]},
+                                       "name": str|None}]; the listed paths leave the session's lists first
+  merge_rows(src, dst)                 src's nights join dst; src's row (chain, variants, wires) goes
+  fold_all() unfold_all() set_mode(mode) select(id)   view only: they change the view dict, never the graph
+apply_many(graph, [(name, kwargs | f(results_so_far) -> kwargs), ...]) = one step, all or nothing.
+"""
+from .shapes import Box, Path, Drawing, Place, Result  # noqa: F401
+from .model import (Project, Block, Row, Wire, Index, FILE_KINDS, FRAME_KINDS, JOIN_KINDS, COMBO_PORTS,  # noqa: F401
+                    COMBO_LABEL, blank_project, check, clone, to_dict, from_dict)
+from .msg import M, say  # noqa: F401
+from .operations import apply, apply_many, new_view, COMMON, try_op  # noqa: F401
+from .rules import LABEL, SETTINGS, FILE_LABEL, defaults, setting_spec  # noqa: F401
+from . import rules as _rules
+
+
+def layout(project, view, tr=None):
+    """Pure: the whole Drawing of the graph page for this model and view state. Same input, same output."""
+    from .layout import layout as _l
+    from .judge import memo
+    return memo("layout", project, (view.get("folded") is True, id(tr)), lambda: _l(project, view, tr))
+
+
+def places(project, view, kind=None, block=None):
+    """Every drop place for a palette kind being dragged (kind=...) or a placed block being dragged
+    (block=id). Lit and refused ones; nothing moves. -> [Place]."""
+    from .placement import places as _p
+    return _p(project, view, kind=kind, block=block)
+
+
+def palette_state(project, view, kind, tr=None):
+    """-> (enabled, reason text): a card is greyed when no place is lit, with its natural place's reason."""
+    from .placement import palette_state as _s
+    ok, why = _s(project, view, kind)
+    return ok, say(why, tr)
+
+
+def title(project, b, tr=None):
+    """Block title: "Gradient 2", "S-H-O", "Session 1" (a one-night row's Session shows the row name).
+    A row id gives the row name."""
+    if b in {r.id for r in project.rows}:
+        return next(r.name for r in project.rows if r.id == b)
+    return _rules.title(project, b, tr=tr)
+
+
+def summary(project, b, tr=None):
+    """One-line summary under the title, or the greyed reason when greyed. A frames row id gives its stack card
+    line "3 sessions · 78 lights · drizzle auto"."""
+    if b in {r.id for r in project.rows}:
+        return _rules.card_summary(project, b, tr)
+    from .judge import evaluation
+    return _rules.summary(project, b, info=evaluation(project), tr=tr)
+
+
+def greyed(project, b, tr=None):
+    """"" when the block's needs are met, else its reason ("Astrometry is needed first", "downstream of Gradient")."""
+    from .judge import evaluation
+    return _rules.greyed(project, b, info=evaluation(project), tr=tr)
+
+
+def wire_tip(project, w, tr=None):
+    """Type text of a wire (stored id or derived Path id), e.g. "linear image · without stars"."""
+    from .judge import evaluation
+    return _rules.wire_tip(project, w, info=evaluation(project), tr=tr)
+
+
+def row_badge(project, r, tr=None):
+    """Under a stack's name: "reference" | "on the grid of “SII”" | ""."""
+    if not any(x.id == r and x.nights for x in project.rows):
+        return ""
+    if project.reference == r:
+        return say("reference", tr)
+    return say(M("on the grid of “{_ref}”", _ref=next(x.name for x in project.rows if x.id == project.reference)), tr)
+
+
+def wire_check(project, view, src, src_port, dst, dst_port, tr=None):
+    """"" when wire(src, src_port, dst, dst_port) would be accepted, else its reason (nothing changes)."""
+    return say(try_op(project, "wire", {"src": src, "src_port": src_port, "dst": dst, "dst_port": dst_port}, view), tr)
+
+
+def project_state(project, tr=None):
+    """Project block colour: ("none" | "partial" | "complete", tip text)."""
+    return _rules.project_state(project, tr)
+
+
+def warnings(project, scope=None, tr=None):
+    """Warnings decidable from the model alone (no reading): scope None, a row id or a session id ->
+    [(session id, kind, text, (op, kwargs) | None)]."""
+    return [(s, k, say(m, tr), fix) for s, k, m, fix in _rules.warnings(project, scope)]
+
+
+stacks = _rules.stacks
+effective = _rules.effective
+followers = _rules.followers
+files_of = _rules.files_of
+differs = _rules.differs
+
+
+def own_keys(project, b):
+    """Keys block b holds of its own (unlike Common / default) -> [key]."""
+    return list(project.blocks[b].settings)
