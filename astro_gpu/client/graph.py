@@ -1866,9 +1866,9 @@ class GraphView(QGraphicsView):
             strong = cur is not None and (cur in n.paths or cur in a.paths)
             y2 = n.y - hgt(n) / 2 + d["y"]
             extra = stagger(i, len(rows), a.y <= y2)
-            if d["image"] == "starless" and a.key == "etoiles":
-                self._image_wire(a, PORTS["etoiles"][0][1], n, d["y"], "starless", d["name"], strong, remove=d["remove"],
-                                 extra=extra)
+            if d["image"] in ("starless", "stars") and a.key == "etoiles":
+                self._image_wire(a, PORTS["etoiles"][0 if d["image"] == "starless" else 1][1], n, d["y"], d["image"],
+                                 d["name"], strong, remove=d["remove"], extra=extra)
                 continue
             same = self.col_of(a) == self.col_of(n)
             if same:                                            # the reference wire between two Align on of one column
@@ -3893,9 +3893,9 @@ class GraphPage(QWidget):
     def make_filters(self, t: dict, name: str, opts: dict):
         """A filters template (issues #43, #165): one workflow per filter (made when the filter has none yet), the first
         the reference, every other aligned on it by an Align on block after its Stacking; for the full one the block of
-        the chosen type reads their Outputs (no Stars/background in their rows) and, when the options remove the stars, takes them off once,
-        with its own Stars/background after it. Returns the workflow shown (the combination,
-        or the first filter's)."""
+        the chosen type reads their Outputs, or, when the options take the stars off, their starless images (each row ends
+        with its own Stars/background) and a second block of the same type reads their stars (model.add_filters_combination).
+        Returns the workflow shown (the combination, or the first filter's)."""
         s = self.s
         from .gallery import palette_kind, template_blocks
         if t.get("rgb_stars"):                              # the narrow bands and a colour workflow's stars (issue #165)
@@ -3908,13 +3908,11 @@ class GraphPage(QWidget):
             for f in filters:                               # a missing filter: an empty Session block (issue #47)
                 if f not in s.filters():
                     s.add_filter_session(f)
-            fused = t["kind"] == "fusion"                   # a combination takes the stars off once, after it: its
-            row_opts = {**opts, "etoiles": "garder"} if fused else opts          # filters' workflows keep theirs
-            made = [(f, s.filter_workflow(f, row_opts)) for f in filters]
+            made = [(f, s.filter_workflow(f, opts)) for f in filters]
             made = [(f, q) for f, q in made if q is not None]
             for _f, q in made:                              # a filter's workflow: no Color block (issue #47)
                 if s.p.workflow(q.pid).blocks is None:
-                    s.set_graph(q, [n for n in template_blocks(t, mono=True) if not (fused and n["block"] == "stars")])
+                    s.set_graph(q, template_blocks(t, mono=True))
             if not made:
                 self.toast(_("No filter: set it in Session"))
                 return None
@@ -3923,8 +3921,7 @@ class GraphPage(QWidget):
                 s.align_without_astrometry(q, first.pid)
             if t["kind"] == "filters":
                 return first
-            return s.add_fusion(name, palette_kind(t["palette"]), [{"pid": q.pid, "role": f, "channel": "L"}
-                                                                   for f, q in made], stars=opts.get("etoiles") == "retirer")
+            return s.add_filters_combination(name, palette_kind(t["palette"]), made, opts.get("etoiles") == "retirer")
 
     def toggle_cut(self, node, pids):
         """Switch a block off, or on again (issue #47): in ``pids`` only, else in every workflow going through it. Its

@@ -603,7 +603,7 @@ class Graph:
                 ins = []
                 for i in src["fusion"]["inputs"]:
                     image = i.get("image", "output")
-                    a = self.by_path.get(i["pid"], {}).get("etoiles") if image == "starless" else None
+                    a = self.by_path.get(i["pid"], {}).get("etoiles") if image in ("starless", "stars") else None
                     a = a or self.leaves.get(i["pid"])     # its Output: the workflow's last block (#17: Stars holds it)
                     if a is not None and a is not n:
                         ins.append((a, i["role"], image))
@@ -622,7 +622,8 @@ class Graph:
             lay = self._sides.get(id(n)) or {}
             starless = self.leaves.get(p.pid) if lay.get("starless") == "output" else self.node_of(p, "etoiles")
             q = lay.get("stars_pid", p.pid)
-            stars = self.node_of(project.view(q), "etoiles") if q is not None and any(
+            stars = (self.leaves.get(q) if lay.get("stars_image") == "output" else
+                     self.node_of(project.view(q), "etoiles")) if q is not None and any(
                 x.pid == q for x in project.paths) else None
             self.composition_inputs[id(n)] = [(starless, "starless"), (stars, "stars")]
             if starless is not None:

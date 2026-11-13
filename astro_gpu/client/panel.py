@@ -1100,9 +1100,10 @@ class Panel(QWidget):
         cb = QComboBox()
         cb.addItem(_("Output image"), "output")
         cb.addItem(_("Starless image"), "starless")
+        cb.addItem(_("Stars alone"), "stars")
         cb.setCurrentIndex(cb.findData(i.get("image", "output")))
-        cb.setToolTip(_("The image this input reads: its workflow's Output, or the starless image of its "
-                        "Stars/background block"))
+        cb.setToolTip(_("The image this input reads: its workflow's Output, or the starless image or the stars alone of "
+                        "its Stars/background block"))
         cb.activated.connect(lambda k, r=i["role"]: s.set_fusion_image(p, r, cb.itemData(k)))
         return cb
 
@@ -1698,9 +1699,11 @@ class Panel(QWidget):
         second = QHBoxLayout()                             # the stars side: another workflow's Stars/background
         second.addWidget(label(f"<b>{html.escape(_('Stars'))}</b>", None), 0)
         second.addWidget(self.workflow_choice(
-            [(q, s.layer_side_problem("stars", q.pid)) for q in s.paths], stars_pid, _("none"),
-            _("The workflow whose stars this block puts back (its Stars/background block's stars alone)"),
-            lambda pid: s.set_layer_side(lid(), "stars", pid)), 1)
+            [(q, s.layer_side_problem("stars", q.pid, "output" if is_fusion_view(q) else "stars")) for q in s.paths],
+            stars_pid, _("none"),
+            _("The workflow whose stars this block puts back (its Stars/background block's stars alone, or the Output "
+              "of a combination of stars)"),
+            lambda pid: s.set_layer_side(lid(), "stars", pid, "output" if is_fusion_view(s.view(pid)) else "stars")), 1)
         self.bv.addLayout(second)
         sliders = dict(lay.get("sliders") or {})
 

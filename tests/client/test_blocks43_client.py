@@ -167,19 +167,27 @@ def test_filters_make_one_workflow_each_and_a_combination_in_the_composition_sec
     d.ok.click()
     settle(world)
     names = [q.name for q in m.paths]
-    assert names[-3:] == ["Ha", "OIII", "H-O"]
-    ha, oiii, ho = m.paths[-3:]
+    assert names[-4:] == ["Ha", "OIII", "H-O · Stars", "H-O"]                 # the stars' combination, the nebula's
+    ha, oiii, ho_stars, ho = m.paths[-4:]
     assert ha.sessions == [1] and oiii.sessions == [2] and m.is_mono(ha) and not m.is_mono(ho)
-    assert ho.source["fusion"]["type"] == "ho" and "stars" not in ho.source["fusion"]
-    assert m.display_keys(ho) == ["fusion", "etoiles"] and "couleur" not in m.display_keys(ha)   # the stars off once, after it (#165)
-    assert "etoiles" not in m.display_keys(ha)
+    assert ho.source["fusion"]["type"] == ho_stars.source["fusion"]["type"] == "ho"
+    assert [i["image"] for i in ho.source["fusion"]["inputs"]] == ["starless"] * 2     # each row's own Stars/background
+    assert [i["image"] for i in ho_stars.source["fusion"]["inputs"]] == ["stars"] * 2   # (the same type, the same palette)
+    assert m.display_keys(ho) == ["fusion"] and "couleur" not in m.display_keys(ha)   # no Stars after it (#165)
+    assert "etoiles" in m.display_keys(ha)                                            # the row ends with its own
     assert m.align_reference(oiii) == ha.pid and m.align_reference(ha) is None      # the others on the first one's grid
     assert "align_on" in m.display_keys(oiii) and "align_on" not in m.display_keys(ha)
     g = Graph(m)
     fn = g.node_of(ho, "fusion")
-    assert fn.handle and g.node_of(ho, "post") is fn and g.node_of(ho, "etoiles") is not None and not fn.waits
-    assert [(id(a), r) for a, r, _i in g.fusion_inputs[id(fn)]] == [(id(g.leaves[ha.pid]), "Ha"),
-                                                                    (id(g.leaves[oiii.pid]), "OIII")]   # named inputs
+    assert fn.handle and g.node_of(ho, "post") is fn and g.node_of(ho, "etoiles") is None and not fn.waits
+    assert [(id(a), r) for a, r, _i in g.fusion_inputs[id(fn)]] == [(id(g.node_of(ha, "etoiles")), "Ha"),
+                                                                    (id(g.node_of(oiii, "etoiles")), "OIII")]   # named inputs
+    fs = g.node_of(ho_stars, "fusion")
+    assert [(id(a), r, i) for a, r, i in g.fusion_inputs[id(fs)]] == [(id(g.node_of(ha, "etoiles")), "Ha", "stars"),
+                                                                      (id(g.node_of(oiii, "etoiles")), "OIII", "stars")]
+    layers = [x for x in m.post_layers() if x.get("kind") == "workflow" and x["pid"] in (ha.pid, oiii.pid, ho.pid, ho_stars.pid)]
+    assert [(x["pid"], x["part"], x["starless"], x["stars_pid"], x["stars_image"]) for x in layers] == [
+        (ho.pid, "combined", "output", ho_stars.pid, "output")]                       # Combine layers puts the stars on
     page.graph.rebuild()
     assert page.graph.graph.node_of(ho, "fusion").col == page.graph._cx["f0"]          # before Combine
     d = page.new_workflow()                                                   # the same filters again: reused
@@ -215,8 +223,8 @@ def test_a_combination_panel_shows_its_named_inputs_and_its_settings(world):
     d.palette.setCurrentIndex(d.palette.findData("H-O"))
     d.ok.click()
     settle(world)
-    ha, oiii, ho = m.paths[-3:]
-    assert m.all_stages(ho) == ["combine_ho", "render_simple", "star_removal"]          # the stars taken off once, after it
+    ha, oiii, _ho_stars, ho = m.paths[-4:]
+    assert m.all_stages(ho) == ["combine_ho", "render_simple"]                          # no Stars/background after it
     page.graph.rebuild()
     page.select(index=m.paths.index(ho), step="fusion")
     page.refresh()
@@ -231,6 +239,6 @@ def test_a_combination_panel_shows_its_named_inputs_and_its_settings(world):
     assert "combine_ho" not in m.p.workflow(ho.pid).params
     page.refresh()
     assert len([s for s in page.panel.findChildren(QDoubleSpinBox) if s.maximum() == 5.0]) >= 2
-    assert not any(c.findData("starless") >= 0 for c in page.panel.findChildren(QComboBox))   # no Split in a channel
-    with pytest.raises(ValueError, match="Stars/background"):                          # its channel needs its Split
-        m.set_fusion_image(m.view(ho.pid), "Ha", "starless")
+    assert any(c.findData("starless") >= 0 and c.findData("stars") >= 0 for c in page.panel.findChildren(QComboBox))
+    m.set_fusion_image(m.view(ho.pid), "Ha", "stars")                                  # a row's stars alone are an image
+    assert m.p.workflow(ho.pid).source["fusion"]["inputs"][0]["image"] == "stars"

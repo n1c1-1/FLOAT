@@ -89,14 +89,12 @@ def test_the_sho_rgb_stars_template_makes_the_graph_of_the_issue(world):
     names = [q.name for q in m.paths]
     assert names == ["SII", "Ha", "OIII", "RGB", "S-H-O"]
     a, b, c, rgb, sho = (by_name(m, n) for n in names)
-    for q in (a, b, c, rgb):          # each: Stacking, [Align on], Gradient, Denoise; Astrometry in the reference only
+    for q in (a, b, c, rgb):          # each: Stacking, [Align on], Gradient, Denoise, Stars; Astrometry in the reference only
         blocks = [n["block"] for n in m.graph(q)]
         assert blocks[blocks.index("stacking") + 1] == ("astrometry" if q is a else "align_on")
         assert ("astrometry" in blocks) == (q is a)
         assert "gradient" in blocks
-        assert blocks.index("gradient") < blocks.index("denoise")
-        assert ("stars" in blocks) == (q is rgb)            # the colour row keeps its Stars/background, the filters' end before
-        assert blocks[-1] == ("stars" if q is rgb else "denoise")
+        assert blocks[-1] == "stars" and blocks.index("gradient") < blocks.index("denoise") < blocks.index("stars")
         assert ("align_on" in blocks) == (q is not a)
         assert (m.align_reference(q) == a.pid) == (q is not a)                       # B, C and RGB on A
     assert "catalogs" in m.p.chain(a.pid) and "color" in m.p.chain(rgb.pid)       # the colour reads the reference's catalogues
@@ -104,31 +102,29 @@ def test_the_sho_rgb_stars_template_makes_the_graph_of_the_issue(world):
     assert "color" in [n["block"] for n in m.graph(rgb)] and "color" not in [n["block"] for n in m.graph(b)]
     f = m.p.workflow(sho.pid).source["fusion"]
     assert f["type"] == "sho"
-    assert [(i["role"], i["pid"], i.get("image", "output")) for i in f["inputs"]] == [("SII", a.pid, "output"),
-                                                                       ("Ha", b.pid, "output"),
-                                                                       ("OIII", c.pid, "output")]
-    assert [n["block"] for n in m.graph(sho)] == ["stars"]                            # the stars taken off once, after it
+    assert [(i["role"], i["pid"], i["image"]) for i in f["inputs"]] == [("SII", a.pid, "starless"),
+                                                                       ("Ha", b.pid, "starless"),
+                                                                       ("OIII", c.pid, "starless")]
+    assert [n["block"] for n in m.graph(sho)] == []                                   # no Stars/background after it
     layers = [x for x in m.post_layers() if x.get("kind") == "workflow"]
     assert len(layers) == 1
     assert (layers[0]["pid"], layers[0]["part"], layers[0]["starless"], layers[0]["stars_pid"]) == (
-        sho.pid, "combined", "starless", rgb.pid)
-    assert {tuple(x) for x in m.p.post["removed"]} >= {(rgb.pid, "combined")}
+        sho.pid, "combined", "output", rgb.pid)
+    assert {tuple(x) for x in m.p.post["removed"]} >= {(sho.pid, None), (rgb.pid, "combined")}
     g = Graph(m)
     assert [name for name, _pid in g.post_layers] == [layers[0]["name"]]            # Post shows exactly this picture
     comp = g.compositions[0]
     (starless, _s), (stars, _t) = g.composition_inputs[id(comp)]
-    assert starless is g.node_of(sho, "etoiles") and stars is g.node_of(rgb, "etoiles")   # the combination's own Stars
+    assert starless is g.node_of(sho, "fusion") and stars is g.node_of(rgb, "etoiles")
     fn = g.node_of(sho, "fusion")
-    assert [(a_ is g.leaves[q.pid], role, image) for (a_, role, image), q in
-            zip(g.fusion_inputs[id(fn)], (a, b, c))] == [(True, "SII", "output"), (True, "Ha", "output"),
-                                                        (True, "OIII", "output")]       # the filters' last blocks, no Stars
+    assert [(a_ is g.node_of(q, "etoiles"), role, image) for (a_, role, image), q in
+            zip(g.fusion_inputs[id(fn)], (a, b, c))] == [(True, "SII", "starless"), (True, "Ha", "starless"),
+                                                        (True, "OIII", "starless")]
     astro_a = g.node_of(a, "astrometrie")      # the reference wire leaves from the reference's Astrometry
     assert [g.align_refs[id(g.node_of(q, "align_on"))] is astro_a for q in (b, c, rgb)] == [True] * 3
     assert all(g.node_of(q, "align_on").slot > astro_a.slot for q in (b, c, rgb))               # Align on in a column after it
     assert not fn.broken and not comp.waits and not [n for n in g.nodes if n.key == "align_on" and n.waits]
-    assert [n["block"] for n in m.graph(rgb)].count("stars") == 1                     # the colour row's stars, once
-    assert [n["block"] for q in (a, b, c) for n in m.graph(q)].count("stars") == 0   # the filters' linear channels have none
-    assert [n["block"] for n in m.graph(sho)].count("stars") == 1                     # the combination's, once
+    assert [n["block"] for n in m.graph(rgb)].count("stars") == 1                     # the stars are taken off once only
 
 
 def test_the_sho_rgb_template_shows_no_ghost_combine_layers_and_names_its_colour_workflow_rgb(world):
@@ -183,10 +179,12 @@ def test_no_wire_goes_right_to_left(world):
     m, page = world["m"], world["page"]
     template(world, "sho_rgb")
     wires = no_wire_goes_left(page)
-    assert any(a.key == "debruitage" and b.key == "fusion" for a, b, _h in wires)               # the joins are in the log
+    assert any(a.key == "etoiles" and b.key == "fusion" for a, b, _h in wires)                 # the joins are in the log
     assert any(b.key == "composition" for _a, b, _h in wires) and any(b.key == "align_on" for _a, b, _h in wires)
     # a Stars/background after a combination (the graph is free) is drawn after it, a second combination after the first
     sho = by_name(m, "S-H-O")
+    page.place_block("stars", sho.pid)
+    settle(world)
     page.place_fusion("ho")
     settle(world)
     ho = m.paths[-1]
@@ -204,15 +202,15 @@ def test_no_wire_goes_right_to_left(world):
 def test_the_filters_templates_align_the_others_on_the_first(world):
     m = world["m"]
     template(world, "filters_full")
-    first, second, third, fusion = m.paths[-4:]
+    first, second, third, star_fusion, fusion = m.paths[-5:]
     assert m.align_reference(first) is None and m.align_reference(second) == first.pid == m.align_reference(third)
-    assert [q.pid for q in m.paths if q.source and q.source.get("fusion")] == [fusion.pid]
+    assert [q.pid for q in m.paths if q.source and q.source.get("fusion")] == [star_fusion.pid, fusion.pid]
+    assert star_fusion.source["fusion"]["type"] == fusion.source["fusion"]["type"]       # the same palette
     assert ["astrometry" in [n["block"] for n in m.graph(q)] for q in (first, second, third)] == [True, False, False]
-    assert [n["block"] for n in m.graph(fusion)] == ["stars"]                           # the stars taken off once, after it
-    assert [n["block"] for q in (first, second, third) for n in m.graph(q)].count("stars") == 0
+    assert [n["block"] for n in m.graph(fusion)] == []                                  # no Stars/background after it
     g = Graph(m)
     assert "to wire" not in g.node_of(fusion, "fusion").waits             # nothing to wire (it waits for lights)
-    assert [pid for _name, pid in g.post_layers] == [fusion.pid]                        # inputs feed it; it goes to Post
+    assert [name for name, _pid in g.post_layers] == [fusion.name + " · Combine layers"]   # Post shows one picture
 
 
 def test_a_combination_placed_from_the_palette_is_empty_and_each_input_is_a_hollow_dot(world):
@@ -300,13 +298,12 @@ def test_the_two_sides_of_combine_layers_are_wired_and_unwired(world):
     assert lid is not None and not comp.waits
     gv = page.graph
     # the stars side takes the stars alone of a Stars/background block, not an Output, not the starless image
-    sho = by_name(m, "S-H-O")
-    go, why = gv.plan_wire(g.node_of(sho, "etoiles"), "starless", comp, ("side", "stars"))
+    go, why = gv.plan_wire(g.node_of(a, "etoiles"), "starless", comp, ("side", "stars"))
     assert go is None and "stars alone" in why.lower()
     n0 = len(m._undo)
-    page.wire_to_input(g.node_of(sho, "etoiles"), "stars", comp, ("side", "stars"))        # another workflow's stars
+    page.wire_to_input(g.node_of(a, "etoiles"), "stars", comp, ("side", "stars"))          # another workflow's stars
     settle(world)
-    assert m.post_layer(lid)["stars_pid"] == sho.pid and len(m._undo) == n0 + 1
+    assert m.post_layer(lid)["stars_pid"] == a.pid and len(m._undo) == n0 + 1
     assert m.undo()
     settle(world)
     assert m.post_layer(lid)["stars_pid"] == rgb.pid
@@ -380,7 +377,7 @@ def test_a_join_stands_between_the_rows_it_reads_and_its_wires_never_cross(world
     assert _joins_are_placed(page) == 2                                        # S-H-O, and Combine layers
     g = page.graph.graph
     sho = g.node_of(by_name(m, "S-H-O"), "fusion")
-    rows = [g.leaves[by_name(m, n).pid].y for n in ("SII", "Ha", "OIII")]
+    rows = [g.node_of(by_name(m, n), "etoiles").y for n in ("SII", "Ha", "OIII")]
     assert abs(sho.y - rows[1]) < 1.0                                          # the Ha row, between S II and O III
     comp = g.compositions[0]
     assert abs(comp.y - (sho.y + g.node_of(by_name(m, "RGB"), "etoiles").y) / 2) < 1.0
@@ -394,21 +391,25 @@ def test_a_join_stands_between_the_rows_it_reads_and_its_wires_never_cross(world
 
 def test_the_filters_template_places_its_combination_level_with_the_middle_filter(world):
     template(world, "filters_full")
-    assert _joins_are_placed(world["page"]) == 2                               # the combination, and its Combine layers
+    assert _joins_are_placed(world["page"]) == 3                 # the two combinations, and their Combine layers
 
 
 @pytest.mark.parametrize("title", [c.title for c in COMBINATIONS])
-def test_every_filters_combination_takes_the_stars_off_once_after_it(world, title):
-    """Combine the linear channels, then take the stars off once, on the combined image (issue #165): the filters' rows end
-    before Stars/background, the combination has exactly one, after it."""
+def test_every_filters_combination_takes_the_stars_off_per_filter_and_combines_them_like_the_nebula(world, title):
+    """Each filter's row ends with its own Stars/background; the combination reads their starless images, a second block of
+    the same type reads their stars, and Combine layers puts the second on the first (issue #165)."""
     m = world["m"]
     t = dict(next(c for c in GALLERY if c["key"] == "filters_full"), palette=title, filters=PALETTES[title])
     world["page"].make_from_template(t, m.unique_name(title), _view_opts(t))
     settle(world)
-    fusion = next(q for q in m.paths if q.source and q.source.get("fusion"))
-    rows = [q for q in m.paths if q.pid != fusion.pid]
-    assert len(rows) == len(PALETTES[title])
-    assert [n["block"] for q in rows for n in m.graph(q)].count("stars") == 0
-    assert [n["block"] for n in m.graph(fusion)] == ["stars"]
-    assert all(i.get("image", "output") == "output" for i in m.p.workflow(fusion.pid).source["fusion"]["inputs"])
-    assert not Graph(m).node_of(fusion, "etoiles").waits
+    fusions = [q for q in m.paths if q.source and q.source.get("fusion")]
+    rows = [q for q in m.paths if q not in fusions]
+    assert len(fusions) == 2 and len(rows) == len(PALETTES[title])
+    assert [n["block"] for q in rows for n in m.graph(q)].count("stars") == len(rows)
+    assert all([n["block"] for n in m.graph(f)] == [] for f in fusions)
+    stars, nebula = fusions
+    assert nebula.source["fusion"]["type"] == stars.source["fusion"]["type"]
+    assert {i["image"] for i in nebula.source["fusion"]["inputs"]} == {"starless"}
+    assert {i["image"] for i in stars.source["fusion"]["inputs"]} == {"stars"}
+    assert [i["pid"] for i in nebula.source["fusion"]["inputs"]] == [i["pid"] for i in stars.source["fusion"]["inputs"]]
+    assert "to wire" not in Graph(m).node_of(nebula, "fusion").waits

@@ -6,7 +6,8 @@ inputs (``ports``), its parameters and its own ``combine``. A type added later i
 
 A combination workflow starts from other workflows (``Workflow.source = {"fusion": {"type", "inputs"}}``): its stage
 reads, for each port, the image of a channel's workflow (its Output's linear image, render_simple: lin.npy, the sky
-taken off; or its Stars/background's starless image, when the user wants the palette made on starless channels) and
+taken off; or its Stars/background's starless image, when the palette is made on starless channels, or its stars alone, for the
+stars of a combination whose starless image is made the same way) and
 writes a stack, which its Output block renders as any stack (core/workflow.PROVIDES). The combination handles no star:
 a Stars/background block after it, and the Combine layers block in Post, do (one block, one function).
 
@@ -82,8 +83,9 @@ from ..core.params import P, StageParams
 from ..core.stage import Context, Stage, StageError
 
 CHANNELS = ("L", "R", "G", "B", "GB")
-#: what a port reads of its channel's workflow: its Output's image, or its Stars/background's starless image
-IMAGES = {"output": ("render_simple", "lin.npy"), "starless": ("star_removal", "starless.npy")}
+#: what a port reads of its channel's workflow: its Output's image, or its Stars/background's starless image or stars alone
+IMAGES = {"output": ("render_simple", "lin.npy"), "starless": ("star_removal", "starless.npy"),
+          "stars": ("star_removal", "stars.npy")}
 LUM = np.array([0.2126, 0.7152, 0.0722], np.float32)
 #: the S-H-O hues measured on the Hubble teams' images (module docstring): S II red-orange, H-alpha copper, O III
 #: blue; and the Oklch hues they land on in Post's display (the warm areas' lower quartile and median, the blue
@@ -369,8 +371,9 @@ class Combination(Stage):
             image = inp.get("image", "output")
             name = IMAGES[image][1]
             if not (d / name).is_file():
-                raise StageError(f"the starless image of the {inp['role']} channel is not computed: run its "
-                                 "Stars/background" if image == "starless" else
+                what = "starless image" if image == "starless" else "stars"
+                raise StageError(f"the {what} of the {inp['role']} channel is not computed: run its Stars/background"
+                                 if image != "output" else
                                  f"the output of the {inp['role']} channel is not computed")
             valid = np.load(d / "valid.npy")
             ch = channel_of(np.asarray(np.load(d / name, mmap_mode="r")), inp.get("channel", "L"))

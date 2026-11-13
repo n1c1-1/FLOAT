@@ -641,6 +641,8 @@ def sub_layer(lay: dict, sub: str) -> dict:
     or its Output (a combination's: ``starless`` "output"). A part of any other layer is the layer's own."""
     if sub == "stars" or sub == "synth":
         return dict(lay, pid=lay["stars_pid"] if lay.get("stars_pid") is not None else lay["pid"], part=sub)
+    if sub == "stars" and lay.get("stars_image") == "output" and lay.get("stars_pid") is not None:
+        return dict(lay, pid=lay["stars_pid"], part=None)              # the Output of a combination of stars
     return dict(lay, part=None if lay.get("starless") == "output" and sub == "starless" else sub)
 
 
@@ -856,6 +858,8 @@ def load_layers(raw, alive: set[int]) -> list[dict]:
                 lay["starless"] = d.get("starless") if d.get("starless") in ("starless", "output") else "starless"
                 sp = d["stars_pid"] if "stars_pid" in d else d["pid"]      # the stars side: its workflow, else none
                 lay["stars_pid"] = int(sp) if sp is not None and int(sp) in alive else None
+                lay["stars_image"] = "output" if d.get("stars_image") == "output" and lay["stars_pid"] is not None \
+                    else "stars"
                 lay["blend"] = d.get("blend") if d.get("blend") in BLENDS else BLENDS[0]
                 shown = d.get("shown") if isinstance(d.get("shown"), dict) else {}
                 lay["shown"] = {k: bool(shown.get(k, True)) for k in SUBS}
