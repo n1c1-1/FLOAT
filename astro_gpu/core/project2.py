@@ -137,11 +137,13 @@ def workflow_images(version: dict[str, Any]) -> Counter:
 
 def versions_problem(post: dict[str, Any]) -> str | None:
     """What is wrong between the versions of a composition (issue #82), None when nothing is: they all hold the same
-    workflows' images, and no two layers share an id."""
+    workflows' images (each its own layers of them), and no two layers share an id."""
     versions = post["versions"]
-    first = workflow_images(versions[0])
+    def images(v):                  # what a version shows or took out itself: its layers are its own (how many, which)
+        return set(workflow_images(v)) | {(int(a), b) for a, b in v.get("removed") or []}
+    first = images(versions[0])
     for v in versions[1:]:
-        if workflow_images(v) != first:
+        if images(v) != first:
             return f"the versions {versions[0]['name']!r} and {v['name']!r} do not hold the same workflows"
     ids = [x["id"] for v in versions for x in v.get("layers") or []]
     return "two layers of the versions share an id" if len(ids) != len(set(ids)) else None

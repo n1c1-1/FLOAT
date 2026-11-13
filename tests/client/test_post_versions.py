@@ -327,3 +327,114 @@ def test_spot_healing_switched_on_then_off_with_no_stroke_leaves_nothing(model):
         page.shutdown()
         page.deleteLater()
         QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def _page_of(model):
+    from astro_gpu.client.post3 import PostPage3
+    from astro_gpu.client.services.render import RenderWorker
+    return PostPage3(model, worker=RenderWorker(None, resolver=lambda pid: None, device="cpu"))
+
+
+def _done(page):
+    page.shutdown()
+    page.deleteLater()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def _layers_of(model, vid):
+    return json.loads(text(next(x for x in model.p.post["versions"] if x["id"] == vid)["layers"]))
+
+
+def test_a_layer_duplicated_then_deleted_in_one_version_leaves_the_others_layers_and_filters_alone(model):
+    """The data-loss sequence: Saturation in Version 1, a second version, the layer duplicated and its copy deleted
+    there: Version 1 holds the layer and its filter exactly as it was, and Ctrl+Z there restores them as they were."""
+    model.add_post_layer(by_name(model, "Full").pid, "stars")
+    page = _page_of(model)
+    v = page.view
+    try:
+        base = v.layers[-1]
+        v.select(base["id"], "layer")
+        fl = v.add_filter("saturation")
+        key = next(iter(fl["params"]))
+        fl["params"][key] = 1.5
+        v._save()
+        first = model.p.post["active"]
+        one = _layers_of(model, first)
+        names = [x["name"] for x in v.layers]
+        v._version_new()
+        second = model.p.post["active"]
+        assert _layers_of(model, first) == one
+        v.select(v.layers[-1]["id"], "layer")
+        v.duplicate()
+        v._save()
+        assert _layers_of(model, first) == one                        # the copy is Version 2's alone
+        copy_ = next(x for x in v.layers if x["kind"] != "filter" and x["name"] not in names)
+        v.select(copy_["id"], "layer")
+        v.delete()
+        v._save()
+        assert _layers_of(model, first) == one                        # nor does deleting it reach Version 1
+        model.set_post_version(first)
+        v._post_changed(None)
+        assert [x["name"] for x in v.layers] == names
+        kept = next(x for x in v.layers if x["kind"] == "filter")
+        assert kept["params"][key] == 1.5
+        v.select(base["id"], "layer")
+        v.push()                                                      # Version 1's own edit, undone: exactly as before
+        v.layers[-1]["opacity"] = 10.0
+        v._save()
+        v.do_undo()
+        assert next(x for x in v.layers if x["kind"] == "filter")["params"][key] == 1.5
+        assert _layers_of(model, first) == one
+        assert second in [x["id"] for x in model.p.post["versions"]]
+    finally:
+        _done(page)
+
+
+def test_what_spreads_between_versions_is_the_workflows_images_not_the_layers_made_of_them(model):
+    full, classic = by_name(model, "Full"), by_name(model, "Classic stack")
+    model.add_post_layer(full.pid, "stars")
+    page = _page_of(model)
+    v = page.view
+    try:
+        first = model.p.post["active"]
+        v._version_new()
+        second = model.p.post["active"]
+        before = _layers_of(model, first)
+        for op in ("duplicate", "filter", "opacity", "mode", "hide", "rename", "reorder", "delete_copy"):
+            v.select(v.layers[-1]["id"], "layer")
+            lay = v.layers[-1]
+            if op == "duplicate":
+                v.duplicate()
+            elif op == "filter":
+                v.add_filter("saturation")
+            elif op == "opacity":
+                v.push(); lay["opacity"] = 30.0
+            elif op == "mode":
+                v.push(); lay["mode"] = "Screen"
+            elif op == "hide":
+                v.push(); lay["visible"] = False
+            elif op == "rename":
+                v.push(); lay["name"] = "Other"
+            elif op == "reorder" and len(v.layers) > 1:
+                v.push(); v.layers.reverse()
+            elif op == "delete_copy":
+                extra = next((x for x in v.layers if "copy" in x["name"].lower()), None)
+                if extra is not None:
+                    v.select(extra["id"], "layer")
+                    v.delete()
+            v._save()
+            assert _layers_of(model, first) == before, op
+        # a workflow's image that is new to Post is shared: its first layer, in each version
+        model.add_post_layer(classic.pid, None)
+        for vid in (first, second):
+            ver = next(x for x in model.p.post["versions"] if x["id"] == vid)
+            assert any(x.get("pid") == classic.pid and x.get("part") is None for x in ver["layers"])
+        assert versions_problem(model.p.post) is None
+        # and one the graph takes out goes from both
+        model.remove_post_part(classic.pid, None)
+        for vid in (first, second):
+            ver = next(x for x in model.p.post["versions"] if x["id"] == vid)
+            assert not any(x.get("pid") == classic.pid and x.get("part") is None for x in ver["layers"])
+    finally:
+        _done(page)
+

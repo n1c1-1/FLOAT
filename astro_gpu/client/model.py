@@ -999,7 +999,9 @@ class ProjectModel(QObject):
         """The scope of these layers replacing the active version's: all the versions when a workflow's image came or
         went."""
         have, now = workflow_images(self.post_version()), workflow_images({"layers": layers})
-        return "active" if not (now - have) else "all"          # an image taken out in Post goes from this version only
+        # an image of a workflow new to this version is shared with the others; the layers of it (copies, deletions,
+        # settings) are the version's own
+        return "active" if not (set(now) - set(have)) else "all"
 
     def set_post_version(self, vid: int):
         """Another version shown: not a step of the Undo (opening is never one)."""
@@ -1049,7 +1051,7 @@ class ProjectModel(QObject):
         self.name_step(_("“{name}” deleted").format(name=next(v["name"] for v in post["versions"] if v["id"] == vid)))
         self.postChanged.emit(None)
 
-    def _post_sync(self):
+    def _post_sync(self, from_post: bool = False, dropped: frozenset = frozenset()):
         """Every version holds the workflows' images of the active one (a workflow touches them all, issue #82), each
         found by its workflow and its image; what the others lack comes with the active one's settings, and ids of its
         own."""
@@ -1063,15 +1065,30 @@ class ProjectModel(QObject):
                 continue
             have = workflow_images(v)
             layers = list(v.get("layers") or [])
-            for key, n in (have - want).items():
-                if key in self.version_removed(act):           # taken out of the active version alone: the others keep it
-                    continue
-                mine = [x["id"] for x in layers if x.get("kind") == "workflow" and (x.get("pid"), x.get("part")) == key]
-                gone = set(mine[-n:])
+            # What spreads between versions: the workflows' images (computed, shared), their coming and going in the
+            # graph. The layers of them (copies, deletions, settings, filters) are each version's own: a change made
+            # in Post counts a workflow's image once, however many layers of it a version holds.
+            if from_post:
+                gone_keys = set()
+                lacking = {k: 1 for k in set(want) - set(have)}
+            else:
+                gone_keys = set(dropped)
+                lacking = dict((want - have).items())
+                for key, n in (have - want).items():
+                    if key in self.version_removed(act) or key in gone_keys:
+                        continue
+                    mine = [x["id"] for x in layers if x.get("kind") == "workflow"
+                            and (x.get("pid"), x.get("part")) == key]
+                    gone = set(mine[-n:])
+                    layers = [x for x in layers if x["id"] not in gone and not (x.get("kind") == "filter"
+                                                                                and x.get("target") in gone)]
+            if gone_keys:                                   # an image the graph took out goes from every version
+                gone = {x["id"] for x in layers if x.get("kind") == "workflow"
+                        and (x.get("pid"), x.get("part")) in gone_keys}
                 layers = [x for x in layers if x["id"] not in gone and not (x.get("kind") == "filter"
                                                                             and x.get("target") in gone)]
             added = []
-            for key, n in (want - have).items():
+            for key, n in lacking.items():
                 if key in self.version_removed(v):             # this version took it out: it stays out
                     continue
                 mine = [x for x in act["layers"] if x.get("kind") == "workflow" and (x.get("pid"), x.get("part")) == key]
@@ -1154,7 +1171,8 @@ class ProjectModel(QObject):
                        "removed": sorted([list(x) for x in out], key=str)}
         self.post_version()["layers"] = layers
         if scope == "all":
-            self._post_sync()
+            self._post_sync(post, frozenset() if post else frozenset(
+                {(x.get("pid"), x.get("part")) for x in old if x.get("kind") == "workflow"} - now))
         self.edited()
         self.postChanged.emit(source)
 

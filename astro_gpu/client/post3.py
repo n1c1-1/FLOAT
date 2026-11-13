@@ -252,6 +252,16 @@ def small(pm: QPixmap) -> QPixmap:
     return pm.scaled(SMALL_W, SMALL_H, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
 
+class _NoContext:
+    """A ``with`` that does nothing (a model without ``from_post``)."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
 class Step(list):
     """A step of Post's Undo: the layers, and the crop of that moment."""
     crop = None
@@ -1357,8 +1367,7 @@ class PostView(QWidget):
 
     def _from_post(self):
         """The changes of the model made inside are Post's steps: the graph's Undo leaves them to Post."""
-        from contextlib import nullcontext
-        return getattr(self.s, "from_post", nullcontext)()
+        return self.s.from_post() if hasattr(self.s, "from_post") else _NoContext()
 
     def _version_picked(self, i: int):
         vid = self.cb_version.itemData(i)
