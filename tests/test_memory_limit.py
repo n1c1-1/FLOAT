@@ -61,7 +61,9 @@ def test_calibration_and_the_stack_take_their_low_memory_ways_under_a_low_limit(
     monkeypatch.setenv(devices.ENV_MEMORY_LIMIT, "8")
     assert cal.memory_short(cache, workers, px) == pytest.approx(6.0)     # plain writes, the room said in GB
     monkeypatch.setenv(devices.ENV_MEMORY_LIMIT, "24")
-    assert cal.memory_short(cache, workers, px) is not None               # 22 GB to fill: 18 + 7 GB do not fit
+    assert cal.memory_short(cache, workers, px) is None                   # 22 GB to fill: 18 + 3.8 GB just fit
+    monkeypatch.setenv(devices.ENV_MEMORY_LIMIT, "20")
+    assert cal.memory_short(cache, workers, px) is not None               # 18 GB to fill: they do not
 
 
 def test_the_limit_reaches_the_worker_and_its_children(monkeypatch):
@@ -97,13 +99,13 @@ def test_a_real_child_process_reads_the_limit(monkeypatch):
 
 
 def test_the_pools_shrink_to_what_the_budget_holds_and_say_so(machine, monkeypatch):
-    px = 2848 * 4256                                                      # 12 Mpx: 0.63 GB + 0.4 GB a worker
+    px = 2848 * 4256                                                      # 12 Mpx: 0.32 GB a worker
     lines: list[str] = []
     ctx = SimpleNamespace(log=lambda m, level="info": lines.append(m))
     assert cal.pool_size(ctx, 12, px) == 12 and lines == []               # 50 GB available: all of them
-    monkeypatch.setenv(devices.ENV_MEMORY_LIMIT, "8")                     # 6 GB to fill: 6 workers
-    assert cal.pool_size(ctx, 12, px) == 6
-    assert lines == ["memory: 6 workers to stay within 6.0 GB (instead of 12)"]
+    monkeypatch.setenv(devices.ENV_MEMORY_LIMIT, "3")                     # 1 GB to fill: 3 workers
+    assert cal.pool_size(ctx, 12, px) == 3
+    assert lines == ["memory: 3 workers to stay within 1.0 GB (instead of 12)"]
     monkeypatch.setenv(devices.ENV_MEMORY_LIMIT, "2.5")                   # 0.5 GB to fill: one worker, never none
     assert cal.pool_size(ctx, 12, px) == 1
     monkeypatch.setattr(devices, "memory_budget", lambda: None)

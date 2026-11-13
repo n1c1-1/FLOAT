@@ -1313,9 +1313,11 @@ class FrameWriter:
                 done += f.write(view[done:])
 
 
-#: what a calibration worker holds per pixel of a frame, besides the cache (the masters, the frame read and calibrated,
-#: their temporary arrays): measured 52 bytes a pixel on a 12 Mpx sensor, 7.6 GB for a pool of 12 (issue #125)
-WORKER_BYTES = 52
+#: what a pool worker (Calibration, Registration) holds per pixel of a frame, besides the cache (the masters, the frame
+#: read and calibrated, their temporary arrays): private bytes of the pool's processes read with psutil during a
+#: Calibration and a Registration of 372 frames of 11.7 Mpx (set 36), one maths thread each: 0.30 to 0.31 GB each,
+#: 26 bytes a pixel (the 52 of issue #125 were measured before the pool's processes ran on one maths thread)
+WORKER_BYTES = 26
 
 
 def memory_short(cache_bytes: int, workers: int, pixels: int) -> float | None:
@@ -1329,8 +1331,6 @@ def memory_short(cache_bytes: int, workers: int, pixels: int) -> float | None:
     return m[1] / 2 ** 30
 
 
-#: what a spawned worker holds before its first frame (the interpreter and the libraries it loads, one maths thread)
-WORKER_BASE_BYTES = 400 * 2 ** 20
 
 
 def pool_size(ctx: Context, workers: int, pixels: int) -> int:
@@ -1340,7 +1340,7 @@ def pool_size(ctx: Context, workers: int, pixels: int) -> int:
     m = devices.memory_budget()
     if m is None:
         return workers
-    each = WORKER_BYTES * pixels + WORKER_BASE_BYTES
+    each = WORKER_BYTES * pixels
     n = int(max(1, min(workers, m[0] // each)))
     if n < workers:
         ctx.log(f"memory: {n} workers to stay within {m[0] / 2 ** 30:.1f} GB (instead of {workers})")
