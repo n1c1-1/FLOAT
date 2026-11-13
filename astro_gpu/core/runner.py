@@ -197,6 +197,7 @@ class Pipeline:
                     # stages run in one process, and a 62 Mpx stack left about 6 GB cached, the next step then saw
                     # a full card and crawled (night of 11 November)
                     devices.empty_cache(ctx.device)
+                    devices.release_memory()
         except Interrupted:
             m.update(status="interrupted", error="stopped by user", duration=time.time() - t0)
             _write_manifest(self.project, st.name, m)

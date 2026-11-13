@@ -171,6 +171,30 @@ def empty_cache(device: Any = None) -> None:
         pass
 
 
+def release_memory() -> None:
+    """Give the process's freed memory back to the system after a step: the arrays a step allocated and freed stay in
+    the allocator's pages and in the process's working set until something trims them, and the next step then sees
+    that much less memory available (the processor's drizzle stack left 7 GB behind it, the steps after it ran 2 to 3 GB
+    higher and chose smaller parts). Collects the garbage, then returns the heap's free pages (Windows: the working set
+    and the heap's unused blocks; glibc: malloc_trim). Never raises."""
+    import gc
+    gc.collect()
+    try:
+        import sys
+        if sys.platform == "win32":
+            import ctypes
+            try:
+                ctypes.cdll.msvcrt._heapmin()
+            except (OSError, AttributeError):
+                pass
+            ctypes.windll.kernel32.SetProcessWorkingSetSize(ctypes.c_void_p(-1), ctypes.c_size_t(-1), ctypes.c_size_t(-1))
+        elif sys.platform.startswith("linux"):
+            import ctypes
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:  # noqa: BLE001 - a hint to the system, nothing depends on it
+        pass
+
+
 def synchronize(device: Any) -> None:
     """Wait for the card to finish what it was given; nothing on the others."""
     import torch
