@@ -167,3 +167,20 @@ def test_the_processors_morphology_steps_give_the_values_of_the_padded_max_pool(
             want = want if grow else -want
             assert torch.equal(S._step(y, grow, cross), want)
             assert torch.equal(S._step(y[0], grow, cross), want[0])
+
+
+def test_the_binary_reconstruction_on_the_processor_gives_the_grey_one_s_values():
+    import torch
+
+    from astro_gpu.render import stars as S
+    g = torch.Generator().manual_seed(4)
+    mask = (torch.rand(1, 60, 70, generator=g) > 0.45).float()
+    seeds = torch.minimum((torch.rand(1, 60, 70, generator=g) > 0.97).float(), mask)
+    for steps in (1, 3, 40):
+        want = torch.minimum(seeds, mask)
+        for _ in range(steps):                                   # the generic loop, by hand
+            n = torch.minimum(S._step(want, True, cross=False), mask)
+            if torch.equal(n, want):
+                break
+            want = n
+        assert torch.equal(S.reconstruct(seeds, mask, steps), want), steps

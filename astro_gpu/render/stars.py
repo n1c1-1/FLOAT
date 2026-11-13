@@ -277,11 +277,37 @@ def _morph(y: torch.Tensor, k: int, grow: bool) -> torch.Tensor:
 RECONSTRUCT_STEPS = 48
 
 
+def _binary(a: torch.Tensor) -> bool:
+    """Only 0 and 1 in it (a support, the seeds of a support)."""
+    return bool(((a == 0) | (a == 1)).all())
+
+
+def _reconstruct_binary(m: torch.Tensor, mask: torch.Tensor, steps: int) -> torch.Tensor:
+    """``reconstruct`` of 0 / 1 planes on the processor, the same result: the dilations by the 3 x 3 square on 8-bit
+    planes (a quarter of the memory), the growth seen in the count of set pixels (it only grows)."""
+    shape = m.shape
+    cur = np.ascontiguousarray(m.numpy().reshape(-1, *shape[-2:]).astype(np.uint8))
+    lim = np.ascontiguousarray(mask.numpy().reshape(-1, *shape[-2:]).astype(np.uint8))
+    for i in range(cur.shape[0]):
+        a, b = cur[i], lim[i]
+        n = cv2.countNonZero(a)
+        for _ in range(max(1, steps)):
+            a = cv2.min(cv2.dilate(a, _SQUARE, borderType=cv2.BORDER_REPLICATE), b)
+            k = cv2.countNonZero(a)
+            if k == n:
+                break
+            n = k
+        cur[i] = a
+    return torch.from_numpy(cur.astype(np.float32).reshape(shape))
+
+
 def reconstruct(marker: torch.Tensor, mask: torch.Tensor, steps: int) -> torch.Tensor:
     """Grey reconstruction by dilation (L. Vincent, "Morphological grayscale reconstruction in image analysis",
     IEEE Trans. Image Processing 2, 1993): the marker dilated one pixel at a time, never above the mask, until it
     settles (or ``steps``)."""
     m = torch.minimum(marker, mask)
+    if m.device.type == "cpu" and m.dtype == torch.float32 and _binary(m) and _binary(mask):
+        return _reconstruct_binary(m, mask, steps)
     for _ in range(max(1, steps)):
         n = torch.minimum(_step(m, True, cross=False), mask)
         if torch.equal(n, m):
