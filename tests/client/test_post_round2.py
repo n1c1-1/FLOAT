@@ -76,7 +76,7 @@ def test_nothing_computed_the_page_lists_the_layers_the_graph_counts(m):
         page.deleteLater()
 
 
-def test_a_layer_deleted_in_post_takes_its_sent_branch_and_undo_brings_both_back_with_its_settings(m):
+def test_a_layer_deleted_in_post_leaves_its_sent_branch_and_the_other_versions_and_undo_brings_it_back(m):
     classic = next(v for v in m.paths if v.name == "Classic stack")
     m.add_exit(classic, "stacking", "Raw stack")
     _rendered(m)
@@ -90,15 +90,22 @@ def test_a_layer_deleted_in_post_takes_its_sent_branch_and_undo_brings_both_back
         assert lay["visible"]                             # a block's image sent: shown at once, as the Split images
         v._set(lay, "mode", "Screen")
         v.flush()
+        first = m.p.post["active"]
+        v._version_new()
+        v.flush()
+        lay = next(x for x in v.layers if x["name"] == "Raw stack")
         v.sel = (lay["id"], "layer")
         v.delete()
-        assert "Raw stack" not in [q.name for q in m.paths]               # its branch went with it
-        assert v.undo[-1] is MODEL_STEP and told and "Ctrl+Z" in told[-1]
+        v.flush()
+        assert "Raw stack" in [q.name for q in m.paths]                   # its branch stays in the graph
+        assert "Raw stack" not in [x["name"] for x in v.layers]
+        one = next(x for x in m.p.post["versions"] if x["id"] == first)
+        assert "Raw stack" in [x["name"] for x in one["layers"]]           # and the other version keeps it
+        assert not any("went with it" in t for t in told)
         v.do_undo()
-        assert "Raw stack" in [q.name for q in m.paths]
-        back = [(x["name"], x["mode"]) for x in v.layers if x["name"] == "Raw stack"]
-        assert back == [("Raw stack", "Screen")]
-        assert MODEL_STEP not in v.undo[-1:] or len(v.undo) == 1          # no step of Post's own from the Undo
+        assert [(x["name"], x["mode"]) for x in v.layers if x["name"] == "Raw stack"] == [("Raw stack", "Screen")]
+        assert m.p.post["active"] != first                                 # Post stays on its version
+        assert "Raw stack" in [x["name"] for x in one["layers"]]
         # the graph's side: the branch's wire removed (the branch goes), then Ctrl+Z: the layer with its settings
         raw = next(q for q in m.paths if q.name == "Raw stack")
         m.remove_path(m.paths.index(raw))

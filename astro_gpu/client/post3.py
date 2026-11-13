@@ -1244,11 +1244,11 @@ class PostView(QWidget):
             self._fill_versions()
         known = {lay["pid"] for lay in self.layers if lay["kind"] == "workflow"}
         fresh = not known
-        removed = getattr(self.s, "post_removed", lambda: set())()
+        removed = getattr(self.s, "post_removed", lambda: set())() | getattr(self.s, "version_removed", lambda: set())()
         for p in paths:
             # every workflow's image comes, except one the user took out (issues #10, #52: it does not come back)
             stars = p.opts.get("etoiles") == "retirer"
-            out = (p.pid, "combined" if stars else None) in removed and getattr(p, "end", None) is None
+            out = (p.pid, "combined" if stars else None) in removed
             channel = getattr(self.s, "feeds_fusion", None) is not None and self.s.feeds_fusion(p)   # #47: the fusion
             channel = channel or (getattr(self.s, "gives_post", None) is not None and not self.s.gives_post(p))
             if not out and p.rendered and p.pid not in known and not channel:   # with Stars: its Combine
@@ -2638,25 +2638,6 @@ class PostView(QWidget):
             return
         if is_synth(lay):                                # the Synthetic stars: their block goes with them (#93)
             self.remove_synth(self.layer(lay["target"]))
-            return
-        p = self.path(lay["pid"]) if lay["kind"] == "workflow" and lay.get("part") is None else None
-        if p is not None and not any(x.get("pid") == p.pid for x in others if x["kind"] == "workflow") and (
-                getattr(p, "end", None) is not None or getattr(self.s, "is_sent_branch", lambda q: False)(p)):
-            # a block's image sent to Post: its branch was made only for it, it goes with its layer, as when its wire
-            # is taken away in the graph (one step of the workflows' Undo, which brings both back)
-            self.flush()
-            self._restoring = True
-            try:
-                with self._from_post():
-                    self.s.remove_path(self.s.paths.index(p))
-            finally:
-                self._restoring = False
-            if hasattr(self.s, "log"):
-                self.s.log('Workflow "{name}" deleted', name=p.name)
-            self.undo.append(MODEL_STEP)
-            self.redo.clear()
-            self.toasted.emit(_('Layer "{name}" deleted: its branch went with it · Ctrl+Z').format(name=layer_name(lay)))
-            self._undo_buttons()
             return
         self.push()
         i = self.index(lay["id"])

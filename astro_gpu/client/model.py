@@ -998,7 +998,8 @@ class ProjectModel(QObject):
     def post_scope(self, layers: list[dict]) -> str:
         """The scope of these layers replacing the active version's: all the versions when a workflow's image came or
         went."""
-        return "active" if workflow_images({"layers": layers}) == workflow_images(self.post_version()) else "all"
+        have, now = workflow_images(self.post_version()), workflow_images({"layers": layers})
+        return "active" if not (now - have) else "all"          # an image taken out in Post goes from this version only
 
     def set_post_version(self, vid: int):
         """Another version shown: not a step of the Undo (opening is never one)."""
@@ -1063,12 +1064,16 @@ class ProjectModel(QObject):
             have = workflow_images(v)
             layers = list(v.get("layers") or [])
             for key, n in (have - want).items():
+                if key in self.version_removed(act):           # taken out of the active version alone: the others keep it
+                    continue
                 mine = [x["id"] for x in layers if x.get("kind") == "workflow" and (x.get("pid"), x.get("part")) == key]
                 gone = set(mine[-n:])
                 layers = [x for x in layers if x["id"] not in gone and not (x.get("kind") == "filter"
                                                                             and x.get("target") in gone)]
             added = []
             for key, n in (want - have).items():
+                if key in self.version_removed(v):             # this version took it out: it stays out
+                    continue
                 mine = [x for x in act["layers"] if x.get("kind") == "workflow" and (x.get("pid"), x.get("part")) == key]
                 added += mine[:n]
             v["layers"] = with_new_ids(added) + layers
@@ -1091,6 +1096,12 @@ class ProjectModel(QObject):
         """The (workflow id, part) taken out of Post by the user."""
         return {(int(a), b) for a, b in ((getattr(self.p, "post", None) or {}).get("removed") or [])}
 
+    def version_removed(self, version: dict | None = None) -> set:
+        """The (workflow id, part) taken out of this version only (the active one by default): a layer deleted in Post
+        leaves the other versions as they are."""
+        v = version if version is not None else self.post_version()
+        return {(int(a), b) for a, b in v.get("removed") or []}
+
     def post_default_part(self, p):
         """The part a workflow gives Post by default: with Stars, its Stars and background image."""
         return "combined" if p.opts.get("etoiles") == "retirer" else None
@@ -1101,7 +1112,7 @@ class ProjectModel(QObject):
         if layers is None:
             layers = self.post_version().get("layers") or []
         have = {x.get("pid") for x in layers if x.get("kind") == "workflow"}
-        out = self.post_removed()
+        out = self.post_removed() | self.version_removed()
         return [q for q in self.paths if q.pid not in have and (q.pid, self.post_default_part(q)) not in out
                 and not self.feeds_fusion(q) and self.gives_post(q)]
 
@@ -1128,7 +1139,17 @@ class ProjectModel(QObject):
                   if not post or getattr(q, "rendered", True)}
         now = {(x.get("pid"), x.get("part")) for x in layers if x.get("kind") == "workflow"}
         alive = {q.pid for q in self.paths}
-        out = {x for x in (self.post_removed() | (shown - now)) - now if x[0] in alive}
+        if scope == "active" and post and self.p.post["versions"][1:]:
+            # taken out in Post, with other versions: out of this one only (its own list), the others keep it
+            gone = {x for x in shown - now if x[0] in alive}
+            mine = {x for x in self.version_removed() | gone if x not in now}
+            out = {x for x in self.post_removed() if x not in now}
+            self.post_version()["removed"] = sorted([list(x) for x in mine], key=str)
+        else:
+            out = {x for x in (self.post_removed() | (shown - now)) - now if x[0] in alive}
+            if self.post_version().get("removed"):
+                self.post_version()["removed"] = sorted([list(x) for x in self.version_removed() if x not in now],
+                                                        key=str)
         self.p.post = {**{k: v for k, v in self.p.post.items() if k != "edited"},
                        "removed": sorted([list(x) for x in out], key=str)}
         self.post_version()["layers"] = layers
@@ -1166,6 +1187,9 @@ class ProjectModel(QObject):
             if part == "combined" and same:               # several Combine layers of one workflow: numbered (2nd round)
                 lay["name"] = f"{name} {len(same) + 1}"
             layers.insert(0, lay)
+            for v in self.p.post["versions"]:             # sent to Post again: back in every version, one that had
+                if v.get("removed"):                      # taken it out included
+                    v["removed"] = [r for r in v["removed"] if (int(r[0]), r[1]) != (pid, part)]
             return lay["id"]
         return self._post_edit(change, source, scope="all")
 
