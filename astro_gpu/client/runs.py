@@ -645,11 +645,20 @@ class RunDialog(QDialog):
         from ..core import sky_data
         for wid, steps in (getattr(self.plan, "left_out", None) or {}).items():
             v = self.s.view(wid)
-            for stage, why in steps.items():          # the data of the sky not on this computer (core/sky_data.py)
-                b = ENGINE_BLOCK.get(sky_data.NEEDED_BY.get(stage.split("@")[0].split("~")[0], ""), "")
+            for stage, why in steps.items():
+                base = stage.split("@")[0].split("~")[0]
+                name = v.name if v is not None else self.names.get(wid, "?")
+                if base not in sky_data.NEEDED_BY:    # an input left to wire (issue #165): its block's name, its reason
+                    from .blocks import STEPS
+                    from .model import wiring_text
+                    key = next((x["key"] for x in STEPS if base in x["stages"]), "")
+                    out.append(_('"{name}": {block} and the blocks after it not run: {why}').format(
+                        name=name, block=block_title(None, key) if key else stage,
+                        why=wiring_text(why) or _(why).rstrip(".")))
+                    continue
+                b = ENGINE_BLOCK.get(sky_data.NEEDED_BY.get(base, ""), "")   # the data of the sky not on this computer
                 out.append(_('"{name}": {block} and the blocks after it not run: {why}. Install it: Settings › '
-                             'Catalogs & astrometry').format(name=v.name if v is not None else self.names.get(wid, "?"),
-                                                            block=block_title(None, b) if b else stage,
+                             'Catalogs & astrometry').format(name=name, block=block_title(None, b) if b else stage,
                                                             why=_(why).rstrip(".")))
         out += [INFO_NOTE + text for text in self._asterion_note()]
         if self.plan is not None and self.plan.jobs and self.has_data():      # no disk need without data (6.7)

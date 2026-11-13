@@ -255,3 +255,29 @@ def test_the_run_window_says_when_asterion_is_not_installed(qapp, tmp_path, monk
         d.close()
     finally:
         done(w, m, page)
+
+
+def test_a_block_left_out_for_its_wiring_is_named_and_translated_without_the_install_tail(qapp, tmp_path, monkeypatch):  # noqa: F811
+    """A combination left out because its inputs are not on one grid: its block by its displayed name, not its engine
+    stage, the reason translated with the names of its ports, and no "Install it" sentence (that one is for the sky's
+    data only)."""
+    w, m, page = open_page(tmp_path, monkeypatch, workflows=("Full",))
+    try:
+        settle(w, page)
+        q = m.paths[0]
+        plan = m.plan_all()
+        plan.left_out = {q.pid: {"combine_sho": "Hα, O III are not on the grid of S II: place Align on after their "
+                                                "Stacking"}}
+        from astro_gpu.client.runs import RunDialog
+        d = RunDialog(m, plan, "Run")
+        en = [t for t in d.warnings() if "not run" in t]
+        assert en == [f'"{q.name}": Combination and the blocks after it not run: Hα, O III are not on the grid of S II: '
+                      "place Align on after their Stacking"]
+        i18n.set_language("fr")
+        fr = [t for t in d.warnings() if "non exécutés" in t]
+        assert len(fr) == 1 and "combine_sho" not in fr[0] and "Installer" not in fr[0] and "installer" not in fr[0]
+        assert "ne sont pas sur la grille de" in fr[0] and "are not on the grid" not in fr[0], fr
+        d.close()
+    finally:
+        i18n.set_language("en")
+        done(w, m, page)
