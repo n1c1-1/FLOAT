@@ -388,3 +388,31 @@ def test_the_compacting_winsorized_clipping_gives_the_same_rejections_on_the_car
     m0 = rc.combine(v, keep, w)[0]
     m1 = rc.combine(v, torch.isfinite(v) & ~b[0].cpu() & ~b[1].cpu(), w)[0]
     assert torch.allclose(m0, m1, rtol=1e-6, equal_nan=True)
+
+
+@pytest.mark.parametrize("n", [3, 4, 5, 6, 7, 9, 15, 30])
+def test_the_compiled_winsorized_clipping_gives_the_tensor_one_s_rejections(n):
+    v = _noisy_stack(n, 30000, 100 + n)
+    v[:, :3000] = torch.round(v[:, :3000] * 4) / 4              # ties in the deviations (the guard's order)
+    v[:, 3000:3100] = 1.0                                       # constant columns (sigma 0)
+    valid = torch.isfinite(v) & (torch.arange(30000)[None] % 17 != 0)
+    for low, high in ((3.0, 3.0), (1.0, 2.0), (0.3, 0.3)):      # the low thresholds make the guard bind
+        a = rc.winsorized_clip_torch(v, low, high, valid)
+        b = rc.winsorized_clip(v, low, high, valid)
+        assert all(bool((x == y).all()) for x, y in zip(a, b))
+        assert n < 5 or int(a[0].sum() + a[1].sum()) > 0
+
+
+@pytest.mark.parametrize("n", [5, 8, 16, 30, 50])
+def test_the_compiled_linear_fit_clipping_gives_the_tensor_one_s_rejections(n):
+    v = _noisy_stack(n, 20000, 200 + n)
+    v[:, 3000:3100] = 1.0                                       # constant columns (sigma 0)
+    v[:, 3100:3200] += torch.linspace(0, 5, n)[:, None]         # a slope along the frames
+    valid = torch.isfinite(v) & (torch.arange(20000)[None] % 13 != 0)
+    total = 0
+    for low, high in ((5.0, 3.5), (2.0, 2.0), (0.5, 1.0)):
+        a = rc.linear_fit_clip_torch(v, low, high, valid)
+        b = rc.linear_fit_clip(v, low, high, valid)
+        assert all(bool((x == y).all()) for x, y in zip(a, b))
+        total += int(a[0].sum() + a[1].sum())
+    assert total > 0

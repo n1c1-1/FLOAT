@@ -423,19 +423,22 @@ class Stack(Stage):
 
         grid_terms = None
 
-        def grid_poly(c):
-            """``poly_eval`` on the whole output grid (every frame's): its terms kept, the sums compiled on the CPU."""
+        def grid_poly(c, rows=None):
+            """``poly_eval`` on the whole output grid (every frame's), or on the grid rows ``rows`` = (first, end) only:
+            its terms kept, the sums compiled on the CPU."""
             nonlocal grid_terms
+            ra, rb = rows if rows else (0, H)
             if dev.type != "cpu":
-                return poly_eval(c, xx, yy)
+                return poly_eval(c, xx[ra:rb], yy[ra:rb])
             if grid_terms is None:
                 u, v = xx / (W / 2) - 1.0, yy / (H / 2) - 1.0
                 grid_terms = torch.stack([torch.ones_like(u), u, v, u * u, u * v, v * v, u ** 3, u * u * v, u * v * v,
                                           v ** 3]).numpy()
             from ..core.stack_kernels import poly
             n = torch.get_num_threads()
-            return (torch.from_numpy(poly(grid_terms, [float(c[0, i]) for i in range(10)], n)),
-                    torch.from_numpy(poly(grid_terms, [float(c[1, i]) for i in range(10)], n)))
+            gt = grid_terms if rows is None else grid_terms[:, ra:rb]
+            return (torch.from_numpy(poly(gt, [float(c[0, i]) for i in range(10)], n)),
+                    torch.from_numpy(poly(gt, [float(c[1, i]) for i in range(10)], n)))
 
         def quad_terms(u, v):
             a = u / (W / 2) - 1.0
@@ -527,30 +530,42 @@ class Stack(Stage):
                                  meta=meta, sel=sel, ch_of_k=ch_of_k, H=H, W=W, satval=satval, dev=dev, t0=t0,
                                  colour=colour, zone=zone)
 
-        def frame_model(i):
+        def frame_model(i, rows=None):
             """The frame normalised to the reference (value, ADU of the reference), where its samples land on the
             output grid (Xo, Yo), its saturated and bad samples, its additive sky difference in its own ADU (grad,
-            for the noise model) and its sky level per channel."""
-            fr = torch.from_numpy(mm[i]).to(dev)
+            for the noise model) and its sky level per channel. ``rows`` = (first, end): only those rows of the
+            frame (its normalisation already measured by an earlier call on the whole frame)."""
+            ra, rb = rows if rows else (0, H)
+            fr = torch.from_numpy(mm[i][ra:rb]).to(dev)
             if fpn is not None:
-                fr = torch.where(fr > VALID_MAX, fr, fr - fpn)
-            X, Y = grid_poly(coef[i])
+                fr = torch.where(fr > VALID_MAX, fr, fr - fpn[ra:rb])
+            X, Y = grid_poly(coef[i], rows)
             Q, bkg_level = frame_norm(i, fr)
             a = X / (W / 2) - 1.0
             b = Y / (H / 2) - 1.0
             terms = torch.stack([torch.ones_like(a), a, b, a * a, a * b, b * b])
-            Qs = torch.from_numpy(Q).to(dev, torch.float32)[chmap]
+            Qs = torch.from_numpy(Q).to(dev, torch.float32)[chmap[ra:rb]]
             grad = (Qs.permute(2, 0, 1) * terms).sum(0)
             sat = fr > VALID_MAX
             bad = torch.isnan(fr)
-            near = sat | (fr > NEAR_SATURATION * satval)
-            val = torch.where(sat, satval, fr)
+            sv = satval[ra:rb] if satval.dim() == 2 else satval
+            near = sat | (fr > NEAR_SATURATION * sv)
+            val = torch.where(sat, sv, fr)
             val = (val - grad) / transp[i]
             Xo, Yo = (X + 0.5) * S - 0.5 - ox, (Y + 0.5) * S - 0.5 - oy
             if chan_fix is not None:                  # each colour's own image placed on the green one
-                dx, dy = chan_fix.at(Xo, Yo, chmap)
+                dx, dy = chan_fix.at(Xo, Yo, chmap[ra:rb])
                 Xo, Yo = Xo - dx, Yo - dy
             return val, Xo, Yo, sat, bad, grad, bkg_level, near
+
+        def frame_extent(i):
+            """The lowest and highest output row (Yo) the samples of each row of the frame land on, two arrays of H."""
+            X, Y = grid_poly(coef[i])
+            Yo = (Y + 0.5) * S - 0.5 - oy
+            if chan_fix is not None:
+                Xo = (X + 0.5) * S - 0.5 - ox
+                Yo = Yo - chan_fix.at(Xo, Yo, chmap)[1]
+            return Yo.amin(1).cpu().numpy(), Yo.amax(1).cpu().numpy()
 
         def deposit(num, den, val, Xo, Yo, w, keep, rej=None, tally=None):
             if zone is not None:                      # only the samples of the zone: the time saved
@@ -647,7 +662,7 @@ class Stack(Stage):
         clock.start()
         by_count_info = None
         if by_count:
-            by_count_info = count_pass(ctx, p, frame_model, used, weight, chmap, h, S, Ho, Wo, dev, accA, accB, near_acc,
+            by_count_info = count_pass(ctx, p, frame_model, frame_extent, used, weight, chmap, h, S, Ho, Wo, dev, accA, accB, near_acc,
                                        clip_acc, rmap, rej_frames, (Ho * Wo, H * W))
             rej_tot, tested = by_count_info["rejected"], by_count_info["tested"]
         for c_, i in enumerate([] if by_count else used):
@@ -1433,7 +1448,7 @@ def rejection_line(mode: str, by_hand: bool, n: int, scale: float, pixfrac: floa
             f"{'under' if v < need else 'at least'} the {need} a sigma clipping at {kappa:g} sigma needs)")
 
 
-def count_pass(ctx, p: StackParams, frame_model, used, weight, chmap, h: float, S: float, Ho: int, Wo: int, dev,
+def count_pass(ctx, p: StackParams, frame_model, frame_extent, used, weight, chmap, h: float, S: float, Ho: int, Wo: int, dev,
                accA, accB, near_acc, clip_acc, rmap, rej_frames: dict, sizes: tuple[int, int]) -> dict:
     """The rejection by frame count (``drizzle_rejection = by_count``): Siril's way [S1]. The output is cut into bands of
     rows; for each band every frame's drops are deposited apart (the frame's value and drop weight at each point, none
@@ -1464,9 +1479,12 @@ def count_pass(ctx, p: StackParams, frame_model, used, weight, chmap, h: float, 
     choice: list = [None, None, None]
     low_f, high_f = np.zeros(N, np.int64), np.zeros(N, np.int64)
     rej_tot = tested = 0
+    t_dep = t_rej = t_acc = t_mod = 0.0
     m = 2 * h + 1
+    extent: dict = {}
     A, B = accA, accB
     for n_done, b in enumerate(order):
+        t_a = time.time()
         r0 = starts[b]
         nr = min(rows, Ho - r0)
         Pn = nr * Wo
@@ -1475,18 +1493,29 @@ def count_pass(ctx, p: StackParams, frame_model, used, weight, chmap, h: float, 
         Vnear = torch.zeros_like(Vn)
         Vclip = torch.zeros_like(Vn)
         for k, i in enumerate(used):
-            val, Xo, Yo, sat, bad, _, _, near = frame_model(i)
+            t_m = time.time()
+            if i not in extent:
+                extent[i] = frame_extent(i)
+            lo_y, hi_y = extent[i]                    # only the frame rows whose samples reach the band
+            hit = np.nonzero((hi_y > r0 - m) & (lo_y < r0 + nr + m))[0]
+            if len(hit) == 0:
+                continue
+            ra, rb = int(hit[0]), int(hit[-1]) + 1
+            val, Xo, Yo, sat, bad, _, _, near = frame_model(i, (ra, rb))
+            t_mod += time.time() - t_m
+            chw = chmap[ra:rb]
             Yb = Yo - r0
             keep = ~bad & (Yb > -m) & (Yb < nr + m) & (Xo > -m) & (Xo < Wo + m)
             w_i = float(weight[i])
-            drizzle_deposit(Vn[k], Vd[k], val, Xo, Yb, w_i, keep, chmap, h, S, nr, Wo)
+            drizzle_deposit(Vn[k], Vd[k], val, Xo, Yb, w_i, keep, chw, h, S, nr, Wo)
             kn = keep & near
             if kn.any():
-                drizzle_deposit(Vnear[k], None, near.float(), Xo, Yb, w_i, kn, chmap, h, S, nr, Wo)
-                drizzle_deposit(Vclip[k], None, sat.float(), Xo, Yb, w_i, keep & sat, chmap, h, S, nr, Wo)
+                drizzle_deposit(Vnear[k], None, near.float(), Xo, Yb, w_i, kn, chw, h, S, nr, Wo)
+                drizzle_deposit(Vclip[k], None, sat.float(), Xo, Yb, w_i, keep & sat, chw, h, S, nr, Wo)
             del val, Xo, Yo, Yb, sat, bad, near, keep, kn
             ctx.progress(0.3 + 0.7 * (n_done + (k + 1) / N) / len(starts),
                          f"rejection by frame count: band {n_done + 1}/{len(starts)}, frame {k + 1}/{N}")
+        t_b = time.time()
         Vn, Vd = Vn.view(N, 3, Pn), Vd.view(N, 3, Pn)
         keepv = torch.zeros(N, 3, Pn, dtype=torch.bool, device=dev)
         low_c = torch.zeros(Pn, dtype=torch.int64, device=dev)
@@ -1510,6 +1539,7 @@ def count_pass(ctx, p: StackParams, frame_model, used, weight, chmap, h: float, 
             rej_tot += int((lo | hi).sum())
             tested += int(valid.sum())
             del lo, hi, valid
+        t_c = time.time()
         rmap.add_counts(r0, low_c.view(nr, Wo), high_c.view(nr, Wo))
         sl = slice(r0, r0 + nr)
         for acc, mask in ((A, half_a), (B, ~half_a)):
@@ -1522,6 +1552,13 @@ def count_pass(ctx, p: StackParams, frame_model, used, weight, chmap, h: float, 
             near_acc.view(3, Ho, Wo)[:, sl] += (Vnear.view(N, 3, Pn)[sel] * kk).sum(0).view(3, nr, Wo).to(near_acc.device)
             clip_acc.view(3, Ho, Wo)[:, sl] += (Vclip.view(N, 3, Pn)[sel] * kk).sum(0).view(3, nr, Wo).to(clip_acc.device)
         del Vn, Vd, Vnear, Vclip, keepv
+        t_d = time.time()
+        t_dep, t_rej, t_acc = t_dep + t_b - t_a, t_rej + t_c - t_b, t_acc + t_d - t_c
+        if n_done < 3:
+            ctx.log(f"  band {n_done + 1}: {t_b - t_a:.1f} s on the frames ({t_mod:.1f} s placing so far), {t_c - t_b:.1f} s rejecting, "
+                    f"{t_d - t_c:.1f} s adding")
+    ctx.log(f"rejection by frame count: {t_dep:.0f} s on the frames ({t_mod:.0f} s of them placing the samples), {t_rej:.0f} s rejecting, "
+            f"{t_acc:.0f} s adding the kept values")
     for k, i in enumerate(used):
         rej_frames[int(i)] = (int(low_f[k]), int(high_f[k]), 0)
     return {"rejected": rej_tot, "tested": tested, "band_rows": rows,

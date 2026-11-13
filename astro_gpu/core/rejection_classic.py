@@ -202,6 +202,20 @@ def winsorized_clip(v: torch.Tensor, low: float, high: float, valid: torch.Tenso
                     max_rounds: int = 100, max_winsor: int = 200):
     """(low, high) rejected (N, P): The reference program's winsorized sigma clipping (see the module's docstring).
 
+    On the processor, a compiled loop per column (core/rejection_kernels.py: the same rejections, a column's values
+    summed in the same order); on a card, ``winsorized_clip_torch``."""
+    if v.device.type == "cpu":
+        from .rejection_kernels import winsorized
+        valid = torch.isfinite(v) if valid is None else valid
+        lo, hi = winsorized(v.numpy(), valid.numpy(), low, high, max_rounds, max_winsor, torch.get_num_threads())
+        return torch.from_numpy(lo), torch.from_numpy(hi)
+    return winsorized_clip_torch(v, low, high, valid, max_rounds, max_winsor)
+
+
+def winsorized_clip_torch(v: torch.Tensor, low: float, high: float, valid: torch.Tensor | None = None,
+                          max_rounds: int = 100, max_winsor: int = 200):
+    """The winsorized sigma clipping in tensor operations, on any device (see ``winsorized_clip``).
+
     Each column is clipped alone, so the work follows the columns still going: the rounds and the winsorizing steps
     work on the whole band while most columns are unfinished, and on the unfinished ones only once they are fewer than
     half of it (a gather of columns, read-only on the data; the results written back with ``index_copy``), where
@@ -427,7 +441,21 @@ def l1_line(y: torch.Tensor, n: torch.Tensor, max_iter: int = 100):
 
 def linear_fit_clip(v: torch.Tensor, low: float, high: float, valid: torch.Tensor | None = None,
                     max_rounds: int = 100):
-    """(low, high) rejected (N, P): The reference processing suite's linear fit clipping (see the module's docstring)."""
+    """(low, high) rejected (N, P): The reference processing suite's linear fit clipping (see the module's docstring).
+
+    On the processor, a compiled loop per column (core/rejection_kernels.py, the same rejections); on a card,
+    ``linear_fit_clip_torch``."""
+    if v.device.type == "cpu":
+        from .rejection_kernels import linear_fit
+        valid = torch.isfinite(v) if valid is None else valid
+        lo, hi = linear_fit(v.numpy(), valid.numpy(), low, high, max_rounds, torch.get_num_threads())
+        return torch.from_numpy(lo), torch.from_numpy(hi)
+    return linear_fit_clip_torch(v, low, high, valid, max_rounds)
+
+
+def linear_fit_clip_torch(v: torch.Tensor, low: float, high: float, valid: torch.Tensor | None = None,
+                          max_rounds: int = 100):
+    """The linear fit clipping in tensor operations, on any device (see ``linear_fit_clip``)."""
     valid = torch.isfinite(v) if valid is None else valid
     N, P = v.shape
     lo = torch.zeros_like(valid)
