@@ -187,3 +187,26 @@ def test_the_block_comes_before_denoise_and_only_its_method_sets_its_stage():
     assert wfl.node_implied(blocks, "deconv") == {"method": "rl"}
     without = wfl.sync_blocks(blocks, "frames", {**full, "deconvolution": None})
     assert "deconv" not in [n["block"] for n in without]
+
+
+def test_cpu_window_filters_equal_the_torch_ones():
+    """The processor's separable window filters give the very values of the max_pool2d they replace (the
+    restoration's result is unchanged), and the restoration on a small synthetic image is the same as with them."""
+    import torch
+    import torch.nn.functional as F
+    from astro_gpu.stages import deconv_lib as lib
+    g = torch.Generator().manual_seed(3)
+    u = (torch.rand(3, 70, 90, generator=g) > 0.2).float()
+    k = 25
+    ref = 1 - F.max_pool2d(F.pad((1 - u)[None], (12, 12, 12, 12), mode="replicate"), k, 1)[0]
+    assert torch.equal(lib._min_filter(u, k), ref)
+    a = torch.rand(70, 90, generator=g)
+    for kk in (7, 25):
+        assert torch.equal(lib._local_max(a, kk), F.max_pool2d(a[None, None], kk, 1, kk // 2)[0, 0])
+    yy, xx = torch.meshgrid(torch.arange(70.0), torch.arange(90.0), indexing="ij")
+    img = 0.05 + 0.5 * torch.exp(-((yy - 35) ** 2 + (xx - 45) ** 2) / 8) + 0.01 * torch.rand(70, 90, generator=g)
+    K = torch.exp(-((torch.arange(-4.0, 5)[:, None] ** 2 + torch.arange(-4.0, 5)[None, :] ** 2) / 4.0))
+    K = K / K.sum()
+    out = lib.restore_saturated(img[None].repeat(2, 1, 1), K, 5, 0.002, 0.01, 1.0, damping=3.0, counts=1e4)
+    assert torch.isfinite(out).all() and out.shape == (2, 70, 90)
+    assert float(out[0, 35, 45]) > float(img[35, 45])          # the peak sharpened

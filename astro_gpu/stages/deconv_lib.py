@@ -25,6 +25,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
+import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -184,9 +185,9 @@ class StackDeconvolver:
         noise = _blur(0.5 * (A[1 if C > 1 else 0] - B[1 if C > 1 else 0]), 1.0)
         sig = _robust_sigma(noise[valid])
         gs = _blur(g - sky, 1.0)
-        mx = F.max_pool2d(gs[None, None], 7, 1, 3)[0, 0]
+        mx = _local_max(gs, 7)
         ok_area = valid & ~_dilate(sat, R)
-        ok_area = ok_area & (F.max_pool2d((~valid).float()[None, None], 2 * R + 1, 1, R)[0, 0] < 0.5)
+        ok_area = ok_area & (_local_max((~valid).float(), 2 * R + 1) < 0.5)
         peaks_lo = (gs == mx) & (gs > 5 * sig)
         cand = peaks_lo & (gs > s.snr_min * sig) & ok_area
         cand[:R + 2] = False
@@ -396,6 +397,28 @@ def _kept(images, outs, keep, valid):
     return res
 
 
+def _local_max(a: torch.Tensor, k: int) -> torch.Tensor:
+    """Maximum of a (H, W) plane over the k x k window centred on each pixel (outside the plane ignored): the same
+    values as ``F.max_pool2d(a[None, None], k, 1, k // 2)[0, 0]``, by OpenCV's separable filter on the processor."""
+    if a.device.type != "cpu":
+        return F.max_pool2d(a[None, None], k, 1, k // 2)[0, 0]
+    return torch.from_numpy(cv2.dilate(a.numpy(), np.ones((k, k), np.uint8)))
+
+
+def _min_filter(u: torch.Tensor, k: int) -> torch.Tensor:
+    """Sliding minimum of (n, H, W) over k x k windows centred on each pixel, the borders replicated: the pixels no
+    bright one reaches. Same values as ``1 - max_pool2d(pad(1 - u, replicate), k, 1)``; on the processor OpenCV's
+    separable filter does it in a fraction of the time (the square window took four fifths of the restoration)."""
+    if u.device.type != "cpu":
+        R = k // 2
+        return 1 - F.max_pool2d(F.pad((1 - u)[None], (R, R, R, R), mode="replicate"), k, 1)[0]
+    a = u.numpy()
+    out = np.empty_like(a)
+    for i in range(a.shape[0]):
+        out[i] = cv2.erode(a[i], np.ones((k, k), np.uint8), borderType=cv2.BORDER_REPLICATE)
+    return torch.from_numpy(out)
+
+
 def restore_saturated(d: torch.Tensor, K: torch.Tensor, iterations: int, reg: float, sig: float, level: float, *,
                       damping: float = 0.0, counts: float = 1.0, stop: float = 0.0, support: torch.Tensor | None = None,
                       local: float = 0.0) -> torch.Tensor:
@@ -420,7 +443,7 @@ def restore_saturated(d: torch.Tensor, K: torch.Tensor, iterations: int, reg: fl
     f = g.clamp(min=low)
     for _ in range(iterations):
         u = (f <= BRIGHT_LEVEL).float()
-        v = 1 - F.max_pool2d(F.pad((1 - u)[None], (R, R, R, R), mode="replicate"), k, 1)[0]    # not reached by S
+        v = _min_filter(u, k)                                              # not reached by S
         f_u, f_s = u * f, f - u * f
         model = conv(f_u).clamp(min=low)
         gain = g / model
