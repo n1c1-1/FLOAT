@@ -365,26 +365,8 @@ class LayerSource(Provider):
         return self.grid(pid).kind
 
     # ------------------------------------------------------------ geometry
-    def _joint_box(self, a, b) -> tuple[float, float, float, float] | None:
-        """The frame of two images put together (a Combine layers layer): the rectangle where both have data (their
-        results' ``valid.npy`` and'ed, trimmed as a combination's frame is: render_simple.whole_box), as (x0, x1, y0, y1) in
-        the pixels of ``a``'s grid. A single stack is not cropped, but what puts two of them together is."""
-        from ...stages.render_simple import whole_box
-        fa, fb = self.folder(a), self.folder(b)
-        if fa is None or fb is None:
-            return None
-        ga, gb = self.grid(a), self.grid(b)
-        va, vb = np.load(fa.path / "valid.npy", mmap_mode="r"), np.load(fb.path / "valid.npy", mmap_mode="r")
-        va = np.asarray(va, bool)
-        vb = np.asarray(vb, bool)
-        if vb.shape != va.shape:
-            vb = cv2.resize(vb.astype(np.uint8), (va.shape[1], va.shape[0]), interpolation=cv2.INTER_NEAREST).astype(bool)
-        y0, y1, x0, x1 = whole_box(va & vb)
-        return float(x0), float(x1), float(y0), float(y1)
-
-    def canvas(self, pids: list[int], joint: tuple = ()) -> Canvas:
-        """The area every layer covers, in the pixels of the first one's grid, on multiples of ``ALIGN``; ``joint``: pairs
-        of layers a Combine layers layer puts together, whose common frame limits it too."""
+    def canvas(self, pids: list[int]) -> Canvas:
+        """The area every layer covers, in the pixels of the first one's grid, on multiples of ``ALIGN``."""
         grids = [self.grid(p) for p in pids]
         ref = grids[0]
         x0, x1, y0, y1 = (float(c) for c in ref.crop)
@@ -392,13 +374,6 @@ class LayerSource(Provider):
             rx, ry = ref.W / g.W, ref.H / g.H                    # a pixel of g is this many pixels of the reference
             x0, x1 = max(x0, g.crop[0] * rx), min(x1, g.crop[1] * rx)
             y0, y1 = max(y0, g.crop[2] * ry), min(y1, g.crop[3] * ry)
-        for a, b in joint:
-            box = self._joint_box(a, b)
-            if box is not None:
-                ga = self.grid(a)
-                rx, ry = ref.W / ga.W, ref.H / ga.H
-                x0, x1 = max(x0, box[0] * rx), min(x1, box[1] * rx)
-                y0, y1 = max(y0, box[2] * ry), min(y1, box[3] * ry)
         ox, oy = -(-int(np.ceil(x0)) // ALIGN) * ALIGN, -(-int(np.ceil(y0)) // ALIGN) * ALIGN
         ex, ey = int(np.floor(x1)) // ALIGN * ALIGN, int(np.floor(y1)) // ALIGN * ALIGN
         if ex - ox < ALIGN or ey - oy < ALIGN:
