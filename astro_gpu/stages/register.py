@@ -193,7 +193,10 @@ class Register(Stage):
                     "degrees")
         if failed:
             ctx.log(f"{len(failed)} frame(s) could not be aligned and will be ignored (no trustworthy match: "
-                    f"under {SPARSE_MIN_MATCHES} star pairs, or a residual too large), e.g. {failed[0]}", "warning")
+                    f"under {SPARSE_MIN_MATCHES} star pairs, or a residual too large)", "warning")
+            gone = set(failed)
+            for i in [i for i in range(n) if meta[i]["path"] in gone][:30]:
+                ctx.log(left_out_reason(os.path.basename(meta[i]["path"]), cats[i], refcat, tree, W, H), "warning")
         # the transparency from the stars' flux in a fixed aperture (holding their light in every frame), not from
         # their flux above the detection threshold, which follows the seeing: on Iris a frame of 5.3 px stars read
         # 0.78 for 0.91 (its signal was scaled up 16 % too much, and its weight cut)
@@ -425,6 +428,23 @@ def fit_frame(cat, ref, tree, W, H):
     if r2 is not None and r2[2] < max(1.0, 2 * (r[2] if r is not None else 0.5)) and (r is None or r2[1] > r[1]):
         return r2
     return r
+
+
+def left_out_reason(name: str, cat, ref, tree, W, H) -> str:
+    """The log line of a frame left out of the alignment: its name, its stars and the star pairs it makes with the
+    reference (after the shift of the stars' vote), and the condition that failed."""
+    nst = 0 if cat is None else len(cat)
+    if nst < 5:
+        return f"{name} left out: no stars detected (a dark or a covered frame?)"
+    pairs = 0
+    if nst >= 30:
+        d, _j = tree.query(cat[:, :2] - initial_shift(ref, cat, W, H), distance_upper_bound=4.0)
+        pairs = int(np.count_nonzero(np.isfinite(d)))
+    if nst < 30:
+        return f"{name} left out: only {nst} stars detected, too few to match"
+    if pairs < SPARSE_MIN_MATCHES:
+        return f"{name} left out: {nst} stars detected, {pairs} star pairs with the reference (under {SPARSE_MIN_MATCHES})"
+    return f"{name} left out: {nst} stars detected, {pairs} star pairs with the reference but a residual too large"
 
 
 def fit_half_turn(cat, ref, tree, W, H, near=None):

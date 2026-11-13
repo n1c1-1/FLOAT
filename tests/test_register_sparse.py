@@ -120,8 +120,9 @@ def test_a_sparse_session_aligns_and_says_what_it_rejected(tmp_path, monkeypatch
     assert float(np.median(z["rms"][ok])) < 0.6
     said = [m for _, m in logs]
     assert any(m.startswith("sparse field: ") for m in said)
-    assert any(l == "warning" and m.startswith("1 frame(s) could not be aligned and will be ignored") and m.endswith("e.g. f6.fits")
+    assert any(l == "warning" and m.startswith("1 frame(s) could not be aligned and will be ignored")
                for l, m in logs)
+    assert any(l == "warning" and m.startswith("f6.fits left out: ") for l, m in logs)
 
 
 def test_a_field_with_enough_stars_stays_on_the_usual_path(tmp_path, monkeypatch):

@@ -246,6 +246,18 @@ PATTERNS: list[tuple[re.Pattern, str, tuple]] = [
         # io/frames.py)
         (r"^useful area from the frames' header: (\d+)x(\d+) of (\d+)x(\d+) pixels, the overscan left out$",
          "useful area from the frames' header: {0}x{1} of {2}x{3} pixels, the overscan left out", ()),
+        (r"^(\d+) frame\(s\) could not be aligned and will be ignored \(no trustworthy match: under (\d+) star pairs, or a "
+         r"residual too large\)$",
+         "{0} frame(s) could not be aligned and will be ignored (no trustworthy match: under {1} star pairs, or a "
+         "residual too large)", ()),
+        (r"^(.+) left out: no stars detected \(a dark or a covered frame\?\)$",
+         "{0} left out: no stars detected (a dark or a covered frame?)", ()),
+        (r"^(.+) left out: only (\d+) stars detected, too few to match$",
+         "{0} left out: only {1} stars detected, too few to match", ()),
+        (r"^(.+) left out: (\d+) stars detected, (\d+) star pairs with the reference \(under (\d+)\)$",
+         "{0} left out: {1} stars detected, {2} star pairs with the reference (under {3})", ()),
+        (r"^(.+) left out: (\d+) stars detected, (\d+) star pairs with the reference but a residual too large$",
+         "{0} left out: {1} stars detected, {2} star pairs with the reference but a residual too large", ()),
         (r"^sparse field: (\d+) frame\(s\) aligned from a few stars \(rotation, shift and scale only\)$",
          "sparse field: {0} frame(s) aligned from a few stars (rotation, shift and scale only)", ()),
         # issue #63: frames of a camera turned between two nights (half a turn, or any angle)
