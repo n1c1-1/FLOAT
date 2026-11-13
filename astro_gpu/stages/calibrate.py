@@ -779,6 +779,11 @@ def _read_frames(paths: list[str], put, start: int = 0, tick=None, read=None) ->
                 tick(start + c + 1)
 
 
+def _master_name(kind: str) -> str:
+    """The calibration frames a shared master is made of, as the logs say them: bias, darks, flat darks, flats."""
+    return "flats" if kind == "flat" else kind.replace("colour_median_", "").replace("median_", "").replace("_", " ")
+
+
 def _shared(ctx: Context, kind: str, paths: list[str], build, extra: bytes = b"") -> np.ndarray:
     """A master built once for identical inputs: the same files (name, size, date), the same ``extra`` (what else it
     depends on) and the same code version give the same master, kept under the project's store and read by every
@@ -798,7 +803,8 @@ def _shared(ctx: Context, kind: str, paths: list[str], build, extra: bytes = b""
     if f.is_file():
         try:
             got = np.load(f)
-            ctx.log(f"the {kind.replace('_', ' ')} ({len(paths)} files) were already read by another session: master reused")
+            ctx.log(f"master of the {_master_name(kind)} reused: " + (
+                "its file was" if len(paths) == 1 else f"its {len(paths)} files were") + " already read by another session")
             return got
         except Exception:
             pass
@@ -807,6 +813,8 @@ def _shared(ctx: Context, kind: str, paths: list[str], build, extra: bytes = b""
     tmp = f.with_name(f.name + f".{os.getpid()}.tmp.npy")
     np.save(tmp, out)
     tmp.replace(f)
+    ctx.log(f"master of the {_master_name(kind)} built from " + ("1 file" if len(paths) == 1 else f"{len(paths)} files")
+            + " and kept for the other sessions")
     return out
 
 
