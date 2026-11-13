@@ -377,7 +377,7 @@ class Combination(Stage):
             ch = channel_of(np.asarray(np.load(d / name, mmap_mode="r")), inp.get("channel", "L"))
             wcs_f = Path(inp.get("wcs") or "")
             if not ref:
-                from ..core.imgutil import read_wcs          # imgutil loads OpenCV: not when the engine's API is imported
+                from ..core.imgutil import read_wcs  # imgutil loads OpenCV: not when the engine's API is imported
                 ref = {"shape": ch.shape, "wcs": read_wcs(wcs_f) if wcs_f.is_file() else None, "dir": d}
             shapes[inp["role"]] = list(ch.shape)
             valid_all = valid if valid_all is None else (valid_all & valid)
