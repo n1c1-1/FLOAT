@@ -104,7 +104,7 @@ GALLERY: list[dict] = [
          text="Several images to Post, one layer each: each Image block takes its file in the graph."),
     dict(key="dual_x2", tab="frames", name="Dual-band x2", opts=FULL, kind="fusion", palette=SHO_DEFAULT,
          filters=["O III / H-alpha", "O III / S II"], dual_x2=True,
-         text="A colour camera with two dual-band filters (O III/H-alpha and O III/S II) and a session for the stars"),
+         text="A colour camera with two dual-band filters (O III/H-alpha and O III/S II) and a session for the stars."),
 ]
 
 #: the template chosen first in the frames' tab
