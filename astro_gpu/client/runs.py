@@ -542,8 +542,10 @@ class RunDialog(QDialog):
                 continue
             state = row_state([j.state for j in jobs])
             frac = t.progress(jobs)                          # as its block's bar in the graph (#136)
-            if r.echo:                                       # Selection: its Registration's state, no time of its own
-                w.show_state(state, frac, "", self._tip(jobs, state))
+            if r.echo:                                       # Selection: its Registration's state; no time of its own
+                # (it is a threshold on what Registration measured, nothing is computed for it): a dash once it is
+                # over, like a row that did nothing, so that the empty cell is not taken for a missing time
+                w.show_state(state, frac, "—" if state in (DONE, SKIPPED, NOT_STARTED) else "", self._tip(jobs, state))
                 continue
             if state == DONE:
                 real = sum(j.duration or 0.0 for j in jobs)

@@ -845,3 +845,29 @@ def test_a_run_with_a_failed_block_ends_done_and_the_recap_and_log_list_it(world
     row = next(x for x in shown if x.startswith("Gradient 2 failed"))
     assert BAD in shown[row] and "1 block failed" in shown, shown
     d.close()
+
+
+def test_the_selection_row_shows_a_dash_once_done_not_an_empty_time(world):
+    """The Selection row never showed a duration (it has no job of its own: a threshold on what Registration
+    measured): its cell stayed empty, like a missing time. Done, it says a dash."""
+    import time
+    w = world(blocks=[{"block": "calibration"}, {"block": "registration"}, {"block": "selection"},
+                      {"block": "stacking"}])
+    now = time.time()
+    plan, t, k = _calibrating(w, now)
+    t.apply([{"t": now, "type": "stage_end", "run": "r1", "stage": "calibrate", "key": k["calibrate"], "status": "done",
+              "duration": 300.0},
+             {"t": now, "type": "stage_start", "run": "r1", "stage": "register", "key": k["register"]}])
+    d = RunDialog(w.m, plan, "Run", track=t)
+    try:
+        d.refresh()
+        sel = [r for r in d.rows if r.row.echo]
+        if not sel:
+            pytest.skip("this world has no Selection block")
+        assert all(r.dur.text() == "" for r in sel)                     # its Registration is running
+        t.apply([{"t": now, "type": "stage_end", "run": "r1", "stage": "register", "key": k["register"],
+                  "status": "done", "duration": 100.0}])
+        d.refresh()
+        assert all(r.dur.text() == "—" for r in sel)
+    finally:
+        d.close()
