@@ -283,5 +283,9 @@
   "Name refused: another version is already named “{name}”": "Nom refusé : une autre version s'appelle déjà « {name} »",
   "Both images of “{name}” are hidden": "Les deux images de « {name} » sont masquées",
   "Every layer is hidden": "Tous les calques sont masqués",
-  "Nothing under this layer to blend with": "Rien sous ce calque à fusionner"
+  "Nothing under this layer to blend with": "Rien sous ce calque à fusionner",
+  "Outdated: run to update": "Obsolète : exécuter pour mettre à jour",
+  "Run the workflows that are out of date": "Exécuter les workflows obsolètes",
+  "Needs a run. Unticked: every color stretched apart, which neutralizes the background (the workflow's output is prepared again)": "Demande une exécution. Décoché : chaque couleur étirée à part, ce qui neutralise le fond (la sortie du workflow est préparée à nouveau)",
+  "Linked channels is a setting of the output: run to see it": "Canaux liés est un réglage de la sortie : exécuter pour le voir"
 }

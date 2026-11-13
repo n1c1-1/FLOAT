@@ -226,3 +226,26 @@ def test_control_round_delete_greyed_on_the_last_layer_says_why_and_the_star_not
     finally:
         page.shutdown()
         page.deleteLater()
+
+
+def test_a_picture_from_outdated_results_is_said_over_it_with_a_run_and_the_row_keeps_its_word(m):
+    _rendered(m)
+    page = _page(m)
+    v = page.view
+    asked = []
+    v.runAsked.connect(lambda: asked.append(1))
+    try:
+        p = next(q for q in m.paths if q.name == "Classic stack")
+        p.computed = True
+        v.rebuild()
+        assert not v.stale.isVisibleTo(v)
+        p.computed = False                                   # its results are outdated: Post shows the earlier ones
+        v.rebuild()
+        assert v.stale.isVisibleTo(v) and v.stale_text.text().startswith("Outdated: run to update")
+        lay = next(x for x in v.layers if x["kind"] == "workflow" and x["pid"] == p.pid)
+        assert v.sub_text(lay).startswith("preview")         # the word first: the end of a row is cut
+        v.stale_run.click()
+        assert asked == [1]
+    finally:
+        page.shutdown()
+        page.deleteLater()

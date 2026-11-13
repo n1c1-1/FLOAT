@@ -919,6 +919,19 @@ class PostView(QWidget):
         self.viewer.overlays.append(self._heal_overlay)
         self.viewer.banner = _("Rendering…")
         self.viewer.crop_box = tuple(self.crop) if self.crop else None
+        # a picture from outdated results: said over it, with the Run that brings it up to date (not a pop-up)
+        self.stale = QFrame()
+        self.stale.setStyleSheet(f"QFrame {{ border-bottom: 2px solid {WARN}; }} QLabel {{ border: none; }}")
+        sl = QHBoxLayout(self.stale)
+        sl.setContentsMargins(10, 4, 10, 4)
+        self.stale_text = label(_("Outdated: run to update"), "dim")
+        self.stale_run = QPushButton(_("Run"))
+        self.stale_run.setToolTip(_("Run the workflows that are out of date"))
+        self.stale_run.clicked.connect(lambda: self.runAsked.emit())
+        sl.addWidget(self.stale_text, 1)
+        sl.addWidget(self.stale_run)
+        self.stale.hide()
+        mv.addWidget(self.stale)
         mv.addWidget(self.viewer, 1)
         self.hint = label("", "small")
         self.hint.setContentsMargins(10, 3, 10, 5)
@@ -2021,6 +2034,7 @@ class PostView(QWidget):
     def rebuild(self, props: bool = True):
         """The layers' rows built again; ``props``: the properties panel too (not for a visibility toggle, issue #24:
         its scroll and an open curves editor were lost)."""
+        self._update_stale()
         self._mask_button()
         self._ann_buttons()
         self.b_heal.blockSignals(True)                   # the tool is on while its layer is the one chosen
@@ -2827,14 +2841,17 @@ class PostView(QWidget):
             # issue #49: the Output block's setting, here (the block is in the wire): its channels stretched linked
             # the same control, the same name as in the Output's panel of the graph (one name, one kind of control)
             c = QCheckBox(_("Linked channels"))
-            c.setToolTip(_("Unticked: every color stretched apart, which neutralizes the background (the "
-                           "workflow's output is prepared again)"))
+            c.setToolTip(_("Needs a run. Unticked: every color stretched apart, which neutralizes the background "
+                           "(the workflow's output is prepared again)"))
             try:
                 linked = self.s.param_value(p, "render_simple", "linked")
             except Exception:  # noqa: BLE001 - a value the worker has not read yet
                 linked = True
             c.setChecked(linked in (None, True))
-            c.toggled.connect(lambda on, q=p: self._set_workflow_param(q, "render_simple", "linked", bool(on)))
+            c.toggled.connect(lambda on, q=p: (self._set_workflow_param(q, "render_simple", "linked", bool(on)),
+                                               self._update_stale(),
+                                               self.toasted.emit(_("Linked channels is a setting of the output: "
+                                                                   "run to see it"))))
             self.pbox.addWidget(c)
             self.linked_box = c
         bases = self.bases_of(p)
@@ -3091,11 +3108,11 @@ class PostView(QWidget):
         """Under a layer's name: mode and opacity; for a filter of its own row, that it applies to everything below (a
         nested one says it by its place)."""
         bits = []
+        if lay["kind"] == "workflow" and self.is_preview(lay["pid"]):
+            bits.append(_("preview"))                       # first: the end of a long row is cut
         if lay["kind"] == "filter" and not lay.get("target"):
             bits.append(_("on everything below"))
         bits.append(f"{_(lay['mode'])} · {with_unit(format(lay['opacity'], '.0f'), '%')}")
-        if lay["kind"] == "workflow" and self.is_preview(lay["pid"]):
-            bits.append(_("preview"))
         if lay["kind"] == "image":
             bits.append(_("image") if self.worker_has_image(lay) else _("not found"))
         if is_pixel(lay) and lay["id"] in self._collapsed:
@@ -3108,8 +3125,16 @@ class PostView(QWidget):
         p = self.path(pid)
         return p is not None and (bool(getattr(p, "provisional", False)) or (p.rendered and not p.computed))
 
+    def _update_stale(self):
+        """The strip over the picture: shown while a layer on screen comes from outdated results."""
+        old = [x for x in self.layers if x["kind"] == "workflow" and x.get("visible") and self.is_preview(x["pid"])]
+        self.stale.setVisible(bool(old))
+        if old:
+            self.stale_text.setText(_("Outdated: run to update") + "  ·  " + ", ".join(layer_name(x) for x in old[:3]))
+
     def _refresh_rows(self):
         """The row texts (mode, opacity) without rebuilding the properties under the mouse."""
+        self._update_stale()
         for row in self.rows:
             row.sub.setText(self.sub_text(row.lay))
 
