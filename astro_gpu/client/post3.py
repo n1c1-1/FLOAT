@@ -2890,6 +2890,8 @@ class PostView(QWidget):
                                                                    "run to see it"))))
             self.pbox.addWidget(c)
             self.linked_box = c
+            self.linked_note = label(_("Output setting: applied by a run"), "small", wrap=True)
+            self.pbox.addWidget(self.linked_note)
         bases = self.bases_of(p)
         if bases:
             r = QHBoxLayout()
