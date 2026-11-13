@@ -132,7 +132,7 @@ def _net(kind: str, dev: str):
             net.eval()
         else:
             from ..stages.star_removal import network
-            net = network(d)
+            net = network(d, inference=True)
         _NETS[(kind, dev)] = net
     return _NETS[(kind, dev)]
 
