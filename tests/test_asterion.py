@@ -274,8 +274,12 @@ def test_a_stop_kills_the_program_and_is_raised(tmp_path):
     t = time.monotonic()
     with pytest.raises(Interrupted):
         A.run(cmd, 60.0, check)
-    assert time.monotonic() - t < 15
-    assert not psutil.pid_exists(_wait_pid(pid))
+    assert time.monotonic() - t < 30                     # far under the 60 s timeout, even on a loaded machine
+    gone = _wait_pid(pid)
+    end = time.monotonic() + 10                          # a killed process can take a moment to leave the table
+    while psutil.pid_exists(gone) and time.monotonic() < end:
+        time.sleep(0.1)
+    assert not psutil.pid_exists(gone)
 
 
 def test_a_program_that_cannot_start_is_a_clear_error(tmp_path):
