@@ -517,7 +517,8 @@ class GraphPage(SidesHost, QWidget):
         if not self.is_blank():
             self.hide_templates()
         self.follow_model_selection()
-        self.refresh_panel()
+        if states or getattr(self, "_panel_shown", None) != self._panel_key():
+            self.refresh_panel()                  # (asked by the gesture the panel already follows: not again)
         self.cost_toast()
 
     def toast(self, text: str):

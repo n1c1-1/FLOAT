@@ -113,8 +113,15 @@ class SidesHost:
             return None
         return self.bridge.drops.drop(block, kind, paths)
 
+    def _panel_key(self):
+        """What the panel shows depends on: the block or wire chosen and the project as it is (its revision)."""
+        return (self.bridge.selected, self.canvas.selected_wire, getattr(self.s, "revision", None),
+                self.bridge.doc.revision)
+
     def panel_later(self, *_a):
-        if getattr(self, "panel", None) is not None:
+        """A choice of the page: the panel follows once the event loop turns, unless it already shows that choice of
+        this revision of the project (a gesture that keeps the block chosen, Folded, a choice made again)."""
+        if getattr(self, "panel", None) is not None and getattr(self, "_panel_shown", None) != self._panel_key():
             self._panel_timer.start()
 
     def refresh_panel(self):
@@ -122,6 +129,8 @@ class SidesHost:
         pn = getattr(self, "panel", None)
         if pn is None:
             return
+        self._panel_timer.stop()                         # made now: the one asked for later is this one
+        self._panel_shown = self._panel_key()
         try:
             node = self.panel_node()
             w = self.canvas.selected_wire

@@ -642,7 +642,14 @@ class GraphCanvas(QGraphicsView):
                     outputs=[("image", box.h / 2, "#9aa3b2", True)], removable=False, dots=dots,
                     tip="\n".join((title, summary, _("Blocks: show the blocks of every stack (Ctrl+J)"))))
 
+    def _behind_table(self) -> bool:
+        """The page shows the Table: nothing of the graph is seen, it is drawn again when the page leaves the Table
+        (``set_display`` changes the view, which draws again)."""
+        return self.bridge.view.get("mode") == "table"
+
     def rebuild(self):
+        if self._behind_table():
+            return
         self._building = True
         try:
             self._rebuild()
@@ -771,6 +778,8 @@ class GraphCanvas(QGraphicsView):
 
     def update_states(self):
         """The run states changed: the items are given them again."""
+        if self._behind_table():
+            return
         drawing = self.bridge.drawing()
         for b, it in self.blocks.items():
             if it.d["kind"] == "card":
