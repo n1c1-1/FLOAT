@@ -3010,6 +3010,44 @@ def test_the_crop_proportions_and_its_removal(post):
     assert v.viewer.crop_box is None
 
 
+def test_a_proportion_gives_the_largest_box_of_it_whatever_the_present_box(post):
+    v = post.view
+    W, H = v.src.size()
+    v.b_crop.setChecked(True)
+    cb = v.crop_ratio_cb
+    for name, q in (("3:2", 1.5), ("2:3", 2 / 3), ("16:9", 16 / 9), ("9:16", 9 / 16), ("1:1", 1.0)):
+        cb.setCurrentIndex(cb.findText(name))
+        x0, y0, x1, y1 = v.viewer.crop_box
+        w, h = (W, W / q) if W / q <= H else (H * q, H)
+        assert abs((x1 - x0) - w) < 1e-6 and abs((y1 - y0) - h) < 1e-6, name       # never shrunk from the last box
+        assert x0 >= -1e-6 and y0 >= -1e-6 and x1 <= W + 1e-6 and y1 <= H + 1e-6
+    v.viewer.crop_box = (W * 0.7, H * 0.7, W * 0.95, H * 0.95)                     # a box off to one side: centred there, clamped
+    cb.setCurrentIndex(cb.findText("Free"))
+    v.viewer.crop_box = (W * 0.7, H * 0.7, W * 0.95, H * 0.95)
+    cb.setCurrentIndex(cb.findText("1:1"))
+    x0, y0, x1, y1 = v.viewer.crop_box
+    assert abs((x1 - x0) - min(W, H)) < 1e-6 and abs((x0 + x1) / 2 - min(max(W * 0.825, min(W, H) / 2), W - min(W, H) / 2)) < 1e-6
+
+
+def test_a_crop_never_goes_under_the_minimum_and_a_click_makes_none(post):
+    from astro_gpu.client.viewer import MIN_CROP
+    v = post.view.viewer
+    W, H = post.view.src.size()
+    post.view.b_crop.setChecked(True)
+    box = (100.0, 100.0, 400.0, 300.0)
+    v.crop_ratio = None
+    # a drag of the east handle to under the minimum stops at it, on that side only
+    a = v._crop_moved("e", box, (0, 0), 101.0, 200.0)
+    assert a[2] - a[0] == MIN_CROP and a[3] - a[1] == 200
+    b = v._crop_moved("se", (50.0, 50.0, 50.0, 50.0), (0, 0), 53.0, 52.0)       # a new box of 3 x 2: 16 x 16
+    assert b[2] - b[0] == MIN_CROP and b[3] - b[1] == MIN_CROP
+    c = v._crop_moved("s", (0.0, 0.0, W, H), (0, 0), W / 2, 5.0)                 # 4256 x 13 is no longer possible
+    assert c[3] - c[1] == MIN_CROP
+    v.crop_ratio = 16 / 9
+    d = v._crop_moved("se", (50.0, 50.0, 50.0, 50.0), (0, 0), 52.0, 51.0)
+    assert d[3] - d[1] >= MIN_CROP - 1e-9 and d[2] - d[0] >= MIN_CROP - 1e-9
+
+
 def test_the_export_writes_the_crop_with_its_origin(exporting):
     from astro_gpu.client.services.render import ExportJob, run_export
     s = exporting
