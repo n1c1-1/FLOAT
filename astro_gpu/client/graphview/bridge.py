@@ -142,6 +142,17 @@ class Bridge(QObject):
         res = self.doc.apply_many(steps)
         return self.after(res, quiet, before=before)
 
+    #: the type a Combination card makes (the palette's flyout of types: S-H-O, H-O, RGB, LRGB)
+    combo_type = "sho"
+
+    def _steps(self, name, kw):
+        """The operation of a place or a card; a Combination of the type chosen in the palette's flyout."""
+        steps = [(name, dict(kw or {}))]
+        if (kw or {}).get("kind") == "combine" and self.combo_type != "sho":
+            t = self.combo_type
+            steps.append(("set_combination_type", lambda res: {"block": res[0].created["block"], "type": t}))
+        return steps
+
     def drop(self, place):
         """Drop on a Place: its operation (a refused place gives its reason)."""
         if not place.lit:
@@ -150,8 +161,19 @@ class Bridge(QObject):
             return res
         name, kw = place.op
         before = self.doc.graph
-        res = self.doc.apply(name, **(kw or {}))
+        steps = self._steps(name, kw)
+        res = self.doc.apply(name, **(kw or {})) if len(steps) == 1 else self.doc.apply_many(steps)
         return self.after(res, False, (kw or {}).get("kind"), before=before)
+
+    def add_combination(self, **kw):
+        """The Combination card double-clicked: placed at its natural place, of the type chosen in the flyout."""
+        steps = self._steps("add_block", {"kind": "combine", **kw})
+        if len(steps) == 1:
+            return self.act("add_block", kind="combine", **kw)
+        res = self.act_many(steps)
+        if res.ok:
+            self.acted.emit("add_block", res)
+        return res
 
     def _drawable(self, back=None) -> bool:
         """The graph a change gave can be drawn; when its drawing raises, the error is logged and ``back()`` takes the

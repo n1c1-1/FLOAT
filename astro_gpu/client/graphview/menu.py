@@ -39,6 +39,8 @@ def menu(doc, b):
             items.append(_item(doc, _("To Post"), "send_to_post", {"block": b}))
         else:
             items.append((_("To Post"), "send_to_post", {"block": b}, False, _("lights first")))
+        if k == "stars":
+            items += stars_items(doc, ix, b)
         if b in ix.row_of and k not in FRAME_SOURCES + ("combine", "combine_layers", "image"):
             items.append(_item(doc, _("Variant here"), "add_variant", {"block": b}))
     if k == "calibration":
@@ -52,6 +54,22 @@ def menu(doc, b):
         items.append(None)
         items.append(_item(doc, _("Delete"), "remove_block", {"block": b}))
     return items
+
+
+def stars_items(doc, ix, b):
+    """The Stars/background block's two images (today's menu, graph.py): each to Post as it is, or out of it again;
+    a Combine layers block putting the stars back on the starless image."""
+    from ...graphcore.model import POST_PORT
+    g = doc.graph
+    out = []
+    for port, on, off in (("Starless", _("Starless to Post"), _("Starless out of Post")),
+                          ("Stars only", _("Stars to Post"), _("Stars out of Post"))):
+        w = next((w for w in g.wires if w.src == [b, port] and w.dst[0] == ix.post), None)
+        out.append(_item(doc, off, "unwire", {"wire": w.id}) if w is not None else
+                   _item(doc, on, "wire", {"src": b, "src_port": port, "dst": ix.post, "dst_port": POST_PORT}))
+    out.append(_item(doc, _("Combine layers"), "add_block", {"kind": "combine_layers",
+                                                             "at": {"type": "comp", "after": b}}))
+    return out
 
 
 def align_items(doc, ix, rid):

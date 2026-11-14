@@ -1,13 +1,10 @@
 """The file-type filter of the imports, and the logic of a drop of files and folders, shared by the table and by the
 graph's Session targets (graph_drops.py).
 
-The filter and « Include » are choices of the drop, resolved AT DROP TIME; the engine keeps its own rule and nothing
-about the filter is stored. The engine's rule (core/project.py ``list_frames``): an entry is a file, taken as it is,
-or a folder read at its first level only; in a folder holding any camera raw or FITS, its JPEG, PNG and TIFF files are
-set aside; colour images are frames only in a folder with no raw or FITS; other files are ignored. So a dropped folder
-is stored as a FOLDER entry when the filter keeps exactly what the engine reads there, else its retained files are
-stored one by one; « Include » adds each sub-folder holding frames as an entry of its own (the same rule for each).
-Types the engine cannot read are never added. The counts said are those of ``list_frames`` on the stored entries.
+The filter and « Include » are choices of the drop, resolved AT DROP TIME; nothing about the filter is stored. FILES
+ONLY: a dropped or picked folder is listed at that moment (its first level; « Include »: its sub-folders too), the filter
+keeps its frames and they are stored one by one; the page never stores a folder (the table shows the files under their
+folder, a display only). Types the engine cannot read are never added. The counts said are those of the files stored.
 
 Matching is by the engine's own frame kinds (``frame_kind``: by extension only, case-insensitive): nothing else of a
 name is read, nothing is sorted or proposed from a name, a folder or a date. The filter chosen last is remembered in
@@ -173,8 +170,7 @@ def frame_folders(folder: str) -> list[str]:
 
 @dataclass
 class Resolution:
-    """What a drop stores and what it says: ``items`` the entries to store (folders the engine reads as the filter
-    asked, else single files), ``left`` frames the filter left out (« Take all »), ``others`` files the engine cannot
+    """What a drop stores and what it says: ``items`` the files to store (one by one), ``left`` frames the filter left out (« Take all »), ``others`` files the engine cannot
     read (never added), ``subs`` sub-folders holding frames (« Include »), ``unreadable`` folders that cannot be read,
     ``empty`` folders that gave nothing."""
     items: list = field(default_factory=list)
@@ -204,10 +200,7 @@ def resolve(reader, paths, i: int | None = None, deep: bool = True) -> Resolutio
             chosen = [f for f in readable if accepts(f, i)]
             r.others += len(fs) - len(readable)
             r.left += [f for f in readable if f not in chosen]
-            if chosen and set(chosen) == set(engine_frames([p])):
-                r.items.append(p)
-                reader.note(p, True)
-            elif chosen:
+            if chosen:                                    # each file stored on its own: never the folder
                 for f in chosen:
                     r.items.append(f)
                     reader.note(f, False)
@@ -240,7 +233,7 @@ def merge(parts) -> Resolution:
 
 
 def include(reader, subs, i: int | None = None) -> Resolution:
-    """« Include »: each sub-folder holding frames as an entry of its own, by the same rule (its own level only)."""
+    """« Include »: the frames of each sub-folder holding some, kept by the filter, each file stored on its own."""
     return resolve(reader, subs, i, deep=False)
 
 

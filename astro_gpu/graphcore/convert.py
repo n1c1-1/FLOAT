@@ -37,6 +37,33 @@ ROLE_OF_PORT = {v: k for k, v in PORT_OF_ROLE.items()}
 SELECTION_KEYS = ("min_transparency", "max_fwhm_ratio", "selection", "selection_transparency")
 
 
+def files_only(p) -> int:
+    """The sessions of a definition made of single files (the graph page stores no folder): each kind holding a folder
+    entry is replaced, in place, by the files the engine's own rule reads there (``list_frames``: the first level, the
+    camera's JPEGs beside raws set aside, sorted by full path, each once), so the frames and every key stay the same.
+    A kind with an entry that cannot be read now (its disk not there) is left as it is, to be converted at a later
+    opening. -> the count of kinds replaced."""
+    import os
+    from ..core.project import list_frames
+    from ..core.project2 import KINDS
+    done = 0
+    for s in p.sessions:
+        for kind in KINDS:
+            entries = list(getattr(s, kind))
+            if not entries:
+                continue
+            paths = [p.abspath(e) if p.root is not None or os.path.isabs(e) else e for e in entries]
+            if not any(os.path.isdir(x) for x in paths):
+                continue
+            if not all(os.path.isdir(x) or os.path.isfile(x) for x in paths):
+                continue
+            files = [f.as_posix() for f in list_frames(paths)]
+            if files != entries:
+                setattr(s, kind, files)
+                done += 1
+    return done
+
+
 def set_values(stored: dict, stage: str) -> dict:
     """A stage's stored settings as the engine's keys read them: a value stored at the stage's static default counts as
     not stored, but on a field with an automatic rule (stored there, it means "not automatic"). The client's block and

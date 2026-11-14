@@ -618,21 +618,31 @@ def check_project(folder: Path, rec: dict) -> dict:
     from astro_gpu.graphcore.rules import structure
     from astro_gpu.graphcore.msg import say
     p = project2.load(folder)
-    g, q, log = proof.round_trip(p)
     rules, scan = key_rules(), InputScan()
+    base = p
+    files = None
+    if os.environ.get("FLOAT_FILES_ONLY") == "1":
+        # files only (the graph page stores no folder): each folder entry replaced by the files the engine reads there;
+        # the definitions compared from that point, the keys, states and frames against the project as it is
+        from astro_gpu.graphcore.convert import files_only
+        base = project2.Project2.from_dict(p.to_dict(), p.root)
+        files = files_only(base)
+    g, q, log = proof.round_trip(base)
     out: dict = {"workflows": len(p.workflows), "sessions": len(p.sessions), "convert_log": log}
+    if files is not None:
+        out["kinds_made_files"] = files
     if os.environ.get("FLOAT_EXPLICIT_DEFAULTS") == "1":
         # the file says everything (client/graphdefaults.py): every default written on the graph, compiled again;
         # the definitions compared without the values written at their static default, the keys as they are
         from astro_gpu.client.graphdefaults import strip_defaults, with_explicit_defaults
         from astro_gpu.graphcore.compile import compile_into
-        g, out["defaults_written"] = with_explicit_defaults(g, like=p)
-        q = project2.Project2.from_dict(p.to_dict(), p.root)
+        g, out["defaults_written"] = with_explicit_defaults(g, like=base)
+        q = project2.Project2.from_dict(base.to_dict(), p.root)
         compile_into(g, q)
-        stripped = project2.Project2.from_dict(strip_defaults(q.to_dict(), p.to_dict()), p.root)
-        out["definition"] = proof.definition_diff(p, stripped)
+        stripped = project2.Project2.from_dict(strip_defaults(q.to_dict(), base.to_dict()), p.root)
+        out["definition"] = proof.definition_diff(base, stripped)
     else:
-        out["definition"] = proof.definition_diff(p, q)
+        out["definition"] = proof.definition_diff(base, q)
     if os.environ.get("FLOAT_EXPLICIT_DEFAULTS") == "1":
         out["keys"] = _keys_diff_modulo_defaults(p, q, rules, scan)
     else:

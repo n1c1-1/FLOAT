@@ -175,6 +175,9 @@ class GraphEditing:
         self._absorbing = False
         self._g = self._with_post_wires(self._g)
         self._sig = self._def_sig()
+        from ..graphcore.convert import files_only
+        if files_only(self.p):                     # files only: a folder entry becomes the files the engine reads there
+            self._absorb()                         # (taken into the graph; saved with the next edit)
 
     # ------------------------------------------------------------------ the graph
     @staticmethod

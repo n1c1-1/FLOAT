@@ -47,8 +47,24 @@ class FileRows(QAbstractListModel):
         self.beginResetModel()
         p = self.panel
         self.rows = []
-        for e in p.entries():
+        last_dir = None
+        entries = list(p.entries())
+        single = {e: not files.is_folder(p.reader, e) for e in entries}
+        per_dir: dict = {}
+        for e in entries:
+            if single[e]:
+                d = os.path.dirname(e.rstrip("/"))
+                per_dir[d] = per_dir.get(d, 0) + 1
+        for e in entries:
             opened = e in self.open
+            if single[e]:                                 # single files (the page stores no folder): shown under
+                d = os.path.dirname(e.rstrip("/"))        # their folder, a heading of the display only
+                if d != last_dir:
+                    self.rows.append((FOLDER, e, f"{d}  ·  {per_dir[d]}", None))
+                    last_dir = d
+                self.rows.append((ENTRY, e, "   " + os.path.basename(e.rstrip("/")), None))
+                continue
+            last_dir = None
             self.rows.append((ENTRY, e, p.entry_text(e, opened), None))
             if not opened:
                 continue

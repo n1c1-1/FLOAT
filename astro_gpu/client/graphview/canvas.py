@@ -547,7 +547,7 @@ class GraphCanvas(QGraphicsView):
                     off=bool(blk.off), grey=grey, badge=badge, review=review, own=doc.differs(b),
                     fallback=fallback, broken=broken, missing=missing, warned=bool(bd.get("warned")),
                     w=box.w, h=box.h, x=box.x, y=box.y, inputs=inputs, outputs=outputs,
-                    removable=kind not in ("post", "calibration"), tip=tip)
+                    removable=kind != "post", tip=tip)
 
     def card_data(self, row_id, box):
         bridge, doc = self.bridge, self.doc
@@ -1762,6 +1762,13 @@ class GraphCanvas(QGraphicsView):
         src, port = st["src"], st["port"]
         self.clean_gesture()
         if hit is None:
+            # a Stars/background image pulled into the empty band at its right (today's Composition band): a Combine
+            # layers block putting the stars back on the starless image, wired from this block
+            blk = self.bridge.block(src)
+            it = self.blocks.get(src)
+            if blk is not None and blk.kind == "stars" and it is not None and \
+                    sp.x() > it.sceneBoundingRect().right() + 20 and self.item_at(self.mapFromScene(sp)) is None:
+                self.bridge.act("add_block", kind="combine_layers", at={"type": "comp", "after": src})
             return
         dst, dport, why = hit
         if why:

@@ -115,9 +115,16 @@ class Card(QFrame):
         drag.exec(Qt.CopyAction)
 
     def mouseReleaseEvent(self, e):                                   # noqa: N802
-        self._press = None
+        pressed, self._press = self._press, None
+        if self.kind == "combine" and pressed is not None and e.button() == Qt.LeftButton and self.enabled:
+            if getattr(self, "_flyout", None) is None:     # today's flyout of the combination's types, once the
+                self._flyout = QTimer(self, singleShot=True, interval=QApplication.doubleClickInterval())
+                self._flyout.timeout.connect(lambda: self.palette.combination_types(self))     # double-click is
+            self._flyout.start()                                                                 # not coming
 
     def mouseDoubleClickEvent(self, e):                               # noqa: N802
+        if getattr(self, "_flyout", None) is not None:
+            self._flyout.stop()
         if self.enabled:
             self.palette.double_click(self.kind)
         elif self.reason:
@@ -370,8 +377,36 @@ class Palette(QScrollArea):
                 bridge.act("add_row", kind="session")
         elif kind == "image":
             bridge.act("add_row", kind="image")
+        elif kind == "combine":
+            bridge.add_combination(row=r.id if r is not None else None)
         else:
             bridge.act("add_block", kind=kind, row=r.id if r is not None else None)
+
+    def combination_types(self, card, run=True):
+        """The Combination card's flyout (graph.py GroupFlyout): S-H-O, H-O, RGB or LRGB, the type the card then
+        places (dragged or double-clicked); its name on the card. -> the menu (``run`` False: not shown, tests)."""
+        from PySide6.QtWidgets import QMenu
+
+        from ...graphcore.model import COMBO_LABEL
+        from ..graphnode import combine_title
+        m = QMenu(self)
+        for t in COMBO_LABEL:
+            a = m.addAction(combine_title(t))
+            a.setCheckable(True)
+            a.setChecked(t == self.bridge.combo_type)
+            a.setToolTip(_("A combination of this type: dragged, or double-clicked, the card places it"))
+            a.triggered.connect(lambda _c=False, t=t: self.set_combination_type(t))
+        if run:
+            m.exec(card.mapToGlobal(card.rect().bottomLeft()))
+        return m
+
+    def set_combination_type(self, t):
+        from ..graphnode import combine_title
+        self.bridge.combo_type = t
+        card = self.cards.get("combine")
+        if card is not None:
+            card.title.setText(combine_title(t))
+            card._tip()
 
     def contains(self, global_pos) -> bool:
         return self.isVisible() and self.rect().contains(self.mapFromGlobal(global_pos))

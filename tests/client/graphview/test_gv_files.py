@@ -107,10 +107,10 @@ def test_gv_files_graph_drop_filter_take_all_and_doubles(qapp, tmp_path):
     drops.link("take_all")
     settle(drops.reader)
     lst = bridge.doc.files_of(sid, "lights")[1]
-    assert len(lst) == 6 and len(bridge.doc.document._undo) == n0 + 2   # the folder + the 5 JPG as single files
+    assert len(lst) == 10 and len(bridge.doc.document._undo) == n0 + 2  # files only: the 5 ARW, then the 5 JPG
     assert toasts.text == "All taken"
     assert drops.drop(sid, "lights", [str(mixed)]) is None            # already there: nothing added
-    assert drops.drop(sid, "lights", [str(mixed / "IMG_0000.ARW")]) is None   # read through the folder already
+    assert drops.drop(sid, "lights", [str(mixed / "IMG_0000.ARW")]) is None   # a file already there
     assert toasts.text == "Already there: nothing added" and len(bridge.doc.document._undo) == n0 + 2
     assert drops.reader.active_jobs() == []
 
@@ -131,8 +131,8 @@ def test_gv_files_graph_drop_sub_folders_and_empty_folder(qapp, tmp_path):
     drops.link("include")
     settle(drops.reader)
     src, lst = bridge.doc.files_of(sid, "lights")
-    # each sub-folder holding frames, an entry of its own; nothing stored about the choice
-    assert src == "own" and lst == [fwd(only / "a"), fwd(only / "b")] and len(bridge.doc.document._undo) == n0 + 1
+    # each sub-folder's frames, stored one by one (files only); nothing stored about the choice
+    assert src == "own" and lst == [fwd(only / d / f"S_{i:04d}.ARW") for d in "ab" for i in range(3)] and         len(bridge.doc.document._undo) == n0 + 1
     assert drops.reader.count(lst) == (6, True)
     assert "file_options" not in bridge.doc.view and not any("**" in x for x in lst)
 
@@ -159,9 +159,9 @@ def test_gv_files_a_filter_unlike_the_engine_rule_stores_single_files(qapp, tmp_
     assert toasts.text == "3 ARW added · 2 FIT left · 1 file not a frame, ignored"
     assert len(list_frames(lst)) == 3
     bridge.undo()
-    files.set_index(3)                                                 # All images on a folder of JPEGs only: the rule
+    files.set_index(3)                                                 # All images on a folder of JPEGs only: its files
     drops.drop(sid, "lights", [str(colour)])
-    assert bridge.doc.files_of(sid, "lights")[1] == [fwd(colour)]
+    assert bridge.doc.files_of(sid, "lights")[1] == [fwd(colour / f"C_{i:04d}.JPG") for i in range(4)]
     drops.drop(sid, "lights", [str(mixed)])                            # All images beside raws: unlike the rule
     lst = bridge.doc.files_of(sid, "lights")[1]
     assert fwd(mixed) not in lst and sum(1 for x in lst if x.startswith(fwd(mixed) + "/")) == 4
@@ -181,25 +181,16 @@ def test_gv_files_panel_entries_unfold_exclude_remove(qapp, tmp_path):
     p = FilesPanel(bridge, sid, "lights")
     settle(bridge.drops.reader)
     p.refresh()
-    assert [r[0] for r in p.rows.rows] == [ENTRY, ENTRY]
-    assert "2 entries · 5 files" == p.summary.text()
-    assert "without sub-folders · 3 files" in p.rows.rows[0][2]
-    p.toggle(fwd(a))
-    kinds = [r[0] for r in p.rows.rows]
-    assert kinds == [ENTRY, FOLDER, FILE, FILE, FILE, ENTRY]
-    assert bridge.open_entries[(sid, "lights")] == {fwd(a)}           # kept over a redraw
-    # one file of a folder: an exclusion, view side, no undo step
+    # files only: each file stored on its own, shown under its folder (a heading of the display only)
+    assert [r[0] for r in p.rows.rows] == [FOLDER, ENTRY, ENTRY, ENTRY, FOLDER, ENTRY, ENTRY]
+    assert p.rows.rows[0][2].startswith(fwd(a)) and p.rows.rows[0][2].endswith("3")
     n0 = len(bridge.doc.document._undo)
-    first_file = p.rows.index(2)
-    p.view.selectionModel().select(first_file, QItemSelectionModel.ClearAndSelect)
+    # a file: through the core, one undo step
+    p.view.selectionModel().select(p.rows.index(len(p.rows.rows) - 1), QItemSelectionModel.ClearAndSelect)
     assert p.b_remove.isEnabled()
     p.remove()
-    assert bridge.doc.view["exclusions"][f"{sid}|lights"] == [p.rows.rows[2][3]]
-    assert len(bridge.doc.document._undo) == n0 and "1 excluded" in p.summary.text()
-    # an entry: through the core, one undo step
-    p.view.selectionModel().select(p.rows.index(len(p.rows.rows) - 1), QItemSelectionModel.ClearAndSelect)
-    p.remove()
-    assert bridge.doc.files_of(sid, "lights")[1] == [fwd(a)] and len(bridge.doc.document._undo) == n0 + 1
+    assert len(bridge.doc.files_of(sid, "lights")[1]) == 4 and len(bridge.doc.document._undo) == n0 + 1
+    assert FILE not in [r[0] for r in p.rows.rows]
 
 
 def test_gv_files_panel_inherited_cell_links_to_common(qapp, tmp_path):

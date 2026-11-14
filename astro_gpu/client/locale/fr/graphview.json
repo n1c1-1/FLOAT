@@ -375,5 +375,10 @@
   "Nothing to add: {n} file not a frame": "Rien à ajouter : {n} fichier qui n'est pas une brute",
   "Nothing to add: {n} files not frames": "Rien à ajouter : {n} fichiers qui ne sont pas des brutes",
   "{mark} {name}   ·   without sub-folders · {n} files": "{mark} {name}   ·   sans sous-dossiers · {n} fichiers",
-  "Sub-folders included": "Sous-dossiers inclus"
+  "Sub-folders included": "Sous-dossiers inclus",
+  "Starless to Post": "Sans étoiles vers Post",
+  "Stars to Post": "Étoiles vers Post",
+  "Starless out of Post": "Sans étoiles hors Post",
+  "Stars out of Post": "Étoiles hors Post",
+  "A combination of this type: dragged, or double-clicked, the card places it": "Une combinaison de ce type : glissée, ou double-cliquée, la carte la place"
 }
