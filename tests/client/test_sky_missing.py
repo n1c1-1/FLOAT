@@ -191,7 +191,10 @@ def test_get_survey_fetches_it_outside_the_run_and_the_next_run_uses_it(qapp, tm
     fetched = []
 
     def fake(wd, W, H, scale, which="auto", min_coverage=0.95, log=print, progress=None, fetch=False):
-        assert fetch                                              # the explicit action: it may fetch
+        if not fetch:                                             # a look at the disk: only what was fetched is there
+            if not fetched:
+                raise surveys.SurveyMissing(surveys.MISSING)
+            return np.zeros((H, W), np.float32), "nsns"
         for k in range(3):
             progress(k / 3, f"tile {k + 1} of 3")
         fetched.append((W, H))
@@ -209,6 +212,8 @@ def test_get_survey_fetches_it_outside_the_run_and_the_next_run_uses_it(qapp, tm
         assert "H-alpha survey: not on this computer" in _texts(page.panel)
         get = _button(page.panel, "Get survey")
         assert "Nothing is downloaded during a run" in get.toolTip()
+        from astro_gpu import api as _api
+        assert _api.survey_state(m.p, wf.id)["available"] is False
         j = survey_job.job()
         ended = []
         j.finished.connect(lambda pid, why: ended.append((pid, why)))
@@ -219,10 +224,26 @@ def test_get_survey_fetches_it_outside_the_run_and_the_next_run_uses_it(qapp, tm
             QApplication.processEvents()
         QApplication.processEvents()
         assert fetched == [(skyfield.W, skyfield.H)] and ended == [(wf.id, "")]
+        store = p.root / "store"
+        assert not (store / "_trash").exists() or not list((store / "_trash").glob("*-survey-*"))   # nothing moved
+        assert not {"surveys", "gradient"} & {x.stage for x in runner2.plan_all(project2.load(p.root)).jobs}
+        m.results_changed()
+        settle(worker, page)
+        assert "H-alpha survey: on this computer, this result was made without it" in _texts(page.panel)
+        use = _button(page.panel, "Use survey")
+        assert "Undo" in use.toolTip()
+        use.click()
+        QApplication.processEvents()
         again = runner2.plan_all(project2.load(p.root))
         assert {"surveys", "gradient", "render_simple"} <= {x.stage for x in again.jobs}       # computed again
         assert {"image", "astrometry"}.isdisjoint({x.stage for x in again.jobs})                # kept
-        assert any((p.root / "store" / "_trash").glob("surveys-*-survey-*"))                    # never deleted
+        assert any((store / "_trash").glob("surveys-*-survey-*"))                               # never deleted
+        assert m.can_undo()
+        assert m.undo()                                                                         # one step: all back
+        assert not {"surveys", "gradient", "render_simple"} & {x.stage for x in
+                                                                  runner2.plan_all(project2.load(p.root)).jobs}
+        assert m.redo()
+        assert {"surveys", "gradient"} <= {x.stage for x in runner2.plan_all(project2.load(p.root)).jobs}
     finally:
         page.close()
         m.close(save=False)
@@ -279,3 +300,22 @@ def test_a_block_left_out_for_its_wiring_is_named_and_translated_without_the_ins
     finally:
         i18n.set_language("en")
         done(w, m, page)
+
+
+def test_use_survey_puts_back_what_is_not_recomputed_and_says_the_rest(tmp_path, monkeypatch):
+    """Undo of Use survey: a key computed since is left as it is, the others come back from the trash."""
+    from astro_gpu import api
+    from astro_gpu.core import project2, store as st
+    from astro_gpu.core.project import Target
+    p = project2.create(tmp_path / "P", "P", Target())
+    s = st.Store(p.root)
+    for stage in ("surveys", "gradient"):
+        (s.dir(stage, "0123456789abcdef")).mkdir(parents=True)
+    moved = [{"stage": "surveys", "key": "0123456789abcdef", "trash": "surveys-0123456789abcdef-survey-x"},
+             {"stage": "gradient", "key": "0123456789abcdef", "trash": "gradient-0123456789abcdef-survey-x"}]
+    done, skipped = api.trash_survey_again(p, moved)
+    assert done == ["surveys", "gradient"] and not s.dir("gradient", "0123456789abcdef").exists()
+    s.dir("gradient", "0123456789abcdef").mkdir(parents=True)                      # recomputed meanwhile
+    done, skipped = api.put_back_survey(p, moved)
+    assert done == ["surveys"] and skipped == ["gradient"]
+    assert (s.trash / "gradient-0123456789abcdef-survey-x").exists()

@@ -533,6 +533,7 @@ class _Snap(tuple):
     """What Undo puts back (``ProjectModel._snapshot``), with the page the change came from: Post's steps are undone
     in Post, the graph's in the graph."""
     from_post = False
+    moved = None                   # Use survey's step: the results it moved to the trash (api.use_survey)
     after_post = None              # the composition right after the step: what it changed is what Undo / Redo puts back
 
 
@@ -1628,17 +1629,60 @@ class ProjectModel(QObject):
     def can_redo(self, graph: bool = False) -> bool:
         return bool(self._redo) and not (graph and self._redo[-1].from_post)
 
+    def use_survey(self, pid: int) -> list[str]:
+        """Use survey: the results made without the survey go to the trash (api.use_survey), one step of Undo
+        (``put_back_survey`` brings them back). Returns the stages moved."""
+        moved = api.use_survey(self.p, pid)
+        if not moved:
+            return []
+        step = _Snap(self._snapshot())
+        step.moved = moved
+        step.after_post = json.loads(step[4])
+        self._undo.append(step)
+        del self._undo[:-200]
+        self._redo.clear()
+        self._new_step()
+        self.name_step(_("Survey used: the blocks after it are computed again at the next run"))
+        self.results_changed()
+        return [m["stage"] for m in moved]
+
+    def _move_survey_results(self, src: list, dst: list, back: bool) -> bool:
+        """Undo (``back``) or Redo of Use survey: the results come back from the trash, or go to it again."""
+        step = src.pop()
+        dst.append(step)
+        move = api.put_back_survey if back else api.trash_survey_again
+        done, skipped = move(self.p, step.moved)
+        self.results_changed()
+        self.survey_skipped = skipped
+        return True
+
     def undo(self, graph: bool = False) -> bool:
         if not self.can_undo(graph):
             return False
+        if getattr(self._undo[-1], "moved", None) is not None:
+            what = self._move_what(self._undo, self._undo_what, self._redo_what)
+            done = self._move_survey_results(self._undo, self._redo, True)
+            self.restored = self._survey_words(what)
+            return done
         what = self._move_what(self._undo, self._undo_what, self._redo_what)
         done = self._restore(self._undo, self._redo)
         self.restored = what if done else ""
         return done
 
+    def _survey_words(self, what: str) -> str:
+        sk = getattr(self, "survey_skipped", [])
+        if not sk:
+            return what
+        return what + " · " + _("{n} result(s) computed again since: kept").format(n=len(sk))
+
     def redo(self, graph: bool = False) -> bool:
         if not self.can_redo(graph):
             return False
+        if getattr(self._redo[-1], "moved", None) is not None:
+            what = self._move_what(self._redo, self._redo_what, self._undo_what)
+            done = self._move_survey_results(self._redo, self._undo, False)
+            self.restored = self._survey_words(what)
+            return done
         what = self._move_what(self._redo, self._redo_what, self._undo_what)
         done = self._restore(self._redo, self._undo)
         self.restored = what if done else ""

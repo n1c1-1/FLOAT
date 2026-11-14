@@ -2077,29 +2077,10 @@ def stage_outputs(p: Project2, wf: int | Workflow, stage: str, which: str = "cur
                         m.get("finished") or "", m)
 
 
-def survey_state(p: Project2, wf: int | Workflow) -> dict | None:
-    """What the workflow's Surveys step gave (its ``survey.json``: {"survey", "title"} or {"survey": "none", "why"}),
-    None when it is not computed. ``missing``: True when the survey of the field was not on this computer (a run never
-    fetches it: Get survey, ``fetch_survey``)."""
-    d = _dir(p, wf, "surveys")
-    if d is None:
-        return None
-    try:
-        js = json.loads((d / "survey.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    js["missing"] = js.get("survey") == "none" and "not on this computer" in str(js.get("why") or "")
-    return js
-
-
-def fetch_survey(p: Project2, wf: int | Workflow, progress: Callable[[float, str], None] | None = None) -> str:
-    """Get survey: the H-alpha survey of the workflow's solved field fetched into the cache, an explicit action of the
-    user outside any run (a run never downloads: core/online.py). Then the Surveys results that said it was not on this
-    computer, and the results computed after them in the workflows that read them, go to the store's trash (never
-    deleted), so that the next run computes them with the survey (their keys do not change: the definition did not).
-    Returns the survey's title. Raises when the field is not solved, no survey covers it, or no service answers."""
+def _survey_field(p: Project2, wf: int | Workflow):
+    """What the survey of the workflow's field is read from: (wcs, width, height, scale in arcsec per pixel, which
+    survey). Raises ValueError when the field is not solved."""
     from .core.imgutil import read_wcs
-    from .stages.surveys import SURVEYS, survey_on_grid
     ast = _dir(p, wf, "astrometry")
     stk = _dir(p, wf, "align_on") or _dir(p, wf, "stack")        # the grid the field was solved on
     if ast is None or stk is None:
@@ -2109,36 +2090,142 @@ def fetch_survey(p: Project2, wf: int | Workflow, progress: Callable[[float, str
         raise ValueError("the field was not identified: no plate solution")
     meta = json.loads((stk / "drz_meta.json").read_text(encoding="utf-8"))
     scale = float((m.get("metrics") or {})["scale_arcsec"])
-    which = (json.loads((_dir(p, wf, "surveys") / "manifest.json").read_text(encoding="utf-8")).get("params") or {}
-             ).get("survey", "auto") if _dir(p, wf, "surveys") is not None else "auto"
-    _img, used = survey_on_grid(read_wcs(ast / "wcs.fits"), int(meta["width"]), int(meta["height"]), scale,
-                                "auto" if which == "none" else which, log=lambda *a: None, progress=progress,
-                                fetch=True)
+    sd = _dir(p, wf, "surveys")
+    which = (json.loads((sd / "manifest.json").read_text(encoding="utf-8")).get("params") or {}
+             ).get("survey", "auto") if sd is not None else "auto"
+    which = "auto" if which == "none" else which
+    return read_wcs(ast / "wcs.fits"), int(meta["width"]), int(meta["height"]), scale, which, str(ast)
+
+
+_SURVEY_ON_DISK: set[tuple[str, str]] = set()      # {(astrometry result, survey)} known to be on this computer
+
+
+def survey_on_disk(p: Project2, wf: int | Workflow) -> bool:
+    """Whether the survey of the workflow's field is in the cache now: its tiles are looked up on the disk (nothing is
+    downloaded, nothing reprojected but the grid's tile indices), a positive answer remembered for the field."""
+    from .stages.surveys import survey_on_grid
+    try:
+        wd, W, H, scale, which, ast = _survey_field(p, wf)
+    except (ValueError, OSError, KeyError):
+        return False
+    if (ast, which) in _SURVEY_ON_DISK:
+        return True
+    try:
+        survey_on_grid(wd, W, H, scale, which, log=lambda *a: None, fetch=False)
+    except Exception:  # noqa: BLE001 - not on the disk (or no survey covers the field): not there to use
+        return False
+    _SURVEY_ON_DISK.add((ast, which))
+    return True
+
+
+def survey_state(p: Project2, wf: int | Workflow) -> dict | None:
+    """What the workflow's Surveys step gave (its ``survey.json``: {"survey", "title"} or {"survey": "none", "why"}),
+    None when it is not computed. ``missing``: True when the result was made without the survey because it was not on
+    this computer (a run never fetches it: Get survey, ``fetch_survey``). ``available``: ``missing`` and the survey of
+    the field is on this computer now (Use survey, ``use_survey``, computes the blocks that read it again)."""
+    d = _dir(p, wf, "surveys")
+    if d is None:
+        return None
+    try:
+        js = json.loads((d / "survey.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    js["missing"] = js.get("survey") == "none" and "not on this computer" in str(js.get("why") or "")
+    js["available"] = bool(js["missing"] and survey_on_disk(p, wf))
+    return js
+
+
+def fetch_survey(p: Project2, wf: int | Workflow, progress: Callable[[float, str], None] | None = None) -> str:
+    """Get survey: the H-alpha survey of the workflow's solved field fetched into the cache, an explicit action of the
+    user outside any run (a run never downloads: core/online.py). Nothing else moves: every result stays as it is,
+    made without the survey, until the user takes it (``use_survey``). Returns the survey's title. Raises when the
+    field is not solved, no survey covers it, or no service answers."""
+    from .stages.surveys import SURVEYS, survey_on_grid
+    wd, W, H, scale, which, ast = _survey_field(p, wf)
+    _img, used = survey_on_grid(wd, W, H, scale, which, log=lambda *a: None, progress=progress, fetch=True)
+    _SURVEY_ON_DISK.add((ast, which))
+    return SURVEYS[used][1]
+
+
+def survey_stale(p: Project2, wf: int | Workflow) -> list[str]:
+    """The stages whose done results were made without the survey the field has now, in the chain's order: the
+    Surveys result that said it was not on this computer and the results after it that read it, in every workflow
+    sharing that result."""
     keys, store = _keys(p), _store(p)
-    stale: dict[str, str] = {}                    # {key: stage} of the results made without the survey
+    out: list[str] = []
+    for ks, s in _survey_stale(p, keys, store, wf).items():
+        if s not in out:
+            out.append(s)
+    return out
+
+
+def _survey_stale(p: Project2, keys: Keys, store, wf) -> dict[str, str]:
+    """{key: stage} of the done results made without the survey, in the workflows sharing the workflow's Surveys."""
+    stale: dict[str, str] = {}
+    if store is None:
+        return stale
+    mine = keys.key(keys.project.workflow(wf) if isinstance(wf, int) else wf, "surveys")
     for w in keys.project.workflows:
         try:
             chain = keys.chain(w)
         except ValueError:
             continue
-        if "surveys" not in chain:
+        if "surveys" not in chain or keys.key(w, "surveys") != mine:
             continue
-        k = keys.key(w, "surveys")
-        st = survey_state(p, w.id)
-        if not (st and st["missing"] and store is not None and store.done("surveys", k)):
+        if not store.done("surveys", mine):
             continue
         for s in chain:
             if s == "surveys" or "surveys" in _reads(keys, w, s):
                 ks = keys.key(w, s)
                 if store.done(s, ks):
                     stale[ks] = s
-    if store is not None:
-        store.trash.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        for ks, s in stale.items():
-            os.replace(store.dir(s, ks), store.trash / f"{wfl.base(s)}-{ks}-survey-{stamp}")
-        store.forget()
-    return SURVEYS[used][1]
+    return stale
+
+
+def use_survey(p: Project2, wf: int | Workflow) -> list[dict]:
+    """Use survey: the Surveys result made without the survey and the results after it that read it go to the store's
+    trash (never deleted), so that the next run computes them with the survey now on this computer (their keys do not
+    change: the definition did not). Returns what it moved, in the chain's order, {"stage", "key", "trash"} each, for
+    ``put_back_survey`` (Undo). Nothing moves when the result was not made without the survey."""
+    keys, store = _keys(p), _store(p)
+    st = survey_state(p, wf)
+    if store is None or not (st and st["missing"]):
+        return []
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    moved = [{"stage": s, "key": ks, "trash": f"{wfl.base(s)}-{ks}-survey-{stamp}"}
+             for ks, s in _survey_stale(p, keys, store, wf).items()]
+    _move_results(store, moved, back=False)
+    return moved
+
+
+def put_back_survey(p: Project2, moved: list[dict]) -> tuple[list[str], list[str]]:
+    """Undo of ``use_survey``: the results go back from the trash to the store. Returns (the stages put back, the
+    stages left in the trash because a result of the same key was computed since)."""
+    store = _store(p)
+    return _move_results(store, moved, back=True) if store is not None else ([], [m["stage"] for m in moved])
+
+
+def trash_survey_again(p: Project2, moved: list[dict]) -> tuple[list[str], list[str]]:
+    """Redo of ``use_survey``: the same results go to the trash again (those no more there are skipped)."""
+    store = _store(p)
+    return _move_results(store, moved, back=False) if store is not None else ([], [m["stage"] for m in moved])
+
+
+def _move_results(store, moved: list[dict], back: bool) -> tuple[list[str], list[str]]:
+    done: list[str] = []
+    skipped: list[str] = []
+    store.trash.mkdir(parents=True, exist_ok=True)
+    for m in moved:
+        here, away = store.dir(m["stage"], m["key"]), store.trash / m["trash"]
+        src, dst = (away, here) if back else (here, away)
+        if not src.exists() or dst.exists():
+            skipped.append(m["stage"])
+            continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(src, dst)
+        done.append(m["stage"])
+    store.forget()
+    return done, skipped
 
 
 def _reads(keys: Keys, w: Workflow, stage: str) -> set[str]:
