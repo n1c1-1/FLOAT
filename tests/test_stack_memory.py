@@ -112,3 +112,26 @@ def test_the_stack_stage_short_of_memory_gives_the_same_files(small_night, monke
     assert "memory: 3.0 GB available, the 8 registered frames (0.0 GB) are kept on disk and the rejection is " \
            "computed in" in log
     assert list(ctx.scratch.iterdir()) == []
+
+
+def test_the_drizzle_on_the_raw_pixels_short_of_memory_keeps_its_sums_on_disk_and_gives_the_same_files(
+        small_night, monkeypatch):
+    """Sigma clipping on the raw pixels: with no memory to spare its sums (the three of each of the first passes, the six
+    of the last) are on scratch files, the stack's files are the same to the bit and the scratch folder is empty."""
+    from astro_gpu.core import devices
+    from astro_gpu.stages.stack import Stack, StackParams
+    root, proj = small_night
+    params = StackParams(scale=1.0, pixfrac=1.0, half_block=2, drizzle_rejection="own")
+    roomy = copy_project(proj.root, root / "roomy_own")
+    run_stage(roomy, Stack(), params)
+    monkeypatch.setattr(devices, "memory_budget", lambda: SHORT)
+    short = copy_project(proj.root, root / "short_own")
+    ctx = run_stage(short, Stack(), params)
+    a, b = roomy.stage_dir("stack"), short.stage_dir("stack")
+    for f in ("drz_full.npy", "drz_A.npy", "drz_B.npy", "drz_weight.npy", "saturation.npy", "rejection.npz"):
+        x, y = np.load(a / f), np.load(b / f)
+        assert all(np.array_equal(x[k], y[k]) for k in x.files) if f.endswith("npz") else np.array_equal(x, y), f
+    log = (short.logs / "journal.md").read_text(encoding="utf-8")
+    for what, n in (("pass 1", 3), ("pass 2", 3), ("pass 3", 6)):
+        assert f"the {n} sums of {what}" in log and f"are 0 in memory and {n} on disk" in log
+    assert list(ctx.scratch.iterdir()) == []

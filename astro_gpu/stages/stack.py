@@ -54,6 +54,7 @@ from __future__ import annotations
 import importlib.util
 import math
 import os
+import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -593,9 +594,10 @@ class Stack(Stage):
                 deposit(sq, None, (val - c0[chmap]) ** 2, Xo, Yo, w, keep)
 
         # ---------------- pass 1: weighted mean and standard deviation of the samples at each point
-        num = torch.zeros(3 * Ho * Wo, device=dev)
-        den = torch.zeros(3 * Ho * Wo, device=dev)
-        sq = None if by_count else torch.zeros(3 * Ho * Wo, device=dev)      # by_count: the mean only (colour offsets)
+        sums = Sums(ctx, dev, H, W, Ho, Wo)
+        # by_count: the mean only (colour offsets); the mean, its background and the first prediction are made after
+        num, den, *sq = sums.zeros(2 if by_count else 3, "pass 1", extra=2 if by_count else 5)
+        sq = sq[0] if sq else None
         clock.start()
         for c_, i in enumerate(used):
             val, Xo, Yo, sat, bad, _, _, _ = frame_model(i)
@@ -604,6 +606,7 @@ class Stack(Stage):
         clock.done("pass 1")
         model = Prediction(num, den, sq, len(used), Ho, Wo, dev, c0, mean_only=by_count)
         del num, den, sq
+        sums.release()
         # ---------------- the colours registered on each other for the whole night: the offsets of the red and blue
         # images of the stars from the green one (lateral chromatic aberration, atmospheric dispersion), measured on
         # the first mean
@@ -618,6 +621,8 @@ class Stack(Stage):
                     model.shift_channels(chan_fix)
             else:
                 chan_fix = None
+        if model is not None:
+            model.drop_background()               # only the colour offsets read it
 
         def judge(i, model):
             """The samples of frame i rejected against the prediction ``model`` (``reject``)."""
@@ -642,9 +647,7 @@ class Stack(Stage):
         else:
             # ------------ pass 2: the first clipping iteration against the mean and standard deviation of pass 1; the
             # samples kept give the mean and standard deviation of the second
-            num = torch.zeros(3 * Ho * Wo, device=dev)
-            den = torch.zeros(3 * Ho * Wo, device=dev)
-            sq = torch.zeros(3 * Ho * Wo, device=dev)
+            num, den, sq = sums.zeros(3, "pass 2")
             clock.start()
             for c_, i in enumerate(used):
                 val, Xo, Yo, bad, hi, lo, _, _, _ = judge(i, model)
@@ -653,6 +656,7 @@ class Stack(Stage):
             clock.done("pass 2")
             model = model.cleaned(num, den, sq)
             del num, den, sq
+            sums.release()
 
         # ---------------- pass 3: the second clipping iteration (or the integration's rejection) + half-stacks
         # by frame count the half-stacks are added band by band: they stay in the machine's memory, the card's memory
@@ -663,10 +667,9 @@ class Stack(Stage):
         rmap = RejectionMap(Ho, Wo, dev)
         rej_frames: dict[int, tuple[int, int, int]] = {}
         if not by_count:
-            accA = [torch.zeros(3 * Ho * Wo, device=dev) for _ in range(2)]
-            accB = [torch.zeros(3 * Ho * Wo, device=dev) for _ in range(2)]
-            near_acc = torch.zeros(3 * Ho * Wo, device=dev)    # the weight of the samples near saturation
-            clip_acc = torch.zeros(3 * Ho * Wo, device=dev)    # and of the clipped ones
+            # the two half-stacks' sums, then the weight of the samples near saturation and of the clipped ones
+            (a0, a1, b0, b1, near_acc, clip_acc), accA, accB = sums.zeros(6, "pass 3"), None, None
+            accA, accB = [a0, a1], [b0, b1]
         tally = [0.0, 0.0]                                  # integration: drop weight excluded, deposited
         clock.start()
         by_count_info = None
@@ -702,7 +705,9 @@ class Stack(Stage):
 
         if not by_count:                          # the half-stacks added up, a band of rows at a time
             images.add_whole(accA, accB, near_acc, clip_acc)
-            del accA, accB, near_acc, clip_acc
+            acc = None                            # (the last frame's half-stack: a name that holds a sum)
+            del accA, accB, near_acc, clip_acc, a0, a1, b0, b1
+            sums.release()
         images.close()
         step, halves = images.step, images.halves
         ctx.metric("near_saturation_pct", round(100 * images.near_points / (Ho * Wo), 4))
@@ -887,6 +892,61 @@ class StackImages:
         return pic
 
 
+class Sums:
+    """The zeroed float32 sums (3 x Ho x Wo, flat) the drizzle passes deposit into. On the processor, when the memory
+    the engine may fill now (core/devices.memory_budget: the user's limit less what the run holds already, or the
+    machine's room) does not hold them all with the frames' own working tensors, the last ones are arrays on a
+    scratch file, written by the same deposits in the same order (the sums are the same to the bit; the run's private
+    bytes do not hold them). One line in the log says it. Figures: the frame's working tensors take about 24 float32
+    arrays of the sensor's size (``FRAME_TENSORS``: 14 of ``frame_model``, 10 of the cached polynomial terms, measured
+    on 12 Mpx at 1.5 x: 1.2 GB), an array of the sums 3 x Ho x Wo x 4 bytes (330 MB on 12 Mpx at 1.5 x)."""
+
+    FRAME_TENSORS = 24 * 4
+
+    def __init__(self, ctx: Context, dev, H: int, W: int, Ho: int, Wo: int):
+        self.ctx, self.dev, self.n_px, self.size = ctx, dev, H * W, 3 * Ho * Wo
+        self.files: list[Path] = []
+        self.dir: Path | None = None
+
+    def zeros(self, count: int, what: str, extra: int = 0) -> list[torch.Tensor]:
+        """``count`` zeroed sums; ``extra``: arrays of the same size the pass makes after (the first mean's)."""
+        from ..core import devices
+        keep = count
+        if self.dev.type == "cpu":
+            mb = devices.memory_budget()
+            if mb:
+                plane = 4 * self.size
+                keep = int(max(0, min(count, (0.9 * mb[0] - self.FRAME_TENSORS * self.n_px) // plane - extra)))
+        out = [torch.zeros(self.size, device=self.dev) for _ in range(keep)]
+        if keep < count:
+            if self.dir is None:
+                self.dir = Path(tempfile.mkdtemp(prefix="sums_", dir=self.ctx.scratch))
+            for k in range(keep, count):
+                f = self.dir / f"{what}_{k}.f32"
+                self.files.append(f)
+                out.append(torch.from_numpy(np.memmap(f, dtype=np.float32, mode="w+", shape=(self.size,))))
+            self.ctx.log(f"memory: {mb[0] / 2 ** 30:.1f} GB may be filled, the {count} sums of {what} (each "
+                         f"{4 * self.size / 2 ** 30:.2f} GB) are {keep} in memory and {count - keep} on disk")
+        return out
+
+    def release(self) -> None:
+        """The scratch files, once the arrays on them are gone."""
+        import gc
+        gc.collect()
+        for f in self.files:
+            try:
+                f.unlink()
+            except OSError:
+                pass
+        self.files = []
+        if self.dir is not None:
+            try:
+                self.dir.rmdir()
+            except OSError:
+                pass
+            self.dir = None
+
+
 class PassClock:
     """The time of each pass over the frames, one line in the log at its end (issue #125: the progress lines carry
     no time, so where a night's 46 min went could not be read): its duration and how much of it went to reading the
@@ -1067,43 +1127,61 @@ class Prediction:
     standard deviation ``D`` of the samples deposited there (``num`` / ``den`` and the sum of squares ``sq`` about
     ``c0``, flat 3 x Ho x Wo), how many frames cover each place (``cover``: the deposited weight relative to its
     median, times the number of frames) and the smooth background of the mean (for the colour offsets); sampled where
-    a frame's samples land (``sample``)."""
+    a frame's samples land (``sample``).
+
+    ``M`` and ``D`` are kept already multiplied by ``vf``, the covered places (1.0 where the first pass deposited
+    something, else 0.0), as ``sample`` reads them: the product is made once, not for each frame (a frame's
+    ``sample`` held three arrays of the output's size more), and the values are the same bit for bit (an element of
+    the product is its factor or a zero; ``shift_channels`` and ``cleaned`` choose between values and take the
+    product of each). The first pass's ``M`` is zero outside ``vf`` already. Memory, in arrays of 3 x Ho x Wo float32
+    (582 MB on 12 Mpx at scale 2): ``vf``, ``M``, ``D``, ``cover`` (4), and the background (1) until
+    ``drop_background``; each made one colour at a time, the temporaries of the whole array gone."""
 
     def __init__(self, num: torch.Tensor, den: torch.Tensor, sq: torch.Tensor | None, n: int, Ho: int, Wo: int, dev,
                  c0: torch.Tensor, mean_only: bool = False):
         d = den.view(3, Ho, Wo)
         self.Ho, self.Wo, self.c0 = Ho, Wo, c0.view(3, 1, 1).to(d.device)
-        self.valid = d > 0
+        self.vf = (d > 0).float()
         if mean_only:                  # the mean and its background alone (the colour offsets): ``num`` becomes the mean
             for c in range(3):         # the same quotient, one colour at a time and in place: no deviation, no coverage
                 m = num.view(3, Ho, Wo)[c]
                 torch.div(m, d[c].clamp(min=1e-12), out=m)
-                m[~self.valid[c]] = 0
+                m[self.vf[c] == 0] = 0
             self.M = num.view(3, Ho, Wo)
             self.D = self.cover = None
             self.bkg, _ = smooth_background(self.M, self.valid)
             return
-        self.M = torch.zeros_like(d)
-        self.D = torch.zeros_like(d)
+        self.M = torch.zeros_like(self.vf)
+        self.D = torch.zeros_like(self.vf)
         self._moments(num, den, sq)
-        self.cover = torch.zeros_like(d)
+        self.cover = torch.zeros_like(self.vf)
         for c in range(3):
-            pos = d[c][self.valid[c]]
+            pos = d[c][self.vf[c] > 0]
             if pos.numel():
                 med = torch.median(pos[::max(1, pos.numel() // 4_000_000)])
                 self.cover[c] = n * d[c] / med
+            del pos
         self.bkg, _ = smooth_background(self.M, self.valid)
+
+    @property
+    def valid(self) -> torch.Tensor:
+        return self.vf > 0
+
+    def drop_background(self) -> None:
+        self.bkg = None
 
     def _moments(self, num: torch.Tensor, den: torch.Tensor, sq: torch.Tensor | None) -> None:
         """Mean and standard deviation where the weight ``den`` is positive (the others keep theirs); ``sq`` None: the
-        mean only (the deviation stays 0)."""
-        d = den.view(3, self.Ho, self.Wo)
-        dd = d.clamp(min=1e-12)
-        m = num.view(3, self.Ho, self.Wo) / dd
-        self.M = torch.where(d > 0, m, self.M)
-        if sq is not None:
-            var = sq.view(3, self.Ho, self.Wo) / dd - (m - self.c0) ** 2
-            self.D = torch.where(d > 0, var.clamp(min=0).sqrt(), self.D)
+        mean only (the deviation stays 0). One colour at a time."""
+        for c in range(3):
+            d = den.view(3, self.Ho, self.Wo)[c]
+            dd = d.clamp(min=1e-12)
+            m = num.view(3, self.Ho, self.Wo)[c] / dd
+            self.M[c] = torch.where(d > 0, m * self.vf[c], self.M[c])
+            if sq is not None:
+                var = sq.view(3, self.Ho, self.Wo)[c] / dd - (m - self.c0[c]) ** 2
+                self.D[c] = torch.where(d > 0, var.clamp(min=0).sqrt() * self.vf[c], self.D[c])
+            del d, dd, m
 
     def shift_channels(self, fix: ChannelOffsets) -> None:
         """The red and blue images of the mean and of the deviation moved onto the green one (``fix``), where the
@@ -1114,10 +1192,10 @@ class Prediction:
             dx, dy = fix.at(xx, yy, torch.full_like(xx, c, dtype=torch.long))
             grid = torch.stack([(xx + dx + 0.5) / self.Wo * 2 - 1, (yy + dy + 0.5) / self.Ho * 2 - 1], -1)[None]
             del dx, dy
-            w = F.grid_sample(self.valid[c].float()[None, None], grid, mode="bilinear", align_corners=False)
+            w = F.grid_sample(self.vf[c][None, None], grid, mode="bilinear", align_corners=False)
             for f in (self.M, self.D):
-                num = F.grid_sample((f[c] * self.valid[c])[None, None], grid, mode="bilinear", align_corners=False)
-                f[c] = torch.where(w[0, 0] > 0.5, num[0, 0] / w[0, 0].clamp(min=1e-6), f[c])
+                num = F.grid_sample((f[c] * self.vf[c])[None, None], grid, mode="bilinear", align_corners=False)
+                f[c] = torch.where(w[0, 0] > 0.5, (num[0, 0] / w[0, 0].clamp(min=1e-6)) * self.vf[c], f[c])
 
     def cleaned(self, num: torch.Tensor, den: torch.Tensor, sq: torch.Tensor) -> Prediction:
         """The same prediction with the mean and deviation of the samples ``num`` / ``den`` / ``sq`` kept by a
@@ -1136,20 +1214,18 @@ class Prediction:
             v = F.grid_sample(a.unsqueeze(0), grid, mode="bilinear", padding_mode="zeros", align_corners=False)[0]
             return torch.gather(v, 0, chmap.unsqueeze(0))[0]
 
-        vf = self.valid.float()
-        w = at(vf)
-        return {"pred": at(self.M * vf) / w.clamp(min=1e-6), "dev": at(self.D * vf) / w.clamp(min=1e-6),
+        w = at(self.vf)
+        return {"pred": at(self.M) / w.clamp(min=1e-6), "dev": at(self.D) / w.clamp(min=1e-6),
                 "cover": torch.where(w > 0.5, at(self.cover), torch.zeros_like(w))}
 
     def _sample_cpu(self, Xo: torch.Tensor, Yo: torch.Tensor, chmap: torch.Tensor) -> dict[str, torch.Tensor]:
         """``sample`` for a frame on the CPU, compiled: each sample read in its own channel only."""
         from ..core.stack_kernels import sample
         shape = Xo.shape
-        vf = self.valid.float()
         # the coordinates as grid_sample rounds them (float32, through its normalised grid): the same samples rejected
         x = (((Xo + 0.5) / self.Wo * 2 - 1 + 1) * self.Wo - 1) / 2
         y = (((Yo + 0.5) / self.Ho * 2 - 1 + 1) * self.Ho - 1) / 2
-        mv, w, cov, dv = sample((self.M * vf).numpy(), vf.numpy(), self.cover.numpy(), (self.D * vf).numpy(),
+        mv, w, cov, dv = sample(self.M.numpy(), self.vf.numpy(), self.cover.numpy(), self.D.numpy(),
                                 x.ravel().numpy(), y.ravel().numpy(), chmap.ravel().numpy(), torch.get_num_threads())
         mv, w, cov, dv = (torch.from_numpy(a).view(shape) for a in (mv, w, cov, dv))
         return {"pred": mv / w.clamp(min=1e-6), "dev": dv / w.clamp(min=1e-6),
