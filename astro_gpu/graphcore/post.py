@@ -90,21 +90,32 @@ def wired_images(g, c=None) -> set:
 
 
 def with_post_wires(g, shared: set):
-    """The graph whose wires to Post are those of the shared set (the others to Post go; Combine layers' kept)."""
+    """The graph whose wires to Post are those of the shared set (the others to Post go; Combine layers' kept). A wire
+    already there for an image of the set stays as it is (its id, its place): an Undo gives the graph back exactly,
+    the projection drawn again over it changes nothing."""
     q = clone(g)
     flows = _flows(q)
     ix = Index(q)
     post = ix.post
-    keep = [w for w in q.wires if w.dst[0] != post or q.blocks[w.src[0]].kind == "combine_layers"]
     rows = {r.wid for r in q.rows if r.wid is not None}
-    have = {(tuple(w.src)) for w in keep if w.dst[0] == post}
+    want = {}                                          # (block, port) -> the wid its wire names (None: its own)
     for wid, part in sorted(shared, key=lambda x: (x[0], str(x[1]))):
         at = place_of(q, wid, part, flows)
-        if at is None or at in have:
+        if at is None or at in want:
             continue
-        have.add(at)
         own = wid in rows and flows[wid][-1] in (at[0], *[b for b in flows[wid][-1:] if q.blocks[b].kind == "stars"])
-        keep.append(Wire(new_id(q, "w"), list(at), [post, POST_PORT], True, None if own else wid))
+        want[at] = None if own else wid
+    keep, have = [], set()
+    for w in q.wires:
+        if w.dst[0] != post or q.blocks[w.src[0]].kind == "combine_layers":
+            keep.append(w)
+        elif tuple(w.src) in want and tuple(w.src) not in have:
+            have.add(tuple(w.src))
+            w.wid = want[tuple(w.src)]
+            keep.append(w)
+    for at, wid in want.items():
+        if at not in have and at not in {tuple(w.src) for w in keep if w.dst[0] == post}:
+            keep.append(Wire(new_id(q, "w"), list(at), [post, POST_PORT], True, wid))
     q.wires = keep
     return q
 

@@ -163,3 +163,35 @@ def test_a_combine_layers_placed_after_a_stars_background_has_its_wire_to_post()
     ok(doc, "add_block", kind="combine_layers", at={"type": "comp", "after": stars})
     j = next(b for b, x in doc.project.blocks.items() if x.kind == "combine_layers")
     assert any(w.src == [j, "image"] and w.dst[0] == post for w in doc.project.wires)
+
+
+def test_the_projection_keeps_the_wires_to_post_it_finds():
+    """Post's wires drawn again over a graph that already has them change nothing (ids, order, next id): an Undo gives
+    the stored graph back exactly (the window fuzz of 14 November: S-H-O + RGB, a block of OIII moved, then a
+    Registration deleted; Ctrl+Z gave the S-H-O's wire to Post back under a new id)."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "graphcore"))
+    from fixtures import Doc
+    from astro_gpu.graphcore.model import model_json
+    from astro_gpu.graphcore.post import wired_images, with_post_wires
+    for key in ("colour_minimal", "several_images", "sho_rgb", "colour_complete", "filters_complete"):
+        g = Doc.from_template(key).project
+        assert model_json(with_post_wires(g, wired_images(g))) == model_json(g), key
+
+
+def test_deleting_a_registration_of_s_h_o_and_rgb_is_undone_exactly(qapp, tmp_path):  # noqa: F811
+    from astro_gpu.graphcore.model import model_json
+    W = World(tmp_path / "w", workflows=(), filters=("SII", "Ha", "OIII"), nights=0)
+    try:
+        W.template("sho_rgb")
+        oiii = next(r for r in W.graph.rows if r.name == "OIII")
+        reg = next(b for b in oiii.blocks if W.graph.blocks[b].kind == "registration")
+        before = model_json(W.graph)
+        assert W.m.apply([("remove_block", {"block": reg})]).ok
+        W.settle()
+        W.m.undo(graph=True)
+        W.settle()
+        assert model_json(W.graph) == before
+    finally:
+        W.close()
