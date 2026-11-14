@@ -1573,8 +1573,22 @@ class GraphEditing:
                 out.append((v.pid, stage))
         return out
 
+    #: the panel's options that are a block's method: made on the graph's block (``apply_change``), so costed as that
+    #: gesture (the what-if workflow of ``_changed`` keeps the block's method: a computed block lost nothing, never asked)
+    _METHOD_KEYS = ("dn", "fond", "deconv_m")
+
     def _panel_cost(self, ch, paths) -> ChangeCost:
         from .. import api
+        subs = ch["changes"] if ch["kind"] == "many" else [ch]
+        if all(c["kind"] == "opt" and c.get("key") in self._METHOD_KEYS for c in subs):
+            steps, seen = [], set()
+            for c in subs:
+                for q in paths:
+                    for bid, method in self._method_change(q, c):
+                        if bid not in seen:
+                            seen.add(bid)
+                            steps.append(("set_method", {"block": bid, "method": method}))
+            return self._steps_cost(steps) if steps else ChangeCost()
         changed, lost = [], []
         for q in paths:
             c = self._changed(q, ch)

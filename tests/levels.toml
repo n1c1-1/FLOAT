@@ -108,4 +108,6 @@ level3 = [
     "tests/test_stacking.py::test_the_default_selection_keeps_every_frame_above_the_minimum_weight",  # heavy, 10-16 s
     "tests/test_stacking.py::test_the_bar_only_goes_forward_after_the_fixed_pattern",               # heavy, 3 stacks, up to 31 s
     "tests/test_stacking.py::test_selection_by_thresholds_with_reasons",                             # heavy, 9-24 s
+    # heavy: every panel control of every block, a slow worker, the event loop watched, 41 s
+    "tests/client/graphview/test_gv_loop_guard.py::test_every_panel_control_of_every_block_leaves_the_event_loop_free_with_a_slow_worker",
 ]
