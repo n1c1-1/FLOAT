@@ -394,8 +394,20 @@ class GraphEditing:
     # ------------------------------------------------------------------ applying
     def apply(self, steps, view=None) -> Result:
         """Graph core operations as ONE undo step: ``steps`` = [(operation, kwargs | f(results so far) -> kwargs)].
-        Refused: nothing changes, the Result says why."""
-        return self._change(list(steps), view=view)
+        Refused: nothing changes, the Result says why. A block's image sent to Post writes its layer at once, in the
+        same step (as ``send_to_post``)."""
+        steps = list(steps)
+        if not any(s[0] == "send_to_post" for s in steps):
+            return self._change(steps, view=view)
+        before = self._wids()
+        with self._edit():
+            res = self._change(steps, view=view)
+            if res.ok:
+                for wid in sorted(self._wids() - before):
+                    v = self._view_of_wid(wid)
+                    if v is not None:
+                        self._write_branch_layer(v)
+        return res
 
     def _change(self, steps=(), raw=None, view=None, name=None) -> Result:
         """Operations, then ``raw(graph)`` (an edit the core has no operation for, on a copy), as one step."""
@@ -727,6 +739,8 @@ class GraphEditing:
             if after is not None:
                 break
         ix = gm.Index(self._g)
+        if after is None and row.blocks and self._g.blocks[row.blocks[0]].kind in ("image", "combine") and                 index > 0:                                # after the Image (or Combination) the row starts with
+            after = row.blocks[0]
         if after is not None and after not in row.blocks:
             if row.fork and after == row.fork[1]:
                 at = {"type": "insert", "row": row.id, "after": None}
@@ -1647,8 +1661,9 @@ class GraphEditing:
             from ..graphcore.operations import _night
             g.nights.append({"sid": sid, "name": nm, "filter": "",
                              "files": {k: list(files.get(k, [])) for k in gm.FILE_KINDS}, "left_out": {}})
-            for r in g.rows:                            # a stack of every night draws it too
-                if r.all_nights and r.nights and not r.fork:
+            for r in g.rows:                            # a stack of every night draws it too (one made before any
+                if r.all_nights and not r.fork and (r.nights or not r.blocks or      # night was added included)
+                                                    g.blocks[r.blocks[0]].kind not in ("image", "combine")):
                     pair = _night(g, nm, {k: v for k, v in files.items() if v})
                     g.blocks[pair[0]].sid = g.blocks[pair[1]].sid = sid
                     g.blocks[pair[1]].off = g.blocks[r.nights[-1][1]].off if g.calibrate_together else False

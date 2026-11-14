@@ -243,7 +243,11 @@ def row_kind(ix, rid):
     if r.nights:
         return "stack"
     k = ix.p.blocks[r.blocks[0]].kind if r.blocks else ""
-    return "image" if k == "image" else "join"
+    if k == "image":
+        return "image"
+    if k in JOIN_KINDS or not r.all_nights:
+        return "join"
+    return "stack"                                     # a stack of every night, made before any night was added
 
 
 # ---------------------------------------------------------------------------------------------------- save / load
@@ -366,8 +370,9 @@ def check(p):
             need(r.fork[0] in ix.row and r.fork[1] in ix.row[r.fork[0]].blocks, f"fork of {r.id}")
             need(kinds[0] not in JOIN_KINDS + ("image",), f"variant {r.id} head")
             need(ix.root(r.id) != r.id and not ix.row[ix.root(r.id)].fork, f"fork loop at {r.id}")
-        elif r.nights:
-            pass                                       # a stack, or a stack being built (no Stacking yet, no block)
+        elif r.nights or (r.all_nights and not any(k in JOIN_KINDS + ("image",) for k in kinds)):
+            pass                                       # a stack, or a stack being built (no Stacking yet, no block);
+            #                                            one of every night made before any night was added
         else:
             need(kinds and kinds[0] in JOIN_KINDS + ("image",), f"row {r.id} has no head")
     by_sid = {}

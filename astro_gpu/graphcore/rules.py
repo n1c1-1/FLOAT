@@ -676,7 +676,9 @@ def root_kind(p, ix, rid):
         src = head.source
         st = bool(src.get("stretched")) if isinstance(src, dict) else bool(effective(p, head.id)["Stretched image"])
         return "stretched" if st else "image"
-    return "layers" if head.kind == "combine_layers" else "join"
+    if head.kind == "combine_layers":
+        return "layers"
+    return "join" if head.kind == "combine" or not r.all_nights else "stack"     # (a stack made before any night)
 
 
 def holder_align(p, ix, chain):
