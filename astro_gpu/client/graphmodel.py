@@ -514,14 +514,15 @@ class GraphEditing:
         rb, ra = layer_rows(before), layer_rows(after)
         if rb == ra:
             return
-        flows = _flows(after)
-        alive = sorted(q.pid for q in self.paths)
-        for s in sorted(set(rb) | set(ra)):
-            nb, na = rb.get(s, []), ra.get(s, [])
-            if len(nb) == len(na) or s not in after.blocks:
+        fb, fa = _flows(before), _flows(after)
+        done = set()
+        for wid in sorted(q.pid for q in self.paths):    # by workflow: a Synthetic stars inserted after its Stars block
+            sb, sa = stars_side(before, wid, fb), stars_side(after, wid, fa)    # takes its Combine layers as they are
+            if sa is None or sa in done:
                 continue
-            wid = next((w for w in alive if stars_side(after, w, flows) == s), None)
-            if wid is None:
+            done.add(sa)
+            nb, na = rb.get(sb, []) if sb is not None else [], ra.get(sa, [])
+            if len(nb) == len(na):
                 continue
             if len(na) > len(nb):
                 for _i in range(len(na) - len(nb)):
@@ -565,9 +566,18 @@ class GraphEditing:
         page, D on it is accepted; Post's pruning then takes its layers out, and switched on again Post's default
         Combine layers comes back). The graph the gesture is made on, without them."""
         from ..graphcore.post import layer_rows, with_layer_rows
-        offs = [s[1].get("block") for s in steps if s[0] == "switch_off" and isinstance(s[1], dict)]
         rows = layer_rows(g)
-        want = {b: 0 for b in offs if b in rows and b in g.blocks and not g.blocks[b].off}
+        if not rows:
+            return g
+        named = {s[1].get("block") for s in steps if isinstance(s[1], dict)}
+        mine = {b: {x for r in g.rows if r.id in rids for x in r.blocks} for b, rids in rows.items()}
+        want = {}
+        for s in steps:
+            b = s[1].get("block") if isinstance(s[1], dict) else None
+            if b not in rows or b not in g.blocks or mine[b] & named:    # the gesture names them: its own business
+                continue
+            if (s[0] == "switch_off" and not g.blocks[b].off) or s[0] == "remove_block":
+                want[b] = 0        # a Stars block deleted alone: its Combine layers go with it, its layers by Post's pruning
         return with_layer_rows(g, want) if want else g
 
     @staticmethod
