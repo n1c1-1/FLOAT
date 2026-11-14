@@ -33,8 +33,8 @@ class Bridge(QObject):
     appeared = Signal(object)     # the block a gesture made (the one of the kind dropped): shown on screen
     acted = Signal(str, object)   # an operation the bridge applied was accepted: (its name, its Result)
 
-    def __init__(self, document=None):
-        super().__init__()
+    def __init__(self, document=None, parent=None):
+        super().__init__(parent)                          # the page's: it goes with the page (no cycle kept by Qt)
         self.doc = Doc(document if document is not None else MemoryDocument())
         self._drawing = None
         self._drawn_for = None        # (graph object, revision) the cached Drawing was laid out for

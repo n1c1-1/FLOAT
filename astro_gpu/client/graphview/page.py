@@ -73,7 +73,7 @@ class GraphPage(SidesHost, QWidget):
         self._last = None                # (seconds to run, count of workflows) at the last refresh: "+ N min to run"
         self.panel = self.dock = None    # today's settings panel and its dock: on a project model only
         self.templates = None            # the gallery's TemplatePage, made when first asked
-        self.bridge = Bridge(document.document if self.s is not None else document)
+        self.bridge = Bridge(document.document if self.s is not None else document, self)
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(0)

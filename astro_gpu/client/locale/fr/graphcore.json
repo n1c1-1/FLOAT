@@ -418,5 +418,9 @@
   "{lab} deleted with {n} blocks that need it": "{lab} supprimé avec {n} blocs qui en ont besoin",
   "Common's files are left out in each session": "les fichiers du commun s'écartent dans chaque session",
   "{n} {kind} left out of “{_name}”": "{n} {kind} écartés de « {_name} »",
-  "{n} {kind} taken back in “{_name}”": "{n} {kind} repris dans « {_name} »"
+  "{n} {kind} taken back in “{_name}”": "{n} {kind} repris dans « {_name} »",
+  "3 σ": "3 σ",
+  "auto": "auto",
+  "{_text}": "{_text}",
+  "{ref} · {bal}": "{ref} · {bal}"
 }
