@@ -258,18 +258,21 @@ def _image_name(plan, g, base, images):
     return f"{base} {n}"
 
 
-def _white_balance(g):
-    """model.add_path: a new workflow takes the camera white balance when the project's first workflow has it, or
-    when there is none yet."""
-    if not g.order and not g.rows:
+def camera_white_balance(g) -> bool:
+    """model.add_path's rule (issue #6) for a new stack: the camera white balance in its Stacking when the project's
+    first stack has it, or when the project has no stack yet (on in a new project), so that the stacks of a project
+    share their setting. A Session alone (no Stacking placed yet) is no stack: it decides nothing."""
+    stacks = [(r.wid is None, r.wid or 0, i, r, b) for i, r in enumerate(g.rows) for b in r.blocks
+              if b in g.blocks and g.blocks[b].kind == "stacking"]
+    if not stacks:
         return True
-    from .compile import compile_into
-    from ..core.project2 import Project2
-    p = Project2(name="wb")
-    compile_into(g, p)
-    if not p.workflows:
-        return True
-    return bool((p.workflows[0].params.get("stack") or {}).get("white_balance", False))
+    *_, r, b = min(stacks, key=lambda x: x[:3])          # the first workflow's (compile._settings: block, then leftovers)
+    v = (g.blocks[b].params.get("stack") or {}).get("white_balance", False)
+    v = ((r.extra or {}).get("stack") or {}).get("white_balance", v)
+    return bool(v) and ("stack", "white_balance") not in {tuple(x) for x in r.unset or []}
+
+
+_white_balance = camera_white_balance
 
 
 def _build_filters(plan, g, t, name, opts):

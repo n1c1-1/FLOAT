@@ -50,6 +50,8 @@ def test_a_new_workflow_takes_the_projects_setting(tmp_path):
     p = project2.create(tmp_path / "P", "P", Target(name="M 1"))
     assert "stack" not in api.add_workflow(p, "Raw", "Classic stack").params           # the engine: as given
     p.workflows.clear()
+    p.current = None                                         # no workflow: none is the current one
+    p.sessions = [project2.Session(id=1, name="Session 1")]  # a stack draws a session
     w = ApiWorker()
     m = ProjectModel(p, w, readonly=True)
     try:
