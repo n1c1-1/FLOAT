@@ -105,9 +105,6 @@ def test_the_palette_reasons_are_french_sentences():
         "Stars/background needs Stacking first"
 
 
-@pytest.mark.xfail(strict=True, reason="the new page's toasts: no workflow name after a switch-off, a refused deletion "
-                   "without the block kept, Stacking's refusal not its own, 'Couleur supprimé' (no agreement), and no "
-                   "history line for a removal")
 def test_switch_off_remove_and_keep_say_it_in_french_and_undo_says_what(world):
     m, page = world["m"], world["page"]
     toasts = watch_toasts(page)

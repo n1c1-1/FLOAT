@@ -1342,7 +1342,12 @@ def op_switch_off(q, block):
         ix = Index(q)
         for _s, c in ix.row[ix.row_of[block]].nights:
             q.blocks[c].off = b.off
-    return Out(M("{lab} switched off" if b.off else "{lab} switched on", lab=LABEL[b.kind]), block, style="off")
+    said = M("{lab} switched off" if b.off else "{lab} switched on", lab=LABEL[b.kind])
+    ix = Index(q)
+    r = ix.row.get(ix.row_of.get(block))
+    if r is not None:                                  # with the workflow's name, as today's page said it
+        said = join([said, M("{_row}", _row=r.name)])
+    return Out(said, block, style="off")
 
 
 def op_set_pause(q, block):

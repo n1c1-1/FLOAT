@@ -417,10 +417,17 @@ class GraphCanvas(QGraphicsView):
         """The delete cross / Del on a block. When the core refuses, nothing is silent: the blocks that depend on it get
         a red frame for 1.5 s and the toast says why, with ONE action to delete them too when that is possible."""
         bridge = self.bridge
+        title = self.doc.title(ident) if ident in bridge.graph.blocks else ""
+        paths = self._workflows_of(ident)
         res = bridge.act("remove_block", quiet="refusal", block=ident)
         if res.ok:
+            log_line = getattr(self.doc.model, "log", None)
+            for p in paths if log_line is not None else ():      # the history says it, workflow by workflow
+                log_line('{block} removed from "{name}"', block=title, name=p.name)
             return res
-        reason = bridge.say(res.reason) or _("This block cannot be deleted")
+        reason = self._kept_reason(ident, paths) or bridge.say(res.reason) or _("This block cannot be deleted")
+        if title:
+            reason = _("{block} kept: {why}").format(block=title, why=reason)
         deps, possible = self.dependants(ident)
         framed = deps or [ident]
         for b in framed:
@@ -435,6 +442,30 @@ class GraphCanvas(QGraphicsView):
             links = [(_("Delete too"), "delete_too")]
         bridge.rich_toast.emit(reason, links)
         return res
+
+    def _workflows_of(self, ident) -> list:
+        """The project model's workflows a block is in (its node's), [] without a model."""
+        bm = getattr(self.doc.model, "block_map", None)
+        n = bm.node(ident) if bm is not None and ident in self.bridge.graph.blocks else None
+        return list(n.paths) if n is not None else []
+
+    def _kept_reason(self, ident, paths) -> str:
+        """Why the project model keeps a block, in today's words ("Color needs it", "the next blocks need its
+        image"), "" when it has none to say."""
+        m = self.doc.model
+        bm = getattr(m, "block_map", None)
+        n = bm.node(ident) if bm is not None and ident in self.bridge.graph.blocks else None
+        why_of = getattr(m, "removal_problem", None)
+        if n is None or why_of is None:
+            return ""
+        for p in paths:
+            try:
+                why = why_of(p, n.ref)
+            except Exception:  # noqa: BLE001 - the core's reason is said instead
+                return ""
+            if why and why != _("not in workflow"):
+                return why
+        return ""
 
     def _end_alert(self, ids):
         for b in ids:
