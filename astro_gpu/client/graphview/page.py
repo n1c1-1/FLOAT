@@ -70,6 +70,10 @@ class GraphPage(SidesHost, QWidget):
         self.left_state, self.right_state = "docked", "docked"
         self._pending = False
         self._mirroring = False
+        # a request of the model since the last drawing (its cause may change a block's state, badge or line): the
+        # refresh gives the blocks their data again; a request made by a gesture of the page before its own drawing
+        # (that drawing computed every block anew) or by the page's own choice of a block (no state changes) does not
+        self._states_due = True
         self._last = None                # (seconds to run, count of workflows) at the last refresh: "+ N min to run"
         self.panel = self.dock = None    # today's settings panel and its dock: on a project model only
         self.templates = None            # the gallery's TemplatePage, made when first asked
@@ -111,6 +115,7 @@ class GraphPage(SidesHost, QWidget):
             self.canvas.new_workflow = self.new_workflow
         self.canvas.wire_chosen.connect(self.panel_later)
         self.bridge.changed.connect(self._update_header)
+        self.bridge.changed.connect(self._drawn)
         self.bridge.changed.connect(self.changed.emit)
         self.bridge.states_changed.connect(self.changed.emit)
         self.bridge.toast.connect(self.toasted.emit)
@@ -485,17 +490,30 @@ class GraphPage(SidesHost, QWidget):
     def request_refresh(self, *_a):
         """The project model changed (a run, Post, the panel, the sources): the page follows once the event loop
         turns."""
+        if not self._mirroring:
+            self._states_due = True
         if not self._pending:
             self._pending = True
-            QTimer.singleShot(0, self, self.refresh)
+            QTimer.singleShot(0, self, self._requested)
 
-    def refresh(self):
+    def _drawn(self):
+        """The bridge's ``changed``: the canvas drew every block again (after its own rebuild, connected first)."""
+        self._states_due = False
+
+    def _requested(self):
+        if self._pending:
+            self.refresh(states=self._states_due)
+
+    def refresh(self, states: bool = True):
+        """The page follows the model; ``states`` False: the blocks' data are those of the last drawing, made after
+        every change the model asked a refresh for (the gesture's own drawing)."""
         self._pending = False
         b = self.bridge
         if b.stale():
             b.view_changed()                  # the graph changed outside the page: laid out and drawn again
-        else:
+        elif states:
             b.run_states_changed()            # states, badges and the reading line only
+        self._states_due = False
         if not self.is_blank():
             self.hide_templates()
         self.follow_model_selection()

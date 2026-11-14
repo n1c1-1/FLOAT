@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import textwrap
 
-from PySide6.QtCore import QMimeData, QPoint, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QMimeData, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QDrag
 from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QMenu, QScrollArea, QToolButton, QVBoxLayout
 
@@ -55,10 +55,49 @@ class Card(QFrame):
         h.addWidget(self.title, 1)
         self.set_state(True, "")
 
-    def set_state(self, enabled, reason, hint=""):
+    # the hint asks the core whether the current workflow takes the card at its natural place: a dry run of the
+    # gesture, so it is asked when it is read (the tooltip shown, a double-click, a test), never for every card at
+    # every change; the palette sets the card again at each change and each choice of a block (``_due``)
+    @property
+    def hint(self):
+        self._resolve()
+        return self._hint
+
+    @hint.setter
+    def hint(self, value):
+        self._hint, self._due = value or "", False
+
+    @property
+    def reason(self):
+        self._resolve()
+        return self._reason
+
+    @reason.setter
+    def reason(self, value):
+        self._reason = value or ""
+
+    def _resolve(self):
+        if getattr(self, "_due", False):
+            self._due = False
+            why, self._hint = self.palette.hint(self.kind)
+            self._reason = why or ""
+            self._tip()
+
+    def toolTip(self):                                                # noqa: N802
+        self._resolve()
+        return super().toolTip()
+
+    def event(self, e):
+        if e.type() == QEvent.ToolTip:
+            self._resolve()
+        return super().event(e)
+
+    def set_state(self, enabled, reason, hint="", due=False):
         """Enabled or greyed with its reason; ``hint``: the card's place in the current workflow is refused (its reason
-        in ``reason``) but it can still be dragged elsewhere, said in words."""
-        self.enabled, self.reason, self.hint = bool(enabled), reason or "", hint or ""
+        in ``reason``) but it can still be dragged elsewhere, said in words; ``due``: enabled, that hint is asked of
+        the core when first read."""
+        self.enabled, self._reason, self._hint = bool(enabled), reason or "", hint or ""
+        self._due = bool(due) and self.enabled
         on = self.enabled
         self.setCursor(Qt.OpenHandCursor if on else Qt.ForbiddenCursor)
         self.setStyleSheet(f"QFrame#tool {{ background: {'#232831' if on else '#1e2128'}; border: 1px solid "
@@ -71,17 +110,17 @@ class Card(QFrame):
         self._tip()
 
     def _tip(self):
-        on = self.enabled
+        on, reason, hint = self.enabled, self._reason, self._hint
         what = textwrap.fill(kind_what(self.kind), 70)
-        if on and self.hint:
-            tip = what + "\n" + _capital(self.reason) + "\n" + self.hint
-        elif on or not self.reason:
+        if on and hint:
+            tip = what + "\n" + _capital(reason) + "\n" + hint
+        elif on or not reason:
             tip = what
         else:
-            tip = _capital(self.reason)
+            tip = _capital(reason)
         # folded (graph.py PaletteCard): the name heads the tooltip, the card shows only its icon
         name = kind_title(self.kind)
-        self.setToolTip(name + "\n" + tip if (self.narrow or not on and self.reason and not self.hint) else tip)
+        self.setToolTip(name + "\n" + tip if (self.narrow or not on and reason and not hint) else tip)
 
     def set_narrow(self, narrow: bool):
         """Folded or automatic: the icon alone, centred in the strip; the name comes back with the tooltip's."""
@@ -334,28 +373,42 @@ class Palette(QScrollArea):
         """The cards' greyed states: the core needs a few tens of ms a card, so they are brought up to date one card
         per turn of the event loop, after the drop's repaint (a drop must feel instant), and again from the start if
         a change comes."""
+        self._gen += 1
+        if not self.isVisible():         # hidden (the Table, Tab): brought up to date when it shows again
+            self._queue, self._hidden_change = [], True
+            return
+        self._hidden_change = False
+        self._for_current()
+        self._queue = list(self.cards)
+        QTimer.singleShot(0, self, lambda g=self._gen: self._step(g))     # (cancelled if the palette is deleted)
+
+    def _for_current(self):
         r = self.current_row()
         self._for_text = _("for “{name}”").format(name=r.name) if r is not None else ""
         self._show_for()
         self.for_row.setVisible(r is not None and self.wide())
-        self._gen += 1
-        self._queue = list(self.cards)
-        QTimer.singleShot(0, self, lambda g=self._gen: self._step(g))     # (cancelled if the palette is deleted)
+
+    def showEvent(self, e):                                           # noqa: N802
+        super().showEvent(e)
+        if getattr(self, "_hidden_change", False):
+            self.refresh()
 
     def _step(self, gen):
         if gen != self._gen or not self._queue:
             return
         k = self._queue.pop(0)
         ok, why = self.bridge.doc.palette_state(k)
-        hint = ""
-        if ok:
-            why, hint = self.hint(k)
-        self.cards[k].set_state(ok, why, hint)
+        self.cards[k].set_state(ok, "" if ok else why, due=ok)
         if self._queue:
             QTimer.singleShot(0, self, lambda g=gen: self._step(g))
 
     def finish(self):
         """Bring every card up to date now (tests, first display)."""
+        if getattr(self, "_hidden_change", False):
+            self._hidden_change = False
+            self._gen += 1
+            self._for_current()
+            self._queue = list(self.cards)
         while self._queue:
             self._step(self._gen)
 
