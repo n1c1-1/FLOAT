@@ -10,6 +10,11 @@ from PySide6.QtWidgets import QApplication, QPushButton, QToolTip
 from tests.client.graphview import test_gv_page as first
 from tests.client.graphview.test_gv_page import fwd, make, pump, settle, template
 
+
+def files_in(folder, *exts):
+    """Files only: what a drop of this folder stores, its first level's frames one by one (``exts``: those kept)."""
+    return [fwd(x) for x in sorted(folder.iterdir()) if x.is_file() and (not exts or x.suffix[1:].upper() in exts)]
+
 page, B = first.page, first.B                                       # the fixtures of the first part
 
 TEMPLATES = ("colour_minimal", "colour_complete", "filters_minimal", "filters_complete", "sho_rgb", "several_images",
@@ -232,7 +237,7 @@ def test_s40_a_file_cell_of_the_table_in_the_right_pane(B, tmp_path):
     assert isinstance(fp, FilesPanel) and B.page.right.isVisible()
     settle(B)
     fp.refresh()
-    assert fp.entries() == [fwd(night)]
+    assert fp.entries() == files_in(night)
     tb.click(("stack", B.graph.rows[0].id))                          # another cell: the pane goes
     assert B.b.file_cell is None and not B.page.right.isVisible() and B.page.files_panel is None
     B.g.display("blocks")
@@ -342,7 +347,7 @@ def test_s33_files_filtered_by_type_take_all_one_undo_step(B, tmp_path):
     settle(B)
     assert "5 ARW added" in B.toast() and "2 JPG left" in B.toast()
     assert {"take_all", "undo"} <= set(B.link_keys())
-    assert B.steps() == n0 + 1 and B.b.doc.files_of(s, "lights")[1] == [fwd(mixed)]
+    assert B.steps() == n0 + 1 and B.b.doc.files_of(s, "lights")[1] == files_in(mixed, "ARW")
     B.canvas.toast.link.emit("take_all")                              # the toast's « Take all » link
     settle(B)
     assert B.b.drops.count(B.b.doc.files_of(s, "lights")[1]) == (7, True)
@@ -367,7 +372,7 @@ def test_s34_sub_folders_not_read_include_and_no_duplicate(B, tmp_path):
     settle(B)
     lst = B.b.doc.files_of(s, "lights")[1]
     assert B.b.drops.count(lst) == (11, True) and B.steps() == n0 + 2
-    assert lst == [fwd(night), fwd(night / "darks"), fwd(night / "flats")]   # each sub-folder an entry of its own
+    assert lst == files_in(night) + files_in(night / "darks") + files_in(night / "flats")   # files only
     before = B.js()
     B.g.drop_files(s, "lights", [str(night)])
     assert B.toast().startswith("Already there: nothing added")
@@ -393,7 +398,7 @@ def test_s35_a_folder_without_direct_files_leaves_no_entry(B, tmp_path):
     B.g.drop_files(s, "lights", [str(night), str(only)])
     settle(B)
     lst = B.b.doc.files_of(s, "lights")[1]
-    assert lst == [fwd(night)] and B.steps() == n0 + 1
+    assert lst == files_in(night) and B.steps() == n0 + 1
 
 
 # ======================================================================================================= delete cross, wires

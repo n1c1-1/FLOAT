@@ -390,9 +390,10 @@ class Converter:
                 sb = gm.new_block(g, "session", name=s.name or f"Session {sid}", sid=sid,
                                   files={k: list(getattr(s, k)) for k in gm.FILE_KINDS if getattr(s, k)})
                 own = (w.calibration or {}).get(str(sid))
-                cb = gm.new_block(g, "calibration", sid=sid, off=bool(calib and calib.get("off")),
-                                  own=copy.deepcopy(own) if own else None)
-                r.nights.append([sb.id, cb.id])
+                # a workflow without a calibration node: its nights drawn without a Calibration (drawn = compiled)
+                cb = gm.new_block(g, "calibration", sid=sid, off=bool(calib.get("off")),
+                                  own=copy.deepcopy(own) if own else None) if calib is not None else None
+                r.nights.append([sb.id, cb.id if cb is not None else None])
         g.rows.append(r)
         self.rows[r.id] = r
         return r
@@ -511,7 +512,7 @@ class Converter:
         """The holders of a workflow's settings, in its chain's order: (kind, object)."""
         g = self.g
         root = self.rows[self.root[wid]]
-        out = [("night", g.blocks[c]) for _s, c in root.nights]
+        out = [("night", g.blocks[c]) for _s, c in root.nights if c is not None]
         out.append(("calib", root))
         out += [("block", g.blocks[b]) for b in self.chain[wid]]
         if self.align_of[wid]:
@@ -526,7 +527,8 @@ class Converter:
         root = self.rows[self.root[wid]]
         if sid:
             if base in ("inventory", "calibrate"):
-                return next((("night", g.blocks[c]) for s, c in root.nights if str(g.blocks[c].sid) == sid), None)
+                return next((("night", g.blocks[c]) for s, c in root.nights
+                             if c is not None and str(g.blocks[c].sid) == sid), None)
             return None
         if stage in ("inventory", "calibrate"):
             return ("calib", root) if root.nights or root.calib_node else None

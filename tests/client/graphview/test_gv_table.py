@@ -29,6 +29,13 @@ def fwd(p) -> str:
     return str(p).replace("\\", "/")
 
 
+def files_in(folder):
+    """Files only: what a drop of this folder stores, its first level's frames the default filter keeps (raws and
+    FITS), one by one."""
+    from astro_gpu.core.project import frame_kind
+    return [fwd(x) for x in sorted(Path(folder).iterdir()) if x.is_file() and frame_kind(x) in ("raw", "fits")]
+
+
 class Bench:
     """A Table on a bridge held in memory, sized as in the window, driven with real events."""
 
@@ -353,7 +360,7 @@ def test_gv_table_replace_half_and_rather_add(qapp, tree):
     n0 = b.steps()
     b.drop([tree["flats2"]], ("box", sid, "flats"), fx=0.8)
     b.read()
-    assert b.own(sid, "flats") == [fwd(tree["flats2"])] and b.steps() == n0 + 1
+    assert b.own(sid, "flats") == files_in(tree["flats2"]) and b.steps() == n0 + 1
     assert "replace" in b.t.toast_text and "rather_add" in b.t.toast_w.text()
     b.t.link("rather_add")
     b.read()
@@ -482,7 +489,7 @@ def test_gv_table_drag_labels_and_refusals(qapp, tree):
     assert b.box(s1, "darks").n == 6 and b.box(s2, "darks").n == 6 and b.steps() == n0 + 1
     # a filled box dragged onto another moves its list; Ctrl copies
     b.drop([], ("box", s2, "flats"), internal=("box", s1, "darks"))
-    assert b.own(s2, "flats") == [fwd(tree["lib"])] and not b.own(s1, "darks")
+    assert b.own(s2, "flats") == files_in(tree["lib"]) and not b.own(s1, "darks")
     b.key(Qt.Key_Z, Qt.ControlModifier)
     assert "Copy" in b.hover([], ("box", s2, "flats"), internal=("box", s1, "darks"), ctrl=True).label
     b.end_hover()
@@ -490,6 +497,9 @@ def test_gv_table_drag_labels_and_refusals(qapp, tree):
 
 
 # ----------------------------------------------------------------------------------------------- reading
+@pytest.mark.xfail(reason="files only: a dropped folder is listed at the drop, its files stored one by one; the "
+                          "table has no folder left to read in the background, so no reading veil nor its stop",
+                   strict=False)
 def test_gv_table_reading_and_stop(qapp, tree):
     b = Bench(1366, delay=0.6)
     sid = b.sessions()[0]
@@ -582,7 +592,7 @@ def test_gv_table_sub_folders_not_read(qapp, tree):
     assert "5 ARW added" in b.t.toast_text and "2 sub-folders not read" in b.t.toast_text
     assert "include" in b.t.toast_w.text()
     tip = b.g.tooltip_text(b.pos(("box", sid, "lights")))
-    assert "folder · without sub-folders" in tip
+    assert "IMG_0000.ARW : file" in tip                              # files only: its files
     assert "file_options" not in b.doc.view                         # nothing about the filter is stored
     # the project reopens with the same files whatever the filter set then
     files.set_index(0)
@@ -606,7 +616,7 @@ def test_gv_table_empty_folder_leaves_no_entry(qapp, tree):
     n0 = b.steps()
     b.drop([tree["sub"], tree["only_sub"]], ("box", sid, "lights"))     # one with direct files, one without
     b.read()
-    assert b.own(sid, "lights") == [fwd(tree["sub"])] and b.box(sid, "lights").n == 5 and b.steps() == n0 + 1
+    assert b.own(sid, "lights") == files_in(tree["sub"]) and b.box(sid, "lights").n == 5 and b.steps() == n0 + 1
     b.close()
     b = Bench(1366)
     n0, s0 = b.steps(), len(b.sessions())
@@ -625,7 +635,7 @@ def test_gv_table_nothing_guessed_from_names(qapp, tree):
     sid = b.sessions()[0]
     b.drop([tree["darks"]], ("box", sid, "lights"))
     b.read()
-    assert b.own(sid, "lights") == [fwd(tree["darks"])] and b.box(sid, "lights").n == 5
+    assert b.own(sid, "lights") == files_in(tree["darks"]) and b.box(sid, "lights").n == 5
     assert not any(b.doc.graph.common["files"].values()) and set(b.doc.graph.blocks[sid].files) == {"lights"}
     assert b.box(sid, "lights").l2 == "" and not b.g.model.all_warnings()
     assert not [c for c in b.g.cells if c.kind not in ("name", "box", "cal", "stack", "setting", "ghost_s", "ghost_p")]
@@ -728,7 +738,7 @@ def test_gv_table_keyboard(qapp, tree):
     g.set_focus(g.cell(("box", s3, "flats")))
     b.key(Qt.Key_V, Qt.ControlModifier)
     b.read()
-    assert b.own(s3, "flats") == [fwd(tree["flats"])]
+    assert b.own(s3, "flats") == files_in(tree["flats"])
     QApplication.clipboard().clear()
     b.close()
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 
 from astro_gpu.graphcore.operations import COMMON
-from tests.client.graphview.test_gv_table import Bench, make
+from tests.client.graphview.test_gv_table import Bench, files_in, make
 
 
 def test_gv_host_builds_on_show_and_shares_the_document(qapp, tmp_path):
@@ -33,7 +33,7 @@ def test_gv_host_undo_from_the_page_and_both_ways(qapp, tmp_path):
     b.drop([night], ("body",))
     assert b.steps() == n0 + 1 and len(b.stacks()) == 1 and len(b.sessions()) == 1
     sid = b.sessions()[0]
-    assert b.own(sid, "lights") == [str(night).replace("\\", "/")]
+    assert b.own(sid, "lights") == files_in(night)                   # files only
     rid = b.stacks()[0]["id"]
     b.drop([night2], ("ghost_s", rid))
     assert b.steps() == n0 + 2 and len(b.sessions()) == 2
