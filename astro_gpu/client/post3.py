@@ -1200,17 +1200,11 @@ class PostView(QWidget):
         self.viewer.toolRelease.connect(self._heal_release)
         # Ctrl+Z / Ctrl+Y are the window's Edit > Undo / Redo, which come here while Post is shown (two shortcuts on
         # one key would cancel each other)
-        for seq, fn in (("R", self.b_crop.toggle), ("C", self.b_cmp.toggle), ("V", self._flip_compare), ("M", self._toggle_mask), ("F", self.viewer.fit),
-                        ("Ctrl+0", self.viewer.fit), ("1", lambda: self.viewer.zoom_to(1.0)),
-                        ("+", lambda: self.viewer.zoom_by(ZOOM_STEP)), ("=", lambda: self.viewer.zoom_by(ZOOM_STEP)),
-                        ("Ctrl++", lambda: self.viewer.zoom_by(ZOOM_STEP)),
-                        ("-", lambda: self.viewer.zoom_by(1 / ZOOM_STEP)),
-                        ("Ctrl+-", lambda: self.viewer.zoom_by(1 / ZOOM_STEP)), ("X", self.toggle_paint),
-                        ("[", lambda: self.brush_size(1 / 1.25)), ("]", lambda: self.brush_size(1.25)),
-                        ("Ctrl+J", self.duplicate), ("Delete", self._delete_key)):
-            sc = QShortcut(QKeySequence(seq), self)
-            sc.setContext(Qt.WidgetWithChildrenShortcut)
-            sc.activated.connect(fn)
+        for seqs, _label, fn in POST_KEYS:
+            for seq in seqs if fn is not None else ():
+                sc = QShortcut(QKeySequence(seq), self)
+                sc.setContext(Qt.WidgetWithChildrenShortcut)
+                sc.activated.connect(lambda fn=fn: fn(self))
         # Enter keeps the crop, only while it is drawn: always on, these two took the key from every field of Post
         # (#141: a version's name, a Curves value were no longer applied by Enter)
         self._crop_keys = []
@@ -3654,6 +3648,27 @@ class PostView(QWidget):
         d = ExportDialog(self, parent or self.window())
         d.exec()
         d.deleteLater()
+
+
+#: Post's own keys: (the key sequences, what they do (English, translated where shown), what they run on the page, None
+#: for a key the page handles apart). The one table binds the keys and gives the Help menu's Shortcuts their list.
+POST_KEYS = (
+    (("R",), "Crop", lambda p: p.b_crop.toggle()),
+    (("C",), "Compare", lambda p: p.b_cmp.toggle()),
+    (("V",), "Flip compare", lambda p: p._flip_compare()),
+    (("M",), "Show mask", lambda p: p._toggle_mask()),
+    (("F", "Ctrl+0"), "Fit", lambda p: p.viewer.fit()),
+    (("1",), "Zoom 100 %", lambda p: p.viewer.zoom_to(1.0)),
+    (("+", "=", "Ctrl++"), "Zoom in", lambda p: p.viewer.zoom_by(ZOOM_STEP)),
+    (("-", "Ctrl+-"), "Zoom out", lambda p: p.viewer.zoom_by(1 / ZOOM_STEP)),
+    (("X",), "Paint / erase", lambda p: p.toggle_paint()),
+    (("[",), "Smaller brush", lambda p: p.brush_size(1 / 1.25)),
+    (("]",), "Bigger brush", lambda p: p.brush_size(1.25)),
+    (("Ctrl+J",), "Duplicate", lambda p: p.duplicate()),
+    (("Delete",), "Delete", lambda p: p._delete_key()),
+    (("Return", "Enter"), "Keep crop", None),
+    (("Escape",), "Leave tool", None),
+)
 
 
 class PostPage3(QWidget):

@@ -2460,7 +2460,7 @@ def test_each_layer_and_the_masks_go_into_subfolders_of_the_folder_chosen(export
         d.accept()
         d.deleteLater()
     names = sorted(p.relative_to(s.out).as_posix() for p in s.out.rglob("*") if p.is_file())
-    assert names == ["heart_16bit.tif", "heart_history.json", "layers/heart_layer_Classic_16bit.tif",
+    assert names == ["heart_16bit.tif", "heart_16bit.tif.history.json", "layers/heart_layer_Classic_16bit.tif",
                      "layers/heart_layer_Full_16bit.tif", "masks/heart_mask_Full.png"]
     lay = tifffile.imread(s.out / "layers" / "heart_layer_Full_16bit.tif")                 # the layer with its own filter
     assert lay.shape == tifffile.imread(s.out / "heart_16bit.tif").shape

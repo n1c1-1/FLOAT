@@ -28,6 +28,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 import time
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -1191,9 +1192,9 @@ class ProjectModel(QObject):
         from .postengine import new_workflow_layer
         p = self.view(pid)
         name = p.name + ("" if part is None else " · " + POST_PART_NAMES[part])
-        lay = new_workflow_layer(pid, name, True, part)
 
         def change(layers):
+            lay = new_workflow_layer(pid, name, True, part)   # made once the layers are loaded: its id is a fresh one
             self._filled(layers, None if keep_default else pid)
             if keep_default and part is not None and any(q.pid == pid for q in self.post_defaults(layers)):
                 # the image Post shows by default for this workflow stays: a Combine layers added is a second one, the
@@ -2109,6 +2110,13 @@ class ProjectModel(QObject):
         def change(layers):
             x = next(v for v in layers if v["id"] == lid)
             if side == "starless":
+                old = self.view(x.get("pid"))
+                new = self.view(int(pid))
+                if old is not None and new is not None and old.name != new.name:   # the default name follows the side
+                    m = re.fullmatch(re.escape(old.name + " · " + POST_PART_NAMES["combined"]) + r"( \d+)?",
+                                     str(x.get("name") or ""))
+                    if m:
+                        x["name"] = new.name + " · " + POST_PART_NAMES["combined"] + (m.group(1) or "")
                 x["pid"], x["starless"] = int(pid), ("output" if image == "output" else "starless")
             else:
                 x["stars_pid"] = None if pid is None else int(pid)

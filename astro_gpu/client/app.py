@@ -376,6 +376,7 @@ class Main(QMainWindow):
         r.addSeparator()
         self.a_stop = act(r, _("Stop"), self.stop_run, enabled=False, role="stop")
         h = mb.addMenu(_("Help"))
+        act(h, _("Shortcuts"), self.shortcuts, "Ctrl+/")
         act(h, _("About"), self.about, "F1", role="about")
         if spec:
             act(h, _("Glossary"), new=True)
@@ -1582,6 +1583,43 @@ class Main(QMainWindow):
 
     def about(self):
         d = self.about_dialog()
+        d.exec()
+        d.deleteLater()
+
+    def shortcut_rows(self) -> list[tuple[str, list[tuple[str, str]]]]:
+        """The keys of the window, from the menus' own actions, and of Post, from its key table: [(page, [(keys, what)])]."""
+        from .post3 import POST_KEYS
+
+        def keys(seqs):
+            return " / ".join(dict.fromkeys(QKeySequence(q).toString(QKeySequence.NativeText) for q in seqs))
+        win: list[tuple[str, str]] = []
+        for m in self.menuBar().findChildren(QMenu, options=Qt.FindDirectChildrenOnly):
+            for a in m.actions():
+                if not a.isSeparator() and a.shortcuts():
+                    win.append((keys(a.shortcuts()), a.text().replace("&", "").split("	")[0].strip()))
+        win += [(keys(["Tab"]), _("Hide panels")), (keys(["Shift+Tab"]), _("Hide right")),
+                (keys(["Return"]), _("Open block")), (keys(["Escape"]), _("Back to Graph"))]
+        post = [(keys(seqs), _(label)) for seqs, label, _fn in POST_KEYS]
+        return [(_("Window"), win), (_("Post"), post)]
+
+    def shortcuts(self):
+        from PySide6.QtWidgets import QTextBrowser
+        d = QDialog(self)
+        cap_dialog(d)
+        d.setWindowTitle(_("Shortcuts"))
+        lv = QVBoxLayout(d)
+        t = QTextBrowser()
+        t.setObjectName("shortcuts")
+        t.setStyleSheet('QTextBrowser { background: #12141a; border: 1px solid #353b47; }')
+        from html import escape
+        t.setHtml("".join(f"<h3>{escape(page)}</h3><table>" + "".join(
+            f"<tr><td><b>{escape(k)}</b>&nbsp;&nbsp;</td><td>{escape(w)}</td></tr>" for k, w in rows) + "</table>"
+            for page, rows in self.shortcut_rows()))
+        lv.addWidget(t, 1)
+        b = QPushButton(_("Close"))
+        b.clicked.connect(d.accept)
+        lv.addWidget(b, 0, Qt.AlignRight)
+        d.resize(420, 560)
         d.exec()
         d.deleteLater()
 
