@@ -327,12 +327,12 @@ def test_every_tool_is_in_the_window_on_a_laptop(qapp, tmp_path, size):
             pytest.skip("Gradient of the test project is not computed")
         assert not t.view.panel_box.isVisibleTo(t.view)          # the stretch column folded: the image keeps the room
         for k in ("method", "main", "avoid", "reset", "variant", "apply", "points", "brush", "ellipse", "grid",
-                  "density", "remove", "clear", "undo", "redo"):
+                  "density", "survey", "marks", "remove", "clear", "undo", "redo"):
             b = ed._ui[k]
             assert b.isVisibleTo(w), k
             r = b.rect().translated(b.mapTo(w, b.rect().topLeft()))
             assert r.left() >= 0 and r.top() >= 0 and r.right() <= w.width() and r.bottom() <= w.height(), (k, r)
-            assert b.width() >= min(b.sizeHint().width(), 24), k                 # never squeezed to nothing
+            assert b.width() >= b.sizeHint().width() - 1, k                       # never squeezed: its name whole
         ed.set_mode("brush")
         for k in ("paint", "erase", "size"):
             b = ed._ui[k]

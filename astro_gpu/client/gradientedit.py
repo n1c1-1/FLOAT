@@ -565,7 +565,7 @@ class GradientEditor(QObject):
         self.view = view
         view.add_overlay(self._paint)
         view.canvas.tool = self if self.mode else None
-        view.set_tool_widgets(self._view_toggles())
+        view.set_tool_widgets([])
         if hasattr(view, "set_tool_row"):
             view.set_tool_row(self._bar())
         view.installEventFilter(self)
@@ -632,7 +632,7 @@ class GradientEditor(QObject):
             pass
 
     def _view_toggles(self) -> list:
-        """What the editor draws over the image, as toggles in the image's bar (as Post's Mask view): the H-alpha
+        """What the editor draws over the image, as toggles on the tools' row (as Post's Mask view): the H-alpha
         survey (R) and the marks (M)."""
         out = []
         for key, text, tip, on, slot in (
@@ -703,6 +703,12 @@ class GradientEditor(QObject):
         st.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         r1.addWidget(st, 1)
         self._ui["state"] = st
+        for key, tip, fn in (("undo", "Undo the draft's last step (Ctrl+Z on the image)", self.undo),
+                             ("redo", "Redo (Ctrl+Y on the image)", self.redo)):
+            b = icon_only(QPushButton(), key, _(tip), 16)
+            b.clicked.connect(fn)
+            r1.addWidget(b)
+            self._ui[key] = b
         for key, text, tip, fn in (("reset", "Reset", "Back to the applied settings: the draft goes", self.reset),
                                    ("variant", "Try variant", "The draft on a variant of the workflow: what is "
                                     "computed stays as it is, the variant is computed by Run", self.try_variant),
@@ -770,6 +776,9 @@ class GradientEditor(QObject):
         szl = label("", "small")
         r2.addWidget(szl)
         self._ui["size_l"] = szl
+        r2.addSpacing(6)
+        for b in self._view_toggles():         # what is drawn over the image: on this row, never scrolled away
+            r2.addWidget(b)
         r2.addStretch(1)
         rm = QPushButton(_("Remove"))
         rm.setToolTip(_("Remove the sample or the ellipse selected (Delete; a right click on it does the same)"))
@@ -782,13 +791,9 @@ class GradientEditor(QObject):
         clr.clicked.connect(self.clear)
         r2.addWidget(clr)
         self._ui["clear"] = clr
-        for key, tip, fn in (("undo", "Undo the draft's last step (Ctrl+Z on the image)", self.undo),
-                             ("redo", "Redo (Ctrl+Y on the image)", self.redo)):
-            b = icon_only(QPushButton(), key, _(tip), 16)
-            b.clicked.connect(fn)
-            r2.addWidget(b)
-            self._ui[key] = b
         v.addLayout(r2)
+        for w in bar.findChildren(QPushButton):        # never squeezed: a name cut short reads as another word
+            w.setMinimumWidth(w.sizeHint().width())
         return bar
 
     # ------------------------------------------------------------ the panel's section
