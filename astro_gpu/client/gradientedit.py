@@ -35,7 +35,6 @@ import numpy as np
 from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, QRunnable, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QColor, QImage, QPen
 from PySide6.QtWidgets import (
-    QButtonGroup,
     QCheckBox,
     QFrame,
     QHBoxLayout,
@@ -107,14 +106,10 @@ TOOLS = (("points", "add", "Sample", "Click adds a sample of sky, a drag moves i
          ("eraser", "remove", "Eraser", "Removes what is under the cursor: a sample, a painted area, an ellipse"),
          ("grid", "samples", "Grid", "Samples on a regular grid, the bright areas left out, in place of the ones the "
                                      "block chooses (its density in Settings)"))
-#: the Settings drawer: its width by default and its limits
-DRAWER_W, DRAWER_MIN = 390, 280
-#: the page's arrangement (DESIGN.md): "A" the method bar on top, the named tools in a row above the image, the actions
-#: under it; "B" one column at the left (method, tools, actions), the image beside it; "C" the method bar with the
-#: actions on top, the named tools in a column at the left of the image
-LAYOUT = "A"
-
-
+#: the settings panel at the right of the image: its width
+PANEL_W = 380
+#: M kept down longer than this hides the marks only while it is down (shorter: a tap shows or hides them)
+MARKS_HOLD_S = 0.35
 def _ell(e) -> tuple[float, float, float, float, float]:
     """An ellipse of exclude_ellipses: centre, half axes, angle (degrees; an earlier one has none)."""
     return float(e[0]), float(e[1]), float(e[2]), float(e[3]), float(e[4]) if len(e) > 4 else 0.0
@@ -195,10 +190,9 @@ class GradientEditor(QObject):
         self.page = self.gv = self.drawer = None   # the page, its viewer, its Settings drawer (built once)
         self.before = False                    # Before / After: the stack shown
         self.cmp = "toggle"                    # toggle | split | side
-        self.drawer_open = False
-        self.drawer_chosen = False             # Settings opened or closed by the user (else: by the window's width)
-        self.drawer_w = DRAWER_W
         self.result_key = None
+        self._m_down = None                    # (when M went down, the marks shown then)
+        self.dock = None
         self.carried: dict[int, dict] = {}     # variant -> the preview its draft had, and the original's result
         self._stashed: dict[int, tuple] = {}   # variant -> (original, the draft it took)
         self.hist_shown = None
@@ -485,6 +479,11 @@ class GradientEditor(QObject):
     # ------------------------------------------------------------ leaving the block with a draft
     def eventFilter(self, obj, e):                                   # noqa: N802 - Qt's name
         t = e.type()
+        if t in (QEvent.KeyPress, QEvent.KeyRelease) and self._page_ok() and obj in (self.gv.canvas, self.page) and \
+                e.key() == Qt.Key_M and not e.modifiers() & (Qt.ControlModifier | Qt.AltModifier):
+            if not e.isAutoRepeat():
+                self._marks_key(t == QEvent.KeyPress)
+            return True
         if t == QEvent.Show and obj in self._sides() and self._page_shown():
             self.hold()                        # the window docked TuneView's panel again: away while the page shows
             QTimer.singleShot(0, lambda: self._side(False) if self._page_shown() else None)
@@ -494,10 +493,11 @@ class GradientEditor(QObject):
                     self._notice.place()
                 except RuntimeError:
                     self._notice = None
+            if self.view is not None and self.dock is not None:
+                want = self._side_state()      # no choice of the user yet: the window's width chooses
+                if want != self.dock.state:
+                    self.dock.set_state(want)
             if self.view is not None:
-                if not self.drawer_chosen:     # Settings follows the window's width until the user chooses
-                    self.drawer_open = obj.width() >= SMALL_W
-                    self._sync()
                 # the window's own layout of Inspect (its panel docked or folded) is taken away again while the page shows
                 QTimer.singleShot(0, lambda: self._side(False) if self.view is not None else None)
         return False
@@ -718,7 +718,7 @@ class GradientEditor(QObject):
     def page_for(self, p, tab) -> bool:
         """The page shows the block's result: computed, or Outdated with its previous one; its Sky model tab and a
         block never computed are Inspect's own."""
-        return tab in (None, "result", "removed") and (self.drafting(p) or p.pid in self.carried)
+        return tab in (None, "result") and (self.drafting(p) or p.pid in self.carried)
 
     def center(self, tv, node, p) -> bool:
         """From TuneView.refresh: the centre is this page when the block shown is the Gradient with a result (True);
@@ -775,7 +775,9 @@ class GradientEditor(QObject):
             tv.center.addWidget(self.page, 1)
             self.page.show()
         self._side(False)
-        tv.view, tv.views, tv._cur = self.gv, [], None
+        spec = next((sp for sp in tv.visuals(p, "fond") if sp.key == "result"), None)
+        tv.view, tv.views = self.gv, []
+        tv._cur = (p, "fond", spec) if spec is not None else None      # the tab Inspect's walkthrough and tests read
         tv._center_sig = ("gradient", p.pid)
         new = self.p is None or self.p.pid != p.pid
         self._load(p)
@@ -785,8 +787,6 @@ class GradientEditor(QObject):
         if d is not None:
             d["told"] = False
         self._hide_banner(p.pid)
-        if not self.drawer_chosen:
-            self.drawer_open = tv.window().width() >= SMALL_W
         self._fill_drawer()
         self._sync()
         self._present(fresh=new)
@@ -808,83 +808,97 @@ class GradientEditor(QObject):
 
     def _build_page(self):
         """Built once, whole: nothing is added to or taken from it afterwards (a control that does not apply is greyed
-        with its reason), so the image's rectangle never moves while the page is shown. Read in order: the method (the
-        block's main decision) and its setting, the image with the tools that act on it, the draft and its actions.
-        ``LAYOUT`` arranges the same parts in one of three ways."""
+        with its reason), so the image's rectangle never moves while the page is shown. Read in order: at the left the
+        method (the block's main decision), the tools that act on the image, Marks, the draft and its actions; the image
+        in the middle; at the right the method's settings and the rest, a side panel kept open, automatic or folded as
+        the window's own (``layout.Dock``), folded or automatic over the image."""
         from .imageview import ImageView
+        from .layout import Dock
         page = QWidget()
         page.setObjectName("gradpage")
         page.setStyleSheet(
-            "QPushButton#methodseg { padding: 6px 18px; border-radius: 0; font-size: 11pt; }"
-            "QPushButton#methodseg:checked { background: #2b3446; border-color: #5ea1ff; color: #ffffff; "
-            "font-weight: 600; }"
             "QPushButton#tool { text-align: left; padding: 4px 10px; }"
-            "QPushButton#tool:checked { background: #2b3446; border-color: #5ea1ff; color: #ffffff; }")
+            "QPushButton#tool:checked { background: #2b3446; border-color: #5ea1ff; color: #ffffff; }"
+            "QPushButton#ivseg { padding: 3px 9px; border-radius: 0; }"
+            "QPushButton#ivseg:checked { background: #2b3446; border-color: #5ea1ff; color: #ffffff; }"
+            "QPushButton#marks { padding: 6px 10px; font-weight: 600; }"
+            f"QPushButton#marks:checked {{ background: #3a2f12; border-color: {WARN}; color: #ffd27a; }}")
         self._ui = {}
         v = QVBoxLayout(page)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(6)
-        title = self._title_row()
+        v.addWidget(self._title_row())
+        body = QWidget()
+        hb = QHBoxLayout(body)
+        hb.setContentsMargins(0, 0, 0, 0)
+        hb.setSpacing(0)
+        col = QFrame()
+        col.setObjectName("gradcol")
+        cv = QVBoxLayout(col)
+        cv.setContentsMargins(0, 0, 10, 0)
+        cv.setSpacing(10)
+        cv.addWidget(self._method_part())
+        cv.addWidget(self._tools_part())
+        cv.addStretch(1)
+        cv.addWidget(self._actions_part())
+        col.ensurePolished()
+        col.setFixedWidth(max(240, col.sizeHint().width()))   # once, from what it holds: the image never moves
+        hb.addWidget(col)
         box = QWidget()
         bl = QVBoxLayout(box)
         bl.setContentsMargins(0, 0, 0, 0)
         gv = ImageView(post=False, compare=True)
         gv.default_dir = lambda: str(getattr(self.s, "root", None) or "")
         gv.toasted.connect(self.tv.toasted.emit)
-        gv.layout().itemAt(0).widget().hide()          # its own toolbar: the page's two buttons and Settings
+        gv.layout().itemAt(0).widget().hide()          # its own toolbar: the page's Before / After and the panel
         gv.readout.parentWidget().hide()               # the readout line: none under the image
         bl.addWidget(gv)
-        v.addWidget(title)
-        if LAYOUT == "B":                              # one column at the left: method, tools, actions
-            col = QFrame()
-            col.setObjectName("gradcol")
-            cv = QVBoxLayout(col)
-            cv.setContentsMargins(0, 0, 8, 0)
-            cv.setSpacing(10)
-            cv.addWidget(self._method_part(vertical=True))
-            cv.addWidget(self._tools_part(vertical=True, two=True))
-            cv.addStretch(1)
-            cv.addWidget(self._actions_part(vertical=True))
-            col.setMinimumWidth(240)
-            col.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
-            body = QHBoxLayout()
-            body.setSpacing(0)
-            body.addWidget(col)
-            body.addWidget(box, 1)
-            v.addLayout(body, 1)
-        elif LAYOUT == "C":                            # the method bar with the actions; the tools at the left
-            v.addWidget(self._method_part(vertical=False, actions=self._actions_part(vertical=False)))
-            body = QHBoxLayout()
-            body.setSpacing(6)
-            tools = self._tools_part(vertical=True)
-            tools.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
-            body.addWidget(tools, 0, Qt.AlignTop)
-            body.addWidget(box, 1)
-            v.addLayout(body, 1)
-        else:                                          # A: the method bar, the tools' row, the image, the actions
-            v.addWidget(self._method_part(vertical=False))
-            v.addWidget(self._tools_part(vertical=False))
-            v.addWidget(box, 1)
-            v.addWidget(self._actions_part(vertical=False))
+        hb.addWidget(box, 1)
+        v.addWidget(body, 1)
         self.page, self.gv = page, gv
-        self.drawer = Drawer(box, self)
-        gv.panel_box.setParent(None)                   # the stretch column: in the drawer, never beside the image
+        self.drawer = SettingsPanel(self)
+        self.dock = Dock(body, self.drawer, lambda: hb.addWidget(self.drawer), lambda: hb.removeWidget(self.drawer),
+                         title=_("Settings"), role="adjust")
+        hb.insertWidget(hb.indexOf(box) + 1, self.dock.strip)
+        hb.addWidget(self.drawer)                      # docked to begin with; then the state the user chose, or the
+        self.dock.set_state(self._side_state())        # window's size says
+        self.dock.chosen.connect(self._side_chosen)
+        gv.panel_box.setParent(None)                   # the stretch column: in the panel, never beside the image
         self.drawer.fixed.addWidget(gv.panel_box)
         gv.show_histogram(True)
         gv.align_bar.setParent(None)
         self.drawer.fixed.addWidget(gv.align_bar)
         gv.add_overlay(self._paint)
         gv.imageShown.connect(self._shown)
+        for x in (gv.canvas, page):                    # M held hides the marks while it is down
+            x.installEventFilter(self)
+
+    def _side_state(self) -> str:
+        """The settings panel's state: the user's choice when he made one, else by the window's width (kept open on a
+        large window, automatic on a small one)."""
+        try:
+            from . import prefs
+            st = prefs.get("gradient_settings_side")
+        except Exception:  # noqa: BLE001 - no preference readable: by the width
+            st = None
+        if st in ("docked", "icons", "auto"):
+            return st
+        return "docked" if self.tv.window().width() >= SMALL_W else "auto"
+
+    def _side_chosen(self, st: str):
+        try:
+            from . import prefs
+            prefs.set("gradient_settings_side", st)
+        except Exception:  # noqa: BLE001 - not kept: the next time by the width again
+            pass
 
     @staticmethod
     def _fixed_rows(w: QWidget) -> QWidget:
-        """A row above or under the image: as high as what it holds (which never changes), never given the image's
-        room nor taken from it."""
+        """A row above the image: as high as what it holds (which never changes), never given the image's room."""
         w.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         return w
 
     def _title_row(self) -> QWidget:
-        from .icons import set_icon
         u = self._ui
         w = QWidget()
         top = QHBoxLayout(w)
@@ -902,109 +916,47 @@ class GradientEditor(QObject):
         ba.toggled.connect(self._set_before)
         top.addWidget(ba)
         u["before"] = ba
-        st = QPushButton(_("Settings"))
-        set_icon(st, "adjust", 16)
-        st.setObjectName("toggle")
-        st.setCheckable(True)
-        st.setToolTip(_("Everything else: the method's settings, the grid's density, the H-alpha survey, the compare "
-                        "modes, the stretch, the measurements"))
-        st.toggled.connect(self._set_drawer)
-        top.addWidget(st)
-        u["settings"] = st
         return self._fixed_rows(w)
 
-    def _main_part(self) -> QHBoxLayout:
-        """The method's one setting: its name, a slider, its value (widths set for the longest of the three)."""
-        u = self._ui
-        row = QHBoxLayout()
-        row.setSpacing(6)
-        nm = label("", "dim")
-        fm = nm.fontMetrics()
-        nm.setMinimumWidth(max(fm.horizontalAdvance(_(MAIN[m][1])) for m in MAIN) + 4)
-        nm.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        row.addWidget(nm)
-        u["main_l"] = nm
-        sl = QSlider(Qt.Horizontal)
-        sl.setMinimumWidth(120)
-        sl.valueChanged.connect(self._main_moved)
-        sl.sliderReleased.connect(lambda: self._main_set(sl.value()))
-        row.addWidget(sl, 1)
-        u["main"] = sl
-        val = label("", "small")
-        val.setMinimumWidth(val.fontMetrics().horizontalAdvance("10.00") + 4)
-        row.addWidget(val)
-        u["main_v"] = val
-        return row
-
-    def _method_part(self, vertical: bool, actions: QWidget | None = None) -> QWidget:
-        """The method: three choices named in full, one line saying what the chosen one does, and its setting."""
+    def _method_part(self) -> QWidget:
+        """The method: a list of the three, named in full (each one's line in the list's tooltips), and one line under
+        it saying what the chosen one does."""
+        from PySide6.QtWidgets import QComboBox
         u = self._ui
         w = QWidget()
-        seg = QFrame()
-        seg.setObjectName("segment")
-        grp = QButtonGroup(seg)
-        grp.setExclusive(True)
-        sh = QVBoxLayout(seg) if vertical else QHBoxLayout(seg)
-        sh.setContentsMargins(0, 0, 0, 0)
-        sh.setSpacing(2 if vertical else 0)
-        for m in METHODS:
-            b = QPushButton(_(METHOD_NAME[m]))
-            b.setObjectName("methodseg")
-            b.setCheckable(True)
-            b.setToolTip(_(METHOD_TIP[m]))
-            b.clicked.connect(lambda _c=False, mm=m: self.set_draft({"method": mm}))
-            grp.addButton(b)
-            sh.addWidget(b)
-            u["m_" + m] = b
-            if vertical:                               # each choice with its line under it, always shown
-                ln = label(_(METHOD_LINE[m]), "small", wrap=True)
-                ln.setContentsMargins(6, 0, 0, 4)
-                sh.addWidget(ln)
-        u["methods"] = seg
-        if vertical:
-            col = QVBoxLayout(w)
-            col.setContentsMargins(0, 0, 0, 0)
-            col.setSpacing(6)
-            col.addWidget(label(_("Method"), "h2"))
-            col.addWidget(seg)
-            col.addLayout(self._main_part())
-            return w
         col = QVBoxLayout(w)
         col.setContentsMargins(0, 0, 0, 0)
-        col.setSpacing(2)
-        row = QHBoxLayout()
-        row.setSpacing(12)
-        row.addWidget(seg)
-        main = self._main_part()
-        holder = QWidget()
-        holder.setLayout(main)
-        holder.setMinimumWidth(280)
-        row.addWidget(holder)
-        row.addStretch(1)
-        if actions is not None:
-            row.addWidget(actions)
-        col.addLayout(row)
-        line = label("", "dim")                        # what the chosen method does, one line, never cut
+        col.setSpacing(4)
+        col.addWidget(label(_("Method"), "h2"))
+        cb = QComboBox()
+        cb.setObjectName("method")
+        for i, m in enumerate(METHODS):
+            cb.addItem(_(METHOD_NAME[m]), m)
+            cb.setItemData(i, _(METHOD_LINE[m]), Qt.ToolTipRole)
+        cb.activated.connect(lambda i: self.set_draft({"method": METHODS[i]}))
+        col.addWidget(cb)
+        u["method"] = u["methods"] = cb
+        line = label("", "small", wrap=True)
+        line.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)     # the column's width, never its own
         fm = line.fontMetrics()
-        line.setMinimumWidth(max(fm.horizontalAdvance(_(METHOD_LINE[m])) for m in METHODS) + 8)
+        line.setMinimumHeight(2 * fm.height() + 2)     # two lines kept: the longest; the column never moves
         col.addWidget(line)
         u["m_line"] = line
-        return self._fixed_rows(w)
+        return w
 
-    def _tools_part(self, vertical: bool, two: bool = False) -> QWidget:
-        """The tools that act on the image, each with its icon AND its name (its sentence on hover); ``two``: in two
-        columns (the narrow left column of B)."""
+    def _tools_part(self) -> QWidget:
+        """The tools that act on the image, each with its icon AND its name (its sentence on hover), in two columns;
+        under them Marks, wide and lit while the marks are shown."""
         from PySide6.QtWidgets import QGridLayout
 
         from .icons import set_icon
         u = self._ui
         w = QFrame()
         w.setObjectName("gradtools")
-        lay = QGridLayout(w) if two else QVBoxLayout(w) if vertical else QHBoxLayout(w)
+        lay = QGridLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(4)
-        if vertical and not two:
-            lay.addWidget(label(_("Tools"), "h2"))
+        lay.addWidget(label(_("Tools"), "h2"), 0, 0, 1, 2)
         for n, (key, role, name, tip) in enumerate(TOOLS):
             b = QPushButton(_(name))
             set_icon(b, role, 16)
@@ -1015,57 +967,63 @@ class GradientEditor(QObject):
                 b.clicked.connect(self.generate)
             else:
                 b.clicked.connect(lambda _c=False, k=key: self.set_mode(None if self.mode == k else k))
-            if two:
-                lay.addWidget(b, n // 2, n % 2)
-            else:
-                lay.addWidget(b)
+            lay.addWidget(b, 1 + n // 2, n % 2)
             u[key] = b
-        if not vertical:
-            lay.addStretch(1)
-            return self._fixed_rows(w)
+        mk = QPushButton(_("Marks"))
+        set_icon(mk, "eye", 16)
+        mk.setObjectName("marks")
+        mk.setCheckable(True)
+        mk.setChecked(self.shown)
+        mk.setToolTip(_("Show or hide the samples and the excluded areas over the image, to judge the result without "
+                        "them (M; M held: hidden while it is down). They come back as soon as a tool is used."))
+        mk.toggled.connect(self._set_shown)
+        lay.addWidget(mk, 1 + (len(TOOLS) + 1) // 2, 0, 1, 2)
+        u["marks"] = mk
         return w
 
-    def _actions_part(self, vertical: bool) -> QWidget:
-        """The draft's state in a few words, Reset, Try variant, Apply."""
+    def _actions_part(self) -> QWidget:
+        """The draft's state in a few words, Reset and Try variant side by side, Apply under them."""
         u = self._ui
         w = QWidget()
-        lay = QVBoxLayout(w) if vertical else QHBoxLayout(w)
+        lay = QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(6 if vertical else 8)
-        state = label("", "small")
-        fm = state.fontMetrics()                       # room for its longest words: it is never cut
-        state.setMinimumWidth(fm.horizontalAdvance(_("Draft · {n} changes").format(n=88) + " · " +
-                                                   _("computing the preview…")) + 8)
-        if vertical:
-            state.setWordWrap(True)
-            state.setMinimumWidth(0)
-            state.setMinimumHeight(2 * fm.height() + 4)
+        lay.setSpacing(6)
+        state = label("", "small", wrap=True)
+        state.setMinimumHeight(2 * state.fontMetrics().height() + 4)
         u["state"] = state
-        if not vertical:
-            lay.addStretch(1)
         lay.addWidget(state)
-        pair = QHBoxLayout() if vertical else lay      # in a column: Reset and Try variant side by side, Apply under
+        pair = QHBoxLayout()
         for key, text, fn in (("reset", "Reset", self.reset), ("variant", "Try variant", self.try_variant),
                               ("apply", "Apply", self.apply)):
             b = QPushButton(_(text))
             if key == "apply":
                 b.setObjectName("primary")
             b.clicked.connect(lambda _c=False, f=fn: f())
-            if vertical and key == "apply":
+            if key == "apply":
                 lay.addLayout(pair)
                 lay.addWidget(b)
             else:
                 pair.addWidget(b)
             u[key] = b
-        return self._fixed_rows(w) if not vertical else w
+        return w
+
+    def _marks_key(self, down: bool):
+        """M: tapped, the marks shown or hidden; held, hidden while it is down, back as they were on release."""
+        if down:
+            self._m_down = (time.monotonic(), self.shown)
+            if self.shown:
+                self.shown = False
+                self.gv.canvas.update()
+            return
+        if self._m_down is None:
+            return
+        t0, was = self._m_down
+        self._m_down = None
+        self._set_shown(was if time.monotonic() - t0 > MARKS_HOLD_S else not was)
 
     def _set_before(self, on: bool):
         self.before = bool(on)
         self._present()
-
-    def _set_drawer(self, on: bool):
-        self.drawer_open, self.drawer_chosen = bool(on), True
-        self._sync()
 
     def _set_compare(self, mode: str):
         self.cmp = mode
@@ -1090,8 +1048,8 @@ class GradientEditor(QObject):
         self.set_draft({name: int(round(val)) if dec == 0 else round(val, dec)})
 
     def _fill_drawer(self):
-        """The drawer's settings, as the draft has them (built again when the method or a setting changes: it lies
-        over the image, the image does not move)."""
+        """The settings panel's groups, as the draft has them, the method's settings first (built again when the method
+        or a setting changes: the panel's width is fixed, the image does not move)."""
         if self.drawer is None or self.p is None:
             return
         from .icons import set_icon
@@ -1107,24 +1065,6 @@ class GradientEditor(QObject):
             t.setContentsMargins(0, 8, 0, 2)
             dv.addWidget(t)
 
-        title("Draft")
-        row = QHBoxLayout()
-        for key, tip, fn in (("undo", "Undo the draft's last step (Ctrl+Z on the image)", self.undo),
-                             ("redo", "Redo (Ctrl+Y on the image)", self.redo)):
-            b = icon_only(QPushButton(), key, _(tip), 16)
-            b.clicked.connect(fn)
-            row.addWidget(b)
-            u[key] = b
-        clr = QPushButton(_("Remove all"))
-        clr.setToolTip(_("Remove the placed samples and the excluded areas from the draft: the block chooses its "
-                         "samples again (Undo brings them back)"))
-        clr.clicked.connect(self.clear)
-        row.addWidget(clr)
-        u["clear"] = clr
-        row.addStretch(1)
-        dv.addLayout(row)
-        if not self.done and self.s.state(p, "gradient") != "running":
-            dv.addWidget(self.tv._run_button(p, "fond"), 0, Qt.AlignLeft)
         groups = self.groups(p)
         rows = [r for _t, rs in groups for r in rs if r.get("level") != "system"]
         if rows:
@@ -1167,6 +1107,24 @@ class GradientEditor(QObject):
         r3.addWidget(szl)
         dv.addLayout(r3)
         u["size"], u["size_l"] = sz, szl
+        title("Draft")
+        row = QHBoxLayout()
+        for key, tip, fn in (("undo", "Undo the draft's last step (Ctrl+Z on the image)", self.undo),
+                             ("redo", "Redo (Ctrl+Y on the image)", self.redo)):
+            b = icon_only(QPushButton(), key, _(tip), 16)
+            b.clicked.connect(fn)
+            row.addWidget(b)
+            u[key] = b
+        clr = QPushButton(_("Remove all"))
+        clr.setToolTip(_("Remove the placed samples and the excluded areas from the draft: the block chooses its "
+                         "samples again (Undo brings them back)"))
+        clr.clicked.connect(self.clear)
+        row.addWidget(clr)
+        u["clear"] = clr
+        row.addStretch(1)
+        dv.addLayout(row)
+        if not self.done and self.s.state(p, "gradient") != "running":
+            dv.addWidget(self.tv._run_button(p, "fond"), 0, Qt.AlignLeft)
         title("H-alpha survey")
         r4 = QHBoxLayout()
         for b in self._view_toggles():
@@ -1220,20 +1178,18 @@ class GradientEditor(QObject):
         """The Sky model tab of the block: Inspect's own view of it (its tabs lead back)."""
         tv = self.tv
         keys = [sp.key for sp in tv.visuals(self.p, "fond")]
-        other = next((k for k in keys if k not in ("result", "removed")), None)
+        other = next((k for k in keys if k != "result"), None)
         if other is not None:
             tv.tab_of["fond"] = other
             tv.request_refresh()
 
     def _view_toggles(self) -> list:
-        """What the editor draws over the image: the H-alpha survey (R) and the marks (M)."""
+        """The H-alpha survey drawn under the samples (R), in the settings panel (Marks is at the left, by the tools)."""
         out = []
         for key, text, tip, on, slot in (
                 ("survey", "H-alpha survey", "Show in amber where the professional H-alpha survey of the field sees "
                  "nebulosity (R): no sample should sit there. Downloaded once; the field must be solved",
-                 self.survey_shown, self._set_survey_shown),
-                ("marks", "Marks", "Show the samples and the excluded areas over the image (M)", self.shown,
-                 self._set_shown)):
+                 self.survey_shown, self._set_survey_shown),):
             b = QPushButton(_(text))
             b.setObjectName("toggle")
             b.setCheckable(True)
@@ -1287,7 +1243,7 @@ class GradientEditor(QObject):
     def _applied_vi(self, p):
         tv = self.tv
         try:
-            spec = next(sp for sp in tv.visuals(p, "fond") if sp.key in ("result", "removed"))
+            spec = next(sp for sp in tv.visuals(p, "fond") if sp.key == "result")
             vi = tv.steps.view_image(p, spec)
         except (StopIteration, Exception):  # noqa: BLE001 - nothing to show: the page says why on its line
             return None
@@ -1298,7 +1254,7 @@ class GradientEditor(QObject):
     def _stack_vi(self, p):
         tv = self.tv
         try:
-            spec = next(sp for sp in tv.visuals(p, "fond") if sp.key in ("result", "removed"))
+            spec = next(sp for sp in tv.visuals(p, "fond") if sp.key == "result")
             targets = tv._targets(p, "fond", spec)
         except (StopIteration, Exception):  # noqa: BLE001 - no stack to compare with: Before greyed
             return None
@@ -1406,6 +1362,9 @@ class GradientEditor(QObject):
                 u["reset"].setToolTip(_("Back to the applied settings: the draft goes") if draft else why)
             if "m_line" in u:
                 u["m_line"].setText(_(METHOD_LINE.get(method, "")))
+            if "method" in u:
+                u["method"].setCurrentIndex(METHODS.index(method) if method in METHODS else 0)
+                u["method"].setToolTip(_(METHOD_TIP.get(method, "")))
             if "state" in u:
                 u["state"].setText(self._status())
                 u["state"].setStyleSheet(f"color: {WARN};" if draft else "color: #8b95a5;")
@@ -1425,15 +1384,6 @@ class GradientEditor(QObject):
                 b.setEnabled(self.cmp == "toggle")
                 b.setToolTip(_("Switch the image between the gradient removed and the stack before it (B)")
                              if self.cmp == "toggle" else _("Split and Side by side show both: Settings › Compare"))
-            if "settings" in u:
-                s = u["settings"]
-                s.blockSignals(True)
-                s.setChecked(bool(self.drawer_open))
-                s.blockSignals(False)
-            if self.drawer is not None:
-                self.drawer.setVisible(bool(self.drawer_open))
-                if self.drawer_open:
-                    self.drawer.place()
             for k, on in (("marks", self.shown), ("survey", self.survey_shown), ("avoid", self.avoid)):
                 if k in u:
                     b = u[k]
@@ -1455,6 +1405,8 @@ class GradientEditor(QObject):
 
     # ------------------------------------------------------------ modes
     def set_mode(self, mode: str | None):
+        if mode and not self.shown:            # a marks tool: never edited blind
+            self._set_shown(True)
         self.mode = mode
         self._sel = None
         if mode != "points":
@@ -1602,6 +1554,11 @@ class GradientEditor(QObject):
         self._commit()
 
     def generate(self):
+        if not self.shown:
+            self._set_shown(True)
+        self._generate()
+
+    def _generate(self):
         """Generate grid: a grid of samples, the brighter areas left out (and, Away from emission, the survey's
         emission, read from this computer first); they become placed samples of the draft."""
         if self.avoid and (self.survey is None or self.survey["pid"] != self.p.pid):
@@ -1842,7 +1799,7 @@ class GradientEditor(QObject):
         dw, dh = canvas.display.size()
         if self.survey_shown:
             self._paint_survey(painter, canvas, dw, dh)
-        if self.shown:
+        if self.shown and not (self.before and self.cmp == "toggle"):     # Before: the stack, nothing over it
             self._paint_veil(painter, canvas, f, dw, dh)
             self._paint_samples(painter, canvas, f)
             for j, e in enumerate(self.work["exclude_ellipses"]):
@@ -2099,44 +2056,32 @@ class GradientEditor(QObject):
                 self.view = None
 
 
-class Drawer(QFrame):
-    """The Settings drawer: over the right of the image (the image keeps its rectangle), its width dragged by its left
-    edge and remembered, closed with its × or Settings. ``rows``: the editor's settings (built again when they
-    change); ``fixed``: the viewer's stretch column and alignment line, kept."""
+class SettingsPanel(QFrame):
+    """The settings at the right of the image: the method's settings first, then the samples, the draft, the H-alpha
+    survey, the compare modes, the measurements and the stretch, in titled groups. A side panel of the window's kind
+    (``layout.Dock``): kept open, automatic or kept folded, chosen with its header's button or the strip's pin.
+    ``rows``: the editor's settings (built again when they change); ``fixed``: the viewer's stretch column and
+    alignment line, kept."""
 
-    def __init__(self, box: QWidget, ed):
-        super().__init__(box)
-        self.box, self.ed = box, ed
-        self.setObjectName("graddrawer")
-        self.setStyleSheet("QFrame#graddrawer { background: #1c1f26; border-left: 1px solid #2a2f38; }")
-        try:
-            from . import prefs
-            ed.drawer_w = int(prefs.get("gradient_settings_w") or ed.drawer_w)
-        except Exception:  # noqa: BLE001 - a preference not readable: the width by default
-            pass
-        h = QHBoxLayout(self)
-        h.setContentsMargins(0, 0, 0, 0)
-        h.setSpacing(0)
-        self.grip = QWidget()
-        self.grip.setFixedWidth(6)
-        self.grip.setCursor(Qt.SizeHorCursor)
-        self.grip.setToolTip(_("Drag to widen or narrow the settings"))
-        self.grip.installEventFilter(self)
-        h.addWidget(self.grip)
-        col = QVBoxLayout()
-        col.setContentsMargins(8, 6, 6, 6)
+    def __init__(self, ed):
+        super().__init__()
+        self.ed = ed
+        self.setObjectName("panel")
+        self.setFixedWidth(PANEL_W)
+        col = QVBoxLayout(self)
+        col.setContentsMargins(10, 6, 6, 6)
         col.setSpacing(4)
         head = QHBoxLayout()
         head.addWidget(label(_("Settings"), "h2"))
         head.addStretch(1)
-        x = icon_only(QPushButton(), "remove", _("Close the settings"), 16)
-        x.clicked.connect(lambda: ed._set_drawer(False))
-        head.addWidget(x)
+        self.mode_b = icon_only(QPushButton(), "fold_right", _("Kept open, automatic or kept folded"), 16)
+        self.mode_b.clicked.connect(lambda: ed.dock.menu(self.mode_b))
+        head.addWidget(self.mode_b)
         col.addLayout(head)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
         sc.setFrameShape(QFrame.NoFrame)
-        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         inner = QWidget()
         iv = QVBoxLayout(inner)
         iv.setContentsMargins(0, 0, 4, 0)
@@ -2149,39 +2094,6 @@ class Drawer(QFrame):
         iv.addStretch(1)
         sc.setWidget(inner)
         col.addWidget(sc, 1)
-        h.addLayout(col, 1)
-        self._drag = None
-        box.installEventFilter(self)
-        self.hide()
-
-    def place(self):
-        bw = self.box.width()
-        w = int(min(max(self.ed.drawer_w, DRAWER_MIN), max(DRAWER_MIN, bw - 80)))
-        self.setGeometry(bw - w, 0, w, self.box.height())
-        self.raise_()
-
-    def eventFilter(self, obj, e):                                   # noqa: N802 - Qt's name
-        t = e.type()
-        if obj is self.box and t == QEvent.Resize and self.isVisible():
-            self.place()
-        elif obj is self.grip:
-            if t == QEvent.MouseButtonPress:
-                self._drag = (e.globalPosition().x(), self.width())
-                return True
-            if t == QEvent.MouseMove and self._drag is not None:
-                x0, w0 = self._drag
-                self.ed.drawer_w = int(w0 + x0 - e.globalPosition().x())
-                self.place()
-                return True
-            if t == QEvent.MouseButtonRelease and self._drag is not None:
-                self._drag = None
-                try:
-                    from . import prefs
-                    prefs.set("gradient_settings_w", int(self.width()))
-                except Exception:  # noqa: BLE001 - not kept: the next session takes the width by default
-                    pass
-                return True
-        return False
 
 
 class Notice(QFrame):

@@ -97,5 +97,9 @@
   "A smooth surface fitted on the sky between the objects": "Une surface lisse ajustée sur le ciel entre les objets",
   "A surface through the samples: follows a gradient of any shape": "Une surface qui passe par les échantillons : suit un gradient de toute forme",
   "A flexible surface on every pixel that does not look like an object": "Une surface souple sur chaque pixel qui ne ressemble pas à un objet",
-  "Tools": "Outils"
+  "Tools": "Outils",
+  "Marks": "Marques",
+  "Kept open, automatic or kept folded": "Gardé ouvert, automatique ou gardé replié",
+  "Show or hide the samples and the excluded areas over the image, to judge the result without them (M; M held: hidden while it is down). They come back as soon as a tool is used.": "Montre ou cache les échantillons et les zones exclues sur l'image, pour juger le résultat sans eux (M ; M maintenu : cachés tant qu'il est enfoncé). Ils reviennent dès qu'un outil sert.",
+  "Before / After at the top switches the image": "Avant / Après, en haut, change l'image"
 }

@@ -335,17 +335,17 @@ def _test_project():
         pytest.skip("the test project is not here")
 
 
-PAGE_CONTROLS = ("before", "settings", "points", "brush", "ellipse", "eraser", "grid", "methods", "main", "reset",
-                 "variant", "apply")
+PAGE_CONTROLS = ("before", "method", "points", "brush", "ellipse", "eraser", "grid", "marks", "reset", "variant",
+                 "apply")
 
 
 def _controls(w, ed) -> list[str]:
-    """The interactive controls of the page outside its Settings drawer, a segmented control counted once."""
+    """The interactive controls of the page outside its settings panel (and that panel's folded strip)."""
     from PySide6.QtWidgets import QAbstractButton, QAbstractSlider, QAbstractSpinBox, QComboBox
     seen, out = set(), []
     for k in (QAbstractButton, QAbstractSlider, QAbstractSpinBox, QComboBox):
         for x in ed.page.findChildren(k):
-            if not x.isVisible() or ed.drawer.isAncestorOf(x):
+            if not x.isVisible() or ed.drawer.isAncestorOf(x) or ed.dock.strip.isAncestorOf(x):
                 continue
             seg = x.parentWidget() if x.parentWidget().objectName() == "segment" else x
             if id(seg) not in seen:
@@ -362,14 +362,17 @@ def test_every_tool_is_in_the_window_on_a_laptop(qapp, tmp_path, size):
         ed = w.tune.grad_editor
         if ed.view is None:
             pytest.skip("Gradient of the test project is not computed")
-        assert not ed.drawer.isVisible() and not w.tune.panel.isVisible()   # Settings closed below 1500 px
+        # the settings panel automatic below 1500 px (its strip at the image's right), Inspect's own panel away
+        assert ed.dock.state == "auto" and not ed.drawer.isVisible() and not w.tune.panel.isVisible()
         for k in PAGE_CONTROLS:
             b = ed._ui[k]
             assert b.isVisible(), k
             r = b.rect().translated(b.mapTo(w, b.rect().topLeft()))
             assert r.left() >= 0 and r.top() >= 0 and r.right() <= w.width() and r.bottom() <= w.height(), (k, r)
             assert b.width() >= b.sizeHint().width() - 1, k                       # never squeezed: its name whole
-        assert len(_controls(w, ed)) <= 12, _controls(w, ed)
+        # at most 11 outside the settings panel: Before / After, Method, the five tools, Marks, Reset, Try variant,
+        # Apply (one more fails)
+        assert len(_controls(w, ed)) <= 11, _controls(w, ed)
     finally:
         w.close()
 
@@ -384,8 +387,10 @@ def _geometry(w, ed):
 
 @pytest.mark.parametrize("size", [(1250, 685), (1920, 1080)])
 def test_the_image_never_moves_through_a_session(qapp, tmp_path, size):
-    """Every tool, every method, a sample placed, moved and erased, a painted area, the grid, Before / After, Settings
-    opened and closed, leaving with a draft and coming back, Reset, Apply: the image's rectangle and zoom stay."""
+    """Every tool, every method, a sample placed, moved and erased, a painted area, the grid, Before / After, Marks,
+    the settings panel opened over the image and closed, leaving with a draft and coming back, Reset, Apply: the
+    image's rectangle and zoom stay (the panel's state is the user's choice of layout: see the next test)."""
+
     _test_project()
     w, settle = _window(tmp_path, size)
     try:
@@ -420,7 +425,9 @@ def test_the_image_never_moves_through_a_session(qapp, tmp_path, size):
             idle()
             check(m)
         for m in ("rbf", "automatic", "polynomial"):
-            ed._ui["m_" + m].click()
+            cb = ed._ui["method"]
+            cb.setCurrentIndex(cb.findData(m))
+            cb.activated.emit(cb.currentIndex())
             idle()
             check(m)
         ed._ui["grid"].click()
@@ -448,10 +455,17 @@ def test_the_image_never_moves_through_a_session(qapp, tmp_path, size):
         ed.release(ed.gv.canvas)
         idle()
         check("painted")
-        for b in ("before", "before", "settings", "settings"):
+        for b in ("before", "before", "marks", "marks"):
             ed._ui[b].click()
             idle()
             check(b)
+        if ed.dock.state != "docked":                  # the panel over the image: the image does not move
+            ed.dock.open_overlay()
+            idle()
+            check("settings over the image")
+            ed.dock.close_overlay()
+            idle()
+            check("settings closed")
         go("empilement")
         assert ed._notice is not None and ed._notice.isVisible()      # leaving with a draft: asked, over the window
         go("fond")
@@ -492,6 +506,73 @@ def test_the_draft_leaves_the_graph_up_to_date_until_apply(qapp, tmp_path):
         settle(w)
         assert s.state(p, "gradient") == "stale" and s.param_value(p, "gradient", "degree") == 3
         assert not ed.has_draft()
+    finally:
+        w.close()
+
+
+def test_the_settings_panel_has_the_window_s_three_states(qapp, tmp_path):
+    """Kept open, automatic, kept folded: the window's side-panel states. Automatic and folded leave a strip at the
+    image's right and open the panel over the image (the same image's rectangle in both); kept open, the panel takes its
+    room beside the image. The user's choice is remembered; without one, the window's width chooses."""
+    _test_project()
+    w, settle = _window(tmp_path, (1920, 1080))
+    try:
+        ed = w.tune.grad_editor
+        if ed.view is None:
+            pytest.skip("Gradient of the test project is not computed")
+        assert ed.dock.state == "docked" and ed.drawer.isVisible()       # a large window: kept open
+        rect = {}
+        for st in ("auto", "icons", "docked"):
+            ed.dock._choose(st)
+            settle(w)
+            rect[st] = _geometry(w, ed)[0]
+            assert ed.dock.strip.isVisible() == (st != "docked")
+            if st != "docked":
+                ed.dock.open_overlay()
+                settle(w)
+                assert ed.drawer.isVisible() and _geometry(w, ed)[0] == rect[st]
+                ed.dock.close_overlay()
+                settle(w)
+        assert rect["auto"] == rect["icons"] and rect["docked"][2] < rect["auto"][2]
+        from astro_gpu.client import prefs
+        assert prefs.get("gradient_settings_side") == "docked"            # the last choice, remembered
+        assert ed._side_state() == "docked"
+    finally:
+        w.close()
+
+
+def test_marks_hide_and_come_back_with_a_tool(qapp, tmp_path):
+    """Marks: hidden to judge the result, shown again as soon as a marks tool is used; M tapped toggles them, M held
+    hides them only while it is down; never part of the draft."""
+    from PySide6.QtCore import QEvent
+    from PySide6.QtGui import QKeyEvent
+    _test_project()
+    w, settle = _window(tmp_path, (1250, 685))
+    try:
+        ed = w.tune.grad_editor
+        if ed.view is None:
+            pytest.skip("Gradient of the test project is not computed")
+        mk = ed._ui["marks"]
+        assert mk.isVisible() and mk.isChecked() and ed.shown
+        mk.click()
+        assert not ed.shown and not mk.isChecked() and not ed.has_draft()
+        ed._ui["brush"].click()
+        assert ed.shown and mk.isChecked()                               # a tool: the marks back
+        c = ed.gv.canvas
+
+        def key(kind):
+            QApplication.sendEvent(c, QKeyEvent(kind, Qt.Key_M, Qt.NoModifier, "m"))
+        key(QEvent.KeyPress)
+        assert not ed.shown
+        ed._m_down = (ed._m_down[0] - 1.0, ed._m_down[1])                # held a second
+        key(QEvent.KeyRelease)
+        assert ed.shown                                                  # held: back on release
+        key(QEvent.KeyPress)
+        key(QEvent.KeyRelease)
+        assert not ed.shown                                              # tapped: hidden
+        key(QEvent.KeyPress)
+        key(QEvent.KeyRelease)
+        assert ed.shown
     finally:
         w.close()
 
