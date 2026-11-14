@@ -23,7 +23,7 @@ from astro_gpu.client.graphmodel import GraphEditing  # noqa: E402
 from astro_gpu.client.model import ProjectModel  # noqa: E402
 from astro_gpu.client.services.worker import ApiWorker  # noqa: E402
 from astro_gpu.core import project2  # noqa: E402
-from astro_gpu.graphcore.model import Index  # noqa: E402
+from astro_gpu.graphcore.model import Index, model_json  # noqa: E402
 
 
 M = ProjectModel                      # the graph is its truth (GraphEditing)
@@ -180,3 +180,68 @@ def test_a_wire_to_post_removed_in_the_graph_leaves_every_version(model):
     assert all(not any(x.get("pid") == wid and x.get("part") is None for x in v.get("layers") or [])
                for v in model.p.post["versions"])
     assert (wid, None) in model.post_removed()
+
+
+def post_wires(g):
+    post = Index(g).post
+    return sorted((tuple(w.src), w.wid) for w in g.wires if w.dst[0] == post)
+
+
+def test_undo_of_a_deletion_gives_back_its_wire_to_post_and_every_version(model):
+    """The window fuzz's failure on the model, shrunk: a workflow duplicated (Post shows its image by default: a wire
+    to Post), then deleted; Ctrl+Z gives back the graph exactly (its wire to Post, its blocks in their order), Post's
+    every version, and selects a block that came back; Ctrl+Y gives back the deletion."""
+    model.new_post_version()
+    doc = model.document
+    assert doc.apply([("duplicate_row", {"row": row(model).id})]).ok
+    dup = model.stored.rows[-1].id
+    before, post = model_json(doc.graph), json.dumps(model.p.post, sort_keys=True)
+    assert len(post_wires(doc.graph)) == 2 and len(model.p.post["versions"]) == 2
+    assert doc.apply([("delete_row", {"row": dup})]).ok
+    after = model_json(doc.graph)
+    assert len(post_wires(doc.graph)) == 1
+    gone = set(json.loads(before)["blocks"]) - set(json.loads(after)["blocks"])
+    assert doc.undo().ok
+    assert model_json(doc.graph) == before                                               # exactly, blocks' order too
+    assert model_json(model.stored) == before                                            # and nothing to absorb
+    assert json.dumps(model.p.post, sort_keys=True) == post
+    assert model.graph_view["selected"] in gone
+    assert doc.redo().ok and model_json(doc.graph) == after
+
+
+def test_undo_keeps_the_blocks_order(model):
+    doc = model.document
+    for _i in range(9):                                       # ids past b9: a sorted order would put b10 before b2
+        assert doc.apply([("add_block", {"kind": "deconv", "row": row(model).id})]).ok
+    before = list(doc.graph.blocks)
+    assert doc.apply([("switch_off", {"block": block(model, "deconv")})]).ok
+    assert doc.undo().ok and list(doc.graph.blocks) == before
+
+
+def test_a_step_that_raised_half_way_is_taken_back_for_good(model, monkeypatch):
+    """The page takes a step that raised back with Undo: the broken state is not left to Redo."""
+    before = model_json(model.document.graph)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("half-way")
+    monkeypatch.setattr(model, "_post_follow", boom)
+    with pytest.raises(RuntimeError):
+        model.apply([("add_block", {"kind": "deconv", "row": row(model).id})])
+    monkeypatch.undo()
+    assert model.document.can_undo
+    assert model.document.undo().ok
+    assert model_json(model.document.graph) == before
+    assert not model.document.can_redo
+
+
+def test_a_template_is_one_step_and_a_result(model):
+    from astro_gpu.client.gallery import GALLERY, _view_opts
+    t = next(x for x in GALLERY if x["key"] == "colour_min")
+    steps, rows = len(model._undo), len(model.stored.rows)
+    res = model.apply_template(t, model.unique_name("Colour minimal"), _view_opts(t))
+    assert res.ok and len(model.stored.rows) == rows + 1 and len(model._undo) == steps + 1
+    from types import SimpleNamespace
+    refused = SimpleNamespace(steps=[("remove_block", {"block": "no such block"})], post=lambda rows: [])
+    model._template = lambda *_a: refused                     # a plan the core refuses: a Result, nothing raised
+    res = model.apply_template(t, "Other", {})
+    assert not res.ok and res.reason and len(model._undo) == steps + 1

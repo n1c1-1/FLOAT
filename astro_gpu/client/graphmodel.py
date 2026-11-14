@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import copy
 import json
+from contextlib import contextmanager
 from pathlib import Path
 
 from ..graphcore import model as gm
@@ -47,6 +48,18 @@ _ROW_STAGES = ("inventory", "calibrate", "render_simple", "align_on")
 _PORT_OF_ROLE = {"SII": "S II", "Ha": "Hα", "OIII": "O III", "L": "L", "R": "R", "G": "G", "B": "B"}
 _PORT_OF_IMAGE = {"starless": "Starless", "stars": "Stars only"}
 _TITLE_OF_KIND = {"sho": "S-H-O", "ho": "H-O", "rgb": "RGB", "lrgb": "LRGB"}
+
+
+#: Save writes the project file as the stored graph (format 3); until then, the definition as today (format 2)
+WRITE_GRAPH = False
+
+
+def _file_format_is(f, fmt) -> bool:
+    """Whether the project file ``f`` is of format ``fmt`` (a file that cannot be read is not)."""
+    try:
+        return json.loads(f.read_text(encoding="utf-8")).get("format") == fmt
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
 def _mm():
@@ -146,8 +159,9 @@ class GraphEditing:
     GRAPH_KEYS = True
 
     def __init__(self, project, *args, **kwargs):
-        # the graph first, compiled into the definition before the worker reads it (no race with the warm job)
-        g = self._convert(project)
+        # the graph first, compiled into the definition before the worker reads it (no race with the warm job): the
+        # one the file holds (format 3), else the definition converted (a project of the previous format)
+        g = self._stored_graph(project) or self._convert(project)
         c = compile_into(g, project)
         super().__init__(project, *args, **kwargs)
         self._g = g
@@ -161,6 +175,37 @@ class GraphEditing:
         self._sig = self._def_sig()
 
     # ------------------------------------------------------------------ the graph
+    @staticmethod
+    def _stored_graph(p):
+        """The graph a format-3 file held (core/project2.py read it and compiled the definition from it), or None."""
+        d = getattr(p, "graph", None)
+        if d is None:
+            return None
+        try:
+            g = gm.from_dict(copy.deepcopy(d))
+            gm.check(g)
+            return g
+        except Exception:  # noqa: BLE001 - a graph that cannot be read: the definition compiled from it is converted
+            return None
+
+    # ------------------------------------------------------------------ the project file (format 3)
+    def flush(self, force: bool = False) -> bool:
+        """Save: the project file holds the stored graph (format 3) when ``WRITE_GRAPH``; a file of the previous format
+        is kept once beside it as ``project.astroproj.v2.bak`` before it is first written so."""
+        if WRITE_GRAPH and self._dirty and not self.readonly and self.root is not None:
+            self._absorb()
+            self.p.graph = gm.to_dict(self._g)
+            self._keep_format_2()
+        return super().flush(force)
+
+    def _keep_format_2(self):
+        from ..core.project2 import FILE, FORMAT
+        f = Path(self.root) / FILE
+        bak = f.with_name(f.name + ".v2.bak")
+        if bak.exists() or not f.exists() or not _file_format_is(f, FORMAT):
+            return
+        bak.write_bytes(f.read_bytes())
+
     def _convert(self, p):
         if self.GRAPH_KEYS:
             try:
@@ -378,9 +423,43 @@ class GraphEditing:
 
     # ------------------------------------------------------------------ undo (INTEGRATION §9)
     def _graph_json(self) -> str:
+        """The graph as a step keeps it: its blocks, rows and settings in their own order (an undo gives back the same
+        graph, not one sorted otherwise)."""
         d = gm.to_dict(self._g)
         d.pop("excluded", None)
-        return json.dumps(d, sort_keys=True, ensure_ascii=False, default=str)
+        return json.dumps(d, ensure_ascii=False, default=str)
+
+    @contextmanager
+    def _edit(self):
+        """ProjectModel._edit; a step whose change raised half-way is marked: undoing it leaves nothing to redo (the
+        broken state never comes back)."""
+        top = self._depth == 0
+        mark = self._undo[-1] if top and self._undo else None
+        try:
+            with super()._edit():
+                yield
+        except BaseException:
+            if top and self._undo and self._undo[-1] is not mark:
+                self._undo[-1].raised = True
+            raise
+
+    def undo(self, graph: bool = False) -> bool:
+        raised = bool(self._undo) and getattr(self._undo[-1], "raised", False)
+        done = super().undo(graph)
+        if done and raised:                             # a step that raised is taken back for good
+            self._redo.pop()
+            if len(self._redo_what) > len(self._redo):
+                self._redo_what.pop()
+        return done
+
+    def _prune_post(self):
+        """Post follows the graph (ProjectModel._prune_post), then the graph's wires to Post follow Post: the step ends
+        with the graph and Post agreeing, so an undo gives both back as they were shown."""
+        super()._prune_post()
+        if getattr(self, "_g", None) is not None and not getattr(self, "_absorbing", False):
+            g2 = self._with_post_wires(self._g)
+            if g2 is not self._g:
+                self._g = g2
 
     def _snapshot(self):
         mm = _mm()
@@ -413,15 +492,8 @@ class GraphEditing:
         gjson, current, _mode, _none, post, target, description, name, acquisition = src.pop()
         self.p.target, self.p.description, self.p.name, self.p.acquisition = Target(**target), description, name, \
             dict(acquisition)
-        g = gm.from_dict(json.loads(gjson))
-        g.excluded = [[int(a), str(b)] for a, b in self.p.excluded]          # the hand exclusions are not undone
-        g.excluded = [x for x in g.excluded if any(n["sid"] == x[0] for n in g.nights)]
-        self._g = g
-        self.compiled = compile_into(g, self.p)
-        if current is not None and any(w.id == current for w in self.p.workflows):
-            self.p.current = current
-        self._sig = self._def_sig()
-        self.revision += 1
+        # Post first, then the graph and the views: the graph's wires to Post are read from Post and the workflows,
+        # so nothing may read them while one of the three is still the later step's
         post_back = json.loads(post) != (getattr(self.p, "post", None) or {})
         in_post = self.sel_step in ("final", "composition")
         if post_back:
@@ -436,6 +508,16 @@ class GraphEditing:
             self.p.post = back
             now.after_post = back
             post_back = back != here
+        g = gm.from_dict(json.loads(gjson))
+        g.excluded = [[int(a), str(b)] for a, b in self.p.excluded]          # the hand exclusions are not undone
+        g.excluded = [x for x in g.excluded if any(n["sid"] == x[0] for n in g.nights)]
+        self._g = g
+        self.compiled = compile_into(g, self.p)
+        if current is not None and any(w.id == current for w in self.p.workflows):
+            self.p.current = current
+        self._sig = self._def_sig()
+        self.revision += 1
+        self._rebuild_views()
         files_after = [(s.id, *(tuple(getattr(s, k)) for k in gm.FILE_KINDS)) for s in self.p.sessions]
         if files_after != files_before:
             self.reload_sources()
@@ -447,7 +529,10 @@ class GraphEditing:
         post_back = post_back or json.dumps(self.p.post, sort_keys=True) != was
         self._unpatch_rows()
         # the selection on block ids: a block that came back is selected; one gone leaves its predecessor selected
-        if sel is not None and sel not in g.blocks and not any(r.id == sel for r in g.rows):
+        came = [b for b in g.blocks if b not in old_g.blocks and g.blocks[b].kind != "post"]
+        if came:
+            self.graph_view["selected"] = came[0]
+        elif sel is not None and sel not in g.blocks and not any(r.id == sel for r in g.rows):
             self.graph_view["selected"] = pred if pred in g.blocks else None
         if self.paths:
             self.current = next((i for i, v in enumerate(self.paths) if v.pid == self.p.current), 0)
@@ -1155,6 +1240,15 @@ class GraphEditing:
     def _template(self, t, name, opts):
         from ..graphcore import templates
         return templates.build(self._g, t, name, opts, tr=_)
+
+    def apply_template(self, t: dict, name: str, opts: dict) -> Result:
+        """A template of the gallery made as one step (its workflow, then Post's layers): -> Result, a refusal saying
+        why and changing nothing."""
+        self._absorb()
+        try:
+            return self._run_plan(self._template(t, name, opts))
+        except GraphRefused as e:
+            return Result(False, reason=str(e))
 
     def add_sho_rgb(self, name: str, kind: str, filters: list[str], opts: dict):
         self._absorb()
