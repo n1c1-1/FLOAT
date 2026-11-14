@@ -3371,3 +3371,26 @@ def test_the_catalogue_is_loaded_ahead_of_the_first_tick_of_the_sky_grid_or_the_
     assert calls == [1]
     monkeypatch.setattr(so, "load_catalogue", lambda *a, **k: (_ for _ in ()).throw(so.CatalogueUnavailable("x")))
     si.warm_annotations(None)                              # no catalogue: nothing raised, the tick says why
+
+
+def test_an_export_with_a_layer_that_cannot_be_read_stops_and_says_so_instead_of_writing_a_black_picture(exporting):
+    """The composition leaves a layer whose result is missing out: with the others there the picture was made without
+    it (all zeros when it was the only one with a canvas), and the project said everything was up to date."""
+    from astro_gpu.client.postengine import is_pixel, source_ids
+    from astro_gpu.client.services.render import ExportJob, ExportRefused, Request, run_export
+    s = exporting
+    assert s.settle()
+    layers = snapshot(s.view.layers)
+    r = s.worker.renderer
+    assert len([x for x in layers if is_pixel(x)]) >= 2 and not r.unreadable(layers)
+    shown = next(x for x in layers if is_pixel(x) and x["visible"])
+    gone = source_ids(shown)[0]
+    real = r.source.available
+    r.source.available = lambda pid: False if pid == gone else real(pid)
+    written = []
+    with pytest.raises(ExportRefused, match="cannot be read"):
+        run_export(r, ExportJob(layers=layers, folder=str(s.out), name="c"), lambda f, m: None,
+                   writer=lambda *a: written.append(a) or [])
+    assert written == [] and [x["id"] for x in r.unreadable(layers)] == [shown["id"]]
+    res = r.run(Request(kind="half", layers=layers, level=1), None)       # Post's own render says which layer is missing
+    assert f"layer:{r.unreadable(layers)[0]['id']}" in res.missing

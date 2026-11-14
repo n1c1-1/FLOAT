@@ -1748,7 +1748,9 @@ class PostView(QWidget):
             self.viewer.refresh()
             self.viewer.update()
             return
-        self.viewer.banner = ""
+        lost = [x for x in self.layers if is_pixel(x) and x.get("visible", True) and f"layer:{x['id']}" in self._missing_images]
+        self.viewer.banner = (_("Not shown, its result cannot be read: {names}")
+                              .format(names=", ".join(layer_name(x) for x in lost)))[:160] if lost else ""
         self.first_image = True
         if res.hists:
             self._hists.update(res.hists)
@@ -3305,6 +3307,8 @@ class PostView(QWidget):
         bits.append(f"{_(lay['mode'])} · {with_unit(format(lay['opacity'], '.0f'), '%')}")
         if lay["kind"] == "image":
             bits.append(_("image") if self.worker_has_image(lay) else _("not found"))
+        elif is_pixel(lay) and f"layer:{lay['id']}" in self._missing_images:
+            bits.append(_("not computed"))
         if is_pixel(lay) and lay["id"] in self._collapsed:
             n = len(children(self.layers, lay["id"]))
             bits.append(plural(n, "{n} filter", "{n} filters"))

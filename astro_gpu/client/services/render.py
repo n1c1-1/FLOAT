@@ -691,7 +691,8 @@ class Renderer:
         res.previews = {lay["pid"] for lay in layers if lay["kind"] == "workflow" and
                         self.source.available(source_id(lay)) and self.source.previous(source_id(lay))}
         res.missing = tuple(sorted({lay["key"] for lay in layers if lay["kind"] == "image"
-                                    and not self.source.available(source_id(lay))}))
+                                    and not self.source.available(source_id(lay))}
+                                   | {f"layer:{x['id']}" for x in self.unreadable(layers) if x["id"] is not None}))
         if req.kind in ("half", "refine") and req.box is None:        # thumbnails of what was just drawn, for free
             res.layer_thumbs = self._visible_thumbs(layers, cp.canvas_of(layers))
         res.ms = 1000 * (time.perf_counter() - t0)
@@ -748,6 +749,29 @@ class Renderer:
         """Whether everything a layer reads is there: a Combine layers layer reads two workflows (issue #165), its starless
         side's and its stars side's (when it has one)."""
         return all(self.source.available(x) for x in source_ids(lay))
+
+    def unreadable(self, layers: list[dict]) -> list[dict]:
+        """The visible pixel layers whose result cannot be read ({"layer": name, "id", "what": the images that are not
+        there}): the composition leaves such a layer out, so a picture made without them is not the picture."""
+        out = []
+        for lay in layers:
+            if not is_pixel(lay) or not lay.get("visible", True):
+                continue
+            sids = source_ids(lay)
+            gone = [x for x in sids if not self.source.available(x)]
+            if not gone:
+                continue
+            if is_group(lay):
+                shown = lay.get("shown") or {}
+                subs = [x for x in ("starless", "stars") if shown.get(x, True)]
+                if lay.get("stars_pid", lay["pid"]) is None and "stars" in subs:
+                    subs.remove("stars")
+                what = [(_("starless image") if x == "starless" else _("stars")) for x, i in zip(subs, sids)
+                        if i in gone]
+            else:
+                what = [_("image")]
+            out.append({"layer": lay["name"], "id": lay["id"], "what": what})
+        return out
 
     def _thumb_subs(self, layers, lay) -> tuple:
         """The images of a Combine layers layer that have a thumbnail of their own: its two, and the synthetic stars of
@@ -865,6 +889,10 @@ def _burned(rgb: np.ndarray, ann, show: dict) -> np.ndarray:
     return np.ascontiguousarray(burn(np.clip(rgb, 0.0, 1.0), ann, show), dtype=np.float32)
 
 
+class ExportRefused(Exception):
+    """An export that cannot be made as the picture is: the sentence for the user is its text."""
+
+
 def run_export(renderer: Renderer, job: ExportJob, progress, stop=None,
                writer: Callable | None = None) -> list[Path]:
     """The final image at full resolution (the engine's whole-grid rendering of each layer, composed), written into
@@ -874,7 +902,11 @@ def run_export(renderer: Renderer, job: ExportJob, progress, stop=None,
     layers = job.layers
     canvas = cp.canvas_of(layers)
     if canvas is None:
-        raise ValueError("no layer has a result to export")
+        raise ExportRefused(_("No layer has a result to export"))
+    lost = renderer.unreadable(layers)
+    if lost:                      # never a picture made without a layer it should show (a black or a partial one)
+        raise ExportRefused(" ".join(_("“{name}” cannot be read ({what}): compute it again, nothing was written.")
+                                     .format(name=x["layer"], what=", ".join(x["what"])) for x in lost))
     crop = tuple(int(v) for v in job.crop) if job.crop else None
     cut = (lambda a: a[..., crop[1]:crop[3], crop[0]:crop[2]]) if crop else (lambda a: a)
     shown = Canvas(crop[2] - crop[0], crop[3] - crop[1], (canvas.origin[0] + crop[0], canvas.origin[1] + crop[1])) \
@@ -1272,6 +1304,8 @@ class RenderWorker(QThread):
             self.exported.emit([str(p) for p in files], "")
         except Superseded:
             self.exported.emit([], "stopped")
+        except ExportRefused as e:
+            self.exported.emit([], str(e))
         except WriteFailed as e:                         # a sentence that names the file; its second line goes to the Log
             self.exported.emit([], _("“{name}” could not be written").format(name=e.name) + chr(10) + e.why)
         except Exception as e:  # noqa: BLE001

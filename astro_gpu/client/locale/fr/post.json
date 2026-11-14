@@ -307,5 +307,10 @@
   "Back to Graph": "Retour Graphe",
   "Nothing more to undo in this version": "Plus rien à annuler dans cette version",
   "Setting “{name}” changed": "Réglage « {name} » changé",
-  "Workflow renamed “{name}”": "Workflow renommé « {name} »"
+  "Workflow renamed “{name}”": "Workflow renommé « {name} »",
+  "No layer has a result to export": "Aucun calque n'a de résultat à exporter",
+  "“{name}” cannot be read ({what}): compute it again, nothing was written.": "« {name} » est illisible ({what}) : calculez-le de nouveau, rien n'a été écrit.",
+  "starless image": "image sans étoiles",
+  "Not shown, its result cannot be read: {names}": "Non affiché, son résultat est illisible : {names}",
+  "not computed": "non calculé"
 }
