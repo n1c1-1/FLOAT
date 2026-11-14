@@ -3901,6 +3901,9 @@ class GraphPage(QWidget):
         if t.get("dual_x2"):                                # two dual-band filters and a session for the stars
             with s.batch():
                 return s.add_dual_x2(name, {**opts})
+        if t.get("mono_rgb"):                               # R, G, B (L, R, G, B): stacked apart, combined, calibrated once
+            with s.batch():
+                return s.add_mono_combination(name, palette_kind(t["palette"]), list(t["filters"]), {**opts})
         if t.get("rgb_stars"):                              # the narrow bands and a colour workflow's stars (issue #165)
             with s.batch():
                 return s.add_sho_rgb(name, palette_kind(t["palette"]), list(t["filters"]), {**opts})

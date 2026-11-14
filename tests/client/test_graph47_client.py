@@ -597,7 +597,7 @@ def test_a_blank_page_has_a_link_to_the_templates_in_place_of_the_graph(qapp, tm
         QTest.mouseClick(page.graph.viewport(), Qt.LeftButton, pos=page.graph.mapFromScene(link.sceneBoundingRect().center()))
         assert page.templates.isVisibleTo(page) and not page.graph.isVisibleTo(page)
         assert [c.t["key"] for c in page.templates.cards] == ["colour_min", "colour_full", "image", "filters_min",
-                                                              "filters_full", "sho_rgb", "images", "dual_x2"]
+                                                              "filters_full", "sho_rgb", "images", "dual_x2", "mono_rgb", "mono_lrgb"]
         page.templates.back_b.click()
         assert page.graph.isVisibleTo(page) and not page.templates.isVisibleTo(page) and page.is_blank()
         assert page.new_workflow() is None and page.templates.isVisibleTo(page)   # the menu: no window on a blank page
@@ -674,7 +674,7 @@ def test_the_template_cards_take_the_height_of_their_content_in_a_grid_that_wrap
         room = page.templates.scroll.viewport().width()
         assert len({c.x() for c in cards}) == min(6, (room + 12) // (cards[0].width() + 12)) > 3, room   # as many as fit
         bottom = max(c.geometry().bottom() for c in cards)
-        assert bottom < page.templates.scroll.viewport().height() * 0.6    # the page's room left below them
+        assert bottom < page.templates.scroll.viewport().height() * 0.8    # the page's room left below them
         page.resize(700, 1000)
         settle(w, page)
         cards = check()

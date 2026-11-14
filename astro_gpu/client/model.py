@@ -2091,6 +2091,30 @@ class ProjectModel(QObject):
         """The graph of a monochrome workflow made from these options (no Color block)."""
         return [dict(n) for n in wfl.from_options(to_engine(dict(opts)), None, "frames") if n["block"] != "color" and not n["off"]]
 
+    def add_mono_combination(self, name: str, kind: str, filters: list[str], opts: dict) -> WorkflowView:
+        """The "Mono RGB" / "Mono LRGB" templates: a monochrome camera, one workflow per filter (the first is the
+        reference; an empty Session block for a filter without one), each stacked on its own with its Gradient and Denoise,
+        no Color block and no Stars/background; the others aligned on the reference without an Astrometry of their own;
+        the combination of type ``kind`` ("rgb", "lrgb") reads the rows' Outputs, then one Color block after it calibrates
+        the colour once (it takes the plate solution of the reference row). Post shows the combination only. One Undo
+        step. Returns the combination."""
+        with self._edit():
+            made = []
+            for f in filters:
+                if f not in self.filters():
+                    self.add_filter_session(f)
+                made.append((f, self.filter_workflow(f, opts)))
+            for _f, q in made:
+                if self.p.workflow(q.pid).blocks is None:
+                    self.set_graph(q, self.mono_blocks(opts))
+            for _f, q in made[1:]:
+                self.align_without_astrometry(q, made[0][1].pid)
+            fus = self.add_filters_combination(name, kind, made, False)
+            self.insert_block(fus, "color")
+            gone = {(int(a), b) for a, b in self.p.post.get("removed") or []}                 | {(q.pid, self.post_default_part(q)) for _f, q in made}        # Post shows the combination only
+            self.p.post = {**self.p.post, "removed": sorted([list(x) for x in gone], key=str)}
+        return self.view(fus.pid)
+
     def add_dual_x2(self, name: str, opts: dict) -> WorkflowView:
         """The "Dual-band x2" template: a colour camera with two dual-band filters (O III / H-alpha, O III / S II) and a
         session for the stars. Rows: S (session B), H (session A), O III (sessions A and B stacked together: the O III of
