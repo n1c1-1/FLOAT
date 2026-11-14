@@ -84,9 +84,10 @@ REJECTION = "rejection.npz"
 #: colour of their surroundings), the most of the three colours
 SATURATION = "saturation.npy"
 #: the bytes a band of the rejection by frame count holds per value (frames x colours x output columns) on the processor,
-#: measured (count_pass), and the most memory its bands may take whatever the machine has free
+#: measured (count_pass), and the most memory its bands may take whatever the machine has free (3 GB: a 50-frame
+#: 12 Mpx night keeps bands at least as wide as before the measure, 99 rows, without a limit)
 CPU_BAND_BYTES = 32
-CPU_BAND_CAP = 3 * 2 ** 29
+CPU_BAND_CAP = 3 * 2 ** 30
 #: a raw value above this fraction of the saturation level is near saturation (the response bends before it clips)
 NEAR_SATURATION = 0.85
 #: the rejection maps are reduced by a whole factor until their longer side is at most this
