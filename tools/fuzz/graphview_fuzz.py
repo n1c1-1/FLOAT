@@ -21,6 +21,9 @@ Checks after every gesture:
   e  a refused gesture shows a message (the toast, visible, not empty); an accepted place / port changes the graph
   f  what is painted is the core's Drawing (an item per box and card at its box, a wire item per path with its ends),
      the bridge's cached Drawing is the current one, no item of a drag is left; no Python exception, no Qt warning
+  g  a side block (Synthetic stars) is under its row's line after the block whose stars it reads, reached by their
+     wire from that block's stars port, its image only into a Combine layers' Synthetic stars input; an optional input
+     left empty is greyed (a and b hold for it as for any block, at every zoom)
 A failure writes the replayable gesture list and a minimised one (delta debugging by replay), and, when the core's
 own Drawing has the defect, the minimal list of document operations that reproduces it.
 """
@@ -55,8 +58,9 @@ from astro_gpu.client.graphview.document import MemoryDocument  # noqa: E402
 from astro_gpu.client.graphview.gestures import Gestures, pump  # noqa: E402
 from astro_gpu.client.graphview.items import BlockItem, FileTarget, GhostItem, RubberWire, StackItem  # noqa: E402
 from astro_gpu.client.graphview.page import GraphPage  # noqa: E402
-from astro_gpu.graphcore.layout import layout as raw_layout  # noqa: E402  (uncached)
-from astro_gpu.graphcore.model import FILE_KINDS, JOIN_KINDS  # noqa: E402
+from astro_gpu.client.graphview.canvas import EMPTY_COL  # noqa: E402
+from astro_gpu.graphcore.layout import layout as raw_layout, SIDE_IN, SIDE_KINDS  # noqa: E402  (uncached)
+from astro_gpu.graphcore.model import FILE_KINDS, JOIN_KINDS, OPTIONAL_PORTS, SYNTH_PORT, Index  # noqa: E402
 from astro_gpu.graphcore.operations import json_of  # noqa: E402
 
 #: the start graphs, in the order --starts takes them (tests/graphcore/fixtures.py)
@@ -485,10 +489,10 @@ class Run:
             return None
         src, sport = self.rng.choice(outs)
         cands = [(b, p) for (b, p, s) in d.ports if s == "in" and b in d.boxes and b != src
-                 and self.graph.blocks[b].kind in JOIN_KINDS]
+                 and self.graph.blocks[b].kind in JOIN_KINDS + SIDE_KINDS]
         cands += [(b, "layers") for b in d.boxes if self.graph.blocks[b].kind == "post"]
         others = [(b, p) for (b, p, s) in d.ports if s == "in" and b in d.boxes and b != src
-                  and self.graph.blocks[b].kind not in JOIN_KINDS]
+                  and self.graph.blocks[b].kind not in JOIN_KINDS + SIDE_KINDS]
         if not cands and not others:
             return None
         ok = [c for c in cands if not self.bridge.check_wire(src, sport, *c)]
@@ -788,6 +792,7 @@ class Run:
         ov = overlaps(rects)
         if ov:
             raise Failure("a", f"items overlap{when}: {ov[0]} {rects[ov[0]]} / {ov[1]} {rects[ov[1]]}")
+        self.check_side(d, when)
         hit = texts_overlap(cv)
         if hit:
             raise Failure("a", f"texts overlap{when}: {hit}")
@@ -800,6 +805,33 @@ class Run:
             if hit:
                 raise Failure("b", f"wire {wid} ({it.style_name} {src}>{dst}) passes behind {hit[1]} "
                                    f"{tuple(round(v) for v in rects[hit[1]])}{when}")
+
+    def check_side(self, d, when=""):
+        """g: a side block (Synthetic stars) is drawn under its row's line, after the block whose stars it reads, its
+        chain wire from that block's stars port down to its input; its image goes only to a Combine layers' Synthetic
+        stars input; an optional input left empty is painted greyed."""
+        g, cv = self.graph, self.canvas
+        ix = Index(g)
+        for b, blk in g.blocks.items():
+            if blk.kind == "combine_layers" and b in cv.blocks:
+                for name, _lab, _y, wired, colour in cv.blocks[b].d["inputs"]:
+                    if name in OPTIONAL_PORTS and not wired and colour != EMPTY_COL:
+                        raise Failure("g", f"the empty input {name} of {b} is not greyed{when}")
+            if blk.kind not in SIDE_KINDS or b not in d.boxes:
+                continue
+            a = ix.pred(b)
+            A, B = (d.boxes.get(a) if a else None), d.boxes[b]
+            if A is None:
+                continue
+            if B.y < A.bottom - 0.05 or B.x < A.right - 0.05 or d.cells[b][0] != d.cells[a][0] + 1:
+                raise Failure("g", f"{b} is not under the line of {a}, after it: {B} / {A}{when}", core=True)
+            path = next((p for p in d.wires if p.id == f"c:{a}>{b}"), None)
+            if path is None or path.points[-1] != d.ports.get((b, SIDE_IN, "in")) or \
+                    path.points[0] != d.ports.get((a, "Stars only", "out"), path.points[0]):
+                raise Failure("g", f"the stars of {a} do not reach the input of {b}{when}", core=True)
+            for w in g.wires:
+                if w.src[0] == b and (g.blocks[w.dst[0]].kind != "combine_layers" or w.dst[1] != SYNTH_PORT):
+                    raise Failure("g", f"{b}'s image goes to {w.dst}{when}", core=True)
 
     def check_shown(self):
         """c: what the gesture made is drawn and fully on screen."""

@@ -46,6 +46,9 @@ CORE_ONLY = {
     "the Background port needs a starless image": "Combine layers is a layer of Post, no workflow: its ports are "
                                                   "the core's (the engine never sees them)",
     "the Stars port needs the stars only": "the same",
+    "the Stars port takes the real stars: the synthetic ones have their own port": "the same",
+    "the Synthetic stars port takes the output of a Synthetic stars block": "the same",
+    "these Synthetic stars read other stars than those wired to Stars": "the same",
     "Preprocessing is folded: unfold it first": "a view rule: the folded band hides the block a variant would fork "
                                                 "from",
     "no {lab} from a stretched image": "a combination works on linear images (stages/combine reads an Output's or a "
@@ -103,6 +106,12 @@ GESTURE = {
     "specific to each stack: a frame chosen in its lights",
     # wires: a loop is not a graph; the engine's joins read an image or a Stars/background
     "this wire would close a loop",
+    # Synthetic stars: a side block of its workflow (its stars to its Combine layers' Synthetic stars input, never a
+    # branch of its own, its port following the block)
+    "Synthetic stars goes on the stars of its workflow, never in a branch of its own",
+    "Synthetic stars go to the Synthetic stars input of their Combine layers",
+    "Synthetic stars read the stars only of a Stars/background",
+    "this port empties with its Synthetic stars block: delete it or switch it off",
     # a switch-off of a block that is not switched (the engine's off_problem says the same for its own nodes)
     "— {takes} → {gives}, essential",
 }
