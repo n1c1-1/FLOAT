@@ -907,6 +907,9 @@ class Run:
         # waits for an answer, so the count is checked again after every gesture)
         # (a start compiled without Post may hold Combine layers blocks Post never had: such a start is not counted)
         n_layers = sum(1 for x in m.post_layers() if x.get("kind") == "workflow" and x.get("part") == "combined")
+        # and the Combine layers layers Post shows by default, written in its version when Post opens (a workflow
+        # given back to Post, a variant made by a gesture), or once its lights are there (the block drawn greyed)
+        n_layers += sum(1 for q in m.post_defaults() + m.post_waiting() if m.post_default_part(q) == "combined")
         # A gesture never adds a block without its layer (nor a layer without its block); an Undo or a Redo gives the
         # graph back with the same agreement it had (the same graph, the same count)
         gap = len(heads | drawn) - n_layers
