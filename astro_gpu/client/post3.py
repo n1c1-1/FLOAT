@@ -77,6 +77,7 @@ from .imageview import ZOOM_PRESETS, ZOOM_STEP
 from .layout import Dock, Sections
 from .model import POST_PART_NAMES
 from .postengine import (
+    visible_signature,
     BLENDS,
     DIRECTIONS,
     FAMILIES,
@@ -1229,6 +1230,8 @@ class PostView(QWidget):
             sc.activated.connect(self.crop_apply)
             sc.setEnabled(False)
             self._crop_keys.append(sc)
+        self._rendered_sig = None                       # the visible signature of the last final render asked
+        self._draft_dirty = False                       # a draft is on the screen after the last final render
         self._draft_t = QTimer(self)
         self._draft_t.setSingleShot(True)
         self._draft_t.timeout.connect(self._send_draft)
@@ -1322,7 +1325,7 @@ class PostView(QWidget):
                 self.sel = None
             self.rebuild()
             self.worker.refresh()
-            self.request(final_only=True)                  # (nothing is saved here: the layers a workflow brings are
+            self.request(final_only=True, force=True)                  # (nothing is saved here: the layers a workflow brings are
                                                            # worked out again from the workflows, only edits are kept)
 
     def _version_shown(self) -> dict:
@@ -1378,7 +1381,7 @@ class PostView(QWidget):
         self.sync_paths()
         self.rebuild()
         self._undo_buttons()
-        self.request(final_only=True)
+        self.request(final_only=True, force=True)
         if self.b_cmp.isChecked():
             self._send_before()
 
@@ -1542,11 +1545,26 @@ class PostView(QWidget):
 
     # ------------------------------------------------------------ rendering (in the worker)
     def refresh(self):
-        self.request(final_only=True)
+        self.request(final_only=True, force=True)
 
-    def request(self, final_only=False):
-        """Something changed: a draft now (while it moves), the screen's image 220 ms after the last change."""
+    def _visible_sig(self) -> str:
+        want, overlay = self._selected_wants()
+        return visible_signature(self.layers, want if overlay else ())
+
+    def request(self, final_only=False, force=False, settings_only=False):
+        """Something changed: a draft now (while it moves), the screen's image 220 ms after the last change. A change
+        that leaves the shown rows as they are (a hidden filter's slider, a hidden layer's settings) renders nothing and
+        shows no draft: the picture on the screen is the one the layers give; the settings are kept all the same.
+        Only a settings change says so (``settings_only``: a slider, the Curves): every other request renders, as the
+        signature knows the rows alone (a crop, a version switch, the bases are not in it)."""
+        if (settings_only and not force and not self._draft_dirty and not self._final_t.isActive()
+                and self._rendered_sig == self._visible_sig()):
+            need = tuple(self._stale_thumbs())
+            if need:
+                self.worker.request(Request(kind="thumbs", layers=snapshot(self.layers), need_thumbs=need))
+            return
         self.src.full = None
+        self._draft_dirty = self._draft_dirty or not final_only
         if not final_only:
             self._draft_t.start(0)
         self._final_t.start(0 if final_only else 220)
@@ -1575,6 +1593,7 @@ class PostView(QWidget):
         return (lay["id"],)
 
     def _send_draft(self):
+        self._draft_dirty = True
         want, overlay = self._selected_wants()
         self._main_seq = self.worker.request(Request(kind="draft", layers=snapshot(self.layers),
                                                      level=self.draft_level, want=want, overlay=overlay))
@@ -1603,6 +1622,8 @@ class PostView(QWidget):
 
     def _send_final(self):
         self._draft_t.stop()
+        self._draft_dirty = False
+        self._rendered_sig = self._visible_sig()
         want, overlay = self._selected_wants()
         cpu = (self._device or self.worker.device) == "cpu"
         if self._quarter_enough():
@@ -3242,7 +3263,7 @@ class PostView(QWidget):
             if state["before"] is None:
                 state["before"] = snapshot(self.layers)
             apply(v)
-            self.request()
+            self.request(settings_only=True)
 
         def done(v):
             if state["before"] is None:
@@ -3250,7 +3271,7 @@ class PostView(QWidget):
             apply(v)
             self.push(state["before"])
             state["before"] = None
-            self.request(final_only=True)
+            self.request(final_only=True, settings_only=True)
             QTimer.singleShot(0, self._refresh_rows)
         sl.moved.connect(moved)
         sl.done.connect(done)
@@ -3267,9 +3288,9 @@ class PostView(QWidget):
         def committed():
             self.push(state["before"] if state["before"] is not None else snapshot(self.layers))
             state["before"] = None
-            self.request(final_only=True)
+            self.request(final_only=True, settings_only=True)
         ed.starting.connect(starting)
-        ed.changed.connect(self.request)
+        ed.changed.connect(lambda *a: self.request(settings_only=True))
         ed.committed.connect(committed)
 
     def sub_text(self, lay) -> str:
@@ -3844,7 +3865,7 @@ class PostPage3(QWidget):
         a store path; None when it is not there. Called in the render worker."""
         self.view.worker.set_image_resolver(fn)
         if any(lay["kind"] == "image" for lay in self.view.layers):
-            self.view.request(final_only=True)           # (a first image may have been drawn without them)
+            self.view.request(final_only=True, force=True)           # (a first image may have been drawn without them)
 
     def refresh(self):
         self.update_page()
@@ -3856,6 +3877,7 @@ class PostPage3(QWidget):
         """Leaving Post: the render engines and the caches (layers' images, steps, masks' planes) go, with the freed
         pages; the next render, on coming back, opens them again."""
         self.view.worker.release()
+        self.view._rendered_sig = None                  # the next request renders again, whatever changed
 
     #: below this much memory the engine may still fill (the machine's free memory, or the Memory limit of the
     #: Settings less what FLOAT holds), leaving Post hands its engines and caches back

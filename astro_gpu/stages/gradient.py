@@ -416,10 +416,12 @@ def point_values(rgb: np.ndarray, valid: np.ndarray, pts: np.ndarray, box: int) 
     return vals, ok
 
 
-def grid_points(rgb: np.ndarray, valid: np.ndarray, samples: int, clip: float) -> tuple[np.ndarray, np.ndarray, int]:
-    """the reference program's generated grid: ``samples`` points along the shorter side, a square box around each; the samples of
-    sky are kept (``sky_blocks``: the ones not above a smooth surface through them by ``clip`` sigmas). Returns
-    (points (n, 2) array pixels, kept (n,), box px)."""
+def grid_samples(rgb: np.ndarray, valid: np.ndarray, samples: int, clip: float
+                 ) -> tuple[np.ndarray, np.ndarray, int, np.ndarray, np.ndarray]:
+    """The reference program's generated grid: ``samples`` points along the shorter side, a square box around each;
+    the samples of sky are kept (``sky_blocks``: the ones not above a smooth surface through them by ``clip``
+    sigmas). Returns (points (n, 2) array pixels, kept (n,), box px, vals (3, n) the medians measured (read once),
+    usable (n,))."""
     H, W = valid.shape
     step = min(H, W) / samples
     box = max(4, int(step / 2))
@@ -431,6 +433,12 @@ def grid_points(rgb: np.ndarray, valid: np.ndarray, samples: int, clip: float) -
     L = LUM @ np.nan_to_num(vals)
     A = poly_terms(pts[:, 0], pts[:, 1], W, H, 2)
     kept = sky_blocks(L, ok, A, clip, xx.shape) if ok.sum() >= 3 * A.shape[1] else ok
+    return pts, kept, box, vals, ok
+
+
+def grid_points(rgb: np.ndarray, valid: np.ndarray, samples: int, clip: float) -> tuple[np.ndarray, np.ndarray, int]:
+    """The generated grid's (points (n, 2) array pixels, kept (n,), box px); see ``grid_samples``."""
+    pts, kept, box, _vals, _ok = grid_samples(rgb, valid, samples, clip)
     return pts, kept, box
 
 
@@ -498,13 +506,16 @@ def emission_mask(level: np.ndarray | None, valid: np.ndarray) -> np.ndarray | N
 
 
 def sky_model_of(stack: np.ndarray, valid: np.ndarray, p: GradientParams, f: float = 1.0, progress=None,
-                 emission: np.ndarray | None = None, _ok: np.ndarray | None = None) -> dict:
+                 emission: np.ndarray | None = None, _ok: np.ndarray | None = None,
+                 cell: int | None = None) -> dict:
     """The sky model of the stage's method on ``stack`` (3, H, W), which may be a copy reduced ``1 / f`` times (the
     preview of the editor: the points and areas are in stack pixels). ``emission``: the survey's emission level on the
     same grid (surveys.emission_level), or None; with ``avoid_emission``, the samples the block chooses (none placed)
     leave it out. Returns {grid (3, h, w), info (how to read it back), covered (the grid's covered cells), samples: {x,
-    y, used, manual} in stack pixels or None, detail}."""
+    y, used, manual} in stack pixels or None, detail}. ``cell``: the evaluation grid's cell, px (None: SKY_FACTOR);
+    a coarser one makes the preview of the splines faster, the stage keeps None."""
     H, W = stack.shape[1:]
+    cf = SKY_FACTOR if cell is None else int(cell)
     excl = exclusion_mask(p, H, W, f)
     ok = valid & ~excl if excl is not None else valid
     if _ok is not None:                        # the pixels already chosen (away from the emission)
@@ -515,7 +526,7 @@ def sky_model_of(stack: np.ndarray, valid: np.ndarray, p: GradientParams, f: flo
         if em is not None:
             try:
                 m = sky_model_of(stack, valid, p.model_copy(update={"avoid_emission": False}), f, progress,
-                                 _ok=ok & ~em)
+                                 _ok=ok & ~em, cell=cell)
                 m["info"]["away_from_emission"] = True
                 return m
             except StageError as e:            # too little sky left beside the nebulosity: the image's own samples
@@ -531,7 +542,7 @@ def sky_model_of(stack: np.ndarray, valid: np.ndarray, p: GradientParams, f: flo
         info.update(grid="corners", factor=pp.downsample, settings=pp.auto_settings().__dict__)
         detail = f"automatic model, scale {p.scale:g}"
         return {"grid": grid, "info": info, "covered": covered, "samples": None, "detail": detail}
-    xx, yy = grid_centres(H, W)
+    xx, yy = grid_centres(H, W, cf)
     covered = cv2.resize(valid.astype(np.uint8), (xx.shape[1], xx.shape[0]), interpolation=cv2.INTER_AREA) > 0
     manual = bool(p.sample_points)
     if p.method == "polynomial" and not manual:
@@ -542,15 +553,14 @@ def sky_model_of(stack: np.ndarray, valid: np.ndarray, p: GradientParams, f: flo
                    "used": both[fit["candidate"]], "manual": False, "box": fit["block"] / f}
         info.update(degree=p.degree, coefs=fit["coefs"].tolist(), block_px=fit["block"] / f)
         detail = f"fitted on {int(both.sum())} of {int(fit['candidate'].sum())} sky samples"
-        return {"grid": grid.astype(np.float32), "info": {**info, "grid": "centres", "factor": SKY_FACTOR},
+        return {"grid": grid.astype(np.float32), "info": {**info, "grid": "centres", "factor": cf},
                 "covered": covered, "samples": samples, "detail": detail, "fit": fit}
     if manual:
         pts = np.asarray(p.sample_points, float) * f
         box = max(4, int(min(H, W) / p.samples / 2))
         vals, use = point_values(stack, ok, pts, box)
     else:
-        pts, use, box = grid_points(stack, ok, p.samples, p.object_clip)
-        vals, _ok = point_values(stack, ok, pts, box)
+        pts, use, box, vals, _ok = grid_samples(stack, ok, p.samples, p.object_clip)
         use &= _ok
     n_min = 3 if p.method == "rbf" else (p.degree + 1) * (p.degree + 2) // 2 + 1
     if use.sum() < n_min:
@@ -565,7 +575,7 @@ def sky_model_of(stack: np.ndarray, valid: np.ndarray, p: GradientParams, f: flo
         info.update(degree=p.degree, coefs=coefs.tolist())
     samples = {"x": pts[:, 0] / f, "y": pts[:, 1] / f, "used": use, "manual": manual, "box": box / f}
     detail = f"{p.method} on {int(use.sum())} of {len(use)} {'placed' if manual else 'grid'} samples"
-    return {"grid": grid.astype(np.float32), "info": {**info, "grid": "centres", "factor": SKY_FACTOR},
+    return {"grid": grid.astype(np.float32), "info": {**info, "grid": "centres", "factor": cf},
             "covered": covered, "samples": samples, "detail": detail}
 
 

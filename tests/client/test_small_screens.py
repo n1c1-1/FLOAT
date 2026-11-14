@@ -670,7 +670,10 @@ def test_post_has_its_layers_on_the_left_and_its_settings_on_the_right(env):
     assert view.ldock.state == "auto" and view.ldock.strip.isVisible() and not view.left.isVisible()
     assert view.dock.state == "docked" and view.right.isVisible()
     assert view.ldock.strip.x() < view.viewer.mapTo(view, QPoint(0, 0)).x() < view.right.mapTo(view, QPoint(0, 0)).x()
-    # the mouse resting on the strip opens the layers over the image; leaving them closes them
+    # the mouse resting on the strip opens the layers over the image; leaving them closes them. It comes from the image
+    # first: a cursor left over the strip by an earlier test of the same process gave no Enter (the strip stayed closed)
+    QTest.mouseMove(view.viewer, view.viewer.rect().center())
+    _wait(w, lambda: False, 100)
     QTest.mouseMove(view.ldock.strip, QPoint(20, 200))
     assert _wait(w, view.ldock.is_open) and view.left.isVisible()
     assert view.left.geometry().left() >= view.ldock.strip.geometry().right()

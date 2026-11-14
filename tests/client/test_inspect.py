@@ -948,18 +948,20 @@ def test_a_change_in_the_side_panel_never_resizes_the_image(scratch, size):
         view.installEventFilter(spy)
         geo = view.geometry()
         acts = []
+        # the confirmation of a change on a computed block (its answer) is the graph page's; here a change applies
+        ans = (lambda a: [lambda: t.panel.answer(a)]) if hasattr(t.panel, "answer") else (lambda a: [])
         cards = [c for c in t.panel.findChildren(MethodCard) if c.isVisible() and c.ok and
                  c.cursor().shape() == Qt.PointingHandCursor]
         if cards:
-            acts += [cards[0].clicked.emit, lambda: t.panel.answer("cancel")]
+            acts += [cards[0].clicked.emit, *ans("cancel")]
         rows = [r for r in t.panel.findChildren(CompactRow) if r.isVisible()]
         box = next((r for r in rows if r.findChild(QCheckBox) is not None), None)
         if box is not None:
             acts += [lambda r=box: t.panel.set_setting(r.r, not bool(r.r["value"])),
-                     lambda: t.panel.answer("replace"), s.undo]
+                     *ans("replace"), s.undo]
         num = next((r for r in rows if r.r.get("type") == "float" and r.r.get("value") is not None), None)
         if num is not None:
-            acts += [lambda r=num: t.panel.set_setting(r.r, r.r["value"] + 0.1), lambda: t.panel.answer("cancel")]
+            acts += [lambda r=num: t.panel.set_setting(r.r, r.r["value"] + 0.1), *(ans("cancel") or [s.undo])]
         acts.append(s.selectionChanged.emit)
         assert len(acts) >= 3, block
         for act in acts:
