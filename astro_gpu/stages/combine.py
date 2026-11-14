@@ -309,18 +309,20 @@ def gamut_gain(ratio: np.ndarray, L: np.ndarray, gain: float) -> np.ndarray:
     over = out_max > cap
     if not over.any():
         return full
-    # the scale that puts the brightest channel at the cap: found by bisection on the (monotonic) channel
-    lo, hi = np.ones_like(L), np.full_like(L, float(gain))
+    # the scale that puts the brightest channel at the cap: found by bisection on the (monotonic) channel, over the
+    # pixels above it only (a nebula's bright core: a few percent of the image; the whole image took 2 s on a laptop)
+    rs, Ls, cs = ratio[:, over], L[over], cap[over]
+    lo, hi = np.ones_like(Ls), np.full_like(Ls, float(gain))
     for _ in range(8):
         mid = 0.5 * (lo + hi)
-        r = np.maximum(1 + mid[None] * (ratio - 1), 0)
+        r = np.maximum(1 + mid[None] * (rs - 1), 0)
         r = r / np.maximum(np.tensordot(LUM, r, 1), 1e-6)[None]
-        ok = r.max(0) * L <= cap
+        ok = r.max(0) * Ls <= cs
         lo = np.where(ok, mid, lo)
         hi = np.where(ok, hi, mid)
-    g = np.where(over, lo, float(gain))
-    r = np.maximum(1 + g[None] * (ratio - 1), 0)
-    return r / np.maximum(np.tensordot(LUM, r, 1), 1e-6)[None]
+    r = np.maximum(1 + lo[None] * (rs - 1), 0)
+    full[:, over] = r / np.maximum(np.tensordot(LUM, r, 1), 1e-6)[None]
+    return full
 
 
 def compose(chans: dict[str, np.ndarray], roles: tuple[str, ...], mat, noise: dict[str, float],
