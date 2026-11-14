@@ -72,4 +72,6 @@ level3 = [
     "tests/client/test_shell.py::test_shots",
     "tests/client/graphview/test_gv_legacy_model.py::test_no_setting_of_the_engine_is_out_of_reach",
     "tests/client/test_graphmodel_speed.py",                  # heavy: a measure of the graph page's gestures, 25 s
+    # heavy: every panel control of every block, a slow worker, the event loop watched, 41 s
+    "tests/client/graphview/test_gv_loop_guard.py::test_every_panel_control_of_every_block_leaves_the_event_loop_free_with_a_slow_worker",
 ]
