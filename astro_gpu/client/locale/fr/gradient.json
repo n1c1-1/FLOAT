@@ -79,6 +79,7 @@
   "Grid and the samples the block chooses leave out the cells where the H-alpha survey shows nebulosity": "La grille et les échantillons que choisit le bloc écartent les cases où le relevé H-alpha voit de la nébulosité",
   "Paint an area left out of the sky model ([ ] size)": "Peindre une zone écartée du modèle du ciel ([ ] taille)",
   "Preview · not computed yet": "Aperçu · pas encore calculé",
+  "The stack is not computed yet": "L'empilement n'est pas encore calculé",
   "Removes what is under the cursor: a sample, a painted area, an ellipse": "Retire ce qui est sous le curseur : un échantillon, une zone peinte, une ellipse",
   "Result of {name}": "Résultat de {name}",
   "Sample": "Échantillon",
