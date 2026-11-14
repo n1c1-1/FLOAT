@@ -1215,8 +1215,12 @@ class _ProjectBase(QObject):
         old = self.post_version().get("layers") or []
         shown = {(x.get("pid"), x.get("part")) for x in old if x.get("kind") == "workflow"}
         # Post holds layers only for the workflows already computed: the others' images, which it never had, are not
-        # taken out by its saving its composition (GUI exploration 4: a filter added emptied Post of new branches)
+        # taken out by its saving its composition (GUI exploration 4: a filter added emptied Post of new branches),
+        # those the graph wrote in the version already included (a block's image sent to Post, its layer written at once)
         post = getattr(source, "is_post_page", False)
+        if post:
+            done = {q.pid for q in self.paths if getattr(q, "rendered", True)}
+            shown = {x for x in shown if x[0] in done}
         # (a change made in the graph never takes out a workflow's image Post shows implicitly and the version has not
         # written yet: only Post's own saving can, by what it showed and the user deleted)
         shown |= {(q.pid, self.post_default_part(q)) for q in self.post_defaults(old)
