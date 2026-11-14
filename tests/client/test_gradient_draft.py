@@ -212,6 +212,40 @@ def test_the_rbf_preview_on_its_own_samples_is_near_the_run(ed):
     assert d < 0.003 * sky, (d, sky)
 
 
+def test_steps_in_quick_succession_make_one_preview_of_the_last(ed):
+    """Five steps of a setting within 300 ms (a spin box's arrows): one preview computed and painted, of the last
+    value; never a burst."""
+    row = {"name": "degree", "suggested": 2}
+    for v in (3, 4, 5, 4, 3):
+        ed.draft_setting(row, v)
+        end = time.monotonic() + 0.05
+        while time.monotonic() < end:
+            QApplication.processEvents()
+            time.sleep(0.005)
+    wait(ed)
+    assert (ed.computed, ed.painted) == (1, 1)
+    sm = small_stack()
+    want = ge._preview(sm, GradientParams(degree=3))["result"]
+    assert float(np.abs(ed.result - want).max()) < 1e-3
+
+
+def test_a_change_during_a_slow_preview_paints_only_the_latest(ed):
+    """A setting changed while a slow preview runs (the RBF on its own 32 per side): that preview is let go or its
+    result dropped, one preview of the latest draft is made, and only it is painted."""
+    ed.set_draft({"method": "rbf", "samples": 32})
+    end = time.monotonic() + 10
+    while not ed.busy and time.monotonic() < end:     # the slow one under way
+        QApplication.processEvents()
+        time.sleep(0.005)
+    assert ed.busy
+    ed.set_draft({"rbf_smooth": 0.2})
+    wait(ed, 60)
+    assert ed.computed == 2 and ed.painted == 1
+    sm = small_stack()
+    want = ge._preview(sm, GradientParams(method="rbf", samples=32, rbf_smooth=0.2))["result"]
+    assert float(np.abs(ed.result - want).max()) < 1e-3
+
+
 def test_apply_makes_the_draft_the_block_settings(ed):
     m, p = ed.s, ed.s.path
     ed.set_draft({"method": "rbf", "rbf_smooth": 0.25})
@@ -577,6 +611,42 @@ def test_marks_hide_and_come_back_with_a_tool(qapp, tmp_path):
         w.close()
 
 
+def test_each_method_offers_only_the_marks_it_reads(qapp, tmp_path):
+    """The stage reads the samples with the polynomial and the RBF, the excluded areas with all three methods, and no
+    sample with the automatic one: its Sample and Grid are greyed with their reason, its samples not drawn nor erased
+    (the draft keeps them, they come back with a method that reads them); Marks stays (its areas are read)."""
+    _test_project()
+    w, settle = _window(tmp_path, (1250, 685))
+    try:
+        ed = w.tune.grad_editor
+        if ed.view is None:
+            pytest.skip("Gradient of the test project is not computed")
+        assert ge.MARK_KINDS == {"polynomial": ("samples", "areas"), "rbf": ("samples", "areas"),
+                                 "automatic": ("areas",)}
+        W, H = ed._stack_size()
+        ed.set_draft({"sample_points": [[W * 0.5, H * 0.5]]})
+        for m in ("polynomial", "rbf", "automatic"):
+            ed.set_draft({"method": m})
+            settle(w)
+            samples = m != "automatic"
+            u = ed._ui
+            assert u["points"].isEnabled() == samples and u["grid"].isEnabled() == samples, m
+            assert u["brush"].isEnabled() and u["ellipse"].isEnabled() and u["eraser"].isEnabled(), m
+            assert u["marks"].isEnabled(), m
+            if not samples:
+                assert "no samples" in u["points"].toolTip()
+                ed.set_mode("eraser")
+                f = ed._f(ed.gv.canvas)
+                ed.press(ed.gv.canvas, W * 0.5 * f, H * 0.5 * f, Qt.LeftButton)
+                ed.release(ed.gv.canvas)
+                assert ed.value("sample_points") == [[W * 0.5, H * 0.5]]     # unseen: untouched
+                ed.set_mode(None)
+        ed.set_draft({"method": "rbf"})
+        assert ed.value("sample_points") == [[W * 0.5, H * 0.5]] and ed._ui["points"].isEnabled()
+    finally:
+        w.close()
+
+
 def test_try_variant_keeps_the_original_and_takes_the_preview(qapp, tmp_path):
     """Try variant from a draft: the original's Gradient keeps its key, its state and its picture, no draft left on it;
     the variant shows the draft's preview (not computed) with the original's result as Before; an Undo of the variant
@@ -688,3 +758,28 @@ def test_nothing_on_the_page_is_cut_at_any_display_scaling(tmp_path, scale):
     if lines[0].startswith("SKIP"):
         pytest.skip("Gradient of the test project is not computed")
     assert lines[0] == "BAD none", lines[0]
+
+
+def test_a_long_preview_is_said_at_the_top_of_the_image(ed):
+    """A preview running longer than BUSY_SHOWN_MS is said on the image ("Computing preview…", its bar along the top);
+    a fast one is not (no flicker); once current, the tag gives the preview's time."""
+    ed.set_draft({"method": "rbf", "samples": 32})                   # slow: over a second on the fixture
+    end = time.monotonic() + 10
+    while not ed._busy_shown and time.monotonic() < end:
+        QApplication.processEvents()
+        time.sleep(0.01)
+    assert ed.busy and ed._busy_shown and ed.tag_text().startswith("Computing preview")
+    assert ed._anim.isActive()
+    wait(ed, 60)
+    assert not ed._busy_shown and not ed._anim.isActive() and ed.tag_text().startswith("Draft preview")
+    ed.set_draft({"method": "polynomial", "samples": 16})            # fast: never said
+    seen = []
+    end = time.monotonic() + 10
+    while (ed.busy or ed._timer.isActive()) and time.monotonic() < end or not seen:
+        QApplication.processEvents()
+        seen.append(ed._busy_shown)
+        time.sleep(0.005)
+        if len(seen) > 2000:
+            break
+    wait(ed)
+    assert not any(seen) or ge.BUSY_SHOWN_MS < ed.result_ms

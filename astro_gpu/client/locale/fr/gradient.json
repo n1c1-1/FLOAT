@@ -101,5 +101,9 @@
   "Marks": "Marques",
   "Kept open, automatic or kept folded": "Gardé ouvert, automatique ou gardé replié",
   "Show or hide the samples and the excluded areas over the image, to judge the result without them (M; M held: hidden while it is down). They come back as soon as a tool is used.": "Montre ou cache les échantillons et les zones exclues sur l'image, pour juger le résultat sans eux (M ; M maintenu : cachés tant qu'il est enfoncé). Ils reviennent dès qu'un outil sert.",
-  "Before / After at the top switches the image": "Avant / Après, en haut, change l'image"
+  "Before / After at the top switches the image": "Avant / Après, en haut, change l'image",
+  "{method} uses no samples: it fits every pixel that does not look like an object": "{method} n'utilise pas d'échantillons : il ajuste chaque pixel qui ne ressemble pas à un objet",
+  "{method} uses no excluded areas": "{method} n'utilise pas de zones exclues",
+  "{method} uses no marks": "{method} n'utilise aucune marque",
+  "Computing preview…": "Calcul de l'aperçu…"
 }

@@ -58,7 +58,11 @@ PREVIEW_PIXELS = 1_000_000
 #: CPU instead of 0.5 s, within 0.5 ADU (0.2 % of the sky) of the run's cell
 PREVIEW_CELL_SHARE = 22
 #: the preview starts this long after the last edit (the automatic model, slower, waits a little more)
-DEBOUNCE_MS, AUTO_DEBOUNCE_MS = 120, 600
+#: the preview starts once the draft has not changed for this long: short when this method's last preview was fast
+#: (FAST_MS or less), so that the polynomial follows the settings live
+DEBOUNCE_MS, FAST_DEBOUNCE_MS, FAST_MS = 200, 80, 150
+#: a preview still running after this long is said on the image ("Computing preview…" and a bar along its top)
+BUSY_SHOWN_MS = 250
 #: the cost of Apply is asked of the model this long after the last edit
 COST_MS = 500
 #: below this window width, the stretch column of this view is folded (the image keeps the room)
@@ -106,6 +110,16 @@ TOOLS = (("points", "add", "Sample", "Click adds a sample of sky, a drag moves i
          ("eraser", "remove", "Eraser", "Removes what is under the cursor: a sample, a painted area, an ellipse"),
          ("grid", "samples", "Grid", "Samples on a regular grid, the bright areas left out, in place of the ones the "
                                      "block chooses (its density in Settings)"))
+#: the marks each method reads (stages/gradient.py, sky_model_of): the samples (placed, or made by Grid) feed the
+#: polynomial and the RBF; the excluded areas (brush, ellipses) are left out of all three models, the automatic one
+#: included; the automatic model takes no sample
+MARK_KINDS = {"polynomial": ("samples", "areas"), "rbf": ("samples", "areas"), "automatic": ("areas",)}
+#: the kind of marks each tool makes ("" for the Eraser: any kind the method reads)
+TOOL_KIND = {"points": "samples", "grid": "samples", "brush": "areas", "ellipse": "areas", "eraser": ""}
+#: why a kind of marks is greyed, per method
+NO_KIND = {"samples": "{method} uses no samples: it fits every pixel that does not look like an object",
+           "areas": "{method} uses no excluded areas",
+           "": "{method} uses no marks"}
 #: the settings panel at the right of the image: its width
 PANEL_W = 380
 #: M kept down longer than this hides the marks only while it is down (shorter: a tap shows or hides them)
@@ -228,6 +242,18 @@ class GradientEditor(QObject):
         self._timer.setSingleShot(True)
         self._timer.setInterval(DEBOUNCE_MS)
         self._timer.timeout.connect(self.preview)
+        self.computed = self.painted = 0        # previews started, previews painted (the tests count them)
+        self._ms_of: dict[str, float] = {}      # method -> the last preview's time (ms)
+        self._busy_shown = False                # the computation said on the image (after BUSY_SHOWN_MS)
+        self._busy_timer = QTimer(self)
+        self._busy_timer.setSingleShot(True)
+        self._busy_timer.setInterval(BUSY_SHOWN_MS)
+        self._busy_timer.timeout.connect(self._show_busy)
+        self._anim = QTimer(self)               # the bar along the image's top while it computes
+        self._anim.setInterval(40)
+        self._anim.timeout.connect(self._tick)
+        self._phase = 0.0
+        self._from_row = False                  # the change came from a settings row: its rows are not built again
         self._cost_timer = QTimer(self)
         self._cost_timer.setSingleShot(True)
         self._cost_timer.setInterval(COST_MS)
@@ -300,7 +326,7 @@ class GradientEditor(QObject):
             self._cost_timer.start()
         else:
             self._to_applied()
-        if names - set(FIELDS):                # the method or a setting: the drawer's rows show it
+        if names - set(FIELDS) and not self._from_row:     # the method, an Undo: the panel's rows show it
             self._fill_drawer()
         self._sync()
         if self.view is not None:
@@ -1007,8 +1033,16 @@ class GradientEditor(QObject):
             u[key] = b
         return w
 
+    def kinds(self) -> tuple:
+        """The kinds of marks the draft's method reads (MARK_KINDS)."""
+        return MARK_KINDS.get(self._method(), ())
+
     def _marks_key(self, down: bool):
-        """M: tapped, the marks shown or hidden; held, hidden while it is down, back as they were on release."""
+        """M: tapped, the marks shown or hidden; held, hidden while it is down, back as they were on release; nothing
+        when the method reads no mark (Marks greyed)."""
+        if not self.kinds():
+            self._m_down = None
+            return
         if down:
             self._m_down = (time.monotonic(), self.shown)
             if self.shown:
@@ -1293,7 +1327,11 @@ class GradientEditor(QObject):
 
     def draft_setting(self, r: dict, value):
         """A settings row edited: into the draft (None: back to the suggestion)."""
-        self.set_draft({r["name"]: r.get("suggested") if value is None else value})
+        self._from_row = True                  # the row shows its value already: never built again under the mouse
+        try:
+            self.set_draft({r["name"]: r.get("suggested") if value is None else value})
+        finally:
+            self._from_row = False
 
     def _status(self) -> str:
         if self.has_draft():
@@ -1321,17 +1359,22 @@ class GradientEditor(QObject):
         try:
             u = self._ui
             method = self._method()
-            sampled = method in ("polynomial", "rbf")
-            no_samples = _("The automatic method uses no samples: it fits every pixel that does not look like an object")
+            kinds = self.kinds()
             for key, _role, name, tip in TOOLS:
                 b = u.get(key)
                 if b is None:
                     continue
                 if b.isCheckable():
                     b.setChecked(self.mode == key)
-                on = sampled or key not in ("points", "grid")
+                kind = TOOL_KIND[key]
+                on = kind in kinds if kind else bool(kinds)
                 b.setEnabled(on)
-                b.setToolTip(f"<b>{_(name)}</b><br>{_(tip) if on else no_samples}")
+                why = _(NO_KIND[kind]).format(method=_(METHOD_NAME.get(method, method)))
+                b.setToolTip(f"<b>{_(name)}</b><br>{_(tip) if on else why}")
+            if "marks" in u:                   # nothing to show: greyed, its reason on hover
+                u["marks"].setEnabled(bool(kinds))
+                if not kinds:
+                    u["marks"].setToolTip(_(NO_KIND[""]).format(method=_(METHOD_NAME.get(method, method))))
             for m in METHODS:
                 b = u.get("m_" + m)
                 if b is not None:
@@ -1635,19 +1678,24 @@ class GradientEditor(QObject):
             self._dab(sx, sy)
             return True
         elif self.mode == "eraser" and button == Qt.LeftButton:
-            # what is under the cursor: a sample, else an ellipse, else the painted areas (erased as a stroke)
-            i = self._pick(canvas, sx, sy)
+            # what is under the cursor: a sample, else an ellipse, else the painted areas (erased as a stroke); only
+            # the kinds the method reads, the ones drawn (the others stay in the draft, unseen and untouched)
+            kinds = self.kinds()
+            i = self._pick(canvas, sx, sy) if "samples" in kinds else None
             if i is not None:
                 self.work["sample_points"].pop(i)
                 self._selpt = None
                 self._commit()
                 return True
             ells = self.work["exclude_ellipses"]
-            hit = next((j for j in reversed(range(len(ells))) if _inside(ells[j], sx, sy)), None)
+            hit = next((j for j in reversed(range(len(ells))) if _inside(ells[j], sx, sy)), None) \
+                if "areas" in kinds else None
             if hit is not None:
                 ells.pop(hit)
                 self._sel = None
                 self._commit()
+                return True
+            if "areas" not in kinds:
                 return True
             self._last = None
             self._stroke0 = len(self.work["exclude_brush"])
@@ -1799,10 +1847,12 @@ class GradientEditor(QObject):
         dw, dh = canvas.display.size()
         if self.survey_shown:
             self._paint_survey(painter, canvas, dw, dh)
-        if self.shown and not (self.before and self.cmp == "toggle"):     # Before: the stack, nothing over it
-            self._paint_veil(painter, canvas, f, dw, dh)
+        kinds = self.kinds()
+        if self.shown and kinds and not (self.before and self.cmp == "toggle"):  # Before: the stack, nothing on it
+            if "areas" in kinds:
+                self._paint_veil(painter, canvas, f, dw, dh)
             self._paint_samples(painter, canvas, f)
-            for j, e in enumerate(self.work["exclude_ellipses"]):
+            for j, e in enumerate(self.work["exclude_ellipses"] if "areas" in kinds else []):
                 cx, cy, rx, ry, a = _ell(e)
                 sel = j == self._sel and self.mode == "ellipse"
                 painter.save()
@@ -1834,8 +1884,15 @@ class GradientEditor(QObject):
             painter.drawEllipse(canvas.img_to_w(*self._hover), r, r)
         from .imageview import tag
         text = self.tag_text()
-        if text:                               # bottom left: the curtain's names are on top
-            tag(painter, QPointF(10, canvas.height() - 28), text, bg=DRAFT_BG if self.has_draft() else QColor(0, 0, 0, 170))
+        if text:                               # at the top of the image, in view at every size
+            tag(painter, QPointF(10, 8), text, bg=DRAFT_BG if self.has_draft() else QColor(0, 0, 0, 170))
+        if self.busy and self._busy_shown:     # a thin bar running along the image's top edge while it computes
+            w = canvas.width()
+            seg = max(60.0, w * 0.25)
+            x = (w + seg) * self._phase - seg
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(WARN))
+            painter.drawRect(QRectF(max(0.0, x), 0, min(seg, w - max(0.0, x)), 3))
 
     def tag_text(self) -> str:
         """What the image shows, said on it: the draft's preview is never taken for the result."""
@@ -1847,12 +1904,13 @@ class GradientEditor(QObject):
         if not self.has_draft() and self.result is None:
             stale = self.p is not None and self.s.state(self.p, "gradient") == "stale"
             return _("Previous settings") if stale else _("After · applied result")
+        if self.busy and self._busy_shown:
+            return _("Computing preview…") + (" · " + self.step_text if self.step_text else "")
         if self.has_draft():
             if self.result is None:
-                return self.step_text or _("Applied result · the draft preview follows")
+                return _("Applied result · the draft preview follows")
             ms = f" · {self.result_ms:.0f} ms" if self.result_ms is not None else ""
-            busy = " · " + (self.step_text or _("computing…")) if self.busy else ""
-            return _("Draft preview · reduced copy") + ms + busy
+            return _("Draft preview · reduced copy") + ms
         if self.result is not None:
             return _("Preview of the settings · not computed yet: Run to here")
         return self.step_text if self.busy else ""
@@ -1898,7 +1956,7 @@ class GradientEditor(QObject):
     def _paint_samples(self, painter, canvas, f):
         """The placed samples, coloured as the last computation (run or preview) used them, white while not computed,
         the one selected in yellow; none placed: the ones the block chose at its last run."""
-        if self._method() == "automatic":
+        if "samples" not in self.kinds():      # a method that reads no sample: none drawn (the draft keeps them)
             return
         s, pts = self.samples, self.work["sample_points"]
         if pts:
@@ -1924,10 +1982,12 @@ class GradientEditor(QObject):
 
     # ------------------------------------------------------------ the preview (one thread at a time)
     def _schedule(self):
-        """The draft's preview, a moment after the last edit (the automatic model waits a little more)."""
+        """The draft's preview, once the draft has not changed for a moment (shorter when this method is fast): steps of
+        a setting in quick succession make one preview, of the last one."""
         if self.p is None:
             return
-        self._timer.setInterval(AUTO_DEBOUNCE_MS if self._method() == "automatic" else DEBOUNCE_MS)
+        fast = self._ms_of.get(self._method(), 1e9) <= FAST_MS
+        self._timer.setInterval(FAST_DEBOUNCE_MS if fast else DEBOUNCE_MS)
         self._timer.start()
 
     def preview(self, force: bool = False):
@@ -1944,10 +2004,14 @@ class GradientEditor(QObject):
         if self.busy:
             if what == "survey":
                 self._survey_wanted = bool(fetch) or bool(self._survey_wanted)
-            else:
-                self._pending = what if what != "preview" or self._pending != "grid" else "grid"
+            elif what != "preview":             # a preview asked while one runs: the latest is made on arrival
+                self._pending = what if self._pending != "grid" else "grid"
             return
         gen, params, pid, n = self.gen, self._params(), self.p.pid, self._density()
+        sig = params.model_dump_json()
+        if what == "preview":
+            self.computed += 1
+            self._busy_timer.start()
         small = self.small if self.small and self.small["pid"] == pid else None
         sv = self.survey if self.avoid and self.survey and self.survey["pid"] == pid else None
         level = sv.get("level") if sv else None
@@ -1963,6 +2027,13 @@ class GradientEditor(QObject):
         if self.view is not None:
             self.view.canvas.update()
         step = self._step
+        ed = self
+
+        def still(c):
+            """The stage's progress, between its colours: a preview the draft has left is stopped there."""
+            if ed._wanted_sig() != sig:
+                raise _Abandoned()
+            step.emit(gen, _("automatic model: colour {n} of 3").format(n=c + 1))
 
         def work():
             try:
@@ -1987,10 +2058,13 @@ class GradientEditor(QObject):
                             out["survey"] = {"pid": pid, "error": _survey_why(e)}
                     lv = level if level is not None else (out.get("survey") or {}).get("level")
                     t0 = time.thread_time()
-                    out.update(_preview(sm, params, lv, progress=lambda c: step.emit(gen, _(
-                        "automatic model: colour {n} of 3").format(n=c + 1))))
+                    try:
+                        out.update(_preview(sm, params, lv, progress=still))
+                    except _Abandoned:
+                        out["abandoned"] = True
                     out["ms"] = 1000 * (time.thread_time() - t0)
-                    out["sig"] = params.model_dump_json()
+                    out["sig"] = sig
+                    out["method"] = params.method
                 elif what == "survey":
                     try:
                         out["survey"] = {"pid": pid, **_survey_small(project, pid, sm, fetch=fetch)}
@@ -2011,9 +2085,35 @@ class GradientEditor(QObject):
                 except RuntimeError:
                     self.view = None
 
+    def _wanted_sig(self) -> str | None:
+        """The settings the preview should show now (the draft's), as the job compares them (any thread)."""
+        try:
+            return self._params().model_dump_json() if self.p is not None else None
+        except Exception:  # noqa: BLE001 - settings being changed: the job goes on, its result is checked on arrival
+            return None
+
+    def _show_busy(self):
+        if self.busy:
+            self._busy_shown = True
+            self._anim.start()
+            self._repaint()
+
+    def _tick(self):
+        self._phase = (self._phase + 0.025) % 1.0
+        self._repaint()
+
+    def _repaint(self):
+        if self.view is not None:
+            try:
+                self.view.canvas.update()
+            except RuntimeError:
+                self.view = None
+
     def _arrived(self, gen: int, out: dict):
         self.busy = False
         self.step_text = ""
+        if out.get("what") == "preview" and "ms" in out and not out.get("abandoned"):
+            self._ms_of[out.get("method", "")] = out["ms"]
         if out.get("small") is not None:
             self.small = out["small"]
         if "applied" in out:
@@ -2033,7 +2133,9 @@ class GradientEditor(QObject):
             if out.get("avoided") is False:
                 self.tv.toasted.emit(_("The H-alpha survey shows no clear nebulosity here: no sample left out"))
             self._commit()
-        elif "result" in out and gen == self.gen and self.p is not None and (self.has_draft() or not self.done):
+        elif "result" in out and self.p is not None and out.get("sig") == self._wanted_sig() and \
+                (self.has_draft() or not self.done):  # the draft as it is now: a preview it has left is never shown
+            self.painted += 1
             self.result, self.result_ms = out["result"], out.get("ms")
             self.result_key = ("gradient-preview", self.p.pid, gen)
             self.samples = out["samples"]
@@ -2046,14 +2148,23 @@ class GradientEditor(QObject):
         if self._pending is not None:
             what, self._pending = self._pending, None
             self._run(what)
-        elif gen != self.gen and out.get("what") == "preview" and self.has_draft():
-            self.preview()                     # edits came during the computation: the last one
+        elif out.get("what") == "preview" and self.has_draft() and out.get("sig") != self._wanted_sig() and \
+                not self._timer.isActive():
+            self.preview()                     # the draft changed meanwhile: one preview, of the latest
+        if not self.busy:
+            self._busy_timer.stop()
+            self._anim.stop()
+            self._busy_shown = False
         self._sync()
         if self.view is not None:
             try:
                 self.view.canvas.update()
             except RuntimeError:
                 self.view = None
+
+
+class _Abandoned(Exception):
+    """A preview the draft has left, stopped at the stage's next progress call."""
 
 
 class SettingsPanel(QFrame):
