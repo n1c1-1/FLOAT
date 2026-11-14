@@ -687,17 +687,25 @@ class GraphCanvas(QGraphicsView):
 
     def _show_block(self, ident):
         """A gesture made this block: it must be on screen (scroll to it if it is not)."""
-        if ident not in self._keep_in_view:
+        if self._item_of(ident) not in self._keep_in_view:
             self._show(ident)
 
+    def _item_of(self, ident):
+        """The id of the item that draws ident: its own, or its row's card when the row is folded (None: not drawn)."""
+        if ident in self.blocks:
+            return ident
+        r = self.bridge.row_of(ident)
+        return r.id if r is not None and r.id in self.blocks else None
+
     def _show(self, *ids, follow=False):
-        """The blocks of ids fully on screen: scroll the minimum, never zoom. The first id is the one that matters when
-        they do not all fit together."""
-        its = [self.blocks[i] for i in ids if i in self.blocks]
+        """The blocks of ids fully on screen (a block of a folded row: its card): scroll the minimum, never zoom. The
+        first id is the one that matters when they do not all fit together."""
+        ids = tuple(dict.fromkeys(i for i in map(self._item_of, ids) if i is not None))
+        its = [self.blocks[i] for i in ids]
         if not its:
             return
         if not follow:
-            self._keep_in_view = tuple(i for i in ids if i in self.blocks)
+            self._keep_in_view = ids
         vp = self.viewport().rect().adjusted(8, 8, -8, -8)
         union = its[0].sceneBoundingRect()
         for it in its[1:]:
@@ -1124,6 +1132,9 @@ class GraphCanvas(QGraphicsView):
             return super().mousePressEvent(e)
         it = self.item_at(vp)
         sp = self.mapToScene(vp)
+        if isinstance(it, WireItem):                     # a wire lit above a block (hovered) never hides its port
+            it = next((b for b in self.items(vp) if isinstance(b, BlockItem) and b.d["kind"] != "card"
+                       and b.output_at(b.mapFromScene(sp)) is not None), it)
         if isinstance(it, BlockItem):
             loc = it.mapFromScene(sp)
             if it.d["kind"] == "card":
