@@ -339,3 +339,32 @@ def test_history_cards_are_whole_statements_cut_at_clause_boundaries():
     assert all(len(x) <= 72 for x in out)
     assert any(x.rstrip().endswith("side masks: starless, stars;") or "side masks: starless, stars" in x for x in out)
     assert not any(x.startswith("part combined") or x.strip() in ("combined", "stars") for x in out)
+
+
+def test_the_stars_of_a_combination_are_stretched_to_the_white_of_the_image_they_go_onto(tmp_path):
+    """A Stars block's stars are stretched with the statistics of the Output they were taken off, stars in them; the
+    stars of a combination go onto the starless combination's Output, so their white is the one of the two together.
+    With the starless image's own (no star in them: the nebula's white) every star above the nebula clipped to white."""
+    import json
+
+    from astro_gpu.render.layers import LayerService
+    n = 128
+    rng = np.random.default_rng(2)
+    main = (rng.normal(0, 1, (3, n, n)) + 50).astype(np.float32)
+    stars = np.zeros((3, n, n), np.float32)
+    for i, (y, x) in enumerate(rng.integers(8, n - 8, (40, 2))):
+        yy, xx = np.mgrid[:n, :n]
+        stars += (10 ** rng.uniform(1.5, 3.7) * np.exp(-((yy - y) ** 2 + (xx - x) ** 2) / 4.0)).astype(np.float32)[None]
+    from astro_gpu.render.simple import image_stats
+    own = image_stats(main, np.ones((n, n), bool))                         # the starless image's: white near 55
+    prep = {"M": np.eye(3).tolist(), "crop": [0, n, 0, n], "drizzle_scale": 1.0, "stats": own}
+    for name, img in (("main", main), ("stars", stars)):
+        d = tmp_path / name
+        d.mkdir()
+        np.save(d / "lin.npy", img)
+        np.save(d / "valid.npy", np.ones((n, n), bool))
+        (d / "prep_simple.json").write_text(json.dumps(prep), encoding="utf-8")
+    out = LayerService("cpu").render(tmp_path / "stars", None, None, 1.0, stats_from=tmp_path / "main").rgb
+    lit = stars[0] > 20
+    clipped = float((out.max(0) >= 0.999)[lit].mean())
+    assert own["lum"]["p99995"] < 100 and clipped < 0.1, clipped            # (over the nebula's white: well over half clipped)

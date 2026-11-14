@@ -123,7 +123,7 @@ def test_the_synthetic_stars_of_a_combination_are_stretched_as_the_real_ones_wit
     main, src, out = tmp_path / "main", tmp_path / "render_simple", tmp_path / "synth_stars"
     for d in (main, src):
         d.mkdir()
-        np.save(d / "lin.npy", s if d is src else np.full_like(s, 5.0))
+        np.save(d / "lin.npy", s if d is src else (5.0 + np.random.default_rng(0).normal(0, 1.5, s.shape)).astype(np.float32))
         np.save(d / "valid.npy", valid)
         (d / "prep_simple.json").write_text(json.dumps(prep), encoding="utf-8")
     pr = _Project(tmp_path, {"render_simple": src, "synth_stars": out}, ["render_simple", "synth_stars"])

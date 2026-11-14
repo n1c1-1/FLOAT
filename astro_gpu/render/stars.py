@@ -190,6 +190,25 @@ class CombinedStarsEngine(StarsRenderEngine):
         self.has_raw = False
         self._proxy = {}
         self.last_fit = None
+        self.prep["stats_full"] = self._whole_stats(Path(stats_folder), theirs["stats"])
+
+    def _whole_stats(self, stats_folder: Path, starless: dict) -> dict:
+        """The statistics the stars are stretched with: those of the whole image, the starless combination's Output with
+        these stars on it, as a Stars block's own stats_full are those of the Output it takes the stars off (its stars
+        in them: the white point is the stars' own, p99.995 of the image they are on). The starless combination's alone
+        have no star in them, so that white point is its nebula's and every star above it clipped (0.99 % of a
+        picture's pixels against 0.14 % of a star row's). ``starless``: those, kept when the two images are not on one
+        grid (nothing to add)."""
+        from .simple import image_stats
+        try:
+            base = np.load(stats_folder / "lin.npy", mmap_mode="r")
+            valid = np.load(stats_folder / "valid.npy")
+            lin = np.asarray(base, np.float32) + self._host["stars"].numpy().astype(np.float32)
+        except (OSError, ValueError):
+            return starless
+        if lin.shape != tuple(base.shape) or valid.shape != lin.shape[1:] or not valid.any():
+            return starless
+        return image_stats(lin, valid)
 
 
 #: Small stars: below this setting the small stars fade (by its share), above it they go and the size grows
