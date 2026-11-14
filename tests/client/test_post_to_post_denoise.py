@@ -50,3 +50,33 @@ def test_to_post_on_a_denoise_block_of_a_channel(qapp, tmp_path, monkeypatch):
         page.close()
         m.close(save=False)
         w.stop()
+
+
+def test_to_post_on_a_block_writes_its_layer_and_a_later_write_never_takes_it_out(qapp, tmp_path, monkeypatch):
+    """The laptop's project: five workflows, the version holding only the Combine layers of the fifth, the others taken
+    out. To Post on a Denoise block writes the new workflow's layer into the version at once (Post never opened); Starless
+    to Post after it keeps it, and the workflow is not listed as taken out."""
+    w, m, page = open_page(tmp_path, monkeypatch, filters=("SII", "Ha", "OIII", "L", "R"))
+    try:
+        for q in list(m.paths):
+            m.p.set_blocks(q.pid, [wfl.node(b) for b in CHAIN + ["gradient", "denoise", "stars"]])
+        m._sync()
+        settle(w, page)
+        pids = [q.pid for q in m.paths]
+        from astro_gpu.client.postengine import new_workflow_layer, save_layers
+        lay = new_workflow_layer(pids[4], "St", True, "combined")
+        m.p.post = {"active": 1, "removed": [[p, "combined"] for p in pids[:4]] + [[pids[4], None]],
+                    "versions": [{"id": 1, "name": "Version 1", "layers": save_layers([lay])}]}
+        page.send_to_post(Graph(m).node_of(m.view(pids[0]), "debruitage"))
+        settle(w, page)
+        sent = m.paths[-1].pid
+        assert sent not in pids
+        assert (sent, None) in {(x.get("pid"), x.get("part")) for x in m.post_version()["layers"]}
+        m.add_post_layer(pids[0], "starless")
+        have = {(x.get("pid"), x.get("part")) for x in m.post_version()["layers"]}
+        assert (sent, None) in have and (pids[0], "starless") in have and (pids[4], "combined") in have
+        assert (sent, None) not in m.post_removed() | m.version_removed()
+    finally:
+        page.close()
+        m.close(save=False)
+        w.stop()

@@ -1212,8 +1212,10 @@ class ProjectModel(QObject):
         # Post holds layers only for the workflows already computed: the others' images, which it never had, are not
         # taken out by its saving its composition (GUI exploration 4: a filter added emptied Post of new branches)
         post = getattr(source, "is_post_page", False)
+        # (a change made in the graph never takes out a workflow's image Post shows implicitly and the version has not
+        # written yet: only Post's own saving can, by what it showed and the user deleted)
         shown |= {(q.pid, self.post_default_part(q)) for q in self.post_defaults(old)
-                  if not post or getattr(q, "rendered", True)}
+                  if post and getattr(q, "rendered", True)}
         now = {(x.get("pid"), x.get("part")) for x in layers if x.get("kind") == "workflow"}
         alive = {q.pid for q in self.paths}
         if scope == "active" and post and self.p.post["versions"][1:]:
@@ -1324,6 +1326,10 @@ class ProjectModel(QObject):
                     and x.get("part") == part}
             layers[:] = [x for x in layers if x["id"] not in gone and not (x["kind"] == "filter"
                                                                            and x.get("target") in gone)]
+            if not getattr(source, "is_post_page", False):
+                # an image taken out from the graph, shown implicitly or not: said here, since a write from the graph
+                # never infers what was taken out
+                self.p.post = {**self.p.post, "removed": [*(self.p.post.get("removed") or []), [pid, part]]}
             return len(gone)
         return self._post_edit(change, source, scope="all")
 
@@ -2735,7 +2741,24 @@ class ProjectModel(QObject):
             x.end = None
             self.p.set_blocks(w.id, head)
             self.p.validate()
-        return self._view_of(w.id)
+            v = self._view_of(w.id)
+            self._write_branch_layer(v)                   # its layer is written now, whether Post was opened or not
+        return v
+
+    def _write_branch_layer(self, v: WorkflowView):
+        """The layer of a block's image just sent to Post, written into the version shown (as Starless / Stars to Post
+        write theirs), and back in every version that had taken it out."""
+        from .postengine import new_workflow_layer
+        pid = v.pid
+
+        def change(layers):
+            self._filled(layers)
+            if not any(x.get("kind") == "workflow" and x.get("pid") == pid and x.get("part") is None for x in layers):
+                layers.insert(0, new_workflow_layer(pid, v.name, True, None))
+            for ver in self.p.post["versions"]:
+                if ver.get("removed"):
+                    ver["removed"] = [r for r in ver["removed"] if (int(r[0]), r[1]) != (pid, None)]
+        self._post_edit(change, None, scope="all")
 
     def add_parallel_flow(self) -> WorkflowView:
         """A second flow of frames (issue #47: a Session dropped on the new-flow zone): its own empty Session, the
