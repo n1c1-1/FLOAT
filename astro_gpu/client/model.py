@@ -104,8 +104,10 @@ TOOL_OPTION = {"debruitage": ("denoise", "pretrained", None), "etoiles": ("stars
 #: the stages whose settings the summaries of the blocks quote: asked of the worker for each workflow
 PREFETCH = ("stack", "denoise")
 #: an edit's keys, states, chains and Run all's plan read by the worker (the window draws first, the states after);
-#: False: read in the GUI thread at the end of the edit
-ASYNC_STATES = True
+#: False: read in the GUI thread at the end of the edit. Off: with it on, the window's random-gesture runs fail now
+#: and then (a refused wire changing the graph, a gesture that should change nothing changing it) and the cause is
+#: not found; it comes back on once those runs are clean
+ASYNC_STATES = False
 
 
 def view_key(name: str) -> str:
