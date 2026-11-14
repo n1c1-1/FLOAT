@@ -127,5 +127,11 @@
   "{n} samples on objects removed": "{n} échantillons sur objets retirés",
   "{n} samples removed": "{n} échantillons retirés",
   "Clear all": "Tout effacer",
-  "Excluded area: this sample is not used": "Zone exclue : cet échantillon n'est pas utilisé"
+  "Excluded area: this sample is not used": "Zone exclue : cet échantillon n'est pas utilisé",
+  "Show survey": "Voir relevé",
+  "On this computer": "Sur cet ordinateur",
+  "Not on this computer": "Absent de cet ordinateur",
+  "Fetches the professional H-alpha survey of this field once, kept on this computer (never during a run)": "Télécharge une fois le relevé H-alpha professionnel de ce champ, gardé sur cet ordinateur (jamais pendant un calcul)",
+  "The survey is not on this computer: Fetch it first": "Le relevé n'est pas sur cet ordinateur : téléchargez-le d'abord",
+  "Shows in amber, over the image, where the professional H-alpha survey of the field sees nebulosity (R): why Avoid nebulosity removes a sample": "Montre en ambre, sur l'image, où le relevé H-alpha professionnel du champ voit de la nébulosité (R) : pourquoi Éviter nébulosité retire un échantillon"
 }

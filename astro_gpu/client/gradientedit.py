@@ -1214,14 +1214,6 @@ class GradientEditor(QObject):
                 cr = CompactRow(self.draft_row(r), uw)
                 cr.changed.connect(self.draft_setting)
                 dv.addWidget(cr)
-        title("Samples")
-        av = QCheckBox(_("Away from emission"))
-        av.setChecked(self.avoid)
-        av.setToolTip(_("Grid and the samples the block chooses leave out the cells where the H-alpha survey shows "
-                        "nebulosity"))
-        av.toggled.connect(self._set_avoid)
-        dv.addWidget(av)
-        u["avoid"] = av
         title("Draft")
         row = QHBoxLayout()
         for key, tip, fn in (("undo", "Undo the draft's last step (Ctrl+Z on the image)", self.undo),
@@ -1241,11 +1233,23 @@ class GradientEditor(QObject):
         if not self.done and self.s.state(p, "gradient") != "running":
             dv.addWidget(self.tv._run_button(p, "fond"), 0, Qt.AlignLeft)
         title("H-alpha survey")
+        here = self.survey_here()
         r4 = QHBoxLayout()
-        for b in self._view_toggles():
-            r4.addWidget(b)
+        r4.addWidget(label(_("On this computer") if here else _("Not on this computer"), "small"))
+        if not here:
+            fb = QPushButton(_("Fetch"))
+            fb.setToolTip(_("Fetches the professional H-alpha survey of this field once, kept on this computer "
+                            "(never during a run)"))
+            fb.clicked.connect(lambda: self._fetch_survey(then=None))
+            r4.addWidget(fb)
+            u["fetch"] = fb
         r4.addStretch(1)
         dv.addLayout(r4)
+        for b in self._view_toggles():
+            b.setEnabled(here)
+            if not here:
+                b.setToolTip(_("The survey is not on this computer: Fetch it first"))
+            dv.addWidget(b, 0, Qt.AlignLeft)
         box = QVBoxLayout()
         dv.addLayout(box)
         try:                                            # the Gradient block's survey row, as the panel draws it
@@ -1302,8 +1306,8 @@ class GradientEditor(QObject):
         """The H-alpha survey drawn under the samples (R), in the settings panel (Marks is at the left, by the tools)."""
         out = []
         for key, text, tip, on, slot in (
-                ("survey", "H-alpha survey", "Show in amber where the professional H-alpha survey of the field sees "
-                 "nebulosity (R): no sample should sit there. Downloaded once; the field must be solved",
+                ("survey", "Show survey", "Shows in amber, over the image, where the professional H-alpha survey of "
+                 "the field sees nebulosity (R): why Avoid nebulosity removes a sample",
                  self.survey_shown, self._set_survey_shown),):
             b = QPushButton(_(text))
             b.setObjectName("toggle")
@@ -1599,12 +1603,24 @@ class GradientEditor(QObject):
         if self.view is not None:
             self.view.canvas.update()
 
+    def survey_here(self) -> bool:
+        """Whether the H-alpha survey of the field is on this computer (the chain's, or fetched since)."""
+        if self.survey is not None and self.survey.get("pid") == getattr(self.p, "pid", None) and "level" in self.survey:
+            return True
+        try:
+            from .. import api
+            st = api.survey_state(self.s.p, self.p.pid)
+        except Exception:  # noqa: BLE001 - nothing readable: not here
+            return False
+        return bool(st) and (st.get("survey", "none") != "none" or bool(st.get("available")))
+
     def _set_survey_shown(self, on: bool):
-        """The H-alpha survey under the samples (R): fetched the first time for this workflow (the one action of the
-        view that may download it)."""
+        """Show survey (R): the survey of the field over the image, read from this computer (Fetch is its own click)."""
+        if on and not self.survey_here():
+            on = False
         self.survey_shown = bool(on)
         if on and (self.survey is None or self.survey["pid"] != self.p.pid or "error" in self.survey):
-            self._run("survey", fetch=True)
+            self._run("survey")
         self._sync()
         if self.view is not None:
             self.view.canvas.update()
@@ -1725,8 +1741,9 @@ class GradientEditor(QObject):
         self._ops = (list(ops), pts, default, self.p.pid)
         self._run("points")
 
-    def _fetch_survey(self):
-        """Avoid nebulosity without the survey here: fetched once, on the user's click (never during a run)."""
+    def _fetch_survey(self, then: str | None = "nebula"):
+        """The survey fetched once, on the user's click (never during a run): from Avoid nebulosity (then applies it)
+        or the panel's Fetch."""
         from .services.survey import job
         j = job()
         pid = self.p.pid
@@ -1742,7 +1759,9 @@ class GradientEditor(QObject):
                 self.say(_("H-alpha survey: {why}").format(why=_(why)))
                 return
             self.survey = None                 # read again from this computer, then the action
-            self._run_points(["nebula"], [list(x) for x in self.work["sample_points"]])
+            self._fill_drawer()
+            if then == "nebula":
+                self._run_points(["nebula"], [list(x) for x in self.work["sample_points"]])
         j.finished.connect(ended, Qt.QueuedConnection)
         if not j.start(self.s.p, pid):
             j.finished.disconnect(ended)

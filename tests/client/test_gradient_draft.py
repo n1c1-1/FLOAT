@@ -685,6 +685,11 @@ def test_each_method_offers_only_the_marks_it_reads(qapp, tmp_path):
                 ed.set_mode(None)
         ed.set_draft({"method": "rbf"})
         assert ed.value("sample_points") == [[W * 0.5, H * 0.5]] and ed._ui["points"].isEnabled()
+        # the survey, simplified: no "Away from emission", a status line and Show survey in the settings panel
+        from PySide6.QtWidgets import QCheckBox
+        assert not [c for c in ed.page.findChildren(QCheckBox) if c.text() == "Away from emission"]
+        assert ed._ui["survey"].text() == "Show survey"
+        assert ed._ui["survey"].isEnabled() == ed.survey_here()
     finally:
         w.close()
 
