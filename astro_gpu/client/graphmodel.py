@@ -466,7 +466,7 @@ class GraphEditing:
             if self.post_default_part(q) == "combined":
                 n[q.pid] = n.get(q.pid, 0) + 1
         want = {}
-        for s in {b for b in g.blocks if g.blocks[b].kind in ("stars", "synth")}:
+        for s in {b for b in g.blocks if g.blocks[b].kind == "stars"}:
             want[s] = 0
         for wid, k in n.items():
             s = stars_side(g, wid, flows)
@@ -578,7 +578,17 @@ class GraphEditing:
                 continue
             if (s[0] == "switch_off" and not g.blocks[b].off) or s[0] == "remove_block":
                 want[b] = 0        # a Stars block deleted alone: its Combine layers go with it, its layers by Post's pruning
-        return with_layer_rows(g, want) if want else g
+        g = with_layer_rows(g, want) if want else g
+        # a Synthetic stars deleted or switched off: its stars leave the Combine layers' Stars side (drawn there for
+        # Post's Stars group), the real stars stay
+        heads = {r.blocks[0] for r in g.rows if r.blocks and g.blocks[r.blocks[0]].kind == "combine_layers"}
+        ys = {s[1].get("block") for s in steps if s[0] in ("switch_off", "remove_block") and isinstance(s[1], dict)}
+        ys = {y for y in ys if y in g.blocks and g.blocks[y].kind == "synth" and not (heads & named)}
+        drop = [w.id for w in g.wires if w.src[0] in ys and w.dst[0] in heads and w.dst[1] == "Stars"]
+        if drop:
+            g = gm.clone(g)
+            g.wires = [w for w in g.wires if w.id not in drop]
+        return g
 
     @staticmethod
     def _tidy_layer_rows(before, g):
@@ -616,7 +626,8 @@ class GraphEditing:
         if base is not before:                            # the step's own graph is where Post follows from
             before = base
         if res.ok and g is not before:
-            g = self._tidy_layer_rows(before, g)
+            from ..graphcore.post import _with_stars_group     # a Synthetic stars put between Stars/background and its
+            g = self._tidy_layer_rows(before, _with_stars_group(g))    # Combine layers: the side reads both stars
         if raw is not None:
             q = gm.clone(g)
             out = raw(q)

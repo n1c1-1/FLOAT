@@ -76,7 +76,9 @@ def candidates(p, view, kind=None, block=None, d=None):
                 add("insert", Box(bx.right + GAP / 2 - 3, bx.y + (bx.h - BH) / 2, 6, BH),
                     M("{lab} here, in “{_row}”", lab=LABEL[kind], _row=r.name), *op_for({"type": "insert", "row": r.id, "after": b}))
         strips = {}
-        for r in p.rows:
+        # Synthetic stars extends the Stars group of its workflow's one Combine layers (its starless image, its real and
+        # synthetic stars): never a branch of its own, which would make a second workflow and a second Combine layers
+        for r in (p.rows if kind != "synth" else []):
             if not r.blocks or r.blocks[0] not in d.boxes and r.id not in d.cards:
                 continue
             sub = ix.subtree(r.id)

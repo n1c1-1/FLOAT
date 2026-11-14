@@ -109,11 +109,11 @@ def with_post_wires(g, shared: set):
 
 
 def stars_side(g, wid, flows=None):
-    """The block whose two images (starless, stars alone) a workflow's Combine layers reads: its last Stars/background
-    or Synthetic stars; None without one."""
+    """The Stars/background whose images a workflow's Combine layers reads (its starless image, its real stars; the
+    stars of a Synthetic stars after it join them in the Stars side): its last one; None without one."""
     chain = (flows or _flows(g)).get(wid)
     for b in reversed(chain or []):
-        if g.blocks[b].kind in ("stars", "synth"):
+        if g.blocks[b].kind == "stars":
             return b
     return None
 
@@ -139,15 +139,16 @@ def with_layer_rows(g, want: dict):
     from .msg import name_of
     from .operations import free_name
     from .rules import LABEL
+    g = _with_stars_group(g)
     have = layer_rows(g)
     if all(len(have.get(s, [])) == n for s, n in want.items()) and \
-            all(s in want for s in have if s in g.blocks and g.blocks[s].kind in ("stars", "synth")):
+            all(s in want for s in have if s in g.blocks and g.blocks[s].kind == "stars"):
         return g
     q = clone(g)
     post = Index(q).post
     for s, rows in have.items():
         extra = len(rows) - want.get(s, 0)
-        if extra <= 0 or s not in q.blocks or q.blocks[s].kind not in ("stars", "synth"):
+        if extra <= 0 or s not in q.blocks or q.blocks[s].kind != "stars":
             continue
         for rid in rows[-extra:]:
             r = next(x for x in q.rows if x.id == rid)
@@ -165,6 +166,69 @@ def with_layer_rows(g, want: dict):
             q.wires.append(Wire(new_id(q, "w"), [s, "Starless"], [j.id, "Background"]))
             q.wires.append(Wire(new_id(q, "w"), [s, "Stars only"], [j.id, "Stars"]))
             q.wires.append(Wire(new_id(q, "w"), [j.id, "image"], [post, POST_PORT]))
+    return _with_stars_group(q)
+
+
+def _synth_after(g, ix, s):
+    """The Synthetic stars right after Stars/background ``s`` in its row, None."""
+    r = ix.row_of.get(s)
+    blocks = ix.row[r].blocks if r is not None else []
+    i = blocks.index(s) if s in blocks else -1
+    nxt = blocks[i + 1] if 0 <= i < len(blocks) - 1 else None
+    return nxt if nxt is not None and g.blocks[nxt].kind == "synth" else None
+
+
+def _with_stars_group(g):
+    """Combine layers is ONE layer of the background and the stars, real and synthetic (as the old page drew it): its
+    Background reads the Stars/background's starless image, its Stars side the real stars and, with a Synthetic stars
+    after it, the synthetic stars too (two wires into the side). A side read from the Synthetic stars' own pair (the
+    core puts it between Stars/background and what read its images) goes back to the Stars/background; a wire never
+    twice; the synthetic stars' wire goes with the block."""
+    ix = Index(g)
+    heads = {r.blocks[0] for r in g.rows if r.blocks and g.blocks[r.blocks[0]].kind == "combine_layers"}
+    if not heads:
+        return g
+    q = None
+
+    def mine():
+        nonlocal q
+        if q is None:
+            q = clone(g)
+        return q
+    # 1. a side read from a Synthetic stars' pair: from the Stars/background before it
+    for w in g.wires:
+        if w.dst[0] in heads and w.src[0] in g.blocks and g.blocks[w.src[0]].kind == "synth":
+            real = ix.pred(w.src[0])
+            if (w.dst[1], w.src[1]) == ("Background", "Starless") and real is not None and g.blocks[real].kind == "stars":
+                x = next(x for x in mine().wires if x.id == w.id)
+                x.src = [real, "Starless"]
+    h = q if q is not None else g
+    ix = Index(h)
+    # 2. each Combine layers on a Stars/background: its real stars; with a Synthetic stars after it, its stars too
+    want = set()
+    for w in h.wires:
+        if w.dst[0] in heads and w.dst[1] == "Background" and w.src[1] == "Starless" and w.src[0] in h.blocks                 and h.blocks[w.src[0]].kind == "stars":
+            want.add(((w.src[0], "Stars only"), w.dst[0]))
+            y = _synth_after(h, ix, w.src[0])
+            if y is not None and not h.blocks[y].off:     # switched off: Post has no synthetic stars row
+                want.add(((y, "Stars only"), w.dst[0]))
+    drop, seen = [], set()
+    for w in h.wires:
+        if w.dst[0] not in heads:
+            continue
+        k = (tuple(w.src), tuple(w.dst))
+        stale = w.dst[1] == "Stars" and w.src[0] in h.blocks and h.blocks[w.src[0]].kind == "synth" and             ((tuple(w.src), w.dst[0]) not in want)
+        if k in seen or stale:
+            drop.append(w.id)
+        seen.add(k)
+    add = [(src, j) for src, j in sorted(want) if not any(tuple(w.src) == src and w.dst == [j, "Stars"]
+                                                          for w in h.wires)]
+    if not add and not drop:
+        return h
+    q = mine()
+    q.wires = [w for w in q.wires if w.id not in drop]
+    for src, j in add:
+        q.wires.append(Wire(new_id(q, "w"), list(src), [j, "Stars"]))
     return q
 
 
