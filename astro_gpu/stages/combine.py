@@ -18,10 +18,12 @@ a Stars/background block after it, and the Combine layers block in Post, do (one
    ``GB`` (the mean of green and blue: the O III of a dual-band filter on a colour sensor, whose green and blue pixels
    both see the 501 nm line).
 3. Each channel's sky is taken to 0 (``neutralise_sky``: the background neutralisation, below), then the channel is
-   brought to the same scale. Narrow-band types: Siril's linear match (``linear_match``, below), each filter fitted
-   linearly to the H-alpha's, so that a faint O III weighs as much as a strong H-alpha. RGB and LRGB: each channel
-   divided by a high percentile of its signal (99.5 %, above its sky at 0). The user's weight of a channel scales it
-   after.
+   brought to the same scale by Siril's linear match (``linear_match``, below), each channel fitted linearly to the
+   type's reference (``match_reference``): the H-alpha for the narrow-band types, so that a faint O III weighs as
+   much as a strong H-alpha; the top layer of Siril's RGB compositing tool for the broadband ones (its documentation:
+   "The top layer loaded (usually Luminance or Red) is taken as the reference channel, and all other channels are
+   automatically linearly matched to it", siril.readthedocs.io, "RGB compositing"): the red for RGB, the luminance
+   for LRGB. The user's weight of a channel scales it after.
 4. The type's ``combine`` makes red, green and blue. The narrow-band types give each filter a hue (Rector, Levay,
    Frattare, English & Pu'uohau-Pummill 2007, AJ 133, 598, "Image-processing techniques for the creation of
    presentation-quality astronomical images": each filter's greyscale image is given its own hue and the colourised
@@ -66,6 +68,37 @@ reference's input: Siril's images are 0 to 1, ours are in ADU). The reference is
 signal: Siril's FAQ (siril.org/faq: linear match the other stacks, "pick the Ha stack as reference") and its
 compositing tool, which takes the top layer loaded as the reference, the H-alpha loaded first for narrow-band images.
 The fit's offset moves the sky, which is taken back to 0 after it (the compositions need an empty sky at 0).
+
+The broadband types (RGB, LRGB) give the colour as it was recorded; its balance is the Color block's, placed after the
+combination (the templates Mono RGB and Mono LRGB): the photometric white balance of the stars, one factor per colour,
+as Siril's and the reference processing suite's photometric calibrations of a monochrome camera's R, G and B make it
+(Siril's RGB composition tutorial, siril.org/tutorials/rgb_composition: for RGB "no normalisation is needed", the
+colour calibration after the composition). So the linear match only puts the channels on one scale; a factor it
+leaves is taken off by the Color block's.
+
+- RGB: the channels are the red, green and blue (the channel combination of the usual programs), nothing else.
+- LRGB: the colour of RGB, the lightness of L, at every pixel (``compose`` with the lightness given): each pixel's
+  colour ratios to their own luminance, times L; where the colour's luminance is under its noise floor the pixel is
+  grey (L alone), so the depth of L is kept on the faint areas and the sky, where the colour has no signal. Siril
+  substitutes the luminance for the lightness of the colour data (its rgbcomp command, HSL by default, HSV or CIE
+  L*a*b*), the reference processing suite's LRGBCombination its CIE lightness: on a linear image the substitution
+  that keeps each pixel's chromaticity is this scaling of its three channels. The L is on the colour's scale: the
+  R, G and B are linearly matched to it (above). Siril and the photometric calibrations calibrate the colour on the
+  RGB before L is added (siril.readthedocs.io, "Spectrophotometric Color Calibration": "We recommend processing only
+  RGB with SPCC. The L layer must be added at a later stage"); here the Color block comes after the LRGB. Since L
+  scales a pixel's three channels alike, the colour ratios the Color block measures and sets are those of the RGB,
+  and its factors give the colour the order of the recommendation would give; only the lightness differs, by the
+  luminance's share of the factors (``Y(M c) / Y(c)``, within the factors' spread around the grey's). The colour is
+  not smoothed (Siril's composition has no chrominance smoothing; each filter's row has its own Denoise), and its
+  strength is not raised: the subject's median Oklch chroma of professional broadband composites spreads over a
+  factor five from one object to the next (0.015 to 0.077, nine ESO and ESA/Hubble images: DSS2 B and R plates,
+  B V R or B V I), not one target, and ours lies within it.
+- The stars' saturation: the combination hands on the saturation map of its colour channels' stacks (``saturation.npy``,
+  the stack's own: a pixel near saturation in any of R, G, B), so that the Color block after it leaves out the
+  saturated stars by the map, as after a Stacking, not by its estimate from the image's brightest pixels, which on
+  a combination refused most of a field's stars (M8 LRGB: 160 of 195 Gaia XP stars, its calibration fell back;
+  with the map 129 are measured). The L is not in it: it scales a pixel's three channels alike, so a star
+  saturated in L keeps the colour ratios of its R, G and B.
 
 The result's valid area is where every input has data. Its scale: the first input's (its level kept). Any workflow may
 feed any port; a port with no workflow is the empty state, and the block waits for it.
@@ -187,15 +220,6 @@ def linear_match(ch: np.ndarray, ref: np.ndarray, valid: np.ndarray, low: float 
         raise StageError("the channels cannot be matched: a channel is flat where the reference has data")
     a = float(np.sum((x - mx) * (y - my)) / var)
     return a, float(my - a * mx), n
-
-
-def balance(ch: np.ndarray, valid: np.ndarray, pct: float) -> tuple[np.ndarray, float]:
-    """A channel divided by the given percentile of its valid pixels above 0 (its sky is at 0)."""
-    v = ch[valid]
-    v = v[np.isfinite(v)]
-    top = float(np.percentile(v, pct)) if v.size else 1.0
-    top = top if top > 0 else 1.0
-    return ch / np.float32(top), top
 
 
 def block_medians(a: np.ndarray, b: int) -> np.ndarray:
@@ -333,7 +357,7 @@ def gamut_gain(ratio: np.ndarray, L: np.ndarray, gain: float) -> np.ndarray:
 
 def compose(chans: dict[str, np.ndarray], roles: tuple[str, ...], mat, noise: dict[str, float],
             sigma: float | None = None, sky: np.ndarray | None = None, equal: bool = False,
-            gain: float = 1.0) -> tuple[np.ndarray, dict]:
+            gain: float = 1.0, light: np.ndarray | None = None) -> tuple[np.ndarray, dict]:
     """(3, H, W) of a narrow-band combination composed as luminance and chrominance (issue #163; the LRGB composition,
     the colour of one image and the lightness of another, R. Gendler, "Lessons from the Masters", Springer 2013, and
     Rector et al. 2007 for the colour layers): the lightness is the mean of the channels (``lightness``), the hues give
@@ -345,9 +369,16 @@ def compose(chans: dict[str, np.ndarray], roles: tuple[str, ...], mat, noise: di
     one to two floors the colour comes in: the noise of a weak filter, raised by the balance, no longer paints the sky.
     That noise is measured on the ``sky`` pixels (the channels' common sky, ``sky_mask``) of the smoothed colour's
     luminance: the residues of the channels' skies and their noise's grain, wider than one pixel, are what a white
-    noise's formula would miss; without sky pixels, the formula. Returns (the image, notes for the log)."""
+    noise's formula would miss; without sky pixels, the formula. ``light``: the lightness given (the L of an LRGB)
+    instead of the channels' mean; its noise is then not known, so ``sigma`` must be given. Returns (the image, notes
+    for the log)."""
     rgb = mix(chans, roles, mat)
-    L, noise_l = lightness(chans, noise, equal)
+    if light is None:
+        L, noise_l = lightness(chans, noise, equal)
+    elif sigma is None:
+        raise ValueError("a lightness given needs the colour's smoothing radius")
+    else:
+        L, noise_l = light.astype(np.float32), float("nan")
     lum_w = LUM.astype(np.float64) @ np.asarray(mat, np.float64)     # each channel's share of the colour's luminance
     noise_c = float(np.sqrt(sum((lum_w[i] * noise[r]) ** 2 for i, r in enumerate(roles))))
     sig = chroma_sigma({r: noise[r] for r in roles}, noise_l) if sigma is None else float(sigma)
@@ -386,12 +417,6 @@ class CombinationParams(StageParams):
                       help="Each channel's weight, after the balance (1: as balanced).")
 
 
-class BalancedParams(CombinationParams):
-    percentile: float = P(99.5, label="Channel balance", level="advanced", ge=90, le=99.99, step=0.1, unit="%",
-                          help="Each channel is divided by this percentile of its signal before it is combined: the "
-                               "filters weigh alike.")
-
-
 class NarrowbandParams(CombinationParams):
     lightness: str = P("noise", label="Lightness", choices=["noise", "equal"],
                        help="How the filters make the lightness: weighted by their noise (the least noisy image), or "
@@ -412,6 +437,10 @@ class Combination(Stage):
     kind: ClassVar[str]
     ports: ClassVar[tuple[str, ...]]
     narrowband: ClassVar[bool] = False
+    #: the port every other channel is linearly matched to (module docstring, 3)
+    match_reference: ClassVar[str] = MATCH_REFERENCE
+    #: the ports whose stacks' saturation map the result hands on (module docstring, the broadband types)
+    saturation_ports: ClassVar[tuple[str, ...]] = ()
     Params = CombinationParams
 
     def combine(self, ctx: Context, p, chans: dict[str, np.ndarray], noise: dict[str, float],
@@ -419,6 +448,21 @@ class Combination(Stage):
         """(3, H, W): the balanced channels by port (each sky at 0) made into red, green and blue (before the first
         channel's level is given back). ``noise``: each balanced channel's sky noise."""
         raise NotImplementedError
+
+    def saturation_of(self, inputs: list[dict], shape: tuple[int, int]) -> np.ndarray | None:
+        """The saturation map handed on (module docstring): the stacks' maps of ``saturation_ports`` (each input's
+        ``saturation``: its Stacking's or Align on's saturation.npy, layer 0 near saturation, 1 saturated) merged, a
+        pixel flagged in any of them flagged; None when a port has none (the Color block then estimates it)."""
+        maps = []
+        for role in self.saturation_ports:
+            f = next((i.get("saturation") or "" for i in inputs if i["role"] == role), "")
+            if not f or not Path(f).is_file():
+                return None
+            m = np.load(f)
+            if m.shape[-2:] != tuple(shape):
+                return None
+            maps.append(m)
+        return np.maximum.reduce(maps) if maps else None
 
     def run(self, ctx: Context, p: CombinationParams) -> None:
         if not p.inputs:
@@ -466,32 +510,24 @@ class Combination(Stage):
             raise StageError("the channels do not overlap: no pixel where every one has data")
         skies = neutralise_sky(chans, valid_all)
         ctx.log("sky removed (level, noise): " + ", ".join(f"{r} {a:.4g}, {b:.3g}" for r, (a, b) in skies.items()))
-        if self.narrowband:
-            # Siril's linear match of every filter to the H-alpha; the result keeps the H-alpha's scale (top 1)
-            ref_role = MATCH_REFERENCE if MATCH_REFERENCE in chans else next(iter(chans))
-            ref_ch = chans[ref_role]
-            full = float(next(i for i in inputs if i["role"] == ref_role).get("full_scale") or 1.0)
-            for role in list(chans):
-                tops[role] = 1.0
-                if role == ref_role:
-                    continue
-                a, b, used = linear_match(chans[role], ref_ch, valid_all, MATCH_LOW * full, MATCH_HIGH * full)
-                if not a > 0:
-                    raise StageError(f"the {role} channel does not follow the {ref_role} one (a negative fit): "
-                                     "check that they show the same field")
-                chans[role] = (chans[role] * np.float32(a) + np.float32(b)).astype(np.float32)
-                tops[role] = 1.0 / a
-                ctx.log(f"{role} matched to {ref_role} on its pixels between {MATCH_LOW * full:.3g} and "
-                        f"{MATCH_HIGH * full:.5g}: {a:.4g} x + {b:.3g} ({used} pixels)")
-            skies = neutralise_sky(chans, valid_all)           # the fits' offsets taken off: the sky at 0 again
-            level = 1.0
-        else:
-            level = None
-            for role in list(chans):
-                chans[role], tops[role] = balance(chans[role], valid_all, p.percentile)
-                if level is None:
-                    level = tops[role]
-            skies = {r: (skies[r][0], skies[r][1] / tops[r]) for r in chans}
+        # Siril's linear match of every channel to the type's reference; the result keeps the reference's scale
+        ref_role = self.match_reference if self.match_reference in chans else next(iter(chans))
+        ref_ch = chans[ref_role]
+        full = float(next(i for i in inputs if i["role"] == ref_role).get("full_scale") or 1.0)
+        for role in list(chans):
+            tops[role] = 1.0
+            if role == ref_role:
+                continue
+            a, b, used = linear_match(chans[role], ref_ch, valid_all, MATCH_LOW * full, MATCH_HIGH * full)
+            if not a > 0:
+                raise StageError(f"the {role} channel does not follow the {ref_role} one (a negative fit): "
+                                 "check that they show the same field")
+            chans[role] = (chans[role] * np.float32(a) + np.float32(b)).astype(np.float32)
+            tops[role] = 1.0 / a
+            ctx.log(f"{role} matched to {ref_role} on its pixels between {MATCH_LOW * full:.3g} and "
+                    f"{MATCH_HIGH * full:.5g}: {a:.4g} x + {b:.3g} ({used} pixels)")
+        skies = neutralise_sky(chans, valid_all)               # the fits' offsets taken off: the sky at 0 again
+        level = 1.0
         for role in list(chans):
             wgt = float(p.weights.get(role, 1.0))
             if wgt != 1.0:                           # the user's weight: the balance's divisor scaled with it
@@ -506,6 +542,10 @@ class Combination(Stage):
         H, W = ref["shape"]
         ctx.save("drz_full.npy", rgb.astype(np.float32))
         ctx.save("drz_weight.npy", np.repeat(valid_all[None].astype(np.float32), 3, axis=0))
+        sat = self.saturation_of(inputs, (H, W))
+        if sat is not None:
+            from .stack import SATURATION
+            ctx.save(SATURATION, sat)
         meta = json.loads((ref["dir"] / "prep_simple.json").read_text(encoding="utf-8")) \
             if (ref["dir"] / "prep_simple.json").is_file() else {}
         ctx.save_json("drz_meta.json", {"scale": float(meta.get("drizzle_scale", 1.0)), "source": "fusion",
@@ -595,9 +635,13 @@ class CombineRGB(Combination):
     title = "RGB"
     kind = "rgb"
     ports = ("R", "G", "B")
-    description = "Combines the red, green and blue filters into one colour image, aligned through their plate solutions."
-    Params = BalancedParams
-    version = "2"
+    description = ("Combines the red, green and blue filters into one colour image, each linearly matched to the red; "
+                   "the colour calibration after it sets the colour balance.")
+    Params = CombinationParams
+    match_reference = "R"
+    saturation_ports = ("R", "G", "B")
+    # 3: Siril's linear match to the red instead of a percentile; the stacks' saturation map handed on
+    version = "3"
 
     def combine(self, ctx, p, chans, noise, valid):
         return mix(chans, self.ports, np.eye(3))
@@ -609,19 +653,20 @@ class CombineLRGB(Combination):
     kind = "lrgb"
     ports = ("L", "R", "G", "B")
     description = ("Combines the red, green and blue filters into the colour, the luminance filter into the detail: "
-                   "each pixel's colour scaled so that its luminance is L's.")
-    Params = BalancedParams
-    version = "2"
+                   "at every pixel the colour of RGB, the lightness of L.")
+    Params = CombinationParams
+    match_reference = "L"
+    saturation_ports = ("R", "G", "B")
+    # 3: R, G and B linearly matched to L (Siril) instead of percentiles; L's lightness at every pixel, the colour grey
+    # under its noise floor (before: the colour's own lightness there); the stacks' saturation map handed on
+    version = "3"
 
     def combine(self, ctx, p, chans, noise, valid):
-        rgb = np.stack([chans["R"], chans["G"], chans["B"]])
-        lum = np.tensordot(LUM, rgb, 1)
-        # the colour ratio only where the colour has signal: with the sky at 0 its luminance is noise around 0, whose
-        # ratio to L's is meaningless; the floor is 3 robust sigmas of the colour's luminance over the frame
-        med = float(np.median(lum))
-        floor = max(1e-6, 3 * 1.4826 * float(np.median(np.abs(lum - med))))
-        k = np.where(lum > floor, chans["L"] / np.maximum(lum, floor), 1.0).astype(np.float32)
-        return (rgb * k[None]).astype(np.float32)
+        rgb, notes = compose(chans, ("R", "G", "B"), np.eye(3), noise, sigma=0.0, sky=sky_mask(chans, valid),
+                             light=chans["L"])
+        ctx.log(f"lightness from L, colour from R, G and B (grey under {notes['floor']:.3g}, the colour's sky noise "
+                f"floor)")
+        return rgb
 
 
 #: the types of combination, in the palette's order; adding a type is adding its class here

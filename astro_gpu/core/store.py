@@ -713,7 +713,11 @@ class Keys:
             v["inputs"] = [{"role": i["role"], "channel": i.get("channel", "L"), "pid": i["pid"],
                             "image": i.get("image", "output"), "dir": folder(i["pid"], _read(i)),
                             "wcs": plate(i["pid"], "wcs.fits"), "grid": self.grid(i["pid"]),
-                            "full_scale": self.full_scale(i["pid"])}
+                            "full_scale": self.full_scale(i["pid"]),
+                            # its stack's saturation map (its Align on's or its Stacking's), which an RGB or LRGB
+                            # hands on to the Color block after it (stages/combine.py)
+                            "saturation": folder(i["pid"], st, "saturation.npy")
+                            if (st := self.read_stage(i["pid"])) else ""}
                            for i in w.source["fusion"]["inputs"]]
             v["solution"] = {d: folder(q, x) for d, (q, x) in self.solution(w).items()}
         if base(stage) == "align_on":
