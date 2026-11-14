@@ -305,6 +305,8 @@ class Doc:
         m = self.model
         bm = getattr(m, "block_map", None) if m is not None else None
         blk = self.graph.blocks.get(b)
+        if bm is not None and blk is not None and blk.kind == "post" and hasattr(bm, "post_line"):
+            return bm.post_line()                    # Post's layers as Post lists them (an image's own layer too)
         if bm is not None and blk is not None and blk.kind in ("session", "calibration", "image"):
             n = bm.node(b)                           # a folder not found, an image's file: the model's
             if n is not None:

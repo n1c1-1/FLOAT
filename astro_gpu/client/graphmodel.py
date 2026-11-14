@@ -433,10 +433,31 @@ class GraphEditing:
         """The images some version of Post shows, and those Post shows by default: (workflow id, part)."""
         from ..graphcore.post import shared_images
         try:
-            defaults = {(q.pid, self.post_default_part(q)) for q in self.post_defaults()}
+            defaults = {(q.pid, self.post_default_part(q)) for q in self.post_defaults() + self.post_waiting()}
         except Exception:  # noqa: BLE001 - views not built yet
             defaults = set()
         return shared_images(getattr(self.p, "post", None) or {}, defaults)
+
+    def post_waiting(self) -> list:
+        """The workflows whose image Post will show once their session has lights (today's page: their wire to Post
+        drawn dashed, "lights first"; a Stars workflow's Combine layers block drawn greyed): no layer yet, not taken
+        out, not a combination's channel, giving Post an image but for the lights."""
+        layers = self.post_version().get("layers") or []
+        have = {x.get("pid") for x in layers if x.get("kind") == "workflow"}
+        out = self.post_removed() | self.version_removed()
+        return [q for q in self.paths if q.pid not in have and (q.pid, self.post_default_part(q)) not in out
+                and not self.feeds_fusion(q) and not self.gives_post(q) and self._lights_only_missing(q)]
+
+    def _lights_only_missing(self, q) -> bool:
+        """Whether a workflow would give Post an image if its sessions had lights."""
+        from ..core import workflow as wfl
+        try:
+            w = self.p.workflow(q.pid)
+        except KeyError:
+            return False
+        if w.source is not None or any(s.lights for s in self.p.sessions_of(w.id)):
+            return False
+        return w.blocks is None or any(n["block"] == "output" and not n["off"] for n in w.blocks) or             wfl.source_of(w) == "stretched"
 
     def _with_post_wires(self, g):
         """The graph whose wires to Post are those of the shared images (nothing else changes)."""
@@ -462,7 +483,7 @@ class GraphEditing:
             if x.get("kind") == "workflow" and x.get("part") == "combined" and \
                     (x.get("starless") or "starless") == "starless" and x.get("pid") is not None:
                 n[int(x["pid"])] = n.get(int(x["pid"]), 0) + 1
-        for q in self.post_defaults():
+        for q in self.post_defaults() + self.post_waiting():
             if self.post_default_part(q) == "combined":
                 n[q.pid] = n.get(q.pid, 0) + 1
         want = {}

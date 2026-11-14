@@ -556,7 +556,7 @@ class BlockMap:
             if len(group) > 1:
                 for i, (n, lay) in enumerate(group):
                     tail = str((lay or {}).get("name") or "").rpartition(" ")[2]
-                    n.num = int(tail) if tail.isdigit() else i + 1
+                    n.num = int(tail) if tail.isdigit() else 1     # the first one, unnumbered in Post
 
     @property
     def nodes(self) -> list:
@@ -697,6 +697,12 @@ class BlockMap:
                 to_post.add(p.pid)
         return out, to_post
 
+    def post_line(self) -> str:
+        """The Post block's line: Post's layers as Post will list them (a workflow's several layers, an image's own
+        layer counted too)."""
+        n = len(self.post_layers)
+        return _("no layer") if n == 0 else _("1 layer") if n == 1 else _("{n} layers").format(n=n)
+
     @property
     def post_layers(self) -> list:
         """The layers of Post, top first: (name as saved, workflow id or None for an image sent from Inspect)."""
@@ -759,6 +765,8 @@ class BlockMap:
         if gone:
             return gone
         blk = self.graph.blocks.get(bid)
+        if blk is not None and blk.kind == "post":
+            return self.post_line()
         if blk is not None and blk.kind == "image" and node.paths and not blk.off:
             src = getattr(node.paths[0], "source", None) or {}     # the workflow's file (the model holds it)
             if isinstance(src, dict) and "fusion" not in src:
