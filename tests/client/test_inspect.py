@@ -785,7 +785,7 @@ def test_the_strip_shows_the_open_block(win):
     """GUI exploration 2: at 1366 x 768 the strip of a long chain showed only the first letter of the block opened."""
     size = win.size()
     try:
-        from astro_gpu.client.blocks import chain
+        from astro_gpu.client.graphnode import chain
         win.resize(700, size.height())
         inspect(win, [k for k in chain(win.s.path) if k != "post"][-1])        # the last block: at the strip's end
         settle(win)
@@ -813,11 +813,11 @@ def test_the_strip_shows_the_open_block(win):
 def test_the_panel_says_the_state_the_graph_shows(win):
     """Control round: the last block (which holds the Output) said "Up to date" in its panel and in Inspect where the
     graph said "Outdated"; a session's Calibration said "Up to date" never computed. One state: the graph's."""
-    from astro_gpu.client.blocks import STATE_WORD, Graph, chain
+    from astro_gpu.client.graphnode import STATE_WORD, chain
     keys = [x for x in chain(win.s.path) if x != "post"]
     k = keys[-1]                                            # the last block: it holds the Output
     inspect(win, k)
-    g = Graph(win.s)
+    g = win.s.block_map
     want = i18n._(STATE_WORD[g.state(g.node_of(win.s.path, k))])
     chips = [lb.text() for lb in win.tune.panel.findChildren(QLabel)
              if lb.isVisible() and lb.text() in {i18n._(x) for x in STATE_WORD.values()}]
