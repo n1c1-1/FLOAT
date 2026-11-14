@@ -164,3 +164,11 @@ def test_the_catalogue_of_french_has_the_new_lines():
                 "only {0} stars found in the stack, at least {1} are needed to identify the field: add light frames, or "
                 "take Astrometry out of this workflow"):
         assert key in fr
+
+
+@pytest.fixture(autouse=True)
+def _no_asterion(monkeypatch):
+    """These tests are of FLOAT's own solver: an Asterion installed on the machine (ASTRO_GPU_ASTERION, FLOAT's folder)
+    would take the field first, with the test's stand-in context."""
+    from astro_gpu.core import asterion
+    monkeypatch.setattr(asterion, "find_program", lambda exe=None: None)

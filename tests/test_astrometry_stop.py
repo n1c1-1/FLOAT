@@ -140,3 +140,11 @@ def test_a_stop_asked_in_the_blind_solve_ends_the_stage_as_stopped_not_failed(tm
                           metric_of=lambda *a, **k: None, check_stop=stop.check_stop)
     with pytest.raises(Interrupted):
         am.Astrometry().run(ctx, AstrometryParams(search_offsets=0.0, blind=True))
+
+
+@pytest.fixture(autouse=True)
+def _no_asterion(monkeypatch):
+    """These tests are of FLOAT's own solver: an Asterion installed on the machine (ASTRO_GPU_ASTERION, FLOAT's folder)
+    would take the field first, with the test's stand-in context."""
+    from astro_gpu.core import asterion
+    monkeypatch.setattr(asterion, "find_program", lambda exe=None: None)
