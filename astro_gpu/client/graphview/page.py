@@ -129,6 +129,7 @@ class GraphPage(SidesHost, QWidget):
                 self.s.postChanged.connect(self._post_changed)
         self._shortcuts()
         self._update_header()
+        self.follow_model_selection()
         self.refresh_panel()
 
     # ------------------------------------------------------------------ the document
@@ -353,8 +354,45 @@ class GraphPage(SidesHost, QWidget):
             return PROJECT
         if k == "final":
             return next((b for b, blk in self.bridge.graph.blocks.items() if blk.kind == "post"), None)
+        if k == "sources":
+            return self._frames_block()
         n = bm.node_of(s.path, k) if s.path is not None else None
         return bm.block_of(n) if n is not None else None
+
+    def _frames_block(self):
+        """The block that stands for the frames on the page (today's Frames block): the first Session of the current
+        workflow's stack; in a workflow without frames its Image (or Combination), never the frames' import."""
+        s, g = self.s, self.bridge.graph
+        q = getattr(s, "path", None)
+        wids = getattr(getattr(s, "compiled", None), "wids", None) or {}
+        mine = [r for r in g.rows if q is not None and wids.get(r.id) == q.pid]
+        for r in mine + [r for r in g.rows if r not in mine]:
+            for night in r.nights or []:
+                if night and night[0] in g.blocks:
+                    return night[0]
+            for b in r.blocks:
+                blk = g.blocks.get(b)
+                if blk is not None and blk.kind in ("image", "combine"):
+                    return b
+        return None
+
+    def follow_model_selection(self):
+        """Nothing chosen on the page while the model has a selection (a project just opened: its frames): the page
+        chooses the block it names, so that the panel shows it as today's page did. Once only: a block the user
+        deselected stays deselected."""
+        if self.s is None or getattr(self, "_followed", False) or self.is_blank():
+            return
+        self._followed = True
+        if self.bridge.selected is not None:
+            return
+        ident = self._block_of_selection()
+        if ident is None or ident == PROJECT:
+            return
+        self._mirroring = True
+        try:
+            self.bridge.choose(ident)
+        finally:
+            self._mirroring = False
 
     def _mirror(self, ident):
         """The page's selection told to the project model (BlockMap.address: the workflow and the view key), so that
@@ -427,6 +465,7 @@ class GraphPage(SidesHost, QWidget):
             b.run_states_changed()            # states, badges and the reading line only
         if not self.is_blank():
             self.hide_templates()
+        self.follow_model_selection()
         self.refresh_panel()
         self.cost_toast()
 

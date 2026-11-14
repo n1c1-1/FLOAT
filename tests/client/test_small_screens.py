@@ -395,7 +395,6 @@ def test_tab_shift_tab_and_ctrl_space_with_their_menu_marks(env):
     assert prefs.get("layout") == {} and page.left_state == "docked" and page.dock.state == "docked"
 
 
-@pytest.mark.xfail(strict=True, reason="an opened project's selection (its frames) chooses nothing on the page: the panel is empty")
 def test_tab_in_a_text_field_moves_the_focus_as_in_a_form(env):
     w = _open(env, (1920, 1080))
     ed = next(x for x in w.graph.panel.findChildren(QLineEdit) if x.isVisible())

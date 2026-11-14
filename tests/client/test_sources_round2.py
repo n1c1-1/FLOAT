@@ -116,8 +116,6 @@ def test_the_selected_block_is_kept_without_an_edit(qapp, tmp_path, monkeypatch)
         w2.stop()
 
 
-@pytest.mark.xfail(strict=True, reason="on the new page, the frames chosen in a project of one Image workflow choose "
-                   "nothing (the old page showed the Image block)")
 def test_an_image_only_project_shows_its_image_not_the_frames(qapp, tmp_path, monkeypatch):
     w, m, page = open_page(tmp_path, monkeypatch)
     try:
