@@ -109,7 +109,9 @@ def test_layer_service_renders_the_output_and_the_stars_layers(preps, tmp_path):
 def test_layer_service_evicts_the_least_recently_used_engine(preps):
     from astro_gpu.render.layers import folder_bytes
     sizes = {k: folder_bytes(preps[k]) for k in ("stars", "simple", "stacking")}
-    svc = LayerService(device="cpu", budget_bytes=sizes["stars"] + sizes["simple"] + sizes["stacking"] // 2)
+    # no free-memory reserve: the order tested is the budget's, not what the machine has free while the suite runs
+    svc = LayerService(device="cpu", budget_bytes=sizes["stars"] + sizes["simple"] + sizes["stacking"] // 2,
+                       reserve_bytes=0)
     assert isinstance(svc.engine(preps["stars"]), StarsRenderEngine)
     svc.engine(preps["simple"])
     svc.engine(preps["stars"])                                  # used again: "simple" is now the least recent
