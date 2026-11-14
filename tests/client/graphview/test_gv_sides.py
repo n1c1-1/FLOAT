@@ -288,35 +288,45 @@ def test_the_page_hosts_todays_settings_panel_and_its_dock(model):
     page.close()
 
 
-def test_a_wire_to_post_shows_its_layer_in_the_panel(model):
+def _combine_layers(page):
+    """A Combine layers block fed by the Stars block (the palette's double-click on it, the Stars block chosen)."""
     from astro_gpu.client.graphview.gestures import pump
+    stars = _kind(page, "stars")
+    page.bridge.choose(stars)
+    res = page.bridge.act("add_block", kind="combine_layers", row=page.bridge.row_of(stars).id)
+    assert res.ok, res.reason
+    pump()
+    return next(b for b, blk in page.bridge.graph.blocks.items() if blk.kind == "combine_layers")
+
+
+def test_a_chosen_wire_to_a_block_leaves_the_panel_empty_and_the_page_whole(model):
+    """Only a wire to Post has a panel (its layer); a wire into Combine layers chosen empties the panel."""
     page = _model_page(model)
-    post = _kind(page, "post")
-    w = next((x for x in page.bridge.graph.wires if x.dst[0] == post and x.id in page.canvas.wires
-              and page.canvas.wires[x.id].selectable), None)
-    if w is None:
-        pytest.skip("no wire to Post that can be chosen in this template")
+    cl = _combine_layers(page)
+    w = next(x for x in page.bridge.graph.wires if x.dst[0] == cl)
     page.canvas.selected_wire = w.id
     page.bridge.choose(None)
     page.canvas.wire_chosen.emit(w.id)
     _wait(0)
-    pump()
-    texts = [b.text() for b in page.panel.findChildren(QPushButton) if b.isVisibleTo(page.panel)]
-    assert "Out of Post" in texts and "Open Post" in texts
+    assert page.panel.node is None and not page.wire_panel(w.id)
+    page.bridge.undo()
     page.close()
 
 
 def test_combine_layers_opens_its_layer_of_post(model):
     from astro_gpu.client.graphview.gestures import Gestures
     page = _model_page(model)
-    cl = next((b for b, blk in page.bridge.graph.blocks.items() if blk.kind == "combine_layers"), None)
-    if cl is None:
-        pytest.skip("this template has no Combine layers block")
+    cl = _combine_layers(page)
+    node = page.layer_node(cl)
+    assert node is not None and node.key == "composition" and node.paths
     got = []
     page.openLayer.connect(lambda lid: got.append(lid))
     page.openPost.connect(lambda: got.append("post"))
+    page.openBlock.connect(lambda: got.append("inspect"))
     Gestures(page).click(cl, double=True)
-    assert got and isinstance(got[0], int) and model.post_layer(got[0]) is not None
+    assert len(got) == 1 and isinstance(got[0], int) and model.post_layer(got[0]) is not None
+    assert model.sel_step == "composition"                     # chosen as today: Inspect opens it in Post
+    page.bridge.undo()
     page.close()
 
 
