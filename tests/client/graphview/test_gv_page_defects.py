@@ -312,3 +312,20 @@ def test_a_palette_card_lights_its_workflows_places_and_another_stacks_under_the
     QApplication.sendEvent(vp, QDragLeaveEvent())
     W.settle(1)
     assert not cv.ghosts
+
+
+# ---------------------------------------------------------------------------------------------- JPEG lights
+def test_a_folder_of_jpeg_lights_alone_is_taken_and_jpegs_beside_raws_are_not(world, tmp_path):
+    from tests.client.graphview.legacy import frames
+    W = world(lights=False)
+    s = W.one("session")
+    phone = frames(tmp_path / "phone", ["IMG_1.JPG", "IMG_2.JPG", "IMG_3.JPG"])
+    W.b.drops.drop(s, "lights", [str(phone)])
+    W.settle()
+    got = W.b.doc.files_of(s, "lights")[1]
+    assert len(got) == 3 and "3 lights added" in W.page.canvas.toast.plain and "left" not in W.page.canvas.toast.plain
+    camera = frames(tmp_path / "camera", ["A_1.ARW", "A_1.JPG", "A_2.ARW", "A_2.JPG"])
+    W.b.drops.drop(s, "darks", [str(camera)])
+    W.settle()
+    got = W.b.doc.files_of(s, "darks")[1]
+    assert sorted(p.rsplit("/", 1)[-1] for p in got) == ["A_1.ARW", "A_2.ARW"]

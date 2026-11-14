@@ -113,7 +113,7 @@ def test_a_dropped_folder_of_jpegs_is_taken_and_the_session_says_the_limit(tmp_p
     try:
         lights = jpegs(tmp_path / "phone")
         page.bridge.drops.drop(session_block(m), "lights", [str(lights)])      # on the Session's Lights target:
-        page.bridge.drops.link("take_all")                     # "Nothing taken · 3 JPG left · Take all": taken
+        assert len(page.bridge.doc.files_of(session_block(m), "lights")[1]) == 3        # taken (#57)
         settle(w, page)
         assert m.session_files(1, "lights") and len(m.session_files(1, "lights")) == 3
         assert m.file_warnings(1) == [] and m.run_problems() == []

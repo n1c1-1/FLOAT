@@ -198,6 +198,11 @@ def resolve(reader, paths, i: int | None = None, deep: bool = True) -> Resolutio
                 continue
             readable = [f for f in fs if frame_kind(f)]
             chosen = [f for f in readable if accepts(f, i)]
+            if not chosen and readable and i == DEFAULT:
+                # the default type takes what the engine reads in this folder: its colour images (JPEG, TIFF...)
+                # when it holds no raw nor FITS (issue #57), never a camera's JPEGs beside its raws
+                read = set(engine_frames([p]))
+                chosen = [f for f in readable if f in read]
             r.others += len(fs) - len(readable)
             r.left += [f for f in readable if f not in chosen]
             if chosen:                                    # each file stored on its own: never the folder
