@@ -158,6 +158,21 @@ def choose(page, ident):
     QApplication.processEvents()
 
 
+def template_card(page, key):
+    """« From template » on the blank page: the gallery shown in place of the graph, the card of this template."""
+    page.show_templates()
+    QApplication.processEvents()
+    return next(c for c in page.templates.cards if c.t["key"] == key)
+
+
+def from_template(page, key):
+    """A click on a template's card of the blank page's gallery: its workflow made."""
+    c = template_card(page, key)
+    QTest.mouseClick(c, Qt.LeftButton)
+    QApplication.processEvents()
+    return c
+
+
 def click(page, it, double=False):
     """A real click (or double-click) of the mouse on a block item of the canvas."""
     c = page.canvas

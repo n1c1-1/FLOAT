@@ -17,13 +17,14 @@ from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton  # noqa: E402
 
 from astro_gpu.client import i18n, prefs  # noqa: E402
-from astro_gpu.client.gallery import GALLERY, TemplateGallery, chain_of, template_blocks, template_source  # noqa: E402
-from astro_gpu.client.graph import GraphPage  # noqa: E402
+from astro_gpu.client.gallery import GALLERY, chain_of, template_blocks, template_source  # noqa: E402
+from astro_gpu.client.graphview.page import GraphPage  # noqa: E402
 from astro_gpu.client.model import ProjectModel  # noqa: E402
 from astro_gpu.client.services.worker import ApiWorker  # noqa: E402
 from astro_gpu.core import project2  # noqa: E402
 from astro_gpu.core import workflow as wfl  # noqa: E402
 from astro_gpu.core.project import Target  # noqa: E402
+from tests.client.pagehelp import from_template, template_card  # noqa: E402
 
 FITS_HEAD = b"SIMPLE  =                    T" + b" " * 50
 
@@ -88,14 +89,6 @@ def texts(widget) -> list[str]:
     return [x.text() for x in widget.findChildren(QLabel)] + [x.text() for x in widget.findChildren(QPushButton)]
 
 
-def window(page):
-    """The templates' window, as a project with workflows opens it (these projects are blank)."""
-    d = TemplateGallery(page.s, None, page)
-    d.accepted.connect(lambda: page.make_workflow(d))
-    d.open()
-    return d
-
-
 def test_the_image_template_takes_a_png_as_stretched(qapp, tmp_path, monkeypatch):
     """1.7: its chain goes to Post as it is, a PNG marked stretched; its preview shows the same. Issue #114: Create asks
     for no file, the Image block waits for it and takes the PNG chosen in its panel as stretched."""
@@ -106,10 +99,7 @@ def test_the_image_template_takes_a_png_as_stretched(qapp, tmp_path, monkeypatch
     cv2.imwrite(str(png), np.full((8, 8, 3), 128, np.uint8))
     w, m, page = open_page(tmp_path, monkeypatch)
     try:
-        d = window(page)
-        d.pick(next(c.t for c in d.cards if c.t["key"] == "image"))
-        assert d.ok.isEnabled()
-        d.ok.click()
+        from_template(page, "image")                      # the blank page's gallery: one click makes it
         settle(w, page)
         q = m.paths[-1]
         assert m.p.workflow(q.pid).source == {"path": "", "stretched": False}
@@ -139,7 +129,7 @@ def test_an_image_block_takes_a_png_as_stretched_and_refuses_what_is_not_an_imag
     assert "its content is not that of its format" in image_problem(fake)
     w, m, page = open_page(tmp_path, monkeypatch)
     try:
-        page.palette_action("image")                                       # placed from the palette: no file yet
+        page.palette.double_click("image")                                 # placed from the palette: no file yet
         settle(w, page)
         q = m.paths[-1]
         assert m.p.workflow(q.pid).source == {"path": "", "stretched": False}
@@ -162,9 +152,7 @@ def test_frames_templates_start_from_session_blocks(qapp, tmp_path, monkeypatch)
     """7.2: a colour template on a project without frames starts from an (empty) Session block."""
     w, m, page = open_page(tmp_path, monkeypatch)
     try:
-        d = window(page)
-        d.pick(next(c.t for c in d.cards if c.t["key"] == "colour_full"))
-        d.ok.click()
+        from_template(page, "colour_full")
         settle(w, page)
         assert len(m.p.sessions) == 1 and not m.p.sessions[0].lights
     finally:
@@ -175,11 +163,11 @@ def test_one_workflow_per_filter_works_on_a_new_project(qapp, tmp_path, monkeypa
     """7.2: its filters come from the palette chosen in the gallery; each gets its empty Session block and its workflow."""
     w, m, page = open_page(tmp_path, monkeypatch)
     try:
-        d = window(page)
-        d.pick(next(c.t for c in d.cards if c.t["key"] == "filters_min"))
-        assert d.palette_row.isVisibleTo(d) and d.palette.currentData() == "H-O"
-        assert d.ok.isEnabled() and "Ha, OIII" in d.duration.text()
-        d.ok.click()
+        from PySide6.QtWidgets import QComboBox
+        card = template_card(page, "filters_min")
+        box = card.findChild(QComboBox)                    # its type of combination, chosen on the card
+        assert box is not None and box.currentData() == "H-O" and list(card.t["filters"]) == ["Ha", "OIII"]
+        from_template(page, "filters_min")
         settle(w, page)
         assert sorted(s.filter for s in m.p.sessions) == ["Ha", "OIII"]
         assert sorted(q.name for q in m.paths) == ["Ha", "OIII"]
