@@ -924,6 +924,7 @@ class Main(QMainWindow):
         page.view.runAsked.connect(self.launch)
         page.view.goResults.connect(self._go_results)
         page.view.card_source = self.report              # the night card, for its Export
+        page.view.undoChanged.connect(self._update_actions)   # Edit > Undo / Redo follow each step (a crop too)
         page.view.toasted.connect(self.flash)            # what a change of Post did beyond Post (a branch removed)
         page.view.goProcessing.connect(lambda pid, k: (self.select(index=self.s.index_of(pid), step=k),
                                                        self.set_mode(1)))
@@ -931,6 +932,7 @@ class Main(QMainWindow):
         page.view.dock.arrow.clicked.connect(self._show_sides)
         page.view.ldock.arrow.clicked.connect(self._show_sides)
         QTimer.singleShot(0, self._layout_post)
+        QTimer.singleShot(0, self._update_actions)       # Post is shown now: Undo / Redo are its own
         return page
 
     @property

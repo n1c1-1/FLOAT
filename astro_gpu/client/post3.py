@@ -724,7 +724,15 @@ class BeforeSource:
 
 # ======================================================================== the view
 #: a step of Post's Undo that is a change of a workflow (its Output's channels): the workflows' Undo takes it back
-MODEL_STEP = object()
+class ModelStep:
+    """A step of the workflows' Undo seen from a version's Undo list: the model's own step it stands for, so that the
+    version takes it back only while it is the model's latest one (a step another version made is never reached)."""
+
+    def __init__(self, step=None):
+        self.step = step
+
+
+MODEL_STEP = ModelStep()
 
 
 class PostView(QWidget):
@@ -733,6 +741,7 @@ class PostView(QWidget):
     goResults = Signal(int)
     panelChosen = Signal(str, str)                        # a side ("left", "right") shown another way by the user
     rendered = Signal(object)                             # a Result was shown (tests, the status line)
+    undoChanged = Signal()                                # Post's Undo / Redo lists changed (the window's Edit menu follows)
     toasted = Signal(str)                                 # what a change did beyond Post (the window's status line)
     layerAsked = Signal(int)                              # Open in Post of a layer (the page lists it when not computed)
     openImages = Signal()                                 # images asked as layers
@@ -1072,6 +1081,12 @@ class PostView(QWidget):
         # buttons, the compact look's margins): the fit again (#142)
         if obj is getattr(self, "centre", None) and e.type() in (QEvent.Resize, QEvent.LayoutRequest):
             self._fit_bar()
+        if e.type() in (QEvent.ShortcutOverride, QEvent.KeyPress) and e.key() == Qt.Key_Escape                 and hasattr(self, "cb_version") and obj is self.cb_version.lineEdit():
+            e.accept()                                   # Escape is the field's, as a layer's name: it gives the typing
+            if e.type() == QEvent.KeyPress:              # up (the window's page-leaving shortcut never sees it)
+                self._fill_versions()                    # the name as it was
+                self.viewer.setFocus(Qt.OtherFocusReason)
+            return True
         if e.type() == QEvent.KeyPress and e.key() in (Qt.Key_Return, Qt.Key_Enter) and                 obj is self.cb_version.lineEdit():
             self._entering = True                       # Enter typed in the version's name: a renaming, not a pick
             QTimer.singleShot(0, lambda: setattr(self, "_entering", False))
@@ -1385,8 +1400,7 @@ class PostView(QWidget):
         self._save()
         with self._from_post():
             self.s.new_post_version()
-        self.undo.append(MODEL_STEP)                     # (the new version is the one shown: its own Undo takes it back)
-        self.redo.clear()
+        self.redo.clear()                                # (making a version is no step of Undo: the new one starts empty)
         self._undo_buttons()
 
     def _version_renamed(self):
@@ -1402,7 +1416,7 @@ class PostView(QWidget):
         elif name != mine:
             with self._from_post():
                 self.s.rename_post_version(self._version, name)
-            self.undo.append(MODEL_STEP)
+            self.undo.append(self._model_mark("_undo"))
             self.redo.clear()
             self._undo_buttons()
         self._fill_versions()
@@ -1417,7 +1431,7 @@ class PostView(QWidget):
         self._save()
         with self._from_post():
             self.s.delete_post_version(self._version)
-        self.undo.append(MODEL_STEP)                     # (the delete showed the other version: its own Undo now)
+        self.undo.append(self._model_mark("_undo"))                     # (the delete showed the other version: its own Undo now)
         self.redo.clear()
         self._undo_buttons()
 
@@ -1930,13 +1944,14 @@ class PostView(QWidget):
     def _undo_buttons(self):
         self.b_undo.setEnabled(bool(self.undo))          # Post's own steps only: the graph's are undone in the graph
         self.b_redo.setEnabled(bool(self.redo))
+        self.undoChanged.emit()
 
     def _set_workflow_param(self, p, stage, name, value):
         """A setting of the workflow shown here (its Output's channels): a step of Post's Undo too (2.4), undone by the
         workflows' Undo."""
         with self._from_post():
             self.s.set_param(p, stage, name, value)
-        self.undo.append(MODEL_STEP)
+        self.undo.append(self._model_mark("_undo"))
         self.redo.clear()
         self._undo_buttons()
 
@@ -1946,31 +1961,43 @@ class PostView(QWidget):
         if self.sel and self.sel[1] == "layer" and self.b_del.isEnabled():
             self.delete()
 
+    def _model_mark(self, on: str) -> ModelStep:
+        """The mark of the model's latest step of its list ``on`` ("_undo" or "_redo"), just made."""
+        stack = getattr(self.s, on, None)
+        return ModelStep(stack[-1] if stack else None)
+
+    def _model_mine(self, mark, on: str) -> bool:
+        """The step this mark stands for is still the model's latest of its list: it is this version's to take back."""
+        if mark.step is None:
+            return True
+        stack = getattr(self.s, on, None)
+        return bool(stack) and stack[-1] is mark.step
+
     def do_undo(self) -> bool:
         """Post's last change undone, said in the status. Only Post's own steps (a "To Post" made in the graph is the
         graph's, undone there); with none, it says so. True when it was a step of the workflows Post made."""
-        if self.undo and self.undo[-1] is not MODEL_STEP:
+        if self.undo and not isinstance(self.undo[-1], ModelStep):
             before = self._step(snapshot(self.layers))
             self.redo.append(before)
             self.layers = self.undo.pop()
             self._restored()
             self._say_step("Undone", "Undone: {what}", step_words(self.layers, before))
             return False
-        if not self.undo:
+        if not self.undo or not self._model_mine(self.undo[-1], "_undo"):
             self.toasted.emit(_("Nothing to undo here: the Graph's changes are undone in the Graph"))
             return False
         self.undo.pop()
         return self._model_step(getattr(self.s, "undo", None), "redo", "Undone", "Undone: {what}")
 
     def do_redo(self) -> bool:
-        if self.redo and self.redo[-1] is not MODEL_STEP:
+        if self.redo and not isinstance(self.redo[-1], ModelStep):
             before = self._step(snapshot(self.layers))
             self.undo.append(before)
             self.layers = self.redo.pop()
             self._restored()
             self._say_step("Redone", "Redone: {what}", step_words(before, self.layers))
             return False
-        if not self.redo:
+        if not self.redo or not self._model_mine(self.redo[-1], "_redo"):
             self.toasted.emit(_("Nothing to redo here: the Graph's changes are redone in the Graph"))
             return False
         self.redo.pop()
@@ -1993,7 +2020,7 @@ class PostView(QWidget):
         try:
             done = fn()
             if done:
-                getattr(self, other).append(MODEL_STEP)
+                getattr(self, other).append(self._model_mark("_undo" if other == "undo" else "_redo"))
         finally:
             self._restoring = False
         self.rebuild()
@@ -2506,7 +2533,7 @@ class PostView(QWidget):
             return False
         finally:
             self._restoring = False
-        self.undo.append(MODEL_STEP)
+        self.undo.append(self._model_mark("_undo"))
         self.redo.clear()
         self._undo_buttons()
         self.toasted.emit(toast)
@@ -2655,7 +2682,7 @@ class PostView(QWidget):
                 self._post_changed(None)                  # and taken back here with their new names
             finally:
                 self._restoring = False
-            self.undo.append(MODEL_STEP)
+            self.undo.append(self._model_mark("_undo"))
             self.redo.clear()
             self._undo_buttons()
             self.toasted.emit(_("“{old}” renamed “{name}”: its workflow too · Ctrl+Z").format(old=old, name=new))
@@ -3488,7 +3515,7 @@ class PostView(QWidget):
         gone = {x["id"] for x in empty}
         self.layers = normalize([x for x in self.layers if x["id"] not in gone])
         made = getattr(self, "_heal_made", None)
-        if made in gone and self.undo and self.undo[-1] is not MODEL_STEP and                 not any(x["id"] == made for x in self.undo[-1]):
+        if made in gone and self.undo and not isinstance(self.undo[-1], ModelStep) and                 not any(x["id"] == made for x in self.undo[-1]):
             self.undo.pop()                                  # (the step before its making: it was not a change)
         self._heal_made = None
         self.sel = None

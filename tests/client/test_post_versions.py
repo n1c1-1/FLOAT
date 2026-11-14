@@ -236,8 +236,8 @@ def test_the_graphs_undo_leaves_a_step_made_in_post_and_posts_undo_names_what_it
         v.do_redo()
         assert said[-1].startswith("Redone: ")
         v.do_undo()
-        v.do_undo()                                                # then the version, in Post
-        assert len(model.p.post["versions"]) == 1 and said[-1].startswith("Undone: ")
+        v.do_undo()                                                # the version is no step: Ctrl+Z stops at its first
+        assert len(model.p.post["versions"]) == 2 and said[-1].startswith("Nothing to undo here")
     finally:
         page.shutdown()
         page.deleteLater()
@@ -625,3 +625,104 @@ def test_posts_undo_does_not_take_back_a_to_post_made_in_the_graph(model):
             x.get("pid") == classic.pid for x in next(z for z in model.p.post["versions"] if z["id"] == first)["layers"])
     finally:
         _done(page)
+
+
+def _page(model):
+    from astro_gpu.client.post3 import PostPage3
+    from astro_gpu.client.services.render import RenderWorker
+    model.add_post_layer(by_name(model, "Full").pid, "stars")
+    return PostPage3(model, worker=RenderWorker(None, resolver=lambda pid: None, device="cpu"))
+
+
+def _close(page):
+    page.shutdown()
+    page.deleteLater()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_ctrl_z_stops_at_the_versions_first_step_and_never_makes_a_version_go(model):
+    """A new version, edits and a rename: Ctrl+Z undoes the rename and the edits, then says there is nothing left; the
+    version stays; Ctrl+Z in it never reaches another version's steps."""
+    page = _page(model)
+    v = page.view
+    said = []
+    v.toasted.connect(said.append)
+    try:
+        v.push()
+        v.layers[0]["opacity"] = 30.0                                   # a step of the first version
+        v._version_new()
+        second = v._version
+        assert v.undo == []
+        v.push()
+        v.layers[0]["opacity"] = 60.0
+        v.cb_version.setEditText("Mine")
+        v._version_renamed()
+        for _ in range(6):
+            v.do_undo()
+        assert len(model.p.post["versions"]) == 2 and v._version == second
+        assert said[-1].startswith("Nothing to undo here")
+        assert [x["name"] for x in model.p.post["versions"]][1] == "Version 2"
+        assert v.layers[0]["opacity"] == 30.0                           # the copy's own start, not the first's steps
+        first = model.p.post["versions"][0]["id"]
+        model.set_post_version(first)
+        v._post_changed(None)
+        assert len(v.undo) == 1                                         # the first version keeps its own step
+    finally:
+        _close(page)
+
+
+def test_a_version_never_takes_back_a_model_step_that_is_not_its_latest(model):
+    """A version's rename is not undone once the workflows' Undo holds a later step made elsewhere."""
+    page = _page(model)
+    v = page.view
+    said = []
+    v.toasted.connect(said.append)
+    try:
+        v.cb_version.setEditText("Named")
+        v._version_renamed()
+        model.new_post_version()                                        # a later step of the model, not this list's
+        v._post_changed(None)
+        v.undo.append(v.undo[-1] if v.undo else None)
+        v.undo = [x for x in v.undo if x is not None]
+        v.do_undo()
+        assert said[-1].startswith("Nothing to undo here")
+        assert any(x["name"] == "Named" for x in model.p.post["versions"])
+    finally:
+        _close(page)
+
+
+def test_every_post_step_updates_the_windows_undo_actions(model):
+    """A crop made first leaves the Edit menu's Undo / Redo to be refreshed: Post tells the window at every step."""
+    page = _page(model)
+    v = page.view
+    seen = []
+    v.undoChanged.connect(lambda: seen.append(bool(v.undo)))
+    try:
+        v._set_crop([0, 0, 20, 20])
+        assert seen and seen[-1] is True
+        n = len(seen)
+        v.do_undo()
+        assert len(seen) > n and seen[-1] is False
+    finally:
+        _close(page)
+
+
+def test_escape_in_the_versions_name_keeps_the_old_name_and_stays_in_post(model):
+    """As a layer's name: Escape drops the typing; it does not reach the window's page-leaving shortcut."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeyEvent
+    page = _page(model)
+    v = page.view
+    try:
+        old = v.cb_version.currentText()
+        ed = v.cb_version.lineEdit()
+        ed.setText("Typed")
+        so = QKeyEvent(QEvent.ShortcutOverride, Qt.Key_Escape, Qt.NoModifier)
+        so.ignore()
+        QApplication.sendEvent(ed, so)
+        assert so.isAccepted()                                          # the shortcut is not offered the key
+        QApplication.sendEvent(ed, QKeyEvent(QEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier))
+        assert v.cb_version.currentText() == old
+        assert [x["name"] for x in model.p.post["versions"]] == [old]
+    finally:
+        _close(page)
