@@ -366,13 +366,12 @@ def test_a_change_on_a_shared_done_block_offers_replace_or_variant(world, model,
     settle(world["w"], page)
     ch = model.pending_change
     assert ch and ch["step"] == "empilement" and ch["value"] == 4.0 and len(ch["pids"]) == 4
-    rep = button(page.panel, "Replace")
-    var = button(page.panel, "Try as variant")
+    assert button(page.panel, "Replace") and button(page.panel, "Try variant")
     paths = [q for q in model.paths if q.pid in ch["pids"]]
-    c_all = model.cost_of_change(paths, ch)
-    c_one = model.cost_of_change([model.path], ch)
-    assert c_all.seconds > c_one.seconds > 0
-    assert hm(c_all.seconds) in rep.text() and hm(c_one.seconds) in var.text()
+    cost = model.change_cost(ch, paths)                     # what it computes again, said in the panel's foot
+    assert cost.lost and cost.blocks[0] == "Stacking" and cost.seconds > 0
+    said = page.panel.findChild(QLabel, "choice_cost").text()
+    assert "Computes again: Stacking" in said and hm(cost.seconds) in said
     assert all("kappa" not in (q.params.get("stack") or {}) or q.params["stack"]["kappa"] != 4.0 for q in model.paths)
     button(page.panel, "Cancel").click()
     from astro_gpu.stages.stack import StackParams
@@ -397,7 +396,7 @@ def test_try_as_variant_keeps_the_original_and_shares_the_blocks_before(world, m
     select_node(page, node(page, "empilement", 1))
     _edit_kappa(page, 3.5)
     n_before = len(model.paths)
-    button(page.panel, "Try as variant").click()
+    button(page.panel, "Try variant").click()
     settle(world["w"], page)
     assert len(model.paths) == n_before + 1
     q = model.paths[-1]
@@ -418,7 +417,7 @@ def test_try_as_variant_keeps_the_original_and_shares_the_blocks_before(world, m
     assert len(model.paths) == n_before and model.path.pid == full.pid
     select_node(page, node(page, "empilement", 1))
     _edit_kappa(page, 3.5)
-    button(page.panel, "Try as variant").click()
+    button(page.panel, "Try variant").click()
     settle(world["w"], page)
     q = model.paths[-1]
     select_node(page, model.block_map.node_of(q, "empilement"))
@@ -442,7 +441,7 @@ def test_a_method_card_asks_the_same_question(world, model, page):
     settle(world["w"], page)
     assert model.pending_change and model.pending_change["key"] == "fond"
     assert "Method: Automatic" in model.pending_change["what"]
-    button(page.panel, "Try as variant").click()
+    button(page.panel, "Try variant").click()
     settle(world["w"], page)
     q = model.paths[-1]
     assert q.opts["fond"] == "auto" and q.opts["etoiles"] == "retirer" and q.variant_of == 1
@@ -677,6 +676,9 @@ def test_the_deconvolution_block_has_its_method_and_its_settings(world, model, p
     page.palette.finish()
     page.palette.double_click("deconv")                        # the palette's Deconvolution, in Full
     settle(world["w"], page)
+    assert model.pending_gesture is not None                   # in the computed chain: asked first, then Replace
+    assert page.answer_change("replace")
+    settle(world["w"], page)
     try:
         select_node(page, node(page, "deconv", 1))
         settle(world["w"], page)
@@ -890,7 +892,7 @@ def test_the_french_switch_translates_every_panel_and_the_page(world, model):
         assert not untranslated(t), untranslated(t)
         words = [x for x in i18n.missing() if re.sub(r"\{\w+\}|[\W\d]", "", x)]      # (a bare "{m0} · {m1}" says nothing)
         assert not words, sorted(words)
-        assert "Remplacer" in " ".join(t) and "Essayer en variante" in " ".join(t)
+        assert "Remplacer" in " ".join(t) and "Essayer variante" in " ".join(t)
         assert any(x.startswith("Suggéré : ") for x in t)
         button(page.panel, "Annuler").click()
         assert "Blocs" in t
@@ -951,7 +953,7 @@ def test_nothing_slow_runs_in_the_gui_thread(qapp, monkeypatch):
     select_node(pg, m.block_map.node_of(m.path, "empilement"))
     settle(w, pg)
     _edit_kappa(pg, 4.0)
-    button(pg.panel, "Try as variant").click()
+    button(pg.panel, "Try variant").click()
     m.add_path("X", {"debruitage": True, "etoiles": "retirer", "fond": "simple"})
     m.undo()
     m.cost()
@@ -1031,7 +1033,7 @@ def test_shots_in_english_and_french_cut_no_text(world, model, tmp_path):
             settle(w, page)
             _edit_kappa(page, 4.0)
             shot(f"variant_{lang}")
-            button(page.panel, i18n._("Try as variant")).click()
+            button(page.panel, i18n._("Try variant")).click()
             assert model.paths[-1].name == f"Full · {i18n._('Rejection threshold').lower()} 4"
             _reset(model)
             page.root.close()

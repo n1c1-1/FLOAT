@@ -293,6 +293,13 @@ class SettingsDialog(QDialog):
         dens.setCurrentIndex(max(dens.findData(prefs.get("layout_density") or "auto"), 0))
         dens.currentIndexChanged.connect(lambda _i: self._density(dens.currentData()))
         self.row(v, _("Interface density"), dens)
+        conf = QCheckBox(_("Confirm changes"))
+        conf.setObjectName("confirm_changes")
+        conf.setToolTip(_("A change that would compute again results already up to date waits for Replace, Try "
+                          "variant or Cancel; unchecked, it applies at once (Ctrl+Z takes it back)"))
+        conf.setChecked(bool(prefs.get("confirm_changes")))
+        conf.toggled.connect(lambda x: prefs.set("confirm_changes", bool(x)))
+        self.row(v, _("Computed results"), conf)
 
     def _density(self, key: str):
         prefs.set("layout_density", key)

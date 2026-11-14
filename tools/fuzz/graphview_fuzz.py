@@ -88,6 +88,8 @@ KNOWN_CORE_CASES = [
      "the same for a Session dragged: places(block=session) offers its own spot as a lit move_night place"),
 ]
 
+#: --model: the answers to a gesture that asks first (Replace: its toast's link; Try variant: Enter; Cancel: Esc)
+ANSWERS = ["replace", "variant", "cancel"]
 WEIGHTS = [("palette", 22), ("double", 6), ("move", 14), ("wire", 9), ("menu", 12), ("key", 12), ("cross", 5),
            ("wclick", 4), ("display", 4), ("ctrlj", 2), ("files", 7)]
 
@@ -315,7 +317,29 @@ def start_model(start):
     m = M(project2.load(os.path.join(root, "P")), w, readonly=True)
     if not w.wait(120) or not m.ready:
         raise RuntimeError(f"the project model could not open {start}: {m.error}")
+    computed(m)
     return ModelDocument(m, w)
+
+
+def computed(m):
+    """--model: every stage of the project taken as computed and up to date (its key of now), as after a run, after
+    every sync: a gesture that would compute results again asks Replace / Try variant / Cancel, which the fuzz
+    answers (``Run.answer``)."""
+    from astro_gpu import api
+    sync = m._sync
+
+    def done_sync(*a, **k):
+        sync(*a, **k)
+        if not m.ready:
+            return
+        for w in m.p.workflows:
+            for st in m._chains.get(w.id, []):
+                try:
+                    m._states[(w.id, st)] = api.StageState("done", "", api.stage_key(m.p, w.id, st))
+                except (ValueError, KeyError):
+                    pass
+    m._sync = done_sync
+    done_sync(False)
 
 
 def core_replay(start, log):
@@ -441,6 +465,8 @@ class Run:
                 kind = rng.choices([k for k, _w in WEIGHTS], [w for _k, w in WEIGHTS])[0]
                 g = getattr(self, "_c_" + kind)()
             if g is not None:
+                if MODEL_ROOT:          # the answer if the gesture asks first (computed results): drawn now, replayed
+                    g["answer"] = rng.choice(ANSWERS)
                 return g
         return None
 
@@ -885,6 +911,31 @@ class Run:
             raise Failure("d", "Ctrl+Y did not give back the graph after the gesture")
         self.check_painted(" after Ctrl+Y")
 
+    def answer(self, g):
+        """--model: the gesture asked Replace / Try variant / Cancel (computed results would be computed again): its
+        question shown, answered as the gesture drew it; -> the expectation after the answer."""
+        toast = self.canvas.toast if self.page.position() != "table" else getattr(self.page, "table_toast", None)
+        keys = [k for _t, k in toast.links()] if toast is not None else []
+        if toast is None or not toast.isVisible() or "confirm_replace" not in keys or "confirm_cancel" not in keys:
+            raise Failure("e", f"a gesture asked first but its question is not shown: {keys}")
+        how = g.get("answer", "replace")
+        if how == "variant" and "confirm_variant" not in keys:
+            how = "replace"
+        if QApplication.activeWindow() is not self.page:   # offscreen: a closed menu leaves no active window (keys)
+            self.page.activateWindow()
+            pump(1)
+        if how == "cancel":
+            self.G.key("Esc", target=self.canvas)
+        elif how == "variant":
+            self.G.key("Enter", target=self.canvas)
+        else:
+            toast.link.emit("confirm_replace")
+            pump()
+        if self.doc.model.pending_gesture is not None:
+            raise Failure("e", f"the answer {how} left the question waiting")
+        self.stats["answered_" + how] = self.stats.get("answered_" + how, 0) + 1
+        return "none" if how == "cancel" else "change_or_message"
+
     # ------------------------------------------------------------------ one gesture
     def step_known(self, g, known):
         """step(g), a known core defect (KNOWN_CORE) counted in `known` and its state taken back instead of failing."""
@@ -918,6 +969,10 @@ class Run:
             return False
         expect, history = out
         pump()
+        if MODEL_ROOT and getattr(self.doc.model, "pending_gesture", None) is not None:
+            if self.js() != before or len(self.doc._undo) != undo0:
+                raise Failure("e", "a gesture asked first but changed the project while its question waits")
+            expect = self.answer(g)
         after = self.js()
         changed = after != before
         self.stats["accepted" if changed else "refused"] += 1

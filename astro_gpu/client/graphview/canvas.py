@@ -36,7 +36,7 @@ from ..i18n import _, number, plural
 from ..layout import pinch_factor, wheel_gesture
 from ..widgets import Spinner
 from . import style
-from .bridge import PROJECT
+from .bridge import ASKED, PROJECT
 from .items import (
     DIM,
     BandItem,
@@ -430,6 +430,8 @@ class GraphCanvas(QGraphicsView):
             log_line = getattr(self.doc.model, "log", None)
             for p in paths if log_line is not None else ():      # the history says it, workflow by workflow
                 log_line('{block} removed from "{name}"', block=title, name=p.name)
+            return res
+        if res.reason == ASKED:                           # computed results: Replace / Try variant / Cancel first
             return res
         reason = self._kept_reason(ident, paths) or bridge.say(res.reason) or _("This block cannot be deleted")
         if title and self.doc.model is not None:         # the project's words, as today's page said them

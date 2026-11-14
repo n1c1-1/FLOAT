@@ -655,6 +655,7 @@ class _ProjectBase(QObject):
     postChanged = Signal(object)           # the Post composition changed (the object that changed it, or None)
     dirtyChanged = Signal(bool)            # there are edits not saved yet (True), or they were saved (False)
     editMade = Signal()                    # any edit of the definition: the recovery copy is written some time after
+    changeAsked = Signal()                 # a gesture of the graph waits for Replace / Try variant / Cancel
 
     def __init__(self, project, worker: ApiWorker | None = None, *, readonly: bool = False,
                  history: list | None = None, gpu: bool = True, device: str | None = None):
@@ -673,6 +674,7 @@ class _ProjectBase(QObject):
         self.sel_layer: int | None = None                  # the Post layer of the selected Stars and background block
         self.scope: list[int] | None = None
         self.pending_change: dict | None = None
+        self.pending_gesture: dict | None = None           # a gesture of the graph waiting for its confirmation
         self.gpu = gpu
         self.device = device if device else (None if gpu else "cpu")
         self.history = history if history is not None else []
@@ -3050,6 +3052,8 @@ class _ProjectBase(QObject):
     @staticmethod
     def _api_changes(ch: dict) -> list[dict]:
         """A change of the views as the engine's changes (``api.Change``); ◇ raises NotInEngine."""
+        if ch["kind"] == "many":                     # several edits of one block confirmed together
+            return [c for x in ch["changes"] for c in _ProjectBase._api_changes(x)]
         if ch["kind"] == "params":
             return [{"kind": "param", "stage": st, "name": nm, "value": v} for st, nm, v in ch["items"]]
         if ch["kind"] == "param":

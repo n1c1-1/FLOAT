@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QAbstractItemView, QHBoxLayout, QListView, QPushBu
 from ...graphcore.operations import COMMON
 from ..i18n import _, number, plural
 from . import files
+from .bridge import ASKED
 from .style import label
 from .table_logic import KIND_TITLE
 
@@ -253,6 +254,8 @@ class FilesPanel(QWidget):
                 res = bridge.act("set_common_files", quiet=True, kind=self.kind, paths=left, mode="replace")
             else:
                 res = bridge.act("remove_files", quiet=True, session=self.owner, kind=self.kind, paths=entries)
+            if not res.ok and res.reason == ASKED:        # a computed stack: Replace / Try variant / Cancel first
+                return
             if not res.ok:
                 bridge.toast.emit(bridge.say(res.reason) if res.reason else _("Not possible"))
                 return

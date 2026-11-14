@@ -46,6 +46,7 @@ from PySide6.QtWidgets import (
 from .. import texts
 from ..core import workflow as wfl
 from . import prefs
+from .graphmodel import confirm_on
 from .graphnode import STATE_WORD, block_state, block_title, kbase
 from .i18n import _, all_workflows, hm, language, number
 from .icons import IconLabel, IconText, icon_only, set_icon
@@ -565,6 +566,7 @@ class Panel(QWidget):
     selectBlock = Signal(str)           # a greyed block's reason: select the block that was cut
     restoreBlock = Signal(str)          # a greyed block's panel: restore the block that was cut
     sectionsChanged = Signal()          # its sections were built (issue #44: the strip of icons follows)
+    answered = Signal()                 # a change waiting for its confirmation was answered (Replace, variant, Cancel)
 
     def __init__(self, project, steps=None, tune=False, parent=None):
         super().__init__(parent)
@@ -597,6 +599,12 @@ class Panel(QWidget):
         sc.setWidget(host)
         self.folds = Sections(self.bv, sc)              # its section titles fold (issue #44)
         v.addWidget(sc, 1)
+        foot = QWidget()                                # the panel's foot: a change waiting for its confirmation
+        self.fv = QVBoxLayout(foot)
+        self.fv.setContentsMargins(10, 0, 10, 0)
+        self.fv.setSpacing(0)
+        v.addWidget(foot)
+        self.pending_next = None                        # a block chosen while a change waited: shown once answered
         self.details = Details()
         v.addWidget(self.details)
         self._later = QTimer(self)
@@ -675,6 +683,7 @@ class Panel(QWidget):
     def _refresh(self, node):
         clear(self.hv)
         clear(self.bv)
+        clear(self.fv)
         self.folds.reset()
         self.details.hide()
         if node is not None and not self._alive(node):     # its block went away (Ctrl+Z, a removal): the page gives
@@ -1455,6 +1464,9 @@ class Panel(QWidget):
         self.hv.addLayout(row)
 
     def choice_box(self, node, p):
+        """A change that would compute again results computed and up to date waits here, at the panel's foot, for its
+        answer: what it is, what it computes again and the time, Replace, Try variant (the default: Enter), Cancel
+        (Esc), and "Do not ask"; nothing in the project changes until then."""
         ch = self.s.pending_change
         if not ch or ch["step"] != node.key:
             return
@@ -1467,45 +1479,127 @@ class Panel(QWidget):
         v = QVBoxLayout(f)
         v.setContentsMargins(10, 8, 10, 8)
         v.setSpacing(6)
-        v.addWidget(label(f"<b>{html.escape(ch['what'])}</b>", wrap=True))
-        c = s.cost_of_change(paths, ch)
-        rep = QPushButton(_("Replace") + f"  ·  {'' if c.measured else '≈ '}{hm(c.seconds)}")
-        rep.setToolTip(_("The current results of {names} are computed again").format(
+        whats = ch.get("whats") or [ch["what"]]
+        v.addWidget(label("<br>".join(f"<b>{html.escape(w)}</b>" for w in whats), wrap=True))
+        cost = ch.get("cost")
+        if cost is not None:
+            what = label(html.escape(cost.text()), "small", wrap=True)
+            what.setObjectName("choice_cost")
+            v.addWidget(what)
+        if self.pending_next is not None:
+            first = label(_("Answer first: the change waits for Replace, Try variant or Cancel."), "warn", wrap=True)
+            first.setObjectName("choice_first")
+            v.addWidget(first)
+        row = QHBoxLayout()
+        row.setSpacing(6)
+        rep = QPushButton(_("Replace"))
+        rep.setObjectName("choice_replace")
+        rep.setToolTip(_("The change goes to {names}; their results are computed again (Ctrl+Z gives them back)").format(
             names=", ".join(q.name for q in paths)))
         rep.clicked.connect(self._replace)
-        v.addWidget(rep)
-        cv = s.cost_of_change([p], ch)
-        var = QPushButton(_("Try as variant") + f"  ·  {'' if cv.measured else '≈ '}{hm(cv.seconds)}")
+        var = QPushButton(_("Try variant"))
         var.setObjectName("primary")
-        var.setToolTip(_('"{name}" stays as it is; the variant shares everything up to this block').format(
-            name=p.name))
+        var.setDefault(True)
+        var.setToolTip(_('"{name}" stays as it is, its results kept; the variant shares everything up to this block '
+                         '(Enter)').format(name=p.name))
         var.clicked.connect(lambda: self._variant(p))
-        v.addWidget(var)
         cancel = QPushButton(_("Cancel"))
+        cancel.setToolTip(_("The setting goes back to its value (Esc)"))
         cancel.clicked.connect(self._cancel)
-        v.addWidget(cancel, 0, Qt.AlignLeft)
-        self.hv.addWidget(f)
+        for b in (rep, var, cancel):
+            row.addWidget(b)
+        row.addStretch(1)
+        v.addLayout(row)
+        never = QLabel(f'<a href="never"><span style="color:#8b93a1">{html.escape(_("Do not ask"))}</span></a>')
+        never.setObjectName("choice_never")
+        never.setToolTip(_("Changes apply at once from now on; Edit › Settings › General turns the question on again"))
+        never.linkActivated.connect(lambda _k: self._never_ask())
+        v.addWidget(never, 0, Qt.AlignLeft)
+        self.fv.addSpacing(6)
+        self.fv.addWidget(f)
+        self.fv.addSpacing(6)
+
+    def answer(self, how: str) -> bool:
+        """The waiting change answered from the keyboard: "default" (Enter: Try variant), "cancel" (Esc), "replace".
+        False when no change waits here."""
+        ch = self.s.pending_change
+        node = self.node
+        if not ch or node is None or ch["step"] != node.key or not node.paths:
+            return False
+        if how == "cancel":
+            self._cancel()
+        elif how == "replace":
+            self._replace()
+        else:
+            p = next((q for q in node.paths if q.pid == ch["pids"][0]), node.paths[0])
+            self._variant(p)
+        return True
+
+    def _never_ask(self):
+        """"Do not ask": the preference is turned off (the change waiting still waits for its answer)."""
+        prefs.set("confirm_changes", False)
+        self.toast.emit(_("Changes apply at once from now on · Edit › Settings › General turns the question on again"))
 
     def propose(self, stage, name, value, suggested, what, short):
-        """A change of setting: made at once when nothing computed is lost; otherwise Replace, or Try as variant."""
+        """A change of setting: made at once when nothing computed and up to date is lost; otherwise it waits for
+        Replace, Try variant or Cancel."""
         self._propose(dict(kind="param", stage=stage, name=name, value=value, suggested=suggested), what, short)
 
     def propose_opt(self, key, value, what, short):
         """A change of option, such as a method."""
         self._propose(dict(kind="opt", key=key, value=value), what, short)
 
+    @staticmethod
+    def _change_id(c):
+        if c["kind"] == "param":
+            return "param", c["stage"], c["name"]
+        if c["kind"] == "params":
+            return ("params",) + tuple((st, nm) for st, nm, _v in c["items"])
+        return "opt", c.get("key")
+
+    @classmethod
+    def _merged(cls, old, ch, what, short):
+        """A second edit of the block while the first waits: both confirmed together (one question, one cost); an edit
+        of the same setting replaces the earlier one."""
+        olds = old["changes"] if old["kind"] == "many" else [old]
+        whats = list(old.get("whats") or [old["what"]])
+        shorts = list(old.get("shorts") or [old["short"]])
+        cores = [{k: v for k, v in c.items() if k not in ("what", "short", "whats", "shorts", "step", "pids", "cost")}
+                 for c in olds]
+        new = dict(ch)
+        i = next((j for j, c in enumerate(cores) if cls._change_id(c) == cls._change_id(new)), None)
+        if i is None:
+            cores.append(new)
+            whats.append(what)
+            shorts.append(short)
+        else:
+            cores[i], whats[i], shorts[i] = new, what, short
+        if len(cores) == 1:
+            return dict(cores[0], what=whats[0], short=shorts[0])
+        return dict(kind="many", changes=cores, what="; ".join(whats), short=" · ".join(shorts), whats=whats,
+                    shorts=shorts)
+
     def _propose(self, ch, what, short):
         s = self.s
         paths = s.scope_paths()
+        old = s.pending_change
+        if old and self.node is not None and old["step"] == self.node.key:
+            paths = [q for q in s.paths if q.pid in old["pids"]] or paths
+            ch = self._merged(old, ch, what, short)
+            what, short = ch.pop("what"), ch.pop("short")
         try:
-            if s.throws_away(paths, ch):
-                s.pending_change = dict(ch, what=what, short=short, step=self.node.key, pids=[q.pid for q in paths])
+            cost = s.change_cost(ch, paths) if confirm_on() and hasattr(s, "change_cost") else None
+            if cost is not None and cost.lost:
+                s.pending_change = dict(ch, what=what, short=short, step=self.node.key, pids=[q.pid for q in paths],
+                                        cost=cost)
             else:
                 s.pending_change = None
                 notes = s.apply_change(paths, ch)
                 s.log("{what} · {names}", what=what, names=", ".join(q.name for q in paths))
                 if notes:
                     self.toast.emit(" · ".join(_(n) for n in notes))
+                if old:
+                    self.answered.emit()
         except NotInEngine:
             s.pending_change = None
             self.toast.emit("◇ " + _("Not in the engine yet."))
@@ -1513,6 +1607,16 @@ class Panel(QWidget):
             s.pending_change = None
             self.toast.emit(_(str(e)))
         self.changed.emit()
+
+    def pending_value(self, r):
+        """The row of a setting as it shows while its change waits for its confirmation (else as it is)."""
+        ch = self.s.pending_change
+        if not ch or self.node is None or ch["step"] != self.node.key:
+            return r
+        for c in (ch["changes"] if ch["kind"] == "many" else [ch]):
+            if c["kind"] == "param" and c["stage"] == r.get("stage") and c["name"] == r.get("name"):
+                return dict(r, value=r.get("suggested") if c["value"] is None else c["value"])
+        return r
 
     def _replace(self):
         ch, self.s.pending_change = self.s.pending_change, None
@@ -1522,11 +1626,13 @@ class Panel(QWidget):
         except (ValueError, wfl.OptionRefused) as e:
             self.toast.emit(_(str(e)))
             self.changed.emit()
+            self.answered.emit()
             return
         self.s.log("{what} · replaced in {names}", what=ch["what"], names=", ".join(q.name for q in paths))
         said = _("{what} · replaced in {names}").format(what=ch["what"], names=", ".join(q.name for q in paths))
         self.toast.emit(" · ".join([said] + [_(n) for n in notes] + ["Ctrl+Z"]))     # said, as the others (decision 11)
         self.changed.emit()
+        self.answered.emit()
 
     def _variant(self, p):
         ch, self.s.pending_change = self.s.pending_change, None
@@ -1535,9 +1641,11 @@ class Panel(QWidget):
         except (ValueError, wfl.OptionRefused) as e:
             self.toast.emit(_(str(e)))
             self.changed.emit()
+            self.answered.emit()
             return
         self.s.log('Variant "{name}" created', name=q.name)
         self.variantMade.emit(q.pid, p.pid)
+        self.answered.emit()
 
     # ------------------------------------------------------------ the method of a block
     def methods(self, p, k):
@@ -1618,8 +1726,10 @@ class Panel(QWidget):
             self.bv.addWidget(why)
 
     def _cancel(self):
+        """Cancel: the change waiting is dropped, its fields show their values again; nothing in the project changed."""
         self.s.pending_change = None
         self.changed.emit()
+        self.answered.emit()
 
     def outputs(self, node):
         """The Stars block's two images, in the colours of its ports, and where each goes (its Stars and background
@@ -1995,7 +2105,7 @@ class Panel(QWidget):
             row.focused.connect(self._focus)
             self.bv.addWidget(row)
             return
-        row = CompactRow(r, self._unit_w)
+        row = CompactRow(self.pending_value(r), self._unit_w)    # a change waiting for its answer: shown typed
         row.changed.connect(self.set_setting)
         row.focused.connect(self._focus)
         self.bv.addWidget(row)

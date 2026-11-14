@@ -15,6 +15,9 @@ from ...graphcore.shapes import Result
 from ..i18n import _
 from .document import FAILED, Doc, MemoryDocument
 
+#: the reason of a gesture kept waiting for its confirmation (graphmodel.ASKED): never said as a refusal
+ASKED = "confirmation asked"
+
 log = logging.getLogger(__name__)
 
 #: the selection id of the Project block
@@ -210,6 +213,8 @@ class Bridge(QObject):
                 self.appeared.emit(new)
             if res.toast and quiet is not True:
                 self.toast.emit(self.say(res.toast) + " · Ctrl+Z")
+        elif res.reason == ASKED:                 # waits for Replace / Try variant / Cancel: the page asks, no refusal
+            pass
         elif res.reason and not quiet:
             self.toast.emit(self.say(res.reason))
         return res
@@ -242,8 +247,13 @@ class Bridge(QObject):
         self.selection.emit(None)
         self.files_chosen.emit()
 
+    #: f(ident) -> True when the selection must stay (a change of the panel waits for its answer: asked first)
+    hold = None
+
     def choose(self, ident):
         """Select an id (view state, never undone)."""
+        if self.hold is not None and ident != self.doc.view.get("selected") and self.hold(ident):
+            return
         if self.file_cell is not None:
             self.file_cell = None
             self.doc.view["selected"] = ident

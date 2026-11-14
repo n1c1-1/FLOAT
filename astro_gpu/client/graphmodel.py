@@ -82,6 +82,58 @@ class GraphRefused(ValueError):
     """A gesture the graph core refused: its reason, translated."""
 
 
+# ---------------------------------------------------------------------------------------------- confirming a change
+#: the reason a gesture of the page returns while it waits for Replace / Try variant / Cancel: never said as a refusal
+ASKED = "confirmation asked"
+#: the core's operations that may make computed results computed again: only these are tried before they apply
+ASK_OPS = frozenset({
+    "remove_block", "switch_off", "add_block", "move_block", "remove_with_dependants", "add_files", "remove_files",
+    "set_common_files", "use_for_all_nights", "reset_own", "reset_own_files", "move_files", "set_session_files",
+    "set_left_out", "exclude_files", "split_by", "remove_night", "move_night", "merge_nights", "split_night",
+    "share_night", "merge_rows", "set_night_filter", "set_setting", "set_common_setting", "apply_to_rows", "set_param",
+    "set_row_param", "set_flow_param", "set_flow_options", "set_method", "set_own_calibration", "follow_session",
+    "remove_own_calibration", "set_image_file", "wire", "unwire", "take_alternative", "set_input",
+    "set_combination_type", "set_reference", "set_align", "own_grid", "set_align_off", "set_calibrate_together",
+    "replace_chain"})
+#: a gesture on one block Try variant makes on a copy of the block: its operation -> the core's change of try_variant
+_VARIANT_CHANGE = {
+    "switch_off": lambda g, kw: {"off": not g.blocks[kw["block"]].off},
+    "set_method": lambda g, kw: {"method": kw["method"]},
+    "set_param": lambda g, kw: {"param": [kw["stage"], kw["name"], kw["value"]]},
+    "set_setting": lambda g, kw: {"setting": [kw["key"], kw["value"]]},
+}
+
+
+def confirm_on() -> bool:
+    """The preference "Confirm changes" (on by default)."""
+    from . import prefs
+    return bool(prefs.get("confirm_changes"))
+
+
+class ChangeCost:
+    """What a change would compute again among the results computed AND up to date: ``blocks`` (their names, in the
+    order of the chain), ``stages`` [(workflow id, stage)], ``seconds`` (what the change adds to the run of these
+    workflows) and ``measured`` (False: an estimate). ``lost`` False: nothing up to date is lost, nothing to ask."""
+
+    def __init__(self, blocks=(), stages=(), seconds=0.0, measured=True):
+        self.blocks, self.stages = list(blocks), list(stages)
+        self.seconds, self.measured = max(0.0, float(seconds)), bool(measured)
+
+    @property
+    def lost(self) -> bool:
+        return bool(self.stages)
+
+    def text(self) -> str:
+        """"Computes again: Gradient, Denoise, Color · about 12 min"."""
+        from .i18n import hm
+        t = hm(self.seconds)
+        when = t if t.startswith("≤") else _("about {t}").format(t=t)
+        return _("Computes again: {blocks} · {time}").format(blocks=", ".join(self.blocks), time=when)
+
+    def __repr__(self):
+        return f"ChangeCost({self.blocks}, {self.seconds:.0f} s)"
+
+
 # ---------------------------------------------------------------------------------------------- the page's document
 class GraphDocument:
     """The document interface of the graph page (graphview/document.py) on a project model with ``GraphEditing``."""
@@ -111,12 +163,19 @@ class GraphDocument:
         return self.model.revision
 
     def apply(self, steps) -> Result:
-        return self.model.apply(steps)
+        m = self.model
+        asked = m.ask_first(steps)                # computed results it would make stale: asked first, nothing changes
+        return asked if asked is not None else m.apply(steps)
 
     def undo(self) -> Result:
-        if not self.model.undo(graph=True):
+        m = self.model
+        done = m.done_count()
+        if not m.undo(graph=True):
             return Result(False, reason="Nothing to undo")
-        return Result(True, toast=M("Undone: {label}", label=self.model.restored or _("a change")))
+        said = M("Undone: {label}", label=m.restored or _("a change"))
+        if m.done_count() > done:                 # a Replace taken back: its results are in the store, up to date again
+            said = M("{m0} · {m1}", m0=said, m1=M("results up to date again"))
+        return Result(True, toast=said)
 
     def redo(self) -> Result:
         if not self.model.redo(graph=True):
@@ -1006,6 +1065,7 @@ class GraphEditing:
         if files_after != files_before:
             self.reload_sources()
         self.pending_change = None
+        self.pending_gesture = None
         self.edited()
         self._sync()
         was = json.dumps(self.p.post, sort_keys=True)
@@ -1365,6 +1425,11 @@ class GraphEditing:
         mm = _mm()
         ids = [q.pid for q in paths]
         notes: list[str] = []
+        if ch["kind"] == "many":                          # several edits of one block, confirmed together: one step
+            with self.batch():
+                for c in ch["changes"]:
+                    notes += [n for n in self.apply_change(paths, c) if n not in notes]
+            return notes
         if ch["kind"] in ("param", "params"):
             items = [(c["stage"], c["name"], c["value"]) for c in mm.ProjectModel._api_changes(ch)]
             self._set_params(ids, items)
@@ -1403,6 +1468,12 @@ class GraphEditing:
     def add_variant(self, p, ch, title: str):
         """Try as variant: a copy of the workflow through the changed block, the change made on the copy."""
         mm = _mm()
+        if ch["kind"] == "many":                          # the first edit makes the variant, the others go on it
+            with self.batch():
+                q = self.add_variant(p, ch["changes"][0], title)
+                for c in ch["changes"][1:]:
+                    self.apply_change([q], c)
+            return self.view(q.pid) or q
         if ch["kind"] in ("param", "params"):
             items = [(c["stage"], c["name"], c["value"]) for c in mm.ProjectModel._api_changes(ch)]
             kind, bid, _st = self._owner(self._g, p.pid, items[0][0])
@@ -1436,6 +1507,170 @@ class GraphEditing:
         v = self.view(self.p.current) if self.p.current is not None else None
         self.current = self.paths.index(v) if v in self.paths else min(self.current, len(self.paths) - 1)
         self.currentChanged.emit()
+
+    # ------------------------------------------------------------------ confirming a change (the owner's rule)
+    def change_cost(self, change, paths=None) -> ChangeCost:
+        """What a change would compute again among the results computed AND up to date, nothing changed: the blocks,
+        the stages and the time it adds (``ChangeCost``; ``lost`` False: nothing to ask). ``change``: a change of the
+        panel (a dict, kind param / params / opt / many) made in ``paths`` (the panel's scope when None), or the graph
+        core's steps of a gesture ([(operation, kwargs)]). A change that only adds something to compute loses
+        nothing."""
+        if not self.ready:
+            return ChangeCost()
+        try:
+            if isinstance(change, dict):
+                return self._panel_cost(change, self.scope_paths() if paths is None else list(paths))
+            return self._steps_cost(list(change))
+        except _mm().NotInEngine:
+            return ChangeCost()
+        except (ValueError, KeyError, gm.Invalid):
+            return ChangeCost()
+
+    def apply_as(self, change, how: str = "replace", paths=None, title: str = ""):
+        """The confirmed change of the panel (or of a view keeping its own draft): ``how`` "replace": made in ``paths``
+        (the panel's scope when None) as one Undo step, -> the notes; "variant": made on a variant of the first of
+        them, which keeps its results, -> the variant's view."""
+        paths = self.scope_paths() if paths is None else list(paths)
+        if how == "variant":
+            p = paths[0]
+            return self.add_variant(p, change, title or f"{p.name} · {change.get('short') or _('variant')}")
+        return self.apply_change(paths, change)
+
+    def _lost(self, v, stages_now, key_now) -> list:
+        """The stages of view v computed and up to date whose key would change (still in the chain)."""
+        out = []
+        for stage in self.all_stages(v):
+            if self.state(v, stage) == "done" and stage in stages_now and key_now(stage) != self.stage_key(v, stage):
+                out.append((v.pid, stage))
+        return out
+
+    def _panel_cost(self, ch, paths) -> ChangeCost:
+        from .. import api
+        changed, lost = [], []
+        for q in paths:
+            c = self._changed(q, ch)
+            changed.append(c)
+            lost += self._lost(q, set(api.chain(self.p, c)), lambda st, c=c: api.stage_key(self.p, c, st))
+        if not lost:
+            return ChangeCost()
+        after, before = self.cost(changed), self.cost([q.pid for q in paths])
+        return ChangeCost(self._lost_blocks(lost), lost, after.seconds - before.seconds, after.measured)
+
+    def _dry_graph(self, steps):
+        """The graph a gesture would give, nothing changed (as ``_change`` makes it); None when refused."""
+        before = self._g
+        if self._row_kept(steps) or self._lights_first(steps):
+            return None
+        base = self._without_layer_rows(before, steps)
+        view = copy.deepcopy(self.graph_view)
+        g, res = apply_many(base, list(steps), view, _)
+        if not res.ok:
+            return None
+        if any(s[0] == "remove_block" for s in steps):
+            g, res = self._with_bare_variants_gone(base, g, res, view)
+        if any(s[0] == "delete_row" for s in steps):
+            g, res = self._with_lone_sessions_gone(base, g, res)
+        self.__dict__["_dry_said"] = say(res.toast, _) if res.toast else ""     # what the gesture would say it did
+        return self._with_defaults(g, self.p)
+
+    def _what_if_project(self, g):
+        """The definition a graph would compile into, apart from the project (the engine's caches of the frames and
+        its rules shared: nothing is read from the disk again)."""
+        from .. import api
+        from ..core.project2 import Project2
+        p2 = Project2.from_dict(self.p.to_dict(), self.p.root)
+        compile_into(g, p2)
+        c1, c2 = api._ctx(self.p), api._ctx(p2)
+        c2.scan, c2.rules_obj, c2.spec = c1.scan, c1.rules(), c1.spec
+        c2.autos, c2.stretch, c2.warm_entries = c1.autos, c1.stretch, c1.warm_entries
+        return p2
+
+    def _steps_cost(self, steps) -> ChangeCost:
+        from .. import api
+        if not any(self.state(v, st) == "done" for v in self.paths for st in self.all_stages(v)):
+            return ChangeCost()
+        g = self._dry_graph(steps)
+        if g is None:
+            return ChangeCost()
+        p2 = self._what_if_project(g)
+        there = {w.id for w in p2.workflows}
+        lost = []
+        for v in self.paths:
+            if v.pid in there:
+                lost += self._lost(v, set(api.chain(p2, v.pid)), lambda st, w=v.pid: api.stage_key(p2, w, st))
+        if not lost:
+            return ChangeCost()
+        wids = sorted({w for w, _s in lost})
+        after = api.cost(p2, wids, self.device, self._history_est)
+        before = self.cost(wids)
+        return ChangeCost(self._lost_blocks(lost), lost, after.seconds - before.seconds, after.measured)
+
+    def _lost_blocks(self, lost) -> list[str]:
+        """The names of the blocks of these stages, in the order of their chains, each once (a stage no block shows,
+        such as the survey Astrometry fetches, is not named)."""
+        from .graphnode import STEPS, block_title
+        of = {st: b["key"] for b in STEPS for st in b["stages"]}
+        out = []
+        for _wid, stage in lost:
+            base, sep, num = stage.partition("@")[0].partition("~")
+            key = of.get(base)
+            if key is None:
+                continue
+            t = block_title(None, f"{key}~{num}" if sep else key)
+            if t not in out:
+                out.append(t)
+        return out
+
+    def done_count(self) -> int:
+        """How many stages of the workflows are computed and up to date."""
+        return sum(1 for st in getattr(self, "_states", {}).values() if st.state == "done")
+
+    @contextmanager
+    def confirmed(self):
+        """The gestures made inside were confirmed (Replace, Try variant): they apply without asking."""
+        was = self.__dict__.get("_confirmed", False)
+        self.__dict__["_confirmed"] = True
+        try:
+            yield
+        finally:
+            self.__dict__["_confirmed"] = was
+
+    def ask_first(self, steps):
+        """A gesture of the page that would make results computed and up to date computed again, the preference on:
+        kept waiting (``pending_gesture``, nothing changes), the page asks Replace / Try variant / Cancel; -> a Result
+        whose reason is ASKED. None: it applies at once."""
+        steps = list(steps)
+        if self.__dict__.get("_confirmed") or not confirm_on() or not self.ready or \
+                not any(s[0] in ASK_OPS for s in steps):
+            return None
+        try:
+            cost = self._steps_cost(steps)
+        except Exception:  # noqa: BLE001 - a question that cannot be priced is not asked: the gesture applies
+            import logging
+            logging.getLogger(__name__).exception("the cost of a gesture could not be read")
+            return None
+        if not cost.lost:
+            return None
+        self.pending_gesture = {"steps": steps, "cost": cost, "variant": self._gesture_variant(steps),
+                                "what": self.__dict__.get("_dry_said", "")}
+        self.changeAsked.emit()
+        return Result(False, reason=ASKED)
+
+    def _gesture_variant(self, steps):
+        """Try variant for a gesture on one block (switch off / on, its method, a setting): the core's steps, or None
+        when the gesture is not one of those or no variant can start from the block."""
+        if len(steps) != 1 or callable(steps[0][1]) or steps[0][0] not in _VARIANT_CHANGE:
+            return None
+        op, kw = steps[0]
+        g = self._g
+        if kw.get("block") not in g.blocks:
+            return None
+        vs = [("try_variant", {"block": kw["block"], "change": _VARIANT_CHANGE[op](g, kw), "name": None})]
+        try:
+            _g2, res = apply_many(g, vs, copy.deepcopy(self.graph_view), _)
+        except Exception:  # noqa: BLE001 - no variant offered
+            return None
+        return vs if res.ok else None
 
     # ------------------------------------------------------------------ workflows: names, copies, deletion
     def rename(self, pid: int, name: str) -> bool:

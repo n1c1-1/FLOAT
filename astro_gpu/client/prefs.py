@@ -48,6 +48,8 @@ DEFAULTS = {
     # display
     "auto_stretch": True,
     "units": "arcsec",                # arcsec | px
+    # a change that would make computed and up-to-date results computed again waits for Replace / Try variant / Cancel
+    "confirm_changes": True,
     # the window on a small screen (issue #44): auto | compact | comfortable; the user's panels per size range
     "layout_density": "auto",
     "layout": {},
