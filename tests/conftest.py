@@ -80,6 +80,23 @@ if not WORKER:      # folders a killed session left (a worker killed by the time
             pass
 
 PRIVATE_HOME = Path(tempfile.mkdtemp(prefix=f"astro_gpu_test_home_{WORKER or ''}_"))
+
+# The client's settings (%APPDATA%/astro_gpu/settings.json, the Post curve presets beside it, the recovery copies) are
+# the user's too, and the window he may have open rewrites them at any time. From the start of the process (before any
+# test module reads APPDATA or imports the client), APPDATA names a private folder: nothing a test, a module-level read
+# or a subprocess does can reach the real file, and the fingerprint checks some test modules make of "the user's
+# settings file" look at a path nobody else writes. ASTRO_GPU_SETTINGS, if the shell had it, is dropped (it would name
+# the real file). The real folder stays known, to be refused by the audit hook below.
+_REAL_APPDATA_ENV = "ASTRO_GPU_TEST_REAL_APPDATA"
+if WORKER:
+    _REAL_APPDATA = os.environ.get(_REAL_APPDATA_ENV, "-")
+    _REAL_APPDATA = "" if _REAL_APPDATA == "-" else _REAL_APPDATA
+else:
+    _REAL_APPDATA = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+    os.environ[_REAL_APPDATA_ENV] = _REAL_APPDATA or "-"
+PRIVATE_APPDATA = Path(tempfile.mkdtemp(prefix=f"astro_gpu_test_appdata_{WORKER or ''}_"))
+os.environ["APPDATA"] = str(PRIVATE_APPDATA)
+os.environ.pop("ASTRO_GPU_SETTINGS", None)
 # BEFORE astro_gpu reads its state; workers inherit it. The offline Gaia extracts the user installed stay visible, read in
 # place (ASTRO_GPU_GAIA_EXTRACTS): a test run of the chain reads the catalogue as the user's runs do, never downloads
 from astro_gpu.core.sirilcat import private_home  # noqa: E402 - numpy only: reads no state of the engine
@@ -122,6 +139,17 @@ def _norm(p) -> str:
 
 _WATCHED = [_norm(h) for h in _REAL_HOMES]
 _CACHE = [w + os.sep + "cache" for w in _WATCHED]
+#: the user's real client settings folder: refused by the audit hook only (his open window writes it, so it is not
+#: compared at the end of the session)
+_REAL_SETTINGS = _norm(Path(_REAL_APPDATA) / "astro_gpu") if _REAL_APPDATA else None
+
+
+def _is_real_settings(path) -> bool:
+    try:
+        s = _norm(path)
+    except (TypeError, ValueError):
+        return False
+    return _REAL_SETTINGS is not None and (s == _REAL_SETTINGS or s.startswith(_REAL_SETTINGS + os.sep))
 
 
 def _is_watched(path) -> bool:
@@ -188,7 +216,8 @@ def _audit(event: str, args: tuple) -> None:
         else:
             return
         for t in targets:
-            if isinstance(t, (str, bytes, os.PathLike)) and _is_watched(os.fsdecode(t) if isinstance(t, bytes) else t):
+            if isinstance(t, (str, bytes, os.PathLike)) and (
+                    lambda p: _is_watched(p) or _is_real_settings(p))(os.fsdecode(t) if isinstance(t, bytes) else t):
                 what = f"{event} {os.fsdecode(t) if isinstance(t, bytes) else os.fspath(t)}"
                 _VIOLATIONS.append(f"{_CURRENT[0]}: {what}")
                 raise UserFolderWrite(f"a test must never write the user's files ({what}; test {_CURRENT[0]}): "
@@ -232,6 +261,7 @@ def pytest_sessionfinish(session, exitstatus) -> None:
         if problems and session.exitstatus == 0:
             session.exitstatus = pytest.ExitCode.TESTS_FAILED
     shutil.rmtree(PRIVATE_HOME, ignore_errors=True)
+    shutil.rmtree(PRIVATE_APPDATA, ignore_errors=True)
     if PRIVATE_TMP is not None:
         shutil.rmtree(PRIVATE_TMP, ignore_errors=True)
 
