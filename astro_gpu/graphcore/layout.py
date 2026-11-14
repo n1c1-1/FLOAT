@@ -124,7 +124,10 @@ def grid(p, view, ix=None):
         cells[ix.post] = (0, POSTCOL)
     src_cols = [c for b, (l, c) in cells.items() if l is not None and c < COMP0]
     nlin = max([c - LIN + 1 for c in src_cols if c >= LIN] + [1])
-    frames = any(r.nights and r.id not in folded for r in p.rows)
+    # the frame band has its columns when a stack shows its nights, or a block of it (a stack whose nights are all
+    # gone, a workflow of the previous format made before its first session: its Registration... still drawn)
+    frames = any(r.nights and r.id not in folded for r in p.rows) or \
+        any(line is not None and 0 < c < LIN for b, (line, c) in cells.items() if not b.startswith("card:"))
     compact = not frames and any(r.nights for r in p.rows)
     recad = any(p.blocks[b].kind == "crop" and ix.row_of.get(b) not in folded for b in p.blocks)
     ncomp = max([v + 1 for v in kcol.values()] + [1])
