@@ -1069,9 +1069,10 @@ class TuneView(QWidget):
         return any(self.steps.key_of(p, x, self.steps.which_for(p, x)) for x in stages)
 
     def _previous_tag(self, p, k):
-        tag = QLabel(_("previous result"))
+        tag = QLabel(_("Previous settings"))
         tag.setStyleSheet(f"color: {WARN}; border: 1px solid {WARN}; border-radius: 9px; padding: 1px 8px;")
-        tag.setToolTip(_("This block is Outdated: what it shows is the result it had."))
+        tag.setToolTip(_("Computed with the previous settings: this is the result the block had. Run to here computes "
+                         "it with the current ones."))
         self.head.addWidget(tag)
         self.head.addWidget(self._run_button(p, k))
 
@@ -2377,7 +2378,11 @@ class TuneView(QWidget):
         plan = plan_to(s, p, self._full_key(k))
         box = QVBoxLayout()
         box.setAlignment(Qt.AlignCenter)
-        if state in ("pending", "stale"):
+        if state == "stale":                            # Outdated, and the result it had is not kept any more
+            box.addWidget(label(_("Outdated"), "h2"), 0, Qt.AlignHCenter)
+            box.addWidget(label(_("Its earlier result is no longer kept: Run to here computes it with the current "
+                                  "settings."), "dim"), 0, Qt.AlignHCenter)
+        elif state == "pending":
             box.addWidget(label(_("Not computed yet"), "h2"), 0, Qt.AlignHCenter)
         else:
             box.addWidget(label(_(STATE_WORD[state]), "h2"), 0, Qt.AlignHCenter)

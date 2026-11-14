@@ -1182,8 +1182,9 @@ class Panel(QWidget):
 
     def survey_row(self, p):
         """The H-alpha survey the Gradient block keeps its samples away from, when the field's is not on this computer:
-        Get survey fetches it (an action of the user, never a run: core/online.py), its progress shown here; the run
-        after it computes the survey and the blocks after it again, with it."""
+        Get survey fetches it (an action of the user, never a run: core/online.py), its progress shown here, and moves
+        nothing. Then the row says the result was made without it and Use survey (one step of Undo) sends that result
+        and the ones after it to the trash, to be computed again at the next run, with the survey."""
         from .. import api
         from .services.survey import job
         j = job()
@@ -1192,6 +1193,9 @@ class Panel(QWidget):
         except Exception:  # noqa: BLE001 - a result that cannot be read: nothing to say
             st = None
         if not (st and st.get("missing")) and not j.running(p.pid):
+            return
+        if st and st.get("available") and not j.running(p.pid):
+            self._use_survey_row(p)
             return
         box = QVBoxLayout()
         box.setSpacing(4)
@@ -1204,7 +1208,7 @@ class Panel(QWidget):
         set_icon(get, "catalogue", 16)
         get.setToolTip(_("Fetches the professional H-alpha survey of this field once, kept on this computer, so that "
                          "the Gradient block keeps its samples off the faint nebulosity. Nothing is downloaded during a "
-                         "run: the next run computes the survey and the blocks after it again, with it."))
+                         "run, and no result changes: Use survey then computes the blocks after it again."))
         box.addWidget(text)
         box.addWidget(get, 0, Qt.AlignLeft)
         box.addWidget(bar)
@@ -1246,6 +1250,28 @@ class Panel(QWidget):
                     pass
         get.destroyed.connect(drop)
         show()
+
+    def _use_survey_row(self, p):
+        """The survey is on this computer, the result was made without it: Use survey (Undo brings the results back)."""
+        from .. import api
+        from .services.run import stage_title
+        try:
+            names = ", ".join(stage_title(self.s, x) for x in api.survey_stale(self.s.p, p.pid))
+        except Exception:  # noqa: BLE001 - the chain cannot be read: no names
+            names = ""
+        box = QVBoxLayout()
+        box.setSpacing(4)
+        box.addWidget(label(_("H-alpha survey: on this computer, this result was made without it"), "warn", wrap=True))
+        use = QPushButton(_("Use survey"))
+        set_icon(use, "catalogue", 16)
+        use.setToolTip(_("The results made without the survey are computed again at the next run, with it: {names}. "
+                         "They go to the trash, not deleted; Undo (Ctrl+Z) puts them back.").format(names=names))
+        box.addWidget(use, 0, Qt.AlignLeft)
+        self.hv.addLayout(box)
+
+        def go():
+            self.s.use_survey(p.pid)
+        use.clicked.connect(go)
 
     def cut_panel(self, node):
         """A block the user cut, or greyed by a cut: what it means, and the way back."""

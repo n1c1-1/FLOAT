@@ -15,6 +15,10 @@ from .i18n import _
 from .layout import pinch_factor, wheel_gesture
 
 
+#: The smallest crop, in image pixels, on each side: below it a box is no crop (an accidental sliver such as 4256 x 13 or
+#: 4 x 3 px). The drag stops there, as Lightroom's and Photoshop's crop does; a bare click makes no box.
+MIN_CROP = 16
+
 class StaticSource:
     """A fixed image (H x W x 3 uint8)."""
 
@@ -285,11 +289,12 @@ class Viewer(QWidget):
                 w = max(w, h * r)
             elif has_y:
                 w = h * r
+            w = max(w, MIN_CROP, MIN_CROP * r)             # the drag stops at the minimum, on both sides
             h = w / r
             f = min(1.0, maxw / max(w, 1e-6), maxh / max(h, 1e-6))
             w, h = w * f, h * f
         else:
-            w, h = min(w, maxw), min(h, maxh)
+            w, h = min(max(w, MIN_CROP), maxw), min(max(h, MIN_CROP), maxh)
         a, b = sorted((ax, ax + sx * w)) if has_x else (ax - w / 2, ax + w / 2)
         c, d = sorted((ay, ay + sy * h)) if has_y else (ay - h / 2, ay + h / 2)
         return a, c, b, d
@@ -497,8 +502,8 @@ class Viewer(QWidget):
         self._drag = None
         if d and d[0] == "crop":
             x0, y0, x1, y1 = self.crop_box
-            if x1 - x0 < 8 or y1 - y0 < 8:               # a click, not a box: as it was
-                self.crop_box = d[4]
+            if not self._crop_dragged(d) or x1 - x0 < MIN_CROP - 1e-6 or y1 - y0 < MIN_CROP - 1e-6:
+                self.crop_box = d[4]                     # a click, not a box (a drag never goes under the minimum)
             else:
                 self.cropChanged.emit()
         elif d and d[0] == "rect" and self._rect:
@@ -511,6 +516,13 @@ class Viewer(QWidget):
         elif d and d[0] == "heal":
             self.toolRelease.emit()
         self.update()
+
+    def _crop_dragged(self, d) -> bool:
+        """Whether the pointer went anywhere since the press (3 screen px): a click makes no box."""
+        if self._mouse is None:
+            return False
+        ix, iy = self.w_to_img(self._mouse.x(), self._mouse.y())
+        return float(np.hypot(ix - d[3][0], iy - d[3][1])) * self.scale >= 3.0
 
     def end_crop_drag(self):
         """The Crop tool left while its box is dragged (Escape): the release that follows changes nothing."""

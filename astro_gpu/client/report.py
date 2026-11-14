@@ -42,7 +42,7 @@ from .charts import LINES, RegistrationData, registration_data
 from .. import texts
 from ..core.params import ADVANCED
 from ..core.project2 import ACQUISITION
-from .i18n import _, language, number
+from .i18n import _, language, number, plural
 from .widgets import put_back, typed
 
 #: the sections that are blocks of the chain, in its order: (block key, title)
@@ -94,6 +94,8 @@ class NightFigure:
     idx: list
     figure: bytes
     card: bytes
+    head: str = ""                                       # the card's heading and its foot, to draw it again with more
+    foot: str = ""
 
 
 @dataclass
@@ -319,7 +321,7 @@ def _night(d: ReportData, idx: list, heading: str = "", foot: str = "") -> bytes
             fig.suptitle(heading, x=0.08, ha="left", fontsize=10)
         if foot:
             fig.text(0.08, 0.012, foot, fontsize=7.5, va="bottom")
-        fig.tight_layout(rect=(0, 0.09 if foot else 0, 1, 0.97 if heading else 1))
+        fig.tight_layout(rect=(0, (0.05 + 0.02 * (foot.count(chr(10)) + 1)) if foot else 0, 1, 0.97 if heading else 1))
         return _png(fig)
 
 
@@ -371,10 +373,26 @@ def draw_figures(d: ReportData, title: str = ""):
             foot = "     ".join(rows[:3]) + chr(10) + "     ".join(rows[3:])
             shown = name if len(d.sessions) > 1 else ""  # a project of one session: its name says nothing
             head = " · ".join(x for x in (_("Night card"), title, shown) if x)
-            d.nights.append(NightFigure(name, idx, _night(d, idx), _night(d, idx, head, foot)))
+            d.nights.append(NightFigure(name, idx, _night(d, idx), _night(d, idx, head, foot), head, foot))
         d.drift = _drift(d.reg)
     if d.spectral is not None:
         d.response = _response(d.spectral)
+
+
+def picture_lines(facts: dict | None) -> list[str]:
+    """What the picture is made of, from the facts the FITS export writes (``api.shot_facts``: the distinct frames of every
+    workflow it is made of): its frames and total exposure, then one line per session or workflow when there are
+    several. [] when the facts say nothing."""
+    if not facts or not facts.get("stackcnt"):
+        return []
+    parts = facts.get("parts") or []
+    colon = " : " if language() == "fr" else ": "
+    lines = [_("The picture") + colon + plural(int(facts["stackcnt"]), "{n} frame", "{n} frames") + " · "
+             + exact_time(float(facts.get("exposure_s") or 0.0))]
+    if len(parts) > 1:
+        lines += [f"{x['name']}{colon}" + plural(int(x["frames"]), "{n} frame", "{n} frames") + " · "
+                  + exact_time(float(x["seconds"])) for x in parts]
+    return lines
 
 
 # ------------------------------------------------------------ the shooting details
@@ -705,6 +723,7 @@ class ReportPage(QWidget):
     def load(self):
         p = self.path()
         if p is None:
+            self._token = None
             self.data = None
             self.build()
             return
@@ -712,12 +731,14 @@ class ReportPage(QWidget):
 
     def _ready(self, name, token, result):
         if name == "report" and token == self._token:
+            self._token = None
             self.data = result
             self.build()
             self.loaded.emit()
 
     def _failed(self, name, token, why):
         if name == "report" and token == self._token:
+            self._token = None
             self.data = ReportData()
             self.build()
             self.loaded.emit()
@@ -1052,12 +1073,23 @@ class ReportPage(QWidget):
     def card_ready(self) -> bool:
         return self.data is not None and bool(self.data.nights)
 
-    def save_cards(self, folder, name: str) -> list[Path]:
-        """One PNG per session, next to the exported image."""
+    def card_loading(self) -> bool:
+        """The registration is being read: the card is not unavailable, it is not there yet."""
+        return self._token is not None
+
+    def save_cards(self, folder, name: str, facts: dict | None = None) -> list[Path]:
+        """One PNG per session, next to the exported image. ``facts`` (the picture's, as the FITS export has them): the
+        card then also says what the whole picture is made of (frames and exposure summed, each session), not only the
+        night it plots."""
         out = []
         many = len(self.data.nights) > 1
+        extra = picture_lines(facts)
         for i, night in enumerate(self.data.nights, 1):
             f = Path(folder) / (f"{name}_night_card_{i}.png" if many else f"{name}_night_card.png")
-            f.write_bytes(night.card)
+            if extra:
+                foot = (night.foot + chr(10) if night.foot else "") + chr(10).join(extra)
+                f.write_bytes(_night(self.data, night.idx, night.head, foot))
+            else:
+                f.write_bytes(night.card)
             out.append(f)
         return out

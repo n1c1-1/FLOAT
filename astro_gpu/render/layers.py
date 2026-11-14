@@ -286,6 +286,23 @@ def _icc() -> bytes:
     return ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
 
 
+def _png_with_icc(path, icc: bytes) -> None:
+    """Embed the profile in a written PNG as an iCCP chunk (right after IHDR; OpenCV writes none)."""
+    import struct
+    import zlib
+    data = Path(path).read_bytes()
+    body = b"sRGB" + bytes(2) + zlib.compress(icc)       # the name, its end, the compression method, the profile
+    chunk = struct.pack(">I", len(body)) + b"iCCP" + body + struct.pack(">I", zlib.crc32(b"iCCP" + body) & 0xFFFFFFFF)
+    cut = 8 + 8 + 13 + 4                                 # signature, IHDR's length and type, its data, its CRC
+    Path(path).write_bytes(data[:cut] + chunk + data[cut:])
+
+
+def _write_png16(path, hwc, icc: bytes) -> None:
+    import cv2
+    cv2.imwrite(str(path), (hwc * 65535 + 0.5).astype(np.uint16)[:, :, ::-1])
+    _png_with_icc(path, icc)
+
+
 def _pixel_map(H: int, W: int, origin, k: int, flip: bool, zoom: float) -> np.ndarray:
     """3 x 3 matrix taking an exported pixel (x, y, 1), 0-based, to the grid pixel it shows."""
     T = np.array([[1.0, 0, origin[0]], [0, 1.0, origin[1]], [0, 0, 1]])
@@ -406,7 +423,7 @@ def export_rgb(rgb: np.ndarray, out_dir: str | Path, options: ExportOptions | di
             _safely(p, lambda t: tifffile.imwrite(t, hwc, photometric="rgb", iccprofile=icc, compression="zlib"))
         elif fmt == "png16":
             p = out_dir / f"{o.name}.png"
-            _safely(p, lambda t: cv2.imwrite(str(t), (hwc * 65535 + 0.5).astype(np.uint16)[:, :, ::-1]))
+            _safely(p, lambda t: _write_png16(t, hwc, icc))
         elif fmt == "jpeg":
             p = out_dir / f"{o.name}.jpg"
             _safely(p, lambda t: Image.fromarray((hwc * 255 + 0.5).astype(np.uint8)).save(t, quality=o.jpeg_quality,
