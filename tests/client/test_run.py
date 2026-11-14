@@ -100,6 +100,8 @@ class ToyStackParams(StageParams):
     scale: float = P(1.5, label="Scale", help="", ge=1.0, le=3.0)
     workers: int = P(4, label="workers", help="", ge=1)
     exclude: list[str] = P([], label="exclude", help="", level="internal")
+    # the engine's frame selection ("all": a stack without a Selection block, graphcore.compile)
+    selection: str = P("min_weight", label="selection", help="")
 
 
 class ToyStack(Stage):
@@ -1747,9 +1749,6 @@ B3 = Path(os.environ.get("TEMP", ".")) / "b3_shots"
 
 
 @real
-@pytest.mark.xfail(strict=True, reason="Review pause from the graph page's menu on Calibration keeps nothing (DEFECTS "
-                   "s6a-5), and once a workflow holds its own list of pauses, Review pause on another of its blocks "
-                   "is not kept either nor shown as Remove pause in the menu")
 def test_real_pause_after_calibration_runs_for_real_continues_and_the_shots_en_fr(env, monkeypatch):
     """The real client (the main window, offscreen) on the definition of the test project, in a scratch folder
     (the copy itself is only read: its results are other tests'), on the CPU: Pause here for review on Calibration and
