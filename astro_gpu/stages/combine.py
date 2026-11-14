@@ -281,6 +281,12 @@ def chroma_sigma(noise: dict[str, float], noise_l: float) -> float:
     return float(s) if s >= 0.5 else 0.0
 
 
+def _lum(r: np.ndarray) -> np.ndarray:
+    """The luminance of colour planes (3, ...), summed pixel by pixel in a fixed order: the same value whatever the shape
+    of the array (a matrix product rounds differently on the whole image and on a subset of its pixels)."""
+    return LUM[0] * r[0] + LUM[1] * r[1] + LUM[2] * r[2]
+
+
 def gamut_gain(ratio: np.ndarray, L: np.ndarray, gain: float) -> np.ndarray:
     """The colour ratios (3, H, W) with their departure from grey scaled by ``gain`` (the luminance kept), the scale
     lowered, pixel by pixel and down to 1 at the least, where the brightest channel would be shown above
@@ -292,7 +298,7 @@ def gamut_gain(ratio: np.ndarray, L: np.ndarray, gain: float) -> np.ndarray:
     median shown at 0.25, white at the 99.99th percentile of the brightest channel at gain 1."""
     def scaled(g):
         r = np.maximum(1 + g * (ratio - 1), 0)
-        return r / np.maximum(np.tensordot(LUM, r, 1), 1e-6)[None]
+        return r / np.maximum(_lum(r), 1e-6)[None]
     full = scaled(gain)
     lit = L > 0
     if lit.sum() < 1000:
@@ -316,12 +322,12 @@ def gamut_gain(ratio: np.ndarray, L: np.ndarray, gain: float) -> np.ndarray:
     for _ in range(8):
         mid = 0.5 * (lo + hi)
         r = np.maximum(1 + mid[None] * (rs - 1), 0)
-        r = r / np.maximum(np.tensordot(LUM, r, 1), 1e-6)[None]
+        r = r / np.maximum(_lum(r), 1e-6)[None]
         ok = r.max(0) * Ls <= cs
         lo = np.where(ok, mid, lo)
         hi = np.where(ok, hi, mid)
     r = np.maximum(1 + lo[None] * (rs - 1), 0)
-    full[:, over] = r / np.maximum(np.tensordot(LUM, r, 1), 1e-6)[None]
+    full[:, over] = r / np.maximum(_lum(r), 1e-6)[None]
     return full
 
 
@@ -563,7 +569,7 @@ class CombineSHO(NarrowbandCombination):
     description = ("Combines the S II, H-alpha and O III filters into one colour image: each filter a hue, the lightness "
                    "from the filters weighted by their noise, aligned through their plate solutions.")
     Params = SHOParams
-    version = "6"
+    version = "7"
 
 
 class HOParams(NarrowbandParams):
@@ -581,7 +587,7 @@ class CombineHO(NarrowbandCombination):
     description = ("Combines the H-alpha and O III filters (two filters, or a dual-band image's channels) into one "
                    "colour image: each filter a hue, the lightness from the filters weighted by their noise.")
     Params = HOParams
-    version = "6"
+    version = "7"
 
 
 class CombineRGB(Combination):
