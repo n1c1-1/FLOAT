@@ -31,6 +31,10 @@ everything below is a layer of its own. In the list a layer's children sit just 
 shows each pixel layer with its children indented under it (``rows``), and reading the panel from the bottom up is the
 order of the composition: a pixel layer, then its children from the lowest to the highest, then the next row up.
 
+A Combine layers layer may also have ``side_masks = {"stars": mask, "starless": mask}`` (either key absent: no mask on
+that side): each is applied to its side's image, after that side's filters and before the two are put together, so
+the stars (or the background) are absent where it is black. An absent field is no side mask (older projects).
+
 Every layer may have a ``mask = {parts, feather, density, invert}`` of parts (H-alpha, luminance, color, gradient,
 brush), each added, subtracted or intersected. Pixel sizes are full-resolution pixels: at a reduced resolution they are
 divided by the reduction factor, so the draft looks like the full image.
@@ -92,6 +96,9 @@ def with_new_ids(layers: list[dict]) -> list[dict]:
             lay["target"] = ids[lay["target"]]
         for part in (lay.get("mask") or {}).get("parts", []):
             part["id"] = new_id()
+        for m in (lay.get("side_masks") or {}).values():
+            for part in m.get("parts", []):
+                part["id"] = new_id()
     return out
 
 
@@ -101,8 +108,9 @@ def reseed_ids(layers: list[dict]) -> None:
     top = 0
     for lay in layers:
         top = max(top, int(lay.get("id", 0)))
-        for p in (lay.get("mask") or {}).get("parts", []):
-            top = max(top, int(p.get("id", 0)))
+        for m in [lay.get("mask") or {}, *(lay.get("side_masks") or {}).values()]:
+            for p in m.get("parts", []):
+                top = max(top, int(p.get("id", 0)))
     _ids = itertools.count(max(top, next(_ids) - 1) + 1)
 
 
@@ -695,7 +703,41 @@ def sub_row(lay: dict, sub: str) -> dict:
     """The row of one of a Stars and background layer's two images in the panel (not a layer of the list: its id is
     its layer's)."""
     return {"id": lay["id"], "kind": "sub", "sub": sub, "target": lay["id"], "name": SUB_NAMES[sub],
-            "visible": (lay.get("shown") or {}).get(sub, True), "mode": "Normal", "opacity": 100.0, "mask": None}
+            "visible": (lay.get("shown") or {}).get(sub, True), "mode": "Normal", "opacity": 100.0,
+            "mask": (lay.get("side_masks") or {}).get(sub), "mkey": (lay["id"], sub)}
+
+
+def mask_selection(what: str) -> bool:
+    """Whether a selection kind of the panel is a mask's: "mask" (the layer's own) or "mask_stars" / "mask_starless"."""
+    return what == "mask" or what.startswith("mask_")
+
+
+def selection_side(what: str) -> str | None:
+    """The side of a Combine layers layer a selection kind is about ("stars", "starless", or their masks), else None."""
+    side = what[5:] if what.startswith("mask_") else what
+    return side if side in SUBS else None
+
+
+class SideLayer(dict):
+    """What the mask tools act on when a side of a Combine layers layer is chosen: a layer-like view whose ``mask`` is
+    that side's, written back to its layer (``side_masks``; the key is dropped with the last mask, so an old file's
+    layer stays as it was)."""
+
+    def __init__(self, lay: dict, side: str):
+        super().__init__(id=lay["id"], kind="sub", sub=side, name=SUB_NAMES[side], visible=True, opacity=100.0,
+                         mode="Normal", mask=(lay.get("side_masks") or {}).get(side))
+        self.lay, self.side = lay, side
+
+    def __setitem__(self, key, value):
+        super().__setitem__(key, value)
+        if key == "mask":
+            sides = self.lay.setdefault("side_masks", {})
+            if value is None:
+                sides.pop(self.side, None)
+            else:
+                sides[self.side] = value
+            if not sides:
+                self.lay.pop("side_masks", None)
 
 
 def normalize(layers: list[dict]) -> list[dict]:
@@ -778,6 +820,10 @@ def move(layers: list[dict], lid: int, parent: int | None, index: int) -> list[d
     return out
 
 
+def copy_mask(m: dict) -> dict:
+    return dict(m, parts=[dict(p, strokes=list(p["strokes"])) if "strokes" in p else dict(p) for p in m["parts"]])
+
+
 def snapshot(layers: list[dict]) -> list[dict]:
     """A copy of the layers, for Undo and for a render request: nothing in it is shared with the layers being edited."""
     out = []
@@ -791,8 +837,9 @@ def snapshot(layers: list[dict]) -> list[dict]:
             d["params"] = {k: copy.deepcopy(v) if isinstance(v, (dict, list)) else v for k, v in d["params"].items()}
         m = lay.get("mask")
         if m is not None:
-            d["mask"] = dict(m, parts=[dict(p, strokes=list(p["strokes"])) if "strokes" in p else dict(p)
-                                       for p in m["parts"]])
+            d["mask"] = copy_mask(m)
+        if lay.get("side_masks"):
+            d["side_masks"] = {k: copy_mask(v) for k, v in lay["side_masks"].items()}
         out.append(d)
     return out
 
@@ -865,6 +912,10 @@ def load_layers(raw, alive: set[int]) -> list[dict]:
                 lay["shown"] = {k: bool(shown.get(k, True)) for k in SUBS}
                 if "real" in shown:                              # the real stars' eye, in a Stars group (#93)
                     lay["shown"]["real"] = bool(shown["real"])
+                sides = d.get("side_masks") if isinstance(d.get("side_masks"), dict) else {}
+                sides = {k: m for k in SUBS if (m := _clean_mask(sides.get(k))) is not None}
+                if sides:                                        # written only when there is one (older files)
+                    lay["side_masks"] = sides
             lay["sliders"] = {k: _num(v, 2.0, 0, 4) for k, v in (d.get("sliders") or {}).items()}
         elif d.get("kind") == "image" and isinstance(d.get("key"), str) and d["key"]:
             lay = new_image_layer(d["key"], str(d.get("name") or "?"), bool(d.get("visible", True)))
@@ -1030,8 +1081,8 @@ class Composite:
     rgb: np.ndarray                                           # (h, w, 3) float32 in [0, 1]: the box at the level
     level: int
     box: tuple[int, int, int, int]
-    masks: dict[int, np.ndarray] = field(default_factory=dict)          # layer id -> (h, w) float32, those wanted
-    mask_thumbs: dict[int, np.ndarray] = field(default_factory=dict)    # layer id -> (36, 54) uint8
+    masks: dict = field(default_factory=dict)          # layer id -> (h, w) float32, those wanted
+    mask_thumbs: dict = field(default_factory=dict)    # layer id -> (36, 54) uint8
     notes: set[str] = field(default_factory=set)
     layer_ms: float = 0.0                                     # time spent in the engine's renderings
     drawn: int = 0                                            # how many workflow layers were rendered (not cached)
@@ -1309,13 +1360,15 @@ class Composer:
             if check():
                 raise Superseded()
 
-        def keep_mask(lay, m):
+        def keep_mask(lay, m, key=None):
+            """``key``: (layer id, side) for a side mask of a Combine layers layer, else the layer's id."""
             if m is None:
                 return
-            if lay["id"] in want:
-                out.masks[lay["id"]] = m[y0 - ay0:y0 - ay0 + (y1 - y0), x0 - ax0:x0 - ax0 + (x1 - x0)]
+            key = lay["id"] if key is None else key
+            if key in want:
+                out.masks[key] = m[y0 - ay0:y0 - ay0 + (y1 - y0), x0 - ax0:x0 - ax0 + (x1 - x0)]
             if thumbs:
-                out.mask_thumbs[lay["id"]] = thumb_of(m)
+                out.mask_thumbs[key] = thumb_of(m)
 
         stack = list(reversed(layers))                                    # bottom first
         under = False                                                     # an image layer drawn below the next one
@@ -1399,8 +1452,19 @@ class Composer:
                     continue
                 x, fm, sig = self._step(fl, x, sig, where, want, thumbs, level, abox, canvas, ctx)
                 keep_mask(fl, fm)
+            side = (lay.get("side_masks") or {}).get(sub)
+            if side is not None:                                          # that side's mask, before the blend
+                m = self.mask({"mask": side}, level, abox, x, canvas, ctx)
+                keep_mask(lay, m, (lay["id"], sub))
+                x = x * m[..., None]
             got.append(x)
             sigs.append(sig)
+        for sub in SUBS:                                                  # a hidden side's mask is still shown
+            side = (lay.get("side_masks") or {}).get(sub)
+            if side is not None and sub not in self._shown(lay) and ((lay["id"], sub) in want or thumbs):
+                hw = (abox[3] - abox[1], abox[2] - abox[0])
+                keep_mask(lay, self.mask({"mask": side}, level, abox, np.zeros((*hw, 3), np.float32), canvas, ctx),
+                          (lay["id"], sub))
         return self._together(lay, got, (abox[3] - abox[1], abox[2] - abox[0])), _sig(*sigs)
 
     def _step(self, fl, under, sig, where, want, thumbs, level, abox, canvas, ctx):

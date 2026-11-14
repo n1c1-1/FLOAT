@@ -510,6 +510,8 @@ def history_lines(history: dict) -> list[str]:
         state = "" if lay.get("visible", True) else " (hidden)"
         blend = f"{lay.get('mode', 'Normal')} {float(lay.get('opacity', 100)):g}%"
         mask = ", masked" if lay.get("mask") else ""
+        if lay.get("side_masks"):
+            mask += ", side masks: " + ", ".join(sorted(lay["side_masks"]))
         if lay.get("kind") == "filter":
             lines.append(f"filter on everything below: {lay.get('name')}{state}, {blend}{mask}; {fmt(lay.get('params'))}")
             continue

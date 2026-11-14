@@ -90,6 +90,9 @@ from .postengine import (
     PART_SETTINGS,
     SUB_NAMES,
     SUB_ROWS,
+    SideLayer,
+    mask_selection,
+    selection_side,
     SUBS,
     THUMB,
     children,
@@ -636,7 +639,8 @@ class LayerRow(QFrame):
             self._dragging = False
             self.panel.drag_end(self, e.globalPosition().toPoint())
         else:                                            # a click: select (after the event, the rows are rebuilt)
-            what = self.lay["sub"] if self.lay["kind"] == "sub" else self._target(press)
+            what = self._target(press) if self.lay["kind"] != "sub" else \
+                "mask_" + self.lay["sub"] if self.m is not None and self.m.geometry().contains(press) else self.lay["sub"]
             QTimer.singleShot(0, lambda: self.panel.select(self.lay["id"], what))
 
     def mouseDoubleClickEvent(self, e):
@@ -1511,8 +1515,20 @@ class PostView(QWidget):
         self._final_t.start(0 if final_only else 220)
 
     def _selected_wants(self):
-        want = (self.sel[0],) if self.sel else ()
-        return want, bool(self.sel and self.sel[1] == "mask")
+        want = (self._mask_key(),) if self.sel else ()
+        return want, bool(self.sel and mask_selection(self.sel[1]))
+
+    def _mask_key(self):
+        """What the render calls the selected mask: its layer's id, or (id, side) for a side mask."""
+        if not self.sel:
+            return None
+        return (self.sel[0], self.sel[1][5:]) if self.sel[1].startswith("mask_") else self.sel[0]
+
+    def mask_owner(self):
+        """What the mask tools act on: the selected layer, or a view of the chosen side of a Combine layers layer."""
+        lay = self.layer(self.sel[0]) if self.sel else None
+        side = selection_side(self.sel[1]) if lay is not None else None
+        return lay if side is None or not is_group(lay) else SideLayer(lay, side)
 
     def _hist_ids(self) -> tuple:
         """The selected filter, when its panel shows the histogram of its input (Curves, the stretches)."""
@@ -1693,10 +1709,10 @@ class PostView(QWidget):
                 self._take_mask_thumbs(res)
             if res.kind == "refine" and res.layer_thumbs:
                 self._take_layer_thumbs(res)
-            sel = self.sel[0] if self.sel else None
+            sel = self._mask_key()
             m = res.masks.get(sel) if sel is not None else None
             self.mask1 = None if m is None else (_upsample(m, 2 ** (res.level - 1)) if res.level > 1 else m)
-            self._set_overlay(res.overlay if self.sel and self.sel[1] == "mask" else None)
+            self._set_overlay(res.overlay if self.sel and mask_selection(self.sel[1]) else None)
             self.src.version += 1
             if res.kind == "half":
                 self._take_mask_thumbs(res)
@@ -1895,7 +1911,7 @@ class PostView(QWidget):
 
     # ------------------------------------------------------------ the red overlay of the mask being edited
     def _overlay(self, p: QPainter, v: Viewer):
-        if not self.sel or self.sel[1] != "mask" or self._overlay_img is None or self.show_mask or \
+        if not self.sel or not mask_selection(self.sel[1]) or self._overlay_img is None or self.show_mask or \
                 self.b_cmp.isChecked() or self.src.canvas is None:
             return
         W, H = self.src.size()
@@ -2000,6 +2016,9 @@ class PostView(QWidget):
         self._show_crop(getattr(self.layers, "crop", self.crop))
         if self.sel and not self.layer(self.sel[0]):
             self.sel = (self.layers[-1]["id"], "layer") if self.layers else None
+        elif self.sel and mask_selection(self.sel[1]) and (own := self.mask_owner()) is not None \
+                and own["mask"] is None:                    # the mask undone: its layer (or side) stays chosen
+            self.sel = (self.sel[0], selection_side(self.sel[1]) or "layer")
         self.rebuild()
         self.request(final_only=True)
         self._save()
@@ -2028,16 +2047,17 @@ class PostView(QWidget):
     def mask_thumb(self, lay):
         if lay["mask"] is None:
             return None
-        pm = self._mthumbs.get(lay["id"])
+        pm = self._mthumbs.get(lay.get("mkey", lay["id"]))
         if pm is None:
             pm = pix(np.full((TH, TW), 255, np.uint8))             # an empty mask shows the layer everywhere
-            self._mthumbs[lay["id"]] = pm
+            self._mthumbs[lay.get("mkey", lay["id"])] = pm
         return pm
 
     def _update_mask_thumb(self):
         for row in self.rows:
-            if row.m is not None and row.lay["id"] in self._mthumbs:
-                row.m.setPixmap(small(self._mthumbs[row.lay["id"]]))
+            key = row.lay.get("mkey", row.lay["id"])
+            if row.m is not None and key in self._mthumbs:
+                row.m.setPixmap(small(self._mthumbs[key]))
 
     def _update_layer_thumbs(self):
         for row in self.rows:
@@ -2116,7 +2136,8 @@ class PostView(QWidget):
                 sl = sl and self.sel[1] == lay.get("sub", "layer")
                 if lay["kind"] == "sub":
                     n = sum(1 for f in children(self.layers, lay["id"]) if f.get("sub") == lay["sub"])
-                    row = LayerRow(self, lay, self.thumb(lay), None, sl, False, depth, n,
+                    row = LayerRow(self, lay, self.thumb(lay), self.mask_thumb(lay), sl and self.sel[1] == lay["sub"],
+                                   self.sel == (lay["id"], "mask_" + lay["sub"]), depth, n,
                                    (lay["id"], lay["sub"]) in self._collapsed)
                 else:
                     row = LayerRow(self, lay, self.thumb(lay), None, sl, False, depth)
@@ -2149,10 +2170,15 @@ class PostView(QWidget):
         self.b_del.setToolTip(_("Delete the selected layer") if self.b_del.isEnabled() else
                               _("Choose a layer first") if lay is None else
                               _("The last image layer stays: Post needs an image (hide it with its eye)"))
-        self.b_maskadd.setEnabled(lay is not None)
-        masked = lay is not None and lay["mask"] is not None      # the accent: the selected layer has its mask
-        icon_only(self.b_maskadd, "mask", _("Edit the mask of the selected layer") if masked else
-                  _("Add a mask to the selected layer"), 16, "selected" if masked else "normal", box=28)
+        own = self.mask_owner()
+        real = lay is not None and self.sel[1] == "real"           # the real stars have no mask of their own
+        self.b_maskadd.setEnabled(own is not None and not real)
+        masked = own is not None and own["mask"] is not None      # the accent: the selected layer has its mask
+        side = own is not lay and own is not None
+        icon_only(self.b_maskadd, "mask", (_("Edit the mask of the selected image") if side else
+                                           _("Edit the mask of the selected layer")) if masked else
+                  _("Add a mask to the selected image") if side else _("Add a mask to the selected layer"),
+                  16, "selected" if masked else "normal", box=28)
         self._undo_buttons()
         self.build_filter_menu()
         if props:
@@ -2164,8 +2190,8 @@ class PostView(QWidget):
         if self.sel == (lid, what):
             return
         self.sel = (lid, what)
-        lay = self.layer(lid)
-        if what == "mask" and lay["mask"] is not None:
+        lay = self.mask_owner() if mask_selection(what) else None
+        if lay is not None and lay["mask"] is not None:
             brush = next((p for p in lay["mask"]["parts"] if p["src"] == "brush"), None)
             self.part_sel = brush["id"] if brush else None
         else:
@@ -2670,7 +2696,7 @@ class PostView(QWidget):
         real = cur is not None and is_pixel(cur) and self.sel[1] == "real"
         if cur is not None:
             target = cur["id"] if is_pixel(cur) else cur.get("target")
-            sub = "stars" if real else self.sel[1] if self.sel[1] in SUBS else None if is_pixel(cur) else cur.get("sub")
+            sub = "stars" if real else selection_side(self.sel[1]) or (None if is_pixel(cur) else cur.get("sub"))
         self.push()
         fl = new_filter_layer(key, target, sub)
         same = sum(1 for lay in self.layers if lay["kind"] == "filter" and lay.get("filter") == key)
@@ -2709,8 +2735,8 @@ class PostView(QWidget):
     def _copy(lay):
         d = snapshot([lay])[0]
         d["id"] = new_id()
-        if d["mask"]:
-            for part in d["mask"]["parts"]:
+        for m in [d["mask"] or {}, *(d.get("side_masks") or {}).values()]:
+            for part in m.get("parts", []):
                 part["id"] = new_id()
         return d
 
@@ -2760,26 +2786,31 @@ class PostView(QWidget):
         self.request(final_only=True)
 
     def mask_button(self):
-        lay = self.layer(self.sel[0]) if self.sel else None
-        if lay is None:
+        lay = self.mask_owner()
+        if lay is None or self.sel[1] == "real":
             return
         if lay["mask"] is None:
             self.add_mask(lay)
         else:
-            self.select(lay["id"], "mask")
+            self.select(lay["id"], self._mask_kind(lay))
+
+    @staticmethod
+    def _mask_kind(lay):
+        """The selection of a mask: the layer's own, or one side's of a Combine layers layer."""
+        return "mask_" + lay["sub"] if isinstance(lay, SideLayer) else "mask"
 
     def add_mask(self, lay):
         self.push()
         lay["mask"] = new_mask()
-        self._mthumbs.pop(lay["id"], None)
+        self._mthumbs.pop((lay["id"], lay["sub"]) if isinstance(lay, SideLayer) else lay["id"], None)
         self.sel = None
-        self.select(lay["id"], "mask")
+        self.select(lay["id"], self._mask_kind(lay))
 
     def remove_mask(self, lay):
         self.push()
         lay["mask"] = None
-        self._mthumbs.pop(lay["id"], None)
-        self.sel = (lay["id"], "layer")
+        self._mthumbs.pop((lay["id"], lay["sub"]) if isinstance(lay, SideLayer) else lay["id"], None)
+        self.sel = (lay["id"], lay["sub"] if isinstance(lay, SideLayer) else "layer")
         self.rebuild()
         self.request(final_only=True)
 
@@ -2798,8 +2829,8 @@ class PostView(QWidget):
         if lay is None:
             self.pbox.addStretch(1)
             return
-        if self.sel[1] == "mask" and lay["mask"] is not None:
-            self.mask_props(lay)
+        if mask_selection(self.sel[1]) and (own := self.mask_owner()) is not None and own["mask"] is not None:
+            self.mask_props(own)
         elif self.sel[1] in SUB_ROWS:
             self.pbox.addWidget(label(_(SUB_NAMES[self.sel[1]]), "h2"))
             if self.sel[1] == "real":                    # the bottom of the Stars group (#93)
@@ -3343,7 +3374,7 @@ class PostView(QWidget):
         self.build_props()
 
     def toggle_paint(self):
-        lay = self.layer(self.sel[0]) if self.sel else None
+        lay = self.mask_owner()
         if not lay or not lay["mask"]:
             return
         part = next((p for p in lay["mask"]["parts"] if p["id"] == self.part_sel and p["src"] == "brush"), None)
@@ -3356,7 +3387,7 @@ class PostView(QWidget):
             self.viewer.brush_r = self.heal_size / 2
             self.build_props()
             return
-        lay = self.layer(self.sel[0]) if self.sel else None
+        lay = self.mask_owner()
         part = next((p for p in (lay["mask"]["parts"] if lay and lay["mask"] else [])
                      if p["id"] == self.part_sel and p["src"] == "brush"), None)
         if part:
@@ -3387,7 +3418,7 @@ class PostView(QWidget):
         self.request(final_only=True)
 
     def _stroke(self, x, y, first):
-        lay = self.layer(self.sel[0]) if self.sel else None
+        lay = self.mask_owner()
         part = next((p for p in (lay["mask"]["parts"] if lay and lay["mask"] else []) if p["id"] == self.part_sel),
                     None)
         if part is None or part["src"] != "brush":
@@ -3575,7 +3606,7 @@ class PostView(QWidget):
 
     def _mask_button(self):
         """Show mask: greyed, the reason on hover, when the selected layer has none (issue #71)."""
-        lay = self.layer(self.sel[0]) if self.sel else None
+        lay = self.mask_owner()
         has = lay is not None and lay.get("mask") is not None
         self.b_mask.setEnabled(has)
         self.b_mask.setToolTip(_("Mask of the selected layer, in gray (M)") if has else
@@ -3595,7 +3626,7 @@ class PostView(QWidget):
         elif self.viewer.mode == "heal":
             t = _("Spot healing: click or paint over a defect, healed when released · [ ] size · Alt+click: the "
                   "source by hand · Ctrl+Z: undo · middle button: move the image")
-        elif self.sel and self.sel[1] == "mask":
+        elif self.sel and mask_selection(self.sel[1]):
             t = _("Red: where the layer shows · M: mask in gray")
         elif self.b_cmp.isChecked():
             t = _("Drag the divider · Before: the bottom layer, suggested settings")
