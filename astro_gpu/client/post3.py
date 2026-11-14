@@ -1828,6 +1828,8 @@ class PostView(QWidget):
 
         from .. import api
         from ..core.workflow import COMBINE
+        if not hasattr(self.s, "all_stages"):
+            return None
         st = next((i for s in self.s.all_stages(p) if s == "align_on" or s in COMBINE
                    for i in [self.s.state_info(p, s)] if i is not None), None)
         if st is None or st.state not in ("done", "stale"):
