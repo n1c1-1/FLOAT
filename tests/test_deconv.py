@@ -210,3 +210,15 @@ def test_cpu_window_filters_equal_the_torch_ones():
     out = lib.restore_saturated(img[None].repeat(2, 1, 1), K, 5, 0.002, 0.01, 1.0, damping=3.0, counts=1e4)
     assert torch.isfinite(out).all() and out.shape == (2, 70, 90)
     assert float(out[0, 35, 45]) > float(img[35, 45])          # the peak sharpened
+
+
+def test_the_neural_network_is_read_from_the_shipped_path_and_its_absence_greys_the_method(monkeypatch, tmp_path):
+    from astro_gpu import api
+    from astro_gpu.stages import deconv
+    assert deconv.BETA_WEIGHTS.parts[-3:] == ("resources", "deconv", "neural.pt")
+    assert not deconv.BETA_WEIGHTS.is_absolute() or "float_train" not in str(deconv.BETA_WEIGHTS)
+    neural = lambda: next(m for m in api.methods("deconvolution") if m.key == "neural")
+    monkeypatch.setattr(deconv, "BETA_WEIGHTS", tmp_path / "neural.pt")
+    assert neural().new and "missing" in neural().what
+    (tmp_path / "neural.pt").write_bytes(b"x")
+    assert not neural().new

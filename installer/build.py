@@ -54,6 +54,7 @@ PLATFORM = "x86_64-pc-windows-msvc"
 BUILDS = {"cu128": "cu128", "cpu": "cpu"}
 OUT_DEFAULT = Path("F:/astro_essais/A_REGARDER/installeur")
 STAR_MODEL = Path("astro_gpu/resources/stars/starless_nafnet.pt")
+DECONV_MODEL = Path("astro_gpu/resources/deconv/neural.pt")      # the Neural deconvolution's network (beta), not in git either
 VC_RUNTIME = ("msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll", "msvcp140_codecvt_ids.dll", "vcruntime140.dll",
               "vcruntime140_1.dll", "vcomp140.dll", "concrt140.dll")
 ASTERION_CACHE = Path(os.environ.get("FLOAT_ASTERION_CACHE") or REPO / "build" / "asterion-cache")
@@ -212,19 +213,19 @@ def check_lock() -> None:
             raise SystemExit(f"lock file, build {build}: missing {missing}; run: python installer/build.py lock")
 
 
-def find_star_model() -> Path:
-    """The Stars network: not in git, it sits in the main checkout (the first worktree listed)."""
-    local = REPO / STAR_MODEL
+def find_star_model(model: Path = STAR_MODEL) -> Path:
+    """A network that is not in git (Stars, Neural deconvolution): it sits in the main checkout (the first worktree listed)."""
+    local = REPO / model
     if local.is_file():
         return local
     out = subprocess.run(["git", "worktree", "list", "--porcelain"], capture_output=True, text=True, cwd=REPO,
                          check=True).stdout
     for line in out.splitlines():
         if line.startswith("worktree "):
-            cand = Path(line[len("worktree "):]) / STAR_MODEL
+            cand = Path(line[len("worktree "):]) / model
             if cand.is_file():
                 return cand
-    raise SystemExit(f"the Stars network is missing: {STAR_MODEL}")
+    raise SystemExit(f"the network is missing: {model}")
 
 
 def sha256_file(path: Path) -> str:
@@ -401,6 +402,10 @@ def stage(stage_dir: Path, lock: dict, cache: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(star, dest)
     print("star model:", star, hashlib.sha256(star.read_bytes()).hexdigest()[:10])
+    dnet = find_star_model(DECONV_MODEL)
+    (app / DECONV_MODEL).parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(dnet, app / DECONV_MODEL)
+    print("deconvolution model:", dnet, hashlib.sha256(dnet.read_bytes()).hexdigest()[:10])
     # the setup scripts, the lock, the root certificates
     setup = stage_dir / "setup"
     setup.mkdir()

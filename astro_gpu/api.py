@@ -1682,7 +1682,15 @@ def methods(block: str) -> list[MethodInfo]:
     engine yet; ``key`` is the workflow option value that selects it; ``stage`` the stage that implements it."""
     if block not in _METHODS:
         raise ValueError(f"block {block!r} has no methods (known: {list(_METHODS)})")
-    return copy.deepcopy(_METHODS[block])
+    out = copy.deepcopy(_METHODS[block])
+    if block == "deconvolution":                   # the beta network is a file shipped with the application: greyed without it
+        from .stages.deconv import BETA_WEIGHTS
+        if not BETA_WEIGHTS.is_file():
+            for m in out:
+                if m.key == "neural":
+                    m.new = True
+                    m.what += " Its network file is missing from this installation."
+    return out
 
 
 def chain(p: Project2, wf: int | Workflow) -> list[str]:
