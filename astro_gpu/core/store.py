@@ -603,7 +603,10 @@ class Keys:
         c = next((x for x in ch if base(x) in COMBINE), None)
         if c is not None and stage in ch and ch.index(stage) > ch.index(c):
             # a block that reads the plate solution after a combination: it needs the one the combination outputs
-            lack = [d for d in self.rules.chains.stages[base(stage)].deps if d in wfl.ASTROMETRY_STAGES
+            need = self.rules.chains.stages[base(stage)].deps
+            if base(stage) in wfl.INSTEAD and any(d in wfl.INSTEAD[base(stage)] and d not in ch for d in need):
+                need = (*need, "astrometry")           # the stars of a combination: redrawn with its plate solution
+            lack = [d for d in need if d in wfl.ASTROMETRY_STAGES
                     and d not in self.rules.chains.optional.get(base(stage), ()) and d not in self.solution(w)]
             if lack:
                 from ..stages.combine import NO_PLATE_SOLUTION

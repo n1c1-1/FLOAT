@@ -619,5 +619,6 @@
  "Per frame": "Pose par pose",
  "Persistence needs 15 frames or more. Per frame works on any session; it needs a Bayer sensor.": "La persistance demande 15 images ou plus. Pose par pose marche sur toute séance ; elle demande un capteur Bayer.",
  "Focal length ignored": "Focale ignorée",
- "Whether the field was not found at the scale of the entered focal length and was searched again without it.": "Si le champ n'a pas été trouvé à l'échelle de la focale saisie et a été cherché de nouveau sans elle."
+ "Whether the field was not found at the scale of the entered focal length and was searched again without it.": "Si le champ n'a pas été trouvé à l'échelle de la focale saisie et a été cherché de nouveau sans elle.",
+ "the combination's inputs bring no plate solution": "les entrées de la combinaison n'apportent pas de solution astrométrique"
 }
