@@ -152,10 +152,15 @@ def template_name(m, t):
 
 
 def old_way(root, t, sessions):
-    """Recording only: the template made by the old page's builder on today's model."""
+    """The template's project: recording, made by the old page's builder on today's model; else as the graph page
+    makes it (the model's ``apply_template``, whose project test_graphmodel_facades checks against the recording)."""
     w = World(root, sessions)
     name = template_name(w.m, t)
-    FakePage(w.m).make_from_template(t, name, _view_opts(t))
+    if RECORD:
+        FakePage(w.m).make_from_template(t, name, _view_opts(t))
+    else:
+        res = w.m.apply_template(t, name, _view_opts(t))
+        assert res.ok, res.reason
     return w
 
 

@@ -533,7 +533,7 @@ def cmd_record(args) -> int:
     except Exception:  # noqa: BLE001
         pass
     from astro_gpu import api  # noqa: F401  (everything is imported before the guard is installed)
-    from astro_gpu.client import blocks, model  # noqa: F401
+    from astro_gpu.client import model  # noqa: F401
     from astro_gpu.stages import v2  # noqa: F401
     GUARD.install()
     aborted = 0

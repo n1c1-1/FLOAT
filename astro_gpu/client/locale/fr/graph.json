@@ -575,5 +575,7 @@
   "The nebula from the narrow bands, the stars from a colour camera: each filter's workflow and a colour workflow take their stars off, the others aligned on the first filter; the combination reads the starless images, and a Combine layers block puts the colour stars back on its image.": "La nébuleuse des bandes étroites, les étoiles d'une caméra couleur : le workflow de chaque filtre et un workflow couleur retirent leurs étoiles, les autres alignés sur le premier filtre ; la combinaison lit les images sans étoiles, et un bloc Combiner calques remet les étoiles couleur sur son image.",
   "Starless": "Sans étoiles",
   "Done with fallback": "Fait avec repli",
-  "not identified · no solution": "non identifié · sans solution"
+  "not identified · no solution": "non identifié · sans solution",
+  "refused": "refusé",
+  "a change": "une modification"
 }

@@ -1,0 +1,788 @@
+{
+ "align_refs": {},
+ "awaits_post": [],
+ "by_path": {
+  "1": {
+   "alignement": 2,
+   "astrometrie": 5,
+   "calibration": 1,
+   "couleur": 7,
+   "debruitage": 8,
+   "empilement": 4,
+   "final": 16,
+   "fond": 6,
+   "post": 8,
+   "selection": 3,
+   "sources": 0
+  },
+  "2": {
+   "alignement": 2,
+   "astrometrie": 5,
+   "calibration": 1,
+   "empilement": 4,
+   "final": 16,
+   "fond": 6,
+   "post": 6,
+   "selection": 3,
+   "sources": 0
+  },
+  "3": {
+   "alignement": 2,
+   "astrometrie": 5,
+   "calibration": 1,
+   "couleur": 7,
+   "debruitage": 8,
+   "empilement": 4,
+   "final": 16,
+   "fond": 6,
+   "post": 8,
+   "selection": 3,
+   "sources": 0
+  },
+  "4": {
+   "alignement": 2,
+   "astrometrie": 5,
+   "calibration": 1,
+   "couleur": 9,
+   "debruitage": 10,
+   "empilement": 4,
+   "final": 16,
+   "fond": 6,
+   "post": 10,
+   "selection": 3,
+   "sources": 0
+  },
+  "5": {
+   "alignement": 2,
+   "astrometrie": 5,
+   "calibration": 1,
+   "couleur": 9,
+   "debruitage": 11,
+   "empilement": 4,
+   "final": 16,
+   "fond": 6,
+   "post": 11,
+   "selection": 3,
+   "sources": 0
+  },
+  "6": {
+   "alignement": 2,
+   "astrometrie": 5,
+   "calibration": 1,
+   "couleur": 7,
+   "empilement": 4,
+   "final": 16,
+   "fond": 6,
+   "fond~2": 12,
+   "post": 12,
+   "selection": 3,
+   "sources": 0
+  },
+  "7": {
+   "alignement": 13,
+   "calibration": 1,
+   "empilement": 15,
+   "final": 16,
+   "post": 15,
+   "selection": 14,
+   "sources": 0
+  }
+ },
+ "calib_forks": {},
+ "composition_inputs": {},
+ "compositions": [],
+ "direct": [],
+ "final": 16,
+ "forks": [
+  {
+   "children": [
+    2,
+    13
+   ],
+   "key": "calibration",
+   "node": 1
+  },
+  {
+   "children": [
+    7,
+    9
+   ],
+   "key": "fond",
+   "node": 6
+  },
+  {
+   "children": [
+    8,
+    12
+   ],
+   "key": "couleur",
+   "node": 7
+  },
+  {
+   "children": [
+    10,
+    11
+   ],
+   "key": "couleur",
+   "node": 9
+  }
+ ],
+ "fusion_inputs": {},
+ "leaves": {
+  "1": 8,
+  "2": 6,
+  "3": 8,
+  "4": 10,
+  "5": 11,
+  "6": 12,
+  "7": 15
+ },
+ "limits": "model opened without warm-up: no facts (colour notes, session problems); sky_missing and image_problem left empty",
+ "model_state": {
+  "current": 0,
+  "sel_step": "sources",
+  "views": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7
+  ]
+ },
+ "nodes": [
+  {
+   "after": -1,
+   "bk": null,
+   "broken": "",
+   "children": [
+    1
+   ],
+   "cut": false,
+   "grey": "",
+   "handle": false,
+   "i": 0,
+   "key": "sources",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": null,
+   "paths": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+   ],
+   "ref": "sources",
+   "sid": null,
+   "slot": -1,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "calibration",
+    [
+     "164f376de1d92a53",
+     "244edac613392a3d"
+    ],
+    [
+     1
+    ],
+    null
+   ],
+   "broken": "",
+   "children": [
+    2,
+    13
+   ],
+   "cut": false,
+   "grey": "",
+   "handle": false,
+   "i": 1,
+   "key": "calibration",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": 0,
+   "paths": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+   ],
+   "ref": "calibration",
+   "sid": null,
+   "slot": -1,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "alignement",
+    [
+     "921cd40c3a7dfb3a"
+    ],
+    [
+     1
+    ],
+    null
+   ],
+   "broken": "",
+   "children": [
+    3
+   ],
+   "cut": false,
+   "grey": "",
+   "handle": false,
+   "i": 2,
+   "key": "alignement",
+   "lid": null,
+   "missing": "",
+   "num": 1,
+   "parent": 1,
+   "paths": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+   ],
+   "ref": "alignement",
+   "sid": null,
+   "slot": -1,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "selection",
+    null,
+    null,
+    "min_weight",
+    "on"
+   ],
+   "broken": "",
+   "children": [
+    4
+   ],
+   "cut": false,
+   "grey": "",
+   "handle": false,
+   "i": 3,
+   "key": "selection",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": 2,
+   "paths": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+   ],
+   "ref": "selection",
+   "sid": null,
+   "slot": -1,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "empilement",
+    [
+     "9444138fdea4ef02"
+    ],
+    [
+     1
+    ],
+    null
+   ],
+   "broken": "",
+   "children": [
+    5
+   ],
+   "cut": false,
+   "grey": "",
+   "handle": false,
+   "i": 4,
+   "key": "empilement",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": 3,
+   "paths": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+   ],
+   "ref": "empilement",
+   "sid": null,
+   "slot": -1,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "astrometrie",
+    [
+     "9404cd5d50aee0d5"
+    ],
+    [
+     1
+    ],
+    null
+   ],
+   "broken": "",
+   "children": [
+    6
+   ],
+   "cut": false,
+   "grey": "",
+   "handle": false,
+   "i": 5,
+   "key": "astrometrie",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": 4,
+   "paths": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+   ],
+   "ref": "astrometrie",
+   "sid": null,
+   "slot": 0,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "fond",
+    [
+     "ce43e65c75d31794"
+    ],
+    [
+     1
+    ],
+    null
+   ],
+   "broken": "",
+   "children": [
+    7,
+    9
+   ],
+   "cut": false,
+   "grey": "",
+   "handle": false,
+   "i": 6,
+   "key": "fond",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": 5,
+   "paths": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+   ],
+   "ref": "fond",
+   "sid": null,
+   "slot": 1,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "couleur",
+    [
+     "81ad37d97b5c00af"
+    ],
+    [
+     1
+    ],
+    null
+   ],
+   "broken": "",
+   "children": [
+    8,
+    12
+   ],
+   "cut": false,
+   "grey": "",
+   "handle": false,
+   "i": 7,
+   "key": "couleur",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": 6,
+   "paths": [
+    1,
+    3,
+    6
+   ],
+   "ref": "couleur",
+   "sid": null,
+   "slot": 2,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "debruitage",
+    [
+     "ee138e5c84b06fe0"
+    ],
+    [
+     1
+    ],
+    null
+   ],
+   "broken": "",
+   "children": [],
+   "cut": false,
+   "grey": "",
+   "handle": false,
+   "i": 8,
+   "key": "debruitage",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": 7,
+   "paths": [
+    1,
+    3
+   ],
+   "ref": "debruitage",
+   "sid": null,
+   "slot": 3,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "cut",
+    "couleur",
+    [
+     "couleur",
+     [],
+     [
+      1
+     ],
+     null
+    ],
+    [
+     "fond",
+     [
+      "ce43e65c75d31794"
+     ],
+     [
+      1
+     ],
+     null
+    ]
+   ],
+   "broken": "",
+   "children": [
+    10,
+    11
+   ],
+   "cut": true,
+   "grey": "",
+   "handle": false,
+   "i": 9,
+   "key": "couleur",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": 6,
+   "paths": [
+    4,
+    5
+   ],
+   "ref": "couleur",
+   "sid": null,
+   "slot": 2,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "debruitage",
+    [
+     "6581c513dd97fc65"
+    ],
+    [
+     1
+    ],
+    null
+   ],
+   "broken": "",
+   "children": [],
+   "cut": false,
+   "grey": "",
+   "handle": true,
+   "i": 10,
+   "key": "debruitage",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": 9,
+   "paths": [
+    4
+   ],
+   "ref": "debruitage",
+   "sid": null,
+   "slot": 3,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "debruitage",
+    [
+     "e76df4ada89215cc"
+    ],
+    [
+     1
+    ],
+    null
+   ],
+   "broken": "",
+   "children": [],
+   "cut": false,
+   "grey": "",
+   "handle": true,
+   "i": 11,
+   "key": "debruitage",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": 9,
+   "paths": [
+    5
+   ],
+   "ref": "debruitage",
+   "sid": null,
+   "slot": 3,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "fond~2",
+    [
+     "866b5a2d7fba4dde"
+    ],
+    [
+     1
+    ],
+    null
+   ],
+   "broken": "",
+   "children": [],
+   "cut": false,
+   "grey": "",
+   "handle": true,
+   "i": 12,
+   "key": "fond~2",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": 7,
+   "paths": [
+    6
+   ],
+   "ref": "fond~2",
+   "sid": null,
+   "slot": 3,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "alignement",
+    [
+     "921cd40c3a7dfb3a"
+    ],
+    [
+     1
+    ],
+    null,
+    7,
+    []
+   ],
+   "broken": "",
+   "children": [
+    14
+   ],
+   "cut": false,
+   "grey": "",
+   "handle": false,
+   "i": 13,
+   "key": "alignement",
+   "lid": null,
+   "missing": "",
+   "num": 2,
+   "parent": 1,
+   "paths": [
+    7
+   ],
+   "ref": "alignement",
+   "sid": null,
+   "slot": -1,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "selection",
+    null,
+    null,
+    "min_weight",
+    "on"
+   ],
+   "broken": "",
+   "children": [
+    15
+   ],
+   "cut": false,
+   "grey": "",
+   "handle": false,
+   "i": 14,
+   "key": "selection",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": 13,
+   "paths": [
+    7
+   ],
+   "ref": "selection",
+   "sid": null,
+   "slot": -1,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "empilement",
+    [
+     "43565a026a311784"
+    ],
+    [
+     1
+    ],
+    null
+   ],
+   "broken": "",
+   "children": [],
+   "cut": false,
+   "grey": "",
+   "handle": true,
+   "i": 15,
+   "key": "empilement",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": 14,
+   "paths": [
+    7
+   ],
+   "ref": "empilement",
+   "sid": null,
+   "slot": -1,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": null,
+   "broken": "",
+   "children": [],
+   "cut": false,
+   "grey": "",
+   "handle": false,
+   "i": 16,
+   "key": "final",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": null,
+   "paths": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+   ],
+   "ref": "final",
+   "sid": null,
+   "slot": -1,
+   "waits": ""
+  }
+ ],
+ "post_layers": [
+  [
+   "Parallel registration",
+   7
+  ],
+  [
+   "Twice",
+   6
+  ],
+  [
+   "No colour \u00b7 adapted",
+   5
+  ],
+  [
+   "No colour",
+   4
+  ],
+  [
+   "Classic copy",
+   3
+  ],
+  [
+   "Classic \u00b7 Gradient",
+   2
+  ],
+  [
+   "Classic",
+   1
+  ]
+ ],
+ "root": 0,
+ "sessions": [],
+ "to_post": [
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7
+ ]
+}

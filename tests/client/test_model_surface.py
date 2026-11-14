@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import ast
+import sys
+import re
 import os
 from pathlib import Path
 
@@ -156,14 +158,21 @@ def test_options_speak_the_views_vocabulary():
 
 
 # ---------------------------------------------------------------------------------------------- the French
+#: the graph's modules: the model, its graph editing and block table, the panel, the settings and the graph page
+GRAPH_MODULES = ("model", "graphmodel", "graphnode", "panel", "settings") + tuple(
+    f"graphview/{f.stem}" for f in sorted((ROOT / "astro_gpu" / "client" / "graphview").glob("*.py"))
+    if f.stem != "__init__")
+
+
 def _shown_texts() -> dict[str, list[str]]:
     """Every English text the graph's modules can show: the ``_("...")`` of the code, the catalogue of settings, the
     block table, the methods and the states."""
     from astro_gpu import api
-    from astro_gpu.client import blocks, settings
+    from astro_gpu.client import graphnode as blocks
+    from astro_gpu.client import settings
     root = ROOT / "astro_gpu" / "client"
     found: dict[str, list[str]] = {}
-    for name in ("model", "blocks", "graph", "panel", "settings"):
+    for name in GRAPH_MODULES:
         tree = ast.parse((root / f"{name}.py").read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_" and node.args:
@@ -219,16 +228,16 @@ def test_every_text_of_the_graph_has_its_french():
 def test_the_graph_modules_import_only_the_client_libraries():
     """No leftover of the old prototype (its imports, its Demo menu, its data files) in the graph's modules."""
     root = ROOT / "astro_gpu" / "client"
-    for name in ("model", "blocks", "graph", "panel", "settings"):
+    for name in GRAPH_MODULES:
         src = (root / f"{name}.py").read_text(encoding="utf-8")
-        for bad in ("alt2", "alt3", "data.json", "datatext", "import project", "from project", "from steps", "Demo"):
-            assert bad not in src, (name, bad)
+        for bad in ("alt2", "alt3", "data.json", "datatext", r"import project", r"from project",
+                    r"from steps", r"Demo"):
+            assert not re.search(bad, src), (name, bad)
         tree = ast.parse(src)
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
                 top = node.module.split(".")[0]
-                assert top in {"__future__", "contextlib", "copy", "dataclasses", "math", "pathlib", "time", "typing",
-                               "PySide6", "numpy"} or top == "astro_gpu", (name, node.module)
+                assert top in sys.stdlib_module_names or top in {"PySide6", "numpy"} or top == "astro_gpu",                     (name, node.module)
 
 
 def test_exclusions_and_session_edits_are_saved_like_any_edit(qapp, tmp_path):

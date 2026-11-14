@@ -4,8 +4,8 @@ block-level answers over a project model (stages, state, duration, summary), ``N
 going through it) and ``BlockMap`` (the blocks of a stored graph, each as a ``Node``, from the compiled definition).
 
 It imports neither the model nor the graph page, so that both can import it (``BlockMap`` takes the model as an
-argument). The constants and the functions above ``Node`` are the same as those of ``blocks.py``, which the graph
-page of today still reads: tests/client/graphview/test_graphnode.py checks that they stay equal.
+argument). The constants and the functions above ``Node`` are those of today's ``blocks.py``, which went with the swap
+to the new graph page.
 """
 from __future__ import annotations
 

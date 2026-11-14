@@ -1,0 +1,674 @@
+{
+ "align_refs": {},
+ "awaits_post": [],
+ "by_path": {
+  "1": {
+   "alignement": 2,
+   "astrometrie": 5,
+   "calibration": 1,
+   "couleur": 7,
+   "empilement": 4,
+   "final": 15,
+   "fond": 6,
+   "post": 7,
+   "selection": 3,
+   "sources": 0
+  },
+  "2": {
+   "alignement": 2,
+   "astrometrie": 5,
+   "calibration": 1,
+   "couleur": 9,
+   "empilement": 4,
+   "final": 15,
+   "fond": 8,
+   "post": 9,
+   "selection": 3,
+   "sources": 0
+  },
+  "3": {
+   "alignement": 2,
+   "astrometrie": 5,
+   "calibration": 1,
+   "couleur": 11,
+   "debruitage": 10,
+   "empilement": 4,
+   "etoiles": 12,
+   "final": 15,
+   "fond": 6,
+   "post": 12,
+   "selection": 3,
+   "sources": 0
+  },
+  "4": {
+   "alignement": 2,
+   "astrometrie": 5,
+   "calibration": 1,
+   "couleur": 11,
+   "debruitage": 10,
+   "empilement": 4,
+   "etoiles": 12,
+   "final": 15,
+   "fond": 6,
+   "post": 12,
+   "selection": 3,
+   "sources": 0
+  }
+ },
+ "calib_forks": {},
+ "composition_inputs": {
+  "13": [
+   [
+    12,
+    "starless"
+   ],
+   [
+    12,
+    "stars"
+   ]
+  ],
+  "14": [
+   [
+    12,
+    "starless"
+   ],
+   [
+    12,
+    "stars"
+   ]
+  ]
+ },
+ "compositions": [
+  13,
+  14
+ ],
+ "direct": [],
+ "final": 15,
+ "forks": [
+  {
+   "children": [
+    6,
+    8
+   ],
+   "key": "astrometrie",
+   "node": 5
+  },
+  {
+   "children": [
+    7,
+    10
+   ],
+   "key": "fond",
+   "node": 6
+  }
+ ],
+ "fusion_inputs": {},
+ "leaves": {
+  "1": 7,
+  "2": 9,
+  "3": 12,
+  "4": 12
+ },
+ "limits": "model opened without warm-up: no facts (colour notes, session problems); sky_missing and image_problem left empty",
+ "model_state": {
+  "current": 0,
+  "sel_step": "sources",
+  "views": [
+   1,
+   2,
+   3,
+   4
+  ]
+ },
+ "nodes": [
+  {
+   "after": -1,
+   "bk": null,
+   "broken": "",
+   "children": [
+    1
+   ],
+   "cut": false,
+   "grey": "",
+   "handle": false,
+   "i": 0,
+   "key": "sources",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": null,
+   "paths": [
+    1,
+    2,
+    3,
+    4
+   ],
+   "ref": "sources",
+   "sid": null,
+   "slot": -1,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "calibration",
+    [
+     "1cdf0bdb2e212270",
+     "d4bdf2534d5ac56f"
+    ],
+    [
+     1,
+     2
+    ],
+    null
+   ],
+   "broken": "",
+   "children": [
+    2
+   ],
+   "cut": false,
+   "grey": "",
+   "handle": false,
+   "i": 1,
+   "key": "calibration",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": 0,
+   "paths": [
+    1,
+    2,
+    3,
+    4
+   ],
+   "ref": "calibration",
+   "sid": null,
+   "slot": -1,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "alignement",
+    [
+     "7bed031360113482"
+    ],
+    [
+     1,
+     2
+    ],
+    null
+   ],
+   "broken": "",
+   "children": [
+    3
+   ],
+   "cut": false,
+   "grey": "",
+   "handle": false,
+   "i": 2,
+   "key": "alignement",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": 1,
+   "paths": [
+    1,
+    2,
+    3,
+    4
+   ],
+   "ref": "alignement",
+   "sid": null,
+   "slot": -1,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "selection",
+    null,
+    null,
+    "min_weight",
+    "on"
+   ],
+   "broken": "",
+   "children": [
+    4
+   ],
+   "cut": false,
+   "grey": "",
+   "handle": false,
+   "i": 3,
+   "key": "selection",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": 2,
+   "paths": [
+    1,
+    2,
+    3,
+    4
+   ],
+   "ref": "selection",
+   "sid": null,
+   "slot": -1,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "empilement",
+    [
+     "51c791baee936609"
+    ],
+    [
+     1,
+     2
+    ],
+    null
+   ],
+   "broken": "",
+   "children": [
+    5
+   ],
+   "cut": false,
+   "grey": "",
+   "handle": false,
+   "i": 4,
+   "key": "empilement",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": 3,
+   "paths": [
+    1,
+    2,
+    3,
+    4
+   ],
+   "ref": "empilement",
+   "sid": null,
+   "slot": -1,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "astrometrie",
+    [
+     "6d582809b48ddc14"
+    ],
+    [
+     1,
+     2
+    ],
+    null
+   ],
+   "broken": "",
+   "children": [
+    6,
+    8
+   ],
+   "cut": false,
+   "grey": "",
+   "handle": false,
+   "i": 5,
+   "key": "astrometrie",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": 4,
+   "paths": [
+    1,
+    2,
+    3,
+    4
+   ],
+   "ref": "astrometrie",
+   "sid": null,
+   "slot": 0,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "fond",
+    [
+     "7d8296f3d3821e15"
+    ],
+    [
+     1,
+     2
+    ],
+    null
+   ],
+   "broken": "",
+   "children": [
+    7,
+    10
+   ],
+   "cut": false,
+   "grey": "",
+   "handle": false,
+   "i": 6,
+   "key": "fond",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": 5,
+   "paths": [
+    1,
+    3,
+    4
+   ],
+   "ref": "fond",
+   "sid": null,
+   "slot": 1,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "couleur",
+    [
+     "6e42f6cdcc5a9680"
+    ],
+    [
+     1,
+     2
+    ],
+    null
+   ],
+   "broken": "",
+   "children": [],
+   "cut": false,
+   "grey": "",
+   "handle": true,
+   "i": 7,
+   "key": "couleur",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": 6,
+   "paths": [
+    1
+   ],
+   "ref": "couleur",
+   "sid": null,
+   "slot": 2,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "fond",
+    [
+     "f63b401ab97ebcaa"
+    ],
+    [
+     1,
+     2
+    ],
+    null
+   ],
+   "broken": "",
+   "children": [
+    9
+   ],
+   "cut": false,
+   "grey": "",
+   "handle": false,
+   "i": 8,
+   "key": "fond",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": 5,
+   "paths": [
+    2
+   ],
+   "ref": "fond",
+   "sid": null,
+   "slot": 1,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "couleur",
+    [
+     "d1890a2d3078c34f"
+    ],
+    [
+     1,
+     2
+    ],
+    null
+   ],
+   "broken": "",
+   "children": [],
+   "cut": false,
+   "grey": "",
+   "handle": true,
+   "i": 9,
+   "key": "couleur",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": 8,
+   "paths": [
+    2
+   ],
+   "ref": "couleur",
+   "sid": null,
+   "slot": 2,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "debruitage",
+    [
+     "7735c5bb6360ca2e"
+    ],
+    [
+     1,
+     2
+    ],
+    null
+   ],
+   "broken": "",
+   "children": [
+    11
+   ],
+   "cut": false,
+   "grey": "",
+   "handle": false,
+   "i": 10,
+   "key": "debruitage",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": 6,
+   "paths": [
+    3,
+    4
+   ],
+   "ref": "debruitage",
+   "sid": null,
+   "slot": 2,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "couleur",
+    [
+     "6e42f6cdcc5a9680"
+    ],
+    [
+     1,
+     2
+    ],
+    null
+   ],
+   "broken": "",
+   "children": [
+    12
+   ],
+   "cut": false,
+   "grey": "",
+   "handle": false,
+   "i": 11,
+   "key": "couleur",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": 10,
+   "paths": [
+    3,
+    4
+   ],
+   "ref": "couleur",
+   "sid": null,
+   "slot": 3,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "etoiles",
+    [
+     "ee730aff2156e3a9"
+    ],
+    [
+     1,
+     2
+    ],
+    null
+   ],
+   "broken": "",
+   "children": [],
+   "cut": false,
+   "grey": "",
+   "handle": false,
+   "i": 12,
+   "key": "etoiles",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": 11,
+   "paths": [
+    3,
+    4
+   ],
+   "ref": "etoiles",
+   "sid": null,
+   "slot": -1,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "composition",
+    null,
+    4
+   ],
+   "broken": "",
+   "children": [],
+   "cut": false,
+   "grey": "",
+   "handle": false,
+   "i": 13,
+   "key": "composition",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": 12,
+   "paths": [
+    4
+   ],
+   "ref": "composition",
+   "sid": null,
+   "slot": -1,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": [
+    "composition",
+    null,
+    3
+   ],
+   "broken": "",
+   "children": [],
+   "cut": false,
+   "grey": "",
+   "handle": false,
+   "i": 14,
+   "key": "composition",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": 12,
+   "paths": [
+    3
+   ],
+   "ref": "composition",
+   "sid": null,
+   "slot": -1,
+   "waits": ""
+  },
+  {
+   "after": -1,
+   "bk": null,
+   "broken": "",
+   "children": [],
+   "cut": false,
+   "grey": "",
+   "handle": false,
+   "i": 15,
+   "key": "final",
+   "lid": null,
+   "missing": "",
+   "num": 0,
+   "parent": null,
+   "paths": [
+    1,
+    2,
+    3,
+    4
+   ],
+   "ref": "final",
+   "sid": null,
+   "slot": -1,
+   "waits": ""
+  }
+ ],
+ "post_layers": [
+  [
+   "Full again \u00b7 Combine layers",
+   4
+  ],
+  [
+   "Full \u00b7 Combine layers",
+   3
+  ],
+  [
+   "Auto",
+   2
+  ],
+  [
+   "Classic",
+   1
+  ]
+ ],
+ "root": 0,
+ "sessions": [],
+ "to_post": [
+  1,
+  2
+ ]
+}

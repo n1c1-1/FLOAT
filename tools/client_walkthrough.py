@@ -1028,7 +1028,7 @@ class Walk:
         if s is None or not s.paths:
             self.problem(f"the project {root} did not open")
             return self.report()
-        from astro_gpu.client.blocks import block_state
+        from astro_gpu.client.graphnode import block_state
         p = s.paths[0]
         states = {k: block_state(s, p, k) for k in s.block_keys(p)}
         print("  blocks:", states, flush=True)

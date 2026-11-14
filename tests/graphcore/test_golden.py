@@ -193,13 +193,22 @@ SHAPES = {"fan_in": fan_in, "variants_and_taps": variants_and_taps, "combination
 
 
 # ---------------------------------------------------------------------------------------------- the proof
-def _drawing(p):
-    pytest.importorskip("PySide6")
-    sys.path.insert(0, os.path.join(ROOT, "tools"))
-    import graph_golden
-    from PySide6.QtWidgets import QApplication
-    QApplication.instance() or QApplication([])
-    return graph_golden.drawing_of(p)
+def _drawing(p, shape):
+    """What today's drawing of the workflows (client/blocks.Graph, gone with the swap to the graph page) made of a
+    shape: recorded before it went (tests/graphcore/old_way/drawing_<shape>.json, by this file run with
+    ``FLOAT_RECORD_OLD_WAY=1`` on the last commit that had it)."""
+    import json
+    rec = Path(__file__).with_name("old_way") / f"drawing_{shape}.json"
+    if os.environ.get("FLOAT_RECORD_OLD_WAY") == "1":
+        pytest.importorskip("PySide6")
+        sys.path.insert(0, os.path.join(ROOT, "tools"))
+        import graph_golden
+        from PySide6.QtWidgets import QApplication
+        QApplication.instance() or QApplication([])
+        d = graph_golden.drawing_of(p)
+        rec.parent.mkdir(exist_ok=True)
+        rec.write_text(json.dumps(d, indent=1, sort_keys=True, default=str), encoding="utf-8")
+    return json.loads(rec.read_text(encoding="utf-8"))
 
 
 @pytest.mark.parametrize("shape", list(SHAPES))
@@ -213,7 +222,7 @@ def test_round_trip_is_the_same_project(shape):
     assert proof.keys_diff(p, q, key_rules(), InputScan()) == []
     ra, rb = proof.review_keys(p, Client(p)), proof.review_keys(q, Client(q))
     assert ra == rb
-    diffs, n = proof.drawing_check(p, g, q, _drawing(p))
+    diffs, n = proof.drawing_check(p, g, q, _drawing(p, shape))
     assert diffs == [] and n > 2, (diffs, log)
     assert to_dict(from_dict(to_dict(g))) == to_dict(g) == to_dict(clone(g))
 
@@ -231,7 +240,7 @@ def test_the_proof_sees_a_difference():
     g, q, _log = proof.round_trip(p)
     r = next(r for r in g.rows if r.wid == 2 or any(t.wid == 2 for t in g.taps))
     g.taps = [t for t in g.taps if t.wid != 3]                      # the duplicate drawn apart: a share less
-    diffs, _n = proof.drawing_check(p, g, q, _drawing(p))
+    diffs, _n = proof.drawing_check(p, g, q, _drawing(p, "variants_and_taps"))
     assert diffs and r is not None
 
 

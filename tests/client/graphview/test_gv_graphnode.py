@@ -1,42 +1,23 @@
-"""graphnode.py: the copies of today's block table and block answers stay equal to the originals (blocks.py, graph.py)
-until the swap; BlockMap gives each block of a compiled graph its Node and its address."""
+"""graphnode.py: the block table and block answers of today's page (blocks.py and graph.py, gone with the swap to the
+new page) keep today's colours; BlockMap gives each block of a compiled graph its Node and its address."""
 from __future__ import annotations
 
 import inspect
 from types import SimpleNamespace
 
-from astro_gpu.client import blocks, graph, graphnode
+from astro_gpu.client import graphnode
 from astro_gpu.client.graphview import style
-
-CONSTANTS = ("COLUMNS", "OPTIONAL", "PHASES", "TOOL_COLUMN", "TITLES", "PORT_NAMES", "TOOLBOX", "WARN_MARK",
-             "STAR_OUTPUTS", "ENGINE_BLOCK", "KEY_ENGINE_BLOCK", "SIDE_INPUTS", "TRUNK", "IMAGE_KEYS", "FRAME_KEYS",
-             "STATE_WORD", "FALLBACK_WORD", "STATE_ORDER", "BREAK_COL", "PAUSE_COL", "REVIEWED_COL", "REVIEW_ORDER",
-             "STEPS", "BY_KEY", "TOOLS")
-FUNCTIONS = ("combine_kind", "combine_title", "port_name", "kbase", "knum", "block_title", "calibration_counts",
-             "gone_kinds", "own_calibration_summary", "session_summary", "node_title", "review_title", "_safe_chain",
-             "chain", "stages_of", "run_stages", "block_state", "block_fallback", "block_seconds", "fmt_int",
-             "drizzle_auto", "method_summary")
-
-
-def test_the_constants_are_those_of_blocks():
-    for name in CONSTANTS:
-        assert getattr(graphnode, name) == getattr(blocks, name), name
-
-
-def test_the_functions_are_those_of_blocks():
-    for name in FUNCTIONS:
-        assert inspect.getsource(getattr(graphnode, name)) == inspect.getsource(getattr(blocks, name)), name
-    a = {f.name: (f.type, f.default) for f in graphnode.Node.__dataclass_fields__.values()}
-    b = {f.name: (f.type, f.default) for f in blocks.Node.__dataclass_fields__.values()}
-    assert a == b
+from astro_gpu.client.widgets import ACCENT, BAD, OK, WARN
 
 
 def test_the_page_colours_are_those_of_today():
-    assert (style.CUT_COL, style.GREY_COL, style.BROKEN_COL) == (graph.CUT_COL, graph.GREY_COL, graph.BROKEN_COL)
-    assert style.STATE_COL == graph.STATE_COL
-    assert style.IMAGE_COL["starless"] == graph.IMAGE_COL["starless"]
-    assert style.IMAGE_COL["stars_only"] == graph.IMAGE_COL["stars"]
-    assert style.PALETTE_W == graph.PALETTE_W
+    """The values today's page drew with (graph.py, before the swap)."""
+    assert (style.CUT_COL, style.GREY_COL, style.BROKEN_COL) == ("#6b7280", "#c9a227", "#e05252")
+    assert style.STATE_COL == {"done": OK, "pending": "#5d6470", "stale": WARN, "running": ACCENT, "failed": BAD,
+                               "interrupted": WARN, "skipped": "#5d6470", "fallback": WARN}
+    assert style.IMAGE_COL["starless"] == "#7aa2d6"
+    assert style.IMAGE_COL["stars_only"] == "#e0c45c"
+    assert style.PALETTE_W == 140
 
 
 def test_graphnode_imports_neither_the_model_nor_the_graph_page():

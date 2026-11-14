@@ -1196,9 +1196,6 @@ class GraphEditing:
         res = self._run_plan(plan)
         return self._view_of_wid(self._fusion_made(res))
 
-    def mono_blocks(self, opts):
-        return _mm().ProjectModel.mono_blocks(opts)
-
     # ------------------------------------------------------------------ new workflows
     def _nodes_of(self, opts, src="frames", end=None, colour=True):
         mm = _mm()
