@@ -554,9 +554,9 @@ def test_a_colour_block_runs_on_a_combination_with_the_solution_it_handed_on(tmp
 def test_the_colour_strength_leaves_a_bright_core_its_colour_and_gives_the_faint_nebula_more():
     from astro_gpu.stages.combine import gamut_gain
     rng = np.random.default_rng(1)
-    L = np.concatenate([np.full(2000, 0.02), np.full(2000, 1.0), np.full(20, 40.0)]).astype(np.float32)
+    L = np.concatenate([np.full(40000, 0.02), np.full(2000, 1.0), np.full(3, 50.0)]).astype(np.float32)
     L = L * rng.uniform(0.95, 1.05, L.size).astype(np.float32)
     ratio = np.tile(np.array([0.4, 1.0, 1.4], np.float32)[:, None], (1, L.size))
     out = gamut_gain(ratio, L, 2.0)
     assert out[2, 0] > ratio[2, 0] and out[0, 0] < ratio[0, 0]            # faint pixels: the colour is stronger
-    assert out[2, 2100] < out[2, 0]                                        # the brightest ones are held back
+    assert out[2, 41000] < out[2, 0]                                        # the brightest ones are held back
