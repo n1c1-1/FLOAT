@@ -237,3 +237,21 @@ def test_a_session_whose_darks_folder_is_gone_says_so_under_its_name(world, tmp_
     W.settle()
     s = W.one("session")
     assert "darks not found" in W.page.canvas.blocks[s].d["summary"]
+
+
+def test_an_image_block_says_its_file_stretched_or_to_choose(world, tmp_path):
+    import numpy as np
+    from astropy.io import fits
+    from PIL import Image
+    W = world(workflows=())
+    f = tmp_path / "m42.fits"
+    fits.PrimaryHDU(np.full((3, 32, 32), 100.0, np.float32)).writeto(f)
+    png = tmp_path / "done.png"
+    Image.fromarray(np.full((32, 32, 3), 120, np.uint8)).save(png)
+    W.page.place_images([str(f), str(png)])
+    W.settle()
+    lines = sorted(it.d["summary"] for it in W.page.canvas.blocks.values() if it.d["kind"] == "image")
+    assert lines == ["done.png  · stretched", "m42.fits"], lines
+    W.template("image")
+    lines = [it.d["summary"] for it in W.page.canvas.blocks.values() if it.d["kind"] == "image"]
+    assert "file to choose" in lines, lines

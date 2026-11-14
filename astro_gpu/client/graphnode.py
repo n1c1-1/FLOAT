@@ -758,6 +758,13 @@ class BlockMap:
         gone = self._gone(bid)
         if gone:
             return gone
+        blk = self.graph.blocks.get(bid)
+        if blk is not None and blk.kind == "image" and node.paths and not blk.off:
+            src = getattr(node.paths[0], "source", None) or {}     # the workflow's file (the model holds it)
+            if isinstance(src, dict) and "fusion" not in src:
+                if not src.get("path"):
+                    return _("file to choose")
+                return Path(str(src["path"])).name + ("  · " + _("stretched") if src.get("stretched") else "")
         return api.summary(self.graph, bid, tr or _)
 
     def _gone(self, bid) -> str:

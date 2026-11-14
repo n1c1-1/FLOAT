@@ -305,8 +305,8 @@ class Doc:
         m = self.model
         bm = getattr(m, "block_map", None) if m is not None else None
         blk = self.graph.blocks.get(b)
-        if bm is not None and blk is not None and blk.kind in ("session", "calibration"):
-            n = bm.node(b)                           # a folder not found: said where the core would count it
+        if bm is not None and blk is not None and blk.kind in ("session", "calibration", "image"):
+            n = bm.node(b)                           # a folder not found, an image's file: the model's
             if n is not None:
                 return bm.summary(n, self.tr) or api.summary(self.graph, b, self.tr)
         return api.summary(self.graph, b, self.tr)
