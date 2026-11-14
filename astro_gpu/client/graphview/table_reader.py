@@ -4,6 +4,8 @@ times only (os.scandir; no file is opened, nothing is read from a header, nothin
 ``Reader`` is a cache filled by one worker thread, never part of the model nor of the undo history. The interface
 asks ``request(key, sources)`` and reads ``count``, ``expand``, ``left_out``, ``sub_folders``, ``unreadable`` at once
 (what is known so far); listeners are told of the progress from the worker thread (connect them to a Qt signal).
+A folder entry is listed as the engine reads it (core/project.py ``list_frames``): its first level only, its frames,
+the colour images set aside when it holds raw or FITS frames (``left_out``).
 """
 from __future__ import annotations
 
@@ -13,7 +15,7 @@ import time
 from collections import namedtuple
 from dataclasses import dataclass, field
 
-from . import files
+from ...core.project import frame_kind
 
 #: one listed file: its path (forward slashes), size in bytes, modification time, the folder entry it came from
 FileInfo = namedtuple("FileInfo", "path size mtime root")
@@ -71,7 +73,6 @@ class Job:
     phase: str = "list"            # list | done | stopped
     listed: int = 0
     stop: bool = False
-    filter: int = files.DEFAULT    # the file-type filter in force when the listing was asked
 
     @property
     def active(self):
@@ -97,10 +98,8 @@ class Reader:
         self._gen = 0
         self._cache: dict[tuple, tuple] = {}
         self._busy = False
-        self._left: dict[str, list] = {}                # folder -> files the type filter left out
+        self._left: dict[str, list] = {}                # folder -> files of its level the engine does not read
         self._reports: dict[str, dict] = {}             # folder -> {"sub": n, "unreadable": bool}
-        self._filter_of: dict[str, int] = {}            # folder -> filter index it was listed with
-        self.opts: dict[str, int] = {}                  # entry -> the type filter it was taken with
 
     # --------------------------------------------------------------- called from the interface thread
     def listen(self, fn):
@@ -128,8 +127,7 @@ class Reader:
         """List the entries of a box (cheap when nothing changed): -> its Job, or None when everything is known."""
         sources = tuple(sources)
         t = self._jobs.get(key)
-        fresh = self.expand(sources) is not None and all(
-            s not in self._folders or self._filter_of.get(s) == self.opts.get(s, files.DEFAULT) for s in sources)
+        fresh = self.expand(sources) is not None
         if t and t.sources == sources and (t.active or (t.phase == "done" and fresh)):
             return t
         if t:
@@ -138,7 +136,6 @@ class Reader:
             self._jobs.pop(key, None)
             return None
         t = Job(key, sources)
-        t.filter = files.index()
         self._jobs[key] = t
         with self._cond:
             self._queue.append(t)
@@ -186,7 +183,7 @@ class Reader:
         return out
 
     def left_out(self, sources) -> list:
-        """Files of the (listed) folders that the type filter left out."""
+        """Files of the (listed) folders' level that the engine does not read (not frames, colour beside raws)."""
         return [f for s in sources for f in self._left.get(s, [])]
 
     def sub_folders(self, sources) -> int:
@@ -242,14 +239,13 @@ class Reader:
         for s in t.sources:
             if t.stop:
                 break
-            filt = self.opts.get(s, files.DEFAULT)
-            if s in self._folders and self._filter_of.get(s) == filt:
+            if s in self._folders:
                 base_n += len(self._folders[s])
                 continue
             if s in self._infos and s not in self._folders:
                 base_n += 1
                 continue
-            path, recursive = files.base(s)
+            path = s
             is_folder = self._is_folder.get(s)
             if is_folder is None:
                 is_folder = os.path.isdir(path)
@@ -258,11 +254,14 @@ class Reader:
                     t.listed = b + n
                     self._signal(t)
                 left, report = [], {}
-                fs = list_folder(path, counter, lambda: t.stop, lambda name, i=filt: files.accepts(name, i), left,
-                                 report, recursive)
+                fs = list_folder(path, counter, lambda: t.stop, lambda name: bool(frame_kind(name)), left, report,
+                                 recursive=False)
                 if t.stop:
                     break
-                self._left[s], self._reports[s], self._filter_of[s] = left, report, filt
+                if any(frame_kind(f.path) != "colour" for f in fs):   # the engine's rule: colour beside raws aside
+                    left += [f for f in fs if frame_kind(f.path) == "colour"]
+                    fs = [f for f in fs if frame_kind(f.path) != "colour"]
+                self._left[s], self._reports[s] = left, report
                 for f in fs:
                     self._infos[f.path] = f
                 self._folders[s] = fs

@@ -534,16 +534,19 @@ def test_gv_table_type_filter(qapp, tree):
     assert b.steps() == n0 + 2 and b.box(sid, "lights").n == 10
     b.key(Qt.Key_Z, Qt.ControlModifier)
     assert b.box(sid, "lights").n == 5
-    b.t.c_files.setCurrentIndex(4)
-    b.t.c_files.activated.emit(4)
-    assert files.index() == 4 and prefs.get("graph_file_filter") == "All files"
+    assert b.t.c_files.count() == 4                                  # no « All files »: the engine reads frames only
+    b.t.c_files.setCurrentIndex(3)
+    b.t.c_files.activated.emit(3)
+    assert files.index() == 3 and prefs.get("graph_file_filter") == "All images"
     b.close()
     b = Bench(1366)
-    assert b.t.c_files.currentIndex() == 4                           # remembered
+    assert b.t.c_files.currentIndex() == 3                           # remembered
     sid = b.sessions()[0]
     b.drop([tree["mixed"]], ("box", sid, "lights"))
     b.read()
+    # JPEGs beside raws: the engine would set them aside, so the ten files are stored one by one
     assert b.box(sid, "lights").n == 10 and "left" not in b.t.toast_text
+    assert fwd(tree["mixed"]) not in b.own(sid, "lights") and len(b.own(sid, "lights")) == 10
     b.close()
     files.set_index(2)
 
@@ -574,10 +577,10 @@ def test_gv_table_sub_folders_not_read(qapp, tree):
     assert "5 ARW added" in b.t.toast_text and "2 sub-folders not read" in b.t.toast_text
     assert "include" in b.t.toast_w.text()
     tip = b.g.tooltip_text(b.pos(("box", sid, "lights")))
-    assert "folder · Raws and FITS · without sub-folders" in tip
-    assert b.doc.view["file_options"]
+    assert "folder · without sub-folders" in tip
+    assert "file_options" not in b.doc.view                         # nothing about the filter is stored
     # the project reopens with the same files whatever the filter set then
-    files.set_index(4)
+    files.set_index(0)
     b2 = Bench(1366, bridge=Bridge(MemoryDocument(b.doc.graph, view=dict(b.doc.view))))
     b2.read()
     assert b2.box(sid, "lights").n == 5

@@ -195,7 +195,6 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
         self._auto = 0
         self._internal = None
         self._warn_idx = -1
-        self._watching = None
         self._rest = self._include = self._rather = None
         self._built_rev = None
         self.t_drop_ms = None
@@ -225,7 +224,6 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
     def detach(self):
         """No more news from the (shared) reader: the grid is about to go."""
         self.reader.unlisten(self._listener)
-        self._watching = None
 
     # ------------------------------------------------------------------ small helpers
     @property
@@ -417,8 +415,7 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
                 if not src:
                     self._sigs.pop((owner, k), None)
                     continue
-                files.restore_options(self.reader, self.doc.view, owner, k, src)
-                sig = (tuple(src), tuple(self.reader.opts.get(x, files.DEFAULT) for x in src))
+                sig = tuple(src)
                 if self._sigs.get((owner, k)) != sig:
                     self._sigs[(owner, k)] = sig
                     self.reader.request((owner, k), src)
@@ -432,7 +429,6 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
 
     def _on_progress(self, job):
         self.model.invalidate()
-        self._check_watch()
         if job.phase in ("done", "stopped"):
             self.rebuild()
             self.toolbar_changed.emit()
@@ -744,36 +740,25 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
             return "set_common_files", dict(kind=kind, paths=list(paths), mode=mode)
         return "add_files", dict(session=owner, kind=kind, paths=list(paths), mode=mode)
 
-    def _take(self, items, loose):
-        """The files the filter left out, made known as single files. -> their paths."""
-        left = list(self.reader.left_out(items))
-        self.reader.adopt(left)
-        for p in loose:
-            self.reader.note(p, False)
-        return [f.path for f in left] + list(loose)
+    def _left_steps(self, pairs):
+        """« Take all »: the frames the filter left out, added as single files. pairs: [(owner, kind, paths)]."""
+        out = []
+        for o, k, paths in pairs:
+            for x in paths:
+                self.reader.note(x, False)
+            if paths:
+                out.append(self._step(o, k, list(paths), "add"))
+        return out
 
-    def _plan_include(self, items, boxes):
-        """Steps that make the folders of a drop read all levels (their entries get the mark). -> (steps, changes)."""
-        mp, steps, chg = self.model, [], []
-        aims = [x for x in items if files.is_folder(self.reader, x) and not files.base(x)[1]]
-        for o, k in boxes:
-            own = None if o == COMMON else mp.own_list(o, k)
-            cur = mp.common_list(k) if o == COMMON else list(own if own is not None else mp.common_list(k))
-            if not any(x in aims for x in cur):
-                continue
-            steps.append(self._step(o, k, [x + files.MARK if x in aims else x for x in cur], "replace"))
-            chg += [(o, k, x, x + files.MARK) for x in cur if x in aims]
-        return steps, chg
-
-    def _plan_include_sessions(self, sids, lots):
-        steps, chg = [], []
-        for sid, (x, _lg) in zip(sids, lots):
-            cur = list(self.model.own_list(sid, "lights") or [])
-            aims = [i for i in x if files.is_folder(self.reader, i) and not files.base(i)[1]]
-            if aims:
-                steps.append(self._step(sid, "lights", [i + files.MARK if i in aims else i for i in cur], "replace"))
-                chg += [(sid, "lights", i, i + files.MARK) for i in cur if i in aims]
-        return steps, chg
+    def _include_steps(self, pairs, i):
+        """« Include »: each sub-folder holding frames as an entry of its own (the drop's rule for each).
+        pairs: [(owner, kind, sub-folders)] -> (steps, [])."""
+        steps = []
+        for o, k, subs in pairs:
+            sub = files.include(self.reader, subs, i)
+            if sub.items:
+                steps.append(self._step(o, k, sub.items, "add"))
+        return steps, []
 
     def drop_files(self, target, g):
         self._rest = self._include = self._rather = None
@@ -783,169 +768,69 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
             self._drop_new_sessions(target, g)
 
     def _drop_on_boxes(self, target, g):
+        """Files onto one or several boxes, resolved at once (files.resolve): folder entries when the filter keeps what
+        the engine reads there, else single files; one undo step."""
         mp = self.model
         mode = "replace" if target.half == "replace" else "add"
         boxes = list(target.boxes)
-        items, loose = files.split_loose(self.reader, list(g.paths))
+        i = files.index()
+        files.note_paths(self.reader, list(g.paths))
+        res = files.resolve(self.reader, list(g.paths), i)
         ignored = 0
         if mode == "add":
             o0, k0 = boxes[0]
             own = None if o0 == COMMON else mp.own_list(o0, k0)
             exist = list(own if own is not None else mp.common_list(k0))
-            new = [p for p in items if not files.already(p, exist)]
-            ignored, items = len(items) - len(new), new
-        self._rest = lambda: [self._step(o, k, self._take(items, loose), "add") for o, k in boxes]
-        self._include = lambda: self._plan_include(items, boxes)
-        if not items:
-            self.toast.emit(*files.nothing_to_take(loose, ignored))
+            ignored = files.without_doubles(res, exist)
+        self._rest = lambda: self._left_steps([(o, k, res.left) for o, k in boxes])
+        self._include = lambda: self._include_steps([(o, k, res.subs) for o, k in boxes], i)
+        if not res.items:
+            self.toast.emit(*files.nothing_to_take(res, ignored))
             return
-
-        def build(paths, mode=mode):
-            return [self._step(o, k, paths, mode) for o, k in boxes]
-        steps = build(items)
+        taken = res.frames()
         o0, k0 = boxes[0]
-        base = files.drop_toast(self.reader, k0, None if o0 == COMMON else self.session_name(o0), items, mode, len(boxes))
-        text = files.drop_sentence(self.reader, base, items, loose, mode, ignored)
-        self._rather = build(items, "add")
-        res = self.act(steps, text, files.drop_links(self.reader, items, loose, mode))
-        if not res.ok:
-            return
-        for o, k in boxes:
-            files.save_options(self.reader, self.doc.view, o, k, items)
-
-        def include_empty(empties, remaining):
-            st, chg = self._plan_include(remaining, boxes) if remaining else ([], [])
-            marked = [x + files.MARK for x in empties]
-            return list(st) + build(marked, "add"), list(chg) + [(o, k, x, x + files.MARK) for o, k in boxes for x in empties]
-        self._watch(items, loose, mode,
-                    lambda remaining: (lambda: self.act(build(remaining))) if remaining else None,
-                    lambda empties, remaining: (lambda: include_empty(empties, remaining)))
+        base = files.drop_toast(k0, None if o0 == COMMON else self.session_name(o0), len(taken), mode, len(boxes))
+        self._rather = [self._step(o, k, res.items, "add") for o, k in boxes]
+        self.act([self._step(o, k, res.items, mode) for o, k in boxes],
+                 files.drop_sentence(base, res, mode, ignored, taken), files.drop_links(res, mode))
 
     def _drop_new_sessions(self, target, g):
-        groups, loose_of = [], []
-        for grp in self._groups(g):
-            items, loose = files.split_loose(self.reader, grp)
-            groups.append(items or None)
-            loose_of.append(loose)
-        taken = [x for x in groups if x]
-        loose_all = [p for lst in loose_of for p in lst]
-        if not taken:
-            if loose_all:
-                self.toast.emit(_("Nothing taken · {left} left").format(left=files.summary(loose_all)), [])
-            return
-        lots_all = [(x, lg) for x, lg in zip(groups, loose_of) if x]
+        """Each dropped folder (and the loose files together) a new session of the stack, or a new stack."""
+        i = files.index()
+        files.note_paths(self.reader, list(g.paths))
+        lots = [files.resolve(self.reader, grp, i) for grp in self._groups(g)]
+        taken = [r for r in lots if r.items]
+        every = files.merge(lots)
         new_session = target.kind == "ghost_s"
 
-        def steps_for(taken):
+        def steps_for(groups):
             if new_session:
-                return [("add_night", dict(row=target.rid, files={"lights": grp})) for grp in taken]
-            out = [("add_row", dict(kind="session", files={"lights": taken[0]}))]
-            out += [("add_night", lambda outs, grp=grp: dict(row=outs[0].created["row"], files={"lights": grp}))
-                    for grp in taken[1:]]
-            return out
-
-        def launch(taken, lots, with_toast=True):
-            n = len(taken)
-            if new_session:
-                txt = plural(n, "{n} session added", "{n} sessions added")
-            else:
-                txt = _("New stack added") if n == 1 else _("New stack added ({n} sessions)").format(n=n)
-            every = [p for x in taken for p in x]
-            if with_toast:
-                res = self.act(steps_for(taken), files.drop_sentence(self.reader, txt, every, loose_all, "add"),
-                               files.drop_links(self.reader, every, loose_all, "add"))
-            else:
-                res = self.act(steps_for(taken))
-            if res.ok:
-                made = [b for b in (res.created or {}).get("blocks", [])
-                        if b in self.doc.graph.blocks and self.doc.graph.blocks[b].kind == "session"]
-
-                def rest(made=made, lots=lots):
-                    out = []
-                    for sid, (x, lg) in zip(made, lots):
-                        ps = self._take(x, lg)
-                        if ps:
-                            out.append(self._step(sid, "lights", ps, "add"))
-                    return out
-                self._rest = rest
-                self._include = lambda: self._plan_include_sessions(made, lots)
-                for sid, (x, _lg) in zip(made, lots):
-                    files.save_options(self.reader, self.doc.view, sid, "lights", x)
-                self.focus_last_session()
-            return res
-
-        res = launch(taken, lots_all)
+                return [("add_night", dict(row=target.rid, files={"lights": grp})) for grp in groups]
+            if not groups:
+                return []
+            out = [("add_row", dict(kind="session", files={"lights": groups[0]}))]
+            return out + [("add_night", lambda outs, grp=grp: dict(row=outs[0].created["row"], files={"lights": grp}))
+                          for grp in groups[1:]]
+        if not taken:                    # sub-folders only: « Include » makes the session(s) of their entries
+            def included():
+                subs = (files.include(self.reader, r.subs, i) for r in lots if r.subs)
+                return steps_for([x.items for x in subs if x.items]), []
+            self._include = included
+            self.toast.emit(*files.nothing_to_take(every, 0))
+            return
+        steps = steps_for([r.items for r in taken])
+        if new_session:
+            txt = plural(len(taken), "{n} session added", "{n} sessions added")
+        else:
+            txt = _("New stack added") if len(taken) == 1 else _("New stack added ({n} sessions)").format(n=len(taken))
+        res = self.act(steps, files.drop_sentence(txt, every, "add"), files.drop_links(every, "add"))
         if not res.ok:
             return
-        every = [p for x in taken for p in x]
-
-        def rebuild(remaining):
-            kept = [[x for x in grp if x in remaining] for grp in taken]
-            kept = [x for x in kept if x]
-            if not kept:
-                return None
-            lots = [([i for i in x if i in remaining], lg) for x, lg in lots_all if any(i in remaining for i in x)]
-            return lambda: launch(kept, lots, with_toast=False)
-
-        def include_empty(empties, remaining):
-            """A new session (or stack) per emptied folder, read at all levels."""
-            def do():
-                marked = [[x + files.MARK for x in grp if x in empties] for grp in taken]
-                marked = [x for x in marked if x]
-                for grp in marked:
-                    for xm in grp:
-                        self.reader.note(xm, True)
-                        self.reader.opts[xm] = self.reader.opts.get(xm[:-len(files.MARK)], files.DEFAULT)
-                return steps_for(marked), [], (lambda res: self._note_included(res, marked))
-            return do
-        self._watch(every, loose_all, "add", rebuild, include_empty)
-
-    def _note_included(self, res, marked):
-        """After « Include » made new sessions of emptied folders: the all-levels choice is recorded for each."""
         made = [b for b in (res.created or {}).get("blocks", [])
                 if b in self.doc.graph.blocks and self.doc.graph.blocks[b].kind == "session"]
-        for sid, grp in zip(made, marked):
-            files.save_options(self.reader, self.doc.view, sid, "lights", grp)
-
-    # ---- a folder with no direct matching file leaves no empty entry behind
-    def _watch(self, items, loose, mode, rebuild, include_empty):
-        """Watch the drop just made: once every folder is listed, the entries holding no direct matching file are taken
-        out again (the gesture is undone and, when some folders did hold files, made again without them: still one
-        undo step), and the toast says why, with « Include » when sub-folders were not read."""
-        self._watching = dict(items=list(items), loose=list(loose), mode=mode, rev=self.doc.revision,
-                              rebuild=rebuild, include_empty=include_empty)
-        self._check_watch()
-
-    def _check_watch(self):
-        w = self._watching
-        if not w:
-            return
-        if self.doc.revision != w["rev"]:                       # something else was edited meanwhile: leave it
-            self._watching = None
-            return
-        items = w["items"]
-        if self.reader.expand(tuple(items)) is None:            # still listing
-            return
-        self._watching = None
-        empties = files.empty_folders(self.reader, items)
-        if not empties:
-            return
-        remaining = [x for x in items if x not in empties]
-        redo = w["rebuild"](remaining)
-        self.doc.undo()
-        self.bridge.view_changed()
-        if self._built_rev != self.doc.revision:
-            self.after_model()
-        if redo is not None:
-            redo()
-        text = files.drop_sentence(self.reader, lambda: _("Folder without a direct file: nothing added"), items,
-                                   w["loose"], w["mode"])
-        links0 = files.drop_links(self.reader, items, w["loose"], w["mode"])
-
-        def links():
-            return [(t, k) for t, k in links0() if k != "undo" or redo is not None]
-        self._include = w["include_empty"](empties, remaining)
-        self.toast.emit(text, links)
+        self._rest = lambda: self._left_steps([(sid, "lights", r.left) for sid, r in zip(made, taken)])
+        self._include = lambda: self._include_steps([(sid, "lights", r.subs) for sid, r in zip(made, taken)], i)
+        self.focus_last_session()
 
     def focus_last_session(self):
         sids = [s["sid"] for pl in self.model.stacks() for s in pl["sessions"]]
@@ -1236,19 +1121,9 @@ class Table(QWidget):
             if steps:
                 g.act(steps, _("All taken"), undo_link())
         elif key == "include":
-            plan = g._include() if g._include else ([], [])
-            steps, chg = plan[0], plan[1]
-            after = plan[2] if len(plan) > 2 else None
+            steps = (g._include() if g._include else ([], []))[0]
             if steps:
-                view = g.doc.view
-                for o, k, old, new in chg:                       # the choice is recorded before the listing starts
-                    name = files.option_name(g.reader, view, o, k, old)
-                    g.reader.opts[new] = g.reader.opts.get(old, files.DEFAULT)
-                    g.reader.note(new, True)
-                    view.setdefault(files.OPTIONS, {})[f"{o}|{k}|{new}"] = [name, True]
-                res = g.act(steps, _("All levels read"), undo_link())
-                if after is not None and res.ok:
-                    after(res)
+                g.act(steps, _("Sub-folders included"), undo_link())
         elif key == "rather_add":
             steps = g._rather
             r = g.doc.undo()

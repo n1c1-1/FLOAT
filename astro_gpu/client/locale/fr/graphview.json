@@ -368,5 +368,12 @@
   "Its files in the panel on the right": "Ses fichiers dans le panneau de droite",
   "No files": "Aucun fichier",
   "This session takes none of these files, not even Common's": "Cette session ne prend aucun de ces fichiers, pas même ceux du commun",
-  "master of {n}": "master de {n}"
+  "master of {n}": "master de {n}",
+  "folder · without sub-folders": "dossier · sans sous-dossiers",
+  "{n} file not a frame, ignored": "{n} fichier qui n'est pas une brute, ignoré",
+  "{n} files not frames, ignored": "{n} fichiers qui ne sont pas des brutes, ignorés",
+  "Nothing to add: {n} file not a frame": "Rien à ajouter : {n} fichier qui n'est pas une brute",
+  "Nothing to add: {n} files not frames": "Rien à ajouter : {n} fichiers qui ne sont pas des brutes",
+  "{mark} {name}   ·   without sub-folders · {n} files": "{mark} {name}   ·   sans sous-dossiers · {n} fichiers",
+  "Sub-folders included": "Sous-dossiers inclus"
 }

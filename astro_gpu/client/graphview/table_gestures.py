@@ -203,9 +203,7 @@ class Gestures:
             elif b.bar:
                 t.append(_("Own to this session · Common has {n}").format(n=len(mp.common_list(kind))))
             src = mp.common_list(kind) if owner == COMMON else (mp.own_list(owner, kind) or mp.common_list(kind))
-            t += [f"{os.path.basename(files.base(x)[0]) or x} : "
-                  + files.describe(x, files.is_folder(self.reader, x), files.option_name(self.reader, self.doc.view,
-                                                                                         owner, kind, x))
+            t += [f"{os.path.basename(x) or x} : " + files.describe(x, files.is_folder(self.reader, x))
                   for x in src[:3]]
             if len(src) > 3:
                 t.append(_("… {n} more").format(n=len(src) - 3))
@@ -619,7 +617,7 @@ class Gestures:
             self.status.emit(_("Nothing to copy here"), 2000)
             return
         m = QMimeData()
-        m.setUrls([QUrl.fromLocalFile(files.base(p)[0]) for p in lst])
+        m.setUrls([QUrl.fromLocalFile(p) for p in lst])
         QGuiApplication.clipboard().setMimeData(m)
         self.status.emit(plural(len(lst), "{n} item copied", "{n} items copied"), 2000)
 

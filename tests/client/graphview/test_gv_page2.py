@@ -366,7 +366,8 @@ def test_s34_sub_folders_not_read_include_and_no_duplicate(B, tmp_path):
     B.canvas.toast.link.emit("include")
     settle(B)
     lst = B.b.doc.files_of(s, "lights")[1]
-    assert B.b.drops.count(lst) == (11, True) and lst[0].endswith("/**") and B.steps() == n0 + 2
+    assert B.b.drops.count(lst) == (11, True) and B.steps() == n0 + 2
+    assert lst == [fwd(night), fwd(night / "darks"), fwd(night / "flats")]   # each sub-folder an entry of its own
     before = B.js()
     B.g.drop_files(s, "lights", [str(night)])
     assert B.toast().startswith("Already there: nothing added")

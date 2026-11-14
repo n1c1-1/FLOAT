@@ -29,7 +29,7 @@ from ...graphcore.rules import FILE_LABEL, title_msg
 from ...graphcore.shapes import Result
 from .. import prefs
 from ..graphnode import SIDE_INPUTS, STAR_OUTPUTS
-from ..i18n import _
+from ..i18n import _, number
 from ..layout import pinch_factor, wheel_gesture
 from ..widgets import Spinner
 from . import style
@@ -51,12 +51,12 @@ from .items import (
 from .menu import menu as block_menu
 from .style import ACCENT, CLIENT_KEY, FALLBACK_WORD, IMAGE_COL, STATE_COL, kind_what, state_word
 
-MIN_ZOOM, MAX_ZOOM, MIN_AUTO, MAX_AUTO = 0.1, 4.0, 0.75, 1.2
+MIN_ZOOM, MAX_ZOOM, MIN_AUTO, MAX_AUTO = 0.1, 8.0, 0.75, 1.2      # the zoom the user can choose, as today
 MARGIN = 48                 # scene margin around the drawing (also keeps blocks off the zoom buttons)
 MIME_KIND = "application/x-float-graph-kind"
 #: the blocks without an image out port
 NO_OUT = ("session", "calibration", "registration", "selection", "crop", "post")
-ZOOMS = (0.25, 0.5, 0.75, 1.0, 1.5, 2.0)
+from ..imageview import ZOOM_PRESETS as ZOOMS  # noqa: E402 - today's presets, 12.5 % to 800 %
 #: a combination's and Combine layers' inputs: the colour of their dot
 PORT_COL = {"Background": IMAGE_COL["starless"], "Stars": IMAGE_COL["stars_only"]}
 OUT_COL = {"Starless": IMAGE_COL["starless"], "Stars only": IMAGE_COL["stars_only"]}
@@ -324,7 +324,7 @@ class GraphCanvas(QGraphicsView):
         zm = QMenu(self.b_zoom)
         zm.addAction(_("Show all"), self.show_all)
         for z in ZOOMS:
-            zm.addAction(f"{int(z * 100)} %", lambda zz=z: self.zoom_to(zz))
+            zm.addAction(f"{number(z * 100, 1 if z * 100 % 1 else 0)} %", lambda zz=z: self.zoom_to(zz))
         self.b_zoom.setMenu(zm)
         self.b_all = QPushButton(_("Show all"), self.viewport())
         self.b_all.setObjectName("toggle")

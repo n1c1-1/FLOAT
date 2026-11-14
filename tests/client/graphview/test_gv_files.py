@@ -1,5 +1,7 @@
 """The file-type filter (graphview/files.py), the background listing (table_reader.py), the drops on the graph's Session
-targets (graph_drops.py) and the panel of a file cell (files_panel.py), on real temporary folders."""
+targets (graph_drops.py) and the panel of a file cell (files_panel.py), on real temporary folders. The filter and
+« Include » are resolved at drop time: a folder entry when the filter keeps what the engine reads there, else single
+files; nothing about the filter is stored; the counts said are the engine's own (``list_frames``)."""
 from __future__ import annotations
 
 import time
@@ -53,16 +55,17 @@ class Toasts:
 def test_gv_files_filter_by_extension_only(qapp):
     from astro_gpu.client import prefs
     from astro_gpu.client.graphview import files
-    assert [n for n, _e in files.TYPES] == ["Camera raws", "FITS", "Raws and FITS", "All images", "All files"]
+    assert [n for n, _e in files.TYPES] == ["Camera raws", "FITS", "Raws and FITS", "All images"]
     assert files.index() == files.DEFAULT == 2
     assert files.accepts("x.CR3", 0) and not files.accepts("x.fit", 0) and files.accepts("x.FITS", 1)
-    assert files.accepts("x.jpeg", 3) and not files.accepts("x.jpeg", 2) and files.accepts("x.txt", 4)
+    assert files.accepts("x.jpeg", 3) and not files.accepts("x.jpeg", 2) and files.accepts("x.fits.fz", 1)
+    assert not any(files.accepts("x.txt", i) for i in range(len(files.TYPES)))   # the engine cannot read it
     assert not files.accepts("DARK_300s.txt", 2)                       # a name is never read, only the extension
     files.set_index(0)
     assert prefs.get("graph_file_filter") == "Camera raws" and files.index() == 0
     assert files.summary(["a.ARW", "b.arw", "c.jpg"]) == "2 ARW, 1 JPG"
-    assert files.already("C:/a/b", ["C:/a/b"]) and files.already("C:/a/b/c.fit", ["C:/a/b/**"])
-    assert not files.already("C:/a/b/**", ["C:/a/b"])                   # read deeper: not a double
+    assert files.already("C:/a/b", ["C:/a/b"])                          # (a file read through a folder: the drops)
+    assert not files.already("C:/a/b/c/d.fit", ["C:/a/b"])             # the engine reads a folder's own level only
 
 
 def test_gv_files_reader_lists_direct_files(qapp, tmp_path):
@@ -78,7 +81,7 @@ def test_gv_files_reader_lists_direct_files(qapp, tmp_path):
     r.request(("s", "lights"), [fwd(root)])
     assert r.wait(10)
     fs = r.expand((fwd(root),))
-    assert len(fs) == 4 and all(f.path.endswith(".ARW") for f in fs)   # Raws and FITS; sub-folders not read
+    assert len(fs) == 4 and all(f.path.endswith(".ARW") for f in fs)   # the engine's rule: JPG beside raws aside
     assert len(r.left_out([fwd(root)])) == 2 and r.sub_folders([fwd(root)]) == 1
     assert seen and seen[-1].phase == "done" and not r.active_jobs()
     missing = fwd(tmp_path / "gone")
@@ -107,6 +110,7 @@ def test_gv_files_graph_drop_filter_take_all_and_doubles(qapp, tmp_path):
     assert len(lst) == 6 and len(bridge.doc.document._undo) == n0 + 2   # the folder + the 5 JPG as single files
     assert toasts.text == "All taken"
     assert drops.drop(sid, "lights", [str(mixed)]) is None            # already there: nothing added
+    assert drops.drop(sid, "lights", [str(mixed / "IMG_0000.ARW")]) is None   # read through the folder already
     assert toasts.text == "Already there: nothing added" and len(bridge.doc.document._undo) == n0 + 2
     assert drops.reader.active_jobs() == []
 
@@ -127,9 +131,43 @@ def test_gv_files_graph_drop_sub_folders_and_empty_folder(qapp, tmp_path):
     drops.link("include")
     settle(drops.reader)
     src, lst = bridge.doc.files_of(sid, "lights")
-    assert src == "own" and lst == [fwd(only) + "/**"] and len(bridge.doc.document._undo) == n0 + 1
+    # each sub-folder holding frames, an entry of its own; nothing stored about the choice
+    assert src == "own" and lst == [fwd(only / "a"), fwd(only / "b")] and len(bridge.doc.document._undo) == n0 + 1
     assert drops.reader.count(lst) == (6, True)
-    assert bridge.doc.view["file_options"][f"{sid}|lights|{fwd(only)}/**"] == ["Raws and FITS", True]
+    assert "file_options" not in bridge.doc.view and not any("**" in x for x in lst)
+
+
+def test_gv_files_a_filter_unlike_the_engine_rule_stores_single_files(qapp, tmp_path):
+    from astro_gpu.client.graphview import files
+    from astro_gpu.core.project import list_frames
+    both = tmp_path / "both"
+    make(both, 3, "R", "ARW")
+    make(both, 2, "F", "fit")
+    make(both, 1, "N", "txt")
+    colour = tmp_path / "colour"
+    make(colour, 4, "C", "JPG")
+    mixed = tmp_path / "mixed"
+    make(mixed, 2, "M", "ARW")
+    make(mixed, 2, "M", "JPG")
+    bridge, sid = one_session_bridge()
+    toasts = Toasts(bridge)
+    drops = bridge.drops
+    files.set_index(0)                                                 # Camera raws: the engine would read the FITS too
+    drops.drop(sid, "lights", [str(both)])
+    lst = bridge.doc.files_of(sid, "lights")[1]
+    assert sorted(lst) == sorted(fwd(both / f"R_{i:04d}.ARW") for i in range(3))
+    assert toasts.text == "3 ARW added · 2 FIT left · 1 file not a frame, ignored"
+    assert len(list_frames(lst)) == 3
+    bridge.undo()
+    files.set_index(3)                                                 # All images on a folder of JPEGs only: the rule
+    drops.drop(sid, "lights", [str(colour)])
+    assert bridge.doc.files_of(sid, "lights")[1] == [fwd(colour)]
+    drops.drop(sid, "lights", [str(mixed)])                            # All images beside raws: unlike the rule
+    lst = bridge.doc.files_of(sid, "lights")[1]
+    assert fwd(mixed) not in lst and sum(1 for x in lst if x.startswith(fwd(mixed) + "/")) == 4
+    assert len(list_frames(lst)) == 8 and "file_options" not in bridge.doc.view
+    assert drops.drop(sid, "lights", [str(tmp_path / "both" / "N_0000.txt")]) is None
+    assert toasts.text == "Nothing to add: 1 file not a frame"
 
 
 # ----------------------------------------------------------------------------------------------- the panel of a file cell
@@ -145,7 +183,7 @@ def test_gv_files_panel_entries_unfold_exclude_remove(qapp, tmp_path):
     p.refresh()
     assert [r[0] for r in p.rows.rows] == [ENTRY, ENTRY]
     assert "2 entries · 5 files" == p.summary.text()
-    assert "Raws and FITS · without sub-folders · 3 files" in p.rows.rows[0][2]
+    assert "without sub-folders · 3 files" in p.rows.rows[0][2]
     p.toggle(fwd(a))
     kinds = [r[0] for r in p.rows.rows]
     assert kinds == [ENTRY, FOLDER, FILE, FILE, FILE, ENTRY]

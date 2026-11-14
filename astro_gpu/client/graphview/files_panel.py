@@ -59,7 +59,7 @@ class FileRows(QAbstractListModel):
             groups = {}
             for f in fs:
                 groups.setdefault(os.path.dirname(f.path), []).append(f)
-            root = files.base(e)[0].rstrip("/")
+            root = e.rstrip("/")
             for d in sorted(groups):
                 gl = groups[d]
                 rel = d[len(root):].lstrip("/") if d.startswith(root) else d
@@ -85,7 +85,7 @@ class FileRows(QAbstractListModel):
             f.setStrikeOut(k == FILE and path in self.panel.excluded())
             return f
         if role == Qt.ToolTipRole:
-            return path or files.base(e)[0]
+            return path or e
         return None
 
     def flags(self, index):
@@ -170,15 +170,12 @@ class FilesPanel(QWidget):
         return set(self.bridge.doc.view.get(EXCLUSIONS, {}).get(f"{self.owner}|{self.kind}", []))
 
     def entry_text(self, e, opened):
-        path, all_levels = files.base(e)
-        name = os.path.basename(path.rstrip("/")) or path
+        name = os.path.basename(e.rstrip("/")) or e
         if files.is_folder(self.reader, e):
             fs = self.reader.expand((e,))
-            filt = _(files.option_name(self.reader, self.bridge.doc.view, self.owner, self.kind, e))
             n = "…" if fs is None else str(sum(1 for f in fs if f.path not in self.excluded()))
-            levels = _("all sub-folders") if all_levels else _("without sub-folders")
-            return _("{mark} {name}   ·   {filter} · {levels} · {n} files").format(
-                mark="▾" if opened else "▸", name=name, filter=filt, levels=levels, n=n)
+            return _("{mark} {name}   ·   without sub-folders · {n} files").format(
+                mark="▾" if opened else "▸", name=name, n=n)
         return _("  {name}   ·   file").format(name=name)
 
     def refresh(self):
