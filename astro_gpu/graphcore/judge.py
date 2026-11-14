@@ -108,6 +108,8 @@ def judge_insert(B, kind, rid, after):
     r = ix.row[rid]
     if after is None and not r.fork and not r.nights:
         return "nothing is inserted before the head of the row", None
+    if after is None and kind == "synth":                   # operations._insert: never a row's head
+        return NO_SYNTH_BRANCH, None
     pos = r.blocks.index(after) + 1 if after is not None else 0
     s = r.blocks[pos] if pos < len(r.blocks) else None
     why = ""

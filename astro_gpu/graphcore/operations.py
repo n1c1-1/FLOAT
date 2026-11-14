@@ -1157,6 +1157,9 @@ def _insert(q, b, rid, after):
     if after is None:
         if not r.fork and not r.nights:
             raise Refusal("nothing is inserted before the head of the row")
+        if q.blocks[b].kind == "synth":                  # (switched off, the engine skips it): never a row's head,
+            from .judge import NO_SYNTH_BRANCH           # it reads the stars of the block before it in its row
+            raise Refusal(NO_SYNTH_BRANCH)
         r.blocks.insert(0, b)
     else:
         if after not in r.blocks:
