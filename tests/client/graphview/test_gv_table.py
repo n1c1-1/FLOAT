@@ -751,7 +751,7 @@ def test_gv_table_structure(qapp, tree):
     assert len(b.stacks()) == 3
     b.key(Qt.Key_Z, Qt.ControlModifier)
     texts = [e[0] for e in g.menu_entries(g.cell(("stack", rid))) if e]
-    assert "Set as reference" in texts and any(t.startswith("Merge into") for t in texts)
+    assert "As reference" in texts and any(t.startswith("Merge into") for t in texts)
     g.take_reference(b.stacks()[1]["id"])
     assert b.stacks()[1]["ref"] and not b.stacks()[0]["ref"]
     g.set_focus(g.cell(("stack", b.stacks()[1]["id"])))

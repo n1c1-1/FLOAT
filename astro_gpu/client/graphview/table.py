@@ -31,7 +31,8 @@ from PySide6.QtWidgets import (
 from ...graphcore.operations import COMMON
 from ..i18n import _, maybe, plural
 from . import files
-from .table_gestures import INTERNAL_MIME, Gestures, undo_link
+from .table_gestures import INTERNAL_MIME, Gestures, common_tip, undo_link
+from .table_headers import HeaderReadings
 from .table_logic import COLS_BLOCK, FOLDED, KIND_TITLE, KINDS, TableModel, count_text
 from .table_paint import (
     ACCENT,
@@ -164,6 +165,10 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
         self.bridge = bridge
         self.reader = reader if reader is not None else bridge.drops.reader
         self.model = TableModel(bridge, self.reader)
+        # what the frames' headers say, read off the GUI thread by the project model's service (none in memory)
+        self.headers = HeaderReadings(bridge, self)
+        self.model.headers = self.headers
+        self.headers.changed.connect(self._headers_read)
         self._progress.connect(self._on_progress)
         self._listener = self._progress.emit
         self.reader.listen(self._listener)
@@ -417,6 +422,13 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
                 if self._sigs.get((owner, k)) != sig:
                     self._sigs[(owner, k)] = sig
                     self.reader.request((owner, k), src)
+        self.headers.request()
+
+    def _headers_read(self):
+        """The headers' reading came: the boxes, dates, durations and warnings that depend on it are drawn again."""
+        self.model.invalidate()
+        self.rebuild()
+        self.toolbar_changed.emit()
 
     def _on_progress(self, job):
         self.model.invalidate()
@@ -1098,7 +1110,8 @@ class Table(QWidget):
         b1.clicked.connect(lambda: g.move_to(g.chosen_sessions(), None))
         self.b_move = QPushButton(_("Move to ▾"))
         self.b_move.clicked.connect(self._move_menu)
-        b3 = QPushButton(_("Back to common"))
+        b3 = QPushButton(_("To Common"))
+        b3.setToolTip(common_tip())
         b3.clicked.connect(lambda: g.back_to_common([g.cell(("name", s)) for s in g.chosen_sessions()]))
         b4 = QPushButton(_("Delete"))
         b4.clicked.connect(g.delete)
@@ -1154,7 +1167,8 @@ class Table(QWidget):
         self.b_warn.setText(plural(n, "{n} warning ▸", "{n} warnings ▸") if n else "")
         self.b_warn.setVisible(bool(n))
         jobs = mp.readings()
-        self.counter.setText(_("Reading… {n}").format(n=sum(t.listed for t in jobs)) if jobs else "")
+        self.counter.setText(_("Reading… {n}").format(n=sum(t.listed for t in jobs)) if jobs else
+                             _("Reading the frames…") if mp.headers_pending() else "")
         if not self._status_timer.isActive():
             self._status_default()
 

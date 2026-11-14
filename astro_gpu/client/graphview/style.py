@@ -3,7 +3,7 @@ graphnode.py), plus the few constants of today's graph page (graph.py) the new i
 page does not import the old one (tests/client/graphview/test_graphnode.py checks they stay equal)."""
 from __future__ import annotations
 
-from ..graphnode import BREAK_COL, BY_KEY, PAUSE_COL, REVIEWED_COL, STATE_WORD  # noqa: F401
+from ..graphnode import BREAK_COL, BY_KEY, FALLBACK_WORD, PAUSE_COL, REVIEWED_COL, STATE_WORD  # noqa: F401
 from ..i18n import _
 from ..icons import IconLabel, app_icon, draw, icon, icon_only, pixmap, set_icon  # noqa: F401
 from ..widgets import ACCENT, BAD, DISABLED, OK, QSS, SHARED, WARN, Box, ElidedLabel, clear, hline, label, para  # noqa: F401
@@ -26,9 +26,10 @@ ROLE = {"session": "block_session", "image": "block_image", "calibration": "bloc
         "stacking": "block_stacking", "astrometry": "block_astrometry", "gradient": "block_gradient",
         "deconv": "deconvolve", "denoise": "block_denoise", "color": "block_colour", "stars": "block_stars",
         "synth": "block_stars", "combine": "block_fusion", "combine_layers": "block_recombine", "post": "layers"}
-#: the palette's groups (headings shown in capitals)
+#: the palette's groups (headings shown in capitals), named as today's palette names them (graph.py PALETTE_GROUPS:
+#: "FRAMES", one word in each language)
 GROUPS = [("Sources", ["session", "image"]),
-          ("Lights", ["calibration", "registration", "selection", "crop", "stacking"]),
+          ("FRAMES", ["calibration", "registration", "selection", "crop", "stacking"]),
           ("Image", ["astrometry", "gradient", "deconv", "denoise", "color"]),
           ("Post", ["stars", "synth"]),
           ("Composition", ["combine", "combine_layers"])]

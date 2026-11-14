@@ -11,6 +11,7 @@ from .style import (
     ACCENT,
     BAD,
     BREAK_COL,
+    BROKEN_COL,
     CUT_COL,
     GREY_COL,
     IMAGE_COL,
@@ -184,10 +185,16 @@ class BlockItem(QGraphicsItem):
             p.restore()
             p.setPen(QPen(QColor("#9aa3b2"), 1.8))
             p.drawLine(QPointF(0, h / 2), QPointF(w, h / 2))
-        if grey:                                         # greyed: amber dashed
+        broken, missing = d.get("broken"), d.get("missing")
+        fallback, warned = bool(d.get("fallback")), bool(d.get("warned"))
+        if grey or missing:                              # greyed, or its sky data not on this computer: amber dashed
             p.setPen(QPen(QColor(GREY_COL), 1.4, Qt.DashLine))
             p.setBrush(Qt.NoBrush)
             p.drawRoundedRect(r.adjusted(1, 1, -1, -1), 7, 7)
+        if broken:                                       # it cannot run at all: circled in red, Run refused
+            p.setPen(QPen(QColor(BROKEN_COL), 2.2))
+            p.setBrush(Qt.NoBrush)
+            p.drawRoundedRect(r.adjusted(-2, -2, 2, 2), 8, 8)
         if self.target_refused:
             p.setPen(QPen(QColor(BAD), 2.0))
             p.setBrush(Qt.NoBrush)
@@ -202,11 +209,13 @@ class BlockItem(QGraphicsItem):
             p.drawRoundedRect(r.adjusted(-3, -3, 3, 3), 10, 10)
         state = d["state"]
         if d["kind"] not in ("session", "post") or state != "pending":
-            _band(p, h, CUT_COL if off else (GREY_COL if grey else STATE_COL.get(state, "#5d6470")))
+            _band(p, h, CUT_COL if off else GREY_COL if grey else
+                  STATE_COL["fallback"] if fallback else STATE_COL.get(state, "#5d6470"))
         f = _font(10, True)
         p.setFont(f)
         p.setPen(QColor("#e8ebf0"))
-        mark = ("off", "dim") if off else ("not_computable", "warning") if grey else None
+        mark = ("failed", "error") if broken else ("off", "dim") if off else \
+            ("not_computable", "warning") if grey or missing else ("warning", "warning") if fallback else None
         x0 = 11 + (20 if mark else 0) + self.name_w
         tw = w - 7 - x0 - (18 if d["removable"] and self.hover else 0)
         readable = QStyleOptionGraphicsItem.levelOfDetailFromTransform(p.worldTransform()) >= MIN_SCALE - 1e-6
@@ -226,9 +235,11 @@ class BlockItem(QGraphicsItem):
             f2 = _font(8.5)
             p.setFont(f2)
             p.setPen(QColor("#8b93a1"))
-            sx = 11 + self.name_w
+            sx = 11 + self.name_w + (20 if warned else 0)  # a warning on its files: its icon heads the summary
             room = w - 4 - sx
             p.drawText(QRectF(sx, 28, room, 18), Qt.AlignLeft | Qt.AlignVCenter, elide(d["summary"], f2, room))
+            if warned:
+                draw(p, QRectF(11 + self.name_w, 29, 16, 16), "warning", "warning")
         if d["own"]:                                     # a setting unlike the other rows
             cw = _own_chip_width()
             _paint_own_chip(p, QRectF(w - 8 - cw - (20 if d["removable"] and self.hover else 0), 8, cw, 15))
@@ -628,6 +639,8 @@ class CaptionItem(QGraphicsItem):
 class ProjectItem(QGraphicsItem):
     """The Project block above the first row: outlined in its colour (red no target, amber partial, green complete)."""
     COLOURS = {"none": BAD, "partial": WARN, "complete": OK}
+    #: today's sizes of its two lines (graph.py ProjectItem), in points
+    TITLE_PT, SUMMARY_PT = 10, 8.5
 
     def __init__(self, rect: QRectF, title, summary, state, selected, tip):
         super().__init__()
@@ -648,18 +661,19 @@ class ProjectItem(QGraphicsItem):
         p.translate(self.rect.topLeft())
         _band(p, self.rect.height(), self.COLOURS.get(self.state, WARN))
         p.restore()
-        compact = self.rect.height() < 46                  # the core's box: two short lines
-        f = _font(9 if compact else 10, True)
+        # today's fonts (10 pt bold, 8.5 pt) whatever the box's height: the core's box is shorter, the lines closer
+        compact = self.rect.height() < 46
+        f = _font(self.TITLE_PT, True)
         p.setFont(f)
         p.setPen(QColor("#e8ebf0"))
         w = self.rect.width() - 20
-        p.drawText(QRectF(self.rect.x() + 11, self.rect.y() + (2 if compact else 6), w, 16 if compact else 20),
+        p.drawText(QRectF(self.rect.x() + 11, self.rect.y() + (0 if compact else 6), w, 19 if compact else 20),
                    Qt.AlignLeft | Qt.AlignVCenter, elide(self.title, f, w))
-        f2 = _font(8 if compact else 8.5)
+        f2 = _font(self.SUMMARY_PT)
         p.setFont(f2)
         p.setPen(QColor("#8b93a1"))
         p.drawText(QRectF(self.rect.x() + 11, self.rect.y() + (17 if compact else 28), self.rect.width() - 15,
-                          15 if compact else 18),
+                          17 if compact else 18),
                    Qt.AlignLeft | Qt.AlignVCenter, elide(self.summary, f2, self.rect.width() - 15))
 
 

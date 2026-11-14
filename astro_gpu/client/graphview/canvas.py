@@ -7,6 +7,7 @@ over the unchanged drawing.
 from __future__ import annotations
 
 import html
+import time
 
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QKeyEvent, QPainter, QPen, QTransform
@@ -25,7 +26,9 @@ from PySide6.QtWidgets import (
 
 from ...graphcore.model import FILE_KINDS, JOIN_KINDS, Index
 from ...graphcore.rules import FILE_LABEL, title_msg
+from ...graphcore.shapes import Result
 from ..i18n import _
+from ..widgets import Spinner
 from . import style
 from .bridge import PROJECT
 from .items import (
@@ -42,7 +45,7 @@ from .items import (
     WireItem,
 )
 from .menu import menu as block_menu
-from .style import ACCENT, IMAGE_COL, STATE_COL, kind_what, state_word
+from .style import ACCENT, FALLBACK_WORD, IMAGE_COL, STATE_COL, kind_what, state_word
 
 MIN_ZOOM, MAX_ZOOM, MIN_AUTO, MAX_AUTO = 0.1, 4.0, 0.75, 1.2
 MARGIN = 48                 # scene margin around the drawing (also keeps blocks off the zoom buttons)
@@ -54,6 +57,8 @@ ZOOMS = (0.25, 0.5, 0.75, 1.0, 1.5, 2.0)
 PORT_COL = {"Background": IMAGE_COL["starless"], "Stars": IMAGE_COL["stars_only"]}
 OUT_COL = {"Starless": IMAGE_COL["starless"], "Stars only": IMAGE_COL["stars_only"]}
 ALERT_MS = 1500
+EDGE = 40                   # a drag this near the view's edge scrolls it (graph.py EDGE)
+EDGE_WAIT = 0.35            # s held near the edge before it scrolls: a drag only crossing the edge moves nothing
 
 
 def _fields(message) -> list:
@@ -246,6 +251,7 @@ class NameEdit(QLineEdit):
 class GraphCanvas(QGraphicsView):
     inspect = Signal(object)             # Enter / double-click / menu "Inspect" on this id
     view_action = Signal(str, object)    # a menu action only the window can do: ("mark_reviewed", block)
+    templates_asked = Signal()           # the blank page's link « From template »
 
     def __init__(self, bridge, over_palette=None, parent=None):
         super().__init__(parent)
@@ -284,6 +290,12 @@ class GraphCanvas(QGraphicsView):
         self._to_delete = None
         self._pressed = False            # a block pressed by the mouse is being selected (it is under the pointer)
         self._k = 1.0
+        # a drag (palette card, placed block, wire, files) held near the view's edge scrolls the view (graph.py)
+        self._edge_pos = None
+        self._edge_since = 0.0
+        self._edge_timer = QTimer(self)
+        self._edge_timer.setInterval(30)
+        self._edge_timer.timeout.connect(self._edge_tick)
         self.toast = Toast(self.viewport())
         self.minimap = Minimap(self)
         self.minimap.hide()
@@ -307,6 +319,17 @@ class GraphCanvas(QGraphicsView):
         self.blank = QWidget(self.viewport())             # the blank page's words
         self.blank.hide()
         self._blank_built = False
+        # while the project model reads the project: no graph, a veil, a spinner and its line (graph.py show_wait)
+        self.veil = QFrame(self)
+        self.veil.setStyleSheet("background: #15171c;")
+        self.veil.hide()
+        self.spinner = Spinner(self)
+        self.spinner.hide()
+        self.wait = QLabel(self)
+        self.wait.setAlignment(Qt.AlignCenter)
+        self.wait.setStyleSheet("color: #8b93a1; font-size: 10pt;")
+        self.wait.hide()
+        self._loading = False
         bridge.changed.connect(self.rebuild)
         bridge.states_changed.connect(self.update_states)
         bridge.selection.connect(self._selection_changed)
@@ -335,6 +358,21 @@ class GraphCanvas(QGraphicsView):
     @property
     def doc(self):
         return self.bridge.doc
+
+    @property
+    def plus_session_pid(self):
+        """The workflow (id) a new session joins, as today's "+ Session" says it: the selected row's, through the
+        project model's BlockMap; None without a selection or a model."""
+        m, sel = self.doc.model, self.bridge.selected
+        bm = getattr(m, "block_map", None) if m is not None else None
+        r = (self.bridge.row(sel) or self.bridge.row_of(sel)) if sel and sel != PROJECT else None
+        if r is None or bm is None:
+            return None
+        for b in [n[0] for n in r.nights] + list(r.blocks):
+            a = bm.address(b)
+            if a is not None:
+                return a[0]
+        return None
 
     def _wire_hover(self, ident, on):
         it = self.wires.get(ident)
@@ -464,8 +502,20 @@ class GraphCanvas(QGraphicsView):
                 outputs.append((port, y, OUT_COL.get(port, "#9aa3b2"), wired))
         title = doc.title(b)
         summary = doc.summary(b)
-        tip = "\n".join(t for t in (title, kind_what(kind), summary, "" if grey else state_word(state),
+        bd = doc.badges(b)
+        fallback = list(bd.get("fallback") or []) if state == "done" and not grey else []
+        broken, missing = bd.get("broken") or "", bd.get("missing") or ""
+        word = _(FALLBACK_WORD) if fallback else state_word(state)
+        tip = "\n".join(t for t in (title, kind_what(kind), summary, "" if grey else word,
                                     (_("Switched off: the image passes through.") if blk.off else "")) if t)
+        if fallback:                                     # why, in the engine's words translated (graph.py)
+            from ..services.run import engine_text
+            tip += "".join("\n" + engine_text(w) for w in fallback)
+        if broken:
+            tip += "\n" + _("Cannot run: {why}. Run is refused until it is fixed.").format(why=broken.rstrip("."))
+        if missing:
+            tip += "\n" + _("Cannot run: {why}. Install it: Settings › Catalogs & astrometry. The runs leave this "
+                            "block out, with the blocks after it.").format(why=missing.rstrip("."))
         if grey:
             tip += "\n" + _("Cannot run: {why}").format(why=grey)
         for _name, lab, _y, wired, _c in inputs:
@@ -473,6 +523,7 @@ class GraphCanvas(QGraphicsView):
                 name=lab)
         return dict(id=b, kind=kind, title=title, summary=summary, state=state, selected=bridge.selected == b,
                     off=bool(blk.off), grey=grey, badge=badge, review=review, own=doc.differs(b),
+                    fallback=fallback, broken=broken, missing=missing, warned=bool(bd.get("warned")),
                     w=box.w, h=box.h, x=box.x, y=box.y, inputs=inputs, outputs=outputs,
                     removable=kind not in ("post", "calibration"), tip=tip)
 
@@ -548,7 +599,7 @@ class GraphCanvas(QGraphicsView):
         sc.addItem(self.tip)
         sc.setSceneRect(rect)
         self.minimap.hide()
-        self._blank_page(not (drawing.boxes or drawing.cards))
+        self._blank_page(not bridge.graph.rows)          # no row yet (the Post block is always drawn)
         if self._refit:                                  # a new document / first build: fit; a gesture never re-zooms
             self._refit = False
             self._apply_zoom()
@@ -558,7 +609,32 @@ class GraphCanvas(QGraphicsView):
         if show:
             self._show(*show)
         self._update_buttons()
+        self.show_wait()
         self.viewport().update()
+
+    def show_wait(self):
+        """The line over the graph while the project model reads the project, or why it could not (graph.py)."""
+        r = self.doc.reading()
+        text, busy = r if r is not None else ("", False)
+        self.wait.setText(text)
+        self.wait.setVisible(bool(text))
+        self.veil.setVisible(busy)
+        self.spinner.setVisible(busy)
+        if busy != self._loading:                       # the system's busy cursor, as long as it lasts
+            self._loading = busy
+            if busy:
+                self.viewport().setCursor(Qt.BusyCursor)
+            else:
+                self.viewport().unsetCursor()
+        self._place_wait()
+
+    def _place_wait(self):
+        self.veil.setGeometry(self.rect())
+        self.spinner.move((self.width() - self.spinner.width()) // 2, self.height() // 2 - 90)
+        self.wait.setGeometry(0, self.height() // 2 - 40, self.width(), 30)
+        for w in (self.veil, self.spinner, self.wait):
+            if w.isVisible():
+                w.raise_()
 
     def update_states(self):
         """The run states changed: the items are given them again."""
@@ -569,6 +645,7 @@ class GraphCanvas(QGraphicsView):
             else:
                 it.d = self.block_data(b, drawing.boxes[b])
             it.update()
+        self.show_wait()
         self.viewport().update()
         self.minimap.update()
 
@@ -614,11 +691,20 @@ class GraphCanvas(QGraphicsView):
             self.blank_title = style.label(_("Blank page"), "h1")
             self.blank_text = style.label(_("Build the workflow from the palette on the left: drag or double-click "
                                             "a block."), "dim")
-            for w in (self.blank_title, self.blank_text):
+            # today's blank page link (graph.py LinkItem "Start from a template"): the gallery, in place of the graph
+            self.blank_link = QPushButton(_("From template"))
+            self.blank_link.setObjectName("link")
+            self.blank_link.setFlat(True)
+            self.blank_link.setCursor(Qt.PointingHandCursor)
+            self.blank_link.setStyleSheet(f"QPushButton {{ color: {ACCENT}; border: none; font-size: 10pt; }} "
+                                          "QPushButton:hover { text-decoration: underline; }")
+            self.blank_link.setToolTip(_("Start the project from one of the gallery's templates"))
+            self.blank_link.clicked.connect(self.templates_asked.emit)
+            for w in (self.blank_title, self.blank_text, self.blank_link):
                 v.addWidget(w, 0, Qt.AlignHCenter)
             self._blank_built = True
         if blank:
-            self.blank.resize(560, 90)
+            self.blank.resize(560, 110)
             vp = self.viewport()
             self.blank.move((vp.width() - 560) // 2, vp.height() // 2 - 150)
             self.blank.show()
@@ -733,6 +819,7 @@ class GraphCanvas(QGraphicsView):
         elif self._keep_in_view:                 # a scroll bar appeared and took room: keep what the gesture made
             self._show(*self._keep_in_view, follow=True)
         self._update_buttons()
+        self._place_wait()
         if self.blank.isVisible():
             self.blank.move((self.viewport().width() - 560) // 2, self.viewport().height() // 2 - 150)
 
@@ -852,8 +939,10 @@ class GraphCanvas(QGraphicsView):
                 self._start_move(st)
         if self.gesture is not None and self.gesture["kind"] == "block":
             self._move_block(e.position())
+            self._edge_scroll(e.position().toPoint())
         elif self.gesture is not None and self.gesture["kind"] == "wire":
             self._pull_wire(self.mapToScene(e.position().toPoint()))
+            self._edge_scroll(e.position().toPoint())
 
     def mouseReleaseEvent(self, e):                                   # noqa: N802
         st, self.gesture = self.gesture, None
@@ -963,6 +1052,7 @@ class GraphCanvas(QGraphicsView):
         self.unsetCursor()
 
     def clean_gesture(self):
+        self._edge_scroll(None)
         for g in self.ghosts:
             self.scene().removeItem(g)
         for c in self.targets:
@@ -981,6 +1071,60 @@ class GraphCanvas(QGraphicsView):
         if self.floater is not None:
             self.scene().removeItem(self.floater)
             self.floater = None
+
+    # ================================================================== edge scroll
+    def _edge_scroll(self, pos):
+        """A drag at ``pos`` (viewport): held near the view's edge after EDGE_WAIT, the view scrolls that way, faster
+        nearer the edge (graph.py ``_edge_scroll``). None: the drag ended."""
+        was = self._edge_pos
+        self._edge_pos = pos
+        if pos is None or self._edge_delta(pos) == (0, 0):
+            self._edge_timer.stop()
+            return
+        if was is None or self._edge_delta(was) == (0, 0):
+            self._edge_since = time.monotonic()
+        if not self._edge_timer.isActive():
+            self._edge_timer.start()
+
+    def _edge_delta(self, pos) -> tuple[int, int]:
+        vp = self.viewport().rect()
+
+        def step(v, size):
+            if v < EDGE:
+                return -int(4 + 16 * min(1.0, (EDGE - v) / EDGE))
+            if v > size - EDGE:
+                return int(4 + 16 * min(1.0, (v - size + EDGE) / EDGE))
+            return 0
+        return step(pos.x(), vp.width()), step(pos.y(), vp.height())
+
+    def _edge_tick(self):
+        pos, st = self._edge_pos, self.gesture
+        if pos is None or st is None or not self.isVisible():
+            self._edge_scroll(None)
+            return
+        if time.monotonic() - self._edge_since < EDGE_WAIT:
+            return
+        dx, dy = self._edge_delta(pos)
+        hb, vb = self.horizontalScrollBar(), self.verticalScrollBar()
+        before = (hb.value(), vb.value())
+        hb.setValue(hb.value() + dx)
+        vb.setValue(vb.value() + dy)
+        if (hb.value(), vb.value()) == before:
+            return                                        # at the end: nothing more to show that way
+        self.auto = False
+        kind = st.get("kind")                             # what is under the pointer now, lit as a move would
+        if kind == "block":
+            self._move_block(QPointF(pos))
+        elif kind == "wire":
+            self._pull_wire(self.mapToScene(pos))
+        elif kind == "palette":
+            self._heat(self.mapToScene(pos))
+        elif kind == "files":
+            self._files_over(pos)
+
+    def hideEvent(self, e):                                           # noqa: N802
+        self._edge_scroll(None)
+        super().hideEvent(e)
 
     # ================================================================== names
     def rename(self, ident, row=None):
@@ -1082,7 +1226,10 @@ class GraphCanvas(QGraphicsView):
         elif op == "mark_reviewed":
             f = getattr(self.bridge.document, "mark_reviewed", None)
             if f is not None:
-                f(ident)
+                res = self.doc.guarded(op, lambda: f(ident) or Result(True), take_back=False)
+                if not res.ok:
+                    self.say(self.bridge.say(res.reason))
+                    return
             self.view_action.emit(op, ident)
             self.bridge.run_states_changed()
         else:
@@ -1195,6 +1342,7 @@ class GraphCanvas(QGraphicsView):
             self._heat(self.mapToScene(e.position().toPoint()))
         elif st["kind"] == "files":
             self._files_over(e.position().toPoint())
+        self._edge_scroll(e.position().toPoint())
         e.acceptProposedAction()
 
     def dragLeaveEvent(self, e):                                      # noqa: N802

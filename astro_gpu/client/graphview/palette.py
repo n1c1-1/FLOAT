@@ -25,6 +25,7 @@ class Card(QFrame):
         super().__init__()
         self.palette, self.kind = palette, kind
         self.enabled, self.reason = True, ""
+        self.hint = ""                   # refused for the current workflow: where it can still go (graph.py drag_only)
         self._press = None
         self.setObjectName("tool")
         self.setMaximumWidth(PALETTE_W - 26)
@@ -42,8 +43,10 @@ class Card(QFrame):
         h.addWidget(self.title, 1)
         self.set_state(True, "")
 
-    def set_state(self, enabled, reason):
-        self.enabled, self.reason = bool(enabled), reason or ""
+    def set_state(self, enabled, reason, hint=""):
+        """Enabled or greyed with its reason; ``hint``: the card's place in the current workflow is refused (its reason
+        in ``reason``) but it can still be dragged elsewhere, said in words."""
+        self.enabled, self.reason, self.hint = bool(enabled), reason or "", hint or ""
         on = self.enabled
         self.setCursor(Qt.OpenHandCursor if on else Qt.ForbiddenCursor)
         self.setStyleSheet(f"QFrame#tool {{ background: {'#232831' if on else '#1e2128'}; border: 1px solid "
@@ -54,7 +57,10 @@ class Card(QFrame):
         self.icon.update()
         self.title.setStyleSheet(self.base + ("" if on else " color: #555b66;"))
         what = textwrap.fill(kind_what(self.kind), 70)
-        self.setToolTip(what if on or not self.reason else kind_title(self.kind) + "\n" + _capital(self.reason))
+        if on and self.hint:
+            self.setToolTip(what + "\n" + _capital(self.reason) + "\n" + self.hint)
+        else:
+            self.setToolTip(what if on or not self.reason else kind_title(self.kind) + "\n" + _capital(self.reason))
 
     def mousePressEvent(self, e):                                     # noqa: N802
         self._press = e.position().toPoint()
@@ -154,7 +160,10 @@ class Palette(QScrollArea):
             return
         k = self._queue.pop(0)
         ok, why = self.bridge.doc.palette_state(k)
-        self.cards[k].set_state(ok, why)
+        hint = ""
+        if ok:
+            why, hint = self.hint(k)
+        self.cards[k].set_state(ok, why, hint)
         if self._queue:
             QTimer.singleShot(0, self, lambda g=gen: self._step(g))
 
@@ -163,8 +172,34 @@ class Palette(QScrollArea):
         while self._queue:
             self._step(self._gen)
 
+    def hint(self, kind):
+        """(reason, words) when the current workflow refuses ``kind`` at its natural place while the card can still be
+        dragged elsewhere ("Drag it onto another workflow", "Drag it between blocks for a new branch", as today's
+        palette says); ("", "") else."""
+        r = self.current_row()
+        if r is None or kind in ("session", "image", "combine", "combine_layers"):
+            return "", ""
+        doc = self.bridge.doc
+        res = doc.try_many([("add_block", {"kind": kind, "row": r.id})])
+        if res.ok:
+            return "", ""
+        lit = [p for p in self.bridge.places(kind=kind) if p.lit]
+        if any(p.kind != "branch" for p in lit):
+            return doc.say(res.reason), _("Drag it onto another workflow")
+        if lit:
+            return doc.say(res.reason), _("Drag it between blocks for a new branch")
+        return "", ""
+
     def double_click(self, kind):
-        """A card double-clicked: it places and wires itself at its natural place."""
+        """A card double-clicked: it places and wires itself at its natural place; refused there, the toast also says
+        where it can still be dragged."""
+        card = self.cards.get(kind)
+        r = self.current_row()
+        if card is not None and card.hint and kind not in ("session", "image"):
+            res = self.bridge.act("add_block", quiet="refusal", kind=kind, row=r.id if r is not None else None)
+            if not res.ok:
+                self.bridge.toast.emit(_capital(self.bridge.say(res.reason)) + " · " + card.hint)
+            return
         bridge = self.bridge
         r = self.current_row()
         if kind == "session":

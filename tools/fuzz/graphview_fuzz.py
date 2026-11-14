@@ -3,6 +3,8 @@ graph held in memory, and after EACH gesture checks on what is painted.
 
     python tools/fuzz/graphview_fuzz.py --seed 1 --starts 3 --gestures 1000 --out DIR
     python tools/fuzz/graphview_fuzz.py --replay DIR/<start>_seed<n>_minimal.json      (replays a gesture list)
+    python tools/fuzz/graphview_fuzz.py --model ...      the page on the client's project model (GraphEditing), each
+                                                         start compiled into a read-only project under DIR/projects
 
 Gestures: a palette card dragged onto a place (lit or refused), a palette card double-clicked, a placed block dragged
 onto a place, a wire pulled from an output port to an input (accepted or refused), a context-menu item, the delete
@@ -219,6 +221,57 @@ def start_document(start):
     return RecordingDocument(graph=h.project, view=h.view)
 
 
+#: --model: the folder the starts' projects are written in (None: the graph held in memory)
+MODEL_ROOT = None
+
+
+class ModelDocument:
+    """The page's document on the client's project model (``M(GraphEditing, ProjectModel)``, read-only): what the fuzz
+    reads of a document (``_undo``, ``log``) over the model's own ``GraphDocument``."""
+
+    def __init__(self, model, worker):
+        self.model, self.worker = model, worker
+        self.inner = model.document
+        self.log: list = []                     # no core-only reproduction on a model: its steps are the model's
+
+    def __getattr__(self, name):
+        return getattr(self.inner, name)
+
+    @property
+    def _undo(self):
+        return self.model._undo
+
+    def close(self):
+        self.model.close(save=False)
+        self.worker.stop()
+
+
+def start_model(start):
+    """A start's graph compiled into a new read-only project, opened by the project model with GraphEditing."""
+    import tempfile
+
+    from astro_gpu.client.graphmodel import GraphEditing
+    from astro_gpu.client.model import ProjectModel
+    from astro_gpu.client.services.worker import ApiWorker
+    from astro_gpu.core import project2
+    from astro_gpu.core.project import Target
+    from astro_gpu.graphcore.compile import compile_into
+
+    class M(GraphEditing, ProjectModel):
+        pass
+    os.makedirs(MODEL_ROOT, exist_ok=True)
+    root = tempfile.mkdtemp(prefix=f"{start}_", dir=MODEL_ROOT)
+    h = FixtureDoc.from_template(start)
+    p = project2.create(os.path.join(root, "P"), start, Target(name="M 31"))
+    compile_into(h.project, p)
+    project2.save(p)
+    w = ApiWorker()
+    m = M(project2.load(os.path.join(root, "P")), w, readonly=True)
+    if not w.wait(120) or not m.ready:
+        raise RuntimeError(f"the project model could not open {start}: {m.error}")
+    return ModelDocument(m, w)
+
+
 def core_replay(start, log):
     doc = start_document(start)
     for name, steps in log:
@@ -282,8 +335,8 @@ class Run:
         self.rng = random.Random(f"{seed}:{start}")
         self.files_root = files_root
         self.errors: list[str] = []
-        self.doc = start_document(start)
-        self.page = GraphPage(self.doc)
+        self.doc = start_model(start) if MODEL_ROOT else start_document(start)
+        self.page = GraphPage(self.doc.model, None) if MODEL_ROOT else GraphPage(self.doc)
         self.page.resize(*SIZE)
         self.page.show()
         self.page.activateWindow()
@@ -309,6 +362,8 @@ class Run:
         self.page.close()
         self.page.deleteLater()
         pump()
+        if isinstance(self.doc, ModelDocument):
+            self.doc.close()
 
     # ------------------------------------------------------------------ reading
     @property
@@ -946,8 +1001,12 @@ def main(argv=None):
     ap.add_argument("--shrink-budget", type=float, default=240.0, help="seconds for each minimisation")
     ap.add_argument("--replay", default=None, help="a gesture list (JSON) written by a failure")
     ap.add_argument("--verbose", action="store_true")
+    ap.add_argument("--model", action="store_true", help="the page on the client's project model, not in memory")
     a = ap.parse_args(argv)
     os.makedirs(a.out, exist_ok=True)
+    if a.model:
+        global MODEL_ROOT
+        MODEL_ROOT = os.path.join(a.out, "projects")
     from astro_gpu.client import i18n, prefs
     prefs.load()
     i18n.set_language("en")

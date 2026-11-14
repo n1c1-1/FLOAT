@@ -15,11 +15,15 @@ A document has:
     tr                      the translation the core's messages are written with
 
 ``Doc`` adds the core's queries bound to the current graph (titles, summaries, greyed reasons, effective settings,
-file lists...), with the client's translation: the page reads everything through it.
+file lists...), with the client's translation: the page reads everything through it. A gesture that raises never
+reaches Qt: ``Doc`` takes the document back to the graph and view before it, logs the error and answers a refusal
+whose reason is ``FAILED``.
 """
 from __future__ import annotations
 
+import copy
 import json
+import logging
 from pathlib import Path
 
 from ...graphcore import api
@@ -31,6 +35,9 @@ from ..i18n import _
 
 #: seconds a block not up to date is counted for by the document held in memory
 BLOCK_SECONDS = 0.4
+#: the toast of a gesture that raised (English; shown through the translation)
+FAILED = "The gesture failed: nothing changed"
+log = logging.getLogger(__name__)
 
 
 class MemoryDocument:
@@ -106,6 +113,34 @@ class MemoryDocument:
         return round(BLOCK_SECONDS * n, 1)
 
 
+def model_badges(m, b, kind, state) -> dict:
+    """The badges of block ``b`` from a project model ``m`` (blocks.py Graph's rules, on BlockMap's node)."""
+    from ..graphnode import block_fallback
+    n = m.block_map.node(b)
+    if n is None:
+        return {}
+    out = {"fallback": [], "broken": "", "missing": "", "warned": False}
+    paths = list(n.paths)
+
+    def first(f, *args):
+        return next((w for q in paths if (w := f(q, *args))), "") if f is not None else ""
+    if kind == "session" and n.sid is not None:
+        why = getattr(m, "session_problem", None)
+        out["broken"] = why(n.sid) if why is not None else ""
+        fw = getattr(m, "file_warnings", None)
+        out["warned"] = bool(fw(n.sid)) if fw is not None else False
+    elif kind == "image":
+        out["broken"] = first(getattr(m, "image_problem", None))
+    elif kind == "combine":
+        out["broken"] = first(getattr(m, "fusion_problem", None))
+    if kind not in ("session", "post", "combine_layers") and not n.cut:
+        out["missing"] = first(getattr(m, "sky_missing", None), n.key)
+    if state == "done" and kind not in ("session", "post", "combine_layers", "calibration") and not n.cut:
+        for q in paths:
+            out["fallback"] += [w for w in block_fallback(m, q, n.key) if w not in out["fallback"]]
+    return out
+
+
 def open_project(path) -> MemoryDocument:
     """A FLOAT project file (format 2) opened read-only: its definition converted to a graph, in memory. The file and
     its folder are never written."""
@@ -146,21 +181,61 @@ class Doc:
         return self.document.revision
 
     def apply(self, name, /, **kwargs) -> Result:
-        return self.document.apply([(name, kwargs)])
+        return self.guarded(name, lambda: self.document.apply([(name, kwargs)]))
 
     def apply_many(self, steps) -> Result:
-        return self.document.apply(steps)
+        steps = list(steps)
+        return self.guarded(steps[0][0] if steps else "apply", lambda: self.document.apply(steps))
 
     def try_many(self, steps) -> Result:
         """Whether these steps would be accepted, nothing changed: -> Result."""
-        _g, res = api.apply_many(self.graph, list(steps), dict(self.view), self.tr)
-        return res
+        def dry():
+            _g, res = api.apply_many(self.graph, list(steps), dict(self.view), self.tr)
+            return res
+        return self.guarded("try", dry, take_back=False)
 
     def undo(self) -> Result:
-        return self.document.undo()
+        return self.guarded("undo", self.document.undo, take_back=False)
 
     def redo(self) -> Result:
-        return self.document.redo()
+        return self.guarded("redo", self.document.redo, take_back=False)
+
+    # --- a gesture that raises
+    def guarded(self, what, fn, take_back=True) -> Result:
+        """``fn()`` (-> Result); when it raises: the error logged, the document taken back to the graph and view before
+        (``take_back``), a refusal whose reason is FAILED."""
+        d = self.document
+        graph, rev = d.graph, getattr(d, "revision", None)
+        try:
+            view = copy.deepcopy(d.view)
+        except Exception:  # noqa: BLE001 - a view that cannot be copied is kept as a shallow copy
+            view = dict(d.view)
+        try:
+            return fn()
+        except Exception:  # noqa: BLE001 - the page never lets the core's error reach Qt
+            log.exception("graph page: the gesture %r raised", what)
+            if take_back:
+                self.take_back(graph, rev, view)
+            return Result(False, reason=FAILED)
+
+    def take_back(self, graph, rev, view):
+        """The document as it was before a gesture that raised: its own undo when it made a step, else its graph set
+        back (a document held in memory); the view dict given back its keys."""
+        d = self.document
+        try:
+            if d.graph is not graph or getattr(d, "revision", None) != rev:
+                if getattr(d, "can_undo", False):
+                    d.undo()
+                if d.graph is not graph and isinstance(d, MemoryDocument):
+                    d.graph = graph
+        except Exception:  # noqa: BLE001 - taken back as far as the document allows
+            log.exception("graph page: the graph could not be taken back")
+        try:
+            v = d.view
+            v.clear()
+            v.update(view)
+        except Exception:  # noqa: BLE001
+            log.exception("graph page: the view could not be taken back")
 
     @property
     def can_undo(self) -> bool:
@@ -179,6 +254,43 @@ class Doc:
 
     def cost(self) -> float:
         return self.document.cost()
+
+    # --- what the run and the project model say of a block (nothing for a graph held in memory)
+    @property
+    def model(self):
+        """The client's project model behind the document (``GraphDocument.model``), or None."""
+        return getattr(self.document, "model", None)
+
+    def badges(self, b) -> dict:
+        """What today's graph page draws on a block beside its state (graph.py BlockItem, blocks.py Graph), from the
+        project model through ``BlockMap``: {"fallback": [the engine's reasons], "broken": why it cannot run at all,
+        "missing": the sky data it needs and this computer has not, "warned": its files have a warning}; {} without a
+        model. A document may give its own (``document.badges``)."""
+        own = getattr(self.document, "badges", None)
+        if own is not None:
+            return own(b) or {}
+        m = self.model
+        blk = self.graph.blocks.get(b)
+        if m is None or blk is None or not hasattr(m, "block_map"):
+            return {}
+        try:
+            return model_badges(m, b, blk.kind, self.state(b))
+        except Exception:  # noqa: BLE001 - a badge the model cannot answer yet is not drawn
+            log.debug("graph page: no badges for %s", b, exc_info=True)
+            return {}
+
+    def reading(self):
+        """(text, busy) while the project model reads the project ("Reading the project…", True) or could not
+        ("Project unreadable: why", False); None when it is ready, or without a model."""
+        m = self.model
+        if m is None:
+            return None
+        err = getattr(m, "error", None)
+        if err:
+            return _("Project unreadable: {why}").format(why=err), False
+        if not getattr(m, "ready", True):
+            return _("Reading the project…"), True
+        return None
 
     # --- texts of the core
     def say(self, message) -> str:

@@ -9,7 +9,7 @@ from PySide6.QtGui import QColor, QFont, QFontMetrics, QPen, QPolygonF
 from ...graphcore.operations import COMMON
 from ..i18n import _, plural
 from . import style
-from .table_logic import FOLDED, KIND_TITLE, count_text, settings_text, short_count
+from .table_logic import FOLDED, KIND_TITLE, count_text, duration, settings_text, short_count
 
 ROW, WARNH, VAR, GHOST, HEAD, COMMON_FULL, COMMON_COMPACT = 40, 20, 26, 32, 48, 48, 32
 BG, CELL, CELL2, COMBG, LINE = "#15171c", "#1b1e25", "#20242d", "#222733", "#2a2f39"
@@ -326,7 +326,13 @@ class Painting:
             for i in range(3):
                 for j in range(2):
                     p.drawEllipse(QPointF(R.x() + 4 + j * 4, R.y() + R.height() / 2 - 6 + i * 6), 1.2, 1.2)
-        self._text(p, R.x() + 14, R.y() + R.height() / 2 + 5, self.model.session_name(sid), F13, TXT, R.width() - 16)
+        date = self.model.date_text(sid)              # its night(s) and the time its lights add up to (headers)
+        if date:
+            self._text(p, R.x() + 14, R.y() + 14, self.model.session_name(sid), F13, TXT, R.width() - 16)
+            self._first_fitting(p, R.x() + 14, R.y() + 28, [date, date.split(" · ")[0]], F11, DIM, R.width() - 16)
+        else:
+            self._text(p, R.x() + 14, R.y() + R.height() / 2 + 5, self.model.session_name(sid), F13, TXT,
+                       R.width() - 16)
 
     def p_folded_name(self, p, c: Cell):
         pl = self.model.stack_by_id(c.id[1])
@@ -368,6 +374,9 @@ class Painting:
         ns, nb, wv = self.model.totals(pl)
         if ns >= 2:
             parts = [plural(ns, "{n} session", "{n} sessions"), count_text(nb, "lights")]
+            sec = self.model.seconds(pl)                 # the time its lights add up to (headers)
+            if sec:
+                parts.append(duration(sec))
             full = " · ".join(parts + ([plural(wv, "{n} warn.", "{n} warn.")] if wv else []))
             self._first_fitting(p, c.x + 10, yh + 33, [full, " · ".join(parts), parts[0]], F11, DIM, c.w - 14)
             mark(c.x + 10, yh + 52)

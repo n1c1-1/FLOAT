@@ -7,11 +7,15 @@ Nothing is computed here: the drawing, the drop places, the texts and the legali
 """
 from __future__ import annotations
 
+import logging
+
 from PySide6.QtCore import QObject, Signal
 
 from ...graphcore.shapes import Result
 from ..i18n import _
-from .document import Doc, MemoryDocument
+from .document import FAILED, Doc, MemoryDocument
+
+log = logging.getLogger(__name__)
 
 #: the selection id of the Project block
 PROJECT = "project"
@@ -27,11 +31,13 @@ class Bridge(QObject):
     rich_toast_refresh = Signal()             # the text of a function toast changed (a background listing moved on)
     files_chosen = Signal()                   # a FILE cell of the table was selected: the panel shows what it holds
     appeared = Signal(object)     # the block a gesture made (the one of the kind dropped): shown on screen
+    acted = Signal(str, object)   # an operation the bridge applied was accepted: (its name, its Result)
 
     def __init__(self, document=None):
         super().__init__()
         self.doc = Doc(document if document is not None else MemoryDocument())
         self._drawing = None
+        self._drawn_for = None        # (graph object, revision) the cached Drawing was laid out for
         self._drops = None
         self.file_cell = None         # (owner, kind) of the selected file cell of the table
         self.go_common = None         # set by the table host: selects the Common cell of a kind
@@ -69,9 +75,20 @@ class Bridge(QObject):
         return self.doc.view
 
     # ------------------------------------------------------------------ reading
+    def _key(self):
+        return id(self.doc.graph), getattr(self.doc.document, "revision", None)
+
+    def stale(self) -> bool:
+        """The document changed outside the page (the project model's other views: Post, the panel, the sources): the
+        cached Drawing is not the graph's."""
+        return self._drawing is None or self._drawn_for != self._key()
+
     def drawing(self):
+        if self._drawing is not None and self._drawn_for != self._key():
+            self._invalidate()                # changed outside the page: laid out again, a selection gone dropped
         if self._drawing is None:
             self._drawing = self.doc.layout()
+            self._drawn_for = self._key()
         return self._drawing
 
     def places(self, kind=None, block=None):
@@ -113,15 +130,17 @@ class Bridge(QObject):
     def act(self, name, quiet=False, **kw):
         """One operation, then the signals. quiet: True = no toast at all; "refusal" = no toast for a refusal.
         -> the Result."""
-        res = self.doc.apply(name, **kw)
-        self.after(res, quiet, kw.get("kind"))
+        before = self.doc.graph
+        res = self.after(self.doc.apply(name, **kw), quiet, kw.get("kind"), before=before)
+        if res.ok:
+            self.acted.emit(name, res)
         return res
 
     def act_many(self, steps, quiet=False):
         """Several operations as one undo step, then the signals. -> the Result."""
+        before = self.doc.graph
         res = self.doc.apply_many(steps)
-        self.after(res, quiet)
-        return res
+        return self.after(res, quiet, before=before)
 
     def drop(self, place):
         """Drop on a Place: its operation (a refused place gives its reason)."""
@@ -130,13 +149,30 @@ class Bridge(QObject):
             self.after(res, False)
             return res
         name, kw = place.op
+        before = self.doc.graph
         res = self.doc.apply(name, **(kw or {}))
-        self.after(res, False, (kw or {}).get("kind"))
-        return res
+        return self.after(res, False, (kw or {}).get("kind"), before=before)
 
-    def after(self, res, quiet=False, kind=None):
-        if res.ok:
+    def _drawable(self, back=None) -> bool:
+        """The graph a change gave can be drawn; when its drawing raises, the error is logged and ``back()`` takes the
+        change back (an undo, or the redo of an undo): nothing of it reaches Qt."""
+        self._invalidate()
+        try:
+            self.drawing()
+            return True
+        except Exception:  # noqa: BLE001 - the page never lets the core's error reach Qt
+            log.exception("graph page: the graph a gesture gave cannot be drawn")
+            self._drawing = None
+            if back is not None:
+                back()
             self._invalidate()
+            return False
+
+    def after(self, res, quiet=False, kind=None, before=None):
+        if res.ok and not self._drawable(self.doc.undo if before is not None and self.doc.graph is not before else None):
+            res = Result(False, reason=FAILED)
+            quiet = False
+        if res.ok:
             made = res.created or {}
             new = next((b for b in made.get("blocks", []) if kind and self.block(b) is not None
                         and self.block(b).kind == kind), made.get("block"))
@@ -153,18 +189,17 @@ class Bridge(QObject):
                 self.toast.emit(self.say(res.toast) + " · Ctrl+Z")
         elif res.reason and not quiet:
             self.toast.emit(self.say(res.reason))
+        return res
 
     def undo(self):
-        res = self.doc.undo()
-        self._after_history(res)
-        return res
+        return self._after_history(self.doc.undo(), "undo")
 
     def redo(self):
-        res = self.doc.redo()
-        self._after_history(res)
-        return res
+        return self._after_history(self.doc.redo(), "redo")
 
-    def _after_history(self, res):
+    def _after_history(self, res, what="undo"):
+        if res.ok and not self._drawable(self.doc.redo if what == "undo" else self.doc.undo):
+            res = Result(False, reason=FAILED)
         if res.ok:
             self._invalidate()
             self.changed.emit()
@@ -173,6 +208,7 @@ class Bridge(QObject):
                 self.toast.emit(self.say(res.toast))
         elif res.reason:
             self.toast.emit(self.say(res.reason))
+        return res
 
     def choose_files(self, owner, kind):
         """A file cell of the table: the right panel shows its list (no block is selected)."""

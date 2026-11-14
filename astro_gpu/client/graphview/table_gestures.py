@@ -16,6 +16,13 @@ from .table_logic import BLOCK_TITLE, FOLDED, KIND_TITLE, KINDS, count_text
 from .table_paint import HEAD, KIND_TIP, ROW
 
 INTERNAL_MIME = "application/x-float-table"
+
+
+def common_tip() -> str:
+    """What « To Common » does (its name is two words)."""
+    return _("Follows Common again: its own files or settings are dropped")
+
+
 FOCUSABLE = ("name", "box", "cal", "setting", "stack", "ghost_s", "ghost_p", "folded_name", "body")
 
 
@@ -296,14 +303,14 @@ class Gestures:
             (_("Replace…"), lambda: self.picker(c, replace=True),
              never or (_("nothing to replace: the cell is empty") if empty else "")),
             (_("Remove"), lambda: self.empty_boxes([c]), never or (_("nothing to remove") if empty else "")),
-            (_("Back to common"), lambda: self.back_to_common([c]),
+            (_("To Common"), lambda: self.back_to_common([c]),
              _("lights have no Common") if kind == "lights" else
              _("it is the Common row") if owner == COMMON else _("already follows Common") if follows else ""),
         ]
         for txt, cb, why in entries:
             a = menu.addAction(txt + (f"  — {why}" if why else ""))
             a.setEnabled(not why)
-            a.setToolTip(why or f"{txt.rstrip('…')} : {title}")
+            a.setToolTip(why or (common_tip() if txt == _("To Common") else f"{txt.rstrip('…')} : {title}"))
             a.triggered.connect(lambda _c=False, cb=cb: cb())
         z = self.zones(c).get("picker")
         if z is not None:
@@ -772,14 +779,16 @@ class Gestures:
         self.context_menu(c, e.globalPos())
 
     def menu_entries(self, c):
-        """[(text, callback, enabled)]; None = a separator. Also what the tests call."""
+        """[(text, callback, enabled[, tooltip])]; None = a separator. Also what the tests call. A name is two words at
+        most; what it does is said in its tooltip."""
         mp = self.model
         out = []
         k = c.kind
         if k == "stack":
             pl = mp.stack_by_id(c.id[1])
             out += [(_("Rename (F2)"), lambda: self.rename(c), True),
-                    (_("Set as reference"), lambda: self.take_reference(pl["id"]), not pl["ref"]),
+                    (_("As reference"), lambda: self.take_reference(pl["id"]), not pl["ref"],
+                     _("This stack becomes the reference the other stacks are aligned on")),
                     (_("Duplicate (Ctrl+D)"), self.duplicate, True),
                     (_("Unfold") if pl["folded"] else _("Fold"), lambda: self.click_zone(c, "chevron"), True), None]
             for p2 in mp.stacks():
@@ -791,25 +800,28 @@ class Gestures:
             sids = self.chosen_sessions() or [c.id[1]]
             out += [(_("Rename (F2)"), lambda: self.rename(c), len(sids) == 1),
                     (_("Duplicate (Ctrl+D)"), self.duplicate, len(sids) == 1),
-                    (_("Back to common"), lambda: self.back_to_common([self.cell(("name", s)) for s in sids]), True),
+                    (_("To Common"), lambda: self.back_to_common([self.cell(("name", s)) for s in sids]), True,
+                     common_tip()),
                     None, (_("New stack"), lambda: self.move_to(sids, None), True)]
             for p2 in mp.stacks():
                 out.append((_("Move to “{p}”").format(p=p2["name"]), lambda r=p2["id"]: self.move_to(sids, r), True))
             out += [None, (_("Delete"), self.delete, True)]
         elif k == "box" and not c.id[1].startswith(FOLDED):
             owner, kind = c.id[1], c.id[2]
-            out += [(_("Open in panel"), lambda: self.open_cell.emit(c.id), True),
+            out += [(_("Show files"), lambda: self.open_cell.emit(c.id), True, _("Its files in the panel on the right")),
                     (_("Add…"), lambda: self.picker(c), owner != COMMON or kind != "lights"),
                     (_("Copy (Ctrl+C)"), self.copy, True)]
             if owner != COMMON:
-                out += [(_("None for this session"), lambda: self.act(
+                out += [(_("No files"), lambda: self.act(
                     [("add_files", dict(session=owner, kind=kind, paths=[], mode="replace"))],
                     _("{kind} of “{s}”: none").format(kind=_(KIND_TITLE[kind]), s=self.session_name(owner)),
-                    undo_link()), True),
-                    (_("Back to common"), lambda: self.back_to_common([c]), mp.own_list(owner, kind) is not None)]
+                    undo_link()), True, _("This session takes none of these files, not even Common's")),
+                    (_("To Common"), lambda: self.back_to_common([c]), mp.own_list(owner, kind) is not None,
+                     common_tip())]
             out += [(_("Empty (Del)"), lambda: self.empty_boxes([c]), True)]
         elif k in ("setting", "cal"):
-            out += [(_("Back to common"), lambda: self.back_to_common([c]), c.id[1] != COMMON and self.is_own(c))]
+            out += [(_("To Common"), lambda: self.back_to_common([c]), c.id[1] != COMMON and self.is_own(c),
+                     common_tip())]
             if k == "setting" and c.id[1] != COMMON and self.block_of(c):
                 out += [(_("Variant here"), lambda: self.act([("add_variant", dict(block=self.block_of(c)))],
                                                             _("Variant added"), undo_link()), True)]
@@ -817,13 +829,16 @@ class Gestures:
 
     def context_menu(self, c, gpos):
         menu = QMenu(self)
+        menu.setToolTipsVisible(True)
         for ent in self.menu_entries(c):
             if ent is None:
                 menu.addSeparator()
                 continue
-            txt, cb, ok = ent
+            txt, cb, ok = ent[:3]
             a = menu.addAction(txt)
             a.setEnabled(bool(ok))
+            if len(ent) > 3:
+                a.setToolTip(ent[3])
             a.triggered.connect(lambda _c=False, cb=cb: cb())
         if menu.actions():
             menu.exec(gpos)
