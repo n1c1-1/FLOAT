@@ -204,10 +204,17 @@ def layout(p, view, tr=None):
         x0 = xs[g.cells[r.blocks[0]][1]]
         x1 = xs[g.cells[r.blocks[-1]][1]] + _width(g.cells[r.blocks[-1]][1])
         y = max(TOP, round(want))
+        # a Combine layers reading the last block of a composition row (a combination's Stars/background) continues
+        # that row on its line, as it does after a stack's Stars/background: that row's free column is its place
+        heads = r.blocks[:1] if p.blocks[r.blocks[0]].kind == "combine_layers" else []
+        follows = {ix.row_of[w.src[0]] for w in p.wires if w.dst[0] in heads and w.src[0] in ix.row_of
+                   and ix.row[ix.row_of[w.src[0]]].blocks[-1:] == [w.src[0]]}
         moved = True
         while moved:
             moved = False
             for _j, rect in placed:
+                if _j in follows:
+                    continue
                 # rows keep one free column on their right (the "after the last block" strip) and never abut
                 if rect.x < x1 + JW + 2 * GAP and x0 < rect.right + JW + 2 * GAP and y < rect.bottom + 26                         and rect.y < y + h + 26:
                     y = rect.bottom + 26

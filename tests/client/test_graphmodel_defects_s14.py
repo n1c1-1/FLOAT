@@ -3,6 +3,8 @@ computed): blocks placed by hand go at the end of their chain, Align on offers o
 words, a second Combine layers is numbered as the old page numbered it."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from tests.client.graphview.legacy import World
@@ -120,3 +122,68 @@ def test_a_second_combine_layers_is_numbered_and_the_first_keeps_its_name(world)
     W.b.undo()
     W.settle()
     assert [b for b, _t in _layers(W)] == [first]
+
+
+COPY64 = Path("C:/Users/Nicolas/sandbox/float_graphe_etude/copies/64_smart_seestar_s30_m16_dualband")
+
+
+def _cl_on_its_line(g, view):
+    """(Combine layers box, its Stars/background box) of each Combine layers of the drawing: on its line, the line
+    through the middle of the Stars/background crosses the Combine layers."""
+    from astro_gpu.graphcore import api
+    d = api.layout(g, view)
+    out = []
+    for b, blk in g.blocks.items():
+        if blk.kind != "combine_layers":
+            continue
+        src = next(w.src[0] for w in g.wires if w.dst == [b, "Background"])
+        out.append((d.boxes[b], d.boxes[src]))
+    return out
+
+
+def test_a_combine_layers_after_a_combinations_stars_is_drawn_on_its_line(world):
+    """A combination's Stars/background (a colour stack's H-O): its Combine layers continues the row on its line in the
+    Composition band, as after a stack's Stars/background, never pushed below it."""
+    W = world(workflows=("Full",), chains={"Couleur complet": ["calibration", "registration", "selection", "stacking",
+                                                               "astrometry", "gradient", "denoise", "color"]})
+    m = W.m
+    q = W.view("Couleur complet")
+    m.add_fusion("HOO", "ho", [{"pid": q.pid, "role": "Ha", "channel": "R"},
+                               {"pid": q.pid, "role": "OIII", "channel": "GB"}])
+    W.settle()
+    W.choose(W.one("combine"))
+    W.page.palette.double_click("stars")
+    W.settle()
+    pairs = _cl_on_its_line(W.graph, dict(m.graph_view))
+    assert len(pairs) == 2
+    for cl, stars in pairs:
+        assert cl.y <= stars.y + stars.h / 2 <= cl.bottom and cl.x > stars.right, (cl, stars)
+
+
+@pytest.mark.skipif(not COPY64.is_dir(), reason="no study copy on this machine")
+def test_a_converted_project_draws_its_combine_layers_as_a_fresh_one(qapp, tmp_path):  # noqa: F811
+    """The copy of a project of the previous format (a colour stack, its H-O combination with Stars/background): its
+    Combine layers is drawn on its row's line in the Composition band, as a project made from scratch draws it."""
+    import json
+    import shutil
+
+    from astro_gpu.client.model import ProjectModel
+    from astro_gpu.client.services.worker import ApiWorker
+    from astro_gpu.core import project2
+    root = tmp_path / "copy"
+    root.mkdir()
+    shutil.copy(COPY64 / "project.astroproj", root / "project.astroproj")
+    d = json.loads((root / "project.astroproj").read_text(encoding="utf-8"))
+    d["scratch_dir"] = (tmp_path / "scratch").as_posix()
+    (root / "project.astroproj").write_text(json.dumps(d, indent=2), encoding="utf-8")
+    w = ApiWorker()
+    m = ProjectModel(project2.load(root), w, readonly=True)
+    try:
+        assert w.wait(120) and m.ready, m.error
+        pairs = _cl_on_its_line(m.stored, dict(m.graph_view))
+        assert len(pairs) == 1
+        cl, stars = pairs[0]
+        assert cl.y <= stars.y + stars.h / 2 <= cl.bottom and cl.x > stars.right, (cl, stars)
+    finally:
+        m.close(save=False)
+        w.stop()
