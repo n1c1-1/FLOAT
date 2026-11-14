@@ -26,7 +26,8 @@ from PySide6.QtWidgets import (
 )
 
 from ...graphcore.layout import BH
-from ...graphcore.model import FILE_KINDS, JOIN_KINDS, Index
+from ...graphcore.layout import SIDE_IN, SIDE_KINDS
+from ...graphcore.model import FILE_KINDS, JOIN_KINDS, OPTIONAL_PORTS, SYNTH_PORT, Index
 from ...graphcore.rules import FILE_LABEL, title_msg
 from ...graphcore.shapes import Result
 from .. import prefs
@@ -60,8 +61,9 @@ MIME_KIND = "application/x-float-graph-kind"
 NO_OUT = ("session", "calibration", "registration", "selection", "crop", "post")
 from ..imageview import ZOOM_PRESETS as ZOOMS  # noqa: E402 - today's presets, 12.5 % to 800 %
 #: a combination's and Combine layers' inputs: the colour of their dot
-PORT_COL = {"Background": IMAGE_COL["starless"], "Stars": IMAGE_COL["stars_only"]}
-OUT_COL = {"Starless": IMAGE_COL["starless"], "Stars only": IMAGE_COL["stars_only"]}
+PORT_COL = {"Background": IMAGE_COL["starless"], "Stars": IMAGE_COL["stars_only"], SYNTH_PORT: IMAGE_COL["synth"]}
+OUT_COL = {"Starless": IMAGE_COL["starless"], "Stars only": IMAGE_COL["stars_only"], SYNTH_PORT: IMAGE_COL["synth"]}
+EMPTY_COL = "#5d6470"       # an optional input left empty: greyed
 ALERT_MS = 1500
 #: the wires that are the chain itself (the core's drawing): never chosen, they say they cannot be removed (#52)
 CHAIN_STYLES = ("chain", "night", "bar", "fork")
@@ -546,8 +548,11 @@ class GraphCanvas(QGraphicsView):
         if kind in JOIN_KINDS:
             for port, y in self._ports(b, box, "in"):
                 wired = any(tuple(w.dst) == (b, port) for w in wires)
-                inputs.append((port, _(port), y, wired, PORT_COL.get(port, "#9aa3b2")))
+                col = EMPTY_COL if port in OPTIONAL_PORTS and not wired else PORT_COL.get(port, "#9aa3b2")
+                inputs.append((port, _(port), y, wired, col))
             inputs.sort(key=lambda i: i[2])
+        elif kind in SIDE_KINDS:                         # its input: the stars of the block before it (unnamed)
+            inputs = [(SIDE_IN, "", y, True, PORT_COL["Stars"]) for _p, y in self._ports(b, box, "in")]
         if kind not in NO_OUT:
             outs = self._ports(b, box, "out") or [("image", box.h / 2)]
             outs.sort(key=lambda o: o[1])
@@ -583,9 +588,15 @@ class GraphCanvas(QGraphicsView):
                             "block out, with the blocks after it.").format(why=missing.rstrip("."))
         if grey:
             tip += "\n" + _("Cannot run: {why}").format(why=grey)
-        for _name, lab, _y, wired, _c in inputs:
-            tip += "\n" + (_("Input {name}: wired") if wired else _("Input {name}: empty, pull a wire here")).format(
-                name=lab)
+        for name, lab, _y, wired, _c in inputs:
+            if not lab:                                  # a Synthetic stars' input: its chain
+                tip += "\n" + _("Input: the stars of the block before it")
+            elif name in OPTIONAL_PORTS and not wired:
+                tip += "\n" + _("Input {name}: optional, empty without a Synthetic stars block in this "
+                                "workflow").format(name=lab)
+            else:
+                tip += "\n" + (_("Input {name}: wired") if wired else _("Input {name}: empty, pull a wire here")
+                               ).format(name=lab)
         return dict(id=b, kind=kind, title=title, summary=summary, state=state, selected=bridge.selected == b,
                     off=bool(blk.off), grey=grey, badge=badge, review=review, own=doc.differs(b),
                     fallback=fallback, broken=broken, missing=missing, warned=bool(bd.get("warned")),
@@ -1901,7 +1912,7 @@ class GraphCanvas(QGraphicsView):
         src = it.id
         cands = []                                       # (block id, port name)
         for (bb, p, sense) in drawing.ports:
-            if sense == "in" and bb in self.blocks and self.blocks[bb].d["kind"] in JOIN_KINDS:
+            if sense == "in" and bb in self.blocks and self.blocks[bb].d["kind"] in JOIN_KINDS + SIDE_KINDS:
                 cands.append((bb, p))
         for b2, it2 in self.blocks.items():
             if it2.d["kind"] == "post":

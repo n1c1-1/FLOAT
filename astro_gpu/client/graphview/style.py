@@ -14,7 +14,7 @@ BROKEN_COL = "#e05252"
 STATE_COL = {"done": OK, "pending": "#5d6470", "stale": WARN, "running": ACCENT, "failed": BAD,
              "interrupted": WARN, "skipped": "#5d6470", "fallback": WARN}
 #: the colours of the Stars block's two images: their ports and their wires (graph.py IMAGE_COL, by the core's names)
-IMAGE_COL = {"starless": "#7aa2d6", "stars_only": "#e0c45c", "": "#9aa3b2"}
+IMAGE_COL = {"starless": "#7aa2d6", "stars_only": "#e0c45c", "synth": "#e0965c", "": "#9aa3b2"}
 WIRE_COL = "#9aa3b2"
 PALETTE_W = 140
 PALETTE_FOLDED_W = 46      # folded or automatic: the strip of the blocks' icons (graph.py PALETTE_FOLDED_W)

@@ -91,6 +91,8 @@
   "Include": "Inclure",
   "Input {name}: empty, pull a wire here": "Entrée {name} : vide, tirer un fil ici",
   "Input {name}: wired": "Entrée {name} : câblée",
+  "Input: the stars of the block before it": "Entrée : les étoiles du bloc avant lui",
+  "Input {name}: optional, empty without a Synthetic stars block in this workflow": "Entrée {name} : facultative, vide sans bloc Étoiles de synthèse dans ce workflow",
   "it is the Common row": "c'est la ligne Commun",
   "it is the same cell": "c'est la même case",
   "Leave": "Laisser",

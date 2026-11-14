@@ -139,7 +139,7 @@ class BlockItem(QGraphicsItem):
         self.alert = False             # a deletion that cannot be made: red frame for 1.5 s on what depends on it
         self.wire_hot = False          # the pointer is on a wire that starts or ends here
         self.name_w = max((QFontMetricsF(_font(8.5)).horizontalAdvance(i[1]) for i in d["inputs"]), default=0) + \
-            (14 if d["inputs"] else 0)
+            (14 if any(i[1] for i in d["inputs"]) else 0)     # an unnamed input (a side block's): a dot only
         self.setAcceptHoverEvents(True)
         self.setPos(d["x"], d["y"])
         self.setZValue(2)

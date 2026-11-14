@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from .shapes import Result
 from .model import (Index, Row, Wire, Tap, check, clone, model_json, new_block, new_id, in_ports, out_ports, edges,
-                    FILE_KINDS, FRAME_KINDS, JOIN_KINDS, COMBO_PORTS, COMBO_LABEL, LAYER_PORTS, POST_PORT)
+                    FILE_KINDS, FRAME_KINDS, JOIN_KINDS, COMBO_PORTS, COMBO_LABEL, LAYER_PORTS, POST_PORT, SYNTH_PORT)
 from . import rules
 from .msg import M, join, typed, name_of, TR
 from .rules import LABEL, OFFABLE, evaluate, need_greyed, title_msg, inherited, rank
@@ -395,6 +395,10 @@ def legality(q, style=None):
         why, e = rules.row_verdict(q, ix, r.id)
         if why:
             return _styled(why, e, style)
+    for w in q.wires:                     # (before what it makes greyed further: the cause)
+        if w.active and q.blocks[w.dst[0]].kind == "combine" and q.blocks[w.src[0]].kind == "synth":
+            return M("{lab} is no input of a combination: it reads an image or a Stars/background",
+                     lab=LABEL[q.blocks[w.src[0]].kind])
     bad = need_greyed(evaluate(q, ix, wiring=False))
     if bad:
         b, why = next(iter(bad.items()))
@@ -625,7 +629,8 @@ def detach(q, b, keep=False):
         raise Refusal("variants start from this block: delete them first")
     for w in list(q.wires):
         if w.src[0] == b:
-            port = _map_port(q.blocks[pred], w.src[1]) if (i > 0 and pred) else None
+            # a Synthetic stars' own image goes with it (nothing before it gives the synthetic stars)
+            port = _map_port(q.blocks[pred], w.src[1]) if (i > 0 and pred and w.src[1] != SYNTH_PORT) else None
             if port is None:
                 q.wires.remove(w)
             else:
@@ -1163,6 +1168,14 @@ def _insert(q, b, rid, after):
             for w in q.wires:
                 if w.src[0] == after and not keeps_wire(q, q.blocks[b].kind, w):
                     w.src = [b, _map_port(q.blocks[b], w.src[1])] if out_ports(q.blocks[b]) else w.src
+        if q.blocks[b].kind == "synth":                  # its stars feed the Synthetic stars of the Combine layers
+            for w in list(q.wires):                      # of its workflow (its two images from the same Stars)
+                j = w.dst[0]
+                if w.src == [after, "Stars only"] and w.dst[1] == "Stars" and w.active and \
+                        q.blocks[j].kind == "combine_layers" and \
+                        any(x.src == [after, "Starless"] and x.dst == [j, "Background"] for x in q.wires) and \
+                        not any(x.dst == [j, SYNTH_PORT] for x in q.wires):
+                    q.wires.append(Wire(new_id(q, "w"), [b, SYNTH_PORT], [j, SYNTH_PORT]))
     return Out(M("{lab} here, in “{_row}”", lab=LABEL[q.blocks[b].kind], _row=r.name), b, new=b)
 
 
@@ -1170,6 +1183,9 @@ def _branch(q, b, rid, y):
     """Variant forked before y (after the row's last block when y is None); b replaces y's copy when same kind."""
     r = _row(q, rid)
     ix = Index(q)
+    if q.blocks[b].kind == "synth":
+        from .judge import NO_SYNTH_BRANCH
+        raise Refusal(NO_SYNTH_BRANCH)
     if not r.blocks:                     # a stack being built (or the block dragged was its only one): no fork block
         raise Refusal("a variant starts after the Registration")
     if y is None:
@@ -1209,6 +1225,9 @@ def op_add_variant(q, block):
     ix = Index(q)
     if b.kind in ("session", "calibration", "registration", "image", "post") + JOIN_KINDS or ix.pred(block) is None:
         raise Refusal("a variant starts after the Registration")
+    if b.kind == "synth":
+        from .judge import NO_SYNTH_BRANCH
+        raise Refusal(NO_SYNTH_BRANCH)
     rid = ix.row_of[block]
     r = ix.row[rid]
     x = ix.pred(block)
@@ -1228,14 +1247,22 @@ def _add_join(q, kind, after):
     q.rows.append(Row(new_id(q, "r"), name, [j.id], legacy=fusion_legacy() if kind == "combine" else None))
     if after is not None:
         a = _blk(q, after, ("stars", "synth"))
+        syn = None
+        if a.kind == "synth":                               # the stars it reads give the Background and the Stars
+            ix = Index(q)
+            syn, a = a, q.blocks[ix.pred(after)] if ix.pred(after) is not None else None
+            if a is None or a.kind != "stars":
+                raise Refusal("this Stars/background already feeds a block")
         post = Index(q).post
-        if kind != "combine_layers" or any(w.src[0] == after and w.dst[0] != post for w in q.wires):
+        if kind != "combine_layers" or any(w.src[0] in (a.id, after) and w.dst[0] != post for w in q.wires):
             raise Refusal("this Stars/background already feeds a block")
         for w in q.wires:
-            if w.src[0] == after and w.dst[0] == post:      # the row's output passes to the new join
+            if w.src[0] == a.id and w.dst[0] == post:      # the row's output passes to the new join
                 w.src = [j.id, "image"]
         q.wires.append(Wire(new_id(q, "w"), [a.id, "Starless"], [j.id, "Background"]))
         q.wires.append(Wire(new_id(q, "w"), [a.id, "Stars only"], [j.id, "Stars"]))
+        if syn is not None and not syn.off:
+            q.wires.append(Wire(new_id(q, "w"), [syn.id, SYNTH_PORT], [j.id, SYNTH_PORT]))
     return Out(M("{_name} added", _name=name), j.id, new=j.id)
 
 
@@ -1302,6 +1329,19 @@ def port_chains(q, jid, port):
     return out
 
 
+def layers_free(q, ix, b):
+    """Whether a Combine layers may be put after row-end block b (a Stars/background, or a Synthetic stars after one):
+    the Stars/background's images feed no block yet (Post aside), nor the Synthetic stars' own."""
+    post = ix.post
+    ends = [b]
+    if q.blocks[b].kind == "synth":
+        a = ix.pred(b)
+        if a is None or q.blocks[a].kind != "stars":
+            return False
+        ends.append(a)
+    return not any(w.src[0] in ends and w.dst[0] != post for w in q.wires)
+
+
 def natural(q, kind, row=None):
     """The natural place of a double-click (§2): a place spec."""
     ix = Index(q)
@@ -1317,7 +1357,7 @@ def natural(q, kind, row=None):
     if kind == "combine_layers":
         for r in q.rows:
             if r.blocks and q.blocks[r.blocks[-1]].kind in ("stars", "synth") \
-                    and not any(w.src[0] == r.blocks[-1] for w in q.wires):
+                    and not any(w.src[0] == r.blocks[-1] for w in q.wires) and layers_free(q, ix, r.blocks[-1]):
                 return {"type": "comp", "after": r.blocks[-1]}
         return {"type": "comp"}
     if kind == "calibration":
@@ -1591,6 +1631,10 @@ def op_wire(q, src, src_port, dst, dst_port, channel=None):
     ix = Index(q)
     if src_port not in out_ports(s):
         raise Refusal("lights first" if not out_ports(s) else M("no output {port}", port=src_port))
+    if d.kind == "synth" and dst_port == SYNTH_IN:
+        return _synth_on(q, ix, src, src_port, dst)
+    if s.kind == "synth" and d.kind == "post":
+        raise Refusal("Synthetic stars go to the Synthetic stars input of their Combine layers")
     if dst_port not in in_ports(d) or (d.kind != "post" and ix.pos.get(dst) != 0):
         raise Refusal(M("no input {port}", port=dst_port))
     if any(w.src == [src, src_port] and w.dst == [dst, dst_port] for w in q.wires):
@@ -1611,10 +1655,29 @@ def op_wire(q, src, src_port, dst, dst_port, channel=None):
     return Out(M("wire {a} → {b}", a=title_msg(q, src), b=title_msg(q, dst)), w.id)
 
 
+#: the input a Synthetic stars block is drawn with: the real stars it reads (its chain: the block before it)
+SYNTH_IN = "Stars"
+
+
+def _synth_on(q, ix, src, src_port, synth):
+    """A wire pulled from a block's stars to a Synthetic stars' input: the block is put on those stars (moved after the
+    Stars/background that gives them, in its workflow); already there, nothing to do."""
+    if q.blocks[src].kind != "stars" or src_port != "Stars only":
+        raise Refusal("Synthetic stars read the stars only of a Stars/background")
+    if ix.pred(synth) == src:
+        raise Refusal("this wire already exists")
+    out = op_move_block(q, synth, {"type": "insert", "row": ix.row_of[src], "after": src})
+    out.toast = M("{lab} on the stars of “{_row}”", lab=LABEL["synth"], _row=Index(q).row[ix.row_of[src]].name)
+    return out
+
+
 def op_unwire(q, wire):
     w = next((x for x in q.wires if x.id == wire), None)
     if w is None:
         raise Refusal("wire not found")
+    if w.dst[1] == SYNTH_PORT and q.blocks[w.src[0]].kind == "synth" and not q.blocks[w.src[0]].off:
+        # the port follows its workflow's block (Post's synthetic stars row): the block goes, or is switched off
+        raise Refusal("this port empties with its Synthetic stars block: delete it or switch it off")
     q.wires.remove(w)
     t = next((t for t in q.taps if not t.auto and w.wid is not None and t.wid == w.wid
               and q.blocks[w.dst[0]].kind == "post"), None)

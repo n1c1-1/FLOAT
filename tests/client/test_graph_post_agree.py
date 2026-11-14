@@ -156,15 +156,18 @@ def test_a_variant_discarded_or_kept_and_a_wire_to_post_removed_keep_them_agreei
 
 # ---------------------------------------------------------------------------------------------- Synthetic stars (#93)
 def _into_stars(W):
+    """The blocks giving the Stars group of the one Combine layers: its Stars input and its Synthetic stars input."""
     cl = W.one("combine_layers")
-    return sorted(W.graph.blocks[w.src[0]].kind for w in W.graph.wires if w.dst == [cl, "Stars"])
+    return sorted(W.graph.blocks[w.src[0]].kind for w in W.graph.wires
+                  if w.dst in ([cl, "Stars"], [cl, "Synthetic stars"]))
 
 
 def test_synthetic_stars_extend_the_one_combine_layers_in_place_and_one_undo_takes_them_back(world_page):
     """The old model and page (issue #93): Synthetic stars goes into the SAME workflow after Stars/background (never a
     second workflow nor a second Combine layers); Post's one Combine layers layer keeps its id and eye and gets the
-    synthetic stars row in its Stars group; the graph's Combine layers takes the real stars and the synthetic ones on its
-    one Stars side (two wires); one Undo takes block and row back; switched off, the synthetic stars' wire goes."""
+    synthetic stars row in its Stars group; the graph's Combine layers takes the real stars on its Stars input and the
+    synthetic ones on its Synthetic stars input; one Undo takes block and row back; switched off, the synthetic stars'
+    wire goes."""
     import astro_gpu.client.postengine as pe
     W, page3 = world_page
     m = W.m

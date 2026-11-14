@@ -70,7 +70,9 @@ def test_a_mid_row_input_is_a_tap_and_synthetic_stars_is_no_input():
                and w.src[0] in row(doc, "SII").blocks)                      # the combination keeps reading the Stars
     synth = row(doc, "SII").blocks[-1]
     j = row(doc, "S-H-O").blocks[0]
-    assert "no input of a combination" in refused_inert(doc, "wire", src=synth, src_port="Starless", dst=j, dst_port="S II")
+    assert "no input of a combination" in refused_inert(doc, "wire", src=synth, src_port="Synthetic stars", dst=j,
+                                                        dst_port="S II")
+    assert refused_inert(doc, "wire", src=synth, src_port="Starless", dst=j, dst_port="S II") == "no output Starless"
     engine_ok(doc)
 
 

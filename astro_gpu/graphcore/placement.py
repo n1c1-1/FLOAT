@@ -151,8 +151,7 @@ def candidates(p, view, kind=None, block=None, d=None):
         if kind == "combine_layers":
             for r in p.rows:
                 last = r.blocks[-1] if r.blocks else None
-                if last in d.boxes and p.blocks[last].kind in ("stars", "synth") \
-                        and not any(w.src[0] == last and w.dst[0] != ix.post for w in p.wires):
+                if last in d.boxes and p.blocks[last].kind in ("stars", "synth") and ops.layers_free(p, ix, last):
                     bx = d.boxes[last]
                     add("comp", Box(bx.right + GAP, bx.y, BW, BH), "Combine layers: Starless → Background, Stars only → Stars",
                         "add_block",

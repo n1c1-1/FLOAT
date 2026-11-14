@@ -8,7 +8,7 @@ import dataclasses
 from dataclasses import dataclass
 
 from .model import (Index, topo, in_ports, out_ports, combo_type, FILE_KINDS, FRAME_KINDS, JOIN_KINDS, COMBO_PORTS,
-                    COMBO_LABEL)
+                    COMBO_LABEL, OPTIONAL_PORTS, SYNTH_PORT)
 from .msg import M, say, join, typed
 from ..core import workflow as wfl
 
@@ -168,8 +168,10 @@ def outs(p, b, ev, blk=None):
     if t is None:
         return {}
     blk = blk or p.blocks[b]
-    if blk.kind in ("stars", "synth"):
+    if blk.kind == "stars":
         return {"Starless": t.but(stars="without"), "Stars only": t.but(stars="only")}
+    if blk.kind == "synth":
+        return {SYNTH_PORT: t.but(stars="only", synth=True)}
     return {port: t for port in out_ports(blk)}
 
 
@@ -302,14 +304,20 @@ def _join(c, b, blk, ev, info, wires):
             why = "the Background port needs a starless image"
         elif port == "Stars" and t.stars != "only":
             why = "the Stars port needs the stars only"
+        elif port == "Stars" and t.synth:
+            why = "the Stars port takes the real stars: the synthetic ones have their own port"
+        elif port == SYNTH_PORT and not t.synth:
+            why = "the Synthetic stars port takes the output of a Synthetic stars block"
+        elif port == SYNTH_PORT and not _synth_of_stars(c, wires, b):
+            why = "these Synthetic stars read other stars than those wired to Stars"
         if why:
             ev.reason, ev.cat, ev.root, ev.out = why, "need", b, None
             return
     if ev.cat == "downstream":
         return
     vals = [got[q] for q in ports if q in got]
-    if len(vals) < len(ports):
-        missing = [q for q in ports if q not in got]
+    missing = [q for q in ports if q not in got and q not in OPTIONAL_PORTS]
+    if missing:
         ev.reason, ev.cat, ev.root = (M("{names} to wire", names=typed(", ".join(missing)))
                                       if blk.kind == "combine" else "ports to wire"), "port", b
         return
@@ -322,6 +330,17 @@ def _join(c, b, blk, ev, info, wires):
                            denoised=all(t.denoised for t in vals))
     else:
         ev.out = first.but(stars="with", half=False, synth=False)
+
+
+def _synth_of_stars(c, wires, j):
+    """Whether the Synthetic stars wired into Combine layers j read the stars wired into its Stars port (the block
+    that gives them, just before the Synthetic stars in its chain); True while Stars is not wired."""
+    act = [w for w in wires if w.active]
+    syn = next((w.src[0] for w in act if w.dst == [j, SYNTH_PORT]), None)
+    real = next((w.src[0] for w in act if w.dst == [j, "Stars"]), None)
+    if syn is None or real is None:
+        return True
+    return list(c.head_in.get(syn, [])) == [real]
 
 
 def need_greyed(info):

@@ -3,7 +3,7 @@ Guarantees (checked in tests/invariants.py): I1 no overlap, I2 no wire behind a 
 from dataclasses import dataclass
 
 from .shapes import Box, Path, Drawing
-from .model import Index, in_ports, out_ports, FRAME_KINDS, JOIN_KINDS
+from .model import Index, in_ports, out_ports, FRAME_KINDS, JOIN_KINDS, SYNTH_PORT
 from .rules import COL, LIN, title
 
 BW, BH, GAP, LANE, SROW, TOP, X0 = 120, 54, 16, 80, 68, 74, 24
@@ -16,11 +16,14 @@ def LAST_FRAME(g):
     return 5 if g.frames else 1 if g.compact else 0
 CLEAR = 8
 COMP0, POSTCOL = 100, 1000
+#: the blocks drawn under their row's line, on the wire of the stars they read (judge.SIDE_KINDS)
+SIDE_KINDS = ("synth",)
+SIDE_IN = "Stars"              # their drawn input (operations.SYNTH_IN)
 
 
 @dataclass
 class Grid:
-    lines: list       # [(kind "chain"|"night", owner id, row id)]
+    lines: list       # [(kind "chain"|"night"|"side", owner id, row id)] ("side": a Synthetic stars under its row)
     cells: dict       # block -> (line | None, logical col)
     cards: dict       # row -> line
     comp: list        # composition rows in placement order
@@ -80,7 +83,11 @@ def grid(p, view, ix=None):
                     if c is not None:                  # a night without Calibration: its column stays empty
                         cells[c] = (len(lines) - 1, 1)
         for b, c in cols(rid):
-            if not (fold and p.blocks[b].kind in FRAME_KINDS):
+            if p.blocks[b].kind in SIDE_KINDS:         # under the row's line, on the stars' wire: the line after it
+                if len(lines) == L + 1:                # (its second night's when it has one: their columns differ)
+                    lines.append(("side", b, rid))
+                cells[b] = (L + 1, c)
+            elif not (fold and p.blocks[b].kind in FRAME_KINDS):
                 cells[b] = (L, c)
         for v in ix.children[rid]:
             emit(v)
@@ -168,7 +175,7 @@ def layout(p, view, tr=None):
     ys, y = [], TOP
     for i, (kind, _o, _r) in enumerate(g.lines):
         if i:
-            y += SROW if kind == "night" else LANE
+            y += SROW if kind in ("night", "side") else LANE
         ys.append(y)
     d.lines = [(o, ys[i]) for i, (_k, o, _r) in enumerate(g.lines)]
     # source boxes
@@ -239,6 +246,8 @@ def layout(p, view, tr=None):
             d.ports[(b, port, "in")] = (bx.x, bx.y + BH / 2) if blk.kind == "post" else (bx.x, bx.y + 18 * (i + 1))
         for port in out_ports(blk):
             d.ports[(b, port, "out")] = _out_port(p, d, b, port)
+        if blk.kind in SIDE_KINDS:                     # its input: the stars it reads (the chain, drawn as a port)
+            d.ports[(b, SIDE_IN, "in")] = (bx.x, bx.y + BH / 2)
     _wires(p, ix, g, d, xs, seq)
     # captions
     for r in p.rows:
@@ -282,7 +291,7 @@ def _drawn(p, d, b, ix=None):
 def _out_port(p, d, b, port):
     if b in d.boxes:
         bx = d.boxes[b]
-        if p.blocks[b].kind in ("stars", "synth") and port in ("Starless", "Stars only"):
+        if p.blocks[b].kind == "stars" and port in ("Starless", "Stars only"):
             return (bx.right, bx.y + (18 if port == "Starless" else 36))
         return (bx.right, bx.y + bx.h / 2)
     bx = _drawn(p, d, b)
@@ -318,6 +327,12 @@ def _wires(p, ix, g, d, xs, seq):
                 continue
             A = _drawn(p, d, a, ix)
             B = d.boxes[b]
+            if p.blocks[b].kind in SIDE_KINDS and a in d.boxes:     # down from the stars' port to the block under
+                sp = _out_port(p, d, a, "Stars only")
+                gi = gap_after(col_of(a))[0]
+                want(gi, (sp[1], "s" + b), "s:" + b, [sp[1]], B.y + BH / 2)
+                plans.append(("side", a, b, sp, gi))
+                continue
             yy = A.y + A.h / 2
             d.wires.append(Path(f"c:{a}>{b}", [(A.right, yy), (B.x, yy)], "chain", a, b))
         if r.nights and r.id not in g.folded and r.blocks:
@@ -382,10 +397,16 @@ def _wires(p, ix, g, d, xs, seq):
             vy = V.y + BH / 2
             d.wires.append(Path(f"f:{x}>{v0}", _clean([(X.right, xy), (tx, xy), (tx, vy), (V.x, vy)]),
                                 "fork", x, v0))
+        elif kind == "side":                          # the stars down to the block that reads them, under the line
+            _k, a, b, sp, gi = plan
+            B = d.boxes[b]
+            tx, by = track["s:" + b], B.y + BH / 2
+            d.wires.append(Path(f"c:{a}>{b}", _clean([sp, (tx, sp[1]), (tx, by), (B.x, by)]), "chain", a, b,
+                                "stars_only"))
         else:
             w, sp, dp = plan[1], plan[2], plan[3]
             style = "port" if w.active else "port_inactive"
-            colour = {"Starless": "starless", "Stars only": "stars_only"}.get(w.src[1], "")
+            colour = {"Starless": "starless", "Stars only": "stars_only", SYNTH_PORT: "synth"}.get(w.src[1], "")
             if kind == "port1":
                 t = track["a:" + w.id]
                 pts = [sp, (t, sp[1]), (t, dp[1]), dp]

@@ -4,9 +4,10 @@ graph (model.Project) and a view state (operations.new_view()); no history, no f
 Ids are strings: blocks "b<n>", rows "r<n>", wires "w<n>". A night is named by its Session block id.
 Block kinds (keys, the engine's block names): session calibration registration selection crop stacking image
 astrometry gradient deconv denoise color stars synth combine combine_layers post.
-Ports: out "image" (every block giving an image), Stars/background out "Starless" / "Stars only"; Combination in =
-its type's names ("S II", "Hα", "O III" | "Hα", "O III" | "R", "G", "B" | "L", "R", "G", "B"); Combine layers in
-"Background", "Stars"; Post in "layers" (many wires). Combination types: sho ho rgb lrgb.
+Ports: out "image" (every block giving an image), Stars/background out "Starless" / "Stars only", Synthetic stars out
+"Synthetic stars" (its input, drawn "Stars", is its chain: the Stars/background before it); Combination in = its type's
+names ("S II", "Hα", "O III" | "Hα", "O III" | "R", "G", "B" | "L", "R", "G", "B"); Combine layers in "Background",
+"Stars", "Synthetic stars" (optional); Post in "layers" (many wires). Combination types: sho ho rgb lrgb.
 File kinds: lights darks flats bias flat_darks.
 
 Texts: Result.reason / .toast and Place.reason / .tip are messages (msg.py), written by `reason_text(tr)`,

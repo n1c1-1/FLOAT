@@ -15,7 +15,11 @@ SOURCE_KINDS = ("session", "image")
 COMBO_PORTS = {"sho": ["S II", "Hα", "O III"], "ho": ["Hα", "O III"], "rgb": ["R", "G", "B"],
                "lrgb": ["L", "R", "G", "B"]}
 COMBO_LABEL = {"sho": "S-H-O", "ho": "H-O", "rgb": "RGB", "lrgb": "LRGB"}
-LAYER_PORTS = ["Background", "Stars"]
+#: Combine layers' inputs, one per level of the layer Post holds: the starless image, the real stars, and the stars of
+#: a Synthetic stars block of the same workflow (optional: empty without one)
+SYNTH_PORT = "Synthetic stars"
+LAYER_PORTS = ["Background", "Stars", SYNTH_PORT]
+OPTIONAL_PORTS = {SYNTH_PORT}
 POST_PORT = "layers"
 PAIR_PORTS = ["Starless", "Stars only"]
 
@@ -170,8 +174,10 @@ def in_ports(b):
 
 
 def out_ports(b):
-    if b.kind in ("stars", "synth"):
+    if b.kind == "stars":
         return list(PAIR_PORTS)
+    if b.kind == "synth":                 # it reads the real stars alone and gives the synthetic ones (a side block)
+        return [SYNTH_PORT]
     if b.kind in ("session", "calibration", "registration", "selection", "crop", "post"):
         return []
     return ["image"]
@@ -288,7 +294,48 @@ def from_dict(d):
     p.blocks = {k: Block(**b) for k, b in d["blocks"].items()}
     p.wires = [Wire(**w) for w in d["wires"]]
     p.taps = [Tap(**t) for t in d.get("taps") or []]
+    _synth_side(p)
     return p
+
+
+def _synth_side(p):
+    """A graph saved while Synthetic stars passed the two images of its Stars/background on (its wire into the Stars
+    of Combine layers, the starless image read from it): the same content, drawn as now. Its stars go to the
+    Synthetic stars input of that Combine layers; any other wire from it leaves the Stars/background before it, with
+    the same image. What is compiled does not change (a Combine layers is a layer of Post, not a workflow)."""
+    old = [w for w in p.wires if w.src[0] in p.blocks and p.blocks[w.src[0]].kind == "synth"
+           and w.src[1] in PAIR_PORTS]
+    if not old:
+        return
+    pred = {}
+    for r in p.rows:
+        for a, b in zip(r.blocks, r.blocks[1:]):
+            pred[b] = a
+    keep = []
+    for w in p.wires:
+        if w in old:
+            dst = p.blocks.get(w.dst[0])
+            if dst is not None and dst.kind == "combine_layers" and (w.src[1], w.dst[1]) == ("Stars only", "Stars"):
+                a = pred.get(w.src[0])
+                real = [x for x in p.wires if x.dst == [w.dst[0], "Stars"] and x.src[0] != w.src[0]]
+                if real:                              # the real stars: the wire into Stars now
+                    if not any(x.active for x in real):
+                        real[0].active = True
+                elif a is not None and p.blocks[a].kind == "stars":
+                    keep.append(Wire(new_id(p, "w"), [a, "Stars only"], [w.dst[0], "Stars"]))
+                w.src, w.dst, w.active = [w.src[0], SYNTH_PORT], [w.dst[0], SYNTH_PORT], True
+            else:
+                a = pred.get(w.src[0])
+                if a is None or p.blocks[a].kind != "stars":
+                    continue
+                w.src = [a, w.src[1]]
+        keep.append(w)
+    seen, p.wires = set(), []
+    for w in keep:                                    # a wire never twice
+        k = (tuple(w.src), tuple(w.dst))
+        if k not in seen:
+            seen.add(k)
+            p.wires.append(w)
 
 
 def model_json(p):

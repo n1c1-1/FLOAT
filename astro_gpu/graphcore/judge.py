@@ -149,13 +149,21 @@ def judge_insert(B, kind, rid, after):
     line = B.chain_line[rid]
     if kind in COL:
         return "", (line, 0) if rid in B.g.folded else (line, COL[kind])
+    from .layout import SIDE_KINDS
+    if kind in SIDE_KINDS:                                              # on the lane under the row's line
+        line += 1
     return "", (line, _col_after(B, a[0]) if after is not None or r.fork else LIN)
 
 
 def keeps_wire(p, kind, w):
-    """A Synthetic stars appended after a Stars/background: a combination's wire stays on the Stars (the engine reads
-    an Output or a Stars/background, never a Synthetic stars: the Stars becomes a mid-row source, a tap)."""
-    return kind == "synth" and p.blocks[w.dst[0]].kind == "combine"
+    """A Synthetic stars appended after a Stars/background: every wire stays on the Stars (a side block, it gives its
+    own image only: a combination's wire too, the engine reading an Output or a Stars/background, never a Synthetic
+    stars: the Stars becomes a mid-row source, a tap)."""
+    return kind == "synth"
+
+
+#: Synthetic stars extends its workflow's Combine layers (Post's one layer of it): never a workflow of its own
+NO_SYNTH_BRANCH = "Synthetic stars goes on the stars of its workflow, never in a branch of its own"
 
 
 def _align_with(p, ix, eff, at, kind, rid):
@@ -173,6 +181,8 @@ def _align_with(p, ix, eff, at, kind, rid):
 def judge_branch(B, kind, rid, y):
     p, ix = B.p, B.ix
     r = ix.row[rid]
+    if kind == "synth":
+        return NO_SYNTH_BRANCH, None
     if y is None:
         x, tail = r.blocks[-1], []
     else:

@@ -12,7 +12,7 @@ An image is ``(workflow id, part)``: part None = the workflow's Output; "starles
 two images; "combined" = a Combine layers layer (not a wire)."""
 from __future__ import annotations
 
-from .model import Index, Row, Wire, POST_PORT, clone, new_id
+from .model import Index, Row, Wire, POST_PORT, SYNTH_PORT, clone, new_id
 
 PART_OF_PORT = {"image": None, "Starless": "starless", "Stars only": "stars"}
 PORT_OF_PART = {v: k for k, v in PART_OF_PORT.items()}
@@ -207,56 +207,39 @@ def _synth_after(g, ix, s):
 
 
 def _with_stars_group(g):
-    """Combine layers is ONE layer of the background and the stars, real and synthetic (as the old page drew it): its
-    Background reads the Stars/background's starless image, its Stars side the real stars and, with a Synthetic stars
-    after it, the synthetic stars too (two wires into the side). A side read from the Synthetic stars' own pair (the
-    core puts it between Stars/background and what read its images) goes back to the Stars/background; a wire never
-    twice; the synthetic stars' wire goes with the block."""
+    """Combine layers is ONE layer of the background and the stars, real and synthetic (Post's layer and its Stars
+    group): its Background reads the Stars/background's starless image, its Stars the real stars and, with a Synthetic
+    stars after that Stars/background (switched on), its Synthetic stars input the synthetic stars (Post's synthetic
+    stars row). A wire never twice; the synthetic stars' wire goes with the block (or when it is switched off)."""
     ix = Index(g)
     heads = {r.blocks[0] for r in g.rows if r.blocks and g.blocks[r.blocks[0]].kind == "combine_layers"}
     if not heads:
         return g
-    q = None
-
-    def mine():
-        nonlocal q
-        if q is None:
-            q = clone(g)
-        return q
-    # 1. a side read from a Synthetic stars' pair: from the Stars/background before it
+    want = set()                                      # (src block, src port, Combine layers, its port)
     for w in g.wires:
-        if w.dst[0] in heads and w.src[0] in g.blocks and g.blocks[w.src[0]].kind == "synth":
-            real = ix.pred(w.src[0])
-            if (w.dst[1], w.src[1]) == ("Background", "Starless") and real is not None and g.blocks[real].kind == "stars":
-                x = next(x for x in mine().wires if x.id == w.id)
-                x.src = [real, "Starless"]
-    h = q if q is not None else g
-    ix = Index(h)
-    # 2. each Combine layers on a Stars/background: its real stars; with a Synthetic stars after it, its stars too
-    want = set()
-    for w in h.wires:
-        if w.dst[0] in heads and w.dst[1] == "Background" and w.src[1] == "Starless" and w.src[0] in h.blocks                 and h.blocks[w.src[0]].kind == "stars":
-            want.add(((w.src[0], "Stars only"), w.dst[0]))
-            y = _synth_after(h, ix, w.src[0])
-            if y is not None and not h.blocks[y].off:     # switched off: Post has no synthetic stars row
-                want.add(((y, "Stars only"), w.dst[0]))
+        if w.dst[0] in heads and w.dst[1] == "Background" and w.src[1] == "Starless" and w.src[0] in g.blocks \
+                and g.blocks[w.src[0]].kind == "stars":
+            want.add((w.src[0], "Stars only", w.dst[0], "Stars"))
+            y = _synth_after(g, ix, w.src[0])
+            if y is not None and not g.blocks[y].off:     # switched off: Post has no synthetic stars row
+                want.add((y, SYNTH_PORT, w.dst[0], SYNTH_PORT))
     drop, seen = [], set()
-    for w in h.wires:
+    for w in g.wires:
         if w.dst[0] not in heads:
             continue
-        k = (tuple(w.src), tuple(w.dst))
-        stale = w.dst[1] == "Stars" and w.src[0] in h.blocks and h.blocks[w.src[0]].kind == "synth" and             ((tuple(w.src), w.dst[0]) not in want)
+        k = (*w.src, *w.dst)
+        stale = w.src[0] in g.blocks and g.blocks[w.src[0]].kind == "synth" and k not in want
         if k in seen or stale:
             drop.append(w.id)
         seen.add(k)
-    add = [(src, j) for src, j in sorted(want) if not any(tuple(w.src) == src and w.dst == [j, "Stars"]
-                                                          for w in h.wires)]
+    have = {(*w.src, *w.dst) for w in g.wires}
+    add = sorted(k for k in want if k not in have)
     if not add and not drop:
-        return h
-    q = mine()
+        return g
+    q = clone(g)
     q.wires = [w for w in q.wires if w.id not in drop]
-    for src, j in add:
-        q.wires.append(Wire(new_id(q, "w"), list(src), [j, "Stars"]))
+    for s, sp, j, jp in add:
+        q.wires.append(Wire(new_id(q, "w"), [s, sp], [j, jp]))
     return q
 
 
