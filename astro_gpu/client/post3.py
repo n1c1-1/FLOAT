@@ -1551,11 +1551,13 @@ class PostView(QWidget):
         want, overlay = self._selected_wants()
         return visible_signature(self.layers, want if overlay else ())
 
-    def request(self, final_only=False, force=False):
+    def request(self, final_only=False, force=False, settings_only=False):
         """Something changed: a draft now (while it moves), the screen's image 220 ms after the last change. A change
         that leaves the shown rows as they are (a hidden filter's slider, a hidden layer's settings) renders nothing and
-        shows no draft: the picture on the screen is the one the layers give; the settings are kept all the same."""
-        if (not force and not self._draft_dirty and not self._final_t.isActive()
+        shows no draft: the picture on the screen is the one the layers give; the settings are kept all the same.
+        Only a settings change says so (``settings_only``: a slider, the Curves): every other request renders, as the
+        signature knows the rows alone (a crop, a version switch, the bases are not in it)."""
+        if (settings_only and not force and not self._draft_dirty and not self._final_t.isActive()
                 and self._rendered_sig == self._visible_sig()):
             need = tuple(self._stale_thumbs())
             if need:
@@ -3261,7 +3263,7 @@ class PostView(QWidget):
             if state["before"] is None:
                 state["before"] = snapshot(self.layers)
             apply(v)
-            self.request()
+            self.request(settings_only=True)
 
         def done(v):
             if state["before"] is None:
@@ -3269,7 +3271,7 @@ class PostView(QWidget):
             apply(v)
             self.push(state["before"])
             state["before"] = None
-            self.request(final_only=True)
+            self.request(final_only=True, settings_only=True)
             QTimer.singleShot(0, self._refresh_rows)
         sl.moved.connect(moved)
         sl.done.connect(done)
@@ -3286,9 +3288,9 @@ class PostView(QWidget):
         def committed():
             self.push(state["before"] if state["before"] is not None else snapshot(self.layers))
             state["before"] = None
-            self.request(final_only=True)
+            self.request(final_only=True, settings_only=True)
         ed.starting.connect(starting)
-        ed.changed.connect(self.request)
+        ed.changed.connect(lambda *a: self.request(settings_only=True))
         ed.committed.connect(committed)
 
     def sub_text(self, lay) -> str:

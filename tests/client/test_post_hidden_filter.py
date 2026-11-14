@@ -99,3 +99,20 @@ def test_a_filter_under_a_hidden_layer_is_not_shown():
     top2 = dict(top, visible=True)
     assert visible_signature([f2, top2]) != visible_signature([f, top2])
     assert visible_signature([f2, dict(top)], want=[2]) != a      # its selected mask is on the screen
+
+
+def test_a_crop_or_any_request_that_is_not_a_setting_still_renders(model):
+    """The skip is for a settings change alone: a crop (not a row of the layers) asks the render as before."""
+    page, v, top, fl = _setup(model)
+    try:
+        v.set_visible(fl["id"], False)
+        _settle(v)
+        v.crop = [0, 0, 32, 32]
+        v._final_t.stop()
+        v.request(final_only=True)
+        assert v._final_t.isActive()                             # a render is asked
+        v._final_t.stop()
+        v.request(final_only=True, settings_only=True)            # the same, said a hidden setting's: skipped
+        assert not v._final_t.isActive() or v._rendered_sig != v._visible_sig()
+    finally:
+        _settle(v)
