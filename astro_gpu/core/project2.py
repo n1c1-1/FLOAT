@@ -35,6 +35,11 @@ from .files import write_json
 from .project import Inputs, Target
 
 FORMAT = 2
+#: a project file the graph page saved: its stored graph and what is not graph (Post, the project's own fields);
+#: the definition the engine reads (format 2) is compiled from the graph when the file is read
+GRAPH_FORMAT = 3
+#: the parts of the definition a format-3 file does not hold: the graph makes them
+GRAPH_PARTS = ("sessions", "excluded", "stack_mode", "workflows", "next_workflow_id")
 FILE = "project.astroproj"
 STATE_FILE = "state.json"
 V1_FILE = "project.json"
@@ -179,6 +184,9 @@ class Project2:
     next_workflow_id: int = 1        # ids are never reused, so an undo can bring a deleted workflow back
     format: int = FORMAT
     root: Path | None = field(default=None, compare=False)
+    #: the stored graph of a format-3 file (graphcore's dict), the definition compiled from it; set by the graph page
+    #: before it saves. Never part of ``to_dict`` (plans freeze the compiled definition: workers never read a graph)
+    graph: dict[str, Any] | None = field(default=None, compare=False, repr=False)
 
     # ------------------------------------------------------------------ paths
     def _root(self) -> Path:
@@ -443,7 +451,9 @@ class Project2:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any], root: str | Path | None = None) -> Project2:
-        """A definition from its JSON content (checked)."""
+        """A definition from its JSON content (checked); a format-3 content is compiled from its graph."""
+        if d.get("format") == GRAPH_FORMAT:
+            return _from_graph(d, root)
         if d.get("format") != FORMAT:
             raise ValueError(f"not a format {FORMAT} project definition (format {d.get('format')!r})")
         sessions = [Session(id=s["id"], name=s.get("name", ""), filter=s.get("filter") or "",
@@ -475,6 +485,41 @@ class Project2:
                 root=Path(root) if root is not None else None)
         p.validate()
         return p
+
+
+def _from_graph(d: dict[str, Any], root) -> Project2:
+    """A format-3 content: its own fields read as format 2's, the graph's parts compiled from the graph (the graph
+    core is imported here only: the workers read plans, which hold the compiled definition)."""
+    from ..graphcore.compile import compile_into
+    from ..graphcore.model import from_dict as graph_from_dict
+    rest = {k: v for k, v in d.items() if k not in ("graph", *GRAPH_PARTS)}
+    p = Project2.from_dict({**rest, "format": FORMAT, "current": None}, root)
+    compile_into(graph_from_dict(copy.deepcopy(d["graph"])), p)
+    if d.get("current") is not None and any(w.id == d["current"] for w in p.workflows):
+        p.current = d["current"]
+    p.graph = copy.deepcopy(d["graph"])
+    p.validate()
+    return p
+
+
+def file_dict(p: Project2) -> dict[str, Any]:
+    """What ``save`` writes: format 3 (the graph, and what is not graph) when the project carries a graph that still
+    compiles to its definition; else format 2 (a definition edited outside the graph page is written as it is, the
+    page converts it again when it opens it)."""
+    d = p.to_dict()
+    if p.graph is None:
+        return d
+    try:
+        q = _from_graph({**d, "format": GRAPH_FORMAT, "graph": p.graph}, p.root)
+    except Exception:  # noqa: BLE001 - a graph that does not compile any more: the definition is the truth
+        return d
+    mine, its = d, q.to_dict()
+    if any(mine[k] != its[k] for k in GRAPH_PARTS):
+        return d
+    out = {k: v for k, v in d.items() if k not in GRAPH_PARTS}
+    out["format"] = GRAPH_FORMAT
+    out["graph"] = copy.deepcopy(p.graph)
+    return out
 
 
 def _is_int(v: Any) -> bool:
@@ -668,7 +713,7 @@ def save(project: Project2, root: str | Path | None = None) -> Path:
     project.validate()
     root.mkdir(parents=True, exist_ok=True)
     f = root / FILE
-    write_json(f, project.to_dict(), indent=2, default=None)
+    write_json(f, file_dict(project), indent=2, default=None)
     project.root = root
     return f
 
