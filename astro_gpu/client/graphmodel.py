@@ -342,11 +342,15 @@ class GraphEditing:
         """The blocks of the graph as Inspect, the run and the panel know them (one Node per block id); made again when
         the graph or Post's layers changed (a Combine layers block's node carries its layer)."""
         post = getattr(self.p, "post", None) or {}
-        stamp = (self.revision, post.get("active"), json.dumps(post.get("versions") or [], sort_keys=True, default=str))
-        if self._bm is None or self._bm[0] != stamp:
+        # compared by value with a copy of Post's versions taken when the map was made (read on every paint: a
+        # comparison, not a serialisation of every version each time)
+        stamp = (self.revision, post.get("active"))
+        versions = post.get("versions") or []
+        bm = self._bm
+        if bm is None or bm[0] != stamp or bm[2] != versions:
             self.__dict__["_drawing"] = True       # a provisional graph is drawn as it is (no conversion waited for)
             try:
-                self._bm = (stamp, BlockMap(self.compiled, self, self._shown))
+                self._bm = (stamp, BlockMap(self.compiled, self, self._shown), copy.deepcopy(versions))
             finally:
                 self.__dict__["_drawing"] = False
         return self._bm[1]
