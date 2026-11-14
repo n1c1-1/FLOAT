@@ -143,6 +143,45 @@ def model_badges(m, b, kind, state) -> dict:
     return out
 
 
+def touched_blocks(before, g) -> set:
+    """The blocks of graph ``g`` whose run state a change from graph ``before`` can change: in each row's chain (its
+    mother's part included), from the first block that changed, moved or went on; a row whose nights changed, wholly;
+    then what reads one of those through a wire (combinations, taps, Align on, Combine layers, Post), from it on.
+    Every block when ``before`` is None."""
+    from ...graphcore.model import Index
+    if before is None:
+        return set(g.blocks)
+    ia, ib = Index(g), Index(before)
+    seeds = {b for b, blk in g.blocks.items() if before.blocks.get(b) != blk}
+    old_w = {(tuple(w.src), tuple(w.dst)) for w in before.wires}
+    new_w = {(tuple(w.src), tuple(w.dst)) for w in g.wires}
+    seeds |= {d[0] for _s, d in old_w ^ new_w if d[0] in g.blocks}
+    out: set = set()
+    chains = {}
+    for r in g.rows:
+        eff = ia.effective(r.id)
+        old = ib.effective(r.id) if r.id in ib.row else []
+        root = ia.row[ia.root(r.id)]
+        nights = [x for s, c in root.nights for x in (s, c) if x is not None]
+        was = ib.row.get(ib.root(r.id)) if r.id in ib.row else None
+        moved = was is None or [list(n) for n in was.nights] != [list(n) for n in root.nights]
+        chains[r.id] = (eff, old, nights, moved)
+    for _round in range(len(g.rows) + 2):
+        n = len(out)
+        hot = seeds | out
+        for eff, old, nights, moved in chains.values():
+            if moved or any(x in hot for x in nights):
+                out.update(nights)
+                out.update(eff)
+                continue
+            i = next((k for k, b in enumerate(eff) if b in hot or k >= len(old) or old[k] != b), len(eff))
+            out.update(eff[i:])
+        out |= {d[0] for s, d in new_w if s[0] in out and d[0] in g.blocks}
+        if len(out) == n and n:
+            break
+    return (out | seeds) & set(g.blocks)
+
+
 def open_project(path) -> MemoryDocument:
     """A FLOAT project file (format 2) opened read-only: its definition converted to a graph, in memory. The file and
     its folder are never written."""
@@ -281,6 +320,11 @@ class Doc:
             log.debug("graph page: no badges for %s", b, exc_info=True)
             return {}
 
+    def states_pending(self) -> bool:
+        """The project model's worker reads the states of its last edit (a graph held in memory: never)."""
+        f = getattr(self.model, "states_pending", None)
+        return bool(f()) if f is not None else False
+
     def reading(self):
         """(text, busy) while the project model reads the project ("Reading the project…", True) or could not
         ("Project unreadable: why", False); None when it is ready, or without a model."""
@@ -301,8 +345,9 @@ class Doc:
     def title(self, b) -> str:
         return api.title(self.graph, b, self.tr)
 
-    def summary(self, b) -> str:
-        m = self.model
+    def summary(self, b, model=True) -> str:
+        """The line under a block's name; ``model`` False: the graph's own (never what the project model reads)."""
+        m = self.model if model else None
         bm = getattr(m, "block_map", None) if m is not None else None
         blk = self.graph.blocks.get(b)
         if bm is not None and blk is not None and blk.kind == "post" and hasattr(bm, "post_line"):
@@ -313,9 +358,10 @@ class Doc:
                 return bm.summary(n, self.tr) or api.summary(self.graph, b, self.tr)
         return api.summary(self.graph, b, self.tr)
 
-    def greyed(self, b) -> str:
+    def greyed(self, b, model=True) -> str:
+        """Why a block cannot run; ``model`` False: the graph's own reason only."""
         why = api.greyed(self.graph, b, self.tr)
-        if why or self.model is None:
+        if why or self.model is None or not model:
             return why
         blk = self.graph.blocks.get(b)
         return self._mono_colour(b) if blk is not None and blk.kind == "color" else ""

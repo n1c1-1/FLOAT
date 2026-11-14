@@ -210,19 +210,46 @@ class Bridge(QObject):
                 self.appeared.emit(new)
             if res.toast and quiet is not True:
                 note = self.take_stale()
-                if note:                          # computed results made stale, or work added: said, with Undo
+                coming = self._stale_coming()
+                if note or coming is not None:    # computed results made stale, or work added: said, with Undo
                     said = self.say(res.toast)
                     r = self.row_of(new) if new is not None and kind else None
                     if r is not None and self.block(new) is not None:    # what was done, never the place's bubble
                         from .style import kind_title
                         said = _("{block} added to “{workflow}”").format(block=kind_title(self.block(new).kind),
                                                                           workflow=r.name)
-                    self.rich_toast.emit(said + " · " + note, [(_("Undo"), "undo")])
+                    if note:
+                        self.rich_toast.emit(said + " · " + note, [(_("Undo"), "undo")])
+                    else:                         # the action at once, what it computes again once the states are read
+                        self._toast_completed(said, coming)
                 else:
                     self.toast.emit(self.say(res.toast) + " · Ctrl+Z")
         elif res.reason and not quiet:
             self.toast.emit(self.say(res.reason))
         return res
+
+    def _stale_coming(self):
+        """The revision whose stale results the project model says once its worker has read the states, or None."""
+        m = getattr(self.doc.document, "model", None)
+        rev = getattr(m, "stale_coming", None) if m is not None else None
+        if rev is not None:
+            m.stale_coming = None
+        return rev
+
+    def _toast_completed(self, said, rev):
+        """The gesture's toast said at once ("Gradient switched off · Full", with Undo), completed in place with what
+        it computes again and the time when the project model has read the states (a later edit: left as it is)."""
+        m = self.doc.document.model
+        note = [""]
+        self.rich_toast.emit(lambda: said + (" · " + note[0] if note[0] else ""), [(_("Undo"), "undo")])
+
+        def done():
+            if m.revision != rev:
+                return
+            note[0] = self.take_stale()
+            if note[0]:
+                self.rich_toast_refresh.emit()
+        m.after_states(done)
 
     def take_stale(self) -> str:
         """What the gesture just applied made stale ("Computes again: Denoise, Color · ≤ 1 min") or added ("To compute: …"),

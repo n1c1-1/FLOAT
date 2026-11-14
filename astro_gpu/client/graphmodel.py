@@ -150,7 +150,14 @@ class GraphDocument:
         m = self.model
         before = m.stale_watch()
         res = m.apply(steps)
-        if res.ok:
+        m.stale_coming = None
+        if res.ok and before is not None and m.states_pending():
+            # the states of the edit being read by the worker: what it makes stale is said once they are read (never
+            # from the states before it); ``stale_coming`` is the revision it is for
+            rev = m.revision
+            m.stale_coming = rev
+            m.after_states(lambda: m.stale_said(before) if m.revision == rev else None)
+        elif res.ok:
             m.stale_said(before)
         return res
 
@@ -160,7 +167,12 @@ class GraphDocument:
         if not m.undo(graph=True):
             return Result(False, reason="Nothing to undo")
         said = M("Undone: {label}", label=m.restored or _("a change"))
-        if m.done_count() > done:                 # a Replace taken back: its results are in the store, up to date again
+        if m.states_pending():                    # the states being read: said again once they are (``late_said``)
+            def later(m=m, said=said, done=done):
+                if m.done_count() > done:
+                    m.late_said = M("{m0} · {m1}", m0=said, m1=M("results up to date again"))
+            m.after_states(later)
+        elif m.done_count() > done:               # a Replace taken back: its results are in the store, up to date again
             said = M("{m0} · {m1}", m0=said, m1=M("results up to date again"))
         return Result(True, toast=said)
 
@@ -430,17 +442,27 @@ class GraphEditing:
                 self._rebuild_from_definition()
                 return
             q = gm.clone(self._g)
+            was = self._sessions_said(q)
             if not self._absorb_sessions(q):
                 self._rebuild_from_definition()
                 return
-            q = self._with_post_wires(q)
-            if gm.model_json(q) != gm.model_json(self._g):
+            q2 = self._with_post_wires(q)
+            # (the sessions absorbed only write what differs, Post's wires give a new graph only when they changed:
+            # compared so, not by serialising both graphs)
+            if q2 is not q or self._sessions_said(q) != was:
+                q = q2
                 self._g = q
                 self.compiled = compile_into(q, self.p)
                 self._sig = self._def_sig()
                 self.revision += 1
         finally:
             self._absorbing = False
+
+    @staticmethod
+    def _sessions_said(g) -> str:
+        """What ``_absorb_sessions`` may write in a graph, as a text (the frames excluded, the nights, the sessions'
+        names and files)."""
+        return repr((g.excluded, g.nights, [(b.id, b.name, b.files) for b in g.blocks.values() if b.kind == "session"]))
 
     def _rebuild_from_definition(self):
         self.graph_rebuilds += 1
@@ -894,6 +916,8 @@ class GraphEditing:
         g = self._with_defaults(g, self.p)                # a block made by the gesture says its settings too
         # the Combine layers the gesture was made without are drawn back with their own ids (_layer_ids_kept)
         self._layer_pool = self._layer_rows_taken(self._g, base) if base is not self._g else None
+        # absorbed when this change began, nothing written since: the step's snapshot does not absorb it again
+        self.__dict__["_absorbed"] = (id(self._g), self.revision)
         try:
             with self._edit():
                 self._commit(g)
@@ -906,6 +930,7 @@ class GraphEditing:
                 self._follow_post()
         finally:
             self._layer_pool = None
+            self.__dict__.pop("_absorbed", None)
         text = name or (say(res.toast, _) if res.toast else "")
         if text:
             self.name_step(text)
@@ -994,7 +1019,8 @@ class GraphEditing:
     def _snapshot(self):
         mm = _mm()
         from dataclasses import asdict
-        self._absorb()
+        if self.__dict__.pop("_absorbed", None) != (id(self.__dict__.get("_graph")), self.revision):
+            self._absorb()
         post = json.dumps(getattr(self.p, "post", None) or {}, sort_keys=True)
         return mm._Snap((self._graph_json(), self.p.current, self.p.stack_mode, None, post, asdict(self.p.target),
                          self.p.description, self.p.name, dict(self.p.acquisition)))
@@ -1053,7 +1079,7 @@ class GraphEditing:
             self.reload_sources()
         self.pending_change = None
         self.edited()
-        self._sync()
+        self._sync(later=True)
         was = json.dumps(self.p.post, sort_keys=True)
         self._prune_post()                                # a layer of a block that is not there any more goes
         post_back = post_back or json.dumps(self.p.post, sort_keys=True) != was
@@ -1076,7 +1102,8 @@ class GraphEditing:
             elif self.sel_step and self.sel_step not in ("sources", "final") and self.sel_step not in keys:
                 j = old_keys.index(self.sel_step) if self.sel_step in old_keys else len(old_keys)
                 self.sel_step = next((k for k in reversed(old_keys[:j]) if k in keys), keys[-1] if keys else "sources")
-        self.pathsChanged.emit()
+        if not self._stale:                               # (else told with the worker's answer)
+            self.pathsChanged.emit()
         self.currentChanged.emit()
         if post_back:
             self.postChanged.emit(None)

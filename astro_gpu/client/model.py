@@ -29,6 +29,7 @@ import copy
 import hashlib
 import json
 import re
+import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -102,6 +103,9 @@ TOOL_OPTION = {"debruitage": ("denoise", "pretrained", None), "etoiles": ("stars
                "simple": ("gradient", "polynomial", None)}
 #: the stages whose settings the summaries of the blocks quote: asked of the worker for each workflow
 PREFETCH = ("stack", "denoise")
+#: an edit's keys, states, chains and Run all's plan read by the worker (the window draws first, the states after);
+#: False: read in the GUI thread at the end of the edit
+ASYNC_STATES = False
 
 
 def view_key(name: str) -> str:
@@ -686,6 +690,9 @@ class _ProjectBase(QObject):
         self._states: dict = {}
         self._chains: dict[int, list[str]] = {}
         self._blocks: dict[int, list] = {}
+        self._stale = 0                                    # the sync the worker is reading for an edit (0: none)
+        self._sync_n = 0                                   # the number of the last sync handed to the worker
+        self.forced_syncs = 0                              # the times a reader could not wait for the worker's answer
         self._cache: dict = {}                             # costs and plans, forgotten at each sync
         self._est: dict = {}                               # durations by stage key (kept across edits; the worker
         #                                                    fills it ahead: estimates read manifests)
@@ -835,6 +842,9 @@ class _ProjectBase(QObject):
 
     # ------------------------------------------------------------ the worker: warm, facts, settings
     def _start_warm(self):
+        if self.__dict__.get("_stale"):                    # the project read again: its sync follows the reading
+            self.worker.cancel(f"model.states:{id(self)}")
+            self._stale = 0
         self.ready = False
         self.worker.submit(f"model.warm:{id(self)}", _warm_job, self.p)
 
@@ -849,6 +859,8 @@ class _ProjectBase(QObject):
             # the durations the views quote are read by the worker before the views are told (no manifest read in
             # the GUI thread when they draw)
             self.worker.submit(f"model.estimates:{id(self)}", self._prefetch_estimates, True)
+        elif channel == "model.states" + me:
+            self._states_came(result)
         elif channel == "model.estimates" + me:
             if result:                                       # the first one, after warm: now the views may ask
                 self.readyChanged.emit()
@@ -875,7 +887,9 @@ class _ProjectBase(QObject):
 
     def _worker_failed(self, channel: str, _n: int, text: str):
         why = text.splitlines()[0] if text else "?"
-        if channel == f"model.warm:{id(self)}":
+        if channel == f"model.states:{id(self)}":
+            self._fresh()                                       # (a race with an edit: read here, at once)
+        elif channel == f"model.warm:{id(self)}":
             self.error = why
             self.readyChanged.emit()
         elif channel == f"model.estimates:{id(self)}":
@@ -1361,23 +1375,164 @@ class _ProjectBase(QObject):
         return next((x for x in self.post_layers() if x.get("id") == lid), None)
 
     # ------------------------------------------------------------ the sync: states, chains, blocks
-    def _sync(self, prefetch: bool = True):
-        """The views, states, chains and block keys read again (GUI thread: caches and manifests only)."""
+    def _sync(self, prefetch: bool = True, later: bool = False):
+        """The views, states, chains and block keys read again (GUI thread: caches and manifests only). ``later`` (the
+        end of an edit, ``ASYNC_STATES``): the views at once, the keys, states, chains and Run all's plan read by the
+        worker (``states_pending`` until its answer, the newest edit's; ``pathsChanged`` then): a reader that cannot
+        wait reads them here at once (``_fresh``), so nothing is ever decided on the states of an earlier edit."""
         self._rebuild_views()
         self._cache.clear()
         if not self.ready:
             return
+        if later and ASYNC_STATES:
+            self._sync_n += 1
+            self._stale = self._sync_n
+            self.worker.submit(f"model.states:{id(self)}", self._states_job, self._sync_n, self.device)
+            return
+        if self._stale:                                    # an answer still coming is of an earlier definition
+            self.worker.cancel(f"model.states:{id(self)}")
+            self._stale = 0
+            QTimer.singleShot(0, self, self._told)
+        self._install(self._read_states())
+        if prefetch:
+            self.worker.submit(f"model.estimates:{id(self)}", self._prefetch_estimates, False)
+
+    # the keys, states, chains and blocks of the definition: read at once when the worker's answer is still coming
+    @property
+    def _states(self) -> dict:
+        if self.__dict__.get("_stale"):
+            self._fresh()
+        return self.__dict__["_st"]
+
+    @_states.setter
+    def _states(self, v):
+        self.__dict__["_st"] = v
+
+    @property
+    def _chains(self) -> dict:
+        if self.__dict__.get("_stale") and threading.current_thread() is threading.main_thread():
+            return self._keys_now()[0]
+        return self.__dict__["_ch"]
+
+    @_chains.setter
+    def _chains(self, v):
+        self.__dict__["_ch"] = v
+
+    @property
+    def _blocks(self) -> dict:
+        if self.__dict__.get("_stale") and threading.current_thread() is threading.main_thread():
+            return self._keys_now()[1]
+        return self.__dict__["_bl"]
+
+    @_blocks.setter
+    def _blocks(self, v):
+        self.__dict__["_bl"] = v
+
+    def _keys_now(self):
+        """(chains, blocks) of the definition as it is now, while the worker reads its states: the keys read once here
+        (the worker takes them again from the API's cache), no state read."""
+        got = self.__dict__.get("_now")
+        if got is not None and got[0] == self._stale:
+            return got[1], got[2]
+        chains, blocks = {}, {}
         try:
-            self._states = api.states(self.p, update=not self.readonly)
-        except (OSError, ValueError, KeyError):
-            self._states = {}
-        self._chains, self._blocks = {}, {}
-        for w in self.p.workflows:
+            keys = api._keys(self.p)
+        except (ValueError, KeyError):
+            keys = None
+        for w in list(self.p.workflows):
             try:
-                self._chains[w.id] = api.chain(self.p, w.id)
-                self._blocks[w.id] = api.blocks(self.p, w.id)
+                c = list(keys.chain(w.id))
+                chains[w.id] = c
+                blocks[w.id] = [api.BlockRef(b, tuple(ss), keys.block_key(w.id, b))
+                                for b, ss in keys.rules.chains.blocks_in(c)]          # (api.chain, api.blocks)
+            except (AttributeError, ValueError, KeyError):
+                chains[w.id], blocks[w.id] = [], []
+        self._now = (self._stale, chains, blocks)
+        return chains, blocks
+
+    def states_pending(self) -> bool:
+        """The worker reads the states of the last edit (the page draws the blocks it can change as being read)."""
+        return bool(self._stale)
+
+    def after_states(self, fn):
+        """``fn()`` once the states of the last edit are read (at once when they are), before the views are told."""
+        if not self._stale:
+            fn()
+        else:
+            self.__dict__.setdefault("_waiters", []).append(fn)
+
+    def _run_waiters(self):
+        fns, self.__dict__["_waiters"] = self.__dict__.get("_waiters") or [], []
+        for fn in fns:
+            try:
+                fn()
+            except Exception:  # noqa: BLE001 - a word said late: never a failure of the model
+                import logging
+                logging.getLogger(__name__).exception("after the states were read")
+
+    def _fresh(self):
+        """A reader needs the states of the definition as it is now and the worker has not answered: they are read here
+        (GUI thread), its answer dropped; the views are told once the event loop turns. In the worker thread (the
+        estimates' prefetch): what was read last."""
+        if not self._stale or threading.current_thread() is not threading.main_thread():
+            return
+        self._stale = 0
+        self.forced_syncs += 1
+        self.worker.cancel(f"model.states:{id(self)}")
+        self._install(self._read_states())
+        self.worker.submit(f"model.estimates:{id(self)}", self._prefetch_estimates, False)
+        QTimer.singleShot(0, self, self._told)
+
+    def _told(self):
+        if not self._stale:
+            self._run_waiters()
+            self.pathsChanged.emit()
+
+    def _read_states(self):
+        """(states, chains, blocks) of the definition (either thread: the API reads a snapshot of it)."""
+        try:
+            states = api.states(self.p, update=not self.readonly)
+        except (OSError, ValueError, KeyError):
+            states = {}
+        chains, blocks = {}, {}
+        for w in list(self.p.workflows):
+            try:
+                chains[w.id] = api.chain(self.p, w.id)
+                blocks[w.id] = api.blocks(self.p, w.id)
             except (ValueError, KeyError):
-                self._chains[w.id], self._blocks[w.id] = [], []
+                chains[w.id], blocks[w.id] = [], []
+        return states, chains, blocks
+
+    def _states_job(self, n: int, device):
+        """Worker thread: the states of sync ``n`` and Run all's plan (the blocks' marks read it when drawn)."""
+        if n != self._stale:
+            return n, None
+        got = self._read_states()
+        try:
+            cost = api.cost(self.p, None, device, self._history_est)
+        except (ValueError, KeyError, OSError):
+            cost = None
+        return n, (got, device, cost)
+
+    def _states_came(self, result):
+        """The worker's answer: taken when it is the newest edit's (an older one, or one read here meanwhile, is
+        dropped); the views are told (``pathsChanged``: the page paints the states in place)."""
+        n, got = result
+        if not n or n != self._stale or got is None:
+            return
+        self._stale = 0
+        states, device, cost = got
+        self._install(states)
+        if cost is not None and device == self.device:
+            self._cache.setdefault(("cost", None, device), cost)
+            self._run_all = (device, self._cache[("cost", None, device)])
+        self.worker.submit(f"model.estimates:{id(self)}", self._prefetch_estimates, False)
+        self._run_waiters()
+        self.pathsChanged.emit()
+
+    def _install(self, got):
+        """The states, chains and blocks read, and what the views take from them."""
+        self._states, self._chains, self._blocks = got
         for v in self.paths:
             stages = self._chains.get(v.pid, [])
             v.computed = bool(stages) and all(self.state(v, s) == "done" for s in stages)
@@ -1391,8 +1546,6 @@ class _ProjectBase(QObject):
             for stage in PREFETCH:
                 if stage in self._chains.get(v.pid, []):
                     self.params(v, stage)
-        if prefetch:
-            self.worker.submit(f"model.estimates:{id(self)}", self._prefetch_estimates, False)
 
     def _prefetch_estimates(self, first: bool) -> bool:
         """Worker thread: the durations the views quote (each stage of each workflow, the method cards, the toolbar
@@ -1451,8 +1604,9 @@ class _ProjectBase(QObject):
                     self.edited()
                 elif self._extra() != extra:
                     self.edited()                           # not for Undo: the frames, not the workflows
-                self._sync()
-                self.pathsChanged.emit()
+                self._sync(later=True)
+                if not self._stale:                         # (else told with the worker's answer)
+                    self.pathsChanged.emit()
 
     # ------------------------------------------------------------ the Project block
     def set_target_name(self, name: str):
@@ -2736,12 +2890,19 @@ class _ProjectBase(QObject):
             k = ("cost", None if workflows is None else tuple(workflows), self.device)
             if k in self._cache:
                 return self._cache[k]
+            last = self.__dict__.get("_run_all")
+            if workflows is None and self._stale and last is not None and last[0] == self.device:
+                # Run all's totals while the worker reads them for an edit (the Run button, the blocks' marks): the last
+                # ones, said again when they come (``pathsChanged``); Run plans anew, so nothing runs on these
+                return last[1]
         try:
             c = api.cost(self.p, workflows, self.device, self._history_est)
         except (ValueError, KeyError, OSError):
             c = api.Cost(0.0, True, 0.0, 0)
         if k is not None:
             self._cache[k] = c
+            if workflows is None:
+                self._run_all = (self.device, c)
         return c
 
     def total_seconds(self) -> float:

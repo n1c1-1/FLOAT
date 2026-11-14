@@ -46,6 +46,10 @@ def _rounded(r: QRectF) -> QPainterPath:
     return p
 
 
+#: the opacity of a state band while the state is being read after an edit (``d["reading"]``)
+READING_OPACITY = 0.35
+
+
 def _band(p: QPainter, h: float, col: str):
     """The 4 px state band on the block's left edge (a rounded rectangle cut to its first 4 px)."""
     p.setPen(Qt.NoPen)
@@ -238,8 +242,12 @@ class BlockItem(QGraphicsItem):
             p.drawRoundedRect(r.adjusted(-3, -3, 3, 3), 10, 10)
         state = d["state"]
         if d["kind"] not in ("session", "post") or state != "pending":
+            was = p.opacity()
+            if d.get("reading"):                         # its state being read after an edit: the last one, faint
+                p.setOpacity(was * READING_OPACITY)
             _band(p, h, CUT_COL if off else GREY_COL if grey else
                   STATE_COL["fallback"] if fallback else STATE_COL.get(state, "#5d6470"))
+            p.setOpacity(was)
         f = _font(10, True)
         p.setFont(f)
         p.setPen(QColor("#e8ebf0"))
@@ -362,7 +370,11 @@ class StackItem(BlockItem):
             p.setPen(QPen(QColor(ACCENT), 2.0))
             p.setBrush(Qt.NoBrush)
             p.drawRoundedRect(r.adjusted(-2, -2, 2, 2), 9, 9)
+        was = p.opacity()
+        if d.get("reading"):                             # its states being read after an edit: the last ones, faint
+            p.setOpacity(was * READING_OPACITY)
         _band(p, h, STATE_COL.get(d["state"], "#5d6470"))
+        p.setOpacity(was)
         f = _font(10, True)
         p.setFont(f)
         p.setPen(QColor("#e8ebf0"))

@@ -26,6 +26,9 @@ Checks after every gesture:
      left empty is greyed (a and b hold for it as for any block, at every zoom)
   h  on a project model, the graph and Post agree on Combine layers: each block stands for a layer Post shows, with
      its wire to Post, as many blocks as layers
+  i  on a project model, once the worker has answered the edit (its keys and states read in the background, the page
+     drawn first): the states the model took are those read at once, and the states, lines and badges painted are those
+     the blocks have when computed anew; no block is left drawn as being read
 A failure writes the replayable gesture list and a minimised one (delta debugging by replay), and, when the core's
 own Drawing has the defect, the minimal list of document operations that reproduces it.
 """
@@ -322,24 +325,40 @@ def start_model(start):
 
 
 def computed(m):
-    """--model: every stage of the project taken as computed and up to date (its key of now), as after a run, after
-    every sync: a gesture that would compute results again asks Replace / Try variant / Cancel, which the fuzz
-    answers (``Run.answer``)."""
+    """--model: the project as if run once when it opened: a stage is computed and up to date while its key is the one
+    it had then (a store holding those results), else as the engine says; a gesture that makes results stale applies
+    at once and its toast says so, with Undo, and Undo makes them up to date again."""
     from astro_gpu import api
-    sync = m._sync
+    install = m._install
+    keys0: dict = {}
 
-    def done_sync(*a, **k):
-        sync(*a, **k)
+    def done_install(got):
+        # each time the model takes states (read at once, or the worker's answer to an edit)
+        install(got)
         if not m.ready:
             return
-        for w in m.p.workflows:
-            for st in m._chains.get(w.id, []):
-                try:
-                    m._states[(w.id, st)] = api.StageState("done", "", api.stage_key(m.p, w.id, st))
-                except (ValueError, KeyError):
-                    pass
-    m._sync = done_sync
-    done_sync(False)
+        first = not keys0
+        mark_done(m, m.__dict__["_st"], m.__dict__["_ch"], keys0, first)
+        if first:
+            keys0.setdefault(None, True)
+    m._install = done_install
+    m._keys0 = keys0
+    m._sync(False)
+
+
+def mark_done(m, states, chains, keys0, first=False):
+    """--model: the stages whose key is the one they had when the project opened, done (``computed``)."""
+    from astro_gpu import api
+    for w in m.p.workflows:
+        for st in chains.get(w.id, []):
+            try:
+                key = api.stage_key(m.p, w.id, st)
+            except (ValueError, KeyError):
+                continue
+            if first:
+                keys0[(w.id, st)] = key
+            if keys0.get((w.id, st)) == key:
+                states[(w.id, st)] = api.StageState("done", "", key)
 
 
 def core_replay(start, log):
@@ -959,11 +978,61 @@ class Run:
                                                                "Post's layers before the gesture"))
         self.settle_states(" after Ctrl+Z")
         self.check_painted(" after Ctrl+Z")
+        self.check_states(" after Ctrl+Z")
         for _i in range(steps):
             self.G.key("Ctrl+Y", target=self.canvas)
         if self.js() != after:
             raise Failure("d", "Ctrl+Y did not give back the graph after the gesture")
+        self.settle_states(" after Ctrl+Y")
         self.check_painted(" after Ctrl+Y")
+        self.check_states(" after Ctrl+Y")
+
+    def settle_states(self, when=""):
+        """--model: the worker's answer to the last edit taken (the states it reads after an edit) and the page's
+        refresh it asks made."""
+        m = getattr(self.doc, "model", None)
+        if not MODEL_ROOT or m is None:
+            return
+        end = time.time() + 60
+        while (m.states_pending() or not m.ready) and time.time() < end:     # (files dropped: the project read again)
+            QApplication.processEvents()
+            time.sleep(0.002)
+        if m.states_pending() or not m.ready:
+            raise Failure("i", f"the states of an edit never came{when}")
+        m.worker.wait(60)                       # (a project read again tells the views after its durations)
+        pump()
+
+    def check_states(self, when=""):
+        """i (--model, once the worker answered): the states the model took are those read now at once, and the states,
+        lines and badges painted are those the blocks have when computed anew; no block is left drawn as being read."""
+        m = getattr(self.doc, "model", None)
+        cv = self.canvas
+        if not MODEL_ROOT or m is None:
+            return
+        if m.states_pending():
+            raise Failure("i", f"states still being read{when}")
+        states, chains, blocks = m._read_states()
+        mark_done(m, states, chains, m._keys0)
+        got = {k: v.state for k, v in m.__dict__["_st"].items()}
+        want = {k: v.state for k, v in states.items()}
+        if got != want:
+            diff = sorted(k for k in set(got) | set(want) if got.get(k) != want.get(k))[:6]
+            raise Failure("i", f"the states taken differ from those read now{when}: "
+                               f"{[(k, got.get(k), want.get(k)) for k in diff]}")
+        if m.__dict__["_ch"] != chains or m.__dict__["_bl"] != blocks:
+            raise Failure("i", f"the chains or blocks taken differ from those read now{when}")
+        if self.page.position() == "table":
+            return
+        d = self.bridge.drawing()
+        for b, it in cv.blocks.items():
+            card = b in d.cards
+            now = cv.card_data(b, d.cards[b]) if card else cv.block_data(b, d.boxes[b])
+            for k in ("state", "summary", "grey", "review", "fallback", "broken", "missing", "warned", "title", "badge",
+                      "own", "dots"):
+                if it.d.get(k) != now.get(k):
+                    raise Failure("i", f"{b} painted with {k} {it.d.get(k)!r}, computed anew {now.get(k)!r}{when}")
+            if it.d.get("reading"):
+                raise Failure("i", f"{b} is still drawn as being read{when}")
 
     def _model_snap(self):
         """--model: the states of every stage and Post's layers (an Undo gives them back, up to date at once)."""
@@ -1016,7 +1085,9 @@ class Run:
         changed = after != before
         self.stats["accepted" if changed else "refused"] += 1
         self.by_kind[g["g"]] = self.by_kind.get(g["g"], 0) + 1
+        self.settle_states()
         self.check_painted()
+        self.check_states()
         self.check_shown()
         self.check_message(expect, changed, toasts0)
         if changed and not history:
@@ -1175,11 +1246,16 @@ def main(argv=None):
     ap.add_argument("--replay", default=None, help="a gesture list (JSON) written by a failure")
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--model", action="store_true", help="the page on the client's project model, not in memory")
+    ap.add_argument("--states", choices=("later", "now"), default=None,
+                    help="--model: an edit's states read by the worker (later) or at once (now); default: the model's")
     a = ap.parse_args(argv)
     os.makedirs(a.out, exist_ok=True)
     if a.model:
         global MODEL_ROOT
         MODEL_ROOT = os.path.join(a.out, "projects")
+    if a.states is not None:
+        from astro_gpu.client import model as client_model
+        client_model.ASYNC_STATES = a.states == "later"
     from astro_gpu.client import i18n, prefs
     prefs.load()
     i18n.set_language("en")

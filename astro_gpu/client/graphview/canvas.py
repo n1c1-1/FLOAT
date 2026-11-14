@@ -37,6 +37,7 @@ from ..layout import pinch_factor, wheel_gesture
 from ..widgets import Spinner
 from . import style
 from .bridge import PROJECT
+from .document import touched_blocks
 from .items import (
     DIM,
     BandItem,
@@ -59,6 +60,8 @@ MARGIN = 48                 # scene margin around the drawing (also keeps blocks
 MIME_KIND = "application/x-float-graph-kind"
 #: the blocks without an image out port
 NO_OUT = ("session", "calibration", "registration", "selection", "crop", "post")
+#: the kinds whose line the project model says (a folder not found, an image's file, Post's layers): Doc.summary
+MODEL_SUMMARY = ("session", "calibration", "image", "post")
 from ..imageview import ZOOM_PRESETS as ZOOMS  # noqa: E402 - today's presets, 12.5 % to 800 %
 #: a combination's and Combine layers' inputs: the colour of their dot
 PORT_COL = {"Background": IMAGE_COL["starless"], "Stars": IMAGE_COL["stars_only"], SYNTH_PORT: IMAGE_COL["synth"]}
@@ -532,13 +535,19 @@ class GraphCanvas(QGraphicsView):
         d = self.bridge.drawing()
         return [(port, y - box.y) for (bb, port, s), (x, y) in d.ports.items() if bb == b and s == sense]
 
-    def block_data(self, b, box):
+    def block_data(self, b, box, prev=None, pending=False, touched=True):
+        """What a block's item draws. ``pending`` (the project model's worker reads the states of its last edit): the
+        graph's own data at once, what the run and the model say of it as ``prev`` (the block's data of the last
+        drawing) said it, a new block "pending", ``touched`` (its state may change: drawn as being read) or not; the
+        states come with ``update_states``."""
         bridge, doc = self.bridge, self.doc
         blk = bridge.block(b)
         kind = blk.kind
-        state = doc.state(b)
-        grey = doc.greyed(b) or ""
-        review = doc.review(b)
+        old = prev or {}
+        state = old.get("state", "pending") if pending else doc.state(b)
+        grey = ((doc.greyed(b, model=False) or (old.get("grey", "") if kind == "color" else "")) if pending else
+                doc.greyed(b)) or ""
+        review = old.get("review") if pending else doc.review(b)
         row = bridge.row_of(b)
         badge = ""
         if kind == "session" and row is not None and row.nights and row.nights[0][0] == b and len(row.nights) == 1:
@@ -560,8 +569,9 @@ class GraphCanvas(QGraphicsView):
                 wired = any(tuple(w.src) == (b, port) for w in wires)
                 outputs.append((port, y, OUT_COL.get(port, "#9aa3b2"), wired))
         title = doc.title(b)
-        summary = doc.summary(b)
-        bd = doc.badges(b)
+        summary = (old.get("summary") if prev and kind in MODEL_SUMMARY else doc.summary(b, model=False)) \
+            if pending else doc.summary(b)
+        bd = {k: old.get(k) for k in ("fallback", "broken", "missing", "warned")} if pending else doc.badges(b)
         fallback = list(bd.get("fallback") or []) if state == "done" and not grey else []
         broken, missing = bd.get("broken") or "", bd.get("missing") or ""
         word = _(FALLBACK_WORD) if fallback else state_word(state)
@@ -576,7 +586,7 @@ class GraphCanvas(QGraphicsView):
         if review is not None and blk.off:               # kept, but a block switched off is not run: no stop now
             tip += "\n" + _("Review point kept: it waits for the block to be switched on again (D); runs go "
                             "through meanwhile.")
-        elif review is not None:
+        elif review is not None and not pending:         # (its count of workflows: once the states are read)
             tip += "\n" + self._review_tip(b, review)
         if fallback:                                     # why, in the engine's words translated (graph.py)
             from ..services.run import engine_text
@@ -601,7 +611,7 @@ class GraphCanvas(QGraphicsView):
                     off=bool(blk.off), grey=grey, badge=badge, review=review, own=doc.differs(b),
                     fallback=fallback, broken=broken, missing=missing, warned=bool(bd.get("warned")),
                     w=box.w, h=box.h, x=box.x, y=box.y, inputs=inputs, outputs=outputs,
-                    removable=kind != "post", tip=tip)
+                    removable=kind != "post", tip=tip, reading=pending and (touched or prev is None))
 
     def _review_tip(self, b, review) -> str:
         """What a block's review pause says (today's ``review_tip``): its state, and in how many of the workflows going
@@ -623,22 +633,28 @@ class GraphCanvas(QGraphicsView):
                                      "Pause set in {n} workflows of {total}.", total=len(paths))
         return text
 
-    def card_data(self, row_id, box):
+    def card_data(self, row_id, box, prev=None, pending=False, touched=True):
+        """A folded row's card; ``pending``: its states as ``prev`` (the card of the last drawing) said them (see
+        ``block_data``)."""
         bridge, doc = self.bridge, self.doc
         r = bridge.row(row_id)
         title, summary = doc.title(row_id), doc.summary(row_id)
         cal = r.nights[0][1] if r.nights else None
         kinds = {bridge.block(b).kind: b for b in r.blocks}
-        dots = []
-        for b in (cal, kinds.get("registration"), kinds.get("selection"), kinds.get("stacking")):
-            if b is not None:
-                dots.append((doc.state(b), doc.title(b) + ": " + doc.summary(b)))
-        stack_state = doc.state(kinds["stacking"]) if "stacking" in kinds else "pending"
+        ids = [b for b in (cal, kinds.get("registration"), kinds.get("selection"), kinds.get("stacking")) if b is not None]
+        was = [st for st, _t in (prev or {}).get("dots", [])]
+        if pending and len(was) != len(ids):
+            was = ["pending"] * len(ids)
+        dots = [(was[i] if pending else doc.state(b), doc.title(b) + ": " + doc.summary(b, model=not pending))
+                for i, b in enumerate(ids)]
+        stack_state = ((prev or {}).get("state", "pending") if pending else doc.state(kinds["stacking"])) \
+            if "stacking" in kinds else "pending"
         return dict(id=row_id, kind="card", title=title, summary=summary, state=stack_state,
                     selected=bridge.selected == row_id, off=False, grey="", badge=doc.row_badge(row_id), review=None,
                     own=any(doc.differs(b) for b in r.blocks), w=box.w, h=box.h, x=box.x, y=box.y, inputs=[],
                     outputs=[("image", box.h / 2, "#9aa3b2", True)], removable=False, dots=dots,
-                    tip="\n".join((title, summary, _("Blocks: show the blocks of every stack (Ctrl+J)"))))
+                    tip="\n".join((title, summary, _("Blocks: show the blocks of every stack (Ctrl+J)"))),
+                    reading=pending and (touched or prev is None))
 
     def _behind_table(self) -> bool:
         """The page shows the Table: nothing of the graph is seen, it is drawn again when the page leaves the Table
@@ -658,6 +674,13 @@ class GraphCanvas(QGraphicsView):
         bridge, doc = self.bridge, self.doc
         self.close_name()
         self.ghosts, self.targets, self.rubber, self.floater = [], [], None, None
+        # the project model's worker reads the states of its last edit: the blocks drawn at once, what the run says of
+        # them as the last drawing said it (being read where the edit can change it), painted when the states come
+        pending = bool(self.blocks) and doc.states_pending()     # (a first drawing has no earlier one: read now)
+        prev = {b: it.d for b, it in self.blocks.items()} if pending else {}
+        touched = touched_blocks(getattr(self, "_drawn_graph", None), bridge.graph) if pending else set()
+        self._drawn_graph = bridge.graph
+        self._waiting_states = pending
         self.blocks, self.wires = {}, {}
         self.side_items = []
         sc = self.scene()
@@ -685,15 +708,16 @@ class GraphCanvas(QGraphicsView):
                 it.mark(True)
         rects = []
         for b, box in drawing.boxes.items():
-            it = BlockItem(self.block_data(b, box))
-            it.node = self.run_node(b)
+            it = BlockItem(self.block_data(b, box, prev.get(b), pending, b in touched))
+            it.node = None if pending else self.run_node(b)
             sc.addItem(it)
             self.blocks[b] = it
             rects.append((QRectF(box.x, box.y, box.w, box.h), QColor(STATE_COL.get(it.d["state"], "#5d6470"))))
         for r, box in drawing.cards.items():
-            it = StackItem(self.card_data(r, box))
             kinds = {bridge.block(b).kind: b for b in bridge.row(r).blocks}
-            it.node = self.run_node(kinds.get("stacking"))       # a run's progress on the card: its Stacking's
+            mine = set(bridge.row(r).blocks) | {x for n in bridge.row(r).nights for x in n}
+            it = StackItem(self.card_data(r, box, prev.get(r), pending, bool(touched & mine)))
+            it.node = None if pending else self.run_node(kinds.get("stacking"))   # a run's progress: its Stacking's
             sc.addItem(it)
             self.blocks[r] = it
             rects.append((QRectF(box.x, box.y, box.w, box.h), QColor(STATE_COL.get(it.d["state"], "#5d6470"))))
@@ -775,23 +799,37 @@ class GraphCanvas(QGraphicsView):
         return float(int(need + 0.999)) if need > 0 else 0.0
 
     def update_states(self):
-        """The run states changed: the items are given them again."""
-        if self._behind_table():
+        """The run states changed: the items are given them again (in place: the scene is not built again). While the
+        project model's worker reads the states of an edit: nothing yet (its answer asks again)."""
+        if self._behind_table() or self.doc.states_pending():
             return
         drawing = self.bridge.drawing()
+        waited, self._waiting_states = getattr(self, "_waiting_states", False), False
         for b, it in self.blocks.items():
-            if it.d["kind"] == "card":
-                it.d = self.card_data(b, drawing.cards[b])
-            else:
-                it.d = self.block_data(b, drawing.boxes[b])
+            dim = it.d.get("dim")
+            card = it.d["kind"] == "card"
+            if waited:                                   # the states of an edit: its node for the run's progress
+                kinds = {self.bridge.block(x).kind: x for x in self.bridge.row(b).blocks} if card else {}
+                it.node = self.run_node(kinds.get("stacking") if card else b)
+            it.d = self.card_data(b, drawing.cards[b]) if card else self.block_data(b, drawing.boxes[b])
+            if dim is not None:
+                it.d["dim"] = dim
+            if waited:
+                it.setToolTip(it.d.get("tip", ""))
             it.update()
+        if waited:
+            self.minimap.rects = [(r, QColor(STATE_COL.get(it.d["state"], "#5d6470")))
+                                  for (r, _c), it in zip(self.minimap.rects, self.blocks.values())]
         pi = self.project_item
         if pi is not None:                               # the project's target and details change no block
             pi.title, pi.summary, pi.state, tip = self.doc.project_block()
             pi.setToolTip(tip)
             pi.update()
         self.show_wait()
-        self.viewport().update()
+        if waited and self.isVisible():
+            self.viewport().repaint()                    # the states of the edit painted now, before the panel
+        else:
+            self.viewport().update()
         self.minimap.update()
 
     def _show_block(self, ident):

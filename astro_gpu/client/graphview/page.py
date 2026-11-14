@@ -517,9 +517,23 @@ class GraphPage(SidesHost, QWidget):
         if not self.is_blank():
             self.hide_templates()
         self.follow_model_selection()
+        if self.bridge.doc.states_pending():      # the panel and the run's estimate: with the states (the model's
+            return                                # answer asks a refresh again)
+        late = getattr(self.s, "late_said", None)
+        if late is not None:                      # what a gesture could say only once the states were read
+            self.s.late_said = None
+            self.bridge.toast.emit(self.bridge.say(late))
         if states or getattr(self, "_panel_shown", None) != self._panel_key():
             self.refresh_panel()                  # (asked by the gesture the panel already follows: not again)
         self.cost_toast()
+
+    def refresh_panel(self):
+        """The settings panel shows the block chosen (``SidesHost.refresh_panel``); while the project model's worker reads
+        the states of an edit, once they are read (its state line and its decisions read them)."""
+        if self.s is not None and self.bridge.doc.states_pending():
+            self._states_due = True
+            return
+        super().refresh_panel()
 
     def toast(self, text: str):
         self.canvas.say(text)
