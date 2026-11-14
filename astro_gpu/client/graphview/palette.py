@@ -147,7 +147,7 @@ class Palette(QScrollArea):
         self.for_row.setVisible(r is not None)
         self._gen += 1
         self._queue = list(self.cards)
-        QTimer.singleShot(0, lambda g=self._gen: self._step(g))
+        QTimer.singleShot(0, self, lambda g=self._gen: self._step(g))     # (cancelled if the palette is deleted)
 
     def _step(self, gen):
         if gen != self._gen or not self._queue:
@@ -156,7 +156,7 @@ class Palette(QScrollArea):
         ok, why = self.bridge.doc.palette_state(k)
         self.cards[k].set_state(ok, why)
         if self._queue:
-            QTimer.singleShot(0, lambda g=gen: self._step(g))
+            QTimer.singleShot(0, self, lambda g=gen: self._step(g))
 
     def finish(self):
         """Bring every card up to date now (tests, first display)."""

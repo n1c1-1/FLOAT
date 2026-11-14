@@ -123,8 +123,17 @@ class GraphPage(QWidget):
         self.display_changed.emit(self.position())
 
     def cycle_display(self):
+        """Ctrl+J: the next position; one the core refuses (Folded, when a variant starts from a stack's frames) is
+        passed over, its reason said, so that Table is always reached."""
         order = [k for k, *_r in POSITIONS]
-        self.set_display(order[(order.index(self.position()) + 1) % len(order)])
+        key = order[(order.index(self.position()) + 1) % len(order)]
+        if key == "folded":
+            res = self.bridge.doc.try_many([("fold_all", {})])
+            if not res.ok:
+                self.set_display("table")
+                self.bridge.toast.emit(self.bridge.say(res.reason))
+                return
+        self.set_display(key)
 
     def _set_mode(self, mode):
         self.bridge.doc.apply("set_mode", mode=mode)

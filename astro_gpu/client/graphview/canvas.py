@@ -282,6 +282,7 @@ class GraphCanvas(QGraphicsView):
         self.name_edit = None
         self.selected_wire = None
         self._to_delete = None
+        self._pressed = False            # a block pressed by the mouse is being selected (it is under the pointer)
         self._k = 1.0
         self.toast = Toast(self.viewport())
         self.minimap = Minimap(self)
@@ -370,7 +371,7 @@ class GraphCanvas(QGraphicsView):
             if it is not None:
                 it.alert = True
                 it.update()
-        QTimer.singleShot(ALERT_MS, lambda bs=tuple(framed): self._end_alert(bs))
+        QTimer.singleShot(ALERT_MS, self, lambda bs=tuple(framed): self._end_alert(bs))
         self._to_delete = [ident] + list(deps) if possible and deps else None
         links = []
         if possible and deps:
@@ -403,6 +404,7 @@ class GraphCanvas(QGraphicsView):
             eff = ix.effective(r.id)
             if ident in eff:
                 later += [b for b in eff[eff.index(ident) + 1:] if b not in later]
+        later += [b for b in g.blocks if b != ident and b not in later]   # then the blocks its wires feed (composition)
         deps = []
         for _i in range(limit):
             res = doc.try_many(self._removals(ident, deps))
@@ -598,7 +600,7 @@ class GraphCanvas(QGraphicsView):
         if self.project_item is not None:
             self.project_item.selected = ident == PROJECT
             self.project_item.update()
-        if ident in self.blocks:
+        if ident in self.blocks and not self._pressed:
             self._show(ident, follow=bool(self._keep_in_view))
         self._update_buttons()
 
@@ -796,7 +798,11 @@ class GraphCanvas(QGraphicsView):
                 self.delete_block(it.id)
                 return
             self.selected_wire = None
-            self.bridge.choose(it.id)
+            self._pressed = True                         # the block is under the pointer: no scroll under it
+            try:
+                self.bridge.choose(it.id)
+            finally:
+                self._pressed = False
             self.gesture = dict(kind="press", id=it.id, press=e.position(), it=it)
             return
         if isinstance(it, WireItem):

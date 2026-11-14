@@ -28,7 +28,7 @@ ROLE = {"session": "block_session", "image": "block_image", "calibration": "bloc
         "synth": "block_stars", "combine": "block_fusion", "combine_layers": "block_recombine", "post": "layers"}
 #: the palette's groups (headings shown in capitals)
 GROUPS = [("Sources", ["session", "image"]),
-          ("Frames", ["calibration", "registration", "selection", "crop", "stacking"]),
+          ("Lights", ["calibration", "registration", "selection", "crop", "stacking"]),
           ("Image", ["astrometry", "gradient", "deconv", "denoise", "color"]),
           ("Post", ["stars", "synth"]),
           ("Composition", ["combine", "combine_layers"])]

@@ -704,6 +704,9 @@ def test_gv_table_keyboard(qapp, tree):
     g.set_focus(g.cell(("box", s1, "darks")))
     b.key(Qt.Key_Delete)
     assert b.own(s1, "darks") is None and "emptied · files kept" in b.t.toast_text
+    for i, s in enumerate(x for x in b.sessions() if x != s1):         # "No flats" is said of a session with lights
+        r = b.doc.apply("add_files", session=s, kind="lights", paths=[str(tree["more"][i % len(tree["more"])])])
+        assert r.ok, r.reason
     b.drop([tree["flats"]], ("box", s1, "flats"))
     b.read()
     assert b.g.model.all_warnings()
