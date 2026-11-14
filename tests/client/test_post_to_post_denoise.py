@@ -2,8 +2,6 @@
 (offscreen, scratch project, nothing computed: the branch is marked rendered)."""
 from __future__ import annotations
 
-import pytest
-
 from astro_gpu.client.post3 import PostPage3
 from astro_gpu.client.services.render import RenderWorker
 
@@ -53,8 +51,6 @@ def test_to_post_on_a_denoise_block_of_a_channel(qapp, tmp_path, monkeypatch):
         w.stop()
 
 
-@pytest.mark.xfail(strict=True, reason="the page's To Post makes the branch but does not write its layer into Post's "
-                   "shown version at once (the model's send_to_post does)")
 def test_to_post_on_a_block_writes_its_layer_and_a_later_write_never_takes_it_out(qapp, tmp_path, monkeypatch):
     """The laptop's project: five workflows, the version holding only the Combine layers of the fifth, the others taken
     out. To Post on a Denoise block writes the new workflow's layer into the version at once (Post never opened); Starless

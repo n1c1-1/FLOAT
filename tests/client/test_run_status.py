@@ -153,7 +153,7 @@ def test_blocks_not_placed_are_not_rows_and_the_output_is_not_a_row_of_its_own(w
     w = world(blocks=[{"block": "stacking"}])
     plan = w.m.plan_all()
     rows = build_rows(w.m, plan.jobs)
-    assert [r.title for r in rows] == ["Calibration", "Stacking"]
+    assert [r.title for r in rows] == ["Stacking"]        # its workflow has no Calibration: none is drawn, none runs
     assert {j.stage for j in plan.jobs} <= {"inventory", "calibrate", "register", "stack", "render_simple"}
     assert sum(len(r.keys) for r in rows) == len(plan.jobs)
 
@@ -167,7 +167,7 @@ def test_the_recap_names_the_flow_when_two_rows_share_a_name_and_is_written_once
     t.abort("PermissionError: [Errno 13] Permission denied: 'x'")
     d = RunDialog(w.m, plan, "Run", track=t)
     names = sorted(d._named().values())
-    assert names == ["Calibration (Flow 2)", "Calibration (Workflow)", "Stacking (Flow 2)", "Stacking (Workflow)"], names
+    assert names == ["Stacking (Flow 2)", "Stacking (Workflow)"], names
     d.rebuild()
     QApplication.processEvents()
     d.rebuild()
@@ -494,8 +494,6 @@ def test_a_fusion_without_lights_has_nothing_to_run_as_f5_says(world):
     assert w2.m.has_data(fusion)
 
 
-@pytest.mark.xfail(strict=True, reason="the graph's line under Gradient 2 says 'polynomial' after its own method was set "
-                   "to Automatic (rbf)")
 def test_a_block_placed_twice_has_its_own_method_and_astrometry_says_what_it_will_do(world):
     """Round 3: Gradient 2's Method list was greyed "Set by the options of the workflow" (its method is its node's:
     chosen on its cards, one Undo step); the Astrometry block said "solved" before anything was computed."""
@@ -761,8 +759,9 @@ def test_a_block_done_with_its_fallback_is_orange_with_its_reason_and_never_a_fa
             return {"fallback": list(self.reasons.get(b, []))}
     doc = Doc()
     bridge = Bridge(doc)
-    assert bridge.act("add_row", kind="session").ok
+    assert bridge.act("add_row", kind="session").ok             # a Session comes alone: its stack, then Astrometry
     row = bridge.graph.rows[0]
+    assert bridge.act("add_block", kind="stacking", row=row.id).ok
     assert bridge.act("add_block", kind="astrometry", row=row.id).ok
     ast = next(b for b, x in bridge.graph.blocks.items() if x.kind == "astrometry")
     stack = next(b for b, x in bridge.graph.blocks.items() if x.kind == "stacking")

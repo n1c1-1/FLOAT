@@ -87,7 +87,12 @@ class GraphDocument:
     """The document interface of the graph page (graphview/document.py) on a project model with ``GraphEditing``."""
 
     def __init__(self, model):
-        self.model = model
+        import weakref
+        self._model = weakref.ref(model)  # weakly: a page's widgets outliving it never keep a closed project alive
+
+    @property
+    def model(self):
+        return self._model()
 
     @property
     def graph(self):
@@ -659,6 +664,21 @@ class GraphEditing:
             q.blocks.pop(b, None)
         return q
 
+    def _lights_first(self, steps) -> str:
+        """To Post on the last block of a workflow waiting for its lights: its image comes once it has lights (its wire
+        is drawn waiting), "lights first", as today's page said."""
+        g = self._g
+        waiting = {q.pid for q in self.post_waiting()}
+        for s in steps:
+            if s[0] != "send_to_post" or not isinstance(s[1], dict) or not waiting:
+                continue
+            b = s[1].get("block")
+            for wid in waiting:
+                chain = self._chain(wid, g) or []
+                if chain and chain[-1] == b:
+                    return _("lights first")
+        return ""
+
     def _row_kept(self, steps) -> str:
         """Why a Delete workflow is refused (today's decision 3): a workflow a combination reads as a channel, or the
         reference of an Align on, is kept, said with the reason; "" when it may go."""
@@ -716,7 +736,7 @@ class GraphEditing:
         """Operations, then ``raw(graph)`` (an edit the core has no operation for, on a copy), as one step."""
         self._absorb()
         before = self._g
-        kept = self._row_kept(steps)
+        kept = self._row_kept(steps) or self._lights_first(steps)
         if kept:
             return Result(False, reason=kept)
         base = self._without_layer_rows(before, steps)
@@ -750,8 +770,10 @@ class GraphEditing:
         with self._edit():
             self._commit(g)
             post = gm.Index(before).post
-            self._post_follow(before, g, wired=any(s[0] == "wire" and isinstance(s[1], dict) and s[1].get("dst") == post
-                                                   for s in steps))
+            # the user's own wire to Post, or To Post on a workflow's last block (its image given back after its
+            # wire was taken away): the image reaches every version
+            self._post_follow(before, g, wired=any((s[0] == "wire" and isinstance(s[1], dict) and s[1].get("dst") == post)
+                                                   or s[0] == "send_to_post" for s in steps))
             self._follow_post()
         text = name or (say(res.toast, _) if res.toast else "")
         if text:
@@ -1193,6 +1215,13 @@ class GraphEditing:
                     steps.append(("set_pause", {"block": bid}))
             else:
                 steps.append(("set_flow_pauses", {"flow": f.id, "pauses": list(new)}))
+        # a block's pause set here is these workflows' only: the others holding their own list keep it as it is (the
+        # core takes a block's pause into every list of the workflows through it, the page's gesture)
+        if switched:
+            mine = {self._flow(wid, g).id for wid in want}
+            steps = [s for s in steps if s[0] == "set_pause"] + [s for s in steps if s[0] != "set_pause"] + [
+                ("set_flow_pauses", {"flow": x.id, "pauses": list(x.pauses)}) for x in list(g.rows) + list(g.taps)
+                if x.pauses is not None and x.id not in mine and x.id not in kept]
         if steps:
             self._do(steps)
 

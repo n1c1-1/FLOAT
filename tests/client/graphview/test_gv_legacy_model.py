@@ -1224,7 +1224,8 @@ def test_the_pause_is_stored_per_workflow_undone_copied_and_leaves_with_its_bloc
     assert model.p.workflow(1).breakpoints == ["calibration", "stacking", "gradient"]
     page.bridge.act("duplicate_row", row=page.bridge.row_of(block_of(page, node(page, "fond", 1))).id)
     settle(world["w"], page)
-    cp = model.paths[-1]                       # (the copy does not keep the pauses: a defect of the swap)
+    cp = model.paths[-1]                       # a copy keeps the pauses
+    assert model.p.workflow(cp.pid).breakpoints == ["calibration", "stacking", "gradient"]
     model.set_breakpoint([cp], "empilement")
     model.set_breakpoint([model.view(cp.pid)], "fond")
     settle(world["w"], page)
@@ -1258,13 +1259,10 @@ def test_breakpoints_change_no_key_and_no_state(world, model, page):
 
 def test_selection_is_reviewed_with_its_thresholds_and_runs_to_registration(world, model, page):
     p = model.view(1)
-    model.set_breakpoint([p], "selection")
-    pause = model.pause_point()
-    assert pause.block == "selection" and pause.pids == [1]
-    plan, pause2 = model.plan_run()
-    mine = [j for j in plan.jobs if 1 in j.wf]
-    assert pause2.block == "selection" and (not mine or mine[-1].stage == "register")
-    assert all(j.stage != "stack" for j in mine)
+    # the owner's decision: no pause on Selection (it computes nothing of its own), the pause goes on Registration
+    with pytest.raises(ValueError, match="Registration"):
+        model.set_breakpoint([p], "selection")
+    assert model.pause_point() is None
     k0 = model.review_key(p, "selection")
     model.apply_change([p], {"kind": "params", "items": [("stack", "min_transparency", 0.73)]})
     assert model.review_key(p, "selection") != k0

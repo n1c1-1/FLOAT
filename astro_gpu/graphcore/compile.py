@@ -28,6 +28,9 @@ IMAGE_OF_PORT = {"Starless": "starless", "Stars only": "stars"}
 #: the graph's chain kinds that are an engine node of the same name
 NODE_KINDS = ("registration", "selection", "crop", "stacking", "astrometry", "gradient", "deconv", "denoise", "color",
               "stars", "synth")
+#: a stack without a Selection block stacks every frame with the same weight: its stack stage reads the engine's
+#: "All frames" (stack.selection = "all"); False: today's default selection
+NO_SELECTION_STACKS_ALL = True
 
 
 @dataclass
@@ -292,14 +295,26 @@ def compile_into(g, p) -> Compiled:
         else:
             sess = nights
         if rec.pauses is not None:
-            bps = list(rec.pauses)
+            # a workflow's own list: a block that left its chain takes its pause with it
+            have = {engine(b) for b in f.chain}
+            bps = [x for x in rec.pauses if x in have or wfl.base(x) not in NODE_KINDS]
         else:
-            bps = sorted({engine(b) for b in f.chain if g.blocks[b].pause and g.blocks[b].kind in NODE_KINDS + (
-                "image", "combine")}, key=wfl.block_order)
+            bps = {engine(b) for b in f.chain if g.blocks[b].pause and g.blocks[b].kind in NODE_KINDS + (
+                "image", "combine")}
+            # a night's Calibration with its pause: the workflow pauses after it (each night's own when the nights
+            # are calibrated each on its own, project2.separate_sessions)
+            sep = not g.calibrate_together and len(root.nights) >= 2 and kind == "frames"
+            bps |= {f"calibration@{sid_of(s)}" if sep else "calibration" for s, c in root.nights
+                    if c is not None and g.blocks[c].pause}
+            bps = sorted(bps, key=wfl.block_order)
         own = {str(sid_of(s)): copy.deepcopy(g.blocks[c].own) for s, c in root.nights
                if c is not None and g.blocks[c].own}
         w = old.get(f.wid) or Workflow(f.wid, rec.name)
         params = _settings(g, f, root, holder)
+        kinds = [g.blocks[b].kind for b in f.chain]
+        if NO_SELECTION_STACKS_ALL and kind == "frames" and "stacking" in kinds and "selection" not in kinds:
+            # a stack without a Selection block: every frame kept, all of the same weight (the engine's "All frames")
+            params.setdefault("stack", {})["selection"] = "all"
         for sid in mixed:
             params.setdefault(f"calibrate@{sid}", {})["apply_masters"] = False
         w.name, w.options, w.params, w.end = rec.name, options, params, end

@@ -176,3 +176,140 @@ def test_deleting_a_stack_takes_the_session_only_it_read_and_a_combinations_inpu
     res = W2.b.act("delete_row", row=ha.id)
     assert not res.ok and "kept" in W2.b.say(res.reason) and "Ha" in W2.b.say(res.reason)
     assert len(m2._undo) == n and [q.name for q in m2.paths] == paths
+
+
+def test_a_stack_without_selection_stacks_every_frame_with_the_same_weight_and_says_so(world):
+    """The owner's decision: no Selection block = every frame kept, the same weight (the engine's "All frames"); the
+    Stacking's line and the deletion's toast say it; a Selection block keeps its own rule."""
+    from astro_gpu.graphcore import api as gapi
+    W = world(workflows=("Full",))
+    m = W.m
+    q = m.paths[0]
+    assert (m.p.workflow(q.pid).params.get("stack") or {}).get("selection") != "all"
+    res = m.apply([("remove_block", {"block": W.block("selection")})])
+    assert res.ok and "every frame is stacked, same weight" in W.b.say(res.toast)
+    assert m.p.workflow(q.pid).params["stack"]["selection"] == "all"
+    assert "every frame is stacked, same weight" in gapi.summary(m.stored, W.one("stacking"))
+    m.undo(graph=True)
+    assert (m.p.workflow(q.pid).params.get("stack") or {}).get("selection") != "all"
+
+
+def test_a_review_pause_is_never_set_on_selection_and_an_old_one_is_a_pause_after_registration(world):
+    from astro_gpu.client.graphview.menu import menu
+    from astro_gpu.graphcore.convert import Converter
+    W = world(workflows=("Full",))
+    m = W.m
+    sel = W.block("selection")
+    res = W.b.act("set_pause", block=sel)
+    assert not res.ok and "set the pause on Registration" in W.b.say(res.reason) and not W.graph.blocks[sel].pause
+    item = next(i for i in menu(W.page.bridge.doc, sel) if i[1] == "set_pause")
+    assert item[3] is False and "Registration" in item[4]
+    # an old project's pause on Selection: the same stop, on Registration, said once
+    p = m.p.__class__.from_dict(m.p.to_dict(), m.p.root)
+    p.workflows[0].breakpoints = ["selection"]
+    c = Converter(p)
+    g = c.convert()
+    reg = next(b for b, x in g.blocks.items() if x.kind == "registration")
+    assert g.blocks[reg].pause and not any(x.pause for x in g.blocks.values() if x.kind == "selection")
+    assert sum("pause after Selection" in x for x in c.log) == 1
+
+
+def test_a_review_pause_on_a_calibration_is_kept_and_one_on_a_workflow_with_its_own_list_too(world):
+    """s6a-5 (test_graph::test_every_block_has_pause_here_for_review_and_the_dot_shows): Review pause on a night's
+    Calibration (shared by the workflows) is kept in each of them, and taken away again; a workflow holding its own
+    list of pauses takes a pause set on another of its blocks."""
+    W = world(workflows=("Full", "Classic stack"))
+    m = W.m
+    cal = W.one("calibration")
+    res = W.b.act("set_pause", block=cal)
+    assert res.ok
+    assert all("calibration" in w.breakpoints for w in m.p.workflows)
+    assert W.b.act("set_pause", block=cal).ok
+    assert not any("calibration" in w.breakpoints for w in m.p.workflows)
+    full = W.view("Full")
+    row = next(r for r in W.graph.rows if r.wid == full.pid)
+    assert m.apply([("set_flow_pauses", {"flow": row.id, "pauses": ["stacking"]})]).ok
+    assert W.b.act("set_pause", block=W.block("fond", full)).ok
+    assert set(m.p.workflow(full.pid).breakpoints) >= {"stacking", "gradient"}
+
+
+def test_the_color_block_of_a_mono_workflow_is_greyed_with_its_reason_and_so_is_its_card(world):
+    """s6a-7 (test_graph47_client::test_a_color_block_of_a_mono_workflow_is_greyed_with_its_reason)."""
+    W = world(workflows=("Full",))
+    m = W.m
+    doc = W.page.bridge.doc
+    color = W.one("color")
+    assert doc.greyed(color) == ""
+    W.choose(W.block("empilement"))
+    assert doc.palette_state("color")[0] or "colour" not in doc.palette_state("color")[1]
+    m.set_session_filter(1, "L")
+    W.settle()
+    assert "colours" in doc.greyed(color)
+    W.choose(W.block("empilement"))
+    ok, why = doc.palette_state("color")
+    assert not ok and "colours" in why
+
+
+def test_a_second_night_joining_a_filter_stack_is_named_and_filtered_after_it(world):
+    """s6a-9 (test_fusion_sessions_client::test_a_filter_s_second_night_is_named_and_drawn_with_its_filter): Ha's
+    Session chosen, a Session placed: "Ha 2", filter Ha, said once ("“Ha 2” joins “Ha”"), its Ctrl+Z once."""
+    W = world(workflows=(), filters=("Ha", "OIII"))
+    W.template("filters_min")
+    m = W.m
+    ha = next(r for r in W.graph.rows if r.name == "Ha")
+    res = W.b.act("add_night", row=ha.id)
+    assert res.ok, res.reason
+    W.settle()
+    s = m.p.sessions[-1]
+    assert (s.name, s.filter) == ("Ha 2", "Ha")
+    said = W.b.say(res.toast)
+    assert said == "“Ha 2” joins “Ha”" and "Ctrl+Z" not in said
+
+
+def test_rows_changed_in_the_definition_still_take_a_combination(world):
+    """s6b (DEFECTS: rows whose blocks were changed in the definition, then read again, refused a combination)."""
+    from astro_gpu.core import workflow as wfl
+    W = world(workflows=(), filters=("Ha", "OIII"))
+    m = W.m
+    chain = ["calibration", "registration", "selection", "stacking"]
+    for f, sid in (("Ha", 1), ("OIII", 2)):
+        m.add_graph_workflow(f, [wfl.node(b) for b in chain], sessions=[sid])
+    for q in m.paths:
+        m.p.set_blocks(q.pid, [wfl.node(b) for b in chain + ["gradient", "denoise", "stars"]])
+    m._sync()
+    assert m.stored and m.graph_rebuilds == 1
+    v = m.add_fusion("H-O", "ho", [{"pid": q.pid, "role": q.name, "channel": "L"} for q in m.paths])
+    assert v is not None and (v.source or {}).get("fusion")
+
+
+def test_to_post_after_the_wire_was_taken_away_gives_it_back(world):
+    """s6a-4 (test_graph47_client::test_control_round_a_port_pulled_again_or_after_its_wire_went_says_so_or_gives_it_back)."""
+    W = world(workflows=("Classic stack",))
+    m = W.m
+    q = m.paths[0]
+    post = W.one("post")
+    wire = next(w for w in W.graph.wires if w.dst[0] == post)
+    assert m.apply([("unwire", {"wire": wire.id})]).ok
+    W.settle()
+    assert (q.pid, None) in m.post_removed() and q.pid not in W.bm.to_post
+    last = wire.src[0]
+    res = W.b.act("send_to_post", block=last)
+    assert res.ok, res.reason
+    W.settle()
+    assert (q.pid, None) not in m.post_removed() and q.pid in W.bm.to_post
+    assert any(w.src[0] == last and w.dst[0] == post for w in W.graph.wires)
+    assert [x.pid for x in m.paths] == [q.pid]
+
+
+def test_a_workflow_without_lights_keeps_its_wire_to_post_and_to_post_says_lights_first(world):
+    """s6a-3 (test_waiting_wire): no lights: its wire to Post drawn (waiting), no layer of Post yet; To Post on its last
+    block says "lights first"."""
+    W = world(workflows=("Classic stack",), lights=False)
+    m = W.m
+    q = m.paths[0]
+    post = W.one("post")
+    wires = [w for w in W.graph.wires if w.dst[0] == post]
+    assert len(wires) == 1 and [x.pid for x in m.post_waiting()] == [q.pid]
+    assert not m.post_version().get("layers")
+    res = W.b.act("send_to_post", block=wires[0].src[0])
+    assert not res.ok and W.b.say(res.reason) == "lights first"

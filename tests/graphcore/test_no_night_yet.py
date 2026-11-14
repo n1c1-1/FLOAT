@@ -49,7 +49,7 @@ def test_a_workflow_without_calibration_is_drawn_without_one(tmp_path):
     raw.mkdir()
     api.add_session(p, lights=[raw])
     w = api.add_workflow(p, "Plain", "Full")
-    p.set_blocks(w.id, [wfl.node("registration"), wfl.node("stacking")])
+    p.set_blocks(w.id, [wfl.node("registration"), wfl.node("selection"), wfl.node("stacking")])
     p.validate()
     assert not any(n["block"] == "calibration" for n in p.workflow(w.id).blocks)
     g = convert(p)

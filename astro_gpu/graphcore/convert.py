@@ -606,17 +606,26 @@ class Converter:
     # ------------------------------------------------------------------ breakpoints
     def _pauses(self):
         g = self.g
+        # a pause on Selection (no stage of its own: the client ran it as "after Registration", workflow.RUN_TO) is
+        # a pause on Registration, the same stop; said once
+        bps = {}
+        for w in self.p.workflows:
+            bps[w.id] = list(dict.fromkeys("registration" if wfl.base(b) == "selection" else b
+                                           for b in w.breakpoints))
+            if bps[w.id] != list(w.breakpoints):
+                self.log.append(f"workflow {w.id}: its pause after Selection is a pause after Registration (the same "
+                                "stop: Selection computes nothing of its own)")
         through: dict[str, list] = {}
         for w in self.p.workflows:
             for b in self.chain[w.id]:
                 through.setdefault(b, []).append(w)
         for b, ws in through.items():
             blk = g.blocks[b]
-            blk.pause = bool(blk.engine) and all(blk.engine in w.breakpoints for w in ws)
+            blk.pause = bool(blk.engine) and all(blk.engine in bps[w.id] for w in ws)
         for w in self.p.workflows:
             got = sorted({g.blocks[b].engine for b in self.chain[w.id] if g.blocks[b].pause}, key=wfl.block_order)
-            if got != list(w.breakpoints):
-                self.flows[w.id].pauses = list(w.breakpoints)
+            if got != bps[w.id]:
+                self.flows[w.id].pauses = list(bps[w.id])
 
     # ------------------------------------------------------------------ combinations
     def _wires(self):

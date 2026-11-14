@@ -96,7 +96,7 @@ GESTURE = {
     "each session already has its Calibration", "“{_name}” already has its Calibration",
     "a Calibration goes beside a session", "add a Session first", "each session keeps its Calibration", "only a Session joins a stack", "a session joins a stack of lights",
     "{lab} is not inserted in a row", "a row starts with a Session or an Image", "a source stays at the head of its row",
-    "Post is fixed", "unknown place for this block", "variants start from this block: delete them first",
+    "Post is fixed", "Selection computes nothing of its own: set the pause on Registration", "unknown place for this block", "variants start from this block: delete them first",
     "the reference is a stack of lights", "an Align on follows a Stacking or an Image of the row",
     "the block is not in the target's chain", "add a Session or an Image first", "{lab}: no place",
     # Commun is the graph's own (the compile flattens it): a setting specific to each stack has no common value

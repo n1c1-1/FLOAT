@@ -31,8 +31,11 @@ class SidesHost:
         from ..layout import ARROW_H, ARROW_W
         from . import style
         self.palette.setParent(body)
-        self.palette.on_fit = self._place_palette
-        self.palette.chosen.connect(lambda st: self.sideChosen.emit("left", st))
+        # weakly: the palette holding the page's method kept every closed project's page and model alive
+        import weakref
+        fit = weakref.WeakMethod(self._place_palette)
+        self.palette.on_fit = lambda: fit() and fit()()
+        self.palette.chosen.connect(self._palette_chosen)
         self.palette_slot = QWidget()                    # the room it takes in the page (graph.py palette_slot)
         self.palette_slot.setFixedWidth(self.palette.slot_width())
         h.addWidget(self.palette_slot)
@@ -45,6 +48,9 @@ class SidesHost:
         self.left_arrow.clicked.connect(self.sidesShown.emit)
         self.left_arrow.hide()
         self.palette.show()
+
+    def _palette_chosen(self, st):
+        self.sideChosen.emit("left", st)
 
     def _place_palette(self):
         body = getattr(self, "body", None)

@@ -231,10 +231,26 @@ def differences(a, b) -> list[str]:
     return out
 
 
+def under_the_all_rule(d: dict) -> dict:
+    """A definition recorded the old way as the graph compiles it since the owner's decision: a stack of frames whose
+    graph has no Selection block stacks every frame with the same weight (``stack.selection = "all"``,
+    compile.NO_SELECTION_STACKS_ALL); the old model left the engine's default selection."""
+    from astro_gpu.graphcore.compile import NO_SELECTION_STACKS_ALL
+    if not NO_SELECTION_STACKS_ALL:
+        return d
+    d = json.loads(json.dumps(d, default=str))
+    for w in d.get("workflows") or []:
+        kinds = [n.get("block") for n in w.get("blocks") or []]
+        if w.get("blocks") is not None and w.get("source") is None and "stacking" in kinds and "selection" not in kinds:
+            w.setdefault("params", {}).setdefault("stack", {})["selection"] = "all"
+    return d
+
+
 def differences_to(recorded: dict, p) -> list[str]:
     """A recorded definition against the project ``p``: the definitions, then the key tables of both, the recorded
     one read in ``p``'s folder."""
     from astro_gpu.client.graphdefaults import strip_defaults, strip_override_defaults
+    recorded = under_the_all_rule(recorded)
     d = _first_diff(_whole(recorded), _whole(strip_defaults(p.to_dict(), recorded)), "definition")
     if d:
         return [d]

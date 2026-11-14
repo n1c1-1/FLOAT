@@ -58,6 +58,8 @@ class ToyStackParams(StageParams):
     scale: float = P(1.5, label="Scale", help="", ge=1.0, le=3.0)
     workers: int = P(4, label="workers", help="", ge=1)
     exclude: list[str] = P([], label="exclude", help="", level="internal")
+    # the engine's frame selection ("all": a stack without a Selection block, graphcore.compile)
+    selection: str = P("min_weight", label="selection", help="")
 
 
 class ToyStack(Stage):

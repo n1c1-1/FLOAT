@@ -314,7 +314,21 @@ class Doc:
         return api.summary(self.graph, b, self.tr)
 
     def greyed(self, b) -> str:
-        return api.greyed(self.graph, b, self.tr)
+        why = api.greyed(self.graph, b, self.tr)
+        if why or self.model is None:
+            return why
+        blk = self.graph.blocks.get(b)
+        return self._mono_colour(b) if blk is not None and blk.kind == "color" else ""
+
+    def _mono_colour(self, b) -> str:
+        """A Color block of a monochrome workflow (its sessions' filter L, Ha...): no colours to calibrate (the model's
+        reason, today's page greyed it)."""
+        m = self.model
+        bm = getattr(m, "block_map", None)
+        n = bm.node(b) if bm is not None else None
+        if n is None or not n.paths or not hasattr(m, "greyed_reason"):
+            return ""
+        return next((w for w in (m.greyed_reason(q, "couleur") for q in n.paths) if w), "")
 
     def wire_tip(self, w) -> str:
         return api.wire_tip(self.graph, w, self.tr)
@@ -348,7 +362,16 @@ class Doc:
         return g.name or _("Project"), g.target or _("target to choose"), state, tip
 
     def palette_state(self, kind):
-        return api.palette_state(self.graph, self.view, kind, self.tr)
+        ok, why = api.palette_state(self.graph, self.view, kind, self.tr)
+        if ok and kind == "color" and self.model is not None and hasattr(self.model, "is_mono"):
+            sel = self.view.get("selected")              # the workflow the palette places in: a mono one has no colours
+            bm = getattr(self.model, "block_map", None)
+            n = bm.node(sel) if bm is not None and sel in self.graph.blocks else None
+            if n is not None and n.paths and all(self.model.is_mono(q) and q.source is None for q in n.paths):
+                from ..i18n import _
+                from ...core import workflow as wfl
+                return False, _(wfl.MONO_NO_COLOUR)
+        return ok, why
 
     def warnings(self, scope=None):
         return api.warnings(self.graph, scope, self.tr)

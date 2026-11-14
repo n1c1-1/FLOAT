@@ -437,17 +437,27 @@ def summary_msg(p, b, info=None, ix=None):
     if k == "registration":
         return M("reference frame: {v}", v=e["Reference image"])
     if k == "selection":
+        if ((blk.params or {}).get("stack") or {}).get("selection") == "all":
+            return "all frames · none left out"
         return e["Frame selection"]
     if k == "crop":
         return e["Drawn zone"]
     if k == "stacking":
         m = M("drizzle {scale}", scale=e["Drizzle scale"]) if e["Method"] == "Drizzle" else "classic"
+        chain = ix.effective(rid) if rid else []
+        if rid and ix.row[ix.root(rid)].nights and not any(p.blocks[x].kind == "selection" for x in chain):
+            return M("{m} · {why}", m=m, why="no Selection: every frame is stacked, same weight")
         return M("{m} · rejection at {thr}", m=m, thr=e["Rejection threshold"])
     if k == "image":
         return join([typed(e["Image file"])] + (["stretched"] if e["Stretched image"] else []))
     if k == "astrometry":
         return M("solves the field · {cat}", cat=e["Catalog"])
     if k in ("gradient", "denoise", "deconv", "stars", "synth"):
+        # the block's own engine method when it has one (Gradient 2 given "rbf": "RBF"), in the order of the choices
+        engine = wfl.METHODS.get(k, ())
+        spec = setting_spec(k, "Method")
+        if blk.method in engine and spec and len(spec[3]) == len(engine):
+            return spec[3][engine.index(blk.method)]
         return e["Method"]
     if k == "color":
         return M("{ref} · {bal}", ref=e["White reference"], bal=e["Balance"])

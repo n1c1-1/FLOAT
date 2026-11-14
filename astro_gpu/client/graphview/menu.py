@@ -32,7 +32,7 @@ def menu(doc, b):
         why = off_reason(k)
         items.append((text, "switch_off", {"block": b}, False, doc.say(why)) if why else
                      _item(doc, text, "switch_off", {"block": b}))
-        items.append((_("Remove pause") if blk.pause else _("Review pause"), "set_pause", {"block": b}, True, ""))
+        items.append(_item(doc, _("Remove pause") if blk.pause else _("Review pause"), "set_pause", {"block": b}))
         items.append((_("Mark reviewed"), "mark_reviewed", {"block": b}, doc.review(b) == "paused",
                       "" if doc.review(b) == "paused" else _("after a stop on this block")))
         if out_ports(blk):

@@ -717,11 +717,26 @@ def op_add_night(q, row, files=None, name=None):
     r = _row(q, row)
     if not r.nights:
         raise Refusal("a session joins a stack of lights")
+    # a stack of one filter's nights: the night joining it takes that filter and is named after it ("Ha 2"), as
+    # today's page did
+    by_sid = {x["sid"]: x for x in q.nights}
+    flts = {(by_sid.get(q.blocks[s].sid) or {}).get("filter", "") for s, _c in r.nights}
+    flt = next(iter(flts)) if len(flts) == 1 else ""
+    if not (name or "").strip() and flt:
+        names = _names(q)
+        k = 2
+        while f"{flt} {k}" in names:
+            k += 1
+        name = f"{flt} {k}"
     name = (name or "").strip() or session_name(q)
     n = _night(q, name, _files(files), calibration=False)        # the Session alone, unless the engine needs more:
+    if flt:
+        sid = _next_sid(q)
+        q.blocks[n[0]].sid = sid
+        q.nights.append({"sid": sid, "name": name, "filter": flt, "files": {}, "left_out": {}})
     r.nights.append(n)
     why = _follow_stack(q, r, n)                                  # calibrated together, the stack's one Calibration
-    toast = M("{_name} added to “{_row}”: it stacks with its sessions · Ctrl+Z to undo", _name=name, _row=r.name)
+    toast = M("“{_name}” joins “{_row}”", _name=name, _row=r.name) if flt else         M("{_name} added to “{_row}”: it stacks with its sessions", _name=name, _row=r.name)
     return Out(join([toast, why]) if why else toast, n[0], new=n[0])
 
 
@@ -1409,6 +1424,8 @@ def op_remove_block(q, block):
         toast = delete_rows(q, [rid])
         return Out(toast, old=None if q._astro_moved else block, style="need")
     detach(q, block)
+    if b.kind == "selection":            # what its absence means (compile: the engine's "All frames")
+        return Out(M("{lab} deleted · {why}", lab=LABEL[b.kind], why=NO_SELECTION), old=block, style="need")
     return Out(M("{lab} deleted", lab=LABEL[b.kind]), old=block, style="need")
 
 
@@ -1474,12 +1491,48 @@ def _remove_calibration(q, block):
     return Out(toast, old=block, style="need")
 
 
+def _follow_flow_pauses(q, ix, block, on):
+    """A workflow holding its own list of pauses (``pauses``: the blocks' pauses do not give them, compile.py) takes
+    the pause set or removed on one of its blocks into that list, under the block's engine name (compile's: its
+    stored node name, else its kind, "~n" for the n-th of a kind in the chain; a night's Calibration "calibration",
+    or "calibration@<session>" when the nights are calibrated each on its own)."""
+    from ..core import workflow as wfl_
+    b = q.blocks[block]
+    for f in list(q.rows) + list(q.taps):
+        if f.pauses is None:
+            continue
+        if hasattr(f, "blocks"):
+            chain, root = ix.effective(f.id), ix.row[ix.root(f.id)]
+        elif f.block in ix.row_of:
+            eff = ix.effective(ix.row_of[f.block])
+            chain, root = eff[:eff.index(f.block) + 1], ix.row[ix.root(ix.row_of[f.block])]
+        else:
+            continue
+        if b.kind == "calibration":
+            pairs = [(s, c) for s, c in root.nights if c == block]
+            if not pairs:
+                continue
+            sep = not q.calibrate_together and len(root.nights) >= 2
+            sid = q.blocks[pairs[0][0]].sid
+            name = f"calibration@{sid}" if sep and sid is not None else "calibration"
+        elif block in chain:
+            same = [x for x in chain[:chain.index(block) + 1] if q.blocks[x].kind == b.kind]
+            name = b.engine or (b.kind if len(same) == 1 else f"{b.kind}~{len(same)}")
+        else:
+            continue
+        have = [x for x in f.pauses if x != name]
+        f.pauses = sorted(have + [name], key=wfl_.block_order) if on else have
+
+
 def op_set_pause(q, block):
     b = _blk(q, block)
     if b.kind == "post":
         raise Refusal("Post is fixed")
+    if b.kind == "selection" and not b.pause:
+        raise Refusal("Selection computes nothing of its own: set the pause on Registration")
     b.pause = not b.pause
     ix = Index(q)
+    _follow_flow_pauses(q, ix, block, b.pause)
     lab = title_msg(q, block, ix)
     if not b.pause:
         return Out(M("No more pause after {block}", block=lab), block)
@@ -1846,6 +1899,8 @@ def op_split_by(q, session, groups):
 
 
 # ---------------------------------------------------------------------------------------------------- engine settings
+#: what a stack without a Selection block does (compile.NO_SELECTION_STACKS_ALL)
+NO_SELECTION = "no Selection: every frame is stacked, same weight"
 #: the stack stage's settings a Selection or a Crop owns (it has no stage of its own; convert.SELECTION_KEYS)
 SELECTION_KEYS = ("min_transparency", "max_fwhm_ratio", "selection", "selection_transparency")
 

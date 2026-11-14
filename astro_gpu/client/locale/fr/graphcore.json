@@ -434,5 +434,12 @@
   "{_text}": "{_text}",
   "{ref} · {bal}": "{ref} · {bal}",
   "with its branch {names}": "avec sa branche {names}",
-  "with {sessions} · files kept": "avec {sessions} · fichiers gardés"
+  "with {sessions} · files kept": "avec {sessions} · fichiers gardés",
+  "{lab} deleted · {why}": "{lab} supprimé{lab:e} · {why}",
+  "no Selection: every frame is stacked, same weight": "sans Sélection : toutes les images empilées, même poids",
+  "{m} · {why}": "{m} · {why}",
+  "all frames · none left out": "toutes · aucune écartée",
+  "“{_name}” joins “{_row}”": "« {_name} » rejoint « {_row} »",
+  "{_name} added to “{_row}”: it stacks with its sessions": "{_name} ajoutée à « {_row} » : elle s'empile avec ses sessions",
+  "Selection computes nothing of its own: set the pause on Registration": "La Sélection ne calcule rien elle-même : mettez la pause sur l'Alignement"
 }

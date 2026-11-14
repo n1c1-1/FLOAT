@@ -95,7 +95,9 @@ def test_a_chain_built_by_hand_then_extended_runs_with_its_planned_keys(qapp, tm
     w = h1.World(tmp_path / "P", [("Night 1", "")])
     m = w.m
     try:
-        assert m.apply([("add_row", {"kind": "session"})]).ok
+        lights = list(m.p.sessions[0].lights)                # a stack of its own, reading the night's frames
+        assert lights and m.apply([("add_row", {"kind": "session", "files": {"lights": lights}})]).ok
+        assert w.w.wait(120) and m.ready                   # the sessions read again once files are added
         row = m.stored.rows[0].id
         for kind in ("calibration", "registration", "selection", "stacking"):
             res = m.apply([("add_block", {"kind": kind, "row": row})])
@@ -113,8 +115,6 @@ def test_a_chain_built_by_hand_then_extended_runs_with_its_planned_keys(qapp, tm
         w.close()
 
 
-@pytest.mark.xfail(strict=True, reason="engine: the worker is started in the project's folder without the client's "
-                                       "package on its path (proposed change to core/runner2._spawn_worker)")
 def test_the_worker_imports_the_code_that_planned_the_run(tmp_path, monkeypatch):
     started = []
 
