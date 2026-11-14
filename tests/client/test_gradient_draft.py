@@ -15,7 +15,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 pytest.importorskip("PySide6")
-from PySide6.QtCore import Signal  # noqa: E402
+from PySide6.QtCore import Qt, Signal  # noqa: E402
 from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 from astro_gpu.client import gradientedit as ge  # noqa: E402
@@ -250,13 +250,14 @@ def test_leaving_with_a_draft_asks_in_the_notice_strip(ed):
     m, p = ed.s, ed.s.path
     ed.set_draft({"degree": 3})
     ed._check_left()                                   # the view hidden: the block is not the one shown
-    (text, actions), = ed.tv.banner.asked
-    assert "draft is not applied" in text and [a[0] for a in actions] == ["Apply", "Try variant", "Reset", "Later"]
+    n = ed._notice
+    assert n is not None and n.parentWidget() is ed.tv.window()   # over the window, in no layout: nothing moves
+    assert [b.text() for b in n.buttons] == ["Apply", "Try variant", "Reset", "Later"]
     ed._check_left()
-    assert len(ed.tv.banner.asked) == 1                # said once
-    dict(actions)["Later"]()
-    assert ed.has_draft() and m.changes == []          # Later: kept
-    dict(actions)["Apply"]()
+    assert ed._notice is n                             # said once
+    n.buttons[3].click()
+    assert ed.has_draft() and m.changes == [] and n.isHidden()    # Later: kept
+    ed.apply()
     assert p.params["gradient"]["degree"] == 3 and not ed.has_draft()
 
 
@@ -317,28 +318,137 @@ def _test_project():
         pytest.skip("the test project is not here")
 
 
+PAGE_CONTROLS = ("before", "settings", "points", "brush", "ellipse", "eraser", "grid", "methods", "main", "reset",
+                 "variant", "apply")
+
+
+def _controls(w, ed) -> list[str]:
+    """The interactive controls of the page outside its Settings drawer, a segmented control counted once."""
+    from PySide6.QtWidgets import QAbstractButton, QAbstractSlider, QAbstractSpinBox, QComboBox
+    seen, out = set(), []
+    for k in (QAbstractButton, QAbstractSlider, QAbstractSpinBox, QComboBox):
+        for x in ed.page.findChildren(k):
+            if not x.isVisible() or ed.drawer.isAncestorOf(x):
+                continue
+            seg = x.parentWidget() if x.parentWidget().objectName() == "segment" else x
+            if id(seg) not in seen:
+                seen.add(id(seg))
+                out.append(seg.objectName() + ":" + (x.text() if isinstance(x, QAbstractButton) else type(x).__name__))
+    return out
+
+
 @pytest.mark.parametrize("size", [(1250, 685), (1366, 728)])
 def test_every_tool_is_in_the_window_on_a_laptop(qapp, tmp_path, size):
     _test_project()
     w, settle = _window(tmp_path, size)
     try:
-        t, ed = w.tune, w.tune.grad_editor
+        ed = w.tune.grad_editor
         if ed.view is None:
             pytest.skip("Gradient of the test project is not computed")
-        assert not t.view.panel_box.isVisibleTo(t.view)          # the stretch column folded: the image keeps the room
-        for k in ("method", "main", "avoid", "reset", "variant", "apply", "points", "brush", "ellipse", "grid",
-                  "density", "survey", "marks", "remove", "clear", "undo", "redo"):
+        assert not ed.drawer.isVisible() and not w.tune.panel.isVisible()   # Settings closed below 1500 px
+        for k in PAGE_CONTROLS:
             b = ed._ui[k]
-            assert b.isVisibleTo(w), k
+            assert b.isVisible(), k
             r = b.rect().translated(b.mapTo(w, b.rect().topLeft()))
             assert r.left() >= 0 and r.top() >= 0 and r.right() <= w.width() and r.bottom() <= w.height(), (k, r)
             assert b.width() >= b.sizeHint().width() - 1, k                       # never squeezed: its name whole
+        assert len(_controls(w, ed)) <= 12, _controls(w, ed)
+    finally:
+        w.close()
+
+
+def _geometry(w, ed):
+    from PySide6.QtCore import QPoint
+    c = ed.gv.canvas
+    st = ed.gv.view_state()
+    return (c.rect().translated(c.mapTo(w, QPoint(0, 0))).getRect(), round(st.get("zoom", 0), 2),
+            round(st.get("fx", 0), 4), round(st.get("fy", 0), 4))
+
+
+@pytest.mark.parametrize("size", [(1250, 685), (1920, 1080)])
+def test_the_image_never_moves_through_a_session(qapp, tmp_path, size):
+    """Every tool, every method, a sample placed, moved and erased, a painted area, the grid, Before / After, Settings
+    opened and closed, leaving with a draft and coming back, Reset, Apply: the image's rectangle and zoom stay."""
+    _test_project()
+    w, settle = _window(tmp_path, size)
+    try:
+        s, t, ed = w.s, w.tune, w.tune.grad_editor
+        if ed.view is None:
+            pytest.skip("Gradient of the test project is not computed")
+
+        def idle():
+            settle(w)
+            for _i in range(300):
+                QApplication.processEvents()
+                if not ed.busy and not ed._timer.isActive() and ed._held is None:
+                    break
+                time.sleep(0.02)
+            settle(w)
+
+        def go(step):
+            s.select(step=step)
+            t.select(step=step)
+            t.request_refresh()
+            idle()
+        idle()
+        g0 = _geometry(w, ed)
+        W, H = ed._stack_size()
+        moved = []
+
+        def check(what):
+            if _geometry(w, ed) != g0:
+                moved.append((what, _geometry(w, ed)))
+        for m in ("points", "brush", "ellipse", "eraser"):
+            ed.set_mode(m)
+            idle()
+            check(m)
+        for m in ("rbf", "automatic", "polynomial"):
+            ed._ui["m_" + m].click()
+            idle()
+            check(m)
+        ed._ui["grid"].click()
+        idle()
+        check("grid")
+        ed.work["sample_points"].append([W * 0.5, H * 0.5])
+        ed._commit()
+        idle()
+        ed.work["sample_points"][-1] = [W * 0.55, H * 0.5]
+        ed._commit()
+        idle()
+        check("sample placed and moved")
+        n = len(ed.work["sample_points"])
+        ed.set_mode("eraser")
+        x, y = ed.work["sample_points"][-1]
+        f = ed._f(ed.gv.canvas)
+        ed.press(ed.gv.canvas, x * f, y * f, Qt.LeftButton)
+        ed.release(ed.gv.canvas)
+        idle()
+        assert len(ed.work["sample_points"]) == n - 1                 # the Eraser takes the sample under it
+        check("sample erased")
         ed.set_mode("brush")
-        for k in ("paint", "erase", "size"):
-            b = ed._ui[k]
-            r = b.rect().translated(b.mapTo(w, b.rect().topLeft()))
-            assert b.isVisibleTo(w) and r.right() <= w.width(), k
-        ed.set_mode(None)
+        ed.press(ed.gv.canvas, W * 0.3 * f, H * 0.3 * f, Qt.LeftButton)
+        ed.move(ed.gv.canvas, W * 0.35 * f, H * 0.3 * f)
+        ed.release(ed.gv.canvas)
+        idle()
+        check("painted")
+        for b in ("before", "before", "settings", "settings"):
+            ed._ui[b].click()
+            idle()
+            check(b)
+        go("empilement")
+        assert ed._notice is not None and ed._notice.isVisible()      # leaving with a draft: asked, over the window
+        go("fond")
+        check("came back")
+        ed._ui["reset"].click()
+        idle()
+        check("reset")
+        ed.set_draft({"degree": 3})
+        idle()
+        ed._ui["apply"].click()
+        idle()
+        check("apply")
+        assert s.state(s.path, "gradient") == "stale"
+        assert not moved, (g0, moved)
     finally:
         w.close()
 
@@ -365,5 +475,55 @@ def test_the_draft_leaves_the_graph_up_to_date_until_apply(qapp, tmp_path):
         settle(w)
         assert s.state(p, "gradient") == "stale" and s.param_value(p, "gradient", "degree") == 3
         assert not ed.has_draft()
+    finally:
+        w.close()
+
+
+def test_try_variant_keeps_the_original_and_takes_the_preview(qapp, tmp_path):
+    """Try variant from a draft: the original's Gradient keeps its key, its state and its picture, no draft left on it;
+    the variant shows the draft's preview (not computed) with the original's result as Before; an Undo of the variant
+    gives the draft back to the original."""
+    _test_project()
+    w, settle = _window(tmp_path, (1250, 685))
+    try:
+        s, t, ed = w.s, w.tune, w.tune.grad_editor
+        if ed.view is None:
+            pytest.skip("Gradient of the test project is not computed")
+        p = s.path
+
+        def idle():
+            settle(w)
+            for _i in range(300):
+                QApplication.processEvents()
+                if not ed.busy and not ed._timer.isActive() and ed._held is None:
+                    break
+                time.sleep(0.02)
+            settle(w)
+        idle()
+        before = (s.stage_key(p, "gradient"), s.state(p, "gradient"), ed.gv.image().identity())
+        ed.set_draft({"degree": 3})
+        idle()
+        assert ed.result is not None
+        ed._ui["variant"].click()
+        idle()
+        v = s.path
+        assert v.pid != p.pid and s.state(v, "gradient") == "pending"
+        assert ed.page.isVisible() and ed.gv.image().name == "Preview" and "not computed" in ed.tag_text()
+        ed._set_before(True)
+        idle()
+        assert ed.gv.image().name.startswith("Result of")             # the original's result, to compare
+        ed._set_before(False)
+        s.select(index=s.index_of(p.pid), step="fond")
+        t.request_refresh()
+        idle()
+        q = s.path
+        assert q.pid == p.pid and not ed.has_draft(p.pid)
+        assert (s.stage_key(q, "gradient"), s.state(q, "gradient"), ed.gv.image().identity()) == before
+        s.undo()
+        idle()
+        s.select(index=s.index_of(p.pid), step="fond")
+        t.request_refresh()
+        idle()
+        assert s.view(v.pid) is None and ed.has_draft(p.pid) and ed.value("degree") == 3
     finally:
         w.close()

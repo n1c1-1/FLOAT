@@ -822,6 +822,8 @@ class TuneView(QWidget):
         self._pending = False
         self._dirty = False
         s = self.s
+        if str(s.sel_step).partition("~")[0] == "fond" or self.grad_editor.view is not None:
+            self.grad_editor.hold()                        # Gradient comes or goes: one paint (gradientedit.py)
         g = g or s.block_map
         self.strip.build(s, g)
         QTimer.singleShot(0, self.show_open_block)         # once laid out: the open block's button in view
@@ -846,6 +848,8 @@ class TuneView(QWidget):
             self.head_box.setMinimumHeight(self._head_height())
         clear(self.head)
         self.grad_editor.detach()
+        if self.grad_editor.center(self, node, p):        # the Gradient block's result: its own page (gradientedit.py)
+            return
         # the same picture as shown (a setting changed, the block Outdated with its previous result): the viewer stays,
         # only the header and the panel are built again (issue #24: rebuilt, the image flickered)
         sig = self._center_signature(p, k=s.sel_step) if node is not None and p is not None else None

@@ -35,12 +35,12 @@ import numpy as np
 from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, QRunnable, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QColor, QImage, QPen
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
-    QComboBox,
-    QDoubleSpinBox,
     QFrame,
     QHBoxLayout,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSlider,
     QSpinBox,
@@ -58,8 +58,10 @@ PREVIEW_PIXELS = 1_000_000
 DEBOUNCE_MS, AUTO_DEBOUNCE_MS = 120, 600
 #: the cost of Apply is asked of the model this long after the last edit
 COST_MS = 500
-#: below this window width, the stretch column of this view starts folded (the image keeps the room)
+#: below this window width, the stretch column of this view is folded (the image keeps the room)
 SMALL_W = 1500
+#: Inspect waits at most this long for its layout and its image before it paints (``GradientEditor.hold``)
+HOLD_MS = 800
 #: a click this close to a sample (screen px) takes it
 PICK_PX = 9
 USED, UNUSED, OUTLINE, PICKED = QColor("#56c8f5"), QColor("#ff4d55"), QColor(255, 255, 255, 220), QColor("#ffd24a")
@@ -91,8 +93,20 @@ MAIN = {"polynomial": ("degree", "Degree", 1, 5, 1, 0, "Degree of the polynomial
 HANDLE_PX, ROT_PX = 5, 26
 #: the keys of the tools: the image takes them before the window's and Inspect's shortcuts (Escape goes back to the
 #: graph otherwise)
-TOOL_KEYS = (Qt.Key_Escape, Qt.Key_Delete, Qt.Key_Backspace, Qt.Key_M, Qt.Key_R, Qt.Key_X, Qt.Key_BracketLeft,
+TOOL_KEYS = (Qt.Key_Escape, Qt.Key_Delete, Qt.Key_Backspace, Qt.Key_M, Qt.Key_R, Qt.Key_B, Qt.Key_BracketLeft,
              Qt.Key_BracketRight)
+#: the tools of the strip at the left of the image: (mode, icon, name, what it does); Grid is an action
+TOOLS = (("points", "add", "Sample", "Click adds a sample of sky, a drag moves it"),
+         ("brush", "mask", "Brush", "Paint an area left out of the sky model ([ ] size)"),
+         ("ellipse", "missing", "Ellipse", "Drag an ellipse around an object to leave it out; its handles size and turn "
+                                           "it"),
+         ("eraser", "remove", "Eraser", "Removes what is under the cursor: a sample, a painted area, an ellipse"),
+         ("grid", "samples", "Grid", "Samples on a regular grid, the bright areas left out, in place of the ones the "
+                                     "block chooses (its density in Settings)"))
+#: the Settings drawer: its width by default and its limits
+DRAWER_W, DRAWER_MIN = 390, 280
+#: the heights of the page's row above the image and of its line under it
+TOP_H, LINE_H = 34, 36
 
 
 def _ell(e) -> tuple[float, float, float, float, float]:
@@ -156,7 +170,7 @@ class GradientEditor(QObject):
         self.tv, self.s = tune, tune.s
         self.view = None
         self.p = None
-        self.mode: str | None = None           # None (looking), "points", "brush", "ellipse"
+        self.mode: str | None = None           # None (looking), "points", "brush", "ellipse", "eraser"
         self.paint = True
         self.size = 60.0                       # brush diameter, stack pixels
         self.shown = True                      # what is drawn over the image (M, Marks)
@@ -172,12 +186,25 @@ class GradientEditor(QObject):
         self.result_ms = None                  # what it took (CPU of the thread, ms)
         self.busy = False
         self.step_text = ""                    # how far the automatic preview is
-        self.hist_shown: bool | None = None    # the stretch column of this view (None: by the window's width)
-        self._hist_saved = None                # Inspect's own choice, given back on leaving
+        self.page = self.gv = self.drawer = None   # the page, its viewer, its Settings drawer (built once)
+        self.before = False                    # Before / After: the stack shown
+        self.cmp = "toggle"                    # toggle | split | side
+        self.drawer_open = False
+        self.drawer_chosen = False             # Settings opened or closed by the user (else: by the window's width)
+        self.drawer_w = DRAWER_W
+        self.result_key = None
+        self.carried: dict[int, dict] = {}     # variant -> the preview its draft had, and the original's result
+        self._stashed: dict[int, tuple] = {}   # variant -> (original, the draft it took)
+        self.hist_shown = None
+        self._syncing = False
         self._cost = None                      # (workflow, settings, what Apply computes again)
         self._applied_at = None
         self._banner_for = None
-        self._cmp_name = None                  # the image the preview is compared with, by name
+        self._notice = None                    # the notice of a draft left (Notice), over the window's foot
+        self._win = None                       # the window whose resizing the editor follows
+        self._held = None                      # Inspect held from painting until its layout settles (hold)
+        self._restore = None                   # (image key, view state) to give back when the preview shows
+        self._cmp_name = None                 # the image the preview is compared with, by name
         self._in_show = False
         self._dims = None                      # (pid, W, H) of the stack
         self._pending = None                   # the request waiting for the one running
@@ -273,10 +300,9 @@ class GradientEditor(QObject):
             self._cost_timer.start()
         else:
             self._to_applied()
-        if names - set(FIELDS):                # the method or a setting: the panel's rows and the bar show it
-            self.tv.request_refresh()
-        else:
-            self._sync()
+        if names - set(FIELDS):                # the method or a setting: the drawer's rows show it
+            self._fill_drawer()
+        self._sync()
         if self.view is not None:
             try:
                 self.view.canvas.update()
@@ -287,9 +313,7 @@ class GradientEditor(QObject):
         """No draft any more: the block's own result on screen again."""
         self.result, self.result_ms = None, None
         self.samples = self._computed_samples()
-        if self.view is not None:
-            self.tv._center_sig = None         # the viewer built again on the block's picture
-            self.tv.request_refresh()
+        self._present()
 
     def undo(self):
         """The draft's last step taken back (the window's Undo is the project's)."""
@@ -430,10 +454,16 @@ class GradientEditor(QObject):
             self._refused(e)
             return
         self.s.log('Variant "{name}" created', name=v.name)
-        self.drafts.pop(q.pid, None)
+        d = self.drafts.pop(q.pid, None)
+        self._stashed[v.pid] = (q.pid, copy.deepcopy(d))       # an Undo of the variant gives the draft back
         self._hide_banner(q.pid)
         if self.p is not None and q.pid == self.p.pid:
-            self.result, self.result_ms = None, None
+            # what was tuned goes with the variant: its preview, and the original's result to compare it with
+            if self.result is not None and self.small is not None and self.small["pid"] == q.pid:
+                ap = self.applied.get("arr") if self.applied is not None and self.applied["key"][0] == q.pid else None
+                self.carried[v.pid] = {"result": self.result, "key": ("gradient-variant", v.pid, self.gen), "ms": self.result_ms,
+                                       "samples": self.samples, "small": self.small, "orig": ap, "of": q.name}
+            self.result, self.result_ms, self.result_key = None, None, None
         self.tv._variant_made(v.pid, q.pid)
 
     def reset(self, pid: int | None = None):
@@ -448,9 +478,79 @@ class GradientEditor(QObject):
 
     # ------------------------------------------------------------ leaving the block with a draft
     def eventFilter(self, obj, e):                                   # noqa: N802 - Qt's name
-        if e.type() == QEvent.Hide and obj is self.view:
-            QTimer.singleShot(0, self._check_left)
+        t = e.type()
+        if t == QEvent.Show and obj in self._sides() and self._page_shown():
+            self.hold()                        # the window docked TuneView's panel again: away while the page shows
+            QTimer.singleShot(0, lambda: self._side(False) if self._page_shown() else None)
+        elif t == QEvent.Resize and obj is self._win:
+            if self._notice is not None:
+                try:
+                    self._notice.place()
+                except RuntimeError:
+                    self._notice = None
+            if self.view is not None:
+                if not self.drawer_chosen:     # Settings follows the window's width until the user chooses
+                    self.drawer_open = obj.width() >= SMALL_W
+                    self._sync()
+                # the window's own layout of Inspect (its panel docked or folded) is taken away again while the page shows
+                QTimer.singleShot(0, lambda: self._side(False) if self.view is not None else None)
         return False
+
+    # ------------------------------------------------------------ one paint per change of view
+    def hold(self):
+        """Inspect paints nothing until its layout has settled: the rows of the tools, the stretch column, the panel's
+        rows, the header and the image asked for all in place; then the image is fitted once on its final size and
+        shown in one paint (the previous picture stays on the screen meanwhile). At most HOLD_MS."""
+        tv = self.tv
+        try:
+            if not tv.isVisible():
+                return
+            if self._held is None:
+                tv.setUpdatesEnabled(False)
+            self._held = {"t0": time.monotonic(), "sig": None, "same": 0}
+        except RuntimeError:
+            return
+        QTimer.singleShot(0, self._hold_check)
+
+    def _hold_check(self):
+        h = self._held
+        if h is None:
+            return
+        try:
+            v = self.tv.view
+            ready = v is None or v._want is None or (v._prep is not None and v._prep.key == v._want) or \
+                v._failed_key == v._want
+            sig = None if v is None else (v.canvas.width(), v.canvas.height(), v.canvas2.isVisible(), ready)
+        except (RuntimeError, AttributeError):
+            sig, ready = None, True
+        h["same"] = h["same"] + 1 if sig == h["sig"] else 0
+        h["sig"] = sig
+        if (ready and h["same"] >= 2) or time.monotonic() - h["t0"] > HOLD_MS / 1000:
+            self._release()
+        else:
+            QTimer.singleShot(10, self._hold_check)
+
+    def _release(self):
+        self._held = None
+        try:
+            v = self.tv.view
+            if v is not None and v.canvas.fitted:
+                v.canvas.fit()                 # once, on the final size
+            self.tv.setUpdatesEnabled(True)
+        except RuntimeError:
+            pass
+
+    def _shown(self, key):
+        """The preview shown in place of an image of another size: the same part of the sky at the same size on the
+        screen (the viewer would fit it again)."""
+        want, self._restore = self._restore, None
+        if want is None or want[0] != key or self.view is None:
+            return
+        try:
+            if not want[1].get("fitted", True):
+                self.view.set_view_state(want[1])
+        except RuntimeError:
+            pass
 
     def _here(self, pid) -> bool:
         """The Gradient block of this workflow is the one Inspect shows."""
@@ -473,22 +573,34 @@ class GradientEditor(QObject):
             d["told"] = True
             text = _("Gradient · {name}: a draft is not applied. It is kept while the project is open.").format(
                 name=q.name)
-            banner = getattr(self.tv.window(), "banner", None)
-            if banner is None:
-                self.tv.toasted.emit(text)
-                return
+            self._hide_banner(self._banner_for)
             self._banner_for = pid
-            banner.ask(text, (_("Apply"), lambda pp=pid: self.apply(pp)),
-                       (_("Try variant"), lambda pp=pid: self.try_variant(pp)),
-                       (_("Reset"), lambda pp=pid: self.reset(pp)), (_("Later"), lambda: None))
+            self._notice = Notice(self.tv.window(), text, [
+                (_("Apply"), lambda pp=pid: self.apply(pp)), (_("Try variant"), lambda pp=pid: self.try_variant(pp)),
+                (_("Reset"), lambda pp=pid: self.reset(pp)), (_("Later"), lambda: None)])
+            self._watch_window()
             return
 
+    def _watch_window(self):
+        win = self.tv.window()
+        if win is not self._win:
+            if self._win is not None:
+                try:
+                    self._win.removeEventFilter(self)
+                except RuntimeError:
+                    pass
+            self._win = win
+            win.installEventFilter(self)
+
     def _hide_banner(self, pid):
-        if self._banner_for == pid:
+        if pid is not None and self._banner_for == pid and self._notice is not None:
             self._banner_for = None
-            banner = getattr(self.tv.window(), "banner", None)
-            if banner is not None:
-                banner.hide()
+            try:
+                self._notice.hide()
+                self._notice.deleteLater()
+            except RuntimeError:
+                pass
+            self._notice = None
 
     # ------------------------------------------------------------ the workflow and the viewer
     def _method(self) -> str:
@@ -512,6 +624,12 @@ class GradientEditor(QObject):
     def _load(self, p):
         """The workflow shown (another one, an Undo, a run, the project opened again): its draft, the samples drawn
         (the preview's, else the ones the last run used)."""
+        for vpid, (opid, d) in list(self._stashed.items()):
+            if self.s.view(vpid) is None:      # the variant undone: the draft it took is the original's again
+                self._stashed.pop(vpid)
+                self.carried.pop(vpid, None)
+                if d and d.get("vals") and not self.has_draft(opid):
+                    self.drafts[opid] = d
         if self.p is None or p.pid != self.p.pid:
             if self.p is not None:
                 self.set_mode(None)
@@ -542,6 +660,12 @@ class GradientEditor(QObject):
                 self._schedule()
         self.work = {f: self.value(f) for f in FIELDS}
         self.done = self.s.state(p, "gradient") == "done"
+        c = self.carried.get(p.pid)
+        if c is not None and self.done:        # the variant computed: its own result from now on
+            self.carried.pop(p.pid)
+        elif c is not None and self.result is None:
+            self.result, self.result_key, self.result_ms, self.samples = c["result"], c["key"], c["ms"], c["samples"]
+            self.small = {**c["small"], "pid": p.pid}
         if self.done and not self.has_draft():
             self.result, self.result_ms = None, None   # the computed result is what is shown
         if self.result is None:
@@ -559,81 +683,430 @@ class GradientEditor(QObject):
         return {"x": z["x"], "y": z["y"], "used": z["used"].astype(bool), "manual": bool(z["manual"]),
                 "box": float(z["box"])}
 
+    # ------------------------------------------------------------ the page: Inspect's centre for the block
     def attach(self, view, p):
-        """The Gradient block's picture is shown in ``view`` (its tab built again: the tool and the draft stay)."""
+        """Kept for Inspect's generic image tab: the Gradient block is shown on its own page (``center``)."""
+        return
+
+    def detach(self):
+        """Inspect is built again (another block, the same one again, the Project block): a gesture cut, TuneView's
+        panel given back (the page takes it away again when it stays)."""
+        self.gesture = False
+        self._grab = self._stroke0 = self._ell = self._edit_ell = self._last = None
+        if self._page_ok() and self.tv.center.indexOf(self.page) >= 0:
+            self.hold()
+            self._side(True)
+        QTimer.singleShot(0, self._check_left)
+
+    def _page_ok(self) -> bool:
+        if self.page is None:
+            return False
+        from shiboken6 import isValid
+        if not isValid(self.page) or not isValid(self.gv):     # taken with the centre (the Project block's form)
+            self.page = self.gv = self.drawer = None
+            self.view = None
+            self._ui = {}
+            return False
+        return True
+
+    def page_for(self, p, tab) -> bool:
+        """The page shows the block's result: computed, or Outdated with its previous one; its Sky model tab and a
+        block never computed are Inspect's own."""
+        return tab in (None, "result", "removed") and (self.drafting(p) or p.pid in self.carried)
+
+    def center(self, tv, node, p) -> bool:
+        """From TuneView.refresh: the centre is this page when the block shown is the Gradient with a result (True);
+        otherwise the page leaves the centre, kept for the next time."""
+        want = (node is not None and p is not None and str(tv.s.sel_step) == "fond" and not node.cut
+                and self.page_for(p, tv.tab_of.get("fond")))
+        if not want:
+            self._leave_page()
+            return False
+        self._enter_page(p)
+        return True
+
+    def _sides(self) -> list:
+        tv = self.tv
+        d = getattr(tv, "dock", None)
+        out = [getattr(tv, "panel", None)] + ([d.strip, d.arrow] if d is not None else [])
+        return [x for x in out if x is not None]
+
+    def _page_shown(self) -> bool:
+        try:
+            return self._page_ok() and self.tv.center.indexOf(self.page) >= 0 and self.page.isVisibleTo(self.tv)
+        except RuntimeError:
+            return False
+
+    def _side(self, show: bool):
+        """TuneView's settings panel: away while the page shows (its Settings drawer holds them), back after."""
+        tv = self.tv
+        d = getattr(tv, "dock", None)
+        try:
+            hb = getattr(tv, "head_box", None)  # Inspect's header: the page has its own (title, Before / After, Settings)
+            if hb is not None:
+                hb.setVisible(show)
+            if show:
+                tv.panel.setVisible(d is None or d.state == "docked")
+                if d is not None:
+                    d.strip.setVisible(d.state in ("icons", "auto"))
+                    d.arrow.setVisible(d.state == "hidden")
+            else:
+                tv.panel.hide()
+                if d is not None:
+                    d.strip.hide()
+                    d.arrow.hide()
+        except (RuntimeError, AttributeError):
+            pass
+
+    def _enter_page(self, p):
+        tv = self.tv
+        if not self._page_ok():
+            self._build_page()
+            for x in self._sides():
+                x.installEventFilter(self)
+        if tv.center.indexOf(self.page) < 0:
+            tv._clear_center()
+            tv.center.addWidget(self.page, 1)
+            self.page.show()
+        self._side(False)
+        tv.view, tv.views, tv._cur = self.gv, [], None
+        tv._center_sig = ("gradient", p.pid)
+        new = self.p is None or self.p.pid != p.pid
         self._load(p)
-        self.view = view
-        view.add_overlay(self._paint)
-        view.canvas.tool = self if self.mode else None
-        view.set_tool_widgets([])
-        if hasattr(view, "set_tool_row"):
-            view.set_tool_row(self._bar())
-        view.installEventFilter(self)
+        self.view = self.gv
+        self._watch_window()
         d = self._draft()
         if d is not None:
             d["told"] = False
         self._hide_banner(p.pid)
-        if self._hist_saved is None:
-            self._hist_saved = self.tv.show_hist
-        want = self.hist_shown
-        if want is None:
-            want = self.tv.window().width() >= SMALL_W
-        try:
-            if view.panel_box.isVisibleTo(view) != bool(want):
-                view.show_histogram(bool(want))
-            view.hist_b.toggled.connect(self._hist_toggled)
-            view.compareChanged.connect(self._compare_changed)
-        except (RuntimeError, AttributeError):
-            pass
-        self._hint()
+        if not self.drawer_chosen:
+            self.drawer_open = tv.window().width() >= SMALL_W
+        self._fill_drawer()
         self._sync()
-        if self.result is not None:
-            self._show(self.result)
-        elif self.has_draft():
+        self._present(fresh=new)
+        if self.has_draft() and self.result is None:
             self._schedule()
 
-    def detach(self):
-        # a gesture cut by a rebuild (a refresh asked before the mouse went down): its release will not come
-        self.gesture = False
-        self._grab = self._stroke0 = self._ell = self._edit_ell = self._last = None
-        if self.view is not None:
-            v = self.view
-            try:
-                v.hist_b.toggled.disconnect(self._hist_toggled)
-                v.compareChanged.disconnect(self._compare_changed)
-            except (RuntimeError, AttributeError, TypeError):
-                pass
-            try:
-                v.removeEventFilter(self)
-                v.canvas.tool = None
-                v.tool_hint.hide()
-                v.set_tool_widgets([])
-                if hasattr(v, "set_tool_row"):
-                    v.set_tool_row(None)
-            except RuntimeError:
-                pass
-        if self._hist_saved is not None:       # Inspect's other views keep their own choice of the column
-            self.tv.show_hist = self._hist_saved
-            self._hist_saved = None
+    def _leave_page(self):
+        if not self._page_ok() or self.tv.center.indexOf(self.page) < 0:
+            return
+        self.hold()
+        self.tv.center.removeWidget(self.page)
+        self.page.hide()
+        self.page.setParent(None)
+        self._side(True)
+        if self.tv.view is self.gv:
+            self.tv.view = None
         self.view = None
-        self._ui = {}
         QTimer.singleShot(0, self._check_left)
 
-    def _hist_toggled(self, on):
-        self.hist_shown = bool(on)
+    def _build_page(self):
+        """Built once, whole: nothing is added to or taken from it afterwards (a control that does not apply is greyed
+        with its reason), so the image's rectangle never moves while the page is shown."""
+        from .icons import set_icon
+        from .imageview import ImageView
+        page = QWidget()
+        page.setObjectName("gradpage")
+        page.setStyleSheet("QPushButton#ivseg { padding: 3px 9px; border-radius: 0; }"
+                           "QPushButton#ivseg:checked { background: #2b3446; border-color: #5ea1ff; color: #ffffff; }")
+        v = QVBoxLayout(page)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(6)
+        u = self._ui = {}
+        top_w = QWidget()                              # fixed heights: the image's rectangle depends on nothing inside
+        top_w.setFixedHeight(TOP_H)
+        top = QHBoxLayout(top_w)
+        top.setContentsMargins(0, 0, 0, 0)
+        top.setSpacing(10)
+        u["title"] = label("", "h1")
+        top.addWidget(u["title"])
+        u["tag"] = label("", "small")
+        u["tag"].setStyleSheet(f"color: {WARN};")
+        top.addWidget(u["tag"])
+        top.addStretch(1)
+        ba = QPushButton(_("Before / After"))
+        ba.setObjectName("toggle")
+        ba.setCheckable(True)
+        ba.toggled.connect(self._set_before)
+        top.addWidget(ba)
+        u["before"] = ba
+        st = QPushButton(_("Settings"))
+        set_icon(st, "adjust", 16)
+        st.setObjectName("toggle")
+        st.setCheckable(True)
+        st.setToolTip(_("Everything else: the method's settings, the grid's density, the H-alpha survey, the compare "
+                        "modes, the stretch, the measurements"))
+        st.toggled.connect(self._set_drawer)
+        top.addWidget(st)
+        u["settings"] = st
+        v.addWidget(top_w)
+        body = QHBoxLayout()
+        body.setSpacing(0)
+        strip = QFrame()
+        strip.setObjectName("gradtools")
+        strip.setFixedWidth(42)
+        strip.setStyleSheet("QFrame#gradtools { background: #1b1e25; border-right: 1px solid #2a2f38; }")
+        sv = QVBoxLayout(strip)
+        sv.setContentsMargins(4, 6, 4, 6)
+        sv.setSpacing(4)
+        for key, role, name, tip in TOOLS:
+            b = icon_only(QPushButton(), role, "", 20)
+            b.setObjectName("toggle")
+            b.setFixedSize(34, 34)
+            b.setCheckable(key != "grid")
+            b.setToolTip(f"<b>{_(name)}</b><br>{_(tip)}")
+            if key == "grid":
+                b.clicked.connect(self.generate)
+            else:
+                b.clicked.connect(lambda _c=False, k=key: self.set_mode(None if self.mode == k else k))
+            sv.addWidget(b)
+            u[key] = b
+        sv.addStretch(1)
+        body.addWidget(strip)
+        box = QWidget()
+        bl = QVBoxLayout(box)
+        bl.setContentsMargins(0, 0, 0, 0)
+        gv = ImageView(post=False, compare=True)
+        gv.default_dir = lambda: str(getattr(self.s, "root", None) or "")
+        gv.toasted.connect(self.tv.toasted.emit)
+        gv.layout().itemAt(0).widget().hide()          # its own toolbar: the page's two buttons and Settings
+        gv.readout.parentWidget().hide()               # the readout line: none under the image
+        bl.addWidget(gv)
+        body.addWidget(box, 1)
+        v.addLayout(body, 1)
+        line_w = QWidget()
+        line_w.setFixedHeight(LINE_H)
+        line = QHBoxLayout(line_w)
+        line.setContentsMargins(0, 0, 0, 0)
+        line.setSpacing(8)
+        seg = QFrame()
+        seg.setObjectName("segment")
+        sh = QHBoxLayout(seg)
+        sh.setContentsMargins(0, 0, 0, 0)
+        sh.setSpacing(0)
+        grp = QButtonGroup(seg)
+        grp.setExclusive(True)
+        for m in METHODS:
+            b = QPushButton(_(METHOD_NAME[m]))
+            b.setObjectName("ivseg")
+            b.setCheckable(True)
+            b.setToolTip(_(METHOD_TIP[m]))
+            b.clicked.connect(lambda _c=False, mm=m: self.set_draft({"method": mm}))
+            grp.addButton(b)
+            sh.addWidget(b)
+            u["m_" + m] = b
+        u["methods"] = seg
+        line.addWidget(seg)
+        line.addSpacing(6)
+        nm = label("", "dim")
+        nm.setFixedWidth(72)
+        nm.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        line.addWidget(nm)
+        u["main_l"] = nm
+        sl = QSlider(Qt.Horizontal)
+        sl.setFixedWidth(150)
+        sl.valueChanged.connect(self._main_moved)
+        sl.sliderReleased.connect(lambda: self._main_set(sl.value()))
+        line.addWidget(sl)
+        u["main"] = sl
+        val = label("", "small")
+        val.setFixedWidth(34)
+        line.addWidget(val)
+        u["main_v"] = val
+        state = ElidedLabel("", "gradstate", Qt.ElideRight)
+        state.setMinimumWidth(40)
+        state.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        line.addWidget(state, 1)
+        u["state"] = state
+        for key, text, fn in (("reset", "Reset", self.reset), ("variant", "Try variant", self.try_variant),
+                              ("apply", "Apply", self.apply)):
+            b = QPushButton(_(text))
+            if key == "apply":
+                b.setObjectName("primary")
+            b.clicked.connect(lambda _c=False, f=fn: f())
+            line.addWidget(b)
+            u[key] = b
+        v.addWidget(line_w)
+        self.page, self.gv = page, gv
+        self.drawer = Drawer(box, self)
+        gv.panel_box.setParent(None)                   # the stretch column: in the drawer, never beside the image
+        self.drawer.fixed.addWidget(gv.panel_box)
+        gv.show_histogram(True)
+        gv.align_bar.setParent(None)
+        self.drawer.fixed.addWidget(gv.align_bar)
+        gv.add_overlay(self._paint)
+        gv.imageShown.connect(self._shown)
+        for w in page.findChildren(QPushButton):       # never squeezed: a name cut short reads as another word
+            w.setMinimumWidth(w.sizeHint().width())
 
-    def _compare_changed(self, _key):
-        if self._in_show or self.view is None:
+    def _set_before(self, on: bool):
+        self.before = bool(on)
+        self._present()
+
+    def _set_drawer(self, on: bool):
+        self.drawer_open, self.drawer_chosen = bool(on), True
+        self._sync()
+
+    def _set_compare(self, mode: str):
+        self.cmp = mode
+        self._present()
+        self._sync()
+
+    def _main_spec(self):
+        return MAIN[self._method() if self._method() in MAIN else "polynomial"]
+
+    def _main_moved(self, i: int):
+        name, text, lo, hi, step, dec, tip = self._main_spec()
+        val = lo + i * step
+        if "main_v" in self._ui:
+            self._ui["main_v"].setText(f"{val:.{dec}f}")
+        sl = self._ui.get("main")
+        if sl is not None and not sl.isSliderDown() and not self._syncing:
+            self._main_set(i)
+
+    def _main_set(self, i: int):
+        name, text, lo, hi, step, dec, tip = self._main_spec()
+        val = lo + i * step
+        self.set_draft({name: int(round(val)) if dec == 0 else round(val, dec)})
+
+    def _fill_drawer(self):
+        """The drawer's settings, as the draft has them (built again when the method or a setting changes: it lies
+        over the image, the image does not move)."""
+        if self.drawer is None or self.p is None:
             return
-        try:
-            i = self.view._cmp_i
-            self._cmp_name = self.view._targets[i].name if i is not None else ""
-        except (RuntimeError, AttributeError, IndexError):
+        from .icons import set_icon
+        from .panel import CompactRow, kv, unit_column
+        from .widgets import clear
+        dv = self.drawer.rows
+        clear(dv)
+        p = self.p
+        u = self._ui
+
+        def title(text):
+            t = label(_(text), "h2")
+            t.setContentsMargins(0, 8, 0, 2)
+            dv.addWidget(t)
+
+        title("Draft")
+        row = QHBoxLayout()
+        for key, tip, fn in (("undo", "Undo the draft's last step (Ctrl+Z on the image)", self.undo),
+                             ("redo", "Redo (Ctrl+Y on the image)", self.redo)):
+            b = icon_only(QPushButton(), key, _(tip), 16)
+            b.clicked.connect(fn)
+            row.addWidget(b)
+            u[key] = b
+        clr = QPushButton(_("Remove all"))
+        clr.setToolTip(_("Remove the placed samples and the excluded areas from the draft: the block chooses its "
+                         "samples again (Undo brings them back)"))
+        clr.clicked.connect(self.clear)
+        row.addWidget(clr)
+        u["clear"] = clr
+        row.addStretch(1)
+        dv.addLayout(row)
+        if not self.done and self.s.state(p, "gradient") != "running":
+            dv.addWidget(self.tv._run_button(p, "fond"), 0, Qt.AlignLeft)
+        groups = self.groups(p)
+        rows = [r for _t, rs in groups for r in rs if r.get("level") != "system"]
+        if rows:
+            title("Method settings")
+            uw = unit_column([r.get("unit") for r in rows])
+            for r in rows:
+                cr = CompactRow(self.draft_row(r), uw)
+                cr.changed.connect(self.draft_setting)
+                dv.addWidget(cr)
+        title("Samples")
+        dens = QSpinBox()
+        dens.setRange(4, 64)
+        dens.setValue(self._density())
+        dens.setSuffix(" " + _("per side"))
+        dens.setKeyboardTracking(False)
+        dens.setToolTip(_("Samples of the grid along the shorter side of the image"))
+        dens.valueChanged.connect(self._set_density)
+        r2 = QHBoxLayout()
+        r2.addWidget(label(_("Grid"), "dim"))
+        r2.addWidget(dens)
+        r2.addStretch(1)
+        dv.addLayout(r2)
+        u["density"] = dens
+        av = QCheckBox(_("Away from emission"))
+        av.setChecked(self.avoid)
+        av.setToolTip(_("Grid and the samples the block chooses leave out the cells where the H-alpha survey shows "
+                        "nebulosity"))
+        av.toggled.connect(self._set_avoid)
+        dv.addWidget(av)
+        u["avoid"] = av
+        r3 = QHBoxLayout()
+        r3.addWidget(label(_("Brush size"), "dim"))
+        sz = QSlider(Qt.Horizontal)
+        sz.setRange(4, 1200)
+        sz.setValue(int(self.size))
+        sz.setToolTip(_("Brush and Eraser size, in pixels of the stack ([ ])"))
+        sz.valueChanged.connect(self._set_size)
+        r3.addWidget(sz, 1)
+        szl = label(f"{int(self.size)} px", "small")
+        r3.addWidget(szl)
+        dv.addLayout(r3)
+        u["size"], u["size_l"] = sz, szl
+        title("H-alpha survey")
+        r4 = QHBoxLayout()
+        for b in self._view_toggles():
+            r4.addWidget(b)
+        r4.addStretch(1)
+        dv.addLayout(r4)
+        box = QVBoxLayout()
+        dv.addLayout(box)
+        try:                                            # the Gradient block's survey row, as the panel draws it
+            from types import SimpleNamespace
+
+            from .panel import Panel
+            Panel.survey_row(SimpleNamespace(hv=box, s=self.s, changed=self.tv.panel.changed,
+                                             toast=self.tv.panel.toast), p)
+        except Exception:  # noqa: BLE001 - the row is the panel's: without it, the toggle above still shows the survey
             pass
+        title("Compare")
+        seg = QHBoxLayout()
+        seg.setSpacing(0)
+        for mode, text, tip in (("toggle", "Before / After", "Before / After at the top switches the image"),
+                                ("split", "Split", "Before on the left of the divider, after on the right"),
+                                ("side", "Side by side", "The two images next to each other, zoom and pan linked")):
+            b = QPushButton(_(text))
+            b.setObjectName("ivseg")
+            b.setCheckable(True)
+            b.setChecked(self.cmp == mode)
+            b.setToolTip(_(tip))
+            b.clicked.connect(lambda _c=False, m=mode: self._set_compare(m))
+            seg.addWidget(b)
+        seg.addStretch(1)
+        dv.addLayout(seg)
+        neu = QCheckBox(_("Neutral sky (display)"))
+        st = self.gv.stretch() if self.gv is not None else None
+        neu.setChecked(bool(getattr(st, "neutral", True)))
+        neu.setToolTip(_("Each channel scaled on the screen so that the sky is grey and the stars white. The data stay "
+                         "in the camera's colours."))
+        neu.toggled.connect(lambda on: self.gv.set_neutral(bool(on)))
+        dv.addWidget(neu)
+        model = QPushButton(_("Sky model"))
+        set_icon(model, "samples", 16)
+        model.setToolTip(_("The sky the block removes, on Inspect's own tab"))
+        model.clicked.connect(self._sky_model)
+        dv.addWidget(model, 0, Qt.AlignLeft)
+        facts = self.tv.steps.facts(p, "fond") if getattr(self.tv, "steps", None) is not None else None
+        if facts:
+            title("Measurements")
+            dv.addWidget(kv(facts))
+        title("Display")
+
+    def _sky_model(self):
+        """The Sky model tab of the block: Inspect's own view of it (its tabs lead back)."""
+        tv = self.tv
+        keys = [sp.key for sp in tv.visuals(self.p, "fond")]
+        other = next((k for k in keys if k not in ("result", "removed")), None)
+        if other is not None:
+            tv.tab_of["fond"] = other
+            tv.request_refresh()
 
     def _view_toggles(self) -> list:
-        """What the editor draws over the image, as toggles on the tools' row (as Post's Mask view): the H-alpha
-        survey (R) and the marks (M)."""
+        """What the editor draws over the image: the H-alpha survey (R) and the marks (M)."""
         out = []
         for key, text, tip, on, slot in (
                 ("survey", "H-alpha survey", "Show in amber where the professional H-alpha survey of the field sees "
@@ -651,193 +1124,77 @@ class GradientEditor(QObject):
             out.append(b)
         return out
 
-    # ------------------------------------------------------------ the bar at the image
-    def _bar(self) -> QWidget:
-        """Two rows above the image: the draft (method, its setting, Away from emission, its state, Reset, Try variant,
-        Apply), then the tools (Samples, Brush, Ellipse, the active tool's options, Remove, Remove all, Undo, Redo).
-        Built whole: a tool switched on or off shows or hides its options, the rows never move."""
-        method = self._method()
-        sampled = method in ("polynomial", "rbf")
-        bar = QFrame()
-        bar.setObjectName("gradbar")
-        bar.setStyleSheet("QFrame#gradbar { background: #1b1e25; border-bottom: 1px solid #2a2f38; }")
-        v = QVBoxLayout(bar)
-        v.setContentsMargins(10, 4, 10, 4)
-        v.setSpacing(4)
-        r1 = QHBoxLayout()
-        r1.setSpacing(6)
-        cb = QComboBox()
-        for i, m in enumerate(METHODS):
-            cb.addItem(_(METHOD_NAME[m]), m)
-            cb.setItemData(i, _(METHOD_TIP[m]), Qt.ToolTipRole)
-        cb.setCurrentIndex(METHODS.index(method) if method in METHODS else 0)
-        cb.setToolTip(_("How the sky gradient is modelled") + "\n" + _(METHOD_TIP.get(method, "")))
-        cb.currentIndexChanged.connect(lambda i: self.set_draft({"method": METHODS[i]}))
-        r1.addWidget(cb)
-        self._ui["method"] = cb
-        name, text, lo, hi, step, dec, tip = MAIN[method if method in MAIN else "polynomial"]
-        r1.addWidget(label(_(text), "dim"))
-        sp = QDoubleSpinBox() if dec else QSpinBox()
-        if dec:
-            sp.setDecimals(dec)
-        sp.setRange(lo, hi)
-        sp.setSingleStep(step)
-        cur = self.value(name)
-        sp.setValue(cur if cur is not None else lo)
-        sp.setKeyboardTracking(False)
-        sp.setToolTip(_(tip))
-        sp.valueChanged.connect(lambda val, nm=name: self.set_draft({nm: val}))
-        r1.addWidget(sp)
-        self._ui["main"] = sp
-        av = QCheckBox(_("Away from emission"))
-        av.setChecked(self.avoid)
-        av.setEnabled(sampled)
-        av.setToolTip(_("Generate grid and the samples the block chooses leave out the cells where the H-alpha survey "
-                        "shows nebulosity (shown with H-alpha survey)") if sampled else
-                      _("The automatic method uses no samples: it fits every pixel that does not look like an object"))
-        av.toggled.connect(self._set_avoid)
-        r1.addWidget(av)
-        self._ui["avoid"] = av
-        st = ElidedLabel("", "gradstate", Qt.ElideRight)
-        st.setMinimumWidth(40)
-        st.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        r1.addWidget(st, 1)
-        self._ui["state"] = st
-        for key, tip, fn in (("undo", "Undo the draft's last step (Ctrl+Z on the image)", self.undo),
-                             ("redo", "Redo (Ctrl+Y on the image)", self.redo)):
-            b = icon_only(QPushButton(), key, _(tip), 16)
-            b.clicked.connect(fn)
-            r1.addWidget(b)
-            self._ui[key] = b
-        for key, text, tip, fn in (("reset", "Reset", "Back to the applied settings: the draft goes", self.reset),
-                                   ("variant", "Try variant", "The draft on a variant of the workflow: what is "
-                                    "computed stays as it is, the variant is computed by Run", self.try_variant),
-                                   ("apply", "Apply", "The draft becomes the block's settings (Ctrl+Z takes it back)",
-                                    self.apply)):
-            b = QPushButton(_(text))
-            if key == "apply":
-                b.setObjectName("primary")
-            b.setToolTip(_(tip))
-            b.clicked.connect(lambda _c=False, f=fn: f())
-            r1.addWidget(b)
-            self._ui[key] = b
-        v.addLayout(r1)
-        r2 = QHBoxLayout()
-        r2.setSpacing(6)
-        for key, text, tip in (
-                ("points", "Samples", "Samples of sky: click adds one, drag moves it, Remove or a right click removes "
-                 "the one selected"),
-                ("brush", "Brush", "Paint the areas left out of the sky model (X: paint / erase, [ ]: size)"),
-                ("ellipse", "Ellipse", "Drag an ellipse around an object to leave it out; its handles size and turn "
-                 "it")):
-            b = QPushButton(_(text))
-            b.setObjectName("face")
-            b.setCheckable(True)
-            on = key != "points" or sampled
-            b.setEnabled(on)
-            b.setToolTip(_(tip) if on else _("The automatic method uses no samples: it fits every pixel that does "
-                                            "not look like an object"))
-            b.clicked.connect(lambda _c=False, k=key: self.set_mode(None if self.mode == k else k))
-            r2.addWidget(b)
-            self._ui[key] = b
-        r2.addSpacing(6)
-        g = QPushButton(_("Generate grid"))
-        g.setToolTip(_("Editable samples on a regular grid, the brighter areas left out (Object rejection), in place "
-                       "of the ones the block chooses at each run; then move or remove them"))
-        g.clicked.connect(self.generate)
-        dens = QSpinBox()
-        dens.setRange(4, 64)
-        dens.setValue(self._density())
-        dens.setSuffix(" " + _("per side"))
-        dens.setKeyboardTracking(False)
-        dens.setToolTip(_("Samples of the grid along the shorter side of the image"))
-        dens.valueChanged.connect(self._set_density)
-        for w, k in ((g, "grid"), (dens, "density")):
-            w.setVisible(sampled)
-            r2.addWidget(w)
-            self._ui[k] = w
-        for text, val, tip in (("Paint", True, "The brush adds to the areas left out (X)"),
-                               ("Erase", False, "The brush takes the areas left out away (X)")):
-            b = QPushButton(_(text))
-            b.setObjectName("face")
-            b.setCheckable(True)
-            b.setToolTip(_(tip))
-            b.clicked.connect(lambda _c=False, vv=val: self._set_paint(vv))
-            r2.addWidget(b)
-            self._ui["paint" if val else "erase"] = b
-        sz = QSlider(Qt.Horizontal)
-        sz.setRange(4, 1200)
-        sz.setValue(int(self.size))
-        sz.setFixedWidth(90)
-        sz.setToolTip(_("Brush size, in pixels of the stack ([ ])"))
-        sz.valueChanged.connect(self._set_size)
-        r2.addWidget(sz)
-        self._ui["size"] = sz
-        szl = label("", "small")
-        r2.addWidget(szl)
-        self._ui["size_l"] = szl
-        r2.addSpacing(6)
-        for b in self._view_toggles():         # what is drawn over the image: on this row, never scrolled away
-            r2.addWidget(b)
-        r2.addStretch(1)
-        rm = QPushButton(_("Remove"))
-        rm.setToolTip(_("Remove the sample or the ellipse selected (Delete; a right click on it does the same)"))
-        rm.clicked.connect(self.remove_selected)
-        r2.addWidget(rm)
-        self._ui["remove"] = rm
-        clr = QPushButton(_("Remove all"))
-        clr.setToolTip(_("Remove the placed samples and the excluded areas from the draft: the block chooses its "
-                         "samples again (Undo brings them back)"))
-        clr.clicked.connect(self.clear)
-        r2.addWidget(clr)
-        self._ui["clear"] = clr
-        v.addLayout(r2)
-        for w in bar.findChildren(QPushButton):        # never squeezed: a name cut short reads as another word
-            w.setMinimumWidth(w.sizeHint().width())
-        return bar
+    def _present(self, fresh: bool = False):
+        """The image of the page: After (the draft's preview, else the applied result) or Before (the stack), or both
+        with Split / Side by side. The part of the sky shown and its size on the screen stay as they were."""
+        from .imageview import ViewImage
+        if not self._page_ok() or self.p is None:
+            return
+        gv, p = self.gv, self.p
+        pid = p.pid
+        if self.result is not None and self.small is not None and self.small["pid"] == pid:
+            after = ViewImage(self.result, _("Draft preview") if self.has_draft() else _("Preview"),
+                              key=self.result_key, camera=True, neutral=True)
+            before = ViewImage(self.small["arr"], _("Stack"), key=("gradient-small", pid), camera=True, neutral=True)
+            c = self.carried.get(pid)
+            if c is not None and c.get("orig") is not None:
+                before = ViewImage(c["orig"], _("Result of {name}").format(name=c["of"]), key=("gradient-orig", pid),
+                                   camera=True, neutral=True)
+        else:
+            after, before = self._applied_vi(p), self._stack_vi(p)
+        main, other = (before, after) if self.before and self.cmp == "toggle" else (after, before)
+        if main is None:
+            main, other = after or before, None
+        if main is None:
+            return
+        try:
+            if gv._want != main.identity():
+                if gv.canvas.display is not None and not fresh:
+                    self._restore = (main.identity(), gv.view_state())
+                gv.set_image(main, keep_view=not fresh, keep_stretch=not fresh)
+            if self.cmp == "toggle" or other is None:
+                gv.set_compare_targets([], None)
+            else:
+                gv.set_compare_mode(self.cmp)
+                gv.set_compare_targets([other], 0)
+                gv.set_same_stretch(True)
+            gv.canvas.tool = self if self.mode else None
+            gv.canvas.update()
+        except RuntimeError:
+            pass
+        self._sync()
 
-    # ------------------------------------------------------------ the panel's section
+    def _applied_vi(self, p):
+        tv = self.tv
+        try:
+            spec = next(sp for sp in tv.visuals(p, "fond") if sp.key in ("result", "removed"))
+            vi = tv.steps.view_image(p, spec)
+        except (StopIteration, Exception):  # noqa: BLE001 - nothing to show: the page says why on its line
+            return None
+        if vi is not None:
+            vi.name = _("Previous settings") if self.s.state(p, "gradient") == "stale" else _("Applied result")
+        return vi
+
+    def _stack_vi(self, p):
+        tv = self.tv
+        try:
+            spec = next(sp for sp in tv.visuals(p, "fond") if sp.key in ("result", "removed"))
+            targets = tv._targets(p, "fond", spec)
+        except (StopIteration, Exception):  # noqa: BLE001 - no stack to compare with: Before greyed
+            return None
+        vi = targets[0] if targets else None
+        if vi is not None:
+            vi.name = _("Stack")
+        return vi
+
+    # ------------------------------------------------------------ the panel's section (Inspect's page has the drawer)
     def controls(self, p) -> QWidget:
-        """The panel's Method: one line per method (what it does and its durations in the tooltip), chosen into the
-        draft; under it, where the tools are, and Run to here when the block waits for it."""
+        """What TuneView's panel shows of the block while the page holds its settings (the panel is away then)."""
         self._load(p)
-        from .model import methods_of
-        from .panel import durations_text
-        box = QFrame()
-        v = QVBoxLayout(box)
-        v.setContentsMargins(0, 2, 0, 6)
-        v.setSpacing(3)
-        cur = self._method()
-        applied = self._applied_value("method")
-        for m in methods_of("fond"):
-            key = m["engine_key"]
-            if key not in METHODS or m.get("new"):
-                continue
-            on = key == cur
-            text = ("●  " if on else "○  ") + _(METHOD_NAME[key]) + "  ·  " + _(METHOD_LINE[key])
-            if key == applied and cur != applied:
-                text += "  ·  " + _("applied")
-            b = QPushButton(text)
-            b.setObjectName("methodline")
-            b.setFlat(True)
-            b.setCursor(Qt.PointingHandCursor)
-            b.setStyleSheet("QPushButton#methodline { text-align: left; padding: 3px 6px; border: 1px solid "
-                            + ("#5ea1ff" if on else "transparent") + "; border-radius: 4px; }"
-                            "QPushButton#methodline:hover { background: #20242c; }")
-            import re
-            times = self.s.method_times(p, "fond", m["key"]) if hasattr(self.s, "method_times") else None
-            dur = re.sub(r"<[^>]+>", "", durations_text(times, "gpu" if getattr(self.s, "gpu", False) else "cpu"))
-            b.setToolTip(_(METHOD_TIP[key]) + "\n" + dur)
-            b.clicked.connect(lambda _c=False, k=key: self.set_draft({"method": k}))
-            v.addWidget(b)
-        v.addWidget(label(_("Samples, exclusions, Apply and Try variant: on the bar above the image. Every change is "
-                            "a draft until it is applied."), "small", wrap=True))
-        if not self.done and self.s.state(p, "gradient") != "running" and not self.tv._has_previous(p, "fond"):
-            v.addWidget(self.tv._run_button(p, "fond"), 0, Qt.AlignLeft)
-        return box
+        return label(_("The settings are in the page's Settings."), "small", wrap=True)
 
     def groups(self, p) -> list:
-        """The panel's settings groups of the draft's method (the applied method's are the block's own)."""
+        """The settings groups of the draft's method (the applied method's are the block's own)."""
         from .model import GRADIENT_VIEW
         from .settings import CATALOG, catalog_key, resolve, step_settings
         key = "fond:" + GRADIENT_VIEW.get(self._method(), "simple")
@@ -851,7 +1208,7 @@ class GradientEditor(QObject):
         return out
 
     def draft_row(self, r: dict) -> dict:
-        """A settings row of the panel as the draft has it."""
+        """A settings row as the draft has it."""
         d = self._draft()
         if d is None or r.get("name") not in d["vals"]:
             return r
@@ -859,77 +1216,62 @@ class GradientEditor(QObject):
         return {**r, "value": val, "changed": val != r.get("suggested")}
 
     def draft_setting(self, r: dict, value):
-        """A settings row of the panel edited: into the draft (None: back to the suggestion)."""
+        """A settings row edited: into the draft (None: back to the suggestion)."""
         self.set_draft({r["name"]: r.get("suggested") if value is None else value})
 
     def _status(self) -> str:
-        bits = []
         if self.has_draft():
             n = len(self._draft()["vals"])
-            bits.append(_("Draft: 1 change") if n == 1 else _("Draft: {n} changes").format(n=n))
-            c = self.cost_text()
-            if c:
-                bits.append(c)
+            text = _("Draft · 1 change") if n == 1 else _("Draft · {n} changes").format(n=n)
+        elif self.result is not None and not self.done:
+            text = _("Preview · not computed yet")
+        elif self.s.state(self.p, "gradient") == "stale":
+            text = _("Applied · not computed yet")
         else:
-            bits.append(_("Applied settings") if self.done else _("Applied settings · not computed yet"))
+            text = _("Applied settings")
         if self.busy:
-            bits.append(self.step_text or _("computing the preview…"))
-        pts, s = self.work["sample_points"], self.samples
-        if self._method() != "automatic":
-            if pts:
-                bits.append(_("{n} samples placed").format(n=len(pts)))
-            elif s is not None and not s.get("manual"):
-                bits.append(_("samples chosen at each run ({n} of sky the last time)").format(n=int(np.sum(s["used"]))))
-        sv = self.survey
-        if (self.survey_shown or self._grid_after_survey) and sv is None:
-            bits.append(_("H-alpha survey: reading…"))
-        elif sv is not None and "error" in sv:
-            bits.append(_("H-alpha survey: {why}").format(why=sv["error"]))
-        return " · ".join(bits)
+            text += " · " + (self.step_text or _("computing the preview…"))
+        return text
 
     def _hint(self):
-        """The gestures of the tool on, on the line under the image (as Post's)."""
-        if self.view is None:
-            return
-        t = {"points": _("Samples: click adds (none placed: the grid first) · drag moves · Remove or right click "
-                         "removes · Space or middle button: move the image · R H-alpha survey · M hide"),
-             "brush": _("Brush: drag to paint · X paint / erase · [ ] size · right drag: move the image · M hide"),
-             "ellipse": _("Ellipse: drag to draw · click inside: select and move · handles: size and rotation · "
-                          "Remove, Delete or right click inside: remove · Space: move the image")}.get(self.mode, "")
-        try:
-            self.view.tool_hint.setText(t)
-            self.view.tool_hint.setVisible(bool(t))
-        except RuntimeError:
-            self.view = None
+        """No help line under the image: each tool says what it does in its tooltip."""
+        return
 
     def _sync(self):
-        """The bar's widgets as the editor is (without building them again)."""
-        if self.p is None:
+        """The page's controls as the editor is (never built again, never shown or hidden: greyed with a reason)."""
+        if self.p is None or not self._ui:
             return
+        self._syncing = True
         try:
             u = self._ui
-            for k in ("points", "brush", "ellipse"):
-                if k in u:
-                    u[k].setChecked(self.mode == k)
-            brush = self.mode == "brush"
-            for k, on in (("paint", self.paint), ("erase", not self.paint)):
-                if k in u:
-                    u[k].setChecked(on)
-                    u[k].setVisible(brush)
-            if "size" in u:
-                u["size"].setVisible(brush)
-                u["size_l"].setVisible(brush)
-                u["size_l"].setText(f"{int(self.size)} px")
-            sampled = self._method() in ("polynomial", "rbf")
-            for k in ("grid", "density"):
-                if k in u:
-                    u[k].setVisible(sampled and not brush)
-            for k, on in (("marks", self.shown), ("survey", self.survey_shown), ("avoid", self.avoid)):
-                if k in u:
-                    b = u[k]
-                    b.blockSignals(True)
-                    b.setChecked(on)
-                    b.blockSignals(False)
+            method = self._method()
+            sampled = method in ("polynomial", "rbf")
+            no_samples = _("The automatic method uses no samples: it fits every pixel that does not look like an object")
+            for key, _role, name, tip in TOOLS:
+                b = u.get(key)
+                if b is None:
+                    continue
+                if b.isCheckable():
+                    b.setChecked(self.mode == key)
+                on = sampled or key not in ("points", "grid")
+                b.setEnabled(on)
+                b.setToolTip(f"<b>{_(name)}</b><br>{_(tip) if on else no_samples}")
+            for m in METHODS:
+                b = u.get("m_" + m)
+                if b is not None:
+                    b.setChecked(m == method)
+            if "main" in u:
+                name, text, lo, hi, step, dec, tip = self._main_spec()
+                cur = self.value(name)
+                cur = lo if cur is None else float(cur)
+                sl = u["main"]
+                sl.blockSignals(True)
+                sl.setRange(0, int(round((hi - lo) / step)))
+                sl.setValue(int(round((cur - lo) / step)))
+                sl.blockSignals(False)
+                sl.setToolTip(_(tip))
+                u["main_l"].setText(_(text))
+                u["main_v"].setText(f"{cur:.{dec}f}")
             draft = self.has_draft()
             why = _("No draft: change a setting, a sample or an area first")
             for k in ("reset", "variant", "apply"):
@@ -937,31 +1279,57 @@ class GradientEditor(QObject):
                     u[k].setEnabled(draft)
             if "apply" in u:
                 c = self.cost_text()
-                u["apply"].setToolTip(_("The draft becomes the block's settings (Ctrl+Z takes it back)") +
-                                      ("\n" + c if c else "") if draft else why)
+                u["apply"].setToolTip((_("The draft becomes the block's settings (Ctrl+Z takes it back)") +
+                                       ("\n" + c if c else "")) if draft else why)
                 u["variant"].setToolTip(_("The draft on a variant of the workflow: what is computed stays as it is, "
                                           "the variant is computed by Run") if draft else why)
                 u["reset"].setToolTip(_("Back to the applied settings: the draft goes") if draft else why)
             if "state" in u:
                 u["state"].setText(self._status())
                 u["state"].setStyleSheet(f"color: {WARN};" if draft else "color: #8b95a5;")
-            if "remove" in u:
-                sel = (self.mode == "ellipse" and self._sel is not None) or \
-                    (self.mode == "points" and self._selpt is not None)
-                u["remove"].setEnabled(sel)
-                if not sel:
-                    u["remove"].setToolTip(_("Select a sample (Samples) or an ellipse (Ellipse) first"))
-                else:
-                    u["remove"].setToolTip(_("Remove the sample or the ellipse selected (Delete; a right click on it "
-                                             "does the same)"))
+            if "title" in u:
+                u["title"].setText(_("Gradient") + "  ·  " + self.p.name)
+                u["title"].setToolTip(_("The stack with its sky gradient removed, in the camera's colours, as every "
+                                        "later block reads it. The sky keeps its level."))
+                stale = self.s.state(self.p, "gradient") == "stale" and not draft
+                u["tag"].setText(_("Previous settings") if stale else "")
+                u["tag"].setToolTip(_("Computed with the previous settings: this is the result the block had. Run to "
+                                      "here computes it with the current ones.") if stale else "")
+            if "before" in u:
+                b = u["before"]
+                b.blockSignals(True)
+                b.setChecked(self.before and self.cmp == "toggle")
+                b.blockSignals(False)
+                b.setEnabled(self.cmp == "toggle")
+                b.setToolTip(_("Switch the image between the gradient removed and the stack before it (B)")
+                             if self.cmp == "toggle" else _("Split and Side by side show both: Settings › Compare"))
+            if "settings" in u:
+                s = u["settings"]
+                s.blockSignals(True)
+                s.setChecked(bool(self.drawer_open))
+                s.blockSignals(False)
+            if self.drawer is not None:
+                self.drawer.setVisible(bool(self.drawer_open))
+                if self.drawer_open:
+                    self.drawer.place()
+            for k, on in (("marks", self.shown), ("survey", self.survey_shown), ("avoid", self.avoid)):
+                if k in u:
+                    b = u[k]
+                    b.blockSignals(True)
+                    b.setChecked(on)
+                    b.blockSignals(False)
             d = self._draft()
             if "undo" in u:
                 u["undo"].setEnabled(bool(d and d["undo"]))
                 u["redo"].setEnabled(bool(d and d["redo"]))
             if "clear" in u:
                 u["clear"].setEnabled(any(self.work[f] for f in FIELDS))
-        except RuntimeError:                   # the bar was built again
-            self._ui = {}
+            if "size_l" in u:
+                u["size_l"].setText(f"{int(self.size)} px")
+        except RuntimeError:                   # a drawer row built again meanwhile
+            pass
+        finally:
+            self._syncing = False
 
     # ------------------------------------------------------------ modes
     def set_mode(self, mode: str | None):
@@ -1053,12 +1421,12 @@ class GradientEditor(QObject):
             return True
         if e.modifiers() & (Qt.ControlModifier | Qt.AltModifier):
             return False
-        if k == Qt.Key_BracketLeft and self.mode == "brush":
+        if k == Qt.Key_BracketLeft and self.mode in ("brush", "eraser"):
             self._resize(1 / 1.25)
-        elif k == Qt.Key_BracketRight and self.mode == "brush":
+        elif k == Qt.Key_BracketRight and self.mode in ("brush", "eraser"):
             self._resize(1.25)
-        elif k == Qt.Key_X and self.mode == "brush":
-            self._set_paint(not self.paint)
+        elif k == Qt.Key_B and self.cmp == "toggle":
+            self._set_before(not self.before)
         elif k == Qt.Key_M:
             self._set_shown(not self.shown)
         elif k == Qt.Key_R:
@@ -1124,7 +1492,7 @@ class GradientEditor(QObject):
     # ------------------------------------------------------------ the tool (ImageCanvas.tool)
     @property
     def cursor(self):
-        return Qt.BlankCursor if self.mode == "brush" else Qt.CrossCursor
+        return Qt.BlankCursor if self.mode in ("brush", "eraser") else Qt.CrossCursor
 
     def _stack_size(self) -> tuple[int, int]:
         """(W, H) of the stack: the reduced copy's, else read from the stack (the block may not be computed)."""
@@ -1187,6 +1555,25 @@ class GradientEditor(QObject):
             self._stroke0 = len(self.work["exclude_brush"])
             self._dab(sx, sy)
             return True
+        elif self.mode == "eraser" and button == Qt.LeftButton:
+            # what is under the cursor: a sample, else an ellipse, else the painted areas (erased as a stroke)
+            i = self._pick(canvas, sx, sy)
+            if i is not None:
+                self.work["sample_points"].pop(i)
+                self._selpt = None
+                self._commit()
+                return True
+            ells = self.work["exclude_ellipses"]
+            hit = next((j for j in reversed(range(len(ells))) if _inside(ells[j], sx, sy)), None)
+            if hit is not None:
+                ells.pop(hit)
+                self._sel = None
+                self._commit()
+                return True
+            self._last = None
+            self._stroke0 = len(self.work["exclude_brush"])
+            self._dab(sx, sy, paint=False)
+            return True
         elif self.mode == "ellipse":
             ells = self.work["exclude_ellipses"]
             if button == Qt.RightButton:
@@ -1247,6 +1634,8 @@ class GradientEditor(QObject):
             self.work["sample_points"][self._grab] = [sx, sy]
         elif self.mode == "brush" and self._stroke0 is not None:
             self._dab(sx, sy)
+        elif self.mode == "eraser" and self._stroke0 is not None:
+            self._dab(sx, sy, paint=False)
         elif self.mode == "ellipse" and self._edit_ell is not None:
             what, e0, (x0, y0) = self._edit_ell
             cx, cy, rx, ry, a = _ell(e0)
@@ -1269,10 +1658,13 @@ class GradientEditor(QObject):
         if self.mode == "points" and self._grab is not None:
             self._grab = None
             edited = True
-        elif self.mode == "brush" and self._stroke0 is not None:
+        elif self.mode in ("brush", "eraser") and self._stroke0 is not None:
             self._last = None
+            if self.mode == "eraser" and not any(d[3] for d in self.work["exclude_brush"][:self._stroke0]):
+                del self.work["exclude_brush"][self._stroke0:]       # nothing painted to erase: no step
+            else:
+                edited = True
             self._stroke0 = None
-            edited = True
         elif self.mode == "ellipse" and self._edit_ell is not None:
             self._edit_ell = None
             edited = True
@@ -1294,7 +1686,8 @@ class GradientEditor(QObject):
     def hover(self, canvas, ix, iy):
         self._hover = (ix, iy)
 
-    def _dab(self, x, y):
+    def _dab(self, x, y, paint: bool | None = None):
+        paint = self.paint if paint is None else paint
         r = self.size / 2
         pts = [(x, y)]
         if self._last is not None:                       # fill the gaps of a fast stroke (as Post's brush)
@@ -1302,7 +1695,7 @@ class GradientEditor(QObject):
             n = int(math.hypot(x - lx, y - ly) / max(r / 3, 1))
             pts = [(lx + (x - lx) * k / (n + 1), ly + (y - ly) * k / (n + 1)) for k in range(1, n + 1)] + pts
         for px, py in pts:
-            self.work["exclude_brush"].append([float(px), float(py), float(r), 1.0 if self.paint else 0.0])
+            self.work["exclude_brush"].append([float(px), float(py), float(r), 1.0 if paint else 0.0])
         self._last = (x, y)
 
     # ------------------------------------------------------------ what is drawn over the image
@@ -1355,7 +1748,7 @@ class GradientEditor(QObject):
             painter.setPen(QPen(OUTLINE, 1.5, Qt.DashLine))
             painter.setBrush(QColor(*VEIL))
             painter.drawEllipse(QRectF(canvas.img_to_w(ax * f, ay * f), canvas.img_to_w(bx * f, by * f)).normalized())
-        if self.mode == "brush" and self._hover is not None:
+        if self.mode in ("brush", "eraser") and self._hover is not None:
             painter.setBrush(Qt.NoBrush)
             painter.setPen(QPen(QColor(255, 255, 255, 200), 1.2))
             r = self.size / 2 * f * canvas.scale
@@ -1367,6 +1760,14 @@ class GradientEditor(QObject):
 
     def tag_text(self) -> str:
         """What the image shows, said on it: the draft's preview is never taken for the result."""
+        if self.before and self.cmp == "toggle":
+            c = self.carried.get(self.p.pid) if self.p is not None else None
+            if c is not None and c.get("orig") is not None:
+                return _("Before · the result of {name}").format(name=c["of"])
+            return _("Before · the stack, its gradient not removed")
+        if not self.has_draft() and self.result is None:
+            stale = self.p is not None and self.s.state(self.p, "gradient") == "stale"
+            return _("Previous settings") if stale else _("After · applied result")
         if self.has_draft():
             if self.result is None:
                 return self.step_text or _("Applied result · the draft preview follows")
@@ -1555,8 +1956,9 @@ class GradientEditor(QObject):
             self._commit()
         elif "result" in out and gen == self.gen and self.p is not None and (self.has_draft() or not self.done):
             self.result, self.result_ms = out["result"], out.get("ms")
+            self.result_key = ("gradient-preview", self.p.pid, gen)
             self.samples = out["samples"]
-            self._show(self.result)
+            self._present()
         if self._survey_wanted is not None:
             fetch, self._survey_wanted = self._survey_wanted, None
             if self.survey is None or self.survey["pid"] != self.p.pid or (fetch and "error" in self.survey):
@@ -1574,38 +1976,122 @@ class GradientEditor(QObject):
             except RuntimeError:
                 self.view = None
 
-    def _show(self, res):
-        """The preview as the main image; the applied result on the same grid and the stack to compare it with."""
-        from .imageview import ViewImage
-        if self.view is None or self.small is None or self.small["pid"] != self.p.pid:
-            return
+
+class Drawer(QFrame):
+    """The Settings drawer: over the right of the image (the image keeps its rectangle), its width dragged by its left
+    edge and remembered, closed with its × or Settings. ``rows``: the editor's settings (built again when they
+    change); ``fixed``: the viewer's stretch column and alignment line, kept."""
+
+    def __init__(self, box: QWidget, ed):
+        super().__init__(box)
+        self.box, self.ed = box, ed
+        self.setObjectName("graddrawer")
+        self.setStyleSheet("QFrame#graddrawer { background: #1c1f26; border-left: 1px solid #2a2f38; }")
         try:
-            v = self.view
-            pid = self.p.pid
-            # Neutral sky at first (display only, as the block's view): before the colour calibration, the green of
-            # the camera hides what the edits do to the sky
-            draft = self.has_draft()
-            vi = ViewImage(res, _("Draft preview") if draft else _("Preview"), key=("gradient-preview", pid, self.gen),
-                           camera=True, neutral=True)
-            targets = []
-            ap = self.applied
-            if ap is not None and ap.get("arr") is not None and ap["key"][0] == pid:
-                targets.append(ViewImage(ap["arr"], _("Applied") if draft else _("Previous settings"),
-                                         key=("gradient-applied", ap["key"]), camera=True, neutral=True))
-            targets.append(ViewImage(self.small["arr"], _("Stack"), key=("gradient-small", pid), camera=True,
-                                     neutral=True))
-            names = [t.name for t in targets]
-            cur = names.index(self._cmp_name) if self._cmp_name in names else (None if self._cmp_name == "" else 0)
-            self._in_show = True
-            try:
-                v.set_image(vi, keep_view=True, keep_stretch=True)
-                v.set_compare_targets(targets, cur)
-                v.set_same_stretch(True)
-            finally:
-                self._in_show = False
-            v.canvas.tool = self if self.mode else None
-        except RuntimeError:
-            self.view = None
+            from . import prefs
+            ed.drawer_w = int(prefs.get("gradient_settings_w") or ed.drawer_w)
+        except Exception:  # noqa: BLE001 - a preference not readable: the width by default
+            pass
+        h = QHBoxLayout(self)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(0)
+        self.grip = QWidget()
+        self.grip.setFixedWidth(6)
+        self.grip.setCursor(Qt.SizeHorCursor)
+        self.grip.setToolTip(_("Drag to widen or narrow the settings"))
+        self.grip.installEventFilter(self)
+        h.addWidget(self.grip)
+        col = QVBoxLayout()
+        col.setContentsMargins(8, 6, 6, 6)
+        col.setSpacing(4)
+        head = QHBoxLayout()
+        head.addWidget(label(_("Settings"), "h2"))
+        head.addStretch(1)
+        x = icon_only(QPushButton(), "remove", _("Close the settings"), 16)
+        x.clicked.connect(lambda: ed._set_drawer(False))
+        head.addWidget(x)
+        col.addLayout(head)
+        sc = QScrollArea()
+        sc.setWidgetResizable(True)
+        sc.setFrameShape(QFrame.NoFrame)
+        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        inner = QWidget()
+        iv = QVBoxLayout(inner)
+        iv.setContentsMargins(0, 0, 4, 0)
+        iv.setSpacing(4)
+        self.rows = QVBoxLayout()
+        self.rows.setSpacing(4)
+        iv.addLayout(self.rows)
+        self.fixed = QVBoxLayout()
+        iv.addLayout(self.fixed)
+        iv.addStretch(1)
+        sc.setWidget(inner)
+        col.addWidget(sc, 1)
+        h.addLayout(col, 1)
+        self._drag = None
+        box.installEventFilter(self)
+        self.hide()
+
+    def place(self):
+        bw = self.box.width()
+        w = int(min(max(self.ed.drawer_w, DRAWER_MIN), max(DRAWER_MIN, bw - 80)))
+        self.setGeometry(bw - w, 0, w, self.box.height())
+        self.raise_()
+
+    def eventFilter(self, obj, e):                                   # noqa: N802 - Qt's name
+        t = e.type()
+        if obj is self.box and t == QEvent.Resize and self.isVisible():
+            self.place()
+        elif obj is self.grip:
+            if t == QEvent.MouseButtonPress:
+                self._drag = (e.globalPosition().x(), self.width())
+                return True
+            if t == QEvent.MouseMove and self._drag is not None:
+                x0, w0 = self._drag
+                self.ed.drawer_w = int(w0 + x0 - e.globalPosition().x())
+                self.place()
+                return True
+            if t == QEvent.MouseButtonRelease and self._drag is not None:
+                self._drag = None
+                try:
+                    from . import prefs
+                    prefs.set("gradient_settings_w", int(self.width()))
+                except Exception:  # noqa: BLE001 - not kept: the next session takes the width by default
+                    pass
+                return True
+        return False
+
+
+class Notice(QFrame):
+    """A notice with its actions over the foot of the window (drawn over the pages, out of every layout: nothing
+    under it moves when it comes or goes); an action hides it."""
+
+    def __init__(self, win, text: str, actions):
+        super().__init__(win)
+        self.setObjectName("gradnotice")
+        self.setStyleSheet("QFrame#gradnotice { background: #3a2f1c; border: 1px solid #5a4a26; border-radius: 6px; }"
+                           " QLabel { background: transparent; }")
+        h = QHBoxLayout(self)
+        h.setContentsMargins(12, 6, 8, 6)
+        h.setSpacing(6)
+        h.addWidget(label(text, "", wrap=True), 1)
+        self.buttons = []
+        for words, fn in actions:
+            b = QPushButton(words)
+            b.clicked.connect(lambda _c=False, f=fn: (self.hide(), f()))
+            h.addWidget(b)
+            self.buttons.append(b)
+        self.place()
+        self.show()
+        self.raise_()
+
+    def place(self):
+        win = self.parentWidget()
+        w = max(320, min(900, win.width() - 32))
+        h = max(self.heightForWidth(w), self.sizeHint().height()) if self.hasHeightForWidth() else \
+            self.sizeHint().height()
+        sb = win.statusBar().height() if hasattr(win, "statusBar") else 0
+        self.setGeometry((win.width() - w) // 2, win.height() - sb - h - 10, w, h)
 
 
 def _reduced_stack(project, pid: int) -> dict:
