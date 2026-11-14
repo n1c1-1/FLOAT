@@ -742,8 +742,10 @@ class BlockMap:
             return next((w for w in STATE_ORDER if w in states), "pending")
         if node.grey or (node.cut and node.key not in ("calibration", "alignement")):
             return "skipped" if node.grey else "done"
-        if node.key == "composition":                 # computed in Post from the Stars block's images
-            return block_state(m, node.paths[0], "etoiles")
+        if node.key == "composition":                 # computed in Post from the Stars block's images, and from the
+            states = {block_state(m, node.paths[0], "etoiles")}   # Synthetic stars on its third input: it waits for
+            states |= set(self._synth_states(node))               # them as for an input still to compute
+            return next((w for w in STATE_ORDER if w in states), "pending")
         states = {block_state(m, p, node.ref) for p in node.paths}
         last = self._last_nodes()
         try:
@@ -754,6 +756,23 @@ class BlockMap:
         states |= {st for st in (block_state(m, p, "post") for p in node.paths
                                  if p.pid in to_post and last.get(p.pid) is node) if st != "skipped"}
         return next((w for w in STATE_ORDER if w in states), "pending")
+
+    def _synth_states(self, node) -> list[str]:
+        """The states of the Synthetic stars block wired into a Combine layers' third input, in the workflows it is
+        in (a colour workflow's own, a star row's, a "· Stars" combination's): [] without one."""
+        from ..graphcore.model import SYNTH_PORT
+        bid, g, m = self.block_of(node), self.graph, self.model
+        if bid is None or g is None:
+            return []
+        src = next((w.src[0] for w in g.wires if w.dst == [bid, SYNTH_PORT] and w.active), None)
+        if src is None or src not in g.blocks or g.blocks[src].off:
+            return []
+        out = []
+        for wid, _name in (getattr(self.compiled, "map", None) or {}).get(src, []):
+            q = next((x for x in getattr(m, "paths", []) if x.pid == wid), None)
+            if q is not None:
+                out.append(block_state(m, q, "synth"))
+        return out
 
     def summary(self, node, tr=None) -> str:
         """The one line under a block's name: the stored graph's own summary of the block."""

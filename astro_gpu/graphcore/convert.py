@@ -140,10 +140,11 @@ class Client:
         src = w.source
         if isinstance(src, dict) and "fusion" in src:
             try:
-                stars = any(n["block"] == "stars" for n in wfl.graph_of(w))
+                kinds = [n["block"] for n in wfl.graph_of(w)]
             except (KeyError, ValueError):
-                stars = False
-            return ["fusion"] + (["etoiles"] if stars else [])
+                kinds = []
+            # (a "· Stars" combination's Synthetic stars after its Output: drawn after the combination)
+            return ["fusion"] + (["etoiles"] if "stars" in kinds else []) + (["synth"] if "synth" in kinds else [])
         if w.blocks is not None:
             try:
                 g = wfl.graph_of(w)
