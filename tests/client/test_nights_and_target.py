@@ -14,7 +14,6 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from astropy.io import fits  # noqa: E402
-from test_graph47_client import qapp  # noqa: E402,F401  (a fixture)
 
 from astro_gpu import api  # noqa: E402
 from astro_gpu.client import i18n  # noqa: E402
@@ -25,6 +24,7 @@ from astro_gpu.client.sources import SourcesView  # noqa: E402
 from astro_gpu.core import project2  # noqa: E402
 from astro_gpu.core.project import Target  # noqa: E402
 from astro_gpu.io.frames import light_facts  # noqa: E402
+from tests.client.pagehelp import item, qapp  # noqa: E402,F401  (a fixture)
 
 NIGHTS = ["2023-06-29", "2023-07-05", "2023-07-08", "2023-07-11", "2023-07-15", "2023-07-18", "2023-07-21", "2023-07-22"]
 
@@ -68,13 +68,29 @@ def test_one_night_is_said_as_today(tmp_path):
     assert SourcesView._sub(SimpleNamespace(), "lights", 2, row) == "2 lights · 300 s · Gain 90 · night of 29/06"
 
 
-def test_the_session_block_s_tooltip_says_the_nights(qapp):  # noqa: F811
-    from astro_gpu.client.blocks import Node
-    from astro_gpu.client.graph import SEVERAL_NIGHTS_WHAT, block_what
-    node = Node("session")
-    assert block_what(node).startswith("One night")
-    assert block_what(node, "8 nights · 29/06 to 22/07").startswith("8 nights · 29/06 to 22/07: their light frames")
-    assert "{nights}" in SEVERAL_NIGHTS_WHAT
+def test_the_session_block_s_tooltip_says_the_nights(qapp, tmp_path):  # noqa: F811
+    from astro_gpu.client.graphview.page import GraphPage
+    from astro_gpu.client.graphview.style import kind_what
+    from astro_gpu.client.services.worker import ApiWorker
+    assert kind_what("session").startswith("One night")
+    p = _project(tmp_path, Target(name="NGC 6995"))
+    w = p.add_workflow("Workflow", {})
+    p.set_blocks(w.id, [{"block": "calibration"}, {"block": "registration"}, {"block": "stacking"}])
+    project2.save(p)
+    worker = ApiWorker()
+    m = ProjectModel(p, worker, readonly=True, gpu=False, device="cpu")
+    assert worker.wait(120) and m.ready, m.error
+    page = GraphPage(m)
+    try:
+        assert m.nights_text(1) == "8 nights · 29/06 to 22/07"
+        page.refresh()
+        tip = item(page, kind="session").toolTip()
+        assert "8 nights · 29/06 to 22/07: their light frames" in tip, tip
+        assert "One night" not in tip
+    finally:
+        page.close()
+        m.close(save=False)
+        worker.stop()
 
 
 def test_the_model_gives_the_nights_of_a_session(tmp_path):
