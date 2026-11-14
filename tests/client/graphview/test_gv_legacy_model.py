@@ -167,8 +167,12 @@ def block_of(page, n):
 
 
 def select_node(page, n):
-    """A block chosen on the page (a click): the model's selection and the panel follow."""
-    page.bridge.choose(block_of(page, n))
+    """A block chosen on the page (a click): the model's selection and the panel follow. The page is shared by the
+    module's tests: a block still chosen by an earlier test is chosen anew, so that its workflows are the scope."""
+    b = block_of(page, n)
+    if page.bridge.selected == b:
+        page.bridge.choose(None)
+    page.bridge.choose(b)
     for _i in range(3):
         _events()
 
