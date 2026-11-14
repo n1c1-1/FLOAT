@@ -187,12 +187,29 @@ def test_the_preview_is_the_stage_result_on_the_reduced_copy(ed, draft):
     wait(ed)
     sm = small_stack()
     prm = GradientParams(**draft)
+    assert ge.preview_cell(prm, (H, W)) is None                # placed samples, or the polynomial: the run's own cell
     mo = sky_model_of(sm["arr"], sm["valid"], prm, f=sm["f"])
     g = read_grid(mo["grid"], mo["info"], H, W)
     lvl = np.array([np.median(g[c]) for c in range(3)], np.float32)[:, None, None]
     want = sm["arr"] - g + lvl
     assert ed.result.shape == want.shape
     assert float(np.abs(ed.result - want).max()) < 1e-3
+
+
+def test_the_rbf_preview_on_its_own_samples_is_near_the_run(ed):
+    """The RBF on the samples the block chooses is previewed on a coarser cell (gradientedit.preview_cell): the sky it
+    takes off stays within 0.3 % of the sky's level of the run's (measured 0.2 % on the test project, 0.48 ADU of 240)."""
+    ed.set_draft({"method": "rbf"})
+    wait(ed)
+    sm = small_stack()
+    prm = GradientParams(method="rbf")
+    assert ge.preview_cell(prm, (H, W)) == max(8, int(H / ge.PREVIEW_CELL_SHARE))
+    mo = sky_model_of(sm["arr"], sm["valid"], prm, f=sm["f"])
+    g = read_grid(mo["grid"], mo["info"], H, W)
+    want = sm["arr"] - g + np.array([np.median(g[c]) for c in range(3)], np.float32)[:, None, None]
+    sky = float(np.median(sm["arr"]))
+    d = float(np.abs(ed.result - want).max())
+    assert d < 0.003 * sky, (d, sky)
 
 
 def test_apply_makes_the_draft_the_block_settings(ed):

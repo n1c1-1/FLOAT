@@ -54,6 +54,10 @@ from .widgets import WARN, ElidedLabel, label
 
 #: the preview's copy of the stack holds about this many pixels
 PREVIEW_PIXELS = 1_000_000
+#: the cell the RBF preview's sky is evaluated on when the block chooses its samples, as a share of the reduced copy's
+#: shorter side (never finer than the run's 8 px): 32 px on a 1064 x 712 copy, the preview of 16 per side in 0.14 s of
+#: CPU instead of 0.5 s, within 0.5 ADU (0.2 % of the sky) of the run's cell
+PREVIEW_CELL_SHARE = 22
 #: the preview starts this long after the last edit (the automatic model, slower, waits a little more)
 DEBOUNCE_MS, AUTO_DEBOUNCE_MS = 120, 600
 #: the cost of Apply is asked of the model this long after the last edit
@@ -2193,11 +2197,26 @@ def _survey_why(e: Exception) -> str:
     return _("not available ({why})").format(why=str(e)[:120])
 
 
+def preview_cell(params, shape: tuple[int, int]) -> int | None:
+    """The cell of the grid the preview's sky is evaluated on: coarser than the run's for the RBF on the samples the
+    block chooses (evaluating the splines is most of the preview's time there; the sky is smooth at that scale), the
+    run's otherwise (None). Apply and the run keep the stage's own cell."""
+    import inspect
+
+    from ..stages.gradient import sky_model_of
+    if params.sample_points or params.method != "rbf" or "cell" not in inspect.signature(sky_model_of).parameters:
+        return None
+    return max(8, int(min(shape) / PREVIEW_CELL_SHARE))
+
+
 def _preview(sm: dict, params, emission=None, progress=None) -> dict:
     """The stack with the model's gradient removed (its level kept), on the reduced copy, and its samples (``emission``:
-    the survey's level on the copy, which the block's own samples avoid, as the run's): the stage's own functions."""
+    the survey's level on the copy, which the block's own samples avoid, as the run's): the stage's own functions, its
+    sky evaluated on ``preview_cell``."""
     from ..stages.gradient import read_grid, sky_model_of
-    m = sky_model_of(sm["arr"], sm["valid"], params, f=sm["f"], progress=progress, emission=emission)
+    cell = preview_cell(params, sm["arr"].shape[1:])
+    kw = {"cell": cell} if cell is not None else {}
+    m = sky_model_of(sm["arr"], sm["valid"], params, f=sm["f"], progress=progress, emission=emission, **kw)
     h, w = sm["arr"].shape[1:]
     g = read_grid(m["grid"], m["info"], h, w)
     lvl = np.array([np.median(g[c][sm["valid"]]) for c in range(3)], np.float32)[:, None, None]
