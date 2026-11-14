@@ -5,6 +5,10 @@ same Post actions run by the model's own Post functions) and compared with the p
 table. The commonest gestures (insert a block, try a variant, a block's image to Post, Align on, a combination) are
 compared the same way, from a project built both ways.
 
+The project model writes every setting of a block (at its default when nobody changed it): the definitions are
+compared without the values stored at their static default, the key tables as they are (their overrides without those
+values: the jobs get the same settings).
+
 The old way's code went with the swap to the graph: its projects were recorded before, by this file run with
 ``FLOAT_RECORD_OLD_WAY=1`` on the last commit that had it (``old_way/<test>.json``: each state the old model reached,
 its definition and what its call returned). A replay compares the new project with the recorded definition, and the
@@ -230,12 +234,14 @@ def differences(a, b) -> list[str]:
 def differences_to(recorded: dict, p) -> list[str]:
     """A recorded definition against the project ``p``: the definitions, then the key tables of both, the recorded
     one read in ``p``'s folder."""
-    d = _first_diff(_whole(recorded), whole(p), "definition")
+    from astro_gpu.client.graphdefaults import strip_defaults, strip_override_defaults
+    d = _first_diff(_whole(recorded), _whole(strip_defaults(p.to_dict(), recorded)), "definition")
     if d:
         return [d]
     q = project2.Project2.from_dict(json.loads(json.dumps(recorded)), p.root)
     rules = _key_rules()
-    d = _first_diff(_rooted(keys_table(q, rules, _NoDisk())), _rooted(keys_table(p, rules, _NoDisk())), "keys")
+    d = _first_diff(_rooted(strip_override_defaults(keys_table(q, rules, _NoDisk()), rules)),
+                    _rooted(strip_override_defaults(keys_table(p, rules, _NoDisk()), rules)), "keys")
     return [d] if d else []
 
 

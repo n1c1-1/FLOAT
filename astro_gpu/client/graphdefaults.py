@@ -60,30 +60,34 @@ def missing_defaults(p, rules=None) -> list[tuple[int, str, str, object]]:
     return out
 
 
-def with_explicit_defaults(g, tr=None, like=None):
-    """The graph ``g`` with every missing default written on what holds its setting (one operation per setting, as
-    the panel stores one): (graph, count). ``g`` itself is not changed. ``like``: the project the graph is compiled into
-    (its reference image decides chains), else an empty one."""
+def with_explicit_defaults(g, tr=None, like=None, rules=None):
+    """The graph ``g`` with every missing default written on what holds its setting (where the panel would store it:
+    graphcore's own store of a workflow's setting): (graph, count). ``g`` itself is not changed. A default changes no
+    effective value, so it is written whatever the graph's state (one a gesture leaves waiting is written too).
+    ``like``: the project the graph is compiled into (its reference image decides chains), else an empty one;
+    ``rules``: its stages' rules (``api``'s of that project), else the engine's."""
     from ..core.project2 import Project2
+    from ..graphcore import model as gm
     from ..graphcore.compile import compile_into
-    from ..graphcore.operations import apply_many
+    from ..graphcore.operations import _flow_of, _stage_names, _store
     q = Project2.from_dict(like.to_dict(), like.root) if like is not None else Project2(name="")
     c = compile_into(g, q)
     flow_of = {wid: fid for fid, wid in c.wids.items()}
-    todo = missing_defaults(q)
-    seen, steps = set(), []
-    for wid, stage, name, v in todo:
+    seen, items = set(), []
+    for wid, stage, name, v in missing_defaults(q, rules):
         f = flow_of.get(wid)
         if f is None or (f, stage, name) in seen:
             continue
         seen.add((f, stage, name))
-        steps.append(("set_flow_param", {"flow": f, "stage": stage, "name": name, "value": v}))
-    if not steps:
+        items.append((f, stage, name, v))
+    if not items:
         return g, 0
-    g2, res = apply_many(g, steps, None, tr) if tr is not None else apply_many(g, steps)
-    if not res.ok:
-        raise ValueError(f"defaults not written: {res.reason}")
-    return g2, len(steps)
+    g2 = gm.clone(g)
+    names, ix = _stage_names(g2), gm.Index(g2)
+    for f, stage, name, v in items:
+        _store(g2, ix, _flow_of(g2, f), stage, name, v, names)
+    gm.check(g2)
+    return g2, len(items)
 
 
 def strip_defaults(d: dict, like: dict, rules=None) -> dict:
@@ -106,3 +110,22 @@ def strip_defaults(d: dict, like: dict, rules=None) -> dict:
             if not kv:
                 del w["params"][stage]
     return d
+
+
+def strip_override_defaults(table: dict, rules=None) -> dict:
+    """A Keys table (graphcore.proof.keys_table) whose overrides (stored settings that are not keys but reach the jobs)
+    leave out the values stored at their static default: the jobs get the same settings."""
+    import json
+    from ..core.store import key_rules
+    rules = rules or key_rules()
+    for row in table.values():
+        for st, js in (row.get("overrides") or {}).items():
+            base = wfl.base(st.split("@")[0])
+            try:
+                dft, auto = rules.defaults(base), rules.auto_fields(base)
+            except (KeyError, ValueError):
+                continue
+            d = json.loads(js)
+            row["overrides"][st] = json.dumps({k: v for k, v in d.items() if k in auto or k not in dft or v != dft[k]},
+                                              sort_keys=True, default=str)
+    return table

@@ -113,13 +113,14 @@ def keys_diff(p, q, rules, scan) -> list[str]:
 
 def review_keys(p, cl: Client) -> dict:
     """The review key of each block the client draws (client/model.ProjectModel.review_key), without Qt."""
+    from .convert import set_values
     out = {}
     exc = sorted([list(x) for x in p.excluded])
     for w in p.workflows:
         refs = {view_key(b): key for b, key in cl.blocks[w.id]}
         for k in cl.display_keys(w):
             parts = [_engine(k), list(refs[k]) if k in refs else []]
-            st = w.params.get("stack") or {}
+            st = set_values(w.params.get("stack") or {}, "stack")
             if k == "crop":
                 parts += [list(refs.get("alignement", [])), st.get("zone")]
             if k == "selection":

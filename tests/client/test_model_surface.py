@@ -257,7 +257,8 @@ def test_exclusions_and_session_edits_are_saved_like_any_edit(qapp, tmp_path):
         def saved():
             assert m.dirty                                  # waiting for Save, then saved by it
             m.flush()
-            return json.loads((root / "project.astroproj").read_text(encoding="utf-8"))
+            assert json.loads((root / "project.astroproj").read_text(encoding="utf-8"))["format"] == 3   # the graph
+            return project2.load(root).to_dict()           # the definition the engine reads from it
         m.set_excluded([(1, "DSC0001.ARW")], True)
         assert m._dirty and not m.can_undo()
         assert saved()["excluded"] == [[1, "DSC0001.ARW"]]

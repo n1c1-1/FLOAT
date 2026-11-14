@@ -51,9 +51,9 @@ _TITLE_OF_KIND = {"sho": "S-H-O", "ho": "H-O", "rgb": "RGB", "lrgb": "LRGB"}
 
 
 #: Save writes the project file as the stored graph (format 3); until then, the definition as today (format 2)
-WRITE_GRAPH = False
+WRITE_GRAPH = True
 #: every setting of a block is written (at its default when nobody changed it): the file says everything
-EXPLICIT_DEFAULTS = False
+EXPLICIT_DEFAULTS = True
 
 
 def _file_format_is(f, fmt) -> bool:
@@ -215,7 +215,9 @@ class GraphEditing:
             return g
         from .graphdefaults import with_explicit_defaults
         try:
-            return with_explicit_defaults(g, _, like)[0]
+            from .. import api
+            rules = api._ctx(like).rules() if like is not None else None
+            return with_explicit_defaults(g, _, like, rules)[0]
         except Exception:  # noqa: BLE001 - settings that cannot be written now stay unwritten (the same keys)
             import logging
             logging.getLogger(__name__).exception("the defaults of the blocks could not be written")

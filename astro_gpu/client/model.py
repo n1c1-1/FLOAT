@@ -536,6 +536,13 @@ class _Snap(tuple):
     after_post = None              # the composition right after the step: what it changed is what Undo / Redo puts back
 
 
+def _set_values(stored: dict, stage: str) -> dict:
+    """A stage's stored settings as the engine's keys read them (graphcore.convert.set_values): a review mark tied to
+    them is the same whether the file writes every default or only the user's changes."""
+    from ..graphcore.convert import set_values
+    return set_values(stored, stage)
+
+
 def merge_post(base: dict, theirs: dict, mine: dict) -> dict:
     """The composition with a step undone or redone: ``base`` is how the step left it, ``theirs`` how it puts it, ``mine``
     how it is now. What the step changed (a version's name, a version made or taken out, a layer added, removed or
@@ -2425,7 +2432,7 @@ class _ProjectBase(QObject):
             zone = (p.params.get("stack") or {}).get("zone")
             return ("crop", tuple(zone) if zone else None) + own
         if key == "selection":
-            st = p.params.get("stack") or {}
+            st = _set_values(p.params.get("stack") or {}, "stack")
             base = ("selection", st.get("min_transparency"), st.get("max_fwhm_ratio"),
                     st.get("selection", "min_weight"), st.get("selection_transparency", "on"))
             return base + own if own != (None, ()) else base
@@ -2809,7 +2816,7 @@ class _ProjectBase(QObject):
                 reg = ref("alignement")
                 parts += [list(reg.key) if reg is not None else [], (p.params.get("stack") or {}).get("zone")]
             if key == "selection":
-                reg, st = ref("alignement"), p.params.get("stack") or {}
+                reg, st = ref("alignement"), _set_values(p.params.get("stack") or {}, "stack")
                 parts += [list(reg.key) if reg is not None else [], st.get("min_transparency"),
                           st.get("max_fwhm_ratio"), st.get("selection", "min_weight"),
                           st.get("selection_transparency", "on"), sorted(list(x) for x in self.frames_excluded)]

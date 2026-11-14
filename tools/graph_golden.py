@@ -596,6 +596,16 @@ def cmd_stable(args) -> int:
 
 
 # ---------------------------------------------------------------------------------------------- check
+def _keys_diff_modulo_defaults(p, q, rules, scan) -> list[str]:
+    """Every stage key and block key as they are; the overrides without the values stored at their static default
+    (client/graphdefaults.strip_override_defaults: the jobs get the same settings)."""
+    from astro_gpu.client.graphdefaults import strip_override_defaults
+    from astro_gpu.graphcore import proof
+    a = strip_override_defaults(proof.keys_table(p, rules, scan), rules)
+    b = strip_override_defaults(proof.keys_table(q, rules, scan), rules)
+    return [d for wid in a if (d := proof._first_diff(a[wid], b.get(wid), f"workflow {wid}"))]
+
+
 def check_project(folder: Path, rec: dict) -> dict:
     """One recorded project through the graph model, in this process: its definition loaded, converted, compiled
     into a copy; then (a) the definitions, (b) every stage key, block key and override, (c) the states and the
@@ -623,7 +633,10 @@ def check_project(folder: Path, rec: dict) -> dict:
         out["definition"] = proof.definition_diff(p, stripped)
     else:
         out["definition"] = proof.definition_diff(p, q)
-    out["keys"] = proof.keys_diff(p, q, rules, scan)
+    if os.environ.get("FLOAT_EXPLICIT_DEFAULTS") == "1":
+        out["keys"] = _keys_diff_modulo_defaults(p, q, rules, scan)
+    else:
+        out["keys"] = proof.keys_diff(p, q, rules, scan)
     out["states"] = proof.states_diff(p, q)
     cl_p, cl_q = Client(p), Client(q)
     ra, rb = proof.review_keys(p, cl_p), proof.review_keys(q, cl_q)

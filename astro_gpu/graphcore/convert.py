@@ -35,6 +35,19 @@ PORT_OF_ROLE = {"SII": "S II", "Ha": "Hα", "OIII": "O III", "L": "L", "R": "R",
 ROLE_OF_PORT = {v: k for k, v in PORT_OF_ROLE.items()}
 #: the settings of the stack stage Selection owns (it has no stage of its own)
 SELECTION_KEYS = ("min_transparency", "max_fwhm_ratio", "selection", "selection_transparency")
+
+
+def set_values(stored: dict, stage: str) -> dict:
+    """A stage's stored settings as the engine's keys read them: a value stored at the stage's static default counts as
+    not stored, but on a field with an automatic rule (stored there, it means "not automatic"). The client's block and
+    review keys read them so: the same whether the file writes every default or only the user's changes."""
+    from ..core.store import key_rules
+    rules = key_rules()
+    try:
+        defaults, auto = rules.defaults(stage), rules.auto_fields(stage)
+    except (KeyError, ValueError):
+        return dict(stored)
+    return {k: v for k, v in stored.items() if k in auto or k not in defaults or v != defaults[k]}
 #: the engine blocks that are a graph block of the same kind
 CHAIN_KINDS = ("registration", "selection", "crop", "stacking", "astrometry", "gradient", "deconv", "denoise",
                "color", "stars", "synth")
@@ -159,7 +172,7 @@ class Client:
 
     def block_key(self, w, k):
         own = (self.node_fork(w, k), self.forks(w))
-        st = w.params.get("stack") or {}
+        st = set_values(w.params.get("stack") or {}, "stack")
         if k == "crop":
             zone = st.get("zone")
             return ("crop", tuple(zone) if zone else None) + own

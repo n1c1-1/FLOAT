@@ -301,7 +301,8 @@ def test_a_project_of_todays_format_opens_converted_and_unchanged(win, env):
         ready(win, 300)
         s = win.s
         assert s.stored.rows and s.graph_rebuilds == 0
-        after = s.p.to_dict()
+        from astro_gpu.client.graphdefaults import strip_defaults
+        after = strip_defaults(s.p.to_dict(), before)          # every default is written: compared without them
         for k in ("sessions", "excluded", "stack_mode", "workflows", "next_workflow_id", "post"):
             assert after[k] == before[k], k
         choose_every_block(win)
@@ -329,7 +330,7 @@ def test_a_setting_undone_and_redone_and_a_block_to_post(win, env):
     assert s.p.workflow(q.pid).params["stack"]["kappa"] == 2.5
     page.bridge.undo()                                     # Ctrl+Z on the page
     settle(win, 3)
-    assert "kappa" not in (s.p.workflow(q.pid).params.get("stack") or {})
+    assert s.p.workflow(q.pid).params["stack"]["kappa"] != 2.5      # back to the stage's default
     page.bridge.redo()
     settle(win, 3)
     assert s.p.workflow(q.pid).params["stack"]["kappa"] == 2.5
@@ -446,7 +447,8 @@ def test_saved_closed_and_opened_again_gives_the_same_graph(win, env):
     win.save()
     settle(win)
     assert not s.dirty
-    graph, definition = drawn(s.stored), s.p.to_dict()
+    from astro_gpu.graphcore.model import model_json
+    graph, definition, stored = drawn(s.stored), s.p.to_dict(), model_json(s.stored)
     assert win.close_project(go_home=False)
     assert win.open_project(root)
     ready(win)
@@ -454,4 +456,7 @@ def test_saved_closed_and_opened_again_gives_the_same_graph(win, env):
     for k in ("sessions", "excluded", "stack_mode", "workflows", "next_workflow_id", "post"):
         assert again[k] == definition[k], k
     assert drawn(win.s.stored) == graph              # the same stacks, blocks, nights, taps and wires
+    assert model_json(win.s.stored) == stored        # the file holds the graph (format 3): the very same one
+    import json as _json
+    assert _json.loads((root / "project.astroproj").read_text(encoding="utf-8"))["format"] == 3
     assert not env["errors"], env["errors"]
