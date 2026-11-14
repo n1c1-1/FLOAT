@@ -181,6 +181,49 @@ def test_one_night_card_per_session_beside_the_image(qapp, monkeypatch, tmp_path
     assert all((tmp_path / n).stat().st_size > 2000 for n in names)
 
 
+def test_the_picture_lines_sum_every_session_the_picture_is_made_of():
+    facts = {"stackcnt": 60, "exposure_s": 1500.0,
+             "parts": [{"name": "Night 1", "frames": 20, "seconds": 300.0, "shared": 0},
+                       {"name": "Night 2", "frames": 20, "seconds": 600.0, "shared": 0},
+                       {"name": "Night 3", "frames": 20, "seconds": 600.0, "shared": 0}]}
+    lines = rep.picture_lines(facts)
+    assert lines[0] == "The picture: 60 frames · 25 min"
+    assert lines[1:] == ["Night 1: 20 frames · 5 min", "Night 2: 20 frames · 10 min", "Night 3: 20 frames · 10 min"]
+    assert rep.picture_lines({"stackcnt": 20, "exposure_s": 300.0, "parts": [{"name": "A", "frames": 20, "seconds": 300.0}]})         == ["The picture: 20 frames · 5 min"]
+    assert rep.picture_lines(None) == [] and rep.picture_lines({"target": "x"}) == []
+
+
+def test_the_cards_beside_an_image_say_what_the_whole_picture_is_made_of(qapp, monkeypatch, tmp_path):
+    p = page(monkeypatch)
+    facts = {"stackcnt": 60, "exposure_s": 900.0, "parts": [{"name": "A", "frames": 30, "seconds": 450.0, "shared": 0},
+                                                              {"name": "B", "frames": 30, "seconds": 450.0, "shared": 0}]}
+    plain = p.save_cards(tmp_path, "a")
+    sized = [f.stat().st_size for f in plain]
+    said = p.save_cards(tmp_path, "b", facts)
+    assert len(said) == len(plain) == 2 and all(f.stat().st_size > 2000 for f in said)
+    assert p.data.nights[0].foot and [f.read_bytes() for f in said] != [f.read_bytes() for f in plain] and sized
+
+
+def test_the_picture_lines_and_the_loading_reason_are_in_french():
+    i18n.set_language("fr")
+    try:
+        lines = rep.picture_lines({"stackcnt": 1, "exposure_s": 300.0, "parts": []})
+        assert lines == ["L'image : 1 image · 5 min"]
+        assert i18n._("Reading the registration result...") == "Lecture du résultat d'alignement..."
+    finally:
+        i18n.set_language("en")
+
+
+def test_the_card_is_loading_not_missing_while_the_registration_is_read(qapp, monkeypatch):
+    p = page(monkeypatch)
+    p._token = None
+    assert not p.card_loading()
+    p._token = 7
+    assert p.card_loading()
+    p._ready("report", 7, rep.ReportData())
+    assert not p.card_loading()
+
+
 def test_the_brush_goes_to_1200_px_and_small_sizes_stay_on_the_slider():
     assert BRUSH_MAX == 1200.0 and brush_px(0.0) == BRUSH_MIN and brush_px(1.0) == 1200
     assert brush_px(brush_pos(60.0)) == 60

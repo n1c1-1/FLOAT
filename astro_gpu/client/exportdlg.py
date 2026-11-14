@@ -201,8 +201,11 @@ class ExportDialog(QDialog):
     def _card_state(self):
         """The night card can be attached once the registration is read; greyed, it says why."""
         ok = self.card is not None and self.card.card_ready()
+        reading = not ok and self.card is not None and getattr(self.card, "card_loading", lambda: False)()
         self.c_card.setEnabled(ok)
-        self.c_card.setToolTip("" if ok else _("No registration result yet"))
+        # being read: the reason is not "no result", it is that it is not there yet
+        self.c_card.setToolTip("" if ok else _("Reading the registration result...") if reading
+                               else _("No registration result yet"))
 
     @staticmethod
     def _check(layout, text, on) -> QCheckBox:
@@ -346,6 +349,11 @@ class ExportDialog(QDialog):
                          annotations={"grid": self.c_grid.isEnabled() and self.c_grid.isChecked(),
                                       "objects": self.c_names.isEnabled() and self.c_names.isChecked()})
 
+    def _card_facts(self):
+        """What the picture is made of (the FITS export's facts), for the card to say."""
+        s = getattr(self.view, "s", None)
+        return s.export_facts(self._image_pids()) if hasattr(s, "export_facts") else None
+
     def _image_pids(self) -> list:
         """The workflows the exported picture is made of: those of its visible layers, a Combine layers layer through
         both its sides (its stars' workflow too)."""
@@ -401,7 +409,7 @@ class ExportDialog(QDialog):
             return
         folder, name = split_file(self.dest.text())
         if self.c_card.isChecked() and self.c_card.isEnabled():
-            files = list(files) + self.card.save_cards(folder, Path(name).stem)
+            files = list(files) + self.card.save_cards(folder, Path(name).stem, self._card_facts())
         self.files = files
         self.bar.setValue(100)
         self.status.setText(plural(len(files), "{n} file written to {folder}", "{n} files written to {folder}",
