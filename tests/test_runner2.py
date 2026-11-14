@@ -1201,3 +1201,20 @@ def test_a_heavy_job_on_the_processor_runs_in_a_child_process_and_its_exit_code_
     w.device = "cpu"
     assert w.run_job(runner2.Job(key="k3", stage="gradient", block="gradient", wf=[1], run_wf=1, deps={})) == "done"
     assert not started and here == ["k2", "k3"]
+
+
+def test_a_worker_imports_the_astro_gpu_of_the_process_that_started_it(tmp_path):
+    """A worker (or a job's process) starts in the project's folder: with the folder of this astro_gpu first on its
+    path it runs this code, not another copy installed in the Python environment (a second checkout)."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    import astro_gpu
+    env = runner2._own_package_first({"PYTHONPATH": "elsewhere"})
+    here = str(Path(astro_gpu.__file__).resolve().parents[1])
+    assert env["PYTHONPATH"].split(os.pathsep) == [here, "elsewhere"]
+    assert runner2._own_package_first({})["PYTHONPATH"] == here
+    out = subprocess.run([sys.executable, "-c", "import astro_gpu; print(astro_gpu.__file__)"], cwd=tmp_path,
+                         env=runner2._own_package_first(dict(os.environ)), capture_output=True, text=True, check=True)
+    assert Path(out.stdout.strip()).resolve().parents[1] == Path(here)
