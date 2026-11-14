@@ -608,9 +608,17 @@ class Panel(QWidget):
                 and [q.pid for q in node.paths] == [q.pid for q in self.node.paths])
         fw = QApplication.focusWidget()
         had_focus = fw is not None and self.isAncestorOf(fw)
+        if same and had_focus and getattr(self, "_typing", False):
+            self.node = node                             # a field is being typed in (edited, not yet applied): built
+            self._later.start(400)                       # again after it, never under the user's fingers
+            return
+        self._typing = False
         scroll = self._sc.verticalScrollBar().value() if same else 0
         self._refresh(node)
         self._finish_sections()
+        for ed in self.findChildren(QLineEdit):          # what the user types (not what a build puts in) until applied
+            ed.textEdited.connect(self._typed, Qt.UniqueConnection)
+            ed.editingFinished.connect(self._applied, Qt.UniqueConnection)
         if same:
             # the scroll area as context, never the panel in the lambda: a panel closed meanwhile is not kept with its
             # model (GUI exploration 4: every closed project stayed in memory)
@@ -621,6 +629,12 @@ class Panel(QWidget):
                 ed = getattr(row, "editor", None)
                 if ed is not None and ed.isEnabled():
                     QTimer.singleShot(0, ed.setFocus)
+
+    def _typed(self, *_a):
+        self._typing = True
+
+    def _applied(self):
+        self._typing = False
 
     def _refresh(self, node):
         clear(self.hv)
