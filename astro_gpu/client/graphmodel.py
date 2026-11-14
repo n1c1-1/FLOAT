@@ -91,7 +91,7 @@ class GraphDocument:
 
     @property
     def graph(self):
-        return self.model._g                  # read on every paint: what the model absorbed at its last step
+        return self.model._shown              # read on every paint: what the model absorbed at its last step
 
     @property
     def view(self):
@@ -160,11 +160,38 @@ class GraphEditing:
     #: the client's block keys the converter reads when the project opens (False: the drawing's structure only)
     GRAPH_KEYS = True
 
+    @property
+    def _g(self):
+        """The stored graph; read while the opening's graph is provisional, the conversion is finished first (only the
+        page's drawing and the block map read the provisional one: ``_shown``)."""
+        d = self.__dict__
+        if d.get("_provisional") and "_graph" in d and not d.get("_drawing"):
+            self._finish_open(files=False)
+        return d.get("_graph")
+
+    @_g.setter
+    def _g(self, g):
+        self.__dict__["_graph"] = g
+
+    @property
+    def _shown(self):
+        """The graph as the page draws it now: the provisional one while the opening waits for the worker."""
+        return self.__dict__.get("_graph")
+
     def __init__(self, project, *args, **kwargs):
         # the graph first, compiled into the definition before the worker reads it (no race with the warm job): the
-        # one the file holds (format 3), else the definition converted (a project of the previous format)
-        g = self._stored_graph(project) or self._with_defaults(self._convert(project), project)
-        c = compile_into(g, project)
+        # one the file holds (format 3), else the definition converted (a project of the previous format). Nothing
+        # here reads the disk nor loads the engine's stages (the old model's rule: the worker does, the window opens at
+        # once): a project of the previous format opened before the engine's rules are loaded shows a provisional graph
+        # (its nights only, the definition untouched) until the worker has warmed the API; the conversion is then
+        # finished (``_finish_open``), at once if an edit comes first.
+        g = self._stored_graph(project)
+        self._provisional = g is None and not self._rules_loaded()
+        if g is None:
+            g = self._provisional_graph(project) if self._provisional else \
+                self._with_defaults(self._convert(project), project)
+        c = compile_into(g, self._scratch(project) if self._provisional else project)
+        self._opening = True                       # the folder entries are listed once the worker has warmed the API
         super().__init__(project, *args, **kwargs)
         self._g = g
         self.compiled = c
@@ -173,11 +200,61 @@ class GraphEditing:
         self.graph_rebuilds = 0                    # the times the definition was changed outside the graph
         self._bm = None
         self._absorbing = False
-        self._g = self._with_post_wires(self._g)
+        if not self._provisional:
+            self._g = self._with_post_wires(self._g)
         self._sig = self._def_sig()
-        from ..graphcore.convert import files_only
-        if files_only(self.p):                     # files only: a folder entry becomes the files the engine reads there
-            self._absorb()                         # (taken into the graph; saved with the next edit)
+
+    @staticmethod
+    def _rules_loaded() -> bool:
+        """Whether the engine's chains and key rules are loaded (they import every stage: seconds, the first time)."""
+        from ..core import store
+        from ..core import workflow as wfl
+        return bool(wfl._CHAINS) and bool(store._RULES)
+
+    @staticmethod
+    def _provisional_graph(p) -> gm.Project:
+        """What a project shows while its conversion waits for the engine's rules: its nights, no stack."""
+        g = gm.Project(name=p.name, target=getattr(p.target, "name", "") or "")
+        g.blocks = {}
+        gm.new_block(g, "post")
+        g.nights = [{"sid": s.id, "name": s.name, "filter": s.filter,
+                     "files": {k: list(getattr(s, k)) for k in gm.FILE_KINDS}, "left_out": copy.deepcopy(s.left_out)}
+                    for s in p.sessions]
+        g.excluded = [[int(a), str(b)] for a, b in p.excluded]
+        g.calibrate_together = p.stack_mode == "together"
+        g.next_wid = p.next_workflow_id
+        return g
+
+    @staticmethod
+    def _scratch(p):
+        """A copy of the definition a provisional graph is compiled into (the definition itself stays as it was read)."""
+        from ..core.project2 import Project2
+        return Project2.from_dict(copy.deepcopy(p.to_dict()), p.root)
+
+    def _finish_open(self, files: bool = True):
+        """The conversion finished (a provisional graph replaced by the definition converted), then the folder entries
+        become the files the engine reads there (``files_only``): after the worker warmed the API, so the frames are
+        listed already and the stages loaded; at once when the graph is read, an edit or a save comes first (``files``
+        False: the conversion only)."""
+        if getattr(self, "_provisional", False):
+            self._provisional = False
+            g = self._with_defaults(self._convert(self.p), self.p)
+            self._g = g
+            self.compiled = compile_into(g, self.p)
+            self._rebuild_views()
+            self._g = self._with_post_wires(self._g)
+            self._sig = self._def_sig()
+            self.revision += 1
+        if files and getattr(self, "_opening", False):
+            self._opening = False
+            from ..graphcore.convert import files_only
+            if files_only(self.p):                 # files only: a folder entry becomes the files the engine reads there
+                self._absorb()                     # (taken into the graph; saved with the next edit)
+
+    def _worker_done(self, channel: str, n: int, result):
+        if channel == f"model.warm:{id(self)}" and (self._provisional or self._opening):
+            self._finish_open()
+        super()._worker_done(channel, n, result)
 
     # ------------------------------------------------------------------ the graph
     @staticmethod
@@ -252,7 +329,11 @@ class GraphEditing:
         post = getattr(self.p, "post", None) or {}
         stamp = (self.revision, post.get("active"), json.dumps(post.get("versions") or [], sort_keys=True, default=str))
         if self._bm is None or self._bm[0] != stamp:
-            self._bm = (stamp, BlockMap(self.compiled, self, self._g))
+            self.__dict__["_drawing"] = True       # a provisional graph is drawn as it is (no conversion waited for)
+            try:
+                self._bm = (stamp, BlockMap(self.compiled, self, self._shown))
+            finally:
+                self.__dict__["_drawing"] = False
         return self._bm[1]
 
     def _def_sig(self) -> str:
@@ -276,6 +357,8 @@ class GraphEditing:
         make rebuilds it from the definition."""
         if getattr(self, "_g", None) is None or self._absorbing:
             return
+        if self._provisional or self._opening:     # an edit before the worker answered: the opening is finished now
+            self._finish_open()
         self._absorbing = True
         try:
             if self._def_sig() != self._sig:
@@ -489,7 +572,8 @@ class GraphEditing:
         """Post follows the graph (ProjectModel._prune_post), then the graph's wires to Post follow Post: the step ends
         with the graph and Post agreeing, so an undo gives both back as they were shown."""
         super()._prune_post()
-        if getattr(self, "_g", None) is not None and not getattr(self, "_absorbing", False):
+        if getattr(self, "_g", None) is not None and not getattr(self, "_absorbing", False) and \
+                not getattr(self, "_provisional", False):
             g2 = self._with_post_wires(self._g)
             if g2 is not self._g:
                 self._g = g2
