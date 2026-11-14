@@ -611,7 +611,18 @@ def check_project(folder: Path, rec: dict) -> dict:
     g, q, log = proof.round_trip(p)
     rules, scan = key_rules(), InputScan()
     out: dict = {"workflows": len(p.workflows), "sessions": len(p.sessions), "convert_log": log}
-    out["definition"] = proof.definition_diff(p, q)
+    if os.environ.get("FLOAT_EXPLICIT_DEFAULTS") == "1":
+        # the file says everything (client/graphdefaults.py): every default written on the graph, compiled again;
+        # the definitions compared without the values written at their static default, the keys as they are
+        from astro_gpu.client.graphdefaults import strip_defaults, with_explicit_defaults
+        from astro_gpu.graphcore.compile import compile_into
+        g, out["defaults_written"] = with_explicit_defaults(g, like=p)
+        q = project2.Project2.from_dict(p.to_dict(), p.root)
+        compile_into(g, q)
+        stripped = project2.Project2.from_dict(strip_defaults(q.to_dict(), p.to_dict()), p.root)
+        out["definition"] = proof.definition_diff(p, stripped)
+    else:
+        out["definition"] = proof.definition_diff(p, q)
     out["keys"] = proof.keys_diff(p, q, rules, scan)
     out["states"] = proof.states_diff(p, q)
     cl_p, cl_q = Client(p), Client(q)

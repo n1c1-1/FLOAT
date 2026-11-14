@@ -394,6 +394,22 @@ def _covered() -> set[tuple[str, str]]:
 COVERED = _covered()
 
 
+def user_changed(stage: str, name: str, info) -> bool:
+    """Whether a setting is the user's change: the file writes every setting (at its default when nobody changed it),
+    so a stored value is a change only when it is not the stage's current default; an automatic field's stored value
+    always is (it means "not automatic")."""
+    if info.origin != "user":
+        return False
+    from .graphmodel import EXPLICIT_DEFAULTS
+    if not EXPLICIT_DEFAULTS:                         # stored means changed while the file writes only changes
+        return True
+    from ..core import workflow as wfl
+    from ..core.store import key_rules
+    if name in key_rules().auto_fields(wfl.base(stage.split("@")[0])):
+        return True
+    return info.value != info.default
+
+
 def _reason_text(s, info, stage: str) -> str:
     """Why the engine suggests this value, in the language shown (a decimal comma in French)."""
     lang = language()
@@ -435,7 +451,7 @@ def resolve(s, p, step: str, it: dict, stage: str | None = None) -> dict | None:
         r.update(label=_(it["label"] or info.label), help=_(it["help"] or info.help), suggested=info.suggested,
                  reason=_reason_text(s, info, stage), min=lo, max=hi, step=info.step, tip=_(tip),
                  unit=_(it["unit"] if it["unit"] is not None else UNITS.get(info.unit, info.unit)),
-                 choices=choices, type=typ, value=info.value, changed=info.origin == "user", locked=info.locked,
+                 choices=choices, type=typ, value=info.value, changed=user_changed(stage, it["name"], info), locked=info.locked,
                  drift=info.drift, result_value=info.result_value, optional=info.type == "float | None",
                  # an automatic value the engine sets from the data, not known yet: "auto", never the default it would
                  # replace (round 3: drizzle 1,50 before the run, 1,00 after, as the block said "auto")

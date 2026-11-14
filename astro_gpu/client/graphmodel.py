@@ -52,6 +52,8 @@ _TITLE_OF_KIND = {"sho": "S-H-O", "ho": "H-O", "rgb": "RGB", "lrgb": "LRGB"}
 
 #: Save writes the project file as the stored graph (format 3); until then, the definition as today (format 2)
 WRITE_GRAPH = False
+#: every setting of a block is written (at its default when nobody changed it): the file says everything
+EXPLICIT_DEFAULTS = False
 
 
 def _file_format_is(f, fmt) -> bool:
@@ -161,7 +163,7 @@ class GraphEditing:
     def __init__(self, project, *args, **kwargs):
         # the graph first, compiled into the definition before the worker reads it (no race with the warm job): the
         # one the file holds (format 3), else the definition converted (a project of the previous format)
-        g = self._stored_graph(project) or self._convert(project)
+        g = self._stored_graph(project) or self._with_defaults(self._convert(project), project)
         c = compile_into(g, project)
         super().__init__(project, *args, **kwargs)
         self._g = g
@@ -205,6 +207,19 @@ class GraphEditing:
         if bak.exists() or not f.exists() or not _file_format_is(f, FORMAT):
             return
         bak.write_bytes(f.read_bytes())
+
+    @staticmethod
+    def _with_defaults(g, like=None):
+        """The graph with every setting of its blocks written (graphdefaults.py), when ``EXPLICIT_DEFAULTS``."""
+        if not EXPLICIT_DEFAULTS:
+            return g
+        from .graphdefaults import with_explicit_defaults
+        try:
+            return with_explicit_defaults(g, _, like)[0]
+        except Exception:  # noqa: BLE001 - settings that cannot be written now stay unwritten (the same keys)
+            import logging
+            logging.getLogger(__name__).exception("the defaults of the blocks could not be written")
+            return g
 
     def _convert(self, p):
         if self.GRAPH_KEYS:
@@ -277,7 +292,7 @@ class GraphEditing:
     def _rebuild_from_definition(self):
         self.graph_rebuilds += 1
         self.log("Changed outside the graph: graph rebuilt from the definition")
-        g = self._convert(self.p)
+        g = self._with_defaults(self._convert(self.p), self.p)
         self._g = g
         self.compiled = compile_into(g, self.p)
         self._rebuild_views()
@@ -401,6 +416,7 @@ class GraphEditing:
             g = q if gm.model_json(q) != gm.model_json(g) else g
         if g is before:
             return res
+        g = self._with_defaults(g, self.p)                # a block made by the gesture says its settings too
         with self._edit():
             self._commit(g)
             post = gm.Index(before).post
