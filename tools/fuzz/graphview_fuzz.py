@@ -898,6 +898,16 @@ class Run:
         heads = {r.blocks[0] for r in g.rows if r.blocks and g.blocks[r.blocks[0]].kind == "combine_layers"
                  and any(w.dst == [r.blocks[0], "Background"] for w in g.wires)}
         drawn = {r.blocks[0] for rids in rows.values() for r in g.rows if r.id in rids}
+        # (nor one whose own inputs read what it cannot take, greyed by the core at itself, nor one whose Background
+        # reads another Combine layers: Post's layers are not layers of layers; the user's block waits for a right wire,
+        # greyed, no layer of Post either)
+        from astro_gpu.graphcore.judge import evaluation
+        ev = evaluation(g)
+        waiting = {j for j in heads | drawn if ev.get(j) is not None and getattr(ev[j], "cat", None) in ("need", "port")
+                   and getattr(ev[j], "root", None) == j}
+        waiting |= {w.dst[0] for w in g.wires if w.dst[1] == "Background" and w.dst[0] in heads | drawn
+                    and w.src[0] in g.blocks and g.blocks[w.src[0]].kind == "combine_layers"}
+        heads, drawn = heads - waiting, drawn - waiting
         for j in sorted(heads):
             if j not in drawn:
                 raise Failure("h", f"Combine layers {j} stands for no layer of Post{when}")
