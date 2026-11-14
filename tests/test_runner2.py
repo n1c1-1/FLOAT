@@ -893,6 +893,9 @@ def test_workers_recording_at_once_all_keep_their_entries(tmp_path, monkeypatch)
     file, so no writer rewrites the file from a copy older than another one's entry. A lock left by a dead process
     (old) is removed; a live one is waited for LOCK_WAIT at most, then the entry is written anyway."""
     import threading
+    # 80 writes queued on one lock: under a loaded suite the last ones waited past LOCK_WAIT and went ahead without the
+    # lock (losing an entry); what is tested here is the lock, not that timeout
+    monkeypatch.setattr(est, "LOCK_WAIT", 120.0)
     p = tmp_path / "timings2.json"
     go = threading.Barrier(8)
 
