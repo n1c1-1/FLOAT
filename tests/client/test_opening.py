@@ -13,8 +13,8 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 from astro_gpu.client import app as appmod  # noqa: E402
-from astro_gpu.client import graph as graphmod  # noqa: E402
 from astro_gpu.client import prefs  # noqa: E402
+from astro_gpu.client.graphview import palette as palettemod  # noqa: E402
 from astro_gpu.client.services import inspect as inspectmod  # noqa: E402
 from astro_gpu.client.services.worker import Gpu, Machine  # noqa: E402
 from astro_gpu.core import project2  # noqa: E402
@@ -87,22 +87,23 @@ def _open(env, root):
 def test_the_palette_is_built_again_only_when_what_it_shows_changed(env):
     made = []
 
-    class Card(graphmod.PaletteCard):
+    class Card(palettemod.Card):
         def __init__(self, *a, **k):
             made.append(a[1])
             super().__init__(*a, **k)
-    env["mp"].setattr(graphmod, "PaletteCard", Card)
+    env["mp"].setattr(palettemod, "Card", Card)
     w = _open(env, _project(env["tmp"]))
     page = w.graph
-    assert page.cards and len(made) <= 2 * len(page.cards)        # blank, then the project read: never once a refresh
-    cards = dict(page.cards)
+    pal = page.palette
+    assert pal.cards and len(made) <= 2 * len(pal.cards)          # blank, then the project read: never once a refresh
+    cards = dict(pal.cards)
     made.clear()
     page.refresh()
     page.refresh()
     _settle(w)
-    assert made == [] and page.cards == cards                    # the same cards, nothing built
-    page.set_layout("docked", "folded")                           # what it shows changed: built again
-    assert len(made) == len(page.cards) and page.cards["denoise"] is not cards["denoise"]
+    assert made == [] and pal.cards == cards                      # the same cards, nothing built
+    page.set_layout("docked", "folded")                           # what it shows changed: the same cards, folded
+    assert made == [] and pal.cards["denoise"] is cards["denoise"] and cards["denoise"].narrow
 
 
 def test_the_frames_are_read_when_inspect_shows_them_not_as_the_project_opens(env):
