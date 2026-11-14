@@ -693,7 +693,11 @@ def items_of(p, chain):
 
 
 def is_legacy(ix, rid):
-    return bool(ix.row[rid].legacy or ix.row[ix.root(rid)].legacy)
+    """A workflow compiled from its options whose chain is not that of its blocks (frozen until its first edit, which
+    rebuilds it from its blocks): the engine checks its options, not its blocks."""
+    def frozen(r):
+        return bool(r.legacy and r.legacy.get("frozen"))
+    return frozen(ix.row[rid]) or frozen(ix.row[ix.root(rid)])
 
 
 def row_verdict(p, ix, rid):

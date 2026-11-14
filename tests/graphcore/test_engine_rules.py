@@ -152,7 +152,13 @@ def test_calibration_together_and_each_night():
     ok(doc, "add_night", row=r.id)
     c2 = doc.project.rows[0].nights[1][1]
     assert doc.project.calibrate_together
-    assert refused_inert(doc, "switch_off", block=c2) == "calibrated together: one setting for all nights"
+    ok(doc, "switch_off", block=c2)              # together: one Calibration for the stack, its nights switch as one
+    assert all(doc.project.blocks[c].off for _s, c in doc.project.rows[0].nights)
+    p, _c = compiled(doc)
+    assert p.workflows[0].blocks[0]["block"] == "calibration" and p.workflows[0].blocks[0]["off"]
+    engine_ok(doc)
+    ok(doc, "switch_off", block=doc.project.rows[0].nights[0][1])
+    assert not any(doc.project.blocks[c].off for _s, c in doc.project.rows[0].nights)
     ok(doc, "set_calibrate_together", on=False)
     ok(doc, "switch_off", block=c2)
     p, _c = compiled(doc)

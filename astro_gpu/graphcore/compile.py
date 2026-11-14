@@ -208,12 +208,21 @@ def compile_into(g, p) -> Compiled:
     def sid_of(b):
         return g.blocks[b].sid if g.blocks[b].sid is not None else fresh[b]
     by_sid = {s.id: s for s in p.sessions}
+    drawn = {}                       # a night a stack draws: its files are its Session block's (Commun's when none)
+    for r in g.rows:
+        for s, _c in r.nights:
+            if g.blocks[s].sid is not None:
+                drawn.setdefault(g.blocks[s].sid, g.blocks[s])
     sessions = []
     for n in g.nights:
         s = by_sid.get(n["sid"]) or Session(n["sid"])
         s.name, s.filter, s.left_out = n.get("name", ""), n.get("filter", ""), copy.deepcopy(n.get("left_out") or {})
+        blk = drawn.get(n["sid"])
         for k in gm.FILE_KINDS:
-            setattr(s, k, list((n.get("files") or {}).get(k) or []))
+            if blk is not None:
+                setattr(s, k, list(blk.files[k] if k in blk.files else g.common["files"].get(k, [])))
+            else:
+                setattr(s, k, list((n.get("files") or {}).get(k) or []))
         sessions.append(s)
     for b, sid in fresh.items():
         blk = g.blocks[b]
@@ -305,7 +314,7 @@ def compile_into(g, p) -> Compiled:
     p.stack_mode = "together" if g.calibrate_together else "per_session"
     p.workflows[:] = [made[x] for x in order]
     p.next_workflow_id = max([g.next_wid] + [x + 1 for x in made])
-    if p.current is not None and p.current not in made:
+    if p.current not in made:           # as Project2.add_workflow / remove_workflow keep it: the first one
         p.current = order[0] if order else None
     _split(g, p, flows, out)
     return out

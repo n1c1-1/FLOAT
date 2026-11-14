@@ -74,6 +74,19 @@ GESTURE = {
     "already alone on its row", "both sessions must be in the same stack", "two different stacks of lights are needed",
     "no other row has a {lab}", "this Stars/background already feeds a block", "already on its own grid",
     "no Align on in this row",
+    # step 3b: the engine's settings by their real keys (the engine's own check), variants on trial, a combination's
+    # inputs, shared nights, taps, a Calibration's own files
+    "unknown stage {_stage}", "{_stage} has no setting {_name}", "{_stage}.{_name} is set by the project",
+    "{_stage}.{_name}: not a valid value", "{lab} holds no setting of {_stage}", "a stack of lights holds this setting",
+    "{_stage}: a block holds this setting", "{lab} has no method", "unknown change", "{lab}: no variant from here",
+    "not a variant on trial", "its original is gone: it is a workflow of its own",
+    "a variant of “{_row}” starts from a block the variant does not have",
+    "a block of “{_row}” sent to Post is not in the variant", "unknown channel", "{port}: no input wired",
+    "a weight is a number", "nothing to change", "needs Stars/background", "unknown image",
+    "its inputs read no starless image", "“{_name}” is already in “{_row}”",
+    "“{_name}” is shared by several stacks: its lights stay together", "not found", "it already follows its session",
+    "{lab} is switched off: its image is its input's",
+    "unknown method",
     # the model's shapes: a row starts with its head, a variant forks after a block of its row, a night's
     # Calibration is its night's, Post is one, a source stays at its row's head
     "nothing is inserted before the head of the row", "a variant starts after the Registration",
@@ -190,6 +203,30 @@ def gen(rng, doc):
                                       "copy": rng.random() < .3}),
         lambda: _split_by(rng, p, sess),
         lambda: ("op", "merge_rows", {"src": pick(rng, rows), "dst": pick(rng, rows)}),
+        lambda: _try_variant(rng, p, blocks),
+        lambda: ("op", "keep_variant", {"row": pick(rng, [r.id for r in p.rows if r.trial is not None] or rows)}),
+        lambda: ("op", "discard_variant", {"row": pick(rng, [r.id for r in p.rows if r.trial is not None] or rows)}),
+        lambda: _set_input(rng, p, joins),
+        lambda: ("op", "add_stars_combination", {"block": pick(rng, [j for j in joins if any(
+            w.dst[0] == j and w.src[1] == "Starless" for w in p.wires)] or joins or blocks)}),
+        lambda: ("op", "add_combination", {"type": pick(rng, list(COMBO_PORTS) + ["x"]), "name": pick(rng, NAMES)}),
+        lambda: _share(rng, p, sess),
+        lambda: ("op", "set_night_filter", {"night": pick(rng, sess), "filter": pick(rng, ["Ha", "OIII", ""])}),
+        lambda: ("op", "send_to_post", {"block": pick(rng, blocks), "name": pick(rng, NAMES)}),
+        lambda: ("op", "remove_tap", {"tap": pick(rng, [t.id for t in p.taps] or ["t0"])}),
+        lambda: _set_param(rng, p, blocks),
+        lambda: ("op", "set_row_param", {"row": pick(rng, rows), "stage": pick(rng, ["render_simple", "calibrate",
+                                                                                   "align_on", "stack"]),
+                                         "name": pick(rng, ["linked", "apply_masters", "method"]),
+                                         "value": pick(rng, [True, False, "stars"])}),
+        lambda: ("op", "set_method", {"block": pick(rng, blocks), "method": pick(rng, METHOD_CHOICES)}),
+        lambda: ("op", "set_own_calibration", {"block": pick(rng, [c for r in p.rows for _s, c in r.nights] or blocks),
+                                               "kind": pick(rng, FILE_KINDS), "paths": rng.sample(PATHS, 2),
+                                               "mode": pick(rng, ["add", "replace"])}),
+        lambda: ("op", "follow_session", {"block": pick(rng, [c for r in p.rows for _s, c in r.nights] or blocks),
+                                          "kind": pick(rng, FILE_KINDS)}),
+        lambda: ("op", "remove_own_calibration", {"block": pick(rng, [c for r in p.rows for _s, c in r.nights]
+                                                                      or blocks)}),
         lambda: ("many", [_setting(rng, p, blocks)[1:3], ("add_night", {"row": pick(rng, rows)})]),
         lambda: ("undo",), lambda: ("undo",), lambda: ("redo",),
         lambda: ("save",),
@@ -206,7 +243,8 @@ def _align(rng, p, rows):
         ix = Index(p)
         blocks = ix.effective(ref) if ref in ix.row else []
     return ("op", "set_align", {"row": pick(rng, rows), "ref": ref,
-                                "block": pick(rng, blocks) if blocks and rng.random() < 0.5 else None}, None)
+                                "block": pick(rng, blocks) if blocks and rng.random() < 0.5 else None,
+                                "method": pick(rng, [None, None, "stars", "plate", "x"])}, None)
 
 
 def _wire(rng, p):
@@ -248,6 +286,75 @@ def _common_setting(rng):
     kind = pick(rng, [k for k in SETTINGS])
     it = rng.choice([it for _s, its in SETTINGS[kind] for it in its])
     return ("op", "set_common_setting", {"kind": kind, "key": it[0], "value": _value(rng, it)}, None)
+
+
+#: the engine settings the fuzz sets (stage, name, values: valid ones and refused ones)
+PARAMS = [("register", "min_pairs", [3, 10, 20, 2, 500]), ("stack", "method", ["drizzle", "classic", "nope"]),
+          ("stack", "min_transparency", [0.6, 0.2]), ("stack", "kappa", [2.5, 3.0]), ("denoise", "fast", [True, False]),
+          ("calibrate", "apply_masters", [False, True]), ("gradient", "nothing", [1]), ("stack", "zone", [None]),
+          ("combine_sho", "lightness", ["noise", "equal"]), ("render_simple", "linked", [False])]
+#: by block kind, the settings it holds (most gestures set one of its own)
+OWN = {"registration": [("register", "min_pairs", [3, 10, 20, 2])], "selection": [("stack", "min_transparency", [0.6])],
+       "stacking": [("stack", "method", ["drizzle", "classic"]), ("stack", "kappa", [2.5])],
+       "crop": [("stack", "zone", [None])], "denoise": [(None, "fast", [True, False])],
+       "gradient": [(None, "nothing", [1])], "calibration": [("calibrate", "apply_masters", [False, True])],
+       "combine": [(None, "lightness", ["noise", "equal"])], "astrometry": [("astrometry", "nothing", [1])]}
+METHOD_CHOICES = ["polynomial", "rbf", "automatic", "pretrained", "adapted", "rl", "neural", "measured", None, "x"]
+
+
+def _param(rng, p, b):
+    blk = p.blocks[b] if b else None
+    if blk is not None and blk.kind in OWN and rng.random() < 0.8:
+        st, name, vals = rng.choice(OWN[blk.kind])
+        if st is None:
+            st = ops.owned_stages(p, b)[0] if blk.kind == "combine" else (blk.engine or blk.kind)
+        return st, name, rng.choice(vals)
+    st, name, vals = rng.choice(PARAMS)
+    return st, name, rng.choice(vals)
+
+
+def _change(rng, p, b):
+    k = rng.random()
+    if k < 0.45:
+        return {"param": list(_param(rng, p, b))}
+    if k < 0.7:
+        return {"method": pick(rng, METHOD_CHOICES)}
+    if k < 0.95:
+        return {"off": rng.random() < 0.5}
+    return {"nothing": 1}
+
+
+def _try_variant(rng, p, blocks):
+    ix = Index(p)
+    b = pick(rng, [x for x in blocks if x in ix.row_of and p.blocks[x].kind not in ("session", "image", "combine",
+                                                                                    "combine_layers")] or blocks)
+    return ("op", "try_variant", {"block": b, "change": _change(rng, p, b), "name": pick(rng, NAMES + [None])}, None)
+
+
+def _set_param(rng, p, blocks):
+    b = pick(rng, blocks)
+    st, name, v = _param(rng, p, b)
+    return ("op", "set_param", {"block": b, "stage": st, "name": name, "value": v}, None)
+
+
+def _share(rng, p, sess):
+    stacks = [r.id for r in p.rows if r.nights and not r.fork]
+    return ("op", "share_night", {"night": pick(rng, sess), "row": pick(rng, stacks or [r.id for r in p.rows])}, None)
+
+
+def _set_input(rng, p, joins):
+    j = pick(rng, joins or list(p.blocks))
+    ports = [w.dst[1] for w in p.wires if j and w.dst[0] == j and w.active] if rng.random() < 0.85 else []
+    ports = ports or (in_ports(p.blocks[j]) if j else [])
+    kw = {"block": j, "port": pick(rng, ports or ["R"])}
+    r = rng.random()
+    if r < 0.4:
+        kw["channel"] = pick(rng, ["L", "R", "G", "B", "GB", "Q"])
+    elif r < 0.7:
+        kw["weight"] = pick(rng, [0.5, 1.0, 2.0, -1, "x"])
+    else:
+        kw["image"] = pick(rng, ["output", "starless", "stars", "other"])
+    return ("op", "set_input", kw, None)
 
 
 def _split(rng, p, sess):

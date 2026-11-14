@@ -370,6 +370,15 @@ def check(p):
             pass                                       # a stack, or a stack being built (no Stacking yet, no block)
         else:
             need(kinds and kinds[0] in JOIN_KINDS + ("image",), f"row {r.id} has no head")
+    by_sid = {}
+    for r in p.rows:
+        sids = [p.blocks[s].sid for s, _c in r.nights if p.blocks[s].sid is not None]
+        need(len(sids) == len(set(sids)), f"row {r.id} draws one session twice")
+        for s, _c in r.nights:
+            if p.blocks[s].sid is not None:
+                by_sid.setdefault(p.blocks[s].sid, []).append(p.blocks[s])
+    for sid, bs in by_sid.items():
+        need(all(b.files == bs[0].files and b.name == bs[0].name for b in bs), f"session {sid} drawn twice unlike")
     flows = {r.id for r in p.rows} | {t.id for t in p.taps}
     for r in p.rows:
         if r.align is not None:
