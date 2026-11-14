@@ -1027,55 +1027,102 @@ class Provider:
 
 
 class ByteLRU:
-    """Images kept by content, the least recently used dropped first; an image no layer holds any more goes at once."""
+    """Images kept by content, the least recently used dropped first; an image no layer holds any more goes at once.
+
+    Scan-resistant: a composition reads its images in the same order every time, and when they do not all fit, a plain
+    LRU drops exactly the one the next composition reads first (none is ever found again). ``begin(level)`` opens a
+    composition at a level. To make room it drops, in this order: an image of a coarser level (cheaper to make again),
+    the least recently used first; one of its level not used by the last two compositions there; one the last
+    composition used, the most recently used first (in a scan, the one needed last: Belady's choice). Never one this
+    composition used, nor one of a finer level: the image is then not kept. The images kept stay the same from one
+    composition to the next, and are found again."""
 
     def __init__(self, cap: int = 1_500_000_000):
         self.cap = cap
         self.items: OrderedDict = OrderedDict()
         self.bytes = 0
+        self.level = 0                            # the level of the composition being made (``begin``)
+        self.gens: dict = {}                      # level -> its compositions so far
+        self._used: dict = {}                     # key -> (level, composition) that last used it
         self._held: dict = {}                     # (layer id, its part, level) -> key
         self._holders: dict = {}                  # key -> {(layer id, its part, level)}
+
+    def begin(self, level: int = 0):
+        self.level = level
+        self.gens[level] = self.gens.get(level, 0) + 1
+
+    def _mark(self, key):
+        self._used[key] = (self.level, self.gens.get(self.level, 0))
 
     def get(self, key):
         a = self.items.get(key)
         if a is not None:
             self.items.move_to_end(key)
+            self._mark(key)
         return a
 
-    def put(self, key, a: np.ndarray, holder=None):
+    def _victim(self):
+        lvl, now = self.level, self.gens.get(self.level, 0)
+        coarser = old = last = None
+        for k in self.items:                                  # the least recently used first
+            t, g = self._used.get(k, (lvl, -1))
+            if t > lvl:
+                if coarser is None:
+                    coarser = k
+            elif t == lvl and g != now:
+                if g < now - 1 and old is None:
+                    old = k
+                last = k
+        return coarser if coarser is not None else old if old is not None else last
+
+    def put(self, key, a: np.ndarray, holder=None) -> bool:
+        """Keep ``a``; False when it was not kept (what is kept serves this composition, or a finer level)."""
+        if holder is not None:
+            self._unhold(holder, key)
         if key not in self.items:
+            while self.items and self.bytes + a.nbytes > self.cap:
+                k = self._victim()
+                if k is None:
+                    return False
+                self._drop(k)
             self.items[key] = a
             self.bytes += a.nbytes
         self.items.move_to_end(key)
+        self._mark(key)
         if holder is not None:
             self.hold(key, holder)
-        while self.bytes > self.cap and len(self.items) > 1:
-            k = next(iter(self.items))
-            if k == key:
-                self.items.move_to_end(k)
-                continue
-            self._drop(k)
+        return True
 
-    def hold(self, key, holder):
+    def _unhold(self, holder, key):
+        """The holder takes another image: the one it held goes when nobody else holds it."""
         old = self._held.get(holder)
         if old is not None and old != key:
             hs = self._holders.get(old, set())
             hs.discard(holder)
+            del self._held[holder]
             if not hs:
                 self._drop(old)
+
+    def hold(self, key, holder):
+        self._unhold(holder, key)
+        if key not in self.items:
+            return
         self._held[holder] = key
         self._holders.setdefault(key, set()).add(holder)
+        self._mark(key)
 
     def _drop(self, key):
         a = self.items.pop(key, None)
         if a is not None:
             self.bytes -= a.nbytes
+        self._used.pop(key, None)
         for h in self._holders.pop(key, set()):
             if self._held.get(h) == key:
                 del self._held[h]
 
     def clear(self):
         self.items.clear()
+        self._used.clear()
         self._held.clear()
         self._holders.clear()
         self.bytes = 0
@@ -1137,21 +1184,52 @@ def default_cache_bytes() -> int:
     return int(min(1_500_000_000, max(300_000_000, 0.08 * total)))
 
 
+@dataclass
+class _Item:
+    """One row of the composition as ``compose`` walks it, bottom first: a visible pixel layer with its own filters
+    ("pixel"), a filter on everything below ("filter"), or a hidden layer whose mask is still asked for ("hidden")."""
+    lay: dict
+    kind: str
+    own: list = field(default_factory=list)
+    sig: str = ""                       # what the composite after it depends on (the step cache's ``comp_sig``)
+    src: str = ""                       # a pixel layer's: what its image after its own filters depends on
+    edit: str = ""                      # the same, without the level: what was set up to it (where an edit is)
+    tkey: str = ""                      # what its mask thumbnails depend on
+    opaque: bool = False                # Normal, 100 %, no mask: what is under it never shows
+    needs: bool = False                 # a mask or a histogram of it is asked for: never skipped
+
+
+THUMB_ITEMS = 4096                      # the mask thumbnails kept, by the rows that made them (2 KB each at most)
+
+
 class Composer:
     """The composition of the layers. One per render worker: it owns the caches (the workflow layers' images by
     content, the brushes' rasters), so it is used from one thread only. ``cache_bytes``: all the caches together
-    (``default_cache_bytes``): 40 % the layers' images, 45 % the steps, 15 % the masks' planes."""
+    (``default_cache_bytes``): 30 % the layers' images, 30 % the steps, 25 % the composites (``backdrops``), 15 % the
+    masks' planes.
+
+    As in a layer editor, a change recomputes only what it changes: the composite under the row being edited (its
+    backdrop) is kept, so a change of that row starts from it, and a row under an opaque one (Normal, 100 %, no mask)
+    is never computed. Each layer's image after its own filters is in the steps (by all that made it)."""
 
     def __init__(self, provider: Provider, cache_bytes: int | None = None):
         cache_bytes = default_cache_bytes() if cache_bytes is None else cache_bytes
         self.provider = provider
-        self.images = ByteLRU(int(cache_bytes * .40))
-        self.steps = ByteLRU(int(cache_bytes * .45))        # the image after each filter, by all that made it (#87)
+        self.images = ByteLRU(int(cache_bytes * .30))
+        self.steps = ByteLRU(int(cache_bytes * .30))        # the image after each filter, by all that made it (#87)
+        self.backdrops = ByteLRU(int(cache_bytes * .25))    # the composite after a row: under the edited one, the last
         self._brush: dict = {}                              # (part id, level) -> (n strokes, last stroke, raster)
         self.parts = ByteLRU(min(int(cache_bytes * .15), 400_000_000))  # a mask part's plane, by its settings and what it reads
         self.part_draws = 0                                 # how many mask part planes were computed (not cached)
         self._canvas: tuple | None = None                   # (pids, canvas)
         self._drawn = 0
+        self._edits: list[str] = []                         # the rows' ``edit`` of the last composition followed
+        self._focus: str | None = None                      # ``edit`` of the row under the one edited last
+        self._edited: str | None = None                     # ``edit`` of the row edited last (its steps are kept)
+        self._keep = True                                   # (False: the steps being made are not kept)
+        self._thumbs: OrderedDict = OrderedDict()           # ``tkey`` -> {mask key: thumbnail}
+        self.skipped = 0                                    # rows the last composition did not compute
+        self.plan_errors = 0                                # rows whose digest the plan did not foresee (tests: 0)
 
     # ------------------------------------------------------------ geometry
     def canvas_of(self, layers: list[dict]) -> Canvas | None:
@@ -1170,8 +1248,11 @@ class Composer:
         """Drop every cached image (the results changed on disk, or an Undo)."""
         self.images.clear()
         self.steps.clear()
+        self.backdrops.clear()
         self.parts.clear()
         self._brush.clear()
+        self._thumbs.clear()
+        self._edits, self._focus, self._edited = [], None, None
         self._canvas = None
 
     def release(self):
@@ -1373,14 +1454,136 @@ class Composer:
                     need = max(need, int(math.ceil(fn(lay["params"]))) + 8)
         return need
 
+    # ------------------------------------------------------------ what a composition reuses
+    def _plan(self, stack, level, abox, canvas, want, hist_ids, draft) -> list[_Item]:
+        """The rows ``compose`` walks, bottom first, with what the composite after each depends on (the same digests
+        as the steps': no pixel is read). A hidden row is one only when its mask is asked for."""
+        items, sig, edit = [], "empty", "empty"
+        where = (level, abox, canvas.W, canvas.H, canvas.origin, bool(draft))
+        for lay in stack:
+            if lay["kind"] == "filter" and lay.get("target"):
+                continue                                                  # applied with its own layer
+            if not lay["visible"]:
+                edit = _sig(edit, "hidden", lay["id"], _settings_of(lay))
+                items.append(_Item(lay, "hidden", sig=sig, edit=edit, needs=lay["id"] in want,
+                                   tkey=_sig(sig if _reads_image(lay.get("mask")) else None, _settings_of(lay),
+                                             lay["id"], where)))
+                continue
+            if is_pixel(lay):
+                sids = source_ids(lay)
+                if not all(self.provider.available(x) for x in sids):
+                    continue
+                own = [fl for fl in stack if fl["kind"] == "filter" and fl.get("target") == lay["id"]]
+                ss, mine = self._src_sig(lay, own, level, abox, canvas), [(_settings_of(f), f["visible"]) for f in own]
+                sig = _sig(sig, ss, _settings_of(lay))
+                edit = _sig(edit, "pixel", _settings_of(lay), mine, [self.provider.version(x) for x in sids])
+                ids = {lay["id"], *(f["id"] for f in own), *((lay["id"], s) for s in SUBS)}
+                it = _Item(lay, "pixel", own, sig=sig, edit=edit, needs=bool(ids & want or ids & hist_ids),
+                           opaque=lay["mode"] == "Normal" and lay["opacity"] / 100 >= 0.999 and lay["mask"] is None
+                           and (is_group(lay) or self.provider.cover(lay, level, abox) is None))
+                # its masks read its own image (and its sides', its filters' inputs), never what is under it
+                it.tkey = _sig(ss, _settings_of(lay), mine, sorted(map(str, ids)), where)
+                it.src = ss
+            else:
+                before = sig
+                sig = _sig(sig, _settings_of(lay))
+                edit = _sig(edit, "filter", _settings_of(lay))
+                it = _Item(lay, "filter", sig=sig, edit=edit, needs=lay["id"] in want or lay["id"] in hist_ids,
+                           tkey=_sig(before if _reads_image(lay.get("mask")) else None, _settings_of(lay), lay["id"],
+                                     where))
+            items.append(it)
+        return items
+
+    def _src_sig(self, lay, own, level, abox, canvas) -> str:
+        """What a pixel layer's image after its own filters depends on: the digest ``compose`` and ``group_rgb`` make
+        while they compute it, made without computing it."""
+        if is_group(lay):
+            sigs = [_settings_of(lay)]
+            for sub in self._shown(lay):
+                if sub == "stars" and not (lay.get("shown") or {}).get("real", True) and \
+                        any(is_synth(fl) and fl.get("sub") == "stars" for fl in own):
+                    sig = _sig("no real stars", (abox[3] - abox[1], abox[2] - abox[0]))
+                else:
+                    sig = _sig(self._key(sub_layer(lay, sub), level, abox, canvas))
+                synth = sub_layer(lay, "synth")
+                if sub == "stars" and self.provider.available(source_id(synth)):
+                    sig = _sig(sig, self._key(synth, level, abox, canvas))
+                for fl in own:
+                    if fl.get("sub") == sub and fl["visible"]:
+                        sig = _sig(sig, _settings_of(fl))
+                sigs.append(sig)
+            sig = _sig(*sigs)
+        else:
+            sig = _sig(self._key(lay, level, abox, canvas))
+        for fl in own:
+            if not fl.get("sub") and fl["visible"]:
+                sig = _sig(sig, _settings_of(fl))
+        return sig
+
+    def _follow(self, items: list[_Item]):
+        """Where the composition changed since the last one followed: the lowest row that differs is the one being
+        edited; the composite under it (its backdrop) is what the next compositions keep."""
+        edits = [it.edit for it in items]
+        n = next((i for i, (a, b) in enumerate(zip(edits, self._edits)) if a != b), min(len(edits), len(self._edits)))
+        if edits != self._edits:
+            self._focus = edits[n - 1] if 0 < n <= len(edits) else None
+            self._edited = edits[n] if n < len(edits) else None
+        self._edits = edits
+
+    def _start(self, items: list[_Item], where, thumbs: bool) -> tuple[int, np.ndarray | None]:
+        """The first row to compute, and the composite under it (None: black). The rows under an opaque one (Normal,
+        100 %, no mask) never show; a kept composite stands for every row under it. A row whose mask or histogram is
+        asked for is computed, and so is one whose mask thumbnails are asked for and not kept."""
+        def blocks(it):
+            if it.needs:
+                return True
+            if not thumbs:
+                return False
+            lay = it.lay
+            masked = lay.get("mask") is not None or bool(lay.get("side_masks")) or \
+                any(f.get("mask") is not None for f in it.own)
+            return masked and (where is None or it.tkey not in self._thumbs)
+
+        top = next((i for i, it in enumerate(items) if blocks(it)), len(items))
+        for s in range(top, 0, -1):
+            if where is not None:
+                back = self.backdrops.get((items[s - 1].sig, where))
+                if back is not None:
+                    return s, back
+            if s < len(items) and items[s].opaque:
+                return s, None
+        return 0, None
+
+    def _filtered(self, it: _Item, where, thumbs: bool) -> np.ndarray | None:
+        """A pixel layer's image after its own filters when it is kept (by all that made it): its layer and its filters
+        are then not computed. Not when one of its filters' masks or histograms is asked for, nor for a layer without
+        filters (its image is the layer's own, ``layer_rgb`` keeps it)."""
+        if where is None or it.needs:
+            return None
+        lay = it.lay
+        if not (is_group(lay) or any(not f.get("sub") and f["visible"] for f in it.own)):
+            return None
+        masked = lay.get("side_masks") or any(f.get("mask") is not None for f in it.own)
+        if thumbs and masked and it.tkey not in self._thumbs:
+            return None
+        return self.steps.get((it.src, where))
+
+    def _keep_composite(self, key, comp, holder):
+        if key in self.backdrops.items:
+            self.backdrops.hold(key, holder)
+        else:
+            self.backdrops.put(key, comp.copy(), holder)
+
     def compose(self, layers: list[dict], level: int, box=None, *, want=(), thumbs: bool = False, stop=None,
-                cache: bool = True, draft: bool = False, hists=()) -> Composite | None:
+                cache: bool = True, draft: bool = False, hists=(), track: bool = False) -> Composite | None:
         """The composite (float 0..1) at a resolution, for a box of the canvas at that level (default: all of it).
         ``want``: ids of layers whose mask is returned (also those hidden). ``thumbs``: also a thumbnail of every mask
         computed. ``stop``: called between the steps (and by the engine between its stages), True abandons the work
         (``Superseded``). ``draft``: a quick look of the pixel layers whose exact image is not cached, and of the filters
         that have one (the curves' tables). ``hists``: ids of filters whose input's histograms are returned (the
-        Curves editor's and the stretches' graphs). None when no pixel layer has a result."""
+        Curves editor's and the stretches' graphs). ``track``: this is the composition being edited (Post's own
+        renders, not the before image or another version's): where it changed says which row's backdrop to keep.
+        None when no pixel layer has a result."""
         canvas = self.canvas_of(layers)
         if canvas is None:
             return None
@@ -1400,14 +1603,17 @@ class Composer:
         ctx.canvas_wh = (W, H)                                            # the whole canvas at this level
         # the image after each step is kept: hiding a filter recomputes only what is above it (a region: not kept)
         where = (level, (canvas.W, canvas.H, canvas.origin)) if cache and not draft and abox == (0, 0, W, H) else None
-        comp_sig = "empty"
         want = set(want)
         self._drawn = 0
         check = stop or (lambda: False)
+        for c in (self.images, self.steps, self.backdrops):
+            c.begin(level)
 
         def checkpoint():
             if check():
                 raise Superseded()
+
+        made: dict = {}                                                   # the mask thumbnails of the row being made
 
         def keep_mask(lay, m, key=None):
             """``key``: (layer id, side) for a side mask of a Combine layers layer, else the layer's id."""
@@ -1417,38 +1623,63 @@ class Composer:
             if key in want:
                 out.masks[key] = m[y0 - ay0:y0 - ay0 + (y1 - y0), x0 - ax0:x0 - ax0 + (x1 - x0)]
             if thumbs:
-                out.mask_thumbs[key] = thumb_of(m)
+                out.mask_thumbs[key] = made[key] = thumb_of(m)
 
         stack = list(reversed(layers))                                    # bottom first
-        under = False                                                     # an image layer drawn below the next one
-        for lay in stack:
+        items = self._plan(stack, level, abox, canvas, want, ctx.hist_ids, draft)
+        if track:
+            self._follow(items)
+        start, back = self._start(items, where, thumbs)
+        self.skipped = start
+        for it in items[:start]:                                          # rows not computed: their mask thumbnails
+            if thumbs and it.tkey in self._thumbs:
+                self._thumbs.move_to_end(it.tkey)
+                out.mask_thumbs.update(self._thumbs[it.tkey])
+        if back is not None:
+            comp = back.copy()                                            # (a filter may work in place on its input)
+        comp_sig = items[start - 1].sig if start else "empty"
+        under = any(it.kind == "pixel" for it in items[:start])           # an image layer drawn below the next one
+        edited_at = next((i for i, it in enumerate(items) if it.edit == self._edited), None)
+        for i in range(start, len(items)):
+            it = items[i]
+            lay = it.lay
             checkpoint()
-            if lay["kind"] == "filter" and lay.get("target"):
-                continue                                                  # applied with its own layer, below
-            if not lay["visible"]:
+            made = {}
+            if it.kind == "hidden":
                 if lay["id"] in want or (thumbs and lay["mask"] is not None):
                     keep_mask(lay, self.mask(lay, level, abox, comp, canvas, ctx))
-                continue
-            if is_pixel(lay):
-                if not all(self.provider.available(x) for x in source_ids(lay)):
-                    continue
-                own = [fl for fl in stack if fl["kind"] == "filter" and fl.get("target") == lay["id"]]
-                if is_group(lay):
-                    src, sig = self.group_rgb(lay, own, level, abox, canvas, ctx, cache, draft, check, keep_mask,
-                                              where, want, thumbs)
+            elif it.kind == "pixel":
+                own = it.own
+                edited = i == edited_at                                   # its steps are kept, not only its image
+                tops = [fl for fl in own if not fl.get("sub") and fl["visible"]]
+                got = self._filtered(it, where, thumbs)
+                if got is not None:                                       # its image after its filters, kept
+                    src, sig = got.copy(), it.src
+                    if thumbs and it.tkey in self._thumbs:
+                        made.update(self._thumbs[it.tkey])
+                        out.mask_thumbs.update(made)
                 else:
-                    src = self.layer_rgb(lay, level, abox, canvas, cache, draft, check)
-                    sig = _sig(self._key(lay, level, abox, canvas))
-                for fl in own:                                            # this layer's own filters, bottom first
-                    if fl.get("sub"):
-                        continue
-                    checkpoint()
-                    if not fl["visible"]:
-                        if fl["id"] in want or (thumbs and fl["mask"] is not None):
-                            keep_mask(fl, self.mask(fl, level, abox, src, canvas, ctx))
-                        continue
-                    src, fm, sig = self._step(fl, src, sig, where, want, thumbs, level, abox, canvas, ctx)
-                    keep_mask(fl, fm)
+                    if is_group(lay):
+                        self._keep = edited
+                        src, sig = self.group_rgb(lay, own, level, abox, canvas, ctx, cache, draft, check,
+                                                  keep_mask, where, want, thumbs)
+                        self._keep = True
+                        if where is not None and not tops:                # (with filters: the last one's step)
+                            self.steps.put((sig, where), src.copy(), (lay["id"], "src", level))
+                    else:
+                        src = self.layer_rgb(lay, level, abox, canvas, cache, draft, check)
+                        sig = _sig(self._key(lay, level, abox, canvas))
+                    for fl in own:                                        # this layer's own filters, bottom first
+                        if fl.get("sub"):
+                            continue
+                        checkpoint()
+                        if not fl["visible"]:
+                            if fl["id"] in want or (thumbs and fl["mask"] is not None):
+                                keep_mask(fl, self.mask(fl, level, abox, src, canvas, ctx))
+                            continue
+                        src, fm, sig = self._step(fl, src, sig, where, want, thumbs, level, abox, canvas, ctx,
+                                                  keep=edited or fl is tops[-1])
+                        keep_mask(fl, fm)
                 comp_sig = _sig(comp_sig, sig, _settings_of(lay))
                 m = self.mask(lay, level, abox, src, canvas, ctx)
                 keep_mask(lay, m)
@@ -1466,9 +1697,25 @@ class Composer:
                 else:
                     a = a if m is None else (a * m)[..., None]
                     comp = comp + (src - comp) * a
-            else:
-                comp, m, comp_sig = self._step(lay, comp, comp_sig, where, want, thumbs, level, abox, canvas, ctx)
+            else:                                     # above the row edited its input changes at each edit: not kept
+                comp, m, comp_sig = self._step(lay, comp, comp_sig, where, want, thumbs, level, abox, canvas, ctx,
+                                               keep=edited_at is None or i <= edited_at)
                 keep_mask(lay, m)
+            if comp_sig != it.sig:                   # the plan missed what this row depends on: keep nothing more
+                self.plan_errors += 1
+                where = None
+            if where is None:
+                continue
+            if thumbs:
+                self._thumbs[it.tkey] = made
+                self._thumbs.move_to_end(it.tkey)
+                while len(self._thumbs) > THUMB_ITEMS:
+                    self._thumbs.popitem(last=False)
+            key = (it.sig, where)
+            if it.edit == self._focus:                                    # the backdrop of the row edited
+                self._keep_composite(key, comp, ("backdrop", level))
+            elif i == len(items) - 1 and self.backdrops.bytes + comp.nbytes <= self.backdrops.cap:
+                self._keep_composite(key, comp, ("last", level))         # never instead of a backdrop
         cut = (slice(y0 - ay0, y0 - ay0 + (y1 - y0)), slice(x0 - ax0, x0 - ax0 + (x1 - x0)))
         out.rgb = np.clip(comp[cut], 0, 1).astype(np.float32, copy=False)
         out.notes = set(self.provider.notes())
@@ -1520,15 +1767,25 @@ class Composer:
                           (lay["id"], sub))
         return self._together(lay, got, (abox[3] - abox[1], abox[2] - abox[0])), _sig(*sigs)
 
-    def _step(self, fl, under, sig, where, want, thumbs, level, abox, canvas, ctx):
-        """``_apply``, kept: (result, mask, what the result depends on). ``where``: None when it is not to be kept."""
+    def _step(self, fl, under, sig, where, want, thumbs, level, abox, canvas, ctx, keep=True):
+        """``_apply``, kept: (result, mask, what the result depends on). ``where``: None when it is not to be kept;
+        ``keep``: False, the result is kept only where there is room (an image a change upstream may replace each
+        time). The filter holds its result: when its settings or what is under it change, the one it held goes."""
         new = _sig(sig, _settings_of(fl))
         key = None if where is None else (new, where)
         got = None if key is None else self.steps.get(key)
+        holder = (fl["id"], fl.get("sub"), level)
+        if got is not None:
+            self.steps.hold(key, holder)
         if got is None:
             out, m = self._apply(fl, under, level, abox, canvas, ctx)
             if key is not None:
-                self.steps.put(key, out.copy())                   # a filter may work in place on what it is given
+                self.steps._unhold(holder, key)                   # the one it held before goes (settings changed)
+                # a filter may work in place on what it is given: a copy is kept. A step of lesser use (``keep``
+                # False: under a layer's last filter, or above the row edited) is kept only where there is room,
+                # never instead of another one: hiding the filter above it still finds it (#87)
+                if (keep and self._keep) or self.steps.bytes + out.nbytes <= self.steps.cap:
+                    self.steps.put(key, out.copy(), holder)
             return out, m, new
         if fl["id"] in ctx.hist_ids:
             ctx.hists[fl["id"]] = pf_curves.histograms(under)
@@ -1567,6 +1824,11 @@ class Composer:
             b = np.clip(b, 0, 1)
             return (1 - 2 * b) * a * a + 2 * b * a
         return b
+
+
+def _reads_image(m: dict | None) -> bool:
+    """Whether a mask reads the image it is on (a Luminance or Color range part); the others read the settings."""
+    return bool(m) and any(p.get("src") in ("luminance", "color") for p in m.get("parts") or ())
 
 
 def _settings_of(lay: dict) -> str:

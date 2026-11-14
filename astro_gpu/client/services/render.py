@@ -676,7 +676,8 @@ class Renderer:
             t0 = time.perf_counter()
             self.source.engine_ms = 0.0
         comp = cp.compose(layers, req.level, req.box, want=req.want, thumbs=req.thumbs, stop=stop,
-                          draft=req.kind == "draft", hists=() if req.kind == "draft" else req.hists)
+                          draft=req.kind == "draft", hists=() if req.kind == "draft" else req.hists,
+                          track=req.kind in ("draft", "half", "refine"))
         if stop is not None and stop():                       # a newer request came meanwhile: this answer is stale
             raise Superseded()
         if comp is None:
@@ -701,7 +702,7 @@ class Renderer:
         the export writes it, then reduced. A filter run on the reduced image sees its colour noise already averaged
         (a strong Saturation turned the sky another colour on screen than in the file); this one shows the file."""
         cp = self.composer
-        comp = cp.compose(req.layers, 0, stop=stop)
+        comp = cp.compose(req.layers, 0, stop=stop, track=True)
         if stop is not None and stop():
             raise Superseded()
         canvas = cp.canvas_of(req.layers)

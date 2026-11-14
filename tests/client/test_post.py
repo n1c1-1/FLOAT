@@ -651,6 +651,7 @@ def test_only_what_changed_is_computed_again_and_a_copy_shares_the_image():
     pr = ToyProvider()
     cp = Composer(pr)
     a, b = new_workflow_layer(1, "A", True), new_workflow_layer(2, "B", True)
+    b["opacity"] = 60.0                                                 # (opaque, B would hide A: A never drawn)
     lay = [b, a]
     assert cp.compose(lay, 1).drawn == 2
     assert cp.compose(lay, 1).drawn == 0
@@ -791,6 +792,7 @@ def test_a_newer_request_stops_the_composition():
     pr = ToyProvider()
     cp = Composer(pr)
     lay = _stack((1, "A"), (2, "B"))
+    lay[0]["opacity"] = 50.0                                           # (opaque, B alone would be computed)
     n = {"k": 0}
 
     def stop():

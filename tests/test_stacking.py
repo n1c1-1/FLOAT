@@ -303,7 +303,7 @@ def test_the_defaults():
     from astro_gpu.stages.stack import SELECTIONS, StackParams
     p = StackParams()
     assert (p.method, p.selection, p.drizzle_rejection) == ("drizzle", "min_weight", "own")
-    assert SELECTIONS == ("min_weight", "sota", "thresholds")
+    assert SELECTIONS == ("min_weight", "sota", "thresholds", "all")
 
 
 def test_the_colour_alignment_for_the_whole_night_is_on(night):
@@ -340,6 +340,22 @@ def test_the_default_selection_keeps_every_frame_above_the_minimum_weight(night,
     assert ctx.metrics["frames_used"] == truth.n - 1
     diag = json.loads((p.stage_dir("stack") / DIAG).read_text())
     assert diag["selection"]["selection"] == "min_weight" and diag["selection"]["excluded"]["9"][0]["code"] == "weight"
+
+
+def test_the_all_selection_keeps_every_aligned_frame_with_the_same_weight(night, tmp_path):
+    """``selection = all`` (a workflow without a Selection block, the owner's "we stack without thinking"): the frame
+    under 5 % of the best one is kept too, and every frame weighs the same."""
+    from astro_gpu.stages.stack import Stack, StackParams
+    root, proj, truth = night
+    p = copy_project(proj.root, tmp_path / "all")
+    z = dict(np.load(p.stage_dir("register") / "reg.npz"))
+    z["transp"] = z["transp"].copy()
+    z["transp"][9] = 0.15                                              # the default would leave it out (weight ~2 %)
+    np.savez(p.stage_dir("register") / "reg.npz", **z)
+    ctx = run_stage(p, Stack(), StackParams(scale=1.0, pixfrac=1.0, half_block=2, selection="all"))
+    rows = json.loads((p.stage_dir("stack") / "frames.json").read_text())
+    assert ctx.metrics["frames_used"] == truth.n
+    assert all(r["weight"] > 0 for r in rows) and len({round(r["weight"], 9) for r in rows}) == 1
 
 
 def test_selection_at_k_sigma_with_reasons(night, tmp_path):

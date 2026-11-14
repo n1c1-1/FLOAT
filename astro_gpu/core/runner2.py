@@ -485,13 +485,25 @@ def launch(project: Project2, plan: Plan, device: str | None = None, python: str
     return info
 
 
+def _own_package_first(env: dict[str, str]) -> dict[str, str]:
+    """``env`` with the folder holding this ``astro_gpu`` first on PYTHONPATH: a worker or a job's process started in the
+    project's folder imports the same code as the process that planned the run, not another copy installed in the
+    Python environment (from a second checkout, a stage whose version reads a local file keyed differently and the
+    run failed with "the inputs ... changed since the run was planned"). core/selftest.py does the same."""
+    here = str(Path(__file__).resolve().parents[2])
+    rest = [p for p in env.get("PYTHONPATH", "").split(os.pathsep)
+            if p and os.path.normcase(os.path.abspath(p)) != os.path.normcase(here)]      # once, whatever the depth
+    return {**env, "PYTHONPATH": os.pathsep.join([here, *rest])}
+
+
 def _spawn_worker(root: str | Path, plan_file: str | Path, visible: str, log_file: str | Path,
                   python: str | None = None, notes: list[str] | None = None) -> int:
     """Start ``python -m astro_gpu.core.runner2 <root> <plan_file>`` detached (it survives the process that started
     it), in the project's folder, appending to the run's log, on the run's GPU. Returns its pid."""
     # the run's log is UTF-8 whatever launched the worker (without it, a console's code page wrote "›" and "σ" as
     # cp1252 bytes when FLOAT was started otherwise than by its launcher)
-    env = {**os.environ, "CUDA_VISIBLE_DEVICES": str(visible), "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"}
+    env = _own_package_first({**os.environ, "CUDA_VISIBLE_DEVICES": str(visible), "PYTHONUNBUFFERED": "1",
+                              "PYTHONIOENCODING": "utf-8"})
     cmd = [python or sys.executable, "-m", "astro_gpu.core.runner2", str(root), str(plan_file)]
     kw: dict[str, Any] = {"cwd": str(root), "env": env, "stdin": subprocess.DEVNULL, "stderr": subprocess.STDOUT,
                           "close_fds": True}
@@ -964,7 +976,7 @@ class _Worker:
         if plan_file is None or not plan_file.exists():
             return None
         cmd = [sys.executable, "-m", "astro_gpu.core.runner2", "--job", job.key, str(self.root), str(plan_file)]
-        kw: dict[str, Any] = {"cwd": str(self.root), "env": {**os.environ, "PYTHONUNBUFFERED": "1"},
+        kw: dict[str, Any] = {"cwd": str(self.root), "env": _own_package_first({**os.environ, "PYTHONUNBUFFERED": "1"}),
                               "stdin": subprocess.DEVNULL}
         if os.name == "nt":
             kw["creationflags"] = CREATE_NO_WINDOW

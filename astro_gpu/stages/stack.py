@@ -8,8 +8,10 @@ or the Classic method (debayering and interpolated registration, ``stack_classic
 - ``selection``: ``min_weight`` (default) keeps every aligned frame unless its weight is under 5 % of the best one,
   and lets the weights handle the bad ones; ``sota`` first applies k x sigma filters at 2.5 on FWHM, roundness and
   transparency (``selection_transparency = off`` drops the last); ``thresholds`` leaves out the frames under a
-  minimum transparency or over a maximum star size, set by the user (on the Selection chart). Frames excluded by hand
-  are left out in every mode. The weights are (transparency / noise)^2 x sharpness.
+  minimum transparency or over a maximum star size, set by the user (on the Selection chart); ``all`` keeps every
+  aligned frame with the same weight (a workflow without a Selection block: no sorting, no weighting). Frames excluded by
+  hand, frames not aligned and frames with no usable pixel are left out in every mode. The weights are
+  (transparency / noise)^2 x sharpness.
 - ``drizzle_rejection = own`` (default) or ``integration``: how the Bayer drizzle finds its outliers.
   ``own`` is a sigma clipping of the drops against their MEASURED spread, as Siril's sigma clipping does it [S1]: the
   first pass keeps, for every output point and colour, the weighted mean m and the weighted standard deviation d of
@@ -98,7 +100,7 @@ REJECTION_SIDE = 4096
 COVERAGE = "coverage.npz"
 #: the choices of the stacking settings (the first value of each: its default)
 METHODS = ("drizzle", "classic")
-SELECTIONS = ("min_weight", "sota", "thresholds")
+SELECTIONS = ("min_weight", "sota", "thresholds", "all")
 ON_OFF = ("on", "off")
 DRIZZLE_REJECTIONS = ("own", "integration", "by_count")
 SWITCHES = {"method": METHODS, "selection": SELECTIONS, "selection_transparency": ON_OFF,
@@ -195,8 +197,9 @@ class StackParams(StageParams):
                             "best one, besides those not aligned; the weights handle the others, so almost every "
                             "frame is kept. k × σ: also the frames more than 2.5 robust sigmas worse than the night's "
                             "median in star size, roundness or transparency. Thresholds: the frames under the "
-                            "minimum transparency or over the maximum star size you set. Frames excluded by hand are "
-                            "left out in every case.")
+                            "minimum transparency or over the maximum star size you set. All: every aligned frame, "
+                            "none sorted out, all with the same weight. Frames excluded by hand are left out in every "
+                            "case.")
     selection_transparency: str = P("on", label="Transparency filter", level=ADVANCED, choices=list(ON_OFF),
                                     help="With the k × σ frame selection: whether frames are also left out for a low "
                                          "transparency. Off keeps them, with the lower weight their transparency "
@@ -1904,7 +1907,7 @@ class Selection:
             more = f" and {len(frames) - 3} more" if len(frames) > 3 else ""
             ctx.log(f"{len(frames)} frame(s) excluded: {code.replace('_', ' ')} ({names}{more})")
         what = {"min_weight": "minimum weight 5 %", "sota": "k x sigma filters and minimum weight",
-                "thresholds": "transparency and star size thresholds"}.get(self.mode, self.mode)
+                "thresholds": "transparency and star size thresholds", "all": "no selection"}.get(self.mode, self.mode)
         ctx.log(f"frames: {int((self.weight > 0).sum())} of {len(self.weight)} kept ({what}); star size from "
                 f"{self.fwhm_source or 'registration'}")
 
@@ -1946,7 +1949,9 @@ def frame_selection(p: StackParams, reg, stats, excl) -> Selection:
     * ``sota``: The reference program's k x sigma filters at 2.5 on FWHM, roundness and transparency (the reference program's Seestar script;
       ``selection_transparency = off`` drops the last; register's Moffat FWHM and roundness when it made them), then
       the minimum weight;
-    * ``thresholds``: the user's thresholds (``select_frames``: minimum transparency, maximum star size)."""
+    * ``thresholds``: the user's thresholds (``select_frames``: minimum transparency, maximum star size);
+    * ``all``: every aligned frame, no filter, no minimum weight and the same weight for all (a workflow without a
+      Selection block: the frames are stacked as they are)."""
     from ..core import frame_weights as fwm
     transp, fwhm, rms = reg["transp"].astype(float), reg["fwhm"], reg["rms"]
     noise = reg["noise"] if "noise" in _files(reg) else None
@@ -1956,6 +1961,8 @@ def frame_selection(p: StackParams, reg, stats, excl) -> Selection:
                                         exclude=excl, noise=noise)
         return Selection("thresholds", weight, reasons)
     raw, _ = quality_weights(transp, fwhm, rms, stats, noise)
+    if p.selection == "all":                          # no sorting and no weighting: every frame in weighs the same
+        raw = np.ones(len(raw))
     f_sel, r_sel, src = selection_fwhm(reg, fwhm)
     filters = fwm.NO_FILTERS
     if p.selection == "sota":
@@ -1964,7 +1971,7 @@ def frame_selection(p: StackParams, reg, stats, excl) -> Selection:
             filters["transparency"] = ""
     fs = fwm.select(raw, fwhm=f_sel, roundness=r_sel, transparency=transp, aligned=np.isfinite(rms),
                     saturated=saturated_frames(stats), exclude=excl,
-                    filters=filters, min_weight=fwm.MIN_WEIGHT)
+                    filters=filters, min_weight=0.0 if p.selection == "all" else fwm.MIN_WEIGHT)
     fm = reg["fwhm_moffat"].astype(float) if src == "moffat" else None
     return Selection(p.selection, fs.weight, fs.reasons, fs, fm, src)
 

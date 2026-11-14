@@ -83,7 +83,9 @@ def test_a_stage_on_a_card_this_process_has_not_runs_on_the_cpu():
     assert ctx.device.type == ("xpu" if devices.available("xpu:0") else "cpu")
 
 
-def test_helpers_do_nothing_on_the_cpu():
+def test_helpers_do_nothing_on_the_cpu(monkeypatch):
+    # without a Memory limit (one left by an earlier test of the same process made the processor tell its room)
+    monkeypatch.setattr(devices, "memory_limit", lambda: None)
     devices.empty_cache("cpu")
     devices.synchronize("cpu")
     assert devices.free_memory("cpu") is None and devices.total_memory("cpu") is None

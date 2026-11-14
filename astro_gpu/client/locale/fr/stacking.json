@@ -38,6 +38,8 @@
  "Frames under the minimum transparency or over the maximum star size below are left out.": "Les images sous la transparence minimale ou au-dessus de la taille d'étoile maximale ci-dessous sont écartées.",
  "These thresholds act only when the frame selection is “{rule}”.": "Ces seuils n'agissent que si la sélection des images est sur « {rule} ».",
  "all frames · weight ≥ 5 %": "toutes · poids ≥ 5 %",
+ "all frames · none left out": "toutes · aucune écartée",
+ "Every aligned frame is kept with the same weight: none is sorted out.": "Toutes les images alignées sont gardées avec le même poids : aucune n'est écartée.",
  "k × σ filters · weight ≥ 5 %": "filtres k × σ · poids ≥ 5 %",
  "Frame: click": "Image : cliquer",
  "The automatic method shows once the registration is computed.": "La méthode automatique s'affiche une fois l'alignement calculé.",

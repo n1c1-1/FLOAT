@@ -216,3 +216,11 @@ def test_a_match_that_says_the_scale_is_confirmed_there_at_once(tmp_path, monkey
     assert abs(metrics["scale_arcsec"] - NSCALE) < 0.002
     off = np.hypot((metrics["ra"] - NRA) * np.cos(np.radians(NDEC)), metrics["dec"] - NDEC) * 3600
     assert off < 2 * NSCALE                     # the centre within 2 px (the mirror's half pixel, the stars' noise)
+
+
+@pytest.fixture(autouse=True)
+def _no_asterion(monkeypatch):
+    """These tests are of FLOAT's own solver: an Asterion installed on the machine (ASTRO_GPU_ASTERION, FLOAT's folder)
+    would take the field first, with the test's stand-in context."""
+    from astro_gpu.core import asterion
+    monkeypatch.setattr(asterion, "find_program", lambda exe=None: None)

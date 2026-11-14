@@ -556,6 +556,8 @@ def selection_rule_text(s, p) -> str:
                   "then those weighing less than 5 % of the best one.") if off else
                 _("Frames far worse than the night's median (over 2.5 σ) in star size, roundness or transparency "
                   "are left out, then those weighing less than 5 % of the best one."))
+    if rule == "all":
+        return _("Every aligned frame is kept with the same weight: none is sorted out.")
     return _("Every aligned frame is kept, except those weighing less than 5 % of the best one.")
 
 
