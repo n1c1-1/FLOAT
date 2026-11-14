@@ -157,14 +157,17 @@ class Palette(QScrollArea):
         self.head_row = QHBoxLayout()
         self.head_row.setContentsMargins(0, 0, 0, 0)
         self.head_row.addWidget(self.head, 1)
-        # today's "⋯" button: the palette's three ways of showing (graph.py build_tools)
+        # the display button: a click folds or opens the palette at once; a right click gives its three ways of showing
         self.display_button = QToolButton()
-        style.icon_only(self.display_button, "more", _("Blocks display"), 16, "dim")
+        style.icon_only(self.display_button, "more", _("Fold or open the blocks · right click: Automatic, Always "
+                                                       "open, Always folded"), 16, "dim")
         self.display_button.setAutoRaise(True)
         self.display_button.setFixedSize(20, 18)
         self.display_button.setStyleSheet("QToolButton { border: none; padding: 0; } "
                                           "QToolButton:hover { background: #2b3446; border-radius: 3px; }")
-        self.display_button.clicked.connect(lambda: self.menu())
+        self.display_button.clicked.connect(self.toggle)
+        self.display_button.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.display_button.customContextMenuRequested.connect(lambda _p: self.menu())
         self.head_row.addWidget(self.display_button, 0, Qt.AlignTop | Qt.AlignRight)
         v.addLayout(self.head_row)
         self.for_row = style.label("", "small", wrap=True)
@@ -275,6 +278,10 @@ class Palette(QScrollArea):
     def choose(self, st):
         if st and st != self.state:
             self.chosen.emit(st)
+
+    def toggle(self):
+        """A click on the display button: open (its names shown) -> Always folded; the icons only -> Always open."""
+        self.choose("folded" if self.wide() else "docked")
 
     # ------------------------------------------------------------------ the cards
     def current_row(self):

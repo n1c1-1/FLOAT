@@ -55,7 +55,8 @@ def test_the_palette_has_todays_three_ways_of_showing_and_an_arrow_when_hidden(q
     p.sidesShown.connect(lambda: shown.append(1))
     # always open: today's width, the names and the group headers; the "⋯" button and its menu
     assert pal.width() == PALETTE_W and p.palette_slot.width() == PALETTE_W and pal.head.isVisible()
-    assert pal.display_button.toolTip() == "Blocks display"
+    assert pal.display_button.toolTip() == \
+        "Fold or open the blocks · right click: Automatic, Always open, Always folded"
     m = pal.menu(run=False)
     assert [(a.text(), a.isChecked()) for a in m.actions()] == \
         [("Automatic", False), ("Always open", True), ("Always folded", False)]
@@ -88,6 +89,28 @@ def test_the_palette_has_todays_three_ways_of_showing_and_an_arrow_when_hidden(q
     assert pal.isVisible() and pal.width() == PALETTE_W and not p.left_arrow.isVisible()
     p.set_display("table")                                     # the table has no palette
     assert not pal.isVisible() and not p.palette_slot.isVisible()
+    p.close()
+
+
+def test_a_click_on_the_display_button_folds_or_opens_the_palette_and_a_right_click_gives_the_menu(qapp, monkeypatch):
+    from PySide6.QtTest import QTest
+    p = _page(_doc("colour_minimal"))
+    pal = p.palette
+    chosen, menus = [], []
+    p.sideChosen.connect(lambda side, st: (chosen.append(st), p.set_layout("docked", st)))   # the window's part
+    monkeypatch.setattr(pal, "menu", lambda run=True: menus.append(
+        [a.text() for a in type(pal).menu(pal, run=False).actions()]))     # the menu built, never shown modal
+    b = pal.display_button
+    QTest.mouseClick(b, Qt.LeftButton)                         # open -> folded at once, no menu
+    assert chosen == ["folded"] and pal.state == "folded" and not pal.head.isVisible() and not menus
+    assert b.isVisible()
+    QTest.mouseClick(b, Qt.LeftButton)                         # folded -> open
+    assert chosen == ["folded", "docked"] and pal.state == "docked" and pal.head.isVisible() and not menus
+    p.set_layout("docked", "auto")
+    QTest.mouseClick(b, Qt.LeftButton)                         # automatic, folded in its strip -> open
+    assert chosen[-1] == "docked" and pal.state == "docked"
+    b.customContextMenuRequested.emit(QPoint(5, 5))            # the right click: the three ways of showing
+    assert menus == [["Automatic", "Always open", "Always folded"]] and pal.state == "docked"
     p.close()
 
 
