@@ -487,7 +487,7 @@ class Keys:
             # Stars/background), and its plate solution; a change in a channel's workflow makes the combination Outdated
             return {"inputs": [
                 {"role": i["role"], "channel": i.get("channel", "L"), "out": self._input_key(i["pid"], _read(i)),
-                 "wcs": self._input_key(i["pid"], "astrometry")} | ({"image": i["image"]} if _read(i) != "render_simple"
+                 "wcs": self._input_key(*self._plate(i["pid"]).get("astrometry", (i["pid"], "")))} | ({"image": i["image"]} if _read(i) != "render_simple"
                                                                     else {})
                 for i in src["fusion"]["inputs"]]}
         if stage == "align_on":
@@ -547,10 +547,21 @@ class Keys:
         aligned image: the reference workflow's, when the wire leaves from its Astrometry (or a block after it); {} when
         it brings none (#165)."""
         w = self._wf(wf)
+        if any(base(x) in COMBINE for x in self.chain(w)) and getattr(w, "source", None):
+            # a combination is on its inputs' grid: the plate solution of the first input that has one (the reference
+            # row's: its own Astrometry, or the one its Align on takes from the reference)
+            return next((s for i in w.source["fusion"]["inputs"] if (s := self._plate(i["pid"]))), {})
         ref = self.project.plate_reference(w)
         if ref is None or "align_on" not in self.chain(w):
             return {}
         return {d: (ref, d) for d in wfl.ASTROMETRY_STAGES if d in self.chain(ref)}
+
+    def _plate(self, wf: int | Workflow) -> dict[str, tuple[int, str]]:
+        """{stage of the Astrometry block: (workflow, stage)} of the plate solution of a workflow's image: its own
+        Astrometry's, else the one its Align on or its combination outputs; {} when it has none."""
+        w = self._wf(wf)
+        own = {d: (w.id, d) for d in wfl.ASTROMETRY_STAGES if d in self.chain(w)}
+        return own or self.solution(w)
 
     def cross_inputs(self, wf: int | Workflow, stage: str) -> list[tuple[int, str]]:
         """(workflow id, stage) of what a stage reads in other workflows: a combination's inputs (each port's image,
@@ -563,6 +574,7 @@ class Keys:
                 for st in (_read(i), "astrometry"):
                     if st in self.chain(i["pid"]) and (i["pid"], st) not in out:
                         out.append((i["pid"], st))
+            out += [x for x in self.solution(w).values() if x not in out]
         elif base(stage) == "align_on":
             pid = self.reference_of(w)
             st = self.read_stage(pid) if pid is not None else None
@@ -588,6 +600,14 @@ class Keys:
             from ..stages.align_on import NO_REFERENCE
             return NO_REFERENCE
         ch = self.chain(w)
+        c = next((x for x in ch if base(x) in COMBINE), None)
+        if c is not None and stage in ch and ch.index(stage) > ch.index(c):
+            # a block that reads the plate solution after a combination: it needs the one the combination outputs
+            lack = [d for d in self.rules.chains.stages[base(stage)].deps if d in wfl.ASTROMETRY_STAGES
+                    and d not in self.rules.chains.optional.get(base(stage), ()) and d not in self.solution(w)]
+            if lack:
+                from ..stages.combine import NO_PLATE_SOLUTION
+                return NO_PLATE_SOLUTION
         if "align_on" in ch and stage in ch and base(stage) != "align_on" and ch.index(stage) > ch.index("align_on"):
             # a block that reads the plate solution and has no Astrometry before it: it needs the one Align on outputs
             lack = [d for d in self.rules.chains.stages[base(stage)].deps if d in wfl.ASTROMETRY_STAGES and d not in ch
@@ -684,11 +704,15 @@ class Keys:
             def folder(pid, st, file=""):
                 k = self._input_key(pid, st)
                 return str(store.dir(st, k) / file) if store and k else ""
+            def plate(pid, file=""):
+                q, x = self._plate(pid).get("astrometry", (pid, "astrometry"))
+                return folder(q, x, file)
             v["inputs"] = [{"role": i["role"], "channel": i.get("channel", "L"), "pid": i["pid"],
                             "image": i.get("image", "output"), "dir": folder(i["pid"], _read(i)),
-                            "wcs": folder(i["pid"], "astrometry", "wcs.fits"), "grid": self.grid(i["pid"]),
+                            "wcs": plate(i["pid"], "wcs.fits"), "grid": self.grid(i["pid"]),
                             "full_scale": self.full_scale(i["pid"])}
                            for i in w.source["fusion"]["inputs"]]
+            v["solution"] = {d: folder(q, x) for d, (q, x) in self.solution(w).items()}
         if base(stage) == "align_on":
             ref = self.reference_of(w)
             if ref is not None:
@@ -828,8 +852,8 @@ class StoreProject:
                 self.alias[base(a)] = a
         for a in self.dirs:
             for d in wfl.PROVIDES.get(base(a), ()):
-                if base(a) == "align_on" and d not in keys.solution(self.workflow):
-                    continue                             # the solution Align on outputs, when the wire brings one (#165)
+                if base(a) in ("align_on", *COMBINE) and d in wfl.ASTROMETRY_STAGES and d not in keys.solution(self.workflow):
+                    continue                             # the solution Align on or a combination outputs, when there is one (#165)
                 self.alias.setdefault(d, a)
         # issue #165: a stage after the Align on block reads the aligned image where it would have read the entry that
         # block reads (the stack, or the image and what it stands for)

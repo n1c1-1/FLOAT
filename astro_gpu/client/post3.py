@@ -1809,6 +1809,10 @@ class PostView(QWidget):
             return ""
         st = self.s.state_info(p, "astrometry")
         if st is None:
+            # no Astrometry block of its own: a combination, like Align on, hands the plate solution of its reference
+            # row on with its image; it is there when that stage is computed and the solution file came with it
+            st = self._handed_on_solution(p, pid)
+        if st is None:
             return _("The image at the bottom has no Astrometry: place the block in its workflow, or put a layer that "
                      "has one at the bottom")
         if st.state not in ("done", "stale"):
@@ -1816,6 +1820,23 @@ class PostView(QWidget):
         if st.state == "done" and getattr(st, "fallback", ""):      # it continued without a solution (its fallback)
             return _("The field of the image at the bottom was not identified: no plate solution to draw")
         return ""
+
+    def _handed_on_solution(self, p, pid):
+        """The state of the combination (or Align on) stage that outputs the bottom workflow's plate solution, None
+        when there is none (no such stage, or it handed none on)."""
+        from pathlib import Path
+
+        from .. import api
+        from ..core.workflow import COMBINE
+        st = next((i for s in self.s.all_stages(p) if s == "align_on" or s in COMBINE
+                   for i in [self.s.state_info(p, s)] if i is not None), None)
+        if st is None or st.state not in ("done", "stale"):
+            return st
+        for which in ("current", "previous"):
+            out = api.stage_outputs(self.s.p, pid, "astrometry", which)
+            if out is not None and (Path(out.dir) / "wcs.fits").is_file():
+                return st
+        return None
 
     def _ann_buttons(self):
         """Sky grid and Object names greyed, the reason on hover, while there is no solution to draw."""

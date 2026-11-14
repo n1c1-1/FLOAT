@@ -3300,3 +3300,23 @@ def test_the_fits_export_greys_the_astrometry_box_with_its_reason_when_there_is_
     finally:
         d.reject()
         d.deleteLater()
+
+
+def _bottom(states, chain, wcs_dir=None, monkeypatch=None):
+    """What PostView.ann_problem reads: the bottom workflow's states and chain, and the folder the solution is in."""
+    pv = SimpleNamespace(_ann_pid=lambda: 2, path=lambda pid: "wf",
+                         s=SimpleNamespace(state_info=lambda p, st: states.get(st), all_stages=lambda p: chain, p=None))
+    pv._handed_on_solution = lambda p, pid: post3.PostView._handed_on_solution(pv, p, pid)
+    monkeypatch.setattr(api, "stage_outputs", lambda *a, **k: SimpleNamespace(dir=str(wcs_dir)) if wcs_dir else None)
+    return post3.PostView.ann_problem(pv)
+
+
+def test_the_sky_grid_is_available_on_a_combination_that_handed_the_plate_solution_on(tmp_path, monkeypatch):
+    done = api.StageState("done")
+    chain = ["combine_ho", "render_simple"]
+    states = {"combine_ho": done, "render_simple": done}
+    assert _bottom(states, chain, None, monkeypatch).startswith("The image at the bottom has no Astrometry")
+    (tmp_path / "wcs.fits").write_bytes(b"w")
+    assert _bottom(states, chain, tmp_path, monkeypatch) == ""                       # its solution came with it
+    states["combine_ho"] = api.StageState("pending")
+    assert _bottom(states, chain, tmp_path, monkeypatch) == "Astrometry is not computed yet for the image at the bottom"

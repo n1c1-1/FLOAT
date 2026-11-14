@@ -130,6 +130,8 @@ PORT_NAMES = {"SII": "S II", "Ha": "Hα", "OIII": "O III"}
 
 #: the reasons a combination waits (the interface translates the templates, filling the names in)
 TO_WIRE = "{names} to wire"
+#: why a block that reads the plate solution after a combination has none: no input of the combination has one
+NO_PLATE_SOLUTION = "the combination's inputs bring no plate solution"
 GRID_ONE = "{names} is not on the grid of {first}: place Align on after its Stacking"
 GRID_MANY = "{names} are not on the grid of {first}: place Align on after their Stacking"
 
@@ -311,6 +313,10 @@ class CombinationParams(StageParams):
                            help="The images of the workflows combined, the port each one feeds, and its channel.")
     #: the user's weight of each channel ({port: weight}, 1 by default): a channel too faint for the balance (its noise
     #: raised with it) is lowered by hand
+    #: set by the project (not keyed: the keys of the stages it holds are): {stage of the reference row's Astrometry
+    #: block: its folder}, the plate solution handed on with the combination's image (empty: the inputs have none)
+    solution: dict = P({}, label="Plate solution", level="internal",
+                       help="The plate solution of the reference row, handed on with the combination's image.")
     weights: dict = P({}, label="Channel weights", level="internal",
                       help="Each channel's weight, after the balance (1: as balanced).")
 
@@ -356,6 +362,7 @@ class Combination(Stage):
         if missing:
             raise StageError(f"{self.title} needs the {', '.join(missing)} channel(s)")
         ref: dict = {}
+        wcs_ref = None
         chans: dict[str, np.ndarray] = {}
         valid_all = None
         tops: dict[str, float] = {}
@@ -377,8 +384,11 @@ class Combination(Stage):
             ch = channel_of(np.asarray(np.load(d / name, mmap_mode="r")), inp.get("channel", "L"))
             wcs_f = Path(inp.get("wcs") or "")
             if not ref:
+                ref = {"shape": ch.shape, "dir": d}
+            if wcs_ref is None and wcs_f.is_file():
+                # the inputs are on one grid: the plate solution of the first input that has one (the reference row's)
                 from ..core.imgutil import read_wcs  # imgutil loads OpenCV: not when the engine's API is imported
-                ref = {"shape": ch.shape, "wcs": read_wcs(wcs_f) if wcs_f.is_file() else None, "dir": d}
+                wcs_ref = read_wcs(wcs_f)
             shapes[inp["role"]] = list(ch.shape)
             valid_all = valid if valid_all is None else (valid_all & valid)
             chans[inp["role"]] = ch
@@ -436,8 +446,12 @@ class Combination(Stage):
         ctx.save_json("drz_meta.json", {"scale": float(meta.get("drizzle_scale", 1.0)), "source": "fusion",
                                         "kind": self.kind, "narrowband": self.narrowband, "width": W, "height": H,
                                         "sky_neutral": True, "channels": {r: round(t, 4) for r, t in tops.items()}})
-        if ref["wcs"] is not None:
-            ref["wcs"].to_fits().writeto(ctx.out("wcs.fits"), overwrite=True)
+        # the reference row's plate solution: the combination is on its grid and crops nothing, so it is the same
+        # solution; the files of its Astrometry stages are handed on as Align on does, the blocks after read them
+        from .align_on import AlignOn
+        AlignOn.hand_on_solution(ctx, p.solution or {})
+        if wcs_ref is not None:
+            wcs_ref.to_fits().writeto(ctx.out("wcs.fits"), overwrite=True)
         ctx.metric("channels", sorted(chans))
         ctx.log(f"{self.title} from {', '.join(chans)}; channel scales " + ", ".join(f"{r} {t:.4g}" for r, t in tops.items()))
         v = np.moveaxis(rgb, 0, -1)
@@ -490,7 +504,7 @@ class CombineSHO(NarrowbandCombination):
     description = ("Combines the S II, H-alpha and O III filters into one colour image: each filter a hue, the lightness "
                    "from the filters weighted by their noise, aligned through their plate solutions.")
     Params = SHOParams
-    version = "3"
+    version = "4"
 
 
 class HOParams(NarrowbandParams):
@@ -508,7 +522,7 @@ class CombineHO(NarrowbandCombination):
     description = ("Combines the H-alpha and O III filters (two filters, or a dual-band image's channels) into one "
                    "colour image: each filter a hue, the lightness from the filters weighted by their noise.")
     Params = HOParams
-    version = "3"
+    version = "4"
 
 
 class CombineRGB(Combination):
@@ -518,7 +532,7 @@ class CombineRGB(Combination):
     ports = ("R", "G", "B")
     description = "Combines the red, green and blue filters into one colour image, aligned through their plate solutions."
     Params = BalancedParams
-    version = "1"
+    version = "2"
 
     def combine(self, ctx, p, chans, noise, valid):
         return mix(chans, self.ports, np.eye(3))
@@ -532,7 +546,7 @@ class CombineLRGB(Combination):
     description = ("Combines the red, green and blue filters into the colour, the luminance filter into the detail: "
                    "each pixel's colour scaled so that its luminance is L's.")
     Params = BalancedParams
-    version = "1"
+    version = "2"
 
     def combine(self, ctx, p, chans, noise, valid):
         rgb = np.stack([chans["R"], chans["G"], chans["B"]])

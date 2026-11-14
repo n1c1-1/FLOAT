@@ -523,6 +523,8 @@
  "RGB": "RVB",
  "LRGB": "LRVB",
  "Channel weights": "Poids canaux",
+ "Plate solution": "Solution astrométrique",
+ "The plate solution of the reference row, handed on with the combination's image.": "La solution astrométrique de la ligne de référence, transmise avec l'image de la combinaison.",
  "Each channel's weight, after the balance (1: as balanced).": "Le poids de chaque canal, après l'équilibre (1 : tel qu'équilibré).",
  "Keep half-stacks": "Garder demi-empilements",
  "Fast pass": "Passe rapide",

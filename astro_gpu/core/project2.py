@@ -334,8 +334,29 @@ class Project2:
         """A workflow whose Align on block takes this one's plate solution has a Color block: it reads the catalogues of
         this workflow's Astrometry, which then makes them (#165)."""
         w = self.workflow(wid)
-        return any(self.plate_reference(x) == w.id and any(b["block"] == "color" and not b.get("off") for b in x.blocks)
+        return any(self._plate_source(x) == w.id and any(b["block"] == "color" and not b.get("off") for b in self._nodes(x))
                    for x in self.workflows if x.id != w.id)
+
+    def _nodes(self, w: Workflow) -> list[dict[str, Any]]:
+        """A workflow's graph, drawn from its options when it has none stored (without the chain: no loop)."""
+        return w.blocks if w.blocks is not None else wfl.from_options(w.options, w.end, wfl.source_of(w))
+
+    def _plate_source(self, wid: int | Workflow) -> int | None:
+        """The workflow whose Astrometry gives this one's image its plate solution when it has no Astrometry block: its
+        Align on's reference, or, for a combination, that of its first input that has one (its own Astrometry, else its
+        Align on's reference)."""
+        w = self.workflow(wid)
+        f = (getattr(w, "source", None) or {}).get("fusion")
+        if not f:
+            return self.plate_reference(w)
+        for i in f["inputs"]:
+            x = self.workflow(i["pid"])
+            if any(b["block"] == "astrometry" and not b.get("off") for b in self._nodes(x)):
+                return x.id
+            r = self._plate_source(x)
+            if r is not None:
+                return r
+        return None
 
     def set_blocks(self, wid: int | Workflow, blocks: list[dict[str, Any]]) -> None:
         """Give a workflow its graph (checked, issue #47); its options follow (what the code reading them sees)."""

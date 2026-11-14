@@ -57,7 +57,8 @@ NON_KEY: dict[str, frozenset[str]] = {
 from .combine import STAGES as _COMBINE  # noqa: E402 (the combinations' stages)
 
 # a combination's inputs' folders: their workflows' keys stand for them (core/store.source_part)
-NON_KEY.update({st: frozenset({"inputs"}) for st in _COMBINE})
+# and the folders of the plate solution it hands on (the keys of the solution's stages stand for them)
+NON_KEY.update({st: frozenset({"inputs", "solution"}) for st in _COMBINE})
 #: the stages only v2 workflows have (issue #43: the sessions' join and the image source)
 NEW_STAGES = ("gradient", "render_simple", "star_removal", "sessions", "image", "align_on", *_COMBINE, "deconv",
               "synth_stars")

@@ -225,7 +225,7 @@ def test_a_combination_workflow_reads_its_channels_images_by_port(tmp_path, nigh
     k = Keys(q)
     assert k.chain(f.id) == ["combine_ho", "render_simple"] and k.deps(f.id, "render_simple") == ("combine_ho",)
     assert k.cross_inputs(f.id, "combine_ho") == [(1, "render_simple"), (1, "astrometry"), (o.id, "render_simple"),
-                                                  (o.id, "astrometry")]
+                                                  (o.id, "astrometry"), (1, "surveys")]       # + the solution it hands on
     ov = k.overrides(f.id, "combine_ho")
     assert ov["inputs"][1]["dir"].endswith(k.key(o.id, "render_simple")) and ov["inputs"][1]["role"] == "OIII"
     assert ov["inputs"][0]["grid"] == ov["inputs"][1]["grid"] == k.grid(1)    # one grid: the Align on block's
@@ -447,3 +447,105 @@ def test_a_combination_reads_the_plate_solutions_without_an_astropy_note(tmp_pat
     with warnings.catch_warnings():
         warnings.simplefilter("error", FITSFixedWarning)
         _run(tmp_path, C.CombineHO, C.CombineHO.Params(inputs=ins))
+
+
+# ---------------------------------------------------------------------------------------------- the plate solution
+
+def _solution_dir(root, crpix):
+    """A folder with the files of an Astrometry result: its plate solution."""
+    _output(root, np.zeros((3, 8, 8), np.float32) + 0.01, _wcs(crpix))
+    return root
+
+
+def test_a_combination_outputs_the_plate_solution_of_its_reference_row(tmp_path):
+    from astropy.io import fits
+    from astro_gpu.core.imgutil import read_wcs
+    H, W = 60, 80
+    ref = _wcs([41.0, 31.0])
+    for name in ("ha", "oiii"):
+        _output(tmp_path / name, np.repeat((5 * _star(H, W, 40, 30))[None], 3, 0) + 0.01, ref)
+    sol = _solution_dir(tmp_path / "ast", [41.0, 31.0])
+    # the Ha row is the reference; the O III row, aligned on it, has no Astrometry: its input carries no file
+    ins = [{"role": "Ha", "channel": "L", "pid": 1, "dir": str(tmp_path / "ha"), "wcs": str(sol / "wcs.fits"), "grid": ["g", 1]},
+           {"role": "OIII", "channel": "L", "pid": 2, "dir": str(tmp_path / "oiii"), "wcs": "", "grid": ["g", 1]}]
+    out = _run(tmp_path, C.CombineHO, C.CombineHO.Params(inputs=ins, solution={"astrometry": str(sol)}))
+    got, want = read_wcs(out / "wcs.fits"), read_wcs(sol / "wcs.fits")
+    assert got.wcs.crpix.tolist() == want.wcs.crpix.tolist() and got.wcs.crval.tolist() == want.wcs.crval.tolist()
+    assert got.wcs.cdelt.tolist() == want.wcs.cdelt.tolist()
+    assert fits.getheader(out / "wcs.fits")["CTYPE1"] == "RA---TAN"
+    # nothing solved: nothing to hand on
+    ins[0]["wcs"] = ""
+    assert not (_run(tmp_path, C.CombineHO, C.CombineHO.Params(inputs=ins), name="bare") / "wcs.fits").exists()
+
+
+def _graph(w, drop=()):
+    """A workflow's graph drawn from its options, without the blocks named."""
+    w.blocks = wfl.check_blocks([n for n in wfl.with_output(wfl.from_options(w.options, w.end, "frames"), "frames")
+                                 if n["block"] not in drop], "frames")
+    w.end = None
+
+
+def _with_colour(tmp_path, nights, drop=()):  # noqa: F811
+    p, o = _channels(tmp_path, nights, FULL)
+    _graph(p.workflow(1), drop)
+    _graph(o, drop)
+    add_align_on(p, o, 1, "stars")
+    f = p.add_workflow("H-O", CLASSIC)
+    f.source = {"fusion": {"type": "ho", "inputs": [{"pid": 1, "role": "Ha", "channel": "L"},
+                                                    {"pid": o.id, "role": "OIII", "channel": "L"}]}}
+    p.set_blocks(f.id, [wfl.node("color"), wfl.node("output")])
+    return p, o, f
+
+
+def test_a_colour_block_after_a_combination_reads_the_plate_solution_of_the_reference_row(tmp_path, nights):  # noqa: F811
+    from astro_gpu.core import runner2
+    from astro_gpu.core.store import StoreProject
+    p, o, f = _with_colour(tmp_path, nights)
+    k = Keys(p)
+    assert k.chain(f.id) == ["combine_ho", "color", "render_simple"]
+    sol = k.solution(f.id)
+    assert sol["astrometry"] == (1, "astrometry") and sol["catalogs"] == (1, "catalogs")
+    assert p.catalogs_wanted(1) and "catalogs" in k.chain(1)               # the reference row makes them for the Colour block
+    assert k.deps(f.id, "color")[0] == "combine_ho" and k.wiring_problem(f.id, "color") == ""
+    assert (1, "catalogs") in k.cross_inputs(f.id, "combine_ho")
+    sp = StoreProject(k, f.id, "color")
+    assert sp.stage_dir("catalogs") == sp.stage_dir("stack") == sp.dirs["combine_ho"]
+    stages = [(j.run_wf, j.stage) for j in runner2.plan_workflows(p, [f.id]).jobs]
+    assert stages.index((1, "catalogs")) < stages.index((f.id, "combine_ho")) < stages.index((f.id, "color"))
+    # the solution is in the combination's key, through the stages it comes from
+    before = k.key(f.id, "combine_ho")
+    p.workflow(1).params["astrometry"] = {"min_stars": 8}
+    assert Keys(p).key(f.id, "combine_ho") != before
+
+
+def test_a_colour_block_after_a_combination_whose_inputs_have_no_solution_waits_with_its_reason(tmp_path, nights):  # noqa: F811
+    from astro_gpu.core import runner2
+    p, o, f = _with_colour(tmp_path, nights, drop=("astrometry", "color"))
+    k = Keys(p)
+    assert k.solution(f.id) == {}
+    why = "the combination's inputs bring no plate solution"
+    assert k.wiring_problem(f.id, "color") == why and k.wiring_problem(f.id, "combine_ho") == ""
+    assert runner2.plan_workflows(p, [f.id]).left_out[f.id]["color"] == why
+
+
+def test_a_colour_block_runs_on_a_combination_with_the_solution_it_handed_on(tmp_path):
+    """The reference row's catalogue files come with the combination's image: Colour reads them as it would after an
+    Astrometry block, on the combination's stage, and the field is the identified one."""
+    from astro_gpu.stages.color import Color
+    H, W = 60, 80
+    for name in ("ha", "oiii"):
+        _output(tmp_path / name, np.repeat((5 * _star(H, W, 40, 30))[None], 3, 0) + 0.01, _wcs([41.0, 31.0]))
+    sol = _solution_dir(tmp_path / "ast", [41.0, 31.0])
+    np.savez(sol / "gaia_xp.npz", x=np.zeros(0), y=np.zeros(0), xyz=np.zeros((0, 3)))      # no star with a spectrum
+    (sol / "manifest.json").write_text(json.dumps({"metrics": {"solved": True}}), encoding="utf-8")
+    ins = [{"role": r, "channel": "L", "pid": i, "dir": str(tmp_path / r.lower()), "wcs": str(sol / "wcs.fits"),
+            "grid": ["g", 1]} for i, r in ((1, "Ha"), (2, "OIII"))]
+    comb = _run(tmp_path, C.CombineHO, C.CombineHO.Params(inputs=ins, solution={"astrometry": str(sol), "catalogs": str(sol)}))
+    assert (comb / "gaia_xp.npz").is_file() and (comb / "wcs.fits").is_file()
+    out = tmp_path / "color"
+    pr = _Project(tmp_path, {"combine_ho": comb, "stack": comb, "catalogs": comb, "color": out}, ["combine_ho", "color"])
+    st = Color()
+    ctx = Context(pr, st, Journal(pr.logs), "cpu")
+    # past the catalogue and the field checks (read from the combination's folder): it is the star count that stops it
+    with pytest.raises(StageError, match="stars with a spectrum|stars with spectra"):
+        st.run(ctx, Color.Params(on_failure="stop"))

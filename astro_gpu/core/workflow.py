@@ -226,12 +226,14 @@ READ_KINDS: dict[str, tuple[str, ...]] = {"all": ("gradient", "deconv", "denoise
                                          "colours": ("gradient", "color")}
 #: the stages of the Astrometry block: an Align on block wired from the reference workflow's Astrometry (or a block after
 #: it) outputs the reference's plate solution with the aligned image (same grid), which is what these stages stand for
-#: after it, in the workflow that has no Astrometry block of its own (#165)
+#: after it, in the workflow that has no Astrometry block of its own (#165). A combination stands for them too, with the
+#: plate solution of its reference row
 ASTROMETRY_STAGES = ("astrometry", "reference", "catalogs", "surveys")
 #: stages that stand for others in a chain (issue #43): the sessions' join for each session's frames and calibration,
 #: the image of an image source for the stack
 PROVIDES: dict[str, tuple[str, ...]] = {"sessions": ("inventory", "calibrate"), "image": ("stack", "render_simple"),
-                                         **{st: ("stack",) for st in COMBINE}, "align_on": ASTROMETRY_STAGES}
+                                         **{st: ("stack", *ASTROMETRY_STAGES) for st in COMBINE},
+                                         "align_on": ASTROMETRY_STAGES}
 #: dependencies a stage has beyond its declared ``deps``
 EXTRA: dict[str, tuple[str, ...]] = {}
 #: dependencies that may be absent from a chain (the stage then runs without them); the stages that read the stack
@@ -690,7 +692,7 @@ def graph_problem(blocks: Sequence[dict], source: str, raise_it: bool = False) -
             return bad(WHY_SOURCE, source=SOURCE_WORDS[source], block=_title(b))
         if source == "stretched" and b not in ("stars", "align_on"):
             return bad(WHY_SOURCE, source=SOURCE_WORDS[source], block=_title(b))
-        if source == "fusion" and b not in ("output", "stars"):
+        if source == "fusion" and b not in ("output", "stars", "color"):
             return bad(WHY_SOURCE, source=SOURCE_WORDS[source], block=_title(b))
         if after_output and b not in ("stars", "synth"):
             return bad(WHY_AFTER_OUTPUT)
@@ -706,7 +708,7 @@ def graph_problem(blocks: Sequence[dict], source: str, raise_it: bool = False) -
                 other = next(x for x in FRAME_BLOCKS[r + 1:] if x in seen)
                 return bad(WHY_FRAME_ORDER, block=_title(b), where="before", other=_title(other))
             frame_rank = r
-        if b == "color" and "astrometry" not in seen and "align_on" not in seen:
+        if b == "color" and "astrometry" not in seen and "align_on" not in seen and source != "fusion":
             return bad(WHY_NEEDS, need=_title("astrometry"))
         if b in ("denoise", "deconv") and (source != "frames" or "stacking" not in seen):
             return bad(WHY_HALVES)
