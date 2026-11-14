@@ -1102,8 +1102,7 @@ class GraphEditing:
             elif self.sel_step and self.sel_step not in ("sources", "final") and self.sel_step not in keys:
                 j = old_keys.index(self.sel_step) if self.sel_step in old_keys else len(old_keys)
                 self.sel_step = next((k for k in reversed(old_keys[:j]) if k in keys), keys[-1] if keys else "sources")
-        if not self._stale:                               # (else told with the worker's answer)
-            self.pathsChanged.emit()
+        self.pathsChanged.emit()
         self.currentChanged.emit()
         if post_back:
             self.postChanged.emit(None)
