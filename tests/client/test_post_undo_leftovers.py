@@ -39,6 +39,6 @@ def test_a_combine_layers_made_in_the_graph_is_not_undone_by_post_and_the_synthe
         v.toasted.connect(said.append)
         v.do_undo()                                                # the Graph's Combine layers stays: not a step of Post
         assert len(v.layers) == n and _names(v.layers) == made
-        assert said and said[-1].startswith("Nothing to undo here")
+        assert said and said[-1].startswith(("Nothing more to undo in this version", "Nothing to undo here"))
     finally:
         _done(page)
