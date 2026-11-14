@@ -465,3 +465,18 @@ def test_s42_a_wire_under_the_pointer_lights_its_ends_and_blocks(B):
     pump()
     assert not it.hot and not any(x.wire_hot for x in c.blocks.values())
 
+
+
+def test_a_synthetic_stars_block_placed_from_the_palette_is_told_in_the_past_tense(B):
+    """The toast after the drop says what was done (« Synthetic stars added to “S-H-O” … »),
+    never the drag bubble's words (« Synthetic stars here, in … »)."""
+    B.tpl("sho_rgb")
+    places = [p for p in B.g.visible_places("synth") if p["lit"]]
+    assert places, "no lit place for Synthetic stars on the S-H-O template"
+    place = next(p for p in places if "“S-H-O”" in p["tip"])
+    n = len(B.graph.blocks)
+    B.g.drag_palette("synth", place["i"])
+    assert len(B.graph.blocks) == n + 1
+    said = B.toast()
+    assert said.startswith("Synthetic stars added to “S-H-O”"), said
+    assert "here, in" not in said, said

@@ -211,19 +211,19 @@ class Bridge(QObject):
             if res.toast and quiet is not True:
                 note = self.take_stale()
                 coming = self._stale_coming()
+                said = self.say(res.toast)
+                r = self.row_of(new) if new is not None and kind else None
+                if r is not None and self.block(new) is not None:    # what was done, never the place's bubble
+                    from .style import kind_title
+                    said = _("{block} added to “{workflow}”").format(block=kind_title(self.block(new).kind),
+                                                                      workflow=r.name)
                 if note or coming is not None:    # computed results made stale, or work added: said, with Undo
-                    said = self.say(res.toast)
-                    r = self.row_of(new) if new is not None and kind else None
-                    if r is not None and self.block(new) is not None:    # what was done, never the place's bubble
-                        from .style import kind_title
-                        said = _("{block} added to “{workflow}”").format(block=kind_title(self.block(new).kind),
-                                                                          workflow=r.name)
                     if note:
                         self.rich_toast.emit(said + " · " + note, [(_("Undo"), "undo")])
                     else:                         # the action at once, what it computes again once the states are read
                         self._toast_completed(said, coming)
                 else:
-                    self.toast.emit(self.say(res.toast) + " · Ctrl+Z")
+                    self.toast.emit(said + " · Ctrl+Z")
         elif res.reason and not quiet:
             self.toast.emit(self.say(res.reason))
         return res
