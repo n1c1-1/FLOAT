@@ -146,7 +146,7 @@ def with_layer_rows(g, want: dict, sides: dict | None = None):
     have = layer_rows(g)
     if all(len(have.get(s, [])) == n for s, n in want.items()) and \
             all(s in want for s in have if s in g.blocks and g.blocks[s].kind == "stars"):
-        return _with_sides(g, sides)
+        return _to_post(_with_sides(g, sides))
     q = clone(g)
     post = Index(q).post
     for s, rows in have.items():
@@ -172,7 +172,21 @@ def with_layer_rows(g, want: dict, sides: dict | None = None):
             else:
                 q.wires.append(Wire(new_id(q, "w"), [s, "image"], [j.id, "Background"]))
             q.wires.append(Wire(new_id(q, "w"), [j.id, "image"], [post, POST_PORT]))
-    return _with_sides(_with_stars_group(q), sides)
+    return _to_post(_with_sides(_with_stars_group(q), sides))
+
+
+def _to_post(g):
+    """Each Combine layers drawn for a layer of Post has its wire to Post (the layer it stands for): one made by a
+    gesture after a Stars/background whose image did not go to Post, then saved, had none while Post held its layer."""
+    post = Index(g).post
+    heads = [b for rids in layer_rows(g).values() for rid in rids for r in g.rows if r.id == rid for b in r.blocks[:1]]
+    missing = [j for j in heads if not any(w.src[0] == j and w.dst[0] == post for w in g.wires)]
+    if post is None or not missing:
+        return g
+    q = clone(g)
+    for j in missing:
+        q.wires.append(Wire(new_id(q, "w"), [j, "image"], [post, POST_PORT]))
+    return q
 
 
 def _with_sides(g, sides):

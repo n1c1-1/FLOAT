@@ -1259,6 +1259,8 @@ def _add_join(q, kind, after):
         for w in q.wires:
             if w.src[0] == a.id and w.dst[0] == post:      # the row's output passes to the new join
                 w.src = [j.id, "image"]
+        if post is not None and not any(w.src[0] == j.id and w.dst[0] == post for w in q.wires):
+            q.wires.append(Wire(new_id(q, "w"), [j.id, "image"], [post, POST_PORT]))   # its image: a layer of Post
         q.wires.append(Wire(new_id(q, "w"), [a.id, "Starless"], [j.id, "Background"]))
         q.wires.append(Wire(new_id(q, "w"), [a.id, "Stars only"], [j.id, "Stars"]))
         if syn is not None and not syn.off:
