@@ -83,6 +83,10 @@ REJECTION = "rejection.npz"
 #: calibration leaves those stars out) and of its clipped samples (layer 1: the simple output gives those cores the
 #: colour of their surroundings), the most of the three colours
 SATURATION = "saturation.npy"
+#: the bytes a band of the rejection by frame count holds per value (frames x colours x output columns) on the processor,
+#: measured (count_pass), and the most memory its bands may take whatever the machine has free
+CPU_BAND_BYTES = 32
+CPU_BAND_CAP = 3 * 2 ** 29
 #: a raw value above this fraction of the saturation level is near saturation (the response bends before it clips)
 NEAR_SATURATION = 0.85
 #: the rejection maps are reduced by a whole factor until their longer side is at most this
@@ -1593,17 +1597,22 @@ def count_pass(ctx, p: StackParams, frame_model, frame_extent, used, weight, chm
     from ..core import rejection_classic as rc
     N = len(used)
     half_a = np.array([(int(i) // p.half_block) % 2 == 0 for i in used])
-    # bytes per output row of a band: the four buffers, the masks and the rejection's double-precision copies
-    per_row = N * 3 * Wo * 64
+    # bytes per output row of a band. Card: the four buffers, the masks and the rejection's double-precision copies, 64
+    # bytes a value (N frames x 3 colours x Wo). Processor: measured on a synthetic night (192 to 480 rows of 1,280
+    # output columns, 16 and 48 frames, private bytes of the process, the memory budget forced to give each band size):
+    # 30 bytes a value, the four float32 buffers (16) and the rejection's working copies of one colour at a time; the
+    # rest of the peak (2.2 GB there, 3.8 GB on 12 Mpx) does not depend on the band
+    per_row = N * 3 * Wo * (64 if dev.type == "cuda" else CPU_BAND_BYTES)
     if dev.type == "cuda":
         torch.cuda.empty_cache()                                          # what the earlier passes left cached is free
         free = torch.cuda.mem_get_info(dev)[0]
         budget = int(0.8 * free) - 14 * 4 * sizes[1]                      # the frame's own working tensors
     else:
         mb = devices.memory_budget()
-        # half of what the engine may fill (the memory budget already leaves out what the run holds; the output's sums
-        # are no longer held whole, each band goes to its files), less the frame's own working tensors
-        budget = (mb[0] if mb else 4 * 2 ** 30) // 2 - 14 * 4 * sizes[1]
+        # what the engine may fill now (it leaves out what the run holds already; the output's sums are not held whole,
+        # each band goes to its files), 10 % kept back, less the frame's own working tensors; and at most
+        # CPU_BAND_CAP: wider bands save only the frames' pass (about 2.6 s a band on 12 Mpx) for more memory
+        budget = min(int(0.9 * (mb[0] if mb else 4 * 2 ** 30)) - 14 * 4 * sizes[1], CPU_BAND_CAP)
     rows = int(max(4, min(Ho, budget // per_row)))
     starts = list(range(0, Ho, rows))
     mid = len(starts) // 2
