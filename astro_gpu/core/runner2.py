@@ -491,8 +491,9 @@ def _own_package_first(env: dict[str, str]) -> dict[str, str]:
     Python environment (from a second checkout, a stage whose version reads a local file keyed differently and the
     run failed with "the inputs ... changed since the run was planned"). core/selftest.py does the same."""
     here = str(Path(__file__).resolve().parents[2])
-    rest = env.get("PYTHONPATH", "")
-    return {**env, "PYTHONPATH": here + (os.pathsep + rest if rest else "")}
+    rest = [p for p in env.get("PYTHONPATH", "").split(os.pathsep)
+            if p and os.path.normcase(os.path.abspath(p)) != os.path.normcase(here)]      # once, whatever the depth
+    return {**env, "PYTHONPATH": os.pathsep.join([here, *rest])}
 
 
 def _spawn_worker(root: str | Path, plan_file: str | Path, visible: str, log_file: str | Path,

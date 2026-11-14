@@ -1,7 +1,7 @@
-"""Runner v2 (DESIGN §3): plans, the detached worker, the store folders, the lock, the estimates; and its engine
+"""Runner v2 (DESIGN Â§3): plans, the detached worker, the store folders, the lock, the estimates; and its engine
 changes (stack.exclude, the cache-only calibrate, run_id, atomic timings).
 
-Toy stages: inventory → stack → b (with the 'denoise' option, checkpointed) → c → e; c reads b when the chain has
+Toy stages: inventory â†’ stack â†’ b (with the 'denoise' option, checkpointed) â†’ c â†’ e; c reads b when the chain has
 it and e reads b through an EXTRA edge. Workflows: Classic (no b) and Denoise.
 """
 from __future__ import annotations
@@ -862,7 +862,7 @@ def test_stacking_on_the_processor_is_estimated_near_what_was_measured():
 
 
 def test_an_image_opened_is_estimated_at_its_own_size(tmp_path):
-    """The night test pass: a picture of 1600 x 1100 was announced "≈ 3 min" on the processor and took 10 s (the
+    """The night test pass: a picture of 1600 x 1100 was announced "â‰ˆ 3 min" on the processor and took 10 s (the
     reference's 27 Mpx grid)."""
     from types import SimpleNamespace
 
@@ -993,7 +993,7 @@ def iris_check(history: dict) -> tuple[float, float, dict]:
                     reason="the user's real projects are not here")
 def test_estimates_are_within_50_percent_of_iris_measured_times(tmp_path, capsys):
     """Iris's whole run, estimated from the history the 8 other real projects give (read only), and from the
-    Heart reference alone (≈)."""
+    Heart reference alone (â‰ˆ)."""
     for r in [IRIS, *OTHERS]:
         assert not (r / "project.astroproj").exists()
     hist_file = tmp_path / "timings2.json"
@@ -1091,7 +1091,7 @@ def test_cache_only_calibrate_gives_the_same_frames_as_a_full_run(tmp_path, stat
 
 
 def test_a_three_filter_fusion_is_estimated_near_its_real_run(monkeypatch):
-    """Wing, a mono camera with SII, Ha and OIII (139 lights of 4656 x 3520 in 8 nights): the plan said "≈ 1 h 00" and
+    """Wing, a mono camera with SII, Ha and OIII (139 lights of 4656 x 3520 in 8 nights): the plan said "â‰ˆ 1 h 00" and
     the run took 19.9 min, because every filter's workflow counted the 139 lights of the project (stack: 538 s each)
     instead of its own filter's 50, 47 and 42. The seconds are the run log's, per stage and workflow."""
     from types import SimpleNamespace
@@ -1215,6 +1215,7 @@ def test_a_worker_imports_the_astro_gpu_of_the_process_that_started_it(tmp_path)
     here = str(Path(astro_gpu.__file__).resolve().parents[1])
     assert env["PYTHONPATH"].split(os.pathsep) == [here, "elsewhere"]
     assert runner2._own_package_first({})["PYTHONPATH"] == here
+    assert runner2._own_package_first(env) == env                               # a child of a worker: still once
     out = subprocess.run([sys.executable, "-c", "import astro_gpu; print(astro_gpu.__file__)"], cwd=tmp_path,
                          env=runner2._own_package_first(dict(os.environ)), capture_output=True, text=True, check=True)
     assert Path(out.stdout.strip()).resolve().parents[1] == Path(here)
