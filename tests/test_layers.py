@@ -325,3 +325,14 @@ def test_the_fits_header_names_the_product_the_shot_and_the_history_keeps_where_
     h = fits.getheader(next(f for f in files if f.suffix == ".fits"))
     assert h["PROGRAM"] == "FLOAT" and h["OBJECT"] == "M 42" and h["EXPTIME"] == 7200.0
     assert h["DATE-OBS"].startswith("2026-11-12T22:01") and "WCS" not in h.tostring() and "CTYPE1" not in h
+
+
+def test_history_cards_are_whole_statements_cut_at_clause_boundaries():
+    from astro_gpu.render.layers import history_lines
+    layers = [{"id": 1, "kind": "workflow", "pid": 1, "part": "combined", "name": "S-H-O Combine layers",
+               "mode": "Normal", "opacity": 100.0, "sliders": {}, "visible": True,
+               "mask": {"parts": [1]}, "side_masks": {"stars": {}, "starless": {}}}]
+    out = history_lines({"project": "P", "created": "x", "layers": layers, "workflows": {}})
+    assert all(len(x) <= 72 for x in out)
+    assert any(x.rstrip().endswith("side masks: starless, stars;") or "side masks: starless, stars" in x for x in out)
+    assert not any(x.startswith("part combined") or x.strip() in ("combined", "stars") for x in out)

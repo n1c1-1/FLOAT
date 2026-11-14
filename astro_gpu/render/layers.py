@@ -530,7 +530,36 @@ def history_lines(history: dict) -> list[str]:
             side = {"stars": "stars only", "starless": "starless image only", "real": "real stars only"}.get(f.get("sub"), "")
             lines.append(f"  its filter {f.get('name')}{fs}{', ' + side if side else ''}, {f.get('mode', 'Normal')} "
                          f"{float(f.get('opacity', 100)):g}%{', masked' if f.get('mask') else ''}; {fmt(f.get('params'))}")
-    return [_ascii(x) for x in lines]
+    return [part for x in lines for part in _cards(_ascii(x))]
+
+
+_CARD = 70                                                    # a HISTORY card holds 72 characters
+
+
+def _cards(line: str, width: int = _CARD) -> list[str]:
+    """One history line as whole statements that fit a FITS card: cut at its clause boundaries ("; " first, then ", "),
+    never inside a phrase; the continuation cards are indented two spaces."""
+    if len(line) <= width:
+        return [line]
+    out: list[str] = []
+    for sep in ("; ", ", "):
+        clauses = line.split(sep)
+        if len(clauses) > 1:
+            break
+    else:
+        return [line]
+    cur = ""
+    for i, c in enumerate(clauses):
+        piece = c + (sep.strip() if i < len(clauses) - 1 else "")
+        trial = piece if not cur else cur + " " + piece
+        if cur and len(trial) > width:
+            out.append(cur)
+            cur = "  " + piece
+        else:
+            cur = trial
+    out.append(cur)
+    # a clause still too long on its own is cut again at the next boundary kind
+    return [c for x in out for c in (_cards(x, width) if len(x) > width and sep == "; " else [x])]
 
 
 def _wcs_header(wcs):
