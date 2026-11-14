@@ -149,6 +149,19 @@ class BlockItem(QGraphicsItem):
     def boundingRect(self):                                           # noqa: N802
         return QRectF(-12, -12, self.w + 24, self.h + 24)
 
+    def shape(self):                                                  # noqa: D102 - what a click or a hover finds
+        """The body, its ports, its named inputs and its review dot: the margin around it is not the block's, so a
+        chain wire in the gap between two blocks is found there (clicked, hovered: it says it cannot be removed)."""
+        path = QPainterPath()
+        path.addRect(QRectF(0, 0, self.w, self.h))
+        for _port, y, _c, _wired in self.d["outputs"]:
+            path.addEllipse(QPointF(self.w, y), 12, 12)
+        for _name, _lab, y, _wired, _c in self.d["inputs"]:
+            path.addRect(QRectF(-9, y - 9, self.name_w + 18, 18))
+        if self.d.get("review"):
+            path.addEllipse(QPointF(2, 2), 10, 10)
+        return path
+
     def cross_rect(self):
         return QRectF(self.w - 20, 4, 16, 16)
 
@@ -274,11 +287,24 @@ class BlockItem(QGraphicsItem):
 
     def hoverEnterEvent(self, e):                                     # noqa: N802
         self.hover = True
+        self._grab_cursor(e.pos())
         self.update()
+
+    def hoverMoveEvent(self, e):                                      # noqa: N802
+        self._grab_cursor(e.pos())
 
     def hoverLeaveEvent(self, e):                                     # noqa: N802
         self.hover = False
+        self.unsetCursor()
         self.update()
+
+    def _grab_cursor(self, pos):
+        """The open hand over an output port (the wire is grabbed there), the arrow on the body (today's page)."""
+        if self.d["kind"] != "card" and self.output_at(pos) is not None:     # a card's port is not pulled
+            if self.cursor().shape() != Qt.OpenHandCursor:
+                self.setCursor(Qt.OpenHandCursor)
+        elif self.hasCursor():
+            self.unsetCursor()
 
 
 class StackItem(BlockItem):

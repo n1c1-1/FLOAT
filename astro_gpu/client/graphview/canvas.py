@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...graphcore.layout import BH
 from ...graphcore.model import FILE_KINDS, JOIN_KINDS, Index
 from ...graphcore.rules import FILE_LABEL, title_msg
 from ...graphcore.shapes import Result
@@ -62,6 +63,8 @@ from ..imageview import ZOOM_PRESETS as ZOOMS  # noqa: E402 - today's presets, 1
 PORT_COL = {"Background": IMAGE_COL["starless"], "Stars": IMAGE_COL["stars_only"]}
 OUT_COL = {"Starless": IMAGE_COL["starless"], "Stars only": IMAGE_COL["stars_only"]}
 ALERT_MS = 1500
+#: the wires that are the chain itself (the core's drawing): never chosen, they say they cannot be removed (#52)
+CHAIN_STYLES = ("chain", "night", "bar", "fork")
 EDGE = 40                   # a drag this near the view's edge scrolls it (graph.py EDGE)
 EDGE_WAIT = 0.35            # s held near the edge before it scrolls: a drag only crossing the edge moves nothing
 WHEEL_STEP = 1.15           # one notch of the wheel
@@ -652,7 +655,10 @@ class GraphCanvas(QGraphicsView):
         for path in drawing.wires:
             sel = path.style in ("port", "port_inactive") and path.id.startswith("w")
             it = WireItem(path.id, path.points, path.style, path.colour, sel)
-            it.tipfn = (lambda i=path.id, w=self._wire_word(path): "\n".join(t for t in (w, doc.wire_tip(i)) if t))
+            chain = _("Part of the chain: it follows the blocks, it cannot be removed") if path.style in \
+                CHAIN_STYLES else ""
+            it.tipfn = (lambda i=path.id, w=self._wire_word(path), c=chain: "\n".join(
+                t for t in (w, doc.wire_tip(i), c) if t))
             it.ends = (path.src, path.dst)
             it.hover_cb = self._wire_hover
             sc.addItem(it)
@@ -1083,7 +1089,16 @@ class GraphCanvas(QGraphicsView):
         self.b_zoom.setText(f"{round(self._k * 100)} %")
         self.b_all.setChecked(True)
         self._update_buttons()
-        self.remember_view()
+        self.forget_view()
+
+    def forget_view(self):
+        """Show all gives the automatic view back: the user's zoom and position are forgotten, in the graph's view
+        state and, a moment later, in the settings for this project (today's page: reopened, the automatic view)."""
+        v = self.bridge.view
+        changed = v.get("zoomed") is True
+        v["zoomed"] = False
+        if changed and self._project_key() is not None:
+            self._view_timer.start()
 
     def auto_view(self):
         self.auto = True
@@ -1192,7 +1207,23 @@ class GraphCanvas(QGraphicsView):
         if f is not None:                                # a native pinch (macOS, Wayland)
             self.zoom_at(f, e.position().toPoint())
             return True
+        if self._own_shortcut(e):
+            return True
         return super().viewportEvent(e)
+
+    @staticmethod
+    def _own_shortcut(e) -> bool:
+        """Ctrl+1 in the graph is its 100 % (the image viewer's readable size, issue #44), not the window's Graph
+        command: the key is kept for the graph's keyPressEvent."""
+        if e.type() == QEvent.ShortcutOverride and e.key() == Qt.Key_1 and e.modifiers() & Qt.ControlModifier:
+            e.accept()
+            return True
+        return False
+
+    def event(self, e):                                               # noqa: N802
+        if self._own_shortcut(e):
+            return True
+        return super().event(e)
 
     def zoom_at(self, f, at: QPoint):
         """The zoom times ``f``, the scene point under ``at`` (viewport) kept in place."""
@@ -1280,7 +1311,8 @@ class GraphCanvas(QGraphicsView):
                 self.bridge.choose(None)
                 self.wire_chosen.emit(it.ident)
             else:
-                self.bridge.toast.emit(_("A wire of the chain: it follows the blocks; switch off or delete a block "
+                self.bridge.toast.emit(_("Chain wire: not removable") if it.style_name in CHAIN_STYLES else   # #52
+                                       _("A wire of the chain: it follows the blocks; switch off or delete a block "
                                          "to take it out"))
             return
         if isinstance(it, ProjectItem):
@@ -1293,15 +1325,17 @@ class GraphCanvas(QGraphicsView):
             else:
                 self.new_workflow_menu(at)
             return
+        self._start_pan(e, deselect=True)                # a click deselects; a drag only pans (at the release)
+
+    def _deselect(self):
         self.selected_wire = None
         for f in self.wires.values():
             f.mark(False)
         self.bridge.choose(None)
-        self._start_pan(e)
 
-    def _start_pan(self, e):
+    def _start_pan(self, e, deselect=False):
         self.gesture = dict(kind="pan", start=e.position(), h=self.horizontalScrollBar().value(),
-                            v=self.verticalScrollBar().value())
+                            v=self.verticalScrollBar().value(), deselect=deselect, moved=False)
         self.setCursor(Qt.ClosedHandCursor)
 
     def mouseMoveEvent(self, e):                                      # noqa: N802
@@ -1311,6 +1345,8 @@ class GraphCanvas(QGraphicsView):
             return
         if st["kind"] == "pan":
             d = e.position() - st["start"]
+            if d.manhattanLength() >= QApplication.startDragDistance():
+                st["moved"] = True
             self.horizontalScrollBar().setValue(int(st["h"] - d.x()))
             self.verticalScrollBar().setValue(int(st["v"] - d.y()))
             self.auto = False
@@ -1331,6 +1367,8 @@ class GraphCanvas(QGraphicsView):
         self.unsetCursor()
         if st is None:
             return super().mouseReleaseEvent(e)
+        if st["kind"] == "pan" and st.get("deselect") and not st.get("moved"):
+            self._deselect()
         if st["kind"] == "block":
             self._end_move(st, e)
         elif st["kind"] == "wire":
@@ -1660,14 +1698,56 @@ class GraphCanvas(QGraphicsView):
         for g in self.ghosts:
             self.scene().removeItem(g)
         self.ghosts = []
+        rows = self._line_rows()
         for place in places:
             g = GhostItem(place)
+            g.row = rows.get(place.line) if isinstance(place.line, int) else None
             self.scene().addItem(g)
             self.ghosts.append(g)
+        self._spans = self._row_spans()
         self.tip.set("", QRectF(), False)
         self.tip.hide()
         if self.tip.scene() is None:
             self.scene().addItem(self.tip)
+
+    def _line_rows(self) -> dict:
+        """{line index: the row it belongs to} of the drawing (a chain line is its row's, a night line its stack's)."""
+        bridge = self.bridge
+        out = {}
+        for i, (owner, _y) in enumerate(bridge.drawing().lines):
+            r = bridge.row(owner) or bridge.row_of(owner)
+            if r is not None:
+                out[i] = r.id
+        return out
+
+    def _row_spans(self) -> dict:
+        """{row id: (top, bottom)} in the scene: where the pointer is on that stack's row."""
+        spans = {}
+        rows = self._line_rows()
+        for i, (_owner, y) in enumerate(self.bridge.drawing().lines):
+            rid = rows.get(i)
+            if rid is None:
+                continue
+            top, bottom = spans.get(rid, (y, y))
+            spans[rid] = (min(top, y - 12), max(bottom, y + BH + 12))
+        return spans
+
+    def _lit_rows(self, sp: QPointF):
+        """The rows whose lit places a palette card shows at once (GUI exploration 4, Q11: a large project would light
+        a hundred): the row the palette places in ("for …": the chosen block's, else the first), and the row under the
+        pointer. None: every row's (a block moved, a page without rows)."""
+        if self.gesture is None or self.gesture.get("kind") != "palette":
+            return None
+        bridge = self.bridge
+        sel = bridge.selected
+        mine = (bridge.row(sel) or bridge.row_of(sel)) if sel not in (None, PROJECT) else None
+        if mine is None and bridge.graph.rows:
+            mine = bridge.graph.rows[0]
+        out = {mine.id} if mine is not None else set()
+        for rid, (top, bottom) in getattr(self, "_spans", {}).items():
+            if top <= sp.y() <= bottom:
+                out.add(rid)
+        return out
 
     @staticmethod
     def _zone(g: GhostItem):
@@ -1686,9 +1766,11 @@ class GraphCanvas(QGraphicsView):
                 if best is None or score < best[0]:
                     best = (score, g)
         hot = best[1] if best else None
+        shown = self._lit_rows(sp)
         for g in self.ghosts:
             h = g is hot
-            vis = g.place.lit or h or abs(g.rect.center().y() - sp.y()) < 36
+            lit = g.place.lit and (shown is None or getattr(g, "row", None) is None or g.row in shown)
+            vis = lit or h or abs(g.rect.center().y() - sp.y()) < 36
             if g.isVisible() != vis:
                 g.setVisible(vis)
             if g.hot != h:

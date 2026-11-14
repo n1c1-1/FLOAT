@@ -93,6 +93,17 @@ class Card(QFrame):
         self.box.setContentsMargins(*((8, 6, 8, 6) if narrow else (7, 5, 7, 5)))
         self._tip()
 
+    def keep_height(self, on: bool):
+        """Automatic palette: the card as tall folded as opened (its name on one line or two), so that opening it
+        under the mouse moves no card; otherwise its own height."""
+        if on:
+            room = PALETTE_W - 26 - 7 - 7 - 16 - 5                # the card's width less its margins and icon
+            h = max(self.title.heightForWidth(room), self.title.fontMetrics().height(), 16) + 10
+            self.setFixedHeight(max(h, 28))
+        elif self.minimumHeight() == self.maximumHeight():
+            self.setMinimumHeight(0)
+            self.setMaximumHeight(16777215)
+
     def mousePressEvent(self, e):                                     # noqa: N802
         self._press = e.position().toPoint()
 
@@ -221,14 +232,22 @@ class Palette(QScrollArea):
 
     def _fit(self):
         wide = self.wide()
+        auto = self.state == "auto"      # opened over the graph under the mouse: no card may move under it
         self.setFixedWidth(PALETTE_W if wide else PALETTE_FOLDED_W)
-        self.body_box.setContentsMargins(*((10, 10, 14, 10) if wide else (4, 6, 4, 6)))
+        top = 10 if wide or auto else 6
+        self.body_box.setContentsMargins(*((10, top, 14, 10) if wide else (4, top, 4, 6)))
+        for w in [self.head, self.for_row, *self.headers]:   # automatic: a hidden heading keeps its room
+            sp = w.sizePolicy()
+            if sp.retainSizeWhenHidden() != auto:
+                sp.setRetainSizeWhenHidden(auto)
+                w.setSizePolicy(sp)
         self.head.setVisible(wide)
         self.for_row.setVisible(wide and bool(self._for_text))
         for h in self.headers:           # folded: only the blocks' icons (graph.py: the headers hidden)
             h.setVisible(wide)
         for c in self.cards.values():
             c.set_narrow(not wide)
+            c.keep_height(auto)
         self._show_for()
         if self.on_fit is not None:
             self.on_fit()

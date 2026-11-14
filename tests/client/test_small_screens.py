@@ -273,7 +273,6 @@ def _mouse_on_palette(page, inside: bool):
                            if inside else QEvent(QEvent.Leave))
 
 
-@pytest.mark.xfail(strict=True, reason="the automatic palette's cards move down as it opens (its headings appear)")
 def test_the_palette_of_a_small_screen_unfolds_under_the_mouse_over_the_graph(env):
     w = _open(env, (1366, 728))
     page = w.graph
@@ -405,7 +404,6 @@ def test_tab_in_a_text_field_moves_the_focus_as_in_a_form(env):
     assert w.graph.dock.state == "docked" and not w.a_hide.isChecked()   # the panels did not move
 
 
-@pytest.mark.xfail(strict=True, reason="Ctrl+1 in the graph goes to the window's Graph command, not the 100 % zoom")
 def test_ctrl_1_is_100_percent_in_the_graph_and_the_mode_switch_elsewhere(env):
     w = _open(env, (1366, 728))
     gv = w.graph.graph
@@ -918,7 +916,6 @@ def test_the_wheel_zooms_at_the_pointer_and_the_zoom_is_the_users(env):
     assert gv.b_zoom.text() == f"{round(gv.zoom * 100)} %"
 
 
-@pytest.mark.xfail(strict=True, reason="Show all keeps the view as the user's zoom")
 def test_the_keys_and_the_presets_match_the_image_viewer(env):
     w = _open(env, (1366, 728))
     gv = w.graph.graph
@@ -982,7 +979,6 @@ def test_the_view_pans_with_the_middle_button_space_or_a_left_drag_on_the_empty_
     assert w.s.sel_step == "calibration"
 
 
-@pytest.mark.xfail(strict=True, reason="a drag on the empty area deselects the block (the press deselects)")
 def test_a_click_on_the_empty_area_still_deselects_but_a_drag_does_not(env):
     w = _open(env, (1366, 728))
     gv = w.graph.graph
@@ -1024,7 +1020,6 @@ def test_the_minimap_shows_when_part_of_the_graph_is_off_screen_and_moves_the_vi
     assert not m.isVisible()                                         # the whole graph in view: no map
 
 
-@pytest.mark.xfail(strict=True, reason="Show all keeps the view as the user's zoom: not forgotten in the settings")
 def test_zoom_and_position_survive_a_rebuild_and_are_kept_with_the_project(env):
     root = _project(env["tmp"], "Kept")
     w = _open(env, (1366, 728), root)

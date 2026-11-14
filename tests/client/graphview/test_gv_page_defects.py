@@ -255,3 +255,60 @@ def test_an_image_block_says_its_file_stretched_or_to_choose(world, tmp_path):
     W.template("image")
     lines = [it.d["summary"] for it in W.page.canvas.blocks.values() if it.d["kind"] == "image"]
     assert "file to choose" in lines, lines
+
+
+def test_a_chain_wire_says_it_cannot_be_removed_and_an_output_port_shows_the_hand(world):
+    from PySide6.QtCore import QPointF, Qt
+    W = world()
+    cv = W.page.canvas
+    chain = [it for it in cv.wires.values() if it.style_name == "chain"]
+    assert chain and all("cannot be removed" in it.tipfn() for it in chain)
+    from astro_gpu.client.graphview.items import WireItem
+    spots = [cv.mapFromScene(it.path().pointAtPercent(0.5)) for it in chain]
+    pt = next(p for p in spots if isinstance(cv.item_at(p), WireItem))     # a spot of the wire, not a port
+    W.g.press(pt)
+    W.g.release(pt)
+    W.settle(2)
+    assert cv.toast.plain == "Chain wire: not removable" and cv.selected_wire is None
+    st = cv.blocks[W.block("empilement")]
+    port, y = st.d["outputs"][0][0], st.d["outputs"][0][1]
+    st._grab_cursor(QPointF(st.w, y))
+    assert st.cursor().shape() == Qt.OpenHandCursor
+    st._grab_cursor(QPointF(st.w / 2, st.h / 2))
+    assert not st.hasCursor()
+
+
+# ---------------------------------------------------------------------------------------------- the palette's places
+def test_a_palette_card_lights_its_workflows_places_and_another_stacks_under_the_pointer(world):
+    from PySide6.QtCore import QMimeData, QPoint, Qt
+    from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDragMoveEvent
+    from PySide6.QtWidgets import QApplication
+
+    from astro_gpu.client.graphview.canvas import MIME_KIND
+    W = world(workflows=(), filters=("Ha", "OIII", "SII", "L"))
+    W.template("filters_min")
+    cv = W.page.canvas
+    rows = [r for r in W.graph.rows if r.nights]
+    assert len(rows) >= 4
+    first = rows[1]
+    W.choose(next(b for b in first.blocks if W.graph.blocks[b].kind == "stacking"))
+    mime = QMimeData()
+    mime.setData(MIME_KIND, b"gradient")
+    vp = cv.viewport()
+
+    def lit_rows(at):
+        QApplication.sendEvent(vp, QDragMoveEvent(at, Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier))
+        return {g.row for g in cv.ghosts if g.isVisible() and g.place.lit and g.row is not None}
+    far = QPoint(4, 4)
+    QApplication.sendEvent(vp, QDragEnterEvent(far, Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier))
+    assert lit_rows(far) == {first.id}                                   # the workflow the palette places in
+    other = rows[3]
+    y = cv.blocks[next(b for b in other.blocks if b in cv.blocks)].sceneBoundingRect().center().y()
+    at = cv.mapFromScene(cv.mapToScene(far).x(), y)
+    cv.centerOn(cv.mapToScene(far).x(), y)
+    W.settle(1)
+    at = cv.mapFromScene(cv.mapToScene(QPoint(4, 4)).x(), y)
+    assert lit_rows(at) == {first.id, other.id}                          # and the stack under the pointer
+    QApplication.sendEvent(vp, QDragLeaveEvent())
+    W.settle(1)
+    assert not cv.ghosts
