@@ -126,5 +126,6 @@
   "{n} samples on nebulosity removed": "{n} échantillons sur nébulosité retirés",
   "{n} samples on objects removed": "{n} échantillons sur objets retirés",
   "{n} samples removed": "{n} échantillons retirés",
-  "Clear all": "Tout effacer"
+  "Clear all": "Tout effacer",
+  "Excluded area: this sample is not used": "Zone exclue : cet échantillon n'est pas utilisé"
 }

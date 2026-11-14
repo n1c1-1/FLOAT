@@ -825,3 +825,17 @@ def test_a_long_preview_is_said_at_the_top_of_the_image(ed):
             break
     wait(ed)
     assert not any(seen) or ge.BUSY_SHOWN_MS < ed.result_ms
+
+
+def test_an_excluded_area_leaves_its_samples_red_and_fades(ed):
+    """A sample under a painted area or in an ellipse is not used (drawn red, said on hover); the area itself shows
+    filled only a moment after it is painted, then fades: never a red block over the image."""
+    ed.set_draft({"sample_points": [[100.0, 100.0], [500.0, 300.0], [800.0, 500.0]],
+                  "exclude_brush": [[500.0, 300.0, 40.0, 1.0]], "exclude_ellipses": [[800.0, 500.0, 30.0, 20.0, 0.0]]})
+    assert list(ed._excluded()) == [False, True, True]
+    ed.set_draft({"exclude_brush": [[500.0, 300.0, 40.0, 1.0], [500.0, 300.0, 50.0, 0.0]]})     # erased again
+    assert list(ed._excluded()) == [False, False, True]
+    ed._fade_t0 = time.monotonic()
+    assert ed._fade_alpha() > 0.5
+    ed._fade_t0 = time.monotonic() - 2 * ge.FADE_MS / 1000
+    assert ed._fade_alpha() == 0.0

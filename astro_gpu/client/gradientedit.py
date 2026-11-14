@@ -65,6 +65,8 @@ DEBOUNCE_MS, FAST_DEBOUNCE_MS, FAST_MS = 200, 80, 150
 BUSY_SHOWN_MS = 250
 #: what an action did stays in the image's tag this long
 SAID_MS = 4000
+#: an area just painted or drawn shows filled, then fades away over this long (the samples it leaves out stay red)
+FADE_MS = 700
 #: the cost of Apply is asked of the model this long after the last edit
 COST_MS = 500
 #: below this window width, the stretch column of this view is folded (the image keeps the room)
@@ -264,6 +266,12 @@ class GradientEditor(QObject):
         self._anim.timeout.connect(self._tick)
         self._phase = 0.0
         self._from_row = False                  # the change came from a settings row: its rows are not built again
+        self._preview_due = False               # a preview asked while another computation ran
+        self._fade_t0 = None                    # when the last area was painted or drawn (its fade)
+        self._fade = QTimer(self)
+        self._fade.setInterval(40)
+        self._fade.timeout.connect(self._fade_tick)
+        self._excl = None                       # (key, which samples sit in an excluded area)
         self._cost_timer = QTimer(self)
         self._cost_timer.setSingleShot(True)
         self._cost_timer.setInterval(COST_MS)
@@ -1946,6 +1954,9 @@ class GradientEditor(QObject):
                 self._sel = len(self.work["exclude_ellipses"]) - 1     # selected: its handles at once
                 edited = True
         if edited:
+            if self.mode in ("brush", "ellipse"):
+                self._fade_t0 = time.monotonic()           # shown filled a moment, then fading
+                self._fade.start()
             self._commit()
         if self.tv._dirty:                     # a refresh held back while the mouse was down
             self.tv.request_refresh()
@@ -1953,6 +1964,46 @@ class GradientEditor(QObject):
 
     def hover(self, canvas, ix, iy):
         self._hover = (ix, iy)
+        if self.mode in (None, "points") and "samples" in self.kinds():
+            f = self._f(canvas)
+            i = self._pick(canvas, ix / f, iy / f)
+            ex = self._excluded()
+            if i is not None and ex is not None and i < len(ex) and ex[i]:
+                from PySide6.QtGui import QCursor
+                from PySide6.QtWidgets import QToolTip
+                QToolTip.showText(QCursor.pos(), _("Excluded area: this sample is not used"))
+
+    def _fade_tick(self):
+        if self._fade_t0 is None or time.monotonic() - self._fade_t0 > FADE_MS / 1000:
+            self._fade_t0 = None
+            self._fade.stop()
+        self._repaint()
+
+    def _fade_alpha(self) -> float:
+        if self._fade_t0 is None:
+            return 0.0
+        return max(0.0, 1.0 - (time.monotonic() - self._fade_t0) / (FADE_MS / 1000))
+
+    def _excluded(self):
+        """Which samples sit in an excluded area (ellipses, then the brush's dabs in their order), as the stage reads
+        them: they are drawn red and not used."""
+        pts = self.work["sample_points"]
+        key = (len(pts), str(pts[:3]), str(pts[-3:]), len(self.work["exclude_brush"]),
+               str(self.work["exclude_ellipses"]))
+        if self._excl is not None and self._excl[0] == key:
+            return self._excl[1]
+        if not pts:
+            out = None
+        else:
+            P = np.asarray(pts, float).reshape(-1, 2)
+            out = np.zeros(len(P), bool)
+            for e in self.work["exclude_ellipses"]:
+                out |= np.array([_inside(e, x, y) for x, y in P], bool)
+            for x, y, r, paint in self.work["exclude_brush"]:
+                near = np.hypot(P[:, 0] - x, P[:, 1] - y) <= r
+                out[near] = bool(paint)
+        self._excl = (key, out)
+        return out
 
     def _dab(self, x, y, paint: bool | None = None):
         paint = self.paint if paint is None else paint
@@ -1995,7 +2046,8 @@ class GradientEditor(QObject):
             if "areas" in kinds:
                 self._paint_veil(painter, canvas, f, dw, dh)
             self._paint_samples(painter, canvas, f)
-            for j, e in enumerate(self.work["exclude_ellipses"] if "areas" in kinds else []):
+            show_areas = "areas" in kinds and (self.mode in ("brush", "ellipse", "eraser") or "samples" not in kinds)
+            for j, e in enumerate(self.work["exclude_ellipses"] if show_areas else []):
                 cx, cy, rx, ry, a = _ell(e)
                 sel = j == self._sel and self.mode == "ellipse"
                 painter.save()
@@ -2063,20 +2115,36 @@ class GradientEditor(QObject):
         return self.step_text if self.busy else ""
 
     def _paint_veil(self, painter, canvas, f, dw, dh):
+        """The excluded areas: a thin outline while Brush, Ellipse or Eraser is on (always, for a method without
+        samples); filled only a moment after they are painted, then fading: never a red block over the image."""
         brush = self.work["exclude_brush"]
         done = brush if self._stroke0 is None else brush[:self._stroke0]
-        if self.work["exclude_ellipses"] or done:
+        outline = self.mode in ("brush", "ellipse", "eraser") or "samples" not in self.kinds()
+        fade = self._fade_alpha()
+        if (self.work["exclude_ellipses"] or done) and (outline or fade > 0):
+            import cv2
+
             from ..stages.gradient import exclusion_mask
             k = min(1.0, 1500 / max(dw, 1))
             key = (dw, dh, len(done), str(self.work["exclude_ellipses"]), id(self.work))
             if self._veil is None or self._veil[0] != key:
                 work = {**self.work, "exclude_brush": done}
                 m = exclusion_mask(self._params(work), int(dh * k), int(dw * k), f * k)
-                rgba = np.zeros((*m.shape, 4), np.uint8)
-                rgba[m] = VEIL
-                img = QImage(rgba.data, m.shape[1], m.shape[0], 4 * m.shape[1], QImage.Format_RGBA8888).copy()
-                self._veil = (key, img)
-            painter.drawImage(QRectF(canvas.img_to_w(0, 0), canvas.img_to_w(dw, dh)), self._veil[1])
+                filled = np.zeros((*m.shape, 4), np.uint8)
+                filled[m] = VEIL
+                edge = m & ~cv2.erode(m.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)
+                line = np.zeros((*m.shape, 4), np.uint8)
+                line[edge] = (255, 255, 255, 210)
+                imgs = [QImage(a.data, m.shape[1], m.shape[0], 4 * m.shape[1], QImage.Format_RGBA8888).copy()
+                        for a in (filled, line)]
+                self._veil = (key, imgs)
+            rect = QRectF(canvas.img_to_w(0, 0), canvas.img_to_w(dw, dh))
+            if fade > 0:
+                painter.setOpacity(fade)
+                painter.drawImage(rect, self._veil[1][0])
+                painter.setOpacity(1.0)
+            if outline:
+                painter.drawImage(rect, self._veil[1][1])
         if self._stroke0 is not None:          # the stroke in progress, drawn as it goes (the veil follows on release)
             painter.setPen(Qt.NoPen)
             for x, y, r, paint in brush[self._stroke0:]:
@@ -2113,9 +2181,10 @@ class GradientEditor(QObject):
             used = list(s["used"]) if same else [None] * len(P)
             W, H = self._stack_size()
             box = s["box"] if s is not None else max(4, int(min(W, H) / self._density() / 2))
+            ex = self._excluded()
+            if ex is not None:                 # in an excluded area: not used, whatever the last preview said
+                used = [False if e else u for u, e in zip(used, ex)]
             rows = zip(P[:, 0], P[:, 1], used)
-        elif s is not None and not s.get("manual"):
-            box, rows = s["box"], zip(s["x"], s["y"], s["used"])
         else:
             return
         half = max(3.0, box / 2 * f * canvas.scale)
@@ -2159,6 +2228,8 @@ class GradientEditor(QObject):
                 self._survey_wanted = bool(fetch) or bool(self._survey_wanted)
             elif what != "preview":             # a preview asked while one runs: the latest is made on arrival
                 self._pending = what if self._pending != "grid" else "grid"
+            else:
+                self._preview_due = True
             return
         gen, params, pid, n = self.gen, self._params(), self.p.pid, self._density()
         sig = params.model_dump_json()
@@ -2332,8 +2403,9 @@ class GradientEditor(QObject):
         if self._pending is not None:
             what, self._pending = self._pending, None
             self._run(what)
-        elif out.get("what") == "preview" and self.has_draft() and out.get("sig") != self._wanted_sig() and \
-                not self._timer.isActive():
+        elif (out.get("what") == "preview" and out.get("sig") != self._wanted_sig() or self._preview_due) and \
+                self.has_draft() and not self._timer.isActive():
+            self._preview_due = False
             self.preview()                     # the draft changed meanwhile: one preview, of the latest
         if out.get("what") == "load" and self.has_draft() and self.too_few():
             self._present()                    # the stack, nothing removed, now that it is read
