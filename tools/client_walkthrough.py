@@ -352,6 +352,11 @@ class Walk:
     # ------------------------------------------------------------ helpers on the views
     def select(self, step: str, pid: int | None = None):
         s = self.w.s
+        bm = getattr(s, "block_map", None)
+        if bm is not None and pid is not None and step not in ("sources", "final", "post") \
+                and bm.node_of(pid, step) is None:          # a session's own block: "calibration@1", its first one
+            keys = sorted(k for (q, k) in getattr(bm, "_by_path", {}) if q == pid and k.split("@")[0] == step)
+            step = keys[0] if keys else step
         self.w.select(index=s.index_of(pid) if pid is not None else None, step=step)
         self.pump(0.1)
 
@@ -372,19 +377,31 @@ class Walk:
                                    for sl in tune._slots), 180, f"the image of {step}")
         return self.shot(name or f"inspect_{step}")
 
+    def block_action(self, node, action: str):
+        """A block's context-menu action on the graph page (graphview/menu.py: "set_pause", "send_to_post") on the
+        block that stands for a view node."""
+        g = self.w.graph
+        g.bridge.act(action, block=self.w.s.block_map.block_of(node))
+
     def set_setting(self, panel, stage: str, name: str, value):
         """Edit a setting as its editor does (the panel's ``set_setting``: applied, or Replace / Try as variant)."""
         from astro_gpu.client.panel import CompactRow
 
-        def rows():
-            return [r for r in panel.findChildren(CompactRow) if r.r.get("stage") == stage and r.r.get("name") == name]
+        def rows():                                     # a session's own stage is "inventory@2": its stage too
+            return [r for r in panel.findChildren(CompactRow)
+                    if str(r.r.get("stage") or "").split("@")[0] == stage and r.r.get("name") == name]
         self.settle()
+        if not rows():                                  # the page shows the block chosen once the event loop turns
+            getattr(self.w.graph, "refresh_panel", lambda: None)()
+            self.settle()
         if not rows() and not panel.expert:
             panel._expert(True)
             self.settle()
         found = rows()
         if not found:
-            self.problem(f"no setting {stage}.{name} in the panel")
+            have = sorted({str(r.r.get("stage")) for r in panel.findChildren(CompactRow)})
+            self.problem(f"no setting {stage}.{name} in the panel (block chosen: {self.w.graph.bridge.selected}, "
+                         f"the panel's stages: {have})")
             return
         panel.set_setting(found[0].r, value)
         self.settle()
@@ -500,8 +517,11 @@ class Walk:
         self.modal(lambda: w.graph.new_workflow(), second, "New workflow (second)")
         self.wait_ready()
         q = s.paths[-1]
-        w.graph.add_tool("etoiles", q.pid)                  # the Stars card, double-clicked (adds Denoise too)
+        self.select("post", q.pid)                          # its last block chosen: the palette works for its row
+        w.graph.palette.double_click("stars")               # the Stars card, double-clicked
         self.settle()
+        if not s.has_tool(s.view(q.pid).opts, "etoiles"):
+            self.problem("the Stars card double-clicked did not give the workflow its Stars block")
         self.shot("graph_step_added")
         w.graph.graph.b_all.setChecked(True)
         self.settle()
@@ -591,8 +611,7 @@ class Walk:
         s = w.s
         p = s.paths[0]
         w.set_mode(0)
-        node = w.graph.graph.graph.node_of(p, "empilement")
-        w.graph.send_to_post(node)
+        self.block_action(s.block_map.node_of(p, "empilement"), "send_to_post")
         self.settle()
         self.shot("graph_raw_stack")
         raw = s.paths[-1]
@@ -661,7 +680,7 @@ class Walk:
         if q is None:
             self.problem("no workflow with Stars to edit")
             return
-        node = w.graph.graph.graph.node_of(q, "etoiles")
+        node = s.block_map.node_of(q, "etoiles")
         w.graph.remove_tool(node, [q.pid])
         self.settle()
         self.shot("edited")
@@ -987,8 +1006,7 @@ class Walk:
         self.select("debruitage", p.pid)
         self.shot("graph_method_cards")
         self.select(block, p.pid)
-        node = w.graph.graph.graph.node_of(p, block)
-        w.graph.toggle_pause(node)
+        self.block_action(s.block_map.node_of(p, block), "set_pause")
         self.settle()
         if s.review_state(p, block) != "paused":
             self.problem(f"the breakpoint on {block} is {s.review_state(p, block)!r}, not 'paused'")
@@ -1011,9 +1029,8 @@ class Walk:
         if w.run.dialog is not None:
             w.run.dialog.close()
         self.settle()
-        node = w.graph.graph.graph.node_of(p, block)
         if s.has_breakpoint(p, block):
-            w.graph.toggle_pause(node)
+            self.block_action(s.block_map.node_of(p, block), "set_pause")
         self.settle()
 
     def features(self, root: Path):
