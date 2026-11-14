@@ -1378,7 +1378,7 @@ class _ProjectBase(QObject):
     def _sync(self, prefetch: bool = True, later: bool = False):
         """The views, states, chains and block keys read again (GUI thread: caches and manifests only). ``later`` (the
         end of an edit, ``ASYNC_STATES``): the views at once, the keys, states, chains and Run all's plan read by the
-        worker (``states_pending`` until its answer, the newest edit's; ``costChanged`` then): a reader that cannot
+        worker (``states_pending`` until its answer, the newest edit's; ``pathsChanged`` again then): a reader that cannot
         wait reads them here at once (``_fresh``), so nothing is ever decided on the states of an earlier edit."""
         self._rebuild_views()
         self._cache.clear()
@@ -1486,7 +1486,7 @@ class _ProjectBase(QObject):
     def _told(self):
         if not self._stale:
             self._run_waiters()
-            self.costChanged.emit()
+            self.pathsChanged.emit()
 
     def _read_states(self):
         """(states, chains, blocks) of the definition (either thread: the API reads a snapshot of it)."""
@@ -1516,7 +1516,8 @@ class _ProjectBase(QObject):
 
     def _states_came(self, result):
         """The worker's answer: taken when it is the newest edit's (an older one, or one read here meanwhile, is
-        dropped); the views are told (``costChanged``: the page paints the states in place)."""
+        dropped); the views are told again (``pathsChanged``: the page paints the states in place, Post gives the
+        workflows computed meanwhile their layer, as it does when it is told of an edit whose states are read)."""
         n, got = result
         if not n or n != self._stale or got is None:
             return
@@ -1528,7 +1529,7 @@ class _ProjectBase(QObject):
             self._run_all = (device, self._cache[("cost", None, device)])
         self.worker.submit(f"model.estimates:{id(self)}", self._prefetch_estimates, False)
         self._run_waiters()
-        self.costChanged.emit()
+        self.pathsChanged.emit()
 
     def _install(self, got):
         """The states, chains and blocks read, and what the views take from them."""
@@ -2892,7 +2893,7 @@ class _ProjectBase(QObject):
             last = self.__dict__.get("_run_all")
             if workflows is None and self._stale and last is not None and last[0] == self.device:
                 # Run all's totals while the worker reads them for an edit (the Run button, the blocks' marks): the last
-                # ones, said again when they come (``costChanged``); Run plans anew, so nothing runs on these
+                # ones, said again when they come (``pathsChanged``); Run plans anew, so nothing runs on these
                 return last[1]
         try:
             c = api.cost(self.p, workflows, self.device, self._history_est)

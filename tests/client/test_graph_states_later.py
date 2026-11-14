@@ -117,6 +117,7 @@ def _computed(m):
                 k = api.stage_key(m.p, w.id, st)
                 if keys0.setdefault((w.id, st), k) == k:
                     m.__dict__["_st"][(w.id, st)] = api.StageState("done", "", k)
+        install((m.__dict__["_st"], m.__dict__["_ch"], m.__dict__["_bl"]))     # what the views take from them
     m._install = done
     m._sync()
 
@@ -152,6 +153,64 @@ def test_the_toast_says_the_gesture_at_once_and_what_it_computes_again_once_the_
     assert "Computes again" not in text()                              # nothing said for an edit taken back
     _painted_as_computed(W)
     assert m.done_count() == sum(1 for st in m._states.values() if st.state == "done")
+
+
+class HeldAnswers:
+    """The worker's answers to the edits' states held back, given in the order a test chooses (late, out of order,
+    some never: an answer superseded by a newer edit)."""
+
+    def __init__(self, m):
+        self.m, self.jobs = m, []
+        submit = m.worker.submit
+
+        def held(channel, fn, *args, **kw):
+            if channel.startswith("model.states:"):
+                self.jobs.append((fn, args))
+                return 0
+            return submit(channel, fn, *args, **kw)
+        m.worker.submit = held
+
+    def give(self, i):
+        fn, args = self.jobs[i]
+        self.m._states_came(fn(*args))
+        for _j in range(4):
+            QApplication.processEvents()
+
+
+def test_the_views_are_told_again_when_the_states_come_whatever_their_order(world):
+    """What the views decide from the states (Post gives a computed workflow its layer from ``rendered``, the page its
+    states) follows the newest edit's answer, whether it comes late, after an older one, or never (a newer edit
+    superseded it, a reader read them at once): the views are told again (``pathsChanged``) once they are read, and
+    only from the newest edit's."""
+    W = world
+    W.template("sho_rgb")
+    m, b = W.m, W.b
+    _computed(m)
+    _states_come(W)
+    done = m.done_count()
+    told = []
+    m.pathsChanged.connect(lambda: told.append(m.states_pending()))
+    held = HeldAnswers(m)
+    grad = W.kinds("gradient")[0]
+    b.act("switch_off", block=grad)                                    # computed results made stale...
+    b.undo()                                                            # ...and up to date again
+    assert m.states_pending() and len(held.jobs) == 2
+    told.clear()
+    held.give(1)                                                        # the newest first: taken, the views told
+    assert not m.states_pending() and told and not any(told)
+    assert m.done_count() == done and all(q.rendered for q in m.paths if q.rendered is not None)
+    _painted_as_computed(W)
+    n_told = len(told)
+    held.give(0)                                                        # the older one, late: dropped
+    assert len(told) == n_told and m.done_count() == done
+    b.act("switch_off", block=grad)                                     # an answer never given: read when asked
+    assert m.states_pending()
+    told.clear()
+    assert m.done_count() < done and not m.states_pending()            # (the reader read them at once)
+    for _j in range(4):
+        QApplication.processEvents()
+    assert told and told[-1] is False
+    _painted_as_computed(W)
 
 
 def _cpu(W, gesture, back):
