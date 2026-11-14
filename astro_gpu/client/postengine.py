@@ -1769,8 +1769,8 @@ class Composer:
 
     def _step(self, fl, under, sig, where, want, thumbs, level, abox, canvas, ctx, keep=True):
         """``_apply``, kept: (result, mask, what the result depends on). ``where``: None when it is not to be kept;
-        ``keep``: False, the result is looked for but not kept (an image a change upstream replaces each time). The
-        filter holds its result: when its settings or what is under it change, the one it held goes."""
+        ``keep``: False, the result is kept only where there is room (an image a change upstream may replace each
+        time). The filter holds its result: when its settings or what is under it change, the one it held goes."""
         new = _sig(sig, _settings_of(fl))
         key = None if where is None else (new, where)
         got = None if key is None else self.steps.get(key)
@@ -1779,10 +1779,13 @@ class Composer:
             self.steps.hold(key, holder)
         if got is None:
             out, m = self._apply(fl, under, level, abox, canvas, ctx)
-            if key is not None and keep and self._keep:
-                self.steps.put(key, out.copy(), holder)           # a filter may work in place on what it is given
-            elif key is not None:
-                self.steps._unhold(holder, key)
+            if key is not None:
+                self.steps._unhold(holder, key)                   # the one it held before goes (settings changed)
+                # a filter may work in place on what it is given: a copy is kept. A step of lesser use (``keep``
+                # False: under a layer's last filter, or above the row edited) is kept only where there is room,
+                # never instead of another one: hiding the filter above it still finds it (#87)
+                if (keep and self._keep) or self.steps.bytes + out.nbytes <= self.steps.cap:
+                    self.steps.put(key, out.copy(), holder)
             return out, m, new
         if fl["id"] in ctx.hist_ids:
             ctx.hists[fl["id"]] = pf_curves.histograms(under)
