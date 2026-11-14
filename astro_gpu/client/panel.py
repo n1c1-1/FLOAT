@@ -21,6 +21,7 @@ centre of Inspect, issue #89).
 from __future__ import annotations
 
 import html
+import re
 from pathlib import Path
 
 from PySide6.QtCore import QLocale, Qt, QTimer, Signal
@@ -392,7 +393,7 @@ class MethodCard(QFrame):
     this machine uses in bold). ``times``: see ``durations_text``; ``here``: "gpu" or "cpu"."""
     clicked = Signal()
 
-    def __init__(self, m, on, ok, times, here, why="", parent=None):
+    def __init__(self, m, on, ok, times, here, why="", parent=None, compact=False):
         super().__init__(parent)
         self.ok = ok
         self.setObjectName("meth")
@@ -406,6 +407,12 @@ class MethodCard(QFrame):
         n = IconText("radio_on" if on else "radio_off", _(m["name"]), "selected" if on else "dim")
         n.label.setStyleSheet("font-weight: 600;" + ("" if ok else " color: #6b7280;"))
         v.addWidget(n)
+        if compact:                       # a small window: one line, what it does and its durations in the tooltip
+            self.setToolTip(_(m["what"]) + "\n" + re.sub(r"<[^>]+>", "", durations_text(times, here, bool(m.get("new")))))
+            v.setContentsMargins(10, 3, 10, 3)
+            if why:
+                v.addWidget(label(why, "warn", wrap=True))
+            return
         top = QHBoxLayout()
         top.setSpacing(6)
         spec_mark(top, m.get("new"))
@@ -534,6 +541,7 @@ class Panel(QWidget):
     def __init__(self, project, steps=None, tune=False, parent=None):
         super().__init__(parent)
         self.s, self.steps, self.tune = project, steps, tune
+        self.compact_cards = False                 # a small window: the method cards on one line
         self.corner = None                         # the » button that folds the panel (its page's, issue #44)
         self.expert = False
         self.focus_key = None
@@ -1513,7 +1521,8 @@ class Panel(QWidget):
             if k == "synth" and m["key"] == "instrument" and not on and hasattr(s, "state_info") and \
                     s.state_info(p, "astrometry") is None:      # the night test pass: chosen, it failed in 1 s
                 ok, why = False, _("Needs the image's scale: place the Astrometry block in this workflow.")
-            card = MethodCard(m, on, ok, times, "gpu" if s.gpu else "cpu", why)
+            card = MethodCard(m, on, ok, times, "gpu" if s.gpu else "cpu", why,
+                              compact=bool(getattr(self, "compact_cards", False)))
             if not on and ok and again:
                 card.clicked.connect(lambda ek=m["engine_key"], nm=m["name"]: self._node_method(ek, _(nm)))
             elif not on and ok:

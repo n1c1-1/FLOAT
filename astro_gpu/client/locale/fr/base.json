@@ -620,6 +620,8 @@
   "Position": "Position",
   "Softness": "Douceur",
   "Paint": "Peindre",
+  "The brush adds an excluded area (X)": "Le pinceau ajoute une zone exclue (X)",
+  "The brush takes the excluded area away (X)": "Le pinceau retire la zone exclue (X)",
   "Erase": "Effacer",
   "Clear all": "Tout effacer",
   "Size": "Taille",

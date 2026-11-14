@@ -607,6 +607,7 @@ class TuneView(QWidget):
         self.cmp_pid = None                               # a workflow to compare with (a variant and its original)
         self.picked = None                                # the frame picked on the chart (an index of the frame table)
         self.show_hist = True                             # the viewers' stretch panel
+        self._small_seen = False                          # the window is compact (its look is set by set_layout)
         self.sky_show = {"grid": True, "stars": True, "objects": True}      # what the solution draws over a picture
         self._splits: dict[str, list[int]] = {}           # block / tab -> the sizes of its two parts (chart, image)
         self._cal_filter: dict[str, str] = {}             # calibration tab -> "all" | "flagged" (the suspicious frames)
@@ -706,6 +707,16 @@ class TuneView(QWidget):
         self.dock.set_state(right)
         self.strip.setVisible(strip_shown)
         self.strip.set_compact(compact)
+        if compact != self._small_seen:                    # a small window: the image keeps the room (the stretch
+            self._small_seen = compact                     # column folded, the method cards on one line); the user's
+            self.show_hist = not compact                   # own choice of the column is kept from then on
+            self.panel.compact_cards = compact
+            if self.view is not None:
+                try:
+                    self.view.show_histogram(self.show_hist)
+                except RuntimeError:
+                    pass
+            self.request_refresh()
 
     def select(self, index=None, step=None):
         s = self.s

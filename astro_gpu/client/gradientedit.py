@@ -192,6 +192,7 @@ class GradientEditor(QObject):
         view.add_overlay(self._paint)
         view.canvas.tool = self if self.mode else None
         view.set_tool_widgets(self._view_toggles())
+        view.set_tool_row(self._tool_row())
         self._hint()
         if self.result is not None:
             self._show(self.result)
@@ -205,6 +206,7 @@ class GradientEditor(QObject):
                 self.view.canvas.tool = None
                 self.view.tool_hint.hide()
                 self.view.set_tool_widgets([])
+                self.view.set_tool_row([])
             except RuntimeError:
                 pass
         self.view = None
@@ -229,6 +231,31 @@ class GradientEditor(QObject):
             out.append(b)
         return out
 
+    def _tool_row(self) -> list:
+        """The tools that act on the image, on the row above it: Samples, the excluded areas (Brush, Ellipse), and the
+        brush's Paint / Erase."""
+        out = []
+        for key, text, tip in (
+                ("points", "Samples", "Left click: add or move a sample · right click: remove it"),
+                ("brush", "Brush", "Paint the areas left out of the sky model"),
+                ("ellipse", "Ellipse", "Drag an ellipse around an object to leave it out"),
+                ("paint", "Paint", "The brush adds an excluded area (X)"),
+                ("erase", "Erase", "The brush takes the excluded area away (X)")):
+            if key == "brush":
+                out.append(label(_("Exclude:"), "small"))
+            b = QPushButton(_(text))
+            b.setObjectName("face")
+            b.setCheckable(True)
+            b.setToolTip(_(tip))
+            if key in ("paint", "erase"):
+                b.clicked.connect(lambda _c=False, vv=(key == "paint"): self._set_paint(vv))
+            else:
+                b.clicked.connect(lambda _c=False, k=key: self.set_mode(None if self.mode == k else k))
+            self._ui[key] = b
+            out.append(b)
+        self._sync()
+        return out
+
     # ------------------------------------------------------------ the panel's section
     def controls(self, p) -> QWidget:
         """Samples and excluded areas: the tools, the brush, the grid, undo, Run to here, the state. Built whole (the
@@ -243,39 +270,8 @@ class GradientEditor(QObject):
         v.setSpacing(6)
         method = self._method()
         sampled = method in ("polynomial", "rbf")
-        self._ui = {k: w for k, w in self._ui.items() if k in ("survey", "marks")}     # the image bar's
-        tools = QHBoxLayout()
-        for key, text, tip in (
-                ("points", "Samples", "Left click: add or move a sample · right click: remove it"),
-                ("brush", "Brush", "Paint the areas left out of the sky model"),
-                ("ellipse", "Ellipse", "Drag an ellipse around an object to leave it out")):
-            if key == "brush":
-                tools.addSpacing(8)
-                tools.addWidget(label(_("Exclude:"), "small"))
-            b = QPushButton(_(text))
-            b.setObjectName("face")
-            b.setCheckable(True)
-            b.setChecked(self.mode == key)
-            on = key != "points" or sampled
-            b.setEnabled(on)
-            b.setToolTip(_(tip) if on else _("The automatic method uses no samples: it fits every pixel that does "
-                                            "not look like an object"))
-            b.clicked.connect(lambda _c=False, k=key: self.set_mode(None if self.mode == k else k))
-            tools.addWidget(b)
-            self._ui[key] = b
-        tools.addStretch(1)
-        v.addLayout(tools)
-        r = QHBoxLayout()
-        for text, val in (("Paint", True), ("Erase", False)):
-            b = QPushButton(_(text))
-            b.setObjectName("face")
-            b.setCheckable(True)
-            b.setChecked(self.paint == val)
-            b.clicked.connect(lambda _c=False, vv=val: self._set_paint(vv))
-            r.addWidget(b)
-            self._ui["paint" if val else "erase"] = b
-        r.addStretch(1)
-        v.addLayout(r)
+        self._ui = {k: w for k, w in self._ui.items() if k in ("survey", "marks", "points", "brush", "ellipse", "paint",
+                                                                  "erase")}     # the image's: its bar and its row
         sz = ContSlider(_("Size"), 4, 1200, self.size, 60, unit="px", step=1)
         sz.moved.connect(lambda val: setattr(self, "size", float(val)))
         sz.done.connect(lambda val: setattr(self, "size", float(val)))
@@ -386,6 +382,12 @@ class GradientEditor(QObject):
             for k in ("points", "brush", "ellipse"):
                 if k in self._ui:
                     self._ui[k].setChecked(self.mode == k)
+            if "points" in self._ui:
+                on = self._method() in ("polynomial", "rbf")
+                self._ui["points"].setEnabled(on)
+                self._ui["points"].setToolTip(_("Left click: add or move a sample · right click: remove it") if on else
+                                              _("The automatic method uses no samples: it fits every pixel that does "
+                                                "not look like an object"))
             for k, on in (("paint", self.paint), ("erase", not self.paint)):
                 if k in self._ui:
                     self._ui[k].setChecked(on)
