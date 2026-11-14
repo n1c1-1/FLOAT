@@ -38,9 +38,12 @@ def test_after_a_combination_only_stars_and_color_and_nothing_after_combine_laye
     engine_ok(c)
     ok(doc, "add_block", kind="stars", at=at)
     s = row(doc, "S-H-O").blocks[1]
-    assert refused_inert(doc, "add_block", kind="synth", at={"type": "insert", "row": row(doc, "S-H-O").id,
-                                                              "after": s}) == "no Synthetic stars from combination"
     engine_ok(doc)
+    c = Doc.from_template("filters_minimal")                   # Synthetic stars after a combination's Stars/background
+    ok(c, "add_block", kind="stars", at=at)                    # (the engine since main's stars side)
+    ok(c, "add_block", kind="synth", at={"type": "insert", "row": row(c, "S-H-O").id,
+                                         "after": row(c, "S-H-O").blocks[1]})
+    engine_ok(c)
     doc = Doc.from_template("colour_complete")
     cl = row(doc, "Combine layers")
     assert refused_inert(doc, "add_block", kind="gradient", at={"type": "insert", "row": cl.id, "after": cl.blocks[0]}) \

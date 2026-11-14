@@ -463,10 +463,12 @@ def _wiring(g, p, c):
         except (KeyError, ValueError):
             continue
         aligned = "align_on" in ch
+        combo = next((i for i, x in enumerate(ch) if wfl.base(x) in wfl.BLOCKS_OF_KIND.values()), None)
         for st in ch:
             bst = wfl.base(st)
+            # (after a combination: a block reading the plate solution its inputs bring, Synthetic stars on its stars)
             if not (bst in wfl.BLOCKS_OF_KIND.values() or bst == "align_on" or
-                    aligned and ch.index(st) > ch.index("align_on")):
+                    aligned and ch.index(st) > ch.index("align_on") or combo is not None and ch.index(st) > combo):
                 continue
             why = k.wiring_problem(w, st)
             if not why:

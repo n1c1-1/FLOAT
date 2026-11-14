@@ -64,8 +64,13 @@ def two_rows(qapp, tmp_path, monkeypatch):  # noqa: F811
     raw.mkdir()
     (raw / "a1.ARW").write_bytes(b"\0" * 100)
     p.sessions.append(project2.Session(1, "night 1", lights=[str(raw)]))
+    raw2 = tmp_path / "raw2"                           # the star row reads a night of its own (as in the templates):
+    raw2.mkdir()                                       # on the same night as Full it would be the same workflow, a
+    (raw2 / "b1.ARW").write_bytes(b"\0" * 100)         # duplicate the graph draws on Full's row
+    p.sessions.append(project2.Session(2, "night 2", lights=[str(raw2)]))
     api.add_workflow(p, "Full", "Full")
     api.add_workflow(p, "Clear", "Full")
+    p.workflows[0].sessions, p.workflows[1].sessions = [1], [2]
     w = ApiWorker()
     m = ProjectModel(p, w, readonly=True)
     assert w.wait(120) and m.ready, m.error

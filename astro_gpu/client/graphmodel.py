@@ -1224,6 +1224,9 @@ class GraphEditing:
         e = wfl.place_problem(g, src, block, index)
         if e is not None:
             raise ValueError(mm.refused_text(e))
+        why = self._synth_solution_reason(p, block)     # (main: Synthetic stars after a combination without the plate
+        if why:                                         # solution its inputs bring: refused, in the engine's words)
+            raise ValueError(why)
         if block == "align_on":
             self.set_align_on(p, None, method or "stars")
             return "align_on"
@@ -1239,8 +1242,10 @@ class GraphEditing:
             if after is not None:
                 break
         ix = gm.Index(self._g)
-        if after is None and row.blocks and self._g.blocks[row.blocks[0]].kind in ("image", "combine") and                 index > 0:                                # after the Image (or Combination) the row starts with
-            after = row.blocks[0]
+        if after is None and row.blocks and self._g.blocks[row.blocks[0]].kind in ("image", "combine") and \
+                (index > 0 or self._g.blocks[row.blocks[0]].kind == "combine"):
+            after = row.blocks[0]                         # after the Image (or Combination) the row starts with: a
+            #                                               combination's graph starts after its Output (no node of it)
         if after is not None and after not in row.blocks:
             if row.fork and after == row.fork[1]:
                 at = {"type": "insert", "row": row.id, "after": None}

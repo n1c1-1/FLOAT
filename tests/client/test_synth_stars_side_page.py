@@ -20,9 +20,8 @@ def on(monkeypatch):
 
 def post_reads_stars_side():
     """Whether Post puts the synthetic stars row by the stars-side workflow (main's change)."""
-    import inspect
     from astro_gpu.client import postengine as pe
-    return "stars_pid" in inspect.getsource(pe.with_synth_rows)
+    return hasattr(pe, "stars_side")
 
 
 @pytest.mark.parametrize("key,filters", [("filters_full", ("SII", "Ha", "OIII")), ("dual_x2", ())])
@@ -48,6 +47,23 @@ def test_synthetic_stars_on_the_stars_side_of_a_template(qapp, tmp_path, on, key
         assert any(w.src == [syn, SYNTH_PORT] and w.dst == [cl, SYNTH_PORT] for w in g.wires)
         stars_pid = next(r.wid for r in g.rows if r.id == ix.row_of[syn])
         assert stars_pid in W.m.synth_wanted()
+        # Post: the one Combine layers layer whose stars side is that workflow gets the synthetic stars row
+        from astro_gpu.client import postengine as pe
+        layers = W.m.post_version().get("layers") or []
+        group = [x for x in layers if pe.is_group(x)]
+        if group:
+            rows = pe.with_synth_rows(layers, W.m.synth_wanted())
+            assert [x["target"] for x in rows if pe.is_synth(x)] == [x["id"] for x in group
+                                                                    if pe.stars_side(x) == stars_pid]
+        # the instrument's shape (the method of the block): Post's row by the same workflow, the definition says it
+        assert W.m.apply([("set_method", {"block": syn, "method": "instrument"})]).ok
+        W.settle()
+        assert W.m.synth_wanted()[stars_pid] == "instrument"
+        assert any(n["block"] == "synth" and n.get("method") == "instrument"
+                   for n in W.m.p.workflow(stars_pid).blocks or [])
+        assert any(w.src == [syn, SYNTH_PORT] and w.dst == [cl, SYNTH_PORT] for w in W.graph.wires)
+        W.m.undo(graph=True)
+        W.settle()
         W.m.undo(graph=True)
         W.settle()
         assert not W.kinds("synth")
