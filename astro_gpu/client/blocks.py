@@ -894,6 +894,8 @@ class Graph:
                 return _("all frames · weight ≥ 5 %")
             if rule == "sota":
                 return _("k × σ filters · weight ≥ 5 %")
+            if rule == "all":
+                return _("all frames · none left out")
             t, f = s.thresholds_now()
             unit = s.thresholds_unit()
             return (_("transparency ≥ {t} % · stars ≤ {f} px").format(t=f"{t:.0f}", f=number(f)) if unit == "px" else

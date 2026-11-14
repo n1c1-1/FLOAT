@@ -474,7 +474,7 @@ CHOICE_TEXTS: dict[str, str] = {
     # what the Color and Astrometry blocks do when the stars cannot calibrate or identify (stages/color.py, astrometry.py)
     "fallback": "Fallback balance", "continue": "Continue without solution", "stop": "Stop",
     # the stacking settings (stages/stack.py)
-    "thresholds": "Thresholds", "sota": "k × σ filters", "on": "On", "off": "Off",
+    "thresholds": "Thresholds", "sota": "k × σ filters", "all": "All frames", "on": "On", "off": "Off",
     "min_weight": "Automatic", "own": "On the raw pixels", "by_count": "By frame count", "integration": "From the classic stack's rejection",
     "drizzle": "Bayer drizzle", "classic": "Classic",
     "rcd": "RCD", "bilinear": "Bilinear", "lanczos4": "Lanczos-4",
