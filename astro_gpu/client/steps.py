@@ -19,7 +19,7 @@ from PySide6.QtGui import QColor, QPainter, QPen
 
 from .. import texts
 from . import APP_NAME
-from .blocks import BY_KEY, STEPS, fmt_int
+from .graphnode import BY_KEY, STEPS, fmt_int
 from .i18n import _, hours_text, language, number
 from .imageview import ViewImage
 from .services.inspect import SkyData, VisualSpec, service_of

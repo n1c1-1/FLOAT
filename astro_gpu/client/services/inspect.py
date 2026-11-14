@@ -1002,7 +1002,7 @@ def diag(name: str):
 
 def block_of(stage: str) -> str:
     """The title of the block a stage belongs to (English; translated where shown)."""
-    from ..blocks import STEPS
+    from ..graphnode import STEPS
     return next((b["title"] for b in STEPS if stage in b["stages"]), stage)
 
 

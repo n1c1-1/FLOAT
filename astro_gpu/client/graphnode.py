@@ -444,6 +444,119 @@ class BlockMap:
             self._ids[id(n)] = bid
             for w, _n in pairs:
                 self._by_path.setdefault((w, n.ref), n)
+        self._paths = paths
+        self._layers(blocks)
+        self._last_nodes()
+        for bid, n in self._nodes.items():
+            n.grey = self._grey(bid, n)
+
+    # ------------------------------------------------------------------ what a node says beside its key (the panel's)
+    def _grey(self, bid, n) -> str:
+        """Why a block cannot run (a block before it switched off or missing), in today's words: the model's reason
+        over the compiled workflows, else the graph core's; "" for one that can."""
+        if n.cut or not n.paths or n.key in ("session", "calibration", "image", "fusion", "composition"):
+            return ""
+        why = getattr(self.model, "greyed_reason", None)
+        if why is not None:
+            try:
+                return next((w for q in n.paths if (w := why(q, n.ref))), "")
+            except Exception:  # noqa: BLE001 - a workflow the model cannot judge now: the core's word
+                pass
+        if self.graph is None:
+            return ""
+        try:
+            from ..graphcore import api
+            return api.greyed(self.graph, bid, _) or ""
+        except Exception:  # noqa: BLE001 - nothing to say rather than a wrong reason
+            return ""
+
+    def _mark(self, n):
+        """The marks that follow the disk and the runs (a session's or an image's file not readable, a combination's
+        input to wire, the data of the sky missing), read again each time a node is asked for."""
+        if n is None or not n.paths:
+            return n
+        m = self.model
+
+        def first(f, *args):
+            if f is None:
+                return ""
+            try:
+                return next((w for q in n.paths if (w := f(q, *args))), "")
+            except Exception:  # noqa: BLE001 - a mark is a word of the panel: never a failure
+                return ""
+        try:
+            if n.key == "session" and n.sid is not None and hasattr(m, "session_problem"):
+                n.broken = m.session_problem(n.sid) or ""
+            elif n.key == "image":
+                n.broken = first(getattr(m, "image_problem", None))
+            elif n.key == "fusion":
+                n.broken = first(getattr(m, "fusion_problem", None))
+                n.waits = first(getattr(m, "wiring_reason", None), "fusion") or \
+                    first(getattr(m, "fusion_waiting", None))
+            elif n.key == "align_on":
+                n.waits = first(getattr(m, "wiring_reason", None), "align_on")
+            if n.key not in ("session", "final", "sources", "composition") and not n.cut and not n.grey:
+                n.missing = first(getattr(m, "sky_missing", None), n.key)
+        except Exception:  # noqa: BLE001 - the same
+            pass
+        return n
+
+    def _layers(self, blocks):
+        """A node for each Combine layers block: over the workflow whose images it combines, with ITS layer of Post
+        (``lid``): the layer of the shown version whose starless side and stars side are the blocks wired into it,
+        each layer given to one block, in the graph's order; numbered when a workflow has several."""
+        g = self.graph
+        if g is None:
+            return
+        cmap = getattr(self.compiled, "map", None) or {}
+        try:
+            layers = [x for x in (self.model.post_layers() if hasattr(self.model, "post_layers") else [])
+                      if x.get("kind") == "workflow" and x.get("part") == "combined"]
+        except Exception:  # noqa: BLE001 - Post not readable now: the blocks without their layer
+            layers = []
+        taken = set()
+        mine: dict = {}
+
+        def side(w):
+            if w is None:
+                return set(), None
+            wids = {x for x, _n in cmap.get(w.src[0], [])}
+            port = str(w.src[1])
+            return wids, ("starless" if port == "Starless" else "stars" if port == "Stars only" else "output")
+        for bid, blk in blocks.items():
+            if blk.kind != "combine_layers":
+                continue
+            ins = {str(w.dst[1]): w for w in getattr(g, "wires", []) if w.dst[0] == bid and getattr(w, "active", True)}
+            back, star = ins.get("Background"), ins.get("Stars")
+            bw, bimg = side(back)
+            sw, simg = side(star)
+            lay = None
+            for x in layers:
+                if id(x) in taken or x.get("pid") not in bw:
+                    continue
+                if (x.get("starless") or "starless") != ("output" if bimg == "output" else "starless"):
+                    continue
+                if star is not None and (x.get("stars_pid", x.get("pid")) not in sw or
+                                         (x.get("stars_image") or "stars") != ("output" if simg == "output" else "stars")):
+                    continue
+                lay = x
+                break
+            if lay is not None:
+                taken.add(id(lay))
+            pid = lay.get("pid") if lay is not None else next(iter(sorted(bw)), None)
+            q = self._paths.get(pid)
+            missing = [w for w, a in (("Starless", back), ("Stars", star)) if a is None]
+            n = Node("composition", [q] if q is not None else [], lid=lay.get("id") if lay is not None else None,
+                     waits=_("{names} to wire").format(names=", ".join(_(x) for x in missing)) if missing else "")
+            self._nodes[bid] = n
+            self._ids[id(n)] = bid
+            if q is not None:
+                mine.setdefault(q.pid, []).append((n, lay))
+        for group in mine.values():                       # several of one workflow: each its layer's number
+            if len(group) > 1:
+                for i, (n, lay) in enumerate(group):
+                    tail = str((lay or {}).get("name") or "").rpartition(" ")[2]
+                    n.num = int(tail) if tail.isdigit() else i + 1
 
     @property
     def nodes(self) -> list:
@@ -451,15 +564,11 @@ class BlockMap:
         return list(self._nodes.values())
 
     def node(self, block: str):
-        return self._nodes.get(block)
+        return self._mark(self._nodes.get(block))
 
     def block_of(self, node) -> str | None:
         """The block id of one of these nodes."""
         return self._ids.get(id(node))
-
-    def node_of(self, p, key: str):
-        """The node of a view key ("fond~2", "calibration@3") in one workflow, or None."""
-        return self._by_path.get((getattr(p, "pid", p), key))
 
     def address(self, block: str):
         """(workflow id, view key) of a block: what the Inspect strip and the run window select it by; None for a block
@@ -470,11 +579,174 @@ class BlockMap:
             return None
         return pairs[0][0], n.ref
 
+    # ------------------------------------------------------------------ what today's blocks.Graph answered
+    @property
+    def root(self) -> Node:
+        """The frames of every workflow of frames ("sources"), as Inspect's strip and the panel name them."""
+        if getattr(self, "_root", None) is None:
+            self._root = Node("sources", [p for p in getattr(self.model, "paths", None) or []
+                                         if getattr(p, "source", None) is None])
+        return self._root
+
+    @property
+    def final(self) -> Node:
+        """Post, over every workflow."""
+        if getattr(self, "_final", None) is None:
+            self._final = Node("final", list(getattr(self.model, "paths", None) or []))
+        return self._final
+
+    @property
+    def sessions(self) -> list:
+        """(Session node, its Calibration node) of each session calibrated on its own (per-session mode), once per
+        session: Inspect's strip shows them before the chain."""
+        if getattr(self, "_sessions", None) is not None:
+            return self._sessions
+        out, seen = [], set()
+        g = self.graph
+        separate = getattr(self.model, "separate_sessions", lambda: [])()
+        if g is not None and separate:
+            for r in getattr(g, "rows", []):
+                for s, c in getattr(r, "nights", []) or []:
+                    sn, cn = self._nodes.get(s), self._nodes.get(c)
+                    if sn is None or cn is None or sn.sid in seen or sn.sid not in separate:
+                        continue
+                    seen.add(sn.sid)
+                    out.append((sn, cn))
+        self._sessions = out
+        return out
+
+    def _last_nodes(self) -> dict:
+        """{workflow id: the node of its last block} (the block that holds its Output: today's ``node_of(p, "post")``)."""
+        if getattr(self, "_last", None) is not None:
+            return self._last
+        out = {}
+        chain_of = getattr(self.model, "_chain", None)
+        for p in getattr(self.model, "paths", None) or []:
+            ids = []
+            if chain_of is not None:
+                try:
+                    ids = list(chain_of(p.pid))
+                except Exception:  # noqa: BLE001 - a workflow the graph does not hold: no last block
+                    ids = []
+            nodes = [self._nodes[b] for b in ids if b in self._nodes and self._nodes[b].key not in ("session",)]
+            if nodes:
+                out[p.pid] = nodes[-1]
+                if len(nodes[-1].paths) == 1:
+                    nodes[-1].handle = True
+        self._last = out
+        return out
+
+    def node_of(self, p, key: str, lid: int | None = None):
+        """The node of a view key in one workflow ("fond~2", "calibration@3"), or None; "sources" and "final" give the
+        frames' and Post's nodes, "post" the block that holds the workflow's Output (its last block), "composition"
+        a Combine layers node over the workflow (its layer ``lid``)."""
+        if key == "sources":
+            return self.root
+        if key == "final":
+            return self.final
+        pid = getattr(p, "pid", p)
+        if key == "post":
+            return self._last_nodes().get(pid)
+        if key == "composition":
+            mine = [n for n in self._nodes.values() if n.key == "composition" and n.paths and n.paths[0].pid == pid]
+            n = next((n for n in mine if n.lid == lid), mine[0] if mine else None)
+            if n is not None:
+                return n
+            q = self._paths.get(pid)
+            return Node("composition", [q], lid=lid) if q is not None else None
+        n = self._by_path.get((pid, key))
+        if n is None and "@" in key:                  # a session's block drawn for another workflow of that night
+            k, _at, sid = key.partition("@")
+            n = next((x for x in self._nodes.values() if x.key == k and str(x.sid) == sid), None)
+        return self._mark(n)
+
+    def _post(self):
+        """Post's layers as Post will have them, top first ((name, workflow id or None)), and the workflows whose Output
+        image is one of them (today's ``blocks.Graph.post_layers`` and ``to_post``). Read anew each time: Post changes
+        without the graph changing."""
+        m = self.model
+        out, to_post = [], set()
+        paths = list(getattr(m, "paths", None) or [])
+        layers = list(m.post_layers()) if hasattr(m, "post_layers") else []
+        have = {lay.get("pid") for lay in layers if lay.get("kind") == "workflow"}
+        feeds = getattr(m, "feeds_fusion", None)
+        removed = getattr(m, "post_removed", lambda: set())()
+        gives = getattr(m, "gives_post", lambda q: True)
+        try:
+            from .model import POST_PART_NAMES
+        except Exception:  # noqa: BLE001 - without the model's module: the part's own word
+            POST_PART_NAMES = {"combined": "Combine layers"}
+        for p in paths:                               # a workflow with no layer yet: the one Post will give it
+            opts = getattr(p, "opts", None) or {}
+            default = "combined" if opts.get("etoiles") == "retirer" else None
+            if p.pid not in have and ((p.pid, default) not in removed or getattr(p, "end", None)) and \
+                    not (feeds is not None and feeds(p)) and gives(p):
+                stars = opts.get("etoiles") == "retirer" and self.node_of(p, "etoiles") is not None
+                layers.insert(0, {"kind": "workflow", "pid": p.pid, "part": "combined" if stars else None, "id": None,
+                                  "name": p.name + (" · " + POST_PART_NAMES["combined"] if stars else "")})
+        for lay in layers:
+            if lay.get("kind") == "image":
+                out.append((str(lay.get("name") or "?"), None))
+            if lay.get("kind") != "workflow":
+                continue
+            p = next((q for q in paths if q.pid == lay.get("pid")), None)
+            if p is None:
+                continue
+            out.append((str(lay.get("name") or p.name), p.pid))
+            if lay.get("part") is None:
+                to_post.add(p.pid)
+        return out, to_post
+
+    @property
+    def post_layers(self) -> list:
+        """The layers of Post, top first: (name as saved, workflow id or None for an image sent from Inspect)."""
+        return self._post()[0]
+
+    @property
+    def to_post(self) -> set:
+        """The workflows whose Output image is a layer of Post."""
+        return self._post()[1]
+
+    def session_stages(self, p, sid) -> list:
+        """The stages of a session's Calibration in a workflow: its instances, or the workflow's own when it stacks
+        that session alone (one filter's)."""
+        inst = [f"inventory@{sid}", f"calibrate@{sid}"]
+        allst = self.model.all_stages(p) if hasattr(self.model, "all_stages") else []
+        return inst if any(x in allst for x in inst) else ["inventory", "calibrate"]
+
     def state(self, node) -> str:
-        """The worst state of a block over its workflows ("done" when the model has no run answers)."""
-        if not node.paths or not hasattr(self.model, "all_stages") or not hasattr(self.model, "state"):
+        """done | pending | stale | running | failed | interrupted | skipped: the worst over the workflows going through
+        the block (today's ``blocks.Graph.state``); "done" for a block of no workflow without run answers."""
+        m = self.model
+        if not hasattr(m, "all_stages") or not hasattr(m, "state"):
             return "done" if not node.paths else "pending"
-        states = {block_state(self.model, p, node.ref) for p in node.paths}
+        if node.key == "sources":
+            return "done" if getattr(m, "sources_loaded", True) else "pending"
+        if node.key == "session":
+            try:
+                return "done" if m.session(node.sid).lights else "pending"
+            except Exception:  # noqa: BLE001 - a session gone meanwhile
+                return "pending"
+        if node.key == "final":
+            return "done" if m.paths and all(getattr(p, "rendered", False) for p in m.paths) else "pending"
+        if not node.paths:
+            return "pending"
+        if node.key == "calibration" and node.sid is not None:
+            states = {m.state(p, x) for p in node.paths for x in self.session_stages(p, node.sid)}
+            return next((w for w in STATE_ORDER if w in states), "pending")
+        if node.grey or (node.cut and node.key not in ("calibration", "alignement")):
+            return "skipped" if node.grey else "done"
+        if node.key == "composition":                 # computed in Post from the Stars block's images
+            return block_state(m, node.paths[0], "etoiles")
+        states = {block_state(m, p, node.ref) for p in node.paths}
+        last = self._last_nodes()
+        try:
+            to_post = self.to_post
+        except Exception:  # noqa: BLE001 - Post not readable now: the block's own stages
+            to_post = set()
+        # the Output held by the last block (#49): its image to Post is this block's too, not done until it is
+        states |= {st for st in (block_state(m, p, "post") for p in node.paths
+                                 if p.pid in to_post and last.get(p.pid) is node) if st != "skipped"}
         return next((w for w in STATE_ORDER if w in states), "pending")
 
     def summary(self, node, tr=None) -> str:
@@ -484,3 +756,9 @@ class BlockMap:
             return ""
         from ..graphcore import api
         return api.summary(self.graph, bid, tr or _)
+
+
+def blocks_of(model) -> BlockMap:
+    """The blocks of a project model's graph (``model.block_map``): what today's ``blocks.Graph(model)`` gave its
+    readers (Post's ``coming_layers`` reads its ``post_layers``)."""
+    return model.block_map

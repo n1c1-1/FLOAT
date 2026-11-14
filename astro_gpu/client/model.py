@@ -53,8 +53,9 @@ from ..core.project2 import (
 )
 from ..core.project2 import FILE as PROJECT_FILE
 from ..core.project2 import join_problem as engine_join_problem
-from .blocks import COLUMNS, KEY_ENGINE_BLOCK, TOOLS, TRUNK, block_state, kbase, knum, port_name  # noqa: F401  (TOOLS: test_model_surface)
-from .blocks import ENGINE_BLOCK as ENGINE_KEY
+from .graphnode import COLUMNS, KEY_ENGINE_BLOCK, TOOLS, TRUNK, block_state, kbase, knum, port_name  # noqa: F401  (TOOLS: test_model_surface)
+from .graphnode import ENGINE_BLOCK as ENGINE_KEY
+from .graphmodel import GraphEditing
 from .i18n import _, hm
 from .services.worker import ApiWorker, norm_path
 
@@ -575,7 +576,7 @@ class SessionSet:
         return True
 
 
-class ProjectModel(QObject):
+class _ProjectBase(QObject):
     pathsChanged = Signal()                # the workflows, their options or settings, or what is computed, changed
     currentChanged = Signal()              # the current workflow or the selected block
     costChanged = Signal()                 # what is to compute changed, without a new workflow or option
@@ -1308,7 +1309,7 @@ class ProjectModel(QObject):
     def _prefetch_estimates(self, first: bool) -> bool:
         """Worker thread: the durations the views quote (each stage of each workflow, the method cards, the toolbar
         cards, the New workflow dialog), into the estimates cache. Returns ``first``."""
-        from .blocks import TOOLBOX
+        from .graphnode import TOOLBOX
         for v in list(self.paths):
             for stage in list(self._chains.get(v.pid, [])):
                 self.seconds(stage, v)
@@ -3318,7 +3319,7 @@ class ProjectModel(QObject):
         workflow that has the method. ``device``: "gpu" or "cpu", else the machine's. The methods the engine does not
         have yet (◇) are the spec's estimates. Reads manifests and the history: the worker's call, the views use
         ``method_times``."""
-        from .blocks import BY_KEY
+        from .graphnode import BY_KEY
         m = next((x for x in methods_of(block) if x["key"] == method), None)
         if m is not None and m["stage"] in EXTRA_SECONDS:
             return EXTRA_SECONDS[m["stage"]], False
@@ -3457,7 +3458,7 @@ class ProjectModel(QObject):
     def pause_name(self, pid: int, key: str) -> str:
         """A paused block as the graph names it: "Gradient 1" when the workflow has two, a session's Calibration with
         its session ("Calibration · Session 2")."""
-        from .blocks import block_title
+        from .graphnode import block_title
         q = self.view(pid)
         base, at, sid = key.partition("@")
         # a workflow's own Calibration drawn beside its one session: named with it
@@ -3807,13 +3808,13 @@ class ProjectModel(QObject):
     @staticmethod
     def branch_name(flow: str, key: str) -> str:
         """The name of a block's image sent to Post: its workflow's and its block's ("Ha · Denoise")."""
-        from .blocks import block_title
+        from .graphnode import block_title
         return f"{flow} · " + (_("Raw stack") if key == "empilement" else block_title(None, key.partition("~")[0]))
 
     def _follow_branch_names(self):
         """A branch sent to Post keeps a name that says what it is: blocks added or taken after its last one, its
         name follows ("Ha · Gradient" becomes "Ha · Denoise"; GUI exploration 2). A name the user gave stays."""
-        from .blocks import BY_KEY
+        from .graphnode import BY_KEY
         titles = {self.branch_name("", k)[3:] for k in BY_KEY}
         names = {w.name for w in self.p.workflows}
         for w in self.p.workflows:
@@ -4388,5 +4389,10 @@ class ProjectModel(QObject):
 
 
 # aliases (test_model_surface checks them)
+class ProjectModel(GraphEditing, _ProjectBase):
+    """The project model: the stored graph (graphcore) is the truth of the workflows, compiled into the definition the
+    engine runs after every change (graphmodel.GraphEditing, mixed in ahead of the model's other parts)."""
+
+
 PathDef = WorkflowView
 Session = ProjectModel

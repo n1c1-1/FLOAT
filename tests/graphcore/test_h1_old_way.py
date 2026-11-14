@@ -1,15 +1,22 @@
 """Hole H1 of the engine owner's review: graphs that do not come from a converted project. Every gallery template is
-built the old way (GraphPage.make_from_template with ProjectModel, on a project with fake sessions or none) and the
-new way (graphcore.templates as one apply_many, compiled into the same kind of project, then the same Post actions run
-by the model's own Post functions), and the two projects are compared: the whole definition (to_dict, Post included)
-and every key table. The commonest gestures (insert a block, try a variant, a block's image to Post, Align on, a
-combination) are compared the same way, from a project built both ways.
+built the new way (graphcore.templates as one apply_many, compiled into a project with fake sessions or none, then the
+same Post actions run by the model's own Post functions) and compared with the project the old way made
+(GraphPage.make_from_template with today's ProjectModel): the whole definition (to_dict, Post included) and every key
+table. The commonest gestures (insert a block, try a variant, a block's image to Post, Align on, a combination) are
+compared the same way, from a project built both ways.
+
+The old way's code went with the swap to the graph: its projects were recorded before, by this file run with
+``FLOAT_RECORD_OLD_WAY=1`` on the last commit that had it (``old_way/<test>.json``: each state the old model reached,
+its definition and what its call returned). A replay compares the new project with the recorded definition, and the
+key tables of both computed now, in this process (a stage version bumped since changes both alike).
 
 Normalised (each cause given): the creation time stamp and the project folder (two projects); the ids of Post's
 layers (a counter of the process, never read by a key) renumbered in their order."""
 from __future__ import annotations
 
+import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -24,7 +31,6 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from astro_gpu.client import i18n  # noqa: E402
 from astro_gpu.client.gallery import GALLERY, _view_opts  # noqa: E402
-from astro_gpu.client.graph import GraphPage  # noqa: E402
 from astro_gpu.client.model import ProjectModel  # noqa: E402
 from astro_gpu.client.services.worker import ApiWorker  # noqa: E402
 from astro_gpu.core import project2  # noqa: E402
@@ -37,6 +43,9 @@ from astro_gpu.graphcore.operations import apply_many, apply  # noqa: E402
 from astro_gpu.graphcore.proof import _first_diff, keys_table  # noqa: E402
 
 FAKE = [("Night S", "SII"), ("Night H", "Ha"), ("Night O", "OIII")]
+#: the old way's projects, recorded before its code went (see the module's text)
+RECORDS = Path(__file__).with_name("old_way")
+RECORD = os.environ.get("FLOAT_RECORD_OLD_WAY") == "1"
 
 
 @pytest.fixture(scope="module")
@@ -44,14 +53,73 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
+# ---------------------------------------------------------------------------------------------- the recordings
+def _plain(v):
+    """A call's answer as a recording keeps it (tuples as lists, views by their name)."""
+    if hasattr(v, "pid") and hasattr(v, "name"):
+        return v.name
+    return json.loads(json.dumps(v, default=str))
+
+
+class Recording:
+    """The states the old model reached in one test, in order: ``check(p, value)`` records one (``RECORD``) or compares
+    the project ``p`` with the next one recorded and gives back what the old call returned."""
+
+    def __init__(self, name: str):
+        self.path = RECORDS / (re.sub(r"[^A-Za-z0-9_.-]+", "_", name) + ".json")
+        self.states: list = []
+        self.at = 0
+        if not RECORD:
+            if not self.path.is_file():
+                pytest.fail(f"no recording of the old way: {self.path.name}")
+            self.states = json.loads(self.path.read_text(encoding="utf-8"))
+
+    def check(self, p, value=None):
+        if RECORD:
+            self.states.append({"definition": p.to_dict(), "value": _plain(value)})
+            return _plain(value)
+        assert self.at < len(self.states), f"{self.path.name}: more states than the old way reached"
+        rec = self.states[self.at]
+        self.at += 1
+        assert differences_to(rec["definition"], p) == []
+        return rec["value"]
+
+    def save(self):
+        if RECORD:
+            RECORDS.mkdir(exist_ok=True)
+            self.path.write_text(json.dumps(self.states, indent=1, sort_keys=True, default=str), encoding="utf-8")
+        else:
+            assert self.at == len(self.states), f"{self.path.name}: the old way reached more states"
+
+
+@pytest.fixture()
+def recording(request):
+    r = Recording(f"{request.module.__name__.rpartition('.')[2]}__{request.node.name}")
+    yield r
+    r.save()
+
+
+def template_recording(t, sessions) -> Recording:
+    """The recording of a template built the old way (``test_every_template...``'s)."""
+    sid = "blank" if not sessions else "fake sessions"
+    return Recording(f"test_h1_old_way__test_every_template_built_the_new_way_is_the_old_project[{t['key']}-{sid}]")
+
+
+# ---------------------------------------------------------------------------------------------- the projects
 class FakePage:
-    """The page's template builders without the page (they only call the model)."""
-    make_from_template = GraphPage.make_from_template
-    make_filters = GraphPage.make_filters
+    """The old page's template builders without the page (they only call the model): recording only."""
 
     def __init__(self, m):
+        from astro_gpu.client.graph import GraphPage      # the old page: there only on the commits that record
         self.s = m
         self.said = []
+        self._page = GraphPage
+
+    def make_from_template(self, t, name, opts):
+        return self._page.make_from_template(self, t, name, opts)
+
+    def make_filters(self, t, name, opts):
+        return self._page.make_filters(self, t, name, opts)
 
     def select(self, **k):
         pass
@@ -61,7 +129,7 @@ class FakePage:
 
 
 class World:
-    def __init__(self, root: Path, sessions):
+    def __init__(self, root: Path, sessions, cls=None):
         i18n.set_language("en")
         self.p = project2.create(root, "P", Target(name="M 31"))
         for sid, (name, flt) in enumerate(sessions, 1):
@@ -70,7 +138,7 @@ class World:
             self.p.sessions.append(s)
         project2.save(self.p)
         self.w = ApiWorker()
-        self.m = ProjectModel(self.p, self.w)
+        self.m = (cls or ProjectModel)(self.p, self.w)
         self.w.wait(120)
 
     def close(self):
@@ -84,6 +152,7 @@ def template_name(m, t):
 
 
 def old_way(root, t, sessions):
+    """Recording only: the template made by the old page's builder on today's model."""
     w = World(root, sessions)
     name = template_name(w.m, t)
     FakePage(w.m).make_from_template(t, name, _view_opts(t))
@@ -122,8 +191,8 @@ def new_way(root, t, sessions):
     return w
 
 
-def whole(p) -> dict:
-    d = p.to_dict()
+def _whole(d: dict) -> dict:
+    d = json.loads(json.dumps(d, default=str))
     d.pop("created", None)
     ids = {}
     for v in d["post"].get("versions") or []:
@@ -135,6 +204,10 @@ def whole(p) -> dict:
             if lay.get("target") in ids:
                 lay["target"] = ids[lay["target"]]
     return d
+
+
+def whole(p) -> dict:
+    return _whole(p.to_dict())
 
 
 def differences(a, b) -> list[str]:
@@ -149,9 +222,20 @@ def differences(a, b) -> list[str]:
     return out
 
 
+def differences_to(recorded: dict, p) -> list[str]:
+    """A recorded definition against the project ``p``: the definitions, then the key tables of both, the recorded
+    one read in ``p``'s folder."""
+    d = _first_diff(_whole(recorded), whole(p), "definition")
+    if d:
+        return [d]
+    q = project2.Project2.from_dict(json.loads(json.dumps(recorded)), p.root)
+    rules = _key_rules()
+    d = _first_diff(_rooted(keys_table(q, rules, _NoDisk())), _rooted(keys_table(p, rules, _NoDisk())), "keys")
+    return [d] if d else []
+
+
 def _rooted(table):
     """The key table with the project's folder named alike on both sides (the overrides hold its store's paths)."""
-    import json
     return json.loads(json.dumps(table, default=str).replace("side_old", "side").replace("side_new", "side"))
 
 
@@ -160,22 +244,21 @@ TEMPLATES = [t for t in GALLERY if t.get("copy") is None]
 
 @pytest.mark.parametrize("sessions", [[], FAKE], ids=["blank", "fake sessions"])
 @pytest.mark.parametrize("t", TEMPLATES, ids=[t["key"] for t in TEMPLATES])
-def test_every_template_built_the_new_way_is_the_old_project(qapp, tmp_path, t, sessions):
-    old = old_way(tmp_path / "side_old", t, sessions)
-    new = new_way(tmp_path / "side_new", t, sessions)
+def test_every_template_built_the_new_way_is_the_old_project(qapp, tmp_path, t, sessions, recording):
+    w = (old_way if RECORD else new_way)(tmp_path / "side", t, sessions)
     try:
-        assert differences(old.p, new.p) == []
+        recording.check(w.p)
     finally:
-        old.close()
-        new.close()
+        w.close()
 
 
 # ---------------------------------------------------------------------------------------------------- gestures
-def _both(tmp_path, key, sessions=()):
+def _both(tmp_path, key, rec, sessions=()):
+    """The template's project: recording, the old way's (recorded); else the new way's, checked against it."""
     t = next(x for x in GALLERY if x["key"] == key)
-    old, new = old_way(tmp_path / "side_old", t, list(sessions)), new_way(tmp_path / "side_new", t, list(sessions))
-    assert differences(old.p, new.p) == []
-    return old, new
+    w = (old_way if RECORD else new_way)(tmp_path / "side", t, list(sessions))
+    rec.check(w.p)
+    return w
 
 
 def _gesture(new, steps):
@@ -200,90 +283,92 @@ def _view(m, name):
     return next(q for q in m.paths if q.name == name)
 
 
-def test_insert_a_block_as_the_old_model_does(qapp, tmp_path):
-    old, new = _both(tmp_path, "colour_min", FAKE[:1])
+def test_insert_a_block_as_the_old_model_does(qapp, tmp_path, recording):
+    w = _both(tmp_path, "colour_min", recording, FAKE[:1])
     try:
-        q = _view(old.m, "Colour minimal")
-        old.m.insert_block(q, "deconv")
-        r = _row(new.g, "Colour minimal")
-        at = {"type": "insert", "row": r.id, "after": _blk(new.g, r, "gradient")}
-        _gesture(new, [("add_block", {"kind": "deconv", "at": at})])
-        assert differences(old.p, new.p) == []
+        if RECORD:
+            w.m.insert_block(_view(w.m, "Colour minimal"), "deconv")
+        else:
+            r = _row(w.g, "Colour minimal")
+            at = {"type": "insert", "row": r.id, "after": _blk(w.g, r, "gradient")}
+            _gesture(w, [("add_block", {"kind": "deconv", "at": at})])
+        recording.check(w.p)
     finally:
-        old.close()
-        new.close()
+        w.close()
 
 
-def test_try_a_variant_as_the_old_model_does(qapp, tmp_path):
-    old, new = _both(tmp_path, "colour_min", FAKE[:1])
+def test_try_a_variant_as_the_old_model_does(qapp, tmp_path, recording):
+    w = _both(tmp_path, "colour_min", recording, FAKE[:1])
     try:
-        q = _view(old.m, "Colour minimal")
-        ch = {"kind": "param", "stage": "register", "name": "min_pairs", "value": 20}
-        old.m.add_variant(q, ch, "Colour minimal · Min pairs")
-        r = _row(new.g, "Colour minimal")
-        _gesture(new, [("try_variant", {"block": _blk(new.g, r, "registration"),
-                                        "change": {"param": ["register", "min_pairs", 20]},
-                                        "name": "Colour minimal · Min pairs"})])
-        assert differences(old.p, new.p) == []
+        if RECORD:
+            ch = {"kind": "param", "stage": "register", "name": "min_pairs", "value": 20}
+            w.m.add_variant(_view(w.m, "Colour minimal"), ch, "Colour minimal · Min pairs")
+        else:
+            r = _row(w.g, "Colour minimal")
+            _gesture(w, [("try_variant", {"block": _blk(w.g, r, "registration"),
+                                          "change": {"param": ["register", "min_pairs", 20]},
+                                          "name": "Colour minimal · Min pairs"})])
+        recording.check(w.p)
     finally:
-        old.close()
-        new.close()
+        w.close()
 
 
-def test_a_block_to_post_as_the_old_model_does(qapp, tmp_path):
-    old, new = _both(tmp_path, "colour_full", FAKE[:1])
+def test_a_block_to_post_as_the_old_model_does(qapp, tmp_path, recording):
+    w = _both(tmp_path, "colour_full", recording, FAKE[:1])
     try:
-        q = _view(old.m, "Colour full")
-        old.m.send_to_post(q, "fond", "Colour full · Gradient")
-        r = _row(new.g, "Colour full")
-        _gesture(new, [("send_to_post", {"block": _blk(new.g, r, "gradient"), "name": "Colour full · Gradient"})])
-        assert differences(old.p, new.p) == []
+        if RECORD:
+            w.m.send_to_post(_view(w.m, "Colour full"), "fond", "Colour full · Gradient")
+        else:
+            r = _row(w.g, "Colour full")
+            _gesture(w, [("send_to_post", {"block": _blk(w.g, r, "gradient"), "name": "Colour full · Gradient"})])
+        recording.check(w.p)
     finally:
-        old.close()
-        new.close()
+        w.close()
 
 
-def test_align_on_as_the_old_model_does(qapp, tmp_path):
-    old, new = _both(tmp_path, "filters_min", FAKE)
+def test_align_on_as_the_old_model_does(qapp, tmp_path, recording):
+    w = _both(tmp_path, "filters_min", recording, FAKE)
     try:
-        ref = _view(old.m, "Ha")
-        old.m.remove_node(_view(old.m, "SII"), "align_on")
-        old.m.set_align_on(_view(old.m, "SII"), ref.pid, method="plate")
-        g = new.g
-        _gesture(new, [("own_grid", {"row": _row(g, "SII").id})])
-        g = new.g
-        _gesture(new, [("set_align", {"row": _row(g, "SII").id, "ref": _row(g, "Ha").id,
-                                      "block": _blk(g, _row(g, "Ha"), "astrometry"), "method": "plate"})])
-        assert differences(old.p, new.p) == []
+        if RECORD:
+            ref = _view(w.m, "Ha")
+            w.m.remove_node(_view(w.m, "SII"), "align_on")
+            w.m.set_align_on(_view(w.m, "SII"), ref.pid, method="plate")
+        else:
+            g = w.g
+            _gesture(w, [("own_grid", {"row": _row(g, "SII").id})])
+            g = w.g
+            _gesture(w, [("set_align", {"row": _row(g, "SII").id, "ref": _row(g, "Ha").id,
+                                        "block": _blk(g, _row(g, "Ha"), "astrometry"), "method": "plate"})])
+        recording.check(w.p)
     finally:
-        old.close()
-        new.close()
+        w.close()
 
 
-def test_a_combination_as_the_old_model_does(qapp, tmp_path):
-    old, new = _both(tmp_path, "filters_min", FAKE)
+def test_a_combination_as_the_old_model_does(qapp, tmp_path, recording):
+    w = _both(tmp_path, "filters_min", recording, FAKE)
     try:
-        ha, oiii = _view(old.m, "Ha"), _view(old.m, "OIII")
-        old.m.add_fusion("H-O", "ho", [{"pid": ha.pid, "role": "Ha", "channel": "R"},
-                                       {"pid": oiii.pid, "role": "OIII", "channel": "GB"}])
-        g = new.g
-        _gesture(new, [("add_combination", {"type": "ho", "name": "H-O"}),
-                       ("wire", lambda res: {"src": _row(g, "Ha").blocks[-1], "src_port": "image",
-                                             "dst": res[0].created["block"], "dst_port": "Hα", "channel": "R"}),
-                       ("wire", lambda res: {"src": _row(g, "OIII").blocks[-1], "src_port": "image",
-                                             "dst": res[0].created["block"], "dst_port": "O III", "channel": "GB"})])
-        assert differences(old.p, new.p) == []
+        if RECORD:
+            ha, oiii = _view(w.m, "Ha"), _view(w.m, "OIII")
+            w.m.add_fusion("H-O", "ho", [{"pid": ha.pid, "role": "Ha", "channel": "R"},
+                                         {"pid": oiii.pid, "role": "OIII", "channel": "GB"}])
+        else:
+            g = w.g
+            _gesture(w, [("add_combination", {"type": "ho", "name": "H-O"}),
+                         ("wire", lambda res: {"src": _row(g, "Ha").blocks[-1], "src_port": "image",
+                                               "dst": res[0].created["block"], "dst_port": "Hα", "channel": "R"}),
+                         ("wire", lambda res: {"src": _row(g, "OIII").blocks[-1], "src_port": "image",
+                                               "dst": res[0].created["block"], "dst_port": "O III", "channel": "GB"})])
+        recording.check(w.p)
     finally:
-        old.close()
-        new.close()
+        w.close()
 
 
+@pytest.mark.skipif(RECORD, reason="the new way only")
 def test_post_wire_set_follows_every_version(qapp, tmp_path):
     """Engine review 3, with the model's Post: two versions; a layer deleted in version 2 only leaves the graph's
     wire; the wire removed in the graph takes the image out of both versions."""
     from astro_gpu.graphcore.post import post_actions, shared_images, wired_images
-    old, new = _both(tmp_path, "colour_min", FAKE[:1])
-    old.close()
+    new = new_way(tmp_path / "side", next(x for x in GALLERY if x["key"] == "colour_min"), FAKE[:1])
     try:
         m, g, c = new.m, new.g, new.c
         wid = c.wids[_row(g, "Colour minimal").id]

@@ -139,7 +139,7 @@ def pause_titles(model, pause, stops=None, named: bool | None = None) -> list[st
     if pause is None and stops is None:
         return []
     stops = pause.all_stops() if stops is None else stops
-    from ..blocks import review_title
+    from ..graphnode import review_title
     titles = [(model.pause_name(pid, k) if hasattr(model, "pause_name") else review_title(k), pid) for pid, k in stops]
     if named is None:
         named = len({p for _t, p in titles}) > 1 and len({t for t, _p in titles}) > 1
@@ -906,7 +906,7 @@ def render_line(line: Line, title=lambda stage: stage) -> str:
         if b.get("fallback"):                    # the blocks done with their declared fallback, for the morning
             text += " · " + plural(b["fallback"], "{n} block with fallback", "{n} blocks with fallback")
     elif kind == "paused":
-        from ..blocks import review_title
+        from ..graphnode import review_title
         text = _("Review pause: {block} · Inspect, then Continue").format(
             block=d.get("name") or review_title(d["block"]))
     elif kind == "run_lost":
@@ -1212,12 +1212,12 @@ class RunController(QObject):
 
     def block_name(self, p, key: str) -> str:
         """A block as the graph and the run window name it ("Gradient 2", "Calibration · Session 2", 4.1 and 6.1)."""
-        from ..blocks import Graph, block_title
+        from ..graphnode import block_title
         from ..runs import row_title
         if key == "post":
             return _("Output")
         try:
-            node = Graph(self.model).node_of(p, key)
+            node = self.model.block_map.node_of(p, key)
         except Exception:  # noqa: BLE001 - a graph that cannot be built now: its plain name
             node = None
         return row_title(self.model, node, p) if node is not None else block_title(p, key)

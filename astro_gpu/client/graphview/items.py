@@ -25,7 +25,7 @@ from .style import (
 )
 
 MIN_SCALE = 0.75
-DIM = 0.45                     # the opacity of a block of another workflow while one is chosen
+DIM = 0.55                     # the opacity of a block of another workflow while one is chosen
 #: the mark of a block holding a setting unlike the same block of the other rows
 OWN_MARK = "own"
 

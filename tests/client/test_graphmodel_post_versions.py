@@ -13,8 +13,7 @@ from astro_gpu.core.project import Target
 from test_post_versions import *  # noqa: F401,F403  (its tests, collected here with the fixture below)
 
 
-class M(GraphEditing, ProjectModel):
-    pass
+M = ProjectModel                      # the graph is its truth (GraphEditing)
 
 
 @pytest.fixture(scope="module")

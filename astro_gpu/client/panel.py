@@ -46,7 +46,7 @@ from PySide6.QtWidgets import (
 from .. import texts
 from ..core import workflow as wfl
 from . import prefs
-from .blocks import STATE_WORD, block_state, block_title, kbase
+from .graphnode import STATE_WORD, block_state, block_title, kbase
 from .i18n import _, all_workflows, hm, language, number
 from .icons import IconLabel, IconText, icon_only, set_icon
 from .layout import Sections
@@ -649,10 +649,9 @@ class Panel(QWidget):
             self.cut_panel(node)
         elif k == "final":
             self.hv.addWidget(label(_("Post"), "h1"))
-            from .blocks import Graph
             from .post3 import tr_name
             rows = []
-            for name, pid in Graph(self.s).post_layers:
+            for name, pid in self.s.block_map.post_layers:
                 q = self.s.view(pid) if pid is not None else None
                 if q is None:
                     rows.append((html.escape(tr_name(name, True)), _("image")))
@@ -875,7 +874,7 @@ class Panel(QWidget):
         self.hv.addLayout(row)
         n = {"lights": counts.get("lights", 0), "darks": counts.get("darks", 0), "flats": counts.get("flats", 0),
              "bias": counts.get("bias", 0), "flat_darks": counts.get("dark_flats", 0)}
-        from .blocks import gone_kinds
+        from .graphnode import gone_kinds
         from .frames import type_warning_text
         gone = gone_kinds(s, {sid})
         warns = s.file_warnings(sid)                       # issue #58: files that may be mistakes, shown on their kind
@@ -1018,7 +1017,7 @@ class Panel(QWidget):
         """A combination block (issue #43; stages/combine.py): its workflow's name, its type, its named inputs (the
         workflow each reads, its Output or its starless image, its weight), then its settings as any block's; its
         output is a layer of Post."""
-        from .blocks import COMBINE_KINDS, combine_kind, combine_title, port_name
+        from .graphnode import COMBINE_KINDS, combine_kind, combine_title, port_name
         s = self.s
         p = node.paths[0]
         f = (p.source or {}).get("fusion") or {}
@@ -1232,7 +1231,7 @@ class Panel(QWidget):
             ed.editingFinished.connect(lambda: self.name_edited(ed, p.name, pid=p.pid))
             top.addWidget(ed, 1)
         else:
-            from .blocks import node_title
+            from .graphnode import node_title
             title = node_title(s, node) if node.paths else block_title(p, k)   # a block placed twice: its number
             if node.sid is not None:
                 title += " · " + s.session(node.sid).name
@@ -1524,7 +1523,7 @@ class Panel(QWidget):
     def _node_method(self, method: str, name: str):
         """The method of a block placed twice, chosen on its cards: stored on its node, one Undo step, said (round 3:
         its Method list was greyed "Set by the options of the workflow")."""
-        from .blocks import node_title
+        from .graphnode import node_title
         node = self.node
         if node is None or not node.paths:
             return
@@ -1571,16 +1570,18 @@ class Panel(QWidget):
     def outputs(self, node):
         """The Stars block's two images, in the colours of its ports, and where each goes (its Stars and background
         blocks, Post as it is), or how to send it."""
-        from .blocks import STAR_OUTPUTS, Graph
-        from .graph import IMAGE_COL
-        g = Graph(self.s)
-        mine = [n for n in g.compositions if n.parent is not None and n.parent._bk == node._bk]
+        from .graphnode import STAR_OUTPUTS
+        from .graphview.style import IMAGE_COL as COLOURS
+        IMAGE_COL = {"starless": COLOURS["starless"], "stars": COLOURS["stars_only"]}
+        pids = {q.pid for q in node.paths}
+        layers = [x for x in self.s.post_layers() if x.get("kind") == "workflow" and x.get("pid") in pids]
+        mine = [x for x in layers if x.get("part") == "combined"]          # its Combine layers blocks (their layers)
         self.bv.addWidget(self.group_title(_("Outputs")))
         names = {"starless": _("Starless image"), "stars": _("Stars alone")}
         for what, _word in STAR_OUTPUTS:
-            to = [block_title(n.paths[0], "composition") + (f" ({n.paths[0].name})" if len(node.paths) > 1 else "")
-                  for n in mine]
-            if any(src._bk == node._bk and part == what for src, part in g.direct):
+            to = [block_title(None, "composition") + (f" ({self.s.view(x['pid']).name})" if len(node.paths) > 1 and
+                                                      self.s.view(x["pid"]) is not None else "") for x in mine]
+            if any(x.get("part") == what for x in layers):
                 to.append(_("Post layer"))
             to = to or [_("unused: drag to Post or Composition")]
             lb = QLabel(f"<span style='color:{IMAGE_COL[what]}'>●</span> <b>{html.escape(names[what])}</b>"
@@ -1615,7 +1616,7 @@ class Panel(QWidget):
 
     def _part_to_post(self, p, part):
         """One of the Stars block's images sent to Post as a layer of its own (as dragging its dot onto Post)."""
-        from .blocks import STAR_OUTPUTS
+        from .graphnode import STAR_OUTPUTS
         self.s.add_post_layer(p.pid, part, self)
         self.s.log('{image} of "{name}" sent to Post', image=dict(STAR_OUTPUTS)[part], name=p.name)
         self.s.select(index=self.s.paths.index(p), step="etoiles")
@@ -1624,7 +1625,7 @@ class Panel(QWidget):
 
     def _part_out_of_post(self, p, part):
         """One of the Stars/background block's images sent as it is, taken out of Post (#29)."""
-        from .blocks import STAR_OUTPUTS
+        from .graphnode import STAR_OUTPUTS
         if self.s.remove_post_part(p.pid, part, self):
             self.s.log('{image} of "{name}" taken out of Post', image=dict(STAR_OUTPUTS)[part], name=p.name)
             self.toast.emit(_('{image} of "{name}" taken out of Post').format(
@@ -1667,7 +1668,7 @@ class Panel(QWidget):
             s.sel_layer = node.lid
         lay = (s.post_layer(node.lid) if node.lid is not None else None) or {}
         top = QHBoxLayout()
-        from .blocks import node_title
+        from .graphnode import node_title
         top.addWidget(label(node_title(s, node), "h1", wrap=True), 1)        # "Combine layers 2": as the graph names it
         st = block_state(s, p, "etoiles")
         chip = QLabel(_(STATE_WORD[st]))
@@ -1679,7 +1680,7 @@ class Panel(QWidget):
         top.addWidget(x)
         self.hv.addLayout(top)
         self.hv.addWidget(label(p.name, "small"))
-        from .blocks import BY_KEY
+        from .graphnode import BY_KEY
         self.bv.addWidget(label(_(BY_KEY["composition"]["what"]), "small", wrap=True))
         if st != "done":
             self.bv.addWidget(label(_("To compute: Stars/background"),
@@ -1774,9 +1775,9 @@ class Panel(QWidget):
     def graph_state(self, node):
         """The block's state as the graph shows it (round 3: a session's Calibration said "Up to date" never computed,
         the last block "Up to date" where the graph said "Outdated" for the Output it holds)."""
-        from .blocks import STATE_ORDER, Graph
+        from .graphnode import STATE_ORDER
         try:
-            g = Graph(self.s)
+            g = self.s.block_map
             same = g.node_of(node.paths[0], node.ref) if node.paths else None
             if same is not None:
                 return g.state(same)

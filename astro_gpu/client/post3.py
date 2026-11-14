@@ -3648,7 +3648,7 @@ class PostPage3(QWidget):
     def coming_layers(self) -> list[tuple[str, int | None]]:
         """The layers Post will have, top first, as the graph counts them: (name as saved, workflow id)."""
         try:
-            from .blocks import Graph
+            from .graphnode import blocks_of as Graph
             return list(Graph(self.s).post_layers)
         except Exception:  # noqa: BLE001 - a model without the graph's surface: its workflows' images
             return [(p.name, p.pid) for p in self.s.paths]

@@ -456,13 +456,13 @@ def resolve(s, p, step: str, it: dict, stage: str | None = None) -> dict | None:
 
 def _home_step(stage: str):
     """The key of the block that computes this stage (compared by key, so that it holds in every language)."""
-    from .blocks import BY_KEY
+    from .graphnode import BY_KEY
     return next((k for k, b in BY_KEY.items() if stage in b.get("stages", [])), None)
 
 
 def _stages_of_step(s, p, step: str) -> list[str]:
     """The engine stages whose settings a block's panel lists (the half-stacks are the block's own)."""
-    from .blocks import BY_KEY
+    from .graphnode import BY_KEY
     step, sid = _split(step)
     step, _t, num = step.partition("~")               # a graph's later node (issue #47): its own stage
     if step not in BY_KEY:

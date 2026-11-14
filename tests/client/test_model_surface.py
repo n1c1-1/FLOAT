@@ -339,11 +339,11 @@ GRAPH_SURFACE = [
 
 @pytest.fixture(scope="module")
 def graph_model(qapp, tmp_path_factory):
-    """The model with the graph as its truth (GraphEditing mixed in ahead of ProjectModel), on an empty project."""
+    """The model with the graph as its truth (GraphEditing mixed in ahead of the model's other parts), on an empty
+    project."""
     from astro_gpu.client.graphmodel import GraphEditing
-
-    class GraphModel(GraphEditing, ProjectModel):
-        pass
+    assert issubclass(ProjectModel, GraphEditing)
+    GraphModel = ProjectModel
     root = tmp_path_factory.mktemp("graph_surface") / "P"
     p = project2.create(root, "P", Target(name="M 1"))
     w = ApiWorker()

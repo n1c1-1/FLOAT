@@ -1,0 +1,78 @@
+[
+ {
+  "definition": {
+   "acquisition": {},
+   "created": "2026-11-14T09:39:42",
+   "current": 1,
+   "current_block": "",
+   "description": "",
+   "devices": {
+    "aux": "",
+    "main": ""
+   },
+   "excluded": [],
+   "format": 2,
+   "name": "P",
+   "next_workflow_id": 2,
+   "post": {
+    "active": 1,
+    "versions": [
+     {
+      "id": 1,
+      "layers": [],
+      "name": "Version 1"
+     }
+    ]
+   },
+   "reference_image": "",
+   "render_bases": {},
+   "scratch_dir": "",
+   "sessions": [],
+   "show_all": false,
+   "stack_mode": "together",
+   "target": {
+    "dec": null,
+    "focal_mm": null,
+    "name": "M 31",
+    "pixel_um": null,
+    "ra": null
+   },
+   "workflows": [
+    {
+     "blocks": [
+      {
+       "block": "output",
+       "method": null,
+       "name": "output",
+       "off": false
+      }
+     ],
+     "breakpoints": [],
+     "calibration": null,
+     "end": null,
+     "id": 1,
+     "name": "Image",
+     "options": {
+      "cut": [
+       "astrometry",
+       "gradient",
+       "color"
+      ],
+      "deconvolution": null,
+      "denoise": null,
+      "gradient": "polynomial",
+      "stars": null
+     },
+     "params": {},
+     "sessions": null,
+     "source": {
+      "path": "",
+      "stretched": false
+     },
+     "variant_of": null
+    }
+   ]
+  },
+  "value": null
+ }
+]

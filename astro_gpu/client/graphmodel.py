@@ -182,9 +182,12 @@ class GraphEditing:
 
     @property
     def block_map(self) -> BlockMap:
-        """The blocks of the graph as Inspect, the run and the panel know them (one Node per block id)."""
-        if self._bm is None or self._bm[0] != self.revision:
-            self._bm = (self.revision, BlockMap(self.compiled, self, self._g))
+        """The blocks of the graph as Inspect, the run and the panel know them (one Node per block id); made again when
+        the graph or Post's layers changed (a Combine layers block's node carries its layer)."""
+        post = getattr(self.p, "post", None) or {}
+        stamp = (self.revision, post.get("active"), json.dumps(post.get("versions") or [], sort_keys=True, default=str))
+        if self._bm is None or self._bm[0] != stamp:
+            self._bm = (stamp, BlockMap(self.compiled, self, self._g))
         return self._bm[1]
 
     def _def_sig(self) -> str:

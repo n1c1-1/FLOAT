@@ -43,7 +43,7 @@ from PySide6.QtWidgets import (
 from ..core import workflow as wfl
 from ..stages.combine import COMBINATIONS, FORMER_PALETTES, CombineSHO
 from . import prefs
-from .blocks import KEY_ENGINE_BLOCK, TITLES, TRUNK
+from .graphnode import KEY_ENGINE_BLOCK, TITLES, TRUNK
 from .i18n import _, hm
 from .icons import set_icon
 from .widgets import ACCENT, cap_dialog, label, size_within

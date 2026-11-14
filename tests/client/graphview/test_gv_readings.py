@@ -16,8 +16,7 @@ from astro_gpu.client.graphmodel import GraphEditing
 from astro_gpu.client.model import ProjectModel
 
 
-class M(GraphEditing, ProjectModel):
-    """Today's model with the graph as its truth."""
+M = ProjectModel                      # the graph is its truth (GraphEditing)
 
 
 def _fits(path: Path, **hdr) -> Path:

@@ -67,7 +67,8 @@ from PySide6.QtWidgets import (
 
 from .. import texts
 from . import prefs
-from .blocks import Graph, block_state, block_title, chain, node_title, stages_of
+from .graphnode import BlockMap as Graph  # noqa: F401  (the type of the strip's graph)
+from .graphnode import block_state, block_title, chain, node_title, stages_of
 from .charts import (
     AMBER,
     BLUE,
@@ -711,7 +712,7 @@ class TuneView(QWidget):
         s = self.s
         s.pending_change = None
         s.select(index, step)
-        g = Graph(s)
+        g = s.block_map
         node = g.node_of(s.path, s.sel_step) if s.sel_step not in ("sources", "final") else None
         s.scope = [q.pid for q in node.paths] if node is not None else None
 
@@ -795,7 +796,7 @@ class TuneView(QWidget):
         self._pending = False
         self._dirty = False
         s = self.s
-        g = g or Graph(s)
+        g = g or s.block_map
         self.strip.build(s, g)
         QTimer.singleShot(0, self.show_open_block)         # once laid out: the open block's button in view
         if s.sel_step == "final":                          # Post first: on a blank page the Project block is the one

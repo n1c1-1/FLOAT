@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .blocks import ENGINE_BLOCK, PAUSE_COL, Graph, Node, block_title, node_title
+from .graphnode import ENGINE_BLOCK, PAUSE_COL, Node, block_title, node_title
 from .i18n import _, all_workflows, hm, plural
 from .icons import IconText, draw, set_icon
 from .services.run import (
@@ -135,7 +135,7 @@ def build_rows(model, jobs, names: dict[int, str] | None = None, with_done: bool
     JobState. The workflows named are those that share the result (``job.wf``). ``with_done``: the blocks already
     up to date too, in their place (``uptodate``; issue #27: the dialog said "3 blocks" without saying which)."""
     names = names or {}
-    g = Graph(model) if model.paths else None
+    g = model.block_map if model.paths else None
     order = {id(n): i for i, n in enumerate(g.nodes)} if g is not None else {}
     jobs = list(jobs)
     views = [model.view(j.run_wf) or next((model.view(w) for w in j.wf if model.view(w) is not None), None)
@@ -651,7 +651,7 @@ class RunDialog(QDialog):
                 base = stage.split("@")[0].split("~")[0]
                 name = v.name if v is not None else self.names.get(wid, "?")
                 if base not in sky_data.NEEDED_BY:    # an input left to wire (issue #165): its block's name, its reason
-                    from .blocks import STEPS
+                    from .graphnode import STEPS
                     from .model import wiring_text
                     key = next((x["key"] for x in STEPS if base in x["stages"]), "")
                     out.append(_('"{name}": {block} and the blocks after it not run: {why}').format(
@@ -774,7 +774,7 @@ class RunDialog(QDialog):
         """The blocks of the graph that are done ("Already up to date")."""
         if not self.s.paths:
             return 0
-        g = Graph(self.s)
+        g = self.s.block_map
         return sum(1 for nd in g.nodes if nd.key not in ("sources", "final") and nd.paths and g.state(nd) == "done")
 
     def _fill_progress(self, t: RunTrack):
@@ -996,10 +996,7 @@ class RunOverlay(QWidget):
     def paintEvent(self, e):                                       # noqa: N802
         if not self.c.running:
             return
-        try:
-            from .graph import BH, BW
-        except ImportError:
-            BW, BH = 124, 54
+        BW, BH = 124, 54                               # a block item's size when it does not give its own
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         k = self.view.transform().m11()
@@ -1010,7 +1007,7 @@ class RunOverlay(QWidget):
             f = self.fraction_of(node)
             if f is None:
                 continue
-            r = self.view.mapFromScene(it.mapRectToScene(QRectF(0, 0, getattr(it, "w", BW), BH))).boundingRect()
+            r = self.view.mapFromScene(it.mapRectToScene(QRectF(0, 0, getattr(it, "w", BW), getattr(it, "h", BH)))).boundingRect()
             inset, hh = 10 * k, max(3.0, 3.5 * k)
             track = QRectF(r.left() + inset, r.bottom() - 7 * k - hh / 2, r.width() - 2 * inset, hh)
             p.setPen(Qt.NoPen)
@@ -1026,7 +1023,7 @@ def run_blocks(s, steps, items, title: str, parent, show_done: bool = False, con
     the block of the last stage, in the first workflow. Prefer ``RunController.run_to_here()``."""
     if not items or controller is None:
         return None
-    from .blocks import BY_KEY
+    from .graphnode import BY_KEY
     p, stage = items[-1]
     key = next((k for k, b in BY_KEY.items() if stage in b["stages"] and b["kind"] != "auto"), None)
     if key is None:

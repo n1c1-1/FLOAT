@@ -64,9 +64,9 @@ ALERT_MS = 1500
 EDGE = 40                   # a drag this near the view's edge scrolls it (graph.py EDGE)
 EDGE_WAIT = 0.35            # s held near the edge before it scrolls: a drag only crossing the edge moves nothing
 WHEEL_STEP = 1.15           # one notch of the wheel
-#: the user's zoom and position, per project, in the settings (graph.py GRAPH_VIEW_KEY; its own key: the new drawing's
-#: coordinates are not today's)
-VIEW_KEY = "graph_canvas_view"
+#: the user's zoom and position, per project, in the settings, under today's key (graph.py GRAPH_VIEW_KEY): a zoom kept
+#: by today's page is restored
+VIEW_KEY = "graph_view"
 #: the wires that are not the chain, drawn for the chosen block (graph.py side inputs): core kind -> [(kind, words)]
 _KIND = {v: k for k, v in CLIENT_KEY.items()}
 SIDE = {_KIND[k]: [(_KIND[src], lab) for src, lab in pairs] for k, pairs in SIDE_INPUTS.items()}

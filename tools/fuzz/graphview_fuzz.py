@@ -283,8 +283,8 @@ def start_model(start):
     from astro_gpu.core.project import Target
     from astro_gpu.graphcore.compile import compile_into
 
-    class M(GraphEditing, ProjectModel):
-        pass
+    assert issubclass(ProjectModel, GraphEditing)
+    M = ProjectModel
     os.makedirs(MODEL_ROOT, exist_ok=True)
     root = tempfile.mkdtemp(prefix=f"{start}_", dir=MODEL_ROOT)
     h = FixtureDoc.from_template(start)

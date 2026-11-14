@@ -816,7 +816,7 @@ class Main(QMainWindow):
 
     def graph_page(self) -> QWidget:
         """Graph: the toolbar of optional blocks, the GraphView and the block Panel."""
-        from .graph import GraphPage
+        from .graphview.page import GraphPage
         from .steps import Steps
         self.steps = Steps(self.s)
         page = GraphPage(self.s, self.steps)

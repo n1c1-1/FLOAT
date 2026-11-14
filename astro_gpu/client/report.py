@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import APP_NAME
-from .blocks import STATE_WORD, block_state
+from .graphnode import STATE_WORD, block_state
 from .charts import LINES, RegistrationData, registration_data
 from .. import texts
 from ..core.params import ADVANCED

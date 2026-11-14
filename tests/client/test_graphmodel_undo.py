@@ -26,8 +26,7 @@ from astro_gpu.core import project2  # noqa: E402
 from astro_gpu.graphcore.model import Index  # noqa: E402
 
 
-class M(GraphEditing, ProjectModel):
-    pass
+M = ProjectModel                      # the graph is its truth (GraphEditing)
 
 
 @pytest.fixture(scope="module")
