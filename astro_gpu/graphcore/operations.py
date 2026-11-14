@@ -2137,6 +2137,8 @@ def op_keep_variant(q, row):
             ix.row[c].fork = [o.id, ix.row[c].fork[1]]
         _copy_flow(o, v)
         o.wid, o.trial = v.wid, trial
+        if o.align and o.align.get("ref") == v.id:      # aligned on its own variant: it takes the variant's
+            o.align = copy.deepcopy(v.align) if v.align and v.align.get("ref") != o.id else None
         for x in q.rows:
             if x.align and x.align.get("ref") == v.id:
                 x.align["ref"] = o.id
@@ -2149,6 +2151,8 @@ def op_keep_variant(q, row):
                 raise Refusal(M("a variant of “{_row}” starts from a block the variant does not have", _row=o.name))
         for s, c in o.nights:
             del q.blocks[s], q.blocks[c]
+        if v.align and v.align.get("ref") == o.id:      # aligned on its original: it takes the original's
+            v.align = copy.deepcopy(o.align) if o.align and o.align.get("ref") != v.id else None
         for x in q.rows:
             if x.align and x.align.get("ref") == o.id:
                 x.align["ref"] = v.id

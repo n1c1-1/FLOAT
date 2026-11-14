@@ -280,3 +280,14 @@ def test_templates_are_one_step_of_core_operations_the_engine_accepts():
     o3 = row(doc, "O III")                                        # the dual-band's O III row: both nights, shared
     assert [doc.project.blocks[s].sid for s, _c in o3.nights] == [1, 2]
     assert sorted(len(r.nights) for r in doc.project.rows if r.nights) == [1, 1, 1, 2]
+
+
+def test_keep_a_trial_aligned_on_its_original_takes_the_original_alignment():
+    doc = Doc.from_template("colour_minimal")
+    r = doc.project.rows[0]
+    ok(doc, "try_variant", block=of_kind(doc, r, "registration"), change={"param": ["register", "min_pairs", 20]})
+    v = doc.project.rows[-1]
+    ok(doc, "set_align", row=v.id, ref=r.id, block=of_kind(doc, doc.project.rows[0], "astrometry"))
+    ok(doc, "keep_variant", row=v.id)
+    assert len(doc.project.rows) == 1 and doc.project.rows[0].align is None
+    engine_ok(doc)
