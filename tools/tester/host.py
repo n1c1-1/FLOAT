@@ -412,18 +412,37 @@ def press_key(combo: str):
 
 
 def type_text(text: str):
-    w = QApplication.focusWidget() or key_target()
-    QTest.keyClicks(w, text)
+    """Each character as a key press and release with its text, to the widget that has the keyboard focus at that
+    moment (a completer's list may open meanwhile)."""
+    from PySide6.QtCore import QEvent
+    from PySide6.QtGui import QKeyEvent
+    for ch in text:
+        w = QApplication.focusWidget() or key_target()
+        if ch == " ":
+            key = Qt.Key_Space
+        elif ch.isascii() and ch.isalnum():
+            key = ord(ch.upper())
+        else:
+            key = 0
+        QApplication.sendEvent(w, QKeyEvent(QEvent.KeyPress, key, Qt.NoModifier, ch))
+        w = QApplication.focusWidget() or w
+        QApplication.sendEvent(w, QKeyEvent(QEvent.KeyRelease, key, Qt.NoModifier, ch))
+        QApplication.processEvents()
 
 
 def wheel(x, y, delta, ctrl=False):
     gp = origin() + QPoint(int(x), int(y))
     top = window_at(gp)
     target = top.childAt(top.mapFromGlobal(gp)) or top
-    lp = target.mapFromGlobal(gp)
-    ev = QWheelEvent(QPointF(lp), QPointF(gp), QPoint(0, 0), QPoint(0, int(delta)), Qt.NoButton,
-                     Qt.ControlModifier if ctrl else Qt.NoModifier, Qt.NoScrollPhase, False)
-    QApplication.sendEvent(target, ev)
+    w = target
+    while w is not None:                              # as the system's wheel: up the parents until one takes it
+        lp = w.mapFromGlobal(gp)
+        ev = QWheelEvent(QPointF(lp), QPointF(gp), QPoint(0, 0), QPoint(0, int(delta)), Qt.NoButton,
+                         Qt.ControlModifier if ctrl else Qt.NoModifier, Qt.NoScrollPhase, False)
+        QApplication.sendEvent(w, ev)
+        if ev.isAccepted() or w.isWindow():
+            break
+        w = w.parentWidget()
 
 
 def drop_files(x, y, paths):
