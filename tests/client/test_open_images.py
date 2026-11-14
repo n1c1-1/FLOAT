@@ -15,7 +15,6 @@ from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 from astro_gpu.client import app as appmod  # noqa: E402
 from astro_gpu.client import drafts, gallery, prefs  # noqa: E402
-from astro_gpu.client.blocks import Graph  # noqa: E402
 from astro_gpu.client.services.worker import Gpu, Machine  # noqa: E402
 
 MACHINE = Machine([Gpu("cuda:0", "RTX", 16.0)], 16, 64.0)
@@ -84,7 +83,7 @@ def test_from_home_the_project_is_made_the_graph_follows_and_post_is_shown(env):
     s = w.s
     assert [q.name for q in s.paths] == ["a", "b"] and all(s.is_plain_image(q) for q in s.paths)
     assert [s.p.workflow(q.pid).source["stretched"] for q in s.paths] == [True, False]
-    g = Graph(s)
+    g = s.block_map
     assert {q.pid for q in s.paths} <= set(g.to_post) and [n.key for n in g.nodes].count("image") == 2
     assert env["launched"]
 

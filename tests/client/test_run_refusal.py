@@ -17,12 +17,12 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from astro_gpu.client import app as appmod  # noqa: E402
 from astro_gpu.client import prefs  # noqa: E402
-from astro_gpu.client.blocks import Graph  # noqa: E402
 from astro_gpu.client.model import ProjectModel, session_checks  # noqa: E402
 from astro_gpu.client.services.worker import ApiWorker  # noqa: E402
 from astro_gpu.core import project as project_mod  # noqa: E402
 from astro_gpu.core import project2  # noqa: E402
 from astro_gpu.core.project import Target  # noqa: E402
+from tests.client.pagehelp import marked  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -67,6 +67,11 @@ def model(tmp: Path, lights: Path, **kinds):
     return m, worker
 
 
+def session_block(m):
+    """The night's Session block of the graph, its marks read now (circled in red when it cannot run)."""
+    return next(n for n in marked(m) if n.key == "session")
+
+
 def close(m, worker):
     m.close(save=False)
     worker.stop()
@@ -77,7 +82,7 @@ def test_good_frames_are_not_refused(env):
     m, wk = model(env, fits_frames(env / "l", 3), darks=fits_frames(env / "d", 2))
     try:
         assert m.run_problems() == []
-        assert not Graph(m).root.broken
+        assert not session_block(m).broken
     finally:
         close(m, wk)
 
@@ -92,7 +97,7 @@ def test_a_lights_folder_not_there_is_refused_with_its_folder_and_the_session_bl
         probs = m.run_problems()
         assert len(probs) == 1 and probs[0][0] == "Workflow"
         assert probs[0][1].startswith("night 1: the folder of the lights is not found:") and "gone" in probs[0][1]
-        assert Graph(m).root.broken == probs[0][1]
+        assert session_block(m).broken == probs[0][1]
         appmod.apply_language("fr")
         assert "dossier des brutes introuvable" in m.run_problems()[0][1]
     finally:
