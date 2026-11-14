@@ -201,7 +201,7 @@ class GraphEditing:
         self._bm = None
         self._absorbing = False
         if not self._provisional:
-            self._g = self._with_post_wires(self._g)
+            self._follow_post()
         self._sig = self._def_sig()
 
     @staticmethod
@@ -242,7 +242,7 @@ class GraphEditing:
             self._g = g
             self.compiled = compile_into(g, self.p)
             self._rebuild_views()
-            self._g = self._with_post_wires(self._g)
+            self._follow_post()
             self._sig = self._def_sig()
             self.revision += 1
         if files and getattr(self, "_opening", False):
@@ -384,7 +384,7 @@ class GraphEditing:
         self._g = g
         self.compiled = compile_into(g, self.p)
         self._rebuild_views()
-        self._g = self._with_post_wires(self._g)
+        self._follow_post()
         self._sig = self._def_sig()
         self.revision += 1
 
@@ -440,19 +440,47 @@ class GraphEditing:
 
     def _with_post_wires(self, g):
         """The graph whose wires to Post are those of the shared images (nothing else changes)."""
-        from ..graphcore.post import with_post_wires
+        from ..graphcore.post import with_layer_rows, with_post_wires
         try:
             q = with_post_wires(g, self.shared_post_images())
+            q = with_layer_rows(q, self._layer_rows_wanted(q))
         except Exception:  # noqa: BLE001 - a graph the projection cannot read keeps its wires
             return g
-        if [(w.src, w.dst, w.wid) for w in q.wires] == [(w.src, w.dst, w.wid) for w in g.wires]:
+        if [(w.src, w.dst, w.wid) for w in q.wires] == [(w.src, w.dst, w.wid) for w in g.wires] and \
+                [r.id for r in q.rows] == [r.id for r in g.rows]:
             return g
         return q
 
+    def _layer_rows_wanted(self, g) -> dict:
+        """{Stars block: how many Combine layers its workflows have in the shown version of Post}: each Combine layers
+        layer whose starless side is a Stars block's (not a combination's Output), and the one Post shows by default
+        for a Stars workflow without a layer yet."""
+        from ..graphcore.post import _flows, stars_side
+        flows = _flows(g)
+        n = {}
+        for x in self.post_version().get("layers") or []:
+            if x.get("kind") == "workflow" and x.get("part") == "combined" and \
+                    (x.get("starless") or "starless") == "starless" and x.get("pid") is not None:
+                n[int(x["pid"])] = n.get(int(x["pid"]), 0) + 1
+        for q in self.post_defaults():
+            if self.post_default_part(q) == "combined":
+                n[q.pid] = n.get(q.pid, 0) + 1
+        want = {}
+        for s in {b for b in g.blocks if g.blocks[b].kind in ("stars", "synth")}:
+            want[s] = 0
+        for wid, k in n.items():
+            s = stars_side(g, wid, flows)
+            if s is not None:
+                want[s] += k
+        return want
+
     def _post_follow(self, before, after, wired=False):
         """A wire to Post removed in the graph takes its image out of every version; one added for an image Post does
-        not show yet puts it in every version. An image whose block went is Post's own pruning's."""
+        not show yet puts it in every version. An image whose block went is Post's own pruning's. A Combine layers
+        block added in the graph adds its layer to Post; one removed takes its layer out (the last one of a workflow:
+        its Combine layers out of every version)."""
         from ..graphcore.post import place_of, wired_images
+        self._layers_follow(before, after)
         a, b = wired_images(before), wired_images(after)
         alive = {q.pid for q in self.paths}
         shared = self.shared_post_images()
@@ -477,6 +505,42 @@ class GraphEditing:
                 self.remove_post_part(wid, part, None)
             self.set_post_version(active)
 
+    def _layers_follow(self, before, after):
+        """The Combine layers blocks a gesture added or removed, said to Post (``_post_follow``): a block added on a
+        Stars block is a new Combine layers layer of its workflow (in every version); one removed takes out the layer
+        it showed (the graph's order is Post's), the last one of a workflow its Combine layers from every version. A
+        Stars block gone takes its layers by Post's own pruning."""
+        from ..graphcore.post import _flows, layer_rows, stars_side
+        rb, ra = layer_rows(before), layer_rows(after)
+        if rb == ra:
+            return
+        flows = _flows(after)
+        alive = sorted(q.pid for q in self.paths)
+        for s in sorted(set(rb) | set(ra)):
+            nb, na = rb.get(s, []), ra.get(s, [])
+            if len(nb) == len(na) or s not in after.blocks:
+                continue
+            wid = next((w for w in alive if stars_side(after, w, flows) == s), None)
+            if wid is None:
+                continue
+            if len(na) > len(nb):
+                for _i in range(len(na) - len(nb)):
+                    self.add_post_layer(wid, "combined", None)
+                continue
+            if not na:
+                active = self.p.post["active"]
+                for v in list(self.p.post["versions"]):
+                    self.set_post_version(v["id"])
+                    self.remove_post_part(wid, "combined", None)
+                self.set_post_version(active)
+                continue
+            mine = [x for x in self.post_version().get("layers") or [] if x.get("kind") == "workflow"
+                    and x.get("pid") == wid and x.get("part") == "combined"
+                    and (x.get("starless") or "starless") == "starless"]
+            for i in sorted((i for i, r in enumerate(nb) if r not in na), reverse=True):
+                if i < len(mine):
+                    self.remove_post_layer(mine[i]["id"], None)
+
     # ------------------------------------------------------------------ applying
     def apply(self, steps, view=None) -> Result:
         """Graph core operations as ONE undo step: ``steps`` = [(operation, kwargs | f(results so far) -> kwargs)].
@@ -495,14 +559,54 @@ class GraphEditing:
                         self._write_branch_layer(v)
         return res
 
+    @staticmethod
+    def _without_layer_rows_of_switched(g, steps):
+        """A Stars block switched off: the Combine layers drawn for Post's layers on it are no dependants (as on today's
+        page, D on it is accepted; Post's pruning then takes its layers out, and switched on again Post's default
+        Combine layers comes back). The graph the gesture is made on, without them."""
+        from ..graphcore.post import layer_rows, with_layer_rows
+        offs = [s[1].get("block") for s in steps if s[0] == "switch_off" and isinstance(s[1], dict)]
+        rows = layer_rows(g)
+        want = {b: 0 for b in offs if b in rows and b in g.blocks and not g.blocks[b].off}
+        return with_layer_rows(g, want) if want else g
+
+    @staticmethod
+    def _tidy_layer_rows(before, g):
+        """The Combine layers drawn for Post's layers after a gesture: one whose Stars block went goes with it (its
+        layers go by Post's pruning), and a copy of a block (a variant, a duplicate) never wires a second image into a
+        Combine layers' side (the copy's own Combine layers are drawn for its own layers)."""
+        from ..graphcore.post import layer_rows
+        heads = {r.blocks[0] for r in g.rows if r.blocks and g.blocks[r.blocks[0]].kind == "combine_layers"}
+        if not heads:
+            return g
+        old = {w.id for w in before.wires}
+        had = {tuple(w.dst) for w in before.wires if w.dst[0] in heads}
+        extra = [w.id for w in g.wires if w.dst[0] in heads and w.id not in old and tuple(w.dst) in had]
+        orphans = {rid for s, rids in layer_rows(before).items() if s not in g.blocks for rid in rids}
+        orphans = {r.id for r in g.rows if r.id in orphans}
+        if not extra and not orphans:
+            return g
+        q = gm.clone(g)
+        gone = {b for r in q.rows if r.id in orphans for b in r.blocks}
+        q.rows = [r for r in q.rows if r.id not in orphans]
+        q.wires = [w for w in q.wires if w.id not in extra and w.src[0] not in gone and w.dst[0] not in gone]
+        for b in gone:
+            q.blocks.pop(b, None)
+        return q
+
     def _change(self, steps=(), raw=None, view=None, name=None) -> Result:
         """Operations, then ``raw(graph)`` (an edit the core has no operation for, on a copy), as one step."""
         self._absorb()
         before = self._g
-        g, res = (apply_many(before, list(steps), self.graph_view if view is None else view, _) if steps
+        base = self._without_layer_rows_of_switched(before, steps)
+        g, res = (apply_many(base, list(steps), self.graph_view if view is None else view, _) if steps
                   else (before, Result(True)))
         if not res.ok:
             return res
+        if base is not before:                            # the step's own graph is where Post follows from
+            before = base
+        if res.ok and g is not before:
+            g = self._tidy_layer_rows(before, g)
         if raw is not None:
             q = gm.clone(g)
             out = raw(q)
@@ -522,9 +626,7 @@ class GraphEditing:
             post = gm.Index(before).post
             self._post_follow(before, g, wired=any(s[0] == "wire" and isinstance(s[1], dict) and s[1].get("dst") == post
                                                    for s in steps))
-            g2 = self._with_post_wires(self._g)
-            if g2 is not self._g:
-                self._g = g2
+            self._follow_post()
         text = name or (say(res.toast, _) if res.toast else "")
         if text:
             self.name_step(text)
@@ -570,13 +672,45 @@ class GraphEditing:
 
     def _prune_post(self):
         """Post follows the graph (ProjectModel._prune_post), then the graph's wires to Post follow Post: the step ends
-        with the graph and Post agreeing, so an undo gives both back as they were shown."""
+        with the graph and Post agreeing, so an undo gives both back as they were shown. Post's page is told when its
+        layers changed (an open page would keep, and save again, the layers of a block gone)."""
+        was = json.dumps(getattr(self.p, "post", None) or {}, sort_keys=True, default=str)
         super()._prune_post()
-        if getattr(self, "_g", None) is not None and not getattr(self, "_absorbing", False) and \
-                not getattr(self, "_provisional", False):
-            g2 = self._with_post_wires(self._g)
-            if g2 is not self._g:
-                self._g = g2
+        if not getattr(self, "_provisional", False) and getattr(self, "_g", None) is not None and \
+                not getattr(self, "_absorbing", False):
+            self._follow_post()
+        if json.dumps(getattr(self.p, "post", None) or {}, sort_keys=True, default=str) != was:
+            self.postChanged.emit(None)
+
+    def _follow_post(self) -> bool:
+        """The graph's wires to Post and its Combine layers made Post's again (the same step); True when they changed."""
+        g2 = self._with_post_wires(self._g)
+        if g2 is self._g:
+            return False
+        rows = [r.id for r in g2.rows] != [r.id for r in self._g.rows]
+        self._g = g2
+        if rows:                                         # a Combine layers came or went: its block is compiled too
+            self.compiled = compile_into(g2, self.p)
+            self._sig = self._def_sig()
+            self.revision += 1
+        return True
+
+    def _set_post_layers(self, layers, source, scope):
+        """Post's layers written (by Post itself too): the graph's wires and Combine layers follow them at once."""
+        super()._set_post_layers(layers, source, scope)
+        self._follow_post_now()
+
+    def set_post_version(self, vid: int):
+        """Another version shown: the graph draws its Combine layers."""
+        super().set_post_version(vid)
+        self._follow_post_now()
+
+    def _follow_post_now(self):
+        """Outside a step (a step's end follows Post itself: ``_prune_post``)."""
+        if self._depth == 0 and not getattr(self, "_provisional", False) and getattr(self, "_g", None) is not None \
+                and not getattr(self, "_absorbing", False) and self._follow_post():
+            self.revision += 1
+            self.pathsChanged.emit()
 
     def _snapshot(self):
         mm = _mm()
