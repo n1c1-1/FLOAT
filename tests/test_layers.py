@@ -170,6 +170,9 @@ def test_exports_reopen_with_the_right_dtype_and_size(tmp_path):
     assert np.abs(c[:, :, ::-1].astype(np.float64) / 65535 - rgb.transpose(1, 2, 0)).max() < 1e-4
     with Image.open(tmp_path / "t.jpg") as im:
         assert im.size == (500, 300) and im.mode == "RGB" and im.info.get("icc_profile")
+    with Image.open(tmp_path / "t.png") as im:                                  # the same sRGB profile in the PNG (iCCP)
+        with Image.open(tmp_path / "t.jpg") as jp:
+            assert im.info.get("icc_profile") == jp.info.get("icc_profile") and len(im.info["icc_profile"]) == 588
     with fits.open(tmp_path / "t.fits") as h:
         assert h[0].data.dtype.kind == "f" and h[0].data.dtype.itemsize == 4 and h[0].data.shape == (3, 300, 500)
         # the rows bottom up, as FITS (and the reference program) have them; the history in the header
