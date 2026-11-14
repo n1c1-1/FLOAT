@@ -3306,15 +3306,17 @@ class PostView(QWidget):
         """Under a layer's name: mode and opacity; for a filter of its own row, that it applies to everything below (a
         nested one says it by its place)."""
         bits = []
+        # the marks first: the end of a long row is cut (the label is at most SUB_MAX wide)
+        if (is_pixel(lay) and lay["kind"] != "image" and f"layer:{lay['id']}" in self._missing_images) or (
+                lay["kind"] == "sub" and f"side:{lay['id']}:{lay['sub']}" in self._missing_images):
+            bits.append(_("not computed"))
         if lay["kind"] == "workflow" and self.is_preview(lay["pid"]):
-            bits.append(_("preview"))                       # first: the end of a long row is cut
+            bits.append(_("preview"))
         if lay["kind"] == "filter" and not lay.get("target"):
             bits.append(_("on everything below"))
         bits.append(f"{_(lay['mode'])} · {with_unit(format(lay['opacity'], '.0f'), '%')}")
         if lay["kind"] == "image":
             bits.append(_("image") if self.worker_has_image(lay) else _("not found"))
-        elif (is_pixel(lay) and f"layer:{lay['id']}" in self._missing_images) or                 (lay["kind"] == "sub" and f"side:{lay['id']}:{lay['sub']}" in self._missing_images):
-            bits.append(_("not computed"))
         if is_pixel(lay) and lay["id"] in self._collapsed:
             n = len(children(self.layers, lay["id"]))
             bits.append(plural(n, "{n} filter", "{n} filters"))
