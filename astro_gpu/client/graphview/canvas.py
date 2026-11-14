@@ -290,6 +290,7 @@ class GraphCanvas(QGraphicsView):
         self.targets: list[FileTarget] = []
         self.project_item = None
         self.new_link = None
+        self.new_workflow = None         # the page's New workflow window (on a project model), else the menu
         self.tip = TipItem()
         self.rubber = None
         self.floater = None
@@ -619,6 +620,7 @@ class GraphCanvas(QGraphicsView):
         nw = drawing.extras.get("new_workflow")
         if nw is not None and (drawing.boxes or drawing.cards):
             self.new_link = LinkItem(QPointF(nw.x + nw.w / 2, nw.y + nw.h / 2), _("New workflow"))
+            self.new_link.setToolTip(_("A further workflow from a template, a copy of a workflow or a template file"))
             sc.addItem(self.new_link)
         else:
             self.new_link = None
@@ -1226,7 +1228,11 @@ class GraphCanvas(QGraphicsView):
             self.bridge.choose(PROJECT)
             return
         if isinstance(it, LinkItem):
-            self.new_workflow_menu(self.viewport().mapToGlobal(vp))
+            at = self.viewport().mapToGlobal(vp)
+            if self.new_workflow is not None:            # the page on a project: the window of issue #147
+                self.new_workflow()
+            else:
+                self.new_workflow_menu(at)
             return
         self.selected_wire = None
         for f in self.wires.values():

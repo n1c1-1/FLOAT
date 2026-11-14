@@ -119,3 +119,57 @@ def test_files_dropped_on_a_kind_row_of_the_session_panel_are_added_as_on_the_gr
     W.settle()
     assert len(W.b.doc.files_of(s, "darks")[1]) == 3                        # no double
     assert "3 already there" in W.page.canvas.toast.plain
+
+
+# ---------------------------------------------------------------------------------------------- New workflow
+def _open_new_workflow(W):
+    from astro_gpu.client.graphview.items import LinkItem
+    from astro_gpu.client.gallery import TemplateGallery
+    cv = W.page.canvas
+    link = cv.new_link
+    assert isinstance(link, LinkItem) and link.text == "New workflow" and link.toolTip()
+    cv.centerOn(link)
+    W.settle(2)
+    W.g.press(cv.mapFromScene(link.sceneBoundingRect().center()))
+    W.g.release(cv.mapFromScene(link.sceneBoundingRect().center()))
+    W.settle(2)
+    d = W.page._gallery
+    assert isinstance(d, TemplateGallery) and d.isVisible()
+    return d
+
+
+def test_the_new_workflow_link_opens_the_window_of_templates_and_copies(world):
+    W = world()
+    d = _open_new_workflow(W)
+    assert "copy" in d.tab_keys and "frames" in d.tab_keys
+    n = len(W.m.paths)
+    d.pick(next(c.t for c in d.cards if c.t.get("key") == "colour_min"))
+    d.name.setText("Second")
+    d._create()
+    W.settle()
+    assert len(W.m.paths) == n + 1 and "Second" in [q.name for q in W.m.paths]
+    d = _open_new_workflow(W)
+    d.tabs.setCurrentIndex(d.tab_keys.index("copy"))
+    W.settle(2)
+    d.pick(next(c.t for c in d.cards if c.t.get("copy") is not None))
+    d.name.setText("Copied")
+    d._create()
+    W.settle()
+    assert len(W.m.paths) == n + 2 and "Copied" in [q.name for q in W.m.paths]
+    W.b.undo()
+    W.settle()
+    assert len(W.m.paths) == n + 1
+
+
+def test_a_filters_template_is_offered_again_on_sessions_that_have_filters(world):
+    W = world(workflows=(), filters=("Ha", "OIII"))
+    W.template("filters_min")
+    n = len(W.m.paths)
+    assert n >= 2
+    d = _open_new_workflow(W)
+    t = next((c.t for c in d.cards if c.t.get("key") == "filters_min"), None)
+    assert t is not None
+    d.pick(t)
+    d._create()
+    W.settle()
+    assert len(W.m.paths) > n

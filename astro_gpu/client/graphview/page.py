@@ -107,6 +107,8 @@ class GraphPage(SidesHost, QWidget):
         self.canvas.inspect.connect(self._opened)
         self.canvas.view_action.connect(self.view_action.emit)
         self.canvas.templates_asked.connect(self.show_templates)
+        if self.s is not None:
+            self.canvas.new_workflow = self.new_workflow
         self.canvas.wire_chosen.connect(self.panel_later)
         self.bridge.changed.connect(self._update_header)
         self.bridge.changed.connect(self.changed.emit)
@@ -586,9 +588,48 @@ class GraphPage(SidesHost, QWidget):
         if self.templates is not None and self.centre.currentWidget() is self.templates:
             self._update_header()
 
-    def template_chosen(self, t: dict):
+    def new_workflow(self, start=None, tab=None):
+        """« New workflow » once the project has one (issue #147, today's ``new_workflow``): the window of the gallery's
+        templates, the user's templates, a template file and the copies of the workflows, opened without blocking;
+        on a blank page the gallery in place of the graph. ``start``: a workflow to copy; ``tab``: the tab it opens
+        on. -> the window, or None."""
+        if self.s is None:
+            return None
+        if start is None and self.is_blank():
+            self.show_templates()
+            return None
+        from ..gallery import TemplateGallery
+        d = TemplateGallery(self.s, start, self)
+        if tab and tab in getattr(d, "tab_keys", []):
+            d.tabs.setCurrentIndex(d.tab_keys.index(tab))
+        d.accepted.connect(lambda: self._gallery_made(d))
+        d.open()                                         # window-modal, without blocking
+        self._gallery = d
+        return d
+
+    def _gallery_made(self, d):
+        """The window's choice: a copy of a workflow (the model's, its options, settings and exit kept), or a template
+        under the name typed."""
+        t = d.choice
+        if t is None:
+            return
+        name = d.name.text().strip()
+        if t.get("copy") is not None:
+            s = self.s
+            try:
+                with s.batch():
+                    s.duplicate(t["copy"], name or s.unique_name(_("New workflow")))
+            except Exception as e:  # noqa: BLE001 - a copy refused is said, nothing reaches Qt
+                log.exception("graph page: the copy could not be made")
+                self.toast(self.bridge.say(str(e)) or _("The gesture failed: nothing changed"))
+                return
+            self.request_refresh()
+            return
+        self.template_chosen(t, name or None)
+
+    def template_chosen(self, t: dict, name: str | None = None):
         """A template of the gallery: its workflow made in one step by the core's operations (graphcore.templates), its
-        Post actions by the project model when there is one."""
+        Post actions by the project model when there is one. ``name``: the one typed in the New workflow window."""
         from ...graphcore import templates as gt
         from ...graphcore.shapes import Result
         from ..gallery import _view_opts
@@ -596,7 +637,7 @@ class GraphPage(SidesHost, QWidget):
         if t.get("copy") is not None:                    # a copy is Ctrl+D on its workflow, not a template
             self.hide_templates()
             return
-        base = _(t["palette"]) if t.get("kind") == "fusion" else _(t["name"])
+        base = name or (_(t["palette"]) if t.get("kind") == "fusion" else _(t["name"]))
         name = gt.Plan(doc.graph).unique_name(base)
         m = self.s
         if m is not None and hasattr(m, "_run_plan") and hasattr(m, "_template"):
