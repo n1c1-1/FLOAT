@@ -1859,6 +1859,13 @@ class PostView(QWidget):
     def _ann_buttons(self):
         """Sky grid and Object names greyed, the reason on hover, while there is no solution to draw."""
         why = self.ann_problem()
+        if not why and not getattr(self, "_ann_warmed", False):
+            self._ann_warmed = True                       # the catalogue is read now, not at the first tick (1 to 3 s)
+            try:
+                from .services import inspect as si
+                si.service_of(self.s).request_job("post.warm", si.warm_annotations)
+            except Exception:  # noqa: BLE001 - a session without the inspect service (tests)
+                pass
         for b, k in ((self.b_grid, "grid"), (self.b_names, "objects")):
             b.setEnabled(not why)
             if why:

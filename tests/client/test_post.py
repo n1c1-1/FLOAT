@@ -3320,3 +3320,14 @@ def test_the_sky_grid_is_available_on_a_combination_that_handed_the_plate_soluti
     assert _bottom(states, chain, tmp_path, monkeypatch) == ""                       # its solution came with it
     states["combine_ho"] = api.StageState("pending")
     assert _bottom(states, chain, tmp_path, monkeypatch) == "Astrometry is not computed yet for the image at the bottom"
+
+
+def test_the_catalogue_is_loaded_ahead_of_the_first_tick_of_the_sky_grid_or_the_names(monkeypatch):
+    from astro_gpu.client.services import inspect as si
+    from astro_gpu.core import skyobjects as so
+    calls = []
+    monkeypatch.setattr(so, "load_catalogue", lambda *a, **k: calls.append(1))
+    si.warm_annotations(None)
+    assert calls == [1]
+    monkeypatch.setattr(so, "load_catalogue", lambda *a, **k: (_ for _ in ()).throw(so.CatalogueUnavailable("x")))
+    si.warm_annotations(None)                              # no catalogue: nothing raised, the tick says why
