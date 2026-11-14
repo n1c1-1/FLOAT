@@ -327,7 +327,7 @@ def stack_classic(load: Callable, coef, bad=None, norm: Norm | None = None, weig
                   params: ClassicParams | None = None, device="cpu", *, used, ch_of_k, H: int, W: int, sat_level=None,
                   progress: Callable | None = None, masks: bool = False, raw_template: str | None = None,
                   colour: bool = False, memory: tuple[int, int] | None = None, spill=None,
-                  log: Callable | None = None) -> ClassicResult:
+                  log: Callable | None = None, mono: bool = False) -> ClassicResult:
     """Stack the frames ``used`` by the Classic method (see the module's docstring for what stack.py passes).
 
     ``load(i)``: frame i, the calibrated CFA (H, W) (torch or numpy; NaN = bad, > VALID_MAX = saturated); ``coef``
@@ -341,7 +341,10 @@ def stack_classic(load: Callable, coef, bad=None, norm: Norm | None = None, weig
     (bytes the stack may fill, bytes available), core/devices.memory_budget; None: no bound. ``spill``: the folder
     where the resampled frames go when they do not fit in it (None, or a disk without the room: kept in memory
     whatever their size); ``log``:
-    where the plain line saying so goes, and the time of each pass (issue #125)."""
+    where the plain line saying so goes, and the time of each pass (issue #125). ``mono``: a monochrome sensor, ``load(i)``
+    gives its one plane (H, W): no demosaicing (nothing to interpolate), the bad samples filled from the plane's own
+    neighbours, the plane taken as the green channel (the colour the drizzle keeps for it); the other two stay zero,
+    are not rejected, and stack.py's hook writes the plane in the three (``cfa.mono_rgb``)."""
     p = params or ClassicParams()
     dev = torch.device(device)
     progress = progress or (lambda f, msg: None)
@@ -418,6 +421,10 @@ def stack_classic(load: Callable, coef, bad=None, norm: Norm | None = None, weig
             rgb = torch.stack([a for a, _ in planes])
             filled = torch.stack([m for _, m in planes])
             near, sat = near.any(0), sat.any(0)          # one flag per pixel, as for a mosaic
+        elif mono:                                       # one plane: no mosaic, no debayering (as Siril stacks mono frames)
+            fr, filled = db.fill_bad(fr, badm)
+            rgb = torch.zeros((3,) + tuple(fr.shape), dtype=fr.dtype, device=fr.device)
+            rgb[1] = fr
         else:
             fr, filled = db.fill_bad(fr, badm, ch_of_k=ch_of_k)
             bal = db.cfa_balance(fr, ch_of_k) if p.cfa_balance and p.debayer == "rcd" else None
@@ -503,7 +510,7 @@ def stack_classic(load: Callable, coef, bad=None, norm: Norm | None = None, weig
         shares = torch.zeros((2, P), device=dev)
         lo_b = torch.zeros(P, dtype=torch.int32, device=dev)
         hi_b = torch.zeros_like(lo_b)
-        for c in range(3):
+        for c in ((1,) if mono else range(3)):
             v = torch.from_numpy(np.ascontiguousarray(store_f[:, c, o0:o1])).to(dev).float()
             valid = torch.isfinite(v)
             lo, hi = rc.reject(v, choice, valid)

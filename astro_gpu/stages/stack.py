@@ -539,7 +539,7 @@ class Stack(Stage):
             clock.done("normalisation")
             return stack_classic(ctx, p, wb=wb, load=load, coef=coef, used=used, weight=weight, norm=norm, transp=transp,
                                  meta=meta, sel=sel, ch_of_k=ch_of_k, H=H, W=W, satval=satval, dev=dev, t0=t0,
-                                 colour=colour, zone=zone)
+                                 colour=colour, zone=zone, mono=mono)
 
         def frame_model(i, rows=None):
             """The frame normalised to the reference (value, ADU of the reference), where its samples land on the
@@ -1518,7 +1518,7 @@ def balanced(a: np.ndarray, wb: np.ndarray | None) -> np.ndarray:
 
 
 def stack_classic(ctx: Context, p: StackParams, *, wb=None, load, coef, used, weight, norm, transp, meta, sel, ch_of_k,
-                  H: int, W: int, satval, dev, t0: float, colour: bool = False, zone=None) -> None:
+                  H: int, W: int, satval, dev, t0: float, colour: bool = False, zone=None, mono: bool = False) -> None:
     """The hook of the Classic method (``method = classic``: RCD debayering, Lanczos-4
     registration with the reference program's clamping, WBPP's rejection by frame count; core/stack_classic.py and the modules it
     uses). ``Stack.run`` calls it once the part both methods share is done: the frames ``used`` with their
@@ -1534,8 +1534,7 @@ def stack_classic(ctx: Context, p: StackParams, *, wb=None, load, coef, used, we
     res = sc.stack_classic(load, coef, bad=None, norm=nm, weights=weight, params=classic_params(p),
                            device=dev, used=used, ch_of_k=ch_of_k, H=H, W=W, sat_level=satval,
                            progress=lambda f, msg: ctx.progress(0.05 + 0.95 * f, msg),
-                           raw_template=raw_template(meta, used, ch_of_k), colour=colour, **within_memory(ctx))
-    mono = cfa_mod.is_mono(meta[0].get("cfa", "")) if meta else False
+                           raw_template=raw_template(meta, used, ch_of_k), colour=colour, mono=mono, **within_memory(ctx))
     for name, a in res.arrays().items():
         if name in ("drz_full.npy", "drz_A.npy", "drz_B.npy"):
             a = balanced(a, wb)

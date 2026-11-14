@@ -188,7 +188,8 @@ def invert(coef, X, Y, W: int, H: int, iters: int = 8):
 
 def is_mono(cfa) -> bool:
     """Whether ``cfa`` names a monochrome sensor (no Bayer pattern)."""
-    return cfa is None or str(cfa).strip().upper() in MONO
+    from .cfa import is_mono as stack_is_mono          # the stack's own test (the inventory's "GGGG"), the same sensor
+    return cfa is None or stack_is_mono(str(cfa).strip().upper()) or str(cfa).strip().upper() in MONO
 
 
 def _channels_of(cfa) -> np.ndarray:
