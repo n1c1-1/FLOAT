@@ -128,7 +128,7 @@ def judge_insert(B, kind, rid, after):
     elif r.fork:
         a = [r.fork[1]]
     else:
-        a = [c for _s, c in r.nights]
+        a = [c if c is not None else s for s, c in r.nights]
     head_over, wires_over, starts = {"__v": a}, {}, []
     if s is not None:
         head_over[s] = ["__v"]
@@ -227,41 +227,31 @@ def judge_port_image(B, j, port):
 
 
 def judge_port_session(B, j, port):
-    """Mirror of operations._add_port_row for a Session: the new stack copies the chain feeding the combination's
-    first wired port (minus Astrometry when aligned)."""
+    """Mirror of operations._add_port_row for a Session: the new stack is its Session and the shortest chain of
+    operations.port_chains the graph accepts there (a Stacking; Denoise and Stars/background too for a starless image
+    or the stars only); the first one's reason when none is."""
     from .rules import Ev, Img
-    p, ix = B.p, B.ix
-    jb = p.blocks[j]
-    from .model import in_ports
-    first = next((w for q in in_ports(jb) for w in p.wires if w.dst == [j, q] and w.active), None)
-    aligned = p.reference is not None
-    if first is not None and first.src[0] in ix.row_of and not ix.is_join_row(ix.row_of[first.src[0]]):
-        sb = first.src[0]
-        chain = ix.effective(ix.row_of[sb])
-        chain = chain[:chain.index(sb) + 1]
-        if p.blocks[chain[0]].kind == "image":
-            chain = chain[1:]
-        protos = [p.blocks[b] for b in chain if not (aligned and p.blocks[b].kind == "astrometry")]
-        if not any(o.kind == "stacking" for o in protos):
-            protos = [Block("", k) for k in ("registration", "selection", "stacking")] + protos
-        src_port = first.src[1]
-    else:
-        protos, src_port = [Block("", k) for k in ("registration", "selection", "stacking")], "image"
-    pre = {"__cal": Ev(out=Img(frames=True, stage=0, grid="__r"))}
-    virtual, chain, head_over, prev = {}, [], {}, "__cal"
-    for i, o in enumerate(protos):
-        vid = f"__p{i}"
-        virtual[vid] = Block(vid, o.kind, dict(o.settings), o.off)
-        head_over[vid] = [prev]
-        chain.append(vid)
-        prev = vid
-    why = chain_problem([(virtual[v].kind, virtual[v].off) for v in chain], "stack",
-                        {"ref": p.reference} if aligned else None)
-    if not why:
-        last = virtual[prev]
-        lst = list(B.ctx.wires_in.get(j, [])) + [_W([prev, _map_port(last, src_port)], [j, port])]
-        why = _run(B, virtual, chain, head_over, {j: lst}, [j], pre)
-    return why, (None if why else (len(B.g.lines), 0))
+    from .operations import port_chains
+    p = B.p
+    align = {"ref": p.reference} if p.reference is not None else None
+    pre = {"__cal": Ev(out=Img(frames=True, stage=-1, grid="__r"))}
+    first = None
+    for kinds, src_port, _why in port_chains(p, j, port):
+        virtual, chain, head_over, prev = {}, [], {}, "__cal"
+        for i, k in enumerate(kinds):
+            vid = f"__p{i}"
+            virtual[vid] = Block(vid, k)
+            head_over[vid] = [prev]
+            chain.append(vid)
+            prev = vid
+        why = chain_problem([(k, False) for k in kinds], "stack", align)
+        if not why:
+            lst = list(B.ctx.wires_in.get(j, [])) + [_W([prev, _map_port(virtual[prev], src_port)], [j, port])]
+            why = _run(B, virtual, chain, head_over, {j: lst}, [j], pre)
+        if not why:
+            return "", (len(B.g.lines), 0)
+        first = first or why
+    return first, None
 
 
 def specs(B, kind):

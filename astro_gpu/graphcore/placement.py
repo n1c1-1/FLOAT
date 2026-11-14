@@ -53,8 +53,9 @@ def candidates(p, view, kind=None, block=None, d=None):
     if chainable:
         for r in p.rows:
             drawn = [b for b in r.blocks if b in d.boxes]
-            if r.nights and r.id not in d.cards and r.nights[0][1] in d.boxes:   # a stack's head, after its nights
-                cal = d.boxes[r.nights[0][1]]
+            n0 = r.nights[0][1] if r.nights and r.nights[0][1] is not None else (r.nights[0][0] if r.nights else None)
+            if r.nights and r.id not in d.cards and n0 in d.boxes:   # a stack's head, after its nights
+                cal = d.boxes[n0]
                 x = d.boxes[r.blocks[0]].x - GAP / 2 - 3 if drawn and r.blocks[0] == drawn[0] else cal.right + GAP / 2 - 3
                 add("insert", Box(x, cal.y, 6, BH), M("{lab} here, in “{_row}”", lab=LABEL[kind], _row=r.name),
                     *op_for({"type": "insert", "row": r.id, "after": None}))
@@ -80,7 +81,7 @@ def candidates(p, view, kind=None, block=None, d=None):
                 continue
             sub = ix.subtree(r.id)
             bottoms = [d.boxes[b].bottom for s in sub for b in ix.row[s].blocks + [x for n in ix.row[s].nights
-                                                                                    for x in n] if b in d.boxes]
+                                                                                    for x in n if x] if b in d.boxes]
             bottoms += [d.cards[s].bottom for s in sub if s in d.cards]
             y = max(bottoms) + 4
             own_y = d.boxes[r.blocks[-1]].y if r.blocks[-1] in d.boxes else d.cards[r.id].y
@@ -122,6 +123,15 @@ def candidates(p, view, kind=None, block=None, d=None):
             else:
                 add("night", rect, M("Add a session to “{_row}”: it stacks with its sessions", _row=r.name),
                     "add_block", {"kind": "session", "at": {"type": "night", "row": r.id}})
+    if kind == "calibration" and block is None:
+        for r in p.rows:                         # a night without Calibration: its Calibration's own column
+            if r.id in d.cards:
+                continue
+            for s, c in r.nights:
+                if c is None and s in d.boxes:
+                    S = d.boxes[s]
+                    add("calib", Box(xs[1], S.y, BW, BH), M("Calibration of “{_name}”", _name=p.blocks[s].name),
+                        "add_block", {"kind": "calibration", "at": {"type": "calib", "night": s}})
     if kind in ("session", "image") and (block is None or kind == "session"):
         allb = list(d.boxes.values()) + list(d.cards.values())
         bottom = max([b.bottom for b in allb if b.x < xs[LIN] + BW] + [d.lines[0][1] if d.lines else 74])
@@ -189,7 +199,10 @@ def palette_state(p, view, kind):
     if kind in ("session", "image", "combine", "combine_layers"):
         return True, ""
     if kind == "calibration":
-        return False, "each session already has its Calibration"
+        if any(c is None for r in p.rows for _s, c in r.nights):     # a night without one: it may take one back
+            return True, ""
+        return False, "each session already has its Calibration" if any(r.nights for r in p.rows) \
+            else "add a Session first"
     if not p.rows:
         return False, "add a Session or an Image first"
     from .judge import specs

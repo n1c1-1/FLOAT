@@ -168,7 +168,8 @@ def _settings(g, f, root, holder) -> dict:
         for st, kv in (d or {}).items():
             out.setdefault(st, {}).update(copy.deepcopy(kv))
     for _s, c in root.nights:
-        put(g.blocks[c].params)
+        if c is not None:
+            put(g.blocks[c].params)
     put(root.calib)
     for b in f.chain:
         put(g.blocks[b].params)
@@ -250,14 +251,16 @@ def compile_into(g, p) -> Compiled:
         source, kind = _source(g, ix, f, root, ports_wid, out)
         nodes = []
         mixed = []
-        if kind == "frames" and root.calib_node:
-            offs = [g.blocks[c].off for _s, c in root.nights]
+        cals = [c for _s, c in root.nights if c is not None]
+        if kind == "frames" and root.calib_node and (cals or not root.nights):
+            # no node when no night has a Calibration: the engine takes the lights as they are (apply_masters off)
+            offs = [g.blocks[c].off if c is not None else True for _s, c in root.nights]
             if offs and any(offs) != all(offs):
                 if g.calibrate_together or len(root.nights) < 2:
                     out.problems.append(f"“{root.name}”: some nights' Calibration off, others on, calibrated "
                                         "together: compiled as on")
-                else:                   # each night its own calibration: the switched-off ones apply no master
-                    mixed = [sid_of(s) for s, c in root.nights if g.blocks[c].off]
+                else:                   # each night its own calibration: the switched-off or absent ones apply no
+                    mixed = [sid_of(s) for s, c in root.nights if c is None or g.blocks[c].off]       # master
             nodes.append(wfl.node("calibration", off=bool(offs) and all(offs), fork=root.calib_fork))
         for b in f.chain:
             blk = g.blocks[b]
@@ -293,7 +296,8 @@ def compile_into(g, p) -> Compiled:
         else:
             bps = sorted({engine(b) for b in f.chain if g.blocks[b].pause and g.blocks[b].kind in NODE_KINDS + (
                 "image", "combine")}, key=wfl.block_order)
-        own = {str(sid_of(s)): copy.deepcopy(g.blocks[c].own) for s, c in root.nights if g.blocks[c].own}
+        own = {str(sid_of(s)): copy.deepcopy(g.blocks[c].own) for s, c in root.nights
+               if c is not None and g.blocks[c].own}
         w = old.get(f.wid) or Workflow(f.wid, rec.name)
         params = _settings(g, f, root, holder)
         for sid in mixed:
@@ -304,7 +308,8 @@ def compile_into(g, p) -> Compiled:
         made[f.wid] = w
         for s, c in root.nights:
             out.map.setdefault(s, []).append((f.wid, "session"))
-            out.map.setdefault(c, []).append((f.wid, "calibration"))
+            if c is not None:
+                out.map.setdefault(c, []).append((f.wid, "calibration"))
         for b in f.chain:
             out.map.setdefault(b, []).append((f.wid, engine(b) if g.blocks[b].kind in NODE_KINDS else
                                               g.blocks[b].kind))

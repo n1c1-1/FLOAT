@@ -100,7 +100,7 @@ class Bench:
         rows = [self.row(row) if isinstance(row, str) else row] if row is not None else self.graph.rows
         out = []
         for r in rows:
-            for b in [x for n in r.nights for x in n] + list(r.blocks):
+            for b in [x for n in r.nights for x in n if x is not None] + list(r.blocks):
                 if self.graph.blocks[b].kind == kind:
                     out.append(b)
         return out
@@ -186,6 +186,11 @@ def page(qapp):
     pump()
 
 
+#: a stack placed block by block: the Session comes alone, then its Calibration, Registration, Selection, Stacking
+STACK = (("add_row", dict(kind="session")),) + tuple(
+    ("add_block", dict(kind=k)) for k in ("calibration", "registration", "selection", "stacking"))
+
+
 @pytest.fixture()
 def B(page):                                                          # noqa: N802 - the scenarios' name
     return Bench(page)
@@ -206,11 +211,11 @@ def test_s01_double_click_session_makes_a_stack(B):
     B.g.double_click_palette("session")
     assert len(B.graph.rows) == 1
     r = B.graph.rows[0]
-    assert len(r.nights) == 1
-    assert [B.graph.blocks[b].kind for b in r.blocks] == ["registration", "selection", "stacking"]
+    assert len(r.nights) == 1 and r.nights[0][1] is None
+    assert r.blocks == []                                     # the Session alone: each next block placed by the user
     s = r.nights[0][0]
     assert B.canvas.blocks[s].d["title"] == "Session 1" and B.canvas.blocks[s].d["badge"] == "reference"
-    assert B.post_wires() and not B.overlaps()
+    assert not B.post_wires() and not B.overlaps()
     assert B.b.selected in B.canvas.blocks and B.canvas.blocks[B.b.selected].d["selected"]
     assert B.steps() == 1
     B.exact(before)
@@ -232,7 +237,7 @@ def test_s02_files_on_session_targets_count_on_the_block(B, tmp_path):
 
 
 def test_s03_drag_session_onto_plus_session(B):
-    B.install().setup(("add_row", dict(kind="session")))
+    B.install().setup(*STACK)
     lit = {pl["kind"] for pl in B.g.visible_places("session") if pl["lit"]}
     assert {"night", "row"} <= lit
     before = B.js()
@@ -274,7 +279,7 @@ def test_s05_back_onto_plus_session_two_undos_give_the_drawing_back(B):
 
 # ======================================================================================================= s06-s10: chains
 def test_s06_branch_strip_makes_a_variant_below(B):
-    B.install().setup(("add_row", dict(kind="session")))
+    B.install().setup(*STACK)
     r = B.graph.rows[0]
     parent = list(r.blocks)
     before = B.js()
@@ -429,8 +434,9 @@ def test_s16_session_dropped_on_the_empty_s_ii_port(B):
     assert len(B.graph.rows) == n + 1
     r = B.graph.rows[-1]
     kinds = [B.graph.blocks[b].kind for b in r.blocks]
-    assert r.name == "S II" and {"gradient", "denoise", "stars"} <= set(kinds), (r.name, kinds)
-    assert any(tuple(w.dst) == (join, "S II") for w in B.graph.wires)
+    # what the port needs, nothing more: the S-H-O is Combine layers' Background, a starless image
+    assert r.name == "S II" and kinds == ["stacking", "denoise", "stars"], (r.name, kinds)
+    assert any(tuple(w.dst) == (join, "S II") and w.src[1] == "Starless" for w in B.graph.wires)
     B.exact(before)
 
 

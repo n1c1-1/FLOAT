@@ -43,8 +43,6 @@ CORE_ONLY = {
     core_rules.FRAME_BAND: "the frame band is drawn in fixed columns before the image band: a frame block (switched "
                            "off: absent for the engine) after an image block, or outside a stack, has no column",
     core_rules.FRAME_ORDER: "the same: two frame blocks of one kind, or out of order, would share a column",
-    core_rules.IMAGE_BAND: "the same: an image block (switched off: absent for the engine) drawn among the frame "
-                           "columns",
     "the Background port needs a starless image": "Combine layers is a layer of Post, no workflow: its ports are "
                                                   "the core's (the engine never sees them)",
     "the Stars port needs the stars only": "the same",
@@ -95,8 +93,8 @@ GESTURE = {
     # the model's shapes: a row starts with its head, a variant forks after a block of its row, a night's
     # Calibration is its night's, Post is one, a source stays at its row's head
     "nothing is inserted before the head of the row", "a variant starts after the Registration",
-    "each session already has its Calibration", "each session has its Calibration: switch it off (D)",
-    "each session keeps its Calibration", "only a Session joins a stack", "a session joins a stack of lights",
+    "each session already has its Calibration", "“{_name}” already has its Calibration",
+    "a Calibration goes beside a session", "add a Session first", "each session keeps its Calibration", "only a Session joins a stack", "a session joins a stack of lights",
     "{lab} is not inserted in a row", "a row starts with a Session or an Image", "a source stays at the head of its row",
     "Post is fixed", "unknown place for this block", "variants start from this block: delete them first",
     "the reference is a stack of lights", "an Align on follows a Stacking or an Image of the row",
@@ -129,6 +127,7 @@ def gen(rng, doc):
     blocks = list(p.blocks)
     rows = [r.id for r in p.rows]
     sess = [s for r in p.rows for s, _c in r.nights]
+    cals = [c for r in p.rows for _s, c in r.nights if c is not None]
     wires = [w.id for w in p.wires]
     joins = [b for b in blocks if p.blocks[b].kind == "combine"]
     roll = rng.random()
@@ -226,13 +225,18 @@ def gen(rng, doc):
                                          "name": pick(rng, ["linked", "apply_masters", "method"]),
                                          "value": pick(rng, [True, False, "stars"])}),
         lambda: ("op", "set_method", {"block": pick(rng, blocks), "method": pick(rng, METHOD_CHOICES)}),
-        lambda: ("op", "set_own_calibration", {"block": pick(rng, [c for r in p.rows for _s, c in r.nights] or blocks),
+        lambda: ("op", "set_own_calibration", {"block": pick(rng, cals or blocks),
                                                "kind": pick(rng, FILE_KINDS), "paths": rng.sample(PATHS, 2),
                                                "mode": pick(rng, ["add", "replace"])}),
-        lambda: ("op", "follow_session", {"block": pick(rng, [c for r in p.rows for _s, c in r.nights] or blocks),
+        lambda: ("op", "follow_session", {"block": pick(rng, cals or blocks),
                                           "kind": pick(rng, FILE_KINDS)}),
-        lambda: ("op", "remove_own_calibration", {"block": pick(rng, [c for r in p.rows for _s, c in r.nights]
-                                                                      or blocks)}),
+        lambda: ("op", "remove_own_calibration", {"block": pick(rng, cals or blocks)}),
+        # a night's Calibration taken away and put back (a Session comes alone; calibrated together, the stack's)
+        lambda: ("op", "remove_block", {"block": pick(rng, cals or blocks)}),
+        lambda: ("op", "add_block", {"kind": "calibration", "at": {"type": "calib", "night": pick(rng, sess)}}),
+        lambda: ("op", "add_block", {"kind": "calibration", "row": pick(rng, rows + [None])}),
+        lambda: ("op", "add_stack", {"name": pick(rng, NAMES), "nights": [_sid(rng, p)], "blocks": pick(rng, [
+            None, [], [{"kind": "stacking"}]]), "calibration": rng.random() < .5}),
         lambda: ("many", [_setting(rng, p, blocks)[1:3], ("add_night", {"row": pick(rng, rows)})]),
         # step 4c: a session by its id, an Image's file, a tap's name, a workflow's pauses, options and settings, a
         # row's chain replaced, a new branch

@@ -208,12 +208,13 @@ def graph_signature(g, q, cl: Client) -> set:
         w = q.workflow(rec.wid)
         mono = cl.is_mono(w)
         items = []
-        if root.nights and not sep and root.calib_node:
+        cals = [c for _s, c in root.nights if c is not None]
+        if cals and not sep and root.calib_node:
             # one Calibration of all the nights: the nights' (INTEGRATION 4.1: two stacks of the same nights share
             # it, drawn in each stack), not the row's
-            off = all(g.blocks[c].off for _s, c in root.nights)
+            off = all(g.blocks[c].off for c in cals)
             ident = ("calib", tuple(g.blocks[s].sid for s, _c in root.nights), root.calib_fork, off,
-                     json.dumps([[g.blocks[c].own, g.blocks[c].params] for _s, c in root.nights] + [root.calib],
+                     json.dumps([[g.blocks[c].own, g.blocks[c].params] for c in cals] + [root.calib],
                                 sort_keys=True))
             items.append((ident, "calibration", off, False))
         holder = None
@@ -240,8 +241,8 @@ def graph_signature(g, q, cl: Client) -> set:
             for s, c in root.nights:
                 sid = g.blocks[s].sid
                 nights.setdefault(("session", sid), set()).add(rec.wid)
-                cal = g.blocks[c]
-                if root.calib_node:
+                cal = g.blocks[c] if c is not None else None
+                if root.calib_node and cal is not None:
                     mark = (cal.own or {}).get("fork")
                     nights.setdefault(("night-calibration", sid, mark, cal.off), set()).add(rec.wid)
     through: dict = {}

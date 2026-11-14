@@ -15,10 +15,14 @@ function; English when None).
 
 Operations: apply(graph, name, **kwargs) -> (graph2, Result), argument names fixed:
   add_block(kind, at=None, row=None)   at = a place spec (Place.op carries it); at None = natural place
-                                       (double-click) in `row` (or the first row)
-  move_block(block, at)                remove_block(block)            (alias delete_block)
-  add_row(kind, files=None, name=None) kind "session" | "image"       delete_row(row)
-  add_night(row, files=None, name=None)  files = {kind: [paths]}      remove_night(night)  (alias delete_night)
+                                       (double-click) in `row` (or the first row); a Calibration's place is
+                                       {"type": "calib", "night": session id} (calibrated together: every night of
+                                       its stack gets one, the engine's one Calibration of the stack)
+  move_block(block, at)                remove_block(block)            (alias delete_block; a Calibration too: its
+                                       night's lights are then taken as they are)
+  add_row(kind, files=None, name=None) kind "session" | "image": the Session or Image alone   delete_row(row)
+  add_night(row, files=None, name=None)  files = {kind: [paths]}: the Session alone (calibrated together, with the
+                                       stack's Calibration when it has one)   remove_night(night)  (alias delete_night)
   move_night(night, row=None, before=None)  row None = its own new row; before = a session of `row` (reorder)
   merge_nights(a, b)                   split_night(night, lights)     lights = list of paths taken out
   add_variant(block)                   take_alternative(wire)         set_reference(row)
@@ -56,7 +60,8 @@ Operations: apply(graph, name, **kwargs) -> (graph2, Result), argument names fix
   wire(..., channel=None)              set_input(block, port, channel=None, weight=None, image=None)
   add_stars_combination(block)         "<name> · Stars": the same type reading the stars alone
   new_night(name=None, filter="")      a session no stack draws yet
-  add_stack(name, nights, blocks=None, align="auto", all_nights=False)   a stack drawing these session ids
+  add_stack(name, nights, blocks=None, align="auto", all_nights=False, calibration=True)   a stack drawing these
+                                       session ids (a template's: blocks None = Registration, Selection, Stacking)
   share_night(night, row)              the same session drawn in another stack (files and name kept equal)
   set_night_filter(night, filter)      send_to_post(block, name=None): mid-row, a tap; remove_tap(tap)
   set_own_calibration(block, kind, paths, mode="add")   follow_session(block, kind)   remove_own_calibration(block)

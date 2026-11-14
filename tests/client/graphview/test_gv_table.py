@@ -39,7 +39,9 @@ class Bench:
         if bridge is None:
             g = api.blank_project()
             if not blank:
-                g, _r = api.apply(g, "add_row", kind="session")
+                g, _r = api.apply(g, "add_row", kind="session")         # the Session comes alone: its stack's
+                for k in ("calibration", "registration", "selection", "stacking"):          # blocks placed after
+                    g, _r = api.apply(g, "add_block", kind=k, row=g.rows[0].id)
                 for _i in range(sessions - 1):
                     g, _r = api.apply(g, "add_night", row=g.rows[0].id)
             bridge = Bridge(MemoryDocument(g))
@@ -310,6 +312,8 @@ def test_gv_table_new_stacks_and_own_setting(qapp, tree):
     assert len(ps) == 4
     g = b.g
     ha = ps[1]
+    assert g.cell_text(g.cell(("setting", ha["id"], "stk")))[0] == "—"     # a new stack: its Session alone
+    g.act([("add_block", dict(kind="stacking", row=ha["id"]))])            # its Stacking placed
     g.set_value(("setting", ha["id"], "stk"), "Rejection threshold", "8 σ")
     g.set_value(("setting", ha["id"], "stk"), "Method", "Standard stacking")
     t, own, _kind, _blk = g.cell_text(g.cell(("setting", ha["id"], "stk")))
@@ -420,6 +424,7 @@ def test_gv_table_merge_preview(qapp):
     b = Bench(1366)
     b.g.act([("add_row", dict(kind="session"))])
     ps = b.stacks()
+    b.g.act([("add_block", dict(kind="stacking", row=ps[1]["id"]))])     # the Session comes alone: its Stacking
     b.g.set_value(("setting", ps[1]["id"], "stk"), "Rejection threshold", "8 σ")
     hot = b.hover([], ("stack", ps[0]["id"]), internal=("stack", ps[1]["id"]), fx=0.3)
     assert hot.kind == "merge" and "1 session joins “Session 1”" in hot.label

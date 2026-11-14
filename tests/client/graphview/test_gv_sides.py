@@ -119,12 +119,22 @@ def test_a_chosen_block_dims_the_other_workflows(qapp):
     from astro_gpu.client.graphview.gestures import Gestures
     p = _page(_doc("sho_rgb"))
     c, g = p.canvas, Gestures(p)
-    g.click("b10")                                             # the SII stack's Gradient
+    gr = p.bridge.graph
+    rows = {r.name: r for r in gr.rows}
+
+    def chain(name):
+        return list(rows[name].blocks)
+
+    def nights(*names):
+        return {x for n in names for pair in rows[n].nights for x in pair if x}
+    sii = chain("SII")
+    g.click(next(b for b in sii if gr.blocks[b].kind == "gradient"))       # the SII stack's Gradient
     dim = {b for b, it in c.blocks.items() if it.d.get("dim")}
-    assert {"b14", "b16", "b20", "b33", "b39", "b49"} <= dim   # Ha, S-H-O, RGB, Combine layers
-    assert not dim & {"b3", "b5", "b9", "b10", "b11", "b12"}   # SII's own chain
-    assert not dim & {"b6", "b7", "b17", "b18", "b1"}          # the Sessions, their Calibrations, Post
-    ha = next(w for w in c.wires.values() if w.ends and set(w.ends) <= {"b14", "b15", "b16", "b20", "b21", "b22"})
+    assert set(chain("Ha") + chain("RGB") + chain("S-H-O") + chain("Combine layers")) <= dim
+    assert not dim & set(sii)                                  # SII's own chain
+    post = next(b for b, x in gr.blocks.items() if x.kind == "post")
+    assert not dim & (nights("SII", "Ha") | {post})            # the Sessions, their Calibrations, Post
+    ha = next(w for w in c.wires.values() if w.ends and set(w.ends) <= set(chain("Ha")))
     assert ha.opacity() < 1
     p.bridge.choose(None)
     assert not any(it.d.get("dim") for it in c.blocks.values()) and ha.opacity() == 1

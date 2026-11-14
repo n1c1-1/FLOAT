@@ -85,13 +85,15 @@ def test_rows_being_built_and_registration_off_or_absent():
     stk = of_kind(doc, row(doc, "Session 1"), "stacking")
     assert refused_inert(doc, "remove_block", block=stk) == "Astrometry needs Stacking first"
     doc = Doc()
-    ok(doc, "add_block", kind="session")
+    ok(doc, "add_block", kind="session")                                    # the Session alone: a stack being built
     r = doc.project.rows[0]
-    for b in list(reversed(r.blocks)):
-        ok(doc, "remove_block", block=b)
-    r = doc.project.rows[0]
-    assert r.blocks == [] and r.nights                                      # the stack stays, being built
+    assert r.blocks == [] and r.nights and r.nights[0][1] is None
     engine_ok(doc)
+    p, _c = compiled(doc)
+    assert p.workflows[0].blocks == [] and p.chain(p.workflows[0]) == []    # nothing computed yet
+    ok(doc, "add_block", kind="calibration")
+    r = doc.project.rows[0]
+    assert doc.project.blocks[r.nights[0][1]].kind == "calibration"
     p, _c = compiled(doc)
     assert [n["block"] for n in p.workflows[0].blocks] == ["calibration"]
     pl = where(doc, "insert", kind="stacking", match={"row": r.id, "after": None})

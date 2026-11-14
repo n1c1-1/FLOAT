@@ -944,7 +944,8 @@ class GraphEditing:
         f = self._flow(wid, g)
         if base in ("inventory", "calibrate") and at:
             root = self._root(f, g)
-            c = next((c for s, c in (root.nights if root else []) if g.blocks[c].sid == int(sid)), None)
+            c = next((c for s, c in (root.nights if root else []) if c is not None and g.blocks[c].sid == int(sid)),
+                     None)
             return ("block", c, base) if c is not None else ("extra", None, stage)
         if stage in _ROW_STAGES:
             return ("row", f.id, stage) if isinstance(f, gm.Row) else ("extra", None, stage)
@@ -1428,17 +1429,18 @@ class GraphEditing:
         return [dict(n) for n in wfl.from_options(mm.to_engine(dict(opts)), e, src)
                 if not n["off"] and (colour or n["block"] != "color")]
 
-    def _new_stack(self, name, sids, nodes, params=None, all_nights=False, end=None, options=None):
+    def _new_stack(self, name, sids, nodes, params=None, all_nights=False, end=None, options=None, calibration=True):
         """A stack drawing these sessions with these nodes' blocks, its settings stored where they belong.
         ``options``: a workflow made from options (today's ``add_workflow``): a row made before the free graph, kept
-        as its options until the first change of its chain (as the converter keeps one)."""
+        as its options until the first change of its chain (as the converter keeps one). ``calibration``: its nights
+        with their Calibration, or without."""
         from ..graphcore.templates import chain_of
         chain = chain_of(nodes)
 
         def made(res):
             return res[0].created["row"]
         steps = [("add_stack", {"name": name, "nights": list(sids), "blocks": chain, "align": None,
-                                "all_nights": all_nights}),          # no session yet: refused (no row is drawn)
+                                "all_nights": all_nights, "calibration": calibration}),  # no session yet: refused
                  ("set_flow_options", lambda res: {"flow": made(res), "options": copy.deepcopy(options), "end": end})]
         if params:
             steps.append(("store_params", lambda res: {"flow": made(res), "params": copy.deepcopy(params)}))
@@ -1482,9 +1484,9 @@ class GraphEditing:
         sids = list(sessions) if sessions is not None else [s.id for s in self.p.sessions]
         params = self._path_params(None)
         with self._edit():
-            q = self._new_stack(self.unique_name(name), sids, [n for n in blocks if n.get("block") != "align_on"],
-                                params, all_nights=sessions is None)
             cal = any(n.get("block") == "calibration" for n in blocks)
+            q = self._new_stack(self.unique_name(name), sids, [n for n in blocks if n.get("block") != "align_on"],
+                                params, all_nights=sessions is None, calibration=cal)
             r = self._row(q.pid)
             if r.calib_node != cal:
                 def raw(g):
@@ -1669,7 +1671,8 @@ class GraphEditing:
         """The Calibration block of a night in a workflow's stack."""
         f = self._flow(p)
         root = self._root(f) if f is not None else None
-        c = next((c for s, c in (root.nights if root else []) if self._g.blocks[c].sid == int(sid)), None)
+        c = next((c for s, c in (root.nights if root else []) if c is not None and self._g.blocks[c].sid == int(sid)),
+                 None)
         if c is None:
             raise GraphRefused(_("not in workflow"))
         return c
@@ -1751,9 +1754,14 @@ class GraphEditing:
             for r in g.rows:                            # a stack of every night draws it too (one made before any
                 if r.all_nights and not r.fork and (r.nights or not r.blocks or      # night was added included)
                                                     g.blocks[r.blocks[0]].kind not in ("image", "combine")):
-                    pair = _night(g, nm, {k: v for k, v in files.items() if v})
-                    g.blocks[pair[0]].sid = g.blocks[pair[1]].sid = sid
-                    g.blocks[pair[1]].off = g.blocks[r.nights[-1][1]].off if g.calibrate_together else False
+                    last = r.nights[-1][1] if r.nights else None    # calibrated as the stack's nights are
+                    pair = _night(g, nm, {k: v for k, v in files.items() if v},
+                                  last is not None if r.nights else r.calib_node)
+                    for b in pair:
+                        if b is not None:
+                            g.blocks[b].sid = sid
+                    if pair[1] is not None:
+                        g.blocks[pair[1]].off = g.blocks[last].off if g.calibrate_together and last else False
                     r.nights.append(pair)
         self._do(raw=raw)
         self.reload_sources()
@@ -1942,10 +1950,14 @@ class GraphEditing:
                 done.add(root.id)
                 files = {k: list(v) for k, v in src.files.items()} if src is not None else \
                     {k: list(v) for k, v in (entry.get("files") or {}).items() if v}
-                pair = _night(g, src.name if src is not None else entry.get("name", ""), files)
-                g.blocks[pair[0]].sid = g.blocks[pair[1]].sid = sid
-                if root.nights and g.calibrate_together:
-                    g.blocks[pair[1]].off = g.blocks[root.nights[-1][1]].off
+                last = root.nights[-1][1] if root.nights else None     # calibrated as the stack's nights are
+                pair = _night(g, src.name if src is not None else entry.get("name", ""), files,
+                              last is not None if root.nights else root.calib_node)
+                for b in pair:
+                    if b is not None:
+                        g.blocks[b].sid = sid
+                if pair[1] is not None and last is not None and g.calibrate_together:
+                    g.blocks[pair[1]].off = g.blocks[last].off
                 root.nights.append(pair)
         self._do(raw=raw)
 

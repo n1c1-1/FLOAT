@@ -30,8 +30,9 @@ def test_blockmap_gives_each_block_its_node_and_address():
     from astro_gpu.graphcore.compile import Compiled
     from astro_gpu.graphcore.history import History
     h = History()
-    h.apply("add_row", kind="session")
+    h.apply("add_row", kind="session")                          # the Session comes alone: its blocks placed after
     rid = h.project.rows[0].id
+    h.apply("add_block", kind="stacking", row=rid)
     h.apply("add_block", kind="gradient", row=rid)
     g = h.project
     ids = {x.kind: b for b, x in g.blocks.items()}

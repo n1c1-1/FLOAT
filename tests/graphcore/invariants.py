@@ -157,7 +157,7 @@ def rows_drawn(p, d):
             r.blocks and p.blocks[r.blocks[0]].kind in JOIN_KINDS and title(p, r.blocks[0], ix) == r.name)
         if not named:
             bad.append(f"row {r.name} not named in the drawing")
-        for b in r.blocks + [x for n in r.nights for x in n]:
+        for b in r.blocks + [x for n in r.nights for x in n if x is not None]:
             if b not in d.boxes and r.id not in d.cards:
                 bad.append(f"block {b} of {r.name} not drawn")
     return bad

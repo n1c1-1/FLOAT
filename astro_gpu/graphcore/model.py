@@ -43,7 +43,8 @@ class Row:
     id: str
     name: str
     blocks: list = field(default_factory=list)   # chain, left to right (Session/Calibration excluded)
-    nights: list = field(default_factory=list)   # [[session id, calibration id]], first = top
+    nights: list = field(default_factory=list)   # [[session id, calibration id | None]], first = top (None: a
+    #                                              night without Calibration: its lights are taken as they are)
     fork: object = None                          # [row id, block id] for a variant
     # -- the row's workflow (compile.py; see FLOW_FIELDS)
     wid: object = None           # its workflow id (None: a row the compile numbers)
@@ -188,8 +189,9 @@ class Index:
             for i, b in enumerate(r.blocks):
                 self.row_of[b], self.pos[b] = r.id, i
             for s, c in r.nights:
-                self.row_of[s] = self.row_of[c] = r.id
-                self.night_of[s] = self.night_of[c] = s
+                self.row_of[s], self.night_of[s] = r.id, s
+                if c is not None:
+                    self.row_of[c], self.night_of[c] = r.id, s
         self.children = {r.id: [] for r in p.rows}
         for r in p.rows:
             if r.fork and r.fork[0] in self.children:
@@ -335,7 +337,7 @@ def check(p):
     seen = {}
     for r in p.rows:
         need(r.name and r.name.strip(), f"row {r.id} unnamed")
-        for b in r.blocks + [x for n in r.nights for x in n]:
+        for b in r.blocks + [x for n in r.nights for x in n if x is not None]:
             need(b in p.blocks, f"row {r.id}: unknown block {b}")
             need(b not in seen, f"block {b} in two rows")
             seen[b] = r.id
@@ -360,7 +362,8 @@ def check(p):
     for r in p.rows:
         kinds = [p.blocks[b].kind for b in r.blocks]
         for s, c in r.nights:
-            need(p.blocks[s].kind == "session" and p.blocks[c].kind == "calibration", f"night pair of {r.id}")
+            need(p.blocks[s].kind == "session" and (c is None or p.blocks[c].kind == "calibration"),
+                 f"night pair of {r.id}")
             need(p.blocks[s].name, f"night {s} unnamed")
         for i, k in enumerate(kinds):
             need(k not in ("session", "calibration", "post"), f"{k} in chain of {r.id}")
@@ -427,9 +430,10 @@ def edges(p, ix=None, active_only=False):
     out = []
     for r in p.rows:
         for s, c in r.nights:
-            out.append((s, c))
+            if c is not None:
+                out.append((s, c))
             if r.blocks:
-                out.append((c, r.blocks[0]))
+                out.append((c if c is not None else s, r.blocks[0]))
         out += list(zip(r.blocks, r.blocks[1:]))
         if r.fork and r.blocks:
             out.append((r.fork[1], r.blocks[0]))

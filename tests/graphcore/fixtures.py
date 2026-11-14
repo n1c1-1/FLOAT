@@ -29,16 +29,23 @@ def _ok(doc, op, **kw):
 
 
 def _stack(doc, name, kinds, kind="session"):
+    """A stack placed block by block (a Session comes alone): its Calibration, Registration, Selection, Stacking to
+    Post, then `kinds`."""
     _ok(doc, "add_row", kind=kind)
     rid = doc.project.rows[-1].id
     _ok(doc, "rename_row", row=rid, name=name)
+    _ok(doc, "add_block", kind="calibration", at={"type": "calib", "night": doc.project.rows[-1].nights[0][0]})
+    for k in ("registration", "selection", "stacking"):
+        _ok(doc, "add_block", kind=k, at={"type": "insert", "row": rid, "after": _last(doc, rid)})
+    _ok(doc, "send_to_post", block=_last(doc, rid))
     for k in kinds:                                  # appended in the order given (not the natural order)
         _ok(doc, "add_block", kind=k, at={"type": "insert", "row": rid, "after": _last(doc, rid)})
     return rid
 
 
 def _last(doc, rid):
-    return Index(doc.project).row[rid].blocks[-1]
+    blocks = Index(doc.project).row[rid].blocks
+    return blocks[-1] if blocks else None
 
 
 def _unpost(doc, rids):

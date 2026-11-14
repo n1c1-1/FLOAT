@@ -73,11 +73,12 @@ def grid(p, view, ix=None):
                 cards[rid] = L
                 cells["card:" + rid] = (L, 0)
             else:
-                s, c = r.nights[0]
-                cells[s], cells[c] = (L, 0), (L, 1)
-                for s, c in r.nights[1:]:
-                    lines.append(("night", s, rid))
-                    cells[s], cells[c] = (len(lines) - 1, 0), (len(lines) - 1, 1)
+                for i, (s, c) in enumerate(r.nights):
+                    if i:
+                        lines.append(("night", s, rid))
+                    cells[s] = (len(lines) - 1, 0)
+                    if c is not None:                  # a night without Calibration: its column stays empty
+                        cells[c] = (len(lines) - 1, 1)
         for b, c in cols(rid):
             if not (fold and p.blocks[b].kind in FRAME_KINDS):
                 cells[b] = (L, c)
@@ -312,11 +313,14 @@ def _wires(p, ix, g, d, xs, seq):
         if r.nights and r.id not in g.folded and r.blocks:
             head = d.boxes[r.blocks[0]]
             gi = gap_after(1)[0]
-            want(gi, (head.y, r.id), "bar:" + r.id, [d.boxes[c].y + BH / 2 for _s, c in r.nights], head.y + BH / 2)
+            want(gi, (head.y, r.id), "bar:" + r.id, [d.boxes[c if c is not None else s].y + BH / 2
+                                                     for s, c in r.nights], head.y + BH / 2)
             for s, c in r.nights:
-                S, C = d.boxes[s], d.boxes[c]
-                d.wires.append(Path(f"n:{s}>{c}", [(S.right, S.y + BH / 2), (C.x, C.y + BH / 2)], "night", s, c))
-                plans.append(("bar", r.id, c, r.blocks[0], gi))
+                S = d.boxes[s]
+                if c is not None:
+                    C = d.boxes[c]
+                    d.wires.append(Path(f"n:{s}>{c}", [(S.right, S.y + BH / 2), (C.x, C.y + BH / 2)], "night", s, c))
+                plans.append(("bar", r.id, c if c is not None else s, r.blocks[0], gi))
         if r.fork and r.blocks and r.blocks[0] in d.boxes:
             x = r.fork[1]
             gi = gap_after(col_of(x))[0]

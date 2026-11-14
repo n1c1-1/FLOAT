@@ -413,11 +413,13 @@ def test_s41_refused_delete_cross_frames_the_dependants_and_deletes_them_too(B):
     B.canvas.toast.link.emit("delete_too")
     assert a not in B.graph.blocks and c not in B.graph.blocks and B.steps() == n0 + 1
     B.exact(before)
-    cal = B.one("calibration")                                        # needed, nothing depends on it: itself framed
+    cal = B.one("calibration")                                        # deleted like any block: the lights taken
+    before = B.js()                                                   # as they are
     B.g.select(cal)
     B.key("Del")
-    assert cal in B.graph.blocks and B.canvas.blocks[cal].alert and B.steps() == n0 + 1
-    assert B.toast() == "each session has its Calibration: switch it off (D)" and not B.canvas.toast.links()
+    assert cal not in B.graph.blocks and B.steps() == n0 + 2
+    assert "taken as they are" in B.toast()
+    B.exact(before)
 
 
 def test_s41b_a_dependant_fed_by_a_wire_is_framed_and_deleted_too(B):

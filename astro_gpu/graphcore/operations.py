@@ -143,7 +143,8 @@ def _alloc(q):
         nxt += 1
     for r in q.rows:
         for s, c in r.nights:
-            q.blocks[c].sid = q.blocks[s].sid
+            if c is not None:
+                q.blocks[c].sid = q.blocks[s].sid
 
 
 def _sessions_state(q):
@@ -409,7 +410,7 @@ def legality(q, style=None):
                      lab=LABEL[q.blocks[w.src[0]].kind])
     if q.calibrate_together:
         for r in q.rows:
-            offs = {q.blocks[c].off for _s, c in r.nights}
+            offs = {q.blocks[c].off if c is not None else None for _s, c in r.nights}
             if len(offs) > 1:
                 return "calibrated together: one setting for all nights"
     return engine_check(q)
@@ -493,14 +494,37 @@ def session_name(q):
     return name_of("Session {n}", n=n)
 
 
-def _night(q, name, files=None):
+def _night(q, name, files=None, calibration=True):
+    """A night: its Session, with its Calibration or without (None: its lights taken as they are)."""
     s = new_block(q, "session", name=name, files=files)
-    c = new_block(q, "calibration")
-    return [s.id, c.id]
+    return [s.id, new_block(q, "calibration").id if calibration else None]
 
 
-def _default_chain(q):
-    return [new_block(q, k).id for k in ("registration", "selection", "stacking")]
+def _stack_calibrated(q, r):
+    """Calibrated together, a stack's nights have the engine's one Calibration of the stack, or none: whether a night
+    joining stack r must have one (None: each night its own, or no night yet: as the gesture says)."""
+    if not q.calibrate_together or not r.nights:
+        return None
+    return r.nights[0][1] is not None
+
+
+def _follow_stack(q, r, n):
+    """A night joining stack r, calibrated together: its Calibration follows the stack's (one engine node for all its
+    nights: made or taken away, switched as the stack's). -> a message when it changed, else ""."""
+    want = _stack_calibrated(q, r)
+    if want is None:
+        return ""
+    if want and n[1] is None:
+        n[1] = new_block(q, "calibration", sid=q.blocks[n[0]].sid).id
+        q.blocks[n[1]].off = _night_off(q, r)
+        return "Calibration added: its stack is calibrated together"
+    if not want and n[1] is not None:
+        del q.blocks[n[1]]
+        n[1] = None
+        return "Calibration taken away: its stack is not calibrated"
+    if n[1] is not None:
+        q.blocks[n[1]].off = _night_off(q, r)
+    return ""
 
 
 def _to_post(q, b, port=None):
@@ -549,7 +573,7 @@ def delete_rows(q, rids):
             ix.row[old].blocks.remove(astro[0])
             _insert_after_frames(q, heir, astro[0])
             q._astro_moved = True
-    blocks = {b for r in gone for b in ix.row[r].blocks + [x for n in ix.row[r].nights for x in n]}
+    blocks = {b for r in gone for b in ix.row[r].blocks + [x for n in ix.row[r].nights for x in n if x is not None]}
     nw = len([w for w in q.wires if w.src[0] in blocks or w.dst[0] in blocks])
     q.wires = [w for w in q.wires if w.src[0] not in blocks and w.dst[0] not in blocks]
     for b in blocks:
@@ -580,7 +604,7 @@ def new_align(ref, block=None):
 def _night_off(q, r):
     """The switch of the Calibration of a night joining stack r: calibrated together, the stack's (one setting for
     all its nights)."""
-    return bool(q.calibrate_together and r.nights and q.blocks[r.nights[0][1]].off)
+    return bool(q.calibrate_together and r.nights and r.nights[0][1] is not None and q.blocks[r.nights[0][1]].off)
 
 
 def _insert_after_frames(q, r, b):
@@ -653,11 +677,12 @@ def _files(files):
 
 def op_add_row(q, kind, files=None, name=None):
     if kind == "session":
+        # the Session alone: a stack being built, each next block placed by the user (the engine runs a stack with
+        # no block: nothing computed until one is placed)
         name = _named(q, name, session_name(q))
-        r = Row(new_id(q, "r"), name, _default_chain(q), [_night(q, name, _files(files))])
+        r = Row(new_id(q, "r"), name, [], [_night(q, name, _files(files), calibration=False)])
         _auto_align(q, r)
         q.rows.append(r)
-        _to_post(q, r.blocks[-1])
         return Out(M("“{_name}” added", _name=name), r.nights[0][0], new=r.nights[0][0])
     if kind == "image":
         if files:
@@ -693,11 +718,11 @@ def op_add_night(q, row, files=None, name=None):
     if not r.nights:
         raise Refusal("a session joins a stack of lights")
     name = (name or "").strip() or session_name(q)
-    off = _night_off(q, r)
-    r.nights.append(_night(q, name, _files(files)))
-    q.blocks[r.nights[-1][1]].off = off
-    return Out(M("{_name} added to “{_row}”: it stacks with its sessions · Ctrl+Z to undo", _name=name, _row=r.name),
-               r.nights[-1][0], new=r.nights[-1][0])
+    n = _night(q, name, _files(files), calibration=False)        # the Session alone, unless the engine needs more:
+    r.nights.append(n)
+    why = _follow_stack(q, r, n)                                  # calibrated together, the stack's one Calibration
+    toast = M("{_name} added to “{_row}”: it stacks with its sessions · Ctrl+Z to undo", _name=name, _row=r.name)
+    return Out(join([toast, why]) if why else toast, n[0], new=n[0])
 
 
 def _night_row(q, night):
@@ -729,7 +754,8 @@ def op_remove_night(q, night):
         return Out(toast, old=None if q._astro_moved else night, style="need")
     r.nights.remove(n)
     for b in n:
-        del q.blocks[b]
+        if b is not None:
+            del q.blocks[b]
     _forget_night(q, sid)
     return Out("session removed", old=night, style="need")
 
@@ -747,11 +773,11 @@ def op_new_night(q, name=None, filter=""):  # noqa: A002
     return Out(M("“{_name}” added", _name=name))
 
 
-def op_add_stack(q, name, nights, blocks=None, align="auto", all_nights=False):
+def op_add_stack(q, name, nights, blocks=None, align="auto", all_nights=False, calibration=True):
     """A stack drawing sessions of the project (``nights``: their session ids, drawn in that order), its chain
-    ``blocks`` ([{"kind", "method"}], None: Registration, Selection, Stacking); ``align`` "auto": on the reference
-    (the first stack keeps its own grid), None: its own grid; ``all_nights``: it stacks every night of the project,
-    those added later too."""
+    ``blocks`` ([{"kind", "method"}], None: Registration, Selection, Stacking: a template's full chain); ``align``
+    "auto": on the reference (the first stack keeps its own grid), None: its own grid; ``all_nights``: it stacks every
+    night of the project, those added later too; ``calibration``: its nights with their Calibration, or without."""
     entry = {n["sid"]: n for n in q.nights}
     if not nights or any(s not in entry for s in nights) or len(set(nights)) != len(nights):
         raise Refusal("session not found")
@@ -762,8 +788,11 @@ def op_add_stack(q, name, nights, blocks=None, align="auto", all_nights=False):
         src = drawn.get(sid)
         files = {k: list(v) for k, v in src.files.items()} if src is not None else \
             {k: list(v) for k, v in (e.get("files") or {}).items() if v}
-        nn = _night(q, src.name if src is not None else (e.get("name") or name_of("Session {n}", n=sid)), files)
-        q.blocks[nn[0]].sid = q.blocks[nn[1]].sid = sid
+        nn = _night(q, src.name if src is not None else (e.get("name") or name_of("Session {n}", n=sid)), files,
+                    calibration)
+        for x in nn:
+            if x is not None:
+                q.blocks[x].sid = sid
         pairs.append(nn)
     chain = []
     for n in (blocks if blocks is not None else [{"kind": k} for k in ("registration", "selection", "stacking")]):
@@ -793,11 +822,16 @@ def op_share_night(q, night, row):
     s = q.blocks[night]
     if t is r or (s.sid is not None and any(q.blocks[x].sid == s.sid for x, _c in t.nights)):
         raise Refusal(M("“{_name}” is already in “{_row}”", _name=s.name, _row=t.name))
-    nn = _night(q, s.name, {k: list(v) for k, v in s.files.items()})
-    q.blocks[nn[0]].sid = q.blocks[nn[1]].sid = s.sid
-    q.blocks[nn[1]].off = _night_off(q, t) if q.calibrate_together else q.blocks[n[1]].off
+    nn = _night(q, s.name, {k: list(v) for k, v in s.files.items()}, n[1] is not None)
+    for x in nn:
+        if x is not None:
+            q.blocks[x].sid = s.sid
+    if nn[1] is not None:
+        q.blocks[nn[1]].off = q.blocks[n[1]].off
+    why = _follow_stack(q, t, nn)
     t.nights.append(nn)
-    return Out(M("“{_name}” also stacked in “{_row}”", _name=s.name, _row=t.name), nn[0], new=nn[0])
+    toast = M("“{_name}” also stacked in “{_row}”", _name=s.name, _row=t.name)
+    return Out(join([toast, why]) if why else toast, nn[0], new=nn[0])
 
 
 def _no_clash(q, t, nights):
@@ -827,10 +861,9 @@ def op_move_night(q, night, row=None, before=None):
         if len(r.nights) == 1:
             raise Refusal("already alone on its row")
         r.nights.remove(n)
-        nr = Row(new_id(q, "r"), free_name(q, name), _default_chain(q), [n])
+        nr = Row(new_id(q, "r"), free_name(q, name), [], [n])       # its own stack, being built: its blocks to place
         _auto_align(q, nr)
         q.rows.append(nr)
-        _to_post(q, nr.blocks[-1])
         return Out(M("“{_name}” moves to its own row “{_row}”", _name=name, _row=nr.name), night, new=night)
     t = _row(q, row)
     if not t.nights:
@@ -845,14 +878,15 @@ def op_move_night(q, night, row=None, before=None):
             t.nights.append(n)
             return Out(M("“{_name}” moved", _name=name), night, new=night)
         return Out(focus=night)                 # dropped where it is: nothing moves, nothing said
-    if t is not r and t.nights:
-        q.blocks[n[1]].off = _night_off(q, t) if q.calibrate_together else q.blocks[n[1]].off
+    why = _follow_stack(q, t, n) if t is not r and t.nights else ""
     r.nights.remove(n)
     at = [x[0] for x in t.nights].index(before) if before is not None else len(t.nights)
     t.nights.insert(at, n)
     if t is r:
         return Out(M("“{_name}” moved", _name=name), night, new=night)
     toast = M("“{_name}” goes into “{_row}”", _name=name, _row=t.name)
+    if why:
+        toast = join([toast, why])
     if not r.nights:
         toast = join([toast, delete_rows(q, [r.id])])
     return Out(toast, night, new=night)
@@ -873,7 +907,8 @@ def op_merge_nights(q, a, b):
             q.blocks[a].files[k] = base + [x for x in q.blocks[b].files[k] if x not in base]
     ra.nights.remove(nb)
     for x in nb:
-        del q.blocks[x]
+        if x is not None:
+            del q.blocks[x]
     return Out(M("“{_name}” holds both sessions", _name=q.blocks[a].name), a, old=b)
 
 
@@ -886,9 +921,10 @@ def op_split_night(q, night, lights):
     q.blocks[night].files["lights"] = [x for x in own if x not in lights]
     files = {k: list(v) for k, v in q.blocks[night].files.items() if k != "lights"}
     files["lights"] = list(lights)
-    nn = _night(q, session_name(q), files)
-    q.blocks[nn[1]].settings = dict(q.blocks[n[1]].settings)
-    q.blocks[nn[1]].off = q.blocks[n[1]].off
+    nn = _night(q, session_name(q), files, n[1] is not None)       # as the night it leaves: with its Calibration or not
+    if nn[1] is not None:
+        q.blocks[nn[1]].settings = dict(q.blocks[n[1]].settings)
+        q.blocks[nn[1]].off = q.blocks[n[1]].off
     r.nights.insert(r.nights.index(n) + 1, nn)
     return Out(M("{n} lights in “{_name}”", n=len(lights), _name=q.blocks[nn[0]].name), nn[0], new=nn[0])
 
@@ -898,12 +934,14 @@ def op_merge_rows(q, src, dst):
     if not a.nights or not b.nights or a is b:
         raise Refusal("two different stacks of lights are needed")
     _no_clash(q, b, a.nights)
-    if q.calibrate_together:
-        for _s, c in a.nights:
-            q.blocks[c].off = _night_off(q, b)
+    why = ""
+    for n in a.nights:
+        why = _follow_stack(q, b, n) or why
     b.nights += a.nights
     a.nights = []
     toast = M("“{_a}” merged into “{_b}”: its own settings are dropped", _a=a.name, _b=b.name)
+    if why:
+        toast = join([toast, why])
     delete_rows(q, [a.id])
     return Out(toast, b.nights[0][0], style="need")
 
@@ -915,12 +953,12 @@ def op_duplicate_row(q, row):
     nights = []
     for s, c in r.nights:
         o = q.blocks[s]
-        nn = _night(q, name_of("{_name} copy", _name=o.name), {k: list(v) for k, v in o.files.items()})
-        q.blocks[nn[1]].settings = dict(q.blocks[c].settings)
+        nn = _night(q, name_of("{_name} copy", _name=o.name), {k: list(v) for k, v in o.files.items()}, c is not None)
+        if c is not None:
+            q.blocks[nn[1]].settings = dict(q.blocks[c].settings)
+            q.blocks[nn[1]].off = q.blocks[c].off
         nights.append(nn)
     nr = Row(new_id(q, "r"), free_name(q, name_of("{_name} copy", _name=r.name)), blocks, nights, list(r.fork) if r.fork else None)
-    for (_s, c), (_s2, c2) in zip(r.nights, nights):
-        q.blocks[c2].off = q.blocks[c].off
     if r.align:
         nr.align = {**r.align, "params": dict(r.align.get("params") or {}), "from": r.align.get("from")}
     elif r.nights and not r.fork:
@@ -1066,11 +1104,21 @@ def op_add_block(q, kind, at=None, row=None, _block=None):
         return _add_join(q, kind, at.get("after"))
     if t == "port":
         return _add_port_row(q, kind, at["block"], at["port"])
+    if t == "calib":
+        if kind != "calibration":
+            raise Refusal(M("{lab} is not inserted in a row", lab=LABEL[kind]))
+        return _add_calibration(q, at.get("night"))
     if kind in ("session", "image") + JOIN_KINDS:
         raise Refusal(M("{lab} is not inserted in a row", lab=LABEL[kind]))
     if kind == "calibration":
-        raise Refusal("each session already has its Calibration")
+        raise Refusal("a Calibration goes beside a session")
+    if _block is None and kind == "stacking":
+        # a new stack: the camera white balance as the project's first stack has it, on in a new project (issue #6)
+        from .templates import camera_white_balance
+        wb = camera_white_balance(q)
     b = _block or new_block(q, kind).id
+    if _block is None and kind == "stacking" and wb:
+        _put(q.blocks[b].params, "stack", "white_balance", True)
     if t == "insert":
         return _insert(q, b, at["row"], at.get("after"))
     if t == "branch":
@@ -1184,29 +1232,53 @@ def _add_port_row(q, kind, jid, port):
         return Out(M("New row for {port}", port=port), b.id, new=b.id)
     if kind != "session":
         raise Refusal("a port takes a new row: Session or Image")
-    ix = Index(q)
-    first = next((w for p_ in in_ports(j) for w in q.wires if w.dst == [jid, p_] and w.active), None)
-    src_port = "image"
-    if first is not None and first.src[0] in ix.row_of and not ix.is_join_row(ix.row_of[first.src[0]]):
-        sb = first.src[0]
-        chain = ix.effective(ix.row_of[sb])
-        chain = chain[:chain.index(sb) + 1]
-        if q.blocks[chain[0]].kind == "image":
-            chain = chain[1:]
-        aligned = q.reference is not None
-        keep = [b for b in chain if not (aligned and q.blocks[b].kind == "astrometry")]
-        blocks = [_copy_block(q, b) for b in keep]
-        if not any(q.blocks[b].kind == "stacking" for b in blocks):
-            blocks = _default_chain(q) + blocks
-        src_port = first.src[1]
-    else:
-        blocks = _default_chain(q)
-    r = Row(new_id(q, "r"), name, blocks, [_night(q, name)])
+    # the Session and what the port needs, nothing more: an image, which frames give once stacked (the engine's
+    # Stacking first); a starless image (or the stars only) when the graph refuses an image with its stars there
+    # (what follows the combination reads one): then Denoise and Stars/background too (the engine's needs of a star
+    # removal from frames)
+    cand = PORT_CHAINS[0]
+    for c in port_chains(q, jid, port):
+        t = clone(q)
+        _port_row(t, jid, port, name, c)
+        normalise(t)
+        if not legality(t):
+            cand = c
+            break
+    return _port_row(q, jid, port, name, cand)
+
+
+def _port_row(q, jid, port, name, cand):
+    kinds, src_port, why = cand
+    blocks = [new_block(q, k).id for k in kinds]
+    r = Row(new_id(q, "r"), name, blocks, [_night(q, name, calibration=False)])
     _auto_align(q, r)
     q.rows.append(r)
-    q.wires.append(Wire(new_id(q, "w"), [blocks[-1], _map_port(q.blocks[blocks[-1]], src_port)], [jid, port],
-                        channel="L" if j.kind == "combine" else None))
-    return Out(M("New row for {port}", port=port), r.nights[0][0], new=r.nights[0][0])
+    q.wires.append(Wire(new_id(q, "w"), [blocks[-1], src_port], [jid, port],
+                        channel="L" if q.blocks[jid].kind == "combine" else None))
+    return Out(join([M("New row for {port}", port=port), why]), r.nights[0][0], new=r.nights[0][0])
+
+
+#: what a Session dropped on a combination's port is given: its blocks, the port its wire leaves from, why
+PORT_CHAINS = [(("stacking",), "image", "Stacking added: the port reads an image"),
+               (("stacking", "denoise", "stars"), "Starless",
+                "Stacking, Denoise, Stars/background added: the port reads a starless image"),
+               (("stacking", "denoise", "stars"), "Stars only",
+                "Stacking, Denoise, Stars/background added: the port reads the stars only")]
+
+
+def port_chains(q, jid, port):
+    """The chains of PORT_CHAINS tried, shortest first, for a new stack feeding `port` of join jid: an image, then
+    the image the port reads (Combine layers: Background a starless image, Stars the stars only), or the one the
+    combination's first wired input reads (a Stars/background's starless or stars only)."""
+    if q.blocks[jid].kind == "combine_layers":
+        want = "Starless" if port == "Background" else "Stars only"
+    else:
+        first = next((w for p_ in in_ports(q.blocks[jid]) for w in q.wires if w.dst == [jid, p_] and w.active), None)
+        want = first.src[1] if first is not None else None
+    out = [PORT_CHAINS[0]]
+    if want in ("Starless", "Stars only"):
+        out.append(next(c for c in PORT_CHAINS if c[1] == want))
+    return out
 
 
 def natural(q, kind, row=None):
@@ -1228,7 +1300,12 @@ def natural(q, kind, row=None):
                 return {"type": "comp", "after": r.blocks[-1]}
         return {"type": "comp"}
     if kind == "calibration":
-        raise Refusal("each session already has its Calibration")
+        for r in ([ix.row[row]] if row in ix.row else []) + list(q.rows):
+            n = next((n for n in r.nights if n[1] is None), None)
+            if n is not None:
+                return {"type": "calib", "night": n[0]}
+        raise Refusal("each session already has its Calibration" if any(r.nights for r in q.rows)
+                      else "add a Session first")
     rows = [r.id for r in q.rows]
     target = row if row in ix.row else (rows[0] if rows else None)
     if target is None:
@@ -1321,7 +1398,7 @@ def op_remove_block(q, block):
     if b.kind == "post":
         raise Refusal("Post is fixed")
     if b.kind == "calibration":
-        raise Refusal("each session has its Calibration: switch it off (D)")
+        return _remove_calibration(q, block)
     if b.kind == "session":
         return op_remove_night(q, block)
     rid = ix.row_of[block]
@@ -1341,13 +1418,57 @@ def op_switch_off(q, block):
         # calibrated together, a stack has one Calibration (the engine's one node): its nights switch as one
         ix = Index(q)
         for _s, c in ix.row[ix.row_of[block]].nights:
-            q.blocks[c].off = b.off
+            if c is not None:
+                q.blocks[c].off = b.off
     said = M("{lab} switched off" if b.off else "{lab} switched on", lab=LABEL[b.kind])
     ix = Index(q)
     r = ix.row.get(ix.row_of.get(block))
-    if r is not None:                                  # with the workflow's name, as today's page said it
+    if r is not None:                                 # with the workflow's name, as today's page said it
         said = join([said, M("{_row}", _row=r.name)])
     return Out(said, block, style="off")
+
+
+def _calibrated_as_one(q, r):
+    """The nights of stack r whose Calibration a gesture on one of them changes: all of them calibrated together
+    (the engine's one Calibration of the stack), else that night alone."""
+    return q.calibrate_together and len(r.nights) > 1
+
+
+def _add_calibration(q, night):
+    """A Calibration put back beside a night's Session (calibrated together: beside each night of its stack, the
+    engine's one Calibration of the stack)."""
+    r, n = _night_row(q, night)
+    if n[1] is not None:
+        raise Refusal(M("“{_name}” already has its Calibration", _name=q.blocks[night].name))
+    off = _night_off(q, r)
+    todo = [x for x in r.nights if x[1] is None] if _calibrated_as_one(q, r) else [n]
+    for x in todo:
+        x[1] = new_block(q, "calibration", sid=q.blocks[x[0]].sid, off=off).id
+    r.calib_node = True                   # drawn = compiled (a stack read without the engine's Calibration node)
+    if len(todo) > 1:
+        toast = M("Calibration added to the {n} sessions of “{_row}”: calibrated together", n=len(todo), _row=r.name)
+    else:
+        toast = M("{lab} here, in “{_row}”", lab=LABEL["calibration"], _row=r.name)
+    return Out(toast, n[1], new=n[1])
+
+
+def _remove_calibration(q, block):
+    """A night's Calibration deleted: its lights are taken as they are (the engine applies no master to them).
+    Calibrated together, the Calibration of every night of its stack goes (the engine's one Calibration of the
+    stack)."""
+    ix = Index(q)
+    r = ix.row[ix.row_of[block]]
+    todo = [x for x in r.nights if x[1] is not None] if _calibrated_as_one(q, r) else \
+        [x for x in r.nights if x[1] == block]
+    for x in todo:
+        del q.blocks[x[1]]
+        x[1] = None
+    if len(todo) > 1:
+        toast = M("Calibration deleted from the {n} sessions of “{_row}”: calibrated together, their lights taken as "
+                  "they are", n=len(todo), _row=r.name)
+    else:
+        toast = "Calibration deleted: the lights are taken as they are"
+    return Out(toast, old=block, style="need")
 
 
 def op_set_pause(q, block):
@@ -1355,7 +1476,14 @@ def op_set_pause(q, block):
     if b.kind == "post":
         raise Refusal("Post is fixed")
     b.pause = not b.pause
-    return Out("Check pause" if b.pause else "Check pause removed", block)
+    ix = Index(q)
+    lab = title_msg(q, block, ix)
+    if not b.pause:
+        return Out(M("No more pause after {block}", block=lab), block)
+    n = sum(1 for r in q.rows if block in ix.effective(r.id) or any(block in nt for nt in r.nights or []))
+    if n > 1:                                          # the workflows it stops, as today's page said it
+        return Out(M("Review pause after {block} · {n} workflows", block=lab, n=n), block)
+    return Out(M("Review pause after {block}", block=lab), block)
 
 
 def op_set_setting(q, block, key, value):
@@ -1695,18 +1823,18 @@ def op_split_by(q, session, groups):
             name = (g.get("name") or "").strip() or session_name(q)
             if name in _names(q):
                 name = free_name(q, name)
-            nn = _night(q, name, {k: fl[k] for k in FILE_KINDS if k in fl})
-            q.blocks[nn[1]].settings = dict(q.blocks[n[1]].settings)
-            q.blocks[nn[1]].off = q.blocks[n[1]].off if into == "night" else False
+            nn = _night(q, name, {k: fl[k] for k in FILE_KINDS if k in fl}, n[1] is not None)   # as the night it
+            if nn[1] is not None:                                                               # leaves
+                q.blocks[nn[1]].settings = dict(q.blocks[n[1]].settings)
+                q.blocks[nn[1]].off = q.blocks[n[1]].off if into == "night" else False
             if into == "night":
                 r.nights.insert(at, nn)
                 at += 1
             else:
-                nr = Row(new_id(q, "r"), name, _default_chain(q), [nn])
+                nr = Row(new_id(q, "r"), name, [], [nn])            # its own stack, being built: its blocks to place
                 _auto_align(q, nr)
                 q.rows.insert(rows_at, nr)
                 rows_at += 1
-                _to_post(q, nr.blocks[-1])
             made += 1
             focus = nn[0]
         else:
@@ -2109,12 +2237,14 @@ def op_try_variant(q, block, change, name=None):
         nights = []
         target = None
         for s, c in root.nights:
-            nn = _night(q, q.blocks[s].name, {k: list(v_) for k, v_ in q.blocks[s].files.items()})
-            q.blocks[nn[0]].sid = q.blocks[nn[1]].sid = q.blocks[s].sid
-            q.blocks[nn[1]].off, q.blocks[nn[1]].own = q.blocks[c].off, copy.deepcopy(q.blocks[c].own)
-            q.blocks[nn[1]].params = copy.deepcopy(q.blocks[c].params)
+            nn = _night(q, q.blocks[s].name, {k: list(v_) for k, v_ in q.blocks[s].files.items()}, c is not None)
+            q.blocks[nn[0]].sid = q.blocks[s].sid
+            if c is not None:
+                q.blocks[nn[1]].sid = q.blocks[s].sid
+                q.blocks[nn[1]].off, q.blocks[nn[1]].own = q.blocks[c].off, copy.deepcopy(q.blocks[c].own)
+                q.blocks[nn[1]].params = copy.deepcopy(q.blocks[c].params)
             nights.append(nn)
-            if c == block:
+            if c is not None and c == block:
                 target = nn[1]
         v = Row(new_id(q, "r"), base, copies, nights)
         v.calib_node, v.calib_fork, v.calib = root.calib_node, root.calib_fork, copy.deepcopy(root.calib)
@@ -2204,7 +2334,9 @@ def op_keep_variant(q, row):
             if ix.row[c].fork[0] == o.id and ix.row[c].fork[1] not in gone:
                 raise Refusal(M("a variant of “{_row}” starts from a block the variant does not have", _row=o.name))
         for s, c in o.nights:
-            del q.blocks[s], q.blocks[c]
+            del q.blocks[s]
+            if c is not None:
+                del q.blocks[c]
         if v.align and v.align.get("ref") == o.id:      # aligned on its original: it takes the original's
             v.align = copy.deepcopy(o.align) if o.align and o.align.get("ref") != v.id else None
         for x in q.rows:
@@ -2475,7 +2607,8 @@ def _holder_of(q, ix, f, stage, name, names):
     rid = f.id if isinstance(f, Row) else ix.row_of.get(f.block)
     root = ix.row[ix.root(rid)] if rid in ix.row else None
     if base in ("inventory", "calibrate") and at:
-        c = next((c for _s, c in (root.nights if root else []) if str(q.blocks[c].sid) == sid), None)
+        c = next((c for _s, c in (root.nights if root else []) if c is not None and str(q.blocks[c].sid) == sid),
+                 None)
         return ("block", c, base) if c is not None else ("extra", f)
     if stage in ("inventory", "calibrate"):
         return ("calib", root) if isinstance(f, Row) and root is not None else ("extra", f)
@@ -2603,9 +2736,17 @@ def op_replace_chain(q, row, blocks, calibration=None, align=None, options=None,
     q.wires = [w for w in q.wires if w.src[0] not in gone and w.dst[0] not in gone]
     r.blocks = head + new
     if r.nights and calibration is not None:
-        r.calib_node = calibration is not False
-        if calibration is not False:
+        r.calib_node = True               # drawn = compiled: a stack without Calibration has none on its nights
+        if calibration is False:
+            for n in r.nights:
+                if n[1] is not None:
+                    del q.blocks[n[1]]
+                    n[1] = None
+        else:
             off = bool(calibration.get("off")) if isinstance(calibration, dict) else False
+            for n in r.nights:
+                if n[1] is None:
+                    n[1] = new_block(q, "calibration", sid=q.blocks[n[0]].sid, off=off).id
             if off != any(q.blocks[c].off for _s, c in r.nights):
                 for _s, c in r.nights:
                     q.blocks[c].off = off
@@ -2658,9 +2799,11 @@ def op_add_branch(q, block, kind, flow=None, name=None, method=None):
         root = ix.row[rid]
         nights, mine = [], None
         for s, c in root.nights:
-            nn = _night(q, q.blocks[s].name, {k: list(v) for k, v in q.blocks[s].files.items()})
-            q.blocks[nn[0]].sid = q.blocks[nn[1]].sid = q.blocks[s].sid
-            q.blocks[nn[1]].own = copy.deepcopy(q.blocks[c].own)
+            nn = _night(q, q.blocks[s].name, {k: list(v) for k, v in q.blocks[s].files.items()}, c is not None)
+            q.blocks[nn[0]].sid = q.blocks[s].sid
+            if c is not None:
+                q.blocks[nn[1]].sid = q.blocks[s].sid
+                q.blocks[nn[1]].own = copy.deepcopy(q.blocks[c].own)
             nights.append(nn)
             if c == block:
                 mine = nn[1]

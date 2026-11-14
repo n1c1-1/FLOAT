@@ -55,12 +55,18 @@ def drop(doc, place):
 
 def boxes_of(d, doc, rid):
     r = Index(doc.project).row[rid]
-    return {b: d.boxes.get(b) for b in r.blocks + [x for n in r.nights for x in n]}
+    return {b: d.boxes.get(b) for b in r.blocks + [x for n in r.nights for x in n if x is not None]}
 
 
 def session_doc():
+    """A Session (it comes alone), then its Calibration, Registration, Selection, Stacking placed one by one, the
+    Stacking sent to Post."""
     doc = Doc()
     ok(doc, "add_block", kind="session")
+    rid = doc.project.rows[0].id
+    for k in ("calibration", "registration", "selection", "stacking"):
+        ok(doc, "add_block", kind=k, row=rid)
+    ok(doc, "send_to_post", block=doc.project.rows[0].blocks[-1])
     return doc
 
 
@@ -148,10 +154,15 @@ def test_point8_drop_on_lower_row_moves_only_that_row():
 
 # ---------------------------------------------------------------------------------------------------- acceptance
 def test_a01_double_click_session():
-    doc = session_doc()
+    doc = Doc()
+    ok(doc, "add_block", kind="session")                     # the Session alone: nothing else is placed for the user
     r = doc.project.rows[0]
     s, c = r.nights[0]
-    assert doc.title(s) == "Session 1" and kinds(doc, r) == ["registration", "selection", "stacking"]
+    assert doc.title(s) == "Session 1" and c is None and kinds(doc, r) == [] and doc.project.wires == []
+    assert [b.kind for b in doc.project.blocks.values()] == ["post", "session"]
+    doc = session_doc()
+    r = doc.project.rows[0]
+    assert kinds(doc, r) == ["registration", "selection", "stacking"]
     ix = Index(doc.project)
     assert [(w.src[0], w.dst[0]) for w in doc.project.wires] == [(r.blocks[-1], ix.post)]
 
@@ -293,11 +304,12 @@ def test_a15_a16_change_type_then_fill_port():
     ok(doc, "set_combination_type", block=j, type="sho")
     assert doc.greyed(j) == "S II to wire"
     p = where(doc, "port", kind="session", match={"block": j, "port": "S II"})[0]
-    drop(doc, p)
+    r = drop(doc, p)
     new = doc.project.rows[-1]
-    assert new.name == "S II"
-    assert kinds(doc, new)[3:] == ["gradient", "denoise", "stars"]
-    assert any(w.dst == [j, "S II"] and w.src[0] == new.blocks[-1] for w in doc.project.wires)
+    assert new.name == "S II" and new.nights[0][1] is None
+    # what the graph needs there, nothing more: the S-H-O is Combine layers' Background, a starless image
+    assert kinds(doc, new) == ["stacking", "denoise", "stars"] and "starless" in r.toast_text()
+    assert any(w.dst == [j, "S II"] and w.src == [new.blocks[-1], "Starless"] for w in doc.project.wires)
 
 
 def test_a17_delete_reference_row():

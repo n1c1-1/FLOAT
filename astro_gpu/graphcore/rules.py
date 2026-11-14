@@ -142,7 +142,7 @@ def effective(p, b):
 @dataclass(frozen=True)
 class Img:
     frames: bool = False
-    stage: int = 9          # last frame step done (0 calibrated, 2 aligned, 3 selected, 4 cropped); 9 = an image
+    stage: int = 9          # last frame step done (-1 none, 0 calibrated, 2 aligned, 3 selected, 4 cropped); 9 = an image
     stars: str = "with"     # with / without / only / pair
     solution: bool = False
     grid: str = ""
@@ -179,6 +179,8 @@ def _make(kind, t):
         if kind == "stacking":
             return t.but(frames=False, stage=9, half=True)
         return t.but(stage=COL[kind])
+    if kind == "calibration":
+        return t.but(stage=0)
     if kind == "astrometry":
         return t.but(solution=True)
     if kind == "denoise":
@@ -199,13 +201,14 @@ class Ctx:
         self.head_in, self.wires_in = {}, {}
         for r in p.rows:
             if r.nights and r.blocks:
-                self.head_in[r.blocks[0]] = [c for _s, c in r.nights]
+                self.head_in[r.blocks[0]] = [c if c is not None else s for s, c in r.nights]
             if r.fork and r.blocks:
                 self.head_in[r.blocks[0]] = [r.fork[1]]
             for a, b in zip(r.blocks, r.blocks[1:]):
                 self.head_in[b] = [a]
             for s, c in r.nights:
-                self.head_in[c] = [s]
+                if c is not None:
+                    self.head_in[c] = [s]
         for w in p.wires:
             if w.active:
                 self.wires_in.setdefault(w.dst[0], []).append(w)
@@ -227,7 +230,7 @@ def eval_one(c, b, info):
     ev = Ev()
     if k == "session":
         rid = ix.row_of[b]
-        ev.out = Img(frames=True, stage=0, grid=rid)
+        ev.out = Img(frames=True, stage=-1, grid=rid)          # its lights as they are: a Calibration calibrates them
         return ev
     if k == "image":
         ev.out = Img(grid=ix.row_of.get(b, b), linear=not effective(p, b)["Stretched image"]
@@ -506,7 +509,7 @@ def stacks(p):
 
 
 def chain_blocks(p):
-    return [b for r in p.rows for b in [x for n in r.nights for x in n] + r.blocks]
+    return [b for r in p.rows for b in [x for n in r.nights for x in n if x is not None] + r.blocks]
 
 
 def differs(p, b):
@@ -610,15 +613,16 @@ SOURCE = {"stack": "frames", "image": "image", "stretched": "stretched", "join":
 HEAD_ONLY = "{lab} is only placed at the head of a row"
 FRAME_BAND = "{lab} belongs to a stack: between the Session and the Stacking"
 FRAME_ORDER = "{lab}: the order is Registration, Selection, Crop, Stacking"
-IMAGE_BAND = "{lab} comes after the Stacking"
 AFTER_LAYERS = "nothing follows Combine layers: its image is a layer of Post"
 
 
 def chain_verdict(items, root, align=None, legacy=False):
     """Whether one effective chain may be kept: the engine's rules first (wfl.graph_problem on the chain compiled as
     the engine runs it: its Align on, its Output where with_output puts it; one name per node), then the core's own
-    drawing rules (heads; the frame band: frame blocks in a stack, in their columns' order, before the image band,
-    switched-off ones too; nothing after Combine layers, a layer of Post).
+    drawing rules, of order only (heads; the frame band: frame blocks in a stack, in their columns' order, before the
+    image band, switched-off ones too; nothing after Combine layers, a layer of Post). Which blocks a chain must have
+    (a Stacking before an image block, a Denoise before a Stars/background...) is the engine's alone: no drawing rule
+    makes a block needed, nor keeps one from being removed.
     items: [(kind, off)] left to right; root: "stack" | "image" | "stretched" | "join" | "layers"; align: the Align
     on of the chain's holder (a dict) or None; legacy: a workflow made before the free graph (compiled from its
     options, which the engine checks). -> (message, BlockRefused | None); ("", None) when it may be kept."""
@@ -634,6 +638,11 @@ def chain_verdict(items, root, align=None, legacy=False):
         if align is not None and src in ("image", "stretched"):
             nodes.insert(0, wfl.node("align_on", off=bool(align.get("off"))))
         e = wfl.graph_problem(wfl.with_output(nodes, src), src)
+        if e is not None and e.template == wfl.WHY_STACK_FIRST and getattr(e, "block", "") == "output":
+            # the Output is never a block on screen: the block that needs it does (as wfl.place_problem says it)
+            k = next((n["block"] for n in nodes if not n["off"] and wfl.IO[n["block"]][0] == wfl.IMAGE), "output")
+            e = wfl.BlockRefused(wfl.WHY_STACK_FIRST, block=wfl.BLOCK_TITLES.get(k, k))
+            e.block = k
         if e is not None:
             return M(e.template, **e.fields), e
         kinds = [k for k, _o in items if k not in wfl.IMAGE_OPS and k not in ("image",) + JOIN_KINDS]
@@ -656,9 +665,7 @@ def chain_verdict(items, root, align=None, legacy=False):
         elif i > 0 or root == "stack":
             if root == "layers":
                 return AFTER_LAYERS, None
-            if root == "stack" and last_frame != 5:
-                return M(IMAGE_BAND, lab=lab), None
-            image_band = True
+            image_band = True             # (whether it needs a Stacking before it is the engine's: Stacking first)
     return "", None
 
 
