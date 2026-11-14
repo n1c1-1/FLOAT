@@ -53,4 +53,4 @@ def test_the_caches_together_stay_in_the_default_budget():
     cap = postengine.default_cache_bytes()
     assert 300_000_000 <= cap <= 1_500_000_000
     c = postengine.Composer(None)
-    assert c.images.cap + c.steps.cap + c.parts.cap <= cap
+    assert c.images.cap + c.steps.cap + c.backdrops.cap + c.parts.cap <= cap
