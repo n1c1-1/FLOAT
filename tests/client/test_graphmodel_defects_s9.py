@@ -79,3 +79,100 @@ def test_combine_layers_is_greyed_before_the_lights(world):
     cl = W.one("combine_layers")
     assert W.m.block_map.state(W.m.block_map.node(cl)) in ("pending", "skipped") or W.page.canvas.blocks[cl].d.get(
         "greyed") or W.page.canvas.blocks[cl].d.get("waits")
+
+
+@pytest.mark.parametrize("key,filters,stars", [("filters_full", ("SII", "Ha", "OIII"), "S-H-O · Stars"),
+                                               ("sho_rgb", ("SII", "Ha", "OIII"), "RGB"),
+                                               ("dual_x2", (), "Stars")])
+def test_a_template_with_combinations_draws_its_combine_layers_and_post_counts_it(world, key, filters, stars):
+    """Issue #165 as on main: the rows, the combinations, each titled by its workflow's name (never "S-H-O 2"), ONE
+    Combine layers block over the combination's Output, its Stars side from the "· Stars" combination's Output or the
+    star row's stars alone, its image to Post; Post holds one "<name> · Combine layers" layer (the facades test compares
+    Post's composition with the old model's), and the Post block says so."""
+    W = world(workflows=(), filters=filters, nights=0 if filters else 1)
+    W.template(key)
+    m, g = W.m, W.graph
+    combos = W.kinds("combine")
+    for b in combos:
+        r = next(r for r in g.rows if r.blocks and r.blocks[0] == b)
+        assert W.page.canvas.blocks[b].d["title"] == r.name
+    cl = W.one("combine_layers")
+    ins = {w.dst[1]: w for w in g.wires if w.dst[0] == cl}
+    sho = next(r for r in g.rows if r.name == "S-H-O")
+    assert ins["Background"].src == [sho.blocks[0], "image"]
+    src = ins["Stars"].src
+    row = next(r for r in g.rows if src[0] in r.blocks)
+    assert row.name == stars and src[1] == ("image" if stars.endswith("· Stars") else "Stars only")
+    assert any(w.src == [cl, "image"] and g.blocks[w.dst[0]].kind == "post" for w in g.wires)
+    layers = [x for x in m.post_version()["layers"] if x.get("kind") == "workflow"]
+    assert [x["name"] for x in layers] == ["S-H-O · Combine layers"]
+    W.page.refresh()
+    W.settle(2)
+    assert W.page.canvas.blocks[W.one("post")].d["summary"] == "1 layer"
+
+
+def test_duplicate_copies_the_workflows_review_pauses(world):
+    """s6a-22 (test_graph::test_the_pause_is_stored_per_workflow_undone_copied_and_leaves_with_its_block): Ctrl+D (the
+    block menu's Duplicate) makes a copy that keeps the workflow's review pauses."""
+    W = world(workflows=("Full",))
+    m = W.m
+    q = m.paths[0]
+    m.set_breakpoint([q], "empilement", True)
+    m.set_breakpoint([q], "fond", True)
+    want = list(m.p.workflow(q.pid).breakpoints)
+    assert len(want) == 2
+    row = next(r for r in W.graph.rows if r.wid == q.pid)
+    assert W.b.act("duplicate_row", row=row.id).ok
+    W.settle()
+    copy_ = m.paths[-1]
+    assert copy_.pid != q.pid and sorted(m.p.workflow(copy_.pid).breakpoints) == sorted(want)
+
+
+def test_a_variant_left_without_a_block_of_its_own_goes_with_it_in_one_undo_step(world):
+    """s6a-20 (test_graph47_client::test_control_round_a_branch_left_without_a_block_of_its_own_goes_with_it)."""
+    W = world(workflows=(), chains={"Main": ["calibration", "registration", "selection", "stacking", "astrometry"]})
+    m = W.m
+    assert W.b.act("add_variant", block=W.one("astrometry")).ok
+    W.settle()
+    var = next(r for r in W.graph.rows if r.fork)
+    res = m.apply([("add_block", {"kind": "color", "at": {"type": "insert", "row": var.id, "after": var.blocks[-1]}})])
+    assert res.ok, res.reason
+    W.settle()
+    names = [q.name for q in m.paths]
+    assert len(names) == 2
+    color = W.one("color")
+    steps = len(m._undo)
+    res = m.apply([("remove_block", {"block": color})])
+    assert res.ok, res.reason
+    W.settle()
+    assert [q.name for q in m.paths] == names[:1] and not any(r.fork for r in W.graph.rows)
+    assert "with its branch" in W.b.say(res.toast)
+    assert len(m._undo) == steps + 1
+    m.undo(graph=True)
+    W.settle()
+    assert [q.name for q in m.paths] == names and W.kinds("color")
+
+
+def test_deleting_a_stack_takes_the_session_only_it_read_and_a_combinations_input_is_kept(world):
+    """s6a-10 (test_fusion_sessions_client::test_removing_a_flow_or_its_session_says_what_goes,
+    ::test_a_fusion_input_keeps_its_workflow): Delete workflow takes the Session only it drew (none left unwired), said,
+    one Ctrl+Z brings both back; a workflow a combination reads is kept, said with the reason, nothing changes."""
+    W = world(workflows=(), filters=("Ha", "OIII"))
+    W.template("filters_min")
+    m = W.m
+    oiii = next(r for r in W.graph.rows if r.name == "OIII")
+    res = W.b.act("delete_row", row=oiii.id)
+    assert res.ok, res.reason
+    W.settle()
+    assert [s.id for s in m.p.sessions] == [1] and "OIII" in W.b.say(res.toast) and "files kept" in W.b.say(res.toast)
+    m.undo(graph=True)
+    W.settle()
+    assert [s.id for s in m.p.sessions] == [1, 2] and len(m.paths) == 2
+    W2 = world(workflows=(), filters=("Ha", "OIII"))
+    W2.template("filters_full")
+    m2 = W2.m
+    ha = next(r for r in W2.graph.rows if r.name == "Ha")
+    n, paths = len(m2._undo), [q.name for q in m2.paths]
+    res = W2.b.act("delete_row", row=ha.id)
+    assert not res.ok and "kept" in W2.b.say(res.reason) and "Ha" in W2.b.say(res.reason)
+    assert len(m2._undo) == n and [q.name for q in m2.paths] == paths

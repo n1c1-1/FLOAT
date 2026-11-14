@@ -119,22 +119,25 @@ def stars_side(g, wid, flows=None):
 
 
 def layer_rows(g) -> dict:
-    """{Stars block: [the Combine layers rows whose Background reads its starless image]}, in the graph's order. A
-    Combine layers whose Background is not wired, or wired from another image, is not one of them."""
+    """{block: [the Combine layers rows whose Background reads its image]}, in the graph's order: a Stars block's
+    starless image, or a combination's Output (issue #165: the S-H-O over its "· Stars" twin). A Combine layers whose
+    Background is not wired is not one of them."""
     out = {}
     heads = {r.blocks[0]: r for r in g.rows if r.blocks and g.blocks[r.blocks[0]].kind == "combine_layers"}
     for w in g.wires:
         r = heads.get(w.dst[0])
-        if r is None or w.dst[1] != "Background" or w.src[1] != "Starless" or w.src[0] not in g.blocks:
+        if r is None or w.dst[1] != "Background" or w.src[1] not in ("Starless", "image") or w.src[0] not in g.blocks:
             continue
         out.setdefault(w.src[0], []).append(r.id)
     return out
 
 
-def with_layer_rows(g, want: dict):
-    """The graph whose Combine layers are Post's (INTEGRATION 4.7, drawn from the shown version): ``want`` {Stars
-    block: the count of Combine layers layers of its workflows}; a Stars block holding fewer gets new ones (both sides
-    wired from it, its image to Post), one holding more loses its last ones. The others are left as they are."""
+def with_layer_rows(g, want: dict, sides: dict | None = None):
+    """The graph whose Combine layers are Post's (INTEGRATION 4.7, drawn from the shown version): ``want`` {block: the
+    count of Combine layers layers it is the background of}; a block holding fewer gets new ones, one holding more loses
+    its last ones; the others are left as they are. A Stars block's new one reads its two images; another block's
+    (a combination's Output) reads its image and, on its Stars side, ``sides[block]`` ([block, port] or None)."""
+    sides = sides or {}
     from .model import new_block
     from .msg import name_of
     from .operations import free_name
@@ -143,12 +146,12 @@ def with_layer_rows(g, want: dict):
     have = layer_rows(g)
     if all(len(have.get(s, [])) == n for s, n in want.items()) and \
             all(s in want for s in have if s in g.blocks and g.blocks[s].kind == "stars"):
-        return g
+        return _with_sides(g, sides)
     q = clone(g)
     post = Index(q).post
     for s, rows in have.items():
         extra = len(rows) - want.get(s, 0)
-        if extra <= 0 or s not in q.blocks or q.blocks[s].kind != "stars":
+        if extra <= 0 or s not in q.blocks or (q.blocks[s].kind != "stars" and s not in want):
             continue
         for rid in rows[-extra:]:
             r = next(x for x in q.rows if x.id == rid)
@@ -163,10 +166,35 @@ def with_layer_rows(g, want: dict):
         for _i in range(n - len(have.get(s, []))):
             j = new_block(q, "combine_layers")
             q.rows.append(Row(new_id(q, "r"), free_name(q, name_of(LABEL["combine_layers"])), [j.id]))
-            q.wires.append(Wire(new_id(q, "w"), [s, "Starless"], [j.id, "Background"]))
-            q.wires.append(Wire(new_id(q, "w"), [s, "Stars only"], [j.id, "Stars"]))
+            if q.blocks[s].kind == "stars":
+                q.wires.append(Wire(new_id(q, "w"), [s, "Starless"], [j.id, "Background"]))
+                q.wires.append(Wire(new_id(q, "w"), [s, "Stars only"], [j.id, "Stars"]))
+            else:
+                q.wires.append(Wire(new_id(q, "w"), [s, "image"], [j.id, "Background"]))
             q.wires.append(Wire(new_id(q, "w"), [j.id, "image"], [post, POST_PORT]))
-    return _with_stars_group(q)
+    return _with_sides(_with_stars_group(q), sides)
+
+
+def _with_sides(g, sides):
+    """The Stars side of each Combine layers over a combination's Output wired from the image its layer names (the
+    "· Stars" combination's Output), when it is not wired yet."""
+    if not sides:
+        return g
+    have = layer_rows(g)
+    add = []
+    for s, src in sides.items():
+        if src is None or src[0] not in g.blocks:
+            continue
+        for rid in have.get(s, []):
+            j = next(r for r in g.rows if r.id == rid).blocks[0]
+            if not any(w.dst == [j, "Stars"] for w in g.wires):
+                add.append((list(src), j))
+    if not add:
+        return g
+    q = clone(g)
+    for src, j in add:
+        q.wires.append(Wire(new_id(q, "w"), src, [j, "Stars"]))
+    return q
 
 
 def _synth_after(g, ix, s):

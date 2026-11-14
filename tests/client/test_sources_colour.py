@@ -106,8 +106,6 @@ def session_block(m, sid=1):
     return next(b for b, x in m.stored.blocks.items() if x.kind == "session" and getattr(x, "sid", None) == sid)
 
 
-@pytest.mark.xfail(strict=True, reason="files dropped on a Session of the new page are in the project, but the model's "
-                   "lists of the session's files are not read again (its counts, notes and checks)")
 def test_a_dropped_folder_of_jpegs_is_taken_and_the_session_says_the_limit(tmp_path):
     w, m, page = opened(tmp_path)
     try:

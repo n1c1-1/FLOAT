@@ -464,7 +464,7 @@ class GraphEditing:
         from ..graphcore.post import with_layer_rows, with_post_wires
         try:
             q = with_post_wires(g, self.shared_post_images())
-            q = with_layer_rows(q, self._layer_rows_wanted(q))
+            q = with_layer_rows(q, *self._layer_rows_wanted(q))
         except Exception:  # noqa: BLE001 - a graph the projection cannot read keeps its wires
             return g
         if [(w.src, w.dst, w.wid) for w in q.wires] == [(w.src, w.dst, w.wid) for w in g.wires] and \
@@ -493,7 +493,23 @@ class GraphEditing:
             s = stars_side(g, wid, flows)
             if s is not None:
                 want[s] += k
-        return want
+        # a combination's Combine layers (issue #165): over its Output, its Stars side the "· Stars" twin's Output
+        from ..graphcore.post import place_of
+        sides = {}
+        for b in g.blocks:
+            if g.blocks[b].kind == "combine":
+                want.setdefault(b, 0)
+        for x in self.post_version().get("layers") or []:
+            if x.get("kind") != "workflow" or x.get("part") != "combined" or x.get("starless") != "output" or                     x.get("pid") is None:
+                continue
+            at = place_of(g, int(x["pid"]), None, flows)
+            if at is None:
+                continue
+            want[at[0]] = want.get(at[0], 0) + 1
+            part = None if x.get("stars_image") == "output" else "stars"   # the twin's Output, else its stars alone
+            st = place_of(g, int(x["stars_pid"]), part, flows) if x.get("stars_pid") is not None else None
+            sides.setdefault(at[0], list(st) if st is not None else None)
+        return want, sides
 
     def _post_follow(self, before, after, wired=False):
         """A wire to Post removed in the graph takes its image out of every version; one added for an image Post does
@@ -569,47 +585,55 @@ class GraphEditing:
         Refused: nothing changes, the Result says why. A block's image sent to Post writes its layer at once, in the
         same step (as ``send_to_post``)."""
         steps = list(steps)
+        files = self._session_files()
         if not any(s[0] == "send_to_post" for s in steps):
-            return self._change(steps, view=view)
-        before = self._wids()
-        with self._edit():
             res = self._change(steps, view=view)
-            if res.ok:
-                for wid in sorted(self._wids() - before):
-                    v = self._view_of_wid(wid)
-                    if v is not None:
-                        self._write_branch_layer(v)
+        else:
+            before = self._wids()
+            with self._edit():
+                res = self._change(steps, view=view)
+                if res.ok:
+                    for wid in sorted(self._wids() - before):
+                        v = self._view_of_wid(wid)
+                        if v is not None:
+                            self._write_branch_layer(v)
+        if res.ok and self._session_files() != files:     # files dropped, added or taken away on the graph: the
+            self.reload_sources()                         # sessions are read again (counts, notes, checks of a run)
         return res
 
+    def _session_files(self):
+        return [(s.id, *(tuple(getattr(s, k)) for k in gm.FILE_KINDS)) for s in self.p.sessions]
+
     @staticmethod
-    def _without_layer_rows_of_switched(g, steps):
-        """A Stars block switched off: the Combine layers drawn for Post's layers on it are no dependants (as on today's
-        page, D on it is accepted; Post's pruning then takes its layers out, and switched on again Post's default
-        Combine layers comes back). The graph the gesture is made on, without them."""
-        from ..graphcore.post import layer_rows, with_layer_rows
-        rows = layer_rows(g)
+    def _without_layer_rows(g, steps):
+        """The graph a gesture is made on: without the Combine layers drawn for Post's layers (a projection of Post,
+        drawn again after the gesture), unless the gesture names one of them (its block, a wire into or out of it).
+        So they are never a block's dependants (a Stars/background or a Synthetic stars deleted or switched off, a
+        combination's input changed: accepted as on today's page, Post's layers following by its pruning), and a copy
+        of a block never copies their wires."""
+        from ..graphcore.post import layer_rows
+        rows = {rid for rids in layer_rows(g).values() for rid in rids}
         if not rows:
             return g
-        named = {s[1].get("block") for s in steps if isinstance(s[1], dict)}
-        mine = {b: {x for r in g.rows if r.id in rids for x in r.blocks} for b, rids in rows.items()}
-        want = {}
-        for s in steps:
-            b = s[1].get("block") if isinstance(s[1], dict) else None
-            if b not in rows or b not in g.blocks or mine[b] & named:    # the gesture names them: its own business
-                continue
-            if (s[0] == "switch_off" and not g.blocks[b].off) or s[0] == "remove_block":
-                want[b] = 0        # a Stars block deleted alone: its Combine layers go with it, its layers by Post's pruning
-        g = with_layer_rows(g, want) if want else g
-        # a Synthetic stars deleted or switched off: its stars leave the Combine layers' Stars side (drawn there for
-        # Post's Stars group), the real stars stay
-        heads = {r.blocks[0] for r in g.rows if r.blocks and g.blocks[r.blocks[0]].kind == "combine_layers"}
-        ys = {s[1].get("block") for s in steps if s[0] in ("switch_off", "remove_block") and isinstance(s[1], dict)}
-        ys = {y for y in ys if y in g.blocks and g.blocks[y].kind == "synth" and not (heads & named)}
-        drop = [w.id for w in g.wires if w.src[0] in ys and w.dst[0] in heads and w.dst[1] == "Stars"]
-        if drop:
-            g = gm.clone(g)
-            g.wires = [w for w in g.wires if w.id not in drop]
-        return g
+        heads = {r.blocks[0] for r in g.rows if r.id in rows}
+        touch = heads | {w.id for w in g.wires if w.src[0] in heads or w.dst[0] in heads}
+
+        def names(x):
+            if isinstance(x, dict):
+                return set().union(*[names(v) for v in x.values()]) if x else set()
+            if isinstance(x, (list, tuple)):
+                return set().union(*[names(v) for v in x]) if x else set()
+            return {x} if isinstance(x, str) else set()
+        said = set().union(*[names(st[1]) for st in steps if len(st) > 1 and not callable(st[1])]) if steps else set()
+        if said & touch:
+            return g
+        q = gm.clone(g)
+        gone = {b for r in q.rows if r.id in rows for b in r.blocks}
+        q.rows = [r for r in q.rows if r.id not in rows]
+        q.wires = [w for w in q.wires if w.src[0] not in gone and w.dst[0] not in gone]
+        for b in gone:
+            q.blocks.pop(b, None)
+        return q
 
     @staticmethod
     def _tidy_layer_rows(before, g):
@@ -635,15 +659,75 @@ class GraphEditing:
             q.blocks.pop(b, None)
         return q
 
+    def _row_kept(self, steps) -> str:
+        """Why a Delete workflow is refused (today's decision 3): a workflow a combination reads as a channel, or the
+        reference of an Align on, is kept, said with the reason; "" when it may go."""
+        g = self._g
+        for s in steps:
+            if s[0] != "delete_row" or not isinstance(s[1], dict):
+                continue
+            r = next((x for x in g.rows if x.id == s[1].get("row")), None)
+            v = self._view_of_wid(r.wid) if r is not None and r.wid is not None else None
+            why = self.channel_problem(v) if v is not None else ""
+            if why:
+                return _('Workflow "{name}" kept: {why}').format(name=v.name, why=why)
+        return ""
+
+    def _with_lone_sessions_gone(self, before, g, res):
+        """A stack deleted takes the Sessions only it drew (no Session left that no stack reads, as today's page): out of
+        the project with it, in the same step, said; their files stay on the disk."""
+        def drawn(q):
+            return {q.blocks[s].sid for r in q.rows for s, _c in r.nights if q.blocks[s].sid is not None}
+        lone = drawn(before) - drawn(g)
+        if not lone or not {n["sid"] for n in g.nights} - lone:      # the project keeps its last sessions
+            return g, res
+        q = gm.clone(g)
+        names = [n.get("name") or "" for n in q.nights if n["sid"] in lone]
+        q.nights = [n for n in q.nights if n["sid"] not in lone]
+        q.excluded = [x for x in q.excluded if x[0] not in lone]
+        said = ", ".join(f"“{n}”" for n in names)
+        toast = M("{m0} · {m1}", m0=res.toast, m1=M("with {sessions} · files kept", sessions=said)) if res.toast \
+            else M("with {sessions} · files kept", sessions=said)
+        return q, Result(True, toast=toast, focus=res.focus, acted=res.acted, created=res.created,
+                         dependants=res.dependants)
+
+    def _with_bare_variants_gone(self, before, g, res, view):
+        """A variant left with no block of its own by a deletion (its last own block deleted: it only copies its
+        mother from where it forks) goes with it, in the same step, said ("with its branch"), as on today's page."""
+        from ..graphcore.msg import M
+        from ..graphcore.rules import mother_same
+        ixb, ixa = gm.Index(before), gm.Index(g)
+        gone = {b for b in before.blocks if b not in g.blocks}
+        bare = [r for r in g.rows if r.fork and r.id in ixb.row and gone & set(ixb.row[r.id].blocks)
+                and mother_same(g, ixa, r.id) and not mother_same(before, ixb, r.id)]
+        if not bare:
+            return g, res
+        g2, r2 = apply_many(g, [("delete_row", {"row": r.id}) for r in bare],
+                            self.graph_view if view is None else view, _)
+        if not r2.ok:
+            return g, res
+        names = ", ".join(f"“{r.name}”" for r in bare)
+        toast = M("{m0} · {m1}", m0=res.toast, m1=M("with its branch {names}", names=names)) if res.toast else \
+            M("with its branch {names}", names=names)
+        return g2, Result(True, toast=toast, focus=res.focus, acted=res.acted, created=res.created,
+                          dependants=res.dependants)
+
     def _change(self, steps=(), raw=None, view=None, name=None) -> Result:
         """Operations, then ``raw(graph)`` (an edit the core has no operation for, on a copy), as one step."""
         self._absorb()
         before = self._g
-        base = self._without_layer_rows_of_switched(before, steps)
+        kept = self._row_kept(steps)
+        if kept:
+            return Result(False, reason=kept)
+        base = self._without_layer_rows(before, steps)
         g, res = (apply_many(base, list(steps), self.graph_view if view is None else view, _) if steps
-                  else (before, Result(True)))
+                  else (base, Result(True)))
         if not res.ok:
             return res
+        if any(s[0] == "remove_block" for s in steps):
+            g, res = self._with_bare_variants_gone(base, g, res, view)
+        if any(s[0] == "delete_row" for s in steps):
+            g, res = self._with_lone_sessions_gone(base, g, res)
         if base is not before:                            # the step's own graph is where Post follows from
             before = base
         if res.ok and g is not before:
@@ -825,7 +909,7 @@ class GraphEditing:
         came = [b for b in g.blocks if b not in old_g.blocks and g.blocks[b].kind != "post"]
         if came:
             self.graph_view["selected"] = came[0]
-        elif sel is not None and sel not in g.blocks and not any(r.id == sel for r in g.rows):
+        elif sel not in (None, "project") and sel not in g.blocks and not any(r.id == sel for r in g.rows):
             self.graph_view["selected"] = pred if pred in g.blocks else None
         if self.paths:
             self.current = next((i for i, v in enumerate(self.paths) if v.pid == self.p.current), 0)

@@ -343,8 +343,15 @@ def title_msg(p, b, ix=None):
         return "Calibration"
     if k == "combine":
         t = combo_type(blk)
+        def default_named(r):               # "S-H-O", "H-O 2"...: a name the combination was given, not the user
+            base = (r.name or "").strip()
+            head, _sp, tail = base.rpartition(" ")
+            return base in COMBO_LABEL.values() or (tail.isdigit() and head in COMBO_LABEL.values())
+        r = ix.row.get(ix.row_of.get(b))
+        if r is not None and r.blocks and r.blocks[0] == b and (r.name or "").strip() and not default_named(r):
+            return typed(r.name)            # a combination is a workflow: titled by its name ("S-H-O · Stars")
         same = [r.blocks[0] for r in p.rows if r.blocks and p.blocks[r.blocks[0]].kind == "combine"
-                and combo_type(p.blocks[r.blocks[0]]) == t]
+                and combo_type(p.blocks[r.blocks[0]]) == t and default_named(r)]
         n = same.index(b) + 1 if b in same else 1
         return COMBO_LABEL[t] if n == 1 else M("{label} {n}", label=COMBO_LABEL[t], n=n)
     if k == "combine_layers":

@@ -223,8 +223,6 @@ class Bridge(QObject):
         return self._after_history(self.doc.redo(), "redo", was)
 
     def _after_history(self, res, what="undo", was=None):
-        if was == PROJECT and self.doc.view.get("selected") is None:
-            self.doc.view["selected"] = PROJECT          # the Project block never goes: an Undo keeps it chosen
         if res.ok and not self._drawable(self.doc.redo if what == "undo" else self.doc.undo):
             res = Result(False, reason=FAILED)
         if res.ok:

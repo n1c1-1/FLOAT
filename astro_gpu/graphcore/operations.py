@@ -949,7 +949,8 @@ def op_merge_rows(q, src, dst):
 def op_duplicate_row(q, row):
     r = _row(q, row)
     drop_astro = bool(r.nights) and q.reference is not None
-    blocks = [_copy_block(q, b) for b in r.blocks if not (drop_astro and q.blocks[b].kind == "astrometry")]
+    # a copy keeps what each block holds (settings, method, engine settings, switch, review pause: today's Duplicate)
+    blocks = [_clone_block(q, b) for b in r.blocks if not (drop_astro and q.blocks[b].kind == "astrometry")]
     nights = []
     for s, c in r.nights:
         o = q.blocks[s]
@@ -957,8 +958,10 @@ def op_duplicate_row(q, row):
         if c is not None:
             q.blocks[nn[1]].settings = dict(q.blocks[c].settings)
             q.blocks[nn[1]].off = q.blocks[c].off
+            q.blocks[nn[1]].pause = q.blocks[c].pause
         nights.append(nn)
     nr = Row(new_id(q, "r"), free_name(q, name_of("{_name} copy", _name=r.name)), blocks, nights, list(r.fork) if r.fork else None)
+    nr.pauses = copy.deepcopy(r.pauses)                     # its review pauses (those the blocks do not hold)
     if r.align:
         nr.align = {**r.align, "params": dict(r.align.get("params") or {}), "from": r.align.get("from")}
     elif r.nights and not r.fork:

@@ -432,5 +432,7 @@
   "3 σ": "3 σ",
   "auto": "auto",
   "{_text}": "{_text}",
-  "{ref} · {bal}": "{ref} · {bal}"
+  "{ref} · {bal}": "{ref} · {bal}",
+  "with its branch {names}": "avec sa branche {names}",
+  "with {sessions} · files kept": "avec {sessions} · fichiers gardés"
 }

@@ -3033,7 +3033,8 @@ class _ProjectBase(QObject):
         with self._edit():
             self.remove_path(self.paths.index(p))
             for sid in alone:
-                self.remove_session(sid)
+                if any(s.id == sid for s in self.p.sessions):     # (the graph's Delete workflow may have taken it)
+                    self.remove_session(sid)
         return names
 
 
