@@ -5,11 +5,17 @@ Each run prints a digest of its final state: the same seed gives the same digest
 Also: apply never changes the graph it is given. Not part of pytest (the smoke is tests/graphcore/test_fuzz_smoke.py).
 Usage: python tools/fuzz/graph_fuzz.py [first_seed] [last_seed] [gestures] [start,start…]
 
-``--engine`` (decision B, INTEGRATION §3): after every gesture the graph's compiled definition must be one the engine
-accepts (graphcore.compile.engine_problems: Project2.validate, the graph rules, the stage chain, the joins' wiring).
-Until the core's rules are the engine's (step 3) this does not stop a run: every class of violation is collected with
-the first gesture sequence that shows it, shrunk, and printed at the end (``--json <file>`` writes them).
-Usage: python tools/fuzz/graph_fuzz.py --engine [first_seed] [last_seed] [gestures] [start,start…] [--json <file>]"""
+The engine's legality (decision B, INTEGRATION §3), on by default (``--no-engine``: off), both directions:
+- after every accepted gesture the graph's compiled definition is one the engine accepts, and the core greys each
+  block the engine leaves out with the engine's reason (graphcore.compile.engine_problems: the graph rules of every
+  workflow, Project2.validate, the stage chains, Keys.wiring_problem against the core's greyed blocks);
+- after every refused gesture the engine refuses the state the gesture would have made (operations.attempt: the same
+  operation without its refusal, compiled), unless the refusal is one of the core's own rules listed below
+  (CORE_ONLY: drawing rules, each with why the engine cannot say it), or the operation itself refused before making a
+  state (GESTURE: a gesture that names nothing that exists, or one the model cannot hold; listed too).
+``--survey``: violations are counted and printed at the end instead of stopping the run (``--json <file>`` writes
+the first gesture sequence of each class).
+Usage: python tools/fuzz/graph_fuzz.py [first_seed] [last_seed] [gestures] [start,start…] [--survey] [--json <file>]"""
 import copy
 import hashlib
 import os
@@ -30,6 +36,60 @@ from astro_gpu.graphcore.msg import say  # noqa: E402
 from fixtures import Doc, templates  # noqa: E402
 import invariants as inv  # noqa: E402
 from astro_gpu.graphcore.compile import engine_problems  # noqa: E402
+from astro_gpu.graphcore import operations as ops, rules as core_rules  # noqa: E402
+
+#: the core's own refusals of a state the engine would run (reverse invariant), each with why the engine cannot say it
+CORE_ONLY = {
+    core_rules.FRAME_BAND: "the frame band is drawn in fixed columns before the image band: a frame block (switched "
+                           "off: absent for the engine) after an image block, or outside a stack, has no column",
+    core_rules.FRAME_ORDER: "the same: two frame blocks of one kind, or out of order, would share a column",
+    core_rules.IMAGE_BAND: "the same: an image block (switched off: absent for the engine) drawn among the frame "
+                           "columns",
+    "the Background port needs a starless image": "Combine layers is a layer of Post, no workflow: its ports are "
+                                                  "the core's (the engine never sees them)",
+    "the Stars port needs the stars only": "the same",
+    "Preprocessing is folded: unfold it first": "a view rule: the folded band hides the block a variant would fork "
+                                                "from",
+    "no {lab} from a stretched image": "a combination works on linear images (stages/combine reads an Output's or a "
+                                       "Stars/background's linear image): a stretched image's workflow has no Output, "
+                                       "its starless is stretched; Project2.validate does not look at what an input "
+                                       "gives, the run would find nothing to read",
+}
+#: refusals an operation gives with the engine's own verdict, before any state (project2.join_problem on the compiled
+#: graph: the reverse invariant holds by construction)
+ENGINE_SAID = {"a workflow cannot read itself", "no stack", "{src} already reads {target}: it would make a loop"}
+#: the operations' own refusals: no state is made (an argument naming nothing that exists, or a shape the model has no
+#: form for); a refusal of this kind that is not listed fails the run
+GESTURE = {
+    # names nothing that exists, or the wrong kind of thing
+    "block not found", "row not found", "wire not found", "session not found", "unknown operation: {_name}",
+    "unknown block", "unknown place", "unknown setting", "unknown type", "unknown port", "unknown kind of files",
+    "unknown destination", "unknown mode", "the place is gone", "session not found in this stack",
+    "{lab} does not fit here", "files go on a Session", "these lights are not in the session",
+    "these files are not in the box", "files absent from the session", "no file", "nothing to split",
+    "no output {port}", "no input {port}", "lights first", "a name cannot be empty", "“{_name}” already exists",
+    "an Image takes no files here", "lights go on a session, not on Common",
+    "the composition takes a Combination or Combine layers", "a port takes a new row: Session or Image",
+    "this wire already exists", "already in Post", "this wire is already taken", "the port is already wired",
+    "already alone on its row", "both sessions must be in the same stack", "two different stacks of lights are needed",
+    "no other row has a {lab}", "this Stars/background already feeds a block", "already on its own grid",
+    "no Align on in this row",
+    # the model's shapes: a row starts with its head, a variant forks after a block of its row, a night's
+    # Calibration is its night's, Post is one, a source stays at its row's head
+    "nothing is inserted before the head of the row", "a variant starts after the Registration",
+    "each session already has its Calibration", "each session has its Calibration: switch it off (D)",
+    "each session keeps its Calibration", "only a Session joins a stack", "a session joins a stack of lights",
+    "{lab} is not inserted in a row", "a row starts with a Session or an Image", "a source stays at the head of its row",
+    "Post is fixed", "unknown place for this block", "variants start from this block: delete them first",
+    "the reference is a stack of lights", "an Align on follows a Stacking or an Image of the row",
+    "the block is not in the target's chain", "add a Session or an Image first", "{lab}: no place",
+    # Commun is the graph's own (the compile flattens it): a setting specific to each stack has no common value
+    "specific to each stack: a frame chosen in its lights",
+    # wires: a loop is not a graph; the engine's joins read an image or a Stars/background
+    "this wire would close a loop",
+    # a switch-off of a block that is not switched (the engine's off_problem says the same for its own nodes)
+    "— {takes} → {gives}, essential",
+}
 
 PATHS = [f"D:/night{n}/IMG_{i:04d}.fit" for n in range(3) for i in range(8)]
 NAMES = ["M31", "Ha", "OIII", "", "  ", "Session 1", "SII", "RGB", "M31 2"]
@@ -85,6 +145,10 @@ def gen(rng, doc):
         lambda: ("op", "add_variant", {"block": pick(rng, blocks)}),
         lambda: ("op", "take_alternative", {"wire": pick(rng, wires)}),
         lambda: ("op", "set_reference", {"row": pick(rng, rows)}),
+        lambda: _align(rng, p, rows),
+        lambda: ("op", "own_grid", {"row": pick(rng, rows)}),
+        lambda: ("op", "set_align_off", {"row": pick(rng, rows)}),
+        lambda: ("op", "set_calibrate_together", {"on": rng.random() < 0.5}),
         lambda: ("op", "set_combination_type", {"block": pick(rng, joins or blocks), "type": pick(rng, COMBO_PORTS)}),
         lambda: _wire(rng, p),
         lambda: ("op", "unwire", {"wire": pick(rng, wires)}),
@@ -131,6 +195,18 @@ def gen(rng, doc):
         lambda: ("save",),
     ])()
     return g if g[0] != "op" or len(g) == 4 else g + (None,)
+
+
+def _align(rng, p, rows):
+    """Align a row on another row or tap, from one of its blocks (or its Stacking/Image), or with its target to
+    choose."""
+    ref = pick(rng, rows + [t.id for t in p.taps] + [None])
+    blocks = []
+    if ref is not None:
+        ix = Index(p)
+        blocks = ix.effective(ref) if ref in ix.row else []
+    return ("op", "set_align", {"row": pick(rng, rows), "ref": ref,
+                                "block": pick(rng, blocks) if blocks and rng.random() < 0.5 else None}, None)
 
 
 def _wire(rng, p):
@@ -193,6 +269,37 @@ def _split_by(rng, p, sess):
 
 
 # ---------------------------------------------------------------------------------------------------- running
+def template(m):
+    return m if isinstance(m, str) else m[0] if m else ""
+
+
+REVERSE = {}    # --survey: {(where, template): [count, first example]}
+ENGINE_ON = [True]
+SURVEY = [False]
+
+
+def reverse_check(prev, view, steps, res):
+    """A refused gesture: the engine refuses the state it would have made, or the refusal is listed (CORE_ONLY,
+    GESTURE). -> a problem text or ""."""
+    if len(steps) == 1 and steps[0][0] in ops.VIEW_OPS:
+        return ""
+    state, where, why = ops.attempt(prev, steps, view)
+    t = template(why)
+    if where == "op":
+        bad = "" if t in GESTURE or t in ENGINE_SAID else f"operation refusal not listed: {t!r}"
+    elif where == "fold":
+        bad = "" if t in CORE_ONLY else f"fold refusal not listed: {t!r}"
+    elif where == "ok":
+        bad = f"apply refused ({res.reason_text()}) but the gesture is accepted when tried again"
+    else:
+        eng = engine_problems(state, keys=False)
+        bad = "" if eng or t in CORE_ONLY else f"core refuses, the engine accepts: {say(why)!r}"
+    if bad and SURVEY[0]:
+        REVERSE.setdefault((where, t if not bad.startswith("core") else say(why)[:90]), [0, steps])[0] += 1
+        return ""
+    return bad
+
+
 def run_one(doc, g, before_d):
     """Execute gesture g on doc (may replace doc on save/load); verify; return (doc, drawing)."""
     p0 = doc._json
@@ -214,12 +321,15 @@ def run_one(doc, g, before_d):
         res, op, place = None, None, None
     else:
         if g[0] == "many":
-            res = doc.apply_many(g[1])
+            steps = [tuple(x) for x in g[1]]
+            res = doc.apply_many(steps)
             op, place = None, None
         else:
             _k, op, args, place = g
+            steps = [(op, args)]
             if place is not None:                       # judged on the current state (replays, shrinking)
                 place = judge(doc.project, doc.view, copy.copy(place))
+            view0 = dict(doc.view)
             res = doc.apply(op, **args)
             if place is not None and place.lit != res.ok:
                 raise Fail(f"place lit={place.lit} ({place.reason_text()}) but apply ok={res.ok} ({res.reason_text()})")
@@ -228,6 +338,10 @@ def run_one(doc, g, before_d):
         if not res.ok:
             if doc._json != p0 or len(doc._undo) != nu or len(doc._redo) != nr:
                 raise Fail(f"refusal changed something: {res.reason_text()}")
+            if ENGINE_ON[0]:
+                bad = reverse_check(prev, view0 if g[0] != "many" else doc.view, steps, res)
+                if bad:
+                    raise Fail(f"reverse: {bad}")
         elif doc._json != p0:
             if len(doc._undo) != nu + 1 or doc._redo:
                 raise Fail("accepted change did not push exactly one step")
@@ -249,6 +363,10 @@ def run_one(doc, g, before_d):
     if res is not None and res.ok and op:
         probs += inv.i4(before_d, d, op, res.acted)
         probs += inv.i5(d, res.focus, place, doc.project)
+    if ENGINE_ON[0] and res is not None and res.ok:
+        eng = [] if SURVEY[0] else engine_problems(doc.project)      # --survey: collected by fuzz()
+        if eng:
+            probs.append("engine: " + "; ".join(f"[{c}] {d}" for c, d in eng[:3]))
     if probs:
         raise Fail("; ".join(probs[:5]))
     return doc, d
@@ -383,6 +501,8 @@ def shrink_engine(key, gestures, cls, budget=45.0):
 
 
 def fuzz(seed, key, n, engine=False):
+    if engine and not SURVEY[0]:
+        engine = False                              # the invariant stops the run (run_one): nothing to collect
     rng = random.Random(f"{seed}:{key}")
     doc = start_doc(key)
     d = layout(doc.project, doc.view)
@@ -411,10 +531,18 @@ def fuzz(seed, key, n, engine=False):
 
 
 def main():
+    try:                                            # a long run never takes the machine from the others
+        import psutil
+        psutil.Process().nice(psutil.BELOW_NORMAL_PRIORITY_CLASS if os.name == "nt" else 10)
+    except Exception:  # noqa: BLE001
+        pass
     argv = list(sys.argv[1:])
-    engine = "--engine" in argv
+    ENGINE_ON[0] = "--no-engine" not in argv
+    SURVEY[0] = "--survey" in argv
+    engine = ENGINE_ON[0]
     out = argv[argv.index("--json") + 1] if "--json" in argv else None
-    argv = [x for i, x in enumerate(argv) if x != "--engine" and x != "--json" and (i == 0 or argv[i - 1] != "--json")]
+    argv = [x for i, x in enumerate(argv) if x not in ("--engine", "--no-engine", "--survey", "--json")
+            and (i == 0 or argv[i - 1] != "--json")]
     a = int(argv[0]) if len(argv) > 0 else 1
     b = int(argv[1]) if len(argv) > 1 else 5
     n = int(argv[2]) if len(argv) > 2 else 2000
@@ -431,8 +559,10 @@ def main():
             bad += not ok
             cr = f"crossings mean {sum(STATS) / max(1, len(STATS)):.1f} max {max(STATS or [0])}"
             print(f"seed {seed} {key}: {'ok ' + ok if ok else 'FAILED'} {cr} ({time.time() - t0:.0f} s)", flush=True)
-    print(f"{total - bad}/{total} runs clean, {n} gestures each")
-    if engine:
+    print(f"{total - bad}/{total} runs clean, {n} gestures each" + (" (engine invariants on)" if engine else ""))
+    for (where, t), (cnt, steps) in sorted(REVERSE.items(), key=lambda kv: -kv[1][0]):
+        print(f"REVERSE [{where}] x{cnt}: {t}   e.g. {steps}"[:400])
+    if engine and SURVEY[0]:
         found = []
         if out:
             import json
