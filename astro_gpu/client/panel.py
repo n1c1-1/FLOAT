@@ -1379,12 +1379,13 @@ class Panel(QWidget):
             self.outputs(node)
         if k.partition("~")[0] == "fond":
             self.survey_row(p)
-        if k.partition("~")[0] in ("fond", "debruitage", "etoiles", "deconv", "synth"):     # Gradient 2 too (round 3)
+        draft = self._gradient_draft(p)                  # Inspect's Gradient: tuned as a draft (gradientedit.py)
+        if draft is not None:
+            self.bv.addWidget(self.group_title(_("Method")))
+            self.bv.addWidget(draft.controls(p))
+        elif k.partition("~")[0] in ("fond", "debruitage", "etoiles", "deconv", "synth"):     # Gradient 2 too (round 3)
             self.methods(p, k)
-        if k == "fond" and self.tune and getattr(self, "grad_editor", None) is not None:
-            self.bv.addWidget(self.group_title(_("Samples · exclusions")))
-            self.bv.addWidget(self.grad_editor.controls(p))
-        elif k == "fond" and not self.tune:            # issue #15: the samples are edited on the image, in Inspect
+        if k == "fond" and not self.tune:            # issue #15: the samples are edited on the image, in Inspect
             b = QPushButton(_("Edit samples…"))
             b.setToolTip(_("Opens the block in Inspect: place, move or remove the samples and the excluded areas on "
                            "the image"))
@@ -1392,7 +1393,7 @@ class Panel(QWidget):
             self.bv.addWidget(b, 0, Qt.AlignLeft)
             self.bv.addSpacing(6)
         sk = node.ref                                  # a session's block: that session's settings (issue #43)
-        groups = self._groups(p, sk)
+        groups = draft.groups(p) if draft is not None else self._groups(p, sk)   # the draft's method's settings
         units = [r.get("unit") for _t, rs in groups for r in rs]          # hidden rows too: the column stays put
         if k == "selection":
             units += [_("% of the best"), "px", _("× median")]
@@ -1978,7 +1979,22 @@ class Panel(QWidget):
             ex.clicked.connect(lambda: self._expert(not self.expert))
             self.bv.addWidget(ex, 0, Qt.AlignLeft)
 
+    def _gradient_draft(self, p):
+        """Inspect's Gradient block with a result on screen: its editor, which keeps its changes as a draft."""
+        ed = getattr(self, "grad_editor", None)
+        if not self.tune or ed is None or self.node is None or self.node.key != "fond":
+            return None
+        return ed if ed.drafting(p) else None
+
     def add_row(self, r):
+        p = self.s.path if self.node is not None and self.s.path in self.node.paths else None
+        draft = self._gradient_draft(p) if p is not None and r.get("stage") == "gradient" else None
+        if draft is not None:                      # Inspect's Gradient: the row shows and edits its draft
+            row = CompactRow(draft.draft_row(r), self._unit_w)
+            row.changed.connect(draft.draft_setting)
+            row.focused.connect(self._focus)
+            self.bv.addWidget(row)
+            return
         row = CompactRow(r, self._unit_w)
         row.changed.connect(self.set_setting)
         row.focused.connect(self._focus)

@@ -2504,6 +2504,13 @@ class ImageView(QWidget):
         v.setSpacing(0)
         # the tools in a row that scrolls sideways in a narrow window (they would widen it otherwise)
         v.addWidget(SideScroll(self._toolbar(post, export, copy, compare)))
+        # the tools of an editor on the image (Inspect's Gradient: its draft, samples, excluded areas), above the image
+        self.tool_row = QWidget()
+        trv = QVBoxLayout(self.tool_row)
+        trv.setContentsMargins(0, 0, 0, 0)
+        trv.setSpacing(0)
+        self.tool_row.hide()
+        v.addWidget(self.tool_row)
         self.align_bar = QFrame()                  # one line: how the compared image was put on this one's grid
         self.align_bar.setObjectName("ivalign")
         ab = QHBoxLayout(self.align_bar)
@@ -3519,6 +3526,18 @@ class ImageView(QWidget):
         for w in widgets:
             lay.addWidget(w)
         self.tool_box.setVisible(bool(widgets))
+
+    def set_tool_row(self, widget):
+        """The bar of an editor on the image, on a row above it (the tools that act on the image sit next to it, as in
+        the reference photo editors); None takes it away."""
+        lay = self.tool_row.layout()
+        while lay.count():
+            w = lay.takeAt(0).widget()
+            if w is not None:
+                w.setParent(None)
+        if widget is not None:
+            lay.addWidget(widget)
+        self.tool_row.setVisible(widget is not None)
 
     #: the annotations the overlays draw, for Export… ((sky, show), or None): a callable the caller sets
     annotation_source = None
