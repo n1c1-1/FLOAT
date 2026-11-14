@@ -652,8 +652,14 @@ class TuneView(QWidget):
         mv = QVBoxLayout(mid)
         mv.setContentsMargins(10, 8, 10, 6)
         mv.setSpacing(6)
-        self.head = QHBoxLayout()
-        mv.addLayout(self.head)
+        # the header above the image keeps its height while it is built again after a change in the panel (its widgets
+        # are deleted, the new ones shown at the next turn of the event loop: the image grew, then shrank back)
+        self.head_box = QWidget()
+        self.head = QHBoxLayout(self.head_box)
+        self.head.setContentsMargins(0, 0, 0, 0)
+        self.head_box.setMinimumHeight(self._head_height())
+        self.head_box.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)     # never given the image's room
+        mv.addWidget(self.head_box)
         self.center = QVBoxLayout()
         self.center.setSpacing(6)
         mv.addLayout(self.center, 1)
@@ -699,6 +705,26 @@ class TuneView(QWidget):
         esc = QShortcut(QKeySequence("Escape"), self)
         esc.setContext(Qt.WidgetWithChildrenShortcut)
         esc.activated.connect(self.back.emit)
+
+    def _head_height(self) -> int:
+        """The tallest thing the header holds (the block's name, the tabs, the Previous settings tag, a button), made
+        in the header itself so that the window's style sizes it: its height is kept whatever it shows, so the image
+        under it never moves."""
+        made = [label("Ag", "h1"), QTabBar(), QLabel("Ag"), QPushButton("Ag")]
+        made[1].setDrawBase(False)                         # as the header's tabs (refresh)
+        made[1].setExpanding(False)
+        made[1].setUsesScrollButtons(False)
+        made[1].addTab("Ag")
+        made[1].addTab("Ag")
+        made[2].setStyleSheet(f"color: {WARN}; border: 1px solid {WARN}; border-radius: 9px; padding: 1px 8px;")
+        h = 0
+        for w in made:
+            w.setParent(self.head_box)
+            w.hide()
+            w.ensurePolished()
+            h = max(h, w.sizeHint().height())
+            w.deleteLater()
+        return h
 
     # ------------------------------------------------------------ selection (what the strip does)
     def set_layout(self, right: str, strip_shown: bool, compact: bool):
@@ -814,6 +840,9 @@ class TuneView(QWidget):
         node = g.node_of(p, s.sel_step)
         self.panel.refresh(node)
         self._remember()
+        if not getattr(self, "_head_sized", False) and self.isVisible():   # measured once in the window's style
+            self._head_sized = True
+            self.head_box.setMinimumHeight(self._head_height())
         clear(self.head)
         self.grad_editor.detach()
         # the same picture as shown (a setting changed, the block Outdated with its previous result): the viewer stays,
