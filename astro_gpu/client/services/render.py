@@ -296,6 +296,14 @@ class LayerSource(Provider):
             self._cv = None
         return changed
 
+    def release(self) -> None:
+        """Leaving Post: what is loaded again from the files or the image sources at the next render goes (the image
+        layers' engines, the stars' and masks' planes, the grids); the sources and the folders stay."""
+        self._img.clear()
+        self._masks.clear()
+        self._grids.clear()
+        self._cv = None
+
     # ------------------------------------------------------------ the image layers
     @staticmethod
     def _is_image(sid) -> bool:
@@ -889,6 +897,7 @@ class RenderWorker(QThread):
         self._running: tuple[str, int] | None = None        # (lane, seq) being computed
         self._stopping = False
         self._refresh = False
+        self._release = False
         self._cancel_export = False
         self.renderer: Renderer | None = None
         self.device = ""
@@ -906,6 +915,7 @@ class RenderWorker(QThread):
             self._seq += 1
             req.seq = self._seq
             self._slots[lane] = req
+            self._release = False                        # (coming back to Post: nothing to release behind the request)
             self._cond.notify()
         return req.seq
 
@@ -917,6 +927,13 @@ class RenderWorker(QThread):
         """The results on disk may have changed (a run ended): look again before the next request."""
         with self._cond:
             self._refresh = True
+
+    def release(self):
+        """Leaving Post: the engines, the caches and the freed pages go, in the worker's thread, after the request being
+        computed (a request that comes later opens what it needs again)."""
+        with self._cond:
+            self._release = True
+            self._cond.notify()
 
     def set_image(self, key: str, source) -> None:
         """The source of an image layer (an array, a file, a function returning one): given to the worker's source
@@ -1060,10 +1077,14 @@ class RenderWorker(QThread):
 
     def _next(self):
         with self._cond:
-            while not self._stopping and not self._slots and self._export is None:
+            while not self._stopping and not self._slots and self._export is None and not self._release:
                 self._cond.wait()
             if self._stopping:
                 return None
+            if self._release and not self._slots and self._export is None:
+                self._release = False
+                self._running = ("release", 0)
+                return "release", None
             if self._export is not None:
                 job, self._export = self._export, None
                 self._running = ("export", 0)
@@ -1102,7 +1123,9 @@ class RenderWorker(QThread):
                     if self.renderer.source.refresh():
                         self.renderer.composer.forget()
                 self._take_images()
-                if lane == "export":
+                if lane == "release":
+                    self._release_now()
+                elif lane == "export":
                     self._run_export(work)
                 else:
                     if work.kind in ("half", "inspect"):
@@ -1125,6 +1148,19 @@ class RenderWorker(QThread):
             finally:
                 with self._cond:
                     self._running = None
+
+    def _release_now(self):
+        from ...core import devices
+        r = self.renderer
+        if r is None:
+            return
+        try:
+            r.composer.release()
+            r.source.release()
+            r.source.service.evict("all")             # (gc and the device's cache)
+            devices.release_memory()
+        except Exception:  # noqa: BLE001 - memory handed back is a courtesy: never a failure shown
+            pass
 
     def _take_images(self):
         """The image sources and resolver the GUI gave since the last request, into the source (worker thread)."""

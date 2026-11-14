@@ -3808,6 +3808,11 @@ class PostPage3(QWidget):
             self.view.worker.refresh()
             self.view.refresh()
 
+    def release_memory(self):
+        """Leaving Post: the render engines and the caches (layers' images, steps, masks' planes) go, with the freed
+        pages; the next render, on coming back, opens them again."""
+        self.view.worker.release()
+
     def export(self, parent=None):
         """File > Export image…"""
         if self.pages.currentIndex() == 1:

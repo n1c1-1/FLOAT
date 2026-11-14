@@ -1119,16 +1119,31 @@ def thumb_of(a: np.ndarray) -> np.ndarray:
     return cv2.resize(u, THUMB, interpolation=cv2.INTER_AREA)
 
 
+def default_cache_bytes() -> int:
+    """What Post's caches (the layers' images, the image after each filter, the masks' planes) may hold together: 8 % of
+    the machine's memory, 0.3 to 1.5 GB. Measured on a laptop (CPU, 3 Mpx synthetic project, 60 actions), the caches were
+    two LRUs of 1.5 GB each and filled over the first 30 actions: +1.2 GB (the second one alone held 1.4 GB, 39 images
+    of 36 MB), for no gain a user feels: a slider reuses the steps below the filter it moves, a dozen images."""
+    try:
+        import psutil
+        total = psutil.virtual_memory().total
+    except Exception:  # noqa: BLE001 - no figure: the smallest cap that keeps Post quick
+        return 600_000_000
+    return int(min(1_500_000_000, max(300_000_000, 0.08 * total)))
+
+
 class Composer:
     """The composition of the layers. One per render worker: it owns the caches (the workflow layers' images by
-    content, the brushes' rasters), so it is used from one thread only."""
+    content, the brushes' rasters), so it is used from one thread only. ``cache_bytes``: all the caches together
+    (``default_cache_bytes``): 40 % the layers' images, 45 % the steps, 15 % the masks' planes."""
 
-    def __init__(self, provider: Provider, cache_bytes: int = 1_500_000_000):
+    def __init__(self, provider: Provider, cache_bytes: int | None = None):
+        cache_bytes = default_cache_bytes() if cache_bytes is None else cache_bytes
         self.provider = provider
-        self.images = ByteLRU(cache_bytes)
-        self.steps = ByteLRU(cache_bytes)                   # the image after each filter, by all that made it (#87)
+        self.images = ByteLRU(int(cache_bytes * .40))
+        self.steps = ByteLRU(int(cache_bytes * .45))        # the image after each filter, by all that made it (#87)
         self._brush: dict = {}                              # (part id, level) -> (n strokes, last stroke, raster)
-        self.parts = ByteLRU(min(cache_bytes, 400_000_000))  # a mask part's plane, by its settings and what it reads
+        self.parts = ByteLRU(min(int(cache_bytes * .15), 400_000_000))  # a mask part's plane, by its settings and what it reads
         self.part_draws = 0                                 # how many mask part planes were computed (not cached)
         self._canvas: tuple | None = None                   # (pids, canvas)
         self._drawn = 0
@@ -1153,6 +1168,10 @@ class Composer:
         self.parts.clear()
         self._brush.clear()
         self._canvas = None
+
+    def release(self):
+        """Leaving Post: every cache goes (all of it is rebuilt by the next render)."""
+        self.forget()
 
     # ------------------------------------------------------------ one workflow layer
     def _key(self, lay: dict, level: int, abox, canvas: Canvas, draft: bool = False) -> tuple:
