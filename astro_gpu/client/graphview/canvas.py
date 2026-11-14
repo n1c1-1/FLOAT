@@ -583,8 +583,12 @@ class GraphCanvas(QGraphicsView):
         sc.clear()
         self.tip = TipItem()
         drawing = bridge.drawing()
-        for label, box in drawing.bands:
-            sc.addItem(BandItem(QRectF(box.x, box.y, box.w, box.h), _(label)))
+        bands = [BandItem(QRectF(box.x, box.y, box.w, box.h), _(label)) for label, box in drawing.bands]
+        self.title_room = self._title_room(drawing, bands)
+        for it in bands:                                 # grown upwards: its title never on a stack's name or a block
+            it.rect = it.rect.adjusted(0, -self.title_room, 0, 0)
+            sc.addItem(it)
+        self.bands = bands
         for path in drawing.wires:
             sel = path.style in ("port", "port_inactive") and path.id.startswith("w")
             it = WireItem(path.id, path.points, path.style, path.colour, sel)
@@ -621,6 +625,7 @@ class GraphCanvas(QGraphicsView):
         pb = drawing.extras.get("project")
         title, line, state, tip = doc.project_block()
         pr = QRectF(pb.x, pb.y, pb.w, pb.h) if pb is not None else QRectF(0, 0, 140, 34)
+        pr.translate(0, -self.title_room)                # above the bands, grown for their titles
         self.project_item = ProjectItem(pr, title, line, state, bridge.selected == PROJECT, tip)
         sc.addItem(self.project_item)
         rect = sc.itemsBoundingRect()                    # the drawing's own box (blocks, bands, wires, captions)...
@@ -669,6 +674,20 @@ class GraphCanvas(QGraphicsView):
         for w in (self.veil, self.spinner, self.wait):
             if w.isVisible():
                 w.raise_()
+
+    @staticmethod
+    def _title_room(drawing, bands) -> float:
+        """How far the bands grow upwards so that each band's title (one line, or two when the band is narrow) ends
+        above the first stack's name and the first blocks under it, whatever the number of nights."""
+        tops = [(x, y - 15) for _r, _t, x, y in drawing.captions]
+        tops += [(bx.x, bx.y) for bx in list(drawing.boxes.values()) + list(drawing.cards.values())]
+        need = 0.0
+        for it in bands:
+            t = it.title_rect()
+            below = [y for x, y in tops if y >= it.rect.top() and it.rect.left() <= x < it.rect.right()]
+            if below:
+                need = max(need, t.bottom() + 3 - min(below))
+        return float(int(need + 0.999)) if need > 0 else 0.0
 
     def update_states(self):
         """The run states changed: the items are given them again."""

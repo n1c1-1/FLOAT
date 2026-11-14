@@ -13,7 +13,7 @@ control (Blocks | Folded | Table, and back), a click on a wire (then sometimes D
 Session's targets (then sometimes a link of the toast), made in a folder under --out.
 
 Checks after every gesture:
-  a  no two block items (blocks, stack cards) overlap
+  a  no two block items (blocks, stack cards) overlap; no band title over a stack's name, a block or the Project block
   b  no painted wire passes behind a block other than its own two ends (their cards when folded)
   c  dropped = shown: what the gesture made (bridge.last_shown) is drawn, and fully on screen
   d  undo exact: after an accepted gesture Ctrl+Z gives back exactly the graph before (json_of), Ctrl+Y the one after
@@ -158,6 +158,22 @@ def overlaps(rects):
                 break
             if inter(A, B):
                 return a, b
+    return None
+
+
+def texts_overlap(cv):
+    """A band's title over a stack's name, a block or the Project block, as painted (the scene's items), or None."""
+    from astro_gpu.client.graphview.items import CaptionItem
+    sc = cv.scene()
+    others = [("caption " + it.text, it.text_rect()) for it in sc.items() if isinstance(it, CaptionItem)]
+    others += [(f"block {i}", QRectF(it.pos().x(), it.pos().y(), it.w, it.h)) for i, it in cv.blocks.items()]
+    if cv.project_item is not None:
+        others.append(("Project block", cv.project_item.rect))
+    for band in getattr(cv, "bands", []):
+        t = band.title_rect()
+        for name, r in others:
+            if t.intersects(r):
+                return f"the title {band.text!r} at {t.getRect()} / {name} at {r.getRect()}"
     return None
 
 
@@ -772,6 +788,9 @@ class Run:
         ov = overlaps(rects)
         if ov:
             raise Failure("a", f"items overlap{when}: {ov[0]} {rects[ov[0]]} / {ov[1]} {rects[ov[1]]}")
+        hit = texts_overlap(cv)
+        if hit:
+            raise Failure("a", f"texts overlap{when}: {hit}")
         g = self.graph
         for wid, it in cv.wires.items():
             src, dst = it.ends

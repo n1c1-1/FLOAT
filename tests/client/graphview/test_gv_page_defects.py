@@ -42,3 +42,30 @@ def test_the_bridge_takes_an_operations_own_name(world):
     r = W.b.act("rename_row", row=W.graph.rows[0].id, name="Deep")
     W.settle()
     assert r.ok and W.graph.rows[0].name == "Deep"
+
+
+# ---------------------------------------------------------------------------------------------- texts that overlap
+def _titles_clear(cv):
+    """No band title over a stack's name, a block or the Project block, as painted."""
+    from PySide6.QtCore import QRectF
+
+    from astro_gpu.client.graphview.items import CaptionItem
+    others = [it.text_rect() for it in cv.scene().items() if isinstance(it, CaptionItem)]
+    others += [QRectF(it.pos().x(), it.pos().y(), it.w, it.h) for it in cv.blocks.values()]
+    others.append(cv.project_item.rect)
+    return [(b.text, r.getRect()) for b in cv.bands for r in others if b.title_rect().intersects(r)]
+
+
+@pytest.mark.parametrize("nights", [1, 2, 3])
+def test_a_band_title_never_covers_the_stack_name_and_its_badge(world, nights):
+    W = world(workflows=(), nights=nights)
+    W.template("colour_full")
+    cv = W.page.canvas
+    for zoom in (0.5, 1.0, 2.0):
+        cv.zoom_to(zoom)
+        W.settle(2)
+        assert not _titles_clear(cv), zoom
+    assert any(x.d["kind"] != "card" for x in cv.blocks.values())
+    W.page.set_display("folded")
+    W.settle()
+    assert not _titles_clear(cv)

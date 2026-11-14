@@ -603,18 +603,29 @@ class BandItem(QGraphicsItem):
     def boundingRect(self):                                           # noqa: N802
         return self.rect
 
+    def _title(self, rect=None):
+        f = _font(8.5, True)
+        r = (rect or self.rect).adjusted(12, 2, -8, 0)
+        fm = QFontMetricsF(f)
+        words = [w if fm.horizontalAdvance(w) <= r.width() else fm.elidedText(w, Qt.ElideRight, r.width())
+                 for w in self.text.upper().split()]
+        return f, r, " ".join(words)
+
+    def title_rect(self, rect=None) -> QRectF:
+        """Where its title is written (on one line or two, as the band's width wraps it), in scene coordinates."""
+        f, r, text = self._title(rect)
+        used = QFontMetricsF(f).boundingRect(QRectF(r.x(), r.y(), r.width(), 1e4),
+                                             int(Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap), text)
+        return QRectF(r.x(), r.y(), used.width(), used.height())
+
     def paint(self, p, opt, widget=None):
         p.setPen(Qt.NoPen)
         p.setBrush(QColor("#191c22"))
         p.drawRoundedRect(self.rect, 10, 10)
-        f = _font(8.5, True)                              # high in the band: the first row's caption sits right under
+        f, r, text = self._title()                        # high in the band: the first row's caption sits right under
         p.setFont(f)
         p.setPen(QColor("#6b7280"))
-        r = self.rect.adjusted(12, 2, -8, 0)
-        fm = QFontMetricsF(f)
-        words = [w if fm.horizontalAdvance(w) <= r.width() else fm.elidedText(w, Qt.ElideRight, r.width())
-                 for w in self.text.upper().split()]
-        p.drawText(r, Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap, " ".join(words))
+        p.drawText(r, Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap, text)
 
 
 class CaptionItem(QGraphicsItem):
@@ -628,6 +639,14 @@ class CaptionItem(QGraphicsItem):
 
     def boundingRect(self):                                           # noqa: N802
         return QRectF(0, -16, 260, 20)
+
+    def text_rect(self) -> QRectF:
+        """Where its words and badge are written, in scene coordinates."""
+        f = _font(self.size)
+        room = 258 - (badge_width(self.badge) + 6 if self.badge else 0)
+        w = QFontMetricsF(f).horizontalAdvance(elide(self.text, f, room)) + (
+            badge_width(self.badge) + 6 if self.badge else 0)
+        return QRectF(self.pos().x(), self.pos().y() - 15, w, 17)
 
     def paint(self, p, opt, widget=None):
         p.setFont(_font(self.size))
