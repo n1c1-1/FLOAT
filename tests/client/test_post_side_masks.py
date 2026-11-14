@@ -270,3 +270,27 @@ def test_each_version_has_its_own_side_masks(project):
     now = {v["id"]: next(x for x in v["layers"] if x.get("part") == "combined").get("side_masks") for v in
            m.p.post["versions"]}
     assert list(now[first]) == ["stars"] and list(now[m.post_version()["id"]]) == ["starless"]
+
+
+def test_adding_a_mask_part_computes_only_that_part_and_the_pixels_are_the_same():
+    """Each part's plane is kept by its settings and the image it reads: the n-th add draws one plane, not n."""
+    g = group(mask=pe.new_mask())
+    kinds = ["color", "luminance", "gradient", "color"]
+    for i, k in enumerate(kinds):
+        p = pe.new_part(k)
+        if k == "color":
+            p["hue"] = 40.0 * i
+        g["mask"]["parts"].append(p)
+    comp = Composer(Images(parts()))
+    drawn = []
+    for n in range(1, len(kinds) + 1):
+        lay = copy.deepcopy(g)
+        lay["mask"]["parts"] = lay["mask"]["parts"][:n]
+        layers = pe.normalize([lay])
+        before = comp.part_draws
+        got = comp.compose(layers, 0, want=[layers[0]["id"]])
+        drawn.append(comp.part_draws - before)
+        fresh = Composer(Images(parts())).compose(copy.deepcopy(layers), 0, want=[layers[0]["id"]])
+        assert np.array_equal(got.masks[layers[0]["id"]], fresh.masks[layers[0]["id"]])
+        assert np.array_equal(got.rgb, fresh.rgb)
+    assert drawn == [1, 1, 1, 1]

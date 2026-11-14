@@ -1128,6 +1128,8 @@ class Composer:
         self.images = ByteLRU(cache_bytes)
         self.steps = ByteLRU(cache_bytes)                   # the image after each filter, by all that made it (#87)
         self._brush: dict = {}                              # (part id, level) -> (n strokes, last stroke, raster)
+        self.parts = ByteLRU(min(cache_bytes, 400_000_000))  # a mask part's plane, by its settings and what it reads
+        self.part_draws = 0                                 # how many mask part planes were computed (not cached)
         self._canvas: tuple | None = None                   # (pids, canvas)
         self._drawn = 0
 
@@ -1148,6 +1150,7 @@ class Composer:
         """Drop every cached image (the results changed on disk, or an Undo)."""
         self.images.clear()
         self.steps.clear()
+        self.parts.clear()
         self._brush.clear()
         self._canvas = None
 
@@ -1213,7 +1216,29 @@ class Composer:
         return a
 
     # ------------------------------------------------------------ masks
-    def part_raster(self, part, level, abox, below, canvas: Canvas, ctx: Ctx) -> np.ndarray:
+    def part_raster(self, part, level, abox, below, canvas: Canvas, ctx: Ctx, seen=None) -> np.ndarray:
+        """A mask part's plane. Kept by its settings (not its id or its operation, which only combine it), the level,
+        the box and, for a part that reads the image (Luminance, Color range), the image's content: adding a part to
+        a mask computes that part only. The plane is shared: never modified by the caller. ``seen``: the digest of
+        ``below`` when the caller already made it."""
+        if part["src"] not in ("luminance", "color", "gradient"):
+            return self._part_plane(part, level, abox, below, canvas, ctx)
+        reads = part["src"] != "gradient"
+        if reads:
+            if seen is None:
+                seen = {}
+            if "d" not in seen:
+                seen["d"] = hashlib.blake2b(np.ascontiguousarray(below).data, digest_size=16).digest()
+        key = (tuple(sorted((k, v) for k, v in part.items() if k not in ("id", "op"))), level, abox, canvas.W,
+               canvas.H, seen["d"] if reads else None)
+        r = self.parts.get(key)
+        if r is None:
+            r = self._part_plane(part, level, abox, below, canvas, ctx)
+            self.part_draws += 1
+            self.parts.put(key, r)
+        return r
+
+    def _part_plane(self, part, level, abox, below, canvas: Canvas, ctx: Ctx) -> np.ndarray:
         src = part["src"]
         if src == "halpha":
             return ctx.halpha()
@@ -1288,9 +1313,9 @@ class Composer:
             return None
         if not m["parts"]:                                 # a new mask shows the whole layer, as in the reference image editor
             return self._finish(np.ones(below.shape[:2], np.float32), m, level)
-        out = None
+        out, seen = None, {}
         for part in m["parts"]:
-            r = self.part_raster(part, level, abox, below, canvas, ctx)
+            r = self.part_raster(part, level, abox, below, canvas, ctx, seen)
             if out is None:
                 out = np.zeros_like(r) if part["op"] == "add" else np.ones_like(r)
             if part["op"] == "add":
