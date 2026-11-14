@@ -755,3 +755,35 @@ def test_undoing_a_rename_gives_back_the_name_only_and_keeps_the_other_versions_
         assert len(next(x for x in model.p.post["versions"] if x["id"] == first)["layers"]) == n
     finally:
         _close(page)
+
+
+def test_undoing_a_workflow_step_made_from_post_keeps_the_other_versions_edits(model):
+    """A layer's workflow renamed in the second version, then a filter added in the first: Ctrl+Z puts the name back
+    and the first version keeps its filter (and the redo does the same)."""
+    page = _page(model)
+    v = page.view
+    try:
+        v._version_new()
+        second = v._version
+        first = next(x["id"] for x in model.p.post["versions"] if x["id"] != second)
+        lay = next(x for x in v.layers if x["kind"] == "workflow" and x.get("part") is None
+                   and x.get("name") == v.path(x["pid"]).name)
+        pid = lay["pid"]
+        was = model.view(pid).name
+        v.rename(lay, "Elsewhere")
+        assert model.view(pid).name == "Elsewhere"
+        model.set_post_version(first)
+        v._post_changed(None)
+        v.add_filter("sharpen")
+        n = len(v.layers)
+        v._save()
+        model.set_post_version(second)
+        v._post_changed(None)
+        v.do_undo()
+        assert model.view(pid).name == was
+        assert len(next(x for x in model.p.post["versions"] if x["id"] == first)["layers"]) == n
+        v.do_redo()
+        assert model.view(pid).name == "Elsewhere"
+        assert len(next(x for x in model.p.post["versions"] if x["id"] == first)["layers"]) == n
+    finally:
+        _close(page)

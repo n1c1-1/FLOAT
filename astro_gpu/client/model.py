@@ -533,7 +533,65 @@ class _Snap(tuple):
     """What Undo puts back (``ProjectModel._snapshot``), with the page the change came from: Post's steps are undone
     in Post, the graph's in the graph."""
     from_post = False
-    versions_only = False          # a step of the versions' list alone (a rename, a delete): it restores that, no more
+    after_post = None              # the composition right after the step: what it changed is what Undo / Redo puts back
+
+
+def merge_post(base: dict, theirs: dict, mine: dict) -> dict:
+    """The composition with a step undone or redone: ``base`` is how the step left it, ``theirs`` how it puts it, ``mine``
+    how it is now. What the step changed (a version's name, a version made or taken out, a layer added, removed or
+    changed) is taken from ``theirs``; whatever it did not touch stays as it is now, so that the edits made since in
+    other versions are never reverted."""
+    def pick(key, b, t, m):
+        return t if m == b else m if t == b else t
+
+    def merge_layers(b, t, m):
+        bl, tl = {x["id"]: x for x in b}, {x["id"]: x for x in t}
+        out = list(m)
+        for lid in [x["id"] for x in b] + [x["id"] for x in t if x["id"] not in bl]:
+            if bl.get(lid) == tl.get(lid):
+                continue                                  # the step left it as it was
+            at = next((i for i, x in enumerate(out) if x["id"] == lid), None)
+            if lid not in tl:
+                if at is not None:
+                    del out[at]
+            elif at is not None:
+                out[at] = tl[lid]
+            else:
+                prev = [x["id"] for x in t]
+                k = prev.index(lid)
+                pos = 0
+                for q in reversed(prev[:k]):
+                    j = next((i for i, x in enumerate(out) if x["id"] == q), None)
+                    if j is not None:
+                        pos = j + 1
+                        break
+                out.insert(pos, tl[lid])
+        return out
+
+    def merge_version(b, t, m):
+        if m == b:
+            return t
+        if t == b:
+            return m
+        out = {k: pick(k, b.get(k), t.get(k), m.get(k)) for k in set(b) | set(t) | set(m) if k != "layers"}
+        out["layers"] = merge_layers(b.get("layers") or [], t.get("layers") or [], m.get("layers") or [])
+        return {k: v for k, v in out.items() if v is not None or k in m}
+
+    bv, tv, mv = ({v["id"]: v for v in d.get("versions", [])} for d in (base, theirs, mine))
+    ids = [v["id"] for v in theirs.get("versions", [])]
+    ids += [i for i in (v["id"] for v in mine.get("versions", [])) if i not in ids and not (i in bv and i not in tv)]
+    versions = []
+    for i in ids:
+        if i in tv and i in mv and i in bv:
+            versions.append(merge_version(bv[i], tv[i], mv[i]))
+        elif i in tv and i not in mv:
+            versions.append(tv[i])                        # a version the step brings back
+        else:
+            versions.append(mv.get(i) or tv[i])
+    out = {k: pick(k, base.get(k), theirs.get(k), mine.get(k)) for k in set(base) | set(theirs) | set(mine)
+           if k != "versions"}
+    out["versions"] = versions
+    return out
 
 
 class SessionSet:
@@ -633,7 +691,6 @@ class ProjectModel(QObject):
         self._undo: list = []
         self._redo: list = []
         self._post_depth = 0                               # inside from_post(): a step Post made
-        self._versions_only = False                        # inside a change of the versions' list alone
         self._undo_what: list = []                         # what each undo step did, in words (None: not said)
         self._redo_what: list = []
         self._naming = False                               # the last step still takes its words (the same gesture)
@@ -1033,21 +1090,12 @@ class ProjectModel(QObject):
         self.postChanged.emit(None)
         return vid
 
-    @contextmanager
-    def _versions_scope(self):
-        """What is changed inside is the versions' list alone (names, which exist): its step puts back only that."""
-        self._versions_only = True
-        try:
-            yield
-        finally:
-            self._versions_only = False
-
     def rename_post_version(self, vid: int, name: str):
         name = name.strip()
         post = self.p.post
         if not name or any(v["name"] == name for v in post["versions"]):
             return
-        with self._versions_scope(), self._edit():
+        with self._edit():
             self.p.post = {**post, "versions": [{**v, "name": name} if v["id"] == vid else v for v in post["versions"]]}
         self.name_step(_("Version renamed “{name}”").format(name=name))
         self.postChanged.emit(None)
@@ -1058,7 +1106,7 @@ class ProjectModel(QObject):
         rest = [v for v in post["versions"] if v["id"] != vid]
         if not rest:
             return
-        with self._versions_scope(), self._edit():
+        with self._edit():
             self.p.post = {**post, "versions": rest, "active": post["active"] if post["active"] != vid else rest[-1]["id"]}
         self.name_step(_("“{name}” deleted").format(name=next(v["name"] for v in post["versions"] if v["id"] == vid)))
         self.postChanged.emit(None)
@@ -1363,9 +1411,10 @@ class ProjectModel(QObject):
                 self._prune_breakpoints()
                 self._follow_branch_names()
                 self._prune_post()
-                if self._snapshot() != before:
+                after = self._snapshot()
+                if after != before:
                     before.from_post = self._post_depth > 0
-                    before.versions_only = self._versions_only
+                    before.after_post = json.loads(after[4])
                     self._undo.append(before)
                     del self._undo[:-200]
                     self._redo.clear()
@@ -1624,7 +1673,7 @@ class ProjectModel(QObject):
             return False
         now = self._snapshot()
         now.from_post = src[-1].from_post                   # a step keeps its page when undone and redone
-        now.versions_only = versions_only = src[-1].versions_only
+        step_after = src[-1].after_post
         dst.append(now)
         had = {v.pid: self.block_keys(v) for v in self.paths}      # decision 5: what comes back is selected
         old_keys = self.block_keys(self.path) if self.path is not None else []
@@ -1639,15 +1688,13 @@ class ProjectModel(QObject):
         if post_back:
             here = getattr(self.p, "post", None) or {}
             back = json.loads(post)
-            if versions_only:       # a rename or a delete puts back names and versions, never the other versions' edits
-                kept = {v["id"]: v for v in here.get("versions", [])}
-                back = {**here, "versions": [{**kept[v["id"]], "name": v["name"]} if v["id"] in kept else v
-                                             for v in back.get("versions", [])],
-                        "active": back.get("active", here.get("active"))}
+            if step_after is not None and now.from_post:        # (the steps Post took) only what the step changed comes back, not the edits made since
+                back = merge_post(step_after, back, here)
             if in_post and here.get("active") is not None and {v["id"] for v in back.get("versions", [])} ==                     {v["id"] for v in here.get("versions", [])} and any(
                     v["id"] == here["active"] for v in back.get("versions", [])):
                 back["active"] = here["active"]          # (a version brought back or taken out shows itself, #145)
             self.p.post = back
+            now.after_post = back
             post_back = back != here
         if frames_back:
             self.reload_sources()
