@@ -1837,6 +1837,23 @@ def _settings_of(lay: dict) -> str:
                       default=str)
 
 
+def visible_signature(layers: list[dict], want=()) -> str:
+    """What the composite depends on in these layers: the rows that are shown, themselves and through their parents (a
+    hidden layer, a hidden filter, a filter under a hidden layer or a hidden image of a Stars and background layer
+    count only as hidden). ``want`` are the mask keys the screen shows (a hidden row's selected mask counts). Two
+    lists with the same signature give the same picture: a change to a row that is not shown needs no render."""
+    ids = {k[0] if isinstance(k, tuple) else k for k in want}
+    by_id = {x["id"]: x for x in layers}
+    out = []
+    for lay in layers:
+        up = by_id.get(lay.get("target")) if lay["kind"] == "filter" and lay.get("target") else None
+        shown = lay["visible"]
+        if up is not None:
+            shown = shown and up["visible"] and (not lay.get("sub") or (up.get("shown") or {}).get(lay["sub"], True))
+        out.append((lay["id"], lay.get("target"), bool(shown), _settings_of(lay) if shown or lay["id"] in ids else None))
+    return _sig(out)
+
+
 def _sig(*what) -> str:
     return hashlib.sha1(repr(what).encode("utf-8")).hexdigest()
 
