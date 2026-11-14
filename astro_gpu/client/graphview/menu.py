@@ -89,7 +89,35 @@ def align_items(doc, ix, rid):
     out.append(_item(doc, _("Own grid"), "own_grid", {"row": rid}))
     if r.align:
         out.append(_item(doc, _("Switch on") if a.get("off") else _("Switch off"), "set_align_off", {"row": rid}))
+        out += method_items(doc, ix, rid)
     return out
+
+
+def method_items(doc, ix, rid):
+    """How the row is aligned on its target (the engine's Align on methods: stars, plate solutions), the one in use
+    checked; plate solutions greyed for a stack, with the engine's reason (amendment A: Astrometry comes after it)."""
+    from ... import texts
+    from ...core import workflow as wfl
+    from ..i18n import language
+    r = ix.row[rid]
+    a = r.align or {}
+    now = a.get("method") or wfl.DEFAULT_METHOD["align_on"]
+    out = [None]
+    for m in wfl.METHODS["align_on"]:
+        text = texts.choice_label(m, language())
+        text = ("✓ " + text) if m == now else text
+        args = {"row": rid, "ref": a.get("ref"), "block": a.get("from"), "method": m}
+        if m == "plate" and r.nights:
+            from ...stages.align_on import NO_PLATE_STACK
+            out.append((text, "set_align", args, False, texts.translate(NO_PLATE_STACK, language())))
+        else:
+            out.append(_item(doc, text, "set_align", args))
+    return out
+
+
+def _alignable(g, r) -> bool:
+    """A row that can be aligned on another: a stack, or a workflow from an image (the core's set_align)."""
+    return bool(r.nights) or any(g.blocks[b].kind in ("stacking", "image") for b in r.blocks if b in g.blocks)
 
 
 def row_items(doc, ix, rid):
@@ -97,6 +125,7 @@ def row_items(doc, ix, rid):
     items = []
     if r.nights:
         items.append(_item(doc, _("Add session"), "add_night", {"row": rid}))
+    if _alignable(doc.graph, r):
         items.append((_("Align on"), "submenu", align_items(doc, ix, rid), True, ""))
     sub = [(_("Rename"), "rename", {"row": rid}, True, ""),
            _item(doc, _("Duplicate (Ctrl+D)"), "duplicate_row", {"row": rid}),

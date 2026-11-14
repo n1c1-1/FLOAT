@@ -173,3 +173,34 @@ def test_a_filters_template_is_offered_again_on_sessions_that_have_filters(world
     d._create()
     W.settle()
     assert len(W.m.paths) > n
+
+
+# ---------------------------------------------------------------------------------------------- Align on
+def test_an_image_workflow_is_aligned_from_its_menu_and_its_method_is_chosen(world, tmp_path):
+    import numpy as np
+    from astropy.io import fits
+    W = world(workflows=("Classic stack",))
+    files = []
+    for n in ("a1", "a2"):
+        f = tmp_path / f"{n}.fits"
+        fits.PrimaryHDU(np.full((3, 32, 32), 100.0, np.float32)).writeto(f)
+        files.append(str(f))
+    W.page.place_images(files)
+    W.settle()
+    a1 = next(b for b, x in W.graph.blocks.items() if x.kind == "image" and W.b.row_of(b).name == "a1")
+    r1 = W.b.row_of(a1)
+    got = W.g.menu_pick(a1, "a2")                                       # Align on > a2
+    W.settle()
+    assert got["ok"] and W.b.row(r1.id).align and W.b.row(r1.id).align["ref"] == W.b.row_of(
+        next(b for b, x in W.graph.blocks.items() if x.kind == "image" and W.b.row_of(b).name == "a2")).id
+    items = dict((t, (on, tip)) for t, on, tip in W.g.menu_pick(a1, "", open_only=True)["items"])
+    assert items["✓ Stars"][0] and items["Plate solutions"][0]          # an image may carry its plate solution
+    got = W.g.menu_pick(a1, "Plate solutions")
+    W.settle()
+    assert got["ok"] and W.b.row(r1.id).align["method"] == "plate"
+    st = W.one("stacking")                                              # a stack: plate greyed, its reason said
+    got = W.g.menu_pick(st, "a1")
+    W.settle()
+    assert got["ok"] and W.b.row_of(st).align
+    items = dict((t, (on, tip)) for t, on, tip in W.g.menu_pick(st, "", open_only=True)["items"])
+    assert items["Plate solutions"] == (False, "the stack has no plate solution yet (Astrometry comes after)")
