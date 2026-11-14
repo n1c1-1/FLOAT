@@ -678,6 +678,18 @@ def source_ids(lay: dict) -> list:
     return [source_id(lay)]
 
 
+def side_layers(lay: dict) -> list:
+    """(side, the layer that is that image) of what ``source_ids`` lists, in the same order: a Combine layers layer's
+    shown sides, else (None, the layer)."""
+    if is_group(lay):
+        shown = lay.get("shown") or {}
+        subs = [x for x in ("starless", "stars") if shown.get(x, True)]
+        if lay.get("stars_pid", lay["pid"]) is None and "stars" in subs:
+            subs.remove("stars")
+        return [(x, sub_layer(lay, x)) for x in subs]
+    return [(None, lay)]
+
+
 def new_filter_layer(key: str, target=None, sub=None) -> dict:
     """A filter layer. target: the id of the one layer it applies to (it sits just above it, as a reference image editor clipping
     mask); None: it applies to everything below it. sub: in a Stars and background layer, the one of its two images it
@@ -999,6 +1011,15 @@ class Canvas:
         return -(-self.W // f), -(-self.H // f)
 
 
+class Unreadable(Exception):
+    """A source (``source_id``) whose result is there but one of its files is not: the layers reading it are left out,
+    and said not computed."""
+
+    def __init__(self, sid):
+        super().__init__(f"the result of {sid!r} cannot be read")
+        self.sid = sid
+
+
 class Provider:
     """What the composition needs from the engine. ``services/render.py`` implements it on the layers service."""
 
@@ -1008,6 +1029,10 @@ class Provider:
 
     def available(self, pid) -> bool:
         raise NotImplementedError
+
+    def readable(self, lay: dict) -> bool:
+        """Whether the image of this layer (or of one side of a Combine layers layer, see ``sub_layer``) can be read."""
+        return self.available(source_id(lay))
 
     def canvas(self, pids: list) -> Canvas:
         """The canvas of these workflows and images (bottom first, see ``source_id``)."""
@@ -1292,11 +1317,12 @@ class Composer:
             return None if any(a is None for a in got) else self._together(lay, got, canvas.size(level)[::-1])
         return self.images.get(self._key(lay, level, None, canvas))
 
-    @staticmethod
-    def _shown(lay: dict) -> list[str]:
-        """A Stars and background layer's images put together, the starless image first."""
+    def _shown(self, lay: dict) -> list[str]:
+        """A Stars and background layer's images put together, the starless image first (a side whose result cannot
+        be read is left out: the other one is shown)."""
         empty = lay.get("stars_pid", lay.get("pid")) is None            # its stars side has no workflow (#165)
-        return [sub for sub in reversed(SUBS) if (lay.get("shown") or {}).get(sub, True) and not (empty and sub == "stars")]
+        return [sub for sub in reversed(SUBS) if (lay.get("shown") or {}).get(sub, True) and not (empty and sub == "stars")
+                and self.provider.readable(sub_layer(lay, sub))]
 
     def _together(self, lay: dict, got: list, hw) -> np.ndarray:
         """A Stars and background layer's images put together as its ``blend`` says (render/stars.blend: the same
@@ -1485,8 +1511,8 @@ class Composer:
                 continue
             if is_pixel(lay):
                 sids = source_ids(lay)
-                if not all(self.provider.available(x) for x in sids):
-                    continue
+                if not any(self.provider.readable(x) for _s, x in side_layers(lay)):      # (one side of a Combine layers layer
+                    continue                                              # that cannot be read: the other one is composed)
                 own = [fl for fl in stack if fl["kind"] == "filter" and fl.get("target") == lay["id"]]
                 ss, mine = self._src_sig(lay, own, level, abox, canvas), [(_settings_of(f), f["visible"]) for f in own]
                 sig = _sig(sig, ss, _settings_of(lay))

@@ -3394,3 +3394,82 @@ def test_an_export_with_a_layer_that_cannot_be_read_stops_and_says_so_instead_of
     assert written == [] and [x["id"] for x in r.unreadable(layers)] == [shown["id"]]
     res = r.run(Request(kind="half", layers=layers, level=1), None)       # Post's own render says which layer is missing
     assert f"layer:{r.unreadable(layers)[0]['id']}" in res.missing
+
+
+@pytest.fixture()
+def exporting_stars(preps, qapp, tmp_path):
+    """The same page with workflow 1 as a Stars and background layer (its Stars block's folder is a copy to damage)."""
+    import shutil
+    root = tmp_path / "ws" / "HeartSoul"
+    (root / "store" / "render_prep").mkdir(parents=True)
+    (root / "project.astroproj").write_text("{}")
+    mine = dict(preps, full_stars=Path(shutil.copytree(preps["full_stars"], tmp_path / "stars_copy")))
+    s = Setup(mine, qapp, root=root, stars=True)
+    assert s.settle()
+    s.out, s.root = tmp_path / "chosen", root
+    s.stars_dir = mine["full_stars"]
+    wait = time.monotonic() + 30
+    while s.worker.renderer is None and time.monotonic() < wait:
+        time.sleep(0.01)
+    yield s
+    s.close()
+
+
+def _lose_stars(s):
+    """stars.npy gone from the Stars block's entry, what was loaded from it forgotten (as at the next opening)."""
+    (s.stars_dir / "stars.npy").unlink()
+    r = s.worker.renderer
+    r.source.service.evict(s.stars_dir)
+    r.composer.forget()
+
+
+def _group_of(s):
+    from astro_gpu.client.postengine import is_group
+    return next(x for x in s.view.layers if is_group(x))
+
+
+def test_a_file_missing_inside_a_result_is_a_layer_that_cannot_be_read_not_an_error_of_the_program(exporting_stars):
+    from astro_gpu.client.services.render import ExportJob, ExportRefused, Request, run_export
+    s = exporting_stars
+    g = _group_of(s)
+    g["starless"] = "output"                                   # the starless side read from the Output's entry
+    layers = snapshot(s.view.layers)
+    r = s.worker.renderer
+    _lose_stars(s)                                             # the entry is there, one of its files is not
+    written = []
+    with pytest.raises(ExportRefused, match=r"cannot be read \(stars\): compute it again, nothing was written"):
+        run_export(r, ExportJob(layers=layers, folder=str(s.out), name="c"), lambda f, m: None,
+                   writer=lambda *a: written.append(a) or [])
+    assert written == []
+    res = r.run(Request(kind="half", layers=layers, level=1), None)       # Post's render: no error, the side is marked
+    assert f"side:{g['id']}:stars" in res.missing and res.rgb is not None
+    assert res.rgb.max() > 0                                              # the starless side is composed (gap 3)
+
+
+def test_one_side_of_a_combined_layer_that_cannot_be_read_leaves_the_other_shown_and_both_rows_say_it(exporting_stars):
+    s = exporting_stars
+    v = s.view
+    g = _group_of(s)
+    g["starless"] = "output"
+    _lose_stars(s)
+    v._missing_images = set()
+    v.request()
+    assert s.settle()
+    assert f"side:{g['id']}:stars" in v._missing_images
+    assert g["name"] in v.viewer.banner and "(stars)" in v.viewer.banner
+    rows = [r for r in v.rows if r.lay["kind"] == "sub" and r.lay["id"] == g["id"] and r.lay["sub"] == "stars"]
+    assert rows and "not computed" in rows[0].sub.full_text() and not rows[0].sub.isHidden()
+
+
+def test_the_row_of_a_layer_that_cannot_be_read_shows_not_computed_and_loses_it_when_it_can(exporting):
+    s = exporting
+    v = s.view
+    lay = next(x for x in v.layers if x["kind"] == "workflow")
+    row = next(r for r in v.rows if r.lay["id"] == lay["id"])
+    assert row.sub.isHidden()
+    v._missing_images = {f"layer:{lay['id']}"}
+    v._refresh_rows()
+    assert "not computed" in row.sub.full_text() and not row.sub.isHidden()
+    v._missing_images = set()
+    v._refresh_rows()
+    assert row.sub.isHidden()
