@@ -1597,7 +1597,8 @@ class Main(QMainWindow):
         def keys(seqs):
             return " / ".join(dict.fromkeys(QKeySequence(q).toString(QKeySequence.NativeText) for q in seqs))
         win: list[tuple[str, str]] = []
-        for m in self.menuBar().findChildren(QMenu, options=Qt.FindDirectChildrenOnly):
+        # the menus the bar shows: its children also hold the previous ones, waiting to be deleted after a rebuild
+        for m in [x.menu() for x in self.menuBar().actions() if x.menu() is not None]:
             for a in m.actions():
                 if not a.isSeparator() and a.shortcuts():
                     win.append((keys(a.shortcuts()), a.text().replace("&", "").split("	")[0].strip()))

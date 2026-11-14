@@ -237,7 +237,7 @@ def test_the_graphs_undo_leaves_a_step_made_in_post_and_posts_undo_names_what_it
         assert said[-1].startswith("Redone: ")
         v.do_undo()
         v.do_undo()                                                # the version is no step: Ctrl+Z stops at its first
-        assert len(model.p.post["versions"]) == 2 and said[-1].startswith("Nothing to undo here")
+        assert len(model.p.post["versions"]) == 2 and said[-1] == "Nothing more to undo in this version"
     finally:
         page.shutdown()
         page.deleteLater()
@@ -660,7 +660,7 @@ def test_ctrl_z_stops_at_the_versions_first_step_and_never_makes_a_version_go(mo
         for _ in range(6):
             v.do_undo()
         assert len(model.p.post["versions"]) == 2 and v._version == second
-        assert said[-1].startswith("Nothing to undo here")
+        assert said[-1] == "Nothing more to undo in this version"
         assert [x["name"] for x in model.p.post["versions"]][1] == "Version 2"
         assert v.layers[0]["opacity"] == 30.0                           # the copy's own start, not the first's steps
         first = model.p.post["versions"][0]["id"]
@@ -787,3 +787,31 @@ def test_undoing_a_workflow_step_made_from_post_keeps_the_other_versions_edits(m
         assert len(next(x for x in model.p.post["versions"] if x["id"] == first)["layers"]) == n
     finally:
         _close(page)
+
+
+def test_undoing_a_workflow_setting_a_workflow_rename_or_synthetic_stars_says_what_was_undone(model):
+    """Every step of Post's Undo names itself, the workflows' ones too ("Undone: <step>")."""
+    from astro_gpu.client.post3 import PostPage3
+    from astro_gpu.client.services.render import RenderWorker
+    full = by_name(model, "Full")
+    model.add_post_layer(full.pid, "stars")
+    page = PostPage3(model, worker=RenderWorker(None, resolver=lambda pid: None, device="cpu"))
+    v = page.view
+    said = []
+    v.toasted.connect(said.append)
+    try:
+        v._set_workflow_param(full, "render_simple", "linked", False)
+        v.do_undo()
+        assert said[-1].startswith("Undone: ") and "linked" in said[-1], said
+        v.do_redo()
+        assert said[-1].startswith("Redone: ") and "linked" in said[-1], said
+        assert v._model_change(lambda: model.rename(full.pid, "Renamed"), "x · Ctrl+Z")
+        v.do_undo()
+        assert said[-1] == "Undone: x", said
+        v.do_undo()
+        v.do_undo()
+        assert said[-1].startswith("Nothing to undo here"), said      # what is left is the layer the Graph made
+    finally:
+        page.shutdown()
+        page.deleteLater()
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)

@@ -1008,6 +1008,11 @@ class Provider:
         slider moves); ``stop()``: True abandons the rendering (raise ``Superseded``)."""
         raise NotImplementedError
 
+    def cover(self, lay: dict, level: int, box) -> np.ndarray | None:
+        """What the layer covers of the box, (h, w) in [0, 1] (an image of another shape is fitted inside the canvas,
+        its aspect kept: transparent around it); None when it covers all of it."""
+        return None
+
     def data_mask(self, name: str, level: int, box) -> np.ndarray | None:
         """The 'halpha' map over the box, (h, w) float32 in [0, 1], or None when the layers have none."""
         return None
@@ -1447,6 +1452,10 @@ class Composer:
                 comp_sig = _sig(comp_sig, sig, _settings_of(lay))
                 m = self.mask(lay, level, abox, src, canvas, ctx)
                 keep_mask(lay, m)
+                if not is_group(lay):                                     # an image fitted inside the canvas: clear around it
+                    cov = self.provider.cover(lay, level, abox)
+                    if cov is not None:
+                        m = cov if m is None else m * cov
                 # nothing under it: no mode to apply (never blended over a black that is not there); the mode stays
                 # stored on the layer and applies again as soon as an image layer is under it
                 src = self.blend(lay["mode"] if under else "Normal", comp, src)

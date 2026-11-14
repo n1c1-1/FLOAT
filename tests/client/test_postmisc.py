@@ -142,3 +142,29 @@ def test_a_long_filter_name_is_cut_at_words_with_the_continuation_indent():
     assert all(len(c) <= 72 for c in lines)
     assert all(c.startswith("  ") for c in cards[1:]) and len(cards) > 1
     assert " ".join(c.strip() for c in lines if "Starless" in c or c.startswith("  ")).count("extraordinarily-long-name") == 3
+
+
+def test_two_combine_layers_with_the_same_starless_side_get_different_default_names(model):
+    s, h = _wf(model, "S"), _wf(model, "H")
+    a = model.add_post_layer(s.pid, "combined")
+    b = model.add_post_layer(s.pid, "combined")
+    c = model.add_post_layer(h.pid, "combined")
+    model.set_layer_side(c, "starless", s.pid)                   # its side now the same as the others'
+    names = [model.post_layer(x)["name"] for x in (a, b, c)]
+    assert len(set(names)) == 3 and all(n.startswith("S · Combine layers") for n in names), names
+    model.set_layer_side(b, "starless", h.pid)
+    model.set_layer_side(b, "starless", s.pid)                   # back to S: not a name taken by another
+    names = [model.post_layer(x)["name"] for x in model.post_layers() and (a, b, c)]
+    assert len(set(names)) == 3, names
+
+
+def test_the_shortcuts_list_names_the_window_once_after_the_menus_are_rebuilt(qapp):
+    from astro_gpu.client.app import Main
+    w = Main()
+    try:
+        w.build_menus()                                          # the former menus wait for their deletion
+        pages = w.shortcut_rows()
+        keys = [k for page, rows in pages if page == "Window" for k, _w in rows]
+        assert [page for page, _rows in pages] == ["Window", "Post"] and len(keys) == len(set(keys))
+    finally:
+        w.deleteLater()

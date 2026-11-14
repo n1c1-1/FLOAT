@@ -1243,6 +1243,18 @@ class ProjectModel(QObject):
         self.set_post_layers(save_layers(normalize(layers)), source, scope=scope)
         return out
 
+    @staticmethod
+    def _free_layer_name(layers, name: str, lid) -> str:
+        """``name`` when no other layer has it, else the first "name 2", "name 3"... free (a default name stays unique)."""
+        taken = {str(x.get("name") or "") for x in layers if x.get("id") != lid}
+        if name not in taken:
+            return name
+        base = re.sub(r" \d+$", "", name)
+        n = 2
+        while f"{base} {n}" in taken:
+            n += 1
+        return f"{base} {n}"
+
     def add_post_layer(self, pid: int, part: str | None, source=None, keep_default: bool = True) -> int:
         """A layer of a workflow's image at the top of Post, shown: its Output block's image (``part`` None) or one of
         its Stars block's (the starless image, the stars alone, or a new Stars and background block). Returns its
@@ -1264,6 +1276,7 @@ class ProjectModel(QObject):
             same = [x for x in layers if x.get("kind") == "workflow" and x.get("pid") == pid and x.get("part") == part]
             if part == "combined" and same:               # several Combine layers of one workflow: numbered (2nd round)
                 lay["name"] = f"{name} {len(same) + 1}"
+            lay["name"] = self._free_layer_name(layers, lay["name"], lay["id"])
             layers.insert(0, lay)
             for v in self.p.post["versions"]:             # sent to Post again: back in every version, one that had
                 if v.get("removed"):                      # taken it out included
@@ -2181,7 +2194,8 @@ class ProjectModel(QObject):
                     m = re.fullmatch(re.escape(old.name + " · " + POST_PART_NAMES["combined"]) + r"( \d+)?",
                                      str(x.get("name") or ""))
                     if m:
-                        x["name"] = new.name + " · " + POST_PART_NAMES["combined"] + (m.group(1) or "")
+                        x["name"] = self._free_layer_name(
+                            layers, new.name + " · " + POST_PART_NAMES["combined"] + (m.group(1) or ""), lid)
                 x["pid"], x["starless"] = int(pid), ("output" if image == "output" else "starless")
             else:
                 x["stars_pid"] = None if pid is None else int(pid)

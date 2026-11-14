@@ -304,5 +304,8 @@
   "Keep crop": "Garder recadrage",
   "Leave tool": "Quitter outil",
   "Open block": "Ouvrir bloc",
-  "Back to Graph": "Retour Graphe"
+  "Back to Graph": "Retour Graphe",
+  "Nothing more to undo in this version": "Plus rien à annuler dans cette version",
+  "Setting “{name}” changed": "Réglage « {name} » changé",
+  "Workflow renamed “{name}”": "Workflow renommé « {name} »"
 }

@@ -1951,6 +1951,7 @@ class PostView(QWidget):
         workflows' Undo."""
         with self._from_post():
             self.s.set_param(p, stage, name, value)
+            self._name_step(_("Setting “{name}” changed").format(name=name))
         self.undo.append(self._model_mark("_undo"))
         self.redo.clear()
         self._undo_buttons()
@@ -1960,6 +1961,12 @@ class PostView(QWidget):
         their own text."""
         if self.sel and self.sel[1] == "layer" and self.b_del.isEnabled():
             self.delete()
+
+    def _name_step(self, text: str):
+        """The words of the workflows' step just made, for the Undo / Redo message ("Undone: <step>")."""
+        name = getattr(self.s, "name_step", None)
+        if name is not None:
+            name(text)
 
     def _model_mark(self, on: str) -> ModelStep:
         """The mark of the model's latest step of its list ``on`` ("_undo" or "_redo"), just made."""
@@ -1984,7 +1991,11 @@ class PostView(QWidget):
             self._say_step("Undone", "Undone: {what}", step_words(self.layers, before))
             return False
         if not self.undo or not self._model_mine(self.undo[-1], "_undo"):
-            self.toasted.emit(_("Nothing to undo here: the Graph's changes are undone in the Graph"))
+            can = getattr(self.s, "can_undo", None)
+            if can is None or can(graph=True):            # what is left is the Graph's: said there
+                self.toasted.emit(_("Nothing to undo here: the Graph's changes are undone in the Graph"))
+            else:
+                self.toasted.emit(_("Nothing more to undo in this version"))
             return False
         self.undo.pop()
         return self._model_step(getattr(self.s, "undo", None), "redo", "Undone", "Undone: {what}")
@@ -2533,6 +2544,7 @@ class PostView(QWidget):
             return False
         finally:
             self._restoring = False
+        self._name_step(toast)
         self.undo.append(self._model_mark("_undo"))
         self.redo.clear()
         self._undo_buttons()
@@ -2682,6 +2694,7 @@ class PostView(QWidget):
                 self._post_changed(None)                  # and taken back here with their new names
             finally:
                 self._restoring = False
+            self._name_step(_("Workflow renamed “{name}”").format(name=new))
             self.undo.append(self._model_mark("_undo"))
             self.redo.clear()
             self._undo_buttons()

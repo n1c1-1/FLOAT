@@ -1505,7 +1505,7 @@ def test_post_undo_leaves_a_graph_gesture_to_the_graph_and_says_so(post):
     v.redo.clear()
     called = []
     s.undo, s.redo = (lambda: called.append("undo") or True), (lambda: called.append("redo") or True)
-    s.can_undo, s.can_redo = (lambda: True), (lambda: True)          # the graph has a step
+    s.can_undo, s.can_redo = (lambda graph=False: True), (lambda graph=False: True)          # the graph has a step
     v._undo_buttons()
     assert not v.b_undo.isEnabled() and not v.b_redo.isEnabled()
     assert v.do_undo() is False and called == [] and said[-1] == "Nothing to undo here: the Graph's changes are undone in the Graph"
