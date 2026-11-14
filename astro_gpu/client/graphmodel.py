@@ -538,7 +538,10 @@ class GraphEditing:
             q.blocks.pop(nb, None)
             q.blocks[ob] = copy.deepcopy(old_blk)
             q.rows.remove(r)
-            q.rows.insert(min(i, len(q.rows)), copy.deepcopy(old_row))
+            back = copy.deepcopy(old_row)
+            if any(x.name == back.name for x in q.rows):  # its name taken meanwhile (a Combine layers the gesture
+                back.name = r.name                        # made): the free one the projection gave it
+            q.rows.insert(min(i, len(q.rows)), back)
             wids = {w.id for w in q.wires}
             by_ends = {(tuple(w.src), tuple(w.dst)): w.id for w in old_wires}
             for w in q.wires:
