@@ -41,15 +41,17 @@ def frames(folder: Path, names) -> Path:
 
 
 def watch_toasts(page) -> list:
-    """The toasts the page shows, in order (``page.toasts``)."""
+    """The toasts the page shows, in order (``page.toasts``): its sentences, and those with links (a deletion refused)."""
     page.toasts = []
     page.toasted.connect(page.toasts.append)
+    page.bridge.rich_toast.connect(lambda t, _links: page.toasts.append(t() if callable(t) else t))
     return page.toasts
 
 
-def open_page(tmp_path, monkeypatch, filters=(), workflows=("Full",)):
-    """One colour session and a template's workflow; or (``filters``) one session per filter, each its own flow; the
-    graph page on its project model. -> (worker, model, page); ``page.toasts`` lists the toasts shown."""
+def open_page(tmp_path, monkeypatch, filters=(), workflows=("Full",), chain=CHAIN):
+    """One colour session and a template's workflow; or (``filters``) one session per filter, each its own flow of
+    these blocks (``chain``); the graph page on its project model. -> (worker, model, page); ``page.toasts`` lists the
+    toasts shown."""
     from astro_gpu.client.graphview.page import GraphPage
     from astro_gpu.client.model import ProjectModel
     from astro_gpu.client.services.worker import ApiWorker
@@ -73,7 +75,7 @@ def open_page(tmp_path, monkeypatch, filters=(), workflows=("Full",)):
     m._sync()
     if filters:
         for i, f in enumerate(filters, 1):
-            m.add_graph_workflow(f, [wfl.node(b) for b in CHAIN], sessions=[i])
+            m.add_graph_workflow(f, [wfl.node(b) for b in chain], sessions=[i])
         m._undo.clear()
     page = GraphPage(m)
     page.resize(1500, 800)
