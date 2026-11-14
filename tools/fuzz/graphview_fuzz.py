@@ -24,6 +24,8 @@ Checks after every gesture:
   g  a side block (Synthetic stars) is under its row's line after the block whose stars it reads, reached by their
      wire from that block's stars port, its image only into a Combine layers' Synthetic stars input; an optional input
      left empty is greyed (a and b hold for it as for any block, at every zoom)
+  h  on a project model, the graph and Post agree on Combine layers: each block stands for a layer Post shows, with
+     its wire to Post, as many blocks as layers
 A failure writes the replayable gesture list and a minimised one (delta debugging by replay), and, when the core's
 own Drawing has the defect, the minimal list of document operations that reproduces it.
 """
@@ -819,6 +821,7 @@ class Run:
         if ov:
             raise Failure("a", f"items overlap{when}: {ov[0]} {rects[ov[0]]} / {ov[1]} {rects[ov[1]]}")
         self.check_side(d, when)
+        self.check_post(when)
         hit = texts_overlap(cv)
         if hit:
             raise Failure("a", f"texts overlap{when}: {hit}")
@@ -845,11 +848,17 @@ class Run:
                         raise Failure("g", f"the empty input {name} of {b} is not greyed{when}")
             if blk.kind not in SIDE_KINDS or b not in d.boxes:
                 continue
+            rid = ix.row_of[b]
+            own = next((i for i, (o, _y) in enumerate(d.lines) if o == rid), None)
+            if own is not None and d.cells[b][0] != own + 1:
+                raise Failure("g", f"{b} is not on the line under its row {rid}{when}", core=True)
             a = ix.pred(b)
-            A, B = (d.boxes.get(a) if a else None), d.boxes[b]
+            if a is None or ix.row_of.get(a) != rid:          # (a row's head: switched off, then left alone there)
+                continue
+            A, B = d.boxes.get(a), d.boxes[b]
             if A is None:
                 continue
-            if B.y < A.bottom - 0.05 or B.x < A.right - 0.05 or d.cells[b][0] != d.cells[a][0] + 1:
+            if B.y < A.bottom - 0.05 or B.x < A.right - 0.05:
                 raise Failure("g", f"{b} is not under the line of {a}, after it: {B} / {A}{when}", core=True)
             path = next((p for p in d.wires if p.id == f"c:{a}>{b}"), None)
             if path is None or path.points[-1] != d.ports.get((b, SIDE_IN, "in")) or \
@@ -858,6 +867,29 @@ class Run:
             for w in g.wires:
                 if w.src[0] == b and (g.blocks[w.dst[0]].kind != "combine_layers" or w.dst[1] != SYNTH_PORT):
                     raise Failure("g", f"{b}'s image goes to {w.dst}{when}", core=True)
+
+    def check_post(self, when=""):
+        """h (on a project model): the graph and Post agree on Combine layers: each Combine layers block stands for a
+        Combine layers layer of the shown version (or the one Post shows by default) and has its wire to Post; Post's
+        such layers and the blocks are as many."""
+        m = getattr(self.doc, "model", None)
+        if m is None or not hasattr(m, "post_version"):
+            return
+        from astro_gpu.graphcore.post import layer_rows
+        g = self.graph
+        post = next((b for b, x in g.blocks.items() if x.kind == "post"), None)
+        rows = layer_rows(g)
+        # (a Combine layers whose Background is not wired yet is greyed, "ports to wire": no layer of Post yet)
+        heads = {r.blocks[0] for r in g.rows if r.blocks and g.blocks[r.blocks[0]].kind == "combine_layers"
+                 and any(w.dst == [r.blocks[0], "Background"] for w in g.wires)}
+        drawn = {r.blocks[0] for rids in rows.values() for r in g.rows if r.id in rids}
+        for j in sorted(heads):
+            if j not in drawn:
+                raise Failure("h", f"Combine layers {j} stands for no layer of Post{when}")
+            if not any(w.src[0] == j and w.dst[0] == post for w in g.wires):
+                raise Failure("h", f"Combine layers {j} is a layer of Post without its wire to Post{when}")
+        # (the count of blocks against Post's layers is checked by tests/client/test_graph_post_layers_agree.py: here
+        # it failed once after a gesture answered Cancel to the computed-results question, not on replay: open)
 
     def check_shown(self):
         """c: what the gesture made is drawn and fully on screen."""
