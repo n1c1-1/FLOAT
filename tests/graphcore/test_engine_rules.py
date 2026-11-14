@@ -27,12 +27,15 @@ def engine_ok(doc):
     assert not inv.static(doc, layout(doc.project, doc.view))
 
 
-def test_after_a_combination_only_stars_and_nothing_after_combine_layers():
+def test_after_a_combination_only_stars_and_color_and_nothing_after_combine_layers():
     doc = Doc.from_template("filters_minimal")
     j = row(doc, "S-H-O").blocks[0]
     at = {"type": "insert", "row": row(doc, "S-H-O").id, "after": j}
     assert refused_inert(doc, "add_block", kind="gradient", at=at) == "no Gradient from combination"
-    assert refused_inert(doc, "add_block", kind="color", at=at) == "no Color from combination"
+    c = Doc.from_template("filters_minimal")                   # a Color may follow a combination (the engine since it
+    ok(c, "add_block", kind="color", at={"type": "insert", "row": row(c, "S-H-O").id,    # takes its reference row's
+                                         "after": row(c, "S-H-O").blocks[0]})            # plate solution)
+    engine_ok(c)
     ok(doc, "add_block", kind="stars", at=at)
     s = row(doc, "S-H-O").blocks[1]
     assert refused_inert(doc, "add_block", kind="synth", at={"type": "insert", "row": row(doc, "S-H-O").id,

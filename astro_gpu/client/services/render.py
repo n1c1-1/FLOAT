@@ -145,6 +145,18 @@ class Grid:
     kind: str
 
 
+FIT_TOLERANCE = 0.005                    # aspects agreeing within this are one grid (a drizzle's rounding), not two shapes
+
+
+def fit_scale(ref: Grid, g: Grid) -> float | None:
+    """The scale (reference pixels per pixel of ``g``) that fits an image of another shape inside the reference grid,
+    its aspect kept, as reference editors place an image; None when the two have the same shape (``g`` then covers
+    the whole grid, stretched by the ratio of the sizes: a drizzle's, a half-size copy's)."""
+    if abs((g.W / g.H) / (ref.W / ref.H) - 1.0) <= FIT_TOLERANCE:
+        return None
+    return min(ref.W / g.W, ref.H / g.H)
+
+
 def read_grid(folder: Path) -> Grid:
     """The grid and the useful frame of an Output or Stars block folder, from its small files (the arrays are not
     loaded)."""
@@ -296,6 +308,14 @@ class LayerSource(Provider):
             self._cv = None
         return changed
 
+    def release(self) -> None:
+        """Leaving Post: what is loaded again from the files or the image sources at the next render goes (the image
+        layers' engines, the stars' and masks' planes, the grids); the sources and the folders stay."""
+        self._img.clear()
+        self._masks.clear()
+        self._grids.clear()
+        self._cv = None
+
     # ------------------------------------------------------------ the image layers
     @staticmethod
     def _is_image(sid) -> bool:
@@ -371,6 +391,8 @@ class LayerSource(Provider):
         ref = grids[0]
         x0, x1, y0, y1 = (float(c) for c in ref.crop)
         for g in grids[1:]:
+            if fit_scale(ref, g) is not None:                    # an image of another shape is fitted in: no area of its own
+                continue
             rx, ry = ref.W / g.W, ref.H / g.H                    # a pixel of g is this many pixels of the reference
             x0, x1 = max(x0, g.crop[0] * rx), min(x1, g.crop[1] * rx)
             y0, y1 = max(y0, g.crop[2] * ry), min(y1, g.crop[3] * ry)
@@ -392,6 +414,54 @@ class LayerSource(Provider):
         ox, oy = cv.origin
         region = ((ox + x0 * f) * rx, (ox + x1 * f) * rx, (oy + y0 * f) * ry, (oy + y1 * f) * ry)
         return fi, region, (x1 - x0, y1 - y0)
+
+    def _placed(self, pid, level: int, box):
+        """For a layer fitted inside the canvas (another shape than the first layer's): (the part of ``box`` it covers,
+        the reduction, its region in its own grid, the size of that part), or ``False`` when it covers none of the box;
+        None for a layer that covers the whole canvas (``_window``)."""
+        cv, ref, g = self._cv, self._ref, self.grid(pid)
+        sc = fit_scale(ref, g)
+        if sc is None:
+            return None
+        f = 2 ** level
+        ox, oy = cv.origin
+        lx0, ly0 = (ref.W - g.W * sc) / 2, (ref.H - g.H * sc) / 2
+        x0, y0, x1, y1 = box
+        sx0, sx1 = max(x0, int(np.ceil((lx0 - ox) / f))), min(x1, int(np.floor((lx0 + g.W * sc - ox) / f)))
+        sy0, sy1 = max(y0, int(np.ceil((ly0 - oy) / f))), min(y1, int(np.floor((ly0 + g.H * sc - oy) / f)))
+        if sx1 <= sx0 or sy1 <= sy0:
+            return False
+        region = tuple(float(np.clip(v, 0, m)) for v, m in (
+            ((ox + sx0 * f - lx0) / sc, g.W), ((ox + sx1 * f - lx0) / sc, g.W),
+            ((oy + sy0 * f - ly0) / sc, g.H), ((oy + sy1 * f - ly0) / sc, g.H)))
+        fi = max(1, int(round(f / sc))) if level > 0 else 1
+        return (sx0, sy0, sx1, sy1), fi, region, (sx1 - sx0, sy1 - sy0)
+
+    def cover(self, lay: dict, level: int, box) -> np.ndarray | None:
+        """What a layer fitted inside the canvas covers of the box, (h, w) float32 (1 inside, 0 around: transparent);
+        None for a layer that covers all of it."""
+        if self._cv is None or lay["kind"] not in ("image", "workflow") or lay.get("part") == "combined":
+            return None
+        try:
+            put = self._placed(source_id(lay), level, box)
+        except (FileNotFoundError, KeyError):
+            return None
+        if put is None:
+            return None
+        x0, y0, x1, y1 = box
+        m = np.zeros((y1 - y0, x1 - x0), np.float32)
+        if put:
+            (a, b, c, d) = put[0]
+            m[b - y0:d - y0, a - x0:c - x0] = 1.0
+        return m
+
+    def _paste(self, put, box, arr: np.ndarray) -> np.ndarray:
+        """The part of the box a fitted layer covers, (h, w, 3), put at its place in a transparent (black) box."""
+        x0, y0, x1, y1 = box
+        out = np.zeros((y1 - y0, x1 - x0, 3), np.float32)
+        a, b, c, d = put[0]
+        out[b - y0:d - y0, a - x0:c - x0] = arr
+        return out
 
     def _cut(self, arr: np.ndarray, fi: int, region, size: tuple[int, int], whole_grid: bool) -> np.ndarray:
         """A rendering (C, h, w) or (h, w) of the whole grid at 1/fi (or of the region at full resolution), cut to the
@@ -416,7 +486,13 @@ class LayerSource(Provider):
         f = self.folder(sid)
         cv = self._cv
         whole = cv.size(level)
-        fi, region, size = self._window(sid, level, box)
+        put = self._placed(sid, level, box)
+        if put is False:
+            return np.zeros((box[3] - box[1], box[2] - box[0], 3), np.float32)
+        if put is None:
+            fi, region, size = self._window(sid, level, box)
+        else:
+            fi, region, size = put[1:]
         base = self.bases(lay.get("base"))
         kw = {"part": "stars" if lay.get("part") == "synth" else lay.get("part"), "blend": lay.get("blend")}
         if lay.get("stars_over") is not None:           # the Output of a combination of stars, on a starless combination
@@ -424,7 +500,7 @@ class LayerSource(Provider):
             if over is None:
                 raise FileNotFoundError("the starless combination this one's stars go onto is not computed")
             kw = {"stats_from": over.path, "blend": lay.get("blend")}
-        if level == 0 and tuple(box) != (0, 0, *whole):
+        if level == 0 and self._partial(sid, put, box, region, whole):
             li = self.service.render(f.path, base, lay.get("sliders"), 1.0, region=tuple(int(round(v)) for v in region),
                                      **kw)
             arr = self._cut(li.rgb, 1, region, size, False)
@@ -434,7 +510,15 @@ class LayerSource(Provider):
         if li.info.get("note"):
             self._notes.add(li.info["note"])
         self.engine_ms += float(li.info.get("render_ms") or 0.0)
-        return np.ascontiguousarray(np.moveaxis(arr, 0, -1), np.float32)
+        out = np.ascontiguousarray(np.moveaxis(arr, 0, -1), np.float32)
+        return out if put is None else self._paste(put, box, out)
+
+    def _partial(self, sid, put, box, region, whole) -> bool:
+        """Whether a rendering at full resolution covers only a part of the layer's grid (a region of it)."""
+        if put is None:
+            return tuple(box) != (0, 0, *whole)
+        g = self.grid(sid)
+        return tuple(int(round(v)) for v in region) != (0, g.W, 0, g.H)
 
     def _image_layer(self, lay: dict, level: int, box) -> np.ndarray:
         """An image layer: the stage result stretched like a simple layer (Sky, Contrast, Saturation), linked or each
@@ -444,15 +528,22 @@ class LayerSource(Provider):
         eng = self.image(lay["key"])[0]
         eng.prep["linked"] = bool(lay.get("linked", True))
         s = settings_at("simple", None, lay.get("sliders"), has_denoise=False)
-        fi, region, size = self._window(sid, level, box)
+        put = self._placed(sid, level, box)
+        if put is False:
+            return np.zeros((box[3] - box[1], box[2] - box[0], 3), np.float32)
+        if put is None:
+            fi, region, size = self._window(sid, level, box)
+        else:
+            fi, region, size = put[1:]
         t0 = time.perf_counter()
-        if level == 0 and tuple(box) != (0, 0, *self._cv.size(0)):
+        if level == 0 and self._partial(sid, put, box, region, self._cv.size(0)):
             reg = tuple(int(round(v)) for v in region)
             arr = self._cut(eng.render(s, 1.0, region=reg).final.cpu().numpy(), 1, region, size, False)
         else:
             arr = self._cut(eng.render(s, 1.0 / fi).final.cpu().numpy(), fi, region, size, True)
         self.engine_ms += 1000 * (time.perf_counter() - t0)
-        return np.ascontiguousarray(np.moveaxis(arr, 0, -1), np.float32)
+        out = np.ascontiguousarray(np.moveaxis(arr, 0, -1), np.float32)
+        return out if put is None else self._paste(put, box, out)
 
     def has(self, name: str) -> bool:
         return any(self.available(p) for p in self._pids if self._is_workflow(p))
@@ -889,6 +980,7 @@ class RenderWorker(QThread):
         self._running: tuple[str, int] | None = None        # (lane, seq) being computed
         self._stopping = False
         self._refresh = False
+        self._release = False
         self._cancel_export = False
         self.renderer: Renderer | None = None
         self.device = ""
@@ -906,6 +998,7 @@ class RenderWorker(QThread):
             self._seq += 1
             req.seq = self._seq
             self._slots[lane] = req
+            self._release = False                        # (coming back to Post: nothing to release behind the request)
             self._cond.notify()
         return req.seq
 
@@ -917,6 +1010,13 @@ class RenderWorker(QThread):
         """The results on disk may have changed (a run ended): look again before the next request."""
         with self._cond:
             self._refresh = True
+
+    def release(self):
+        """Leaving Post: the engines, the caches and the freed pages go, in the worker's thread, after the request being
+        computed (a request that comes later opens what it needs again)."""
+        with self._cond:
+            self._release = True
+            self._cond.notify()
 
     def set_image(self, key: str, source) -> None:
         """The source of an image layer (an array, a file, a function returning one): given to the worker's source
@@ -1060,10 +1160,14 @@ class RenderWorker(QThread):
 
     def _next(self):
         with self._cond:
-            while not self._stopping and not self._slots and self._export is None:
+            while not self._stopping and not self._slots and self._export is None and not self._release:
                 self._cond.wait()
             if self._stopping:
                 return None
+            if self._release and not self._slots and self._export is None:
+                self._release = False
+                self._running = ("release", 0)
+                return "release", None
             if self._export is not None:
                 job, self._export = self._export, None
                 self._running = ("export", 0)
@@ -1102,7 +1206,9 @@ class RenderWorker(QThread):
                     if self.renderer.source.refresh():
                         self.renderer.composer.forget()
                 self._take_images()
-                if lane == "export":
+                if lane == "release":
+                    self._release_now()
+                elif lane == "export":
                     self._run_export(work)
                 else:
                     if work.kind in ("half", "inspect"):
@@ -1125,6 +1231,19 @@ class RenderWorker(QThread):
             finally:
                 with self._cond:
                     self._running = None
+
+    def _release_now(self):
+        from ...core import devices
+        r = self.renderer
+        if r is None:
+            return
+        try:
+            r.composer.release()
+            r.source.release()
+            r.source.service.evict("all")             # (gc and the device's cache)
+            devices.release_memory()
+        except Exception:  # noqa: BLE001 - memory handed back is a courtesy: never a failure shown
+            pass
 
     def _take_images(self):
         """The image sources and resolver the GUI gave since the last request, into the source (worker thread)."""

@@ -90,6 +90,9 @@ from .postengine import (
     PART_SETTINGS,
     SUB_NAMES,
     SUB_ROWS,
+    SideLayer,
+    mask_selection,
+    selection_side,
     SUBS,
     THUMB,
     children,
@@ -636,7 +639,8 @@ class LayerRow(QFrame):
             self._dragging = False
             self.panel.drag_end(self, e.globalPosition().toPoint())
         else:                                            # a click: select (after the event, the rows are rebuilt)
-            what = self.lay["sub"] if self.lay["kind"] == "sub" else self._target(press)
+            what = self._target(press) if self.lay["kind"] != "sub" else \
+                "mask_" + self.lay["sub"] if self.m is not None and self.m.geometry().contains(press) else self.lay["sub"]
             QTimer.singleShot(0, lambda: self.panel.select(self.lay["id"], what))
 
     def mouseDoubleClickEvent(self, e):
@@ -720,7 +724,15 @@ class BeforeSource:
 
 # ======================================================================== the view
 #: a step of Post's Undo that is a change of a workflow (its Output's channels): the workflows' Undo takes it back
-MODEL_STEP = object()
+class ModelStep:
+    """A step of the workflows' Undo seen from a version's Undo list: the model's own step it stands for, so that the
+    version takes it back only while it is the model's latest one (a step another version made is never reached)."""
+
+    def __init__(self, step=None):
+        self.step = step
+
+
+MODEL_STEP = ModelStep()
 
 
 class PostView(QWidget):
@@ -729,6 +741,7 @@ class PostView(QWidget):
     goResults = Signal(int)
     panelChosen = Signal(str, str)                        # a side ("left", "right") shown another way by the user
     rendered = Signal(object)                             # a Result was shown (tests, the status line)
+    undoChanged = Signal()                                # Post's Undo / Redo lists changed (the window's Edit menu follows)
     toasted = Signal(str)                                 # what a change did beyond Post (the window's status line)
     layerAsked = Signal(int)                              # Open in Post of a layer (the page lists it when not computed)
     openImages = Signal()                                 # images asked as layers
@@ -1068,6 +1081,12 @@ class PostView(QWidget):
         # buttons, the compact look's margins): the fit again (#142)
         if obj is getattr(self, "centre", None) and e.type() in (QEvent.Resize, QEvent.LayoutRequest):
             self._fit_bar()
+        if e.type() in (QEvent.ShortcutOverride, QEvent.KeyPress) and e.key() == Qt.Key_Escape                 and hasattr(self, "cb_version") and obj is self.cb_version.lineEdit():
+            e.accept()                                   # Escape is the field's, as a layer's name: it gives the typing
+            if e.type() == QEvent.KeyPress:              # up (the window's page-leaving shortcut never sees it)
+                self._fill_versions()                    # the name as it was
+                self.viewer.setFocus(Qt.OtherFocusReason)
+            return True
         if e.type() == QEvent.KeyPress and e.key() in (Qt.Key_Return, Qt.Key_Enter) and                 obj is self.cb_version.lineEdit():
             self._entering = True                       # Enter typed in the version's name: a renaming, not a pick
             QTimer.singleShot(0, lambda: setattr(self, "_entering", False))
@@ -1196,17 +1215,11 @@ class PostView(QWidget):
         self.viewer.toolRelease.connect(self._heal_release)
         # Ctrl+Z / Ctrl+Y are the window's Edit > Undo / Redo, which come here while Post is shown (two shortcuts on
         # one key would cancel each other)
-        for seq, fn in (("R", self.b_crop.toggle), ("C", self.b_cmp.toggle), ("V", self._flip_compare), ("M", self._toggle_mask), ("F", self.viewer.fit),
-                        ("Ctrl+0", self.viewer.fit), ("1", lambda: self.viewer.zoom_to(1.0)),
-                        ("+", lambda: self.viewer.zoom_by(ZOOM_STEP)), ("=", lambda: self.viewer.zoom_by(ZOOM_STEP)),
-                        ("Ctrl++", lambda: self.viewer.zoom_by(ZOOM_STEP)),
-                        ("-", lambda: self.viewer.zoom_by(1 / ZOOM_STEP)),
-                        ("Ctrl+-", lambda: self.viewer.zoom_by(1 / ZOOM_STEP)), ("X", self.toggle_paint),
-                        ("[", lambda: self.brush_size(1 / 1.25)), ("]", lambda: self.brush_size(1.25)),
-                        ("Ctrl+J", self.duplicate), ("Delete", self._delete_key)):
-            sc = QShortcut(QKeySequence(seq), self)
-            sc.setContext(Qt.WidgetWithChildrenShortcut)
-            sc.activated.connect(fn)
+        for seqs, _label, fn in POST_KEYS:
+            for seq in seqs if fn is not None else ():
+                sc = QShortcut(QKeySequence(seq), self)
+                sc.setContext(Qt.WidgetWithChildrenShortcut)
+                sc.activated.connect(lambda fn=fn: fn(self))
         # Enter keeps the crop, only while it is drawn: always on, these two took the key from every field of Post
         # (#141: a version's name, a Curves value were no longer applied by Enter)
         self._crop_keys = []
@@ -1387,8 +1400,7 @@ class PostView(QWidget):
         self._save()
         with self._from_post():
             self.s.new_post_version()
-        self.undo.append(MODEL_STEP)                     # (the new version is the one shown: its own Undo takes it back)
-        self.redo.clear()
+        self.redo.clear()                                # (making a version is no step of Undo: the new one starts empty)
         self._undo_buttons()
 
     def _version_renamed(self):
@@ -1404,7 +1416,7 @@ class PostView(QWidget):
         elif name != mine:
             with self._from_post():
                 self.s.rename_post_version(self._version, name)
-            self.undo.append(MODEL_STEP)
+            self.undo.append(self._model_mark("_undo"))
             self.redo.clear()
             self._undo_buttons()
         self._fill_versions()
@@ -1419,7 +1431,7 @@ class PostView(QWidget):
         self._save()
         with self._from_post():
             self.s.delete_post_version(self._version)
-        self.undo.append(MODEL_STEP)                     # (the delete showed the other version: its own Undo now)
+        self.undo.append(self._model_mark("_undo"))                     # (the delete showed the other version: its own Undo now)
         self.redo.clear()
         self._undo_buttons()
 
@@ -1450,11 +1462,18 @@ class PostView(QWidget):
         # its Ctrl+Z puts back the very composition saved before (the layer with its settings, not a new one)
         if text == self._saved and text == json.dumps(save_layers(self.layers), sort_keys=True):
             return
-        if not getattr(self, "_restoring", False):      # (a step of the workflows' Undo undone here: no step of its own)
-            self.undo.append(snapshot(self.layers))
-            self.redo.clear()
         old = {lay["id"] for lay in self.layers}
+        before = self.layers
         self.layers = self._with_synth(load_layers(version.get("layers"), {p.pid for p in self.s.paths}))
+        if getattr(self, "_restoring", False):          # (a step of the workflows' Undo undone here: no step of its own)
+            pass
+        elif getattr(self.s, "_post_depth", 0) == 0:
+            # made in the Graph: its step is the Graph's to undo, never Post's. Post's steps keep working around it: the
+            # layers the Graph put in or took out are put in or taken out of the steps of this version's lists too
+            self._rebase_steps(before, self.layers)
+        else:
+            self.undo.append(snapshot(before))
+            self.redo.clear()
         self._saved = json.dumps(save_layers(self.layers), sort_keys=True)
         added = [lay["id"] for lay in self.layers if lay["id"] not in old]
         if added:                                   # a layer sent from the graph: selected, as a pasted layer is
@@ -1462,6 +1481,28 @@ class PostView(QWidget):
         elif self.sel and not self.layer(self.sel[0]):
             self.sel = (self.layers[0]["id"], "layer") if self.layers else None
         self.sync_paths()                           # the layers the workflows give and the composition lacks yet
+
+    def _rebase_steps(self, before: list, after: list):
+        """The Graph changed the layers (``before`` to ``after``): the layers it added are put into the steps of Post's Undo
+        and Redo (at their place, as they are now), the ones it took out are taken out of them, so that going back through
+        Post's own steps never undoes the Graph's."""
+        was = {x["id"] for x in before}
+        now = {x["id"] for x in after}
+        added = [(i, x) for i, x in enumerate(after) if x["id"] not in was]
+        gone = was - now
+        if not added and not gone:
+            return
+        for steps in (self.undo, self.redo):
+            for k, step in enumerate(steps):
+                if isinstance(step, ModelStep):
+                    continue
+                have = {x["id"] for x in step}
+                fresh = Step(x for x in step if x["id"] not in gone)
+                fresh.crop = getattr(step, "crop", None)
+                for i, lay in added:
+                    if lay["id"] not in have:
+                        fresh.insert(min(i, len(fresh)), snapshot([lay])[0])
+                steps[k] = fresh
 
     def select_layer(self, lid):
         """Show this layer's settings (the graph's Open in Post); not computed yet, the page's list shows it."""
@@ -1511,8 +1552,20 @@ class PostView(QWidget):
         self._final_t.start(0 if final_only else 220)
 
     def _selected_wants(self):
-        want = (self.sel[0],) if self.sel else ()
-        return want, bool(self.sel and self.sel[1] == "mask")
+        want = (self._mask_key(),) if self.sel else ()
+        return want, bool(self.sel and mask_selection(self.sel[1]))
+
+    def _mask_key(self):
+        """What the render calls the selected mask: its layer's id, or (id, side) for a side mask."""
+        if not self.sel:
+            return None
+        return (self.sel[0], self.sel[1][5:]) if self.sel[1].startswith("mask_") else self.sel[0]
+
+    def mask_owner(self):
+        """What the mask tools act on: the selected layer, or a view of the chosen side of a Combine layers layer."""
+        lay = self.layer(self.sel[0]) if self.sel else None
+        side = selection_side(self.sel[1]) if lay is not None else None
+        return lay if side is None or not is_group(lay) else SideLayer(lay, side)
 
     def _hist_ids(self) -> tuple:
         """The selected filter, when its panel shows the histogram of its input (Curves, the stretches)."""
@@ -1693,10 +1746,10 @@ class PostView(QWidget):
                 self._take_mask_thumbs(res)
             if res.kind == "refine" and res.layer_thumbs:
                 self._take_layer_thumbs(res)
-            sel = self.sel[0] if self.sel else None
+            sel = self._mask_key()
             m = res.masks.get(sel) if sel is not None else None
             self.mask1 = None if m is None else (_upsample(m, 2 ** (res.level - 1)) if res.level > 1 else m)
-            self._set_overlay(res.overlay if self.sel and self.sel[1] == "mask" else None)
+            self._set_overlay(res.overlay if self.sel and mask_selection(self.sel[1]) else None)
             self.src.version += 1
             if res.kind == "half":
                 self._take_mask_thumbs(res)
@@ -1809,6 +1862,10 @@ class PostView(QWidget):
             return ""
         st = self.s.state_info(p, "astrometry")
         if st is None:
+            # no Astrometry block of its own: a combination, like Align on, hands the plate solution of its reference
+            # row on with its image; it is there when that stage is computed and the solution file came with it
+            st = self._handed_on_solution(p, pid)
+        if st is None:
             return _("The image at the bottom has no Astrometry: place the block in its workflow, or put a layer that "
                      "has one at the bottom")
         if st.state not in ("done", "stale"):
@@ -1817,9 +1874,35 @@ class PostView(QWidget):
             return _("The field of the image at the bottom was not identified: no plate solution to draw")
         return ""
 
+    def _handed_on_solution(self, p, pid):
+        """The state of the combination (or Align on) stage that outputs the bottom workflow's plate solution, None
+        when there is none (no such stage, or it handed none on)."""
+        from pathlib import Path
+
+        from .. import api
+        from ..core.workflow import COMBINE
+        if not hasattr(self.s, "all_stages"):
+            return None
+        st = next((i for s in self.s.all_stages(p) if s == "align_on" or s in COMBINE
+                   for i in [self.s.state_info(p, s)] if i is not None), None)
+        if st is None or st.state not in ("done", "stale"):
+            return st
+        for which in ("current", "previous"):
+            out = api.stage_outputs(self.s.p, pid, "astrometry", which)
+            if out is not None and (Path(out.dir) / "wcs.fits").is_file():
+                return st
+        return None
+
     def _ann_buttons(self):
         """Sky grid and Object names greyed, the reason on hover, while there is no solution to draw."""
         why = self.ann_problem()
+        if not why and not getattr(self, "_ann_warmed", False):
+            self._ann_warmed = True                       # the catalogue is read now, not at the first tick (1 to 3 s)
+            try:
+                from .services import inspect as si
+                si.service_of(self.s).request_job("post.warm", si.warm_annotations)
+            except Exception:  # noqa: BLE001 - a session without the inspect service (tests)
+                pass
         for b, k in ((self.b_grid, "grid"), (self.b_names, "objects")):
             b.setEnabled(not why)
             if why:
@@ -1872,7 +1955,7 @@ class PostView(QWidget):
 
     # ------------------------------------------------------------ the red overlay of the mask being edited
     def _overlay(self, p: QPainter, v: Viewer):
-        if not self.sel or self.sel[1] != "mask" or self._overlay_img is None or self.show_mask or \
+        if not self.sel or not mask_selection(self.sel[1]) or self._overlay_img is None or self.show_mask or \
                 self.b_cmp.isChecked() or self.src.canvas is None:
             return
         W, H = self.src.size()
@@ -1890,13 +1973,15 @@ class PostView(QWidget):
     def _undo_buttons(self):
         self.b_undo.setEnabled(bool(self.undo))          # Post's own steps only: the graph's are undone in the graph
         self.b_redo.setEnabled(bool(self.redo))
+        self.undoChanged.emit()
 
     def _set_workflow_param(self, p, stage, name, value):
         """A setting of the workflow shown here (its Output's channels): a step of Post's Undo too (2.4), undone by the
         workflows' Undo."""
         with self._from_post():
             self.s.set_param(p, stage, name, value)
-        self.undo.append(MODEL_STEP)
+            self._name_step(_("Setting “{name}” changed").format(name=name))
+        self.undo.append(self._model_mark("_undo"))
         self.redo.clear()
         self._undo_buttons()
 
@@ -1906,31 +1991,53 @@ class PostView(QWidget):
         if self.sel and self.sel[1] == "layer" and self.b_del.isEnabled():
             self.delete()
 
+    def _name_step(self, text: str):
+        """The words of the workflows' step just made, for the Undo / Redo message ("Undone: <step>")."""
+        name = getattr(self.s, "name_step", None)
+        if name is not None:
+            name(text)
+
+    def _model_mark(self, on: str) -> ModelStep:
+        """The mark of the model's latest step of its list ``on`` ("_undo" or "_redo"), just made."""
+        stack = getattr(self.s, on, None)
+        return ModelStep(stack[-1] if stack else None)
+
+    def _model_mine(self, mark, on: str) -> bool:
+        """The step this mark stands for is still the model's latest of its list: it is this version's to take back."""
+        if mark.step is None:
+            return True
+        stack = getattr(self.s, on, None)
+        return bool(stack) and stack[-1] is mark.step
+
     def do_undo(self) -> bool:
         """Post's last change undone, said in the status. Only Post's own steps (a "To Post" made in the graph is the
         graph's, undone there); with none, it says so. True when it was a step of the workflows Post made."""
-        if self.undo and self.undo[-1] is not MODEL_STEP:
+        if self.undo and not isinstance(self.undo[-1], ModelStep):
             before = self._step(snapshot(self.layers))
             self.redo.append(before)
             self.layers = self.undo.pop()
             self._restored()
             self._say_step("Undone", "Undone: {what}", step_words(self.layers, before))
             return False
-        if not self.undo:
-            self.toasted.emit(_("Nothing to undo here: the Graph's changes are undone in the Graph"))
+        if not self.undo or not self._model_mine(self.undo[-1], "_undo"):
+            can = getattr(self.s, "can_undo", None)
+            if can is None or can(graph=True):            # what is left is the Graph's: said there
+                self.toasted.emit(_("Nothing to undo here: the Graph's changes are undone in the Graph"))
+            else:
+                self.toasted.emit(_("Nothing more to undo in this version"))
             return False
         self.undo.pop()
         return self._model_step(getattr(self.s, "undo", None), "redo", "Undone", "Undone: {what}")
 
     def do_redo(self) -> bool:
-        if self.redo and self.redo[-1] is not MODEL_STEP:
+        if self.redo and not isinstance(self.redo[-1], ModelStep):
             before = self._step(snapshot(self.layers))
             self.undo.append(before)
             self.layers = self.redo.pop()
             self._restored()
             self._say_step("Redone", "Redone: {what}", step_words(before, self.layers))
             return False
-        if not self.redo:
+        if not self.redo or not self._model_mine(self.redo[-1], "_redo"):
             self.toasted.emit(_("Nothing to redo here: the Graph's changes are redone in the Graph"))
             return False
         self.redo.pop()
@@ -1953,7 +2060,7 @@ class PostView(QWidget):
         try:
             done = fn()
             if done:
-                getattr(self, other).append(MODEL_STEP)
+                getattr(self, other).append(self._model_mark("_undo" if other == "undo" else "_redo"))
         finally:
             self._restoring = False
         self.rebuild()
@@ -1977,6 +2084,9 @@ class PostView(QWidget):
         self._show_crop(getattr(self.layers, "crop", self.crop))
         if self.sel and not self.layer(self.sel[0]):
             self.sel = (self.layers[-1]["id"], "layer") if self.layers else None
+        elif self.sel and mask_selection(self.sel[1]) and (own := self.mask_owner()) is not None \
+                and own["mask"] is None:                    # the mask undone: its layer (or side) stays chosen
+            self.sel = (self.sel[0], selection_side(self.sel[1]) or "layer")
         self.rebuild()
         self.request(final_only=True)
         self._save()
@@ -2005,16 +2115,17 @@ class PostView(QWidget):
     def mask_thumb(self, lay):
         if lay["mask"] is None:
             return None
-        pm = self._mthumbs.get(lay["id"])
+        pm = self._mthumbs.get(lay.get("mkey", lay["id"]))
         if pm is None:
             pm = pix(np.full((TH, TW), 255, np.uint8))             # an empty mask shows the layer everywhere
-            self._mthumbs[lay["id"]] = pm
+            self._mthumbs[lay.get("mkey", lay["id"])] = pm
         return pm
 
     def _update_mask_thumb(self):
         for row in self.rows:
-            if row.m is not None and row.lay["id"] in self._mthumbs:
-                row.m.setPixmap(small(self._mthumbs[row.lay["id"]]))
+            key = row.lay.get("mkey", row.lay["id"])
+            if row.m is not None and key in self._mthumbs:
+                row.m.setPixmap(small(self._mthumbs[key]))
 
     def _update_layer_thumbs(self):
         for row in self.rows:
@@ -2093,7 +2204,8 @@ class PostView(QWidget):
                 sl = sl and self.sel[1] == lay.get("sub", "layer")
                 if lay["kind"] == "sub":
                     n = sum(1 for f in children(self.layers, lay["id"]) if f.get("sub") == lay["sub"])
-                    row = LayerRow(self, lay, self.thumb(lay), None, sl, False, depth, n,
+                    row = LayerRow(self, lay, self.thumb(lay), self.mask_thumb(lay), sl and self.sel[1] == lay["sub"],
+                                   self.sel == (lay["id"], "mask_" + lay["sub"]), depth, n,
                                    (lay["id"], lay["sub"]) in self._collapsed)
                 else:
                     row = LayerRow(self, lay, self.thumb(lay), None, sl, False, depth)
@@ -2126,10 +2238,18 @@ class PostView(QWidget):
         self.b_del.setToolTip(_("Delete the selected layer") if self.b_del.isEnabled() else
                               _("Choose a layer first") if lay is None else
                               _("The last image layer stays: Post needs an image (hide it with its eye)"))
-        self.b_maskadd.setEnabled(lay is not None)
-        masked = lay is not None and lay["mask"] is not None      # the accent: the selected layer has its mask
-        icon_only(self.b_maskadd, "mask", _("Edit the mask of the selected layer") if masked else
-                  _("Add a mask to the selected layer"), 16, "selected" if masked else "normal", box=28)
+        own = self.mask_owner()
+        real = lay is not None and self.sel[1] == "real"           # the real stars have no mask of their own
+        self.b_maskadd.setEnabled(own is not None and not real)
+        masked = own is not None and own["mask"] is not None      # the accent: the selected layer has its mask
+        side = own is not lay and own is not None
+        icon_only(self.b_maskadd, "mask", (_("Edit the mask of the selected image") if side else
+                                           _("Edit the mask of the selected layer")) if masked else
+                  _("Add a mask to the selected image") if side else _("Add a mask to the selected layer"),
+                  16, "selected" if masked else "normal", box=28)
+        if real:                                                  # greyed, it says why
+            self.b_maskadd.setToolTip(_("The Real stars row has no mask of its own: choose the layer or one of its "
+                                        "two images"))
         self._undo_buttons()
         self.build_filter_menu()
         if props:
@@ -2141,8 +2261,8 @@ class PostView(QWidget):
         if self.sel == (lid, what):
             return
         self.sel = (lid, what)
-        lay = self.layer(lid)
-        if what == "mask" and lay["mask"] is not None:
+        lay = self.mask_owner() if mask_selection(what) else None
+        if lay is not None and lay["mask"] is not None:
             brush = next((p for p in lay["mask"]["parts"] if p["src"] == "brush"), None)
             self.part_sel = brush["id"] if brush else None
         else:
@@ -2453,7 +2573,8 @@ class PostView(QWidget):
             return False
         finally:
             self._restoring = False
-        self.undo.append(MODEL_STEP)
+        self._name_step(toast)
+        self.undo.append(self._model_mark("_undo"))
         self.redo.clear()
         self._undo_buttons()
         self.toasted.emit(toast)
@@ -2602,7 +2723,8 @@ class PostView(QWidget):
                 self._post_changed(None)                  # and taken back here with their new names
             finally:
                 self._restoring = False
-            self.undo.append(MODEL_STEP)
+            self._name_step(_("Workflow renamed “{name}”").format(name=new))
+            self.undo.append(self._model_mark("_undo"))
             self.redo.clear()
             self._undo_buttons()
             self.toasted.emit(_("“{old}” renamed “{name}”: its workflow too · Ctrl+Z").format(old=old, name=new))
@@ -2647,7 +2769,7 @@ class PostView(QWidget):
         real = cur is not None and is_pixel(cur) and self.sel[1] == "real"
         if cur is not None:
             target = cur["id"] if is_pixel(cur) else cur.get("target")
-            sub = "stars" if real else self.sel[1] if self.sel[1] in SUBS else None if is_pixel(cur) else cur.get("sub")
+            sub = "stars" if real else selection_side(self.sel[1]) or (None if is_pixel(cur) else cur.get("sub"))
         self.push()
         fl = new_filter_layer(key, target, sub)
         same = sum(1 for lay in self.layers if lay["kind"] == "filter" and lay.get("filter") == key)
@@ -2686,8 +2808,8 @@ class PostView(QWidget):
     def _copy(lay):
         d = snapshot([lay])[0]
         d["id"] = new_id()
-        if d["mask"]:
-            for part in d["mask"]["parts"]:
+        for m in [d["mask"] or {}, *(d.get("side_masks") or {}).values()]:
+            for part in m.get("parts", []):
                 part["id"] = new_id()
         return d
 
@@ -2737,26 +2859,31 @@ class PostView(QWidget):
         self.request(final_only=True)
 
     def mask_button(self):
-        lay = self.layer(self.sel[0]) if self.sel else None
-        if lay is None:
+        lay = self.mask_owner()
+        if lay is None or self.sel[1] == "real":
             return
         if lay["mask"] is None:
             self.add_mask(lay)
         else:
-            self.select(lay["id"], "mask")
+            self.select(lay["id"], self._mask_kind(lay))
+
+    @staticmethod
+    def _mask_kind(lay):
+        """The selection of a mask: the layer's own, or one side's of a Combine layers layer."""
+        return "mask_" + lay["sub"] if isinstance(lay, SideLayer) else "mask"
 
     def add_mask(self, lay):
         self.push()
         lay["mask"] = new_mask()
-        self._mthumbs.pop(lay["id"], None)
+        self._mthumbs.pop((lay["id"], lay["sub"]) if isinstance(lay, SideLayer) else lay["id"], None)
         self.sel = None
-        self.select(lay["id"], "mask")
+        self.select(lay["id"], self._mask_kind(lay))
 
     def remove_mask(self, lay):
         self.push()
         lay["mask"] = None
-        self._mthumbs.pop(lay["id"], None)
-        self.sel = (lay["id"], "layer")
+        self._mthumbs.pop((lay["id"], lay["sub"]) if isinstance(lay, SideLayer) else lay["id"], None)
+        self.sel = (lay["id"], lay["sub"] if isinstance(lay, SideLayer) else "layer")
         self.rebuild()
         self.request(final_only=True)
 
@@ -2775,8 +2902,8 @@ class PostView(QWidget):
         if lay is None:
             self.pbox.addStretch(1)
             return
-        if self.sel[1] == "mask" and lay["mask"] is not None:
-            self.mask_props(lay)
+        if mask_selection(self.sel[1]) and (own := self.mask_owner()) is not None and own["mask"] is not None:
+            self.mask_props(own)
         elif self.sel[1] in SUB_ROWS:
             self.pbox.addWidget(label(_(SUB_NAMES[self.sel[1]]), "h2"))
             if self.sel[1] == "real":                    # the bottom of the Stars group (#93)
@@ -3320,7 +3447,7 @@ class PostView(QWidget):
         self.build_props()
 
     def toggle_paint(self):
-        lay = self.layer(self.sel[0]) if self.sel else None
+        lay = self.mask_owner()
         if not lay or not lay["mask"]:
             return
         part = next((p for p in lay["mask"]["parts"] if p["id"] == self.part_sel and p["src"] == "brush"), None)
@@ -3333,7 +3460,7 @@ class PostView(QWidget):
             self.viewer.brush_r = self.heal_size / 2
             self.build_props()
             return
-        lay = self.layer(self.sel[0]) if self.sel else None
+        lay = self.mask_owner()
         part = next((p for p in (lay["mask"]["parts"] if lay and lay["mask"] else [])
                      if p["id"] == self.part_sel and p["src"] == "brush"), None)
         if part:
@@ -3364,7 +3491,7 @@ class PostView(QWidget):
         self.request(final_only=True)
 
     def _stroke(self, x, y, first):
-        lay = self.layer(self.sel[0]) if self.sel else None
+        lay = self.mask_owner()
         part = next((p for p in (lay["mask"]["parts"] if lay and lay["mask"] else []) if p["id"] == self.part_sel),
                     None)
         if part is None or part["src"] != "brush":
@@ -3430,7 +3557,7 @@ class PostView(QWidget):
         gone = {x["id"] for x in empty}
         self.layers = normalize([x for x in self.layers if x["id"] not in gone])
         made = getattr(self, "_heal_made", None)
-        if made in gone and self.undo and self.undo[-1] is not MODEL_STEP and                 not any(x["id"] == made for x in self.undo[-1]):
+        if made in gone and self.undo and not isinstance(self.undo[-1], ModelStep) and                 not any(x["id"] == made for x in self.undo[-1]):
             self.undo.pop()                                  # (the step before its making: it was not a change)
         self._heal_made = None
         self.sel = None
@@ -3552,7 +3679,7 @@ class PostView(QWidget):
 
     def _mask_button(self):
         """Show mask: greyed, the reason on hover, when the selected layer has none (issue #71)."""
-        lay = self.layer(self.sel[0]) if self.sel else None
+        lay = self.mask_owner()
         has = lay is not None and lay.get("mask") is not None
         self.b_mask.setEnabled(has)
         self.b_mask.setToolTip(_("Mask of the selected layer, in gray (M)") if has else
@@ -3572,7 +3699,7 @@ class PostView(QWidget):
         elif self.viewer.mode == "heal":
             t = _("Spot healing: click or paint over a defect, healed when released · [ ] size · Alt+click: the "
                   "source by hand · Ctrl+Z: undo · middle button: move the image")
-        elif self.sel and self.sel[1] == "mask":
+        elif self.sel and mask_selection(self.sel[1]):
             t = _("Red: where the layer shows · M: mask in gray")
         elif self.b_cmp.isChecked():
             t = _("Drag the divider · Before: the bottom layer, suggested settings")
@@ -3590,6 +3717,27 @@ class PostView(QWidget):
         d = ExportDialog(self, parent or self.window())
         d.exec()
         d.deleteLater()
+
+
+#: Post's own keys: (the key sequences, what they do (English, translated where shown), what they run on the page, None
+#: for a key the page handles apart). The one table binds the keys and gives the Help menu's Shortcuts their list.
+POST_KEYS = (
+    (("R",), "Crop", lambda p: p.b_crop.toggle()),
+    (("C",), "Compare", lambda p: p.b_cmp.toggle()),
+    (("V",), "Flip compare", lambda p: p._flip_compare()),
+    (("M",), "Show mask", lambda p: p._toggle_mask()),
+    (("F", "Ctrl+0"), "Fit", lambda p: p.viewer.fit()),
+    (("1",), "Zoom 100 %", lambda p: p.viewer.zoom_to(1.0)),
+    (("+", "=", "Ctrl++"), "Zoom in", lambda p: p.viewer.zoom_by(ZOOM_STEP)),
+    (("-", "Ctrl+-"), "Zoom out", lambda p: p.viewer.zoom_by(1 / ZOOM_STEP)),
+    (("X",), "Paint / erase", lambda p: p.toggle_paint()),
+    (("[",), "Smaller brush", lambda p: p.brush_size(1 / 1.25)),
+    (("]",), "Bigger brush", lambda p: p.brush_size(1.25)),
+    (("Ctrl+J",), "Duplicate", lambda p: p.duplicate()),
+    (("Delete",), "Delete", lambda p: p._delete_key()),
+    (("Return", "Enter"), "Keep crop", None),
+    (("Escape",), "Leave tool", None),
+)
 
 
 class PostPage3(QWidget):
@@ -3701,6 +3849,23 @@ class PostPage3(QWidget):
         if self.pages.currentIndex() == 1:
             self.view.worker.refresh()
             self.view.refresh()
+
+    def release_memory(self):
+        """Leaving Post: the render engines and the caches (layers' images, steps, masks' planes) go, with the freed
+        pages; the next render, on coming back, opens them again."""
+        self.view.worker.release()
+
+    #: below this much memory the engine may still fill (the machine's free memory, or the Memory limit of the
+    #: Settings less what FLOAT holds), leaving Post hands its engines and caches back
+    LEAVE_ROOM_BYTES = 2 << 30
+
+    def leave(self):
+        """Leaving Post for another page: its engines and caches are kept, so that coming back shows the picture at once
+        (releasing them cost 2 to 5 s on each return, on a laptop), unless memory is short: then they are released."""
+        from ..core import devices
+        mb = devices.memory_budget()
+        if mb is not None and mb[0] < self.LEAVE_ROOM_BYTES:
+            self.release_memory()
 
     def export(self, parent=None):
         """File > Export image…"""

@@ -648,8 +648,9 @@ def test_the_smallest_window_is_about_1024_by_640(env):
     assert w.mode == 0 and not _cut_controls(w)
 
 
-def _wait(w, until, ms=1500):
-    """Real time passing (the automatic side's delays), the events handled meanwhile."""
+def _wait(w, until, ms=6000):
+    """Real time passing (the automatic side's delays), the events handled meanwhile. It returns as soon as ``until``
+    holds: the long limit only matters under a loaded suite, where 1.5 s was not enough for the strip to open."""
     end = time.monotonic() + ms / 1000
     while not until() and time.monotonic() < end:
         QApplication.processEvents()

@@ -290,5 +290,22 @@
   "Linked channels is a setting of the output: run to see it": "Canaux liés est un réglage de la sortie : exécuter pour le voir",
   "Nothing to undo here: the Graph's changes are undone in the Graph": "Rien à annuler ici : les changements du Graphe s'annulent dans le Graphe",
   "Nothing to redo here: the Graph's changes are redone in the Graph": "Rien à rétablir ici : les changements du Graphe se rétablissent dans le Graphe",
-  "Output setting: applied by a run": "Réglage de la sortie : appliqué par une exécution"
+  "Output setting: applied by a run": "Réglage de la sortie : appliqué par une exécution",
+  "Shortcuts": "Raccourcis",
+  "Window": "Fenêtre",
+  "Compare": "Comparer",
+  "Flip compare": "Inverser comparaison",
+  "Zoom 100 %": "Zoom 100 %",
+  "Zoom in": "Zoom avant",
+  "Zoom out": "Zoom arrière",
+  "Paint / erase": "Peindre / effacer",
+  "Smaller brush": "Pinceau plus petit",
+  "Bigger brush": "Pinceau plus grand",
+  "Keep crop": "Garder recadrage",
+  "Leave tool": "Quitter outil",
+  "Open block": "Ouvrir bloc",
+  "Back to Graph": "Retour Graphe",
+  "Nothing more to undo in this version": "Plus rien à annuler dans cette version",
+  "Setting “{name}” changed": "Réglage « {name} » changé",
+  "Workflow renamed “{name}”": "Workflow renommé « {name} »"
 }

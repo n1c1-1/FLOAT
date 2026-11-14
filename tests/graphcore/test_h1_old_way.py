@@ -326,6 +326,7 @@ def test_a_block_to_post_as_the_old_model_does(qapp, tmp_path, recording):
         else:
             r = _row(w.g, "Colour full")
             _gesture(w, [("send_to_post", {"block": _blk(w.g, r, "gradient"), "name": "Colour full · Gradient"})])
+            w.m._write_branch_layer(_view(w.m, "Colour full · Gradient"))   # its layer, as the model writes it
         recording.check(w.p)
     finally:
         w.close()

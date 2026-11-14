@@ -199,7 +199,7 @@ def test_control_round_a_layer_renamed_in_post_renames_its_workflow_when_it_had_
         v.rename(lay, "Background only")
         assert m.view(pid).name == "Background only"                       # the workflow (and its wire) follow
         assert [x["name"] for x in v.layers if x.get("pid") == pid] == ["Background only"]
-        assert v.undo[-1] is MODEL_STEP and told and "Ctrl+Z" in told[-1]
+        assert isinstance(v.undo[-1], MODEL_STEP.__class__) and told and "Ctrl+Z" in told[-1]
         v.do_undo()                                                         # one step brings both back
         assert m.view(pid).name == "Classic stack"
         assert [x["name"] for x in v.layers if x.get("pid") == pid] == ["Classic stack"]

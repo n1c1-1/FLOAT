@@ -100,6 +100,18 @@ SKY_SHARE = 0.2
 #: the side of the blocks whose medians find the sky (px): wide enough that a star or the noise does not move a block's
 #: median, narrow enough that a faint nebula leaves its own blocks
 SKY_BLOCK = 16
+#: the colour strength of a narrow-band combination (``chroma_gain``): the factor on the colour's departure from grey, so
+#: that the nebula's Oklch chroma in Post's default display matches the Hubble teams' own: the same five SHO composites
+#: as the hues (module docstring), the same nebula pixels (sky and stars masked: Oklch lightness 0.25 to 0.85), warm
+#: areas (hue 0-120) pooled median chroma 0.058, blue areas (180-300) 0.050, their mean 0.054. The nebula pixels of our
+#: combinations, rendered with Post's defaults, have a median chroma of 0.026 at gain 1; the gain is the factor
+#: that brings it to 0.054, with gamut_gain keeping the bright core from flattening (measured on the Helix's stored
+#: S-H-O channels at a quarter of the size, nebula = smoothed luminance 3 sigma over the sky: chroma 0.026 at gain 1,
+#: 0.048 at 1.7, 0.054 at 1.9, 0.060 at 2.1; the core disk's colour and texture are those of gain 1).
+HUBBLE_CHROMA = 0.054
+CHROMA_GAIN = 1.9
+#: the top of the display a colour may reach (``gamut_gain``): the brightest channel's shown value
+DISPLAY_CAP = 0.9
 #: the bounds of the linear match (module docstring): Siril's RGB compositing tool's own
 MATCH_LOW, MATCH_HIGH = 1e-7, 0.875
 #: the narrow-band types' reference of the linear match: the H-alpha
@@ -130,6 +142,8 @@ PORT_NAMES = {"SII": "S II", "Ha": "Hα", "OIII": "O III"}
 
 #: the reasons a combination waits (the interface translates the templates, filling the names in)
 TO_WIRE = "{names} to wire"
+#: why a block that reads the plate solution after a combination has none: no input of the combination has one
+NO_PLATE_SOLUTION = "the combination's inputs bring no plate solution"
 GRID_ONE = "{names} is not on the grid of {first}: place Align on after its Stacking"
 GRID_MANY = "{names} are not on the grid of {first}: place Align on after their Stacking"
 
@@ -267,8 +281,59 @@ def chroma_sigma(noise: dict[str, float], noise_l: float) -> float:
     return float(s) if s >= 0.5 else 0.0
 
 
+def _lum(r: np.ndarray) -> np.ndarray:
+    """The luminance of colour planes (3, ...), summed pixel by pixel in a fixed order: the same value whatever the shape
+    of the array (a matrix product rounds differently on the whole image and on a subset of its pixels)."""
+    return LUM[0] * r[0] + LUM[1] * r[1] + LUM[2] * r[2]
+
+
+def gamut_gain(ratio: np.ndarray, L: np.ndarray, gain: float) -> np.ndarray:
+    """The colour ratios (3, H, W) with their departure from grey scaled by ``gain`` (the luminance kept), the scale
+    lowered, pixel by pixel and down to 1 at the least, where the brightest channel would be shown above
+    ``DISPLAY_CAP`` in Post's default display: a bright pixel (the core of a nebula) has little room left, and more
+    colour there flattens it against the top of the display. This is gamut compression at constant lightness (the
+    chroma scaled down to what the display can show: Morovic and Luo, "The fundamentals of gamut mapping: a survey",
+    J. Imaging Sci. Technol. 45(3), 2001, "chroma clipping at constant lightness"; Ottosson 2021, "Gamut clipping in
+    Oklab", the same rule in a perceptual space). The display is its midtones stretch put at the Post's rule: the
+    median shown at 0.25, white at the 99.99th percentile of the brightest channel at gain 1."""
+    def scaled(g):
+        r = np.maximum(1 + g * (ratio - 1), 0)
+        return r / np.maximum(_lum(r), 1e-6)[None]
+    full = scaled(gain)
+    lit = L > 0
+    if lit.sum() < 1000:
+        return full
+    top = ratio.max(0) * L
+    white = float(np.percentile(top[lit], 99.99))
+    med = float(np.median(L[lit])) / max(white, 1e-12)
+    if not 0 < med < 1 or white <= 0:
+        return full
+    m = float(((0.25 - 1) * med) / ((2 * 0.25 - 1) * med - 0.25))      # the mid point that shows the median at 0.25
+    cap = white * float(((1 - m) - 1) * DISPLAY_CAP / ((2 * (1 - m) - 1) * DISPLAY_CAP - (1 - m)))   # its inverse
+    cap = np.maximum(cap, top)                 # a pixel already above it keeps its own colour
+    out_max = full.max(0) * L
+    over = out_max > cap
+    if not over.any():
+        return full
+    # the scale that puts the brightest channel at the cap: found by bisection on the (monotonic) channel, over the
+    # pixels above it only (a nebula's bright core: a few percent of the image; the whole image took 2 s on a laptop)
+    rs, Ls, cs = ratio[:, over], L[over], cap[over]
+    lo, hi = np.ones_like(Ls), np.full_like(Ls, float(gain))
+    for _ in range(8):
+        mid = 0.5 * (lo + hi)
+        r = np.maximum(1 + mid[None] * (rs - 1), 0)
+        r = r / np.maximum(_lum(r), 1e-6)[None]
+        ok = r.max(0) * Ls <= cs
+        lo = np.where(ok, mid, lo)
+        hi = np.where(ok, hi, mid)
+    r = np.maximum(1 + lo[None] * (rs - 1), 0)
+    full[:, over] = r / np.maximum(_lum(r), 1e-6)[None]
+    return full
+
+
 def compose(chans: dict[str, np.ndarray], roles: tuple[str, ...], mat, noise: dict[str, float],
-            sigma: float | None = None, sky: np.ndarray | None = None, equal: bool = False) -> tuple[np.ndarray, dict]:
+            sigma: float | None = None, sky: np.ndarray | None = None, equal: bool = False,
+            gain: float = 1.0) -> tuple[np.ndarray, dict]:
     """(3, H, W) of a narrow-band combination composed as luminance and chrominance (issue #163; the LRGB composition,
     the colour of one image and the lightness of another, R. Gendler, "Lessons from the Masters", Springer 2013, and
     Rector et al. 2007 for the colour layers): the lightness is the mean of the channels (``lightness``), the hues give
@@ -299,6 +364,8 @@ def compose(chans: dict[str, np.ndarray], roles: tuple[str, ...], mat, noise: di
     t = np.clip(lum / floor - 1, 0, 1)
     t = t * t * (3 - 2 * t)                             # from one to two floors, smoothly
     ratio = 1 + t[None] * (rgb / np.maximum(lum, floor)[None] - 1)
+    if gain != 1.0:                       # the colour strength: the departure from grey scaled, the luminance kept
+        ratio = gamut_gain(ratio, L, gain)
     return (ratio * L[None]).astype(np.float32), {"sigma": sig, "noise_l": noise_l, "floor": floor}
 
 
@@ -311,6 +378,10 @@ class CombinationParams(StageParams):
                            help="The images of the workflows combined, the port each one feeds, and its channel.")
     #: the user's weight of each channel ({port: weight}, 1 by default): a channel too faint for the balance (its noise
     #: raised with it) is lowered by hand
+    #: set by the project (not keyed: the keys of the stages it holds are): {stage of the reference row's Astrometry
+    #: block: its folder}, the plate solution handed on with the combination's image (empty: the inputs have none)
+    solution: dict = P({}, label="Plate solution", level="internal",
+                       help="The plate solution of the reference row, handed on with the combination's image.")
     weights: dict = P({}, label="Channel weights", level="internal",
                       help="Each channel's weight, after the balance (1: as balanced).")
 
@@ -356,6 +427,7 @@ class Combination(Stage):
         if missing:
             raise StageError(f"{self.title} needs the {', '.join(missing)} channel(s)")
         ref: dict = {}
+        wcs_ref = None
         chans: dict[str, np.ndarray] = {}
         valid_all = None
         tops: dict[str, float] = {}
@@ -377,8 +449,11 @@ class Combination(Stage):
             ch = channel_of(np.asarray(np.load(d / name, mmap_mode="r")), inp.get("channel", "L"))
             wcs_f = Path(inp.get("wcs") or "")
             if not ref:
+                ref = {"shape": ch.shape, "dir": d}
+            if wcs_ref is None and wcs_f.is_file():
+                # the inputs are on one grid: the plate solution of the first input that has one (the reference row's)
                 from ..core.imgutil import read_wcs  # imgutil loads OpenCV: not when the engine's API is imported
-                ref = {"shape": ch.shape, "wcs": read_wcs(wcs_f) if wcs_f.is_file() else None, "dir": d}
+                wcs_ref = read_wcs(wcs_f)
             shapes[inp["role"]] = list(ch.shape)
             valid_all = valid if valid_all is None else (valid_all & valid)
             chans[inp["role"]] = ch
@@ -436,8 +511,12 @@ class Combination(Stage):
         ctx.save_json("drz_meta.json", {"scale": float(meta.get("drizzle_scale", 1.0)), "source": "fusion",
                                         "kind": self.kind, "narrowband": self.narrowband, "width": W, "height": H,
                                         "sky_neutral": True, "channels": {r: round(t, 4) for r, t in tops.items()}})
-        if ref["wcs"] is not None:
-            ref["wcs"].to_fits().writeto(ctx.out("wcs.fits"), overwrite=True)
+        # the reference row's plate solution: the combination is on its grid and crops nothing, so it is the same
+        # solution; the files of its Astrometry stages are handed on as Align on does, the blocks after read them
+        from .align_on import AlignOn
+        AlignOn.hand_on_solution(ctx, p.solution or {})
+        if wcs_ref is not None:
+            wcs_ref.to_fits().writeto(ctx.out("wcs.fits"), overwrite=True)
         ctx.metric("channels", sorted(chans))
         ctx.log(f"{self.title} from {', '.join(chans)}; channel scales " + ", ".join(f"{r} {t:.4g}" for r, t in tops.items()))
         v = np.moveaxis(rgb, 0, -1)
@@ -461,7 +540,7 @@ class NarrowbandCombination(Combination):
             raise StageError(f"{e}: choose hues around the colour wheel") from None
         sigma = None if p.smoothing == "auto" else p.radius
         rgb, notes = compose(chans, self.ports, mat, noise, sigma, sky=sky_mask(chans, valid),
-                             equal=p.lightness == "equal")
+                             equal=p.lightness == "equal", gain=CHROMA_GAIN)
         ctx.log(f"lightness from the channels {'weighted by their noise' if p.lightness == 'noise' else 'equally'} ("
                 + ", ".join(f"{r} {(notes['noise_l'] / max(noise[r], 1e-12)) ** 2:.2f}" for r in chans)
                 + "), colour from the hues " + ", ".join(f"{r} {h:g}" for r, h in zip(self.ports, self.hues(p)))
@@ -490,7 +569,7 @@ class CombineSHO(NarrowbandCombination):
     description = ("Combines the S II, H-alpha and O III filters into one colour image: each filter a hue, the lightness "
                    "from the filters weighted by their noise, aligned through their plate solutions.")
     Params = SHOParams
-    version = "3"
+    version = "7"
 
 
 class HOParams(NarrowbandParams):
@@ -508,7 +587,7 @@ class CombineHO(NarrowbandCombination):
     description = ("Combines the H-alpha and O III filters (two filters, or a dual-band image's channels) into one "
                    "colour image: each filter a hue, the lightness from the filters weighted by their noise.")
     Params = HOParams
-    version = "3"
+    version = "7"
 
 
 class CombineRGB(Combination):
@@ -518,7 +597,7 @@ class CombineRGB(Combination):
     ports = ("R", "G", "B")
     description = "Combines the red, green and blue filters into one colour image, aligned through their plate solutions."
     Params = BalancedParams
-    version = "1"
+    version = "2"
 
     def combine(self, ctx, p, chans, noise, valid):
         return mix(chans, self.ports, np.eye(3))
@@ -532,7 +611,7 @@ class CombineLRGB(Combination):
     description = ("Combines the red, green and blue filters into the colour, the luminance filter into the detail: "
                    "each pixel's colour scaled so that its luminance is L's.")
     Params = BalancedParams
-    version = "1"
+    version = "2"
 
     def combine(self, ctx, p, chans, noise, valid):
         rgb = np.stack([chans["R"], chans["G"], chans["B"]])

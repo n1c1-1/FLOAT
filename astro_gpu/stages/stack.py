@@ -54,6 +54,7 @@ from __future__ import annotations
 import importlib.util
 import math
 import os
+import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -83,6 +84,11 @@ REJECTION = "rejection.npz"
 #: calibration leaves those stars out) and of its clipped samples (layer 1: the simple output gives those cores the
 #: colour of their surroundings), the most of the three colours
 SATURATION = "saturation.npy"
+#: the bytes a band of the rejection by frame count holds per value (frames x colours x output columns) on the processor,
+#: measured (count_pass), and the most memory its bands may take whatever the machine has free (3 GB: a 50-frame
+#: 12 Mpx night keeps bands at least as wide as before the measure, 99 rows, without a limit)
+CPU_BAND_BYTES = 32
+CPU_BAND_CAP = 3 * 2 ** 30
 #: a raw value above this fraction of the saturation level is near saturation (the response bends before it clips)
 NEAR_SATURATION = 0.85
 #: the rejection maps are reduced by a whole factor until their longer side is at most this
@@ -412,6 +418,7 @@ class Stack(Stage):
                                 torch.arange(W, device=dev, dtype=torch.float32), indexing="ij")
         kmap = P * (yy.long() % P) + (xx.long() % P)
         chmap = torch.tensor(ch_of_k, device=dev)[kmap]
+        del kmap
         h = PIX * S / 2.0
         nby, nbx = (H // P) // BS, (W // P) // BS
 
@@ -587,17 +594,19 @@ class Stack(Stage):
                 deposit(sq, None, (val - c0[chmap]) ** 2, Xo, Yo, w, keep)
 
         # ---------------- pass 1: weighted mean and standard deviation of the samples at each point
-        num = torch.zeros(3 * Ho * Wo, device=dev)
-        den = torch.zeros(3 * Ho * Wo, device=dev)
-        sq = None if by_count else torch.zeros(3 * Ho * Wo, device=dev)      # by_count: the mean only (colour offsets)
+        sums = Sums(ctx, dev, H, W, Ho, Wo)
+        # by_count: the mean only (colour offsets); the mean, its background and the first prediction are made after
+        num, den, *sq = sums.zeros(2 if by_count else 3, "pass 1", extra=2 if by_count else 5)
+        sq = sq[0] if sq else None
         clock.start()
         for c_, i in enumerate(used):
             val, Xo, Yo, sat, bad, _, _, _ = frame_model(i)
             deposit_moments(num, den, sq, val, Xo, Yo, float(weight[i]), ~bad)
             ctx.progress(0.3 * (c_ + 1) / len(used), f"pass 1: {c_ + 1}/{len(used)} frames")
         clock.done("pass 1")
-        model = Prediction(num, den, sq, len(used), Ho, Wo, dev, c0)
+        model = Prediction(num, den, sq, len(used), Ho, Wo, dev, c0, mean_only=by_count)
         del num, den, sq
+        sums.release()
         # ---------------- the colours registered on each other for the whole night: the offsets of the red and blue
         # images of the stars from the green one (lateral chromatic aberration, atmospheric dispersion), measured on
         # the first mean
@@ -608,9 +617,12 @@ class Stack(Stage):
             ctx.metric("channel_offsets", chan_info)
             ctx.log(chan_fix.describe())
             if chan_fix.applied:
-                model.shift_channels(chan_fix)
+                if not by_count:                      # by frame count the mean is not used again
+                    model.shift_channels(chan_fix)
             else:
                 chan_fix = None
+        if model is not None:
+            model.drop_background()               # only the colour offsets read it
 
         def judge(i, model):
             """The samples of frame i rejected against the prediction ``model`` (``reject``)."""
@@ -635,9 +647,7 @@ class Stack(Stage):
         else:
             # ------------ pass 2: the first clipping iteration against the mean and standard deviation of pass 1; the
             # samples kept give the mean and standard deviation of the second
-            num = torch.zeros(3 * Ho * Wo, device=dev)
-            den = torch.zeros(3 * Ho * Wo, device=dev)
-            sq = torch.zeros(3 * Ho * Wo, device=dev)
+            num, den, sq = sums.zeros(3, "pass 2")
             clock.start()
             for c_, i in enumerate(used):
                 val, Xo, Yo, bad, hi, lo, _, _, _ = judge(i, model)
@@ -646,25 +656,26 @@ class Stack(Stage):
             clock.done("pass 2")
             model = model.cleaned(num, den, sq)
             del num, den, sq
+            sums.release()
 
         # ---------------- pass 3: the second clipping iteration (or the integration's rejection) + half-stacks
         # by frame count the half-stacks are added band by band: they stay in the machine's memory, the card's memory
         # being for the bands (a band's rows grow with what the card has free)
-        adev = torch.device("cpu") if by_count else dev
-        accA = [torch.zeros(3 * Ho * Wo, device=adev) for _ in range(2)]
-        accB = [torch.zeros(3 * Ho * Wo, device=adev) for _ in range(2)]
+        images = StackImages(ctx, Ho, Wo, wb, mono)
         rej_tot = tested = 0
         rej = None
         rmap = RejectionMap(Ho, Wo, dev)
         rej_frames: dict[int, tuple[int, int, int]] = {}
-        near_acc = torch.zeros(3 * Ho * Wo, device=adev)    # the weight of the samples near saturation
-        clip_acc = torch.zeros(3 * Ho * Wo, device=adev)    # and of the clipped ones
+        if not by_count:
+            # the two half-stacks' sums, then the weight of the samples near saturation and of the clipped ones
+            (a0, a1, b0, b1, near_acc, clip_acc), accA, accB = sums.zeros(6, "pass 3"), None, None
+            accA, accB = [a0, a1], [b0, b1]
         tally = [0.0, 0.0]                                  # integration: drop weight excluded, deposited
         clock.start()
         by_count_info = None
         if by_count:
-            by_count_info = count_pass(ctx, p, frame_model, frame_extent, used, weight, chmap, h, S, Ho, Wo, dev, accA, accB, near_acc,
-                                       clip_acc, rmap, rej_frames, (Ho * Wo, H * W))
+            by_count_info = count_pass(ctx, p, frame_model, frame_extent, used, weight, chmap, h, S, Ho, Wo, dev, images,
+                                       rmap, rej_frames, (Ho * Wo, H * W))
             rej_tot, tested = by_count_info["rejected"], by_count_info["tested"]
         for c_, i in enumerate([] if by_count else used):
             rej = None
@@ -692,27 +703,14 @@ class Stack(Stage):
         clock.done("pass 3" if not by_count else "rejection by frame count")
         del model, rej
 
-        def finish(a):
-            img = (a[0] / a[1].clamp(min=1e-12)).view(3, Ho, Wo)
-            out = balanced(torch.where(a[1].view(3, Ho, Wo) > 0, img, torch.zeros_like(img)).cpu().numpy(), wb)
-            return cfa_mod.mono_rgb(out) if mono else out     # a monochrome sensor: its one channel in the three
-
-        full = [accA[0] + accB[0], accA[1] + accB[1]]
-        drz = finish(full)
-        ctx.save("drz_full.npy", drz)
-        step = noise_step(Ho, Wo)
-        halves = []                              # a sample of each half-stack: the noise of the result
-        for name, acc in (("drz_A.npy", accA), ("drz_B.npy", accB)):
-            img = finish(acc)
-            ctx.save(name, img)
-            halves.append(img[:, ::step, ::step].copy())
-            del img
-        wt = full[1].view(3, Ho, Wo).cpu().numpy()
-        ctx.save("drz_weight.npy", cfa_mod.mono_rgb(wt) if mono else wt)
-        frac = torch.stack([(a / full[1].clamp(min=1e-12)).view(3, Ho, Wo).amax(0) for a in (near_acc, clip_acc)])
-        ctx.save(SATURATION, torch.ceil(255 * frac.clamp(0, 1)).to(torch.uint8).cpu().numpy())
-        ctx.metric("near_saturation_pct", round(100 * float((frac[0] > 0).float().mean()), 4))
-        del near_acc, clip_acc, frac
+        if not by_count:                          # the half-stacks added up, a band of rows at a time
+            images.add_whole(accA, accB, near_acc, clip_acc)
+            acc = None                            # (the last frame's half-stack: a name that holds a sum)
+            del accA, accB, near_acc, clip_acc, a0, a1, b0, b1
+            sums.release()
+        images.close()
+        step, halves = images.step, images.halves
+        ctx.metric("near_saturation_pct", round(100 * images.near_points / (Ho * Wo), 4))
         rej_pct = 100 * rej_tot / max(tested, 1)      # of the samples landing on the stack (the others: no data)
         excluded_pct = None
         if integ is not None:                         # the integration's rate: of the values of the registered frames
@@ -725,7 +723,7 @@ class Stack(Stage):
         meta_d = {"scale": S, "pixfrac": PIX, "n": int(len(used)), "reject_pct": rej_pct,
                   "width": Wo, "height": Ho, "sensor": [W, H], **({"zone": zone} if zone else {})}
         # the coverage per colour, measured and as the rule estimates it
-        cov = coverage_record(full[1].view(3, Ho, Wo), rmap.f, coef[used], W, H, info["cfa"], S, PIX,
+        cov = coverage_record(images.weight(), rmap.f, coef[used], W, H, info["cfa"], S, PIX,
                               weight[used], drizzle_suggestion(reg, info, use=weight > 0, weights=weight))
         np.savez_compressed(ctx.out(COVERAGE), **cov.pop("arrays"))
         ctx.metric("coverage_variation_pct", [None if v is None else round(100 * v, 1) for v in cov["measured_cv"]])
@@ -773,7 +771,180 @@ class Stack(Stage):
         ctx.log(f"drizzle {Wo}x{Ho} from {len(used)} frames in {(time.time() - t0) / 60:.1f} min, "
                 f"{rej_pct:.2f} % pixels rejected" + ("" if integ is None else
                                                       f" (integration), {excluded_pct:.2f} % of the drops left out"))
-        ctx.preview("stack", asinh_preview(drz))
+        ctx.preview("stack", images.preview())
+
+
+class NpyBands:
+    """An .npy file of shape (3, Ho, Wo) written band by band with plain writes (the way Calibration's cache is: no memory
+    map, so no dirty pages in the process's working set) and read back by rows; the file, header included, is the one
+    ``np.save`` writes, and appears under its name when ``close`` is called."""
+
+    def __init__(self, path: Path, shape: tuple[int, ...], dtype):
+        self.path, self.shape, self.dtype = Path(path), shape, np.dtype(dtype)
+        self.tmp = self.path.with_suffix(".tmp.npy")
+        self.f = open(self.tmp, "w+b")
+        np.lib.format.write_array_header_1_0(self.f, {"descr": np.lib.format.dtype_to_descr(self.dtype),
+                                                      "fortran_order": False, "shape": tuple(shape)})
+        self.start = self.f.tell()
+
+    def _at(self, c: int, r0: int) -> int:
+        return self.start + (c * self.shape[1] + r0) * self.shape[2] * self.dtype.itemsize
+
+    def write(self, c: int, r0: int, rows: np.ndarray) -> None:
+        self.f.seek(self._at(c, r0))
+        self.f.write(np.ascontiguousarray(rows, self.dtype).tobytes())
+
+    def read(self, c: int, r0: int, r1: int) -> np.ndarray:
+        n = (r1 - r0) * self.shape[2] * self.dtype.itemsize
+        if self.f.closed:                                   # after ``close``: the file under its name
+            with open(self.path, "rb") as f:
+                f.seek(self._at(c, r0))
+                buf = f.read(n)
+        else:
+            self.f.seek(self._at(c, r0))
+            buf = self.f.read(n)
+        return np.frombuffer(buf, self.dtype).reshape(r1 - r0, self.shape[2])
+
+    def close(self) -> None:
+        self.f.seek(self._at(self.shape[0], 0))
+        self.f.truncate()
+        self.f.close()
+        self.tmp.replace(self.path)
+
+
+class StackImages:
+    """The stack's images made and written one band of output rows at a time (the sums of the half-stacks A and B, the
+    weight sum of the kept samples near saturation and of the clipped ones, each (3, rows, Wo)): the full image, the two
+    half-stacks, the weight map and the saturation map (2 x Ho x Wo, 255 x the share of each point's weight) go to
+    their files, a sample of each half-stack is kept for the noise, and nothing of the size of the output stays in
+    memory. Every value is made by the same elementwise operations as on the whole arrays: the files are the same to the
+    bit."""
+
+    def __init__(self, ctx: Context, Ho: int, Wo: int, wb, mono: bool):
+        self.Ho, self.Wo, self.wb, self.mono = Ho, Wo, wb, mono
+        self.step = noise_step(Ho, Wo)
+        self.names = ("drz_full.npy", "drz_A.npy", "drz_B.npy", "drz_weight.npy", SATURATION)
+        shape = (3, Ho, Wo)
+        self.out = [NpyBands(ctx.out(n), shape, np.float32) for n in self.names[:4]]
+        self.out.append(NpyBands(ctx.out(SATURATION), (2, Ho, Wo), np.uint8))
+        self.halves = [np.zeros((3, -(-Ho // self.step), -(-Wo // self.step)), np.float32) for _ in range(2)]
+        self.near_points = 0
+
+    def image(self, num: torch.Tensor, den: torch.Tensor) -> np.ndarray:
+        img = num / den.clamp(min=1e-12)
+        out = balanced(torch.where(den > 0, img, torch.zeros_like(img)).cpu().numpy(), self.wb)
+        return cfa_mod.mono_rgb(out) if self.mono else out
+
+    def add(self, r0: int, A0, A1, B0, B1, near, clip) -> None:
+        """The rows from ``r0`` of the stack, from the sums of the half-stacks A and B (num, den) and of near and
+        clip, each (3, rows, Wo)."""
+        nr = A0.shape[1]
+        w = A1 + B1
+        rows = [self.image(A0 + B0, w), self.image(A0, A1), self.image(B0, B1)]
+        wt = w.cpu().numpy()
+        rows.append(cfa_mod.mono_rgb(wt) if self.mono else wt)
+        for o, r in zip(self.out, rows):
+            for c in range(3):
+                o.write(c, r0, r[c])
+        g = np.arange(r0, r0 + nr)
+        pick = np.nonzero(g % self.step == 0)[0]
+        for h, r in zip(self.halves, rows[1:3]):
+            h[:, g[pick] // self.step] = r[:, pick, ::self.step]
+        frac = torch.stack([(a / w.clamp(min=1e-12)).amax(0) for a in (near, clip)])
+        sat = torch.ceil(255 * frac.clamp(0, 1)).to(torch.uint8).cpu().numpy()
+        for c in range(2):
+            self.out[4].write(c, r0, sat[c])
+        self.near_points += int((frac[0] > 0).sum())
+
+    def add_whole(self, accA, accB, near, clip, rows: int = 256) -> None:
+        """The same from the whole accumulators (flat 3 x Ho x Wo), ``rows`` output rows at a time."""
+        v = [a.view(3, self.Ho, self.Wo) for a in (accA[0], accA[1], accB[0], accB[1], near, clip)]
+        for r0 in range(0, self.Ho, rows):
+            self.add(r0, *[a[:, r0:r0 + rows] for a in v])
+
+    def close(self) -> None:
+        for o in self.out:
+            o.close()
+
+    def weight(self) -> torch.Tensor:
+        """The weight map as the stack made it (3, Ho, Wo), for the coverage record."""
+        a = np.load(self.out[3].path)
+        if self.mono:                                  # the file holds the one colour in the three
+            a = np.where(np.arange(3)[:, None, None] == 1, a, 0).astype(np.float32)
+        return torch.from_numpy(a)
+
+    def preview(self) -> np.ndarray:
+        """``asinh_preview`` of the full image as the (H, W, 3) 8-bit picture ``Context.preview`` makes of it, a band of
+        rows at a time."""
+        o = self.out[0]
+        step = 256
+        sub = np.concatenate([np.stack([o.read(c, r0, min(r0 + step, self.Ho))[::4, ::4] for c in range(3)])
+                              for r0 in range(0, self.Ho, step)], axis=1)
+        bk = np.percentile(sub, 5, axis=(1, 2))[:, None, None]
+        hi = np.percentile(sub - bk, 99.7)
+        k = 60.0
+        pic = np.empty((self.Ho, self.Wo, 3), np.uint8)
+        for r0 in range(0, self.Ho, step):
+            a = np.stack([o.read(c, r0, min(r0 + step, self.Ho)) for c in range(3)])
+            v = np.clip((a - bk) / max(hi, 1e-6), 0, None)
+            f = np.clip(np.arcsinh(v * k) / np.arcsinh(k), 0, 1)
+            pic[r0:r0 + a.shape[1]] = (np.clip(f.transpose(1, 2, 0), 0, 1) * 255 + 0.5).astype(np.uint8)
+        return pic
+
+
+class Sums:
+    """The zeroed float32 sums (3 x Ho x Wo, flat) the drizzle passes deposit into. On the processor, when the memory
+    the engine may fill now (core/devices.memory_budget: the user's limit less what the run holds already, or the
+    machine's room) does not hold them all with the frames' own working tensors, the last ones are arrays on a
+    scratch file, written by the same deposits in the same order (the sums are the same to the bit; the run's private
+    bytes do not hold them). One line in the log says it. Figures: the frame's working tensors take about 24 float32
+    arrays of the sensor's size (``FRAME_TENSORS``: 14 of ``frame_model``, 10 of the cached polynomial terms, measured
+    on 12 Mpx at 1.5 x: 1.2 GB), an array of the sums 3 x Ho x Wo x 4 bytes (330 MB on 12 Mpx at 1.5 x)."""
+
+    FRAME_TENSORS = 24 * 4
+
+    def __init__(self, ctx: Context, dev, H: int, W: int, Ho: int, Wo: int):
+        self.ctx, self.dev, self.n_px, self.size = ctx, dev, H * W, 3 * Ho * Wo
+        self.files: list[Path] = []
+        self.dir: Path | None = None
+
+    def zeros(self, count: int, what: str, extra: int = 0) -> list[torch.Tensor]:
+        """``count`` zeroed sums; ``extra``: arrays of the same size the pass makes after (the first mean's)."""
+        from ..core import devices
+        keep = count
+        if self.dev.type == "cpu":
+            mb = devices.memory_budget()
+            if mb:
+                plane = 4 * self.size
+                keep = int(max(0, min(count, (0.9 * mb[0] - self.FRAME_TENSORS * self.n_px) // plane - extra)))
+        out = [torch.zeros(self.size, device=self.dev) for _ in range(keep)]
+        if keep < count:
+            if self.dir is None:
+                self.dir = Path(tempfile.mkdtemp(prefix="sums_", dir=self.ctx.scratch))
+            for k in range(keep, count):
+                f = self.dir / f"{what}_{k}.f32"
+                self.files.append(f)
+                out.append(torch.from_numpy(np.memmap(f, dtype=np.float32, mode="w+", shape=(self.size,))))
+            self.ctx.log(f"memory: {mb[0] / 2 ** 30:.1f} GB may be filled, the {count} sums of {what} (each "
+                         f"{4 * self.size / 2 ** 30:.2f} GB) are {keep} in memory and {count - keep} on disk")
+        return out
+
+    def release(self) -> None:
+        """The scratch files, once the arrays on them are gone."""
+        import gc
+        gc.collect()
+        for f in self.files:
+            try:
+                f.unlink()
+            except OSError:
+                pass
+        self.files = []
+        if self.dir is not None:
+            try:
+                self.dir.rmdir()
+            except OSError:
+                pass
+            self.dir = None
 
 
 class PassClock:
@@ -956,34 +1127,61 @@ class Prediction:
     standard deviation ``D`` of the samples deposited there (``num`` / ``den`` and the sum of squares ``sq`` about
     ``c0``, flat 3 x Ho x Wo), how many frames cover each place (``cover``: the deposited weight relative to its
     median, times the number of frames) and the smooth background of the mean (for the colour offsets); sampled where
-    a frame's samples land (``sample``)."""
+    a frame's samples land (``sample``).
+
+    ``M`` and ``D`` are kept already multiplied by ``vf``, the covered places (1.0 where the first pass deposited
+    something, else 0.0), as ``sample`` reads them: the product is made once, not for each frame (a frame's
+    ``sample`` held three arrays of the output's size more), and the values are the same bit for bit (an element of
+    the product is its factor or a zero; ``shift_channels`` and ``cleaned`` choose between values and take the
+    product of each). The first pass's ``M`` is zero outside ``vf`` already. Memory, in arrays of 3 x Ho x Wo float32
+    (582 MB on 12 Mpx at scale 2): ``vf``, ``M``, ``D``, ``cover`` (4), and the background (1) until
+    ``drop_background``; each made one colour at a time, the temporaries of the whole array gone."""
 
     def __init__(self, num: torch.Tensor, den: torch.Tensor, sq: torch.Tensor | None, n: int, Ho: int, Wo: int, dev,
-                 c0: torch.Tensor):
+                 c0: torch.Tensor, mean_only: bool = False):
         d = den.view(3, Ho, Wo)
         self.Ho, self.Wo, self.c0 = Ho, Wo, c0.view(3, 1, 1).to(d.device)
-        self.valid = d > 0
-        self.M = torch.zeros_like(d)
-        self.D = torch.zeros_like(d)
+        self.vf = (d > 0).float()
+        if mean_only:                  # the mean and its background alone (the colour offsets): ``num`` becomes the mean
+            for c in range(3):         # the same quotient, one colour at a time and in place: no deviation, no coverage
+                m = num.view(3, Ho, Wo)[c]
+                torch.div(m, d[c].clamp(min=1e-12), out=m)
+                m[self.vf[c] == 0] = 0
+            self.M = num.view(3, Ho, Wo)
+            self.D = self.cover = None
+            self.bkg, _ = smooth_background(self.M, self.valid)
+            return
+        self.M = torch.zeros_like(self.vf)
+        self.D = torch.zeros_like(self.vf)
         self._moments(num, den, sq)
-        self.cover = torch.zeros_like(d)
+        self.cover = torch.zeros_like(self.vf)
         for c in range(3):
-            pos = d[c][self.valid[c]]
+            pos = d[c][self.vf[c] > 0]
             if pos.numel():
                 med = torch.median(pos[::max(1, pos.numel() // 4_000_000)])
                 self.cover[c] = n * d[c] / med
+            del pos
         self.bkg, _ = smooth_background(self.M, self.valid)
+
+    @property
+    def valid(self) -> torch.Tensor:
+        return self.vf > 0
+
+    def drop_background(self) -> None:
+        self.bkg = None
 
     def _moments(self, num: torch.Tensor, den: torch.Tensor, sq: torch.Tensor | None) -> None:
         """Mean and standard deviation where the weight ``den`` is positive (the others keep theirs); ``sq`` None: the
-        mean only (the deviation stays 0)."""
-        d = den.view(3, self.Ho, self.Wo)
-        dd = d.clamp(min=1e-12)
-        m = num.view(3, self.Ho, self.Wo) / dd
-        self.M = torch.where(d > 0, m, self.M)
-        if sq is not None:
-            var = sq.view(3, self.Ho, self.Wo) / dd - (m - self.c0) ** 2
-            self.D = torch.where(d > 0, var.clamp(min=0).sqrt(), self.D)
+        mean only (the deviation stays 0). One colour at a time."""
+        for c in range(3):
+            d = den.view(3, self.Ho, self.Wo)[c]
+            dd = d.clamp(min=1e-12)
+            m = num.view(3, self.Ho, self.Wo)[c] / dd
+            self.M[c] = torch.where(d > 0, m * self.vf[c], self.M[c])
+            if sq is not None:
+                var = sq.view(3, self.Ho, self.Wo)[c] / dd - (m - self.c0[c]) ** 2
+                self.D[c] = torch.where(d > 0, var.clamp(min=0).sqrt() * self.vf[c], self.D[c])
+            del d, dd, m
 
     def shift_channels(self, fix: ChannelOffsets) -> None:
         """The red and blue images of the mean and of the deviation moved onto the green one (``fix``), where the
@@ -994,10 +1192,10 @@ class Prediction:
             dx, dy = fix.at(xx, yy, torch.full_like(xx, c, dtype=torch.long))
             grid = torch.stack([(xx + dx + 0.5) / self.Wo * 2 - 1, (yy + dy + 0.5) / self.Ho * 2 - 1], -1)[None]
             del dx, dy
-            w = F.grid_sample(self.valid[c].float()[None, None], grid, mode="bilinear", align_corners=False)
+            w = F.grid_sample(self.vf[c][None, None], grid, mode="bilinear", align_corners=False)
             for f in (self.M, self.D):
-                num = F.grid_sample((f[c] * self.valid[c])[None, None], grid, mode="bilinear", align_corners=False)
-                f[c] = torch.where(w[0, 0] > 0.5, num[0, 0] / w[0, 0].clamp(min=1e-6), f[c])
+                num = F.grid_sample((f[c] * self.vf[c])[None, None], grid, mode="bilinear", align_corners=False)
+                f[c] = torch.where(w[0, 0] > 0.5, (num[0, 0] / w[0, 0].clamp(min=1e-6)) * self.vf[c], f[c])
 
     def cleaned(self, num: torch.Tensor, den: torch.Tensor, sq: torch.Tensor) -> Prediction:
         """The same prediction with the mean and deviation of the samples ``num`` / ``den`` / ``sq`` kept by a
@@ -1016,20 +1214,18 @@ class Prediction:
             v = F.grid_sample(a.unsqueeze(0), grid, mode="bilinear", padding_mode="zeros", align_corners=False)[0]
             return torch.gather(v, 0, chmap.unsqueeze(0))[0]
 
-        vf = self.valid.float()
-        w = at(vf)
-        return {"pred": at(self.M * vf) / w.clamp(min=1e-6), "dev": at(self.D * vf) / w.clamp(min=1e-6),
+        w = at(self.vf)
+        return {"pred": at(self.M) / w.clamp(min=1e-6), "dev": at(self.D) / w.clamp(min=1e-6),
                 "cover": torch.where(w > 0.5, at(self.cover), torch.zeros_like(w))}
 
     def _sample_cpu(self, Xo: torch.Tensor, Yo: torch.Tensor, chmap: torch.Tensor) -> dict[str, torch.Tensor]:
         """``sample`` for a frame on the CPU, compiled: each sample read in its own channel only."""
         from ..core.stack_kernels import sample
         shape = Xo.shape
-        vf = self.valid.float()
         # the coordinates as grid_sample rounds them (float32, through its normalised grid): the same samples rejected
         x = (((Xo + 0.5) / self.Wo * 2 - 1 + 1) * self.Wo - 1) / 2
         y = (((Yo + 0.5) / self.Ho * 2 - 1 + 1) * self.Ho - 1) / 2
-        mv, w, cov, dv = sample((self.M * vf).numpy(), vf.numpy(), self.cover.numpy(), (self.D * vf).numpy(),
+        mv, w, cov, dv = sample(self.M.numpy(), self.vf.numpy(), self.cover.numpy(), self.D.numpy(),
                                 x.ravel().numpy(), y.ravel().numpy(), chmap.ravel().numpy(), torch.get_num_threads())
         mv, w, cov, dv = (torch.from_numpy(a).view(shape) for a in (mv, w, cov, dv))
         return {"pred": mv / w.clamp(min=1e-6), "dev": dv / w.clamp(min=1e-6),
@@ -1465,7 +1661,7 @@ def rejection_line(mode: str, by_hand: bool, n: int, scale: float, pixfrac: floa
 
 
 def count_pass(ctx, p: StackParams, frame_model, frame_extent, used, weight, chmap, h: float, S: float, Ho: int, Wo: int, dev,
-               accA, accB, near_acc, clip_acc, rmap, rej_frames: dict, sizes: tuple[int, int]) -> dict:
+               images, rmap, rej_frames: dict, sizes: tuple[int, int]) -> dict:
     """The rejection by frame count (``drizzle_rejection = by_count``): Siril's way [S1]. The output is cut into bands of
     rows; for each band every frame's drops are deposited apart (the frame's value and drop weight at each point, none
     where it gives nothing), so that each point holds the values of all the frames, and the rejection of
@@ -1478,15 +1674,22 @@ def count_pass(ctx, p: StackParams, frame_model, frame_extent, used, weight, chm
     from ..core import rejection_classic as rc
     N = len(used)
     half_a = np.array([(int(i) // p.half_block) % 2 == 0 for i in used])
-    # bytes per output row of a band: the four buffers, the masks and the rejection's double-precision copies
-    per_row = N * 3 * Wo * 64
+    # bytes per output row of a band. Card: the four buffers, the masks and the rejection's double-precision copies, 64
+    # bytes a value (N frames x 3 colours x Wo). Processor: measured on a synthetic night (192 to 480 rows of 1,280
+    # output columns, 16 and 48 frames, private bytes of the process, the memory budget forced to give each band size):
+    # 30 bytes a value, the four float32 buffers (16) and the rejection's working copies of one colour at a time; the
+    # rest of the peak (2.2 GB there, 3.8 GB on 12 Mpx) does not depend on the band
+    per_row = N * 3 * Wo * (64 if dev.type == "cuda" else CPU_BAND_BYTES)
     if dev.type == "cuda":
         torch.cuda.empty_cache()                                          # what the earlier passes left cached is free
         free = torch.cuda.mem_get_info(dev)[0]
         budget = int(0.8 * free) - 14 * 4 * sizes[1]                      # the frame's own working tensors
     else:
         mb = devices.memory_budget()
-        budget = (mb[0] if mb else 4 * 2 ** 30) // 2 - 14 * 4 * sizes[1]
+        # what the engine may fill now (it leaves out what the run holds already; the output's sums are not held whole,
+        # each band goes to its files), 10 % kept back, less the frame's own working tensors; and at most
+        # CPU_BAND_CAP: wider bands save only the frames' pass (about 2.6 s a band on 12 Mpx) for more memory
+        budget = min(int(0.9 * (mb[0] if mb else 4 * 2 ** 30)) - 14 * 4 * sizes[1], CPU_BAND_CAP)
     rows = int(max(4, min(Ho, budget // per_row)))
     starts = list(range(0, Ho, rows))
     mid = len(starts) // 2
@@ -1498,7 +1701,6 @@ def count_pass(ctx, p: StackParams, frame_model, frame_extent, used, weight, chm
     t_dep = t_rej = t_acc = t_mod = 0.0
     m = 2 * h + 1
     extent: dict = {}
-    A, B = accA, accB
     for n_done, b in enumerate(order):
         t_a = time.time()
         r0 = starts[b]
@@ -1557,16 +1759,21 @@ def count_pass(ctx, p: StackParams, frame_model, frame_extent, used, weight, chm
             del lo, hi, valid
         t_c = time.time()
         rmap.add_counts(r0, low_c.view(nr, Wo), high_c.view(nr, Wo))
-        sl = slice(r0, r0 + nr)
+        # the band's half-stack sums, then the band's rows of the images (no accumulator of the whole output)
+        A = [torch.zeros(3, nr, Wo) for _ in range(2)]
+        B = [torch.zeros(3, nr, Wo) for _ in range(2)]
+        near_b, clip_b = torch.zeros(3, nr, Wo), torch.zeros(3, nr, Wo)
         for acc, mask in ((A, half_a), (B, ~half_a)):
             sel = torch.from_numpy(np.nonzero(mask)[0]).to(dev)
             if not len(sel):
                 continue
             kk = keepv[sel]
-            acc[0].view(3, Ho, Wo)[:, sl] += (Vn[sel] * kk).sum(0).view(3, nr, Wo).to(acc[0].device)
-            acc[1].view(3, Ho, Wo)[:, sl] += (Vd[sel] * kk).sum(0).view(3, nr, Wo).to(acc[1].device)
-            near_acc.view(3, Ho, Wo)[:, sl] += (Vnear.view(N, 3, Pn)[sel] * kk).sum(0).view(3, nr, Wo).to(near_acc.device)
-            clip_acc.view(3, Ho, Wo)[:, sl] += (Vclip.view(N, 3, Pn)[sel] * kk).sum(0).view(3, nr, Wo).to(clip_acc.device)
+            acc[0] += (Vn[sel] * kk).sum(0).view(3, nr, Wo).to(acc[0].device)
+            acc[1] += (Vd[sel] * kk).sum(0).view(3, nr, Wo).to(acc[1].device)
+            near_b += (Vnear.view(N, 3, Pn)[sel] * kk).sum(0).view(3, nr, Wo).to(near_b.device)
+            clip_b += (Vclip.view(N, 3, Pn)[sel] * kk).sum(0).view(3, nr, Wo).to(clip_b.device)
+        images.add(r0, A[0], A[1], B[0], B[1], near_b, clip_b)
+        del A, B, near_b, clip_b
         del Vn, Vd, Vnear, Vclip, keepv
         t_d = time.time()
         t_dep, t_rej, t_acc = t_dep + t_b - t_a, t_rej + t_c - t_b, t_acc + t_d - t_c

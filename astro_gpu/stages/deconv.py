@@ -24,10 +24,11 @@ from .gradient import DECONV_FILE, image_in
 from .stack import SATURATION
 
 METHODS = ("rl", "neural")
-#: the network of the Neural method, in beta: not bundled yet, read from where it was trained (tools/bench/deconv_train.py).
+#: the network of the Neural method, in beta: shipped with the application like the Stars network (not in git: the
+#: installer build copies it, see installer/build.py), trained by tools/bench/deconv_train.py.
 #: The second training's: it was trained on images that went through Denoise first, so the method denoises each plane
 #: (the block's pretrained network, its four passes) before the network, as the training and its measures did
-BETA_WEIGHTS = Path("E:/float_train/run2/net_058000.pt")
+BETA_WEIGHTS = Path(__file__).resolve().parents[1] / "resources" / "deconv" / "neural.pt"
 BETA_TILE, BETA_PAD = 512, 48
 
 
@@ -114,7 +115,7 @@ class Deconv(Stage):
         from . import denoise as dn
         from .star_removal import NAFNet, fwd, inv
         if not BETA_WEIGHTS.is_file():
-            raise StageError(f"the neural deconvolution's network is not here: {BETA_WEIGHTS}")
+            raise StageError(f"the neural deconvolution's network is missing: resources/deconv/{BETA_WEIGHTS.name}")
         net = NAFNet(recompute=False)
         w = net.intro.out_channels
         net.intro, net.ending = nn.Conv2d(1, w, 3, padding=1), nn.Conv2d(w, 1, 3, padding=1)

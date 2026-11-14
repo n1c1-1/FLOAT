@@ -1860,6 +1860,17 @@ def lights_of(p, wid: int | None, headers: dict | None = None, session: int | No
     return items
 
 
+def warm_annotations(p) -> None:
+    """Load the catalogue of named objects (read from its cache, or made from the shipped files the first time in a
+    session: 1 to 3 s) before Sky grid or Object names is first ticked (worker thread; the result is kept in memory)."""
+    from ..annotate import field_annotations  # noqa: F401 - its imports are the rest of the first use's cost
+    from ...core import skyobjects as so
+    try:
+        so.load_catalogue()
+    except so.CatalogueUnavailable:
+        pass                                           # the ticked box says why, as before
+
+
 def post_annotations(p, wid: int, w: int, h: int, origin=(0, 0)):
     """The sky grid and the named objects of Post's canvas (w x h pixels of the bottom workflow's grid from
     ``origin``): ``annotate.Annotations`` (worker thread)."""

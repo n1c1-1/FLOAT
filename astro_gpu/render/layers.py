@@ -367,7 +367,7 @@ def export_rgb(rgb: np.ndarray, out_dir: str | Path, options: ExportOptions | di
                facts: dict | None = None) -> list[Path]:
     """Write a composed image (3, H, W), display sRGB in [0, 1]. ``wcs``: the grid's astrometric solution (a FITS
     header, a WCS or a wcs.fits path) for the FITS file; ``origin``: the grid pixel of rgb[:, 0, 0] (the crop);
-    ``history``: written beside the images as <name>_history.json. ``facts``: what the FITS header says of the shot
+    ``history``: written beside the images as <name>_history.json (<file>.history.json when one file is written). ``facts``: what the FITS header says of the shot
     (``target``, ``date_obs``, ``exposure_s``: the total), each written when known. Returns the files written."""
     import cv2
     import tifffile
@@ -447,7 +447,9 @@ def export_rgb(rgb: np.ndarray, out_dir: str | Path, options: ExportOptions | di
                                                  header=hdr).writeto(t, overwrite=True))
         files.append(p)
     if history is not None:
-        p = out_dir / f"{o.name}_history.json"
+        # one file written: its history carries its full name (a JPEG export does not overwrite the FITS's); several
+        # files: the one history of the export, named after the version
+        p = out_dir / (f"{files[0].name}.history.json" if len(files) == 1 else f"{o.name}_history.json")
         p.write_text(json.dumps(history, indent=1, default=str), encoding="utf-8")
         files.append(p)
     progress(1.0, "done")
@@ -486,8 +488,16 @@ def _ascii(text) -> str:
 def history_lines(history: dict) -> list[str]:
     """The processing history of an export as the HISTORY lines of a FITS header: the project, the canvas, then the
     composition from the bottom up (each layer, its settings, its own filters, the filters on everything below)."""
+    def curves(c) -> str:                                  # {'RGB/K': {'pts': [...], 'interp': 'Akima'}} -> "RGB/K: 2 points, Akima"
+        parts = []
+        for ch, v in (c.items() if isinstance(c, dict) else []):
+            n = len(v.get("pts") or []) if isinstance(v, dict) else 0
+            parts.append(f"{ch}: {n} point{'' if n == 1 else 's'}" + (f", {v['interp']}" if isinstance(v, dict) and v.get("interp") else ""))
+        return " / ".join(parts)
+
     def fmt(d: dict) -> str:
-        return ", ".join(f"{k}={v:g}" if isinstance(v, (int, float)) and not isinstance(v, bool) else f"{k}={v}"
+        return ", ".join(f"curves {curves(v)}" if k == "curves" and isinstance(v, dict) else
+                         f"{k}={v:g}" if isinstance(v, (int, float)) and not isinstance(v, bool) else f"{k}={v}"
                          for k, v in sorted((d or {}).items()))
 
     lines = [f"FLOAT Post export, {history.get('created', '')}", f"project: {history.get('project', '')}"]
@@ -510,6 +520,8 @@ def history_lines(history: dict) -> list[str]:
         state = "" if lay.get("visible", True) else " (hidden)"
         blend = f"{lay.get('mode', 'Normal')} {float(lay.get('opacity', 100)):g}%"
         mask = ", masked" if lay.get("mask") else ""
+        if lay.get("side_masks"):
+            mask += ", side masks: " + ", ".join(sorted(lay["side_masks"]))
         if lay.get("kind") == "filter":
             lines.append(f"filter on everything below: {lay.get('name')}{state}, {blend}{mask}; {fmt(lay.get('params'))}")
             continue
@@ -528,7 +540,50 @@ def history_lines(history: dict) -> list[str]:
             side = {"stars": "stars only", "starless": "starless image only", "real": "real stars only"}.get(f.get("sub"), "")
             lines.append(f"  its filter {f.get('name')}{fs}{', ' + side if side else ''}, {f.get('mode', 'Normal')} "
                          f"{float(f.get('opacity', 100)):g}%{', masked' if f.get('mask') else ''}; {fmt(f.get('params'))}")
-    return [_ascii(x) for x in lines]
+    return [part for x in lines for part in _cards(_ascii(x))]
+
+
+_CARD = 70                                                    # a HISTORY card holds 72 characters
+
+
+def _cards(line: str, width: int = _CARD) -> list[str]:
+    """One history line as whole statements that fit a FITS card: cut at its clause boundaries ("; " first, then ", "),
+    never inside a phrase; the continuation cards are indented two spaces."""
+    if len(line) <= width:
+        return [line]
+    return [c for x in _clauses(line, width) for c in _words(x, width)]
+
+
+def _words(card: str, width: int) -> list[str]:
+    """A card still too long (no clause boundary left to cut at): cut at word boundaries, continuation cards indented
+    two spaces like the others."""
+    if len(card) <= width:
+        return [card]
+    import textwrap
+    lead = "  " if card.startswith("  ") else ""
+    return textwrap.wrap(card.strip(), width, initial_indent=lead, subsequent_indent="  ", break_long_words=True, break_on_hyphens=False)
+
+
+def _clauses(line: str, width: int) -> list[str]:
+    out: list[str] = []
+    for sep in ("; ", ", "):
+        clauses = line.split(sep)
+        if len(clauses) > 1:
+            break
+    else:
+        return [line]
+    cur = ""
+    for i, c in enumerate(clauses):
+        piece = c + (sep.strip() if i < len(clauses) - 1 else "")
+        trial = piece if not cur else cur + " " + piece
+        if cur and len(trial) > width:
+            out.append(cur)
+            cur = "  " + piece
+        else:
+            cur = trial
+    out.append(cur)
+    # a clause still too long on its own is cut again at the next boundary kind
+    return [c for x in out for c in (_clauses(x, width) if len(x) > width and sep == "; " else [x])]
 
 
 def _wcs_header(wcs):

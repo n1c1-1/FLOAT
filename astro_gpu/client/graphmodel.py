@@ -397,6 +397,7 @@ class GraphEditing:
             return False
         now = self._snapshot()
         now.from_post = src[-1].from_post
+        step_after = src[-1].after_post                   # Post as the step left it (model._Snap)
         dst.append(now)
         had = {v.pid: self.block_keys(v) for v in self.paths}
         old_keys = self.block_keys(self.path) if self.path is not None else []
@@ -426,11 +427,14 @@ class GraphEditing:
         if post_back:
             here = getattr(self.p, "post", None) or {}
             back = json.loads(post)
+            if step_after is not None and now.from_post:   # a step of Post: only what it changed comes back, not the
+                back = _mm().merge_post(step_after, back, here)    # edits made since in other versions
             if in_post and here.get("active") is not None and {v["id"] for v in back.get("versions", [])} == \
                     {v["id"] for v in here.get("versions", [])} and any(
                     v["id"] == here["active"] for v in back.get("versions", [])):
                 back["active"] = here["active"]
             self.p.post = back
+            now.after_post = back
             post_back = back != here
         files_after = [(s.id, *(tuple(getattr(s, k)) for k in gm.FILE_KINDS)) for s in self.p.sessions]
         if files_after != files_before:
@@ -438,6 +442,9 @@ class GraphEditing:
         self.pending_change = None
         self.edited()
         self._sync()
+        was = json.dumps(self.p.post, sort_keys=True)
+        self._prune_post()                                # a layer of a block that is not there any more goes
+        post_back = post_back or json.dumps(self.p.post, sort_keys=True) != was
         self._unpatch_rows()
         # the selection on block ids: a block that came back is selected; one gone leaves its predecessor selected
         if sel is not None and sel not in g.blocks and not any(r.id == sel for r in g.rows):
@@ -926,8 +933,12 @@ class GraphEditing:
         if bid is None:
             raise ValueError(_("no Post from here"))
         before = self._wids()
-        self._do([("send_to_post", {"block": bid, "name": self.unique_name(name)})])
-        return self._new_view(before)
+        with self._edit():                                # its layer written at once, in the same step
+            self._do([("send_to_post", {"block": bid, "name": self.unique_name(name)})])
+            v = self._new_view(before)
+            if v is not None:
+                self._write_branch_layer(v)
+        return v
 
     # ------------------------------------------------------------------ an Image block
     def set_image_file(self, p, path: str | None = None, stretched: bool | None = None):

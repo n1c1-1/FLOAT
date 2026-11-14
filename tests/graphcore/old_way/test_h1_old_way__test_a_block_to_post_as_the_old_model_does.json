@@ -2,7 +2,7 @@
  {
   "definition": {
    "acquisition": {},
-   "created": "2026-11-14T09:39:43",
+   "created": "2026-11-14T10:14:34",
    "current": 1,
    "current_block": "",
    "description": "",
@@ -144,7 +144,7 @@
  {
   "definition": {
    "acquisition": {},
-   "created": "2026-11-14T09:39:43",
+   "created": "2026-11-14T10:14:34",
    "current": 1,
    "current_block": "",
    "description": "",
@@ -158,10 +158,45 @@
    "next_workflow_id": 3,
    "post": {
     "active": 1,
+    "removed": [],
     "versions": [
      {
       "id": 1,
-      "layers": [],
+      "layers": [
+       {
+        "base": null,
+        "blend": "Screen",
+        "id": 65,
+        "kind": "workflow",
+        "mask": null,
+        "mode": "Normal",
+        "name": "Colour full \u00b7 Combine layers",
+        "opacity": 100.0,
+        "part": "combined",
+        "pid": 1,
+        "shown": {
+         "starless": true,
+         "stars": true
+        },
+        "sliders": {},
+        "starless": "starless",
+        "stars_pid": 1,
+        "visible": false
+       },
+       {
+        "base": null,
+        "id": 66,
+        "kind": "workflow",
+        "mask": null,
+        "mode": "Normal",
+        "name": "Colour full \u00b7 Gradient",
+        "opacity": 100.0,
+        "part": null,
+        "pid": 2,
+        "sliders": {},
+        "visible": true
+       }
+      ],
       "name": "Version 1"
      }
     ]

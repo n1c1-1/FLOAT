@@ -236,8 +236,8 @@ def test_the_graphs_undo_leaves_a_step_made_in_post_and_posts_undo_names_what_it
         v.do_redo()
         assert said[-1].startswith("Redone: ")
         v.do_undo()
-        v.do_undo()                                                # then the version, in Post
-        assert len(model.p.post["versions"]) == 1 and said[-1].startswith("Undone: ")
+        v.do_undo()                                                # the version is no step: Ctrl+Z stops at its first
+        assert len(model.p.post["versions"]) == 2 and said[-1] == "Nothing more to undo in this version"
     finally:
         page.shutdown()
         page.deleteLater()
@@ -625,3 +625,193 @@ def test_posts_undo_does_not_take_back_a_to_post_made_in_the_graph(model):
             x.get("pid") == classic.pid for x in next(z for z in model.p.post["versions"] if z["id"] == first)["layers"])
     finally:
         _done(page)
+
+
+def _page(model):
+    from astro_gpu.client.post3 import PostPage3
+    from astro_gpu.client.services.render import RenderWorker
+    model.add_post_layer(by_name(model, "Full").pid, "stars")
+    return PostPage3(model, worker=RenderWorker(None, resolver=lambda pid: None, device="cpu"))
+
+
+def _close(page):
+    page.shutdown()
+    page.deleteLater()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_ctrl_z_stops_at_the_versions_first_step_and_never_makes_a_version_go(model):
+    """A new version, edits and a rename: Ctrl+Z undoes the rename and the edits, then says there is nothing left; the
+    version stays; Ctrl+Z in it never reaches another version's steps."""
+    page = _page(model)
+    v = page.view
+    said = []
+    v.toasted.connect(said.append)
+    try:
+        v.push()
+        v.layers[0]["opacity"] = 30.0                                   # a step of the first version
+        v._version_new()
+        second = v._version
+        assert v.undo == []
+        v.push()
+        v.layers[0]["opacity"] = 60.0
+        v.cb_version.setEditText("Mine")
+        v._version_renamed()
+        for _ in range(6):
+            v.do_undo()
+        assert len(model.p.post["versions"]) == 2 and v._version == second
+        assert said[-1] == "Nothing more to undo in this version"
+        assert [x["name"] for x in model.p.post["versions"]][1] == "Version 2"
+        assert v.layers[0]["opacity"] == 30.0                           # the copy's own start, not the first's steps
+        first = model.p.post["versions"][0]["id"]
+        model.set_post_version(first)
+        v._post_changed(None)
+        assert len(v.undo) == 1                                         # the first version keeps its own step
+    finally:
+        _close(page)
+
+
+def test_a_version_never_takes_back_a_model_step_that_is_not_its_latest(model):
+    """A version's rename is not undone once the workflows' Undo holds a later step made elsewhere."""
+    page = _page(model)
+    v = page.view
+    said = []
+    v.toasted.connect(said.append)
+    try:
+        v.cb_version.setEditText("Named")
+        v._version_renamed()
+        model.new_post_version()                                        # a later step of the model, not this list's
+        v._post_changed(None)
+        v.undo.append(v.undo[-1] if v.undo else None)
+        v.undo = [x for x in v.undo if x is not None]
+        v.do_undo()
+        assert said[-1].startswith("Nothing to undo here")
+        assert any(x["name"] == "Named" for x in model.p.post["versions"])
+    finally:
+        _close(page)
+
+
+def test_every_post_step_updates_the_windows_undo_actions(model):
+    """A crop made first leaves the Edit menu's Undo / Redo to be refreshed: Post tells the window at every step."""
+    page = _page(model)
+    v = page.view
+    seen = []
+    v.undoChanged.connect(lambda: seen.append(bool(v.undo)))
+    try:
+        v._set_crop([0, 0, 20, 20])
+        assert seen and seen[-1] is True
+        n = len(seen)
+        v.do_undo()
+        assert len(seen) > n and seen[-1] is False
+    finally:
+        _close(page)
+
+
+def test_escape_in_the_versions_name_keeps_the_old_name_and_stays_in_post(model):
+    """As a layer's name: Escape drops the typing; it does not reach the window's page-leaving shortcut."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeyEvent
+    page = _page(model)
+    v = page.view
+    try:
+        old = v.cb_version.currentText()
+        ed = v.cb_version.lineEdit()
+        ed.setText("Typed")
+        so = QKeyEvent(QEvent.ShortcutOverride, Qt.Key_Escape, Qt.NoModifier)
+        so.ignore()
+        QApplication.sendEvent(ed, so)
+        assert so.isAccepted()                                          # the shortcut is not offered the key
+        QApplication.sendEvent(ed, QKeyEvent(QEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier))
+        assert v.cb_version.currentText() == old
+        assert [x["name"] for x in model.p.post["versions"]] == [old]
+    finally:
+        _close(page)
+
+
+def test_undoing_a_rename_gives_back_the_name_only_and_keeps_the_other_versions_edits(model):
+    """Rename V2, add a filter in V1, back to V2, Ctrl+Z: V2's old name is back and V1 keeps its filter; the same for
+    a delete brought back."""
+    page = _page(model)
+    v = page.view
+    try:
+        v._version_new()
+        second = v._version
+        first = next(x["id"] for x in model.p.post["versions"] if x["id"] != second)
+        v.cb_version.setEditText("Mine")
+        v._version_renamed()
+        model.set_post_version(first)
+        v._post_changed(None)
+        v.add_filter("sharpen")
+        n = len(v.layers)
+        v._save()
+        model.set_post_version(second)
+        v._post_changed(None)
+        v.do_undo()
+        names = {x["id"]: x["name"] for x in model.p.post["versions"]}
+        assert names[second] == "Version 2"
+        assert len(next(x for x in model.p.post["versions"] if x["id"] == first)["layers"]) == n
+        v.do_redo()
+        assert {x["id"]: x["name"] for x in model.p.post["versions"]}[second] == "Mine"
+        assert len(next(x for x in model.p.post["versions"] if x["id"] == first)["layers"]) == n
+    finally:
+        _close(page)
+
+
+def test_undoing_a_workflow_step_made_from_post_keeps_the_other_versions_edits(model):
+    """A layer's workflow renamed in the second version, then a filter added in the first: Ctrl+Z puts the name back
+    and the first version keeps its filter (and the redo does the same)."""
+    page = _page(model)
+    v = page.view
+    try:
+        v._version_new()
+        second = v._version
+        first = next(x["id"] for x in model.p.post["versions"] if x["id"] != second)
+        lay = next(x for x in v.layers if x["kind"] == "workflow" and x.get("part") is None
+                   and x.get("name") == v.path(x["pid"]).name)
+        pid = lay["pid"]
+        was = model.view(pid).name
+        v.rename(lay, "Elsewhere")
+        assert model.view(pid).name == "Elsewhere"
+        model.set_post_version(first)
+        v._post_changed(None)
+        v.add_filter("sharpen")
+        n = len(v.layers)
+        v._save()
+        model.set_post_version(second)
+        v._post_changed(None)
+        v.do_undo()
+        assert model.view(pid).name == was
+        assert len(next(x for x in model.p.post["versions"] if x["id"] == first)["layers"]) == n
+        v.do_redo()
+        assert model.view(pid).name == "Elsewhere"
+        assert len(next(x for x in model.p.post["versions"] if x["id"] == first)["layers"]) == n
+    finally:
+        _close(page)
+
+
+def test_undoing_a_workflow_setting_a_workflow_rename_or_synthetic_stars_says_what_was_undone(model):
+    """Every step of Post's Undo names itself, the workflows' ones too ("Undone: <step>")."""
+    from astro_gpu.client.post3 import PostPage3
+    from astro_gpu.client.services.render import RenderWorker
+    full = by_name(model, "Full")
+    model.add_post_layer(full.pid, "stars")
+    page = PostPage3(model, worker=RenderWorker(None, resolver=lambda pid: None, device="cpu"))
+    v = page.view
+    said = []
+    v.toasted.connect(said.append)
+    try:
+        v._set_workflow_param(full, "render_simple", "linked", False)
+        v.do_undo()
+        assert said[-1].startswith("Undone: ") and "linked" in said[-1], said
+        v.do_redo()
+        assert said[-1].startswith("Redone: ") and "linked" in said[-1], said
+        assert v._model_change(lambda: model.rename(full.pid, "Renamed"), "x · Ctrl+Z")
+        v.do_undo()
+        assert said[-1] == "Undone: x", said
+        v.do_undo()
+        v.do_undo()
+        assert said[-1].startswith("Nothing to undo here"), said      # what is left is the layer the Graph made
+    finally:
+        page.shutdown()
+        page.deleteLater()
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)

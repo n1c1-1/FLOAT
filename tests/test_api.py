@@ -609,7 +609,9 @@ def test_methods_table_marks_what_is_not_in_the_engine():
     assert not dn["pretrained"].new and not dn["adapted"].new and dn["pretrained"].runs_on == "both"
     assert [(m.key, m.new) for m in api.methods("gradient")] == [("polynomial", False), ("rbf", False), ("automatic", False)]
     assert [(m.key, m.stage) for m in api.methods("stars")] == [("neural", "star_removal")]
-    assert [(m.key, m.new) for m in api.methods("deconvolution")] == [("rl", False), ("neural", False)]
+    # the Neural deconvolution is greyed (new) exactly when its network file is not in this installation
+    from astro_gpu.stages.deconv import BETA_WEIGHTS
+    assert [(m.key, m.new) for m in api.methods("deconvolution")] == [("rl", False), ("neural", not BETA_WEIGHTS.is_file())]
     from astro_gpu.core import workflow
     for block, opt in (("denoise", "denoise"), ("gradient", "gradient"), ("stars", "stars")):
         allowed = set(workflow.OPTION_VALUES[opt])

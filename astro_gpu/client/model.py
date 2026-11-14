@@ -28,6 +28,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -532,6 +533,65 @@ class _Snap(tuple):
     """What Undo puts back (``ProjectModel._snapshot``), with the page the change came from: Post's steps are undone
     in Post, the graph's in the graph."""
     from_post = False
+    after_post = None              # the composition right after the step: what it changed is what Undo / Redo puts back
+
+
+def merge_post(base: dict, theirs: dict, mine: dict) -> dict:
+    """The composition with a step undone or redone: ``base`` is how the step left it, ``theirs`` how it puts it, ``mine``
+    how it is now. What the step changed (a version's name, a version made or taken out, a layer added, removed or
+    changed) is taken from ``theirs``; whatever it did not touch stays as it is now, so that the edits made since in
+    other versions are never reverted."""
+    def pick(key, b, t, m):
+        return t if m == b else m if t == b else t
+
+    def merge_layers(b, t, m):
+        bl, tl = {x["id"]: x for x in b}, {x["id"]: x for x in t}
+        out = list(m)
+        for lid in [x["id"] for x in b] + [x["id"] for x in t if x["id"] not in bl]:
+            if bl.get(lid) == tl.get(lid):
+                continue                                  # the step left it as it was
+            at = next((i for i, x in enumerate(out) if x["id"] == lid), None)
+            if lid not in tl:
+                if at is not None:
+                    del out[at]
+            elif at is not None:
+                out[at] = tl[lid]
+            else:
+                prev = [x["id"] for x in t]
+                k = prev.index(lid)
+                pos = 0
+                for q in reversed(prev[:k]):
+                    j = next((i for i, x in enumerate(out) if x["id"] == q), None)
+                    if j is not None:
+                        pos = j + 1
+                        break
+                out.insert(pos, tl[lid])
+        return out
+
+    def merge_version(b, t, m):
+        if m == b:
+            return t
+        if t == b:
+            return m
+        out = {k: pick(k, b.get(k), t.get(k), m.get(k)) for k in set(b) | set(t) | set(m) if k != "layers"}
+        out["layers"] = merge_layers(b.get("layers") or [], t.get("layers") or [], m.get("layers") or [])
+        return {k: v for k, v in out.items() if v is not None or k in m}
+
+    bv, tv, mv = ({v["id"]: v for v in d.get("versions", [])} for d in (base, theirs, mine))
+    ids = [v["id"] for v in theirs.get("versions", [])]
+    ids += [i for i in (v["id"] for v in mine.get("versions", [])) if i not in ids and not (i in bv and i not in tv)]
+    versions = []
+    for i in ids:
+        if i in tv and i in mv and i in bv:
+            versions.append(merge_version(bv[i], tv[i], mv[i]))
+        elif i in tv and i not in mv:
+            versions.append(tv[i])                        # a version the step brings back
+        else:
+            versions.append(mv.get(i) or tv[i])
+    out = {k: pick(k, base.get(k), theirs.get(k), mine.get(k)) for k in set(base) | set(theirs) | set(mine)
+           if k != "versions"}
+    out["versions"] = versions
+    return out
 
 
 class SessionSet:
@@ -1150,8 +1210,10 @@ class _ProjectBase(QObject):
         # Post holds layers only for the workflows already computed: the others' images, which it never had, are not
         # taken out by its saving its composition (GUI exploration 4: a filter added emptied Post of new branches)
         post = getattr(source, "is_post_page", False)
+        # (a change made in the graph never takes out a workflow's image Post shows implicitly and the version has not
+        # written yet: only Post's own saving can, by what it showed and the user deleted)
         shown |= {(q.pid, self.post_default_part(q)) for q in self.post_defaults(old)
-                  if not post or getattr(q, "rendered", True)}
+                  if post and getattr(q, "rendered", True)}
         now = {(x.get("pid"), x.get("part")) for x in layers if x.get("kind") == "workflow"}
         alive = {q.pid for q in self.paths}
         if scope == "active" and post and self.p.post["versions"][1:]:
@@ -1181,6 +1243,18 @@ class _ProjectBase(QObject):
         self.set_post_layers(save_layers(normalize(layers)), source, scope=scope)
         return out
 
+    @staticmethod
+    def _free_layer_name(layers, name: str, lid) -> str:
+        """``name`` when no other layer has it, else the first "name 2", "name 3"... free (a default name stays unique)."""
+        taken = {str(x.get("name") or "") for x in layers if x.get("id") != lid}
+        if name not in taken:
+            return name
+        base = re.sub(r" \d+$", "", name)
+        n = 2
+        while f"{base} {n}" in taken:
+            n += 1
+        return f"{base} {n}"
+
     def add_post_layer(self, pid: int, part: str | None, source=None, keep_default: bool = True) -> int:
         """A layer of a workflow's image at the top of Post, shown: its Output block's image (``part`` None) or one of
         its Stars block's (the starless image, the stars alone, or a new Stars and background block). Returns its
@@ -1189,9 +1263,9 @@ class _ProjectBase(QObject):
         from .postengine import new_workflow_layer
         p = self.view(pid)
         name = p.name + ("" if part is None else " · " + POST_PART_NAMES[part])
-        lay = new_workflow_layer(pid, name, True, part)
 
         def change(layers):
+            lay = new_workflow_layer(pid, name, True, part)   # made once the layers are loaded: its id is a fresh one
             self._filled(layers, None if keep_default else pid)
             if keep_default and part is not None and any(q.pid == pid for q in self.post_defaults(layers)):
                 # the image Post shows by default for this workflow stays: a Combine layers added is a second one, the
@@ -1202,6 +1276,7 @@ class _ProjectBase(QObject):
             same = [x for x in layers if x.get("kind") == "workflow" and x.get("pid") == pid and x.get("part") == part]
             if part == "combined" and same:               # several Combine layers of one workflow: numbered (2nd round)
                 lay["name"] = f"{name} {len(same) + 1}"
+            lay["name"] = self._free_layer_name(layers, lay["name"], lay["id"])
             layers.insert(0, lay)
             for v in self.p.post["versions"]:             # sent to Post again: back in every version, one that had
                 if v.get("removed"):                      # taken it out included
@@ -1249,6 +1324,10 @@ class _ProjectBase(QObject):
                     and x.get("part") == part}
             layers[:] = [x for x in layers if x["id"] not in gone and not (x["kind"] == "filter"
                                                                            and x.get("target") in gone)]
+            if not getattr(source, "is_post_page", False):
+                # an image taken out from the graph, shown implicitly or not: said here, since a write from the graph
+                # never infers what was taken out
+                self.p.post = {**self.p.post, "removed": [*(self.p.post.get("removed") or []), [pid, part]]}
             return len(gone)
         return self._post_edit(change, source, scope="all")
 
@@ -1349,8 +1428,10 @@ class _ProjectBase(QObject):
                 self._prune_breakpoints()
                 self._follow_branch_names()
                 self._prune_post()
-                if self._snapshot() != before:
+                after = self._snapshot()
+                if after != before:
                     before.from_post = self._post_depth > 0
+                    before.after_post = json.loads(after[4])
                     self._undo.append(before)
                     del self._undo[:-200]
                     self._redo.clear()
@@ -1777,6 +1858,14 @@ class _ProjectBase(QObject):
         def change(layers):
             x = next(v for v in layers if v["id"] == lid)
             if side == "starless":
+                old = self.view(x.get("pid"))
+                new = self.view(int(pid))
+                if old is not None and new is not None and old.name != new.name:   # the default name follows the side
+                    m = re.fullmatch(re.escape(old.name + " · " + POST_PART_NAMES["combined"]) + r"( \d+)?",
+                                     str(x.get("name") or ""))
+                    if m:
+                        x["name"] = self._free_layer_name(
+                            layers, new.name + " · " + POST_PART_NAMES["combined"] + (m.group(1) or ""), lid)
                 x["pid"], x["starless"] = int(pid), ("output" if image == "output" else "starless")
             else:
                 x["stars_pid"] = None if pid is None else int(pid)
@@ -2170,6 +2259,20 @@ class _ProjectBase(QObject):
                    and self.sessions_of(q) == self.sessions_of(p) and self._forks(q) == self._forks(p)
                    and nodes(q)[:len(mine)] == mine for q in self.paths)
 
+    def _write_branch_layer(self, v: WorkflowView):
+        """The layer of a block's image just sent to Post, written into the version shown (as Starless / Stars to Post
+        write theirs), and back in every version that had taken it out."""
+        from .postengine import new_workflow_layer
+        pid = v.pid
+
+        def change(layers):
+            self._filled(layers)
+            if not any(x.get("kind") == "workflow" and x.get("pid") == pid and x.get("part") is None for x in layers):
+                layers.insert(0, new_workflow_layer(pid, v.name, True, None))
+            for ver in self.p.post["versions"]:
+                if ver.get("removed"):
+                    ver["removed"] = [r for r in ver["removed"] if (int(r[0]), r[1]) != (pid, None)]
+        self._post_edit(change, None, scope="all")
 
 
 
@@ -2656,14 +2759,24 @@ class _ProjectBase(QObject):
         """Post follows the graph (GUI exploration 3.3): a layer of a Split image goes with its Split block (the
         workflow's own image then comes back to Post), a layer of a workflow gone goes."""
         ws = {w.id: w for w in self.p.workflows}
+        try:
+            wanted = set(self.synth_wanted())
+        except (KeyError, ValueError):
+            wanted = None
         for v in self.p.post["versions"]:
-            self._prune_version(v, ws)
+            self._prune_version(v, ws, wanted)
 
     @staticmethod
-    def _prune_version(v: dict, ws: dict):
+    def _prune_version(v: dict, ws: dict, wanted: set | None = None):
         layers = v.get("layers") or []
         keep, gone, changed = [], set(), False
+        groups = {x.get("id"): x for x in layers if x.get("kind") == "workflow" and x.get("part") == "combined"}
         for x in layers:
+            if wanted is not None and x.get("kind") == "filter" and x.get("filter") == "synth" and (
+                    groups.get(x.get("target")) is None or groups[x["target"]].get("pid") not in wanted):
+                gone.add(x.get("id"))                     # a Synthetic stars row whose block left the graph goes
+                changed = True
+                continue
             if x.get("kind") != "workflow":
                 keep.append(x)
                 continue
