@@ -911,7 +911,7 @@ def test_a_setting_of_the_block_shown_keeps_its_picture_on_screen(scratch):
     settle(w)
     assert s.state(full, "gradient") == "stale"
     assert t.view is v0 and t.view.image().identity() == img0
-    assert "previous result" in texts_of(t)
+    assert "Previous settings" in texts_of(t)
 
 
 def test_an_outdated_block_shows_its_previous_result(scratch):
@@ -929,7 +929,7 @@ def test_an_outdated_block_shows_its_previous_result(scratch):
     assert vi is not None and ("stack", s.previous_key(full, "stack")) in vi.identity()[-1]
     assert t.view.wait(120) and t.view.prepared().size() == GRID
     texts_ = texts_of(t)
-    assert "previous result" in texts_ and any(x.startswith("Run to here") for x in texts_)
+    assert "Previous settings" in texts_ and any(x.startswith("Run to here") for x in texts_)
     assert dict(w.steps.facts(full, "empilement"))[texts.metric_label("frames_used")] == str(N_LIGHTS)
     shot(w, "inspect_previous")
     run = [b for b in t.findChildren(QPushButton) if b.text().startswith("Run to here")][0]
@@ -938,7 +938,7 @@ def test_an_outdated_block_shows_its_previous_result(scratch):
     run.click()
     assert got == [1]
     inspect(w, "debruitage", index=0)
-    assert w.tune.view.image() is not None and "previous result" in texts_of(w.tune)
+    assert w.tune.view.image() is not None and "Previous settings" in texts_of(w.tune)
     q = s.add_path("Classic stack", {"debruitage": False, "etoiles": "garder", "fond": "simple"})
     s.set_param(q, "gradient", "degree", 3)                               # never computed: no previous result
     inspect(w, "fond", index=s.index_of(q.pid))
