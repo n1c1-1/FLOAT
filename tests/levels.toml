@@ -71,4 +71,5 @@ level3 = [
     "tests/client/test_shell.py::test_python_m_starts_the_client",
     "tests/client/test_shell.py::test_shots",
     "tests/client/graphview/test_gv_legacy_model.py::test_no_setting_of_the_engine_is_out_of_reach",
+    "tests/client/test_graphmodel_speed.py",                  # heavy: a measure of the graph page's gestures, 25 s
 ]

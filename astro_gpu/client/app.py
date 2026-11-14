@@ -1022,6 +1022,7 @@ class Main(QMainWindow):
         if self.screens.currentWidget() is not self.proj_screen:
             self.screens.setCurrentWidget(self.proj_screen)
         was_post = self.mode == 2 and s is not None and s.sel_step == "final"
+        was = self.mode
         if s is not None and i == 1 and s.sel_step == "composition":
             # a Stars and background block is a layer of Post: Inspect shows it there
             self.open_layer(s.sel_layer) if s.sel_layer is not None else self.set_mode(2)
@@ -1045,8 +1046,9 @@ class Main(QMainWindow):
             self._post_holder.page.refresh()
         elif was_post and i != 2 and self._post_holder is not None and self._post_holder.page is not None:
             self._post_holder.page.leave()     # Post's engines and caches go only when memory is short
-        if i == 0 and self.graph is not None and getattr(self.graph, "graph", None) is not None:
-            self.graph.graph.rebuild()             # the arrows of the images sent to Post meanwhile
+        if i == 0 and was != 0 and self.graph is not None and getattr(self.graph, "graph", None) is not None:
+            self.graph.graph.rebuild()             # the arrows of the images sent to Post meanwhile (from another mode:
+            #                                        the graph shown already follows every change made on it)
         self.refresh()
 
     def _strip_pick(self, k: str):

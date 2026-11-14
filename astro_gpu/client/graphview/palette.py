@@ -247,8 +247,9 @@ class Palette(QScrollArea):
         self._for_text = ""
         bridge.changed.connect(self.refresh)
         bridge.selection.connect(lambda *_a: self.refresh())
+        # the cards are judged once the palette shows, one per turn of the event loop as after a change: a project
+        # opens without waiting for them (``finish`` brings them all up to date at once)
         self.refresh()
-        self.finish()                    # the first time: all at once, nothing is waiting for the window yet
 
     # ------------------------------------------------------------------ its ways of showing (graph.py)
     def set_state(self, st: str):
