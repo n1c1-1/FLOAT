@@ -16,7 +16,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt, Signal  # noqa: E402
-from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QWidget  # noqa: E402
 
 from astro_gpu.client import gradientedit as ge  # noqa: E402
 from astro_gpu.stages.gradient import GradientParams, read_grid, sky_model_of  # noqa: E402
@@ -884,5 +884,71 @@ def test_the_gradient_view_s_aids_never_reach_another_view(qapp, tmp_path):
         settle(w)
         a1 = denoise_split()
         assert a0.shape == a1.shape and (a0 == a1).all()
+    finally:
+        w.close()
+
+
+def _window_without_stack(tmp_path, size=(1366, 728)):
+    """The test project's definition alone: nothing computed, so the Gradient block has no stack to read."""
+    import shutil
+
+    from conftest import TEST_PROJECT
+    from test_inspect import inspect, open_window, settle
+
+    from astro_gpu.client import app as appmod
+    from astro_gpu.client import prefs
+    from astro_gpu.client.widgets import QSS
+    QApplication.instance().setStyleSheet(QSS + appmod.EXTRA_QSS)
+    os.environ["ASTRO_GPU_SETTINGS"] = str(tmp_path / "settings.json")
+    prefs.load()
+    appmod.apply_language("en")
+    folder = tmp_path / "proj"
+    folder.mkdir()
+    shutil.copy(TEST_PROJECT / "project.astroproj", folder / "project.astroproj")
+    w = open_window(folder, size=size, readonly=False)
+    inspect(w, "fond", index=0)
+    settle(w)
+    return w, settle
+
+
+def test_before_the_stack_exists_the_gradient_view_shows_with_only_its_method_live(qapp, tmp_path):
+    _test_project()
+    w, settle = _window_without_stack(tmp_path)
+    try:
+        ed = w.tune.grad_editor
+        assert ed.no_input() and ed.view is not None, "the Gradient view itself is shown"
+        u = ed._ui
+        why = "The stack is not computed yet"
+        for k in ("points", "brush", "ellipse", "eraser", "generate", "objects", "nebula", "clearall", "pitch", "marks",
+                  "before"):
+            assert not u[k].isEnabled() and u[k].toolTip() == why, k
+        assert u["method"].isEnabled()
+        cover = u["cover"]
+        assert cover.isVisible() and cover.geometry() == ed.gv.rect()
+        texts = [x.text() for x in cover.findChildren(QLabel)] + [x.text() for x in cover.findChildren(QPushButton)]
+        assert "Not computed yet" in texts and any(t.startswith("Run to here") for t in texts), texts
+        g0 = _geometry(w, ed)
+        u["method"].setCurrentIndex(u["method"].findData("rbf"))     # a choice of the method: the draft's path
+        u["method"].activated.emit(u["method"].currentIndex())
+        settle(w)
+        assert ed.has_draft() and ed.value("method") == "rbf" and u["apply"].isEnabled()
+        assert not ed.busy and ed.result is None                      # no preview without a stack
+        assert not u["generate"].isEnabled() and _geometry(w, ed) == g0
+    finally:
+        w.close()
+
+
+def test_the_settings_panel_has_no_second_clear_all(qapp, tmp_path):
+    """Clear all is the left column's action only: the panel's Draft group has Undo and Redo, no Remove all."""
+    _test_project()
+    w, settle = _window(tmp_path, (1920, 1080))
+    try:
+        ed = w.tune.grad_editor
+        if ed.view is None:
+            pytest.skip("Gradient of the test project is not computed")
+        names = [b.text() for b in ed.drawer.findChildren(QPushButton)]
+        assert "Remove all" not in names and "Clear all" not in names, names
+        assert ed._ui["clearall"].isVisible() and ed._ui["clearall"].text() == "Clear all"
+        assert "clear" not in ed._ui
     finally:
         w.close()

@@ -574,6 +574,11 @@ class GradientEditor(QObject):
             if not e.isAutoRepeat():
                 self._marks_key(t == QEvent.KeyPress)
             return True
+        if t == QEvent.Resize and self._ui and obj is self.gv:
+            cv = self._ui.get("cover")
+            if cv is not None and cv.isVisible():
+                cv.setGeometry(self.gv.rect())
+            return False
         if t == QEvent.Show and obj in self._sides() and self._page_shown():
             self.hold()                        # the window docked TuneView's panel again: away while the page shows
             QTimer.singleShot(0, lambda: self._side(False) if self._page_shown() else None)
@@ -808,7 +813,49 @@ class GradientEditor(QObject):
     def page_for(self, p, tab) -> bool:
         """The page shows the block's result: computed, or Outdated with its previous one; its Sky model tab and a
         block never computed are Inspect's own."""
-        return tab in (None, "result") and (self.drafting(p) or p.pid in self.carried)
+        return tab in (None, "result") and (self.drafting(p) or p.pid in self.carried or self.no_input(p))
+
+    def no_input(self, p=None) -> bool:
+        """Whether the stack the block reads does not exist yet (not computed, no earlier result either) and the block
+        has no result of its own: the page then shows the method only, the rest greyed."""
+        p = p or self.p
+        if p is None or self.drafting(p) or p.pid in self.carried:
+            return False
+        try:
+            st = self.s.state(p, "stack")
+            if st == "done":
+                return False
+            return not (st == "stale" and self.tv._has_previous(p, "empilement"))
+        except Exception:  # noqa: BLE001 - no state readable: as a block with its input
+            return False
+
+    def _update_cover(self):
+        """The image area while the stack does not exist: the block's 'Not computed yet' and its Run to here, over the
+        image's own rectangle (which does not change)."""
+        cover = self._ui.get("cover")
+        if cover is None:
+            return
+        try:
+            want = self.no_input()
+            if want and not cover.isVisible():
+                from .widgets import clear
+                clear(cover.layout())
+                box = cover.layout()
+                box.addStretch(1)
+                box.addWidget(label(_("Not computed yet"), "h2"), 0, Qt.AlignHCenter)
+                box.addSpacing(8)
+                rb = self.tv._run_button(self.p, "fond")
+                rb.setObjectName("primary")
+                box.addWidget(rb, 0, Qt.AlignHCenter)
+                if not self.s.has_data(self.p):
+                    box.addWidget(label(self.tv._no_data(self.p), "warn"), 0, Qt.AlignHCenter)
+                box.addStretch(2)
+            cover.setGeometry(self.gv.rect())
+            cover.setVisible(want)
+            if want:
+                cover.raise_()
+        except RuntimeError:
+            pass
 
     def center(self, tv, node, p) -> bool:
         """From TuneView.refresh: the centre is this page when the block shown is the Gradient with a result (True);
@@ -856,7 +903,9 @@ class GradientEditor(QObject):
 
     def _enter_page(self, p):
         tv = self.tv
+        new = self.p is None or self.p.pid != p.pid
         if not self._page_ok():
+            self._load(p)                              # the page is made from the block's settings
             self._build_page()
             for x in self._sides():
                 x.installEventFilter(self)
@@ -869,7 +918,6 @@ class GradientEditor(QObject):
         tv.view, tv.views = self.gv, []
         tv._cur = (p, "fond", spec) if spec is not None else None      # the tab Inspect's walkthrough and tests read
         tv._center_sig = ("gradient", p.pid)
-        new = self.p is None or self.p.pid != p.pid
         self._load(p)
         self.view = self.gv
         self._watch_window()
@@ -877,7 +925,10 @@ class GradientEditor(QObject):
         if d is not None:
             d["told"] = False
         self._hide_banner(p.pid)
-        if "samples" in self.kinds():
+        nostack = self.no_input(p)
+        if self._ui.get("cover") is not None:
+            self._ui["cover"].hide()                   # built again below with the block's present state
+        if "samples" in self.kinds() and not nostack:
             if p.pid not in self.defaults and not self._applied_value("sample_points"):
                 # the block places its own samples: the same grid, made here as the stage makes it
                 self._run_points(["generate", "objects", "nebula_disk"], [], default=True)
@@ -949,6 +1000,13 @@ class GradientEditor(QObject):
         gv.layout().itemAt(0).widget().hide()          # its own toolbar: the page's Before / After and the panel
         gv.readout.parentWidget().hide()               # the readout line: none under the image
         bl.addWidget(gv)
+        cover = QFrame(gv)                             # shown over the image while the stack does not exist
+        cover.setObjectName("gradcover")
+        cover.setAutoFillBackground(True)
+        QVBoxLayout(cover).setContentsMargins(0, 0, 0, 0)
+        cover.hide()
+        self._ui["cover"] = cover
+        gv.installEventFilter(self)
         hb.addWidget(box, 1)
         v.addWidget(body, 1)
         self.page, self.gv = page, gv
@@ -1224,12 +1282,6 @@ class GradientEditor(QObject):
             b.clicked.connect(fn)
             row.addWidget(b)
             u[key] = b
-        clr = QPushButton(_("Remove all"))
-        clr.setToolTip(_("Remove the placed samples and the excluded areas from the draft: the block chooses its "
-                         "samples again (Undo brings them back)"))
-        clr.clicked.connect(self.clear)
-        row.addWidget(clr)
-        u["clear"] = clr
         row.addStretch(1)
         dv.addLayout(row)
         if not self.done and self.s.state(p, "gradient") != "running":
@@ -1543,10 +1595,20 @@ class GradientEditor(QObject):
             if "undo" in u:
                 u["undo"].setEnabled(bool(d and d["undo"]))
                 u["redo"].setEnabled(bool(d and d["redo"]))
-            if "clear" in u:
-                u["clear"].setEnabled(any(self.work[f] for f in FIELDS))
             if "size_l" in u:
                 u["size_l"].setText(f"{int(self.size)} px")
+            if self.no_input():                # no stack: only the method is live; the rest says why
+                why = _("The stack is not computed yet")
+                for k in [t[0] for t in TOOLS] + [a[0] for a in ACTIONS] + ["pitch", "size", "marks", "before"]:
+                    b = u.get(k)
+                    if b is not None:
+                        b.setEnabled(False)
+                        b.setToolTip(why)
+                if "points" in u:
+                    for k in [t[0] for t in TOOLS]:
+                        if u[k].isCheckable():
+                            u[k].setChecked(False)
+            self._update_cover()
         except RuntimeError:                   # a drawer row built again meanwhile
             pass
         finally:
@@ -2223,7 +2285,7 @@ class GradientEditor(QObject):
     def _schedule(self):
         """The draft's preview, once the draft has not changed for a moment (shorter when this method is fast): steps of
         a setting in quick succession make one preview, of the last one."""
-        if self.p is None:
+        if self.p is None or self.no_input():
             return
         fast = self._ms_of.get(self._method(), 1e9) <= FAST_MS
         self._timer.setInterval(FAST_DEBOUNCE_MS if fast else DEBOUNCE_MS)
@@ -2243,7 +2305,7 @@ class GradientEditor(QObject):
     def _run(self, what: str, fetch: bool = False):
         """One computation at a time: a request made while one runs waits, replaced by the next (only the last
         counts); the answer of an older edit is dropped. ``fetch``: the survey may be downloaded (its toggle only)."""
-        if self.p is None:
+        if self.p is None or self.no_input():          # no stack: nothing to read, nothing to preview
             return
         self.gen += 1
         if self.busy:
