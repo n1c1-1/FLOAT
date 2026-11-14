@@ -1088,6 +1088,9 @@ def _join_problem(q, row, ref):
     p = Project2(name="check")
     c = compile_into(q, p)
     a, b = c.wids.get(row), c.wids.get(ref)
+    if b is None and ref in Index(q).row:
+        from ..core.project2 import JOIN_NO_STACK      # a row that is no workflow (a Combine layers, a layer of Post)
+        return JOIN_NO_STACK
     if a is None or b is None:
         return ""
     why = join_problem(p, a, b, reference=True)

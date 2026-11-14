@@ -73,18 +73,28 @@ def stars_items(doc, ix, b):
 
 
 def align_items(doc, ix, rid):
-    """The Align on choices of a stack: on another row (each, refused ones greyed with the engine's reason), its own
-    grid, switched off; "reference for all" in one gesture."""
+    """The Align on choices of a stack: on another workflow (the engine's join_problem judges: a combination or a
+    Combine layers is never a target, so it is not offered; a workflow that would make a loop is greyed with the
+    client's words, as the old Align on block's list said it), its own grid, switched off; "reference for all" in one
+    gesture."""
+    from ...core.project2 import JOIN_NO_STACK
     g = doc.graph
     r = ix.row[rid]
     a = r.align or {}
     out = [_item(doc, _("Reference for all"), "set_reference", {"row": rid})]
-    others = [x for x in g.rows if x.id != rid]
-    if others:
-        out.append(None)
-    for x in others:
+    targets = []
+    for x in g.rows:
+        if x.id == rid or (x.blocks and x.blocks[0] in g.blocks and g.blocks[x.blocks[0]].kind == "combine_layers"):
+            continue
         text = x.name if a.get("ref") != x.id else "✓ " + x.name
-        out.append(_item(doc, text, "set_align", {"row": rid, "ref": x.id}))
+        args = {"row": rid, "ref": x.id}
+        res = doc.try_many([("set_align", args)])
+        if not res.ok and res.reason == JOIN_NO_STACK:
+            continue                                  # never a target: not offered
+        targets.append((text, "set_align", args, res.ok, "" if res.ok else doc.say(res.reason)))
+    if targets:
+        out.append(None)
+    out += targets
     out.append(None)
     out.append(_item(doc, _("Own grid"), "own_grid", {"row": rid}))
     if r.align:
