@@ -1748,7 +1748,15 @@ class PostView(QWidget):
             self.viewer.refresh()
             self.viewer.update()
             return
-        self.viewer.banner = ""
+        lost = []
+        for x in self.layers:
+            if is_pixel(x) and x.get("visible", True):
+                if f"layer:{x['id']}" in self._missing_images:
+                    lost.append(layer_name(x))
+                lost += [f"{layer_name(x)} ({_(SUB_NAMES[sub]).lower()})" for sub in SUBS
+                         if f"side:{x['id']}:{sub}" in self._missing_images]
+        self.viewer.banner = (_("Not shown, its result cannot be read: {names}")
+                              .format(names=", ".join(lost)))[:160] if lost else ""
         self.first_image = True
         if res.hists:
             self._hists.update(res.hists)
@@ -3298,8 +3306,12 @@ class PostView(QWidget):
         """Under a layer's name: mode and opacity; for a filter of its own row, that it applies to everything below (a
         nested one says it by its place)."""
         bits = []
+        # the marks first: the end of a long row is cut (the label is at most SUB_MAX wide)
+        if (is_pixel(lay) and lay["kind"] != "image" and f"layer:{lay['id']}" in self._missing_images) or (
+                lay["kind"] == "sub" and f"side:{lay['id']}:{lay['sub']}" in self._missing_images):
+            bits.append(_("not computed"))
         if lay["kind"] == "workflow" and self.is_preview(lay["pid"]):
-            bits.append(_("preview"))                       # first: the end of a long row is cut
+            bits.append(_("preview"))
         if lay["kind"] == "filter" and not lay.get("target"):
             bits.append(_("on everything below"))
         bits.append(f"{_(lay['mode'])} · {with_unit(format(lay['opacity'], '.0f'), '%')}")
@@ -3337,8 +3349,14 @@ class PostView(QWidget):
     def _refresh_rows(self):
         """The row texts (mode, opacity) without rebuilding the properties under the mouse."""
         self._update_stale()
+        usual = f"{_('Normal')} · {with_unit('100', '%')}"
         for row in self.rows:
             row.sub.setText(self.sub_text(row.lay))
+            if row.n.isHidden():                                  # (being renamed)
+                continue
+            text = row.sub.full_text()
+            # a row says more than the usual blend once a mark (not computed) is on it, and is silent again without
+            row.sub.setVisible(_("not computed") in text if row.lay["kind"] == "sub" else text != usual)
 
     def _set(self, lay, key, value):
         self.push()

@@ -39,6 +39,8 @@ from ..postengine import (
     Composer,
     Provider,
     Superseded,
+    Unreadable,
+    side_layers,
     has_synth,
     is_group,
     is_pixel,
@@ -264,6 +266,7 @@ class LayerSource(Provider):
         self.resolver = resolver
         self.service = service
         self.bases = bases or (lambda b: b)
+        self._gone: set = set()                               # source ids with a file missing inside their result
         self._folders: dict[Any, Folder | None] = {}          # by source id: a workflow's, or ("stars", its id)
         self._grids: dict[str, Grid] = {}
         self._epoch: dict[Any, int] = {}
@@ -290,6 +293,7 @@ class LayerSource(Provider):
         """The results may have changed: look again. The source ids whose result changed (a new folder, or the same
         folder written again) lose their engine and their cached images."""
         changed = set()
+        self._gone.clear()                                    # looked at again: still broken, it is found out again
         for pid in list(self._folders):
             old, new = self._folders[pid], self.resolver(pid)
             self._folders[pid] = new
@@ -359,7 +363,16 @@ class LayerSource(Provider):
     def available(self, pid) -> bool:
         if self._is_image(pid):
             return self.image(pid[1]) is not None
-        return self.folder(pid) is not None
+        return pid not in self._gone and self.folder(pid) is not None
+
+    def readable(self, lay: dict) -> bool:
+        return self.available(source_id(lay))
+
+    def mark_gone(self, sid) -> None:
+        """A file is missing inside the result of this source (its engine cannot be opened): it is not available, its
+        layers say not computed."""
+        self._gone.add(sid)
+        self._cv = None
 
     def previous(self, pid) -> bool:
         if self._is_image(pid):
@@ -500,13 +513,17 @@ class LayerSource(Provider):
             if over is None:
                 raise FileNotFoundError("the starless combination this one's stars go onto is not computed")
             kw = {"stats_from": over.path, "blend": lay.get("blend")}
-        if level == 0 and self._partial(sid, put, box, region, whole):
-            li = self.service.render(f.path, base, lay.get("sliders"), 1.0, region=tuple(int(round(v)) for v in region),
-                                     **kw)
-            arr = self._cut(li.rgb, 1, region, size, False)
-        else:                                               # the whole grid at 1/fi, cut to the canvas
-            li = self.service.render(f.path, base, lay.get("sliders"), 1.0 / fi, **kw)
-            arr = self._cut(li.rgb, fi, region, size, True)
+        try:
+            if level == 0 and self._partial(sid, put, box, region, whole):
+                li = self.service.render(f.path, base, lay.get("sliders"), 1.0,
+                                         region=tuple(int(round(v)) for v in region), **kw)
+                arr = self._cut(li.rgb, 1, region, size, False)
+            else:                                               # the whole grid at 1/fi, cut to the canvas
+                li = self.service.render(f.path, base, lay.get("sliders"), 1.0 / fi, **kw)
+                arr = self._cut(li.rgb, fi, region, size, True)
+        except (KeyError, OSError) as e:                        # a file of the result is not there (the folder is)
+            self.mark_gone(sid)
+            raise Unreadable(sid) from e
         if li.info.get("note"):
             self._notes.add(li.info["note"])
         self.engine_ms += float(li.info.get("render_ms") or 0.0)
@@ -657,6 +674,17 @@ class Renderer:
 
     def run(self, req: Request, stop: Callable[[], bool] | None = None,
             emit: Callable[[Result], None] | None = None) -> Result:
+        """The request's image; a source found unreadable on the way (a file of its result is missing) is left out and
+        the request made again without it, so the layers that can be read are shown."""
+        for _try in range(8):
+            try:
+                return self._run(req, stop, emit)
+            except Unreadable:
+                continue                                  # (the source is marked: not available any more)
+        return self._run(req, stop, emit)
+
+    def _run(self, req: Request, stop: Callable[[], bool] | None = None,
+             emit: Callable[[Result], None] | None = None) -> Result:
         """The request's image. ``emit``: where a "refine" result goes before the half image (the exact 1/4, when
         ``req.refine``)."""
         t0 = time.perf_counter()
@@ -691,7 +719,11 @@ class Renderer:
         res.previews = {lay["pid"] for lay in layers if lay["kind"] == "workflow" and
                         self.source.available(source_id(lay)) and self.source.previous(source_id(lay))}
         res.missing = tuple(sorted({lay["key"] for lay in layers if lay["kind"] == "image"
-                                    and not self.source.available(source_id(lay))}))
+                                    and not self.source.available(source_id(lay))}
+                                   | {f"layer:{x['id']}" for x in self.unreadable(layers)
+                                      if x["id"] is not None and x["whole"]}
+                                   | {f"side:{x['id']}:{sub}" for x in self.unreadable(layers)
+                                      if x["id"] is not None for sub in x["sides"]}))
         if req.kind in ("half", "refine") and req.box is None:        # thumbnails of what was just drawn, for free
             res.layer_thumbs = self._visible_thumbs(layers, cp.canvas_of(layers))
         res.ms = 1000 * (time.perf_counter() - t0)
@@ -747,7 +779,27 @@ class Renderer:
     def _ready(self, lay) -> bool:
         """Whether everything a layer reads is there: a Combine layers layer reads two workflows (issue #165), its starless
         side's and its stars side's (when it has one)."""
-        return all(self.source.available(x) for x in source_ids(lay))
+        return any(self.source.readable(x) for _s, x in side_layers(lay))
+
+    def unreadable(self, layers: list[dict]) -> list[dict]:
+        """The visible pixel layers whose result cannot be read ({"layer": name, "id", "what": the images that are not
+        there}): the composition leaves such a layer out, so a picture made without them is not the picture."""
+        out = []
+        for lay in layers:
+            if not is_pixel(lay) or not lay.get("visible", True):
+                continue
+            sides = side_layers(lay)
+            gone = [x for x, sl in sides if not self.source.readable(sl)]
+            if not gone:
+                continue
+            if is_group(lay):
+                what = [(_("starless image") if x == "starless" else _("stars")) for x in gone]
+                names = list(gone)
+            else:
+                what, names = [_("image")], []
+            out.append({"layer": lay["name"], "id": lay["id"], "what": what, "sides": names,
+                        "whole": len(gone) == len(sides)})
+        return out
 
     def _thumb_subs(self, layers, lay) -> tuple:
         """The images of a Combine layers layer that have a thumbnail of their own: its two, and the synthetic stars of
@@ -755,7 +807,8 @@ class Renderer:
         if not is_group(lay):
             return ()
         synth = has_synth(layers, lay["id"]) and self.source.available(source_id(sub_layer(lay, "synth")))
-        subs = tuple(x for x in SUBS if not (x == "stars" and lay.get("stars_pid", lay["pid"]) is None))
+        subs = tuple(x for x in SUBS if not (x == "stars" and lay.get("stars_pid", lay["pid"]) is None)
+                     and self.source.readable(sub_layer(lay, x)))
         return subs + (("synth",) if synth else ())
 
     def _thumbs(self, req: Request, stop, t0) -> Result:
@@ -865,6 +918,10 @@ def _burned(rgb: np.ndarray, ann, show: dict) -> np.ndarray:
     return np.ascontiguousarray(burn(np.clip(rgb, 0.0, 1.0), ann, show), dtype=np.float32)
 
 
+class ExportRefused(Exception):
+    """An export that cannot be made as the picture is: the sentence for the user is its text."""
+
+
 def run_export(renderer: Renderer, job: ExportJob, progress, stop=None,
                writer: Callable | None = None) -> list[Path]:
     """The final image at full resolution (the engine's whole-grid rendering of each layer, composed), written into
@@ -874,7 +931,14 @@ def run_export(renderer: Renderer, job: ExportJob, progress, stop=None,
     layers = job.layers
     canvas = cp.canvas_of(layers)
     if canvas is None:
-        raise ValueError("no layer has a result to export")
+        raise ExportRefused(_("No layer has a result to export"))
+
+    def refuse(lost):             # never a picture made without a layer (or a side of one) it should show
+        return ExportRefused(" ".join(_("“{name}” cannot be read ({what}): compute it again, nothing was written.")
+                                      .format(name=x["layer"], what=", ".join(x["what"])) for x in lost))
+    lost = renderer.unreadable(layers)
+    if lost:
+        raise refuse(lost)
     crop = tuple(int(v) for v in job.crop) if job.crop else None
     cut = (lambda a: a[..., crop[1]:crop[3], crop[0]:crop[2]]) if crop else (lambda a: a)
     shown = Canvas(crop[2] - crop[0], crop[3] - crop[1], (canvas.origin[0] + crop[0], canvas.origin[1] + crop[1])) \
@@ -895,7 +959,10 @@ def run_export(renderer: Renderer, job: ExportJob, progress, stop=None,
         progress(0.9 * done / n_steps, msg)
 
     step("composing the image")
-    comp = cp.compose(layers, 0, want=(), stop=stop, cache=False)
+    try:
+        comp = cp.compose(layers, 0, want=(), stop=stop, cache=False)
+    except Unreadable:            # a file missing inside a result: found out here, the source is marked
+        raise refuse(renderer.unreadable(layers)) from None
     files: list[Path] = []
     # the solution of the bottom layer's grid (the canvas is in its pixels): a workflow's astrometry; an image layer of
     # the stack grid has none of its own, the first workflow's then (the same grid when the drizzle scales agree)
@@ -932,7 +999,10 @@ def run_export(renderer: Renderer, job: ExportJob, progress, stop=None,
     if job.each_layer:
         for lay in [x for x in layers if is_pixel(x)]:
             step(f"layer {lay['name']}")
-            c = cp.compose(only_layer(layers, lay["id"]), 0, cache=False, stop=stop)
+            try:
+                c = cp.compose(only_layer(layers, lay["id"]), 0, cache=False, stop=stop)
+            except Unreadable:
+                raise refuse(renderer.unreadable(layers)) from None
             o = dict(opts, name=f"{job.name}_layer_{_slug(lay['name'])}")
             files += write(np.ascontiguousarray(cut(np.moveaxis(c.rgb, -1, 0))), folder / "layers", ExportOptions(**o),
                            {"wcs": wcs, "origin": shown.origin})
@@ -1272,6 +1342,8 @@ class RenderWorker(QThread):
             self.exported.emit([str(p) for p in files], "")
         except Superseded:
             self.exported.emit([], "stopped")
+        except ExportRefused as e:
+            self.exported.emit([], str(e))
         except WriteFailed as e:                         # a sentence that names the file; its second line goes to the Log
             self.exported.emit([], _("“{name}” could not be written").format(name=e.name) + chr(10) + e.why)
         except Exception as e:  # noqa: BLE001
