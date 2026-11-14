@@ -92,8 +92,19 @@ class SidesHost:
         pn.saveTemplate.connect(self.save_template)
         pn.openLayer.connect(self.openLayer.emit)
         pn.cutToggled.connect(self.toggle_cut)
+        pn.drop_files = self.panel_drop
         self._panel_timer = QTimer(self, singleShot=True, interval=0)
         self._panel_timer.timeout.connect(self.refresh_panel)
+
+    def panel_drop(self, sid, kind, paths):
+        """Files dropped on a kind's row of a Session's panel: resolved as a drop on that Session's target of the graph
+        (graph_drops: the type filter, « n added · n left · Take all », no double, files stored one by one)."""
+        g = self.bridge.graph
+        block = next((b for b, blk in g.blocks.items() if blk.kind == "session" and getattr(blk, "sid", None) == sid),
+                     None)
+        if block is None:
+            return None
+        return self.bridge.drops.drop(block, kind, paths)
 
     def panel_later(self, *_a):
         if getattr(self, "panel", None) is not None:

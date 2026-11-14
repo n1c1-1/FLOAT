@@ -69,3 +69,53 @@ def test_a_band_title_never_covers_the_stack_name_and_its_badge(world, nights):
     W.page.set_display("folded")
     W.settle()
     assert not _titles_clear(cv)
+
+
+# ---------------------------------------------------------------------------------------------- the panel's kind rows
+def _drop_on(widget, paths, leave=False):
+    """A drop of files from the explorer on a widget, as Qt delivers it (enter, move, then drop or leave)."""
+    from PySide6.QtCore import QMimeData, QPointF, Qt, QUrl
+    from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDragMoveEvent, QDropEvent
+    from PySide6.QtWidgets import QApplication
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(str(p)) for p in paths])
+    pt = widget.rect().center()
+    enter = QDragEnterEvent(pt, Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)
+    QApplication.sendEvent(widget, enter)
+    QApplication.sendEvent(widget, QDragMoveEvent(pt, Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier))
+    hot = "dashed" in widget.styleSheet()
+    if leave:
+        QApplication.sendEvent(widget, QDragLeaveEvent())
+    else:
+        QApplication.sendEvent(widget, QDropEvent(QPointF(pt), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier))
+    return enter.isAccepted(), hot
+
+
+def test_files_dropped_on_a_kind_row_of_the_session_panel_are_added_as_on_the_graph(world, tmp_path):
+    from PySide6.QtWidgets import QLabel
+
+    from tests.client.graphview.legacy import frames
+    W = world()
+    s = W.one("session")
+    W.choose(s)
+    W.settle()
+    darks = frames(tmp_path / "darks", ["d1.ARW", "d2.ARW", "d3.ARW", "d1.JPG"])
+
+    def row(kind_title):
+        return next(x for x in W.page.panel.findChildren(QLabel)
+                    if x.objectName() == "sectiontitle" and x.text().startswith(kind_title) and x.isVisible())
+    ok, hot = _drop_on(row("Darks"), [darks], leave=True)
+    assert ok and hot and "dashed" not in row("Darks").styleSheet()          # lit while over it, not after
+    n0 = W.steps()
+    ok, _hot = _drop_on(row("Darks"), [darks])
+    W.settle()
+    assert ok and W.steps() == n0 + 1
+    got = W.b.doc.files_of(s, "darks")[1]
+    assert len(got) == 3 and all(p.endswith(".ARW") for p in got)            # single files, the type chosen
+    said = W.page.canvas.toast.plain
+    assert "3 ARW added" in said and "1 JPG left" in said
+    assert "take_all" in [k for _t, k in W.page.canvas.toast.links()]
+    _drop_on(row("Darks"), [darks])
+    W.settle()
+    assert len(W.b.doc.files_of(s, "darks")[1]) == 3                        # no double
+    assert "3 already there" in W.page.canvas.toast.plain

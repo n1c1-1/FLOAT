@@ -23,7 +23,7 @@ from __future__ import annotations
 import html
 from pathlib import Path
 
-from PySide6.QtCore import QLocale, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QLocale, QObject, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QApplication,
@@ -515,6 +515,41 @@ class Details(QFrame):
         self.show()
 
 
+class KindDrop(QObject):
+    """Files or folders from the file explorer dropped on a Session's kind row (Lights, Darks...): given to ``take``;
+    the row is outlined while they are dragged over it."""
+
+    def __init__(self, row, take):
+        super().__init__(row)
+        self.row, self.take, self.style = row, take, row.styleSheet()
+        row.setAcceptDrops(True)
+        row.installEventFilter(self)
+
+    def _hot(self, on: bool):
+        self.row.setStyleSheet(self.style + (f" QLabel#sectiontitle {{ background: #2b3446; border: 1px dashed {ACCENT};"
+                                             " border-radius: 4px; }" if on else ""))
+
+    def eventFilter(self, obj, e):                                    # noqa: N802 - Qt's name
+        t = e.type()
+        if t in (QEvent.DragEnter, QEvent.DragMove) and e.mimeData().hasUrls() and \
+                any(u.isLocalFile() for u in e.mimeData().urls()):
+            e.acceptProposedAction()
+            if t == QEvent.DragEnter:
+                self._hot(True)
+            return True
+        if t == QEvent.DragLeave:
+            self._hot(False)
+            return True
+        if t == QEvent.Drop:
+            self._hot(False)
+            paths = [u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()]
+            if paths:
+                e.acceptProposedAction()
+                QTimer.singleShot(0, lambda: self.take(paths))    # the panel may be built again by what it adds
+            return True
+        return False
+
+
 class Panel(QWidget):
     changed = Signal()                  # a setting changed (the window rebuilds the graph)
     openTune = Signal()                 # "Browse frames" and the like
@@ -535,6 +570,7 @@ class Panel(QWidget):
         super().__init__(parent)
         self.s, self.steps, self.tune = project, steps, tune
         self.corner = None                         # the » button that folds the panel (its page's, issue #44)
+        self.drop_files = None                     # (session id, kind, paths): files dropped on a Session's kind row
         self.expert = False
         self.focus_key = None
         self.node = None
@@ -909,7 +945,10 @@ class Panel(QWidget):
                 count = str(n[kind]) if n[kind] else _("none")
             if not n[kind] and kind in gone:              # not an empty folder: one not found (GUI exploration 4)
                 count = _("folder not found")
-            self.bv.addWidget(self.group_title(_(title) + "  ·  " + count))
+            head = self.group_title(_(title) + "  ·  " + count)
+            if self.drop_files is not None:                # files dropped on its row: added to this kind (the graph's)
+                KindDrop(head, lambda paths, k=kind: self.drop_files(sid, k, paths))
+            self.bv.addWidget(head)
             shared = s.shared_with(sid, kind) if kind != "lights" else []
             if shared:
                 names = ", ".join(s.session(o).name for o in shared)
