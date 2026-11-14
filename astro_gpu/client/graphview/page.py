@@ -417,6 +417,10 @@ class GraphPage(SidesHost, QWidget):
         ident = self._block_of_selection()
         if ident is None or ident == PROJECT:
             return
+        bm = self._block_map()
+        node = bm.node(ident) if bm is not None else None      # its workflows, as a click there gives them
+        self.s.scope = [q.pid for q in node.paths] if node is not None and node.key not in ("sources", "final") \
+            else None
         self._mirroring = True
         try:
             self.bridge.choose(ident)

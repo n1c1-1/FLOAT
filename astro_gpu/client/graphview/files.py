@@ -113,11 +113,21 @@ def already(p: str, existing) -> bool:
 def without_doubles(res, existing) -> int:
     """The entries, sub-folders and left-out files of a drop already in the list taken out. -> how many entries were
     doubles."""
+    existing = set(existing)
     new = [p for p in res.items if not already(p, existing)]
     ignored, res.items = len(res.items) - len(new), new
-    res.subs = [x for x in res.subs if x not in existing]
+    res.subs = [x for x in res.subs if not _sub_taken(x, existing)]
     res.left = [x for x in res.left if x not in existing]       # left out by the filter, but taken before
     return ignored
+
+
+def _sub_taken(folder: str, existing) -> bool:
+    """A sub-folder already taken: its entry, or (files only) every frame at its level already in the list."""
+    if folder in existing:
+        return True
+    fs, _ds, bad = _level(folder)
+    frames = [f for f in fs if frame_kind(f)]
+    return not bad and bool(frames) and all(already(f, existing) for f in frames)
 
 
 def normalise(p: str) -> str:

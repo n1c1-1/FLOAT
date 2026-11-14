@@ -152,14 +152,28 @@ class BlockItem(QGraphicsItem):
     def shape(self):                                                  # noqa: D102 - what a click or a hover finds
         """The body, its ports, its named inputs and its review dot: the margin around it is not the block's, so a
         chain wire in the gap between two blocks is found there (clicked, hovered: it says it cannot be removed)."""
+        key = (self.w, self.h, bool(self.d.get("review")), tuple(o[1] for o in self.d["outputs"]),
+               tuple(i[2] for i in self.d["inputs"]))
+        cached = getattr(self, "_shape", None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
         path = QPainterPath()
         path.addRect(QRectF(0, 0, self.w, self.h))
+        parts = []
         for _port, y, _c, _wired in self.d["outputs"]:
-            path.addEllipse(QPointF(self.w, y), 12, 12)
+            parts.append(("ellipse", QPointF(self.w, y), 12))
         for _name, _lab, y, _wired, _c in self.d["inputs"]:
-            path.addRect(QRectF(-9, y - 9, self.name_w + 18, 18))
+            parts.append(("rect", QRectF(-9, y - 9, self.name_w + 18, 18), 0))
         if self.d.get("review"):
-            path.addEllipse(QPointF(2, 2), 10, 10)
+            parts.append(("ellipse", QPointF(2, 2), 10))
+        for kind, at, r in parts:                        # a union: an overlap never cuts a hole in the block
+            more = QPainterPath()
+            if kind == "ellipse":
+                more.addEllipse(at, r, r)
+            else:
+                more.addRect(at)
+            path = path.united(more)
+        self._shape = (key, path)
         return path
 
     def cross_rect(self):

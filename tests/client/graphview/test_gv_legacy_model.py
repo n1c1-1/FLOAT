@@ -1422,7 +1422,9 @@ def test_round2_a_wire_chosen_takes_the_block_selection_and_goes_with_escape(wor
     from astro_gpu.client.graphview.gestures import Gestures
     g = Gestures(page)
     post = next(b for b, x in page.bridge.graph.blocks.items() if x.kind == "post")
-    wire = next(w for w in page.bridge.graph.wires if w.dst[0] == post)
+    cv = page.canvas                                    # a wire to Post whose middle is its own (Post's wires from
+    wire = next(w for w in page.bridge.graph.wires if w.dst[0] == post and cv.item_at(   # Combine layers run along)
+        g._vp_pt(cv.wires[w.id].path().pointAtPercent(0.5))) is cv.wires[w.id])
     page.bridge.choose(block_of(page, node(page, "fond")))
     g.click_wire(wire.id)
     settle(world["w"], page)

@@ -10,7 +10,7 @@ import html
 import textwrap
 import time
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QKeyEvent, QPainter, QPainterPath, QPen, QTransform
 from PySide6.QtWidgets import (
     QApplication,
@@ -430,7 +430,7 @@ class GraphCanvas(QGraphicsView):
                 log_line('{block} removed from "{name}"', block=title, name=p.name)
             return res
         reason = self._kept_reason(ident, paths) or bridge.say(res.reason) or _("This block cannot be deleted")
-        if title:
+        if title and self.doc.model is not None:         # the project's words, as today's page said them
             reason = _("{block} kept: {why}").format(block=title, why=reason)
         deps, possible = self.dependants(ident)
         framed = deps or [ident]
@@ -1846,6 +1846,9 @@ class GraphCanvas(QGraphicsView):
         it = self.item_at(vp)
         if isinstance(it, FileTarget):
             return self.gesture.get("session")
+        if not isinstance(it, BlockItem):               # its margin too: the targets open around the block
+            it = next((x for x in self.items(QRect(vp.x(), vp.y(), 1, 1), Qt.IntersectsItemBoundingRect)
+                       if isinstance(x, BlockItem)), it)
         if not isinstance(it, BlockItem) or it.d["kind"] == "card":
             return None
         if it.d["kind"] == "session":

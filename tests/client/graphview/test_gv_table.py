@@ -497,22 +497,21 @@ def test_gv_table_drag_labels_and_refusals(qapp, tree):
 
 
 # ----------------------------------------------------------------------------------------------- reading
-@pytest.mark.xfail(reason="files only: a dropped folder is listed at the drop, its files stored one by one; the "
-                          "table has no folder left to read in the background, so no reading veil nor its stop",
-                   strict=False)
 def test_gv_table_reading_and_stop(qapp, tree):
+    """Files only: a dropped folder is listed at the drop and its files stored one by one, so the table has no folder
+    left to read in the background: no reading veil nor its stop, even with a slow reader; the drop is one undo
+    step, given back by Ctrl+Y."""
     b = Bench(1366, delay=0.6)
     sid = b.sessions()[0]
     b.drop([tree["lights"]], ("box", sid, "lights"))
     b.wait(0.15)
     bx = b.box(sid, "lights")
-    assert bx.reading == "Reading…" and bx.progress is not None
-    assert b.t.counter.text().startswith("Reading…") or b.g.model.readings()
-    assert "stop" in b.g.zones(b.g.cell(("box", sid, "lights")))
-    b.click(("box", sid, "lights"), zone="stop")
+    assert bx.reading != "Reading…" and "stop" not in b.g.zones(b.g.cell(("box", sid, "lights")))
+    assert b.own(sid, "lights")
     b.reader.delay = 0.0
     b.read()
-    assert not b.own(sid, "lights")                                  # × takes the drop back (one undo step)
+    b.key(Qt.Key_Z, Qt.ControlModifier)
+    assert not b.own(sid, "lights")                                  # the drop taken back in one step
     b.key(Qt.Key_Y, Qt.ControlModifier)
     assert b.own(sid, "lights")
     b.close()
