@@ -25,7 +25,8 @@ def menu(doc, b):
         return row_items(doc, ix, b)
     blk = g.blocks[b]
     k = blk.kind
-    items = [(_("Inspect"), "inspect", {"block": b}, True, "")]
+    # a Combine layers block is a layer of Post: its Inspect is Post on that layer (graph.py: "Open Post")
+    items = [(_("Open Post") if k == "combine_layers" else _("Inspect"), "inspect", {"block": b}, True, "")]
     if k != "post":
         text = _("Switch on (D)") if blk.off else _("Switch off (D)")
         why = off_reason(k)

@@ -10,7 +10,7 @@ import html
 import time
 
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QKeyEvent, QPainter, QPen, QTransform
+from PySide6.QtGui import QColor, QFont, QKeyEvent, QPainter, QPainterPath, QPen, QTransform
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -27,11 +27,15 @@ from PySide6.QtWidgets import (
 from ...graphcore.model import FILE_KINDS, JOIN_KINDS, Index
 from ...graphcore.rules import FILE_LABEL, title_msg
 from ...graphcore.shapes import Result
+from .. import prefs
+from ..graphnode import SIDE_INPUTS, STAR_OUTPUTS
 from ..i18n import _
+from ..layout import pinch_factor, wheel_gesture
 from ..widgets import Spinner
 from . import style
 from .bridge import PROJECT
 from .items import (
+    DIM,
     BandItem,
     BlockItem,
     CaptionItem,
@@ -45,7 +49,7 @@ from .items import (
     WireItem,
 )
 from .menu import menu as block_menu
-from .style import ACCENT, FALLBACK_WORD, IMAGE_COL, STATE_COL, kind_what, state_word
+from .style import ACCENT, CLIENT_KEY, FALLBACK_WORD, IMAGE_COL, STATE_COL, kind_what, state_word
 
 MIN_ZOOM, MAX_ZOOM, MIN_AUTO, MAX_AUTO = 0.1, 4.0, 0.75, 1.2
 MARGIN = 48                 # scene margin around the drawing (also keeps blocks off the zoom buttons)
@@ -59,6 +63,15 @@ OUT_COL = {"Starless": IMAGE_COL["starless"], "Stars only": IMAGE_COL["stars_onl
 ALERT_MS = 1500
 EDGE = 40                   # a drag this near the view's edge scrolls it (graph.py EDGE)
 EDGE_WAIT = 0.35            # s held near the edge before it scrolls: a drag only crossing the edge moves nothing
+WHEEL_STEP = 1.15           # one notch of the wheel
+#: the user's zoom and position, per project, in the settings (graph.py GRAPH_VIEW_KEY; its own key: the new drawing's
+#: coordinates are not today's)
+VIEW_KEY = "graph_canvas_view"
+#: the wires that are not the chain, drawn for the chosen block (graph.py side inputs): core kind -> [(kind, words)]
+_KIND = {v: k for k, v in CLIENT_KEY.items()}
+SIDE = {_KIND[k]: [(_KIND[src], lab) for src, lab in pairs] for k, pairs in SIDE_INPUTS.items()}
+#: the image a coloured wire carries, as today's wires name it (graph.py STAR_OUTPUTS, Synthetic stars)
+WIRE_WORD = {"starless": dict(STAR_OUTPUTS)["starless"], "stars_only": dict(STAR_OUTPUTS)["stars"]}
 
 
 def _fields(message) -> list:
@@ -252,6 +265,7 @@ class GraphCanvas(QGraphicsView):
     inspect = Signal(object)             # Enter / double-click / menu "Inspect" on this id
     view_action = Signal(str, object)    # a menu action only the window can do: ("mark_reviewed", block)
     templates_asked = Signal()           # the blank page's link « From template »
+    wire_chosen = Signal(object)         # a wire that can be removed was chosen: its id (the panel shows it)
 
     def __init__(self, bridge, over_palette=None, parent=None):
         super().__init__(parent)
@@ -290,6 +304,10 @@ class GraphCanvas(QGraphicsView):
         self._to_delete = None
         self._pressed = False            # a block pressed by the mouse is being selected (it is under the pointer)
         self._k = 1.0
+        self._building = False           # a rebuild sets the view: not the user's zoom
+        self.side_items = []             # the side input wires of the chosen block (graph.py _side_wire)
+        self._view_timer = QTimer(self, singleShot=True, interval=400)
+        self._view_timer.timeout.connect(self._write_view)
         # a drag (palette card, placed block, wire, files) held near the view's edge scrolls the view (graph.py)
         self._edge_pos = None
         self._edge_since = 0.0
@@ -549,10 +567,18 @@ class GraphCanvas(QGraphicsView):
                     tip="\n".join((title, summary, _("Blocks: show the blocks of every stack (Ctrl+J)"))))
 
     def rebuild(self):
+        self._building = True
+        try:
+            self._rebuild()
+        finally:
+            self._building = False
+
+    def _rebuild(self):
         bridge, doc = self.bridge, self.doc
         self.close_name()
         self.ghosts, self.targets, self.rubber, self.floater = [], [], None, None
         self.blocks, self.wires = {}, {}
+        self.side_items = []
         sc = self.scene()
         sc.clear()
         self.tip = TipItem()
@@ -562,7 +588,7 @@ class GraphCanvas(QGraphicsView):
         for path in drawing.wires:
             sel = path.style in ("port", "port_inactive") and path.id.startswith("w")
             it = WireItem(path.id, path.points, path.style, path.colour, sel)
-            it.tipfn = (lambda i=path.id: doc.wire_tip(i))
+            it.tipfn = (lambda i=path.id, w=self._wire_word(path): "\n".join(t for t in (w, doc.wire_tip(i)) if t))
             it.ends = (path.src, path.dst)
             it.hover_cb = self._wire_hover
             sc.addItem(it)
@@ -572,11 +598,14 @@ class GraphCanvas(QGraphicsView):
         rects = []
         for b, box in drawing.boxes.items():
             it = BlockItem(self.block_data(b, box))
+            it.node = self.run_node(b)
             sc.addItem(it)
             self.blocks[b] = it
             rects.append((QRectF(box.x, box.y, box.w, box.h), QColor(STATE_COL.get(it.d["state"], "#5d6470"))))
         for r, box in drawing.cards.items():
             it = StackItem(self.card_data(r, box))
+            kinds = {bridge.block(b).kind: b for b in bridge.row(r).blocks}
+            it.node = self.run_node(kinds.get("stacking"))       # a run's progress on the card: its Stacking's
             sc.addItem(it)
             self.blocks[r] = it
             rects.append((QRectF(box.x, box.y, box.w, box.h), QColor(STATE_COL.get(it.d["state"], "#5d6470"))))
@@ -606,9 +635,12 @@ class GraphCanvas(QGraphicsView):
         self._blank_page(not bridge.graph.rows)          # no row yet (the Post block is always drawn)
         if self._refit:                                  # a new document / first build: fit; a gesture never re-zooms
             self._refit = False
-            self._apply_zoom()
+            if not self._restore_view():                 # the user's zoom kept with the project (graph.py)
+                self._apply_zoom()
         else:
             self._set_scale(self._k, None)
+        self._dim()
+        self._side_wires()
         show, bridge.to_show = bridge.to_show, ()
         if show:
             self._show(*show)
@@ -681,9 +713,131 @@ class GraphCanvas(QGraphicsView):
         if self.project_item is not None:
             self.project_item.selected = ident == PROJECT
             self.project_item.update()
+        self._dim()
+        self._side_wires()
         if ident in self.blocks and not self._pressed:
             self._show(ident, follow=bool(self._keep_in_view))
         self._update_buttons()
+
+    # ================================================================== the chosen block's workflows
+    def run_node(self, b):
+        """The block's node for the run overlay (runs.py ``RunOverlay`` walks the items' ``node``, ``w``): the project
+        model's BlockMap node (graphnode ``Node``); None on a graph held in memory."""
+        bm = getattr(self.doc.model, "block_map", None) if self.doc.model is not None else None
+        try:
+            return bm.node(b) if bm is not None and b is not None else None
+        except Exception:  # noqa: BLE001 - a block without its run node only shows no progress bar
+            return None
+
+    def lit_blocks(self):
+        """The blocks of the workflows through the chosen block (graph.py: the others dimmed), or None when nothing
+        is chosen: the rows whose chain goes through it, each with its own chain and its nights."""
+        bridge = self.bridge
+        sel = bridge.selected
+        if sel is None or sel == PROJECT:
+            return None
+        g = bridge.graph
+        ix = Index(g)
+        r = bridge.row(sel)
+        if r is not None:                                # a stack card: its row's last block
+            sel = r.blocks[-1] if r.blocks else None
+        if sel is None or sel not in ix.row_of or g.blocks[sel].kind in ("session", "calibration", "post"):
+            return None
+        lit = set()
+        for row in g.rows:
+            eff = ix.effective(row.id)
+            if sel in eff:
+                lit.update(eff)
+                for x in g.rows:                         # the stacks it starts from: their nights too
+                    if any(b in eff for b in x.blocks):
+                        lit.update(b for pair in x.nights for b in pair if b)
+                lit.add(row.id)
+        return lit
+
+    def _dim(self):
+        """The blocks and wires of the workflows not going through the chosen block are dimmed (graph.py ``dim``);
+        Sessions, their Calibrations, Post and the Project stay."""
+        lit = self.lit_blocks()
+        g = self.bridge.graph
+        ix = Index(g)
+        for b, it in self.blocks.items():
+            kind = it.d["kind"]
+            if kind == "card":
+                r = self.bridge.row(b)
+                on = lit is None or b in lit or (r is not None and any(x in lit for x in r.blocks))
+            else:
+                on = lit is None or b in lit or kind in ("session", "calibration", "post") or b not in ix.row_of
+            if it.d.get("dim") != (not on):
+                it.d["dim"] = not on
+                it.update()
+        for w in self.wires.values():
+            ends = [e for e in (w.ends or ()) if e]
+            on = lit is None or not ends or all(self._lit_end(e, lit) for e in ends)
+            w.setOpacity(1.0 if on else DIM)
+
+    def _lit_end(self, b, lit):
+        if b in lit or b not in self.bridge.graph.blocks:
+            return True
+        return self.bridge.block(b).kind in ("session", "calibration", "post")
+
+    def side_inputs(self, b):
+        """[(source block, words)] of the wires that come from further back into the chosen block (graph.py
+        ``side_inputs``): Denoise reads the half-stacks of its Stacking, Color the Gaia spectra its Astrometry fetched;
+        none when the source is the block just before it, or the block is switched off or greyed."""
+        bridge = self.bridge
+        blk = bridge.block(b) if b is not None and b != PROJECT else None
+        if blk is None or blk.off or blk.kind not in SIDE or self.doc.greyed(b):
+            return []
+        r = bridge.row_of(b)
+        if r is None:
+            return []
+        eff = Index(bridge.graph).effective(r.id)
+        before = eff[:eff.index(b)] if b in eff else []
+        out = []
+        for kind, words in SIDE[blk.kind]:
+            src = next((x for x in reversed(before) if bridge.block(x).kind == kind), None)
+            if src is not None and src != before[-1]:
+                out.append((src, _(words)))
+        return out
+
+    def _side_wires(self):
+        """The chosen block's side inputs: a dashed curve under the blocks, its words at its middle (graph.py)."""
+        sc = self.scene()
+        for it in self.side_items:
+            if it.scene() is sc:
+                sc.removeItem(it)
+        self.side_items = []
+        b = self.bridge.selected
+        dst = self.blocks.get(b)
+        for src, words in self.side_inputs(b):
+            a = self.blocks.get(src)
+            if a is None:                                # folded into its stack's card: from the card
+                r = self.bridge.row_of(src)
+                a = self.blocks.get(r.id) if r is not None else None
+            if a is None or dst is None:
+                continue
+            ra, rb = a.sceneBoundingRect().adjusted(12, 12, -12, -12), dst.sceneBoundingRect().adjusted(12, 12, -12, -12)
+            x1, y1, x2, y2 = ra.center().x(), ra.bottom(), rb.center().x(), rb.bottom()
+            low = max(y1, y2) + 34
+            path = QPainterPath(QPointF(x1, y1))
+            path.cubicTo(QPointF(x1, low), QPointF(x2, low), QPointF(x2, y2))
+            line = sc.addPath(path, QPen(QColor(ACCENT), 1.5, Qt.DashLine))
+            line.setZValue(1.5)
+            line.setToolTip(words)
+            t = sc.addSimpleText(words, QFont("Segoe UI", 8))
+            t.setBrush(QColor(ACCENT))
+            m = path.pointAtPercent(0.5)
+            t.setPos(m.x() - t.boundingRect().width() / 2, m.y() + 2)
+            t.setZValue(1.6)
+            self.side_items += [line, t]
+
+    def _wire_word(self, path) -> str:
+        """The image a wire carries, as today's wire names it (Starless image, Stars alone, Synthetic stars)."""
+        src = self.bridge.block(path.src) if path.src else None
+        if src is not None and src.kind == "synth":
+            return _("Synthetic stars")
+        word = WIRE_WORD.get(path.colour or "")
+        return _(word) if word else ""
 
     # ================================================================== the blank page
     def _blank_page(self, blank):
@@ -736,6 +890,62 @@ class GraphCanvas(QGraphicsView):
             self.verticalScrollBar().setValue(self.verticalScrollBar().minimum())
         self.b_zoom.setText(f"{round(k * 100)} %")
 
+    # ------------------------------------------------------------------ the user's zoom, kept with the project
+    def _project_key(self):
+        root = getattr(self.doc.model, "root", None) if self.doc.model is not None else None
+        return str(root).replace("\\", "/").lower() if root is not None else None
+
+    def remember_view(self):
+        """The user's zoom and the scene point at the view's centre, in the graph's view state (never an undo step)
+        and, a moment later, in the settings for this project (graph.py ``_store_view``); "Show all" and the fit
+        forget it."""
+        if self._building:
+            return
+        v = self.bridge.view
+        if self.auto:
+            changed = v.get("zoomed") is True
+            v["zoomed"] = False
+        else:
+            c = self.mapToScene(self.viewport().rect().center())
+            new = (round(self._k, 4), [round(c.x(), 1), round(c.y(), 1)])
+            changed = v.get("zoomed") is not True or (v.get("zoom"), v.get("scroll")) != new
+            v["zoomed"], v["zoom"], v["scroll"] = True, new[0], new[1]
+        if changed and self._project_key() is not None:
+            self._view_timer.start()
+
+    def _write_view(self):
+        key = self._project_key()
+        if key is None:
+            return
+        v = self.bridge.view
+        cur = dict(prefs.get(VIEW_KEY) or {})
+        cur.pop(key, None)
+        if v.get("zoomed") is True:
+            cur[key] = {"k": v.get("zoom"), "x": v["scroll"][0], "y": v["scroll"][1]}
+        prefs.set(VIEW_KEY, dict(list(cur.items())[-50:]))      # the oldest go beyond 50 projects
+
+    def _restore_view(self) -> bool:
+        """The zoom and position kept: the graph's view state, else this project's in the settings. False: none."""
+        v = self.bridge.view
+        if v.get("zoomed") is not True:
+            key = self._project_key()
+            got = (prefs.get(VIEW_KEY) or {}).get(key) if key else None
+            if not isinstance(got, dict) or "k" not in got:
+                return False
+            v["zoomed"], v["zoom"], v["scroll"] = True, float(got["k"]), [float(got.get("x", 0)), float(got.get("y", 0))]
+        try:
+            k = max(MIN_ZOOM, min(MAX_ZOOM, float(v.get("zoom") or 1.0)))
+            x, y = (float(c) for c in (v.get("scroll") or (0, 0)))
+        except (TypeError, ValueError):
+            return False
+        self.auto = False
+        self._k = k
+        self.b_all.setChecked(False)
+        self.setTransform(QTransform.fromScale(k, k))
+        self.centerOn(QPointF(x, y))
+        self.b_zoom.setText(f"{round(k * 100)} %")
+        return True
+
     @property
     def zoom(self) -> float:
         return self._k
@@ -751,12 +961,14 @@ class GraphCanvas(QGraphicsView):
         self.b_zoom.setText(f"{round(self._k * 100)} %")
         self.b_all.setChecked(True)
         self._update_buttons()
+        self.remember_view()
 
     def auto_view(self):
         self.auto = True
         self.b_all.setChecked(False)
         self._apply_zoom()
         self._update_buttons()
+        self.remember_view()
 
     def zoom_to(self, k, centre=None):
         k = max(MIN_ZOOM, min(MAX_ZOOM, k))
@@ -769,6 +981,7 @@ class GraphCanvas(QGraphicsView):
         self.centerOn(c)
         self.b_zoom.setText(f"{round(k * 100)} %")
         self._update_buttons()
+        self.remember_view()
 
     def go_post(self):
         for it in self.blocks.values():
@@ -812,7 +1025,13 @@ class GraphCanvas(QGraphicsView):
             self.minimap.place()
 
     def resizeEvent(self, e):                                         # noqa: N802
-        super().resizeEvent(e)
+        v = self.bridge.view
+        kept = not self.auto and v.get("zoomed") is True and bool(v.get("scroll"))
+        self._building = True                            # the view moved by the resize is not the user's
+        try:
+            super().resizeEvent(e)
+        finally:
+            self._building = False
         size = (self.width(), self.height())
         changed = size != self._size
         self._size = size
@@ -820,6 +1039,8 @@ class GraphCanvas(QGraphicsView):
             self._keep_in_view = ()
             if self.auto:
                 self._apply_zoom(keep=True)
+            elif kept:                                   # the user's view: its centre stays (graph.py _apply_view)
+                self.centerOn(QPointF(*v["scroll"]))
         elif self._keep_in_view:                 # a scroll bar appeared and took room: keep what the gesture made
             self._show(*self._keep_in_view, follow=True)
         self._update_buttons()
@@ -830,25 +1051,52 @@ class GraphCanvas(QGraphicsView):
     def scrollContentsBy(self, dx, dy):                               # noqa: N802
         super().scrollContentsBy(dx, dy)
         self._update_buttons()
+        if not self.auto:
+            self.remember_view()
 
     def wheelEvent(self, e):                                          # noqa: N802
-        d = e.angleDelta().y()
-        if d == 0:
-            return
-        pos = self.mapToScene(e.position().toPoint())
+        """As today's page (graph.py): the wheel zooms at the pointer; two fingers on a touchpad pan, a pinch (Ctrl
+        held, as Windows sends it) zooms."""
+        kind, a, b = wheel_gesture(e)
+        if kind == "zoom":
+            if a:
+                self.zoom_at(WHEEL_STEP ** a, e.position().toPoint())
+        else:
+            self.pan_by(a, b)
+        e.accept()
+
+    def viewportEvent(self, e):                                       # noqa: N802
+        f = pinch_factor(e)
+        if f is not None:                                # a native pinch (macOS, Wayland)
+            self.zoom_at(f, e.position().toPoint())
+            return True
+        return super().viewportEvent(e)
+
+    def zoom_at(self, f, at: QPoint):
+        """The zoom times ``f``, the scene point under ``at`` (viewport) kept in place."""
+        pos = self.mapToScene(at)
         self._keep_in_view = ()
-        k = max(MIN_ZOOM, min(MAX_ZOOM, self._k * (1.15 if d > 0 else 1 / 1.15)))
+        k = max(MIN_ZOOM, min(MAX_ZOOM, self._k * f))
         self.auto = False
         self.b_all.setChecked(False)
         self._k = k
-        before = e.position().toPoint()
         self.setTransform(QTransform.fromScale(k, k))
-        delta = self.mapFromScene(pos) - before
+        delta = self.mapFromScene(pos) - at
         self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() + delta.x())
         self.verticalScrollBar().setValue(self.verticalScrollBar().value() + delta.y())
         self.b_zoom.setText(f"{round(k * 100)} %")
         self._update_buttons()
-        e.accept()
+        self.remember_view()
+
+    def pan_by(self, dx, dy):
+        """The graph moved by (dx, dy) pixels of the view (two fingers on a touchpad)."""
+        h, v = self.horizontalScrollBar(), self.verticalScrollBar()
+        self.auto = False
+        self.b_all.setChecked(False)
+        h.setValue(h.value() - int(dx))
+        v.setValue(v.value() - int(dy))
+        self._update_buttons()
+        self.remember_view()
 
     # ================================================================== hit testing
     def item_at(self, vp: QPoint):
@@ -905,6 +1153,7 @@ class GraphCanvas(QGraphicsView):
                 for f in self.wires.values():
                     f.mark(f is it)
                 self.bridge.choose(None)
+                self.wire_chosen.emit(it.ident)
             else:
                 self.bridge.toast.emit(_("A wire of the chain: it follows the blocks; switch off or delete a block "
                                          "to take it out"))
@@ -1128,6 +1377,9 @@ class GraphCanvas(QGraphicsView):
 
     def hideEvent(self, e):                                           # noqa: N802
         self._edge_scroll(None)
+        if self._view_timer.isActive():                  # closing the project or leaving the page: not lost
+            self._view_timer.stop()
+            self._write_view()
         super().hideEvent(e)
 
     # ================================================================== names

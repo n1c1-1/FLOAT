@@ -25,6 +25,7 @@ from .style import (
 )
 
 MIN_SCALE = 0.75
+DIM = 0.45                     # the opacity of a block of another workflow while one is chosen
 #: the mark of a block holding a setting unlike the same block of the other rows
 OWN_MARK = "own"
 
@@ -167,7 +168,8 @@ class BlockItem(QGraphicsItem):
         d = self.d
         p.setRenderHint(QPainter.Antialiasing)
         off, grey, sel = d["off"], d["grey"], d["selected"]
-        p.setOpacity(0.25 if self.dragged else 0.55 if off else 1.0)
+        # a block of a workflow not through the chosen block: dimmed (graph.py ``dim``)
+        p.setOpacity((0.25 if self.dragged else 0.55 if off else 1.0) * (DIM if d.get("dim") else 1.0))
         w, h = self.w, self.h
         r = QRectF(0, 0, w, h)
         hot = sel or self.target
@@ -303,6 +305,7 @@ class StackItem(BlockItem):
         w, h = self.w, self.h
         r = QRectF(0, 0, w, h)
         sel = d["selected"]
+        p.setOpacity(DIM if d.get("dim") else 1.0)
         fill = "#2b3446" if sel else ("#272c36" if self.hover else "#22262e")
         p.setPen(QPen(QColor(ACCENT if sel else "#3a4150"), 2 if sel else 1))
         p.setBrush(QColor("#1b1e25"))                    # the stack: two sheets behind the card

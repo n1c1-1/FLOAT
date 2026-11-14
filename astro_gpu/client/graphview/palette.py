@@ -1,17 +1,27 @@
 """The palette on the left: the client's groups and icon cards. A card is dragged onto the graph (ghost places over
-the unchanged drawing) or placed at its natural place by a double-click; greyed, it says why on hover."""
+the unchanged drawing) or placed at its natural place by a double-click; greyed, it says why on hover.
+
+Its three ways of showing are today's (graph.py ``palette_menu``, its "⋯" button "Blocks display"): Always open, Always
+folded (the blocks' icons only, their names in the tooltips, the headers hidden) and Automatic (the same strip of icons,
+opened over the graph after the mouse rests 200 ms on it, folded 300 ms after it left). Hidden (Tab), the page leaves a
+small arrow at the window's edge. The window keeps the choice (``chosen``, then ``set_state`` through the page's
+``set_layout``)."""
 from __future__ import annotations
 
 import textwrap
 
-from PySide6.QtCore import QMimeData, QPoint, Qt, QTimer
+from PySide6.QtCore import QMimeData, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QDrag
-from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout
+from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QMenu, QScrollArea, QToolButton, QVBoxLayout
 
 from ..i18n import _
+from ..layout import FOLD_MS, UNFOLD_MS
 from . import style
 from .canvas import MIME_KIND
-from .style import ACCENT, GROUPS, PALETTE_W, ROLE, kind_title, kind_what
+from .style import ACCENT, GROUPS, PALETTE_FOLDED_W, PALETTE_W, ROLE, kind_title, kind_what
+
+#: the palette's three ways of showing, as today's menu words them (graph.py palette_menu)
+SHOWN = (("auto", "Automatic"), ("docked", "Always open"), ("folded", "Always folded"))
 
 
 def _capital(text: str) -> str:
@@ -19,19 +29,21 @@ def _capital(text: str) -> str:
 
 
 class Card(QFrame):
-    """A block of the palette."""
+    """A block of the palette; narrow (folded or automatic): its icon alone, its name in the tooltip."""
 
     def __init__(self, palette, kind):
         super().__init__()
         self.palette, self.kind = palette, kind
         self.enabled, self.reason = True, ""
         self.hint = ""                   # refused for the current workflow: where it can still go (graph.py drag_only)
+        self.narrow = False
         self._press = None
         self.setObjectName("tool")
         self.setMaximumWidth(PALETTE_W - 26)
         h = QHBoxLayout(self)
         h.setContentsMargins(7, 5, 7, 5)
         h.setSpacing(5)
+        self.box = h
         self.icon = style.IconLabel(ROLE[kind], 16, "normal")
         h.addWidget(self.icon, 0, Qt.AlignTop)
         title = kind_title(kind)
@@ -56,11 +68,30 @@ class Card(QFrame):
         self.icon.state = "normal" if on else "disabled"
         self.icon.update()
         self.title.setStyleSheet(self.base + ("" if on else " color: #555b66;"))
+        self._tip()
+
+    def _tip(self):
+        on = self.enabled
         what = textwrap.fill(kind_what(self.kind), 70)
         if on and self.hint:
-            self.setToolTip(what + "\n" + _capital(self.reason) + "\n" + self.hint)
+            tip = what + "\n" + _capital(self.reason) + "\n" + self.hint
+        elif on or not self.reason:
+            tip = what
         else:
-            self.setToolTip(what if on or not self.reason else kind_title(self.kind) + "\n" + _capital(self.reason))
+            tip = _capital(self.reason)
+        # folded (graph.py PaletteCard): the name heads the tooltip, the card shows only its icon
+        name = kind_title(self.kind)
+        self.setToolTip(name + "\n" + tip if (self.narrow or not on and self.reason and not self.hint) else tip)
+
+    def set_narrow(self, narrow: bool):
+        """Folded or automatic: the icon alone, centred in the strip; the name comes back with the tooltip's."""
+        if narrow == self.narrow:
+            return
+        self.narrow = narrow
+        self.title.setVisible(not narrow)
+        self.setMaximumWidth(PALETTE_FOLDED_W - 12 if narrow else PALETTE_W - 26)
+        self.box.setContentsMargins(*((8, 6, 8, 6) if narrow else (7, 5, 7, 5)))
+        self._tip()
 
     def mousePressEvent(self, e):                                     # noqa: N802
         self._press = e.position().toPoint()
@@ -80,6 +111,7 @@ class Card(QFrame):
         drag.setMimeData(mime)
         drag.setPixmap(self.grab())
         drag.setHotSpot(QPoint(20, 12))
+        self.palette.unfold(False)               # automatic: the places it covered are the first ones (graph.py)
         drag.exec(Qt.CopyAction)
 
     def mouseReleaseEvent(self, e):                                   # noqa: N802
@@ -93,10 +125,19 @@ class Card(QFrame):
 
 
 class Palette(QScrollArea):
+    chosen = Signal(str)                 # the user's choice in the "⋯" menu: "auto" | "docked" | "folded"
+
     def __init__(self, bridge):
         super().__init__()
         self.bridge = bridge
         self.cards: dict[str, Card] = {}
+        self.state = "docked"            # docked | auto | folded | hidden (the window's, through set_state)
+        self._unfolded = False           # automatic: opened over the graph now
+        self.on_fit = None               # the page places the palette again when its width changes
+        self._unfold_timer = QTimer(self, singleShot=True, interval=UNFOLD_MS)
+        self._unfold_timer.timeout.connect(lambda: self.unfold(True))
+        self._fold_timer = QTimer(self, singleShot=True, interval=FOLD_MS)
+        self._fold_timer.timeout.connect(lambda: self.unfold(False))
         self.setFixedWidth(PALETTE_W)
         self.setFrameShape(QFrame.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -110,18 +151,30 @@ class Palette(QScrollArea):
         v = QVBoxLayout(body)
         v.setContentsMargins(10, 10, 14, 10)
         v.setSpacing(4)
-        head = QLabel(_("Blocks"))
-        head.setStyleSheet("font-weight: 600; font-size: 10.5pt; color: #e8ebf0;")
+        self.body_box = v
+        self.head = QLabel(_("Blocks"))
+        self.head.setStyleSheet("font-weight: 600; font-size: 10.5pt; color: #e8ebf0;")
         self.head_row = QHBoxLayout()
         self.head_row.setContentsMargins(0, 0, 0, 0)
-        self.head_row.addWidget(head, 1)
+        self.head_row.addWidget(self.head, 1)
+        # today's "⋯" button: the palette's three ways of showing (graph.py build_tools)
+        self.display_button = QToolButton()
+        style.icon_only(self.display_button, "more", _("Blocks display"), 16, "dim")
+        self.display_button.setAutoRaise(True)
+        self.display_button.setFixedSize(20, 18)
+        self.display_button.setStyleSheet("QToolButton { border: none; padding: 0; } "
+                                          "QToolButton:hover { background: #2b3446; border-radius: 3px; }")
+        self.display_button.clicked.connect(lambda: self.menu())
+        self.head_row.addWidget(self.display_button, 0, Qt.AlignTop | Qt.AlignRight)
         v.addLayout(self.head_row)
         self.for_row = style.label("", "small", wrap=True)
         v.addWidget(self.for_row)
+        self.headers: list[QLabel] = []
         for title, kinds in GROUPS:
             h = QLabel(_(title).upper())
             h.setStyleSheet("color: #8b93a1; font-size: 8pt; font-weight: 600; margin-top: 8px;")
             v.addWidget(h)
+            self.headers.append(h)
             for k in kinds:
                 c = Card(self, k)
                 self.cards[k] = c
@@ -131,11 +184,99 @@ class Palette(QScrollArea):
         self.setWidgetResizable(True)
         self._gen = 0
         self._queue: list[str] = []
+        self._for_text = ""
         bridge.changed.connect(self.refresh)
         bridge.selection.connect(lambda *_a: self.refresh())
         self.refresh()
         self.finish()                    # the first time: all at once, nothing is waiting for the window yet
 
+    # ------------------------------------------------------------------ its ways of showing (graph.py)
+    def set_state(self, st: str):
+        """docked | auto | folded | hidden, as the window's layout says (``set_layout``)."""
+        if st not in ("docked", "auto", "folded", "hidden"):
+            st = "docked"
+        self._unfold_timer.stop()
+        self._fold_timer.stop()
+        self._unfolded = False
+        self.state = st
+        self._fit()
+
+    def wide(self) -> bool:
+        """Its names shown: always open, or automatic while it is opened over the graph."""
+        return self.state == "docked" or (self.state == "auto" and self._unfolded)
+
+    def slot_width(self) -> int:
+        """The room it takes in the page: the strip of icons when folded or automatic."""
+        return PALETTE_FOLDED_W if self.state in ("folded", "auto") else PALETTE_W
+
+    def _fit(self):
+        wide = self.wide()
+        self.setFixedWidth(PALETTE_W if wide else PALETTE_FOLDED_W)
+        self.body_box.setContentsMargins(*((10, 10, 14, 10) if wide else (4, 6, 4, 6)))
+        self.head.setVisible(wide)
+        self.for_row.setVisible(wide and bool(self._for_text))
+        for h in self.headers:           # folded: only the blocks' icons (graph.py: the headers hidden)
+            h.setVisible(wide)
+        for c in self.cards.values():
+            c.set_narrow(not wide)
+        self._show_for()
+        if self.on_fit is not None:
+            self.on_fit()
+
+    def unfold(self, on: bool):
+        """Automatic: opened over the graph, or back to its icons (a menu open keeps it open)."""
+        if not on and QApplication.activePopupWidget() is not None and self.state == "auto":
+            self._fold_timer.start()
+            return
+        self._unfold_timer.stop()
+        self._fold_timer.stop()
+        on = on and self.state == "auto"
+        if on != self._unfolded:
+            self._unfolded = on
+            self._fit()
+            self.raise_()
+
+    def enterEvent(self, e):                                          # noqa: N802
+        if self.state == "auto":
+            self._fold_timer.stop()
+            if not self._unfolded:
+                self._unfold_timer.start()
+        super().enterEvent(e)
+
+    def leaveEvent(self, e):                                          # noqa: N802
+        self._unfold_timer.stop()
+        if self._unfolded:
+            self._fold_timer.start()
+        super().leaveEvent(e)
+
+    def hideEvent(self, e):                                           # noqa: N802
+        self.unfold(False)               # another page, Tab
+        super().hideEvent(e)
+
+    def menu(self, run=True):
+        """The "⋯" menu: Automatic, Always open, Always folded; the choice goes to the window (``chosen``), which keeps
+        it for this size of window and gives it back by ``set_layout``. ``run`` False: the menu built, not shown
+        (tests)."""
+        m = QMenu(self)
+        for st, word in SHOWN:
+            a = m.addAction(_(word))
+            a.setCheckable(True)
+            a.setChecked(st == self.state)
+            a.setData(st)
+        if not run:
+            return m
+        b = self.display_button
+        a = m.exec(b.mapToGlobal(b.rect().bottomLeft()))
+        st = a.data() if a is not None else None
+        m.deleteLater()
+        self.choose(st)
+        return None
+
+    def choose(self, st):
+        if st and st != self.state:
+            self.chosen.emit(st)
+
+    # ------------------------------------------------------------------ the cards
     def current_row(self):
         """The row the palette works for: the selected block's row (or the selected card), else None (first row)."""
         bridge = self.bridge
@@ -144,13 +285,26 @@ class Palette(QScrollArea):
             return None
         return bridge.row(sel) or bridge.row_of(sel)
 
+    def _show_for(self):
+        """For “name”: wrapped when always open; one line elided when automatic, the blocks under it never move."""
+        text = self._for_text
+        if self.state == "auto" and text:
+            self.for_row.setWordWrap(False)
+            self.for_row.setToolTip(text)
+            self.for_row.setText(self.for_row.fontMetrics().elidedText(text, Qt.ElideRight, PALETTE_W - 44))
+        else:
+            self.for_row.setWordWrap(True)
+            self.for_row.setToolTip("")
+            self.for_row.setText(text)
+
     def refresh(self):
         """The cards' greyed states: the core needs a few tens of ms a card, so they are brought up to date one card
         per turn of the event loop, after the drop's repaint (a drop must feel instant), and again from the start if
         a change comes."""
         r = self.current_row()
-        self.for_row.setText(_("for “{name}”").format(name=r.name) if r is not None else "")
-        self.for_row.setVisible(r is not None)
+        self._for_text = _("for “{name}”").format(name=r.name) if r is not None else ""
+        self._show_for()
+        self.for_row.setVisible(r is not None and self.wide())
         self._gen += 1
         self._queue = list(self.cards)
         QTimer.singleShot(0, self, lambda g=self._gen: self._step(g))     # (cancelled if the palette is deleted)
@@ -213,4 +367,4 @@ class Palette(QScrollArea):
             bridge.act("add_block", kind=kind, row=r.id if r is not None else None)
 
     def contains(self, global_pos) -> bool:
-        return self.rect().contains(self.mapFromGlobal(global_pos))
+        return self.isVisible() and self.rect().contains(self.mapFromGlobal(global_pos))

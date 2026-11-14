@@ -7,15 +7,16 @@ on a graph held in memory as well as on the client's project model: ``GraphPage(
 the same names (``openBlock``, ``openPost``, ``openLayer``, ``addSession``, ``variantMade``, ``changed``, ``toasted``,
 ``sideChosen``, ``sidesShown``; ``set_layout``, ``project_open``, ``select``, ``rebuild``, ``current_node``,
 ``place_images``, ``plus_session_pid``, ``request_refresh``, ``remove_tool``, ``graph``), so that the window swaps one
-line. The window around it (menus, side bars, the settings panel, Run) stays the window's: the page only emits what
-it cannot do itself (``inspect``, ``view_action``).
+line. On a project model it hosts today's settings panel and its dock as today's page does (host.py), the palette's
+ways of showing and the arrows of hidden sides, and says the time a change adds to the run. The window around it
+(menus, Run) stays the window's: the page only emits what it cannot do itself (``inspect``, ``view_action``).
 """
 from __future__ import annotations
 
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QButtonGroup, QFrame, QHBoxLayout, QLabel, QPushButton, QStackedWidget, QVBoxLayout, QWidget
 
@@ -23,11 +24,13 @@ from ..i18n import _
 from . import style
 from .bridge import PROJECT, Bridge
 from .canvas import GraphCanvas, Toast
+from .host import SidesHost
 from .palette import Palette
 
 log = logging.getLogger(__name__)
-#: the project model's signals after which the page is drawn again (today's page connects the same)
-MODEL_SIGNALS = ("pathsChanged", "currentChanged", "costChanged", "sourcesChanged", "readyChanged", "postChanged")
+#: the project model's signals after which the page is drawn again (today's page connects the same; postChanged
+#: through ``_post_changed``: not for a slider of the panel)
+MODEL_SIGNALS = ("pathsChanged", "currentChanged", "costChanged", "sourcesChanged", "readyChanged")
 
 
 def _is_model(x) -> bool:
@@ -41,7 +44,7 @@ POSITIONS = (("blocks", "Blocks", "graph", "The blocks unfolded: every stack wit
 RIGHT_W = 360
 
 
-class GraphPage(QWidget):
+class GraphPage(SidesHost, QWidget):
     inspect = Signal(object)             # Enter / double-click / menu "Inspect" on this id
     view_action = Signal(str, object)    # a menu action only the window can do: ("mark_reviewed", block)
     display_changed = Signal(str)        # "blocks" | "folded" | "table"
@@ -67,6 +70,8 @@ class GraphPage(QWidget):
         self.left_state, self.right_state = "docked", "docked"
         self._pending = False
         self._mirroring = False
+        self._last = None                # (seconds to run, count of workflows) at the last refresh: "+ N min to run"
+        self.panel = self.dock = None    # today's settings panel and its dock: on a project model only
         self.templates = None            # the gallery's TemplatePage, made when first asked
         self.bridge = Bridge(document.document if self.s is not None else document)
         v = QVBoxLayout(self)
@@ -74,11 +79,12 @@ class GraphPage(QWidget):
         v.setSpacing(0)
         v.addWidget(self._header())
         body = QWidget()
+        self.body = body
         h = QHBoxLayout(body)
         h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(0)
         self.palette = Palette(self.bridge)
-        h.addWidget(self.palette)
+        self._build_palette_room(body, h)
         self.centre = QStackedWidget()
         self.canvas = GraphCanvas(self.bridge, over_palette=self.palette.contains)
         self.table_host = None           # built when the table is first shown (it lists files in the background)
@@ -92,19 +98,26 @@ class GraphPage(QWidget):
         self.right.hide()
         self.files_panel = None
         h.addWidget(self.right)
+        if self.s is not None:
+            self._build_panel(body, h)
         v.addWidget(body, 1)
+        body.installEventFilter(self)
         self.graph = self.canvas         # today's page's ``graph`` (its GraphView): rebuild(), plus_session_pid
         self.canvas.inspect.connect(self.inspect.emit)
         self.canvas.inspect.connect(self._opened)
         self.canvas.view_action.connect(self.view_action.emit)
         self.canvas.templates_asked.connect(self.show_templates)
+        self.canvas.wire_chosen.connect(self.panel_later)
         self.bridge.changed.connect(self._update_header)
         self.bridge.changed.connect(self.changed.emit)
         self.bridge.states_changed.connect(self.changed.emit)
         self.bridge.toast.connect(self.toasted.emit)
+        self.bridge.toast.connect(self.said)
+        self.bridge.rich_toast.connect(self.said)
         self.bridge.files_chosen.connect(self._show_files)
         self.bridge.selection.connect(self._selection)
         self.bridge.selection.connect(self._mirror)
+        self.bridge.selection.connect(self.panel_later)
         self.bridge.replaced.connect(self._replaced)
         self.bridge.acted.connect(self._acted)
         if self.s is not None:
@@ -112,8 +125,11 @@ class GraphPage(QWidget):
                 sig = getattr(self.s, name, None)
                 if sig is not None:
                     sig.connect(self.request_refresh)
+            if getattr(self.s, "postChanged", None) is not None:
+                self.s.postChanged.connect(self._post_changed)
         self._shortcuts()
         self._update_header()
+        self.refresh_panel()
 
     # ------------------------------------------------------------------ the document
     @property
@@ -195,9 +211,9 @@ class GraphPage(QWidget):
         if table and self.table_host is None:
             self._build_table()
         self.centre.setCurrentWidget(self.table_host if table else self.canvas)
-        self.palette.setVisible(not table and self.left_state != "hidden")
+        self._show_palette(not table)
         if not table and self.bridge.file_cell is None:
-            self.right.hide()
+            self._right_pane(False)
 
     def _build_table(self):
         from .table_host import TableHost
@@ -226,14 +242,20 @@ class GraphPage(QWidget):
             self.files_panel.deleteLater()
         self.files_panel = FilesPanel(self.bridge, cell[0], cell[1], go_common=self.bridge.go_common)
         self.right_box.addWidget(self.files_panel)
-        self.right.show()
+        self._right_pane(True)
+
+    def _right_pane(self, on: bool):
+        """A file cell's content on the right: in the settings panel's place while it is shown (one right side)."""
+        self.right.setVisible(on)
+        if self.panel is not None and self.dock is not None and self.dock.state == "docked":
+            self.panel.setVisible(not on)
 
     def _selection(self, ident):
         if self.bridge.file_cell is None and self.files_panel is not None:
             self.right_box.removeWidget(self.files_panel)
             self.files_panel.deleteLater()
             self.files_panel = None
-            self.right.hide()
+            self._right_pane(False)
 
     def _replaced(self):
         self._selection(None)
@@ -249,13 +271,22 @@ class GraphPage(QWidget):
 
     # ================================================================== today's page's public methods (graph.py)
     def set_layout(self, right: str, left: str):
-        """The window's layout of the sides: the right pane (docked | icons | hidden) and the palette (docked | folded |
-        hidden). The palette is hidden or shown; its folded look and the right pane's icons are today's page's alone
-        (PARITE 55-63)."""
+        """The window's layout of the sides (layout.state, as today's page takes it): the settings panel (docked |
+        icons | auto | hidden, its Dock) and the palette (docked | folded | auto | hidden, its arrow then)."""
         self.right_state, self.left_state = right, left
-        self.palette.setVisible(left != "hidden" and self.position() != "table")
+        if left != self.palette.state:
+            self.palette.set_state(left)
+        if self.dock is not None:
+            self.dock.set_state(right)
         if right == "hidden":
             self.right.hide()
+        shown = self.templates is None or self.centre.currentWidget() is not self.templates
+        self._show_palette(shown and self.position() != "table")
+
+    def eventFilter(self, obj, e):                                    # noqa: N802
+        if obj is getattr(self, "body", None) and e.type() == QEvent.Resize:
+            self._place_palette()
+        return super().eventFilter(obj, e)
 
     def project_open(self) -> bool:
         """Whether the Project block is the one chosen: Inspect shows its form then."""
@@ -344,6 +375,15 @@ class GraphPage(QWidget):
                 s.scope = None
                 s.select(step="final")
                 return
+            if blk is not None and blk.kind == "combine_layers":   # its layer of Post (graph.py select_node)
+                n = self.layer_node(ident)
+                pid = n.paths[0].pid if n is not None and n.paths else None
+                index = next((i for i, q in enumerate(s.paths) if q.pid == pid), None)
+                if index is not None:
+                    s.sel_layer = n.lid
+                    s.select(index, "composition")
+                    s.scope = [pid]
+                return
             if ident is not None and self.bridge.row(ident) is not None:
                 ident = self._card_block(ident)
             bm = self._block_map()
@@ -387,10 +427,15 @@ class GraphPage(QWidget):
             b.run_states_changed()            # states, badges and the reading line only
         if not self.is_blank():
             self.hide_templates()
+        self.refresh_panel()
+        self.cost_toast()
 
     def toast(self, text: str):
         self.canvas.say(text)
         self.toasted.emit(text)
+        if "Ctrl+Z" in text and hasattr(self.s, "name_step"):
+            self.s.name_step(text)                        # what Ctrl+Z / Ctrl+Y will say they undid or redid
+            self.said()
 
     def remove_tool(self, node, pids=None):
         """Delete a block (today's ``remove_tool``, the window's Delete): the block of ``node``, else the selected
@@ -433,10 +478,17 @@ class GraphPage(QWidget):
 
     # ------------------------------------------------------------------ what the window is told
     def _opened(self, ident):
-        """Enter / double-click on a block: today's signals (Inspect, or Post for the Post block)."""
+        """Enter / double-click on a block: today's signals (Inspect; Post for the Post block; Post on its layer for a
+        Combine layers block, graph.py ``open_layer``)."""
         blk = self.bridge.block(ident) if ident != PROJECT else None
         if blk is not None and blk.kind == "post":
             self.openPost.emit()
+        elif blk is not None and blk.kind == "combine_layers":
+            lid = self.layer_id(ident)
+            if lid is not None:
+                self.openLayer.emit(lid)
+            else:
+                self.openPost.emit()
         else:
             self.openBlock.emit()
 
@@ -461,7 +513,7 @@ class GraphPage(QWidget):
             self.centre.addWidget(self.templates)
         self.templates.build()
         self.centre.setCurrentWidget(self.templates)
-        self.palette.hide()
+        self._show_palette(False)
         self.templatesAsked.emit()
 
     def hide_templates(self):

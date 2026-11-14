@@ -17,6 +17,7 @@ STATE_COL = {"done": OK, "pending": "#5d6470", "stale": WARN, "running": ACCENT,
 IMAGE_COL = {"starless": "#7aa2d6", "stars_only": "#e0c45c", "": "#9aa3b2"}
 WIRE_COL = "#9aa3b2"
 PALETTE_W = 140
+PALETTE_FOLDED_W = 46      # folded or automatic: the strip of the blocks' icons (graph.py PALETTE_FOLDED_W)
 #: the block a pane shows is "never computed" in this state: its state band is not drawn on a Session or Post
 PENDING = "pending"
 
