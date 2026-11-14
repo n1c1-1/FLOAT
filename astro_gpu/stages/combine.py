@@ -105,10 +105,13 @@ SKY_BLOCK = 16
 #: as the hues (module docstring), the same nebula pixels (sky and stars masked: Oklch lightness 0.25 to 0.85), warm
 #: areas (hue 0-120) pooled median chroma 0.058, blue areas (180-300) 0.050, their mean 0.054. The nebula pixels of our
 #: combinations, rendered with Post's defaults, have a median chroma of 0.026 at gain 1; the gain is the factor
-#: that brings it to 0.054 (measured on the Helix's stored S-H-O channels at a quarter of the size, nebula = smoothed
-#: luminance 3 sigma over the sky: chroma 0.026 at gain 1, 0.046 at 1.5, 0.069 at 2, 0.089 at 2.5, 0.055 at 1.7).
+#: that brings it to 0.054, with gamut_gain keeping the bright core from flattening (measured on the Helix's stored
+#: S-H-O channels at a quarter of the size, nebula = smoothed luminance 3 sigma over the sky: chroma 0.026 at gain 1,
+#: 0.048 at 1.7, 0.054 at 1.9, 0.060 at 2.1; the core disk's colour and texture are those of gain 1).
 HUBBLE_CHROMA = 0.054
-CHROMA_GAIN = 1.7
+CHROMA_GAIN = 1.9
+#: the top of the display a colour may reach (``gamut_gain``): the brightest channel's shown value
+DISPLAY_CAP = 0.9
 #: the bounds of the linear match (module docstring): Siril's RGB compositing tool's own
 MATCH_LOW, MATCH_HIGH = 1e-7, 0.875
 #: the narrow-band types' reference of the linear match: the H-alpha
@@ -278,6 +281,48 @@ def chroma_sigma(noise: dict[str, float], noise_l: float) -> float:
     return float(s) if s >= 0.5 else 0.0
 
 
+def gamut_gain(ratio: np.ndarray, L: np.ndarray, gain: float) -> np.ndarray:
+    """The colour ratios (3, H, W) with their departure from grey scaled by ``gain`` (the luminance kept), the scale
+    lowered, pixel by pixel and down to 1 at the least, where the brightest channel would be shown above
+    ``DISPLAY_CAP`` in Post's default display: a bright pixel (the core of a nebula) has little room left, and more
+    colour there flattens it against the top of the display. This is gamut compression at constant lightness (the
+    chroma scaled down to what the display can show: Morovic and Luo, "The fundamentals of gamut mapping: a survey",
+    J. Imaging Sci. Technol. 45(3), 2001, "chroma clipping at constant lightness"; Ottosson 2021, "Gamut clipping in
+    Oklab", the same rule in a perceptual space). The display is its midtones stretch put at the Post's rule: the
+    median shown at 0.25, white at the 99.99th percentile of the brightest channel at gain 1."""
+    def scaled(g):
+        r = np.maximum(1 + g * (ratio - 1), 0)
+        return r / np.maximum(np.tensordot(LUM, r, 1), 1e-6)[None]
+    full = scaled(gain)
+    lit = L > 0
+    if lit.sum() < 1000:
+        return full
+    top = ratio.max(0) * L
+    white = float(np.percentile(top[lit], 99.99))
+    med = float(np.median(L[lit])) / max(white, 1e-12)
+    if not 0 < med < 1 or white <= 0:
+        return full
+    m = float(((0.25 - 1) * med) / ((2 * 0.25 - 1) * med - 0.25))      # the mid point that shows the median at 0.25
+    cap = white * float(((1 - m) - 1) * DISPLAY_CAP / ((2 * (1 - m) - 1) * DISPLAY_CAP - (1 - m)))   # its inverse
+    cap = np.maximum(cap, top)                 # a pixel already above it keeps its own colour
+    out_max = full.max(0) * L
+    over = out_max > cap
+    if not over.any():
+        return full
+    # the scale that puts the brightest channel at the cap: found by bisection on the (monotonic) channel
+    lo, hi = np.ones_like(L), np.full_like(L, float(gain))
+    for _ in range(8):
+        mid = 0.5 * (lo + hi)
+        r = np.maximum(1 + mid[None] * (ratio - 1), 0)
+        r = r / np.maximum(np.tensordot(LUM, r, 1), 1e-6)[None]
+        ok = r.max(0) * L <= cap
+        lo = np.where(ok, mid, lo)
+        hi = np.where(ok, hi, mid)
+    g = np.where(over, lo, float(gain))
+    r = np.maximum(1 + g[None] * (ratio - 1), 0)
+    return r / np.maximum(np.tensordot(LUM, r, 1), 1e-6)[None]
+
+
 def compose(chans: dict[str, np.ndarray], roles: tuple[str, ...], mat, noise: dict[str, float],
             sigma: float | None = None, sky: np.ndarray | None = None, equal: bool = False,
             gain: float = 1.0) -> tuple[np.ndarray, dict]:
@@ -312,8 +357,7 @@ def compose(chans: dict[str, np.ndarray], roles: tuple[str, ...], mat, noise: di
     t = t * t * (3 - 2 * t)                             # from one to two floors, smoothly
     ratio = 1 + t[None] * (rgb / np.maximum(lum, floor)[None] - 1)
     if gain != 1.0:                       # the colour strength: the departure from grey scaled, the luminance kept
-        ratio = np.maximum(1 + gain * (ratio - 1), 0)
-        ratio = ratio / np.maximum(np.tensordot(LUM, ratio, 1), 1e-6)[None]
+        ratio = gamut_gain(ratio, L, gain)
     return (ratio * L[None]).astype(np.float32), {"sigma": sig, "noise_l": noise_l, "floor": floor}
 
 
@@ -517,7 +561,7 @@ class CombineSHO(NarrowbandCombination):
     description = ("Combines the S II, H-alpha and O III filters into one colour image: each filter a hue, the lightness "
                    "from the filters weighted by their noise, aligned through their plate solutions.")
     Params = SHOParams
-    version = "5"
+    version = "6"
 
 
 class HOParams(NarrowbandParams):
@@ -535,7 +579,7 @@ class CombineHO(NarrowbandCombination):
     description = ("Combines the H-alpha and O III filters (two filters, or a dual-band image's channels) into one "
                    "colour image: each filter a hue, the lightness from the filters weighted by their noise.")
     Params = HOParams
-    version = "5"
+    version = "6"
 
 
 class CombineRGB(Combination):
