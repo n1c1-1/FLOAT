@@ -451,7 +451,6 @@ def test_run_says_why_it_is_greyed_without_a_block_and_without_lights(world):
 
 
 # ---------------------------------------------------------------------------------------------- control round
-@pytest.mark.xfail(strict=True, reason="the new page's block tooltip says nothing of a pause kept on a switched-off block")
 def test_a_switched_off_block_is_said_so_and_its_pause_waits_for_it(world):
     """Round 3: Run to here on a switched-off Gradient 2 said "is no longer in the graph"; a pause kept on it was
     announced as a stop while the run passed it silently. The reason is right, the pause says it waits, the run window

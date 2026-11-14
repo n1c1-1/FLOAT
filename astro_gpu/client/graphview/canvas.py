@@ -7,6 +7,7 @@ over the unchanged drawing.
 from __future__ import annotations
 
 import html
+import textwrap
 import time
 
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, QTimer, Signal
@@ -29,7 +30,7 @@ from ...graphcore.rules import FILE_LABEL, title_msg
 from ...graphcore.shapes import Result
 from .. import prefs
 from ..graphnode import SIDE_INPUTS, STAR_OUTPUTS
-from ..i18n import _, number
+from ..i18n import _, number, plural
 from ..layout import pinch_factor, wheel_gesture
 from ..widgets import Spinner
 from . import style
@@ -560,8 +561,15 @@ class GraphCanvas(QGraphicsView):
         if bd.get("nights"):                             # a Session of several nights says so (graph.py block_what)
             what = _("{nights}: their light frames and the dark, flat and bias frames chosen for them, and the "
                      "filter.").format(nights=bd["nights"])
-        tip = "\n".join(t for t in (title, what, summary, "" if grey else word,
-                                    (_("Switched off: the image passes through.") if blk.off else "")) if t)
+        what = textwrap.fill(what, 70) if what else ""   # a paragraph of its own: a plain tooltip never wraps by itself
+        tip = "\n".join(t for t in (title, what, summary, "" if grey or blk.off else word,
+                                    (_("Switched off: the image passes through. D or the menu switches it on again.")
+                                     if blk.off else "")) if t)
+        if review is not None and blk.off:               # kept, but a block switched off is not run: no stop now
+            tip += "\n" + _("Review point kept: it waits for the block to be switched on again (D); runs go "
+                            "through meanwhile.")
+        elif review is not None:
+            tip += "\n" + self._review_tip(b, review)
         if fallback:                                     # why, in the engine's words translated (graph.py)
             from ..services.run import engine_text
             tip += "".join("\n" + engine_text(w) for w in fallback)
@@ -580,6 +588,26 @@ class GraphCanvas(QGraphicsView):
                     fallback=fallback, broken=broken, missing=missing, warned=bool(bd.get("warned")),
                     w=box.w, h=box.h, x=box.x, y=box.y, inputs=inputs, outputs=outputs,
                     removable=kind != "post", tip=tip)
+
+    def _review_tip(self, b, review) -> str:
+        """What a block's review pause says (today's ``review_tip``): its state, and in how many of the workflows going
+        through the block it is set when not in all."""
+        text = {"pending": _("Review point: the run stops here for your review."),
+                "paused": _("Paused: check this block (Inspect), then Continue from the Run window."),
+                "reviewed": _("Reviewed: the run goes through while these results stay as they are.")}.get(review, "")
+        m = self.doc.model
+        paths = self._workflows_of(b)
+        n = self.doc.model.block_map.node(b) if paths else None
+        has = getattr(m, "has_breakpoint", None)
+        if n is not None and has is not None:
+            try:
+                have = sum(1 for p in paths if has(p, n.ref))
+            except Exception:  # noqa: BLE001 - the count is left out rather than wrong
+                have = len(paths)
+            if 0 < have < len(paths):
+                text += " " + plural(have, "Pause set in {n} workflow of {total}.",
+                                     "Pause set in {n} workflows of {total}.", total=len(paths))
+        return text
 
     def card_data(self, row_id, box):
         bridge, doc = self.bridge, self.doc

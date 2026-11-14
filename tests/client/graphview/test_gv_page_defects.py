@@ -204,3 +204,25 @@ def test_an_image_workflow_is_aligned_from_its_menu_and_its_method_is_chosen(wor
     assert got["ok"] and W.b.row_of(st).align
     items = dict((t, (on, tip)) for t, on, tip in W.g.menu_pick(st, "", open_only=True)["items"])
     assert items["Plate solutions"] == (False, "the stack has no plate solution yet (Astrometry comes after)")
+
+
+# ---------------------------------------------------------------------------------------------- words
+def test_a_review_pause_says_its_block_and_workflows_in_its_toast_and_tooltip(world):
+    W = world(workflows=("Full", "Classic stack"))
+    st = W.block("empilement", "Full")
+    W.g.menu_pick(st, "Review pause")
+    W.settle()
+    assert W.said[-1] == "Review pause after Stacking · 2 workflows · Ctrl+Z"      # shared by the two
+    tip = W.page.canvas.blocks[st].toolTip()
+    assert "Review point: the run stops here for your review." in tip
+    gr = W.block("fond", "Full")
+    W.g.menu_pick(gr, "Review pause")
+    W.settle()
+    assert W.said[-1] == "Review pause after Gradient · 2 workflows · Ctrl+Z"
+    W.b.act("switch_off", block=gr)
+    W.settle()
+    assert W.said[-1] == "Gradient switched off · Full · Ctrl+Z"
+    tip = W.page.canvas.blocks[gr].toolTip()
+    assert "waits for the block to be switched on again" in tip and "the run stops here" not in tip
+    assert all(len(line) <= 100 for line in tip.split("\n")), tip     # what it does wrapped (it was ~300)
+    assert "Up to date" not in tip                                     # a block switched off is not computed
