@@ -918,6 +918,58 @@ def test_a_setting_of_the_block_shown_keeps_its_picture_on_screen(scratch):
     assert "Previous settings" in texts_of(t)
 
 
+@pytest.mark.parametrize("size", [(1250, 685), (1920, 1080)])
+def test_a_change_in_the_side_panel_never_resizes_the_image(scratch, size):
+    """The owner's rule: in Inspect, the image keeps its geometry through any change made in the side panel (a method
+    card, a checkbox, a number, the confirmation and its answer, Undo, a rebuild by a project signal). The header above
+    it was built again with its widgets shown a turn later: the image grew by the header's height, then shrank back."""
+    from PySide6.QtCore import QObject
+
+    from astro_gpu.client.panel import CompactRow, MethodCard
+    w = scratch
+    s = w.s
+    w.resize(*size)
+    full = next(p for p in s.paths if p.name == "Full")
+    for block in ("debruitage", "empilement"):
+        inspect(w, block, index=s.index_of(full.pid))
+        t = w.tune
+        if t.dock.state != "docked":
+            t.dock.set_state("docked")
+            settle(w)
+        resized = []
+
+        class Spy(QObject):
+            def eventFilter(self, obj, e):  # noqa: N802
+                if e.type() == QEvent.Resize:
+                    resized.append((block, e.oldSize().toTuple(), e.size().toTuple()))
+                return False
+        spy = Spy()
+        view = t.view
+        view.installEventFilter(spy)
+        geo = view.geometry()
+        acts = []
+        cards = [c for c in t.panel.findChildren(MethodCard) if c.isVisible() and c.ok and
+                 c.cursor().shape() == Qt.PointingHandCursor]
+        if cards:
+            acts += [cards[0].clicked.emit, lambda: t.panel.answer("cancel")]
+        rows = [r for r in t.panel.findChildren(CompactRow) if r.isVisible()]
+        box = next((r for r in rows if r.findChild(QCheckBox) is not None), None)
+        if box is not None:
+            acts += [lambda r=box: t.panel.set_setting(r.r, not bool(r.r["value"])),
+                     lambda: t.panel.answer("replace"), s.undo]
+        num = next((r for r in rows if r.r.get("type") == "float" and r.r.get("value") is not None), None)
+        if num is not None:
+            acts += [lambda r=num: t.panel.set_setting(r.r, r.r["value"] + 0.1), lambda: t.panel.answer("cancel")]
+        acts.append(s.selectionChanged.emit)
+        assert len(acts) >= 3, block
+        for act in acts:
+            act()
+            settle(w)
+            assert t.view is view and view.geometry() == geo, (block, act)
+        view.removeEventFilter(spy)
+        assert resized == [], resized
+
+
 def test_an_outdated_block_shows_its_previous_result(scratch):
     w = scratch
     s = w.s
