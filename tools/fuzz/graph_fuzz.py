@@ -87,6 +87,11 @@ GESTURE = {
     "“{_name}” is shared by several stacks: its lights stay together", "not found", "it already follows its session",
     "{lab} is switched off: its image is its input's",
     "unknown method",
+    # step 4c: a workflow's pauses, options, chain replaced, a branch from a block of another workflow
+    "a pause list names blocks", "unknown options", "the block is not in this workflow",
+    "variants or blocks sent to Post start from this row: delete them first", "a combination is made of its blocks",
+    "the blocks are not those of the options", "Common's files are left out in each session",
+    "{lab} belongs to a stack: between the Session and the Stacking", core_rules.AFTER_LAYERS,
     # the model's shapes: a row starts with its head, a variant forks after a block of its row, a night's
     # Calibration is its night's, Post is one, a source stays at its row's head
     "nothing is inserted before the head of the row", "a variant starts after the Registration",
@@ -229,10 +234,70 @@ def gen(rng, doc):
         lambda: ("op", "remove_own_calibration", {"block": pick(rng, [c for r in p.rows for _s, c in r.nights]
                                                                       or blocks)}),
         lambda: ("many", [_setting(rng, p, blocks)[1:3], ("add_night", {"row": pick(rng, rows)})]),
+        # step 4c: a session by its id, an Image's file, a tap's name, a workflow's pauses, options and settings, a
+        # row's chain replaced, a new branch
+        lambda: ("op", "new_night", {"name": pick(rng, NAMES), "filter": pick(rng, ["Ha", ""])}),
+        lambda: ("op", "set_session_files", {"sid": _sid(rng, p), "kind": pick(rng, FILE_KINDS + ("x",)),
+                                             "paths": rng.sample(PATHS, rng.randint(0, 4))}),
+        lambda: ("op", "rename_session", {"sid": _sid(rng, p), "name": pick(rng, NAMES)}),
+        lambda: ("op", "set_session_filter", {"sid": _sid(rng, p), "filter": pick(rng, ["Ha", "OIII", ""])}),
+        lambda: ("op", "set_left_out", {"sid": _sid(rng, p), "left_out": pick(rng, [
+            {}, {"darks": rng.sample(PATHS, 2)}, {"flats": []}, {"x": []}])}),
+        lambda: ("op", "remove_session", {"sid": _sid(rng, p)}),
+        lambda: ("op", "exclude_frames", {"sid": _sid(rng, p), "names": rng.sample(PATHS, rng.randint(0, 3)),
+                                          "excluded": rng.random() < 0.7}),
+        lambda: ("op", "set_image_file", {"block": pick(rng, [b for b in blocks if p.blocks[b].kind == "image"]
+                                                         or blocks),
+                                          "path": pick(rng, ["D:/img/a.tif", "", None]),
+                                          "stretched": pick(rng, [None, True, False])}),
+        lambda: ("op", "rename_tap", {"tap": pick(rng, [t.id for t in p.taps] or ["t0"]), "name": pick(rng, NAMES)}),
+        lambda: ("op", "set_flow_pauses", {"flow": _flow(rng, p), "pauses": pick(rng, [
+            None, [], ["output"], ["calibration", "gradient"], "gradient"])}),
+        lambda: ("op", "set_flow_options", {"flow": _flow(rng, p), "options": pick(rng, [None, LEGACY, {"x": 1}]),
+                                            "end": pick(rng, [None, None, "stacking", "x"])}),
+        lambda: ("op", "set_flow_param", dict(zip(("flow", "stage", "name", "value"),
+                                                  (_flow(rng, p),) + _param(rng, p, pick(rng, blocks))))),
+        lambda: ("op", "store_params", {"flow": _flow(rng, p), "params": {
+            st: {nm: v} for st, nm, v in [_param(rng, p, pick(rng, blocks))]}}),
+        lambda: _replace_chain(rng, p, rows),
+        lambda: ("op", "remove_with_dependants", {"block": pick(rng, blocks)}),
+        lambda: ("op", "exclude_files", {"session": pick(rng, sess + [COMMON]), "kind": pick(rng, FILE_KINDS),
+                                         "paths": rng.sample(PATHS, rng.randint(0, 3)), "excluded": rng.random() < .7}),
+        lambda: ("op", "move_block", {"block": pick(rng, [b for b in blocks if b in ix.row_of] or blocks),
+                                      "at": {"type": "branch", "row": pick(rng, rows or ["r0"]), "y": None}}),
+        lambda: ("op", "add_branch", {"block": pick(rng, blocks), "kind": pick(rng, ORDER),
+                                      "flow": pick(rng, [None, None, _flow(rng, p)]), "name": pick(rng, NAMES + [None]),
+                                      "method": pick(rng, [None, None, "rbf", "neural", "x"])}),
         lambda: ("undo",), lambda: ("undo",), lambda: ("redo",),
         lambda: ("save",),
     ])()
     return g if g[0] != "op" or len(g) == 4 else g + (None,)
+
+
+LEGACY = {"denoise": None, "stars": None, "gradient": "polynomial", "deconvolution": None}
+CHAINS = [["registration", "selection", "stacking"], ["registration", "stacking", "astrometry", "gradient", "color"],
+          ["registration", "selection", "stacking", "gradient", "denoise", "stars"], ["gradient", "denoise"],
+          ["stacking", "registration"], [],
+          [n["block"] for n in ops.wfl.from_options(LEGACY) if not n["off"]          # the blocks of LEGACY
+           and n["block"] not in ("image", "output", "align_on", "calibration")]]
+
+
+def _sid(rng, p):
+    return pick(rng, [n["sid"] for n in p.nights] + [99])
+
+
+def _flow(rng, p):
+    return pick(rng, [r.id for r in p.rows] + [t.id for t in p.taps] + ["r0"])
+
+
+def _replace_chain(rng, p, rows):
+    return ("op", "replace_chain", {"row": pick(rng, rows or ["r0"]),
+                                    "blocks": [{"kind": k} for k in pick(rng, CHAINS)] if rng.random() < .95
+                                    else [{"kind": "post"}],
+                                    "calibration": pick(rng, [None, False, {"off": False}]),
+                                    "align": pick(rng, [None, None, {"ref": None, "method": "stars"}]),
+                                    "options": pick(rng, [None, None, LEGACY]),
+                                    "params": pick(rng, [None, {"register": {"min_pairs": 5}}, {"x": {"y": 1}}])}, None)
 
 
 def _align(rng, p, rows):

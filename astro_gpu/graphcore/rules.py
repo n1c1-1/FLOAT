@@ -546,7 +546,7 @@ def warnings(p, scope=None):
                 for path in p.blocks[s].files[f]:
                     where.setdefault(path, []).append((s, f))
     for s in mine:
-        if s not in any_flats and any_flats - {s}:
+        if s not in any_flats and any_flats - {s} and files_of(p, s, "lights")[1]:     # a session with lights
             out.append((s, "flats", "No flats: the other sessions have some", None))
         for f in FILE_KINDS:
             for path in p.blocks[s].files.get(f, []):

@@ -101,7 +101,10 @@ def _apply_many(graph, steps, view):
         finish(q, outs[-1].style if outs else None)
         fold_guard(graph, q, view)
     except Refusal as e:
-        return graph, Result(False, reason=e.msg)
+        res = Result(False, reason=e.msg)
+        if len(steps) == 1 and ALIASES.get(steps[0][0], steps[0][0]) == "remove_block" and isinstance(steps[0][1], dict):
+            res.dependants = dependants(graph, steps[0][1].get("block"))      # what remove_with_dependants takes
+        return graph, res
     out = outs[-1]
     toast = join([o.toast for o in outs])
     acted = _acted(graph, view, q, out)
@@ -191,11 +194,12 @@ def _legacy_chains(q):
 def _thaw(q, chains):
     """A workflow made before the free graph (kept as its options, frozen) is rebuilt from its blocks by the first
     change of its chain: from then on its blocks are the truth."""
+    keep = q.__dict__.pop("_legacy_kept", set())     # a chain replaced with its options given (replace_chain)
     if not chains:
         return
     ix = Index(q)
     for f in list(q.rows) + list(q.taps):
-        if f.legacy and f.id in chains and _flow_sig(q, ix, f) != chains[f.id]:
+        if f.legacy and f.id in chains and f.id not in keep and _flow_sig(q, ix, f) != chains[f.id]:
             f.legacy = None
 
 
@@ -839,7 +843,8 @@ def op_move_night(q, night, row=None, before=None):
         if before is None and t.nights[-1] is not n:
             t.nights.remove(n)
             t.nights.append(n)
-        return Out(M("“{_name}” moved", _name=name), night, new=night)
+            return Out(M("“{_name}” moved", _name=name), night, new=night)
+        return Out(focus=night)                 # dropped where it is: nothing moves, nothing said
     if t is not r and t.nights:
         q.blocks[n[1]].off = _night_off(q, t) if q.calibrate_together else q.blocks[n[1]].off
     r.nights.remove(n)
@@ -1096,6 +1101,8 @@ def _branch(q, b, rid, y):
     """Variant forked before y (after the row's last block when y is None); b replaces y's copy when same kind."""
     r = _row(q, rid)
     ix = Index(q)
+    if not r.blocks:                     # a stack being built (or the block dragged was its only one): no fork block
+        raise Refusal("a variant starts after the Registration")
     if y is None:
         x, tail = r.blocks[-1], []
     else:
@@ -1291,10 +1298,21 @@ def op_move_block(q, block, at):
     if at.get("y") == block:
         nxt = ix.pos[block] + 1
         at["y"] = r.blocks[nxt] if nxt < len(r.blocks) else None
+    if own_spot(ix, block, at):
+        return Out(focus=block)                 # dropped where it is: nothing moves, nothing said
     detach(q, block, keep=True)
     out = op_add_block(q, b.kind, at, _block=block)
     out.toast = M("{lab} moved", lab=LABEL[b.kind])
     return out
+
+
+def own_spot(ix, block, at):
+    """Whether place spec `at` puts chain block `block` back where it is (after its predecessor in its row)."""
+    if at.get("type") != "insert" or at.get("row") != ix.row_of.get(block):
+        return False
+    i = ix.pos[block]
+    r = ix.row[ix.row_of[block]]
+    return at.get("after") in ((r.blocks[i - 1],) if i > 0 else (None,)) + (block,)
 
 
 def op_remove_block(q, block):
@@ -1781,7 +1799,32 @@ def op_set_param(q, block, stage, name, value):
             raise Refusal(M("{lab} holds no setting of {_stage}", lab=LABEL[b.kind], _stage=f"stack.{name}"))
     v = None if value is None else check_param(stage, name, value, internal=name == "zone")
     _put(b.params, stage, name, v)
+    _unhide(_flows_through(q, Index(q), block), stage, name)
     return Out(M("{_name}: {_value}", _name=name, _value=str(v)), block)
+
+
+def _flows_through(q, ix, b):
+    """The rows and taps whose workflow goes through block b (its chain, or its stack's nights)."""
+    out = []
+    for f in list(q.rows) + list(q.taps):
+        rid = f.id if isinstance(f, Row) else ix.row_of.get(f.block)
+        if rid not in ix.row:
+            continue
+        root = ix.row[ix.root(rid)]
+        if b in _flow_chain(q, ix, f.id) or any(b in n for n in root.nights):
+            out.append(f)
+    return out
+
+
+def _unhide(flows, stage, name):
+    """A setting stored on its holder shows: the workflows' leftovers holding the same key (applied after the
+    holders at the compile) are taken out."""
+    for f in flows:
+        if f.extra and name in (f.extra.get(stage) or {}):
+            d = {k: v for k, v in f.extra[stage].items() if k != name}
+            f.extra = {k: v for k, v in f.extra.items() if k != stage} | ({stage: d} if d else {})
+        if f.unset and [stage, name] in [list(u) for u in f.unset]:
+            f.unset = [u for u in f.unset if list(u) != [stage, name]]
 
 
 def op_set_row_param(q, row, stage, name, value):
@@ -1806,6 +1849,12 @@ def op_set_row_param(q, row, stage, name, value):
     _put(store, stage, name, v)
     if stage == "render_simple":
         r.output = store.get("render_simple", {})
+    if stage in ("inventory", "calibrate"):
+        _unhide([f for f in list(q.rows) + list(q.taps)
+                 if (f.id if isinstance(f, Row) else ix.row_of.get(f.block)) in ix.row
+                 and ix.root(f.id if isinstance(f, Row) else ix.row_of[f.block]) == root.id], stage, name)
+    else:
+        _unhide([r], stage, name)
     return Out(M("{_name}: {_value}", _name=name, _value=str(v)), row)
 
 
@@ -2185,6 +2234,533 @@ def op_discard_variant(q, row):
     delete_rows(q, [v.id])
     q.order = [x for x in q.order if x != v.wid]
     return Out(M("variant “{_name}” discarded", _name=name))
+
+
+# ---------------------------------------------------------------------------------------------------- step 4c
+# What the project model edits beside the drawing: a session by its id (drawn by a stack or not), an Image block's
+# file, a tap's name, a workflow's own pauses, options, settings, a row's chain replaced as a whole, a new branch.
+def _entry(q, sid):
+    """The project's entry of session `sid` (Project.nights)."""
+    e = next((n for n in q.nights if not isinstance(sid, bool) and n["sid"] == sid), None)
+    if e is None:
+        raise Refusal("session not found")
+    return e
+
+
+def _drawn(q, sid):
+    """The Session blocks drawing session `sid` (none for a night no stack draws)."""
+    return [b for b in q.blocks.values() if b.kind == "session" and b.sid == sid]
+
+
+def op_set_session_files(q, sid, kind, paths):
+    """A session's list of files of a kind, replaced (its Session blocks', or the entry of a night no stack draws)."""
+    e = _entry(q, sid)
+    _kind(kind)
+    if isinstance(paths, str):
+        raise Refusal("no file")
+    lst = _dedup([str(x) for x in paths])
+    drawn = _drawn(q, sid)
+    for b in drawn:
+        b.files[kind] = list(lst)
+    e.setdefault("files", {})[kind] = list(lst)
+    return Out(M("{kind} of “{_name}”: {n}", kind=rules.FILE_LABEL[kind], _name=e.get("name", ""), n=len(lst)),
+               drawn[0].id if drawn else None)
+
+
+def op_rename_session(q, sid, name):
+    e = _entry(q, sid)
+    name = (name or "").strip()
+    if not name:
+        raise Refusal("a name cannot be empty")
+    e["name"] = name
+    drawn = _drawn(q, sid)
+    for b in drawn:
+        b.name = name
+    return Out(M("session renamed “{_name}”", _name=name), drawn[0].id if drawn else None)
+
+
+def op_set_session_filter(q, sid, filter):  # noqa: A002
+    """The filter of a session's lights (stored; nothing is read from the files)."""
+    e = _entry(q, sid)
+    e["filter"] = str(filter or "")
+    drawn = _drawn(q, sid)
+    return Out(M("filter: {_f}", _f=e["filter"]), drawn[0].id if drawn else None)
+
+
+def op_set_left_out(q, sid, left_out):
+    """A session's calibration frames left out by hand, {kind: [paths]} as a whole (out of its lists, still shown,
+    to be taken back)."""
+    e = _entry(q, sid)
+    if not isinstance(left_out, dict):
+        raise Refusal("unknown kind of files")
+    for k, v in left_out.items():
+        _kind(k)
+        if isinstance(v, str):
+            raise Refusal("no file")
+    e["left_out"] = {k: [str(x) for x in v] for k, v in left_out.items()}
+    n = sum(len(v) for v in e["left_out"].values())
+    drawn = _drawn(q, sid)
+    return Out(M("frames left out of “{_name}”: {n}", _name=e.get("name", ""), n=n), drawn[0].id if drawn else None)
+
+
+def op_remove_session(q, sid):
+    """A session out of the project (its files are never touched): its night out of every stack drawing it (a stack
+    of that night alone goes with it), its frames excluded by hand, its own settings in every workflow."""
+    e = _entry(q, sid)
+    for b in [b.id for b in _drawn(q, sid)]:
+        if b in q.blocks:
+            op_remove_night(q, b)
+    q.nights = [n for n in q.nights if n["sid"] != sid]
+    q.excluded = [x for x in q.excluded if x[0] != sid]
+    mark = f"@{sid}"
+    for f in list(q.rows) + list(q.taps):
+        if f.extra and any(k.endswith(mark) for k in f.extra):
+            f.extra = {k: v for k, v in f.extra.items() if not k.endswith(mark)}
+        if f.sessions is not None and sid in f.sessions:
+            f.sessions = [x for x in f.sessions if x != sid]
+    for r in q.rows:
+        if r.calib and any(k.endswith(mark) for k in r.calib):
+            r.calib = {k: v for k, v in r.calib.items() if not k.endswith(mark)}
+    return Out(M("“{_name}” out of the project · files kept", _name=e.get("name", "")), style="need")
+
+
+def _file_name(path):
+    return str(path).replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+
+
+def op_exclude_frames(q, sid, names, excluded=True):
+    """Lights excluded by hand from every stack (or taken back): Project.excluded, by file name."""
+    e = _entry(q, sid)
+    if isinstance(names, str) or not names:
+        raise Refusal("no file")
+    names = _dedup([_file_name(x) for x in names])
+    have = [list(x) for x in q.excluded]
+    if excluded:
+        q.excluded = have + [[sid, x] for x in names if [sid, x] not in have]
+    else:
+        gone = {(sid, x) for x in names}
+        q.excluded = [x for x in have if (x[0], x[1]) not in gone]
+    return Out(M("{n} lights excluded from “{_name}”" if excluded else "{n} lights taken back in “{_name}”",
+                 n=len(names), _name=e.get("name", "")))
+
+
+def op_exclude_files(q, session, kind, paths, excluded=True):
+    """Single files of a Session left out by hand (or taken back), one step: lights excluded from every stack
+    (Project.excluded, by file name); calibration frames noted as left out of the session (its night's left_out, which
+    the session shows to take them back)."""
+    if session == COMMON:
+        raise Refusal("Common's files are left out in each session")
+    s = _session(q, session)
+    _kind(kind)
+    if s.sid is None:
+        raise Refusal("session not found")
+    if isinstance(paths, str) or not paths:
+        raise Refusal("no file")
+    if kind == "lights":
+        return op_exclude_frames(q, s.sid, paths, excluded)
+    e = _entry(q, s.sid)
+    paths = _dedup([str(x) for x in paths])
+    lo = {k: list(v) for k, v in (e.get("left_out") or {}).items()}
+    cur = [x for x in lo.get(kind, []) if x not in paths]
+    lo[kind] = cur + paths if excluded else cur
+    e["left_out"] = lo
+    return Out(M("{n} {kind} left out of “{_name}”" if excluded else "{n} {kind} taken back in “{_name}”",
+                 n=len(paths), kind=rules.FILE_LABEL[kind].lower(), _name=e.get("name", "")), session)
+
+
+def excluded_files(q, session, kind):
+    """The files of a Session left out by hand: lights by file name, calibration frames by path."""
+    if session not in q.blocks or q.blocks[session].kind != "session" or kind not in FILE_KINDS:
+        return []
+    sid = q.blocks[session].sid
+    if kind == "lights":
+        return [x[1] for x in q.excluded if x[0] == sid]
+    e = next((n for n in q.nights if n["sid"] == sid), None)
+    return list(((e or {}).get("left_out") or {}).get(kind) or [])
+
+
+def op_set_image_file(q, block, path=None, stretched=None):
+    """The file an Image block reads, and whether it is stretched (its source as stored)."""
+    b = _blk(q, block, ("image",))
+    if path is None and stretched is None:
+        raise Refusal("nothing to change")
+    src = copy.deepcopy(b.source) if b.source is not None else {
+        "path": "", "stretched": bool(rules.effective(q, block)["Stretched image"])}
+    if path is not None:
+        src["path"] = str(path)
+    if stretched is not None:
+        src["stretched"] = bool(stretched)
+    b.source = src
+    if path is not None:
+        return Out(M("image file: {_path}", _path=_file_name(path) if path else ""), block)
+    return Out("stretched image" if src["stretched"] else "linear image", block)
+
+
+def _flow_of(q, fid):
+    """The row or tap `fid`."""
+    f = next((x for x in list(q.rows) + list(q.taps) if x.id == fid), None)
+    if f is None:
+        raise Refusal("row not found")
+    return f
+
+
+def op_rename_tap(q, tap, name):
+    """A block's image sent to Post (or a copy of a workflow) renamed."""
+    t = next((x for x in q.taps if x.id == tap), None)
+    if t is None:
+        raise Refusal("not found")
+    name = (name or "").strip()
+    if not name:
+        raise Refusal("a name cannot be empty")
+    if name != t.name and name in {x.name for x in list(q.rows) + list(q.taps) if x is not t}:
+        raise Refusal(M("“{_name}” already exists", _name=name))
+    t.name = name
+    return Out(M("renamed “{_name}”", _name=name), t.block)
+
+
+def op_set_flow_pauses(q, flow, pauses):
+    """A workflow's own pause list (the engine's block names: "calibration@2", "align_on", "output"...), for the pauses
+    its blocks do not give (a night's Calibration, an Align on, its Output, a block shared with another workflow);
+    None: the pauses of its blocks."""
+    f = _flow_of(q, flow)
+    if pauses is not None and (isinstance(pauses, str) or not isinstance(pauses, (list, tuple))
+                               or any(not isinstance(x, str) or not x for x in pauses)):
+        raise Refusal("a pause list names blocks")
+    f.pauses = None if pauses is None else list(pauses)
+    if pauses is None:
+        return Out(M("check pauses of “{_name}”: those of its blocks", _name=f.name))
+    return Out(M("check pauses of “{_name}”: {n}", _name=f.name, n=len(f.pauses)))
+
+
+def op_set_flow_options(q, flow, options=None, end=None):
+    """A workflow made from options (as before the free graph: kept as its options until the first change of its
+    chain), or one of its blocks again (options None); `end`: its early exit."""
+    f = _flow_of(q, flow)
+    try:
+        end = wfl.check_end(end)
+        opts = None if options is None else wfl.check_options(dict(options))
+    except (ValueError, TypeError) as e:
+        raise Refusal("unknown options") from e
+    if opts is None:
+        f.legacy, f.end = None, end
+        return Out(M("“{_name}” follows its blocks", _name=f.name))
+    f.legacy = {"options": opts, "end": end, "frozen": False}
+    return Out(M("“{_name}” follows its options", _name=f.name))
+
+
+def _stage_names(q):
+    """The node name of every chain block (stored, else the compile's)."""
+    from ..core.project2 import Project2
+    from .compile import compile_into
+    normalise(q)
+    return compile_into(q, Project2(name="names")).names
+
+
+def _stages_of(q, b, names):
+    blk = q.blocks[b]
+    if blk.kind in wfl.IMAGE_OPS:
+        return [blk.engine or names.get(b) or blk.kind]
+    return owned_stages(q, b)
+
+
+def _holder_of(q, ix, f, stage, name, names):
+    """Where workflow f's setting (stage, name) is stored: ("block", id, stage) | ("calib", root row) | ("output", f)
+    | ("align", row) | ("extra", f)."""
+    base, at, sid = stage.partition("@")
+    rid = f.id if isinstance(f, Row) else ix.row_of.get(f.block)
+    root = ix.row[ix.root(rid)] if rid in ix.row else None
+    if base in ("inventory", "calibrate") and at:
+        c = next((c for _s, c in (root.nights if root else []) if str(q.blocks[c].sid) == sid), None)
+        return ("block", c, base) if c is not None else ("extra", f)
+    if stage in ("inventory", "calibrate"):
+        return ("calib", root) if isinstance(f, Row) and root is not None else ("extra", f)
+    if stage == "render_simple":
+        return ("output", f) if isinstance(f, Row) else ("extra", f)
+    if stage == "align_on":
+        return ("align", f) if isinstance(f, Row) and f.align else ("extra", f)
+    chain = _flow_chain(q, ix, f.id)
+    if stage == "stack":
+        own = "selection" if name in SELECTION_KEYS else "crop" if name == "zone" else "stacking"
+        b = next((b for b in chain if q.blocks[b].kind == own), None)
+    else:
+        b = next((b for b in chain if stage in _stages_of(q, b, names)), None)
+    return ("block", b, stage) if b is not None else ("extra", f)
+
+
+def _store(q, ix, f, stage, name, v, names):
+    """Workflow f's setting stored on its holder; -> (the stage key it is stored under, the workflows it shows in)."""
+    h = _holder_of(q, ix, f, stage, name, names)
+    if h[0] == "block":
+        blk = q.blocks[h[1]]
+        st = f"{h[2]}@{blk.sid}" if blk.kind == "calibration" else h[2]
+        _put(blk.params, st, name, v)
+        return st, _flows_through(q, ix, h[1])
+    if h[0] == "calib":
+        root = h[1]
+        _put(root.calib, stage, name, v)
+        return stage, [x for x in list(q.rows) + list(q.taps)
+                       if (x.id if isinstance(x, Row) else ix.row_of.get(x.block)) in ix.row
+                       and ix.root(x.id if isinstance(x, Row) else ix.row_of[x.block]) == root.id]
+    if h[0] == "output":
+        store = {"render_simple": f.output}
+        _put(store, stage, name, v)
+        f.output = store.get("render_simple", {})
+        return stage, [f]
+    if h[0] == "align":
+        _put(f.align.setdefault("params", {}), stage, name, v)
+        return stage, [f]
+    _put(f.extra, stage, name, v)
+    return stage, []
+
+
+def op_set_flow_param(q, flow, stage, name, value):
+    """A workflow's setting (the engine's real key; None: back to the suggestion), stored on what holds it: the block
+    of its chain owning the stage, its night's Calibration, its stack, its Output, its Align on; else its leftovers.
+    The leftovers that would hide it are taken out."""
+    f = _flow_of(q, flow)
+    if not isinstance(stage, str) or not isinstance(name, str):
+        raise Refusal("unknown setting")
+    v = None if value is None else check_param(stage, name, value, internal=name == "zone")
+    names = _stage_names(q)
+    ix = Index(q)
+    st, through = _store(q, ix, f, stage, name, v, names)
+    _unhide(through, st, name)
+    if not through:
+        f.unset = [u for u in f.unset or [] if list(u) != [stage, name]]
+    return Out(M("{_name}: {_value}", _name=name, _value=str(v)))
+
+
+def _store_all(q, f, params):
+    if not isinstance(params, dict) or any(not isinstance(kv, dict) for kv in params.values()):
+        raise Refusal("unknown setting")
+    names = _stage_names(q)
+    ix = Index(q)
+    for stage, kv in params.items():
+        for k, v in kv.items():
+            if v is not None:
+                try:                         # a value the engine refuses is not stored (one it does not know is)
+                    check_param(str(stage), str(k), v, internal=True)
+                except Refusal as e:
+                    if isinstance(e.msg, tuple) and e.msg[0] == "{_stage}.{_name}: not a valid value":
+                        raise
+            _store(q, ix, f, str(stage), str(k), copy.deepcopy(v), names)
+
+
+def op_store_params(q, flow, params):
+    """A workflow's settings {stage: {name: value}} stored as given (as the engine stored them: no check) where they
+    belong (see set_flow_param): a workflow made, or its chain replaced, keeps its settings."""
+    f = _flow_of(q, flow)
+    _store_all(q, f, params)
+    return Out(M("settings of “{_name}” stored", _name=f.name))
+
+
+def op_replace_chain(q, row, blocks, calibration=None, align=None, options=None, params=None):
+    """A row's chain made of these blocks ([{"kind", "method", "off", "fork", "engine"}], its head Image or
+    Combination kept): a template given to a workflow. `calibration`: None keeps the stack's Calibration node, False
+    none, {"off": bool} one; `align`: None keeps its Align on (gone without a Stacking), {"ref": row or tap | None,
+    "method", "off"} a new one; `options`: the row kept as these options (made before the free graph), None: of its
+    blocks; `params`: its settings stored again where the new blocks hold them (its leftovers emptied first)."""
+    from .compile import NODE_KINDS
+    r = _row(q, row)
+    ix = Index(q)
+    if r.fork or ix.children[r.id] or any(t.block in r.blocks for t in q.taps):
+        raise Refusal("variants or blocks sent to Post start from this row: delete them first")
+    if isinstance(blocks, (str, dict)) or any(not isinstance(n, dict) or n.get("kind") not in NODE_KINDS
+                                              for n in blocks):
+        raise Refusal("unknown block")
+    head = [b for b in r.blocks[:1] if q.blocks[b].kind in ("image", "combine", "combine_layers")]
+    hk = q.blocks[head[0]].kind if head else None
+    if hk == "combine_layers" and blocks:
+        raise Refusal(rules.AFTER_LAYERS)
+    frame = next((n["kind"] for n in blocks if n["kind"] in FRAME_KINDS), None)
+    if frame and not r.nights:
+        raise Refusal(M("{lab} belongs to a stack: between the Session and the Stacking", lab=LABEL[frame]))
+    if options is not None:
+        if hk in JOIN_KINDS:                 # the engine would run the options, the drawing its blocks
+            raise Refusal("a combination is made of its blocks")
+        try:
+            options = wfl.check_options(dict(options))
+        except (ValueError, TypeError) as e:
+            raise Refusal("unknown options") from e
+        end = r.legacy.get("end") if r.legacy else r.end
+        src = "frames" if not head else "stretched" if (q.blocks[head[0]].source or {}).get(
+            "stretched", rules.effective(q, head[0]).get("Stretched image")) else "image"
+        want = [n["block"] for n in wfl.from_options(options, end, src)
+                if not n["off"] and n["block"] not in ("image", "output", "align_on", "calibration")]
+        kinds = [n["kind"] for n in blocks]
+        if kinds not in (want, [k for k in want if k != "color"]):     # a mono stack draws no Color
+            raise Refusal("the blocks are not those of the options")     # (the engine runs the options)
+    gone = set(r.blocks) - set(head)
+    new = [new_block(q, n["kind"], method=n.get("method"), off=bool(n.get("off")), fork=n.get("fork"),
+                     engine=(n.get("engine") or None) if n["kind"] in wfl.IMAGE_OPS else None).id for n in blocks]
+    for b in gone:
+        del q.blocks[b]
+    q.wires = [w for w in q.wires if w.src[0] not in gone and w.dst[0] not in gone]
+    r.blocks = head + new
+    if r.nights and calibration is not None:
+        r.calib_node = calibration is not False
+        if calibration is not False:
+            off = bool(calibration.get("off")) if isinstance(calibration, dict) else False
+            if off != any(q.blocks[c].off for _s, c in r.nights):
+                for _s, c in r.nights:
+                    q.blocks[c].off = off
+    if align is not None:
+        if not isinstance(align, dict):
+            raise Refusal("unknown place")
+        ref = align.get("ref")
+        if ref is not None and ref not in {x.id for x in q.rows} | {t.id for t in q.taps}:
+            raise Refusal("row not found")
+        r.align = {**new_align(ref), "method": align.get("method"), "off": bool(align.get("off"))}
+    elif r.align and not any(q.blocks[b].kind in ("stacking", "image") for b in r.blocks):
+        r.align = None
+    if options is None:
+        r.legacy = None
+    else:
+        r.legacy = {**(r.legacy or {"end": r.end, "frozen": False}), "options": options}
+        q.__dict__.setdefault("_legacy_kept", set()).add(r.id)
+    if params is not None:
+        r.extra, r.unset = {}, []
+        _store_all(q, r, params)
+    return Out(M("“{_row}”: its blocks replaced", _row=r.name), r.blocks[0] if r.blocks else None,
+               new=r.blocks[0] if r.blocks else None)
+
+
+def op_add_branch(q, block, kind, flow=None, name=None, method=None):
+    """A new branch: a workflow with the settings of `flow` (the row of `block` by default), its chain up to `block`,
+    then a new block of `kind` from its defaults, drawn as a variant forking after `block`. After a night's
+    Calibration (kind "calibration"): a stack drawing the same nights, that night's Calibration its own (placed in
+    parallel), the others as in the stack it leaves."""
+    b = _blk(q, block)
+    ix = Index(q)
+    if kind not in LABEL:
+        raise Refusal("unknown block")
+    if block not in ix.row_of or b.kind in ("session", "post") or _is_layers_row(q, ix, ix.row_of[block]):
+        raise Refusal(M("{lab}: no variant from here", lab=LABEL.get(b.kind, b.kind)))
+    if (b.kind == "calibration") != (kind == "calibration"):
+        raise Refusal(M("{lab}: no variant from here", lab=LABEL.get(b.kind, b.kind)))
+    if kind in ("session", "post", "image") + JOIN_KINDS:
+        raise Refusal(M("{lab} is not inserted in a row", lab=LABEL[kind]))
+    rid = ix.row_of[block]
+    src = _flow_of(q, flow) if flow is not None else ix.row[rid]
+    if flow is not None:
+        sroot = ix.root(src.id if isinstance(src, Row) else ix.row_of.get(src.block, rid))
+        if block not in _flow_chain(q, ix, src.id) and not (b.kind == "calibration" and sroot == rid):
+            raise Refusal("the block is not in this workflow")
+    if method is not None and method not in wfl.METHODS.get(kind, ()):
+        raise Refusal("unknown method")
+    base = (name or "").strip() or name_of("{_row} · {lab}", _row=src.name, lab=LABEL[kind])
+    if b.kind == "calibration":
+        root = ix.row[rid]
+        nights, mine = [], None
+        for s, c in root.nights:
+            nn = _night(q, q.blocks[s].name, {k: list(v) for k, v in q.blocks[s].files.items()})
+            q.blocks[nn[0]].sid = q.blocks[nn[1]].sid = q.blocks[s].sid
+            q.blocks[nn[1]].own = copy.deepcopy(q.blocks[c].own)
+            nights.append(nn)
+            if c == block:
+                mine = nn[1]
+        v = Row(new_id(q, "r"), free_name(q, base), [], nights)
+        v.calib_node, v.calib_fork = True, None
+        new = mine
+        at = _after_subtree(q, root.id)
+    else:
+        nb = new_block(q, kind, method=method)
+        v = Row(new_id(q, "r"), free_name(q, base), [nb.id], [], [rid, block])
+        new = nb.id
+        at = _after_subtree(q, rid)
+    _copy_flow(v, src)
+    v.legacy, v.end, v.trial, v.align = None, None, None, None
+    q.rows.insert(at, v)
+    _alloc(q)
+    if b.kind == "calibration":
+        q.blocks[new].own = {"fork": v.wid}
+    elif kind in FRAME_KINDS:
+        q.blocks[new].fork = v.wid            # a frame block drawn on its own, even while it computes the same
+    from ..core.project2 import Project2
+    from .compile import compile_into
+    p = Project2(name="branch")
+    c = compile_into(q, p)
+    sw, vw = p.workflow(c.wids[src.id]), p.workflow(v.wid)
+    extra = copy.deepcopy(v.extra)
+    for st, kv in sw.params.items():                  # as a copy of the workflow it leaves: every setting it stores
+        for k, val in kv.items():
+            if (vw.params.get(st) or {}).get(k, object()) != val:
+                extra.setdefault(st, {})[k] = copy.deepcopy(val)
+    fresh = {st for st in extra if st.split("@")[0] in ("inventory", "calibrate")} if b.kind == "calibration" \
+        else set(_stages_of(q, new, c.names))
+    v.extra = {st: kv for st, kv in extra.items() if st not in fresh}     # its new block: from its defaults
+    if vw.breakpoints:
+        v.pauses = []                                 # a new workflow pauses nowhere
+    return Out(M("branch “{_name}” from “{_base}”", _name=v.name, _base=src.name), new, new=new)
+
+
+def dependants(q, block):
+    """The blocks a removal of chain block `block` takes with it (those after it, in its row and its variants, that
+    need it), in the order they go; [] when it goes alone, or when taking later blocks does not make it possible.
+    Nothing changes in q."""
+    if not isinstance(block, str) or block not in q.blocks:
+        return []
+    ix = Index(q)
+    if block not in ix.row_of or q.blocks[block].kind in ("session", "calibration", "post") or \
+            ix.pos.get(block) is None:
+        return []
+    rid = ix.row_of[block]
+    cands = [x for r in ix.subtree(rid) for x in (ix.row[r].blocks[ix.pos[block] + 1:] if r == rid
+                                                     else ix.row[r].blocks)]
+    fed = True
+    while fed:                                  # the joins its images feed, and what follows them
+        fed = False
+        for w in q.wires:
+            d = w.dst[0]
+            if w.src[0] in [block] + cands and d not in cands and d != ix.post and d in ix.row_of:
+                cands += [x for r in ix.subtree(ix.row_of[d]) for x in ix.row[r].blocks if x not in cands]
+                fed = True
+    c = clone(q)
+    try:
+        op_remove_block(c, block)
+        normalise(c)
+    except Refusal:
+        return []
+    why, deps = legality(c), []
+    while why and cands:
+        text = say_text(why)
+        live = [d for d in cands if d in c.blocks and d not in deps]
+        tried = None
+        for d in sorted(live, key=lambda d: say_text(rules.title_msg(c, d)) not in text):    # the one named first
+            c2 = clone(c)
+            try:
+                op_remove_block(c2, d)
+                normalise(c2)
+            except Refusal:
+                continue
+            why2 = legality(c2)
+            if not why2 or say_text(why2) != text:
+                tried = (d, c2, why2)
+                break
+        if tried is None:
+            return []
+        deps.append(tried[0])
+        c, why = tried[1], tried[2]
+    return deps if not why else []
+
+
+def say_text(m):
+    from .msg import say
+    return say(m)
+
+
+def op_remove_with_dependants(q, block):
+    """A block deleted with the blocks after it that need it (one step)."""
+    b = _blk(q, block)
+    deps = dependants(q, block)
+    out = op_remove_block(q, block)
+    for d in deps:
+        if d in q.blocks:
+            op_remove_block(q, d)
+    if deps:
+        out.toast = M("{lab} deleted with {n} block that needs it" if len(deps) == 1
+                      else "{lab} deleted with {n} blocks that need it", lab=LABEL[b.kind], n=len(deps))
+    return out
 
 
 OPS = {k[3:]: v for k, v in dict(globals()).items() if k.startswith("op_")}

@@ -60,6 +60,25 @@ Operations: apply(graph, name, **kwargs) -> (graph2, Result), argument names fix
   share_night(night, row)              the same session drawn in another stack (files and name kept equal)
   set_night_filter(night, filter)      send_to_post(block, name=None): mid-row, a tap; remove_tap(tap)
   set_own_calibration(block, kind, paths, mode="add")   follow_session(block, kind)   remove_own_calibration(block)
+  -- step 4c (what the project model edits beside the drawing)
+  set_session_files(sid, kind, paths)  rename_session(sid, name)  set_session_filter(sid, filter)
+  set_left_out(sid, kind, paths)       remove_session(sid)        a session by its id, drawn or not
+  exclude_frames(sid, names, excluded=True)   lights excluded by hand (Project.excluded, by file name)
+  exclude_files(session, kind, paths, excluded=True)   single files of a Session left out by hand (lights: as
+                                       exclude_frames; calibration frames: its night's left_out)
+  set_image_file(block, path=None, stretched=None)   an Image block's file
+  rename_tap(tap, name)                set_flow_pauses(flow, pauses)   a row's or tap's own pause list (None: its
+                                       blocks' pauses)
+  set_flow_options(flow, options=None, end=None)   a workflow made from options (Row.legacy), or its early exit
+  set_flow_param(flow, stage, name, value)   a workflow's setting on what holds it (a block, its stack, its Output,
+                                       its Align on, else its leftovers); store_params(flow, params) the same,
+                                       stored as given (no check)
+  replace_chain(row, blocks, calibration=None, align=None, options=None)   a row's chain made of these blocks
+  add_branch(block, kind, flow=None, name=None, method=None)   a new workflow: the chain up to block, then a new
+                                       block of that kind (a Calibration: the night's own, beside its stack's)
+  remove_with_dependants(block)        a block deleted with the blocks after it that need it (one step)
+  Queries: variants(graph, row), dependants(graph, block), fold_problem(graph, tr),
+           excluded_files(graph, session, kind). A refused remove_block's Result.dependants: the blocks that need it.
   Templates: graphcore.templates.build(graph, t, name, opts) -> Plan (Plan.steps for apply_many, Plan.post(rows)).
   Post's wires: graphcore.post (shared_images, wired_images, with_post_wires, post_actions).
   fold_all() unfold_all() set_mode(mode) select(id)   view only: they change the view dict, never the graph
@@ -161,6 +180,36 @@ effective = _rules.effective
 followers = _rules.followers
 files_of = _rules.files_of
 differs = _rules.differs
+
+
+def variants(project, r):
+    """The variants of row r (the rows forking from it, directly or through another variant), in rows order ->
+    [row id]; [] for an unknown row."""
+    ix = Index(project)
+    if r not in ix.row:
+        return []
+    mine = set(ix.subtree(r)) - {r}
+    return [x.id for x in project.rows if x.id in mine]
+
+
+def dependants(project, b):
+    """The blocks a removal of block b takes with it (remove_with_dependants): those after it that need it, in the
+    order they go; [] when it goes alone or cannot go even with them."""
+    from .operations import dependants as _d
+    return _d(project, b)
+
+
+def fold_problem(project, tr=None):
+    """"" when the preprocessing band can be folded, else why not (a variant starts from inside a stack)."""
+    from .operations import fold_problem as _f
+    ix = Index(project)
+    return next((say(m, tr) for m in (_f(project, ix, r.id) for r in project.rows if r.nights) if m), "")
+
+
+def excluded_files(project, session, kind):
+    """The files of a Session left out by hand (exclude_files): lights by file name, calibration frames by path."""
+    from .operations import excluded_files as _x
+    return _x(project, session, kind)
 
 
 def own_keys(project, b):

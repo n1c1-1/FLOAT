@@ -42,6 +42,8 @@ def candidates(p, view, kind=None, block=None, d=None):
     out = []
 
     def add(pk, rect, tip, name, args):
+        if block is not None and _own_place(p, ix, block, name, args):
+            return                               # a block dropped where it is: no place (nothing would move)
         out.append(Place(pk, rect, None, None, False, "", tip, (name, args)))
 
     def op_for(at):
@@ -155,6 +157,16 @@ def candidates(p, view, kind=None, block=None, d=None):
                 add("port", Box(px - 44, py - STRIP / 2, 40, STRIP), M("New row for {port}", port=port),
                     "add_block", {"kind": kind, "at": {"type": "port", "block": j, "port": port}})
     return out
+
+
+def _own_place(p, ix, block, name, args):
+    """Whether a drag's place puts the dragged block (or Session) back where it is."""
+    if name == "move_block":
+        return ops.own_spot(ix, block, args["at"])
+    if name == "move_night" and args.get("row") is not None and args.get("before") is None:
+        r = ix.row.get(args["row"])
+        return r is not None and bool(r.nights) and r.nights[-1][0] == block
+    return False
 
 
 def judge(p, view, place):

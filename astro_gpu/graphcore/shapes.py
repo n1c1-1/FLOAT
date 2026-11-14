@@ -92,6 +92,7 @@ class Result:
     focus: object = None
     acted: object = None
     created: object = None
+    dependants: object = None   # a refused remove_block: the blocks after it that need it ([] when none can help)
 
     def reason_text(self, tr=None):
         return say(self.reason, tr)
