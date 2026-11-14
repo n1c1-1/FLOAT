@@ -3855,6 +3855,18 @@ class PostPage3(QWidget):
         pages; the next render, on coming back, opens them again."""
         self.view.worker.release()
 
+    #: below this much memory the engine may still fill (the machine's free memory, or the Memory limit of the
+    #: Settings less what FLOAT holds), leaving Post hands its engines and caches back
+    LEAVE_ROOM_BYTES = 2 << 30
+
+    def leave(self):
+        """Leaving Post for another page: its engines and caches are kept, so that coming back shows the picture at once
+        (releasing them cost 2 to 5 s on each return, on a laptop), unless memory is short: then they are released."""
+        from ..core import devices
+        mb = devices.memory_budget()
+        if mb is not None and mb[0] < self.LEAVE_ROOM_BYTES:
+            self.release_memory()
+
     def export(self, parent=None):
         """File > Export image…"""
         if self.pages.currentIndex() == 1:

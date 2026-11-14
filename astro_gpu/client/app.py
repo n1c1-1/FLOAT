@@ -1003,7 +1003,7 @@ class Main(QMainWindow):
         if i == 2 and not was_post and self._post_holder is not None and self._post_holder.page is not None:
             self._post_holder.page.refresh()
         elif was_post and i != 2 and self._post_holder is not None and self._post_holder.page is not None:
-            self._post_holder.page.release_memory()      # Post's engines and caches go; coming back opens them again
+            self._post_holder.page.leave()     # Post's engines and caches go only when memory is short
         if i == 0 and self.graph is not None and getattr(self.graph, "graph", None) is not None:
             self.graph.graph.rebuild()             # the arrows of the images sent to Post meanwhile
         self.refresh()
