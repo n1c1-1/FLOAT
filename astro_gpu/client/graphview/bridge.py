@@ -127,9 +127,10 @@ class Bridge(QObject):
         if sel and sel != PROJECT and sel not in self.doc.graph.blocks and self.row(sel) is None:
             self.doc.view["selected"] = None
 
-    def act(self, name, quiet=False, **kw):
+    def act(self, name, /, quiet=False, **kw):
         """One operation, then the signals. quiet: True = no toast at all; "refusal" = no toast for a refusal.
-        -> the Result."""
+        The operation's name is positional only: an operation's own ``name=`` (rename_row, rename_night) goes into
+        ``kw``. -> the Result."""
         before = self.doc.graph
         res = self.after(self.doc.apply(name, **kw), quiet, kw.get("kind"), before=before)
         if res.ok:
