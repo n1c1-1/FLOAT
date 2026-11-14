@@ -67,9 +67,8 @@ level3 = [
     "tests/client/test_post.py::test_masks_with_parts_show_on_the_image_and_in_the_thumbnails",
     "tests/client/test_post.py::test_the_engine_note_is_said_in_the_hint",
     "tests/client/test_post.py::test_the_export_reduced_matches_the_half_resolution_preview",
-    # test_shell.py, test_graph.py
+    # test_shell.py, graphview/test_gv_legacy_model.py (today's test_graph.py ported to the new page)
     "tests/client/test_shell.py::test_python_m_starts_the_client",
     "tests/client/test_shell.py::test_shots",
-    "tests/client/test_graph.py::test_shots",
-    "tests/client/test_graph.py::test_no_setting_of_the_engine_is_out_of_reach",
+    "tests/client/graphview/test_gv_legacy_model.py::test_no_setting_of_the_engine_is_out_of_reach",
 ]

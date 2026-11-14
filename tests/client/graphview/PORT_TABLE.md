@@ -6,8 +6,11 @@ any more. Each of their tests is one line here:
 - **COVERED**: a test of the new page or of the graph core already checks the same behaviour (named).
 - **PORTED**: rewritten on the new page and the project model (named; `legacy.py` is their bench).
 - **GONE**: a detail of the old drawing code that no longer exists (said which).
-- **LOST**: something the user could do or see that the new page does not do: not tested here, listed with how to
-  reproduce it in the list of defects of the swap (its number, `s6a-N`).
+- **LOST**: something the user could do or see that the new page does not do (the test's main point): not tested, listed with how to
+  reproduce it in the list of defects of the swap (its number, `s6a-N`). A smaller part lost from a test otherwise ported is
+  said beside it ("part lost").
+
+Of the 197 tests: 118 PORTED, 28 COVERED, 4 GONE, 47 LOST.
 
 Files: `misc` = test_gv_legacy_misc.py, `page` = test_gv_legacy_page.py, `flows` = test_gv_legacy_flows.py,
 `model` = test_gv_legacy_model.py (all in tests/client/graphview/).
@@ -20,7 +23,7 @@ Files: `misc` = test_gv_legacy_misc.py, `page` = test_gv_legacy_page.py, `flows`
 | test_a_workflow_saved_as_a_template_comes_back_in_the_gallery_and_as_a_file | LOST | s6a-18 (a saved template is offered only on a blank page; no window, no template file) |
 | test_a_filters_template_on_a_new_project_makes_its_empty_sessions | PORTED | page::test_a_filters_template_on_a_new_project_makes_its_empty_sessions |
 | test_a_color_block_of_a_mono_workflow_is_greyed_with_its_reason | LOST | s6a-7 |
-| test_what_the_play_test_found_stays_fixed | LOST | s6a-7 (no Color in mono); the refused delete keeping the selection: page::test_a_refused_delete_keeps_the_selection_and_frames_what_needs_it |
+| test_what_the_play_test_found_stays_fixed | PORTED | page::test_a_refused_delete_keeps_the_selection_and_frames_what_needs_it (part lost: no Color in mono, s6a-7) |
 | test_a_template_takes_the_place_of_an_empty_workflow_and_channels_are_not_post_layers | PORTED | flows::test_filters_make_one_workflow_each_and_their_combinations (channels give Post no layer); the empty workflow made from sessions is GONE (a Session is a stack) |
 | test_branches_parallel_flows_removable_wires_and_the_palette_taking_a_block_back | PORTED | page::test_a_wire_to_post_is_taken_away_with_del_and_stays_away, page::test_a_block_dragged_onto_the_palette_is_removed; branch and parallel stack COVERED by test_gv_page.py::test_s06_branch_strip_makes_a_variant_below, ::test_s03_drag_session_onto_plus_session |
 | test_the_first_blocks_have_their_cross_and_the_last_session_can_go | LOST | s6a-19 (Calibration not deletable, owner's call); the last Session: page::test_the_last_session_goes_with_its_workflow_and_ctrl_z_brings_everything_back |
@@ -39,7 +42,7 @@ Files: `misc` = test_gv_legacy_misc.py, `page` = test_gv_legacy_page.py, `flows`
 | test_the_filters_card_makes_the_palette_chosen_on_it | PORTED | page::test_the_filters_card_makes_the_palette_chosen_on_it |
 | test_the_dual_band_x2_card_offers_no_combination_choice | PORTED | page::test_the_dual_band_x2_card_offers_no_combination_choice |
 | test_no_template_asks_for_a_file_it_only_places_its_blocks | PORTED | page::test_no_template_asks_for_a_file_it_only_places_its_blocks (the window's part: s6a-18) |
-| test_several_images_are_all_numbered_the_first_too | LOST | s6a-8 (the Image's line); the names: page::test_images_are_numbered_by_their_workflows |
+| test_several_images_are_all_numbered_the_first_too | PORTED | page::test_images_are_numbered_by_their_workflows (part lost: the Image's line, s6a-8) |
 | test_an_image_added_beside_one_numbers_both_as_their_blocks | PORTED | page::test_images_are_numbered_by_their_workflows (an Image block's title is its kind; its row's caption carries the name) |
 | test_deleting_a_middle_image_keeps_each_blocks_title_its_workflows_name | PORTED | page::test_images_are_numbered_by_their_workflows |
 | test_the_menu_of_another_workflows_block_stays_open | PORTED | page::test_the_menu_of_another_workflows_block_stays_open |
@@ -105,9 +108,9 @@ Files: `misc` = test_gv_legacy_misc.py, `page` = test_gv_legacy_page.py, `flows`
 | test_two_sessions_are_drawn_before_the_chain_and_joined | COVERED | test_gv_page.py::test_s03_drag_session_onto_plus_session; tests/graphcore/test_points.py::test_a03_second_night_fans_in |
 | test_the_session_block_edits_its_frames_and_its_filter | PORTED | flows::test_the_session_block_edits_its_frames_and_its_filter |
 | test_switching_a_block_off_draws_it_so_refuses_what_cannot_and_undoes | COVERED | test_gv_page2.py::test_s20_d_switches_off_then_refuses_a_needed_block |
-| test_a_workflow_from_an_image_starts_on_its_own_lane | LOST | s6a-8 (its line); the rest: flows::test_a_workflow_from_an_image_starts_on_its_own_row |
-| test_filters_make_one_workflow_each_and_a_combination_in_the_composition_section | LOST | s6a-18 (the same filters again, from the New workflow window); the rest: flows::test_filters_make_one_workflow_each_and_their_combinations |
-| test_an_already_stretched_image_workflow_goes_to_post | LOST | s6a-8 (its line); the rest: flows::test_an_already_stretched_image_workflow_goes_to_post |
+| test_a_workflow_from_an_image_starts_on_its_own_lane | PORTED | flows::test_a_workflow_from_an_image_starts_on_its_own_row (part lost: its line, s6a-8) |
+| test_filters_make_one_workflow_each_and_a_combination_in_the_composition_section | PORTED | flows::test_filters_make_one_workflow_each_and_their_combinations (part lost: the same filters again from the New workflow window, s6a-18) |
+| test_an_already_stretched_image_workflow_goes_to_post | PORTED | flows::test_an_already_stretched_image_workflow_goes_to_post (part lost: its line, s6a-8) |
 | test_a_combination_panel_shows_its_named_inputs_and_its_settings | PORTED | flows::test_a_combination_panel_shows_its_named_inputs_and_its_settings |
 
 ## test_parallel_blocks.py (19)
@@ -162,7 +165,7 @@ Files: `misc` = test_gv_legacy_misc.py, `page` = test_gv_legacy_page.py, `flows`
 | test_two_images_without_a_file_are_two_blocks | PORTED | page::test_two_images_without_a_file_are_two_blocks |
 | test_names_never_empty_nor_another_s | PORTED | flows::test_names_are_never_empty_nor_another_s (the name typed on a block: s6a-1) |
 | test_removing_a_flow_or_its_session_says_what_goes | LOST | s6a-10 (the Session left); the rest: flows::test_removing_a_stack_or_its_session_says_what_goes |
-| test_a_session_calibration_shows_its_scope_and_has_its_buttons | LOST | s6a-5 (a pause on Calibration said, not kept); the rest: flows::test_a_session_calibration_shows_its_scope_and_has_its_buttons |
+| test_a_session_calibration_shows_its_scope_and_has_its_buttons | PORTED | flows::test_a_session_calibration_shows_its_scope_and_has_its_buttons (part lost: a pause on Calibration said, not kept, s6a-5) |
 | test_a_field_going_away_writes_nothing | PORTED | misc::test_a_field_going_away_writes_nothing |
 | test_a_filter_s_second_night_is_named_and_drawn_with_its_filter | LOST | s6a-9 |
 | test_a_new_session_s_name_is_never_another_s | PORTED | flows::test_a_new_session_s_name_is_never_another_s |
@@ -188,5 +191,67 @@ Files: `misc` = test_gv_legacy_misc.py, `page` = test_gv_legacy_page.py, `flows`
 | test_a_workflow_without_lights_has_a_dashed_wire_and_no_layer | LOST | s6a-3 |
 | test_to_post_on_the_last_block_says_lights_first_not_already_a_layer | LOST | s6a-3 |
 | test_lights_turn_the_dashed_wire_into_a_layer | PORTED | flows::test_with_lights_a_workflow_s_wire_to_post_is_a_layer |
-| test_every_block_says_what_it_does | LOST | s6a-17 (the line not wrapped); what each says: flows::test_every_block_says_what_it_does |
+| test_every_block_says_what_it_does | PORTED | flows::test_every_block_says_what_it_does (part lost: the line not wrapped, s6a-17) |
 | test_a_banner_stays_until_it_is_closed | PORTED | misc::test_a_banner_stays_until_it_is_closed |
+
+## test_graph.py (58)
+| old test | verdict | where |
+|---|---|---|
+| test_the_model_does_not_wait_for_the_disk | LOST | s6a-21 (opening reads the frames in the GUI thread); the rest: model::test_the_model_does_not_wait_for_the_disk |
+| test_the_tree_shares_blocks_as_the_engine_does | PORTED | model::test_the_blocks_are_shared_as_the_engine_does |
+| test_the_graph_shows_the_real_engine_order | PORTED | model::test_the_blocks_are_shared_as_the_engine_does (the engine's order, the bands, Gradient before Color; the old columns are GONE) |
+| test_states_come_from_the_api | PORTED | model::test_states_come_from_the_api |
+| test_calibration_counts_take_the_plural | PORTED | misc::test_calibration_counts_take_the_plural |
+| test_a_shared_stage_is_one_key | PORTED | model::test_a_shared_stage_is_one_key |
+| test_adding_and_removing_blocks_follows_the_rules_with_toasts | COVERED | test_gv_page2.py::test_s19_drop_on_a_refused_place_changes_nothing_and_says_why, ::test_s21_del_on_a_needed_block_is_refused_with_its_reason; tests/graphcore/test_engine_rules.py::test_needs_are_the_engines |
+| test_the_palette_offers_every_block_and_says_why_one_cannot_go | COVERED | test_gv_page2.py::test_s24_palette_greys_a_card_and_says_why_on_hover; test_gv_parity.py::test_a_card_refused_here_says_where_it_can_still_go |
+| test_a_change_on_a_shared_done_block_offers_replace_or_variant | PORTED | model::test_a_change_on_a_shared_done_block_offers_replace_or_variant |
+| test_try_as_variant_keeps_the_original_and_shares_the_blocks_before | PORTED | model::test_try_as_variant_keeps_the_original_and_shares_the_blocks_before |
+| test_a_method_card_asks_the_same_question | PORTED | model::test_a_method_card_asks_the_same_question |
+| test_a_method_card_says_the_duration_on_each_device_and_which_one_is_used | PORTED | model::test_a_method_card_says_the_duration_on_each_device_and_which_one_is_used |
+| test_the_durations_of_the_cards_are_read_by_the_worker_and_the_panel_follows | PORTED | model::test_the_durations_of_the_cards_are_read_by_the_worker_and_the_panel_follows |
+| test_undo_and_redo_restore_the_workflows | PORTED | model::test_undo_and_redo_restore_the_workflows (a workflow deleted on the page) |
+| test_escape_cancels_a_port_pulled_to_post | PORTED | page::test_escape_cancels_a_port_pulled_to_post |
+| test_outputs_pulled_to_post_make_a_raw_stack_workflow | PORTED | model::test_a_port_pulled_to_post_makes_a_raw_stack_workflow_without_star_sliders |
+| test_the_mouse_over_and_on_every_block_works | PORTED | page::test_the_mouse_over_and_on_every_block_works (part lost: the hand over a port, s6a-16) |
+| test_new_workflow_duplicate_rename_delete | LOST | s6a-18 (New workflow from the gallery), s6a-1 (Rename); Duplicate and Delete: model::test_duplicate_and_delete_a_workflow |
+| test_clicking_selects_and_sets_the_scope | PORTED | model::test_clicking_selects_and_sets_the_scope |
+| test_the_panel_lists_the_settings_of_the_engine | PORTED | model::test_the_panel_lists_the_settings_of_the_engine |
+| test_the_colour_block_has_one_factor_per_colour_and_no_choice_of_correction | PORTED | model::test_the_colour_block_has_one_factor_per_colour_and_no_choice_of_correction |
+| test_a_settings_row_changes_marks_and_goes_back_to_the_suggestion | PORTED | model::test_a_settings_row_changes_marks_and_goes_back_to_the_suggestion |
+| test_a_block_after_the_stars_has_its_column_and_not_the_first | GONE | the old view's columns (`GraphView.columns`): the new layout places a row's blocks in its chain's order |
+| test_the_deconvolution_block_has_its_method_and_its_settings | PORTED | model::test_the_deconvolution_block_has_its_method_and_its_settings (placed from the palette) |
+| test_the_stacking_method_is_chosen_on_cards_and_shows_only_its_own_settings | PORTED | model::test_the_stacking_method_is_chosen_on_cards_and_shows_only_its_own_settings |
+| test_the_engines_method_is_an_automatic_outline_with_its_reason | PORTED | model::test_the_engines_method_is_an_automatic_outline_with_its_reason |
+| test_the_selection_rule_is_said_and_the_thresholds_act_only_with_the_thresholds_rule | PORTED | model::test_the_selection_rule_is_said_and_the_thresholds_act_only_with_the_thresholds_rule (the graph's line under Selection is the core's own, tests/graphcore) |
+| test_selection_thresholds_come_from_the_stack_settings | PORTED | model::test_selection_thresholds_come_from_the_stack_settings |
+| test_spec_mode_shows_what_the_engine_does_not_have_disabled | PORTED | model::test_spec_mode_shows_what_the_engine_does_not_have_disabled |
+| test_the_french_switch_translates_everything_visible | PORTED | model::test_the_french_switch_translates_every_panel_and_the_page (the page built again in French, as the window does) |
+| test_decimal_commas_in_french_reasons | PORTED | model::test_decimal_commas_in_french_reasons |
+| test_nothing_slow_runs_in_the_gui_thread | PORTED | model::test_nothing_slow_runs_in_the_gui_thread (part lost: the opening, s6a-21) |
+| test_save_writes_only_the_definition_and_only_when_asked | PORTED | model::test_save_writes_only_the_definition_and_only_when_asked |
+| test_shots | PORTED | model::test_shots_in_english_and_french_cut_no_text (no block over another: tests/graphcore/test_core.py::test_layout_invariants_on_fixtures_and_folds) |
+| test_the_page_says_it_is_reading_while_the_worker_works | COVERED | test_gv_parity.py::test_the_reading_veil_and_an_unreadable_project |
+| test_dropping_a_block_on_a_lane_puts_it_where_the_rules_say | LOST | s6a-23 (every place of every stack lit at once); the drop where the rules say: tests/graphcore/test_core.py::test_places_lit_match_apply, test_gv_page2.py::test_s19_drop_on_a_refused_place_changes_nothing_and_says_why |
+| test_a_block_dropped_on_another_workflows_place_goes_there | COVERED | tests/graphcore/test_points.py::test_point8_drop_on_lower_row_moves_only_that_row |
+| test_a_project_without_workflows_has_a_blank_graph_and_the_project_panel | PORTED | model::test_a_project_without_workflows_has_a_blank_graph_and_the_project_panel |
+| test_a_change_of_an_automatic_setting_is_seen_by_the_what_if | PORTED | model::test_a_change_of_an_automatic_setting_is_seen_by_the_what_if |
+| test_no_setting_of_the_engine_is_out_of_reach | PORTED | model::test_no_setting_of_the_engine_is_out_of_reach |
+| test_every_block_has_pause_here_for_review_and_the_dot_shows | LOST | s6a-5 (the pause on Calibration), s6a-6 (the tooltip); the rest: model::test_every_block_has_review_pause_and_the_dot_shows |
+| test_the_dot_says_pending_paused_or_reviewed_and_the_graph_follows | PORTED | model::test_the_dot_says_pending_paused_or_reviewed_and_the_graph_follows (part lost: the tooltip, s6a-6) |
+| test_the_pause_is_stored_per_workflow_undone_copied_and_leaves_with_its_block | LOST | s6a-22 (a copy loses its pauses); the rest: model::test_the_pause_is_stored_per_workflow_undone_copied_and_leaves_with_its_block |
+| test_breakpoints_change_no_key_and_no_state | PORTED | model::test_breakpoints_change_no_key_and_no_state |
+| test_selection_is_reviewed_with_its_thresholds_and_runs_to_registration | PORTED | model::test_selection_is_reviewed_with_its_thresholds_and_runs_to_registration |
+| test_the_pause_in_french_on_the_graph | PORTED | model::test_the_pause_in_french_on_the_graph (part lost: the French tooltip and the toast's block and count, s6a-6) |
+| test_the_default_view_shows_the_whole_chain_from_frames_to_post_at_any_width_and_in_both_languages | PORTED | model::test_the_default_view_shows_the_session_at_any_width_and_post_when_it_fits (the old minimum scale is GONE) |
+| test_a_chain_wider_than_the_view_keeps_post_at_hand_and_a_drag_near_the_edge_scrolls | PORTED | model::test_the_default_view_shows_the_session_at_any_width_and_post_when_it_fits (Post →); the edge scroll: test_gv_parity.py::test_a_drag_held_near_the_edge_scrolls_the_view |
+| test_a_band_one_column_wide_writes_its_title_on_two_lines | PORTED | model::test_a_band_one_column_wide_writes_its_title_on_two_lines |
+| test_the_test_project_is_untouched | PORTED | model::test_the_test_project_is_untouched |
+| test_a_rebuild_keeps_where_the_graph_was_scrolled | PORTED | model::test_a_rebuild_keeps_where_the_graph_was_scrolled |
+| test_the_panel_built_again_keeps_the_setting_being_edited_focused | PORTED | model::test_the_panel_built_again_keeps_the_setting_being_edited_focused |
+| test_round2_post_block_menu_opens_post_and_the_last_block_menu_puts_the_workflow_apart | PORTED | model::test_round2_post_block_menu_opens_post_and_the_last_block_menu_puts_the_workflow_apart (a Combine layers block's menu: s6a-2) |
+| test_round2_d_on_a_recombine_says_why_and_a_new_recombine_is_said_and_numbered | LOST | s6a-2 |
+| test_round2_opening_a_default_recombine_in_post_is_no_undo_step | PORTED | model::test_round2_opening_a_default_recombine_in_post_is_no_undo_step |
+| test_round2_an_empty_click_deselects_and_undo_selects_what_comes_back | PORTED | model::test_round2_an_empty_click_deselects_and_del_and_d_do_nothing_then; Undo selecting what comes back: test_graphmodel_undo.py::test_undo_selects_on_block_ids |
+| test_round2_a_wire_chosen_takes_the_block_selection_and_stays_chosen | PORTED | model::test_round2_a_wire_chosen_takes_the_block_selection_and_goes_with_escape |
+| test_round2_a_shown_widget_without_parent_never_opens_as_a_window | PORTED | misc::test_a_shown_widget_without_parent_never_opens_as_a_window |
