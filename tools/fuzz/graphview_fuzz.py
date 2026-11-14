@@ -90,8 +90,6 @@ KNOWN_CORE_CASES = [
      "the same for a Session dragged: places(block=session) offers its own spot as a lit move_night place"),
 ]
 
-#: --model: the answers to a gesture that asks first (Replace: its toast's link; Try variant: Enter; Cancel: Esc)
-ANSWERS = ["replace", "variant", "cancel"]
 WEIGHTS = [("palette", 22), ("double", 6), ("move", 14), ("wire", 9), ("menu", 12), ("key", 12), ("cross", 5),
            ("wclick", 4), ("display", 4), ("ctrlj", 2), ("files", 7)]
 
@@ -467,8 +465,6 @@ class Run:
                 kind = rng.choices([k for k, _w in WEIGHTS], [w for _k, w in WEIGHTS])[0]
                 g = getattr(self, "_c_" + kind)()
             if g is not None:
-                if MODEL_ROOT:          # the answer if the gesture asks first (computed results): drawn now, replayed
-                    g["answer"] = rng.choice(ANSWERS)
                 return g
         return None
 
@@ -888,8 +884,28 @@ class Run:
                 raise Failure("h", f"Combine layers {j} stands for no layer of Post{when}")
             if not any(w.src[0] == j and w.dst[0] == post for w in g.wires):
                 raise Failure("h", f"Combine layers {j} is a layer of Post without its wire to Post{when}")
-        # (the count of blocks against Post's layers is checked by tests/client/test_graph_post_layers_agree.py: here
-        # it failed once after a gesture answered Cancel to the computed-results question, not on replay: open)
+        # as many: (it failed once after a gesture answered Cancel to the computed-results question; a gesture no longer
+        # waits for an answer, so the count is checked again after every gesture)
+        # (a start compiled without Post may hold Combine layers blocks Post never had: such a start is not counted)
+        n_layers = sum(1 for x in m.post_layers() if x.get("kind") == "workflow" and x.get("part") == "combined")
+        # A gesture never adds a block without its layer (nor a layer without its block); an Undo or a Redo gives the
+        # graph back with the same agreement it had (the same graph, the same count)
+        gap = len(heads | drawn) - n_layers
+        if "_post_gaps" not in self.__dict__ and gap != 0:
+            self.stats["post_count_off"] = gap     # a start that disagrees with Post from the first: not counted
+        if self.stats.get("post_count_off"):
+            return
+        gaps = self.__dict__.setdefault("_post_gaps", {})
+        key = self.js()
+        if key in gaps and gaps[key] != gap:
+            raise Failure("h", f"{len(heads | drawn)} Combine layers blocks against {n_layers} Combine layers layers "
+                               f"of Post, {gaps[key]:+d} for the same graph before{when}")
+        was = getattr(self, "_post_gap", None)
+        if "Ctrl+" not in when and not getattr(self, "_in_history", False) and was is not None and abs(gap) > abs(was):
+            raise Failure("h", f"{len(heads | drawn)} Combine layers blocks against {n_layers} Combine layers layers "
+                               f"of Post (it was {was:+d}){when}")
+        gaps.setdefault(key, gap)
+        self._post_gap = gap
 
     def check_shown(self):
         """c: what the gesture made is drawn and fully on screen."""
@@ -936,6 +952,12 @@ class Run:
             self.G.key("Ctrl+Z", target=self.canvas)
         if self.js() != before:
             raise Failure("d", "Ctrl+Z did not give back the graph before the gesture")
+        now = self._model_snap()
+        if MODEL_ROOT and now != self.snap0:
+            st = sorted(set(now[0]) ^ set(self.snap0[0]))[:6]
+            raise Failure("d", "Ctrl+Z did not give back " + (f"the states before the gesture: {st}" if st else
+                                                               "Post's layers before the gesture"))
+        self.settle_states(" after Ctrl+Z")
         self.check_painted(" after Ctrl+Z")
         for _i in range(steps):
             self.G.key("Ctrl+Y", target=self.canvas)
@@ -943,30 +965,13 @@ class Run:
             raise Failure("d", "Ctrl+Y did not give back the graph after the gesture")
         self.check_painted(" after Ctrl+Y")
 
-    def answer(self, g):
-        """--model: the gesture asked Replace / Try variant / Cancel (computed results would be computed again): its
-        question shown, answered as the gesture drew it; -> the expectation after the answer."""
-        toast = self.canvas.toast if self.page.position() != "table" else getattr(self.page, "table_toast", None)
-        keys = [k for _t, k in toast.links()] if toast is not None else []
-        if toast is None or not toast.isVisible() or "confirm_replace" not in keys or "confirm_cancel" not in keys:
-            raise Failure("e", f"a gesture asked first but its question is not shown: {keys}")
-        how = g.get("answer", "replace")
-        if how == "variant" and "confirm_variant" not in keys:
-            how = "replace"
-        if QApplication.activeWindow() is not self.page:   # offscreen: a closed menu leaves no active window (keys)
-            self.page.activateWindow()
-            pump(1)
-        if how == "cancel":
-            self.G.key("Esc", target=self.canvas)
-        elif how == "variant":
-            self.G.key("Enter", target=self.canvas)
-        else:
-            toast.link.emit("confirm_replace")
-            pump()
-        if self.doc.model.pending_gesture is not None:
-            raise Failure("e", f"the answer {how} left the question waiting")
-        self.stats["answered_" + how] = self.stats.get("answered_" + how, 0) + 1
-        return "none" if how == "cancel" else "change_or_message"
+    def _model_snap(self):
+        """--model: the states of every stage and Post's layers (an Undo gives them back, up to date at once)."""
+        m = getattr(self.doc, "model", None)
+        if not MODEL_ROOT or m is None:
+            return None
+        return (sorted((k, v.state) for k, v in m._states.items() if v.state == "done"),     # up to date again
+                json.dumps(m.post_layers(), sort_keys=True, default=str))
 
     # ------------------------------------------------------------------ one gesture
     def step_known(self, g, known):
@@ -991,6 +996,7 @@ class Run:
             self.page.activateWindow()
             pump(1)
         before = self.last_before = self.js()
+        self.snap0 = self._model_snap()
         toasts0 = len(self.G.toasts)
         undo0 = len(self.doc._undo)
         self.bridge.last_shown = ()
@@ -1000,11 +1006,12 @@ class Run:
             self.stats["skipped"] += 1
             return False
         expect, history = out
+        self._in_history = history                # an Undo / Redo gesture gives back an earlier agreement with Post
         pump()
-        if MODEL_ROOT and getattr(self.doc.model, "pending_gesture", None) is not None:
-            if self.js() != before or len(self.doc._undo) != undo0:
-                raise Failure("e", "a gesture asked first but changed the project while its question waits")
-            expect = self.answer(g)
+        if MODEL_ROOT and self.js() != before and self.canvas.toast.isVisible():
+            said = self.canvas.toast.plain        # a gesture never waits: applied, its toast says what it made stale
+            if "Replace" in said or "Do not ask" in said or " here, in " in said and "Computes again" in said:
+                raise Failure("e", f"a gesture's toast reads as a question or as the place's bubble: {said!r}")
         after = self.js()
         changed = after != before
         self.stats["accepted" if changed else "refused"] += 1

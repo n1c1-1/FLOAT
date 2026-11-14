@@ -656,7 +656,6 @@ class _ProjectBase(QObject):
     postChanged = Signal(object)           # the Post composition changed (the object that changed it, or None)
     dirtyChanged = Signal(bool)            # there are edits not saved yet (True), or they were saved (False)
     editMade = Signal()                    # any edit of the definition: the recovery copy is written some time after
-    changeAsked = Signal()                 # a gesture of the graph waits for Replace / Try variant / Cancel
 
     def __init__(self, project, worker: ApiWorker | None = None, *, readonly: bool = False,
                  history: list | None = None, gpu: bool = True, device: str | None = None):
@@ -675,7 +674,6 @@ class _ProjectBase(QObject):
         self.sel_layer: int | None = None                  # the Post layer of the selected Stars and background block
         self.scope: list[int] | None = None
         self.pending_change: dict | None = None
-        self.pending_gesture: dict | None = None           # a gesture of the graph waiting for its confirmation
         self.gpu = gpu
         self.device = device if device else (None if gpu else "cpu")
         self.history = history if history is not None else []

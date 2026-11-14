@@ -230,7 +230,7 @@ def test_get_survey_fetches_it_outside_the_run_and_the_next_run_uses_it(qapp, tm
         use.click()
         QApplication.processEvents()
         # it names what it computes again and is one Undo step: it never asks Replace / Try variant / Cancel too
-        assert m.pending_change is None and m.pending_gesture is None
+        assert m.pending_change is None
         assert page.panel.findChild(QLabel, "choice_cost") is None
         again = runner2.plan_all(project2.load(p.root))
         assert {"surveys", "gradient", "render_simple"} <= {x.stage for x in again.jobs}       # computed again

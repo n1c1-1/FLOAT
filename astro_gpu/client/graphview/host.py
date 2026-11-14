@@ -325,9 +325,10 @@ class SidesHost:
 
     # ------------------------------------------------------------------ a change waiting for its confirmation
     def _build_confirm(self, pn):
-        """A change that would compute again results computed and up to date waits for Replace / Try variant / Cancel:
-        a change of the panel at the panel's foot, a gesture of the graph in the page's toast; Enter answers the
-        default (Try variant, else Replace), Esc cancels; choosing another block meanwhile asks first."""
+        """A change of setting in the panel that would compute again results computed and up to date waits at the
+        panel's foot for Replace / Try variant / Cancel; Enter answers the default (Try variant), Esc cancels; choosing
+        another block meanwhile asks first. (A gesture of the graph never waits: it applies, its toast says what it
+        made stale, with Undo.)"""
         from PySide6.QtCore import Qt
         from PySide6.QtGui import QKeySequence, QShortcut
         self._confirm_keys = []
@@ -340,14 +341,11 @@ class SidesHost:
         self.bridge.hold = self._hold_selection
         pn.answered.connect(self._change_answered)
         pn.changed.connect(self._confirm_keys_follow)
-        if hasattr(self.s, "changeAsked"):
-            self.s.changeAsked.connect(self._gesture_asked)
-        self.canvas.toast.link.connect(self._confirm_link)
 
     def _confirm_keys_follow(self, *_a):
         """Enter and Esc answer the question only while one waits (else they are the page's and the fields' own)."""
         s = self.s
-        on = bool(getattr(s, "pending_change", None) or getattr(s, "pending_gesture", None))
+        on = bool(getattr(s, "pending_change", None))
         for sc in getattr(self, "_confirm_keys", ()):
             sc.setEnabled(on)
 
@@ -360,12 +358,6 @@ class SidesHost:
             done = self.panel.answer(how)
             self._confirm_keys_follow()
             return done
-        if getattr(s, "pending_gesture", None):
-            g = s.pending_gesture
-            if how == "default":
-                how = "variant" if g.get("variant") else "replace"
-            self._answer_gesture(how)
-            return True
         self._confirm_keys_follow()
         return False
 
@@ -389,68 +381,3 @@ class SidesHost:
         (ident,), pn.pending_next = pn.pending_next, None
         if ident is None or ident == PROJECT or ident in self.bridge.graph.blocks or self.bridge.row(ident) is not None:
             self.bridge.choose(ident)
-
-    def _confirm_toast(self):
-        """The toast the question is asked in: the table's while the table is shown, else the canvas'."""
-        if self.position() == "table" and getattr(self, "table_toast", None) is not None:
-            t = self.table_toast
-            if not getattr(self, "_table_toast_wired", False):
-                t.link.connect(self._confirm_link)
-                self._table_toast_wired = True
-            return t
-        return self.canvas.toast
-
-    def _gesture_asked(self, note: str = ""):
-        """A gesture of the graph waits (``pending_gesture``): what it computes again and the time, with Replace, Try
-        variant (when the gesture can be made on a copy of its block), Cancel and Do not ask, in the page's toast,
-        which stays until the answer."""
-        s = self.s
-        g = getattr(s, "pending_gesture", None)
-        if g is None:
-            return
-        links = [(_("Replace"), "confirm_replace")]
-        if g.get("variant"):
-            links.append((_("Try variant"), "confirm_variant"))
-        links.append((_("Cancel"), "confirm_cancel"))
-        if not note:
-            links.append((_("Do not ask"), "confirm_never"))
-        text = " · ".join(x for x in (note, g.get("what"), g["cost"].text()) if x)
-        self._confirm_toast().say_links(text, links, lambda: getattr(self.s, "pending_gesture", None) is not None)
-        self.said()
-        self._confirm_keys_follow()
-
-    def _confirm_link(self, key):
-        if key == "confirm_replace":
-            self._answer_gesture("replace")
-        elif key == "confirm_variant":
-            self._answer_gesture("variant")
-        elif key == "confirm_cancel":
-            self._answer_gesture("cancel")
-        elif key == "confirm_never":                     # the preference off; the question still waits for its answer
-            from .. import prefs
-            prefs.set("confirm_changes", False)
-            self._gesture_asked(_("Changes apply at once from now on (Edit › Settings › General asks again)"))
-
-    def _answer_gesture(self, how: str):
-        """Replace: the gesture made (one Undo step; Ctrl+Z gives the results back at once); Try variant: made on a copy
-        of its block, the computed chain kept; Cancel: nothing changes."""
-        s = self.s
-        g, s.pending_gesture = getattr(s, "pending_gesture", None), None
-        self._confirm_keys_follow()
-        if g is None:
-            return None
-        if how == "cancel":
-            self.canvas.toast.hide()
-            if getattr(self, "table_toast", None) is not None:
-                self.table_toast.hide()
-            return None
-        steps = g["variant"] if how == "variant" and g.get("variant") else g["steps"]
-        with s.confirmed():
-            res = self.bridge.act_many(steps, quiet=how == "replace")
-        if res.ok and how == "replace":
-            said = self.bridge.say(res.toast) if res.toast else _("Changed")
-            self.bridge.toast.emit(_("{what} · results computed again · Ctrl+Z gives them back").format(what=said))
-        if res.ok:
-            self.bridge.acted.emit(steps[0][0], res)
-        return res
-

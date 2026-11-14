@@ -17,7 +17,6 @@ from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QMenu, 
 from ..i18n import _
 from ..layout import FOLD_MS, UNFOLD_MS
 from . import style
-from .bridge import ASKED
 from .canvas import MIME_KIND
 from .style import ACCENT, GROUPS, PALETTE_FOLDED_W, PALETTE_W, ROLE, kind_title, kind_what
 
@@ -439,7 +438,7 @@ class Palette(QScrollArea):
         r = self.current_row()
         if card is not None and card.hint and kind not in ("session", "image"):
             res = self.bridge.act("add_block", quiet="refusal", kind=kind, row=r.id if r is not None else None)
-            if not res.ok and res.reason != ASKED:      # (asked: Replace / Try variant / Cancel shown by the page)
+            if not res.ok:
                 self.bridge.toast.emit(_capital(self.bridge.say(res.reason)) + " · " + card.hint)
             return
         bridge = self.bridge

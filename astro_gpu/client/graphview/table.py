@@ -31,7 +31,6 @@ from PySide6.QtWidgets import (
 from ...graphcore.operations import COMMON
 from ..i18n import _, maybe, plural
 from . import files
-from .bridge import ASKED
 from .table_gestures import INTERNAL_MIME, Gestures, common_tip, undo_link
 from .table_headers import HeaderReadings
 from .table_logic import COLS_BLOCK, FOLDED, KIND_TITLE, KINDS, TableModel, count_text
@@ -284,16 +283,15 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
     def act(self, steps, toast=None, links=(), error=None):
         """One gesture = one undo step: steps = [(name, kwargs | f(results) -> kwargs)]. -> the core's Result."""
         res = self.doc.apply_many(list(steps))
-        if not res.ok and res.reason == ASKED:          # waits for Replace / Try variant / Cancel: asked by the page
-            return res
         if not res.ok:
             self.status.emit(self.bridge.say(res.reason) if res.reason else (error or _("Not possible")), 4000)
             return res
         self.bridge.view_changed()                    # the graph is drawn again; the host refreshes this table
         if self._built_rev != self.doc.revision:
             self.after_model()
+        note = self.bridge.take_stale()                # computed results made stale, or work added: said too
         if toast:
-            self.toast.emit(toast, links if callable(links) else list(links))
+            self.toast.emit(toast + (" · " + note if note else ""), links if callable(links) else list(links))
         return res
 
     def undo(self):

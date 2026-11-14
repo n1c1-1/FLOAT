@@ -1116,5 +1116,7 @@
   "{what} · results computed again · Ctrl+Z gives them back": "{what} · résultats à recalculer · Ctrl+Z les rend",
   "Changed": "Modifié",
   "results up to date again": "résultats de nouveau à jour",
-  "variant": "variante"
+  "variant": "variante",
+  "To compute: {blocks} · {time}": "À calculer : {blocks} · {time}",
+  "{block} added to “{workflow}”": "{block} ajouté à « {workflow} »"
 }

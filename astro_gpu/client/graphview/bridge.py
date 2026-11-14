@@ -15,9 +15,6 @@ from ...graphcore.shapes import Result
 from ..i18n import _
 from .document import FAILED, Doc, MemoryDocument
 
-#: the reason of a gesture kept waiting for its confirmation (graphmodel.ASKED): never said as a refusal
-ASKED = "confirmation asked"
-
 log = logging.getLogger(__name__)
 
 #: the selection id of the Project block
@@ -212,12 +209,30 @@ class Bridge(QObject):
             if new is not None:
                 self.appeared.emit(new)
             if res.toast and quiet is not True:
-                self.toast.emit(self.say(res.toast) + " · Ctrl+Z")
-        elif res.reason == ASKED:                 # waits for Replace / Try variant / Cancel: the page asks, no refusal
-            pass
+                note = self.take_stale()
+                if note:                          # computed results made stale, or work added: said, with Undo
+                    said = self.say(res.toast)
+                    r = self.row_of(new) if new is not None and kind else None
+                    if r is not None and self.block(new) is not None:    # what was done, never the place's bubble
+                        from .style import kind_title
+                        said = _("{block} added to “{workflow}”").format(block=kind_title(self.block(new).kind),
+                                                                          workflow=r.name)
+                    self.rich_toast.emit(said + " · " + note, [(_("Undo"), "undo")])
+                else:
+                    self.toast.emit(self.say(res.toast) + " · Ctrl+Z")
         elif res.reason and not quiet:
             self.toast.emit(self.say(res.reason))
         return res
+
+    def take_stale(self) -> str:
+        """What the gesture just applied made stale ("Computes again: Denoise, Color · ≤ 1 min") or added ("To compute: …"),
+        once; "" when nothing (the project model's ``last_stale``)."""
+        m = getattr(self.doc.document, "model", None)
+        c = getattr(m, "last_stale", None) if m is not None else None
+        if c is None:
+            return ""
+        m.last_stale = None
+        return c.text()
 
     def undo(self):
         was = self.selected

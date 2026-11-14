@@ -676,9 +676,6 @@ def test_the_deconvolution_block_has_its_method_and_its_settings(world, model, p
     page.palette.finish()
     page.palette.double_click("deconv")                        # the palette's Deconvolution, in Full
     settle(world["w"], page)
-    assert model.pending_gesture is not None                   # in the computed chain: asked first, then Replace
-    assert page.answer_change("replace")
-    settle(world["w"], page)
     try:
         select_node(page, node(page, "deconv", 1))
         settle(world["w"], page)

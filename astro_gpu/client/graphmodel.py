@@ -83,27 +83,6 @@ class GraphRefused(ValueError):
 
 
 # ---------------------------------------------------------------------------------------------- confirming a change
-#: the reason a gesture of the page returns while it waits for Replace / Try variant / Cancel: never said as a refusal
-ASKED = "confirmation asked"
-#: the core's operations that may make computed results computed again: only these are tried before they apply
-ASK_OPS = frozenset({
-    "remove_block", "switch_off", "add_block", "move_block", "remove_with_dependants", "add_files", "remove_files",
-    "set_common_files", "use_for_all_nights", "reset_own", "reset_own_files", "move_files", "set_session_files",
-    "set_left_out", "exclude_files", "split_by", "remove_night", "move_night", "merge_nights", "split_night",
-    "share_night", "merge_rows", "set_night_filter", "set_setting", "set_common_setting", "apply_to_rows", "set_param",
-    "set_row_param", "set_flow_param", "set_flow_options", "set_method", "set_own_calibration", "follow_session",
-    "remove_own_calibration", "set_image_file", "wire", "unwire", "take_alternative", "set_input",
-    "set_combination_type", "set_reference", "set_align", "own_grid", "set_align_off", "set_calibrate_together",
-    "replace_chain"})
-#: a gesture on one block Try variant makes on a copy of the block: its operation -> the core's change of try_variant
-_VARIANT_CHANGE = {
-    "switch_off": lambda g, kw: {"off": not g.blocks[kw["block"]].off},
-    "set_method": lambda g, kw: {"method": kw["method"]},
-    "set_param": lambda g, kw: {"param": [kw["stage"], kw["name"], kw["value"]]},
-    "set_setting": lambda g, kw: {"setting": [kw["key"], kw["value"]]},
-}
-
-
 def confirm_on() -> bool:
     """The preference "Confirm changes" (on by default)."""
     from . import prefs
@@ -111,27 +90,30 @@ def confirm_on() -> bool:
 
 
 class ChangeCost:
-    """What a change would compute again among the results computed AND up to date: ``blocks`` (their names, in the
-    order of the chain), ``stages`` [(workflow id, stage)], ``seconds`` (what the change adds to the run of these
-    workflows) and ``measured`` (False: an estimate). ``lost`` False: nothing up to date is lost, nothing to ask."""
+    """What a change computes: ``blocks`` (the names of the blocks the user sees, in the order of the chain),
+    ``stages`` [(workflow id, stage)], ``seconds`` (what it adds to the run) and ``measured`` (False: an estimate).
+    ``again`` True: results computed and up to date it makes stale ("Computes again"); False: work it only adds
+    ("To compute"). ``lost``: something computed and up to date is made stale (the panel then asks first). The
+    nodes the compile adds by itself (a workflow's automatic Output) are never counted nor named."""
 
-    def __init__(self, blocks=(), stages=(), seconds=0.0, measured=True):
+    def __init__(self, blocks=(), stages=(), seconds=0.0, measured=True, again=True):
         self.blocks, self.stages = list(blocks), list(stages)
-        self.seconds, self.measured = max(0.0, float(seconds)), bool(measured)
+        self.seconds, self.measured, self.again = max(0.0, float(seconds)), bool(measured), bool(again)
 
     @property
     def lost(self) -> bool:
-        return bool(self.stages)
+        return self.again and bool(self.stages)
 
     def text(self) -> str:
-        """"Computes again: Gradient, Denoise, Color · about 12 min"."""
+        """"Computes again: Gradient, Denoise, Color · about 12 min", or "To compute: Gradient · ≤ 1 min"."""
         from .i18n import hm
         t = hm(self.seconds)
         when = t if t.startswith("≤") else _("about {t}").format(t=t)
-        return _("Computes again: {blocks} · {time}").format(blocks=", ".join(self.blocks), time=when)
+        words = _("Computes again: {blocks} · {time}") if self.again else _("To compute: {blocks} · {time}")
+        return words.format(blocks=", ".join(self.blocks), time=when)
 
     def __repr__(self):
-        return f"ChangeCost({self.blocks}, {self.seconds:.0f} s)"
+        return f"ChangeCost({'again' if self.again else 'to compute'} {self.blocks}, {self.seconds:.0f} s)"
 
 
 # ---------------------------------------------------------------------------------------------- the page's document
@@ -163,9 +145,14 @@ class GraphDocument:
         return self.model.revision
 
     def apply(self, steps) -> Result:
+        """The gesture applies at once (the gesture is the validation); what it made stale, or the work it added, is
+        kept for the page's toast (``last_stale``)."""
         m = self.model
-        asked = m.ask_first(steps)                # computed results it would make stale: asked first, nothing changes
-        return asked if asked is not None else m.apply(steps)
+        before = m.stale_watch()
+        res = m.apply(steps)
+        if res.ok:
+            m.stale_said(before)
+        return res
 
     def undo(self) -> Result:
         m = self.model
@@ -1065,7 +1052,6 @@ class GraphEditing:
         if files_after != files_before:
             self.reload_sources()
         self.pending_change = None
-        self.pending_gesture = None
         self.edited()
         self._sync()
         was = json.dumps(self.p.post, sort_keys=True)
@@ -1536,11 +1522,23 @@ class GraphEditing:
             return self.add_variant(p, change, title or f"{p.name} · {change.get('short') or _('variant')}")
         return self.apply_change(paths, change)
 
+    @staticmethod
+    def _block_of_stage(stage):
+        """The block key (graphnode) a stage is computed in, None for a node the compile adds by itself and the user
+        never sees as a block (a workflow's automatic Output, the survey Astrometry fetches)."""
+        from .graphnode import STEPS
+        of = GraphEditing.__dict__.get("_STAGE_BLOCK")
+        if of is None:
+            of = {st: b["key"] for b in STEPS for st in b["stages"] if b["key"] != "post"}
+            GraphEditing._STAGE_BLOCK = of
+        return of.get(stage.partition("@")[0].partition("~")[0])
+
     def _lost(self, v, stages_now, key_now) -> list:
-        """The stages of view v computed and up to date whose key would change (still in the chain)."""
+        """The stages of view v computed and up to date whose key would change (still in the chain), of the blocks the
+        user sees."""
         out = []
         for stage in self.all_stages(v):
-            if self.state(v, stage) == "done" and stage in stages_now and key_now(stage) != self.stage_key(v, stage):
+            if self.state(v, stage) == "done" and stage in stages_now and self._block_of_stage(stage) is not None                     and key_now(stage) != self.stage_key(v, stage):
                 out.append((v.pid, stage))
         return out
 
@@ -1570,7 +1568,6 @@ class GraphEditing:
             g, res = self._with_bare_variants_gone(base, g, res, view)
         if any(s[0] == "delete_row" for s in steps):
             g, res = self._with_lone_sessions_gone(base, g, res)
-        self.__dict__["_dry_said"] = say(res.toast, _) if res.toast else ""     # what the gesture would say it did
         return self._with_defaults(g, self.p)
 
     def _what_if_project(self, g):
@@ -1608,12 +1605,11 @@ class GraphEditing:
     def _lost_blocks(self, lost) -> list[str]:
         """The names of the blocks of these stages, in the order of their chains, each once (a stage no block shows,
         such as the survey Astrometry fetches, is not named)."""
-        from .graphnode import STEPS, block_title
-        of = {st: b["key"] for b in STEPS for st in b["stages"]}
+        from .graphnode import block_title
         out = []
         for _wid, stage in lost:
-            base, sep, num = stage.partition("@")[0].partition("~")
-            key = of.get(base)
+            _base, sep, num = stage.partition("@")[0].partition("~")
+            key = self._block_of_stage(stage)
             if key is None:
                 continue
             t = block_title(None, f"{key}~{num}" if sep else key)
@@ -1625,52 +1621,42 @@ class GraphEditing:
         """How many stages of the workflows are computed and up to date."""
         return sum(1 for st in getattr(self, "_states", {}).values() if st.state == "done")
 
-    @contextmanager
-    def confirmed(self):
-        """The gestures made inside were confirmed (Replace, Try variant): they apply without asking."""
-        was = self.__dict__.get("_confirmed", False)
-        self.__dict__["_confirmed"] = True
-        try:
-            yield
-        finally:
-            self.__dict__["_confirmed"] = was
+    #: what the last gesture of the page made stale, or the work it added (ChangeCost), for its toast; None: nothing
+    last_stale = None
 
-    def ask_first(self, steps):
-        """A gesture of the page that would make results computed and up to date computed again, the preference on:
-        kept waiting (``pending_gesture``, nothing changes), the page asks Replace / Try variant / Cancel; -> a Result
-        whose reason is ASKED. None: it applies at once."""
-        steps = list(steps)
-        if self.__dict__.get("_confirmed") or not confirm_on() or not self.ready or \
-                not any(s[0] in ASK_OPS for s in steps):
-            return None
-        try:
-            cost = self._steps_cost(steps)
-        except Exception:  # noqa: BLE001 - a question that cannot be priced is not asked: the gesture applies
-            import logging
-            logging.getLogger(__name__).exception("the cost of a gesture could not be read")
-            return None
-        if not cost.lost:
-            return None
-        self.pending_gesture = {"steps": steps, "cost": cost, "variant": self._gesture_variant(steps),
-                                "what": self.__dict__.get("_dry_said", "")}
-        self.changeAsked.emit()
-        return Result(False, reason=ASKED)
+    def _done_and_chains(self):
+        return ({k for k, st in getattr(self, "_states", {}).items() if st.state == "done"},
+                {w: set(c) for w, c in getattr(self, "_chains", {}).items()})
 
-    def _gesture_variant(self, steps):
-        """Try variant for a gesture on one block (switch off / on, its method, a setting): the core's steps, or None
-        when the gesture is not one of those or no variant can start from the block."""
-        if len(steps) != 1 or callable(steps[0][1]) or steps[0][0] not in _VARIANT_CHANGE:
+    def stale_watch(self):
+        """Before a gesture of the page: the stages computed and up to date, the chains and the run's time (None when
+        nothing is computed: the gesture then says nothing more)."""
+        self.last_stale = None
+        if not self.ready:
             return None
-        op, kw = steps[0]
-        g = self._g
-        if kw.get("block") not in g.blocks:
+        done, chains = self._done_and_chains()
+        if not done:
             return None
-        vs = [("try_variant", {"block": kw["block"], "change": _VARIANT_CHANGE[op](g, kw), "name": None})]
-        try:
-            _g2, res = apply_many(g, vs, copy.deepcopy(self.graph_view), _)
-        except Exception:  # noqa: BLE001 - no variant offered
-            return None
-        return vs if res.ok else None
+        return done, chains, self.total_seconds()
+
+    def stale_said(self, before):
+        """After it (applied at once: the gesture is the validation): the blocks the user sees whose up-to-date results
+        it made stale ("Computes again"), else the blocks it added to compute ("To compute"), with the time it adds,
+        in ``last_stale``; the automatic nodes of the compile never count."""
+        self.last_stale = None
+        if before is None:
+            return
+        done, chains, sec = before
+        now, chains_now = self._done_and_chains()
+        lost = [(w, s) for w, s in done - now if s in chains_now.get(w, ()) and self._block_of_stage(s) is not None]
+        added = [(w, s) for w, c in chains_now.items() for s in sorted(c - chains.get(w, set()))
+                 if w in chains and self._block_of_stage(s) is not None and (w, s) not in now]
+        if not lost and not added:
+            return
+        order = {(w, s): i for w, c in getattr(self, "_chains", {}).items() for i, s in enumerate(c)}
+        stages = sorted(lost or added, key=lambda k: (k[0], order.get(k, 0)))
+        c = self.cost()
+        self.last_stale = ChangeCost(self._lost_blocks(stages), stages, c.seconds - sec, c.measured, again=bool(lost))
 
     # ------------------------------------------------------------------ workflows: names, copies, deletion
     def rename(self, pid: int, name: str) -> bool:

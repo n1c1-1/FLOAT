@@ -15,7 +15,6 @@ from PySide6.QtCore import QObject, Signal
 
 from ..i18n import _
 from . import files
-from .bridge import ASKED
 from .table_reader import Reader
 
 
@@ -67,15 +66,15 @@ class GraphDrops(QObject):
             self._say(*files.nothing_to_take(res, ignored))
             return None
         out = bridge.act("add_files", quiet=True, session=session, kind=kind, paths=res.items, mode="add")
-        if not out.ok and out.reason == ASKED:          # a computed stack: Replace / Try variant / Cancel asked first
-            return out
         if not out.ok:
             self._say(bridge.say(out.reason) if out.reason else _("Not possible"), [])
             return out
         self.read(session, kind, doc.files_of(session, kind)[1])
         taken = res.frames()
         base = files.drop_toast(kind, doc.title(session), len(taken), "add")
-        self._say(files.drop_sentence(base, res, "add", ignored, taken), files.drop_links(res, "add"))
+        note = bridge.take_stale()                      # a computed stack: what it computes again, said too
+        self._say(files.drop_sentence(base, res, "add", ignored, taken) + (" · " + note if note else ""),
+                  files.drop_links(res, "add"))
         return out
 
     def _say(self, text, links):
