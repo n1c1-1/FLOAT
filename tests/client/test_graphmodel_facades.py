@@ -236,8 +236,18 @@ def test_options_replaced_and_an_early_exit(pair):
                                                                                "debruitage")[0]))
 
 
-def test_a_facade_not_ported_says_so(pair):
-    _old, new = pair("colour_min", h1.FAKE[:1])
-    assert "add_branch" in NOT_PORTED
-    with pytest.raises(NotImplementedError, match="add_branch"):
-        new.add_branch(view(new, "Colour minimal"), "fond", "denoise")
+def test_a_new_branch_from_a_block_and_beside_a_night_calibration(pair):
+    old, new = pair("colour_full", h1.FAKE[:1])
+    a, b = both(old, new, lambda m: (lambda r: (r[0].name, r[1]))(
+        m.add_branch(view(m, "Colour full"), "astrometrie", "gradient")))
+    assert a == b
+    a, b = both(old, new, lambda m: (lambda r: (r[0].name, r[1]))(
+        m.add_branch(view(m, "Colour full"), "alignement", "stacking")))
+    assert a == b
+    a, b = both(old, new, lambda m: (lambda r: (r[0].name, r[1]))(
+        m.add_branch(view(m, "Colour full"), "sources", "calibration")))
+    assert a == b
+
+
+def test_every_facade_is_ported():
+    assert NOT_PORTED == ()

@@ -698,25 +698,29 @@ class GraphEditing:
                 want[q.pid] = (eb, new)
         if not want:
             return
-
-        def raw(g):
-            ix = gm.Index(g)
-            for wid, (eb, new) in want.items():
-                f = self._flow(wid, g)
-                bid = self._bid(wid, mm.view_key(eb) if "@" not in eb else eb, g)
-                kind = g.blocks[bid].kind if bid in g.blocks else None
-                pausable = kind in ("registration", "selection", "crop", "stacking", "astrometry", "gradient", "deconv",
-                                    "denoise", "color", "stars", "synth", "image", "combine")
-                if f.pauses is None and pausable:
-                    for other in list(g.rows) + list(g.taps):   # the other workflows of a shared block keep theirs
-                        if other.wid not in want and other.wid is not None and bid in self._chain(other.wid, g) \
-                                and other.pauses is None and any(w.id == other.wid for w in self.p.workflows):
-                            other.pauses = list(self.p.workflow(other.wid).breakpoints)
-                    g.blocks[bid].pause = on
-                else:
-                    f.pauses = list(new)
-            del ix
-        self._do(raw=raw)
+        g = self._g
+        steps, kept, switched = [], set(), set()
+        for wid, (eb, new) in want.items():
+            f = self._flow(wid, g)
+            bid = self._bid(wid, mm.view_key(eb) if "@" not in eb else eb, g)
+            kind = g.blocks[bid].kind if bid in g.blocks else None
+            pausable = kind in ("registration", "selection", "crop", "stacking", "astrometry", "gradient", "deconv",
+                                "denoise", "color", "stars", "synth", "image", "combine")
+            if f.pauses is None and pausable:
+                for other in list(g.rows) + list(g.taps):       # the other workflows of a shared block keep theirs
+                    if other.wid not in want and other.wid is not None and other.id not in kept \
+                            and bid in self._chain(other.wid, g) and other.pauses is None \
+                            and any(w.id == other.wid for w in self.p.workflows):
+                        kept.add(other.id)
+                        steps.append(("set_flow_pauses", {"flow": other.id,
+                                                          "pauses": list(self.p.workflow(other.wid).breakpoints)}))
+                if g.blocks[bid].pause != on and bid not in switched:
+                    switched.add(bid)
+                    steps.append(("set_pause", {"block": bid}))
+            else:
+                steps.append(("set_flow_pauses", {"flow": f.id, "pauses": list(new)}))
+        if steps:
+            self._do(steps)
 
     # ------------------------------------------------------------------ settings (they are the blocks')
     def _owner(self, g, wid, stage):
@@ -736,57 +740,6 @@ class GraphEditing:
                 return "block", b, stage
         return "extra", None, stage
 
-    def _put_setting(self, g, wid, stage, name, value):
-        """A setting of a workflow stored where it belongs in the graph ``g`` (in place); the workflows' leftovers
-        that would hide it are taken out."""
-        from ..graphcore.operations import Refusal, _put, check_param
-        try:
-            v = None if value is None else check_param(stage, name, value, internal=name == "zone")
-        except Refusal as e:
-            raise ValueError(say(e.msg, _)) from None
-        kind, where, st = self._owner(g, wid, stage)
-        if stage == "stack" and kind == "block":
-            own = "selection" if name in _SELECTION else "crop" if name == "zone" else "stacking"
-            b = next((b for b in self._chain(wid, g) if g.blocks[b].kind == own), None)
-            kind, where = ("block", b) if b is not None else ("extra", None)
-        f = self._flow(wid, g)
-        if kind == "block":
-            blk = g.blocks[where]
-            if blk.kind == "calibration":
-                st = f"{st}@{blk.sid}"
-            _put(blk.params, st, name, v)
-            through = [x for x in list(g.rows) + list(g.taps) if x.wid is not None and where in self._chain(x.wid, g)]
-            through += [x for x in g.rows if any(c == where for _s, c in x.nights)]
-        elif kind == "row":
-            ix = gm.Index(g)
-            if stage in ("inventory", "calibrate"):
-                root = ix.row[ix.root(where)]
-                _put(root.calib, stage, name, v)
-                through = [x for x in g.rows if ix.root(x.id) == root.id] + \
-                    [t for t in g.taps if t.block in ix.row_of and ix.root(ix.row_of[t.block]) == root.id]
-            elif stage == "render_simple":
-                store = {"render_simple": f.output}
-                _put(store, stage, name, v)
-                f.output = store.get("render_simple", {})
-                through = [f]
-            else:
-                r = ix.row[where]
-                if not r.align:
-                    raise ValueError(_("not in workflow"))
-                _put(r.align.setdefault("params", {}), stage, name, v)
-                through = [f]
-        else:
-            through = []
-            _put(f.extra, stage, name, v)
-            f.unset = [x for x in f.unset or [] if list(x) != [stage, name]]
-            return
-        for x in through:
-            if x.extra and name in (x.extra.get(st) or {}):
-                d = dict(x.extra[st])
-                d.pop(name, None)
-                x.extra = {k: vv for k, vv in x.extra.items() if k != st} | ({st: d} if d else {})
-            x.unset = [u for u in x.unset or [] if list(u) != [st, name]]
-
     def set_param(self, p, stage: str, name: str, value, suggested=None):
         ids = [q.pid for q in (self.scope_paths() if p is None else [p])]
         if value is not None and suggested is not None and value == suggested:
@@ -803,11 +756,13 @@ class GraphEditing:
             for stage, name, value in items:
                 c = api.with_change(self.p, wid, {"kind": "param", "stage": stage, "name": name, "value": value})
                 want.append((wid, stage, name, (c.params.get(stage) or {}).get(name)))
-
-        def raw(g):
-            for wid, stage, name, v in want:
-                self._put_setting(g, wid, stage, name, v)
-        self._do(raw=raw)
+        steps = []
+        for wid, stage, name, v in want:
+            f = self._flow(wid)
+            if f is None:
+                raise GraphRefused(_("not in workflow"))
+            steps.append(("set_flow_param", {"flow": f.id, "stage": stage, "name": name, "value": v}))
+        self._do(steps)
 
     def set_trunk_param(self, stage: str, name: str, value) -> bool:
         try:
@@ -903,14 +858,13 @@ class GraphEditing:
 
     def _rename(self, pid: int, name: str):
         old = self.p.workflow(pid).name
-
-        def raw(g):
-            f = self._flow(pid, g)
-            if f is None:
-                raise GraphRefused(_("not in workflow"))
-            f.name = name
+        f = self._flow(pid)
+        if f is None:
+            raise GraphRefused(_("not in workflow"))
+        step = ("rename_row", {"row": f.id, "name": name}) if isinstance(f, gm.Row) else \
+            ("rename_tap", {"tap": f.id, "name": name})
         with self._edit():                                # its Post layers' names in the same step
-            self._do(raw=raw)
+            self._do([step])
             self._rename_layers(pid, name, old)
 
     def _rename_layers(self, pid, name, old=None):
@@ -986,14 +940,12 @@ class GraphEditing:
         elif path and before and not self.graph(p):
             src["stretched"] = False
 
-        def raw(g):
-            f = self._flow(p.pid, g)
-            root = self._root(f, g) if f is not None else None
-            head = g.blocks[root.blocks[0]] if root is not None and root.blocks else None
-            if head is None or head.kind != "image":
-                raise GraphRefused(_("not in workflow"))
-            head.source = src
-        self._do(raw=raw)
+        f = self._flow(p.pid)
+        root = self._root(f) if f is not None else None
+        head = root.blocks[0] if root is not None and root.blocks else None
+        if head is None or self._g.blocks[head].kind != "image":
+            raise GraphRefused(_("not in workflow"))
+        self._do([("set_image_file", {"block": head, "path": src.get("path", ""), "stretched": src.get("stretched")})])
 
     # ------------------------------------------------------------------ combinations
     def _source_port(self, pid, image):
@@ -1258,30 +1210,16 @@ class GraphEditing:
         as its options until the first change of its chain (as the converter keeps one)."""
         from ..graphcore.templates import chain_of
         chain = chain_of(nodes)
-        if sids:
-            steps = [("add_stack", {"name": name, "nights": list(sids), "blocks": chain, "align": None,
-                                    "all_nights": all_nights})]
-        else:
-            steps = []
 
-        def raw(g):
-            if not sids:                                  # a project without a session yet: a row being built
-                r = gm.Row(gm.new_id(g, "r"), name, [gm.new_block(g, c["kind"], method=c.get("method")).id
-                                                     for c in chain], [])
-                r.all_nights = all_nights
-                g.rows.append(r)
-                r.wid, g.next_wid = g.next_wid, g.next_wid + 1
-                g.order.append(r.wid)
-            r = g.rows[-1]
-            if options is not None:
-                r.legacy = {"options": copy.deepcopy(options), "end": end, "frozen": False}
-            else:
-                r.end = end
-            for stage, kv in (params or {}).items():
-                for k, v in kv.items():
-                    self._put_setting_new(g, r, stage, k, v)
+        def made(res):
+            return res[0].created["row"]
+        steps = [("add_stack", {"name": name, "nights": list(sids), "blocks": chain, "align": None,
+                                "all_nights": all_nights}),          # no session yet: refused (no row is drawn)
+                 ("set_flow_options", lambda res: {"flow": made(res), "options": copy.deepcopy(options), "end": end})]
+        if params:
+            steps.append(("store_params", lambda res: {"flow": made(res), "params": copy.deepcopy(params)}))
         before = self._wids()
-        self._do(steps, raw=raw)
+        self._do(steps)
         return self._new_view(before)
 
     def _legacy_nodes(self, options, end, src, mono):
@@ -1290,35 +1228,6 @@ class GraphEditing:
         return [dict(n) for n in wfl.from_options(options, end, src)
                 if not n["off"] and n["block"] not in ("image", "output", "align_on", "calibration")
                 and not (mono and n["block"] == "color")]
-
-    def _put_setting_new(self, g, r, stage, name, value):
-        """A setting of a row just made (no workflow id compiled yet): on its block, its stack, else its leftovers."""
-        from ..graphcore.operations import _put
-        ix = gm.Index(g)
-        chain = ix.effective(r.id)
-        base, at, sid = stage.partition("@")
-        if base in ("inventory", "calibrate"):
-            c = next((c for _s, c in r.nights if at and g.blocks[c].sid == int(sid)), None)
-            _put(g.blocks[c].params if c is not None else r.calib, stage, name, value)
-            return
-        if stage == "render_simple":
-            store = {"render_simple": r.output}
-            _put(store, stage, name, value)
-            r.output = store.get("render_simple", {})
-            return
-        if stage == "align_on" and r.align:
-            _put(r.align.setdefault("params", {}), stage, name, value)
-            return
-        if stage == "stack":
-            own = "selection" if name in _SELECTION else "crop" if name == "zone" else "stacking"
-            b = next((b for b in chain if g.blocks[b].kind == own), None)
-        else:
-            q = gm.clone(g)
-            b = next((b for b in chain if stage in owned_stages(q, b)), None)
-        if b is not None:
-            _put(g.blocks[b].params, stage, name, value)
-        else:
-            _put(r.extra, stage, name, value)
 
     def _path_params(self, params):
         """today's add_path: a new workflow's settings, the current one's pre-processing when it has none of its own,
@@ -1391,16 +1300,19 @@ class GraphEditing:
         source = {"path": Path(path).as_posix() if path else "", "stretched": bool(stretched)}
         name = self.unique_name(name)
 
-        def raw(g):
-            head = gm.new_block(g, "image", engine="image", source=source)
-            r = gm.Row(gm.new_id(g, "r"), name, [head.id] + [gm.new_block(g, n["block"], method=n.get("method")).id
-                                                              for n in nodes])
-            r.legacy = {"options": copy.deepcopy(options), "end": None, "frozen": False}
-            r.wid, g.next_wid = g.next_wid, g.next_wid + 1
-            g.order.append(r.wid)
-            g.rows.append(r)
+        def last(res):                                    # the block the last step made (the Image first)
+            return next(x.created["block"] for x in reversed(res) if x.created and x.created.get("block"))
+        steps = [("add_row", {"kind": "image", "name": name})]
+        for n in nodes:
+            steps.append(("add_block", lambda res, k=n["block"]: {
+                "kind": k, "at": {"type": "insert", "row": res[0].created["row"], "after": last(res)}}))
+            if n.get("method") is not None:
+                steps.append(("set_method", lambda res, m=n["method"]: {"block": last(res), "method": m}))
+        steps += [("set_image_file", lambda res: {"block": res[0].created["block"], "path": source["path"],
+                                                  "stretched": source["stretched"]}),
+                  ("set_flow_options", lambda res: {"flow": res[0].created["row"], "options": copy.deepcopy(options)})]
         before = self._wids()
-        self._do(raw=raw)
+        self._do(steps)
         return self._new_view(before)
 
     def set_graph(self, p, blocks: list[dict]) -> None:
@@ -1448,57 +1360,60 @@ class GraphEditing:
         """The row of workflow ``p``: its chain made of these nodes (``options``: kept as these options, made before
         the free graph), its workflow's settings stored again where the new blocks hold them."""
         from ..graphcore.compile import NODE_KINDS
-        from ..graphcore.operations import new_align
-        wfl = _mm().wfl
         w = self.p.workflow(p.pid)
-        params = copy.deepcopy(w.params)
-
-        def raw(g):
-            r = self._row(p.pid, g)
-            ix = gm.Index(g)
-            if r.fork or ix.children[r.id] or any(t.block in r.blocks for t in g.taps):
-                _not_ported("set_graph / set_opts(a row variants or taps start from)")
-            head = [b for b in r.blocks[:1] if g.blocks[b].kind in ("image", "combine")]
-            gone = set(r.blocks) - set(head)
-            new, align = [], None
-            for n in blocks:
-                k = n["block"]
-                if k in ("calibration", "output", "image"):
-                    continue
-                if k == "align_on":
-                    align = n
-                    continue
-                if k not in NODE_KINDS:
-                    continue
-                b = gm.new_block(g, k, method=n.get("method"), off=bool(n.get("off")), fork=n.get("fork"),
-                                 engine=n.get("name") if k in wfl.IMAGE_OPS and n.get("name") else None)
-                new.append(b.id)
-            for b in gone:
-                g.blocks.pop(b, None)
-            g.wires = [x for x in g.wires if x.src[0] not in gone and x.dst[0] not in gone]
-            r.blocks = head + new
-            if r.nights:
-                cal = next((n for n in blocks if n["block"] == "calibration"), None)
-                r.calib_node = cal is not None
-                if cal is not None and bool(cal.get("off")) != any(g.blocks[c].off for _s, c in r.nights):
-                    for _s, c in r.nights:
-                        g.blocks[c].off = bool(cal.get("off"))
-            if align is not None:
-                ref = self._flow(align["reference"], g) if align.get("reference") is not None else None
-                r.align = {**new_align(ref.id if ref is not None else None), "method": align.get("method"),
-                           "off": bool(align.get("off"))}
-            elif r.align and not any(g.blocks[b].kind in ("stacking", "image") for b in r.blocks):
-                r.align = None
-            r.legacy = None if options is None else {**(r.legacy or {"end": w.end, "frozen": False}),
-                                                     "options": copy.deepcopy(options)}
-            r.extra, r.unset = {}, []
-            for stage, kv in params.items():
-                for k, v in kv.items():
-                    self._put_setting_new(g, r, stage, k, v)
-        self._do(raw=raw)
+        r = self._row(p.pid)
+        ix = gm.Index(self._g)
+        if r.fork or ix.children[r.id] or any(t.block in r.blocks for t in self._g.taps):
+            _not_ported("set_graph / set_opts(a row variants or taps start from)")
+        chain, align, cal = [], None, None
+        for n in blocks:
+            k = n["block"]
+            if k == "calibration":
+                cal = n
+            elif k == "align_on":
+                align = n
+            elif k in NODE_KINDS:
+                chain.append({"kind": k, "method": n.get("method"), "off": bool(n.get("off")), "fork": n.get("fork"),
+                              "engine": n.get("name")})
+        if align is not None:
+            ref = self._flow(align["reference"]) if align.get("reference") is not None else None
+            align = {"ref": ref.id if ref is not None else None, "method": align.get("method"),
+                     "off": bool(align.get("off"))}
+        self._do([("replace_chain", {"row": r.id, "blocks": chain,
+                                     "calibration": {"off": bool(cal.get("off"))} if cal is not None else False,
+                                     "align": align, "options": copy.deepcopy(options),
+                                     "params": copy.deepcopy(w.params)})])
 
     def add_branch(self, p, key: str, block: str):
-        _not_ported("add_branch")
+        """A new branch (issue #47): a workflow with the settings of ``p``, its chain up to the block ``key``, then
+        ``block`` from its defaults, drawn as a variant forking there (beside a night's Calibration: a stack drawing
+        the same nights, that night's Calibration its own). Returns the branch and its new block's key."""
+        mm = _mm()
+        wfl = mm.wfl
+        if not self.can_branch(p, key, block):
+            raise ValueError(self.palette_reason(p, block) or _("no branch from here"))
+        night = self._branch_night(p, key)
+        g = self.graph(p)
+        i = self.node_index(p, key)
+        head = [dict(n) for n in g[:i + 1]] if night is None else []
+        method = None
+        nxt = g[i + 1] if i is not None and i + 1 < len(g) else None
+        if nxt is not None and nxt["block"] == block and block in wfl.METHODS:
+            # the same block with the same method would be the same result, drawn once: the branch tries another one
+            method = next((m for m in wfl.METHODS[block] if m != nxt["method"]), None)
+        n = wfl.node(block, method, name=wfl.new_name(head, block))
+        flow = p.name.partition(" · ")[0]                 # beside a block of the frames: named from the flow it leaves,
+        if block not in wfl.FRAME_BLOCKS or flow not in {w.name for w in self.p.workflows}:     # not the last branch
+            flow = p.name
+        bid = self._night_calibration(p, night) if night is not None else self._bid(p, key)
+        f = self._flow(p)
+        if bid is None or f is None:
+            raise ValueError(_("no branch from here"))
+        before = self._wids()
+        self._do([("add_branch", {"block": bid, "kind": block, "flow": f.id, "method": method,
+                                  "name": self.unique_name(self.branch_name(flow, mm.node_key(n)))})])
+        new = mm.node_key(n)
+        return self._new_view(before), f"{new}@{night}" if night is not None and self.separate_sessions() else new
 
     def image_name(self, base: str) -> str:
         if not any(isinstance(q.source, dict) and "path" in q.source for q in self.paths):
@@ -1560,24 +1475,14 @@ class GraphEditing:
     def _night_edit(self, sid, files=None, name=None, flt=None, left_out=None, toast=""):
         """A session's lists of files (``files``: {kind: list}), name, filter or frames left out, as one step: on the
         Session blocks drawing it, else on the night no stack draws."""
-        def raw(g):
-            n = next((x for x in g.nights if x["sid"] == sid), None)
-            if n is None:
-                raise GraphRefused(_("session not found"))
-            blocks = [b for b in g.blocks.values() if b.kind == "session" and b.sid == sid]
-            for k, lst in (files or {}).items():
-                for b in blocks:
-                    b.files[k] = list(lst)
-                n.setdefault("files", {})[k] = list(lst)
-            if name is not None:
-                n["name"] = name
-                for b in blocks:
-                    b.name = name
-            if flt is not None:
-                n["filter"] = flt
-            if left_out is not None:
-                n["left_out"] = copy.deepcopy(left_out)
-        return self._do(raw=raw, name=toast or None)
+        steps = [("set_session_files", {"sid": sid, "kind": k, "paths": list(lst)}) for k, lst in (files or {}).items()]
+        if name is not None:
+            steps.append(("rename_session", {"sid": sid, "name": name}))
+        if flt is not None:
+            steps.append(("set_session_filter", {"sid": sid, "filter": flt}))
+        if left_out is not None:
+            steps.append(("set_left_out", {"sid": sid, "left_out": copy.deepcopy(left_out)}))
+        return self._do(steps, name=toast or None)
 
     def rename_session(self, sid: int, name: str) -> bool:
         name = name.strip()
@@ -1726,21 +1631,7 @@ class GraphEditing:
         stack of that night alone goes with it), its frames excluded by hand, its own settings."""
         if self.session_removal_problem(sid):
             return False
-        steps = [("remove_night", {"night": b.id}) for b in self._g.blocks.values()
-                 if b.kind == "session" and b.sid == sid]
-
-        def raw(g):
-            g.nights = [n for n in g.nights if n["sid"] != sid]
-            g.excluded = [x for x in g.excluded if x[0] != sid]
-            for f in list(g.rows) + list(g.taps):
-                if f.extra:
-                    f.extra = {k: v for k, v in f.extra.items() if not k.endswith(f"@{sid}")}
-                if f.sessions is not None:
-                    f.sessions = [x for x in f.sessions if x != sid]
-            for r in g.rows:
-                if r.calib:
-                    r.calib = {k: v for k, v in r.calib.items() if not k.endswith(f"@{sid}")}
-        self._do(steps, raw=raw)
+        self._do([("remove_session", {"sid": sid})])
         self.current = max(0, min(self.current, len(self.paths) - 1))
         self.reload_sources()
         return True
@@ -1896,9 +1787,9 @@ PORTED = (
     # today's code, unchanged, on ported facades: new_session, delete_workflow
     "set_stack_mode", "_set_calibration_files", "remove_own_calibration", "rename_session", "set_session_filter",
     "add_filter_session", "add_session", "add_session_entries", "remove_session_files", "remove_session_entry",
-    "use_from_session",
+    "use_from_session", "add_branch",
 )
-NOT_PORTED = ("add_branch",)
+NOT_PORTED = ()
 #: kept as today's: they read the compiled definition, or edit Post / the parts of the definition the graph absorbs
 READERS_KEPT = ("graph", "gives_post", "feeds_fusion", "is_sent_branch", "synth_wanted", "removal_problem",
                 "palette_reason", "name_problem", "throws_away", "cost_with", "cost_of_change", "scope_paths",
