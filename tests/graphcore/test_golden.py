@@ -306,14 +306,40 @@ def test_compile_numbers_new_rows_and_names_new_blocks():
 
 
 @pytest.mark.parametrize("shape", list(SHAPES))
-def test_converted_graph_and_engine(shape):
-    """The converted graph of each shape: what the core's validator and the engine say of it (step 3 closes the gaps
-    listed in ECARTS_REGLES; here they are only recorded)."""
+def test_converted_graph_is_one_the_core_keeps(shape):
+    """Every shape converts to a graph the core accepts as a whole, needs included (INTEGRATION §3, the reverse half
+    of decision B): its structure, each row's chain as the engine runs it, the joins' ports, the compiled definition
+    as the engine reads it; and the engine accepts it (with each block it leaves out greyed by the core)."""
+    from astro_gpu.graphcore.operations import legality
+    from astro_gpu.graphcore.rules import structure
     g = convert(SHAPES[shape]())
-    try:
-        check(g)
-        core = ""
-    except Exception as e:  # noqa: BLE001
-        core = str(e)
-    assert isinstance(core, str)
+    check(g)
+    assert structure(g) == []
+    assert legality(g) == ""
     assert engine_problems(g) == []
+
+
+def same_stacking_other_align():
+    """Two workflows on one night with the same frame blocks and settings, aligned on one target differently (from its
+    Stacking, from its Astrometry): drawn as two rows (each its own Align on after a Stacking they would share)."""
+    p = project("two aligns", [night(1, "Ha", "Ha"), night(2, "OIII", "OIII")])
+    ha = flow(p, "Ha", nodes(*FRAMES, "astrometry", "gradient"), sessions=[1])
+    for name, frm in (("OIII", None), ("OIII plate", "astrometry")):
+        flow(p, name, nodes(*FRAMES) + [wfl.node("align_on", reference=ha.id, reference_block=frm)]
+             + nodes("gradient"), sessions=[2], params={"stack": {"kappa": 2.5}})
+    return loaded(p)
+
+
+def test_same_stacking_other_align_on_keeps_the_stack_keys():
+    """Engine review, second: "same Stacking, different Align on" falls back to a separate row; the two rows' shared
+    prefix keeps equal keys (the stack is computed once)."""
+    from astro_gpu.core.store import InputScan, Keys, key_rules
+    p = same_stacking_other_align()
+    g, q, log = proof.round_trip(p)
+    assert proof.definition_diff(p, q) == []
+    a, b = (next(r for r in g.rows if r.wid == wid) for wid in (2, 3))
+    assert not a.fork and not b.fork and any("Align on" in x for x in log)     # two rows
+    k = Keys(q, key_rules(), InputScan())
+    for st in ("calibrate", "register", "stack"):
+        assert k.key(2, st) == k.key(3, st), st
+    assert k.key(2, "align_on") != k.key(3, "align_on")

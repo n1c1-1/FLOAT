@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from .model import (Index, topo, in_ports, out_ports, combo_type, FILE_KINDS, FRAME_KINDS, JOIN_KINDS, COMBO_PORTS,
                     COMBO_LABEL)
 from .msg import M, say, join, typed
+from ..core import workflow as wfl
 
 ORDER = ["session", "image", "calibration", "registration", "selection", "crop", "stacking", "astrometry",
          "gradient", "deconv", "denoise", "color", "stars", "synth", "combine", "combine_layers"]
@@ -145,7 +146,6 @@ class Img:
     stars: str = "with"     # with / without / only / pair
     solution: bool = False
     grid: str = ""
-    aligned: bool = False   # on another row's grid (the reference's)
     half: bool = False
     linear: bool = True
     denoised: bool = False
@@ -159,7 +159,7 @@ class Img:
 class Ev:
     out: object = None      # main output Img
     reason: object = ""     # greyed reason (a message, "" = fine)
-    cat: str = ""           # "need" | "port" | "downstream"
+    cat: str = ""           # "need" | "port" | "wiring" | "downstream"
     root: object = None     # block causing the greying
 
 
@@ -173,56 +173,8 @@ def outs(p, b, ev, blk=None):
     return {port: t for port in out_ports(blk)}
 
 
-def _need(p, kind, t, ref_name, structural=False):
-    """Reason the block cannot take image t ("" = fine). structural: only the order rules (a switched-off block)."""
-    lab = LABEL[kind]
-    if t.stars == "pair" and kind != "synth":
-        return "only Synthetic stars follows Stars/background"
-    if not t.linear and kind not in ("stars", "synth") and not structural:
-        return M("no {lab} from a stretched image", lab=lab)
-    if kind == "calibration":
-        return ""
-    if kind in FRAME_KINDS:
-        k = COL[kind]
-        if not t.frames:
-            return M("{lab} comes before {next}", lab=lab, next="the Stacking")
-        if t.stage == k:
-            return M("{lab} is already in the row", lab=lab)
-        if t.stage > k:
-            nxt = {3: "Selection", 4: "Crop", 5: "the Stacking"}[t.stage]
-            return M("{lab} comes before {next}", lab=lab, next=nxt)
-        if kind != "registration" and t.stage < 2:
-            return M("{lab} comes after {reg}", lab=lab, reg="Registration")
-        return ""
-    if t.frames:
-        return "Stacking is needed first"
-    if structural:
-        return ""
-    if kind == "astrometry":
-        if t.aligned:
-            return M("the grid of “{_ref}” gives the solution", _ref=ref_name)
-        if t.solution:
-            return "only one Astrometry per row"
-        if t.stars != "with":
-            return "stars are needed"
-    if kind in ("deconv", "denoise") and not t.half:
-        return "the half stacks are needed (start from the lights)"
-    if kind == "color" and not t.solution:
-        return "Astrometry is needed first"
-    if kind == "stars":
-        if not t.denoised:
-            return "a denoised image is needed"
-        if t.stars != "with":
-            return "stars are needed"
-    if kind == "synth":
-        if t.stars != "pair":
-            return "Stars/background is needed first"
-        if t.synth:
-            return M("{lab} is already in the row", lab=lab)
-    return ""
-
-
 def _make(kind, t):
+    """The image a block gives (its type; whether it may take its input is the engine's: chain_verdict)."""
     if kind in FRAME_KINDS:
         if kind == "stacking":
             return t.but(frames=False, stage=9, half=True)
@@ -239,15 +191,11 @@ def _make(kind, t):
 
 
 class Ctx:
-    """What evaluating one block needs: its inputs (chain/night/fork) and active port wires, the reference."""
+    """What evaluating one block needs: its inputs (chain/night/fork) and active port wires, and what the engine
+    says of the compiled graph's wiring (wiring=False: not asked; the legality of a gesture does not depend on it)."""
 
-    def __init__(self, p, ix):
+    def __init__(self, p, ix, wiring=True):
         self.p, self.ix = p, ix
-        ref = p.reference
-        self.ref = ref
-        self.ref_name = ix.row[ref].name if ref in ix.row else ""
-        self.ref_astro = ref in ix.row and any(p.blocks[b].kind == "astrometry" and not p.blocks[b].off
-                                               for b in ix.row[ref].blocks)
         self.head_in, self.wires_in = {}, {}
         for r in p.rows:
             if r.nights and r.blocks:
@@ -262,6 +210,10 @@ class Ctx:
             if w.active:
                 self.wires_in.setdefault(w.dst[0], []).append(w)
         self.virtual = {}                       # hypothetical blocks (fast placement judge)
+        self.wiring = {}
+        if wiring and any(r.align or (r.blocks and p.blocks[r.blocks[0]].kind in JOIN_KINDS) for r in p.rows):
+            from .compile import engine_wiring
+            self.wiring = engine_wiring(p)
 
     def blk(self, b):
         return self.virtual.get(b) or self.p.blocks[b]
@@ -275,7 +227,7 @@ def eval_one(c, b, info):
     ev = Ev()
     if k == "session":
         rid = ix.row_of[b]
-        ev.out = Img(frames=True, stage=0, grid=c.ref or rid, aligned=rid != c.ref)
+        ev.out = Img(frames=True, stage=0, grid=rid)
         return ev
     if k == "image":
         ev.out = Img(grid=ix.row_of.get(b, b), linear=not effective(p, b)["Stretched image"]
@@ -295,21 +247,19 @@ def eval_one(c, b, info):
     if t is None:
         ev.cat, ev.root = "port", b
         return ev
-    if k == "stacking" and t.frames and t.aligned and c.ref_astro:
-        t = t.but(solution=True)
-    why = _need(p, k, t, c.ref_name, structural=blk.off)
-    if why:
-        ev.reason, ev.cat, ev.root = why, "need", b
+    if b in c.wiring:                           # the engine leaves it out until what it reads is wired (store.py)
+        ev.reason, ev.cat, ev.root = c.wiring[b], "wiring", b
         return ev
     ev.out = (t.but(stage=COL[k]) if k in FRAME_KINDS else t) if blk.off else _make(k, t)
     return ev
 
 
-def evaluate(p, ix=None):
-    """{block id: Ev} in topological order (§2: type of a wire = its attributes; needs give greyed reasons)."""
+def evaluate(p, ix=None, wiring=True):
+    """{block id: Ev} in topological order (§2: type of a wire = its attributes; greyed reasons: a join's ports, the
+    engine's wiring problems, downstream). wiring=False: without the engine's wiring problems (legality only)."""
     ix = ix or Index(p)
     order = topo(p, ix, active_only=True) or list(p.blocks)
-    c = Ctx(p, ix)
+    c = Ctx(p, ix, wiring)
     info = {}
     for b in order:
         info[b] = eval_one(c, b, info)
@@ -352,16 +302,16 @@ def _join(c, b, blk, ev, info, wires):
         if why:
             ev.reason, ev.cat, ev.root, ev.out = why, "need", b, None
             return
-    vals = [got[q] for q in ports if q in got]
-    if len({t.grid for t in vals}) > 1 and not all(t.solution for t in vals):
-        ev.reason, ev.cat, ev.root = ("ports on different grids: Astrometry is needed"
-                                      if blk.kind == "combine" else "Background and Stars on different grids"), \
-            "need", b
-        return
     if ev.cat == "downstream":
         return
+    vals = [got[q] for q in ports if q in got]
     if len(vals) < len(ports):
-        ev.reason, ev.cat, ev.root = "ports to wire", "port", b
+        missing = [q for q in ports if q not in got]
+        ev.reason, ev.cat, ev.root = (M("{names} to wire", names=typed(", ".join(missing)))
+                                      if blk.kind == "combine" else "ports to wire"), "port", b
+        return
+    if b in c.wiring:                           # the engine's: its inputs not on one grid
+        ev.reason, ev.cat, ev.root = c.wiring[b], "wiring", b
         return
     first = vals[0]
     if blk.kind == "combine":
@@ -449,7 +399,7 @@ def summary_msg(p, b, info=None, ix=None):
     if ev and ev.reason:
         return ev.reason
     if blk.off:
-        return "off: image passed on"
+        return "off: its settings still apply" if k == "selection" else "off: image passed on"
     rid = ix.row_of.get(b)
     if rid and ix.row[rid].fork and ix.row[rid].blocks[0] == b and mother_same(p, ix, rid):
         return "like the mother — change a setting"
@@ -463,8 +413,9 @@ def summary_msg(p, b, info=None, ix=None):
             elif paths:
                 parts.append(_count(len(paths), f))
         txt = join(parts)
-        if p.reference and rid != p.reference:
-            txt = join([M("on the grid of {_ref}", _ref=ix.row[p.reference].name), txt])
+        a = ix.row[ix.root(rid)].align if rid else None
+        if a and a.get("ref") in ix.row:
+            txt = join([M("on the grid of {_ref}", _ref=ix.row[a["ref"]].name), txt])
         return txt
     if k == "calibration":
         changed = [key for key, v in e.items() if v != defaults(k).get(key)]
@@ -653,56 +604,110 @@ def project_state(p, tr=None):
 
 
 # ---------------------------------------------------------------------------------------------------- structure
-AFTER_JOIN = ("gradient", "color", "stars", "synth")
+#: the engine's sources of a row's root kind
+SOURCE = {"stack": "frames", "image": "image", "stretched": "stretched", "join": "fusion"}
+#: the core's own drawing rules (chain_verdict): the engine has no such rule, each is drawn by the layout
+HEAD_ONLY = "{lab} is only placed at the head of a row"
+FRAME_BAND = "{lab} belongs to a stack: between the Session and the Stacking"
+FRAME_ORDER = "{lab}: the order is Registration, Selection, Crop, Stacking"
+IMAGE_BAND = "{lab} comes after the Stacking"
+AFTER_LAYERS = "nothing follows Combine layers: its image is a layer of Post"
 
 
-def chain_problem(kinds, root):
-    """Order rules of one effective chain, whatever the greying (CHANGES.md, "What follows what").
-    kinds: the chain's block kinds left to right; root: "stack" | "image" | "join". -> a message or ""."""
-    last_frame, prev, n_ef, n_syn = -1, None, 0, 0
-    for i, k in enumerate(kinds):
-        lab = LABEL[k]
-        if k in FRAME_KINDS:
-            if root != "stack" or last_frame == 5 or (prev is not None and prev not in FRAME_KINDS):
-                return M("{lab} belongs to a stack: between the Session and the Stacking", lab=lab)
-            if (i == 0) != (k == "registration") or COL[k] <= last_frame:
-                return M("{lab}: the order is Registration, Selection, Crop, Stacking", lab=lab)
-            last_frame = COL[k]
-        elif i > 0:
+def chain_verdict(items, root, align=None, legacy=False):
+    """Whether one effective chain may be kept: the engine's rules first (wfl.graph_problem on the chain compiled as
+    the engine runs it: its Align on, its Output where with_output puts it; one name per node), then the core's own
+    drawing rules (heads; the frame band: frame blocks in a stack, in their columns' order, before the image band,
+    switched-off ones too; nothing after Combine layers, a layer of Post).
+    items: [(kind, off)] left to right; root: "stack" | "image" | "stretched" | "join" | "layers"; align: the Align
+    on of the chain's holder (a dict) or None; legacy: a workflow made before the free graph (compiled from its
+    options, which the engine checks). -> (message, BlockRefused | None); ("", None) when it may be kept."""
+    src = SOURCE.get(root)
+    if src and not legacy:
+        nodes = []
+        for k, off in items:
             if k in ("session", "calibration", "image", "post") + JOIN_KINDS:
-                return M("{lab} is only placed at the head of a row", lab=lab)
+                continue
+            nodes.append(wfl.node(k, off=bool(off)))
+            if k == "stacking" and align is not None:
+                nodes.append(wfl.node("align_on", off=bool(align.get("off"))))
+        if align is not None and src in ("image", "stretched"):
+            nodes.insert(0, wfl.node("align_on", off=bool(align.get("off"))))
+        e = wfl.graph_problem(wfl.with_output(nodes, src), src)
+        if e is not None:
+            return M(e.template, **e.fields), e
+        kinds = [k for k, _o in items if k not in wfl.IMAGE_OPS and k not in ("image",) + JOIN_KINDS]
+        dup = next((k for k in kinds if kinds.count(k) > 1), None)
+        if dup is not None:                     # one name per node: a second one, switched off (Project2.validate)
+            e = wfl.BlockRefused(wfl.WHY_ONCE_OFF, block=wfl.BLOCK_TITLES.get(dup, dup))
+            e.block = dup
+            return M(e.template, **e.fields), e
+    last_frame, image_band = -1, False
+    for i, (k, _off) in enumerate(items):
+        lab = LABEL[k]
+        if i > 0 and k in ("session", "calibration", "image", "post") + JOIN_KINDS:
+            return M(HEAD_ONLY, lab=lab), None
+        if k in FRAME_KINDS:
+            if root != "stack" or image_band:
+                return M(FRAME_BAND, lab=lab), None
+            if COL[k] <= last_frame:
+                return M(FRAME_ORDER, lab=lab), None
+            last_frame = COL[k]
+        elif i > 0 or root == "stack":
+            if root == "layers":
+                return AFTER_LAYERS, None
             if root == "stack" and last_frame != 5:
-                return M("{lab} comes after the Stacking", lab=lab)
-            if root == "join" and k not in AFTER_JOIN:
-                return "after a join: Gradient, Color or Stars/background"
-        if prev == "stars" and k != "synth":
-            return "only Synthetic stars follows Stars/background"
-        if k == "synth" and prev != "stars":
-            return "Stars/background is needed first"
-        n_ef += k == "stars"
-        n_syn += k == "synth"
-        if n_ef > 1 or n_syn > 1:
-            return M("only one {lab} per row", lab=lab)
-        prev = k
-    if root == "stack" and last_frame != 5:
-        return "Stacking is essential to the stack"
-    return ""
+                return M(IMAGE_BAND, lab=lab), None
+            image_band = True
+    return "", None
+
+
+def chain_problem(items, root, align=None, legacy=False):
+    """The message of chain_verdict ("" = the chain may be kept)."""
+    return chain_verdict(items, root, align, legacy)[0]
 
 
 def root_kind(p, ix, rid):
     r = ix.row[ix.root(rid)]
-    if r.nights:
+    if r.nights or not r.blocks:
         return "stack"
-    return "image" if p.blocks[r.blocks[0]].kind == "image" else "join"
+    head = p.blocks[r.blocks[0]]
+    if head.kind == "image":
+        src = head.source
+        st = bool(src.get("stretched")) if isinstance(src, dict) else bool(effective(p, head.id)["Stretched image"])
+        return "stretched" if st else "image"
+    return "layers" if head.kind == "combine_layers" else "join"
+
+
+def holder_align(p, ix, chain):
+    """The Align on a chain passes: that of the row holding its last Stacking (or its Image), None."""
+    a = None
+    for b in chain:
+        if p.blocks[b].kind in ("stacking", "image"):
+            a = ix.row[ix.row_of[b]].align
+    return a
+
+
+def items_of(p, chain):
+    return [(p.blocks[b].kind, p.blocks[b].off) for b in chain]
+
+
+def is_legacy(ix, rid):
+    return bool(ix.row[rid].legacy or ix.row[ix.root(rid)].legacy)
+
+
+def row_verdict(p, ix, rid):
+    eff = ix.effective(rid)
+    return chain_verdict(items_of(p, eff), root_kind(p, ix, rid), holder_align(p, ix, eff), is_legacy(ix, rid))
 
 
 def structure(p, ix=None):
     """Problems of the stricter structural validator (empty = fine): every row's effective chain obeys
-    chain_problem, and nothing follows Post (Post is in no row). -> [message]."""
+    chain_verdict, and nothing follows Post (Post is in no row). -> [message]."""
     ix = ix or Index(p)
     out = []
     for r in p.rows:
-        why = chain_problem([p.blocks[b].kind for b in ix.effective(r.id)], root_kind(p, ix, r.id))
+        why = row_verdict(p, ix, r.id)[0]
         if why:
             out.append(M("“{_row}”: {why}", _row=r.name, why=why))
     return out

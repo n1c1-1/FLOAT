@@ -51,6 +51,11 @@ def candidates(p, view, kind=None, block=None, d=None):
     if chainable:
         for r in p.rows:
             drawn = [b for b in r.blocks if b in d.boxes]
+            if r.nights and r.id not in d.cards and r.nights[0][1] in d.boxes:   # a stack's head, after its nights
+                cal = d.boxes[r.nights[0][1]]
+                x = d.boxes[r.blocks[0]].x - GAP / 2 - 3 if drawn and r.blocks[0] == drawn[0] else cal.right + GAP / 2 - 3
+                add("insert", Box(x, cal.y, 6, BH), M("{lab} here, in “{_row}”", lab=LABEL[kind], _row=r.name),
+                    *op_for({"type": "insert", "row": r.id, "after": None}))
             if not drawn:
                 continue
             if r.fork:

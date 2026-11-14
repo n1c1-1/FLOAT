@@ -1,13 +1,15 @@
 """Operations (§4). Every operation runs on a clone of the graph; refused = nothing changes. No history here:
 the caller keeps the graphs it wants to go back to."""
+import copy
 from dataclasses import dataclass
 
 from .shapes import Result
-from .model import (Index, Row, Wire, check, clone, model_json, new_block, new_id, in_ports, out_ports, edges,
+from .model import (Index, Row, Wire, Tap, check, clone, model_json, new_block, new_id, in_ports, out_ports, edges,
                     FILE_KINDS, FRAME_KINDS, JOIN_KINDS, COMBO_PORTS, COMBO_LABEL, LAYER_PORTS, POST_PORT)
 from . import rules
 from .msg import M, join, typed, name_of, TR
 from .rules import LABEL, OFFABLE, evaluate, need_greyed, title_msg, inherited, rank
+from ..core import workflow as wfl
 
 COMMON = "common"
 
@@ -159,7 +161,18 @@ def fold_problem(p, ix, rid):
 
 # ---------------------------------------------------------------------------------------------------- validation
 def finish(q, style=None):
-    """Normalise what has one stored form, check structure, refuse any need left unmet."""
+    """Normalise what has one stored form, check structure, refuse what the engine (or the drawing) refuses."""
+    normalise(q)
+    check(q)
+    why = legality(q, style)
+    if why:
+        raise Refusal(why)
+
+
+def normalise(q):
+    """The stored forms: wires on existing ports, one active wire per port, settings and files equal to what they
+    follow dropped, taps on chain blocks (a combination's wire from a mid-row block reads a tap: made, and gone with
+    its last wire), one node name per chain, Align on targets that exist."""
     ix = Index(q)
     keep, seen = [], set()
     for w in q.wires:
@@ -186,9 +199,9 @@ def finish(q, style=None):
             w.active = False
         if not act:
             ws[0].active = True
-    frames = [r.id for r in q.rows if r.nights]
-    if q.reference not in frames:
-        q.reference = frames[0] if frames else None
+    _norm_taps(q, ix)
+    _norm_names(q, ix)
+    _norm_align(q, ix)
     for b in q.blocks.values():
         inh = inherited(q, b.kind)
         b.settings = {k: v for k, v in sorted(b.settings.items()) if inh.get(k, object()) != v}
@@ -197,22 +210,145 @@ def finish(q, style=None):
                        and b.files[k] != q.common["files"].get(k, [])}
     q.common["files"] = {k: q.common["files"][k] for k in FILE_KINDS if q.common["files"].get(k)}
     q.common["settings"] = {k: dict(sorted(v.items())) for k, v in q.common["settings"].items() if v}
-    check(q)
+
+
+def _mid_row(ix, b):
+    r = ix.row[ix.row_of[b]]
+    return ix.pos[b] < len(r.blocks) - 1
+
+
+def _norm_taps(q, ix):
+    """A combination's input from a block where no workflow of a row ends is a tap's (INTEGRATION 4.6); a tap made
+    for such a wire goes with its last one, or when its block ends its row again."""
+    flows = {f.wid for f in list(q.rows) + list(q.taps) if f.wid is not None}
+    want = []
+    for w in q.wires:
+        if not w.active or q.blocks[w.dst[0]].kind != "combine" or w.src[0] not in ix.row_of:
+            continue
+        if _mid_row(ix, w.src[0]) and not (w.wid is not None and w.wid in flows) and w.src[0] not in want:
+            want.append(w.src[0])
+    q.taps = [t for t in q.taps if not t.auto or t.block in want]
+    have = {t.block for t in q.taps}
+    for b in want:
+        if b not in have:
+            r = ix.row[ix.row_of[b]]
+            q.taps.append(Tap(new_id(q, "t"), b, name_of("{_row} · {lab}", _row=r.name, lab=LABEL[q.blocks[b].kind]),
+                              auto=True))
+
+
+def _norm_names(q, ix):
+    """One node name per chain (Project2.validate): a block that comes into a chain holding its stored name (moved,
+    or its chain changed) is named again by the compile; the earlier block keeps its name (its results)."""
+    for r in q.rows:
+        seen = {}
+        for b in ix.effective(r.id):
+            blk = q.blocks[b]
+            if not blk.engine or blk.kind not in wfl.IMAGE_OPS:
+                continue
+            o = seen.get(blk.engine)
+            if o is None or o == b:
+                seen[blk.engine] = b
+                continue
+            early, late = sorted((o, b), key=lambda x: int(x[1:]))
+            seen[blk.engine] = early
+            q.blocks[late].engine = None
+
+
+def _norm_align(q, ix):
+    flows = {r.id for r in q.rows} | {t.id for t in q.taps}
+    for r in q.rows:
+        a = r.align
+        if not a:
+            continue
+        if a.get("ref") is not None and a["ref"] not in flows:
+            a["ref"] = None
+        if a.get("from") is not None and (a["from"] not in q.blocks or a.get("ref") is None
+                                          or a["from"] not in _flow_chain(q, ix, a["ref"])):
+            a["from"] = None
+        if r.fork and not any(q.blocks[b].kind in ("stacking", "image") for b in r.blocks):
+            r.align = None               # a variant aligned with its stack: no Align on of its own
+
+
+def _flow_chain(q, ix, fid):
+    if fid in ix.row:
+        return ix.effective(fid)
+    t = next((t for t in q.taps if t.id == fid), None)
+    if t is None or t.block not in ix.row_of:
+        return []
+    eff = ix.effective(ix.row_of[t.block])
+    return eff[:eff.index(t.block) + 1]
+
+
+def legality(q, style=None):
+    """"" when the graph may be kept, else why not (a message): each row's effective chain as the engine runs it,
+    then the drawing (rules.chain_verdict), a join's ports, the compiled definition as the engine reads it
+    (compile.engine_check: no engine form, Project2.validate, the stage chains)."""
+    from .compile import engine_check
     ix = Index(q)
-    bad = need_greyed(evaluate(q, ix))
-    if not bad:
-        for r in q.rows:
-            why = rules.chain_problem([q.blocks[b].kind for b in ix.effective(r.id)], rules.root_kind(q, ix, r.id))
-            if why:
-                raise Refusal(why)
+    for r in q.rows:
+        why, e = rules.row_verdict(q, ix, r.id)
+        if why:
+            return _styled(why, e, style)
+    bad = need_greyed(evaluate(q, ix, wiring=False))
     if bad:
         b, why = next(iter(bad.items()))
         t = title_msg(q, b)
         if style == "need":
-            raise Refusal(M("{t} needs it", t=t))
+            return M("{t} needs it", t=t)
         if style == "off":
-            raise Refusal(M("{t} needs it: disable {t} first", t=t))
-        raise Refusal(why)
+            return M("{t} needs it: disable {t} first", t=t)
+        return why
+    for w in q.wires:                     # the engine's combination reads an Output or a Stars/background
+        if w.active and q.blocks[w.dst[0]].kind == "combine" and q.blocks[w.src[0]].kind in ("synth", "combine_layers"):
+            return M("{lab} is no input of a combination: it reads an image or a Stars/background",
+                     lab=LABEL[q.blocks[w.src[0]].kind])
+    if q.calibrate_together:
+        for r in q.rows:
+            offs = {q.blocks[c].off for _s, c in r.nights}
+            if len(offs) > 1:
+                return "calibrated together: one setting for all nights"
+    return engine_check(q)
+
+
+def _styled(why, e, style):
+    """A removal or a switch-off the engine refuses because a later block needs the block: said as the engine says
+    it for those gestures (wfl.remove_problem, wfl.off_problem)."""
+    if e is not None and style in ("need", "off") and e.template in (wfl.WHY_NEEDS, wfl.WHY_HALVES) and \
+            getattr(e, "block", ""):
+        return M(wfl.WHY_REMOVE_NEEDED if style == "need" else wfl.WHY_OFF_NEEDED,
+                 other=wfl.BLOCK_TITLES.get(e.block, e.block))
+    return why
+
+
+def attempt(graph, steps, view=None):
+    """A gesture tried without its refusal (the fuzz's reverse invariant): (state, where, reason). where: "op" (the
+    operation itself refused: no state is made, state None), "legal" (refused by legality: state is the graph it
+    would have made), "fold" (the folded band), "ok"."""
+    q = clone(graph)
+    outs = []
+    try:
+        for name, args in steps:
+            fn = OPS.get(ALIASES.get(name, name))
+            if fn is None:
+                raise Refusal(M("unknown operation: {_name}", _name=name))
+            if callable(args):
+                args = args([Result(True, toast=o.toast, focus=o.focus, created=o.created) for o in outs])
+            o = fn(q, **args)
+            o.created = {}
+            outs.append(o)
+    except Refusal as e:
+        if getattr(e, "at", None) is not None and len(steps) == 1 and steps[0][0] == "add_block":
+            return attempt(graph, [("add_block", {**steps[0][1], "at": e.at})], view)   # the natural place's
+        return None, "op", e.msg
+    normalise(q)
+    check(q)
+    if legality(q, outs[-1].style if outs else None):
+        return q, "legal", legality(q)        # the reason itself (a removal's or a switch-off's wording aside)
+    try:
+        fold_guard(graph, q, view or new_view())
+    except Refusal as e:
+        return q, "fold", e.msg
+    return q, "ok", ""
 
 
 # ---------------------------------------------------------------------------------------------------- helpers
@@ -286,7 +422,8 @@ def _after_subtree(q, rid):
 
 
 def delete_rows(q, rids):
-    """Delete rows with their subtrees, blocks and wires; the reference passes on with its Astrometry."""
+    """Delete rows with their subtrees, blocks and wires; the rows aligned on a deleted one pass to the first of
+    them (its own grid then), with the deleted target's Astrometry when it has none."""
     ix = Index(q)
     q._astro_moved = False
     gone = []
@@ -294,14 +431,19 @@ def delete_rows(q, rids):
         for x in ix.subtree(r):
             if x not in gone:
                 gone.append(x)
-    if q.reference in gone:
-        left = [r.id for r in q.rows if r.nights and r.id not in gone]
-        astro = [b for b in ix.row[q.reference].blocks if q.blocks[b].kind == "astrometry"]
-        if left and astro:
-            ix.row[q.reference].blocks.remove(astro[0])
-            _insert_after_frames(q, ix.row[left[0]], astro[0])
+    left = [r for r in q.rows if r.id not in gone and r.align and r.align.get("ref") in gone]
+    if left:
+        heir = left[0]
+        old = heir.align["ref"]
+        heir.align = None
+        for r in left[1:]:
+            r.align["ref"], r.align["from"] = heir.id, None
+            r.align["auto"] = True
+        astro = [b for b in ix.row[old].blocks if q.blocks[b].kind == "astrometry"]             if old in ix.row and ix.row[old].nights and heir.nights else []
+        if astro and not any(q.blocks[b].kind == "astrometry" for b in heir.blocks):
+            ix.row[old].blocks.remove(astro[0])
+            _insert_after_frames(q, heir, astro[0])
             q._astro_moved = True
-        q.reference = left[0] if left else None
     blocks = {b for r in gone for b in ix.row[r].blocks + [x for n in ix.row[r].nights for x in n]}
     nw = len([w for w in q.wires if w.src[0] in blocks or w.dst[0] in blocks])
     q.wires = [w for w in q.wires if w.src[0] not in blocks and w.dst[0] not in blocks]
@@ -314,6 +456,25 @@ def delete_rows(q, rids):
     if nw:
         done = join([done, M(" with {n} wire" if nw == 1 else " with {n} wires", n=nw)], "")
     return done
+
+
+def _auto_align(q, r):
+    """A new stack is aligned on the stack the others are aligned on (the reference), from its Astrometry when it
+    has one; none when it is the first stack."""
+    ref = q.reference
+    if ref is not None and ref != r.id and ref in {x.id for x in q.rows}:
+        r.align = new_align(ref)
+
+
+def new_align(ref, block=None):
+    return {"ref": ref, "from": block, "from_name": None, "ref_wid": None, "method": None, "off": False,
+            "fork": None, "params": {}, "auto": block is None}
+
+
+def _night_off(q, r):
+    """The switch of the Calibration of a night joining stack r: calibrated together, the stack's (one setting for
+    all its nights)."""
+    return bool(q.calibrate_together and r.nights and q.blocks[r.nights[0][1]].off)
 
 
 def _insert_after_frames(q, r, b):
@@ -330,7 +491,7 @@ def detach(q, b, keep=False):
     i = ix.pos[b]
     pred = ix.pred(b)
     kids = [v for v in ix.children[rid] if ix.row[v].fork[1] == b]
-    if i == 0 and len(r.blocks) > 1 and kids:
+    if i == 0 and kids and (len(r.blocks) > 1 or pred is None):
         raise Refusal("variants start from this block: delete them first")
     for w in list(q.wires):
         if w.src[0] == b:
@@ -342,7 +503,7 @@ def detach(q, b, keep=False):
     for v in kids:
         ix.row[v].fork = [ix.row_of[pred], pred] if pred else None
     r.blocks.remove(b)
-    if not r.blocks:
+    if not r.blocks and not r.nights:
         at = q.rows.index(r)
         q.rows = [x for x in q.rows if x.id not in kids]
         for k, v in enumerate(kids):
@@ -388,10 +549,9 @@ def op_add_row(q, kind, files=None, name=None):
     if kind == "session":
         name = _named(q, name, session_name(q))
         r = Row(new_id(q, "r"), name, _default_chain(q), [_night(q, name, _files(files))])
+        _auto_align(q, r)
         q.rows.append(r)
         _to_post(q, r.blocks[-1])
-        if q.reference is None:
-            q.reference = r.id
         return Out(M("“{_name}” added", _name=name), r.nights[0][0], new=r.nights[0][0])
     if kind == "image":
         if files:
@@ -427,7 +587,9 @@ def op_add_night(q, row, files=None, name=None):
     if not r.nights:
         raise Refusal("a session joins a stack of lights")
     name = (name or "").strip() or session_name(q)
+    off = _night_off(q, r)
     r.nights.append(_night(q, name, _files(files)))
+    q.blocks[r.nights[-1][1]].off = off
     return Out(M("{_name} added to “{_row}”: it stacks with its sessions · Ctrl+Z to undo", _name=name, _row=r.name),
                r.nights[-1][0], new=r.nights[-1][0])
 
@@ -460,6 +622,7 @@ def op_move_night(q, night, row=None, before=None):
             raise Refusal("already alone on its row")
         r.nights.remove(n)
         nr = Row(new_id(q, "r"), free_name(q, name), _default_chain(q), [n])
+        _auto_align(q, nr)
         q.rows.append(nr)
         _to_post(q, nr.blocks[-1])
         return Out(M("“{_name}” moves to its own row “{_row}”", _name=name, _row=nr.name), night, new=night)
@@ -473,6 +636,8 @@ def op_move_night(q, night, row=None, before=None):
             t.nights.remove(n)
             t.nights.append(n)
         return Out(M("“{_name}” moved", _name=name), night, new=night)
+    if t is not r and t.nights:
+        q.blocks[n[1]].off = _night_off(q, t) if q.calibrate_together else q.blocks[n[1]].off
     r.nights.remove(n)
     at = [x[0] for x in t.nights].index(before) if before is not None else len(t.nights)
     t.nights.insert(at, n)
@@ -513,6 +678,7 @@ def op_split_night(q, night, lights):
     files["lights"] = list(lights)
     nn = _night(q, session_name(q), files)
     q.blocks[nn[1]].settings = dict(q.blocks[n[1]].settings)
+    q.blocks[nn[1]].off = q.blocks[n[1]].off
     r.nights.insert(r.nights.index(n) + 1, nn)
     return Out(M("{n} lights in “{_name}”", n=len(lights), _name=q.blocks[nn[0]].name), nn[0], new=nn[0])
 
@@ -521,6 +687,9 @@ def op_merge_rows(q, src, dst):
     a, b = _row(q, src), _row(q, dst)
     if not a.nights or not b.nights or a is b:
         raise Refusal("two different stacks of lights are needed")
+    if q.calibrate_together:
+        for _s, c in a.nights:
+            q.blocks[c].off = _night_off(q, b)
     b.nights += a.nights
     a.nights = []
     toast = M("“{_a}” merged into “{_b}”: its own settings are dropped", _a=a.name, _b=b.name)
@@ -539,8 +708,14 @@ def op_duplicate_row(q, row):
         q.blocks[nn[1]].settings = dict(q.blocks[c].settings)
         nights.append(nn)
     nr = Row(new_id(q, "r"), free_name(q, name_of("{_name} copy", _name=r.name)), blocks, nights, list(r.fork) if r.fork else None)
+    for (_s, c), (_s2, c2) in zip(r.nights, nights):
+        q.blocks[c2].off = q.blocks[c].off
+    if r.align:
+        nr.align = {**r.align, "params": dict(r.align.get("params") or {}), "from": r.align.get("from")}
+    elif r.nights and not r.fork:
+        nr.align = new_align(r.id)
     q.rows.insert(_after_subtree(q, r.id), nr)
-    if q.blocks[blocks[-1]].kind not in JOIN_KINDS and out_ports(q.blocks[blocks[-1]]):
+    if blocks and q.blocks[blocks[-1]].kind not in JOIN_KINDS and out_ports(q.blocks[blocks[-1]]):
         _to_post(q, blocks[-1])
     first = nights[0][0] if nights else blocks[0]
     return Out(M("“{_new}” drawn under “{_row}”", _new=nr.name, _row=r.name), first, new=first)
@@ -567,19 +742,98 @@ def op_rename_night(q, night, name):
 
 
 def op_set_reference(q, row):
+    """"Reference for all": every other stack (and each variant with its own Stacking) aligned on this one, from its
+    Astrometry when it has one; this one on its own grid. The old reference's Astrometry passes to it when it has
+    none (the plate solution the others take)."""
     r = _row(q, row)
     if not r.nights:
         raise Refusal("the reference is a stack of lights")
     old = q.reference
-    if old == row:
-        return Out(focus=row)
     ix = Index(q)
-    astro = [b for b in ix.row[old].blocks if q.blocks[b].kind == "astrometry"] if old in ix.row else []
-    if astro:
-        detach(q, astro[0], keep=True)
-        _insert_after_frames(q, _row(q, row), astro[0])
-    q.reference = row
+    mine = set(ix.subtree(row))
+    if old != row and old in ix.row and ix.row[old].nights and not any(
+            q.blocks[b].kind == "astrometry" for b in r.blocks):
+        astro = [b for b in ix.row[old].blocks if q.blocks[b].kind == "astrometry"]
+        if astro:
+            detach(q, astro[0], keep=True)
+            _insert_after_frames(q, _row(q, row), astro[0])
+    for x in q.rows:
+        own = bool(x.nights) or (x.fork and any(q.blocks[b].kind == "stacking" for b in x.blocks))
+        if not own or x.id in mine:
+            if x.id in mine and x.align:
+                x.align = None
+            continue
+        a = x.align or new_align(row)
+        x.align = {**a, "ref": row, "from": None, "auto": True}
     return Out(M("“{_row}” becomes the registration reference", _row=r.name), row, style="need")
+
+
+def op_set_align(q, row, ref, block=None):
+    """The target of a row's Align on (INTEGRATION 4.3): `ref` a row (or tap) of another stack or image, None: an
+    Align on with its target to choose; `block`: the target's block the alignment leaves from (its Stacking or Image
+    by default; from its Astrometry or a block after it, the plate solution comes with the grid)."""
+    r = _row(q, row)
+    ix = Index(q)
+    if not any(q.blocks[b].kind in ("stacking", "image") for b in r.blocks) and not r.nights:
+        raise Refusal("an Align on follows a Stacking or an Image of the row")
+    if ref is not None:
+        flows = {x.id for x in q.rows} | {t.id for t in q.taps}
+        if ref not in flows:
+            raise Refusal("row not found")
+        if block is not None and block not in _flow_chain(q, ix, ref):
+            raise Refusal("the block is not in the target's chain")
+        why = _join_problem(q, row, ref)
+        if why:
+            raise Refusal(why)
+    a = r.align or new_align(ref)
+    r.align = {**a, "ref": ref, "from": block, "auto": False}
+    if ref is None:
+        return Out(M("“{_row}”: grid to choose", _row=r.name), row)
+    tgt = ix.row[ref].name if ref in ix.row else next(t.name for t in q.taps if t.id == ref)
+    return Out(M("“{_row}” on the grid of “{_ref}”", _row=r.name, _ref=tgt), row)
+
+
+def op_own_grid(q, row):
+    """The row keeps its own grid: no Align on."""
+    r = _row(q, row)
+    if not r.align:
+        raise Refusal("already on its own grid")
+    r.align = None
+    return Out(M("“{_row}” on its own grid", _row=r.name), row)
+
+
+def op_set_align_off(q, row):
+    """Switch the row's Align on off (its image stays on its own grid, the target kept) or on again."""
+    r = _row(q, row)
+    if not r.align:
+        raise Refusal("no Align on in this row")
+    r.align = {**r.align, "off": not r.align.get("off")}
+    return Out("Align on switched off" if r.align["off"] else "Align on switched on", row, style="off")
+
+
+def _join_problem(q, row, ref):
+    """project2.join_problem on the compiled graph: why `row` cannot be aligned on `ref` (no self, no combination,
+    no loop), "" when it can."""
+    from ..core.project2 import Project2, join_problem
+    from .compile import compile_into
+    p = Project2(name="check")
+    c = compile_into(q, p)
+    a, b = c.wids.get(row), c.wids.get(ref)
+    if a is None or b is None:
+        return ""
+    why = join_problem(p, a, b, reference=True)
+    if not why:
+        return ""
+    from ..core.project2 import JOIN_LOOP
+    if why.endswith("it would make a loop"):
+        return M(JOIN_LOOP, src=typed(p.workflow(b).name), target=typed(p.workflow(a).name))
+    return why
+
+
+def op_set_calibrate_together(q, on):
+    """One calibration for all the nights of a stack (together), or each night its own (INTEGRATION 4.4)."""
+    q.calibrate_together = bool(on)
+    return Out("calibrated together" if on else "each night calibrated on its own", style="off")
 
 
 # ---------------------------------------------------------------------------------------------------- blocks
@@ -614,7 +868,7 @@ def op_add_block(q, kind, at=None, row=None, _block=None):
 def _insert(q, b, rid, after):
     r = _row(q, rid)
     if after is None:
-        if not r.fork:
+        if not r.fork and not r.nights:
             raise Refusal("nothing is inserted before the head of the row")
         r.blocks.insert(0, b)
     else:
@@ -623,8 +877,9 @@ def _insert(q, b, rid, after):
         i = r.blocks.index(after) + 1
         r.blocks.insert(i, b)
         if i == len(r.blocks) - 1:                       # appended at the end: the row's outputs follow
+            from .judge import keeps_wire
             for w in q.wires:
-                if w.src[0] == after:
+                if w.src[0] == after and not keeps_wire(q, q.blocks[b].kind, w):
                     w.src = [b, _map_port(q.blocks[b], w.src[1])] if out_ports(q.blocks[b]) else w.src
     return Out(M("{lab} here, in “{_row}”", lab=LABEL[q.blocks[b].kind], _row=r.name), b, new=b)
 
@@ -657,6 +912,10 @@ def _make_variant(q, frow, x, blocks, origin, base):
                 act = q.blocks[w.dst[0]].kind == "post"
                 q.wires.append(Wire(new_id(q, "w"), [nb, w.src[1]], list(w.dst), act))
     v = Row(new_id(q, "r"), free_name(q, base, False), blocks, [], [frow, x])
+    if any(q.blocks[b].kind == "stacking" for b in blocks):
+        ix = Index(q)
+        a = rules.holder_align(q, ix, ix.effective(frow))
+        v.align = copy.deepcopy(a) if a else None
     q.rows.insert(_after_subtree(q, frow), v)
     return Out(M("variant “{_name}” under “{_base}”", _name=v.name, _base=base), blocks[0], new=blocks[0])
 
@@ -728,6 +987,7 @@ def _add_port_row(q, kind, jid, port):
     else:
         blocks = _default_chain(q)
     r = Row(new_id(q, "r"), name, blocks, [_night(q, name)])
+    _auto_align(q, r)
     q.rows.append(r)
     q.wires.append(Wire(new_id(q, "w"), [blocks[-1], _map_port(q.blocks[blocks[-1]], src_port)], [jid, port]))
     return Out(M("New row for {port}", port=port), r.nights[0][0], new=r.nights[0][0])
@@ -757,7 +1017,7 @@ def natural(q, kind, row=None):
     target = row if row in ix.row else (rows[0] if rows else None)
     if target is None:
         raise Refusal("add a Session or an Image first")
-    first_reason = None
+    first_reason, first_at = None, None
     for rid in [target] + [r for r in rows if r != target]:
         r = ix.row[rid]
         i0 = 0
@@ -766,14 +1026,17 @@ def natural(q, kind, row=None):
         slots = list(range(len(r.blocks) + 1))
         slots.sort(key=lambda i: (abs(i - i0), i))
         for i in slots:
-            if i == 0 and not r.fork:
+            if i == 0 and not r.fork and not r.nights:
                 continue
             at = {"type": "insert", "row": rid, "after": r.blocks[i - 1] if i else None}
             why = try_op(q, "add_block", {"kind": kind, "at": at})
             if not why:
                 return at
-            first_reason = first_reason or why
-    raise Refusal(first_reason or M("{lab}: no place", lab=LABEL[kind]))
+            if first_reason is None:
+                first_reason, first_at = why, at
+    e = Refusal(first_reason or M("{lab}: no place", lab=LABEL[kind]))
+    e.at = first_at                     # the place its reason is that of (operations.attempt)
+    raise e
 
 
 def fold_guard(before, q, view):
@@ -808,15 +1071,13 @@ def op_move_block(q, block, at):
     if b.kind in ("image",) + JOIN_KINDS:
         raise Refusal("a source stays at the head of its row")
     rid = ix.row_of[block]
-    if ix.row[rid].nights and b.kind in ("registration", "stacking"):
-        raise Refusal(M("{lab} is essential to the stack", lab=LABEL[b.kind]))
     at = dict(at)
     if at.get("type") not in ("insert", "branch"):
         raise Refusal("unknown place for this block")
     r = ix.row[rid]
     if at.get("after") == block:
         at["after"] = r.blocks[ix.pos[block] - 1] if ix.pos[block] > 0 else None
-        if at["after"] is None and not r.fork:
+        if at["after"] is None and not r.fork and not r.nights:
             return Out(focus=block)
     if at.get("y") == block:
         nxt = ix.pos[block] + 1
@@ -838,9 +1099,8 @@ def op_remove_block(q, block):
         return op_remove_night(q, block)
     rid = ix.row_of[block]
     if ix.pos[block] == 0 and b.kind in ("image",) + JOIN_KINDS:
-        return Out(delete_rows(q, [rid]), old=block, style="need")
-    if ix.row[rid].nights and b.kind in ("registration", "stacking"):
-        raise Refusal(M("{lab} is essential to the stack", lab=LABEL[b.kind]))
+        toast = delete_rows(q, [rid])
+        return Out(toast, old=None if q._astro_moved else block, style="need")
     detach(q, block)
     return Out(M("{lab} deleted", lab=LABEL[b.kind]), old=block, style="need")
 
@@ -913,6 +1173,7 @@ def op_wire(q, src, src_port, dst, dst_port):
         raise Refusal("this wire already exists")
     if would_cycle(q, src, dst):
         raise Refusal("this wire would close a loop")
+
     if d.kind != "post":
         q.wires = [w for w in q.wires if not (w.dst == [dst, dst_port] and w.active)]
     w = Wire(new_id(q, "w"), [src, src_port], [dst, dst_port])
@@ -1131,11 +1392,13 @@ def op_split_by(q, session, groups):
                 name = free_name(q, name)
             nn = _night(q, name, {k: fl[k] for k in FILE_KINDS if k in fl})
             q.blocks[nn[1]].settings = dict(q.blocks[n[1]].settings)
+            q.blocks[nn[1]].off = q.blocks[n[1]].off if into == "night" else False
             if into == "night":
                 r.nights.insert(at, nn)
                 at += 1
             else:
                 nr = Row(new_id(q, "r"), name, _default_chain(q), [nn])
+                _auto_align(q, nr)
                 q.rows.insert(rows_at, nr)
                 rows_at += 1
                 _to_post(q, nr.blocks[-1])

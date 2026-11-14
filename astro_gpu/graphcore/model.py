@@ -61,8 +61,11 @@ class Row:
     calib_node: bool = True      # its chain starts with the engine's Calibration node
     calib_fork: object = None    # that node's mark
     calib: dict = field(default_factory=dict)     # its settings (inventory, calibrate)
-    align: object = None         # {"ref": row or tap id, "from": block id, "from_name", "method", "off", "fork",
-    #                              "params"}: the Align on after its Stacking (or Image); None: none
+    align: object = None         # {"ref": row or tap id | None, "from": block id, "from_name", "ref_wid", "method",
+    #                              "off", "fork", "params", "auto"}: the Align on after its Stacking (or Image), its
+    #                              target ("ref" None: a target to choose); "auto": from the target's Astrometry
+    #                              when it has one (its plate solution comes with the grid), else its Stacking or
+    #                              Image; None: the row keeps its own grid
 
 
 #: the per-workflow fields a row and a tap share
@@ -88,6 +91,7 @@ class Tap:
     options: object = None
     end: object = None
     legacy: object = None
+    auto: bool = False       # made for a combination's wire from a mid-row block: goes when no such wire leaves it
 
 
 @dataclass
@@ -108,7 +112,6 @@ class Project:
     rows: list = field(default_factory=list)
     blocks: dict = field(default_factory=dict)
     wires: list = field(default_factory=list)
-    reference: object = None
     common: dict = field(default_factory=lambda: {"files": {}, "settings": {}})
     next_id: int = 1
     # -- the engine's definition (compile.py)
@@ -118,6 +121,16 @@ class Project:
     next_wid: int = 1                             # the next workflow id (ids are never reused)
     order: list = field(default_factory=list)     # the workflow ids in the definition's order
     taps: list = field(default_factory=list)      # [Tap]
+
+    @property
+    def reference(self):
+        """The stack the others are aligned on (derived, never stored): the target most rows point at (the first of
+        them on a tie); with no row aligned, the first stack; None without a stack."""
+        ids = [r.id for r in self.rows] + [t.id for t in self.taps]
+        refs = [r.align["ref"] for r in self.rows if r.align and r.align.get("ref") in ids]
+        if refs:
+            return max(dict.fromkeys(refs), key=lambda x: (refs.count(x), -ids.index(x)))
+        return next((r.id for r in self.rows if r.nights and not r.fork), None)
 
 
 def new_id(p, prefix):
@@ -255,17 +268,16 @@ def to_dict(p):
                        for k, b in p.blocks.items()},
             "wires": [{"id": w.id, "src": list(w.src), "dst": list(w.dst), "active": w.active, "wid": w.wid,
                        "channel": w.channel, "image": w.image} for w in p.wires],
-            "reference": p.reference,
             "common": {"files": {k: list(v) for k, v in p.common["files"].items()},
                        "settings": {k: dict(v) for k, v in p.common["settings"].items()}},
             "next_id": p.next_id,
             "nights": _dc(p.nights), "excluded": [list(x) for x in p.excluded],
             "calibrate_together": p.calibrate_together, "next_wid": p.next_wid, "order": list(p.order),
-            "taps": [{"id": t.id, "block": t.block, "name": t.name, **_flow_dict(t)} for t in p.taps]}
+            "taps": [{"id": t.id, "block": t.block, "name": t.name, **_flow_dict(t), "auto": t.auto} for t in p.taps]}
 
 
 def from_dict(d):
-    p = Project(**{k: v for k, v in d.items() if k not in ("rows", "blocks", "wires", "taps")})
+    p = Project(**{k: v for k, v in d.items() if k not in ("rows", "blocks", "wires", "taps", "reference")})
     p.rows = [Row(**r) for r in d["rows"]]
     p.blocks = {k: Block(**b) for k, b in d["blocks"].items()}
     p.wires = [Wire(**w) for w in d["wires"]]
@@ -286,7 +298,7 @@ def _dcq(x):
 
 def clone(p):
     """Fast deep copy of a project."""
-    q = Project(p.name, p.target, reference=p.reference, next_id=p.next_id,
+    q = Project(p.name, p.target, next_id=p.next_id,
                 common={"files": {k: list(v) for k, v in p.common["files"].items()},
                         "settings": {k: dict(v) for k, v in p.common["settings"].items()}},
                 nights=_dcq(p.nights), excluded=[list(x) for x in p.excluded],
@@ -300,7 +312,7 @@ def clone(p):
                          b.engine, b.method, b.fork, _dcq(b.params), b.sid, _dcq(b.own), _dcq(b.source))
                 for k, b in p.blocks.items()}
     q.wires = [Wire(w.id, list(w.src), list(w.dst), w.active, w.wid, w.channel, w.image) for w in p.wires]
-    q.taps = [Tap(t.id, t.block, t.name, **{k: _dcq(getattr(t, k)) for k in FLOW_FIELDS}) for t in p.taps]
+    q.taps = [Tap(t.id, t.block, t.name, **{k: _dcq(getattr(t, k)) for k in FLOW_FIELDS}, auto=t.auto) for t in p.taps]
     return q
 
 
@@ -355,12 +367,16 @@ def check(p):
             need(kinds[0] not in JOIN_KINDS + ("image",), f"variant {r.id} head")
             need(ix.root(r.id) != r.id and not ix.row[ix.root(r.id)].fork, f"fork loop at {r.id}")
         elif r.nights:
-            need(kinds[:1] == ["registration"] and "stacking" in kinds, f"frames row {r.id} lacks a stack")
+            pass                                       # a stack, or a stack being built (no Stacking yet, no block)
         else:
             need(kinds and kinds[0] in JOIN_KINDS + ("image",), f"row {r.id} has no head")
-    frames = [r.id for r in p.rows if r.nights]
-    need((p.reference is None) == (not frames), "reference None iff no frames row")
-    need(p.reference is None or p.reference in frames, "reference not a frames row")
+    flows = {r.id for r in p.rows} | {t.id for t in p.taps}
+    for r in p.rows:
+        if r.align is not None:
+            need(isinstance(r.align, dict), f"align of {r.id}")
+            need(r.align.get("ref") is None or r.align["ref"] in flows, f"align of {r.id}: unknown target")
+            need(r.align.get("ref") != r.id, f"align of {r.id}: on itself")
+            need(r.align.get("from") is None or r.align["from"] in p.blocks, f"align of {r.id}: unknown block")
     single = {}
     pairs = set()
     for w in p.wires:

@@ -56,6 +56,7 @@ def definition_diff(p, q) -> list[str]:
         out.append(f"workflows: ids {ia} -> {ib}")
     wb = {w["id"]: w for w in b["workflows"]}
     for w in a["workflows"]:
+        w = _normalised(w)
         x = wb.get(w["id"])
         if x is None:
             continue
@@ -64,6 +65,20 @@ def definition_diff(p, q) -> list[str]:
             if d:
                 out.append(d)
     return out
+
+
+#: the normalisations of a definition the proof allows, each key-neutral:
+#: - a graph's options are those of its blocks (engine review, second): the keys of a workflow with blocks read its
+#:   blocks, never its options (core/store.py Keys.chain and Keys._given)
+def _normalised(w: dict) -> dict:
+    from ..core import workflow as wfl
+    if w.get("blocks") is None:
+        return w
+    try:
+        src = "frames" if not w.get("source") else "fusion" if "fusion" in w["source"] else             "stretched" if w["source"].get("stretched") else "image"
+        return {**w, "options": wfl.options_of(w["blocks"], src)}
+    except (ValueError, KeyError):
+        return w
 
 
 def keys_table(p, rules, scan) -> dict:

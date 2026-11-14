@@ -71,10 +71,10 @@ def test_check_catches_broken_models():
     breakers = [
         lambda q: q.rows[0].blocks.append(q.rows[1].blocks[0]),            # block in two rows
         lambda q: q.rows[0].blocks.append("b999"),                          # dangling id
-        lambda q: setattr(q, "reference", None),
+        lambda q: setattr(q.rows[1], "align", {"ref": "r999"}),            # aligned on no row
         lambda q: q.wires.append(Wire("w999", [q.rows[0].blocks[-1], "Starless"], [q.rows[3].blocks[0], "Hα"])),
         lambda q: setattr(q.rows[1], "name", q.rows[0].name),
-        lambda q: q.rows[0].blocks.remove(q.rows[0].blocks[0]),             # frames row without Registration
+        lambda q: setattr(q.rows[0], "align", {"ref": q.rows[0].id}),      # aligned on itself
         lambda q: setattr(q, "next_id", 3),
     ]
     for brk in breakers:
@@ -98,23 +98,25 @@ def test_titles_numbers_and_reasons():
     img = Doc.from_template("several_images")
     row = img.project.rows[0]
     res = img.apply("add_block", kind="denoise", at={"type": "insert", "row": row.id, "after": row.blocks[0]})
-    assert res.reason_text() == "the half stacks are needed (start from the lights)"
+    assert res.reason_text() == "needs half-stacks (from frames)"              # the engine's reason
     res = img.apply("add_block", kind="selection", at={"type": "insert", "row": row.id, "after": row.blocks[0]})
-    assert res.reason_text() == "Selection comes before the Stacking"
+    assert res.reason_text() == "no Selection from image file"
     f = Doc.from_template("filters_minimal")
     o3 = f.project.rows[1]
     res = f.apply("add_block", kind="astrometry", at={"type": "insert", "row": o3.id, "after": o3.blocks[2]})
-    assert res.reason_text() == "the grid of “Ha” gives the solution"
+    assert res.ok                                    # an aligned stack may hold its own Astrometry (the engine's)
 
 
 def test_greyed_ports_and_downstream():
     doc = Doc.from_template("filters_minimal")
     j = doc.project.rows[2].blocks[0]
     w = next(x for x in doc.project.wires if x.dst[0] == j)
-    assert doc.apply("add_block", kind="gradient", at={"type": "insert", "row": doc.project.rows[2].id,
-                                                       "after": j}).ok
+    assert not doc.apply("add_block", kind="gradient", at={"type": "insert", "row": doc.project.rows[2].id,
+                                                           "after": j}).ok     # from a combination: no Gradient
+    assert doc.apply("add_block", kind="stars", at={"type": "insert", "row": doc.project.rows[2].id,
+                                                    "after": j}).ok
     assert doc.apply("unwire", wire=w.id).ok
-    assert doc.greyed(j) == "ports to wire"
+    assert doc.greyed(j) == "Hα to wire"
     g = doc.project.rows[2].blocks[1]
     assert doc.greyed(g) == "downstream of H-O" and doc.summary(g) == "downstream of H-O"
     assert "No image" in doc.wire_tip(f"c:{j}>{g}")
@@ -136,7 +138,7 @@ def test_messages_are_written_by_the_translation_given():
     doc.tr = tr
     j = doc.project.rows[2].blocks[0]
     w = next(x for x in doc.project.wires if x.dst[0] == j)
-    doc.apply("add_block", kind="gradient", at={"type": "insert", "row": doc.project.rows[2].id, "after": j})
+    doc.apply("add_block", kind="stars", at={"type": "insert", "row": doc.project.rows[2].id, "after": j})
     doc.apply("unwire", wire=w.id)
     g = doc.project.rows[2].blocks[1]
     assert doc.greyed(g) == "en aval de H-O"

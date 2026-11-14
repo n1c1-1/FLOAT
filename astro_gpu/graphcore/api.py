@@ -38,6 +38,11 @@ Operations: apply(graph, name, **kwargs) -> (graph2, Result), argument names fix
   split_by(session, groups)            groups = [{"into": "here"|"common"|"night"|"row", "files": {kind: [paths]},
                                        "name": str|None}]; the listed paths leave the session's lists first
   merge_rows(src, dst)                 src's nights join dst; src's row (chain, variants, wires) goes
+  set_align(row, ref, block=None)      the row's Align on target (a row or tap; None: to choose), from `block`
+                                       of the target (its Stacking/Image by default; its Astrometry brings the plate)
+  own_grid(row)                        no Align on            set_align_off(row)   switch it off / on
+  set_reference(row)                   "reference for all": every other stack aligned on this one
+  set_calibrate_together(on)           one calibration for all the nights of a stack, or each night its own
   fold_all() unfold_all() set_mode(mode) select(id)   view only: they change the view dict, never the graph
 apply_many(graph, [(name, kwargs | f(results_so_far) -> kwargs), ...]) = one step, all or nothing.
 """
@@ -101,12 +106,19 @@ def wire_tip(project, w, tr=None):
 
 
 def row_badge(project, r, tr=None):
-    """Under a stack's name: "reference" | "on the grid of “SII”" | ""."""
-    if not any(x.id == r and x.nights for x in project.rows):
+    """Under a stack's name: "reference" | "on the grid of “SII”" | "grid to choose" | "Align on off" | ""."""
+    row = next((x for x in project.rows if x.id == r), None)
+    if row is None or not row.nights:
         return ""
-    if project.reference == r:
-        return say("reference", tr)
-    return say(M("on the grid of “{_ref}”", _ref=next(x.name for x in project.rows if x.id == project.reference)), tr)
+    a = row.align
+    if a:
+        if a.get("off"):
+            return say("Align on off", tr)
+        names = {x.id: x.name for x in project.rows} | {t.id: t.name for t in project.taps}
+        if a.get("ref") in names:
+            return say(M("on the grid of “{_ref}”", _ref=names[a["ref"]]), tr)
+        return say("grid to choose", tr)
+    return say("reference", tr) if project.reference == r else ""
 
 
 def wire_check(project, view, src, src_port, dst, dst_port, tr=None):

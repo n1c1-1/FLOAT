@@ -5,7 +5,7 @@ the one apply() gives, and that a lit place's (line, col) is where the block is 
 from collections import ChainMap
 
 from .model import Index, Block, edges, topo, out_ports, JOIN_KINDS, FRAME_KINDS
-from .rules import Ctx, eval_one, evaluate, chain_problem, root_kind, COL, LIN
+from .rules import Ctx, eval_one, evaluate, chain_problem, root_kind, holder_align, is_legacy, COL, LIN
 
 _cache = {}
 
@@ -27,8 +27,8 @@ class Base:
         self.p = p
         self.view = {"folded": view.get("folded") is True}
         self.ix = Index(p)
-        self.info = evaluation(p, self.ix)
-        self.ctx = Ctx(p, self.ix)
+        self.info = memo("evaluate_legal", p, None, lambda: evaluate(p, self.ix, wiring=False))
+        self.ctx = Ctx(p, self.ix, wiring=False)          # as legality judges (operations.legality): no wiring
         self.order = {b: i for i, b in enumerate(topo(p, self.ix, active_only=True) or list(p.blocks))}
         self.succ = {}
         for a, b in edges(p, self.ix, active_only=True):
@@ -55,7 +55,7 @@ class _W:
 class _Overlay:
     def __init__(self, B, virtual, head_over, wires_over):
         c = B.ctx
-        self.p, self.ix, self.ref, self.ref_name, self.ref_astro = c.p, c.ix, c.ref, c.ref_name, c.ref_astro
+        self.p, self.ix, self.wiring = c.p, c.ix, c.wiring
         self.head_in = ChainMap(head_over, c.head_in)
         self.wires_in = ChainMap(wires_over, c.wires_in)
         self.virtual = virtual
@@ -106,44 +106,68 @@ def _col_after(B, x):
 def judge_insert(B, kind, rid, after):
     p, ix = B.p, B.ix
     r = ix.row[rid]
-    if after is None and not r.fork:
+    if after is None and not r.fork and not r.nights:
         return "nothing is inserted before the head of the row", None
-    a = after if after is not None else r.fork[1]
     pos = r.blocks.index(after) + 1 if after is not None else 0
     s = r.blocks[pos] if pos < len(r.blocks) else None
+    why = ""
+    for x in ix.subtree(rid):                               # the engine's rules and the drawing's first
+        eff = ix.effective(x)
+        if x != rid and (s is None or s not in eff):
+            continue
+        at = eff.index(s) if s is not None else len(eff)
+        items = [(p.blocks[b].kind, p.blocks[b].off) for b in eff]
+        items.insert(at, (kind, False))
+        why = chain_problem(items, root_kind(p, ix, x), _align_with(p, ix, eff, at, kind, rid),
+                            is_legacy(ix, x))
+        if why:
+            return why, None
     v = Block("__v", kind)
-    head_over, wires_over, starts = {"__v": [a]}, {}, []
+    if after is not None:
+        a = [after]
+    elif r.fork:
+        a = [r.fork[1]]
+    else:
+        a = [c for _s, c in r.nights]
+    head_over, wires_over, starts = {"__v": a}, {}, []
     if s is not None:
         head_over[s] = ["__v"]
         starts.append(s)
     elif out_ports(v):                                     # appended at the end: the row's outputs follow
         for w in p.wires:
-            if w.src[0] == after:
+            if w.src[0] == after and not keeps_wire(p, kind, w):
                 lst = wires_over.setdefault(w.dst[0], list(B.ctx.wires_in.get(w.dst[0], [])))
                 if w.active:
                     lst[lst.index(w)] = _W(["__v", _map_port(v, w.src[1])], w.dst)
                     starts.append(w.dst[0])
     why = _run(B, {"__v": v}, ["__v"], head_over, wires_over, starts)
-    if not why:
-        for x in ix.subtree(rid):
-            eff = ix.effective(x)
-            if x != rid and (s is None or s not in eff):
-                continue
-            at = eff.index(s) if s is not None else len(eff)
-            kinds = [p.blocks[b].kind for b in eff]
-            kinds.insert(at, kind)
-            why = chain_problem(kinds, root_kind(p, ix, x))
-            if why:
-                break
     if why:
         return why, None
-    ca = B.g.cells.get(a)
+    ca = B.g.cells.get(a[0])
     if ca is not None and ca[0] is None:
         return "", (None, ca[1] + 1)                                    # composition area
     line = B.chain_line[rid]
     if kind in COL:
         return "", (line, 0) if rid in B.g.folded else (line, COL[kind])
-    return "", (line, _col_after(B, a))
+    return "", (line, _col_after(B, a[0]) if after is not None or r.fork else LIN)
+
+
+def keeps_wire(p, kind, w):
+    """A Synthetic stars appended after a Stars/background: a combination's wire stays on the Stars (the engine reads
+    an Output or a Stars/background, never a Synthetic stars: the Stars becomes a mid-row source, a tap)."""
+    return kind == "synth" and p.blocks[w.dst[0]].kind == "combine"
+
+
+def _align_with(p, ix, eff, at, kind, rid):
+    """The Align on the chain eff passes once a block of `kind` is inserted at `at` in row rid's blocks: that of
+    the row holding its last Stacking (or Image), the inserted one included."""
+    a = None
+    for i, b in enumerate(eff + [None]):
+        if i == at and kind in ("stacking", "image"):
+            a = ix.row[rid].align
+        if b is not None and p.blocks[b].kind in ("stacking", "image"):
+            a = ix.row[ix.row_of[b]].align
+    return a
 
 
 def judge_branch(B, kind, rid, y):
@@ -167,11 +191,14 @@ def judge_branch(B, kind, rid, y):
         head_over[vid] = [prev]
         chain.append(vid)
         prev = vid
-    why = _run(B, virtual, chain, head_over, {}, [])
+    eff = ix.effective(rid)
+    items = [(p.blocks[b].kind, p.blocks[b].off) for b in eff[:eff.index(x) + 1]] + \
+        [(virtual[v].kind, virtual[v].off) for v in chain]
+    own = any(virtual[v].kind in ("stacking", "image") for v in chain)
+    align = holder_align(p, ix, eff) if own else holder_align(p, ix, eff[:eff.index(x) + 1])
+    why = chain_problem(items, root_kind(p, ix, rid), align, is_legacy(ix, rid))
     if not why:
-        eff = ix.effective(rid)
-        kinds = [p.blocks[b].kind for b in eff[:eff.index(x) + 1]] + [virtual[v].kind for v in chain]
-        why = chain_problem(kinds, root_kind(p, ix, rid))
+        why = _run(B, virtual, chain, head_over, {}, [])
     if not why and B.view["folded"] and r.nights and p.blocks[x].kind in FRAME_KINDS[:-1]:
         from .layout import foldable
         if foldable(p, ix, rid):
@@ -220,7 +247,7 @@ def judge_port_session(B, j, port):
         src_port = first.src[1]
     else:
         protos, src_port = [Block("", k) for k in ("registration", "selection", "stacking")], "image"
-    pre = {"__cal": Ev(out=Img(frames=True, stage=0, grid=p.reference or "__r", aligned=aligned))}
+    pre = {"__cal": Ev(out=Img(frames=True, stage=0, grid="__r"))}
     virtual, chain, head_over, prev = {}, [], {}, "__cal"
     for i, o in enumerate(protos):
         vid = f"__p{i}"
@@ -228,7 +255,8 @@ def judge_port_session(B, j, port):
         head_over[vid] = [prev]
         chain.append(vid)
         prev = vid
-    why = chain_problem([virtual[v].kind for v in chain], "stack")
+    why = chain_problem([(virtual[v].kind, virtual[v].off) for v in chain], "stack",
+                        {"ref": p.reference} if aligned else None)
     if not why:
         last = virtual[prev]
         lst = list(B.ctx.wires_in.get(j, [])) + [_W([prev, _map_port(last, src_port)], [j, port])]
@@ -242,7 +270,7 @@ def specs(B, kind):
     if kind in FRAME_KINDS:          # a stack step goes only after another one (not Empilement): only those spots
         early = FRAME_KINDS[:-1]
         for r in p.rows:
-            if r.fork and p.blocks[r.fork[1]].kind in early:
+            if r.fork and p.blocks[r.fork[1]].kind in early or r.nights:
                 yield {"type": "insert", "row": r.id, "after": None}
             for i, b in enumerate(r.blocks):
                 if p.blocks[b].kind in early and b in B.g.cells:
@@ -251,7 +279,7 @@ def specs(B, kind):
                     yield {"type": "branch", "row": r.id, "y": b}
         return
     for r in p.rows:
-        if r.fork:
+        if r.fork or r.nights:
             yield {"type": "insert", "row": r.id, "after": None}
         for b in r.blocks:
             if b in B.g.cells or (r.id in B.g.folded and p.blocks[b].kind == "stacking"):
@@ -259,7 +287,8 @@ def specs(B, kind):
         for i, b in enumerate(r.blocks):
             if i > 0 and p.blocks[b].kind != "registration" and b in B.g.cells:
                 yield {"type": "branch", "row": r.id, "y": b}
-        yield {"type": "branch", "row": r.id, "y": None}
+        if r.blocks:
+            yield {"type": "branch", "row": r.id, "y": None}
 
 
 def judge(B, op, args):

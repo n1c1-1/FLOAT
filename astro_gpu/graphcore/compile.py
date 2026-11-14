@@ -137,8 +137,9 @@ def _source(g, ix, f, root, ports_wid, out: Compiled):
     if root.nights or head is None or head.kind not in ("image", "combine"):
         return None, "frames"
     if head.kind == "image":
+        from .rules import effective
         src = copy.deepcopy(head.source) if head.source is not None else {
-            "path": "", "stretched": bool(head.settings.get("Stretched image", False))}
+            "path": "", "stretched": bool(effective(g, head.id)["Stretched image"])}      # Commun flattened
         return src, "stretched" if src.get("stretched") else "image"
     ins = []
     for w in g.wires:
@@ -239,29 +240,34 @@ def compile_into(g, p) -> Compiled:
         holder = _effective_align(g, ix, f.chain)
         source, kind = _source(g, ix, f, root, ports_wid, out)
         nodes = []
+        mixed = []
         if kind == "frames" and root.calib_node:
             offs = [g.blocks[c].off for _s, c in root.nights]
             if offs and any(offs) != all(offs):
-                out.problems.append(f"“{root.name}”: some nights' Calibration off, others on: compiled as on")
+                if g.calibrate_together or len(root.nights) < 2:
+                    out.problems.append(f"“{root.name}”: some nights' Calibration off, others on, calibrated "
+                                        "together: compiled as on")
+                else:                   # each night its own calibration: the switched-off ones apply no master
+                    mixed = [sid_of(s) for s, c in root.nights if g.blocks[c].off]
             nodes.append(wfl.node("calibration", off=bool(offs) and all(offs), fork=root.calib_fork))
         for b in f.chain:
             blk = g.blocks[b]
             if blk.kind in ("image", "combine", "combine_layers"):
                 if blk.kind == "image" and holder is not None:
-                    nodes.append(_align_node(g, holder, by_wid))
+                    nodes.append(_align_node(g, holder, by_wid, names))
                 continue
             if blk.kind not in NODE_KINDS:
                 continue
             nodes.append(wfl.node(blk.kind, blk.method, blk.off, engine(b), blk.fork))
             if blk.kind == "stacking" and holder is not None:
-                nodes.append(_align_node(g, holder, by_wid))
+                nodes.append(_align_node(g, holder, by_wid, names))
         rec = f.rec
         if rec.legacy:
             blocks, options, end = None, copy.deepcopy(rec.legacy["options"]), rec.legacy.get("end")
         else:
             blocks = wfl.with_output(nodes, kind)
-            try:
-                options = copy.deepcopy(rec.options) if rec.options is not None else wfl.options_of(blocks, kind)
+            try:                        # a graph's options are those of its blocks (the blocks are the truth)
+                options = wfl.options_of(blocks, kind)
             except ValueError as e:
                 out.problems.append(f"workflow {f.wid}: its options: {e}")
                 options = dict(wfl.DEFAULT_OPTIONS)
@@ -280,7 +286,10 @@ def compile_into(g, p) -> Compiled:
                 "image", "combine")}, key=wfl.block_order)
         own = {str(sid_of(s)): copy.deepcopy(g.blocks[c].own) for s, c in root.nights if g.blocks[c].own}
         w = old.get(f.wid) or Workflow(f.wid, rec.name)
-        w.name, w.options, w.params, w.end = rec.name, options, _settings(g, f, root, holder), end
+        params = _settings(g, f, root, holder)
+        for sid in mixed:
+            params.setdefault(f"calibrate@{sid}", {})["apply_masters"] = False
+        w.name, w.options, w.params, w.end = rec.name, options, params, end
         w.variant_of, w.breakpoints, w.source, w.sessions = rec.trial, bps, source, sess
         w.blocks, w.calibration = blocks, own or None
         made[f.wid] = w
@@ -306,7 +315,7 @@ def compile_into(g, p) -> Compiled:
 compile = compile_into  # noqa: A001
 
 
-def _align_node(g, holder, by_wid):
+def _align_node(g, holder, by_wid, names):
     a = holder.align
     ref = None
     if a.get("ref") is not None:
@@ -315,8 +324,18 @@ def _align_node(g, holder, by_wid):
         ref = a["ref_wid"]
     frm = a.get("from_name")
     if a.get("from") is not None and a["from"] in g.blocks:
-        frm = g.blocks[a["from"]].engine or g.blocks[a["from"]].kind
+        frm = _engine_name(g, a["from"], names)
+    elif a.get("auto") and a.get("ref") is not None:
+        f = next((f for f in by_wid.values() if f.rec.id == a["ref"]), None)
+        astro = next((b for b in (f.chain if f else []) if g.blocks[b].kind == "astrometry" and not g.blocks[b].off),
+                     None)
+        frm = _engine_name(g, astro, names) if astro is not None else None
     return wfl.node("align_on", a.get("method"), bool(a.get("off")), None, a.get("fork"), ref, frm)
+
+
+def _engine_name(g, b, names):
+    blk = g.blocks[b]
+    return blk.engine or names.get(b) or blk.kind
 
 
 def _split(g, p, flows, out: Compiled):
@@ -345,14 +364,21 @@ def _split(g, p, flows, out: Compiled):
 
 # ---------------------------------------------------------------------------------------------- legality (decision B)
 class _NoDisk:
-    """An input scan that reads no disk: every frame list empty (the structure alone is checked)."""
+    """An input scan that reads no disk: the frames of a session are its definition's entries (one frame per folder
+    or file given, by its name: two sessions given the same entries have the same frames, as on disk), every file id
+    its path. The keys are those of the definition alone; what the engine says of its wiring (a combination's
+    grids, Keys.grid) is exact on it."""
 
     def __new__(cls):
+        from pathlib import Path
         from ..core.store import InputScan
 
         class Scan(InputScan):
             def session_frames(self, project, session):
-                return {k: [] for k in gm.FILE_KINDS}
+                return {k: [(Path(f), 0) for f in getattr(session, k)] for k in gm.FILE_KINDS}
+
+            def useful_areas(self, project, sessions):
+                return []
 
             def file_id(self, path):
                 return [path, None]
@@ -365,13 +391,140 @@ class _NoDisk:
 _RULES = []
 
 
-def engine_problems(g, keys=True) -> list[tuple[str, str]]:
+def _key_rules():
+    if not _RULES:
+        from ..core.store import key_rules
+        _RULES.append(key_rules())
+    return _RULES[0]
+
+
+def _engine_message(text: str):
+    """The engine's wiring text as a message (template, fields), from the templates it is written with (the client
+    translates those); the names it carries are kept as written."""
+    import re
+    from ..stages.align_on import NO_PLATE_REFERENCE, NO_REFERENCE
+    from ..stages.combine import GRID_MANY, GRID_ONE, TO_WIRE
+    from .msg import M, typed
+    for t in (NO_REFERENCE, NO_PLATE_REFERENCE, GRID_ONE, GRID_MANY, TO_WIRE):
+        names = re.findall(r"{(\w+)}", t)
+        rx = "^" + re.sub(r"\\{(\w+)\\}", r"(?P<\1>.+?)", re.escape(t)) + "$"
+        m = re.match(rx, text)
+        if m:
+            return M(t, **{k: typed(m.group(k)) for k in names}) if names else t
+    return M("{_why}", _why=text)
+
+
+def _wiring(g, p, c):
+    """[(wid, stage, block id | None, message)]: what the engine's Keys.wiring_problem says of each stage that reads
+    other workflows (a combination's grids, an Align on's target, a plate solution taken from the target), with the
+    block the core greys for it: the combination's head; the first block after the Align on (None: none in the
+    row); the block of the stage."""
+    from ..core.store import Keys
+    k = Keys(p, _key_rules(), _NoDisk())
+    ix = gm.Index(g)
+    block_of = {(wid, name): b for b, rows in c.map.items() for wid, name in rows}
+    flows = {}
+    for b, rows in c.map.items():
+        for wid, _n in rows:
+            flows.setdefault(wid, []).append(b)
+    out = []
+    for w in p.workflows:
+        try:
+            ch = k.chain(w)
+        except (KeyError, ValueError):
+            continue
+        aligned = "align_on" in ch
+        for st in ch:
+            bst = wfl.base(st)
+            if not (bst in wfl.BLOCKS_OF_KIND.values() or bst == "align_on" or
+                    aligned and ch.index(st) > ch.index("align_on")):
+                continue
+            why = k.wiring_problem(w, st)
+            if not why:
+                continue
+            blk = None
+            mine = [b for b in flows.get(w.id, []) if b in ix.row_of]
+            if bst in wfl.BLOCKS_OF_KIND.values():
+                blk = next((b for b in mine if g.blocks[b].kind == "combine"), None)
+            elif bst == "align_on":
+                chain = _chain_of(g, ix, mine)
+                at = max((i for i, b in enumerate(chain) if g.blocks[b].kind in ("stacking", "image")), default=None)
+                blk = chain[at + 1] if at is not None and at + 1 < len(chain) else None
+            else:
+                n = wfl.node_of(w.blocks or [], st)
+                blk = block_of.get((w.id, n["name"])) if n is not None else None
+            out.append((w.id, st, blk, _engine_message(why)))
+    return out, k
+
+
+def _chain_of(g, ix, blocks):
+    """The chain (left to right) of the chain blocks a workflow passes."""
+    mine = set(blocks)
+    rows = [r for r in g.rows if any(b in mine for b in r.blocks)]
+    longest = max((ix.effective(r.id) for r in rows), key=len, default=[])
+    return [b for b in longest if b in mine]
+
+
+_MEMO = []
+
+
+def engine_wiring(g) -> dict:
+    """{block id: message}: the blocks the engine leaves out until what they read is wired (Keys.wiring_problem on the
+    compiled graph), with its reason. Cached for the latest graph object (graphs are never changed in place)."""
+    if _MEMO and _MEMO[0] is g:
+        return _MEMO[1]
+    from ..core.project2 import Project2
+    p = Project2(name="wiring")
+    out = {}
+    try:
+        c = compile_into(g, p)
+        probs, _k = _wiring(g, p, c)
+        for _wid, _st, b, msg in probs:
+            if b is not None:
+                out.setdefault(b, msg)
+    except Exception:  # noqa: BLE001
+        out = {}                     # a graph the engine cannot read: its legality says why (engine_problems)
+    _MEMO[:] = [g, out]
+    return out
+
+
+def engine_check(g):
+    """The engine's verdict on the compiled definition of a graph, what a gesture may not leave: "" when it accepts
+    it, else the reason (a message). The compile having no engine form for something, Project2.validate (the graph
+    rules of every workflow, its node names, the workflows read: loops, a combination as an alignment target), the
+    stage chain of each workflow."""
+    from ..core.project2 import Project2
+    from .msg import M
+    p = Project2(name="check")
+    try:
+        c = compile_into(g, p)
+    except Exception as e:  # noqa: BLE001
+        return M("the engine cannot read it: {_why}", _why=str(e))
+    if c.problems:
+        return M("the engine has no form for it: {_why}", _why=c.problems[0])
+    try:
+        p.validate()
+    except wfl.BlockRefused as e:
+        return M(e.template, **e.fields)
+    except ValueError as e:
+        return M("the engine refuses it: {_why}", _why=str(e))
+    for w in p.workflows:
+        try:
+            p.chain(w)
+        except (ValueError, KeyError) as e:
+            return M("the engine refuses it: {_why}", _why=str(e))
+    return ""
+
+
+def engine_problems(g, keys=True, info=None) -> list[tuple[str, str]]:
     """What the engine refuses in the compiled definition of a graph: [(class, detail)], [] when it accepts it. The
     detail is a template (ids, numbers, names taken out), so that one rule broken twice is one class.
     Classes: "graph" (wfl.graph_problem of a workflow: its template and the block), "validate" (Project2.validate, when
-    no graph rule is broken), "chain" (the stage chain), "wiring" (Keys.wiring_problem of a combination or an Align on
-    the core does not grey), "compile" (what the compile had to decide: something the engine has no form for)."""
+    no graph rule is broken), "chain" (the stage chain), "wiring" (a stage Keys.wiring_problem says waits for what it
+    reads, and the core does not grey its block with the same reason, or the core greys a block the engine does not
+    leave out), "compile" (what the compile had to decide: something the engine has no form for)."""
     from ..core.project2 import Project2
+    from .msg import say
     p = Project2(name="check")
     out: list[tuple[str, str]] = []
     try:
@@ -398,22 +551,24 @@ def engine_problems(g, keys=True) -> list[tuple[str, str]]:
             out.append(("chain", _template(str(e))))
     if keys and not any(k in ("validate", "chain", "graph") for k, _ in out):
         try:
-            from ..core.store import Keys, key_rules
-            from .judge import evaluation
-            from .rules import greyed
-            if not _RULES:
-                _RULES.append(key_rules())
-            k = Keys(p, _RULES[0], _NoDisk())
-            info = evaluation(g)
-            head = {wid: b for b, rows in c.map.items() for wid, name in rows
-                    if g.blocks[b].kind == "combine"}
-            for w in p.workflows:
-                for st in k.chain(w):
-                    if wfl.base(st) in wfl.BLOCKS_OF_KIND.values() or wfl.base(st) == "align_on":
-                        why = k.wiring_problem(w, st)
-                        b = head.get(w.id)
-                        if why and not (b is not None and greyed(g, b, info=info)):
-                            out.append(("wiring", f"{wfl.base(st).split('_')[0]}: {_template(why)}"))
+            from .rules import evaluate
+            info = info or evaluate(g)
+            probs, _k = _wiring(g, p, c)
+            said = set()
+            for _wid, st, b, msg in probs:
+                if b is None:
+                    continue
+                said.add(b)
+                ev = info.get(b)
+                ok = ev is not None and (ev.cat == "wiring" and say(ev.reason) == say(msg) or ev.cat == "downstream"
+                                         or ev.cat == "port" and wfl.base(st) in wfl.BLOCKS_OF_KIND.values())
+                if not ok:
+                    out.append(("wiring", f"{wfl.base(st).split('_')[0]}: {_template(say(msg))} [core: "
+                                          f"{ev.cat if ev else 'absent'}]"))
+            for b, ev in info.items():
+                if ev.cat == "wiring" and b not in said and g.blocks[b].kind != "combine_layers":
+                    out.append(("wiring", f"core greys {g.blocks[b].kind}: {_template(say(ev.reason))}, the engine "
+                                          "does not"))
         except Exception as e:  # noqa: BLE001
             out.append(("keys", f"{type(e).__name__}: {_template(str(e))}"))
     return sorted(set(out))

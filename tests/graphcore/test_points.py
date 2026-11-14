@@ -291,7 +291,7 @@ def test_a15_a16_change_type_then_fill_port():
     assert "S II" in r.toast_text() and {w.dst[1] for w in doc.project.wires if w.dst[0] == j} == {"Hα", "O III"}
     assert [(w.src, w.dst) for w in doc.project.wires if w.dst[0] == cc] == ccw
     ok(doc, "set_combination_type", block=j, type="sho")
-    assert doc.greyed(j) == "ports to wire"
+    assert doc.greyed(j) == "S II to wire"
     p = where(doc, "port", kind="session", match={"block": j, "port": "S II"})[0]
     drop(doc, p)
     new = doc.project.rows[-1]
@@ -325,7 +325,7 @@ def test_a18_duplicate_drawn_below():
 def test_a19_couleur_on_image_row_refused():
     doc = Doc.from_template("several_images")
     ps = [p for p in places(doc.project, doc.view, kind="color") if p.kind == "insert"]
-    assert ps and all(not p.lit and p.reason_text() == "Astrometry is needed first" for p in ps)
+    assert ps and all(not p.lit and p.reason_text() == "needs Astrometry first" for p in ps)
     refused_inert(doc, ps[0].op[0], **ps[0].op[1])
 
 
@@ -336,15 +336,15 @@ def test_a20_a21_switch_off_and_needed():
     ok(doc, "switch_off", block=g)
     assert doc.summary(g) == "off: image passed on"
     a = of_kind(doc, r, "astrometry")
-    assert refused_inert(doc, "switch_off", block=a) == "Color needs it: disable Color first"
-    assert refused_inert(doc, "remove_block", block=a) == "Color needs it"
+    assert refused_inert(doc, "switch_off", block=a) == "needed by Color: switch Color off first"
+    assert refused_inert(doc, "remove_block", block=a) == "needed by Color"
 
 
 def test_a24_debruitage_needs_half_stacks():
     doc = Doc.from_template("several_images")
     assert len([w for w in doc.project.wires]) == 3
     ps = [p for p in places(doc.project, doc.view, kind="denoise") if p.kind == "insert"]
-    assert all(p.reason_text() == "the half stacks are needed (start from the lights)" for p in ps)
+    assert all(p.reason_text() == "needs half-stacks (from frames)" for p in ps)
 
 
 def test_a25_a26_combinaison_unwired_then_loop():
@@ -352,7 +352,7 @@ def test_a25_a26_combinaison_unwired_then_loop():
     p = where(doc, "comp", kind="combine")[0]
     drop(doc, p)
     j = doc.project.rows[-1].blocks[0]
-    assert doc.greyed(j) == "ports to wire"
+    assert doc.greyed(j) == "S II, Hα, O III to wire"
     ha = row(doc, "Ha")
     ok(doc, "wire", src=ha.blocks[-1], src_port="Starless", dst=j, dst_port="Hα")
     sho = row(doc, "S-H-O").blocks[0]

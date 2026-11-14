@@ -314,11 +314,6 @@ class Converter:
         self._pauses()
         self._wires()
         self._aligns()
-        frames = [r.id for r in g.rows if r.nights]
-        if frames:
-            refs = [self.rows[r].align.get("ref") for r in frames if self.rows[r].align]
-            best = max(set(refs) - {None}, key=refs.count, default=None) if refs else None
-            g.reference = best if best in frames else frames[0]
         return g
 
     # ------------------------------------------------------------------ rows and taps
@@ -464,8 +459,9 @@ class Converter:
                     o = wfl.options_of(w.blocks, src)
                 except ValueError:
                     o = None
-                if o != w.options:
-                    f.options = copy.deepcopy(w.options)
+                if o != w.options:      # the blocks are the truth: their options are compiled (keys read the blocks)
+                    self.log.append(f"workflow {w.id}: its stored options differ from its blocks': {_js(w.options)} "
+                                    f"-> {_js(o)}")
                 if w.end is not None:
                     f.end = w.end
         f.trial = w.variant_of
