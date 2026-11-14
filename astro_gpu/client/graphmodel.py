@@ -278,12 +278,22 @@ class GraphEditing:
     # ------------------------------------------------------------------ the project file (format 3)
     def flush(self, force: bool = False) -> bool:
         """Save: the project file holds the stored graph (format 3) when ``WRITE_GRAPH``; a file of the previous format
-        is kept once beside it as ``project.astroproj.v2.bak`` before it is first written so."""
-        if WRITE_GRAPH and self._dirty and not self.readonly and self.root is not None:
+        is kept once beside it as ``project.astroproj.v2.bak`` before it is first written so. A graph the engine wrote as
+        the definition instead (it did not compile, or to another definition: core/project2.save) is never silent: the
+        Log says why and ``save_note`` holds the notice the window shows for that save ("" otherwise)."""
+        self.save_note = ""
+        graph = WRITE_GRAPH and self._dirty and not self.readonly and self.root is not None
+        if graph:
             self._absorb()
             self.p.graph = gm.to_dict(self._g)
+            self.p.graph_dropped = ""
             self._keep_format_2()
-        return super().flush(force)
+        ok = super().flush(force)
+        if graph and ok and self.p.graph_dropped:
+            self.log("Saved in the previous format, without its graph: {why}", why=self.p.graph_dropped)
+            self.save_note = _("Saved in the previous format: the graph and what the engine runs differ. The details "
+                               "are in the Log.")
+        return ok
 
     def _keep_format_2(self):
         from ..core.project2 import FILE, FORMAT

@@ -167,5 +167,15 @@
  "Auto: compact and icons on a small window · Never: today's layout on any screen": "Auto : compact et icônes sur une petite fenêtre · Jamais : la disposition d'origine sur tout écran",
  "The program hit an unexpected error. The details below help to find it.": "Le programme a rencontré une erreur imprévue. Le détail ci-dessous aide à la retrouver.",
  "Another window of the program saved this project since it was opened here: nothing is replaced. Save as… keeps this window's work in another folder.": "Une autre fenêtre du logiciel a enregistré ce projet depuis son ouverture ici : rien n'est remplacé. Enregistrer sous… garde le travail de cette fenêtre dans un autre dossier.",
- "This project cannot be shown: {why}": "Ce projet ne peut pas être affiché : {why}"
+ "This project cannot be shown: {why}": "Ce projet ne peut pas être affiché : {why}",
+ "This project was made with a newer FLOAT: open it with that version.": "Ce projet a été fait avec une version plus récente de FLOAT : ouvrez-le avec celle-ci.",
+ "This project cannot be opened: its graph cannot be read by this version ({why}).": "Impossible d'ouvrir ce projet : son graphe ne peut pas être lu par cette version ({why}).",
+ "The graph of this project cannot be read by this version ({why}). The copy kept at its last save can be opened; nothing is written until you save.": "Le graphe de ce projet ne peut pas être lu par cette version ({why}). La copie gardée à son dernier enregistrement peut être ouverte ; rien n'est écrit avant que vous enregistriez.",
+ "The graph of this project cannot be read by this version ({why}). The copy kept at an earlier save can be opened, without the later changes; nothing is written until you save.": "Le graphe de ce projet ne peut pas être lu par cette version ({why}). La copie gardée à un enregistrement antérieur peut être ouverte, sans les changements suivants ; rien n'est écrit avant que vous enregistriez.",
+ "Open copy": "Ouvrir copie",
+ "This project cannot be opened: the copy kept at its last save cannot be read either.": "Impossible d'ouvrir ce projet : la copie gardée à son dernier enregistrement ne peut pas être lue non plus.",
+ "Opened from the copy kept at its last save: its graph is drawn again from it. The project file is left as it is until you save.": "Ouvert depuis la copie gardée à son dernier enregistrement : son graphe est redessiné d'après elle. Le fichier du projet reste tel quel jusqu'à ce que vous enregistriez.",
+ "Opened from the copy kept at its last save: its graph could not be read": "Ouvert depuis la copie gardée à son dernier enregistrement : son graphe ne pouvait pas être lu",
+ "Saved in the previous format, without its graph: {why}": "Enregistré dans le format précédent, sans son graphe : {why}",
+ "Saved in the previous format: the graph and what the engine runs differ. The details are in the Log.": "Enregistré dans le format précédent : le graphe et ce que le moteur exécute diffèrent. Le détail est dans le Journal."
 }

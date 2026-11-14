@@ -569,8 +569,9 @@ class Main(QMainWindow):
             return False, "cpu"
         return True, (None if dev == "auto" else dev)
 
-    def open_project(self, root, created: bool = False, recovered=None) -> bool:
-        """``recovered``: the definition found after a crash, in place of the file."""
+    def open_project(self, root, created: bool = False, recovered=None, rescued: bool = False) -> bool:
+        """``recovered``: the definition found after a crash, in place of the file; ``rescued``: it is the copy kept at
+        the last save of a project whose graph cannot be read (``open_working_copy``)."""
         root = Path(root)
         if self.project is not None and root.as_posix().lower() == self.project.root.as_posix().lower():
             self.show_project()
@@ -582,6 +583,12 @@ class Main(QMainWindow):
             return False
         except project2.EarlierVersionProject:
             self.banner.say(_("This project was saved by an earlier version of FLOAT: convert it first."))
+            return False
+        except project2.NewerVersionProject:
+            self.banner.say(_(project2.NewerVersionProject.MESSAGE))
+            return False
+        except project2.GraphUnreadable as e:
+            self._graph_unreadable(root, e)
             return False
         except FileNotFoundError:
             self.banner.say(_("No project in this folder: {folder}").format(folder=root.as_posix()))
@@ -597,7 +604,7 @@ class Main(QMainWindow):
         self.project.log("Project created" if created else "Project opened")
         if not drafts.is_untitled(root):
             prefs.add_recent(root.as_posix(), d.name, d.target.name or "")
-        self._recovery_mine = recovered is not None
+        self._recovery_mine = recovered is not None and not rescued
         try:
             self.make_model()
             self.mode = 0
@@ -614,7 +621,41 @@ class Main(QMainWindow):
         self.run.before_run = self._named_for_run
         if recovered is not None:
             self.s.edited()                              # it waits for Save, as before the crash
+        if rescued:
+            self.project.log("Opened from the copy kept at its last save: its graph could not be read")
+            self.banner.say(_("Opened from the copy kept at its last save: its graph is drawn again from it. The project "
+                              "file is left as it is until you save."))
         return True
+
+    def _graph_unreadable(self, root: Path, e) -> None:
+        """A project whose graph this version cannot compile (a later bug, a graph of a newer version): said in plain
+        words, the technical detail in the output; the copy kept at its last save is offered when there is one."""
+        import logging
+        logging.getLogger(__name__).warning("the graph of %s cannot be compiled: %s", root.as_posix(), e.cause)
+        why = plain_error(e.cause)
+        if e.working is None:
+            self.banner.say(_("This project cannot be opened: its graph cannot be read by this version ({why}).")
+                            .format(why=why))
+            return
+        if e.working_current:
+            text = _("The graph of this project cannot be read by this version ({why}). The copy kept at its last save "
+                     "can be opened; nothing is written until you save.")
+        else:
+            text = _("The graph of this project cannot be read by this version ({why}). The copy kept at an earlier "
+                     "save can be opened, without the later changes; nothing is written until you save.")
+        self.banner.ask(text.format(why=why), (_("Open copy"), lambda: self.open_working_copy(root)),
+                        (_("Cancel"), lambda: None))
+
+    def open_working_copy(self, root) -> bool:
+        """The project opened from the definition kept at its last save (core/project2.WORKING_FILE), converted to a graph
+        as a project of the previous format; it waits for Save, the file left as it is until then."""
+        root = Path(root)
+        try:
+            d = project2.load_working(root)
+        except (OSError, ValueError, KeyError, TypeError):
+            self.banner.say(_("This project cannot be opened: the copy kept at its last save cannot be read either."))
+            return False
+        return self.open_project(root, recovered=d, rescued=True)
 
     def make_model(self):
         """The model, the run controller and their signals, once per project."""
@@ -1203,7 +1244,15 @@ class Main(QMainWindow):
             self.banner.say(_("Another window of the program saved this project since it was opened here: nothing is "
                               "replaced. Save as… keeps this window's work in another folder."))
             return
-        self.flash(_("Project saved"))
+        self._said_saved()
+
+    def _said_saved(self):
+        """A save said: "Project saved", or the notice of a save that could not write the graph (graphmodel.flush)."""
+        note = getattr(self.s, "save_note", "") if self.s is not None else ""
+        if note:
+            self.banner.say(note)
+        else:
+            self.flash(_("Project saved"))
 
     def _suggested_name(self) -> str:
         """The name a project without one is proposed: the name typed in its form (issue #89), else its target, else the
@@ -1251,7 +1300,7 @@ class Main(QMainWindow):
         prefs.add_recent(root.as_posix(), name, p.target.name or "")
         self.title.setText(self.project_name())
         self._title()
-        self.flash(_("Project saved"))
+        self._said_saved()
         return True
 
     def open_images(self):
@@ -1294,7 +1343,7 @@ class Main(QMainWindow):
                 self.banner.say(_("Another window of the program saved this project since it was opened here: nothing "
                                   "is replaced. Save as… keeps this window's work in another folder."))
                 return False
-            self.flash(_("Project saved"))
+            self._said_saved()
         return True
 
     # ------------------------------------------------------------ the recovery after a crash
