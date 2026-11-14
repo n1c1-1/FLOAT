@@ -376,8 +376,18 @@ def _stage_of(s, p, it: dict, sid: str | None = None, num: str = "") -> str | No
     """The stage of a catalogue item, when the workflow has it; for a session's block (``sid``, issue #43), that
     session's instance ("calibrate@2"): the settings of that session; for a block placed twice (``num``, "fond~2"),
     its own stage ("gradient~2"): the items of a shared stage (the first block's catalogs) are not its own."""
+    sid = _own_session(s, p, sid)
     st = f"{it['stage']}@{sid}" if sid is not None else f"{it['stage']}~{num}" if num else it["stage"]
     return st if st in s.all_stages(p) else None
+
+
+def _own_session(s, p, sid: str | None) -> str | None:
+    """The session whose own stages ("calibrate@2") a session's block reads; None when the workflow has none of that
+    session (it stacks that session alone: its block's settings are the workflow's own stages, as
+    graphnode.BlockMap.session_stages has them)."""
+    if sid is None:
+        return None
+    return sid if any(x.endswith("@" + sid) for x in s.all_stages(p)) else None
 
 
 def _split(step: str) -> tuple[str, str | None]:
@@ -480,6 +490,7 @@ def _stages_of_step(s, p, step: str) -> list[str]:
     """The engine stages whose settings a block's panel lists (the half-stacks are the block's own)."""
     from .graphnode import BY_KEY
     step, sid = _split(step)
+    sid = _own_session(s, p, sid)
     step, _t, num = step.partition("~")               # a graph's later node (issue #47): its own stage
     if step not in BY_KEY:
         return []
