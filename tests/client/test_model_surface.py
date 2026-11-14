@@ -300,3 +300,72 @@ def test_durations_are_read_by_the_worker_before_the_views_are_told(qapp, tmp_pa
     finally:
         m.close()
         w.stop()
+
+
+# ---------------------------------------------------------------------------------------------- the graph as the truth
+#: every member of the model that post3, panel, tune, sources, ownframes, runs, gallery, report, steps, settings,
+#: home, gradientedit, cropedit, frames and services/* read (frozen from their sources, 14 Nov): the model with the
+#: graph as its truth (client/graphmodel.GraphEditing, INTEGRATION §8) must serve each of them
+GRAPH_SURFACE = [
+    "add_calibration_files", "add_post_layer", "add_session", "add_session_entries", "add_variant", "align_reference",
+    "all_stages", "apply_change", "batch", "block_keys", "calibration_files", "calibration_follows", "can_redo",
+    "can_switch_off", "can_undo", "clear_fusion_input", "close", "colour_frames", "colour_note", "costChanged",
+    "cost_of_change", "current", "currentChanged", "default_post_layer", "delete_post_version", "deps", "device",
+    "display_keys", "drop_variant", "duplicate", "edited", "error", "feeds_fusion", "file_warnings", "filters", "flush",
+    "follow_session", "frames_excluded", "from_post", "fwhm_median", "gives_post", "gpu", "graph", "has_data",
+    "history", "index_of", "info", "input_choices", "insert_block", "is_cut", "is_plain_image", "is_sent_branch",
+    "keep_variant", "kept_frames", "layer_side_problem", "leave_out_calibration", "log", "mark_reviewed",
+    "method_times", "name", "name_problem", "new_post_version", "new_session", "opts_seconds", "own_calibration_night",
+    "owner", "p", "palette_reason", "param_info", "param_value", "params", "paramsChanged", "params_error", "path",
+    "paths", "pathsChanged", "pause_keys", "pause_name", "pending", "pending_change", "plan_run", "plan_run_to",
+    "plan_to_block", "postChanged", "post_layer", "post_layers", "post_removed", "post_scope", "post_shown",
+    "post_version_label", "previous_key", "project_state", "ready", "readyChanged", "reason_for", "redo",
+    "reference_choices", "removal_problem", "remove_calibration_files", "remove_node", "remove_post_part",
+    "remove_session_entry", "remove_session_files", "rename", "rename_post_version", "rename_session",
+    "request_selection", "restored", "results_changed", "root", "run_problems", "same_calibration", "scope",
+    "scope_paths", "seconds", "sel_layer", "sel_step", "select", "selectionChanged", "selection_rule",
+    "selection_total", "separate_sessions", "session", "session_files", "session_removal_problem", "sessions",
+    "sessions_of", "set_align_reference", "set_calibration_excluded", "set_description", "set_excluded",
+    "set_fusion_channel", "set_fusion_image", "set_fusion_input", "set_fusion_weight", "set_image_file",
+    "set_layer_side", "set_node_method", "set_param", "set_post_layer", "set_post_layers", "set_post_version",
+    "set_project_name", "set_session_filter", "set_shooting_detail", "set_stack_mode", "set_target_name",
+    "set_target_values", "shared_with", "sky_changed", "slider_infos", "slider_state", "sourcesChanged",
+    "sources_loaded", "stack_mode", "state", "state_info", "suggested_thresholds", "synth_wanted", "target",
+    "target_state", "thresholds_active", "thresholds_now", "thresholds_unit", "throws_away", "title", "total_seconds",
+    "undo", "unique_name", "unreadable_lights", "upstream", "use_from_session", "version_removed", "view",
+    "waiting_breakpoints", "worker",
+]
+
+
+@pytest.fixture(scope="module")
+def graph_model(qapp, tmp_path_factory):
+    """The model with the graph as its truth (GraphEditing mixed in ahead of ProjectModel), on an empty project."""
+    from astro_gpu.client.graphmodel import GraphEditing
+
+    class GraphModel(GraphEditing, ProjectModel):
+        pass
+    root = tmp_path_factory.mktemp("graph_surface") / "P"
+    p = project2.create(root, "P", Target(name="M 1"))
+    w = ApiWorker()
+    m = GraphModel(p, w, readonly=True)
+    assert w.wait(120)
+    yield m
+    m.close(save=False)
+    w.stop()
+
+
+def test_the_model_with_the_graph_serves_every_member_the_views_use(graph_model):
+    missing = [n for n in GRAPH_SURFACE if not hasattr(graph_model, n)]
+    assert not missing, missing
+
+
+def _graph_ported_params():
+    from astro_gpu.client.graphmodel import NOT_PORTED
+    return [pytest.param(n, marks=pytest.mark.xfail(strict=True, reason="not ported to the graph yet"))
+            if n in NOT_PORTED else n for n in GRAPH_SURFACE]
+
+
+@pytest.mark.parametrize("name", _graph_ported_params())
+def test_each_member_the_views_use_is_ported_to_the_graph(name):
+    from astro_gpu.client.graphmodel import NOT_PORTED
+    assert name not in NOT_PORTED
