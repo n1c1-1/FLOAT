@@ -188,3 +188,29 @@ def test_without_a_survey_the_run_goes_on(monkeypatch, tmp_path):
     surveys.Surveys().run(Ctx(), surveys.SurveysParams())
     assert saved["survey.json"]["survey"] == "none" and "covers" in saved["survey.json"]["why"]
     assert any(level == "warning" for level, _m in logs)
+
+
+def test_grid_samples_read_the_medians_once_and_cell_none_is_today():
+    """grid_samples returns the values point_values gives on the same points; sky_model_of with cell=None (or 8)
+    equals the default, and a coarser cell changes only the evaluation grid."""
+    from astro_gpu.stages.gradient import GradientParams, SKY_FACTOR, grid_points, grid_samples, point_values, sky_model_of
+    H, W = 120, 160
+    rng = np.random.default_rng(3)
+    yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
+    img = np.stack([0.1 + 0.05 * xx / W + 0.02 * yy / H + 0.01 * c for c in range(3)])
+    img += rng.normal(0, 0.003, img.shape).astype(np.float32)
+    img[:, 40:60, 70:100] += 0.3
+    valid = np.ones((H, W), bool)
+    pts, kept, box, vals, ok = grid_samples(img, valid, 8, 2.5)
+    v2, ok2 = point_values(img, valid, pts, box)
+    assert np.array_equal(vals, v2, equal_nan=True) and np.array_equal(ok, ok2)
+    p2, k2, b2 = grid_points(img, valid, 8, 2.5)
+    assert np.array_equal(p2, pts) and np.array_equal(k2, kept) and b2 == box
+    for method in ("rbf", "polynomial"):
+        p = GradientParams(method=method, samples=8)
+        a, b, c = sky_model_of(img, valid, p), sky_model_of(img, valid, p, cell=None), sky_model_of(img, valid, p, cell=SKY_FACTOR)
+        assert np.array_equal(a["grid"], b["grid"]) and np.array_equal(a["grid"], c["grid"])
+        assert a["info"] == b["info"] and a["detail"] == b["detail"]
+        assert np.array_equal(a["samples"]["used"], b["samples"]["used"])
+    d = sky_model_of(img, valid, GradientParams(method="rbf", samples=8), cell=16)
+    assert d["info"]["factor"] == 16 and d["grid"].shape[1:] == d["covered"].shape
