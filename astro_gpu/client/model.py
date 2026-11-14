@@ -1712,8 +1712,11 @@ class ProjectModel(QObject):
         if frames_back:
             self.reload_sources()
         self.pending_change = None
-        self.edited()
         self._sync()
+        was = json.dumps(self.p.post, sort_keys=True)
+        self._prune_post()                                # (a row of a block that is not there any more stays nowhere)
+        post_back = post_back or json.dumps(self.p.post, sort_keys=True) != was
+        self.edited()
         self._unpatch_rows()
         if self.paths:
             self.current = next((i for i, v in enumerate(self.paths) if v.pid == self.p.current), 0)
@@ -3575,14 +3578,24 @@ class ProjectModel(QObject):
         """Post follows the graph (GUI exploration 3.3): a layer of a Split image goes with its Split block (the
         workflow's own image then comes back to Post), a layer of a workflow gone goes."""
         ws = {w.id: w for w in self.p.workflows}
+        try:
+            wanted = set(self.synth_wanted())
+        except (KeyError, ValueError):
+            wanted = None
         for v in self.p.post["versions"]:
-            self._prune_version(v, ws)
+            self._prune_version(v, ws, wanted)
 
     @staticmethod
-    def _prune_version(v: dict, ws: dict):
+    def _prune_version(v: dict, ws: dict, wanted: set | None = None):
         layers = v.get("layers") or []
         keep, gone, changed = [], set(), False
+        groups = {x.get("id"): x for x in layers if x.get("kind") == "workflow" and x.get("part") == "combined"}
         for x in layers:
+            if wanted is not None and x.get("kind") == "filter" and x.get("filter") == "synth" and (
+                    groups.get(x.get("target")) is None or groups[x["target"]].get("pid") not in wanted):
+                gone.add(x.get("id"))                     # a Synthetic stars row whose block left the graph goes
+                changed = True
+                continue
             if x.get("kind") != "workflow":
                 keep.append(x)
                 continue

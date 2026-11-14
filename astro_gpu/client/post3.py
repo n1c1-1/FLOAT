@@ -1462,11 +1462,18 @@ class PostView(QWidget):
         # its Ctrl+Z puts back the very composition saved before (the layer with its settings, not a new one)
         if text == self._saved and text == json.dumps(save_layers(self.layers), sort_keys=True):
             return
-        if not getattr(self, "_restoring", False):      # (a step of the workflows' Undo undone here: no step of its own)
-            self.undo.append(snapshot(self.layers))
-            self.redo.clear()
         old = {lay["id"] for lay in self.layers}
+        before = self.layers
         self.layers = self._with_synth(load_layers(version.get("layers"), {p.pid for p in self.s.paths}))
+        if getattr(self, "_restoring", False):          # (a step of the workflows' Undo undone here: no step of its own)
+            pass
+        elif getattr(self.s, "_post_depth", 0) == 0:
+            # made in the Graph: its step is the Graph's to undo, never Post's. Post's steps keep working around it: the
+            # layers the Graph put in or took out are put in or taken out of the steps of this version's lists too
+            self._rebase_steps(before, self.layers)
+        else:
+            self.undo.append(snapshot(before))
+            self.redo.clear()
         self._saved = json.dumps(save_layers(self.layers), sort_keys=True)
         added = [lay["id"] for lay in self.layers if lay["id"] not in old]
         if added:                                   # a layer sent from the graph: selected, as a pasted layer is
@@ -1474,6 +1481,28 @@ class PostView(QWidget):
         elif self.sel and not self.layer(self.sel[0]):
             self.sel = (self.layers[0]["id"], "layer") if self.layers else None
         self.sync_paths()                           # the layers the workflows give and the composition lacks yet
+
+    def _rebase_steps(self, before: list, after: list):
+        """The Graph changed the layers (``before`` to ``after``): the layers it added are put into the steps of Post's Undo
+        and Redo (at their place, as they are now), the ones it took out are taken out of them, so that going back through
+        Post's own steps never undoes the Graph's."""
+        was = {x["id"] for x in before}
+        now = {x["id"] for x in after}
+        added = [(i, x) for i, x in enumerate(after) if x["id"] not in was]
+        gone = was - now
+        if not added and not gone:
+            return
+        for steps in (self.undo, self.redo):
+            for k, step in enumerate(steps):
+                if isinstance(step, ModelStep):
+                    continue
+                have = {x["id"] for x in step}
+                fresh = Step(x for x in step if x["id"] not in gone)
+                fresh.crop = getattr(step, "crop", None)
+                for i, lay in added:
+                    if lay["id"] not in have:
+                        fresh.insert(min(i, len(fresh)), snapshot([lay])[0])
+                steps[k] = fresh
 
     def select_layer(self, lid):
         """Show this layer's settings (the graph's Open in Post); not computed yet, the page's list shows it."""
