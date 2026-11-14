@@ -100,6 +100,15 @@ SKY_SHARE = 0.2
 #: the side of the blocks whose medians find the sky (px): wide enough that a star or the noise does not move a block's
 #: median, narrow enough that a faint nebula leaves its own blocks
 SKY_BLOCK = 16
+#: the colour strength of a narrow-band combination (``chroma_gain``): the factor on the colour's departure from grey, so
+#: that the nebula's Oklch chroma in Post's default display matches the Hubble teams' own: the same five SHO composites
+#: as the hues (module docstring), the same nebula pixels (sky and stars masked: Oklch lightness 0.25 to 0.85), warm
+#: areas (hue 0-120) pooled median chroma 0.058, blue areas (180-300) 0.050, their mean 0.054. The nebula pixels of our
+#: combinations, rendered with Post's defaults, have a median chroma of 0.026 at gain 1; the gain is the factor
+#: that brings it to 0.054 (measured on the Helix's stored S-H-O channels at a quarter of the size, nebula = smoothed
+#: luminance 3 sigma over the sky: chroma 0.026 at gain 1, 0.046 at 1.5, 0.069 at 2, 0.089 at 2.5, 0.055 at 1.7).
+HUBBLE_CHROMA = 0.054
+CHROMA_GAIN = 1.7
 #: the bounds of the linear match (module docstring): Siril's RGB compositing tool's own
 MATCH_LOW, MATCH_HIGH = 1e-7, 0.875
 #: the narrow-band types' reference of the linear match: the H-alpha
@@ -270,7 +279,8 @@ def chroma_sigma(noise: dict[str, float], noise_l: float) -> float:
 
 
 def compose(chans: dict[str, np.ndarray], roles: tuple[str, ...], mat, noise: dict[str, float],
-            sigma: float | None = None, sky: np.ndarray | None = None, equal: bool = False) -> tuple[np.ndarray, dict]:
+            sigma: float | None = None, sky: np.ndarray | None = None, equal: bool = False,
+            gain: float = 1.0) -> tuple[np.ndarray, dict]:
     """(3, H, W) of a narrow-band combination composed as luminance and chrominance (issue #163; the LRGB composition,
     the colour of one image and the lightness of another, R. Gendler, "Lessons from the Masters", Springer 2013, and
     Rector et al. 2007 for the colour layers): the lightness is the mean of the channels (``lightness``), the hues give
@@ -301,6 +311,9 @@ def compose(chans: dict[str, np.ndarray], roles: tuple[str, ...], mat, noise: di
     t = np.clip(lum / floor - 1, 0, 1)
     t = t * t * (3 - 2 * t)                             # from one to two floors, smoothly
     ratio = 1 + t[None] * (rgb / np.maximum(lum, floor)[None] - 1)
+    if gain != 1.0:                       # the colour strength: the departure from grey scaled, the luminance kept
+        ratio = np.maximum(1 + gain * (ratio - 1), 0)
+        ratio = ratio / np.maximum(np.tensordot(LUM, ratio, 1), 1e-6)[None]
     return (ratio * L[None]).astype(np.float32), {"sigma": sig, "noise_l": noise_l, "floor": floor}
 
 
@@ -475,7 +488,7 @@ class NarrowbandCombination(Combination):
             raise StageError(f"{e}: choose hues around the colour wheel") from None
         sigma = None if p.smoothing == "auto" else p.radius
         rgb, notes = compose(chans, self.ports, mat, noise, sigma, sky=sky_mask(chans, valid),
-                             equal=p.lightness == "equal")
+                             equal=p.lightness == "equal", gain=CHROMA_GAIN)
         ctx.log(f"lightness from the channels {'weighted by their noise' if p.lightness == 'noise' else 'equally'} ("
                 + ", ".join(f"{r} {(notes['noise_l'] / max(noise[r], 1e-12)) ** 2:.2f}" for r in chans)
                 + "), colour from the hues " + ", ".join(f"{r} {h:g}" for r, h in zip(self.ports, self.hues(p)))
@@ -504,7 +517,7 @@ class CombineSHO(NarrowbandCombination):
     description = ("Combines the S II, H-alpha and O III filters into one colour image: each filter a hue, the lightness "
                    "from the filters weighted by their noise, aligned through their plate solutions.")
     Params = SHOParams
-    version = "4"
+    version = "5"
 
 
 class HOParams(NarrowbandParams):
@@ -522,7 +535,7 @@ class CombineHO(NarrowbandCombination):
     description = ("Combines the H-alpha and O III filters (two filters, or a dual-band image's channels) into one "
                    "colour image: each filter a hue, the lightness from the filters weighted by their noise.")
     Params = HOParams
-    version = "4"
+    version = "5"
 
 
 class CombineRGB(Combination):
