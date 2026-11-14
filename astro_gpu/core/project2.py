@@ -7,7 +7,8 @@ Layout on disk::
         state.json              {"last_keys": {"<wf id>": {"<stage>": "<key>"}}}: previous results of Outdated blocks
         store/<stage>/<key>/    one done result (store/<stage>/<key>.tmp/ while a job runs; store/_trash/)
         logs/                   events.jsonl, run.lock, STOP, runs/<run_id>.plan.json and .log
-        cache/  inputs/  export/<name>/
+        cache/                  what is made again when missing: thumb.jpg, definition.json (``WORKING_FILE``)
+        inputs/  export/<name>/
     <scratch_dir or project/scratch>/<key>/<stage>/   large temporaries (the calibrated frame cache)
 
 The definition holds the sessions (nights: lists of folders or files per kind; the engine gets their union), the
@@ -22,8 +23,11 @@ project.json.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
+import logging
 import os
+import re
 from collections import Counter
 from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import datetime
@@ -41,6 +45,10 @@ GRAPH_FORMAT = 3
 #: the parts of the definition a format-3 file does not hold: the graph makes them
 GRAPH_PARTS = ("sessions", "excluded", "stack_mode", "workflows", "next_workflow_id")
 FILE = "project.astroproj"
+#: a working file beside a format-3 project: the definition compiled from its graph at its last save, with the
+#: fingerprint of the file that save wrote. Never read in normal use, rewritten at each save, optional (missing or
+#: stale, nothing depends on it): a project whose graph cannot be compiled any more opens from it (``load_working``)
+WORKING_FILE = Path("cache") / "definition.json"
 STATE_FILE = "state.json"
 V1_FILE = "project.json"
 KINDS = ("lights", "darks", "flats", "bias", "flat_darks")
@@ -54,6 +62,31 @@ FILTERS = ("", "L", "R", "G", "B", "Ha", "OIII", "SII")
 #: the shooting details the files do not say (``Project2.acquisition``), in the order the Report and the Project block's
 #: form show them (issue #89)
 ACQUISITION = ("instrument", "mount", "filter", "location", "date")
+
+log = logging.getLogger(__name__)
+
+
+class GraphUnreadable(ValueError):
+    """A format-3 file whose graph this version cannot compile into a definition (a later bug of the compile, a graph
+    written by a newer version). ``cause``: why, naming the part of the graph when it is known; set by ``load``:
+    ``working``, the working file of the folder when it can be opened instead (None: there is none, or it cannot be
+    read), and ``working_current``, whether it was written by the save that wrote the project file as it is now."""
+
+    def __init__(self, cause: str):
+        self.cause = cause
+        self.working: Path | None = None
+        self.working_current = False
+        super().__init__(f"the graph of this project cannot be compiled into a definition: {cause}")
+
+
+class NewerVersionProject(ValueError):
+    """A project file of a format this version does not know: a later version of FLOAT wrote it."""
+
+    MESSAGE = "This project was made with a newer FLOAT: open it with that version."
+
+    def __init__(self, fmt: Any):
+        super().__init__(self.MESSAGE)
+        self.format = fmt
 
 
 class LegacyProject(Exception):
@@ -187,6 +220,9 @@ class Project2:
     #: the stored graph of a format-3 file (graphcore's dict), the definition compiled from it; set by the graph page
     #: before it saves. Never part of ``to_dict`` (plans freeze the compiled definition: workers never read a graph)
     graph: dict[str, Any] | None = field(default=None, compare=False, repr=False)
+    #: why the last ``save`` wrote the definition (format 2) although the project carried a graph: the graph did not
+    #: compile, or compiled to another definition ("" when it did not happen); the graph is then dropped
+    graph_dropped: str = field(default="", compare=False, repr=False)
 
     # ------------------------------------------------------------------ paths
     def _root(self) -> Path:
@@ -454,6 +490,8 @@ class Project2:
         """A definition from its JSON content (checked); a format-3 content is compiled from its graph."""
         if d.get("format") == GRAPH_FORMAT:
             return _from_graph(d, root)
+        if _is_int(d.get("format")) and d["format"] > GRAPH_FORMAT:
+            raise NewerVersionProject(d["format"])
         if d.get("format") != FORMAT:
             raise ValueError(f"not a format {FORMAT} project definition (format {d.get('format')!r})")
         sessions = [Session(id=s["id"], name=s.get("name", ""), filter=s.get("filter") or "",
@@ -493,33 +531,85 @@ def _from_graph(d: dict[str, Any], root) -> Project2:
     from ..graphcore.compile import compile_into
     from ..graphcore.model import from_dict as graph_from_dict
     rest = {k: v for k, v in d.items() if k not in ("graph", *GRAPH_PARTS)}
-    p = Project2.from_dict({**rest, "format": FORMAT, "current": None}, root)
-    compile_into(graph_from_dict(copy.deepcopy(d["graph"])), p)
+    p = Project2.from_dict({**rest, "format": FORMAT, "current": None}, root)    # not graph: read as format 2's
+    if not isinstance(d.get("graph"), dict):
+        raise GraphUnreadable("the file holds no graph")
+    try:
+        g = graph_from_dict(copy.deepcopy(d["graph"]))
+    except TypeError as e:
+        m = re.search(r"unexpected keyword argument '(\w+)'", str(e))
+        if m is None:
+            raise GraphUnreadable(f"{type(e).__name__}: {e}") from e
+        raise GraphUnreadable(f"the graph holds “{m.group(1)}”, which this version does not know: it may have been "
+                              "made with a newer FLOAT") from e
+    except Exception as e:  # noqa: BLE001 - any failure is the graph's: said with its cause
+        raise GraphUnreadable(f"{type(e).__name__}: {e}") from e
+    try:
+        c = compile_into(g, p)
+    except ValueError as e:                  # a sentence of the engine (a block's method it does not have...)
+        raise GraphUnreadable(str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        raise GraphUnreadable(f"{type(e).__name__}: {e}") from e
     if d.get("current") is not None and any(w.id == d["current"] for w in p.workflows):
         p.current = d["current"]
     p.graph = copy.deepcopy(d["graph"])
-    p.validate()
+    try:
+        p.validate()
+    except ValueError as e:
+        raise GraphUnreadable(_in_graph(g, c, p, str(e))) from e
     return p
+
+
+def _in_graph(g, c, p: Project2, text: str) -> str:
+    """What ``validate`` says of a definition compiled from a graph, said of the graph: the row (or the branch) of the
+    workflow it names and the block a rule of the graph names, the night of a session; else of the graph as a whole."""
+    m = re.match(r"(workflow|session) (\d+): (.*)", text, re.S)
+    if m is None:
+        return f"the graph: {text}"
+    what, n, rest = m.group(1), int(m.group(2)), m.group(3)
+    if what == "session":
+        night = next((x for x in g.nights if x.get("sid") == n), None)
+        return f"the graph's night “{(night or {}).get('name') or n}”: {rest}"
+    rows = {r.id: r for r in g.rows}
+    rec = next((r for r in [*g.rows, *g.taps] if c.wids.get(r.id) == n), None)
+    if rec is None:
+        return f"the graph: {text}"
+    where = f"the graph's row “{rec.name}”" if rec.id in rows else f"the graph's branch “{rec.name}”"
+    try:
+        w = p.workflow(n)
+        e = wfl.graph_problem(w.blocks, wfl.source_of(w)) if w.blocks is not None else None
+    except (KeyError, ValueError):
+        e = None
+    block = getattr(e, "block", "") if e is not None and str(e) == rest else ""      # the very rule said
+    if block:
+        where += f", block {wfl.BLOCK_TITLES.get(wfl.base(block), block)}"
+    return f"{where}: {rest}"
 
 
 def file_dict(p: Project2) -> dict[str, Any]:
     """What ``save`` writes: format 3 (the graph, and what is not graph) when the project carries a graph that still
     compiles to its definition; else format 2 (a definition edited outside the graph page is written as it is, the
     page converts it again when it opens it)."""
+    return _file_dict(p)[0]
+
+
+def _file_dict(p: Project2) -> tuple[dict[str, Any], str]:
+    """``file_dict`` and why it is format 2 although the project carries a graph ("" when it is not)."""
     d = p.to_dict()
     if p.graph is None:
-        return d
+        return d, ""
     try:
         q = _from_graph({**d, "format": GRAPH_FORMAT, "graph": p.graph}, p.root)
-    except Exception:  # noqa: BLE001 - a graph that does not compile any more: the definition is the truth
-        return d
-    mine, its = d, q.to_dict()
-    if any(mine[k] != its[k] for k in GRAPH_PARTS):
-        return d
+    except Exception as e:  # noqa: BLE001 - a graph that does not compile any more: the definition is the truth
+        return d, f"its graph does not compile ({getattr(e, 'cause', None) or f'{type(e).__name__}: {e}'})"
+    its = q.to_dict()
+    differ = [k for k in GRAPH_PARTS if d[k] != its[k]]
+    if differ:
+        return d, f"its graph compiles to another definition (its {', '.join(differ)} differ)"
     out = {k: v for k, v in d.items() if k not in GRAPH_PARTS}
     out["format"] = GRAPH_FORMAT
     out["graph"] = copy.deepcopy(p.graph)
-    return out
+    return out, ""
 
 
 def _is_int(v: Any) -> bool:
@@ -702,20 +792,73 @@ def load(root: str | Path) -> Project2:
         if (root / V1_FILE).exists():
             raise LegacyProject(root)
         raise FileNotFoundError(f"not a project folder (no {FILE}): {root}")
-    return Project2.from_dict(json.loads(f.read_text(encoding="utf-8")), root)
+    data = f.read_bytes()
+    try:
+        return Project2.from_dict(json.loads(data.decode("utf-8")), root)
+    except GraphUnreadable as e:
+        e.working, e.working_current = _working(root, data)
+        raise
+
+
+def _working(root: Path, data: bytes) -> tuple[Path | None, bool]:
+    """The working file of a folder when it can be opened (else None), and whether the save that wrote the project file
+    ``data`` wrote it."""
+    w = root / WORKING_FILE
+    try:
+        d = json.loads(w.read_text(encoding="utf-8"))
+        Project2.from_dict(d["definition"], root)
+    except Exception:  # noqa: BLE001 - absent, damaged, or of another version: nothing to offer
+        return None, False
+    return w, d.get("project_file_sha256") == hashlib.sha256(data).hexdigest()
+
+
+def load_working(root: str | Path) -> Project2:
+    """The definition the working file of a folder keeps (``WORKING_FILE``), without a graph: the project opens from it
+    when its graph cannot be compiled (the graph page converts it again, as a format-2 file). Nothing is written.
+    Raises OSError or ValueError when it is absent or cannot be read."""
+    root = Path(root)
+    d = json.loads((root / WORKING_FILE).read_text(encoding="utf-8"))
+    if not isinstance(d, dict) or not isinstance(d.get("definition"), dict):
+        raise ValueError(f"not a working file of a project: {root / WORKING_FILE}")
+    return Project2.from_dict(d["definition"], root)
 
 
 def save(project: Project2, root: str | Path | None = None) -> Path:
     """Write the definition atomically into ``root`` (default: the project's own folder), which becomes the
-    project's folder. Refuses a v1 project folder. Returns the file written."""
+    project's folder. Refuses a v1 project folder. Returns the file written. A format-3 file has its working file
+    written beside it (``WORKING_FILE``: the definition it compiles to); a project carrying a graph written as format 2
+    says why in the log and in ``graph_dropped``, its graph dropped."""
     root = Path(root) if root is not None else project._root()
     _refuse_v1(root)
     project.validate()
     root.mkdir(parents=True, exist_ok=True)
     f = root / FILE
-    write_json(f, file_dict(project), indent=2, default=None)
+    out, why = _file_dict(project)
+    write_json(f, out, indent=2, default=None)
     project.root = root
+    project.graph_dropped = why
+    if why:
+        log.warning("%s saved as a definition (format 2), its graph dropped: %s", f.as_posix(), why)
+        project.graph = None
+    elif out.get("format") == GRAPH_FORMAT:
+        _write_working(project, root)
     return f
+
+
+def _write_working(project: Project2, root: Path) -> None:
+    """The working file of a format-3 save: the compiled definition and the fingerprint of the project file just
+    written. It is optional: a failure to write it is logged, the save stands."""
+    try:
+        sha = hashlib.sha256((root / FILE).read_bytes()).hexdigest()
+        (root / WORKING_FILE).parent.mkdir(parents=True, exist_ok=True)
+        write_json(root / WORKING_FILE,
+                   {"about": f"the definition compiled from {FILE} at its last save: a working file, never read in "
+                             "normal use, made again at each save",
+                    "saved": datetime.now().isoformat(timespec="seconds"),
+                    "project_file_sha256": sha,
+                    "definition": project.to_dict()}, indent=1, default=None)
+    except OSError as e:
+        log.warning("the working file of %s was not written: %s", root.as_posix(), e)
 
 
 def create(root: str | Path, name: str, target: Target | None = None) -> Project2:
