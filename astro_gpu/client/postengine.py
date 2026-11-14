@@ -577,9 +577,17 @@ def new_synth_layer(gid: int) -> dict:
     return row
 
 
+def stars_side(lay: dict):
+    """The workflow whose stars a Combine layers layer puts back: its stars side's (``stars_pid``: a stars row, or a
+    combination of stars), else its own; None when the side is unwired. This is the workflow a Synthetic stars block
+    of the layer lives in."""
+    return lay.get("stars_pid", lay.get("pid"))
+
+
 def with_synth_rows(layers: list[dict], wanted: dict[int, str]) -> list[dict]:
-    """The layers with one Synthetic stars layer in the Stars group of each combined layer whose workflow has the block
-    (``wanted``: {workflow id: its method}), none in the others. A new one goes at the bottom of the group's rows above
+    """The layers with one Synthetic stars layer in the Stars group of each combined layer whose stars side's workflow
+    (``stars_side``: its own when the layer has no other) has the block (``wanted``: {workflow id: its method}), none
+    in the others. A new one goes at the bottom of the group's rows above
     the real stars (applied first: the filters of the group then act on the stars it leaves). A composition saved
     before the group (#93) holds the same row, its mask and settings: it is kept as it is, so the image is the same;
     one put on the starless image by an older drag goes back to the stars, a second one in a group goes."""
@@ -587,12 +595,12 @@ def with_synth_rows(layers: list[dict], wanted: dict[int, str]) -> list[dict]:
     for lay in layers:
         if is_synth(lay):
             t = next((x for x in layers if x["id"] == lay.get("target")), None)
-            if t is None or not is_group(t) or t.get("pid") not in wanted or t["id"] in seen:
+            if t is None or not is_group(t) or stars_side(t) not in wanted or t["id"] in seen:
                 continue
             seen.add(t["id"])
             if lay.get("sub") != "stars":
                 lay = dict(lay, sub="stars")
-        if is_group(lay) and lay["pid"] in wanted and not any(
+        if is_group(lay) and stars_side(lay) in wanted and not any(
                 is_synth(x) and x.get("target") == lay["id"] for x in layers):
             out.append(new_synth_layer(lay["id"]))
         out.append(lay)
@@ -647,10 +655,14 @@ def sub_layer(lay: dict, sub: str) -> dict:
     """The layer to render for one image of a Combine layers layer (issue #165, two branches): its stars are its stars
     side's workflow's stars (``stars_pid``); its starless image is its first workflow's Stars/background starless image,
     or its Output (a combination's: ``starless`` "output"). A part of any other layer is the layer's own."""
-    if sub == "stars" or sub == "synth":
-        return dict(lay, pid=lay["stars_pid"] if lay.get("stars_pid") is not None else lay["pid"], part=sub)
-    if sub == "stars" and lay.get("stars_image") == "output" and lay.get("stars_pid") is not None:
-        return dict(lay, pid=lay["stars_pid"], part=None, stars_over=lay["pid"])   # a combination of stars' Output
+    if sub in ("stars", "synth"):
+        sp = lay["stars_pid"] if lay.get("stars_pid") is not None else lay["pid"]
+        if lay.get("stars_image") == "output" and lay.get("stars_pid") is not None:
+            # a combination of stars: its Output's image (the Synthetic stars block's, redrawn from it, in the same
+            # layout), stretched with the statistics of the starless combination they go onto (stars_over), so that the
+            # synthetic stars replace the real ones with no jump
+            return dict(lay, pid=sp, part="synth" if sub == "synth" else None, stars_over=lay["pid"])
+        return dict(lay, pid=sp, part=sub)
     return dict(lay, part=None if lay.get("starless") == "output" and sub == "starless" else sub)
 
 
@@ -1265,10 +1277,12 @@ class Composer:
         changes when another workflow's result comes in. A draft (a quick look) is kept apart from the exact image."""
         sid = source_id(lay)
         part = lay.get("part")
+        over = lay.get("stars_over")          # the stars of a combination: stretched with the starless one's statistics
         return (sid, part, lay.get("blend") if part == "combined" else None,
-                json.dumps(part_sliders(lay.get("sliders"), part), sort_keys=True),
+                json.dumps(part_sliders(lay.get("sliders"), "stars" if over is not None and part is None else part),
+                           sort_keys=True),
                 json.dumps(lay.get("base"), sort_keys=True, default=str), lay.get("linked"), self.provider.version(sid),
-                level, None if level > 0 else abox, (canvas.W, canvas.H, canvas.origin)) + (("draft",) if draft else ())
+                level, None if level > 0 else abox, (canvas.W, canvas.H, canvas.origin))             + (("draft",) if draft else ()) + (("over", over, self.provider.version(over)) if over is not None else ())
 
     def cached(self, lay: dict, level: int, canvas: Canvas) -> np.ndarray | None:
         """The image of a pixel layer over the whole canvas at a level if it is in the cache (level > 0); a Stars and

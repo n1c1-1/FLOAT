@@ -1778,7 +1778,19 @@ class _ProjectBase(QObject):
         e = wfl.palette_problem(self.graph(p), self.source_kind(p), block)
         if e is not None and block == "calibration" and self._nights_as_one(p):
             return _("calibrate per night first")   # one Calibration of all the nights: none to set beside it
-        return refused_text(e) if e is not None else ""
+        return refused_text(e) if e is not None else self._synth_solution_reason(p, block)
+
+    def _synth_solution_reason(self, p: WorkflowView, block: str) -> str:
+        """Why Synthetic stars cannot be placed after a combination of stars: it redraws them with the plate solution
+        its inputs bring (translated), "" otherwise."""
+        if block != "synth" or self.source_kind(p) != "fusion" or any(n["block"] == "stars" for n in self.graph(p)):
+            return ""
+        from ..core.store import Keys
+        from ..stages.combine import NO_PLATE_SOLUTION
+        try:
+            return "" if Keys(self.p).solution(p.pid) else _(NO_PLATE_SOLUTION)
+        except (KeyError, ValueError):
+            return ""
 
     def gives_post(self, p) -> bool:
         """Whether a workflow gives Post an image: one made before the free graph does; a graph does once it has an
@@ -2825,12 +2837,13 @@ class _ProjectBase(QObject):
 
     @staticmethod
     def _prune_version(v: dict, ws: dict, wanted: set | None = None):
+        from .postengine import stars_side
         layers = v.get("layers") or []
         keep, gone, changed = [], set(), False
         groups = {x.get("id"): x for x in layers if x.get("kind") == "workflow" and x.get("part") == "combined"}
         for x in layers:
             if wanted is not None and x.get("kind") == "filter" and x.get("filter") == "synth" and (
-                    groups.get(x.get("target")) is None or groups[x["target"]].get("pid") not in wanted):
+                    groups.get(x.get("target")) is None or stars_side(groups[x["target"]]) not in wanted):
                 gone.add(x.get("id"))                     # a Synthetic stars row whose block left the graph goes
                 changed = True
                 continue

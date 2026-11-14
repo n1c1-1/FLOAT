@@ -61,8 +61,13 @@ class SynthStars(Stage):
     version = "1"
 
     def run(self, ctx: Context, p: SynthStarsParams) -> None:
-        s = ctx.load("star_removal", "stars.npy").astype(np.float32)
-        v = ctx.load("star_removal", "valid.npy")
+        # after a combination of stars there is no Stars/background: the stars alone are the combination's Output
+        # (core/workflow.INSTEAD), and what is written is an Output's layout, which Post stretches with the starless
+        # combination's statistics as it does the real stars
+        out_only = not ctx.has("star_removal")
+        src, name = ("render_simple", "lin.npy") if out_only else ("star_removal", "stars.npy")
+        s = ctx.load(src, name).astype(np.float32)
+        v = ctx.load(src, "valid.npy")
         valid = (v if v.ndim == 2 else v.min(0)) > 0
         ctx.progress(0.1, "drawing the stars")
         if p.method == "instrument":
@@ -78,6 +83,12 @@ class SynthStars(Stage):
         if "stars_saturated" in info:
             ctx.metric("stars_saturated", info["stars_saturated"])
             ctx.metric("stars_from_catalogue", info["stars_from_catalogue"])
+        if out_only:
+            ctx.save("lin.npy", np.asarray(drawn, np.float32))
+            ctx.save("valid.npy", v)
+            ctx.out("prep_simple.json").write_text(json.dumps(ctx.load_json(src, "prep_simple.json")), encoding="utf-8")
+            ctx.preview("before_after", before_after(s, drawn))
+            return
         ctx.save("stars.npy", np.asarray(drawn, np.float32))
         ctx.save("valid.npy", v)
         (ctx.out("prep_stars.json")).write_text(json.dumps(ctx.load_json("star_removal", "prep_stars.json")), encoding="utf-8")

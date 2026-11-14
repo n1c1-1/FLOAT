@@ -250,6 +250,9 @@ OPTIONAL: dict[str, tuple[str, ...]] = {
     "star_removal": ("gradient",),
     "synth_stars": ("catalogs",),                   # the saturated stars' light, with the instrument's shape
 }
+#: a dependency that another stands in for where the chain has none: the Synthetic stars block of a combination of
+#: stars redraws the stars of the combination's Output (the Output's image: render_simple), there is no Stars/background
+INSTEAD: dict[str, dict[str, str]] = {"synth_stars": {"star_removal": "render_simple"}}
 #: the blocks of the graph and their stages; Selection has no stage of its own (it follows register)
 BLOCKS: dict[str, tuple[str, ...]] = {
     **{st: (st,) for st in COMBINE},                # the combinations of filters: each its block, its stage
@@ -453,6 +456,8 @@ class Chains:
                 out += [x for x in prior if base(x) == d and x not in out]
                 continue
             r = self.resolve(chain, stage, d)
+            if r is None and d in INSTEAD.get(b, {}):
+                r = self.resolve(chain, stage, INSTEAD[b][d])        # what stands in for it where it is absent
             if r is not None:
                 if r not in out:
                     out.append(r)
@@ -692,7 +697,7 @@ def graph_problem(blocks: Sequence[dict], source: str, raise_it: bool = False) -
             return bad(WHY_SOURCE, source=SOURCE_WORDS[source], block=_title(b))
         if source == "stretched" and b not in ("stars", "align_on"):
             return bad(WHY_SOURCE, source=SOURCE_WORDS[source], block=_title(b))
-        if source == "fusion" and b not in ("output", "stars", "color"):
+        if source == "fusion" and b not in ("output", "stars", "color", "synth"):
             return bad(WHY_SOURCE, source=SOURCE_WORDS[source], block=_title(b))
         if after_output and b not in ("stars", "synth"):
             return bad(WHY_AFTER_OUTPUT)
@@ -700,6 +705,8 @@ def graph_problem(blocks: Sequence[dict], source: str, raise_it: bool = False) -
             return bad(WHY_ALIGN_PLACE, where=_title("stacking") if source == "frames" else "the image")
         if takes != kind and takes == IMAGE and kind == FRAMES:      # what to do, not only why (8.5)
             return bad(WHY_STACK_FIRST, block=_title(b))
+        if b == "synth" and source == "fusion" and "stars" not in seen and "output" in seen and kind == IMAGE:
+            takes = kind                      # a combination of stars: its Output is the stars alone the block redraws
         if takes != kind:
             return bad(WHY_INPUT, takes=KIND_WORDS[takes], before=before, gives=KIND_WORDS[kind])
         if b in FRAME_BLOCKS:
@@ -712,7 +719,7 @@ def graph_problem(blocks: Sequence[dict], source: str, raise_it: bool = False) -
             return bad(WHY_NEEDS, need=_title("astrometry"))
         if b in ("denoise", "deconv") and (source != "frames" or "stacking" not in seen):
             return bad(WHY_HALVES)
-        if b == "synth" and "stars" not in seen:
+        if b == "synth" and "stars" not in seen and not (source == "fusion" and "output" in seen):
             return bad(WHY_NEEDS, need=_title("stars"))
         if b == "stars" and source == "frames" and "denoise" not in seen:      # trained on denoised images
             return bad(WHY_NEEDS, need=_title("denoise"))
@@ -1016,7 +1023,9 @@ def with_output(blocks: Sequence[dict], source: str = "frames") -> list[dict[str
     image = source in ("image", "fusion") or any(IO[n["block"]][1] in (IMAGE, PAIR) for n in act)
     if not image:
         return g
-    stars = next((i for i, n in enumerate(g) if n["block"] == "stars"), len(g))
+    stars = next((i for i, n in enumerate(g) if n["block"] == "stars"), None)
+    if stars is None:                    # the stars of a combination: Synthetic stars alone after the Output
+        stars = next((i for i, n in enumerate(g) if n["block"] == "synth"), len(g))
     return g[:stars] + [node("output")] + g[stars:]
 
 

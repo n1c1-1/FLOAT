@@ -114,6 +114,7 @@ from .postengine import (
     save_layers,
     snapshot,
     tree,
+    stars_side,
     with_synth_rows,
 )
 from .services.render import CPU_DRAFT_LEVEL, DRAFT_LEVEL, HALF_LEVEL, RenderWorker, Request, default_device_pref
@@ -2576,7 +2577,7 @@ class PostView(QWidget):
 
     def synth_problem(self, group) -> str:
         """Why the Synthetic stars block cannot be placed in the workflow of a Combine layers layer, "" when it can."""
-        p = self.path(group.get("pid"))
+        p = self.path(stars_side(group))             # the block lives where the stars come from (a stars row, a combination)
         if p is None or not hasattr(self.s, "insert_block"):
             return _("not in workflow")
         return self.s.palette_reason(p, "synth") if hasattr(self.s, "palette_reason") else ""
@@ -2605,7 +2606,7 @@ class PostView(QWidget):
         """Synthetic stars in the Stars group of a Combine layers layer: their block placed in the graph after
         Stars/background, as the palette places it; the layer comes with it (``with_synth_rows``, its mask open),
         selected."""
-        p = self.path(group["pid"])
+        p = self.path(stars_side(group))
         if p is None or self.synth_problem(group):
             return
 
@@ -2626,7 +2627,7 @@ class PostView(QWidget):
         """The Synthetic stars of a Stars group taken out, their block with them from the graph: one step of Undo,
         which brings both back, the layer with its mask (the composition without it is saved in the same step)."""
         from .model import node_key
-        p = self.path(group["pid"])
+        p = self.path(stars_side(group))
         key = next((node_key(n) for n in self.s.graph(p) if n["block"] == "synth"), None) \
             if p is not None and hasattr(self.s, "graph") else None
         why = self.s.removal_problem(p, key) if key is not None else _("not in workflow")
