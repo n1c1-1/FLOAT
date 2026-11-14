@@ -480,11 +480,73 @@ class GraphEditing:
         try:
             q = with_post_wires(g, self.shared_post_images())
             q = with_layer_rows(q, *self._layer_rows_wanted(q))
+            q = self._layer_ids_kept(g, q)
         except Exception:  # noqa: BLE001 - a graph the projection cannot read keeps its wires
             return g
         if [(w.src, w.dst, w.wid) for w in q.wires] == [(w.src, w.dst, w.wid) for w in g.wires] and \
                 [r.id for r in q.rows] == [r.id for r in g.rows]:
             return g
+        return q
+
+    @staticmethod
+    def _layer_rows_taken(before, base) -> dict:
+        """The Combine layers rows a gesture is made without (``_without_layer_rows``): {block its Background reads:
+        [(its index in ``before``'s rows, row, its block, the wires into or out of it)]}, in the graph's order."""
+        from ..graphcore.post import layer_rows
+        kept = {r.id for r in base.rows}
+        out = {}
+        for src, rids in layer_rows(before).items():
+            for rid in rids:
+                if rid in kept:
+                    continue
+                i, r = next((i, r) for i, r in enumerate(before.rows) if r.id == rid)
+                if len(r.blocks) != 1 or r.blocks[0] not in before.blocks:
+                    continue
+                b = r.blocks[0]
+                out.setdefault(src, []).append((i, r, before.blocks[b],
+                                                [w for w in before.wires if w.src[0] == b or w.dst[0] == b]))
+        return out
+
+    def _layer_ids_kept(self, g, q):
+        """The Combine layers the projection draws again after a gesture keep the ids (row, block, wires), the name and
+        the place they had before it: the projection takes them away for the gesture and draws them back, and a new id
+        each time made a chosen Combine layers lose its choice at any gesture, and an Undo choose it as a block that
+        came back. Only those the gesture took away (``_layer_pool``), on the same block, while their ids are free."""
+        pool = getattr(self, "_layer_pool", None)
+        if not pool:
+            return q
+        from ..graphcore.post import layer_rows
+        had = {r.id for r in g.rows}
+        fresh = {rid: src for src, rids in layer_rows(q).items() for rid in rids if rid not in had}
+        if not fresh:
+            return q
+        q = gm.clone(q)
+        olds = {src: list(v) for src, v in pool.items()}
+        for rid, src in fresh.items():
+            if not olds.get(src):
+                continue
+            i, old_row, old_blk, old_wires = olds[src].pop(0)
+            r = next(x for x in q.rows if x.id == rid)
+            used = set(q.blocks) | {x.id for x in q.rows}
+            if len(r.blocks) != 1 or old_row.id in used or old_blk.id in used:
+                continue
+            nb, ob = r.blocks[0], old_blk.id
+            q.blocks.pop(nb, None)
+            q.blocks[ob] = copy.deepcopy(old_blk)
+            q.rows.remove(r)
+            q.rows.insert(min(i, len(q.rows)), copy.deepcopy(old_row))
+            wids = {w.id for w in q.wires}
+            by_ends = {(tuple(w.src), tuple(w.dst)): w.id for w in old_wires}
+            for w in q.wires:
+                if nb not in (w.src[0], w.dst[0]):
+                    continue
+                w.src = [ob if w.src[0] == nb else w.src[0], w.src[1]]
+                w.dst = [ob if w.dst[0] == nb else w.dst[0], w.dst[1]]
+                old = by_ends.get((tuple(w.src), tuple(w.dst)))
+                if old is not None and old not in wids:
+                    wids.discard(w.id)
+                    w.id = old
+                    wids.add(old)
         return q
 
     def _layer_rows_wanted(self, g) -> dict:
@@ -777,14 +839,20 @@ class GraphEditing:
         if g is before:
             return res
         g = self._with_defaults(g, self.p)                # a block made by the gesture says its settings too
-        with self._edit():
-            self._commit(g)
-            post = gm.Index(before).post
-            # the user's own wire to Post, or To Post on a workflow's last block (its image given back after its
-            # wire was taken away): the image reaches every version
-            self._post_follow(before, g, wired=any((s[0] == "wire" and isinstance(s[1], dict) and s[1].get("dst") == post)
-                                                   or s[0] == "send_to_post" for s in steps))
-            self._follow_post()
+        # the Combine layers the gesture was made without are drawn back with their own ids (_layer_ids_kept)
+        self._layer_pool = self._layer_rows_taken(self._g, base) if base is not self._g else None
+        try:
+            with self._edit():
+                self._commit(g)
+                post = gm.Index(before).post
+                # the user's own wire to Post, or To Post on a workflow's last block (its image given back after its
+                # wire was taken away): the image reaches every version
+                self._post_follow(before, g, wired=any((s[0] == "wire" and isinstance(s[1], dict)
+                                                        and s[1].get("dst") == post)
+                                                       or s[0] == "send_to_post" for s in steps))
+                self._follow_post()
+        finally:
+            self._layer_pool = None
         text = name or (say(res.toast, _) if res.toast else "")
         if text:
             self.name_step(text)

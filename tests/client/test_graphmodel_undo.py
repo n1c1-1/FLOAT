@@ -245,3 +245,38 @@ def test_a_template_is_one_step_and_a_result(model):
     model._template = lambda *_a: refused                     # a plan the core refuses: a Result, nothing raised
     res = model.apply_template(t, "Other", {})
     assert not res.ok and res.reason and len(model._undo) == steps + 1
+
+
+def test_a_gesture_elsewhere_keeps_the_combine_layers_block_and_undo_chooses_nothing_new(qapp, tmp_path):
+    """The Combine layers drawn for Post's layers are taken away for a gesture and drawn back after it: they come back
+    with the same row, block and wire ids, so that a chosen Combine layers stays chosen, and an Undo of a change of a
+    session's files keeps the block chosen (it chose the Combine layers as a block that came back)."""
+    root = tmp_path / "P"
+    w = h1.old_way(root, next(t for t in h1.GALLERY if t["key"] == "colour_full"), h1.FAKE[:1])
+    project2.save(w.p)
+    w.close()
+    worker = ApiWorker()
+    m = M(project2.load(root), worker, readonly=True)
+    try:
+        assert worker.wait(120) and m.ready
+        g = m.stored
+        cl = [b for b, x in g.blocks.items() if x.kind == "combine_layers"]
+        assert cl, "the template draws a Combine layers"
+        ids = (sorted(g.blocks), sorted(r.id for r in g.rows), sorted(x.id for x in g.wires))
+        sid = m.p.sessions[0].id
+        session = next(b for b, x in g.blocks.items() if x.kind == "session" and x.sid == sid)
+        m.graph_view["selected"] = session
+        darks = list(m.p.session(sid).darks)
+        m._night_edit(sid, files={"darks": darks + [(tmp_path / "D_1.fits").as_posix()]})
+        g2 = m.stored
+        assert [b for b, x in g2.blocks.items() if x.kind == "combine_layers"] == cl
+        assert (sorted(g2.blocks), sorted(r.id for r in g2.rows), sorted(x.id for x in g2.wires)) == ids
+        assert [r.id for r in g2.rows] == [r.id for r in g.rows]                 # in the same place
+        assert m.undo(graph=True)
+        assert m.graph_view["selected"] == session
+        m.graph_view["selected"] = cl[0]                    # a chosen Combine layers stays chosen over a gesture
+        m._night_edit(sid, files={"darks": darks + [(tmp_path / "D_2.fits").as_posix()]})
+        assert cl[0] in m.stored.blocks and m.graph_view["selected"] == cl[0]
+    finally:
+        m.close(save=False)
+        worker.stop()
