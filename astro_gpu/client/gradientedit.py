@@ -50,7 +50,7 @@ from PySide6.QtWidgets import (
 
 from .i18n import _
 from .icons import icon_only
-from .widgets import WARN, ElidedLabel, label
+from .widgets import WARN, label
 
 #: the preview's copy of the stack holds about this many pixels
 PREVIEW_PIXELS = 1_000_000
@@ -76,9 +76,9 @@ FIELDS = ("sample_points", "exclude_ellipses", "exclude_brush")
 #: the methods, in the order of the list, and their names (2 words at most; what they do goes to the tooltip)
 METHODS = ("polynomial", "rbf", "automatic")
 METHOD_NAME = {"polynomial": "Polynomial", "rbf": "RBF", "automatic": "Automatic"}
-METHOD_LINE = {"polynomial": "Smooth surface under the sky",
-               "rbf": "Surface through the samples",
-               "automatic": "No samples, every sky pixel"}
+METHOD_LINE = {"polynomial": "A smooth surface fitted on the sky between the objects",
+               "rbf": "A surface through the samples: follows a gradient of any shape",
+               "automatic": "A flexible surface on every pixel that does not look like an object"}
 METHOD_TIP = {"polynomial": "A smooth surface fitted on the sky between the objects. Keeps faint, very wide structures "
                             "best.",
               "rbf": "A surface through the samples (thin-plate splines): follows a gradient of any shape; best with "
@@ -109,8 +109,10 @@ TOOLS = (("points", "add", "Sample", "Click adds a sample of sky, a drag moves i
                                      "block chooses (its density in Settings)"))
 #: the Settings drawer: its width by default and its limits
 DRAWER_W, DRAWER_MIN = 390, 280
-#: the heights of the page's row above the image and of its line under it
-TOP_H, LINE_H = 34, 36
+#: the page's arrangement (DESIGN.md): "A" the method bar on top, the named tools in a row above the image, the actions
+#: under it; "B" one column at the left (method, tools, actions), the image beside it; "C" the method bar with the
+#: actions on top, the named tools in a column at the left of the image
+LAYOUT = "A"
 
 
 def _ell(e) -> tuple[float, float, float, float, float]:
@@ -806,20 +808,86 @@ class GradientEditor(QObject):
 
     def _build_page(self):
         """Built once, whole: nothing is added to or taken from it afterwards (a control that does not apply is greyed
-        with its reason), so the image's rectangle never moves while the page is shown."""
-        from .icons import set_icon
+        with its reason), so the image's rectangle never moves while the page is shown. Read in order: the method (the
+        block's main decision) and its setting, the image with the tools that act on it, the draft and its actions.
+        ``LAYOUT`` arranges the same parts in one of three ways."""
         from .imageview import ImageView
         page = QWidget()
         page.setObjectName("gradpage")
-        page.setStyleSheet("QPushButton#ivseg { padding: 3px 9px; border-radius: 0; }"
-                           "QPushButton#ivseg:checked { background: #2b3446; border-color: #5ea1ff; color: #ffffff; }")
+        page.setStyleSheet(
+            "QPushButton#methodseg { padding: 6px 18px; border-radius: 0; font-size: 11pt; }"
+            "QPushButton#methodseg:checked { background: #2b3446; border-color: #5ea1ff; color: #ffffff; "
+            "font-weight: 600; }"
+            "QPushButton#tool { text-align: left; padding: 4px 10px; }"
+            "QPushButton#tool:checked { background: #2b3446; border-color: #5ea1ff; color: #ffffff; }")
+        self._ui = {}
         v = QVBoxLayout(page)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(6)
-        u = self._ui = {}
-        top_w = QWidget()                              # fixed heights: the image's rectangle depends on nothing inside
-        top_w.setFixedHeight(TOP_H)
-        top = QHBoxLayout(top_w)
+        title = self._title_row()
+        box = QWidget()
+        bl = QVBoxLayout(box)
+        bl.setContentsMargins(0, 0, 0, 0)
+        gv = ImageView(post=False, compare=True)
+        gv.default_dir = lambda: str(getattr(self.s, "root", None) or "")
+        gv.toasted.connect(self.tv.toasted.emit)
+        gv.layout().itemAt(0).widget().hide()          # its own toolbar: the page's two buttons and Settings
+        gv.readout.parentWidget().hide()               # the readout line: none under the image
+        bl.addWidget(gv)
+        v.addWidget(title)
+        if LAYOUT == "B":                              # one column at the left: method, tools, actions
+            col = QFrame()
+            col.setObjectName("gradcol")
+            cv = QVBoxLayout(col)
+            cv.setContentsMargins(0, 0, 8, 0)
+            cv.setSpacing(10)
+            cv.addWidget(self._method_part(vertical=True))
+            cv.addWidget(self._tools_part(vertical=True, two=True))
+            cv.addStretch(1)
+            cv.addWidget(self._actions_part(vertical=True))
+            col.setMinimumWidth(240)
+            col.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+            body = QHBoxLayout()
+            body.setSpacing(0)
+            body.addWidget(col)
+            body.addWidget(box, 1)
+            v.addLayout(body, 1)
+        elif LAYOUT == "C":                            # the method bar with the actions; the tools at the left
+            v.addWidget(self._method_part(vertical=False, actions=self._actions_part(vertical=False)))
+            body = QHBoxLayout()
+            body.setSpacing(6)
+            tools = self._tools_part(vertical=True)
+            tools.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+            body.addWidget(tools, 0, Qt.AlignTop)
+            body.addWidget(box, 1)
+            v.addLayout(body, 1)
+        else:                                          # A: the method bar, the tools' row, the image, the actions
+            v.addWidget(self._method_part(vertical=False))
+            v.addWidget(self._tools_part(vertical=False))
+            v.addWidget(box, 1)
+            v.addWidget(self._actions_part(vertical=False))
+        self.page, self.gv = page, gv
+        self.drawer = Drawer(box, self)
+        gv.panel_box.setParent(None)                   # the stretch column: in the drawer, never beside the image
+        self.drawer.fixed.addWidget(gv.panel_box)
+        gv.show_histogram(True)
+        gv.align_bar.setParent(None)
+        self.drawer.fixed.addWidget(gv.align_bar)
+        gv.add_overlay(self._paint)
+        gv.imageShown.connect(self._shown)
+
+    @staticmethod
+    def _fixed_rows(w: QWidget) -> QWidget:
+        """A row above or under the image: as high as what it holds (which never changes), never given the image's
+        room nor taken from it."""
+        w.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        return w
+
+    def _title_row(self) -> QWidget:
+        from .icons import set_icon
+        u = self._ui
+        w = QWidget()
+        top = QHBoxLayout(w)
         top.setContentsMargins(0, 0, 0, 0)
         top.setSpacing(10)
         u["title"] = label("", "h1")
@@ -843,105 +911,153 @@ class GradientEditor(QObject):
         st.toggled.connect(self._set_drawer)
         top.addWidget(st)
         u["settings"] = st
-        v.addWidget(top_w)
-        body = QHBoxLayout()
-        body.setSpacing(0)
-        strip = QFrame()
-        strip.setObjectName("gradtools")
-        strip.setFixedWidth(42)
-        strip.setStyleSheet("QFrame#gradtools { background: #1b1e25; border-right: 1px solid #2a2f38; }")
-        sv = QVBoxLayout(strip)
-        sv.setContentsMargins(4, 6, 4, 6)
-        sv.setSpacing(4)
-        for key, role, name, tip in TOOLS:
-            b = icon_only(QPushButton(), role, "", 20)
-            b.setObjectName("toggle")
-            b.setFixedSize(34, 34)
-            b.setCheckable(key != "grid")
-            b.setToolTip(f"<b>{_(name)}</b><br>{_(tip)}")
-            if key == "grid":
-                b.clicked.connect(self.generate)
-            else:
-                b.clicked.connect(lambda _c=False, k=key: self.set_mode(None if self.mode == k else k))
-            sv.addWidget(b)
-            u[key] = b
-        sv.addStretch(1)
-        body.addWidget(strip)
-        box = QWidget()
-        bl = QVBoxLayout(box)
-        bl.setContentsMargins(0, 0, 0, 0)
-        gv = ImageView(post=False, compare=True)
-        gv.default_dir = lambda: str(getattr(self.s, "root", None) or "")
-        gv.toasted.connect(self.tv.toasted.emit)
-        gv.layout().itemAt(0).widget().hide()          # its own toolbar: the page's two buttons and Settings
-        gv.readout.parentWidget().hide()               # the readout line: none under the image
-        bl.addWidget(gv)
-        body.addWidget(box, 1)
-        v.addLayout(body, 1)
-        line_w = QWidget()
-        line_w.setFixedHeight(LINE_H)
-        line = QHBoxLayout(line_w)
-        line.setContentsMargins(0, 0, 0, 0)
-        line.setSpacing(8)
+        return self._fixed_rows(w)
+
+    def _main_part(self) -> QHBoxLayout:
+        """The method's one setting: its name, a slider, its value (widths set for the longest of the three)."""
+        u = self._ui
+        row = QHBoxLayout()
+        row.setSpacing(6)
+        nm = label("", "dim")
+        fm = nm.fontMetrics()
+        nm.setMinimumWidth(max(fm.horizontalAdvance(_(MAIN[m][1])) for m in MAIN) + 4)
+        nm.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        row.addWidget(nm)
+        u["main_l"] = nm
+        sl = QSlider(Qt.Horizontal)
+        sl.setMinimumWidth(120)
+        sl.valueChanged.connect(self._main_moved)
+        sl.sliderReleased.connect(lambda: self._main_set(sl.value()))
+        row.addWidget(sl, 1)
+        u["main"] = sl
+        val = label("", "small")
+        val.setMinimumWidth(val.fontMetrics().horizontalAdvance("10.00") + 4)
+        row.addWidget(val)
+        u["main_v"] = val
+        return row
+
+    def _method_part(self, vertical: bool, actions: QWidget | None = None) -> QWidget:
+        """The method: three choices named in full, one line saying what the chosen one does, and its setting."""
+        u = self._ui
+        w = QWidget()
         seg = QFrame()
         seg.setObjectName("segment")
-        sh = QHBoxLayout(seg)
-        sh.setContentsMargins(0, 0, 0, 0)
-        sh.setSpacing(0)
         grp = QButtonGroup(seg)
         grp.setExclusive(True)
+        sh = QVBoxLayout(seg) if vertical else QHBoxLayout(seg)
+        sh.setContentsMargins(0, 0, 0, 0)
+        sh.setSpacing(2 if vertical else 0)
         for m in METHODS:
             b = QPushButton(_(METHOD_NAME[m]))
-            b.setObjectName("ivseg")
+            b.setObjectName("methodseg")
             b.setCheckable(True)
             b.setToolTip(_(METHOD_TIP[m]))
             b.clicked.connect(lambda _c=False, mm=m: self.set_draft({"method": mm}))
             grp.addButton(b)
             sh.addWidget(b)
             u["m_" + m] = b
+            if vertical:                               # each choice with its line under it, always shown
+                ln = label(_(METHOD_LINE[m]), "small", wrap=True)
+                ln.setContentsMargins(6, 0, 0, 4)
+                sh.addWidget(ln)
         u["methods"] = seg
-        line.addWidget(seg)
-        line.addSpacing(6)
-        nm = label("", "dim")
-        nm.setFixedWidth(72)
-        nm.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        line.addWidget(nm)
-        u["main_l"] = nm
-        sl = QSlider(Qt.Horizontal)
-        sl.setFixedWidth(150)
-        sl.valueChanged.connect(self._main_moved)
-        sl.sliderReleased.connect(lambda: self._main_set(sl.value()))
-        line.addWidget(sl)
-        u["main"] = sl
-        val = label("", "small")
-        val.setFixedWidth(34)
-        line.addWidget(val)
-        u["main_v"] = val
-        state = ElidedLabel("", "gradstate", Qt.ElideRight)
-        state.setMinimumWidth(40)
-        state.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        line.addWidget(state, 1)
+        if vertical:
+            col = QVBoxLayout(w)
+            col.setContentsMargins(0, 0, 0, 0)
+            col.setSpacing(6)
+            col.addWidget(label(_("Method"), "h2"))
+            col.addWidget(seg)
+            col.addLayout(self._main_part())
+            return w
+        col = QVBoxLayout(w)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(2)
+        row = QHBoxLayout()
+        row.setSpacing(12)
+        row.addWidget(seg)
+        main = self._main_part()
+        holder = QWidget()
+        holder.setLayout(main)
+        holder.setMinimumWidth(280)
+        row.addWidget(holder)
+        row.addStretch(1)
+        if actions is not None:
+            row.addWidget(actions)
+        col.addLayout(row)
+        line = label("", "dim")                        # what the chosen method does, one line, never cut
+        fm = line.fontMetrics()
+        line.setMinimumWidth(max(fm.horizontalAdvance(_(METHOD_LINE[m])) for m in METHODS) + 8)
+        col.addWidget(line)
+        u["m_line"] = line
+        return self._fixed_rows(w)
+
+    def _tools_part(self, vertical: bool, two: bool = False) -> QWidget:
+        """The tools that act on the image, each with its icon AND its name (its sentence on hover); ``two``: in two
+        columns (the narrow left column of B)."""
+        from PySide6.QtWidgets import QGridLayout
+
+        from .icons import set_icon
+        u = self._ui
+        w = QFrame()
+        w.setObjectName("gradtools")
+        lay = QGridLayout(w) if two else QVBoxLayout(w) if vertical else QHBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(4)
+        if vertical and not two:
+            lay.addWidget(label(_("Tools"), "h2"))
+        for n, (key, role, name, tip) in enumerate(TOOLS):
+            b = QPushButton(_(name))
+            set_icon(b, role, 16)
+            b.setObjectName("tool")
+            b.setCheckable(key != "grid")
+            b.setToolTip(_(tip))
+            if key == "grid":
+                b.clicked.connect(self.generate)
+            else:
+                b.clicked.connect(lambda _c=False, k=key: self.set_mode(None if self.mode == k else k))
+            if two:
+                lay.addWidget(b, n // 2, n % 2)
+            else:
+                lay.addWidget(b)
+            u[key] = b
+        if not vertical:
+            lay.addStretch(1)
+            return self._fixed_rows(w)
+        return w
+
+    def _actions_part(self, vertical: bool) -> QWidget:
+        """The draft's state in a few words, Reset, Try variant, Apply."""
+        u = self._ui
+        w = QWidget()
+        lay = QVBoxLayout(w) if vertical else QHBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6 if vertical else 8)
+        state = label("", "small")
+        fm = state.fontMetrics()                       # room for its longest words: it is never cut
+        state.setMinimumWidth(fm.horizontalAdvance(_("Draft · {n} changes").format(n=88) + " · " +
+                                                   _("computing the preview…")) + 8)
+        if vertical:
+            state.setWordWrap(True)
+            state.setMinimumWidth(0)
+            state.setMinimumHeight(2 * fm.height() + 4)
         u["state"] = state
+        if not vertical:
+            lay.addStretch(1)
+        lay.addWidget(state)
+        pair = QHBoxLayout() if vertical else lay      # in a column: Reset and Try variant side by side, Apply under
         for key, text, fn in (("reset", "Reset", self.reset), ("variant", "Try variant", self.try_variant),
                               ("apply", "Apply", self.apply)):
             b = QPushButton(_(text))
             if key == "apply":
                 b.setObjectName("primary")
             b.clicked.connect(lambda _c=False, f=fn: f())
-            line.addWidget(b)
+            if vertical and key == "apply":
+                lay.addLayout(pair)
+                lay.addWidget(b)
+            else:
+                pair.addWidget(b)
             u[key] = b
-        v.addWidget(line_w)
-        self.page, self.gv = page, gv
-        self.drawer = Drawer(box, self)
-        gv.panel_box.setParent(None)                   # the stretch column: in the drawer, never beside the image
-        self.drawer.fixed.addWidget(gv.panel_box)
-        gv.show_histogram(True)
-        gv.align_bar.setParent(None)
-        self.drawer.fixed.addWidget(gv.align_bar)
-        gv.add_overlay(self._paint)
-        gv.imageShown.connect(self._shown)
-        for w in page.findChildren(QPushButton):       # never squeezed: a name cut short reads as another word
-            w.setMinimumWidth(w.sizeHint().width())
+        return self._fixed_rows(w) if not vertical else w
 
     def _set_before(self, on: bool):
         self.before = bool(on)
@@ -1288,6 +1404,8 @@ class GradientEditor(QObject):
                 u["variant"].setToolTip(_("The draft on a variant of the workflow: what is computed stays as it is, "
                                           "the variant is computed by Run") if draft else why)
                 u["reset"].setToolTip(_("Back to the applied settings: the draft goes") if draft else why)
+            if "m_line" in u:
+                u["m_line"].setText(_(METHOD_LINE.get(method, "")))
             if "state" in u:
                 u["state"].setText(self._status())
                 u["state"].setStyleSheet(f"color: {WARN};" if draft else "color: #8b95a5;")

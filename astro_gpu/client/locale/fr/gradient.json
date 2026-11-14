@@ -93,5 +93,9 @@
   "Method settings": "Réglages méthode",
   "Compare": "Comparer",
   "Display": "Affichage",
-  "Measurements": "Mesures"
+  "Measurements": "Mesures",
+  "A smooth surface fitted on the sky between the objects": "Une surface lisse ajustée sur le ciel entre les objets",
+  "A surface through the samples: follows a gradient of any shape": "Une surface qui passe par les échantillons : suit un gradient de toute forme",
+  "A flexible surface on every pixel that does not look like an object": "Une surface souple sur chaque pixel qui ne ressemble pas à un objet",
+  "Tools": "Outils"
 }

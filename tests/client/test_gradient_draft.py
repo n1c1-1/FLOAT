@@ -544,3 +544,66 @@ def test_try_variant_keeps_the_original_and_takes_the_preview(qapp, tmp_path):
         assert s.view(v.pid) is None and ed.has_draft(p.pid) and ed.value("degree") == 3
     finally:
         w.close()
+
+
+_SCALED = r'''
+import os, sys, time
+from pathlib import Path
+sys.path[:0] = [sys.argv[1], sys.argv[1] + "/tests", sys.argv[1] + "/tests/client"]
+os.environ["ASTRO_GPU_SETTINGS"] = sys.argv[3]
+from conftest import scratch_project
+from test_inspect import inspect, open_window, settle
+from PySide6.QtWidgets import QAbstractButton, QApplication, QLabel, QWidget
+from astro_gpu.client import app as appmod, prefs
+from astro_gpu.client.widgets import QSS
+a = QApplication.instance() or QApplication([])
+a.setStyleSheet(QSS + appmod.EXTRA_QSS)
+prefs.load()
+appmod.apply_language("fr")                                  # the longest names
+w = open_window(scratch_project(Path(sys.argv[2])), size=(1250, 685), readonly=False)
+inspect(w, "fond", index=0)
+w.tune.dock.set_state("docked")
+settle(w)
+ed = w.tune.grad_editor
+if ed.page is None or not ed.page.isVisible():
+    print("SKIP no page")
+    sys.exit(0)
+bad = []
+for x in ed.page.findChildren(QWidget):
+    if not x.isVisible() or x is ed.drawer or ed.drawer.isAncestorOf(x) or ed.gv.isAncestorOf(x):
+        continue
+    par = x.parentWidget()
+    if par is not None and not par.rect().contains(x.geometry()):
+        bad.append(("outside its parent", getattr(x, "text", lambda: type(x).__name__)()))
+    r = x.rect().translated(x.mapTo(w, x.rect().topLeft()))
+    if not w.rect().contains(r):
+        bad.append(("outside the window", getattr(x, "text", lambda: type(x).__name__)()))
+    if isinstance(x, (QAbstractButton, QLabel)) and not (isinstance(x, QLabel) and x.wordWrap()) and \
+            x.width() < x.sizeHint().width() - 1:
+        bad.append(("cut", x.text()))
+print("BAD", bad if bad else "none")
+w.close()
+'''
+
+
+@pytest.mark.parametrize("scale", ["1", "1.25", "1.5"])
+def test_nothing_on_the_page_is_cut_at_any_display_scaling(tmp_path, scale):
+    """The application's own style, the French names (the longest), a 1250 x 685 window at 100, 125 and 150 % display
+    scaling: every control of the page whole, inside its parent and inside the window (a fixed width once cut the
+    tools in half on a real launch)."""
+    import subprocess
+    import sys
+    from pathlib import Path
+    _test_project()
+    root = str(Path(__file__).resolve().parents[2])
+    script = tmp_path / "scaled.py"
+    script.write_text(_SCALED, encoding="utf-8")
+    env = dict(os.environ, QT_SCALE_FACTOR=scale, QT_QPA_PLATFORM="offscreen", PYTHONPATH=root,
+               CUDA_VISIBLE_DEVICES="")
+    out = subprocess.run([sys.executable, str(script), root, str(tmp_path / "proj"), str(tmp_path / "s.json")],
+                         capture_output=True, text=True, env=env, timeout=300)
+    lines = [ln for ln in out.stdout.splitlines() if ln.startswith(("BAD", "SKIP"))]
+    assert lines, out.stdout[-2000:] + out.stderr[-2000:]
+    if lines[0].startswith("SKIP"):
+        pytest.skip("Gradient of the test project is not computed")
+    assert lines[0] == "BAD none", lines[0]
