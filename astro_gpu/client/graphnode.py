@@ -755,7 +755,33 @@ class BlockMap:
         if bid is None or self.graph is None:
             return ""
         from ..graphcore import api
+        gone = self._gone(bid)
+        if gone:
+            return gone
         return api.summary(self.graph, bid, tr or _)
+
+    def _gone(self, bid) -> str:
+        """The line of a Session or a Calibration one of whose folders is not found (moved or renamed outside, its
+        disk unplugged: GUI exploration 4): "darks not found" where it would count them, "" when all are there."""
+        m, g = self.model, self.graph
+        blk = g.blocks.get(bid)
+        if blk is None or blk.kind not in ("session", "calibration") or not hasattr(m, "sessions"):
+            return ""
+        pairs = [(s, c) for r in g.rows for s, c in (r.nights or [])]
+        sids = [g.blocks[s].sid for s, c in pairs if bid in (s, c) and s in g.blocks]
+        sids = [x for x in sids if x is not None]
+        try:
+            gone = gone_kinds(m, set(sids)) if sids else set()
+            if not gone:
+                return ""
+            if blk.kind == "session":
+                return session_summary(m, sids[0])
+            if not gone & {"darks", "flats"}:
+                return ""
+            n ={k: sum(int(x.get(k) or 0) for x in m.sessions if x["id"] in sids) for k in ("darks", "flats")}
+            return calibration_counts(n["darks"], n["flats"], gone=gone)
+        except Exception:  # noqa: BLE001 - the graph's own line rather than none
+            return ""
 
 
 def blocks_of(model) -> BlockMap:

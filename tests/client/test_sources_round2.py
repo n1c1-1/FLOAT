@@ -167,8 +167,6 @@ def test_plus_session_joins_the_flow_it_is_drawn_with(qapp, tmp_path, monkeypatc
         close(w, m, page)
 
 
-@pytest.mark.xfail(strict=True, reason="the new page's Session and Calibration blocks say '1 dark' and 'standard' under "
-                   "their name for a darks folder not found (the panel and Locate say it)")
 def test_a_folder_not_found_says_so_and_is_chosen_again_from_its_row(qapp, tmp_path, monkeypatch):
     """GUI exploration 4: a darks (or lights) folder renamed outside: the Session and Calibration blocks and the
     panel say it is not found, never "0 dark" or "none"; in the Session's files, Locate chooses where it is now (one

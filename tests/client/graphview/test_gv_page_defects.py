@@ -226,3 +226,14 @@ def test_a_review_pause_says_its_block_and_workflows_in_its_toast_and_tooltip(wo
     assert "waits for the block to be switched on again" in tip and "the run stops here" not in tip
     assert all(len(line) <= 100 for line in tip.split("\n")), tip     # what it does wrapped (it was ~300)
     assert "Up to date" not in tip                                     # a block switched off is not computed
+
+
+def test_a_session_whose_darks_folder_is_gone_says_so_under_its_name(world, tmp_path):
+    W = world()
+    W.m.p.session(1).darks = [(tmp_path / "darks_renamed").as_posix()]
+    W.m.reload_sources()
+    W.settle()
+    W.page.refresh()
+    W.settle()
+    s = W.one("session")
+    assert "darks not found" in W.page.canvas.blocks[s].d["summary"]
