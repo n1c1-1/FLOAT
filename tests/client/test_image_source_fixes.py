@@ -16,12 +16,12 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from astro_gpu.client import app as appmod  # noqa: E402
 from astro_gpu.client import i18n, prefs  # noqa: E402
-from astro_gpu.client.blocks import Graph  # noqa: E402
 from astro_gpu.client.model import ProjectModel  # noqa: E402
 from astro_gpu.client.services.worker import ApiWorker  # noqa: E402
 from astro_gpu.core import project2  # noqa: E402
 from astro_gpu.core.project import Target  # noqa: E402
 from astro_gpu.stages.image import image_problem  # noqa: E402
+from tests.client.pagehelp import block_id, item, node  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -69,6 +69,7 @@ def test_a_stretched_image_alone_has_something_to_run(model, tmp_path):
     lin = SimpleNamespace(blocks=[], source={"path": "x.fits", "stretched": False})
     assert not appmod.no_block(lin)                   # a linear image too: it goes to Post as it is
     assert appmod.images_only(model)
+    model.add_session("night 1")                      # a stack of frames draws a night (none: refused, no row drawn)
     model.add_graph_workflow("Frames", [])
     assert not appmod.images_only(model)              # a frames workflow: "add lights or image" stays right
 
@@ -116,13 +117,19 @@ def test_an_8_bit_tiff_is_a_stretched_picture(model, tmp_path):
     assert src()["stretched"] is False
 
 
-def test_a_damaged_file_s_tooltip_has_one_full_stop(qapp):
+def test_a_damaged_file_s_tooltip_has_one_full_stop(model, tmp_path):
     """Control round: "the file is damaged.. Run is refused" (the reason's own full stop, then the sentence's)."""
-    from astro_gpu.client.blocks import Node
-    from astro_gpu.client.graph import BlockItem
-    n = Node("image", [], broken="bad.fits cannot be read: the file is damaged.")
-    tip = BlockItem(SimpleNamespace(), n, "Image", "", "pending", False, False, True).toolTip()
-    assert "damaged. Run is refused" in tip and ".." not in tip
+    from astro_gpu.client.graphview.page import GraphPage
+    bad = tmp_path / "bad.fits"
+    bad.write_bytes(b"SIMPLE  =                    T" + b"\0" * 3000)
+    q = model.add_image_workflow("Image", str(bad))
+    model.set_graph(q, [])
+    page = GraphPage(model)
+    try:
+        tip = item(page, key="image").toolTip()
+        assert "damaged. Run is refused" in tip and ".." not in tip
+    finally:
+        page.close()
 
 
 def test_a_damaged_fits_is_said(tmp_path):
@@ -148,18 +155,21 @@ def test_an_image_file_gone_circles_its_block_and_refuses_run(model, tmp_path):
     fits = fits_file(tmp_path / "soon_gone.fits")
     q = model.add_image_workflow("Image", str(fits))
     model.set_graph(q, [])
-    model.insert_block(model.view(q.pid), "gradient")
+    img = block_id(model, q, "image")                 # Image -> Gradient, as a drop after the Image block makes it
+    row = next(r.id for r in model.stored.rows if img in r.blocks)
+    assert model.apply([("add_block", {"kind": "gradient", "at": {"type": "insert", "row": row, "after": img}})]).ok
     q = model.view(q.pid)
-    assert model.image_problem(q) == "" and not Graph(model).node_of(q, "image").broken
+    assert [n["block"] for n in model.graph(q)][-1:] == ["gradient"]
+    assert model.image_problem(q) == "" and not node(model, q, "image").broken
     assert not model.run_problems()
     model.worker.wait(30)                     # the estimates read the image's size meanwhile (Windows: no rename then)
     fits.rename(tmp_path / "elsewhere.fits")
     assert model.image_problem(q) == "File not found: soon_gone.fits"
-    assert Graph(model).node_of(q, "image").broken == "File not found: soon_gone.fits"
+    assert node(model, q, "image").broken == "File not found: soon_gone.fits"
     assert model.run_problems() == [(q.name, "File not found: soon_gone.fits")]
     (tmp_path / "damaged.fits").write_bytes(b"SIMPLE  =                    T" + b"\0" * 3000)
     model.set_image_file(q, str(tmp_path / "damaged.fits"))
-    assert "damaged" in Graph(model).node_of(model.view(q.pid), "image").broken
+    assert "damaged" in node(model, model.view(q.pid), "image").broken
 
 
 def test_a_second_window_never_replaces_what_the_first_saved(model, tmp_path):
