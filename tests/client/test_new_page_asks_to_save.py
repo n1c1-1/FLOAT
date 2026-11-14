@@ -192,6 +192,47 @@ def test_quitting_after_a_template_and_a_gesture_of_the_page_asks(win, tmp_path,
     assert _quit_asks(win, "close") and _quit_asks(win, "quit")
 
 
+# ======================================================================================================= Run saves
+def _saved_project(win, tmp_path):
+    """A project with its own folder (named), its workflow made from « Colour full », its target IC 1805, saved."""
+    from astro_gpu.client.gallery import GALLERY
+    root = tmp_path / "ws" / "Saved"
+    assert win.create_project(root.as_posix(), "Saved", "IC 1805"), win.banner.text.text()
+    _ready(win)
+    win.graph.show_templates()
+    win.graph.templates.chosen.emit(next(t for t in GALLERY if t["key"] == "colour_full"))
+    QApplication.processEvents()
+    assert win.s.flush() and not win.s.dirty
+    return root
+
+
+def test_run_on_a_saved_project_saves_its_edits_first_and_says_so(win, tmp_path):
+    from astro_gpu.core import project2
+    root = _saved_project(win, tmp_path)
+    win.s.set_target_name("M 42")                                       # an edit not saved
+    assert win.s.dirty and project2.load(root).target.name == "IC 1805"
+    assert win.run.before_run() is True                                 # what Run and Run to here do first
+    assert not win.asked and not win.s.dirty
+    assert project2.load(root).target.name == "M 42"                    # on the disk before the plan is made
+    assert win.status.text() == "Project saved"
+    win.s.set_target_name("M 31")
+    win.s.flush = lambda force=False: False                             # another window saved it meanwhile
+    assert win.run.before_run() is False and win.s.dirty                # the run waits, the reason said
+    assert "nothing is replaced" in win.banner.text.text()
+    assert project2.load(root).target.name == "M 42"
+    del win.s.flush
+
+
+def test_run_on_a_project_never_saved_names_it_first_as_before(win, monkeypatch):
+    win.new_project()
+    _ready(win)
+    win.s.set_target_name("M 42")
+    named = []
+    monkeypatch.setattr(appmod.Main, "name_project", lambda self: named.append(1) or False)     # the name asked: Cancel
+    assert win.run.before_run() is False and named == [1] and win.s.dirty
+    assert win.status.text() != "Project saved"
+
+
 def test_quitting_after_view_changes_only_does_not_ask(win):
     page = _colour_full_saved(win)
     b, cv = page.bridge, page.canvas

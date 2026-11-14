@@ -1276,7 +1276,26 @@ class Main(QMainWindow):
             QTimer.singleShot(50, self._launch_when_ready)
 
     def _named_for_run(self) -> bool:
-        return self.project is None or not drafts.is_untitled(self.project.root) or self.name_project()
+        """Before a run: a project never saved is named and saved (asked, as Save asks); a saved one with edits is saved
+        without a question, the status line says so; a save that fails stops the run, its reason said."""
+        if self.project is None:
+            return True
+        if drafts.is_untitled(self.project.root):
+            return self.name_project()
+        if self.s is not None and self.s.dirty:
+            self._commit_typing()
+            self._flush_post()
+            try:
+                saved = self.s.flush()
+            except (OSError, ValueError) as e:
+                self.banner.say(_("The project cannot be saved: {why}").format(why=e))
+                return False
+            if not saved:
+                self.banner.say(_("Another window of the program saved this project since it was opened here: nothing "
+                                  "is replaced. Save as… keeps this window's work in another folder."))
+                return False
+            self.flash(_("Project saved"))
+        return True
 
     # ------------------------------------------------------------ the recovery after a crash
     def _write_recovery(self):
