@@ -14,10 +14,8 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
 
 from astro_gpu.client import i18n  # noqa: E402
-from astro_gpu.client.blocks import Graph  # noqa: E402
-from astro_gpu.client.graph import BlockItem  # noqa: E402
 from astro_gpu.core import sirilcat, sky_data  # noqa: E402
-from tests.client.test_fusion_sessions_client import done, open_page, qapp, settle  # noqa: E402, F401
+from tests.client.pagehelp import done, item, marked, node, open_page, qapp, settle  # noqa: E402, F401
 
 NO_STARS = "the star catalogue is not installed on this computer"
 
@@ -48,16 +46,14 @@ def test_the_block_without_its_catalogue_is_marked_and_says_why(qapp, tmp_path, 
     try:
         settle(w, page)
         q = m.paths[0]
-        g = Graph(m)
-        ast = g.node_of(q, "astrometrie")
+        ast = node(m, q, "astrometrie")
         assert ast.missing == NO_STARS
-        assert all(not n.missing for n in g.nodes if n not in (ast, g.node_of(q, "couleur")))   # Stacking, Gradient...
+        col = node(m, q, "couleur")
+        assert all(not n.missing for n in marked(m) if n.key not in ("astrometrie", "couleur"))   # Stacking, Gradient...
         # #161: the Color block needs the spectra too; it is left out with Astrometry and says it, not only the earlier one
-        col = g.node_of(q, "couleur")
         assert col.missing == NO_STARS
         assert m.sky_missing(q, "couleur") == NO_STARS
-        item = next(it for it in page.graph.scene().items() if isinstance(it, BlockItem) and it.node.key == "astrometrie")
-        tip = item.toolTip()
+        tip = item(page, key="astrometrie").toolTip()
         assert f"Cannot run: {NO_STARS}. Install it: Settings › Catalogs & astrometry" in tip
         page.select(step="astrometrie")
         settle(w, page)
@@ -81,7 +77,7 @@ def test_the_block_without_its_catalogue_is_marked_and_says_why(qapp, tmp_path, 
         sirilcat.reset()
         m.sky_changed()
         QApplication.processEvents()
-        assert Graph(m).node_of(q, "astrometrie").missing == "" and m.plan_all().left_out == {}
+        assert node(m, q, "astrometrie").missing == "" and m.plan_all().left_out == {}
     finally:
         done(w, m, page)
 
@@ -98,9 +94,8 @@ def test_the_positions_without_the_spectra_leave_the_color_block_to_its_fallback
     try:
         settle(w, page)
         q = m.paths[0]
-        g = Graph(m)
-        assert g.node_of(q, "couleur").missing == ""
-        assert g.node_of(q, "astrometrie").missing == ""
+        assert node(m, q, "couleur").missing == ""
+        assert node(m, q, "astrometrie").missing == ""
         assert m.plan_all().left_out == {}
     finally:
         done(w, m, page)
@@ -168,7 +163,7 @@ def test_get_survey_fetches_it_outside_the_run_and_the_next_run_uses_it(qapp, tm
     fetches it (an action of the user, its progress shown), then the results made without it are computed again."""
     import numpy as np
 
-    from astro_gpu.client.graph import GraphPage
+    from astro_gpu.client.graphview.page import GraphPage
     from astro_gpu.client.model import ProjectModel
     from astro_gpu.client.services import survey as survey_job
     from astro_gpu.client.services.worker import ApiWorker
