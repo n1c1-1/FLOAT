@@ -2179,6 +2179,9 @@ class PostView(QWidget):
                                            _("Edit the mask of the selected layer")) if masked else
                   _("Add a mask to the selected image") if side else _("Add a mask to the selected layer"),
                   16, "selected" if masked else "normal", box=28)
+        if real:                                                  # greyed, it says why
+            self.b_maskadd.setToolTip(_("The Real stars row has no mask of its own: choose the layer or one of its "
+                                        "two images"))
         self._undo_buttons()
         self.build_filter_menu()
         if props:

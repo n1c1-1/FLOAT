@@ -590,6 +590,7 @@
   "Add a mask to the selected layer": "Ajouter un masque au calque sélectionné",
   "Edit the mask of the selected layer": "Régler le masque du calque sélectionné",
   "Add a mask to the selected image": "Ajouter un masque à l'image sélectionnée",
+  "The Real stars row has no mask of its own: choose the layer or one of its two images": "La ligne Étoiles réelles n'a pas de masque propre : choisis le calque ou l'une de ses deux images",
   "Edit the mask of the selected image": "Régler le masque de l'image sélectionnée",
   "Add mask": "Ajouter masque",
   "Delete mask": "Supprimer masque",
