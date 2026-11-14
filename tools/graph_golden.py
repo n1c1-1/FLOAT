@@ -23,9 +23,12 @@ Project folders are read-only. Three layers hold that:
 ``stable`` records twice in two fresh processes and says what differs.
 ``check`` takes every recorded project through the graph model (astro_gpu/graphcore: convert, then compile into a
 copy of the definition, in one process) and compares the definitions, the keys, the states, the review keys and the
-graph's rows against the recorded drawing; read-only under the same guard. A project is PROVEN when every session's
-frame list is non-empty on both sides (a project of images only: when its image files are there); else its
-definition is only shown equal.
+graph's rows against the recorded drawing; read-only under the same guard; and the converted graph must be one the
+core keeps as a whole (operations.legality: the engine's rules on every row, the joins' ports, the compiled
+definition). A project is PROVEN when every session's frame list is non-empty on both sides, or every workflow from
+frames reads a non-empty frame list on both sides (a session with no lights in its definition reads none); a project
+of images only: when its image files are there; a project with no session and no workflow is EMPTY (no key to
+compare); else its definition is only shown equal.
 """
 from __future__ import annotations
 
@@ -624,6 +627,12 @@ def check_project(folder: Path, rec: dict) -> dict:
     frames_q = {s.id: scan.frames(q, s.id) for s in q.sessions}
     images = [w.source["path"] for w in p.workflows if isinstance(w.source, dict) and w.source.get("path")]
     out["frames_nonempty"] = bool(p.sessions) and all(frames_p.values()) and all(frames_q.values())
+    # every workflow from frames reads frames on both sides (a session with no lights in the definition reads none,
+    # whatever is on the disk): its keys were compared on real frames
+    flows = [w for w in p.workflows if w.source is None]
+    out["workflow_frames_nonempty"] = bool(flows) and all(
+        scan.frames(x, None, x.sessions_of(w.id)) for x in (p, q) for w in flows)
+    out["empty_definition"] = not p.sessions and not p.workflows
     out["images_present"] = bool(images) and all(Path(p.abspath(x)).exists() for x in images)
     out["frames_equal"] = frames_p == frames_q
     try:
@@ -632,11 +641,14 @@ def check_project(folder: Path, rec: dict) -> dict:
     except Invalid as e:
         out["core_check"] = str(e)
     out["core_structure"] = [say(m) for m in structure(g)]
-    from astro_gpu.graphcore.rules import evaluate, need_greyed, title
+    # the converted graph as a whole is one the core keeps (its legality: the engine's rules on every row, the
+    # joins' ports, the compiled definition as the engine reads it): no gesture would be refused for its state
+    from astro_gpu.graphcore.operations import legality
     try:
-        out["core_needs"] = [f"{title(g, b)}: {say(w)}" for b, w in need_greyed(evaluate(g)).items()]
+        why = legality(g)
+        out["legal"] = [say(why)] if why else []
     except Exception as e:  # noqa: BLE001
-        out["core_needs"] = [f"{type(e).__name__}: {e}"]
+        out["legal"] = [f"{type(e).__name__}: {e}"]
     return out
 
 
@@ -702,16 +714,18 @@ def cmd_check(args) -> int:
             print(f"ABORT: the read-only project {q} changed or a write was attempted", file=sys.stderr)
             break
     report.setdefault("write_proof", {"differences": [], "violations": GUARD.violations})
-    gate = ("definition", "keys", "states", "reviews", "drawing")
-    summary = {"proven": [], "proven_images": [], "definition_equal_only": [], "differing": {}}
+    gate = ("definition", "keys", "states", "reviews", "drawing", "legal")
+    summary = {"proven": [], "proven_images": [], "empty": [], "definition_equal_only": [], "differing": {}}
     for src, r in report["projects"].items():
-        bad = {k: r[k][0] for k in gate if r[k]}
+        bad = {k: r[k][0] for k in gate if r.get(k)}
         if bad:
             summary["differing"][src] = bad
-        elif r["frames_nonempty"]:
+        elif r["frames_nonempty"] or r["workflow_frames_nonempty"]:
             summary["proven"].append(src)
         elif not r["sessions"] and r["images_present"]:
             summary["proven_images"].append(src)
+        elif r["empty_definition"]:
+            summary["empty"].append(src)          # no session, no workflow: no key to compare
         else:
             summary["definition_equal_only"].append(src)
     report["summary"] = summary
@@ -719,6 +733,7 @@ def cmd_check(args) -> int:
     GUARD.active = False
     out.write_text(json.dumps(report, indent=1, ensure_ascii=False, default=str), encoding="utf-8")
     print(json.dumps({"proven": len(summary["proven"]), "proven_images": len(summary["proven_images"]),
+                      "empty": len(summary["empty"]),
                       "definition_equal_only": len(summary["definition_equal_only"]),
                       "differing": len(summary["differing"]), "failed": len(report["failed"]),
                       "aborted": "ABORTED_AT" in report}))
