@@ -2171,7 +2171,7 @@ def test_the_engine_note_is_said_in_the_hint(preps, qapp):
         assert "GPU memory full: rendered on the CPU" in s.view.hint.text()
         i18n.set_language("fr")
         s.view._hint()
-        assert "moire du GPU pleine" in s.view.hint.text()
+        assert "moire de la carte graphique pleine" in s.view.hint.text()
     finally:
         s.close()
 
@@ -2354,7 +2354,7 @@ def test_the_export_writes_only_into_the_folder_chosen_and_it_reads_back(exporti
         a = tifffile.imread(s.out / "heart_16bit.tif")
         assert a.dtype == np.uint16 and a.shape == expect.shape
         assert np.abs(a.astype(np.float64) / 65535 - np.clip(expect, 0, 1)).max() < 1e-4
-        hist = json.loads((s.out / "heart_history.json").read_text(encoding="utf-8"))
+        hist = json.loads((s.out / "heart_16bit.tif.history.json").read_text(encoding="utf-8"))   # (one file: <file>.history)
         assert hist["project"] == "HeartSoul" and [x["name"] for x in hist["layers"]] == ["Classic", "Saturation", "Full"]
         d.accept()
         for fmt, name in (("tiff32f", "heart_32bit_float.tif"), ("png16", "heart.png"), ("jpeg", "heart.jpg"),
@@ -2395,7 +2395,8 @@ def test_the_export_writes_only_into_the_folder_chosen_and_it_reads_back(exporti
     assert all(p.startswith("chosen/") for p in new), new
     assert {k: v for k, v in before.items()} == {k: after[k] for k in before}
     assert sorted(Path(p).name for p in new) == sorted(
-        ["heart_16bit.tif", "heart_32bit_float.tif", "heart.png", "heart.jpg", "heart.fits", "heart_history.json"])
+        ["heart_16bit.tif", "heart_32bit_float.tif", "heart.png", "heart.jpg", "heart.fits", "heart_16bit.tif.history.json",
+         "heart.fits.history.json"])
     assert not list((s.root / "export").glob("*")) if (s.root / "export").exists() else True
 
 
