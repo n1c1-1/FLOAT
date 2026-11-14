@@ -43,6 +43,25 @@ Operations: apply(graph, name, **kwargs) -> (graph2, Result), argument names fix
   own_grid(row)                        no Align on            set_align_off(row)   switch it off / on
   set_reference(row)                   "reference for all": every other stack aligned on this one
   set_calibrate_together(on)           one calibration for all the nights of a stack, or each night its own
+  -- step 3b (what the current graph page does)
+  try_variant(block, change, name=None)  change {"param": [stage, name, value]} | {"method": m} | {"off": bool}
+                                       | {"setting": [key, value]}: a variant row on trial (Row.trial = the
+                                       original's workflow id); before any fork point, a whole copy of the stack
+                                       drawing the same nights
+  keep_variant(row)  discard_variant(row)
+  set_param(block, stage, name, value)  the engine's setting by its real key on the block owning it (value None: back
+                                       to the suggestion); set_row_param(row, stage, name, value) for calibrate /
+                                       inventory (the stack's), render_simple (its Output), align_on
+  set_method(block, method)            add_combination(type="sho", name=None)
+  wire(..., channel=None)              set_input(block, port, channel=None, weight=None, image=None)
+  add_stars_combination(block)         "<name> · Stars": the same type reading the stars alone
+  new_night(name=None, filter="")      a session no stack draws yet
+  add_stack(name, nights, blocks=None, align="auto", all_nights=False)   a stack drawing these session ids
+  share_night(night, row)              the same session drawn in another stack (files and name kept equal)
+  set_night_filter(night, filter)      send_to_post(block, name=None): mid-row, a tap; remove_tap(tap)
+  set_own_calibration(block, kind, paths, mode="add")   follow_session(block, kind)   remove_own_calibration(block)
+  Templates: graphcore.templates.build(graph, t, name, opts) -> Plan (Plan.steps for apply_many, Plan.post(rows)).
+  Post's wires: graphcore.post (shared_images, wired_images, with_post_wires, post_actions).
   fold_all() unfold_all() set_mode(mode) select(id)   view only: they change the view dict, never the graph
 apply_many(graph, [(name, kwargs | f(results_so_far) -> kwargs), ...]) = one step, all or nothing.
 """

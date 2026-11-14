@@ -2074,8 +2074,10 @@ def op_try_variant(q, block, change, name=None):
             target = copies[root.blocks.index(block)]
         out = Out(M("variant “{_name}” under “{_base}”", _name=base, _base=r.name), copies[0] if copies else nights[0][0],
                   new=copies[0] if copies else nights[0][0])
+    v.name = ""
     v.name = free_name(q, base)
     _copy_flow(v, r)
+    v.legacy = None
     v.trial = r.wid
     _apply_change(q, target, change)
     out.toast = M("variant “{_name}”: Keep or Discard", _name=v.name)
@@ -2106,12 +2108,13 @@ def op_keep_variant(q, row):
     o, old = _variant_parts(q, ix, v)
     mine = list(v.blocks)
     m = {a: b for a, b in zip(old, mine) if q.blocks[a].kind == q.blocks[b].kind}
+    inside = bool(v.fork and v.fork[0] == o.id)          # the variant's blocks continue the original's row
     for c in ix.children[o.id]:
         f = ix.row[c].fork[1]
         if f in old and c != v.id:
             if f not in m:
                 raise Refusal(M("a variant of “{_row}” starts from a block the variant does not have", _row=o.name))
-            ix.row[c].fork = [v.id, m[f]]
+            ix.row[c].fork = [o.id if inside else v.id, m[f]]
     for t in q.taps:
         if t.block in old:
             if t.block not in m:
@@ -2128,7 +2131,7 @@ def op_keep_variant(q, row):
         if r.align and r.align.get("from") in gone:
             r.align["from"] = m.get(r.align["from"])
     retired, name, trial = o.wid, o.name, o.trial
-    if v.fork and v.fork[0] == o.id:                    # the variant's blocks continue the original's row
+    if inside:
         o.blocks = o.blocks[:len(o.blocks) - len(old)] + mine
         for c in ix.children[v.id]:
             ix.row[c].fork = [o.id, ix.row[c].fork[1]]

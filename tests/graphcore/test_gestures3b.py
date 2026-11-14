@@ -232,3 +232,51 @@ def test_a_frozen_row_made_before_the_free_graph_is_rebuilt_by_its_first_change(
     p, _ = compiled(doc)
     assert p.workflows[0].blocks is not None
     assert Index(doc.project).row[r.id].legacy is None
+
+
+# ---------------------------------------------------------------------------------------------------- 4. Post
+def test_the_wires_to_post_are_the_shared_set_of_images():
+    from astro_gpu.graphcore.post import post_actions, shared_images, wired_images, with_post_wires
+    doc = Doc.from_template("colour_complete")
+    r = doc.project.rows[0]
+    ok(doc, "send_to_post", block=of_kind(doc, r, "gradient"), name="Session 1 · Gradient")
+    g = doc.project
+    wid, tap = g.rows[0].wid, g.taps[0].wid
+    post = {"versions": [{"id": 1, "layers": [{"kind": "workflow", "pid": wid, "part": "starless"}]},
+                         {"id": 2, "layers": [{"kind": "workflow", "pid": tap, "part": None}],
+                          "removed": [[wid, "starless"]]}], "active": 2}
+    shared = shared_images(post, defaults={(wid, "stars")})
+    assert shared == {(wid, "starless"), (wid, "stars"), (tap, None)}   # a version's own removal keeps the image
+    g2 = with_post_wires(g, shared)
+    assert wired_images(g2) == shared
+    stars = of_kind(doc, r, "stars")
+    assert {(w.src[0], w.src[1]) for w in g2.wires if g2.blocks[w.dst[0]].kind == "post"} >= {
+        (stars, "Starless"), (stars, "Stars only"), (of_kind(doc, r, "gradient"), "image")}
+    g3 = with_post_wires(g2, shared - {(wid, "stars")})
+    assert post_actions(g2, g3) == [("remove_post_part", wid, "stars")]
+    assert post_actions(g3, g2) == [("add_post_layer", wid, "stars")]
+
+
+# ---------------------------------------------------------------------------------------------------- 6. templates
+GALLERY = [dict(key="filters_full", name="Filters full", opts=dict(debruitage=True, etoiles="retirer", fond="simple"),
+                kind="fusion", palette="S-H-O", filters=["SII", "Ha", "OIII"]),
+           dict(key="dual_x2", name="Dual-band x2", opts=dict(debruitage=True, etoiles="retirer", fond="simple"),
+                kind="fusion", palette="S-H-O", filters=["O III / H-alpha", "O III / S II"], dual_x2=True)]
+
+
+def test_templates_are_one_step_of_core_operations_the_engine_accepts():
+    from astro_gpu.graphcore import templates
+    for t in GALLERY:
+        doc = Doc()
+        plan = templates.build(doc.project, t, "S-H-O", dict(t["opts"]))
+        res = doc.apply_many(plan.steps)
+        assert res.ok, res.reason_text()
+        assert len(doc._undo) == 1
+        engine_ok(doc)
+        p, c = compiled(doc)
+        assert [w.name for w in p.workflows][-2:] in (["S-H-O · Stars", "S-H-O"], ["Stars", "S-H-O"])
+        acts = plan.post(res.created["rows"])
+        assert acts[0][0] == "add_layer" and acts[-1][0] == "removed"
+    o3 = row(doc, "O III")                                        # the dual-band's O III row: both nights, shared
+    assert [doc.project.blocks[s].sid for s, _c in o3.nights] == [1, 2]
+    assert sorted(len(r.nights) for r in doc.project.rows if r.nights) == [1, 1, 1, 2]

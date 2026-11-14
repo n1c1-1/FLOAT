@@ -393,5 +393,6 @@
   "it already follows its session": "il suit déjà sa session",
   "{kind} of the session again": "{kind} de la session à nouveau",
   "calibrated as its session says": "calibré comme le dit sa session",
-  "filter: {_f}": "filtre : {_f}"
+  "filter: {_f}": "filtre : {_f}",
+  "unknown method": "méthode inconnue"
 }

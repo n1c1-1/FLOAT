@@ -211,6 +211,7 @@ def gen(rng, doc):
             w.dst[0] == j and w.src[1] == "Starless" for w in p.wires)] or joins or blocks)}),
         lambda: ("op", "add_combination", {"type": pick(rng, list(COMBO_PORTS) + ["x"]), "name": pick(rng, NAMES)}),
         lambda: _share(rng, p, sess),
+        lambda: _template(rng, p),
         lambda: ("op", "set_night_filter", {"night": pick(rng, sess), "filter": pick(rng, ["Ha", "OIII", ""])}),
         lambda: ("op", "send_to_post", {"block": pick(rng, blocks), "name": pick(rng, NAMES)}),
         lambda: ("op", "remove_tap", {"tap": pick(rng, [t.id for t in p.taps] or ["t0"])}),
@@ -335,6 +336,31 @@ def _set_param(rng, p, blocks):
     b = pick(rng, blocks)
     st, name, v = _param(rng, p, b)
     return ("op", "set_param", {"block": b, "stage": st, "name": name, "value": v}, None)
+
+
+#: the gallery's templates (client/gallery.GALLERY, its data only: the fuzz runs without Qt)
+_FULL = dict(debruitage=True, etoiles="retirer", fond="simple")
+_CLASSIC = dict(debruitage=False, etoiles="garder", fond="simple")
+GALLERY = [dict(key="colour_min", name="Colour minimal", opts=_CLASSIC),
+           dict(key="colour_full", name="Colour full", opts=_FULL),
+           dict(key="image", name="Image", opts=_CLASSIC, source="image", plain=True, blocks=[]),
+           dict(key="filters_min", name="Filters minimal", opts=_CLASSIC, kind="filters", palette="H-O",
+                filters=["Ha", "OIII"]),
+           dict(key="filters_full", name="Filters full", opts=_FULL, kind="fusion", palette="S-H-O",
+                filters=["SII", "Ha", "OIII"]),
+           dict(key="sho_rgb", name="SHO + RGB stars", opts=_FULL, kind="fusion", palette="S-H-O",
+                filters=["SII", "Ha", "OIII"], rgb_stars=True),
+           dict(key="images", name="Several images", opts=_CLASSIC, source="image", plain=True, blocks=[], images=3),
+           dict(key="dual_x2", name="Dual-band x2", opts=_FULL, kind="fusion", palette="S-H-O",
+                filters=["O III / H-alpha", "O III / S II"], dual_x2=True)]
+
+
+def _template(rng, p):
+    """A gallery template made on the graph as it is: its steps as one gesture."""
+    from astro_gpu.graphcore import templates as tpl
+    t = rng.choice(GALLERY)
+    plan = tpl.build(p, t, t.get("palette") if t.get("kind") == "fusion" else t["name"], dict(t["opts"]))
+    return ("many", plan.steps)
 
 
 def _share(rng, p, sess):
