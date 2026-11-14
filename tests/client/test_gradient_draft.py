@@ -844,3 +844,45 @@ def test_an_excluded_area_leaves_its_samples_red_and_fades(ed):
     assert ed._fade_alpha() > 0.5
     ed._fade_t0 = time.monotonic() - 2 * ge.FADE_MS / 1000
     assert ed._fade_alpha() == 0.0
+
+
+def test_the_gradient_view_s_aids_never_reach_another_view(qapp, tmp_path):
+    """The survey map and the marks shown in the Gradient view stay there: Denoise's compare with "Gradient removed"
+    (Split) is pixel for pixel the same with the survey shown or hidden in the Gradient view."""
+    from PySide6.QtGui import QImage
+    _test_project()
+    w, settle = _window(tmp_path, (1250, 685))
+    try:
+        s, t, ed = w.s, w.tune, w.tune.grad_editor
+        if ed.view is None:
+            pytest.skip("Gradient of the test project is not computed")
+
+        def go(step):
+            s.select(step=step)
+            t.select(step=step)
+            t.request_refresh()
+            settle(w)
+            settle(w)
+
+        def denoise_split():
+            go("debruitage")
+            v = t.view
+            i = next(k for k, x in enumerate(v._targets) if x.name == "Gradient removed")
+            v.set_compare_mode("split")
+            v.set_compare(i)
+            assert v.wait(60)
+            settle(w)
+            img = v.canvas.grab().toImage().convertToFormat(QImage.Format.Format_RGB888)
+            raw = np.frombuffer(img.constBits(), np.uint8, img.sizeInBytes()).reshape(img.height(), img.bytesPerLine())
+            return raw[:, : img.width() * 3].copy()
+        a0 = denoise_split()
+        go("fond")
+        if not ed.survey_here():
+            pytest.skip("no H-alpha survey of the test project's field on this computer")
+        ed._set_survey_shown(True)
+        ed._set_shown(True)
+        settle(w)
+        a1 = denoise_split()
+        assert a0.shape == a1.shape and (a0 == a1).all()
+    finally:
+        w.close()

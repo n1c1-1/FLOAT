@@ -380,6 +380,8 @@ class GradientEditor(QObject):
             self._cost_timer.start()
         else:
             self._to_applied()
+        if self.mode and TOOL_KIND.get(self.mode) and TOOL_KIND[self.mode] not in self.kinds():
+            self.set_mode(None)                # a method that reads none of its marks: the tool goes off
         if names - set(FIELDS) and not self._from_row:     # the method, an Undo: the panel's rows show it
             self._fill_drawer()
         self._sync()
@@ -2054,7 +2056,9 @@ class GradientEditor(QObject):
         return GradientParams(**vals)
 
     def _paint(self, painter, canvas):
-        if self.p is None or canvas.display is None:
+        """The aids drawn over the page's image (the survey, the samples, the areas, the tag): on the page's own canvas
+        only, never on another viewer, a compared side, Post or an export."""
+        if self.p is None or canvas.display is None or self.gv is None or canvas is not self.gv.canvas:
             return
         f = self._f(canvas)
         dw, dh = canvas.display.size()
