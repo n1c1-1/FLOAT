@@ -45,13 +45,14 @@ def test_badges_and_their_words_are_drawn_as_today(qapp):
             return self.given.get(self.graph.blocks[b].kind, {})
     h = _fixture("colour_minimal")
     doc = Badged(h.graph, h.view, states={b: "done" for b in h.graph.blocks})
-    doc.given = {"session": {"broken": "a folder is not found", "warned": True},
+    doc.given = {"session": {"broken": "a folder is not found", "warned": True, "nights": "8 nights · 28/06 to 21/07"},
                  "astrometry": {"missing": "the offline star catalogue is not installed"},
                  "stacking": {"fallback": ["drizzle off: too few frames"]}}
     p = _page(doc)
     by = {it.d["kind"]: it for it in p.canvas.blocks.values()}
     s, a, st = by["session"].d, by["astrometry"].d, by["stacking"].d
     assert s["broken"] and s["warned"] and "Cannot run: a folder is not found. Run is refused" in by["session"].toolTip()
+    assert "8 nights · 28/06 to 21/07: their light frames" in by["session"].toolTip()
     assert a["missing"] and "Install it: Settings › Catalogs & astrometry" in by["astrometry"].toolTip()
     assert st["fallback"] and "Done with fallback" in by["stacking"].toolTip()
     for it in by.values():                             # painted with them (no exception, the scene draws)

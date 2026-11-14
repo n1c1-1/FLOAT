@@ -225,6 +225,30 @@ def start_document(start):
 MODEL_ROOT = None
 
 
+class CountingStack(list):
+    """The model's undo list, its steps counted: + a step pushed, - a step popped or taken back from its end; the
+    oldest dropped at the 200 cap are not counted off."""
+
+    def __init__(self, items=()):
+        super().__init__(items)
+        self.net = len(self)
+
+    def append(self, x):
+        super().append(x)
+        self.net += 1
+
+    def pop(self, *a):
+        x = super().pop(*a)
+        self.net -= 1
+        return x
+
+    def __delitem__(self, key):
+        n = len(self)
+        if isinstance(key, slice) and key.start is not None and key.start >= 0 and key.stop is None:
+            self.net -= len(range(*key.indices(n)))   # the end taken back (default_post_layer)
+        super().__delitem__(key)
+
+
 class ModelDocument:
     """The page's document on the client's project model (``M(GraphEditing, ProjectModel)``, read-only): what the fuzz
     reads of a document (``_undo``, ``log``) over the model's own ``GraphDocument``."""
@@ -233,13 +257,15 @@ class ModelDocument:
         self.model, self.worker = model, worker
         self.inner = model.document
         self.log: list = []                     # no core-only reproduction on a model: its steps are the model's
+        model._undo = CountingStack(model._undo)
 
     def __getattr__(self, name):
         return getattr(self.inner, name)
 
     @property
     def _undo(self):
-        return self.model._undo
+        """Its steps counted (the model keeps its last 200 only: a length would stop growing)."""
+        return range(self.model._undo.net)
 
     def close(self):
         self.model.close(save=False)
@@ -371,6 +397,8 @@ class Run:
         return self.bridge.graph
 
     def js(self):
+        if MODEL_ROOT:          # the model's undo gives the graph back from its sorted JSON: compared as content
+            return json.dumps(json.loads(json_of(self.graph)), sort_keys=True)
         return json_of(self.graph)
 
     def boxes(self):

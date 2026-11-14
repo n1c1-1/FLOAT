@@ -506,7 +506,11 @@ class GraphCanvas(QGraphicsView):
         fallback = list(bd.get("fallback") or []) if state == "done" and not grey else []
         broken, missing = bd.get("broken") or "", bd.get("missing") or ""
         word = _(FALLBACK_WORD) if fallback else state_word(state)
-        tip = "\n".join(t for t in (title, kind_what(kind), summary, "" if grey else word,
+        what = kind_what(kind)
+        if bd.get("nights"):                             # a Session of several nights says so (graph.py block_what)
+            what = _("{nights}: their light frames and the dark, flat and bias frames chosen for them, and the "
+                     "filter.").format(nights=bd["nights"])
+        tip = "\n".join(t for t in (title, what, summary, "" if grey else word,
                                     (_("Switched off: the image passes through.") if blk.off else "")) if t)
         if fallback:                                     # why, in the engine's words translated (graph.py)
             from ..services.run import engine_text

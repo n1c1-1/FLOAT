@@ -129,6 +129,8 @@ def model_badges(m, b, kind, state) -> dict:
         out["broken"] = why(n.sid) if why is not None else ""
         fw = getattr(m, "file_warnings", None)
         out["warned"] = bool(fw(n.sid)) if fw is not None else False
+        nt = getattr(m, "nights_text", None)            # "8 nights · 28/06 to 21/07" from the lights' own dates
+        out["nights"] = nt(n.sid) if nt is not None else ""
     elif kind == "image":
         out["broken"] = first(getattr(m, "image_problem", None))
     elif kind == "combine":
