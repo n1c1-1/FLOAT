@@ -63,6 +63,8 @@ PREVIEW_CELL_SHARE = 22
 DEBOUNCE_MS, FAST_DEBOUNCE_MS, FAST_MS = 200, 80, 150
 #: a preview still running after this long is said on the image ("Computing preview…" and a bar along its top)
 BUSY_SHOWN_MS = 250
+#: what an action did stays in the image's tag this long
+SAID_MS = 4000
 #: the cost of Apply is asked of the model this long after the last edit
 COST_MS = 500
 #: below this window width, the stretch column of this view is folded (the image keeps the room)
@@ -107,15 +109,20 @@ TOOLS = (("points", "add", "Sample", "Click adds a sample of sky, a drag moves i
          ("brush", "mask", "Brush", "Paint an area left out of the sky model ([ ] size)"),
          ("ellipse", "missing", "Ellipse", "Drag an ellipse around an object to leave it out; its handles size and turn "
                                            "it"),
-         ("eraser", "remove", "Eraser", "Removes what is under the cursor: a sample, a painted area, an ellipse"),
-         ("grid", "samples", "Grid", "Samples on a regular grid, the bright areas left out, in place of the ones the "
-                                     "block chooses (its density in Settings)"))
+         ("eraser", "remove", "Eraser", "Removes what is under the cursor: a sample, a painted area, an ellipse"))
+#: the actions on the samples (each one step of the draft's Undo): (key, name, what it does)
+ACTIONS = (("generate", "Generate grid", "Replaces the samples by a regular grid of this pitch, looking at nothing else"),
+           ("objects", "Avoid objects", "Removes, among the samples present, those on objects: the stage's own rule "
+                                        "(brighter than the sky around them by Object rejection)"),
+           ("nebula", "Avoid nebulosity", "Removes, among the samples present, those where the professional H-alpha "
+                                          "survey of the field sees nebulosity"),
+           ("clearall", "Clear all", "Removes every sample: none is chosen for you afterwards"))
 #: the marks each method reads (stages/gradient.py, sky_model_of): the samples (placed, or made by Grid) feed the
 #: polynomial and the RBF; the excluded areas (brush, ellipses) are left out of all three models, the automatic one
 #: included; the automatic model takes no sample
 MARK_KINDS = {"polynomial": ("samples", "areas"), "rbf": ("samples", "areas"), "automatic": ("areas",)}
 #: the kind of marks each tool makes ("" for the Eraser: any kind the method reads)
-TOOL_KIND = {"points": "samples", "grid": "samples", "brush": "areas", "ellipse": "areas", "eraser": ""}
+TOOL_KIND = {"points": "samples", "brush": "areas", "ellipse": "areas", "eraser": ""}
 #: why a kind of marks is greyed, per method
 NO_KIND = {"samples": "{method} uses no samples: it fits every pixel that does not look like an object",
            "areas": "{method} uses no excluded areas",
@@ -206,6 +213,9 @@ class GradientEditor(QObject):
         self.cmp = "toggle"                    # toggle | split | side
         self.result_key = None
         self._m_down = None                    # (when M went down, the marks shown then)
+        self.defaults: dict[int, list] = {}    # workflow -> the samples the block places by itself (stack px)
+        self._said = None                      # (what an action did, when): said in the image's tag a moment
+        self._ops = None                       # the action waiting for its computation (ops, its points)
         self.dock = None
         self.carried: dict[int, dict] = {}     # variant -> the preview its draft had, and the original's result
         self._stashed: dict[int, tuple] = {}   # variant -> (original, the draft it took)
@@ -284,6 +294,40 @@ class GradientEditor(QObject):
             return copy.deepcopy(d["vals"][name])
         return self._applied_value(name)
 
+    def _explicit_empty(self) -> bool:
+        """No sample, by the user's choice (Clear all): the block must not choose its own then."""
+        d = self._draft()
+        return bool(d and "sample_points" in d["vals"] and d["vals"]["sample_points"] == [])
+
+    def _fields(self) -> dict:
+        """The marks on screen: the draft's; while the samples were never touched, the ones the block places by itself
+        (``defaults``), drawn as any sample: the first change makes them the draft's own."""
+        w = {f: self.value(f) for f in FIELDS}
+        if not w["sample_points"] and not self._explicit_empty() and "samples" in self.kinds() and \
+                self.p is not None:
+            w["sample_points"] = copy.deepcopy(self.defaults.get(self.p.pid) or [])
+        return w
+
+    def n_min(self) -> int:
+        """The fewest samples the stage fits with (sky_model_of's own minimum)."""
+        if self._method() == "rbf":
+            return 3
+        d = int(self.value("degree") or 2)
+        return (d + 1) * (d + 2) // 2 + 1
+
+    def too_few(self) -> bool:
+        """Samples cleared, or fewer than the method's minimum: nothing to apply, nothing removed in the preview."""
+        if "samples" not in self.kinds():
+            return False
+        pts = self.value("sample_points")
+        return self._explicit_empty() or 0 < len(pts) < self.n_min()
+
+    def say(self, text: str):
+        """What an action did, in the image's tag for a few seconds."""
+        self._said = (text, time.monotonic())
+        self._repaint()
+        QTimer.singleShot(SAID_MS + 50, self._repaint)
+
     def drafting(self, p) -> bool:
         """Whether the block of ``p`` is tuned as a draft here: it has a result on screen (computed, or Outdated with
         its previous one). Never computed, its settings are the panel's as any block's."""
@@ -298,12 +342,14 @@ class GradientEditor(QObject):
         before = copy.deepcopy(d["vals"])
         for k, v in updates.items():
             v = _norm(k, v)
-            if v == self._applied_value(k):
+            if k == "sample_points" and v == [] and self._applied_value(k) == []:
+                d["vals"][k] = []              # none, by choice: not the block's own choice (Clear all)
+            elif v == self._applied_value(k):
                 d["vals"].pop(k, None)
             else:
                 d["vals"][k] = copy.deepcopy(v)
         if d["vals"] == before:
-            self.work = {f: self.value(f) for f in FIELDS}
+            self.work = self._fields()
             self._sync()
             return False
         if undo:
@@ -314,7 +360,7 @@ class GradientEditor(QObject):
         return True
 
     def _draft_changed(self, names: set):
-        self.work = {f: self.value(f) for f in FIELDS}
+        self.work = self._fields()
         self._veil = None
         if self._sel is not None and self._sel >= len(self.work["exclude_ellipses"]):
             self._sel = None
@@ -435,6 +481,10 @@ class GradientEditor(QObject):
         """The draft becomes the block's settings, in the workflows the panel's changes go to: one step of the
         window's Undo. The preview stays on screen until Run to here computes it."""
         q = self._view_of(pid)
+        if q is not None and self.p is not None and q.pid == self.p.pid and self.too_few():
+            self.say(_("Too few samples for {method}: place samples or generate a grid").format(
+                method=_(METHOD_NAME.get(self._method(), self._method()))))
+            return                             # the stage would choose its own: never applied behind the user
         ch = self.draft_change(q.pid) if q is not None else None
         if ch is None:
             return
@@ -455,13 +505,17 @@ class GradientEditor(QObject):
         self._hide_banner(q.pid)
         self.tv.toasted.emit(_("Gradient: draft applied · Run to here computes it · Ctrl+Z"))
         if self.p is not None and q.pid == self.p.pid:
-            self.work = {f: self.value(f) for f in FIELDS}
+            self.work = self._fields()
             self.done = self.s.state(self.p, "gradient") == "done"
         self.tv.request_refresh()
 
     def try_variant(self, pid: int | None = None):
         """The draft on a variant of the workflow (the chain computed stays as it is); the variant is shown."""
         q = self._view_of(pid)
+        if q is not None and self.p is not None and q.pid == self.p.pid and self.too_few():
+            self.say(_("Too few samples for {method}: place samples or generate a grid").format(
+                method=_(METHOD_NAME.get(self._method(), self._method()))))
+            return                             # the stage would choose its own: never applied behind the user
         ch = self.draft_change(q.pid) if q is not None else None
         if ch is None:
             return
@@ -690,7 +744,7 @@ class GradientEditor(QObject):
                         d["vals"].pop(k)
             if not first and self.has_draft():
                 self._schedule()
-        self.work = {f: self.value(f) for f in FIELDS}
+        self.work = self._fields()
         self.done = self.s.state(p, "gradient") == "done"
         c = self.carried.get(p.pid)
         if c is not None and self.done:        # the variant computed: its own result from now on
@@ -813,6 +867,12 @@ class GradientEditor(QObject):
         if d is not None:
             d["told"] = False
         self._hide_banner(p.pid)
+        if "samples" in self.kinds():
+            if p.pid not in self.defaults and not self._applied_value("sample_points"):
+                # the block places its own samples: the same grid, made here as the stage makes it
+                self._run_points(["generate", "objects", "nebula_disk"], [], default=True)
+            if self.mode is None:
+                self.set_mode("points")        # the samples are edited at once: a click adds one
         self._fill_drawer()
         self._sync()
         self._present(fresh=new)
@@ -995,6 +1055,27 @@ class GradientEditor(QObject):
                 b.clicked.connect(lambda _c=False, k=key: self.set_mode(None if self.mode == k else k))
             lay.addWidget(b, 1 + n // 2, n % 2)
             u[key] = b
+        row = 1 + (len(TOOLS) + 1) // 2
+        lay.addWidget(label(_("Samples"), "h2"), row, 0, 1, 2)
+        for n, (key, name, tip) in enumerate(ACTIONS):
+            b = QPushButton(_(name))
+            b.setToolTip(_(tip))
+            b.clicked.connect(lambda _c=False, k=key: self.act(k))
+            if key == "generate":
+                lay.addWidget(b, row + 1, 0)
+                pitch = QSpinBox()
+                pitch.setRange(4, 64)
+                pitch.setValue(self._density())
+                pitch.setSuffix(" " + _("per side"))
+                pitch.setKeyboardTracking(False)
+                pitch.setToolTip(_("The grid's pitch: samples along the shorter side of the image"))
+                pitch.valueChanged.connect(self._set_density)
+                lay.addWidget(pitch, row + 1, 1)
+                u["pitch"] = pitch
+            else:
+                lay.addWidget(b, row + 2 + (n - 1) // 2, (n - 1) % 2)
+            u[key] = b
+        row += 2 + (len(ACTIONS) - 1 + 1) // 2
         mk = QPushButton(_("Marks"))
         set_icon(mk, "eye", 16)
         mk.setObjectName("marks")
@@ -1003,7 +1084,7 @@ class GradientEditor(QObject):
         mk.setToolTip(_("Show or hide the samples and the excluded areas over the image, to judge the result without "
                         "them (M; M held: hidden while it is down). They come back as soon as a tool is used."))
         mk.toggled.connect(self._set_shown)
-        lay.addWidget(mk, 1 + (len(TOOLS) + 1) // 2, 0, 1, 2)
+        lay.addWidget(mk, row, 0, 1, 2)
         u["marks"] = mk
         return w
 
@@ -1242,7 +1323,11 @@ class GradientEditor(QObject):
             return
         gv, p = self.gv, self.p
         pid = p.pid
-        if self.result is not None and self.small is not None and self.small["pid"] == pid:
+        if self.has_draft() and self.too_few() and self.small is not None and self.small["pid"] == pid:
+            after = ViewImage(self.small["arr"], _("No gradient removed"), key=("gradient-none", pid),
+                              camera=True, neutral=True)
+            before = after
+        elif self.result is not None and self.small is not None and self.small["pid"] == pid:
             after = ViewImage(self.result, _("Draft preview") if self.has_draft() else _("Preview"),
                               key=self.result_key, camera=True, neutral=True)
             before = ViewImage(self.small["arr"], _("Stack"), key=("gradient-small", pid), camera=True, neutral=True)
@@ -1393,10 +1478,25 @@ class GradientEditor(QObject):
                 u["main_v"].setText(f"{cur:.{dec}f}")
             draft = self.has_draft()
             why = _("No draft: change a setting, a sample or an area first")
+            few = self.too_few()
             for k in ("reset", "variant", "apply"):
                 if k in u:
-                    u[k].setEnabled(draft)
-            if "apply" in u:
+                    u[k].setEnabled(draft and (k == "reset" or not few))
+            for key, _name, tip in ACTIONS:
+                if key in u:
+                    on = "samples" in kinds and (key in ("generate",) or bool(self.work["sample_points"]))
+                    u[key].setEnabled(on)
+                    u[key].setToolTip(_(tip) if on else _(NO_KIND["samples"]).format(
+                        method=_(METHOD_NAME.get(method, method))) if "samples" not in kinds else
+                        _("No sample to act on"))
+            if "pitch" in u:
+                u["pitch"].setEnabled("samples" in kinds)
+            if "apply" in u and draft and few:
+                fw = _("Too few samples for {method}: place samples or generate a grid").format(
+                    method=_(METHOD_NAME.get(method, method)))
+                u["apply"].setToolTip(fw)
+                u["variant"].setToolTip(fw)
+            elif "apply" in u:
                 c = self.cost_text()
                 u["apply"].setToolTip((_("The draft becomes the block's settings (Ctrl+Z takes it back)") +
                                        ("\n" + c if c else "")) if draft else why)
@@ -1448,6 +1548,8 @@ class GradientEditor(QObject):
 
     # ------------------------------------------------------------ modes
     def set_mode(self, mode: str | None):
+        if mode == "grid":
+            mode = None
         if mode and not self.shown:            # a marks tool: never edited blind
             self._set_shown(True)
         self.mode = mode
@@ -1473,11 +1575,9 @@ class GradientEditor(QObject):
         return int(self.value("samples") or 16)
 
     def _set_density(self, n: int):
-        """The grid's points along the shorter side, then a new grid (two steps of the draft's Undo)."""
-        if n == self._density():
-            return
-        self.set_draft({"samples": int(n)})
-        self.generate()
+        """The grid's pitch (the block's samples per side): Generate grid uses it; the samples stay as they are."""
+        if n != self._density():
+            self.set_draft({"samples": int(n)})
 
     def _set_paint(self, on: bool):
         self.paint = on
@@ -1596,10 +1696,63 @@ class GradientEditor(QObject):
             return
         self._commit()
 
-    def generate(self):
+    def act(self, key: str):
+        """An action on the samples: one step of the draft's Undo, what it did said in the image's tag."""
         if not self.shown:
             self._set_shown(True)
-        self._generate()
+        if "samples" not in self.kinds():
+            return
+        n0 = len(self.work["sample_points"])
+        if key == "clearall":
+            self.set_draft({"sample_points": []})
+            self.say(_("{n} samples removed").format(n=n0))
+        elif key == "generate":
+            pts = self.grid_points_of()
+            self.set_draft({"sample_points": pts})
+            self.say(_("{n} samples on a grid").format(n=len(pts)))
+        elif key in ("objects", "nebula"):
+            self._run_points([key], [list(x) for x in self.work["sample_points"]])
+
+    def grid_points_of(self) -> list:
+        """A regular grid of ``samples`` per shorter side (the stage's generated grid's places), in stack pixels."""
+        W, H = self._stack_size()
+        n = self._density()
+        step = min(H, W) / n
+        return [[round(float(x), 1), round(float(y), 1)] for y in np.arange(step / 2, H, step)
+                for x in np.arange(step / 2, W, step)]
+
+    def _run_points(self, ops: list, pts: list, default: bool = False):
+        self._ops = (list(ops), pts, default, self.p.pid)
+        self._run("points")
+
+    def _fetch_survey(self):
+        """Avoid nebulosity without the survey here: fetched once, on the user's click (never during a run)."""
+        from .services.survey import job
+        j = job()
+        pid = self.p.pid
+
+        def ended(epid, why):
+            try:
+                j.finished.disconnect(ended)
+            except (RuntimeError, TypeError):
+                pass
+            if epid != pid:
+                return
+            if why:
+                self.say(_("H-alpha survey: {why}").format(why=_(why)))
+                return
+            self.survey = None                 # read again from this computer, then the action
+            self._run_points(["nebula"], [list(x) for x in self.work["sample_points"]])
+        j.finished.connect(ended, Qt.QueuedConnection)
+        if not j.start(self.s.p, pid):
+            j.finished.disconnect(ended)
+            self.say(_("H-alpha survey: a fetch is already under way"))
+        else:
+            self.say(_("H-alpha survey: fetching…"))
+
+    def generate(self):
+        """Generate grid (kept for the keyboard and the tests): the action."""
+        self.act("generate")
 
     def _generate(self):
         """Generate grid: a grid of samples, the brighter areas left out (and, Away from emission, the survey's
@@ -1662,10 +1815,6 @@ class GradientEditor(QObject):
                     self._commit()
                 return True
             if button == Qt.LeftButton:
-                if not self.work["sample_points"]:
-                    self._extra = [sx, sy]     # none placed: the grid first, this sample with it
-                    self.generate()
-                    return True
                 if i is None:
                     self.work["sample_points"].append([sx, sy])
                     i = len(self.work["sample_points"]) - 1
@@ -1838,6 +1987,8 @@ class GradientEditor(QObject):
         if d is not None:
             vals.update(copy.deepcopy(d["vals"]))
         vals.update(work if work is not None else self.work)
+        if not self.value("sample_points"):    # the block's own placement (or none): the stage chooses as it will
+            vals["sample_points"] = []
         return GradientParams(**vals)
 
     def _paint(self, painter, canvas):
@@ -1906,6 +2057,10 @@ class GradientEditor(QObject):
             return _("Previous settings") if stale else _("After · applied result")
         if self.busy and self._busy_shown:
             return _("Computing preview…") + (" · " + self.step_text if self.step_text else "")
+        if self._said is not None and time.monotonic() - self._said[1] < SAID_MS / 1000:
+            return self._said[0]
+        if self.has_draft() and self.too_few():
+            return _("Too few samples: no gradient removed · place samples or generate a grid")
         if self.has_draft():
             if self.result is None:
                 return _("Applied result · the draft preview follows")
@@ -1993,6 +2148,12 @@ class GradientEditor(QObject):
     def preview(self, force: bool = False):
         if self.p is None or not (self.has_draft() or force):
             return
+        if self.too_few():                     # nothing removed: the stack as it is, said on it
+            self.result, self.result_ms = None, None
+            if self.small is None or self.small["pid"] != self.p.pid:
+                self._run("load")
+            self._present()
+            return
         self._run("preview")
 
     def _run(self, what: str, fetch: bool = False):
@@ -2013,7 +2174,7 @@ class GradientEditor(QObject):
             self.computed += 1
             self._busy_timer.start()
         small = self.small if self.small and self.small["pid"] == pid else None
-        sv = self.survey if self.avoid and self.survey and self.survey["pid"] == pid else None
+        sv = self.survey if (self.avoid or what == "points") and self.survey and self.survey["pid"] == pid else None
         level = sv.get("level") if sv else None
         # the block's own samples avoid the survey's emission: the preview too (the survey read from the disk with it)
         read = (what == "preview" and self.avoid and params.method != "automatic" and not params.sample_points
@@ -2021,6 +2182,7 @@ class GradientEditor(QObject):
         akey = self._applied_key()
         want_applied = what in ("preview", "load") and (self.applied is None or self.applied["key"] != akey)
         project = self.s.p
+        ops = self._ops if what == "points" else None
         self.busy = True
         self.step_text = ""
         self._sync()
@@ -2041,7 +2203,9 @@ class GradientEditor(QObject):
                 out = {"small": sm, "what": what}
                 if want_applied:
                     out["applied"] = {"key": akey, "arr": _applied_small(project, pid, sm)}
-                if what == "grid":
+                if what == "points":
+                    out.update(_points_job(sm, params, ops, level, project, pid))
+                elif what == "grid":
                     from ..stages.gradient import exclusion_mask, grid_points
                     ex = exclusion_mask(params, *sm["valid"].shape, sm["f"])
                     ok = sm["valid"] & ~ex if ex is not None else sm["valid"]
@@ -2085,6 +2249,32 @@ class GradientEditor(QObject):
                 except RuntimeError:
                     self.view = None
 
+    def _points_arrived(self, out: dict):
+        ops, _pts, default, pid = out["ops"]
+        if "survey" in out and out["survey"] is not None:
+            self.survey, self._survey_img = out["survey"], None
+        if pid != (self.p.pid if self.p is not None else None):
+            return
+        if default:                            # the block's own placement: drawn, not a change of the draft
+            self.defaults[pid] = out["points"]
+            self.work = self._fields()
+            self._veil = None
+            self._sync()
+            self._repaint()
+            return
+        if out.get("need_survey"):
+            Notice(self.tv.window(), _("Avoid nebulosity needs the H-alpha survey of this field, not on this computer."),
+                   [(_("Fetch"), self._fetch_survey), (_("Cancel"), lambda: None)])
+            return
+        removed = sum(out["removed"].values())
+        self.set_draft({"sample_points": out["points"]})
+        if "nebula" in ops and out.get("no_emission"):
+            self.say(_("The H-alpha survey shows no clear nebulosity here: no sample removed"))
+        elif "nebula" in ops:
+            self.say(_("{n} samples on nebulosity removed").format(n=removed))
+        else:
+            self.say(_("{n} samples on objects removed").format(n=removed))
+
     def _wanted_sig(self) -> str | None:
         """The settings the preview should show now (the draft's), as the job compares them (any thread)."""
         try:
@@ -2127,6 +2317,8 @@ class GradientEditor(QObject):
                 self._pending = "grid"
         if "error" in out:
             self.tv.toasted.emit(_("Gradient preview: {why}").format(why=_(out["error"])))
+        elif "points" in out:
+            self._points_arrived(out)
         elif "grid" in out:
             self.work["sample_points"] = out["grid"] + ([self._extra] if self._extra else [])
             self._extra = None
@@ -2151,6 +2343,8 @@ class GradientEditor(QObject):
         elif out.get("what") == "preview" and self.has_draft() and out.get("sig") != self._wanted_sig() and \
                 not self._timer.isActive():
             self.preview()                     # the draft changed meanwhile: one preview, of the latest
+        if out.get("what") == "load" and self.has_draft() and self.too_few():
+            self._present()                    # the stack, nothing removed, now that it is read
         if not self.busy:
             self._busy_timer.stop()
             self._anim.stop()
@@ -2237,6 +2431,50 @@ class Notice(QFrame):
             self.sizeHint().height()
         sb = win.statusBar().height() if hasattr(win, "statusBar") else 0
         self.setGeometry((win.width() - w) // 2, win.height() - sb - h - 10, w, h)
+
+
+def _points_job(sm: dict, params, req, level, project, pid) -> dict:
+    """The actions on the samples, on the reduced copy, with the stage's own rules: ``generate`` (the regular grid's
+    places), ``objects`` (``sky_blocks`` with Object rejection on the points' values), ``nebula`` (``away_from_emission``
+    on the survey's level; ``nebula_disk``: only when the survey is on this computer, never asked)."""
+    from ..core.imgutil import poly_terms
+    from ..stages.gradient import LUM, away_from_emission, exclusion_mask, point_values, sky_blocks
+    ops, pts, default, _pid = req
+    h, w = sm["valid"].shape
+    f = sm["f"]
+    n = params.samples
+    if "generate" in ops:
+        step = min(sm["H"], sm["W"]) / n
+        pts = [[float(x), float(y)] for y in np.arange(step / 2, sm["H"], step) for x in np.arange(step / 2, sm["W"], step)]
+    P = np.asarray(pts, float).reshape(-1, 2)
+    box = max(4, int(min(h, w) / n / 2))
+    out = {"removed": {}, "ops": req}
+    if "objects" in ops and len(P):
+        ex = exclusion_mask(params, h, w, f)
+        ok = sm["valid"] & ~ex if ex is not None else sm["valid"]
+        ps = P * f
+        vals, use = point_values(sm["arr"], ok, ps, box)
+        L = LUM @ np.nan_to_num(vals)
+        A = poly_terms(ps[:, 0], ps[:, 1], w, h, 2)
+        kept = sky_blocks(L, use, A, params.object_clip, (1, len(ps))) if use.sum() >= 3 * A.shape[1] else use
+        out["removed"]["objects"] = int((~kept).sum())
+        P = P[kept]
+    if ("nebula" in ops or "nebula_disk" in ops) and len(P):
+        if level is None:
+            try:
+                sv = {"pid": pid, **_survey_small(project, pid, sm, fetch=False)}
+                level = sv["level"]
+                out["survey"] = sv
+            except Exception:  # noqa: BLE001 - not on this computer: asked of the user (an explicit action only)
+                if "nebula" in ops:
+                    out["need_survey"] = True
+        if level is not None:
+            kept, used = away_from_emission(P * f, np.ones(len(P), bool), level, box)
+            out["no_emission"] = not used
+            out["removed"]["nebula"] = int((~kept).sum()) if used else 0
+            P = P[kept]
+    out["points"] = [[round(float(x), 1), round(float(y), 1)] for x, y in P]
+    return out
 
 
 def _reduced_stack(project, pid: int) -> dict:

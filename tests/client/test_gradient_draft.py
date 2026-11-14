@@ -246,6 +246,46 @@ def test_a_change_during_a_slow_preview_paints_only_the_latest(ed):
     assert float(np.abs(ed.result - want).max()) < 1e-3
 
 
+def test_the_block_s_own_samples_are_one_editable_grid(ed):
+    """The samples the block places by itself are drawn as ordinary samples, not in the draft; the first change makes
+    them the draft's own (what is seen is what is used); Undo gives the block's own placement back."""
+    ed._run_points(["generate", "objects", "nebula_disk"], [], default=True)
+    wait(ed)
+    grid = ed.defaults[1]
+    assert grid and ed.work["sample_points"] == grid and not ed.has_draft()
+    assert ed._params().sample_points == []                       # previewed as the stage would choose
+    ed.work["sample_points"].append([500.0, 300.0])
+    ed._commit()
+    assert ed.value("sample_points")[:-1] == grid and len(ed.value("sample_points")) == len(grid) + 1
+    ed.undo()
+    assert not ed.has_draft() and ed.work["sample_points"] == grid
+
+
+def test_the_actions_on_the_samples(ed):
+    """Generate grid places a regular grid of its pitch; Avoid objects keeps the samples of sky (the stage's rule);
+    Clear all leaves none and nothing chosen behind the user: Apply refused, the preview removes nothing; each one step
+    of Undo, each said in the image's tag."""
+    ed._run("load")                                            # the stack's size, as the view has it
+    wait(ed)
+    ed.set_draft({"samples": 8})
+    ed.act("generate")
+    n = len(ed.value("sample_points"))
+    assert n == 8 * 12 and ed.tag_text().endswith("samples on a grid")     # 900 x 600: 8 by 12
+    ed.act("objects")
+    wait(ed)
+    assert 0 < len(ed.value("sample_points")) <= n and "removed" in ed.tag_text()
+    ed.act("clearall")
+    wait(ed)
+    assert ed._explicit_empty() and ed.too_few() and ed.value("sample_points") == []
+    ed.apply()
+    ed.try_variant()
+    assert ed.s.changes == [] and ed.s.variants == []              # never "the block chooses" instead
+    ed._said = None
+    assert ed.tag_text().startswith("Too few samples")
+    ed.undo()
+    assert len(ed.value("sample_points")) > 0 and not ed.too_few()
+
+
 def test_apply_makes_the_draft_the_block_settings(ed):
     m, p = ed.s, ed.s.path
     ed.set_draft({"method": "rbf", "rbf_smooth": 0.25})
@@ -369,8 +409,8 @@ def _test_project():
         pytest.skip("the test project is not here")
 
 
-PAGE_CONTROLS = ("before", "method", "points", "brush", "ellipse", "eraser", "grid", "marks", "reset", "variant",
-                 "apply")
+PAGE_CONTROLS = ("before", "method", "points", "brush", "ellipse", "eraser", "generate", "pitch", "objects", "nebula",
+                 "clearall", "marks", "reset", "variant", "apply")
 
 
 def _controls(w, ed) -> list[str]:
@@ -404,9 +444,9 @@ def test_every_tool_is_in_the_window_on_a_laptop(qapp, tmp_path, size):
             r = b.rect().translated(b.mapTo(w, b.rect().topLeft()))
             assert r.left() >= 0 and r.top() >= 0 and r.right() <= w.width() and r.bottom() <= w.height(), (k, r)
             assert b.width() >= b.sizeHint().width() - 1, k                       # never squeezed: its name whole
-        # at most 11 outside the settings panel: Before / After, Method, the five tools, Marks, Reset, Try variant,
-        # Apply (one more fails)
-        assert len(_controls(w, ed)) <= 11, _controls(w, ed)
+        # at most 15 outside the settings panel: Before / After, Method, the four tools, the four actions on the
+        # samples and the grid's pitch, Marks, Reset, Try variant, Apply (one more fails)
+        assert len(_controls(w, ed)) <= 15, _controls(w, ed)
     finally:
         w.close()
 
@@ -464,9 +504,10 @@ def test_the_image_never_moves_through_a_session(qapp, tmp_path, size):
             cb.activated.emit(cb.currentIndex())
             idle()
             check(m)
-        ed._ui["grid"].click()
-        idle()
-        check("grid")
+        for a in ("generate", "objects", "clearall", "generate"):
+            ed._ui[a].click()
+            idle()
+            check(a)
         ed.work["sample_points"].append([W * 0.5, H * 0.5])
         ed._commit()
         idle()
@@ -630,7 +671,8 @@ def test_each_method_offers_only_the_marks_it_reads(qapp, tmp_path):
             settle(w)
             samples = m != "automatic"
             u = ed._ui
-            assert u["points"].isEnabled() == samples and u["grid"].isEnabled() == samples, m
+            assert u["points"].isEnabled() == samples and u["generate"].isEnabled() == samples, m
+            assert u["objects"].isEnabled() == samples and u["nebula"].isEnabled() == samples, m
             assert u["brush"].isEnabled() and u["ellipse"].isEnabled() and u["eraser"].isEnabled(), m
             assert u["marks"].isEnabled(), m
             if not samples:
