@@ -533,6 +533,7 @@ class _Snap(tuple):
     """What Undo puts back (``ProjectModel._snapshot``), with the page the change came from: Post's steps are undone
     in Post, the graph's in the graph."""
     from_post = False
+    versions_only = False          # a step of the versions' list alone (a rename, a delete): it restores that, no more
 
 
 class SessionSet:
@@ -632,6 +633,7 @@ class ProjectModel(QObject):
         self._undo: list = []
         self._redo: list = []
         self._post_depth = 0                               # inside from_post(): a step Post made
+        self._versions_only = False                        # inside a change of the versions' list alone
         self._undo_what: list = []                         # what each undo step did, in words (None: not said)
         self._redo_what: list = []
         self._naming = False                               # the last step still takes its words (the same gesture)
@@ -1031,12 +1033,21 @@ class ProjectModel(QObject):
         self.postChanged.emit(None)
         return vid
 
+    @contextmanager
+    def _versions_scope(self):
+        """What is changed inside is the versions' list alone (names, which exist): its step puts back only that."""
+        self._versions_only = True
+        try:
+            yield
+        finally:
+            self._versions_only = False
+
     def rename_post_version(self, vid: int, name: str):
         name = name.strip()
         post = self.p.post
         if not name or any(v["name"] == name for v in post["versions"]):
             return
-        with self._edit():
+        with self._versions_scope(), self._edit():
             self.p.post = {**post, "versions": [{**v, "name": name} if v["id"] == vid else v for v in post["versions"]]}
         self.name_step(_("Version renamed “{name}”").format(name=name))
         self.postChanged.emit(None)
@@ -1047,7 +1058,7 @@ class ProjectModel(QObject):
         rest = [v for v in post["versions"] if v["id"] != vid]
         if not rest:
             return
-        with self._edit():
+        with self._versions_scope(), self._edit():
             self.p.post = {**post, "versions": rest, "active": post["active"] if post["active"] != vid else rest[-1]["id"]}
         self.name_step(_("“{name}” deleted").format(name=next(v["name"] for v in post["versions"] if v["id"] == vid)))
         self.postChanged.emit(None)
@@ -1354,6 +1365,7 @@ class ProjectModel(QObject):
                 self._prune_post()
                 if self._snapshot() != before:
                     before.from_post = self._post_depth > 0
+                    before.versions_only = self._versions_only
                     self._undo.append(before)
                     del self._undo[:-200]
                     self._redo.clear()
@@ -1612,6 +1624,7 @@ class ProjectModel(QObject):
             return False
         now = self._snapshot()
         now.from_post = src[-1].from_post                   # a step keeps its page when undone and redone
+        now.versions_only = versions_only = src[-1].versions_only
         dst.append(now)
         had = {v.pid: self.block_keys(v) for v in self.paths}      # decision 5: what comes back is selected
         old_keys = self.block_keys(self.path) if self.path is not None else []
@@ -1626,6 +1639,11 @@ class ProjectModel(QObject):
         if post_back:
             here = getattr(self.p, "post", None) or {}
             back = json.loads(post)
+            if versions_only:       # a rename or a delete puts back names and versions, never the other versions' edits
+                kept = {v["id"]: v for v in here.get("versions", [])}
+                back = {**here, "versions": [{**kept[v["id"]], "name": v["name"]} if v["id"] in kept else v
+                                             for v in back.get("versions", [])],
+                        "active": back.get("active", here.get("active"))}
             if in_post and here.get("active") is not None and {v["id"] for v in back.get("versions", [])} ==                     {v["id"] for v in here.get("versions", [])} and any(
                     v["id"] == here["active"] for v in back.get("versions", [])):
                 back["active"] = here["active"]          # (a version brought back or taken out shows itself, #145)

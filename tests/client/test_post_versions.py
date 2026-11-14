@@ -726,3 +726,32 @@ def test_escape_in_the_versions_name_keeps_the_old_name_and_stays_in_post(model)
         assert [x["name"] for x in model.p.post["versions"]] == [old]
     finally:
         _close(page)
+
+
+def test_undoing_a_rename_gives_back_the_name_only_and_keeps_the_other_versions_edits(model):
+    """Rename V2, add a filter in V1, back to V2, Ctrl+Z: V2's old name is back and V1 keeps its filter; the same for
+    a delete brought back."""
+    page = _page(model)
+    v = page.view
+    try:
+        v._version_new()
+        second = v._version
+        first = next(x["id"] for x in model.p.post["versions"] if x["id"] != second)
+        v.cb_version.setEditText("Mine")
+        v._version_renamed()
+        model.set_post_version(first)
+        v._post_changed(None)
+        v.add_filter("sharpen")
+        n = len(v.layers)
+        v._save()
+        model.set_post_version(second)
+        v._post_changed(None)
+        v.do_undo()
+        names = {x["id"]: x["name"] for x in model.p.post["versions"]}
+        assert names[second] == "Version 2"
+        assert len(next(x for x in model.p.post["versions"] if x["id"] == first)["layers"]) == n
+        v.do_redo()
+        assert {x["id"]: x["name"] for x in model.p.post["versions"]}[second] == "Mine"
+        assert len(next(x for x in model.p.post["versions"] if x["id"] == first)["layers"]) == n
+    finally:
+        _close(page)
