@@ -597,7 +597,7 @@ def test_filter_workflows_and_their_combination_draw_no_output_block(world):
 
 def test_no_wire_of_the_templates_passes_under_a_block_nor_goes_right_to_left(world):
     """The wires of the graph never pass under a block, never go right to left, no block covers another: every
-    template of the gallery made on the page (the core's own templates: tests/graphcore/test_core.py)."""
+    template of the gallery made on the page (the core's own templates: tests/graphcore/test_graph_core.py)."""
     from astro_gpu.client.gallery import GALLERY
     for t in [t for t in GALLERY if t.get("copy") is None]:
         W = world(workflows=(), nights=0)

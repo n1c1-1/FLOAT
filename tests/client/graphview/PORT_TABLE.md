@@ -28,7 +28,7 @@ Files: `misc` = test_gv_legacy_misc.py, `page` = test_gv_legacy_page.py, `flows`
 | test_branches_parallel_flows_removable_wires_and_the_palette_taking_a_block_back | PORTED | page::test_a_wire_to_post_is_taken_away_with_del_and_stays_away, page::test_a_block_dragged_onto_the_palette_is_removed; branch and parallel stack COVERED by test_gv_page.py::test_s06_branch_strip_makes_a_variant_below, ::test_s03_drag_session_onto_plus_session |
 | test_the_first_blocks_have_their_cross_and_the_last_session_can_go | LOST | s6a-19 (Calibration not deletable, owner's call); the last Session: page::test_the_last_session_goes_with_its_workflow_and_ctrl_z_brings_everything_back |
 | test_a_stage_phase_moves_the_bar_from_its_first_file | PORTED | misc::test_a_stage_phase_moves_the_bar_from_its_first_file |
-| test_the_second_play_test_stays_fixed | PORTED | page::test_a_wire_to_post_is_taken_away_with_del_and_stays_away (stays away, a chosen wire kept over a rebuild); Combine dragged: tests/graphcore/test_core.py::test_places_lit_match_apply; branch method: test_graphmodel_facades.py::test_a_new_branch_from_a_block_and_beside_a_night_calibration |
+| test_the_second_play_test_stays_fixed | PORTED | page::test_a_wire_to_post_is_taken_away_with_del_and_stays_away (stays away, a chosen wire kept over a rebuild); Combine dragged: tests/graphcore/test_graph_core.py::test_places_lit_match_apply; branch method: test_graphmodel_facades.py::test_a_new_branch_from_a_block_and_beside_a_night_calibration |
 | test_a_fusion_channel_session_removed_keeps_the_project_valid_and_the_fusion_red | LOST | s6a-10 |
 | test_a_parallel_flow_on_a_template_without_night_and_a_calibration_in_the_second_flow | LOST | s6a-5 (the pause on a session's Calibration); a stack always has its night now |
 | test_a_block_placed_twice_has_its_own_settings_and_its_own_pause | PORTED | page::test_a_block_placed_twice_has_its_own_settings_and_its_own_pause |
@@ -54,7 +54,7 @@ Files: `misc` = test_gv_legacy_misc.py, `page` = test_gv_legacy_page.py, `flows`
 | test_a_file_added_by_mistake_is_warned_and_taken_out_one_by_one | PORTED | page::test_a_file_added_by_mistake_is_warned_and_taken_out_one_by_one |
 | test_control_round_a_port_pulled_again_or_after_its_wire_went_says_so_or_gives_it_back | LOST | s6a-4 (the wire not given back); the rest: page::test_a_port_pulled_again_says_its_image_is_a_layer_already_and_a_shared_block_is_named_by_its_owner (the menu's order is GONE: the new menu) |
 | test_control_round_a_branch_left_without_a_block_of_its_own_goes_with_it | LOST | s6a-20 |
-| test_control_round_a_fusion_channel_sent_to_post_keeps_the_channels_apart | COVERED | tests/graphcore/test_core.py::test_layout_invariants_on_fixtures_and_folds (no block over another); flows::test_no_wire_of_the_templates_passes_under_a_block_nor_goes_right_to_left (the old lanes are GONE) |
+| test_control_round_a_fusion_channel_sent_to_post_keeps_the_channels_apart | COVERED | tests/graphcore/test_graph_core.py::test_layout_invariants_on_fixtures_and_folds (no block over another); flows::test_no_wire_of_the_templates_passes_under_a_block_nor_goes_right_to_left (the old lanes are GONE) |
 | test_control_round_the_fusion_card_waits_for_the_channels_lights | PORTED | flows::test_a_combination_is_placed_empty_and_waits_for_its_wires_and_one_grid |
 | test_control_round_undo_selects_the_block_before_and_a_file_taken_out_is_one_undo_step | COVERED | test_graphmodel_undo.py::test_undo_selects_on_block_ids; test_gv_page2.py::test_s33_files_filtered_by_type_take_all_one_undo_step |
 | test_control_round_a_variant_of_a_graph_keeps_its_blocks_and_each_choice_is_said | COVERED | tests/graphcore/test_gestures3b.py::test_try_a_variant_then_keep_it_retires_the_original_id; Keep in the panel: model::test_try_as_variant_keeps_the_original_and_shares_the_blocks_before |
@@ -77,7 +77,7 @@ Files: `misc` = test_gv_legacy_misc.py, `page` = test_gv_legacy_page.py, `flows`
 | test_a_combination_waiting_for_frames_is_greyed_never_red | PORTED | flows::test_a_combination_is_placed_empty_and_waits_for_its_wires_and_one_grid |
 | test_the_names_of_the_inputs_never_sit_under_the_title_nor_the_subtitle | GONE | the old block item's layout of its inputs' names beside its title |
 | test_the_wires_into_a_join_each_bend_at_their_own_place | GONE | the old router's staggered bends (`graph.stagger`) |
-| test_no_wire_goes_right_to_left | COVERED | tests/graphcore/test_core.py::test_layout_invariants_on_fixtures_and_folds (I3); flows::test_no_wire_of_the_templates_passes_under_a_block_nor_goes_right_to_left |
+| test_no_wire_goes_right_to_left | COVERED | tests/graphcore/test_graph_core.py::test_layout_invariants_on_fixtures_and_folds (I3); flows::test_no_wire_of_the_templates_passes_under_a_block_nor_goes_right_to_left |
 | test_the_filters_templates_align_the_others_on_the_first | COVERED | test_graphmodel_facades.py::test_every_template_made_through_the_model_is_the_old_project[filters_full] |
 | test_a_combination_placed_from_the_palette_is_empty_and_each_input_is_a_hollow_dot | PORTED | flows::test_a_combination_is_placed_empty_and_waits_for_its_wires_and_one_grid |
 | test_a_wire_dropped_on_an_input_wires_it_one_step_each_and_undo_takes_it_back | COVERED | test_gv_page2.py::test_s25_combination_to_the_composition_then_a_wire_into_its_port |
@@ -230,9 +230,9 @@ Files: `misc` = test_gv_legacy_misc.py, `page` = test_gv_legacy_page.py, `flows`
 | test_decimal_commas_in_french_reasons | PORTED | model::test_decimal_commas_in_french_reasons |
 | test_nothing_slow_runs_in_the_gui_thread | PORTED | model::test_nothing_slow_runs_in_the_gui_thread (part lost: the opening, s6a-21) |
 | test_save_writes_only_the_definition_and_only_when_asked | PORTED | model::test_save_writes_only_the_definition_and_only_when_asked |
-| test_shots | PORTED | model::test_shots_in_english_and_french_cut_no_text (no block over another: tests/graphcore/test_core.py::test_layout_invariants_on_fixtures_and_folds) |
+| test_shots | PORTED | model::test_shots_in_english_and_french_cut_no_text (no block over another: tests/graphcore/test_graph_core.py::test_layout_invariants_on_fixtures_and_folds) |
 | test_the_page_says_it_is_reading_while_the_worker_works | COVERED | test_gv_parity.py::test_the_reading_veil_and_an_unreadable_project |
-| test_dropping_a_block_on_a_lane_puts_it_where_the_rules_say | LOST | s6a-23 (every place of every stack lit at once); the drop where the rules say: tests/graphcore/test_core.py::test_places_lit_match_apply, test_gv_page2.py::test_s19_drop_on_a_refused_place_changes_nothing_and_says_why |
+| test_dropping_a_block_on_a_lane_puts_it_where_the_rules_say | LOST | s6a-23 (every place of every stack lit at once); the drop where the rules say: tests/graphcore/test_graph_core.py::test_places_lit_match_apply, test_gv_page2.py::test_s19_drop_on_a_refused_place_changes_nothing_and_says_why |
 | test_a_block_dropped_on_another_workflows_place_goes_there | COVERED | tests/graphcore/test_points.py::test_point8_drop_on_lower_row_moves_only_that_row |
 | test_a_project_without_workflows_has_a_blank_graph_and_the_project_panel | PORTED | model::test_a_project_without_workflows_has_a_blank_graph_and_the_project_panel |
 | test_a_change_of_an_automatic_setting_is_seen_by_the_what_if | PORTED | model::test_a_change_of_an_automatic_setting_is_seen_by_the_what_if |
