@@ -194,7 +194,6 @@ def test_the_project_block_is_above_the_first_object_from_the_blank_page_on(env)
     assert not item(w2).selected
 
 
-@pytest.mark.xfail(strict=True, reason="the new page draws no wire from the Project block to Astrometry (the target it reads)")
 def test_its_wire_to_astrometry_shows_only_while_selected(env):
     def wired():
         """The chosen block's side wires on the canvas (a dashed curve with its words): one from the Project block."""
@@ -213,8 +212,6 @@ def test_its_wire_to_astrometry_shows_only_while_selected(env):
     assert wired()
 
 
-@pytest.mark.xfail(strict=True, reason="the new page's Project block keeps 'target to choose' after a target is typed (the "
-                   "stored graph's target is not the project's)")
 def test_the_target_typed_goes_green_or_orange_and_undo_takes_it_back(env):
     w = project_with_a_chain(env)
     click_project(w)
@@ -447,8 +444,6 @@ def form(w):
     return f
 
 
-@pytest.mark.xfail(strict=True, reason="the new page's Project block is coloured by the graph's readiness (lights, greyed "
-                   "blocks), not by the target and shooting details of issue #89")
 def test_the_project_block_is_red_orange_or_green_and_its_tooltip_says_what_is_missing(env):
     """Issue #89: red with no target, orange with a target but shooting details missing, green when complete."""
     w = project_with_a_chain(env)
@@ -472,8 +467,6 @@ def test_the_project_block_is_red_orange_or_green_and_its_tooltip_says_what_is_m
     assert ProjectItem.COLOURS == {"none": BAD, "partial": WARN, "complete": OK}
 
 
-@pytest.mark.xfail(strict=True, reason="an Undo of what the Project form changed deselects the Project block on the new "
-                   "page: Inspect's form goes")
 def test_a_double_click_on_the_project_block_opens_its_form_in_inspect(env):
     """Issue #89: a double-click on the Project block opens it in Inspect, as a double-click opens the other blocks, with
     one form in the centre: name, target, shooting details; what is typed there is the project's."""
@@ -514,8 +507,6 @@ def test_a_double_click_on_the_project_block_opens_its_form_in_inspect(env):
     assert w.mode == 0 and item(w).selected
 
 
-@pytest.mark.xfail(strict=True, reason="another block chosen in Inspect leaves the Project block chosen on the new page: "
-                   "the form stays")
 def test_a_single_click_keeps_the_graph_and_enter_opens_the_form(env):
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
@@ -540,8 +531,6 @@ def test_a_single_click_keeps_the_graph_and_enter_opens_the_form(env):
     assert w.tune.project_form is None and not w.graph.project_open()
 
 
-@pytest.mark.xfail(strict=True, reason="an Undo of what the Project form changed deselects the Project block on the new "
-                   "page: Inspect's form goes")
 def test_a_shooting_detail_of_the_form_reaches_the_report_and_back(env):
     """Issue #89: the form and the Report edit one place in the project: what is typed in one is in the other, in the
     Report's text, saved with the project, taken back by Undo."""

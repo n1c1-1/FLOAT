@@ -619,11 +619,9 @@ class GraphCanvas(QGraphicsView):
         else:
             self.new_link = None
         pb = drawing.extras.get("project")
-        state, tip = doc.project_state()
-        g = bridge.graph
+        title, line, state, tip = doc.project_block()
         pr = QRectF(pb.x, pb.y, pb.w, pb.h) if pb is not None else QRectF(0, 0, 140, 34)
-        self.project_item = ProjectItem(pr, g.name or _("Project"), g.target or _("target to choose"), state,
-                                        bridge.selected == PROJECT, tip)
+        self.project_item = ProjectItem(pr, title, line, state, bridge.selected == PROJECT, tip)
         sc.addItem(self.project_item)
         rect = sc.itemsBoundingRect()                    # the drawing's own box (blocks, bands, wires, captions)...
         if rect.width() < 10 or rect.height() < 10:
@@ -681,6 +679,11 @@ class GraphCanvas(QGraphicsView):
             else:
                 it.d = self.block_data(b, drawing.boxes[b])
             it.update()
+        pi = self.project_item
+        if pi is not None:                               # the project's target and details change no block
+            pi.title, pi.summary, pi.state, tip = self.doc.project_block()
+            pi.setToolTip(tip)
+            pi.update()
         self.show_wait()
         self.viewport().update()
         self.minimap.update()
@@ -838,6 +841,37 @@ class GraphCanvas(QGraphicsView):
             t.setPos(m.x() - t.boundingRect().width() / 2, m.y() + 2)
             t.setZValue(1.6)
             self.side_items += [line, t]
+        self._project_wires(b)
+
+    def _project_wires(self, b):
+        """The Project block's wire to Astrometry (the target it starts from), only while one of the two is chosen
+        (graph.py ``_project_wire``)."""
+        pi = self.project_item
+        sc = self.scene()
+        if pi is None or pi.scene() is not sc:
+            return
+        bridge = self.bridge
+        if b == PROJECT:
+            ends = [x for x, blk in bridge.graph.blocks.items() if blk.kind == "astrometry" and not blk.off]
+        else:
+            blk = bridge.block(b) if b is not None else None
+            ends = [b] if blk is not None and blk.kind == "astrometry" and not blk.off else []
+        for x in ends:
+            it = self.blocks.get(x)
+            if it is None:                               # folded into its stack's card: to the card
+                r = bridge.row_of(x)
+                it = self.blocks.get(r.id) if r is not None else None
+            if it is None:
+                continue
+            rb = it.sceneBoundingRect().adjusted(12, 12, -12, -12)
+            x1, y1 = pi.rect.right(), pi.rect.center().y()
+            x2, y2 = rb.center().x(), rb.top()
+            path = QPainterPath(QPointF(x1, y1))
+            path.cubicTo(QPointF(x2, y1), QPointF(x2, y1), QPointF(x2, y2))
+            line = sc.addPath(path, QPen(QColor(ACCENT), 1.5, Qt.DashLine))
+            line.setZValue(2)
+            line.setToolTip(_("Astrometry starts from the target of the project"))
+            self.side_items.append(line)
 
     def _wire_word(self, path) -> str:
         """The image a wire carries, as today's wire names it (Starless image, Stars alone, Synthetic stars)."""

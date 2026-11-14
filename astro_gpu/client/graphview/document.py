@@ -319,6 +319,25 @@ class Doc:
     def project_state(self):
         return api.project_state(self.graph, self.tr)
 
+    def project_block(self):
+        """(title, line under it, state, tooltip) of the Project block. On a project model, issue #89's rule as today's
+        page drew it: red with no target, orange with shooting details missing, green complete; its line the target
+        (typed, or what Astrometry found), its tooltip what is missing. Without a model, the core's readiness."""
+        m = self.model
+        if m is not None and hasattr(m, "project_state") and hasattr(m, "target_state"):
+            try:
+                st, ps = m.target_state(), m.project_state()
+                tip = [_("The project: target, comments, capture data"), ps.line] + ([st.note] if st.name and st.note
+                                                                                    else []) + \
+                    [_("Double-click: its form in Inspect")]
+                name = getattr(getattr(m, "p", None), "name", "") or self.graph.name
+                return name or _("Project"), st.name or _("target to choose"), ps.level, "\n".join(t for t in tip if t)
+            except Exception:  # noqa: BLE001 - a project the model cannot judge now: the core's readiness
+                log.debug("graph page: the Project block's state from the model failed", exc_info=True)
+        state, tip = self.project_state()
+        g = self.graph
+        return g.name or _("Project"), g.target or _("target to choose"), state, tip
+
     def palette_state(self, kind):
         return api.palette_state(self.graph, self.view, kind, self.tr)
 

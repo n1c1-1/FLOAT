@@ -125,6 +125,10 @@ class GraphPage(SidesHost, QWidget):
                 sig = getattr(self.s, name, None)
                 if sig is not None:
                     sig.connect(self.request_refresh)
+            for name in ("pathsChanged", "currentChanged"):
+                sig = getattr(self.s, name, None)
+                if sig is not None:
+                    sig.connect(self._project_choice)
             if getattr(self.s, "postChanged", None) is not None:
                 self.s.postChanged.connect(self._post_changed)
         self._shortcuts()
@@ -251,7 +255,30 @@ class GraphPage(SidesHost, QWidget):
         if self.panel is not None and self.dock is not None and self.dock.state == "docked":
             self.panel.setVisible(not on)
 
+    def _project_choice(self, *_a):
+        """The Project block chosen follows the project model at once (today's page read its choice from the model): a
+        block chosen elsewhere (Inspect's strip) takes the choice from it; an Undo of what its form changed, which
+        leaves the model's choice on the project, keeps it chosen."""
+        s, b = self.s, self.bridge
+        if s is None or self._mirroring:
+            return
+        step = getattr(s, "sel_step", "")
+        if b.selected == PROJECT and step:
+            ident = self._block_of_selection()
+            if ident not in (None, PROJECT):
+                self._mirroring = True
+                try:
+                    b.choose(ident)
+                finally:
+                    self._mirroring = False
+        elif b.selected is None and not step and getattr(self, "_chosen", None) == PROJECT:
+            b.doc.view["selected"] = PROJECT              # silently: the model's step dropped it, the model kept it
+            if self.canvas.project_item is not None:
+                self.canvas.project_item.selected = True
+                self.canvas.project_item.update()
+
     def _selection(self, ident):
+        self._chosen = ident
         if self.bridge.file_cell is None and self.files_panel is not None:
             self.right_box.removeWidget(self.files_panel)
             self.files_panel.deleteLater()
