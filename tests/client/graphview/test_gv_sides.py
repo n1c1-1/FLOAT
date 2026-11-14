@@ -415,6 +415,7 @@ def test_a_change_that_adds_time_says_it(model, monkeypatch):
     secs = [600.0]
     monkeypatch.setattr(model, "total_seconds", lambda: secs[0])
     page._said_at = -9.0
+    page._last = None             # the page's own refreshes at its opening took the model's real estimate: forgotten
     page.refresh()
     assert not [t for t in said if "to run" in t]              # the first estimate is the reference
     secs[0] = 720.0

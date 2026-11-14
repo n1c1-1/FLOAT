@@ -215,10 +215,12 @@ def test_a_folder_after_some_of_its_files_adds_the_others(qapp, tmp_path, monkey
 
 
 def test_a_project_listing_a_folder_still_reads_it_and_its_files_are_known(qapp, tmp_path, monkeypatch):
-    """A project made before the files were listed one by one: its folder entry is read, a file of it is already in."""
+    """A project made before the files were listed one by one: its folder entry becomes, at the opening, the files the
+    engine reads there (files only: the same frames), and a file of it is already in."""
     w, m, page = open_page(tmp_path, monkeypatch, sessions=1, workflows=("Full",))
     try:
-        assert [Path(e).name for e in m.p.session(1).lights] == ["n1"] and len(m.session_files(1, "lights")) == 3
+        assert [Path(e).name for e in m.p.session(1).lights] == ["L_000.fits", "L_001.fits", "L_002.fits"]
+        assert [Path(f).name for f in m.session_files(1, "lights")] == ["L_000.fits", "L_001.fits", "L_002.fits"]
         notes: list = []
         assert m.add_session_entries(1, "lights", [m.session_files(1, "lights")[0]], notes) == 0 and notes
     finally:
