@@ -134,6 +134,9 @@ def test_one_maths_thread_in_the_workers_gives_the_same_files(tmp_path, monkeypa
     one = run(tmp_path / "one", folders)
     # the workers as before: every thread (no variable of this test session limits them either)
     monkeypatch.setattr(devices, "one_maths_thread", contextlib.nullcontext)
+    # Calibration then runs in this process, where the patch holds (on the processor it runs in a child process, which
+    # would still limit its workers to one thread)
+    monkeypatch.setattr(runner2, "ISOLATED", frozenset())
     for k in devices.MATHS_THREADS:
         monkeypatch.delenv(k, raising=False)
     every = run(tmp_path / "every", folders)
@@ -146,7 +149,10 @@ WITH_TORCH = """import sys
 
 import torch  # noqa: F401
 
+from astro_gpu.core import runner2
 from astro_gpu.core.runner2 import main
+
+runner2.ISOLATED = ()  # Calibration in this process, as it was: its pool's workers import this main module again
 
 if __name__ == "__main__":
     sys.exit(main())
