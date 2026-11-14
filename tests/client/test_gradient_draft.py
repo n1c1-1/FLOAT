@@ -410,7 +410,7 @@ def _test_project():
 
 
 PAGE_CONTROLS = ("before", "method", "points", "brush", "ellipse", "eraser", "generate", "pitch", "objects", "nebula",
-                 "clearall", "marks", "reset", "variant", "apply")
+                 "clearall", "size", "marks", "reset", "variant", "apply")
 
 
 def _controls(w, ed) -> list[str]:
@@ -444,9 +444,9 @@ def test_every_tool_is_in_the_window_on_a_laptop(qapp, tmp_path, size):
             r = b.rect().translated(b.mapTo(w, b.rect().topLeft()))
             assert r.left() >= 0 and r.top() >= 0 and r.right() <= w.width() and r.bottom() <= w.height(), (k, r)
             assert b.width() >= b.sizeHint().width() - 1, k                       # never squeezed: its name whole
-        # at most 15 outside the settings panel: Before / After, Method, the four tools, the four actions on the
-        # samples and the grid's pitch, Marks, Reset, Try variant, Apply (one more fails)
-        assert len(_controls(w, ed)) <= 15, _controls(w, ed)
+        # at most 16 outside the settings panel: Before / After, Method, the four tools and their size, the four
+        # actions on the samples and the grid's pitch, Marks, Reset, Try variant, Apply (one more fails)
+        assert len(_controls(w, ed)) <= 16, _controls(w, ed)
     finally:
         w.close()
 

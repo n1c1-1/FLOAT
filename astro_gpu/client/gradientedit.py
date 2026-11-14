@@ -1056,6 +1056,23 @@ class GradientEditor(QObject):
             lay.addWidget(b, 1 + n // 2, n % 2)
             u[key] = b
         row = 1 + (len(TOOLS) + 1) // 2
+        size = QWidget()                       # the Brush's and the Eraser's size, under them
+        sh = QHBoxLayout(size)
+        sh.setContentsMargins(0, 0, 0, 0)
+        sh.setSpacing(6)
+        sh.addWidget(label(_("Size"), "dim"))
+        sz = QSlider(Qt.Horizontal)
+        sz.setRange(4, 1200)
+        sz.setValue(int(self.size))
+        sz.setToolTip(_("Brush and Eraser size, in pixels of the stack ([ ])"))
+        sz.valueChanged.connect(self._set_size)
+        sh.addWidget(sz, 1)
+        szl = label(f"{int(self.size)} px", "small")
+        szl.setMinimumWidth(szl.fontMetrics().horizontalAdvance("1200 px") + 2)
+        sh.addWidget(szl)
+        lay.addWidget(size, row, 0, 1, 2)
+        u["size"], u["size_l"] = sz, szl
+        row += 1
         lay.addWidget(label(_("Samples"), "h2"), row, 0, 1, 2)
         for n, (key, name, tip) in enumerate(ACTIONS):
             b = QPushButton(_(name))
@@ -1190,19 +1207,6 @@ class GradientEditor(QObject):
                 cr.changed.connect(self.draft_setting)
                 dv.addWidget(cr)
         title("Samples")
-        dens = QSpinBox()
-        dens.setRange(4, 64)
-        dens.setValue(self._density())
-        dens.setSuffix(" " + _("per side"))
-        dens.setKeyboardTracking(False)
-        dens.setToolTip(_("Samples of the grid along the shorter side of the image"))
-        dens.valueChanged.connect(self._set_density)
-        r2 = QHBoxLayout()
-        r2.addWidget(label(_("Grid"), "dim"))
-        r2.addWidget(dens)
-        r2.addStretch(1)
-        dv.addLayout(r2)
-        u["density"] = dens
         av = QCheckBox(_("Away from emission"))
         av.setChecked(self.avoid)
         av.setToolTip(_("Grid and the samples the block chooses leave out the cells where the H-alpha survey shows "
@@ -1210,18 +1214,6 @@ class GradientEditor(QObject):
         av.toggled.connect(self._set_avoid)
         dv.addWidget(av)
         u["avoid"] = av
-        r3 = QHBoxLayout()
-        r3.addWidget(label(_("Brush size"), "dim"))
-        sz = QSlider(Qt.Horizontal)
-        sz.setRange(4, 1200)
-        sz.setValue(int(self.size))
-        sz.setToolTip(_("Brush and Eraser size, in pixels of the stack ([ ])"))
-        sz.valueChanged.connect(self._set_size)
-        r3.addWidget(sz, 1)
-        szl = label(f"{int(self.size)} px", "small")
-        r3.addWidget(szl)
-        dv.addLayout(r3)
-        u["size"], u["size_l"] = sz, szl
         title("Draft")
         row = QHBoxLayout()
         for key, tip, fn in (("undo", "Undo the draft's last step (Ctrl+Z on the image)", self.undo),
