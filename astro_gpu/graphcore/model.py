@@ -20,6 +20,10 @@ COMBO_LABEL = {"sho": "S-H-O", "ho": "H-O", "rgb": "RGB", "lrgb": "LRGB"}
 SYNTH_PORT = "Synthetic stars"
 LAYER_PORTS = ["Background", "Stars", SYNTH_PORT]
 OPTIONAL_PORTS = {SYNTH_PORT}
+#: Synthetic stars on the stars side of a Combine layers read from another workflow (right after a "<name> · Stars"
+#: combination, after a star row's Stars/background): its image wired to that Combine layers' Synthetic stars input.
+#: On once the engine runs it after a combination and Post puts its row in the layer of the stars-side workflow.
+SYNTH_ON_STARS_SIDE = False
 POST_PORT = "layers"
 PAIR_PORTS = ["Starless", "Stars only"]
 

@@ -19,6 +19,7 @@ COMP0, POSTCOL = 100, 1000
 #: the blocks drawn under their row's line, on the wire of the stars they read (judge.SIDE_KINDS)
 SIDE_KINDS = ("synth",)
 SIDE_IN = "Stars"              # their drawn input (operations.SYNTH_IN)
+SIDE_GAP = SROW - BH           # under a composition row: the same lane as under a stack's line
 
 
 @dataclass
@@ -216,6 +217,8 @@ def layout(p, view, tr=None):
         heads = r.blocks[:1] if p.blocks[r.blocks[0]].kind == "combine_layers" else []
         follows = {ix.row_of[w.src[0]] for w in p.wires if w.dst[0] in heads and w.src[0] in ix.row_of
                    and ix.row[ix.row_of[w.src[0]]].blocks[-1:] == [w.src[0]]}
+        # a Synthetic stars of the row (after a "· Stars" combination) on the lane under it: the row's room grows
+        hh = h + SIDE_GAP + BH if any(p.blocks[b].kind in SIDE_KINDS for b in r.blocks) else h
         moved = True
         while moved:
             moved = False
@@ -223,10 +226,10 @@ def layout(p, view, tr=None):
                 if _j in follows:
                     continue
                 # rows keep one free column on their right (the "after the last block" strip) and never abut
-                if rect.x < x1 + JW + 2 * GAP and x0 < rect.right + JW + 2 * GAP and y < rect.bottom + 26                         and rect.y < y + h + 26:
+                if rect.x < x1 + JW + 2 * GAP and x0 < rect.right + JW + 2 * GAP and y < rect.bottom + 26                         and rect.y < y + hh + 26:
                     y = rect.bottom + 26
                     moved = True
-        rect = Box(x0, y, x1 - x0, h)
+        rect = Box(x0, y, x1 - x0, hh)
         placed.append((j, rect))
         mid = y + h / 2
         mids[j] = mid
@@ -234,6 +237,8 @@ def layout(p, view, tr=None):
             c = g.cells[b][1]
             if p.blocks[b].kind in JOIN_KINDS:
                 d.boxes[b] = Box(xs[c], y, JW, h)
+            elif p.blocks[b].kind in SIDE_KINDS:
+                d.boxes[b] = Box(xs[c], y + h + SIDE_GAP, BW, BH)
             else:
                 d.boxes[b] = Box(xs[c], mid - BH / 2, BW, BH)
     if ix.post:

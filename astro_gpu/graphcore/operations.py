@@ -7,6 +7,7 @@ from .shapes import Result
 from .model import (Index, Row, Wire, Tap, check, clone, model_json, new_block, new_id, in_ports, out_ports, edges,
                     FILE_KINDS, FRAME_KINDS, JOIN_KINDS, COMBO_PORTS, COMBO_LABEL, LAYER_PORTS, POST_PORT, SYNTH_PORT)
 from . import rules
+from . import model as _model
 from .msg import M, join, typed, name_of, TR
 from .rules import LABEL, OFFABLE, evaluate, need_greyed, title_msg, inherited, rank
 from ..core import workflow as wfl
@@ -1174,9 +1175,9 @@ def _insert(q, b, rid, after):
         if q.blocks[b].kind == "synth":                  # its stars feed the Synthetic stars of the Combine layers
             for w in list(q.wires):                      # of its workflow (its two images from the same Stars)
                 j = w.dst[0]
-                if w.src == [after, "Stars only"] and w.dst[1] == "Stars" and w.active and \
-                        q.blocks[j].kind == "combine_layers" and \
-                        any(x.src == [after, "Starless"] and x.dst == [j, "Background"] for x in q.wires) and \
+                own = any(x.src == [after, "Starless"] and x.dst == [j, "Background"] for x in q.wires)
+                if w.src[0] == after and w.src[1] in ("Stars only", "image") and w.dst[1] == "Stars" and w.active \
+                        and q.blocks[j].kind == "combine_layers" and (own or _model.SYNTH_ON_STARS_SIDE) and \
                         not any(x.dst == [j, SYNTH_PORT] for x in q.wires):
                     q.wires.append(Wire(new_id(q, "w"), [b, SYNTH_PORT], [j, SYNTH_PORT]))
     return Out(M("{lab} here, in “{_row}”", lab=LABEL[q.blocks[b].kind], _row=r.name), b, new=b)
@@ -1667,7 +1668,8 @@ SYNTH_IN = "Stars"
 def _synth_on(q, ix, src, src_port, synth):
     """A wire pulled from a block's stars to a Synthetic stars' input: the block is put on those stars (moved after the
     Stars/background that gives them, in its workflow); already there, nothing to do."""
-    if q.blocks[src].kind != "stars" or src_port != "Stars only":
+    stars_combo = _model.SYNTH_ON_STARS_SIDE and q.blocks[src].kind == "combine" and src_port == "image"
+    if not stars_combo and (q.blocks[src].kind != "stars" or src_port != "Stars only"):
         raise Refusal("Synthetic stars read the stars only of a Stars/background")
     if ix.pred(synth) == src:
         raise Refusal("this wire already exists")

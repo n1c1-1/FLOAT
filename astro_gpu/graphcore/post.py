@@ -12,6 +12,7 @@ An image is ``(workflow id, part)``: part None = the workflow's Output; "starles
 two images; "combined" = a Combine layers layer (not a wire)."""
 from __future__ import annotations
 
+from . import model as _model
 from .model import Index, Row, Wire, POST_PORT, SYNTH_PORT, clone, new_id
 
 PART_OF_PORT = {"image": None, "Starless": "starless", "Stars only": "stars"}
@@ -237,6 +238,13 @@ def _with_stars_group(g):
             y = _synth_after(g, ix, w.src[0])
             if y is not None and not g.blocks[y].off:     # switched off: Post has no synthetic stars row
                 want.add((y, SYNTH_PORT, w.dst[0], SYNTH_PORT))
+    if _model.SYNTH_ON_STARS_SIDE:                    # the stars of another workflow (a "· Stars" combination, a star
+        for w in g.wires:                             # row): its Synthetic stars after the block that gives them
+            if w.dst[0] in heads and w.dst[1] == "Stars" and w.active and w.src[0] in g.blocks \
+                    and g.blocks[w.src[0]].kind != "synth":
+                y = _synth_after(g, ix, w.src[0])
+                if y is not None and not g.blocks[y].off:
+                    want.add((y, SYNTH_PORT, w.dst[0], SYNTH_PORT))
     drop, seen = [], set()
     for w in g.wires:
         if w.dst[0] not in heads:
