@@ -139,11 +139,11 @@ class ExportDialog(QDialog):
         self.c_masks = self._check(v, _("The masks"), False)
         self.c_card = self._check(v, _("Attach the night card (a PNG beside the image)"), False)
         self.card = getattr(view, "card_source", None)
-        self._card_state()
         if self.card is not None:
             self.card.loaded.connect(self._card_state)
             if not self.card.card_ready():
-                self.card.refresh()
+                self.card.refresh()                  # the read starts: its state is said below, "being read"
+        self._card_state()
         # the annotations of Post's view, drawn into the picture (PNG, JPEG, TIFF): handy to show what the image is
         show = dict(getattr(view, "ann_show", None) or {})
         ah = QHBoxLayout()
