@@ -257,18 +257,6 @@ def check_lines(data: ProjectFrames | None) -> list[tuple[str, str]]:
     return out
 
 
-def channel_lines(s) -> list[tuple[str, str]]:
-    """The Combination inputs fed with frames of another filter (graphview/files.channel_mismatch), as warnings of the
-    health check: « “S-H-O” S II: its frames' filter is R… »."""
-    g = getattr(s, "_shown", None)
-    if g is None:
-        return []
-    from .graphview.files import channel_mismatches
-    from ..graphcore import api
-    return [("warn", _("“{block}” {port}: {why}").format(block=api.title(g, b, _), port=_(port), why=t))
-            for b, port, t in channel_mismatches(g)]
-
-
 #: what the engine does not check yet (Spec mode only)
 NEW_CHECKS = ["Darks: a master of the library is matched by exposure, ISO and temperature.",
               "Sensor temperature more than 2 °C from the master dark: the dark is scaled.",
@@ -432,9 +420,6 @@ class FramesView(QWidget):
         self.sv.addWidget(label(_("Health check"), "h2"))
         data = self._current_data()
         lines = check_lines(data)
-        extra = channel_lines(s) if data is not None else []
-        if extra:                                         # never "nothing to worry about" above a warning
-            lines = extra + [x for x in lines if x[0] != "ok"]
         if data is None:
             self.sv.addWidget(label(_("Reading the frames…"), "dim"))
         for lvl, text in lines:

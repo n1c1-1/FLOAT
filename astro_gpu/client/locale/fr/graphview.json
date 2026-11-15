@@ -418,6 +418,6 @@
   "A newer version of its recipe exists: Update recipe in its panel.": "Une version plus récente de sa recette existe : Mettre à jour, dans son panneau.",
   "These frames' header names filter {f}, “{s}” holds a colour camera's: where do they go?": "L'en-tête de ces images indique le filtre {f}, « {s} » contient celles d'un capteur couleur : où vont-elles ?",
   "These flats' header names filter {f}, “{s}” is {g}: add them here?": "L'en-tête de ces flats indique le filtre {f}, « {s} » est en {g} : les ajouter ici ?",
-  "Its frames' filter is {f}, this input is for {r}: check the wire": "Ses images sont en filtre {f}, cette entrée attend {r} : vérifiez le lien",
+  "Input {name} ← {source}": "Entrée {name} ← {source}",
   "“{block}” {port}: {why}": "« {block} » {port} : {why}"
 }

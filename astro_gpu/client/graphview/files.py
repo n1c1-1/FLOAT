@@ -408,38 +408,21 @@ def row_filter(graph, row_id) -> str:
     return next(iter(flts)) if len(flts) == 1 else ""
 
 
-def channel_mismatch(graph, block, port) -> str:
-    """A Combination input fed by a workflow whose sessions' filter is another one than the input's (a Red stack in
-    « S II »): the sentence said on its wire, its port and in the Health check; "" when they agree, when either names
-    none, or for any other block. Said, never refused: the user may mean it."""
-    from ...core.project2 import FILTERS
-    from ...graphcore import combos
+def port_source(graph, block, port) -> str:
+    """What a Combination input reads, as a plain fact for its port's tooltip: the name of the workflow wired into it
+    (« Ha 2 »); "" when nothing is wired or for any other block. An input is a role: what is wired into it is the
+    user's choice, never judged (no filter compared)."""
     from ...graphcore.model import Index
+    from ..names import shown
     b = graph.blocks.get(block)
     if b is None or b.kind != "combine":
         return ""
-    role = combos.role_of(b, port)
-    if role not in FILTERS or not role:
+    w = next((w for w in graph.wires if tuple(w.dst) == (block, port) and w.active), None)
+    if w is None:
         return ""
-    w = next((w for w in graph.wires if tuple(w.dst) == (block, port)), None)
-    rid = Index(graph).row_of.get(w.src[0]) if w is not None else None
-    flt = row_filter(graph, rid) if rid is not None else ""
-    if not flt or flt == role:
-        return ""
-    return _("Its frames' filter is {f}, this input is for {r}: check the wire").format(f=flt, r=role)
-
-
-def channel_mismatches(graph) -> list[tuple[str, str, str]]:
-    """Every Combination input whose wire brings frames of another filter: [(block, port, sentence)]."""
-    from ...graphcore import combos
-    out = []
-    for bid, b in graph.blocks.items():
-        if b.kind == "combine":
-            for port in combos.ports(b):
-                t = channel_mismatch(graph, bid, port)
-                if t:
-                    out.append((bid, port, t))
-    return out
+    ix = Index(graph)
+    rid = ix.row_of.get(w.src[0])
+    return shown(ix.row[rid].name) if rid is not None else ""
 
 
 def free_session_name(graph, base: str) -> str:

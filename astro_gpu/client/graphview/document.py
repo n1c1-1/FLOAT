@@ -422,20 +422,13 @@ class Doc:
         return next((w for w in (m.greyed_reason(q, "couleur") for q in n.paths) if w), "")
 
     def wire_tip(self, w) -> str:
-        """The core's words on a wire, and the filter of the frames it brings when the Combination input it feeds is
-        for another one (``files.channel_mismatch``)."""
-        tip = api.wire_tip(self.graph, w, self.tr)
-        wire = next((x for x in self.graph.wires if x.id == w), None)
-        if wire is not None:
-            from .files import channel_mismatch
-            warn = channel_mismatch(self.graph, wire.dst[0], wire.dst[1])
-            tip = "\n".join(t for t in (tip, warn) if t)
-        return tip
+        """The core's words on a wire."""
+        return api.wire_tip(self.graph, w, self.tr)
 
-    def port_warning(self, b, port) -> str:
-        """What a block's input says beside « wired »: the frames' filter when it is not the input's; ""."""
-        from .files import channel_mismatch
-        return channel_mismatch(self.graph, b, port)
+    def port_source(self, b, port) -> str:
+        """What a Combination input reads: the name of the workflow wired into it (``files.port_source``); ""."""
+        from .files import port_source
+        return port_source(self.graph, b, port)
 
     def row_badge(self, r) -> str:
         return api.row_badge(self.graph, r, self.tr)

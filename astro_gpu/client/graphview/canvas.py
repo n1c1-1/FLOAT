@@ -630,11 +630,12 @@ class GraphCanvas(QGraphicsView):
                 tip += "\n" + _("Input {name}: optional, empty without a Synthetic stars block in this "
                                 "workflow").format(name=lab)
             else:
-                tip += "\n" + (_("Input {name}: wired") if wired else _("Input {name}: empty, pull a wire here")
-                               ).format(name=lab)
-                warn = doc.port_warning(b, name) if wired else ""
-                if warn:                                 # frames of another filter: said, never refused
-                    tip += " · " + warn
+                src = doc.port_source(b, name) if wired else ""
+                if src:                                  # a combination's input: what is wired, a fact, never judged
+                    tip += "\n" + _("Input {name} ← {source}").format(name=lab, source=src)
+                else:
+                    tip += "\n" + (_("Input {name}: wired") if wired else _("Input {name}: empty, pull a wire here")
+                                   ).format(name=lab)
         return dict(id=b, kind=kind, title=title, summary=line, state=state, selected=bridge.selected == b,
                     off=bool(blk.off), grey=grey, badge=badge, review=review, own=doc.differs(b),
                     fallback=fallback, broken=broken, missing=missing, warned=bool(bd.get("warned")),

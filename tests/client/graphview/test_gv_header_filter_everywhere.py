@@ -1,8 +1,9 @@
 """Every way of adding lights reads the filter their FITS header names (a beta tester: frames dropped on the Table's
 « + Stack » row or on a Session block kept « none (colour camera) » while « Add files… » read it, so Stacking offered
 colour debayering on monochrome narrowband frames). Flats whose header names another filter than the session's
-lights are asked about, as lights are; a Combination input fed by frames of another filter is said on its wire, its
-port and in the Health check, never refused. Only headers are read: the files' names say the opposite on purpose."""
+lights are asked about, as lights are. A Combination input is a role: a workflow of another filter wired into it is a
+normal choice, never judged; its port says what is wired, as a fact. Only headers are read: the files' names say the
+opposite on purpose."""
 from __future__ import annotations
 
 import numpy as np
@@ -97,7 +98,7 @@ def test_flats_of_another_filter_are_asked_about(qapp, tmp_path):
     b.close()
 
 
-def test_a_combination_input_fed_by_another_filter_is_said_not_refused(qapp, tmp_path):
+def test_a_combination_input_fed_by_another_filter_is_never_judged(qapp, tmp_path):
     red = frames(tmp_path / "r", 2, "R")
     b = Bench(1366, blank=True)
     b.drop([red], ("ghost_p",))
@@ -110,15 +111,20 @@ def test_a_combination_input_fed_by_another_filter_is_said_not_refused(qapp, tmp
     j = next(x for x, blk in g.blocks.items() if blk.kind == "combine")
     src = next(r for r in g.rows if r.id == row.id).blocks[-1]
     res = b.bridge.act("wire", src=src, src_port="image", dst=j, dst_port="S II")
-    assert res.ok, res.reason                                  # accepted: the user may mean it
-    w = next(x for x in b.doc.graph.wires if tuple(x.dst) == (j, "S II"))
-    assert "Its frames' filter is R, this input is for SII" in b.doc.wire_tip(w.id)
-    assert b.doc.port_warning(j, "S II") and not b.doc.port_warning(j, "Hα")
-    assert [(x, p) for x, p, _t in files.channel_mismatches(b.doc.graph)] == [(j, "S II")]
+    assert res.ok, res.reason                                  # a role: the user's choice
+    g = b.doc.graph
+    w = next(x for x in g.wires if tuple(x.dst) == (j, "S II"))
+    name = next(r for r in g.rows if r.id == row.id).name
+    tip = b.doc.wire_tip(w.id)
+    assert "filter" not in tip and "check" not in tip            # the wire says nothing of filters
+    assert b.doc.port_source(j, "S II") == name and b.doc.port_source(j, "Hα") == ""
+    from astro_gpu.client.graphview.canvas import GraphCanvas
+    cv = GraphCanvas(b.bridge)
+    d = b.bridge.drawing()
+    block_tip = cv.block_data(j, d.boxes[j])["tip"]
+    assert f"Input S II ← {name}" in block_tip and "check the wire" not in block_tip
+    cv.deleteLater()
     from astro_gpu.client.frames import check_lines
     data = type("D", (), {"checks": []})()
-    model = type("M", (), {"_shown": b.doc.graph})()
-    from astro_gpu.client.frames import channel_lines
-    lines = channel_lines(model)
-    assert lines and lines[0][0] == "warn" and "“Mix” S II" in lines[0][1] and check_lines(data) == []
+    assert check_lines(data) == []                             # the Health check says nothing of it
     b.close()
