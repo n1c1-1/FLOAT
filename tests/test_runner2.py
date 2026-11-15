@@ -759,7 +759,8 @@ def test_after_a_gpu_fault_a_fresh_worker_retries_the_job_once_and_the_lock_is_h
         assert c["pid"] == workers[1]                   # computed again by the fresh worker
     else:
         assert lost == [LOST_C, LOST_C_AGAIN], log
-        assert end["status"] == "failed" and end["failed"] == [c1] and end["skipped"] == [e1]
+        # (a run is never failed as a whole while a block was computed: it ends done, the failed block listed)
+        assert end["status"] == "done" and end["failed"] == [c1] and end["skipped"] == [e1]
         assert sorted(end["done"]) == sorted(others) and not Store(proj.root).done("c", c1)
         part3 = json.loads((proj.root / "logs" / "runs" / f"{info.run_id}.part3.plan.json").read_text())
         assert [j["key"] for j in part3["jobs"]] == plan.keys[3:] and part3["resume"]["failed"] == [c1]

@@ -1019,6 +1019,11 @@ def test_a_variant_is_shown_compared_with_its_original(scratch):
         assert "Not computed yet" in texts_of(t)
         return
     names = [v.cmp_cb.itemText(i) for i in range(v.cmp_cb.count())]
+    if s.state(full, "debruitage") != "done" or s.state(q, "debruitage") != "done":
+        # the test project computes no Denoise: the original has no picture here to compare with, and none is offered
+        # (an entry is the other workflow's computed picture, never a name with nothing behind it)
+        assert not any(n.startswith(full.name + "  ·  ") for n in names) and v.compare_mode() != "side"
+        return
     assert any(n.startswith(full.name + "  ·  ") for n in names) and v.compare_mode() == "side"
 
 
