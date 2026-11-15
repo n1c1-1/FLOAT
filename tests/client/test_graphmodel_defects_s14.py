@@ -144,10 +144,10 @@ def _cl_on_its_line(g, view):
 def test_a_combine_layers_after_a_combinations_stars_is_drawn_on_its_line(world):
     """A combination's Stars/background (a colour stack's H-O): its Combine layers continues the row on its line in the
     Composition band, as after a stack's Stars/background, never pushed below it."""
-    W = world(workflows=("Full",), chains={"Couleur complet": ["calibration", "registration", "selection", "stacking",
+    W = world(workflows=("Full",), chains={"Colour full": ["calibration", "registration", "selection", "stacking",
                                                                "astrometry", "gradient", "denoise", "color"]})
     m = W.m
-    q = W.view("Couleur complet")
+    q = W.view("Colour full")
     m.add_fusion("HOO", "ho", [{"pid": q.pid, "role": "Ha", "channel": "R"},
                                {"pid": q.pid, "role": "OIII", "channel": "GB"}])
     W.settle()

@@ -145,16 +145,18 @@ def test_messages_are_written_by_the_translation_given():
     assert say(M("{a} and {_b}", a="Gradient", _b="Gradient"), tr) == "Dégradé and Gradient"
 
 
-def test_default_names_follow_the_language():
+def test_default_names_are_stored_in_english_whatever_the_language():
+    """A default name is the neutral form (the client shows it in its language while it is the default): a call made
+    with a French translation still stores "Session 1" and "Session 1 copy"."""
     table = {"Session {n}": "Nuit {n}", "{_name} copy": "{_name} copie"}
 
     def tr(s):
         return table.get(s, s)
     g = graphcore.blank_project()
     g, r = apply(g, "add_row", kind="session", tr=tr)
-    assert g.rows[0].name == "Nuit 1", g.rows[0].name
+    assert g.rows[0].name == "Session 1", g.rows[0].name
     g, r = apply(g, "duplicate_row", row=g.rows[0].id, tr=tr)
-    assert g.rows[1].name == "Nuit 1 copie"
+    assert g.rows[1].name == "Session 1 copy"
 
 
 # ---------------------------------------------------------------------------------------------------- 3 operations
