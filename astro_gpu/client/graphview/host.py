@@ -352,10 +352,29 @@ class SidesHost:
         return pn.draft_reset()
 
     def _hold_selection(self, ident) -> bool:
-        """Another block chosen while the block shown holds a draft: the question first; True (the choice held) when
-        the user stays."""
+        """Another block chosen while the block shown holds a draft: the choice is held, and the question asked once
+        the click is over (asked inside the mouse press, the canvas kept its button down after the box: the next move
+        started a drag that waited for ever); answered, the block chosen is chosen, unless the user stays."""
         s, pn = self.s, self.panel
         if s is None or pn is None or not getattr(s, "pending_change", None) or self._mirroring:
             return False
+        if not getattr(self, "_asking", False):
+            self._asking = True
+            QTimer.singleShot(0, self, lambda i=ident: self._ask_then_choose(i))
+        return True
+
+    def _ask_then_choose(self, ident):
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QApplication
+
         from ..blockdraft import settle
-        return not settle(pn, self)
+        if QApplication.mouseButtons() != Qt.NoButton:   # once the button is up: the canvas ends its gesture first
+            QTimer.singleShot(30, self, lambda i=ident: self._ask_then_choose(i))
+            return
+        try:
+            go = settle(self.panel, self)
+        finally:
+            self._asking = False
+        if go and (ident is None or ident == PROJECT or ident in self.bridge.graph.blocks
+                   or self.bridge.row(ident) is not None):
+            self.bridge.choose(ident)

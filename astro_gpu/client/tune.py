@@ -761,15 +761,17 @@ class TuneView(QWidget):
         from .blockdraft import settle
         return settle(getattr(self, "grad_editor", None), self) and settle(self.panel, self)
 
-    def select(self, index=None, step=None):
+    def select(self, index=None, step=None) -> bool:
+        """False when the block shown holds a draft and the user stays."""
         s = self.s
         if not self.leave_ok(index, step):
-            return
+            return False
         s.pending_change = None
         s.select(index, step)
         g = s.block_map
         node = g.node_of(s.path, s.sel_step) if s.sel_step not in ("sources", "final") else None
         s.scope = [q.pid for q in node.paths] if node is not None else None
+        return True
 
     def eventFilter(self, obj, e):                                    # noqa: N802
         try:
@@ -796,12 +798,14 @@ class TuneView(QWidget):
             pass
 
     def _strip_pick(self, k: str):
-        self.select(step=k)
-        self.pick.emit(k)
+        if self.select(step=k):
+            self.pick.emit(k)
+        else:
+            self.request_refresh()                       # Stay: the strip shows the block kept
 
     def _strip_workflow(self, i: int):
-        self.select(index=i)
-        self.workflow.emit(i)
+        if self.select(index=i):
+            self.workflow.emit(i)
 
     def _add_session(self):
         self.sources.add_session()

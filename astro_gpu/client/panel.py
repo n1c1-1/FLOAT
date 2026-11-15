@@ -642,10 +642,12 @@ class Panel(QWidget):
     def _rebuild(self):
         """Not while a setting is being typed: the editor would go away under the user's fingers."""
         fw = QApplication.focusWidget()
-        if fw is not None and self.isAncestorOf(fw) and isinstance(fw, QLineEdit | QAbstractSpinBox | QPlainTextEdit):
+        if fw is not None and self.isAncestorOf(fw) and (isinstance(fw, QPlainTextEdit) or (
+                isinstance(fw, QLineEdit | QAbstractSpinBox) and getattr(self, "_typing", False))):
             self._later.start(400)
             return
-        self.refresh(self.node)
+        self._typing = False                             # typed and applied (Enter): the field keeps its focus, the
+        self.refresh(self.node)                          # panel shows what it made (a draft's bar, for one)
 
     # ------------------------------------------------------------ build
     def refresh(self, node):
@@ -2352,6 +2354,7 @@ class Panel(QWidget):
         if r["kind"] == "new":
             return
         self.focus_key = r["key"]
+        self._typing = False                             # its value is given (Enter): the panel shows what it made
         applied = r.get("applied", r["value"])           # the workflow's value (the row shows the draft's)
         same = (not r.get("applied_changed", r.get("changed"))) if value is None else value == applied
         old = fmt(applied, r["type"], r.get("choices"))
