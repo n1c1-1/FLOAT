@@ -13,7 +13,7 @@ STRIP = 18
 def _simulate(p, view, name, args):
     q = clone(p)
     try:
-        out = ops.OPS[name](q, **args)
+        out = ops._run(q, ops.OPS[name], args)      # as apply runs it (a shared night's other stacks follow, ...)
         ops.finish(q, out.style)
         ops.fold_guard(p, q, view)
     except ops.Refusal as e:

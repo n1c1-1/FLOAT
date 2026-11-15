@@ -293,3 +293,34 @@ def test_keep_a_trial_aligned_on_its_original_takes_the_original_alignment():
     ok(doc, "keep_variant", row=v.id)
     assert len(doc.project.rows) == 1 and doc.project.rows[0].align is None
     engine_ok(doc)
+
+
+def test_a_session_moved_out_of_a_whole_variant_is_shown_where_its_place_says():
+    """A whole variant draws its original's sessions: one dragged out of it (or out of the original) to another stack
+    is drawn back in the variant by the same gesture, so the rows under it do not move up. The place says the cell the
+    session is shown at (the core fuzz: a drop one line above where it was shown)."""
+    from astro_gpu.graphcore import operations as ops
+    from astro_gpu.graphcore.placement import places, shown_cell
+    doc = Doc()
+    ok(doc, "add_block", kind="session")
+    for _i in range(2):
+        ok(doc, "add_block", kind="session", at={"type": "row"})
+    rows = [r.id for r in doc.project.rows]
+    for rid in rows:
+        for k in ("registration", "selection", "stacking"):
+            ok(doc, "add_block", kind=k, row=rid)
+    ok(doc, "add_block", kind="session", at={"type": "night", "row": rows[0]})
+    ok(doc, "try_variant", block=Index(doc.project).row[rows[0]].blocks[0],
+       change={"param": ["register", "min_pairs", 20]})
+    p = doc.project
+    seen = 0
+    for r in p.rows:
+        for s, _c in r.nights:
+            for pl in places(p, doc.view, block=s):
+                if pl.op[0] != "move_night" or not pl.lit:
+                    continue
+                g2, res = ops.apply_many(p, [pl.op], dict(doc.view))
+                assert res.ok and (shown_cell(g2, doc.view, res.focus) or (None, None)) == (pl.line, pl.col), \
+                    (s, pl.op[1])
+                seen += 1
+    assert seen > 10
