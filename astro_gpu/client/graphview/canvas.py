@@ -701,6 +701,8 @@ class GraphCanvas(QGraphicsView):
 
     def _rebuild(self):
         bridge, doc = self.bridge, self.doc
+        if self.gesture is not None and self.gesture["kind"] in ("press", "block", "wire"):
+            self.cancel_gesture()                        # it holds items the new drawing deletes: given up
         self.close_name()
         self.ghosts, self.targets, self.rubber, self.floater = [], [], None, None
         # the project model's worker reads the states of its last edit: the blocks drawn at once, what the run says of

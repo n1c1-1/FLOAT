@@ -47,7 +47,7 @@ class GraphDrops(QObject):
             return None
         for x in src:
             if self.reader.known(x) is None:
-                self.reader.note(x, os.path.isdir(x))
+                self.reader.note(x, os.path.isdir(self.reader._on_disk(x)))    # a relative entry: the project's
         return self.reader.request((owner, kind), list(src))
 
     def count(self, src) -> tuple[int, bool]:

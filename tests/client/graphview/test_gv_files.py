@@ -209,3 +209,28 @@ def test_gv_files_panel_inherited_cell_links_to_common(qapp, tmp_path):
     settle(bridge.drops.reader)
     pc.refresh()
     assert not pc.inherited and pc.entries() == [fwd(darks)] and "2 files" in pc.summary.text()
+
+
+def test_gv_files_panel_a_file_removed_inside_a_folder_leaves_what_the_engine_reads(qapp, tmp_path):
+    """« Remove » on a file of a folder entry: the entry becomes the folder's other files, one undo step (the file was
+    only struck through on screen, and still stacked)."""
+    from astro_gpu.client.graphview.files_panel import FILE, FilesPanel
+    a = make(tmp_path / "a", 3, "L")
+    bridge, sid = one_session_bridge()
+    bridge.drops.reader.note(fwd(a), True)
+    assert bridge.act("add_files", quiet=True, session=sid, kind="lights", paths=[fwd(a)], mode="replace").ok
+    p = FilesPanel(bridge, sid, "lights")
+    settle(bridge.drops.reader)
+    p.refresh()
+    p.toggle(fwd(a))
+    files_rows = [i for i, r in enumerate(p.rows.rows) if r[0] == FILE]
+    assert len(files_rows) == 3
+    gone = p.rows.rows[files_rows[1]][3]
+    n0 = len(bridge.doc.document._undo)
+    p.view.selectionModel().select(p.rows.index(files_rows[1]), QItemSelectionModel.ClearAndSelect)
+    p.remove()
+    held = bridge.doc.files_of(sid, "lights")[1]
+    assert fwd(a) not in held and gone not in held and len(held) == 2   # what the engine reads lost that file
+    assert len(bridge.doc.document._undo) == n0 + 1
+    bridge.undo()
+    assert bridge.doc.files_of(sid, "lights")[1] == [fwd(a)]

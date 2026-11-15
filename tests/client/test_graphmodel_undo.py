@@ -119,6 +119,36 @@ def test_a_frame_excluded_by_hand_is_no_step_but_goes_into_the_graph(model):
     assert model.graph_rebuilds == 0
 
 
+@pytest.fixture()
+def model2(qapp, tmp_path):
+    """M on a "Colour minimal" project of two sessions."""
+    root = tmp_path / "P2"
+    w = h1.old_way(root, next(t for t in h1.GALLERY if t["key"] == "colour_min"), h1.FAKE[:2])
+    project2.save(w.p)
+    w.close()
+    worker = ApiWorker()
+    m = M(project2.load(root), worker, readonly=True)
+    assert worker.wait(120) and m.ready
+    yield m
+    m.close(save=False)
+    worker.stop()
+
+
+def test_a_session_removed_then_brought_back_by_undo_keeps_its_frames_excluded_by_hand(model2):
+    m = model2
+    s1, s2 = [n["sid"] for n in m.stored.nights][:2]
+    m.set_excluded([(s2, "L0.fit"), (s1, "L1.fit")], True)
+    night = next(b for b in m.stored.blocks.values() if b.kind == "session" and b.sid == s2)
+    assert m.apply([("remove_night", {"night": night.id})]).ok
+    assert (s2, "L0.fit") not in m.frames_excluded
+    m.set_excluded([(s1, "L1.fit")], False)                                              # still no step: kept as is
+    assert m.undo(graph=True)
+    assert (s2, "L0.fit") in m.frames_excluded                                           # the session's exclusion back
+    assert (s1, "L1.fit") not in m.frames_excluded                                       # the gesture not undone
+    assert m.redo(graph=True) and (s2, "L0.fit") not in m.frames_excluded
+    assert m.undo(graph=True) and (s2, "L0.fit") in m.frames_excluded
+
+
 def test_undo_selects_on_block_ids(model):
     model.apply([("add_block", {"kind": "deconv", "row": row(model).id})])
     d = block(model, "deconv")
@@ -280,3 +310,17 @@ def test_a_gesture_elsewhere_keeps_the_combine_layers_block_and_undo_chooses_not
     finally:
         m.close(save=False)
         worker.stop()
+
+
+def test_a_projection_of_posts_wires_that_fails_keeps_the_wires_and_is_logged(model, monkeypatch, caplog):
+    import logging
+    from astro_gpu.graphcore import post
+
+    def broken(g, shared):
+        raise ValueError("projection failed")
+    monkeypatch.setattr(post, "with_post_wires", broken)
+    g = model.stored
+    with caplog.at_level(logging.WARNING):
+        assert model._with_post_wires(g) is g                                            # the wires kept
+    assert any("projection failed" in (r.exc_text or "") + r.getMessage() or
+               (r.exc_info and "projection failed" in str(r.exc_info[1])) for r in caplog.records)
