@@ -219,9 +219,13 @@ def stack_lights(graph, session=None, row=None) -> dict[str, str]:
     on the screen and may be stacked twice. Every way of adding lights reads it (a drop on a box, a new session, a new
     stack, Inspect's Add files…). A folder entry of an older project counts by the frames the engine reads in it."""
     out: dict[str, str] = {}
+    me = graph.blocks.get(session) if session is not None else None
+    mine = getattr(me, "sid", None)
     for s, b in graph.blocks.items():
         if s == session or b is None or b.kind != "session":
             continue
+        if mine is not None and b.sid == mine:     # the same session drawn by another stack (a whole variant of its
+            continue                               # stack): its frames are this one's, never a double
         for f in ((b.files or {}).get("lights") or []):
             for x in (engine_frames([f]) if not os.path.splitext(f)[1] and os.path.isdir(f) else [f]):
                 out.setdefault(os.path.normcase(normalise(x)), b.name or s)

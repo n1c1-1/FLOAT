@@ -96,9 +96,11 @@ def short_count(n: int, kind: str) -> str:
     return _(SHORT[kind]).format(n=n)
 
 
-def settings_text(kind: str, eff: dict, short=False) -> str:
+def settings_text(kind: str, eff: dict, short=False, block=None) -> str:
     """Text of a settings cell from the core's effective settings: the same words as the block's summary in the graph
-    (rules.summary_msg); `short` = the value only (a cell that follows Common in a narrow column)."""
+    (rules.summary_msg); `short` = the value only (a cell that follows Common in a narrow column). ``block``: the
+    Stacking's block, whose engine settings stored by the settings panel come first, as in the graph (a beta tester
+    read "drizzle auto" in the Table for stacks set to Classic)."""
     if kind == "calibration":
         changed = [k for k, v in eff.items() if v != defaults(kind).get(k)]
         if not changed:
@@ -114,9 +116,12 @@ def settings_text(kind: str, eff: dict, short=False) -> str:
     if kind == "selection":
         v = maybe(str(eff.get("Frame selection", "")))
         return v.split(" · ")[0] if short else v
-    thr = str(eff.get("Rejection threshold", ""))
-    if eff.get("Method") == "Drizzle":
-        m = _("drizzle {scale}").format(scale=maybe(str(eff.get("Drizzle scale", ""))))
+    sp = ((getattr(block, "params", None) or {}).get("stack") or {}) if kind == "stacking" else {}
+    thr = str(eff.get("Rejection threshold", "")) if not isinstance(sp.get("kappa"), (int, float)) else         f"{float(sp['kappa']):g} σ"
+    drizzle = sp["method"] == "drizzle" if sp.get("method") in ("drizzle", "classic") else eff.get("Method") == "Drizzle"
+    if drizzle:
+        scale = f"{float(sp['scale']):g}" if isinstance(sp.get("scale"), (int, float)) else str(eff.get("Drizzle scale", ""))
+        m = _("drizzle {scale}").format(scale=maybe(scale))
     else:
         m = _("classic")
     if short:
@@ -224,7 +229,8 @@ class TableModel:
             for b in r.blocks:
                 k = self.p.blocks[b].kind
                 if k in BLOCK_TITLE and k != "calibration":
-                    parts.append(f"{_(BLOCK_TITLE[k])} {settings_text(k, self.doc.effective(b))}")
+                    text = settings_text(k, self.doc.effective(b), block=self.p.blocks[b])
+                    parts.append(f"{_(BLOCK_TITLE[k])} {text}")
             txt = " · ".join(parts) or self.doc.summary(r.blocks[0])
             out.append({"id": r.id, "name": r.name, "text": txt, "block": r.blocks[0]})
         return out

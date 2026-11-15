@@ -776,12 +776,14 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
         boxes = list(target.boxes)
         i = files.index()
         files.note_paths(self.reader, list(g.paths))
-        exist = []
-        if mode == "add":
-            o0, k0 = boxes[0]
-            own = None if o0 == COMMON else mp.own_list(o0, k0)
-            exist = list(own if own is not None else mp.common_list(k0))
-        res = files.resolve(self.reader, list(g.paths), i, existing=exist)
+        o0, k0 = boxes[0]
+        own = None if o0 == COMMON else mp.own_list(o0, k0)
+        exist = list(own if own is not None else mp.common_list(k0))
+        res = files.resolve(self.reader, list(g.paths), i, existing=exist if mode == "add" else ())
+        if mode == "replace" and any(files.already(p, set(exist)) for p in res.items):
+            # frames the box already holds: the rule of doubles, never a replacement (a beta tester's 4 lights
+            # replaced by 2 of them, dropped again)
+            mode = "add"
         ignored = 0
         if mode == "add":
             ignored = files.without_doubles(res, exist)

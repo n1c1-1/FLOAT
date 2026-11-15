@@ -399,7 +399,7 @@ class Painting:
         if b is None:                                    # the stack has no such block (switched out): nothing to show
             return "—", False, kind, None
         own = self.doc.own_keys(b)
-        return settings_text(kind, self.doc.effective(b)), bool(own), kind, b
+        return settings_text(kind, self.doc.effective(b), block=self.doc.graph.blocks.get(b)), bool(own), kind, b
 
     def is_own(self, c):
         if c.id[1] == COMMON or str(c.id[1]).startswith(FOLDED):
@@ -436,7 +436,8 @@ class Painting:
             p.drawEllipse(QPointF(x + 2, y - 4), 3, 3)
             x += 10
         pre = "" if (own or common) else "↑ "
-        ts = settings_text(kind, self.doc.effective(b if b is not None else kind), short=True)
+        ts = settings_text(kind, self.doc.effective(b if b is not None else kind), short=True,
+                           block=self.doc.graph.blocks.get(b) if b is not None else None)
         self._first_fitting(p, x, y, [pre + t, pre + ts], F12, TXT if (own or common) else "#6f7787", R.right() - x - 6)
         zs = self.zones(c)
         if "reset" in zs and self.hover == c.id and self.drag is None:

@@ -631,6 +631,8 @@ def warnings(p, scope=None):
         sessions are a sharing, never a warning; the same lights in two sessions are said once, on the later one."""
         if (s2, f2) == (s, f):
             return False
+        if s2 != s and p.blocks[s].sid is not None and p.blocks[s2].sid == p.blocks[s].sid:
+            return False                         # one session drawn by two stacks (a variant of the whole stack)
         if f2 == f and s2 != s:
             return f == "lights" and order.get(s2, 0) < order.get(s, 0)
         return True

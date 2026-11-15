@@ -82,6 +82,7 @@ def _run(q, fn, args):
     o = fn(q, **args)
     _alloc(q)
     _sync_shared(q, before)
+    _whole_variants_follow(q)
     _thaw(q, chains)
     return o
 
@@ -172,6 +173,41 @@ def _sync_shared(q, before):
                 b.name = src.name
         if sid in entry and src.id in before and before[src.id][1] != src.name:
             entry[sid]["name"] = src.name
+
+
+def _whole_variants_follow(q):
+    """A variant of a whole stack (op_try_variant from a block before which no variant forks) draws its original's
+    sessions: a session added to the original, or taken out of it, is the variant's too, in the original's order (a
+    beta tester's variant kept 4 lights after its original's stack grew to 6, and its frames were said twice). Its own
+    Calibration of a session it already draws is kept; a new one's is the original's copied."""
+    for v in q.rows:
+        if v.trial is None or v.fork or not v.nights:
+            continue
+        o = next((r for r in q.rows if r.wid == v.trial and r is not v), None)
+        if o is None or o.fork or not o.nights:
+            continue
+        sid = {s: q.blocks[s].sid for s, _c in o.nights + v.nights}
+        want = [sid[s] for s, _c in o.nights]
+        if [sid[s] for s, _c in v.nights] == want or None in want:
+            continue
+        mine = {sid[s]: [s, c] for s, c in v.nights}
+        nights = []
+        for s, c in o.nights:
+            pair = mine.pop(sid[s], None)
+            if pair is None:
+                pair = _night(q, q.blocks[s].name, {k: list(x) for k, x in q.blocks[s].files.items()}, c is not None)
+                q.blocks[pair[0]].sid = sid[s]
+                if c is not None:
+                    n = q.blocks[pair[1]]
+                    n.sid, n.off, n.own = sid[s], q.blocks[c].off, copy.deepcopy(q.blocks[c].own)
+                    n.params = copy.deepcopy(q.blocks[c].params)
+            nights.append(pair)
+        for s, c in mine.values():                        # a session its original no longer draws
+            gone = {s, c} - {None}
+            q.wires = [w for w in q.wires if w.src[0] not in gone and w.dst[0] not in gone]
+            for b in gone:
+                q.blocks.pop(b, None)
+        v.nights = nights
 
 
 def _flow_sig(q, ix, f):
