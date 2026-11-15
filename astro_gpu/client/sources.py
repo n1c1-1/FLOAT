@@ -477,19 +477,16 @@ class SourcesView(QWidget):
     def _beside_rows(self, kind: str):
         """Under a kind: the colour images the last addition left beside raws (« Take all »), and those a session
         saved before holds beside its raws (« Remove JPG »): said, never removed without the user's click."""
-        from .graphview.files import summary
+        from .graphview.files import beside_note, summary
         lines = []
         left = self._left.get((self.sid, kind))
         if left:
             lines.append(("info", _("{name} left: beside raw frames").format(name=summary(left)), _("Take all"),
                           _("Adds them as frames too: the engine then reads each as one more frame"), self.take_all))
-        stored = self.beside_raws(kind)
+        stored, note, button = beside_note([self.s.p.abspath(e) for e in getattr(self._session(), kind)])  # the
+        # graph page's own words
         if stored:
-            typ = ", ".join(sorted({x.split(" ", 1)[1] for x in summary(stored).split(", ")}))
-            lines.append(("warning", plural(len(stored), "{n} {type} beside raw frames: not usual, read as one more frame",
-                                            "{n} {type} beside raw frames: not usual, each read as one more frame",
-                                            type=typ),
-                          _("Remove {type}").format(type=typ),
+            lines.append(("warning", note, button,
                           _("Takes them out of the session (the files are not touched); Ctrl+Z brings them back"),
                           self.remove_beside_raws))
         for icon, text, btn, tip, act in lines:

@@ -68,3 +68,34 @@ def test_gv_jpeg_table_picker_folder_and_new_session(qapp, tmp_path):
     assert len(b.own(new, "lights")) == 8 and len(engine(b.own(new, "lights"))) == 8 and "8 JPG left" in b.t.toast_text
     b.close()
     files.set_index(2)
+
+
+def test_gv_jpeg_saved_beside_raws_is_said_with_a_one_click_removal(qapp, tmp_path):
+    """A session saved since files only with JPEGs beside its raws: the table's cell and the files panel say it; one
+    click takes the JPEGs out (one undo step); nothing is removed silently."""
+    from astro_gpu.client.graphview.files_panel import FilesPanel
+    picked = pairs(tmp_path / "night")
+    b = Bench(1366)
+    sid = b.sessions()[0]
+    b.bridge.act("add_files", session=sid, kind="lights", paths=picked, mode="add")   # as saved before
+    b.read()
+    assert len(engine(b.own(sid, "lights"))) == 16                    # the engine would read 16 frames
+    b.g.model.invalidate()
+    w = b.g.model.box(sid, "lights").warn
+    assert w is not None and w.text == "8 JPG beside raw frames: not usual, each read as one more frame"
+    assert w.button == "Remove JPG" and len(b.own(sid, "lights")) == 16          # said, not removed
+    p = FilesPanel(b.bridge, sid, "lights")
+    assert not p.beside.isHidden() and p.b_beside.text() == "Remove JPG" and p.beside.text() == w.text
+    n0 = b.steps()
+    p.remove_beside()
+    lst = b.own(sid, "lights")
+    assert len(lst) == 8 and all(x.endswith(".ARW") for x in lst) and b.steps() == n0 + 1
+    assert p.beside.isHidden()
+    b.g.model.invalidate()
+    assert b.g.model.box(sid, "lights").warn is None
+    b.bridge.undo()
+    b.g.model.invalidate()
+    w = b.g.model.box(sid, "lights").warn
+    b.g.click_zone(b.g.cell(("box", sid, "lights")), "button")       # the cell's own button
+    assert len(b.own(sid, "lights")) == 8 and w.key[0] == "beside"
+    b.close()

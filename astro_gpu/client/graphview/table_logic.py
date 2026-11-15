@@ -429,6 +429,16 @@ class TableModel:
                                         "Remove them", [("add_files", dict(session=sid, kind=kind, mode="replace",
                                                                           paths=[f.path for f in fs if f.size]))],
                                         plural(len(bad), "{n} unreadable file removed", "{n} unreadable files removed")))
+        # a camera's JPEGs saved beside its raws (stored before the gesture left them): the engine reads each as one
+        # more frame; said, removed only by the user's click
+        from .files import beside_note
+        for kind in KINDS:
+            own = self.own_list(sid, kind)
+            aside, text, button = beside_note(own or ())
+            if aside:
+                out.append(Warn(("beside", sid, kind), sid, kind, text, button,
+                                [("remove_files", dict(session=sid, kind=kind, paths=list(aside)))],
+                                plural(len(aside), "{n} removed", "{n} removed")))
         out += self._header_warnings(sid)
         # what the model alone decides (the core's warnings: flats missing, a path in two boxes)
         flagged = set()

@@ -137,6 +137,14 @@ class FilesPanel(QWidget):
             v.addWidget(self.link, 0, Qt.AlignLeft)
         self.summary = label("", "small", wrap=True)
         v.addWidget(self.summary)
+        bar = QHBoxLayout()                               # colour images saved beside raws: said, one click out
+        self.beside = label("", "warn", wrap=True)
+        bar.addWidget(self.beside, 1)
+        self.b_beside = QPushButton()
+        self.b_beside.setToolTip(_("Takes them out of the session (the files are not touched); Ctrl+Z brings them back"))
+        self.b_beside.clicked.connect(self.remove_beside)
+        bar.addWidget(self.b_beside, 0, Qt.AlignTop)
+        v.addLayout(bar)
         self.view = QListView()
         self.view.setModel(self.rows)
         self.view.setUniformItemSizes(True)
@@ -208,8 +216,29 @@ class FilesPanel(QWidget):
                 parts.append(plural(exc, "{n} excluded", "{n} excluded"))
             text = " · ".join(parts)
         self.summary.setText(text)
+        aside, note, button = files.beside_note(self.entries())
+        self.beside.setText(note)
+        self.b_beside.setText(button)
+        self.beside.setVisible(bool(aside))
+        self.b_beside.setVisible(bool(aside))
         self.rows.rebuild()
         self._update_button()
+
+    def remove_beside(self):
+        """« Remove JPG »: the colour images beside raws taken out of the list, one undo step."""
+        aside = files.beside_note(self.entries())[0]
+        if not aside:
+            return
+        bridge = self.bridge
+        if self.owner == COMMON:
+            res = bridge.act("set_common_files", quiet=True, kind=self.kind,
+                             paths=[x for x in self.held() if x not in aside], mode="replace")
+        else:
+            res = bridge.act("remove_files", quiet=True, session=self.owner, kind=self.kind, paths=list(aside))
+        if res.ok:
+            bridge.toast.emit(plural(len(aside), "{n} removed", "{n} removed") + " · Ctrl+Z")
+            if shiboken6.isValid(self):
+                self.refresh()
 
     def _update_button(self):
         self.b_remove.setEnabled(bool(self.view.selectionModel().selectedRows()) and not self.inherited)

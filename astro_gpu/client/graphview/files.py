@@ -208,6 +208,18 @@ def beside_raws(paths, existing=()) -> list[str]:
     return [p for p in paths if frame_kind(p) == "colour" and _folder_of(p) in raw]
 
 
+def beside_note(stored) -> tuple[list, str, str]:
+    """A list saved with colour images beside its raws (before they were left at the gesture): (those images, the
+    notice, the button's label), or ([], "", "") when it holds none. Said, never removed without the user's click."""
+    aside = beside_raws(list(stored), list(stored))
+    if not aside:
+        return [], "", ""
+    typ = ", ".join(sorted({extension(f).upper() for f in aside}))
+    return (aside, plural(len(aside), "{n} {type} beside raw frames: not usual, read as one more frame",
+                          "{n} {type} beside raw frames: not usual, each read as one more frame", type=typ),
+            _("Remove {type}").format(type=typ))
+
+
 def resolve(reader, paths, i: int | None = None, deep: bool = True, existing=()) -> Resolution:
     """A drop resolved now: each folder's first level read (scandir, names only), the filter applied, the engine's
     rule compared (see the module's text). ``deep`` False: the sub-folders are not looked for (« Include » itself).
