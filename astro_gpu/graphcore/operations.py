@@ -979,6 +979,31 @@ def _eff_list(q, s, kind):
     return rules.files_of(q, s, kind)[1]
 
 
+def _exclude_in(q, night, names):
+    """Lights excluded by hand (file names) in the session of night block ``night``, which is given its session id
+    now when it has none yet (as op_add_night gives one)."""
+    blk = q.blocks[night]
+    if blk.sid is None:
+        blk.sid = _next_sid(q)
+        q.nights.append({"sid": blk.sid, "name": blk.name, "filter": "", "files": {}, "left_out": {}})
+    have = [list(x) for x in q.excluded]
+    q.excluded = have + [[blk.sid, x] for x in _dedup(names) if [blk.sid, x] not in have]
+
+
+def _carry_excluded(q, sid, own, moved, kept, night):
+    """Lights of session ``sid`` (``own`` before) moved to night block ``night`` (``moved``; ``kept``: the lights it
+    keeps): a frame excluded by hand stays excluded where it goes (by file name, as the engine matches them); a name of
+    no light (a frame of a folder) stays excluded in both."""
+    if sid is None:
+        return
+    mv, kp, ow = ({_file_name(x) for x in v} for v in (moved, kept, own))
+    names = [x[1] for x in q.excluded if x[0] == sid and (x[1] in mv or x[1] not in ow)]
+    if not names:
+        return
+    q.excluded = [x for x in q.excluded if not (x[0] == sid and x[1] in mv and x[1] not in kp)]
+    _exclude_in(q, night, names)
+
+
 def op_merge_nights(q, a, b):
     ra, na = _night_row(q, a)
     rb, nb = _night_row(q, b)
@@ -988,10 +1013,15 @@ def op_merge_nights(q, a, b):
         if k in q.blocks[b].files:
             base = _eff_list(q, a, k)
             q.blocks[a].files[k] = base + [x for x in q.blocks[b].files[k] if x not in base]
+    sid_b = q.blocks[b].sid
+    names = [x[1] for x in q.excluded if sid_b is not None and x[0] == sid_b]
     ra.nights.remove(nb)
     for x in nb:
         if x is not None:
             del q.blocks[x]
+    if names:                                            # its lights excluded by hand stay excluded in a
+        _exclude_in(q, a, names)
+    _forget_night(q, sid_b)                              # as a session removed
     return Out(M("“{_name}” holds both sessions", _name=q.blocks[a].name), a, old=b)
 
 
@@ -1009,6 +1039,7 @@ def op_split_night(q, night, lights):
         q.blocks[nn[1]].settings = dict(q.blocks[n[1]].settings)
         q.blocks[nn[1]].off = q.blocks[n[1]].off
     r.nights.insert(r.nights.index(n) + 1, nn)
+    _carry_excluded(q, q.blocks[night].sid, own, lights, q.blocks[night].files["lights"], nn[0])
     return Out(M("{n} lights in “{_name}”", n=len(lights), _name=q.blocks[nn[0]].name), nn[0], new=nn[0])
 
 
@@ -2047,6 +2078,8 @@ def op_split_by(q, session, groups):
                 _auto_align(q, nr)
                 q.rows.insert(rows_at, nr)
                 rows_at += 1
+            _carry_excluded(q, s.sid, own.get("lights", []), files.get("lights", []), s.files.get("lights", []),
+                            nn[0])
             made += 1
             focus = nn[0]
         else:
