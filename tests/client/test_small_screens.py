@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (  # noqa: E402
 from astro_gpu.client import app as appmod  # noqa: E402
 from astro_gpu.client import layout, post3, prefs  # noqa: E402
 from astro_gpu.client.graphview import palette as palmod  # noqa: E402
+from astro_gpu.client.graphview.canvas import MIN_AUTO  # noqa: E402
 from astro_gpu.client.graphview.items import MIN_SCALE, BlockItem  # noqa: E402
 from astro_gpu.client.graphview.style import PALETTE_FOLDED_W, PALETTE_W  # noqa: E402
 from astro_gpu.client.layout import FOLD_MS as PALETTE_FOLD_MS  # noqa: E402
@@ -919,6 +920,16 @@ def test_the_wheel_zooms_at_the_pointer_and_the_zoom_is_the_users(env):
     assert gv.b_zoom.text() == f"{round(gv.zoom * 100)} %"
 
 
+def _shows_all_or_the_readable_floor(gv):
+    """Show all: the whole graph in view, unless that is below the readable size of the default view (75 %, on
+    purpose since the overlap fixes): then 75 % from the left end of the graph, as the old page's default view."""
+    hb, vb = gv.horizontalScrollBar(), gv.verticalScrollBar()
+    if hb.maximum() == 0 and vb.maximum() == 0:
+        assert gv.zoom >= MIN_AUTO - 1e-6
+    else:
+        assert abs(gv.zoom - MIN_AUTO) < 1e-6 and hb.value() == hb.minimum() and vb.value() == vb.minimum()
+
+
 def test_the_keys_and_the_presets_match_the_image_viewer(env):
     w = _open(env, (1366, 728))
     gv = w.graph.graph
@@ -929,7 +940,8 @@ def test_the_keys_and_the_presets_match_the_image_viewer(env):
     _key(w, Qt.Key_Minus)
     assert abs(gv.zoom - 1.0) < 1e-6
     _key(w, Qt.Key_F)                                  # Fit is today's Show all
-    assert gv.b_all.isChecked() and not _zoomed(gv) and gv.horizontalScrollBar().maximum() == 0
+    assert gv.b_all.isChecked() and not _zoomed(gv)
+    _shows_all_or_the_readable_floor(gv)
     gv.zoom_to(1.0)
     assert not gv.b_all.isChecked()
     _key(w, Qt.Key_0, Qt.ControlModifier)
@@ -1020,7 +1032,10 @@ def test_the_minimap_shows_when_part_of_the_graph_is_off_screen_and_moves_the_vi
     assert gv.horizontalScrollBar().value() < h1
     gv.show_all()
     _settle(w)
-    assert not m.isVisible()                                         # the whole graph in view: no map
+    _shows_all_or_the_readable_floor(gv)
+    hb, vb = gv.horizontalScrollBar(), gv.verticalScrollBar()
+    # the whole graph in view: no map; wider than the window at the readable floor: the map stays, the view at the start
+    assert m.isVisible() == (hb.maximum() > 0 or vb.maximum() > 0)
 
 
 def test_zoom_and_position_survive_a_rebuild_and_are_kept_with_the_project(env):
