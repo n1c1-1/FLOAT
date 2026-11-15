@@ -96,38 +96,43 @@ def summary(paths) -> str:
 # ---------------------------------------------------------------------------------------------------- drops (shared)
 def is_folder(reader, p: str) -> bool:
     d = reader.known(p)
-    return os.path.isdir(p) if d is None else d
+    return os.path.isdir(reader.on_disk(p)) if d is None else d
 
 
-def already(p: str, existing) -> bool:
+def already(p: str, existing, reader=None) -> bool:
     """No silent doubles: the same entry, or a file the engine already reads through a folder entry (its own level;
-    a JPEG beside raws is not read there, so it is not a double)."""
+    a JPEG beside raws is not read there, so it is not a double). An entry written relative to the project is
+    compared where it is (``reader.on_disk``)."""
     if p in existing:
         return True
-    if os.path.isdir(p):
+    where = normalise if reader is None else (lambda x: normalise(reader.on_disk(x)))
+    q = where(p)
+    if os.path.isdir(q):
         return False
-    parent = os.path.dirname(p).replace("\\", "/")
-    return any(parent == e.rstrip("/") and p in engine_frames([e]) for e in existing)
+    if reader is not None and any(where(e) == q for e in existing):
+        return True
+    parent = os.path.dirname(q).replace("\\", "/")
+    return any(parent == where(e).rstrip("/") and q in engine_frames([where(e)]) for e in existing)
 
 
-def without_doubles(res, existing) -> int:
+def without_doubles(res, existing, reader=None) -> int:
     """The entries, sub-folders and left-out files of a drop already in the list taken out. -> how many entries were
     doubles."""
     existing = set(existing)
-    new = [p for p in res.items if not already(p, existing)]
+    new = [p for p in res.items if not already(p, existing, reader)]
     ignored, res.items = len(res.items) - len(new), new
-    res.subs = [x for x in res.subs if not _sub_taken(x, existing)]
+    res.subs = [x for x in res.subs if not _sub_taken(x, existing, reader)]
     res.left = [x for x in res.left if x not in existing]       # left out by the filter, but taken before
     return ignored
 
 
-def _sub_taken(folder: str, existing) -> bool:
+def _sub_taken(folder: str, existing, reader=None) -> bool:
     """A sub-folder already taken: its entry, or (files only) every frame at its level already in the list."""
     if folder in existing:
         return True
     fs, _ds, bad = _level(folder)
     frames = [f for f in fs if frame_kind(f)]
-    return not bad and bool(frames) and all(already(f, existing) for f in frames)
+    return not bad and bool(frames) and all(already(f, existing, reader) for f in frames)
 
 
 def normalise(p: str) -> str:

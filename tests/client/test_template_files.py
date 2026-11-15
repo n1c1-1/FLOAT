@@ -301,28 +301,32 @@ def _in_dialog(fn):
 
 def test_the_tab_field_says_a_new_name_makes_a_new_tab(qapp, settings):
     from PySide6.QtWidgets import QComboBox
-    got =_in_dialog(lambda d: (d.findChild(QComboBox).lineEdit().placeholderText(), d.findChild(QComboBox).toolTip()))
+    got = _in_dialog(lambda d: (d.findChild(QComboBox).lineEdit().placeholderText(), d.findChild(QComboBox).toolTip()))
     assert got == ("An existing tab, or a new name", "An existing tab, or a new name")
 
 
-def test_save_says_it_replaces_a_template_of_the_same_file(qapp, settings):
+def test_save_says_it_replaces_its_own_name_and_refuses_another_name_of_the_same_file(qapp, settings):
     """13.33: a name that writes the same file as a template of the tab ("Night: SHO" and "Night SHO") replaced it
-    without a word; Save now says it on hover. Another name: nothing said."""
+    without a word. The same name: Save says on hover it replaces it; another name of that file: Save greyed, the
+    reason on it; a name of its own file, or another tab: nothing said."""
     from PySide6.QtWidgets import QComboBox, QDialogButtonBox, QLineEdit
     templatefiles.save_user({"graph": {"blocks": {}, "nights": [], "common": {}}}, "Color", "Night SHO")
 
     def read(d):
         save = d.findChild(QDialogButtonBox).buttons()[0]
-        out = [save.toolTip()]
-        d.findChild(QLineEdit).setText("Another one")
-        out.append(save.toolTip())
-        d.findChild(QLineEdit).setText("night sho")                 # the same file on this system
-        d.findChild(QComboBox).setCurrentText("Mono")
-        out.append(save.toolTip())
+        name = d.findChild(QLineEdit)
+        out = [(save.isEnabled(), save.toolTip())]                    # "Night: SHO", the name the dialog opens with
+        for text, tab in (("Night SHO", None), ("night sho", None), ("Another one", None), ("night sho", "Mono")):
+            if tab:
+                d.findChild(QComboBox).setCurrentText(tab)
+            name.setText(text)
+            out.append((save.isEnabled(), save.toolTip()))
         return out
-    first, other, mono = _in_dialog(read)
-    assert "Night SHO" in first and "replace" in first.lower()
-    assert other == "" and mono == ""
+    other, same, case, new, mono = _in_dialog(read)
+    assert other == (False, "The template “Night SHO” of this tab would be replaced: choose another name.")
+    assert case == other
+    assert same == (True, "Replaces the template “Night SHO” of this tab")
+    assert new == (True, "") and mono == (True, "")
 
 
 def test_a_template_that_cannot_be_written_is_said_in_the_banner(win, monkeypatch):
@@ -336,3 +340,30 @@ def test_a_template_that_cannot_be_written_is_said_in_the_banner(win, monkeypatc
     monkeypatch.setattr(win.banner, "say", lambda text, *a, **k: said.append(text))
     win.save_template()
     assert said and "the disk is full" in said[0]
+
+
+def test_a_saved_template_never_replaces_one_of_another_name(win, monkeypatch):
+    """Two names that make the same file (a character a file name cannot hold taken out, or only the case differing on
+    a disk that ignores it) are two templates: the second one is refused, said in the banner, the first kept. A
+    template saved again under its own name replaces itself, as before; a write that fails is said in the banner."""
+    from astro_gpu.client import gallery
+    d = {"graph": {"blocks": {}, "nights": [], "common": {}}}
+    f = templatefiles.save_user(d, "Narrow", "NGC 7000 HOO", text="first")
+    for other in ("NGC 7000: HOO", "ngc 7000 hoo"):
+        with pytest.raises(templatefiles.NameTaken):
+            templatefiles.save_user(d, "Narrow", other, text="second")
+        assert json.loads(f.read_text(encoding="utf-8"))["template"]["text"] == "first"
+    templatefiles.save_user(d, "Narrow", "NGC 7000 HOO", text="again")                # its own name: replaced
+    assert json.loads(f.read_text(encoding="utf-8"))["template"]["text"] == "again"
+    monkeypatch.setattr(gallery, "template_dialog", lambda parent, name: ("NGC 7000: HOO", "Narrow"))
+    win.save_template()
+    assert win.banner.isVisible() and "NGC 7000 HOO" in win.banner.text.text()
+    assert json.loads(f.read_text(encoding="utf-8"))["template"]["text"] == "again"
+    win.banner.hide()
+
+    def full(*a, **k):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(gallery, "template_dialog", lambda parent, name: ("Other", "Narrow"))
+    monkeypatch.setattr(Path, "write_text", full)
+    win.save_template()
+    assert win.banner.isVisible() and win.banner.text.text().startswith("The template cannot be saved")

@@ -241,8 +241,11 @@ class Gestures:
         elif z == "stop":
             self.reader.stop((c.id[1], c.id[2]))
             self.reader.stop((COMMON, c.id[2]))
-            self.undo()                                   # a cancelled listing takes its drop back: one undo step
-            self.status.emit(_("Reading cancelled: the drop is taken back"), 4000)
+            if self.drop_is_last((c.id[1], c.id[2])):
+                self.undo()                               # a cancelled listing takes its drop back: one undo step
+                self.status.emit(_("Reading cancelled: the drop is taken back"), 4000)
+            else:                                         # a reading no drop started (the project's own lists)
+                self.status.emit(_("Reading cancelled"), 4000)
         elif z == "chevron":
             self.model.folded ^= {c.id[1]}
             self.after_model()
@@ -253,6 +256,14 @@ class Gestures:
             self.leave(w)
             if z == "button" and w.steps:
                 self.act(w.steps, w.toast, undo_link())
+
+    def drop_is_last(self, box=None):
+        """Whether the last drop is still the document's last change (and, given a box (owner, kind), one of the
+        boxes it filled): what a stop or « Rather add » takes back, never another gesture."""
+        d = getattr(self, "_dropped", None)
+        if d is None or d[0] != self.doc.revision:
+            return False
+        return box is None or box in d[1] or (COMMON, box[1]) in d[1]
 
     def leave(self, w):
         self.model.left.add(w.key)
@@ -684,7 +695,7 @@ class Gestures:
             self.status.emit(_("Nothing to copy here"), 2000)
             return
         m = QMimeData()
-        m.setUrls([QUrl.fromLocalFile(p) for p in lst])
+        m.setUrls([QUrl.fromLocalFile(self.reader.on_disk(p)) for p in lst])   # a relative entry: the project's
         QGuiApplication.clipboard().setMimeData(m)
         self.status.emit(plural(len(lst), "{n} item copied", "{n} items copied"), 2000)
 

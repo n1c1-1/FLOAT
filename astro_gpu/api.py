@@ -719,13 +719,17 @@ def _mtime(*paths: Path) -> float:
     return best
 
 
-def _lock_alive(root: Path) -> bool:
-    try:
-        holder = json.loads((root / "logs" / "run.lock").read_text(encoding="utf-8"))
-        import psutil
-        return psutil.pid_exists(int(holder["pid"]))
-    except Exception:  # noqa: BLE001 - no lock, an unreadable one, no psutil: no live run
-        return False
+def run_alive(root: str | Path) -> bool:
+    """Whether a run of the project in folder ``root`` is going: its run.lock names a process that still runs and
+    started before the lock (a number reused after a crash is not it). The one check of a run in progress, for the
+    client too (review 2.6); ``running`` gives the run itself."""
+    return _r2().running(root) is not None
+
+
+def process_alive(pid: int | None, started: float = 0.0) -> bool:
+    """Whether the process ``pid`` runs (a zombie does not); ``started``: when it was known to run, so that a number
+    reused by a later process is not taken for it (core/runner2.process_alive)."""
+    return _r2().process_alive(pid, started)
 
 
 def _summary(d: Path, deep: bool) -> ProjectSummary:
@@ -738,7 +742,7 @@ def _summary(d: Path, deep: bool) -> ProjectSummary:
         return s
     s.name, s.description, s.target = p.name, p.description, p.target.name
     s.nights, s.workflows = sum(1 for x in p.sessions if x.lights), len(p.workflows)
-    s.running = _lock_alive(d)
+    s.running = run_alive(d)
     thumb = d / "cache" / "thumb.jpg"
     s.thumb = str(thumb) if thumb.is_file() else ""
     store = Store(d)
@@ -788,25 +792,6 @@ def open_project(root: str | Path) -> Project2:
 def save(p: Project2) -> Path:
     """Write the definition atomically; returns the file."""
     return p2.save(p)
-
-
-def save_as(p: Project2, root: str | Path) -> Project2:
-    """Copy the definition to a new folder (definition only: no results) and return that project; ``p`` stays where
-    it was. Relative paths become absolute, so that the copy still finds the frames and the reference image."""
-    root = Path(root)
-    if (root / p2.FILE).exists():
-        raise FileExistsError(f"a project already exists in {root}")
-    q = Project2.from_dict(p.to_dict(), None)
-    for s in q.sessions:
-        for kind in KINDS:
-            setattr(s, kind, [p.abspath(f) for f in getattr(s, kind)])
-    if q.reference_image:
-        q.reference_image = p.reference_path()
-    if q.scratch_dir:
-        q.scratch_dir = p.abspath(q.scratch_dir)
-    q.created = datetime.now().isoformat(timespec="seconds")
-    p2.save(q, root)
-    return q
 
 
 def import_v1(old_root: str | Path, new_root: str | Path, path_map: dict[str, Any] | None = None,
@@ -1005,15 +990,6 @@ def add_frames(p: Project2, scan: ScanResult, session: int | None = None) -> lis
                     _put(getattr(s, kind), f)
     p.validate()
     return made
-
-
-def remove_session(p: Project2, session: int) -> Session:
-    """Remove a session and the frames of it excluded by hand; returns it."""
-    s = p.session(session)
-    p.sessions.remove(s)
-    p.excluded = [pair for pair in p.excluded if pair[0] != session]
-    p.validate()
-    return s
 
 
 def set_excluded(p: Project2, pairs: Iterable[tuple[int, str]], excluded: bool = True) -> None:

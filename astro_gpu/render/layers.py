@@ -150,8 +150,16 @@ class LayerService:
             self.evict(next(iter(self._eng)))
 
     def evict(self, folder=None) -> None:
-        """Drop one engine (the least recently used one by default), or all with folder='all'."""
-        keys = list(self._eng) if folder == "all" else [self._key(folder) if folder else next(iter(self._eng), None)]
+        """Drop one engine (the least recently used one by default), or all with folder='all'. A folder's engine goes
+        with the combined stars' engines that read it (kept by the pair "stars|starless": review 10.2, the old
+        combined stars showed after a new computation)."""
+        if folder == "all":
+            keys = list(self._eng)
+        elif folder:
+            k = self._key(folder)
+            keys = [x for x in self._eng if x == k or k in x.split("|")]
+        else:
+            keys = [next(iter(self._eng), None)]
         for k in keys:
             if k in self._eng:
                 del self._eng[k]

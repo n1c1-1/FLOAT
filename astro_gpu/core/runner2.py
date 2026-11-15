@@ -578,12 +578,25 @@ def _lock_holder(lock: Path) -> dict | None:
 def _alive(holder: dict) -> bool:
     """Whether the process named by a lock still runs (a pid reused by a process started after the lock is not)."""
     try:
+        return process_alive(int(holder["pid"]), float(holder.get("started") or 0))
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def process_alive(pid: int | None, started: float = 0.0) -> bool:
+    """Whether a process runs: the one check of the engine and the client (review 2.6). ``started``: when the
+    process was known to run (a lock's time): a process of that number started after it is another one, the number
+    reused after a crash. A zombie is not running."""
+    if not pid:
+        return False
+    try:
         import psutil
-        pid = int(holder["pid"])
-        if not psutil.pid_exists(pid):
+        if not psutil.pid_exists(int(pid)):
             return False
-        started = float(holder.get("started") or 0)
-        return not started or psutil.Process(pid).create_time() <= started + 1.0
+        proc = psutil.Process(int(pid))
+        if proc.status() == psutil.STATUS_ZOMBIE:
+            return False
+        return not started or proc.create_time() <= float(started) + 1.0
     except Exception:  # noqa: BLE001 - psutil.NoSuchProcess, AccessDenied...: a process we cannot see is gone
         return False
 
@@ -848,9 +861,12 @@ class _Worker:
                                      "skipped": list(r.get("skipped") or []), "interrupted": [], "not_started": []}
         bad: set[str] = set(r.get("bad") or [])
         retried: set[str] = set(r.get("retried") or [])            # jobs already tried again after a GPU fault
-        status = "done"
+        # "done" only once every job went through (review 2.2: an unexpected error, a journal line on a full disk, was
+        # announced "done" with the block being computed in no list)
+        status = "failed"
+        i = 0
         try:
-            for i, job in enumerate(self.jobs):
+            for i, job in enumerate(self.jobs):  # noqa: B007 - (i read after an unexpected error)
                 if self.stop_requested():
                     out["not_started"] = [x.key for x in self.jobs[i:]]
                     status = "interrupted"
@@ -878,6 +894,15 @@ class _Worker:
                     out["not_started"] = [x.key for x in self.jobs[i + 1:]]
                     status = "interrupted"
                     break
+            else:
+                status = "done"
+        except BaseException:
+            listed = {k for v in out.values() for k in v}
+            if self.jobs and self.jobs[i].key not in listed:          # the job it stopped in, and those after it
+                out["failed"].append(self.jobs[i].key)
+            out["not_started"] = [x.key for x in self.jobs[i + 1:] if x.key not in listed]
+            status = "failed"
+            raise
         finally:
             self.journal.job = None
             if status != "handover":
@@ -1100,7 +1125,7 @@ class _Worker:
         write_json(tmp / MASTERS, {"params": result_params(p), "metrics": om.get("metrics") or {},
                                    "from": str(old)})
         ck.parent.mkdir(parents=True, exist_ok=True)
-        ck.write_text(json.dumps(tag))
+        write_json(ck, tag, indent=None)
         self.journal.emit("log", stage=job.stage, level="info",
                           msg="the calibrated frames were lost: they are rebuilt with the masters of the result")
 

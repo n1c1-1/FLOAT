@@ -33,3 +33,22 @@ def test_a_write_error_at_closing_keeps_the_project_open_and_says_it(win, tmp_pa
     monkeypatch.setattr(api, "save", saving)
     assert win.close_project() is True and win.project is None          # written now, then closed
     QApplication.processEvents()
+
+
+def test_a_write_error_at_saving_is_said_in_the_banner(win, tmp_path, monkeypatch):
+    """Ctrl+S on a full disk: said in the banner (it raised out of Save, so the crash box opened); the edits wait."""
+    root = tmp_path / "ws" / "Full"
+    assert win.create_project(root.as_posix(), "Full", "IC 1805")
+    _ready(win)
+    win.s.set_target_name("M 42")
+
+    def full(_p):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(api, "save", full)
+    appmod.apply_language("fr")
+    try:
+        win.save()
+        assert win.banner.isVisible() and "plein" in win.banner.text.text()
+        assert win.s.dirty
+    finally:
+        appmod.apply_language("en")

@@ -77,9 +77,8 @@ class TableHost(QWidget):
                 self.bridge.go_common = self.go_common
                 self.bridge.choose_files(ident[1], ident[2])
             return
-        block = self.table.block_of_cell(ident)
-        if block:
-            self.bridge.choose(block)
+        # a cell with no block behind it (Common's settings, a folded row): no block shown, never the one before
+        self.bridge.choose(self.table.block_of_cell(ident) or None)
 
     def go_common(self, kind):
         """« See the Common cell »: select the Common cell of this kind and show its files."""

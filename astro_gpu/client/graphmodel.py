@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -101,14 +102,21 @@ def _step_words(g, steps) -> str:
                 texts.choice_label(str(m), "en")
             return _("{setting}: {value}").format(setting=_(LABEL.get(blk.kind, blk.kind)), value=_(word))
         if op in ("set_flow_param", "set_param", "set_trunk_param") and isinstance(kw.get("name"), str):
-            stage, name, v = str(kw.get("stage") or ""), kw["name"], kw.get("value")
-            label = texts.param_label(stage.partition("@")[0].partition("~")[0], name, language()) or name
-            value = _("suggested value") if v is None else (texts.choice_label(v, language()) if isinstance(v, str)
-                                                             else fmt(v))
-            return _("{setting}: {value}").format(setting=label, value=value)
+            return _param_words(str(kw.get("stage") or ""), kw["name"], kw.get("value"))
     except (KeyError, ValueError, TypeError, IndexError, AttributeError):
         return ""
     return ""
+
+
+def _param_words(stage, name, v) -> str:
+    """A setting and its value in the interface's words ("Hot pixel threshold: 0.7"), never the engine's names."""
+    from .. import texts
+    from .i18n import language
+    from .settings import fmt
+    label = texts.param_label(stage.partition("@")[0].partition("~")[0], name, language()) or name
+    value = _("suggested value") if v is None else (texts.choice_label(v, language()) if isinstance(v, str)
+                                                     else fmt(v))
+    return _("{setting}: {value}").format(setting=label, value=value)
 
 
 class GraphRefused(ValueError):
@@ -398,6 +406,49 @@ class GraphEditing:
             raise ValueError(_("the graph and what the engine runs differ"))
         return d
 
+    def copy_for(self, root):
+        """The open project as it is written into another folder (Save as, the first naming): a copy of the definition
+        compiled from the same graph (its blocks, wires and view as they are now, edits not saved included), whose
+        entries written relative to the project are made absolute, unless they still find the same file from
+        ``root``; nothing is written. The definition alone made absolute compiled to other sessions than the graph
+        it carried, so the copy was written without its graph."""
+        from ..core import project2
+        self._absorb()
+        old, root = self.p, Path(root)
+
+        def moved(x):
+            if not isinstance(x, str) or Path(x).is_absolute():
+                return x
+            a = old.abspath(x)
+            there = root / x
+            try:
+                same = there.exists() and os.path.samefile(there, a)
+            except OSError:
+                same = False
+            return x if same else a
+
+        def all_moved(files):
+            return {k: (v if k == "fork" or not isinstance(v, list) else [moved(x) for x in v])
+                    for k, v in (files or {}).items()}
+
+        g = gm.clone(self._g)
+        for b in g.blocks.values():
+            if b.files is not None:
+                b.files = all_moved(b.files)
+            if b.own:
+                b.own = all_moved(b.own)
+            if b.kind == "image" and isinstance(b.source, dict) and b.source.get("path"):
+                b.source = {**b.source, "path": moved(b.source["path"])}
+        g.common["files"] = all_moved(g.common["files"])
+        for n in g.nights:
+            n["files"] = all_moved(n.get("files"))
+            if n.get("left_out"):
+                n["left_out"] = all_moved(n["left_out"])
+        p = project2.Project2.from_dict(old.to_dict())
+        compile_into(g, p)
+        p.graph = gm.to_dict(g)
+        return p
+
     def template_card(self) -> dict:
         """What the gallery's card of this project's template draws: the blocks of its first workflow (the recipe that
         adds it to a project holding frames), nothing when it has none or is not a stack of frames."""
@@ -474,9 +525,10 @@ class GraphEditing:
                           default=str)
 
     def _commit(self, g):
-        """The graph ``g`` becomes the truth: compiled into the same definition, the views read again."""
-        self._g = g
-        self.compiled = compile_into(g, self.p)
+        """The graph ``g`` becomes the truth: compiled into the same definition, the views read again. Compiled first:
+        a graph that does not compile is never left in place of the one the definition was compiled from."""
+        c = compile_into(g, self.p)
+        self._g, self.compiled = g, c
         self._rebuild_views()
         self._sig = self._def_sig()
         self.revision += 1
@@ -763,13 +815,15 @@ class GraphEditing:
         if not acts:
             return
         active = self.p.post["active"]
-        for what, wid, part in acts:
-            if what == "add":
-                self.add_post_layer(wid, part, None)
-                continue
-            for v in list(self.p.post["versions"]):
-                self.set_post_version(v["id"])
-                self.remove_post_part(wid, part, None)
+        try:
+            for what, wid, part in acts:
+                if what == "add":
+                    self.add_post_layer(wid, part, None)
+                    continue
+                for v in list(self.p.post["versions"]):
+                    self.set_post_version(v["id"])
+                    self.remove_post_part(wid, part, None)
+        finally:                                     # the version shown is given back, a removal that raised too
             self.set_post_version(active)
 
     def _layers_follow(self, before, after):
@@ -797,10 +851,12 @@ class GraphEditing:
                 continue
             if not na:
                 active = self.p.post["active"]
-                for v in list(self.p.post["versions"]):
-                    self.set_post_version(v["id"])
-                    self.remove_post_part(wid, "combined", None)
-                self.set_post_version(active)
+                try:
+                    for v in list(self.p.post["versions"]):
+                        self.set_post_version(v["id"])
+                        self.remove_post_part(wid, "combined", None)
+                finally:
+                    self.set_post_version(active)
                 continue
             mine = [x for x in self.post_version().get("layers") or [] if x.get("kind") == "workflow"
                     and x.get("pid") == wid and x.get("part") == "combined"
@@ -1274,7 +1330,7 @@ class GraphEditing:
                     v["id"] == here["active"] for v in back.get("versions", [])):
                 back["active"] = here["active"]
             self.p.post = back
-            now.after_post = back
+            now.after_post = copy.deepcopy(back)          # its own: Post's edits made since are not the step's
             post_back = back != here
         g = gm.from_dict(json.loads(gjson))
         g.excluded = [[int(a), str(b)] for a, b in self.p.excluded]          # the hand exclusions are not undone
@@ -1743,7 +1799,17 @@ class GraphEditing:
                 for c in ch["changes"][1:]:
                     self.apply_change([q], c)
             return self.view(q.pid) or q
-        res = self._do(self._variant_steps(p, ch, title))
+        steps = self._variant_steps(p, ch, title)
+        words = ""
+        if ch["kind"] in ("param", "params"):             # Undo names it in the user's words, as a setting's step
+            try:
+                first = _mm().ProjectModel._api_changes(ch)[0]
+                words = _param_words(first["stage"], first["name"], first["value"])
+            except (KeyError, ValueError, TypeError, IndexError, AttributeError):
+                words = ""
+        else:
+            words = _step_words(self._g, [("set_method", steps[0][1]["change"] | {"block": steps[0][1]["block"]})])                 if "method" in steps[0][1].get("change", {}) else ""
+        res = self._do(steps, name=f"{_('Try variant')} · {words}" if words else None)
         return self._view_of_wid(self._made_wid(res))
 
     #: the stages a variant takes from the stack's start: its frames, their calibration, registration and stack

@@ -324,3 +324,64 @@ def test_a_projection_of_posts_wires_that_fails_keeps_the_wires_and_is_logged(mo
         assert model._with_post_wires(g) is g                                            # the wires kept
     assert any("projection failed" in (r.exc_text or "") + r.getMessage() or
                (r.exc_info and "projection failed" in str(r.exc_info[1])) for r in caplog.records)
+
+
+def test_an_edit_of_post_after_undo_is_not_taken_back_by_redo(model):
+    """After an Undo the step's snapshot kept Post itself: a Post edit made in place then changed the snapshot too, and
+    the next Redo took that edit back."""
+    with model.from_post():
+        model.new_post_version()
+    assert model.undo()
+    assert len(model.p.post["versions"]) == 1
+    model.p.post["versions"][0]["note"] = "edited after undo"            # a Post edit made in place
+    assert model.redo()
+    assert len(model.p.post["versions"]) == 2
+    assert model.p.post["versions"][0].get("note") == "edited after undo"
+
+
+def test_a_graph_that_does_not_compile_is_not_left_in_place(model, monkeypatch):
+    """The graph was replaced before it was compiled: a compilation that raised left the new graph with the old
+    definition. It is compiled first, and replaces the graph only then."""
+    from astro_gpu.client import graphmodel
+    before, compiled = model_json(model._g), model.compiled
+
+    def boom(*_a, **_k):
+        raise RuntimeError("does not compile")
+    monkeypatch.setattr(graphmodel, "compile_into", boom)
+    with pytest.raises(RuntimeError):
+        model.apply([("add_block", {"kind": "deconv", "row": row(model).id})])
+    monkeypatch.undo()
+    assert model_json(model._g) == before and model.compiled is compiled
+
+
+def test_a_removal_from_post_that_raises_gives_the_active_version_back(model, monkeypatch):
+    """A wire to Post removed in the graph takes its image out of every version, each made active in turn: a removal
+    that raised left Post on another version than the one shown."""
+    wid = next(q.pid for q in model.paths if q.name == "Color minimal")
+    model.add_post_layer(wid, None, None)
+    model.new_post_version()
+    first = model.p.post["versions"][0]["id"]
+    model.set_post_version(first)
+    post = next(b for b in model.stored.blocks if model.stored.blocks[b].kind == "post")
+    w = next(x for x in model.stored.wires if x.dst[0] == post)
+    calls = []
+
+    def boom(*_a, **_k):
+        calls.append(model.p.post["active"])
+        if len(calls) == 2:
+            raise RuntimeError("cannot remove")
+    monkeypatch.setattr(model, "remove_post_part", boom)
+    with pytest.raises(RuntimeError):
+        model.apply([("unwire", {"wire": w.id})])
+    assert len(calls) == 2 and model.p.post["active"] == first
+
+
+def test_the_undo_text_of_a_variant_tried_names_its_setting_in_the_users_words(model):
+    """Undo after Try variant read "variant “…”: Keep or Discard · hot_sigma: 0.7": a header that is gone and the
+    engine's own name of the setting."""
+    p = next(q for q in model.paths if q.name == "Color minimal")
+    ch = {"kind": "param", "stage": "calibrate", "name": "hot_sigma", "value": 0.7}
+    model.add_variant(p, ch, f"{p.name} · hot_sigma: 0.7")
+    text = model._undo_what[-1]
+    assert "Keep or Discard" not in text and "hot_sigma" not in text
+    assert text == "Try variant · Hot pixel threshold: 0.7"

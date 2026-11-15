@@ -216,9 +216,7 @@ def _whole_variants_follow(q):
                 pair = _night(q, q.blocks[s].name, {k: list(x) for k, x in q.blocks[s].files.items()}, c is not None)
                 q.blocks[pair[0]].sid = sid[s]
                 if c is not None:
-                    n = q.blocks[pair[1]]
-                    n.sid, n.off, n.own = sid[s], q.blocks[c].off, copy.deepcopy(q.blocks[c].own)
-                    n.params = copy.deepcopy(q.blocks[c].params)
+                    _copy_calibration(q, c, pair[1], sid[s])
             nights.append(pair)
         for s, c in mine.values():                        # a session its original no longer draws
             gone = {s, c} - {None}
@@ -372,6 +370,28 @@ def normalise(q):
                        and b.files[k] != q.common["files"].get(k, [])}
     q.common["files"] = {k: q.common["files"][k] for k in FILE_KINDS if q.common["files"].get(k)}
     q.common["settings"] = {k: dict(sorted(v.items())) for k, v in q.common["settings"].items() if v}
+    _norm_params(q)
+
+
+def _norm_params(q):
+    """An image block's engine settings are its node's. One whose node name is given by the compile (moved into a
+    chain already holding its name, or copied) may hold them under another name, another node's of its chain (a
+    second Gradient's settings applied to the first): they are put under the name it is given, which it keeps."""
+    late = [b for r in q.rows for b in r.blocks if b in q.blocks and q.blocks[b].kind in wfl.IMAGE_OPS
+            and q.blocks[b].engine is None and q.blocks[b].params]
+    if not late:
+        return
+    from ..core.project2 import Project2
+    from .compile import compile_into
+    names = compile_into(q, Project2(name="names")).names
+    for b in late:
+        blk, name = q.blocks[b], names.get(b)
+        if name is None or list(blk.params) == [name]:
+            continue
+        mine = {}
+        for kv in blk.params.values():
+            mine.update(kv)
+        blk.engine, blk.params = name, {name: mine}
 
 
 def _mid_row(ix, b):
@@ -559,6 +579,17 @@ def _night(q, name, files=None, calibration=True):
     """A night: its Session, with its Calibration or without (None: its lights taken as they are)."""
     s = new_block(q, "session", name=name, files=files)
     return [s.id, new_block(q, "calibration").id if calibration else None]
+
+
+def _copy_calibration(q, c, to, sid=None):
+    """Night Calibration c copied into Calibration `to` (a variant's, a branch's, a duplicate's night): all it holds,
+    its settings, switch, review pause, engine settings and own files; `sid` the session it calibrates (None: a new
+    one, numbered by the compile)."""
+    a, b = q.blocks[c], q.blocks[to]
+    b.settings, b.off, b.pause = copy.deepcopy(a.settings), a.off, a.pause
+    b.method, b.params, b.own = a.method, copy.deepcopy(a.params), copy.deepcopy(a.own)
+    if sid is not None:
+        b.sid = sid
 
 
 def _stack_calibrated(q, r):
@@ -1047,6 +1078,7 @@ def op_merge_rows(q, src, dst):
     a, b = _row(q, src), _row(q, dst)
     if not a.nights or not b.nights or a is b:
         raise Refusal("two different stacks of lights are needed")
+    _not_into_whole_variant(q, b)
     _no_clash(q, b, a.nights)
     why = ""
     for n in a.nights:
@@ -1070,10 +1102,7 @@ def op_duplicate_row(q, row):
         o = q.blocks[s]
         nn = _night(q, name_of("{_name} copy", _name=o.name), {k: list(v) for k, v in o.files.items()}, c is not None)
         if c is not None:
-            q.blocks[nn[1]].settings = dict(q.blocks[c].settings)
-            q.blocks[nn[1]].off = q.blocks[c].off
-            q.blocks[nn[1]].pause = q.blocks[c].pause
-            q.blocks[nn[1]].params = copy.deepcopy(q.blocks[c].params)
+            _copy_calibration(q, c, nn[1])
         nights.append(nn)
     nr = Row(new_id(q, "r"), free_name(q, name_of("{_name} copy", _name=r.name)), blocks, nights, list(r.fork) if r.fork else None)
     _copy_flow(nr, r)                                       # its workflow's own settings (Output, pauses...)
@@ -2568,9 +2597,7 @@ def op_try_variant(q, block, change, name=None):
             nn = _night(q, q.blocks[s].name, {k: list(v_) for k, v_ in q.blocks[s].files.items()}, c is not None)
             q.blocks[nn[0]].sid = q.blocks[s].sid
             if c is not None:
-                q.blocks[nn[1]].sid = q.blocks[s].sid
-                q.blocks[nn[1]].off, q.blocks[nn[1]].own = q.blocks[c].off, copy.deepcopy(q.blocks[c].own)
-                q.blocks[nn[1]].params = copy.deepcopy(q.blocks[c].params)
+                _copy_calibration(q, c, nn[1], q.blocks[s].sid)
             nights.append(nn)
             if c is not None and c == block:
                 target = nn[1]
@@ -2593,7 +2620,7 @@ def op_try_variant(q, block, change, name=None):
     v.legacy = None
     v.trial = r.wid
     _apply_change(q, target, change)
-    out.toast = M("variant “{_name}”: Keep or Discard", _name=v.name)
+    out.toast = M("variant “{_name}” under “{_base}”", _name=v.name, _base=r.name)    # a row like another: no header
     out.focus = target
     return out
 
@@ -3060,6 +3087,11 @@ def op_replace_chain(q, row, blocks, calibration=None, align=None, options=None,
     gone = set(r.blocks) - set(head)
     new = [new_block(q, n["kind"], method=n.get("method"), off=bool(n.get("off")), fork=n.get("fork"),
                      engine=(n.get("engine") or None) if n["kind"] in wfl.IMAGE_OPS else None).id for n in blocks]
+    last = r.blocks[-1] if r.blocks and r.blocks[-1] in gone else None
+    end = (head + new)[-1] if head + new else None
+    for w in q.wires:              # what its image fed (a combination's input) leaves from its new last block
+        if w.src[0] == last and end is not None and w.dst[0] not in gone and w.src[1] in out_ports(q.blocks[end]):
+            w.src = [end, w.src[1]]
     for b in gone:
         del q.blocks[b]
     q.wires = [w for w in q.wires if w.src[0] not in gone and w.dst[0] not in gone]
@@ -3130,9 +3162,10 @@ def op_add_branch(q, block, kind, flow=None, name=None, method=None):
         for s, c in root.nights:
             nn = _night(q, q.blocks[s].name, {k: list(v) for k, v in q.blocks[s].files.items()}, c is not None)
             q.blocks[nn[0]].sid = q.blocks[s].sid
-            if c is not None:
+            if c == block:                            # the branch's own Calibration: a new block, from its defaults
                 q.blocks[nn[1]].sid = q.blocks[s].sid
-                q.blocks[nn[1]].own = copy.deepcopy(q.blocks[c].own)
+            elif c is not None:                       # the other nights: as in the stack it leaves
+                _copy_calibration(q, c, nn[1], q.blocks[s].sid)
             nights.append(nn)
             if c == block:
                 mine = nn[1]

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -154,9 +154,17 @@ def _bright_stars(ctx, centres, radius, cols, fine):
 
 
 def _epoch(t: str | None) -> float:
+    """The observation date as a decimal year, for the stars' proper motions; 2016.0 (Gaia DR3's epoch) when there is
+    none or it cannot be read. A date with a time zone ("Z", "+02:00") is taken in UTC (review 4.3: it stopped the
+    block, and the colour calibration with it)."""
     if not t:
         return 2016.0
-    dt = datetime.fromisoformat(t)
+    try:
+        dt = datetime.fromisoformat(str(t).strip().replace("Z", "+00:00"))
+    except ValueError:
+        return 2016.0
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
     y0 = datetime(dt.year, 1, 1)
     return dt.year + (dt - y0).total_seconds() / (365.25 * 86400)
 

@@ -344,6 +344,9 @@ class Facts:
     in_field: list = field(default_factory=list)
     #: the one of them that names the field (api.main_sky_object: covering its centre, Messier > NGC / IC > Sharpless)
     main_object: object = None
+    #: workflow id -> {"register": its metrics, "stack": its metrics}: the measures its own settings use (star width,
+    #: picture size), where ``register`` and ``stack`` above are the first workflow's, the project's facts
+    measures: dict = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------------------------- worker jobs
@@ -361,14 +364,17 @@ def _facts_job(p) -> Facts:
     f = Facts()
     for w in p.workflows:
         for stage in ("inventory", "register", "stack"):
-            if getattr(f, stage):
+            if getattr(f, stage) and stage == "inventory":
                 continue
             try:
                 out = api.stage_outputs(p, w.id, stage) or api.stage_outputs(p, w.id, stage, "previous")
             except (OSError, ValueError, KeyError):
                 out = None
             if out is not None:
-                setattr(f, stage, dict(out.metrics))
+                if stage != "inventory":
+                    f.measures.setdefault(w.id, {})[stage] = dict(out.metrics)
+                if not getattr(f, stage):
+                    setattr(f, stage, dict(out.metrics))
     for s in p.sessions:
         counts, files = {}, {}
         for kind in ("lights", "darks", "flats", "bias", "flat_darks"):
@@ -1327,9 +1333,15 @@ class _ProjectBase(QObject):
         """The Combine layers Post shows by default for a workflow, made a layer of its own to open it in Post: what Post
         shows does not change, so it is not an undo step (decision 7: opening is never one)."""
         n, redo = len(self._undo), list(self._redo)
+        words, redo_words, naming, dirty = list(self._undo_what), list(self._redo_what), self._naming, self._dirty
         lid = self.add_post_layer(pid, "combined", None, keep_default=False)
         del self._undo[n:]
         self._redo[:] = redo
+        self._undo_what[:], self._redo_what[:] = words, redo_words   # each Undo / Redo keeps its own words
+        self._naming = naming                            # the next words named are not given to the step before
+        if not dirty and self._dirty:                    # nor is the project changed by an opening
+            self._dirty = False
+            self.dirtyChanged.emit(False)
         return lid
 
     def _filled(self, layers: list[dict], skip: int | None = None):
@@ -3574,9 +3586,17 @@ class _ProjectBase(QObject):
 
 
     # ------------------------------------------------------------ frame selection (Selection and Stacking)
+    def _measured(self, stage: str) -> dict:
+        """The metrics of ``stage`` of the workflow shown (its settings are converted with its own measures, never
+        with another workflow's); the project's first ones when no workflow is shown."""
+        p = self.path
+        if p is None:
+            return getattr(self._facts, stage)
+        return self._facts.measures.get(p.pid, {}).get(stage) or {}
+
     def fwhm_median(self) -> float | None:
-        """The median star size of the registered frames, when Registration is done."""
-        v = self._facts.register.get("fwhm_px")
+        """The median star size of the registered frames of the workflow shown, when its Registration is done."""
+        v = self._measured("register").get("fwhm_px")
         return float(v) if v else None
 
     def selection_rule(self, p=None) -> str:
@@ -3796,8 +3816,8 @@ class _ProjectBase(QObject):
                 "exposure_s": round(float(hours) * 3600, 1) if hours else 0}
 
     def image_size(self) -> tuple[int, int] | None:
-        """(width, height) of the stack grid, once Stacking is done."""
-        g = self._facts.stack.get("grid")
+        """(width, height) of the stack grid of the workflow shown, once its Stacking is done."""
+        g = self._measured("stack").get("grid")
         return (int(g[0]), int(g[1])) if g else None
 
     def load_sources(self):

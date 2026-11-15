@@ -31,7 +31,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, QEventLoop, QLibraryInfo, QLocale, Qt, QTimer, QTranslator
+from PySide6.QtCore import QCoreApplication, QEvent, QEventLoop, QLibraryInfo, QLocale, QObject, Qt, QTimer, QTranslator
 from PySide6.QtGui import QAction, QFont, QFontMetrics, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
@@ -244,9 +244,39 @@ class Banner(QFrame):
         self.show()
 
 
+class _FieldUndo(QObject):
+    """Ctrl+Z (Ctrl+Y) with the cursor in a field of the window: the field's own Undo while it has something to undo
+    (what was typed in it), else the window's Undo, as Edit > Undo (after Apply, the notice says Ctrl+Z while the cursor
+    is often still in the field: the field took the key and did nothing)."""
+
+    def __init__(self, window):
+        super().__init__(window)
+        self.window = window
+
+    def eventFilter(self, obj, e):                                    # noqa: N802 - Qt's name
+        if e.type() != QEvent.ShortcutOverride or not isinstance(obj, (QLineEdit, QPlainTextEdit, QAbstractSpinBox)):
+            return False
+        undo = e.matches(QKeySequence.Undo)
+        if not (undo or e.matches(QKeySequence.Redo)) or obj.window() is not self.window:
+            return False
+        field = obj.findChild(QLineEdit) if isinstance(obj, QAbstractSpinBox) else obj    # a spin box's own text
+        if isinstance(field, QLineEdit):
+            left = field.isUndoAvailable() if undo else field.isRedoAvailable()
+        elif isinstance(field, QPlainTextEdit):
+            doc = field.document()
+            left = doc.isUndoAvailable() if undo else doc.isRedoAvailable()
+        else:
+            left = True
+        if left:
+            return False
+        e.ignore()                                     # not the field's: the window's shortcut takes the key
+        return True
+
+
 class Main(QMainWindow):
     def __init__(self, worker: ApiWorker | None = None):
         super().__init__()
+        QApplication.instance().installEventFilter(_FieldUndo(self))
         self.worker = worker or ApiWorker(self)
         self.worker.done.connect(self._worker_done)
         from .services.selftest import job as card_test_job
@@ -514,20 +544,45 @@ class Main(QMainWindow):
         view.set_compact(lay.compact(cls))
 
     def _tab(self):
-        fw = QApplication.focusWidget()
-        if self.project is None or isinstance(fw, (QLineEdit, QAbstractSpinBox, QTextEdit, QPlainTextEdit)) or \
-                (isinstance(fw, QComboBox) and fw.isEditable()):
-            self.focusNextPrevChild(True)
-        else:
-            self.toggle_panels("hidden")
+        self._tab_key(True, "hidden")
 
     def _shift_tab(self):
+        self._tab_key(False, "right_hidden")
+
+    def _tab_key(self, forward: bool, panels: str):
+        """Tab (Shift+Tab): the focus goes on in a field, as in a form, and in a block's settings; elsewhere it hides
+        the panels (the right one)."""
         fw = QApplication.focusWidget()
-        if self.project is None or isinstance(fw, (QLineEdit, QAbstractSpinBox, QTextEdit, QPlainTextEdit)) or \
-                (isinstance(fw, QComboBox) and fw.isEditable()):
-            self.focusNextPrevChild(False)
-        else:
-            self.toggle_panels("right_hidden")
+        took = "on" if self.project is None or isinstance(fw, (QLineEdit, QAbstractSpinBox, QTextEdit, QPlainTextEdit)) \
+            or (isinstance(fw, QComboBox) and fw.isEditable()) else self._settings_take_tab(fw, forward)
+        if took == "on":
+            self.focusNextPrevChild(forward)
+        elif not took:
+            self.toggle_panels(panels)
+
+    def _settings_take_tab(self, fw, forward: bool) -> str:
+        """Tab never hides the side bars while a settings field could take it: "on" with the focus in a block's
+        settings (a list, a box to tick: the focus goes on), "in" with their drawer open over the page (a small window)
+        and the focus elsewhere (the focus goes to its first field); "" otherwise."""
+        for page in (getattr(self, "graph", None), getattr(self, "_tune", None)):
+            pn, dock = getattr(page, "panel", None), getattr(page, "dock", None)
+            if pn is None:
+                continue
+            try:
+                if fw is not None and pn.isAncestorOf(fw):
+                    return "on"
+                if dock is not None and dock.is_open() and pn.isVisible():
+                    if forward:
+                        w = pn.nextInFocusChain()
+                        while w is not pn and not (pn.isAncestorOf(w) and w.isVisible() and w.isEnabled()
+                                                   and w.focusPolicy() & Qt.TabFocus):
+                            w = w.nextInFocusChain()
+                        if w is not pn:
+                            w.setFocus(Qt.TabFocusReason)    # the drawer's first field
+                    return "in"
+            except RuntimeError:                         # a page being closed
+                continue
+        return ""
 
     def toggle_panels(self, key: str):
         """Tab (hidden), Shift+Tab (right_hidden), Ctrl+Space (max): a toggle, remembered for this size range."""
@@ -629,6 +684,10 @@ class Main(QMainWindow):
         name, tab = got
         try:
             f = templatefiles.save_user(self.s.template_file(), tab, name)
+        except templatefiles.NameTaken as e:
+            self.banner.say(_("The template “{name}” of this tab would be replaced: choose another name.")
+                            .format(name=e.name))
+            return
         except (OSError, ValueError) as e:
             self.banner.say(_("The template cannot be saved: {why}").format(why=e))
             return
@@ -723,13 +782,14 @@ class Main(QMainWindow):
         self.project.log("Project created" if created else "Project opened")
         if not drafts.is_untitled(root):
             prefs.add_recent(root.as_posix(), d.name, d.target.name or "")
-        self._recovery_mine = recovered is not None and not rescued
+        self._recovery_mine = False                      # a crash's copy is kept until the screen is built
         try:
             self.make_model()
             self.mode = 0
             self._last_step = None
             self.build_menus()
             self.build_project()
+            self._recovery_mine = recovered is not None and not rescued
         except Exception as e:  # noqa: BLE001 - the night test pass: a project that failed to build stayed half open,
             import logging      # invisible, the next gestures acting on it; closed, said, the detail in the output
             logging.getLogger(__name__).exception("the project could not be shown")
@@ -1469,7 +1529,12 @@ class Main(QMainWindow):
         if self.project is not None and drafts.is_untitled(self.project.root):
             self.name_project()
             return
-        if self.s is not None and not self.s.flush():
+        try:
+            saved = self.s is None or self.s.flush()
+        except (OSError, ValueError) as e:               # a full disk, a locked file: said, the edits wait
+            self.banner.say(_("The project cannot be saved: {why}").format(why=plain_error(f"{type(e).__name__}: {e}")))
+            return
+        if not saved:
             self.banner.say(_("Another window of the program saved this project since it was opened here: nothing is "
                               "replaced. Save as… keeps this window's work in another folder."))
             return
@@ -1617,8 +1682,8 @@ class Main(QMainWindow):
     @staticmethod
     def _commit_typing():
         w = QApplication.focusWidget()
-        if isinstance(w, (QLineEdit, QAbstractSpinBox)):
-            w.clearFocus()                               # editingFinished: what is typed applies before the save
+        if isinstance(w, (QLineEdit, QAbstractSpinBox, QPlainTextEdit)):
+            w.clearFocus()                               # editingFinished (a note: its focus out): what is typed applies
 
     def save_as(self):
         """The project, its edits included, in another folder with its results (moved: _move_results), then
@@ -1641,11 +1706,8 @@ class Main(QMainWindow):
         old = self.project.definition
         if self.s is not None and self.s.path is not None:
             old.current = self.s.path.pid                # the copy opens on the workflow shown
-        p = project2.Project2.from_dict(old.to_dict())
+        p = self.s.copy_for(root)                        # the same graph, its entries as the copy finds them
         p.name = root.name                               # two projects of one name on Home otherwise (GUI exploration 4, Q8)
-        for s in p.sessions:
-            for kind in project2.KINDS:
-                setattr(s, kind, [old.abspath(x) for x in getattr(s, kind)])
         p.reference_image = old.reference_path()
         cache = prefs.get("cache_dir")
         p.scratch_dir = (Path(cache) / root.name).as_posix() if cache else ""
@@ -1699,6 +1761,7 @@ class Main(QMainWindow):
         if "error" in out:
             self.banner.say(_("The results could not be moved: {why}").format(why=out["error"]))
             return False
+        self.banner.hide()                               # the move is over: its notice goes with it
         return True
 
     def offer_import(self, root: Path):

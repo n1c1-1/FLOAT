@@ -289,7 +289,7 @@ def test_list_projects_skips_underscore_folders_and_folders_without_a_definition
     assert deep.state == "outdated" and deep.outdated == 1
 
 
-def test_create_open_save_and_save_as(tmp_path, state):
+def test_create_open_and_save(tmp_path, state):
     p = api.create_project(tmp_path / "p", "P", "M31")
     assert (tmp_path / "p" / "project.astroproj").is_file() and p.target.name == "M31"
     assert api.open_project(tmp_path / "p").name == "P"
@@ -299,20 +299,6 @@ def test_create_open_save_and_save_as(tmp_path, state):
         api.open_project(tmp_path / "v1")
     with pytest.raises(FileNotFoundError):
         api.open_project(tmp_path / "nothing")
-    # save_as copies the definition, relative paths become absolute, the original stays where it was
-    api.add_session(p, lights=["raw/lights"], flats=["raw/flat"])
-    p.reference_image = "inputs/full.png"
-    api.add_workflow(p, "Full", "Full", {"stack": {"scale": 2.0}})
-    api.save(p)
-    before = (tmp_path / "p" / "project.astroproj").read_bytes()
-    q = api.save_as(p, tmp_path / "q")
-    assert q.root == tmp_path / "q" and p.root == tmp_path / "p"
-    assert q.sessions[0].lights == [p.abspath("raw/lights")] and q.reference_image == p.abspath("inputs/full.png")
-    assert q.workflows[0].params == {"stack": {"scale": 2.0}}
-    assert api.open_project(tmp_path / "q").reference_image == q.reference_image
-    assert (tmp_path / "p" / "project.astroproj").read_bytes() == before
-    with pytest.raises(FileExistsError):
-        api.save_as(p, tmp_path / "q")
 
 
 def make_v1(tmp_path: Path) -> tuple[Path, dict[str, str]]:
@@ -469,9 +455,7 @@ def test_health_checks_flats_of_two_sessions_are_merged(tmp_path, card):
     got = {c.key: c for c in api.health_checks(p)}
     assert got["flats_merged"].level == "warn" and got["flats_merged"].args["n"] == 2 and "ok" not in got
     # a bigger need than the disk has is a warning
-    big = api.add_session(p, lights=[card])
     p.scratch_dir = str(tmp_path / "scratch")
-    api.remove_session(p, big.id)
     chk = api._disk_check(p)
     assert chk.level in ("ok", "warn") and chk.args["free_gb"] > 0
 
@@ -490,10 +474,8 @@ def test_exclusions_are_session_and_name_pairs_and_change_only_the_stack(tmp_pat
         api.set_excluded(p, [(9, "L0.fits")])
     api.set_excluded(p, [(1, "L0.fits")], excluded=False)
     assert p.excluded == [(2, "L3.fits")]
-    api.remove_session(p, 2)
-    assert p.excluded == [] and [s.id for s in p.sessions] == [1]
     api.save(p)
-    assert api.open_project(p.root).excluded == []
+    assert api.open_project(p.root).excluded == [(2, "L3.fits")]
 
 
 def test_frame_thumb_shares_one_stretch_per_session(tmp_path, card):

@@ -230,24 +230,39 @@ def user_file(tab: str, name: str) -> Path | None:
     return root / tab / (name + SUFFIX) if root is not None and tab and name else None
 
 
-def replaced(tab: str, name: str) -> str:
-    """The name of the template of that tab that saving under ``name`` replaces (the same file: a name that differs
-    only by characters a file name cannot hold, or by its capitals), "" when none."""
+class NameTaken(ValueError):
+    """The file a template would be saved in holds a template of another name (``name``): a character a file name
+    cannot hold was taken out of the name typed, or only the case differs on a disk that ignores it."""
+
+    def __init__(self, name: str):
+        super().__init__(f"the template {name!r} would be replaced")
+        self.name = name
+
+
+def held(tab: str, name: str) -> str:
+    """The name of the template already in the file that saving ``name`` in ``tab`` writes (a disk may ignore the
+    case), "" when there is none. The same name as typed: it is replaced; another name: the save is refused."""
     f = user_file(tab, name)
     if f is None or not f.parent.is_dir():
         return ""
-    want = f.name.casefold()
-    return next((x.stem for x in f.parent.glob("*" + SUFFIX) if x.name.casefold() == want), "")
+    there = next((x for x in f.parent.glob("*" + SUFFIX) if x.name.casefold() == f.name.casefold()), None)
+    if there is None:
+        return ""
+    c = card(there, there.parent.name, True)
+    return c["name"] if c is not None else there.stem
 
 
 def save_user(d: dict, tab: str, name: str, text: str = "", card_data: dict | None = None) -> Path:
     """The blank project ``d`` as a template of the user's, in the folder ``tab``, under ``name``. An existing file of
-    that name is replaced (the dialog says so first: ``replaced``). -> the file."""
+    that name is replaced; one holding a template of another name is not (``NameTaken``). -> the file."""
     if user_dir() is None:
         raise OSError("no folder for the user's templates")
     f = user_file(tab, name)
     if f is None:
         raise ValueError("a template needs a tab and a name")
+    old = held(tab, name)
+    if old and old != name.strip():
+        raise NameTaken(old)
     out = blank(d)
     out["template"] = {"text": text.strip(), **({"card": card_data} if card_data else {})}
     f.parent.mkdir(parents=True, exist_ok=True)

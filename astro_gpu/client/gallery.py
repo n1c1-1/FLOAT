@@ -929,9 +929,13 @@ def template_dialog(parent, name: str) -> tuple[str, str] | None:
         return cb.itemData(i) if i >= 0 and cb.itemData(i) else cb.currentText().strip()
 
     def said():
-        """A template of the tab written to the same file is replaced: said on Save (13.33: it went without a word)."""
-        old = templatefiles.replaced(tab_of(), ed.text()) if ed.text().strip() and tab_of() else ""
-        save.setToolTip(_("Replaces the template “{name}” of this tab").format(name=old) if old else "")
+        """13.33: a template of the same name is replaced, said on Save; another name that writes the same file is
+        refused: Save greyed, the reason on it (it replaced that template without a word)."""
+        old = templatefiles.held(tab_of(), ed.text()) if ed.text().strip() and tab_of() else ""
+        other = bool(old) and old != ed.text().strip()
+        save.setEnabled(not other)
+        save.setToolTip(_("The template “{name}” of this tab would be replaced: choose another name.").format(name=old)
+                        if other else _("Replaces the template “{name}” of this tab").format(name=old) if old else "")
     ed.textChanged.connect(said)
     cb.currentTextChanged.connect(said)
     said()

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import QLocale, QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QLocale, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QCheckBox, QComboBox, QDoubleSpinBox, QFrame, QLineEdit, QPushButton, QSpinBox, QWidget
 
@@ -672,10 +672,54 @@ def parse(text: str, r: dict):
         if typ == "optfloat" and t.lower() in ("", "auto", "none"):
             return None
         x = float(t.replace(" ", "").replace(",", "."))
+        if not math.isfinite(x):                         # "nan", "inf": text float() reads, not a number typed
+            raise ValueError(t)
         if r.get("min") is not None and x < r["min"] or r.get("max") is not None and x > r["max"]:
             raise ValueError(_("out of range {lo} to {hi}").format(lo=fmt(r.get("min")), hi=fmt(r.get("max"))))
         return int(round(x)) if typ == "int" else x
     return "" if t == "—" else t
+
+
+def decimals_shown(value, least: int) -> int:
+    """The decimals of a decimal field: ``least`` (from its step), and at least those its value has, up to 6. A field
+    showing fewer would round the value (33.33 with a step of 1 shown 33.3)."""
+    try:
+        t = f"{abs(float(value)):.6f}".rstrip("0")
+    except (TypeError, ValueError):
+        return least
+    return max(least, len(t.split(".")[1]))
+
+
+def on_edited(spin, done):
+    """Calls ``done()`` at the end of an edit of the spin box only when the user changed its value (typed, arrows,
+    wheel): passing through the field (Tab, a click elsewhere) sends nothing. Connected once its value is set."""
+    edited = []
+    spin.valueChanged.connect(lambda *_a: edited or edited.append(True))
+
+    def end():
+        if edited:
+            edited.clear()
+            done()
+    spin.editingFinished.connect(end)
+
+
+class _StepIsAnEdit:
+    """A step (the arrows, the Up and Down keys, the wheel of the focused field) ends an edit as Enter does: its value
+    is sent at once, not when the field is left. Sent once the event is over (the panel may be built again by it)."""
+
+    def stepBy(self, steps):                                          # noqa: N802 - Qt's name
+        before = self.value()
+        super().stepBy(steps)
+        if self.value() != before:
+            QTimer.singleShot(0, self, self.editingFinished.emit)
+
+
+class SpinBox(_StepIsAnEdit, QSpinBox):
+    pass
+
+
+class DoubleSpinBox(_StepIsAnEdit, QDoubleSpinBox):
+    pass
 
 
 # ======================================================================== how one setting is shown
@@ -771,6 +815,8 @@ class SettingRow(QFrame):
                     v = float(t) if t else None
                 except ValueError:
                     return
+                if v is not None and not math.isfinite(v):     # "nan", "inf": not a number typed
+                    return
                 if v is not None:
                     lo, hi = r.get("min"), r.get("max")
                     v = max(v, lo) if lo is not None else v
@@ -778,7 +824,7 @@ class SettingRow(QFrame):
                     self.changed.emit(self.r, int(round(v)) if typ == "int" else round(v, 6))
             e.editingFinished.connect(typed)
         elif typ == "int":
-            e = QSpinBox()
+            e = SpinBox()
             e.setLocale(QLocale())                  # the language's numbers: a widget keeps its parent's locale
             e.setRange(int(r["min"]) if r.get("min") is not None else -10 ** 9,
                        int(r["max"]) if r.get("max") is not None else 10 ** 9)
@@ -788,18 +834,18 @@ class SettingRow(QFrame):
             e.setFixedWidth(110)
             e.editingFinished.connect(lambda: e.value() != self.r["value"] and self.changed.emit(self.r, e.value()))
         elif typ == "float":
-            e = QDoubleSpinBox()
+            e = DoubleSpinBox()
             e.setLocale(QLocale())                  # a decimal comma in French
             v = float(r["suggested"] or 0)
             step = r.get("step") or (10 ** (math.floor(math.log10(abs(v))) - 1) if v else 0.1)
             dec = max(0, int(-math.floor(math.log10(step)))) if step < 1 else 0
-            e.setDecimals(min(dec + 1, 5))
+            e.setDecimals(decimals_shown(cur, min(dec + 1, 5)))
             e.setRange(r["min"] if r.get("min") is not None else -1e9, r["max"] if r.get("max") is not None else 1e9)
             e.setSingleStep(step)
             e.setValue(float(cur))
             e.setFixedWidth(110)
-            e.editingFinished.connect(lambda: abs(e.value() - float(self.r["value"])) > 1e-12
-                                      and self.changed.emit(self.r, round(e.value(), 6)))
+            on_edited(e, lambda: abs(e.value() - float(self.r["value"])) > 1e-12
+                      and self.changed.emit(self.r, round(e.value(), 6)))
         else:
             e = QLineEdit("" if cur is None else fmt(cur, typ) if typ == "optfloat" else str(cur))
             e.setFixedWidth(160)

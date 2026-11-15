@@ -198,6 +198,7 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
         self._internal = None
         self._warn_idx = -1
         self._rest = self._include = self._rather = None
+        self._dropped = None      # (revision, boxes) of the last drop: what a stop or « Rather add » may take back
         self._built_rev = None
         self.t_drop_ms = None
         self.t_last_paint = 0.0
@@ -728,6 +729,7 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
 
     def drop_files(self, target, g):
         self._rest = self._include = self._rather = self._anyway = None
+        self._dropped = None
         if target.kind == "box":
             self._drop_on_boxes(target, g)
         elif target.kind in ("ghost_s", "ghost_p"):
@@ -745,13 +747,13 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
         own = None if o0 == COMMON else mp.own_list(o0, k0)
         exist = list(own if own is not None else mp.common_list(k0))
         res = files.resolve(self.reader, list(g.paths), i, existing=exist if mode == "add" else ())
-        if mode == "replace" and any(files.already(p, set(exist)) for p in res.items):
+        if mode == "replace" and any(files.already(p, set(exist), self.reader) for p in res.items):
             # frames the box already holds: the rule of doubles, never a replacement (a beta tester's 4 lights
             # replaced by 2 of them, dropped again)
             mode = "add"
         ignored = 0
         if mode == "add":
-            ignored = files.without_doubles(res, exist)
+            ignored = files.without_doubles(res, exist, self.reader)
         o0, k0 = boxes[0]
         if k0 == "lights" and o0 != COMMON and len(boxes) == 1:          # the same night already in another session
             files.elsewhere(res, files.stack_lights(self.doc.graph, session=o0))
@@ -765,8 +767,10 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
         o0, k0 = boxes[0]
         base = files.drop_toast(k0, None if o0 == COMMON else self.session_name(o0), len(taken), mode, len(boxes))
         self._rather = [self._step(o, k, res.items, "add") for o, k in boxes]
-        self.act([self._step(o, k, res.items, mode) for o, k in boxes],      # filed by the box, never by a header
-                 files.drop_sentence(base, res, mode, ignored, taken), files.drop_links(res, mode))
+        out = self.act([self._step(o, k, res.items, mode) for o, k in boxes],      # filed by the box, never by a
+                       files.drop_sentence(base, res, mode, ignored, taken), files.drop_links(res, mode))   # header
+        if out.ok:
+            self._dropped = (self.doc.revision, set(boxes))
 
     def _drop_new_sessions(self, target, g):
         """Each dropped folder (and the loose files together) a new session of the stack, or a new stack."""
@@ -808,6 +812,7 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
             return
         made = [b for b in (res.created or {}).get("blocks", [])
                 if b in self.doc.graph.blocks and self.doc.graph.blocks[b].kind == "session"]
+        self._dropped = (self.doc.revision, {(sid, "lights") for sid in made})
         self._rest = lambda: self._left_steps([(sid, "lights", r.left) for sid, r in zip(made, taken)])
         self._include = lambda: self._include_steps([(sid, "lights", r.subs) for sid, r in zip(made, taken)], i)
         self._anyway = lambda: (self._left_steps([(sid, "lights", r.elsewhere) for sid, r in zip(made, taken)])
@@ -1117,6 +1122,9 @@ class Table(QWidget):
                 g.act(steps, _("Sub-folders included"), undo_link())
         elif key == "rather_add":
             steps = g._rather
+            if not g.drop_is_last():               # a gesture made since: it is never the one taken back
+                g.status.emit(_("Not possible"), 3000)
+                return
             r = g.doc.undo()
             if r.ok:
                 g.bridge.view_changed()

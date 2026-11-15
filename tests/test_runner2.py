@@ -1237,3 +1237,60 @@ def test_a_stopped_run_says_what_it_leaves_in_the_scratch_folder(proj):
     status, info = run(proj, plan_all(proj))
     assert status == "done"
     assert not [e for e in events(proj, info) if e["type"] == "log" and "scratch folder keeps" in e.get("msg", "")]
+
+
+def test_an_unexpected_error_during_a_run_ends_it_failed_with_the_block_named(proj, monkeypatch):
+    # review 2.2: the status was "done" before the loop and written as such by its finally: a journal line failing
+    # (a full disk) ended the run "done", the block being computed in no list
+    plan = plan_all(proj)
+    calls = []
+    real = runner2._Worker.run_job
+
+    def second_fails(self, job):
+        calls.append(job.key)
+        if len(calls) == 2:
+            raise OSError(28, "No space left on device")
+        return real(self, job)
+    monkeypatch.setattr(runner2._Worker, "run_job", second_fails)
+    info = runner2.prepare_run(proj, plan, "cpu")
+    with pytest.raises(OSError):
+        runner2.run_plan(proj.root, info.plan_file, rules=RULES, echo=False)
+    end = events(proj, info)[-1]
+    assert end["type"] == "run_end" and end["status"] == "failed"
+    assert end["failed"] == [plan.keys[1]] and end["done"] == plan.keys[:1] and end["not_started"] == plan.keys[2:]
+
+
+def test_a_truncated_checkpoint_tag_starts_the_block_afresh_instead_of_failing_it(proj):
+    # review 2.5: _ckpt/meta.json was written without a temporary file and read without a guard: cut short (a crash
+    # while writing it), the block failed at each run
+    B.stop_at = 4
+    status, _info = run(proj, plan_all(proj))
+    assert status == "interrupted"
+    b = K(proj).key(DENOISE, "b")
+    tmp = Store(proj.root).tmp_dir("b", b)
+    (tmp / "_ckpt" / "meta.json").write_text('{"params_hash": "')            # cut short
+    status, _info = run(proj, plan_all(proj))
+    assert status == "done"
+    out = json.loads((Store(proj.root).dir("b", b) / "b.json").read_text())
+    assert out == {"steps": 10, "resumed_from": 0}                            # afresh: its checkpoint not trusted
+
+
+def test_a_lock_whose_number_a_later_process_took_is_no_run_anywhere(tmp_path):
+    # review 2.6: Home, the run's follow-up, the API's summary and the old pipeline tested the number alone: after a
+    # crash, a process that took the number kept "running" on screen. One check now (api.run_alive)
+    import os
+
+    from astro_gpu import api
+    from astro_gpu.core import runner
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    lock = logs / runner2.LOCK
+    lock.write_text(json.dumps({"pid": os.getpid(), "run_id": "r", "started": time.time() - 3600}))
+    assert not api.run_alive(tmp_path)                                    # this process started after the lock
+    assert not runner2.process_alive(os.getpid(), time.time() - 3600) and runner2.process_alive(os.getpid())
+    lock.write_text(json.dumps({"pid": os.getpid(), "run_id": "r", "started": time.time()}))
+    assert api.run_alive(tmp_path) and api.process_alive(os.getpid())
+    assert not api.run_alive(tmp_path / "none") and not api.process_alive(None)
+    from types import SimpleNamespace
+    old = SimpleNamespace(logs=logs)
+    assert runner._run_alive(old) is False                               # its own lock (the old pipeline's rule)
