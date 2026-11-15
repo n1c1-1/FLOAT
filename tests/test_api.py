@@ -1261,3 +1261,32 @@ def test_health_checks_say_empty_sessions_missing_calibration_and_the_same_frame
     s2.lights = []
     api.refresh(p, scan=True)
     assert any(c.key == "session_no_lights" and c.level == "warn" for c in api.health_checks(p))
+
+
+def test_a_lock_held_by_a_worker_does_not_freeze_the_caller(tmp_path, monkeypatch, card):
+    import threading
+    import time
+    p = api.create_project(tmp_path / "p", "p")
+    api.add_frames(p, api.scan_files({"lights": [card]}))
+    first = api._keys(p)                             # a snapshot exists already
+    monkeypatch.setattr(api, "LOCK_WAIT", 0.3)
+    c = api._ctx(p)
+    held, release = threading.Event(), threading.Event()
+
+    def worker():
+        with c.lock:
+            held.set()
+            release.wait(10)
+    t = threading.Thread(target=worker)
+    t.start()
+    held.wait(5)
+    try:
+        t0 = time.time()
+        assert api._keys(p) is first                 # the last snapshot, after the bounded wait
+        assert api._store(p) is not None
+        api.refresh(p)
+        assert time.time() - t0 < 3.0
+    finally:
+        release.set()
+        t.join()
+    assert api._keys(p) is not None

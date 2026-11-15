@@ -31,10 +31,12 @@ also reaches the detached worker through ``Plan.rules``.
 """
 from __future__ import annotations
 
+import contextlib
 import copy
 import hashlib
 import importlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -549,6 +551,25 @@ _CTXS: dict[int, _Ctx] = {}
 _CTX_LOCK = threading.Lock()
 
 
+#: how long the GUI waits for a project's lock before it answers with what it has (a worker holding it must not freeze
+#: the window)
+LOCK_WAIT = 3.0
+
+
+@contextlib.contextmanager
+def _held(c: _Ctx, what: str, wait: float | None = None):
+    """The context's lock with a bounded wait: yields True when held, False after ``wait`` seconds (said in the log),
+    the caller then answers from what it has instead of blocking."""
+    got = c.lock.acquire(timeout=LOCK_WAIT if wait is None else wait)
+    if not got:
+        logging.getLogger(__name__).warning("%s: the project's lock is held by a worker; answered without waiting", what)
+    try:
+        yield got
+    finally:
+        if got:
+            c.lock.release()
+
+
 def _ctx(p: Project2) -> _Ctx:
     k = id(p)
     c = _CTXS.get(k)
@@ -568,7 +589,9 @@ def _keys(p: Project2) -> Keys:
     d = p.to_dict()
     seen = {k: v for k, v in d.items() if k not in ("current_block", "show_all")}   # view state keys nothing
     fp = hashlib.sha1(json.dumps([str(p.root), seen], sort_keys=True, default=str).encode()).hexdigest()
-    with c.lock:
+    with _held(c, "keys") as got:
+        if not got:                                  # a worker holds the lock: the last snapshot, or one for this call only
+            return c.keys if c.keys is not None else Keys(Project2.from_dict(d, p.root), c.rules(), c.scan)
         if c.keys is None or c.fp != fp:
             c.keys = Keys(Project2.from_dict(d, p.root), c.rules(), c.scan)
             c.fp = fp
@@ -580,7 +603,9 @@ def _store(p: Project2) -> Store | None:
         return None
     c = _ctx(p)
     root = os.path.abspath(p.root)
-    with c.lock:
+    with _held(c, "store") as got:
+        if not got:
+            return c.store if c.store is not None else Store(root)
         if c.store is None or c.store_root != root:
             c.store, c.store_root = Store(root), root
         return c.store
@@ -603,7 +628,7 @@ def use_rules(p: Project2, rules: KeyRules | str | None, spec: str | None = None
     """Replace the stage graph of this project (tests and tools): ``rules`` is a KeyRules, or a ``'module:function'``
     spec building one. ``spec`` names the same rules for the detached worker (``Plan.rules``)."""
     c = _ctx(p)
-    with c.lock:
+    with _held(c, "use_rules"):
         if isinstance(rules, str):
             c.rules_obj, c.spec = _load_rules(rules), rules
         else:
@@ -616,7 +641,7 @@ def refresh(p: Project2, scan: bool = False) -> None:
     """Forget what was cached about the disk: the 'usable' answers and the automatic values (after a run or a stage
     end). ``scan=True`` also forgets the frame files and file ids (the raws changed on disk)."""
     c = _ctx(p)
-    with c.lock:
+    with _held(c, "refresh"):
         if c.store is not None:
             c.store.forget()
         c.autos.clear()
@@ -643,7 +668,7 @@ def warm(p: Project2, progress: Callable[[float, str], None] | None = None) -> N
             if store is not None and s in ("inventory", "calibrate") and store.done(s, k):
                 store.usable_as_input(s, k)
         est.facts(keys, w, store)                       # reads one raw header (the sensor size) for the estimates
-    with c.lock:
+    with _held(c, "warm"):
         c.warm_entries = {_entries(keys.project, s) for s in keys.project.sessions}
     say(1.0, "ready")
 
