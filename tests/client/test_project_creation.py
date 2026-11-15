@@ -127,13 +127,14 @@ def test_the_name_is_asked_before_a_run_and_a_refusal_runs_nothing(env):
     assert w.run.before_run() is True
 
 
-def test_the_name_proposed_is_the_target_else_the_folder_of_the_images(env):
+def test_the_name_proposed_is_the_name_typed_else_the_target_never_a_folder_name(env):
+    """Nothing is deduced from a file or a folder name: lights in a folder named like a target propose no name."""
     w = untitled(env)
     assert w._suggested_name() == ""
     w.s.add_filter_session("")
     sid = w.s.p.sessions[0].id
     w.s.p.session(sid).lights = [(env["tmp"] / "Rosette" / "a.fits").as_posix()]
-    assert w._suggested_name() == "Rosette"
+    assert w._suggested_name() == ""
     w.s.set_target_name("M 42")
     assert w._suggested_name() == "M 42"
     w.s.set_project_name("Orion in the wind")                    # typed in the Project block's form (issue #89)
