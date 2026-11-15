@@ -41,3 +41,26 @@ def test_stack_and_calibration_per_unit():
 
 def test_an_unknown_stage_keeps_the_minute_fallback():
     assert seconds("toy_stage", est.HEART_FACTS, gpu=True) == 60.0
+
+
+def test_a_workflow_whose_sessions_have_no_light_yet_is_not_given_the_reference_projects_721(tmp_path):
+    """A filter's workflow waiting for its lights has nothing to compute (4 lights in the SII session announced 1 h 26 for
+    the other filters' empty workflows)."""
+    import numpy as np
+    from astropy.io import fits
+    from astro_gpu.core import project2 as p2
+    from astro_gpu.core import workflow as wfl
+    from astro_gpu.core.project2 import Session
+    from astro_gpu.core.store import InputScan, Keys
+    d = tmp_path / "sii"
+    d.mkdir()
+    for i in range(4):
+        fits.PrimaryHDU(np.full((8, 8), 100, np.uint16)).writeto(d / f"L{i}.fits")
+    p = p2.create(tmp_path / "p", "p")
+    p.sessions = [Session(1, "SII", lights=[str(d)]), Session(2, "Ha")]
+    a = p.add_workflow("A", wfl.TEMPLATES["Classic stack"])
+    b = p.add_workflow("B", wfl.TEMPLATES["Classic stack"])
+    a.sessions, b.sessions = [1], [2]
+    keys = Keys(p, scan=InputScan())
+    assert est.facts(keys, a).lights == 4
+    assert est.facts(keys, b).lights == 0 and est.estimate("stack", est.facts(keys, b), history={}).seconds == 0
