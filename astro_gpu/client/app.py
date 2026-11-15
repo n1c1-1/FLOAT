@@ -728,15 +728,18 @@ class Main(QMainWindow):
             self.render = RenderWorker(self.s.p, device=default_device_pref() if gpu else "cpu")
         return self.render
 
-    def _leave_thumbnail(self):
+    def _leave_thumbnail(self, saving: bool = False):
         """The composition Post last showed becomes the project's picture on Home (``cache/thumb.jpg``, written by the
-        worker)."""
+        worker), when it is the project as saved: never a composition with changes not saved (the testers' pass 2: Home
+        showed a version the user chose not to save). ``saving``: the changes are being saved now."""
         holder = self._post_holder
         page = holder.page if holder is not None else None
         view = getattr(page, "view", None)
         src = getattr(view, "src", None)
         img = getattr(src, "img1", None)
         if img is None or self.s is None or self.s.readonly or self.project is None:
+            return
+        if not saving and self.unsaved():
             return
         crop = getattr(view, "crop", None)              # the picture as Post shows it: its crop applied (the report and
         crop = tuple(crop) if crop else None            # Home showed the whole canvas)
@@ -808,7 +811,7 @@ class Main(QMainWindow):
                     self._run_widget = None
                 self.run.deleteLater()
                 self.run = None
-            self._leave_thumbnail()
+            self._leave_thumbnail(saving=save)
             self._flush_post()
             if self.s is not None:
                 from .services.inspect import _services
@@ -1334,6 +1337,7 @@ class Main(QMainWindow):
             self.banner.say(note)
         else:
             self.flash(_("Project saved"))
+        self._leave_thumbnail()                          # the project as saved: Home's picture
 
     def _suggested_name(self) -> str:
         """The name a project without one is proposed: the name typed in its form (issue #89), else its target the

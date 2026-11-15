@@ -14,3 +14,20 @@ def test_closing_the_window_with_changes_not_saved_asks_first(win, monkeypatch):
     assert win.close() is False and win.isVisible() and win.project is not None and win.unsaved()
     monkeypatch.setenv(appmod.SAVE_ANSWER_ENV, "discard")
     assert win.close() is True and not win.isVisible() and win.project is None
+
+
+def test_home_never_shows_a_composition_not_saved(win, monkeypatch):
+    """The testers' pass 2: Home's picture of a project showed a version the user chose not to save."""
+    from types import SimpleNamespace as NS
+
+    import numpy as np
+    img = np.zeros((4, 4, 3), np.float32)
+    view = NS(src=NS(img1=img, size=lambda: (8, 8)), crop=None)
+    monkeypatch.setattr(win, "_post_holder", NS(page=NS(view=view)))
+    written = []
+    monkeypatch.setattr(win.worker, "submit", lambda ch, fn, *a: written.append(ch) if ch.startswith("thumb:") else None)
+    _set_rbf(win)                                                     # a change not saved
+    win._leave_thumbnail()                                            # Home shown, or closed without saving
+    assert written == []
+    win._leave_thumbnail(saving=True)                                 # closed with Save: the picture of what is saved
+    assert len(written) == 1
