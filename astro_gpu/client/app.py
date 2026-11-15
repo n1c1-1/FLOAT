@@ -2389,14 +2389,35 @@ def log_crash(text: str, page: str = "") -> Path | None:
     """An unexpected error added to the crash log with its date, the program's version and the page shown, so that it
     can be read afterwards (the box shows it once). A disk that refuses it costs only the log."""
     from datetime import datetime
-    f = crash_log_file()
     try:
+        f = crash_log_file()
         f.parent.mkdir(parents=True, exist_ok=True)
         with open(f, "a", encoding="utf-8") as out:
             out.write(f"===== {datetime.now():%Y-%m-%d %H:%M:%S} · {APP_NAME} {__version__} · {page}\n{text}\n")
         return f
     except OSError:
         return None
+
+
+_crash_open = False                                     # the crash box is shown: a further error is only written
+
+
+def show_error(t, v, tb, window=None):
+    """The handler of an unexpected error: written to the crash log, shown in the crash box. An error raised while the
+    box is open (a timer's, repeated) is written to the log only: the modal box was shown again over itself."""
+    global _crash_open
+    text = "".join(traceback.format_exception(t, v, tb))
+    log_crash(text, page_shown(window))
+    if _crash_open:
+        return
+    _crash_open = True
+    try:
+        box = QMessageBox(QMessageBox.Critical, APP_NAME, _("The program hit an unexpected error. The details below "
+                                                            "help to find it."))
+        box.setDetailedText(text[-3000:])
+        box.exec()
+    finally:
+        _crash_open = False
 
 
 def main(argv=None):
@@ -2422,16 +2443,7 @@ def main(argv=None):
     apply_language(prefs.get("language"))
 
     shown = {}
-
-    def show_error(t, v, tb):
-        text = "".join(traceback.format_exception(t, v, tb))
-        log_crash(text, page_shown(shown.get("w")))
-        box = QMessageBox(QMessageBox.Critical, APP_NAME, _("The program hit an unexpected error. The details below "
-                                                            "help to find it."))
-        box.setDetailedText(text[-3000:])
-        box.exec()
-
-    sys.excepthook = show_error
+    sys.excepthook = lambda t, v, tb: show_error(t, v, tb, shown.get("w"))
     threading.Thread(target=_warm_up, name="warm-up", daemon=True).start()
     w = Main()
     shown["w"] = w
