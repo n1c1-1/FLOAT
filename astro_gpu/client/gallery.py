@@ -45,6 +45,7 @@ from ..stages.combine import COMBINATIONS, FORMER_PALETTES, CombineSHO
 from . import prefs
 from .graphnode import KEY_ENGINE_BLOCK, TITLES, TRUNK
 from .i18n import _, hm
+from .names import shown
 from .icons import set_icon
 from .widgets import ACCENT, cap_dialog, label, size_within
 
@@ -818,7 +819,7 @@ class TemplateGallery(QDialog):
         base = t["name"] if t.get("copy") else _(palette_name(t["palette"])) if t.get("kind") == "fusion" else _(t["name"])
         if t.get("copy"):
             base = _("{name} (copy)").format(name=t["copy"].name)
-        self.name.setText(self.s.unique_name(base) if hasattr(self.s, "unique_name") else base)
+        self.name.setText(shown(self.s.unique_name(base)) if hasattr(self.s, "unique_name") else base)
         self._update()
 
     def _palette(self, palette: str):
@@ -827,7 +828,8 @@ class TemplateGallery(QDialog):
         self.choice = t
         self.preview.setPixmap(draw_graph(t, PREVIEW_W, 190, names=True))
         if t.get("kind") == "fusion":
-            self.name.setText(self.s.unique_name(_(t["palette"])) if hasattr(self.s, "unique_name") else _(t["palette"]))
+            self.name.setText(shown(self.s.unique_name(_(t["palette"]))) if hasattr(self.s, "unique_name")
+                              else _(t["palette"]))
         self._update()
 
     def needs(self, t: dict) -> list[str]:

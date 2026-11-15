@@ -49,6 +49,7 @@ from . import prefs
 from .graphmodel import confirm_on
 from .graphnode import STATE_WORD, block_state, block_title, kbase
 from .i18n import _, all_workflows, hm, language, number
+from .names import shown as shown_name
 from .icons import IconLabel, IconText, icon_only, set_icon
 from .layout import Sections
 from .model import NotInEngine, method_of, method_value, methods_of
@@ -1320,7 +1321,7 @@ class Panel(QWidget):
             from .graphnode import node_title
             title = node_title(s, node) if node.paths else block_title(p, k)   # a block placed twice: its number
             if node.sid is not None:
-                title += " · " + s.session(node.sid).name
+                title += " · " + shown_name(s.session(node.sid).name)
             top.addWidget(label(title, "h1", wrap=True), 1)     # a long name (#36) wraps, never cut
         st = self.graph_state(node)
         top.addWidget(self.state_chip(node, st))

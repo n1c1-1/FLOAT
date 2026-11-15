@@ -32,6 +32,7 @@ from ...graphcore.msg import M
 from ...graphcore.operations import new_view
 from ...graphcore.shapes import Result
 from ..i18n import _
+from ..names import shown
 
 #: seconds a block not up to date is counted for by the document held in memory
 BLOCK_SECONDS = 0.4
@@ -355,7 +356,7 @@ class Doc:
         return api.say(message, self.tr)
 
     def title(self, b) -> str:
-        return api.title(self.graph, b, self.tr)
+        return shown(api.title(self.graph, b, self.tr))          # a row's default name, in the interface's language
 
     def summary(self, b, model=True) -> str:
         """The line under a block's name; ``model`` False: the graph's own (never what the project model reads)."""

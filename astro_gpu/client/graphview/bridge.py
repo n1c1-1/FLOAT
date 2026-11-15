@@ -13,6 +13,7 @@ from PySide6.QtCore import QObject, Signal
 
 from ...graphcore.shapes import Result
 from ..i18n import _
+from ..names import shown
 from .document import FAILED, Doc, MemoryDocument
 
 log = logging.getLogger(__name__)
@@ -216,7 +217,7 @@ class Bridge(QObject):
                 if r is not None and self.block(new) is not None:    # what was done, never the place's bubble
                     from .style import kind_title
                     said = _("{block} added to “{workflow}”").format(block=kind_title(self.block(new).kind),
-                                                                      workflow=r.name)
+                                                                      workflow=shown(r.name))
                 if note or coming is not None:    # computed results made stale, or work added: said, with Undo
                     if note:
                         self.rich_toast.emit(said + " · " + note, [(_("Undo"), "undo")])

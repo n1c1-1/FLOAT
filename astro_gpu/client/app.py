@@ -1699,6 +1699,8 @@ class Main(QMainWindow):
         if self.s is not None:
             self.s.set_machine(*self._device())
         if self.render is not None:                  # Post picks its device again before its next render
+            if self.s is not None:
+                self.s._rebuild_views()              # the workflows' default names, in the new language
             from .services.render import default_device_pref
             self.render.pref = default_device_pref() if self._device()[0] else "cpu"
             self.render._busy_at, self.render._last_busy = 0.0, "?"

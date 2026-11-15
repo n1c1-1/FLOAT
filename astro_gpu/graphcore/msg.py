@@ -17,8 +17,21 @@ def _same(s):
     return s
 
 
+def _same_name(s):
+    return s
+
+
+#: how a name typed by a person is written in a message: as it is, unless the client says better (a default name the
+#: application gave is shown in the interface's language: client/names.py sets this)
+NAMES = _same_name
+
+
 def say(m, tr=None):
     """The text of a message in the language of `tr` ("" for no message)."""
+    return _render(m, tr, lambda s: NAMES(s))
+
+
+def _render(m, tr, names):
     if not m:
         return ""
     tr = tr or _same
@@ -27,8 +40,13 @@ def say(m, tr=None):
     template, fields = m
     out = {}
     for k, v in fields.items():
-        if isinstance(v, tuple) or (isinstance(v, str) and not k.startswith("_")):
-            v = say(v, tr)
+        if isinstance(v, tuple):
+            v = _render(v, tr, names)
+        elif isinstance(v, str) and not k.startswith("_"):
+            t = _render(v, tr, names)
+            v = t if t != v else names(v)          # a name no catalogue knows: a default name of the application?
+        elif isinstance(v, str):
+            v = names(v)
         out[k] = v
     return tr(template).format(**out)
 
@@ -48,10 +66,12 @@ def typed(text):
     return ("{_text}", {"_text": text})
 
 
-#: the language names a stored default name (Session 2, Stars copy) is written in, set by apply_many for one call
+#: the language a message of one call is written in, set by apply_many (a default name is not: see ``name_of``)
 TR = ContextVar("graphcore_tr", default=None)
 
 
 def name_of(template, **fields):
-    """A default name to store (a row or session name): written in the language of the current call."""
-    return say((template, fields), TR.get())
+    """A default name to store (a row or session name): always in English, the neutral form. The client shows it in
+    its language while it is the default (client/names.py), so what a project holds never depends on the language it
+    was made in."""
+    return _render((template, fields), None, _same_name)

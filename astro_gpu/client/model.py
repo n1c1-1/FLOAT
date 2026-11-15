@@ -58,6 +58,7 @@ from .graphnode import COLUMNS, KEY_ENGINE_BLOCK, TOOLS, TRUNK, block_state, kba
 from .graphnode import ENGINE_BLOCK as ENGINE_KEY
 from .graphmodel import GraphEditing
 from .i18n import _, hm
+from .names import shown as shown_name
 from .services.worker import ApiWorker, norm_path
 
 #: the stage of the Output block: a workflow has a layer in Post once it is computed
@@ -795,7 +796,7 @@ class _ProjectBase(QObject):
             c = self._facts.sessions.get(s.id, {})
             lights = c.get("lights", 0)
             ex = sum(1 for sid, _n in self.p.excluded if sid == s.id)
-            out.append(dict(id=s.id, name=s.name, night=s.name, lights=lights, kept=max(lights - ex, 0),
+            out.append(dict(id=s.id, name=shown_name(s.name), night=shown_name(s.name), lights=lights, kept=max(lights - ex, 0),
                             flats=c.get("flats", 0), darks=c.get("darks", 0), bias=c.get("bias", 0),
                             dark_flats=c.get("flat_darks", 0), exposure=self._facts.inventory.get("exposure_s"),
                             iso=self._facts.inventory.get("iso_gain"), temp=None, filter=s.filter or "OSC", rotation=0.0,
@@ -823,7 +824,7 @@ class _ProjectBase(QObject):
         out = []
         for w in self.p.workflows:
             v = by.get(w.id) or WorkflowView(w.id, w.name, {}, model=self)
-            v.name, v.opts = w.name, from_engine(w.options)
+            v.name, v.opts = shown_name(w.name), from_engine(w.options)       # a default name, in the interface's language
             v.params, v.variant_of = copy.deepcopy(w.params), w.variant_of
             v.end = "empilement" if w.end == "stacking" else None
             v.source = copy.deepcopy(w.source)
@@ -2594,12 +2595,13 @@ class _ProjectBase(QObject):
     def name_problem(self, name: str, pid: int | None = None, sid: int | None = None) -> str:
         """Why a workflow (``pid``) or a session (``sid``) cannot take this name (translated), "" when it can (GUI
         exploration 2, decision 8): never empty, never the name of another workflow, or of another session."""
+        from .names import neutral
         name = name.strip()
         if not name:
             return _("a name is needed")
         if sid is not None and any(s.name == name for s in self.p.sessions if s.id != sid):
             return _("“{name}”: another session has it").format(name=name)
-        if pid is not None and any(w.name == name for w in self.p.workflows if w.id != pid):
+        if pid is not None and any(neutral(w.name) == neutral(name) for w in self.p.workflows if w.id != pid):
             return _("“{name}”: another workflow has it").format(name=name)
         return ""
 
@@ -3280,8 +3282,11 @@ class _ProjectBase(QObject):
     def unique_name(self, base: str, numbered: bool = False) -> str:
         """``base``, else ``base 2``, ``base 3``... ``numbered``: one of several made together, numbered from 1 as a
         block placed twice ("Image 1", "Image 2", issue #134); a series already numbered goes on numbered, so that the
-        workflow's name says the number its block shows."""
-        names = {p.name for p in self.paths}
+        workflow's name says the number its block shows. A default name is kept in its neutral form (English, see
+        names.py), the language the views show it in making no difference to what is free."""
+        from .names import neutral
+        base = neutral(base)
+        names = {neutral(p.name) for p in self.paths}
         series = any(x.startswith(base + " ") and x[len(base) + 1:].isdigit() for x in names)
         if base not in names and not numbered and not series:
             return base

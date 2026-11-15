@@ -8,6 +8,7 @@ from __future__ import annotations
 from ...graphcore.model import Index, out_ports
 from ...graphcore.rules import off_reason
 from ..i18n import _
+from ..names import shown
 
 FRAME_SOURCES = ("session", "calibration")
 
@@ -86,7 +87,7 @@ def align_items(doc, ix, rid):
     for x in g.rows:
         if x.id == rid or (x.blocks and x.blocks[0] in g.blocks and g.blocks[x.blocks[0]].kind == "combine_layers"):
             continue
-        text = x.name if a.get("ref") != x.id else "✓ " + x.name
+        text = shown(x.name) if a.get("ref") != x.id else "✓ " + shown(x.name)
         args = {"row": rid, "ref": x.id}
         res = doc.try_many([("set_align", args)])
         if not res.ok and res.reason == JOIN_NO_STACK:
@@ -140,5 +141,5 @@ def row_items(doc, ix, rid):
     sub = [(_("Rename"), "rename", {"row": rid}, True, ""),
            _item(doc, _("Duplicate (Ctrl+D)"), "duplicate_row", {"row": rid}),
            _item(doc, _("Delete workflow"), "delete_row", {"row": rid})]
-    items.append((_("Workflow “{name}”").format(name=r.name), "submenu", sub, True, ""))
+    items.append((_("Workflow “{name}”").format(name=shown(r.name)), "submenu", sub, True, ""))
     return items

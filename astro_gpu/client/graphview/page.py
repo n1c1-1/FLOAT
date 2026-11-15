@@ -674,7 +674,8 @@ class GraphPage(SidesHost, QWidget):
         if t.get("copy") is not None:                    # a copy is Ctrl+D on its workflow, not a template
             self.hide_templates()
             return
-        base = name or (_(t["palette"]) if t.get("kind") == "fusion" else _(t["name"]))
+        from ..names import neutral
+        base = neutral(name) if name else (t["palette"] if t.get("kind") == "fusion" else t["name"])   # stored in English
         name = gt.Plan(doc.graph).unique_name(base)
         m = self.s
         if m is not None and hasattr(m, "_run_plan") and hasattr(m, "_template"):

@@ -12,6 +12,7 @@
   "Colour full": "Couleur complet",
   "Filters minimal": "Filtres minimal",
   "Filters full": "Filtres complet",
+  "Each filter's workflow with denoise and its stars taken off, the others aligned on the first one; the combination of the filters chosen here makes the colour nebula from their starless images, a second one of the same type makes the colour stars from their stars, and a Combine layers block puts them back.": "Le workflow de chaque filtre avec débruitage et ses étoiles retirées, les autres alignés sur le premier ; la combinaison des filtres choisis ici fait la nébuleuse en couleur à partir de leurs images sans étoiles, une seconde du même type fait les étoiles en couleur à partir de leurs étoiles, et un bloc Combiner calques les remet.",
   "Several images": "Plusieurs images",
   "Templates": "Modèles",
   "Start from a template": "Partir d'un modèle",

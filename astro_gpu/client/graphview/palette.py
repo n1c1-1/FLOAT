@@ -15,6 +15,7 @@ from PySide6.QtGui import QDrag
 from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QMenu, QScrollArea, QToolButton, QVBoxLayout
 
 from ..i18n import _
+from ..names import shown
 from ..layout import FOLD_MS, UNFOLD_MS
 from . import style
 from .canvas import MIME_KIND
@@ -385,7 +386,7 @@ class Palette(QScrollArea):
 
     def _for_current(self):
         r = self.current_row()
-        self._for_text = _("for “{name}”").format(name=r.name) if r is not None else ""
+        self._for_text = _("for “{name}”").format(name=shown(r.name)) if r is not None else ""
         self._show_for()
         self.for_row.setVisible(r is not None and self.wide())
 

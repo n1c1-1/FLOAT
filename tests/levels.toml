@@ -81,6 +81,7 @@ level3 = [
     # ---- level 1 (one file, one process) over its minute: the longest tests of the file come here (times alone) ------
     "tests/client/test_swap_smoke.py::test_a_new_project_from_each_template_shows_its_blocks_and_the_panel",  # heavy, 32 s
     "tests/client/test_swap_smoke.py::test_a_run_shows_the_states_and_its_progress_on_the_graph",     # worker, 27 s
+    "tests/client/test_language_scan.py",                                                          # heavy: every screen, both languages, 90 s
     "tests/client/graphview/test_gv_legacy_flows.py::test_no_template_and_no_block_placed_after_it_draws_an_output_block",  # heavy, 69 s
     "tests/client/graphview/test_gv_legacy_flows.py::test_no_wire_of_the_templates_passes_under_a_block_nor_goes_right_to_left",  # heavy, 6 s
     "tests/client/graphview/test_gv_legacy_flows.py::test_a_second_session_joins_the_chosen_stack_never_in_place_of_its_nights",  # heavy, 7 s
