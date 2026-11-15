@@ -259,7 +259,7 @@ def f_saturation(x, p, ctx):
         return x
     L = lum(x)
     center = dict(HUES)[p["hues"]]
-    guard = background_guard(L, p.get("protect", 0.0))
+    guard = background_guard(L, p.get("protect", 0.0), ctx)
     if center is None and guard is None:               # every hue alike: L + (x - L) * (1 + k) in one pass
         return _mix(x, 1 + k, _gray3(L), -k)
     w = np.ones_like(L)
@@ -272,17 +272,22 @@ def f_saturation(x, p, ctx):
     return L + (x - L) * (1 + k * w[..., None])
 
 
-def background_guard(L, factor: float):
+def background_guard(L, factor: float, ctx=None):
     """Issue #23: the saturation of the astronomy software's colour tools spares the background: only the pixels
     brighter than ``factor`` x (the median + one sigma of the image's luminance) change, so that the noise of the
-    background is not coloured. A smooth start over 20 % around that level; None at 0 (everything changes)."""
+    background is not coloured. A smooth start over 20 % around that level; None at 0 (everything changes). The
+    median and sigma are the whole image's (``ctx.whole_stats``), also when a region is rendered."""
     if factor <= 0:
         return None
-    sub = L[::4, ::4]
-    med = float(np.median(sub))
-    sig = 1.4826 * float(np.median(np.abs(sub - med)))
+    med, sig = ctx.whole_stats("background", L, _median_sigma) if ctx is not None else _median_sigma(L)
     thr = factor * (med + sig)
     return np.clip((L - 0.8 * thr) / max(0.4 * thr, 1e-6), 0, 1).astype(np.float32)
+
+
+def _median_sigma(L) -> tuple[float, float]:
+    sub = L[::4, ::4] if L.size > 4_000_000 else L
+    med = float(np.median(sub))
+    return med, 1.4826 * float(np.median(np.abs(sub - med)))
 
 
 def mixer_params() -> list[dict]:
@@ -1213,6 +1218,30 @@ class Ctx:
         self.hists: dict = {}
         self.synth = None                                     # the Synthetic stars of the layer being composed
         self._memo: dict[str, np.ndarray] = {}
+        self.canvas_wh: tuple[int, int] | None = None         # the whole canvas at this level
+        self.stats_key: str | None = None                     # the input of the filter being applied, any region
+        self.row_edit: str | None = None                      # (the ``edit`` of the image layer being composed)
+
+    def whole_stats(self, name: str, x: np.ndarray, measure):
+        """``measure`` of a filter's input taken on the whole image, whatever region is rendered (review 10.1: at
+        100 % Post renders the visible area only, and a measure of it differed from the export's): on a whole-canvas
+        rendering, measured on the input reduced to the measure level (``stats_level``: the same pixels at any level)
+        and kept under the input's key; on a region, the kept value (``Composer.compose`` makes it first)."""
+        key = None if self.stats_key is None else (self.stats_key, name)
+        whole = self.canvas_wh is not None and tuple(self.abox) == (0, 0, *self.canvas_wh)
+        if not whole and key is not None and key in self.comp.stats:
+            return self.comp.stats[key]
+        if not whole or self.canvas_wh is None:
+            return measure(x)
+        k = stats_level(*self.canvas_wh)
+        v = measure(x if k == 0 else cv2.resize(x, (max(1, x.shape[1] >> k), max(1, x.shape[0] >> k)),
+                                               interpolation=cv2.INTER_AREA))
+        if key is not None:
+            self.comp.stats[key] = v
+            self.comp.stats.move_to_end(key)
+            while len(self.comp.stats) > STATS_KEPT:
+                self.comp.stats.popitem(last=False)
+        return v
 
     def _data(self, name: str) -> np.ndarray:
         if name not in self._memo:
@@ -1224,6 +1253,26 @@ class Ctx:
 
     def halpha(self) -> np.ndarray:
         return self._data("halpha")
+
+
+#: the long side of the image a whole-image measure is taken on (``Ctx.whole_stats``), whatever the level rendered
+STATS_SIDE = 1600
+STATS_KEPT = 512
+
+
+def stats_level(w: int, h: int) -> int:
+    """How many halvings bring an image of w x h to ``STATS_SIDE`` or under: at level l the measure is taken at
+    level l + this, the same level for every rendering of the image."""
+    k = 0
+    while max(w, h) >> k > STATS_SIDE:
+        k += 1
+    return k
+
+
+#: the filters a measure of their whole input decides (``Ctx.whole_stats``), when that measure is used
+def _wants_whole(fl) -> bool:
+    return fl["filter"] == "saturation" and float(fl["params"].get("protect", 0.0)) > 0 and \
+        float(fl["params"].get("strength", 0.0)) != 0
 
 
 def thumb_of(a: np.ndarray) -> np.ndarray:
@@ -1291,6 +1340,7 @@ class Composer:
         self._thumbs: OrderedDict = OrderedDict()           # ``tkey`` -> {mask key: thumbnail}
         self.skipped = 0                                    # rows the last composition did not compute
         self.plan_errors = 0                                # rows whose digest the plan did not foresee (tests: 0)
+        self.stats: OrderedDict = OrderedDict()             # (filter input's key, measure) -> its whole-image values
 
     # ------------------------------------------------------------ geometry
     def canvas_of(self, layers: list[dict]) -> Canvas | None:
@@ -1559,6 +1609,19 @@ class Composer:
             items.append(it)
         return items
 
+    @staticmethod
+    def _stats_keys(items) -> list[tuple]:
+        """The whole-image measures (``Ctx.whole_stats``) the visible filters of a plan use: their input's key, the
+        same at any level and region (made of the rows' ``edit``)."""
+        out, before = [], "empty"
+        for it in items:
+            if it.kind == "filter" and _wants_whole(it.lay):
+                out.append((_sig(before, it.lay["id"]), "background"))
+            elif it.kind == "pixel":
+                out += [(_sig(it.edit, fl["id"]), "background") for fl in it.own if fl["visible"] and _wants_whole(fl)]
+            before = it.edit
+        return out
+
     def _src_sig(self, lay, own, level, abox, canvas) -> str:
         """What a pixel layer's image after its own filters depends on: the digest ``compose`` and ``group_rgb`` make
         while they compute it, made without computing it."""
@@ -1692,6 +1755,10 @@ class Composer:
 
         stack = list(reversed(layers))                                    # bottom first
         items = self._plan(stack, level, abox, canvas, want, ctx.hist_ids, draft)
+        if abox != (0, 0, W, H) and any(key not in self.stats for key in self._stats_keys(items)):
+            # a region: the measures of the whole image its filters need, made on the whole canvas at the measure
+            # level first (Ctx.whole_stats; review 10.1)
+            self.compose(layers, level + stats_level(W, H), stop=stop, cache=cache, draft=draft)
         if track:
             self._follow(items)
         start, back = self._start(items, where, thumbs)
@@ -1724,6 +1791,7 @@ class Composer:
                         made.update(self._thumbs[it.tkey])
                         out.mask_thumbs.update(made)
                 else:
+                    ctx.row_edit = it.edit                                # (the key of its filters' measures)
                     if is_group(lay):
                         self._keep = edited
                         src, sig = self.group_rgb(lay, own, level, abox, canvas, ctx, cache, draft, check,
@@ -1742,6 +1810,7 @@ class Composer:
                             if fl["id"] in want or (thumbs and fl["mask"] is not None):
                                 keep_mask(fl, self.mask(fl, level, abox, src, canvas, ctx))
                             continue
+                        ctx.stats_key = _sig(it.edit, fl["id"])
                         src, fm, sig = self._step(fl, src, sig, where, want, thumbs, level, abox, canvas, ctx,
                                                   keep=edited or fl is tops[-1])
                         keep_mask(fl, fm)
@@ -1763,6 +1832,7 @@ class Composer:
                     a = a if m is None else (a * m)[..., None]
                     comp = comp + (src - comp) * a
             else:                                     # above the row edited its input changes at each edit: not kept
+                ctx.stats_key = _sig(items[i - 1].edit if i else "empty", lay["id"])
                 comp, m, comp_sig = self._step(lay, comp, comp_sig, where, want, thumbs, level, abox, canvas, ctx,
                                                keep=edited_at is None or i <= edited_at)
                 keep_mask(lay, m)
@@ -1815,6 +1885,7 @@ class Composer:
                     raise Superseded()
                 if not fl["visible"]:
                     continue
+                ctx.stats_key = _sig(ctx.row_edit, fl["id"])
                 x, fm, sig = self._step(fl, x, sig, where, want, thumbs, level, abox, canvas, ctx)
                 keep_mask(fl, fm)
             side = (lay.get("side_masks") or {}).get(sub)

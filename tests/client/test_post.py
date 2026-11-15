@@ -613,6 +613,27 @@ def test_a_mask_acts_on_a_layer_and_on_a_filter():
     assert np.allclose(out, pr.img[1] + (pr.img[1] ** 0.5 - pr.img[1]) * ramp, atol=1e-5)
 
 
+def test_the_saturations_background_guard_is_measured_on_the_whole_image_in_a_region_too():
+    # review 10.1: at 100 % Post renders the visible area; the guard's median and sigma were measured on it, so that
+    # on a bright core the saturation was held back there and not in the export
+    pr = ToyProvider(640, 400)
+    pr.img[1][100:380, 120:520] *= np.float32([1.6, 1.4, 1.2])            # a bright core, under half the image
+    pr.img[1] = np.clip(pr.img[1], 0, 1)
+    base = new_workflow_layer(1, "A", True)
+    sat = new_filter_layer("saturation", None)
+    sat["params"].update(strength=60, protect=1.0)
+    lay = [sat, base]
+    box = (260, 200, 380, 280)                                            # the visible area, inside the core
+    full = Composer(pr).compose(lay, 0).rgb
+    cp = Composer(pr)
+    reg = cp.compose(lay, 0, box).rgb                                      # a fresh engine: a region first
+    assert np.abs(reg - full[200:280, 260:380]).max() * 255 < 1.0
+    sat["params"]["strength"] = 30                                         # its input's measure is kept
+    n = len(cp.stats)
+    cp.compose(lay, 0, box)
+    assert len(cp.stats) == n
+
+
 def test_a_region_is_the_crop_of_the_whole_and_the_levels_agree():
     pr = ToyProvider(640, 400)
     cp = Composer(pr)
