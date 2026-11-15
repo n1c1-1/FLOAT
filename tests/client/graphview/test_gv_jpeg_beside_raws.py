@@ -99,3 +99,18 @@ def test_gv_jpeg_saved_beside_raws_is_said_with_a_one_click_removal(qapp, tmp_pa
     b.g.click_zone(b.g.cell(("box", sid, "lights")), "button")       # the cell's own button
     assert len(b.own(sid, "lights")) == 8 and w.key[0] == "beside"
     b.close()
+
+
+def test_gv_jpeg_own_calibration_files_leave_jpegs_beside_raws(qapp, tmp_path, monkeypatch):
+    """A Calibration's own frames picked in Inspect: the same rule (its « Add files… »)."""
+    from types import SimpleNamespace
+
+    from astro_gpu.client import ownframes
+    picked = pairs(tmp_path / "darks", 3)
+    added, said = [], []
+    s = SimpleNamespace(calibration_files=lambda p, sid, kind: [],
+                        add_calibration_files=lambda paths, sid, kind, got: added.extend(got))
+    panel = SimpleNamespace(s=s, toast=SimpleNamespace(emit=said.append))
+    monkeypatch.setattr(ownframes.QFileDialog, "getOpenFileNames", lambda *a, **k: (list(picked), ""))
+    ownframes._add(panel, ["p"], 1, "darks")
+    assert sorted(added) == [x for x in picked if x.endswith(".ARW")] and said == ["3 JPG left: beside raw frames"]

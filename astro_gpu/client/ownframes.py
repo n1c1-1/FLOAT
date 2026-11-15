@@ -86,5 +86,11 @@ def _add(panel, paths, sid: int, kind: str) -> None:
     got, _f = QFileDialog.getOpenFileNames(panel, _("Add files…"), prefs.last_folder(),
                                            _("Frames ({patterns})").format(patterns=pats) + ";;" + _("All files (*)"))
     if got:
+        from .graphview.files import beside_raws, summary
         prefs.remember_folder(str(Path(got[0]).parent))
-        panel.s.add_calibration_files(paths, sid, kind, got)
+        aside = set(beside_raws(got, panel.s.calibration_files(paths[0], sid, kind)))   # a camera's JPEGs beside
+        if aside:                                                                       # its raws: not more frames
+            panel.toast.emit(_("{name} left: beside raw frames").format(name=summary(aside)))
+        got = [f for f in got if f not in aside]
+        if got:
+            panel.s.add_calibration_files(paths, sid, kind, got)
