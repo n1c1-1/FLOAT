@@ -21,7 +21,8 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
-def _wheel(w, pos=QPointF(100, 100)):
+def _wheel(w):
+    pos = QPointF(100, 100)
     ev = QWheelEvent(pos, w.mapToGlobal(pos), QPoint(0, 0), QPoint(0, 120), Qt.NoButton, Qt.NoModifier,
                      Qt.NoScrollPhase, False)
     w.wheelEvent(ev)
