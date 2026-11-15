@@ -32,3 +32,12 @@ def test_isolated_xp_is_the_same_from_the_npz_file_and_from_arrays_read_once(tmp
     want = ok[np.linspace(0, len(ok) - 1, p.xp_max).round().astype(int)]
     assert len(want) == p.xp_max                               # the cap is reached: the order matters
     assert np.array_equal(from_file, want) and np.array_equal(once, want)
+
+
+def test_an_observation_date_with_a_time_zone_or_unreadable_gives_an_epoch():
+    # review 4.3: "2023-10-12T22:11:03Z" (or "+02:00") stopped the block: no catalogue, no colour calibration
+    from astro_gpu.stages.catalogs import _epoch
+    naive = _epoch("2023-10-12T22:11:03")
+    assert _epoch("2023-10-12T22:11:03Z") == naive
+    assert abs(_epoch("2023-10-13T00:11:03+02:00") - naive) < 1e-9          # the same instant in UTC
+    assert _epoch("not a date") == _epoch(None) == 2016.0
