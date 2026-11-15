@@ -501,7 +501,7 @@ class Painting:
             self._dashes(p, R, DASH, 255, 1.0, 8)
         p.setFont(font(15))
         p.setPen(colour(TXT if hot else DIM))
-        p.drawText(R, Qt.AlignCenter, _("No session. Drop a session's folder here, or several."))
+        p.drawText(R, Qt.AlignCenter, _("No session. Drop light frames here to make one."))
 
     def p_common_name(self, p, c: Cell):
         R = QRectF(c.x + 3, c.y + 3, c.w - 6, c.h - 6)
