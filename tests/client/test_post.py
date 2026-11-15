@@ -3657,3 +3657,42 @@ def test_undo_names_the_eye_of_a_groups_image_and_each_mask_edit():
     assert step_words(after(mask=one), after(mask=dict(one, density=50.0))) == "Density of the mask of “Full”"
     assert step_words(after(mask=one), after(mask=None)) == "Mask of “Full” deleted"
     assert step_words([g], after(side_masks={"starless": one})) == "Mask added to “Starless image”"
+
+
+def test_the_properties_panel_stays_where_it_was_scrolled_when_it_is_made_again(post):
+    """The laptop's B7: on a small window the panel went back to the top after a mask edit or an Undo."""
+    v = post.view
+    full = named(v, "Full")
+    v.select(full["id"], "layer")
+    v.mask_button()
+    for src in ("luminance", "color", "gradient", "brush"):
+        v.add_part(full, src)
+    post.page.resize(1250, 420)
+    v.build_props()
+    for _ in range(3):
+        QApplication.processEvents()
+    sb = v.psc.verticalScrollBar()
+    assert v.psc.isVisible() and sb.maximum() > 100, (v.psc.isVisible(), v.psc.height(), v.psc.widget().height())
+    sb.setValue(sb.maximum() - 20)
+    at = sb.value()
+    v.build_props()
+    sb.setValue(0)                                                    # the jump seen when a layout pass came between
+    QApplication.processEvents()
+    QApplication.processEvents()
+    assert sb.value() == at
+    post.page.resize(1500, 900)
+
+
+def test_the_night_card_line_says_it_is_being_read_while_it_is_greyed(exporting):
+    """The laptop's B8: greyed a second, then active, with no reason seen (on hover only)."""
+    s = exporting
+    d = ExportDialog(s.view)
+    try:
+        d.card = SimpleNamespace(card_ready=lambda: False, card_loading=lambda: True)
+        d._card_state()
+        assert not d.c_card.isEnabled() and d.c_card.text().endswith(" · reading the registration…")
+        d.card = SimpleNamespace(card_ready=lambda: True, card_loading=lambda: False)
+        d._card_state()
+        assert d.c_card.isEnabled() and d.c_card.text() == "Attach the night card (a PNG beside the image)"
+    finally:
+        d.close()

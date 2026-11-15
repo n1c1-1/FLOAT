@@ -2373,11 +2373,15 @@ class PostView(QWidget):
             QTimer.singleShot(0, lambda: (self.lsc.ensureWidgetVisible(sel_row, 0, 10),
                                           self.lsc.horizontalScrollBar().setValue(0)))
         lay = self.layer(self.sel[0]) if self.sel else None
-        self.b_dup.setEnabled(lay is not None and not is_synth(lay))      # one Synthetic stars layer per group
-        self.b_del.setEnabled(lay is not None and (not is_pixel(lay) or sum(map(is_pixel, self.layers)) > 1))
+        image = self._image_of_group()                    # one of a group's images: it goes with its layer (B2, B3)
+        self.b_dup.setEnabled(lay is not None and not is_synth(lay) and not image)  # one Synthetic stars layer per group
+        self.b_dup.setToolTip(_("Duplicate (Ctrl+J)") if self.b_dup.isEnabled() else
+                              _("Choose a layer first") if lay is None else image or
+                              _("One Synthetic stars layer per Stars group: it cannot be duplicated"))
+        self.b_del.setEnabled(lay is not None and not image and (not is_pixel(lay) or sum(map(is_pixel, self.layers)) > 1))
         # greyed, it says why (control round): the last image layer stays, or nothing chosen
         self.b_del.setToolTip(_("Delete the selected layer") if self.b_del.isEnabled() else
-                              _("Choose a layer first") if lay is None else
+                              _("Choose a layer first") if lay is None else image or
                               _("The last image layer stays: Post needs an image (hide it with its eye)"))
         own = self.mask_owner()
         real = lay is not None and self.sel[1] == "real"           # the real stars have no mask of their own
@@ -2637,6 +2641,14 @@ class PostView(QWidget):
             if lay["sub"] == "stars":                    # its synthetic stars too (#93)
                 m.addSeparator()
                 self._synth_action(m, self.layer(lay["id"]))
+            m.addSeparator()                             # what it cannot do, greyed with why (B2, B3)
+            why = _("One of the images of “{name}”: it stays in its layer. Duplicate, rename, move or delete the "
+                    "layer itself").format(name=layer_name(self.layer(lay["id"]) or lay))
+            for txt in ("Duplicate", "Rename", "Delete"):
+                a = m.addAction(_(txt))
+                a.setEnabled(False)
+                a.setToolTip(why)
+            m.setToolTipsVisible(True)
             return m
         m.addSeparator()
         if is_group(lay):
@@ -2954,10 +2966,20 @@ class PostView(QWidget):
                 part["id"] = new_id()
         return d
 
+    def _image_of_group(self) -> str:
+        """When the selection is one of a Combine layers layer's images (or its mask): why it cannot be duplicated,
+        renamed, moved or deleted apart (the laptop's B2, B3: Duplicate with Stars chosen copied the whole layer, and
+        nothing said the images stay in place); else ""."""
+        if not self.sel or self.sel[1] not in SUB_ROWS and selection_side(self.sel[1]) is None:
+            return ""
+        lay = self.layer(self.sel[0])
+        return _("One of the images of “{name}”: it stays in its layer. Duplicate, rename, move or delete the layer "
+                 "itself").format(name=layer_name(lay)) if lay is not None else ""
+
     def duplicate(self):
         """A copy above; a pixel layer comes with its own filters."""
         lay = self.layer(self.sel[0]) if self.sel else None
-        if lay is None:
+        if lay is None or self._image_of_group():
             return
         self.push()
         d = self._copy(lay)
@@ -2985,6 +3007,8 @@ class PostView(QWidget):
     def delete(self):
         """A pixel layer goes with its own filters; the last pixel layer stays."""
         lay = self.layer(self.sel[0]) if self.sel else None
+        if self._image_of_group():
+            return
         others = [x for x in self.layers if x["id"] != lay["id"] and x.get("target") != lay["id"]] if lay else []
         if lay is None or not any(is_pixel(x) for x in others) and is_pixel(lay):
             return
@@ -3030,6 +3054,19 @@ class PostView(QWidget):
 
     # ------------------------------------------------------------ properties of the selection
     def build_props(self):
+        """The properties panel made again. Of the same selection (a mask edited, an Undo), it stays where it was
+        scrolled (the laptop's B7: on a small window it went back to the top, or jumped as the rows came back)."""
+        key = (self.sel, self.b_crop.isChecked())
+        sb = self.psc.verticalScrollBar() if hasattr(self, "psc") else None
+        keep = sb.value() if sb is not None and key == getattr(self, "_props_key", None) else 0
+        self._props_key = key
+        self._build_props()
+        if keep:
+            self.psc.widget().adjustSize()
+            sb.setValue(keep)
+            QTimer.singleShot(0, lambda: sb.setValue(min(keep, sb.maximum())))
+
+    def _build_props(self):
         clear(self.pbox)
         self.folds.reset()
         self.curves_editor = self.function_graph = None
@@ -3560,6 +3597,10 @@ class PostView(QWidget):
         v.addLayout(top)
         src = part["src"]
         default = new_part(src)
+        if src == "halpha":                              # no setting of its own: what it is made of (the laptop's B9)
+            v.addWidget(label(_("Where the image is redder than green, the hydrogen glow of the workflow at the bottom "
+                                "(its starless image when it has one): nothing at its middle value, all at its "
+                                "brightest 3 %. Feather, Density and Invert act on it."), "small", wrap=True))
 
         def sl(key, name, lo, hi, unit=""):
             s = ContSlider(_(name), lo, hi, part[key], default[key], unit=unit, step=1)

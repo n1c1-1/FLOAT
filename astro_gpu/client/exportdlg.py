@@ -207,6 +207,9 @@ class ExportDialog(QDialog):
         ok = self.card is not None and self.card.card_ready()
         reading = not ok and self.card is not None and getattr(self.card, "card_loading", lambda: False)()
         self.c_card.setEnabled(ok)
+        # while it is read (a second or so) its line says so: greyed that long, a reason on hover was never seen (B8)
+        self.c_card.setText(_("Attach the night card (a PNG beside the image)") +
+                            (" · " + _("reading the registration…") if reading else ""))
         # being read: the reason is not "no result", it is that it is not there yet
         self.c_card.setToolTip("" if ok else _("Reading the registration result...") if reading
                                else _("No registration result yet"))
