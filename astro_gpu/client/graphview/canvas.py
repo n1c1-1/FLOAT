@@ -1933,13 +1933,34 @@ class GraphCanvas(QGraphicsView):
             self._files_over(e.position().toPoint())
             self.gesture = None
             target, session = st.get("target"), st.get("session")
-            if target is None and session is not None:
-                target = "lights"
             paths = [u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()]
             self.clean_gesture()
             e.acceptProposedAction()
-            if session is not None and target is not None and paths:
+            if not paths:
+                return
+            if session is None:                          # nowhere that takes frames: said, never silent
+                has = any(b.kind == "session" for b in self.bridge.graph.blocks.values())
+                self.say(_("Drop the frames on a Session block, or on one of its rows") if has else
+                         _("No Session block yet: choose a template or place a Session, then drop the frames on it"))
+            elif target is None:                         # on the block itself: the kind is the user's, asked here
+                self.ask_kind(e.position().toPoint(), session, paths)
+            else:
                 self.bridge.drops.drop(session, target, paths)       # the table's own path (files.py)
+
+    #: the kinds a drop on a Session block itself asks for (nothing is deduced from the files' or folders' names)
+    ASKED_KINDS = ("lights", "darks", "flats", "bias")
+
+    def ask_kind(self, vp: QPoint, session, paths):
+        """Files dropped on a Session block, not on one of its rows: a small menu at the drop point says which kind
+        they are (Lights, Darks, Flats, Bias); nothing is added before the choice."""
+        m = QMenu(self)
+        m.setObjectName("drop_kind")
+        for k in self.ASKED_KINDS:
+            a = m.addAction(_(FILE_LABEL[k]))
+            a.setData(k)
+            a.triggered.connect(lambda _c=False, kk=k: self.bridge.drops.drop(session, kk, list(paths)))
+        self.kind_menu = m
+        m.popup(self.viewport().mapToGlobal(vp))
 
     def _session_under(self, vp: QPoint):
         """The Session block (id) a file drag is over: a Session block, or its night's Calibration."""
@@ -1989,8 +2010,8 @@ class GraphCanvas(QGraphicsView):
                 c.hot = h
                 c.update()
         if session is not None and st["target"] is None:
-            self.tip.set(_("Drop here: Lights; or on one of the targets"), self.blocks[session].sceneBoundingRect(),
-                         False)
+            self.tip.set(_("Drop here: the kind is asked; or on one of the rows"),
+                         self.blocks[session].sceneBoundingRect(), False)
         else:
             self.tip.hide()
 

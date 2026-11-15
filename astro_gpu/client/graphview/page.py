@@ -231,6 +231,8 @@ class GraphPage(SidesHost, QWidget):
         from .table_host import TableHost
         self.table_host = TableHost(self.bridge)
         self.table_toast = Toast(self.table_host)       # the canvas' toast is hidden behind the table
+        # its links do what the canvas toast's do (its Undo did nothing: the testers' pass 2, 2 of 2)
+        self.table_toast.link.connect(lambda key: self.canvas._toast_link(key))
         self.bridge.toast.connect(self._table_say)
         self.bridge.rich_toast.connect(lambda t, ls: self._table_say(t() if callable(t) else t, ls))
         self.centre.addWidget(self.table_host)

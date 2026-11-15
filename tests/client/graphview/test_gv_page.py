@@ -236,6 +236,48 @@ def test_s02_files_on_session_targets_count_on_the_block(B, tmp_path):
     B.exact(before)
 
 
+def _drop_raw(B, point, paths):
+    """Files dropped at a point of the view (not on a target): the events the Explorer sends."""
+    from PySide6.QtCore import QMimeData, QPointF, Qt, QUrl
+    from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(p) for p in paths])
+    vp = B.g.vp
+    QApplication.sendEvent(vp, QDragEnterEvent(point, Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier))
+    QApplication.sendEvent(vp, QDragMoveEvent(point, Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier))
+    QApplication.sendEvent(vp, QDropEvent(QPointF(point), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier))
+    pump()
+
+
+def test_s02b_files_on_the_session_block_itself_ask_their_kind(B, tmp_path):
+    """The testers' pass 2: a master dark and a master flat dropped on a Session block were added as "2 lights" (the
+    block itself assumed lights). The kind is the user's: a small menu at the drop point asks it, nothing is added before;
+    the notice says the kind they were added as, with Undo."""
+    B.install().setup(("add_row", dict(kind="session")))
+    s = B.one("session")
+    darks = make(tmp_path / "darks", 3, "fits", "D")
+    before = B.steps()
+    B.g._see(B.g.block_point(s))
+    _drop_raw(B, B.g.block_point(s), sorted(str(p) for p in darks.iterdir()))
+    menu = B.canvas.kind_menu
+    assert [a.text() for a in menu.actions()] == ["Lights", "Darks", "Flats", "Bias"] and B.steps() == before
+    next(a for a in menu.actions() if a.data() == "darks").trigger()
+    pump()
+    settle(B)
+    assert "3 darks" in B.canvas.blocks[s].d["summary"] and not (B.graph.blocks[s].files or {}).get("lights")
+    toast = B.canvas.toast
+    assert "dark" in toast.plain.lower() and [k for _t, k in toast.links()] == ["undo"], toast.plain
+
+
+def test_s02c_files_dropped_where_nothing_takes_them_are_said(B, tmp_path):
+    """The testers' pass 2: files dropped on the blank page of a new project: nothing happened, nothing was said."""
+    from PySide6.QtCore import QPoint
+    B.install()
+    lights = make(tmp_path / "lights", 2, "fits", "L")
+    _drop_raw(B, QPoint(30, 30), sorted(str(p) for p in lights.iterdir()))
+    assert B.canvas.toast.isVisible() and "No Session block yet" in B.canvas.toast.plain, B.canvas.toast.plain
+
+
 def test_s03_drag_session_onto_plus_session(B):
     B.install().setup(*STACK)
     lit = {pl["kind"] for pl in B.g.visible_places("session") if pl["lit"]}

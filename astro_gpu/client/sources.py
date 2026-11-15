@@ -129,9 +129,15 @@ class GroupRow(QFrame):
         if e.mimeData().hasUrls():
             e.acceptProposedAction()
 
+    def dragMoveEvent(self, e):                                      # noqa: N802 - Qt's name
+        """Taken while the files move over it too (a move event refused made the whole drop refused)."""
+        if e.mimeData().hasUrls():
+            e.acceptProposedAction()
+
     def dropEvent(self, e):                                          # noqa: N802 - Qt's name
         paths = local_paths(e.mimeData())
         if paths:
+            e.acceptProposedAction()
             self.dropped.emit(self.key, paths)
 
 
@@ -716,6 +722,12 @@ class SourcesView(QWidget):
             self._drop_hot(True)
             e.acceptProposedAction()
 
+    def dragMoveEvent(self, e):                                      # noqa: N802 - Qt's name
+        """Taken while the files move over the page too (a move event refused made every drop refused, the zone
+        "Drop your files here" included: the testers' pass 2)."""
+        if e.mimeData().hasUrls() and self.sid is not None:
+            e.acceptProposedAction()
+
     def dragLeaveEvent(self, e):                                     # noqa: N802 - Qt's name
         self._drop_hot(False)
 
@@ -723,7 +735,8 @@ class SourcesView(QWidget):
         """Dropped anywhere but on a kind's row: into the kind shown."""
         self._drop_hot(False)
         paths = local_paths(e.mimeData())
-        if paths:
+        if paths and self.sid is not None:
+            e.acceptProposedAction()
             self.add_files(self.group, paths)
 
     # ------------------------------------------------------------ data

@@ -71,3 +71,42 @@ def test_sources_lights_of_another_session_of_the_stack_are_said_not_added(qapp,
     finally:
         view.close()
         close(w, m, page)
+
+
+def _drop(widget, paths):
+    """Files dropped as the Explorer sends them: enter, a move (a fresh event, not accepted beforehand), the drop."""
+    from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
+    from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
+    from PySide6.QtWidgets import QApplication
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(p) for p in paths])
+    pt = QPoint(10, 10)
+    enter = QDragEnterEvent(pt, Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)
+    QApplication.sendEvent(widget, enter)
+    move = QDragMoveEvent(pt, Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)
+    move.ignore()
+    QApplication.sendEvent(widget, move)
+    if not (enter.isAccepted() and move.isAccepted()):
+        return False
+    QApplication.sendEvent(widget, QDropEvent(QPointF(pt), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier))
+    return True
+
+
+def test_sources_take_dropped_files_on_the_page_and_on_a_kinds_row(qapp, tmp_path, monkeypatch):
+    """The testers' pass 2: in Inspect's Files page every drop was refused, the zone "Drop your files here" included:
+    the page took the files as they entered, not as they moved over it."""
+    from astro_gpu.client.sources import GroupRow, SourcesView
+    darks = [x for x in night(tmp_path / "darks") if x.endswith(".fits")][:2]
+    w, m, page = open_page(tmp_path, monkeypatch, sessions=1, workflows=("Full",))
+    view = SourcesView(m)
+    try:
+        sid = m.p.sessions[0].id
+        view.show_session(sid, "darks")
+        assert _drop(view, [darks[0]]) and len(m.p.session(sid).darks) == 1
+        view.refresh()
+        row = next(r for r in view.findChildren(GroupRow) if r.key == "flats")
+        assert _drop(row, [darks[1]])
+        assert len(m.p.session(sid).flats) == 1
+    finally:
+        view.close()
+        close(w, m, page)
