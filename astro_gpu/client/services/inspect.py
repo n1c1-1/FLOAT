@@ -1188,6 +1188,15 @@ def _calib_masters(cal_dir: str):
     return m
 
 
+def forget_masters(root) -> None:
+    """The masters read from a project's results go with it (closed): a gigabyte for a large sensor, kept until the
+    program ended."""
+    top = os.path.normcase(os.path.abspath(str(root)))
+    with _masters_lock:
+        for k in [k for k in _masters if os.path.normcase(os.path.abspath(k)).startswith(top + os.sep)]:
+            del _masters[k]
+
+
 def calibrated_frame(p, wid: int, path: str, which: str = "current") -> tuple[np.ndarray, str, str]:
     """One light frame as the calibration made it: (mosaic in ADU above the dark, Bayer pattern, how it was got); a frame
     already in colour: (its image (H, W, 3), no pattern, how it was got). From the calibrated cache when it is on disk,
@@ -2030,6 +2039,9 @@ class InspectService(QObject):
         self._drop_renderer()
         for w in (self.images, self.thumbs, self.view, self.prefetch):
             w.stop()
+        root = getattr(getattr(self.model, "p", None), "root", None)
+        if root is not None:                         # the project closed: the masters read of it go too
+            forget_masters(root)
 
     def wait(self, timeout: float = 60.0) -> bool:
         """Process events until the workers are idle (tests and scripted walkthroughs)."""

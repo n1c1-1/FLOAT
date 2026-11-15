@@ -331,6 +331,12 @@ class LayerSource(Provider):
     def _is_workflow(self, sid) -> bool:
         return not self._is_image(sid)
 
+    def keep_images(self, keys) -> None:
+        """The image layers Post's composition holds now: the engines of the others (a layer deleted) go. Their sources
+        stay: an Undo brings the layer back, its image read again."""
+        for key in [k for k in self._img if k not in keys]:
+            del self._img[key]
+
     def set_image(self, key: str, source) -> None:
         """The source of an image layer (an array, a file, a function); a new source for a key replaces its image."""
         self.image_sources[key] = source
@@ -695,6 +701,8 @@ class Renderer:
         t0 = time.perf_counter()
         cp = self.composer
         self.source.engine_ms = 0.0
+        if req.kind in ("draft", "half") and hasattr(self.source, "keep_images"):   # Post's whole composition
+            self.source.keep_images({lay["key"] for lay in req.layers if lay.get("kind") == "image"})
         if req.kind == "thumbs":
             return self._thumbs(req, stop, t0)
         if req.kind == "exact":
