@@ -862,7 +862,9 @@ def test_two_sessions_merge_their_flats_and_offer_the_stacking_mode(win):
         f.show_page(0)                                                 # the table of the sessions and the health check
         settle(win)
         lines = check_lines(f.data)
-        assert any(lv == "warn" and "The flats of 2 sessions are merged into one master flat" in tx for lv, tx in lines)
+        # (said per workflow since the merge is per workflow: "<workflow>: the flats of 2 sessions are merged …")
+        assert any(lv == "warn" and "the flats of 2 sessions are merged into one master flat" in tx.lower()
+                   for lv, tx in lines), lines
         assert "Stacking" in texts_of(f.pages.widget(0))
         assert "All together" in texts_of(f.pages.widget(0))          # compact names: the sentence in its tooltip
         assert "One stack per session" not in " ".join(texts_of(f.pages.widget(0)))        # ◇
