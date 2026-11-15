@@ -264,40 +264,58 @@ def row_kind(ix, rid):
 
 # ---------------------------------------------------------------------------------------------------- save / load
 _dc = copy.deepcopy
+#: the Project's fields that hold the other classes (each saved with all its fields, in declaration order)
+_HELD = ("rows", "blocks", "wires", "taps")
+_PLAIN = (str, int, float, bool, type(None))
 
 
-def _flow_dict(f):
-    return {k: _dc(getattr(f, k)) for k in FLOW_FIELDS}
+def _copy(x):
+    """Deep copy of a field's value as JSON holds it (a tuple as a list), fast for the plain values most fields hold."""
+    t = type(x)
+    if t in _PLAIN:
+        return x
+    if t is list or t is tuple:
+        return [v if type(v) in _PLAIN else _copy(v) for v in x]
+    if t is dict:
+        return {k: v if type(v) in _PLAIN else _copy(v) for k, v in x.items()}
+    return _dc(x)
+
+
+def _fields(x):
+    """The names of an object's fields, in declaration order: the one list each class gives (dataclasses)."""
+    return x.__dataclass_fields__.keys()
+
+
+def _record(x):
+    return {k: _copy(getattr(x, k)) for k in _fields(x)}
 
 
 def to_dict(p):
     """The dataclasses as plain dicts, fields in declaration order (same result as dataclasses.asdict)."""
-    return {"name": p.name, "target": p.target,
-            "rows": [{"id": r.id, "name": r.name, "blocks": list(r.blocks), "nights": [list(n) for n in r.nights],
-                      "fork": list(r.fork) if r.fork else r.fork, **_flow_dict(r),
-                      "calib_node": r.calib_node, "calib_fork": r.calib_fork, "calib": _dc(r.calib),
-                      "align": _dc(r.align)} for r in p.rows],
-            "blocks": {k: {"id": b.id, "kind": b.kind, "settings": dict(b.settings), "off": b.off, "pause": b.pause,
-                           "name": b.name, "files": {f: list(v) for f, v in b.files.items()}
-                           if b.files is not None else None, "engine": b.engine, "method": b.method, "fork": b.fork,
-                           "params": _dc(b.params), "sid": b.sid, "own": _dc(b.own), "source": _dc(b.source)}
-                       for k, b in p.blocks.items()},
-            "wires": [{"id": w.id, "src": list(w.src), "dst": list(w.dst), "active": w.active, "wid": w.wid,
-                       "channel": w.channel, "image": w.image} for w in p.wires],
-            "common": {"files": {k: list(v) for k, v in p.common["files"].items()},
-                       "settings": {k: dict(v) for k, v in p.common["settings"].items()}},
-            "next_id": p.next_id,
-            "nights": _dc(p.nights), "excluded": [list(x) for x in p.excluded],
-            "calibrate_together": p.calibrate_together, "next_wid": p.next_wid, "order": list(p.order),
-            "taps": [{"id": t.id, "block": t.block, "name": t.name, **_flow_dict(t), "auto": t.auto} for t in p.taps]}
+    d = {}
+    for k in _fields(p):
+        v = getattr(p, k)
+        if k == "blocks":
+            d[k] = {i: _record(b) for i, b in v.items()}
+        elif k in _HELD:
+            d[k] = [_record(x) for x in v]
+        else:
+            d[k] = _copy(v)
+    return d
 
 
-def from_dict(d):
-    p = Project(**{k: v for k, v in d.items() if k not in ("rows", "blocks", "wires", "taps", "reference")})
+def _build(d):
+    """The project of a dict as to_dict gives it (its values taken as they are)."""
+    p = Project(**{k: v for k, v in d.items() if k not in _HELD + ("reference",)})
     p.rows = [Row(**r) for r in d["rows"]]
     p.blocks = {k: Block(**b) for k, b in d["blocks"].items()}
     p.wires = [Wire(**w) for w in d["wires"]]
     p.taps = [Tap(**t) for t in d.get("taps") or []]
+    return p
+
+
+def from_dict(d):
+    p = _build(d)
     _synth_side(p)
     return p
 
@@ -346,31 +364,9 @@ def model_json(p):
     return json.dumps(to_dict(p), ensure_ascii=False, sort_keys=False)
 
 
-def _dcq(x):
-    """Deep copy, fast for the empty and plain values most blocks and rows hold."""
-    if x is None or isinstance(x, (str, int, float, bool)):
-        return x
-    return type(x)() if not x else _dc(x)
-
-
 def clone(p):
-    """Fast deep copy of a project."""
-    q = Project(p.name, p.target, next_id=p.next_id,
-                common={"files": {k: list(v) for k, v in p.common["files"].items()},
-                        "settings": {k: dict(v) for k, v in p.common["settings"].items()}},
-                nights=_dcq(p.nights), excluded=[list(x) for x in p.excluded],
-                calibrate_together=p.calibrate_together, next_wid=p.next_wid, order=list(p.order))
-    q.rows = [Row(r.id, r.name, list(r.blocks), [list(n) for n in r.nights], list(r.fork) if r.fork else None,
-                  **{k: _dcq(getattr(r, k)) for k in FLOW_FIELDS}, calib_node=r.calib_node, calib_fork=r.calib_fork,
-                  calib=_dcq(r.calib), align=_dcq(r.align))
-              for r in p.rows]
-    q.blocks = {k: Block(b.id, b.kind, dict(b.settings), b.off, b.pause, b.name,
-                         {f: list(v) for f, v in b.files.items()} if b.files is not None else None,
-                         b.engine, b.method, b.fork, _dcq(b.params), b.sid, _dcq(b.own), _dcq(b.source))
-                for k, b in p.blocks.items()}
-    q.wires = [Wire(w.id, list(w.src), list(w.dst), w.active, w.wid, w.channel, w.image) for w in p.wires]
-    q.taps = [Tap(t.id, t.block, t.name, **{k: _dcq(getattr(t, k)) for k in FLOW_FIELDS}, auto=t.auto) for t in p.taps]
-    return q
+    """Fast deep copy of a project: every field of every class (to_dict's own list)."""
+    return _build(to_dict(p))
 
 
 # ---------------------------------------------------------------------------------------------------- validator
