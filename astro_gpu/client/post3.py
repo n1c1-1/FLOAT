@@ -927,7 +927,7 @@ class PostView(QWidget):
         # its name's start shown, "…" at its end (#146); made in the list, the list's own field: made apart, it was styled
         # as a field of its own, its padding and border inside the list's, its text 13 px high, a g's tail cut (#152)
         self.cb_version.setLineEdit(NameEdit("", self.cb_version))
-        self.cb_version.setToolTip(_("The version shown; type here to rename it"))
+        self.cb_version.setToolTip(_("The version shown: a click opens the list, a double-click renames it"))
         # one width whatever its names, today's (about "Version 1"), within bounds: a long name never pushes the bar, it
         # is cut (#146; as wide as its names, the list resized itself after the bar's layout and covered New version)
         self.cb_version.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
@@ -940,6 +940,8 @@ class PostView(QWidget):
         for w in (self.version_lab, self.cb_version, self.b_version_new, self.b_version_del):
             bar.addWidget(w)
         self._entering = False
+        self._version_click = QTimer(self, singleShot=True)
+        self._version_click.timeout.connect(self.cb_version.showPopup)
         self.cb_version.lineEdit().installEventFilter(self)
         self.cb_version.activated.connect(self._version_picked)
         self.cb_version.lineEdit().editingFinished.connect(self._version_renamed)
@@ -1130,6 +1132,19 @@ class PostView(QWidget):
                 self._fill_versions()                    # the name as it was
                 self.viewer.setFocus(Qt.OtherFocusReason)
             return True
+        if hasattr(self, "cb_version") and obj is self.cb_version.lineEdit() and not obj.hasFocus():
+            # the name not being typed in: a click opens the list (the laptop's B5: it put a text cursor), a double-click
+            # types in it to rename, as a layer's name; the click waits a double-click's time to know which
+            if e.type() == QEvent.MouseButtonPress and e.button() == Qt.LeftButton:
+                self._version_click.start(QApplication.doubleClickInterval())
+                return True
+            if e.type() == QEvent.MouseButtonDblClick and e.button() == Qt.LeftButton:
+                self._version_click.stop()
+                obj.setFocus(Qt.MouseFocusReason)
+                obj.selectAll()
+                return True
+            if e.type() == QEvent.MouseButtonRelease:
+                return True
         if e.type() == QEvent.KeyPress and e.key() in (Qt.Key_Return, Qt.Key_Enter) and                 obj is self.cb_version.lineEdit():
             self._entering = True                       # Enter typed in the version's name: a renaming, not a pick
             QTimer.singleShot(0, lambda: setattr(self, "_entering", False))
@@ -1403,7 +1418,7 @@ class PostView(QWidget):
         i = self.cb_version.findData(self._version)
         self.cb_version.setCurrentIndex(max(i, 0))
         self.cb_version.lineEdit().setCursorPosition(0)  # its start, Enter's renaming too (#146)
-        tip = _("The version shown; type here to rename it")
+        tip = _("The version shown: a click opens the list, a double-click renames it")
         self.cb_version.setToolTip(f"{self.cb_version.currentText()}\n{tip}" if self.cb_version.count() else tip)
         j = self.cb_cmp.findData(kept)
         self.cb_cmp.setCurrentIndex(max(j, 0))
@@ -1446,13 +1461,17 @@ class PostView(QWidget):
         if vid is not None and vid != self._version:
             self._save()
             self.s.set_post_version(vid)
+        self.viewer.setFocus(Qt.OtherFocusReason)       # the keys back to the page: Ctrl+Z undoes the version's edits (B4)
 
     def _version_new(self):
         self._save()
+        old = self.cb_version.currentText()
         with self._from_post():
             self.s.new_post_version()
         self.redo.clear()                                # (making a version is no step of Undo: the new one starts empty)
         self._undo_buttons()
+        self.toasted.emit(_("“{name}”, a copy of “{old}”: its own Undo starts here").format(
+            name=self.cb_version.currentText(), old=old))
 
     def _version_renamed(self):
         """The name typed for the version shown: refused with its reason when empty or already another version's, the
@@ -1480,8 +1499,10 @@ class PostView(QWidget):
         if p is None or len(p.post["versions"]) < 2:
             return
         self._save()
+        gone = self.cb_version.currentText()
         with self._from_post():
             self.s.delete_post_version(self._version)
+        self.toasted.emit(_("“{name}” deleted").format(name=gone) + " · Ctrl+Z")      # (the model's words for its step)
         self.undo.append(self._model_mark("_undo"))                     # (the delete showed the other version: its own Undo now)
         self.redo.clear()
         self._undo_buttons()

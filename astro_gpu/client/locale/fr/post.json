@@ -277,6 +277,7 @@
   "blend mode": "mode de fusion",
   "mask": "masque",
   "“{name}” changed": "« {name} » modifié",
+  "“{name}”, a copy of “{old}”: its own Undo starts here": "« {name} », copie de « {old} » : son propre Annuler commence ici",
   "Mask added to “{name}”": "Masque ajouté à « {name} »",
   "Mask of “{name}” deleted": "Masque de « {name} » supprimé",
   "{part} added to the mask of “{name}”": "{part} ajouté au masque de « {name} »",
