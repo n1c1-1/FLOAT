@@ -319,6 +319,17 @@ class Main(QMainWindow):
             sc.activated.connect(fn)
         self.show_home()
         self.worker.submit("machine", machine_info)
+        prefs.watch(self._settings_trouble)          # an unreadable settings file, a failed write: said in the banner
+
+    def _settings_trouble(self, kind: str, detail: str):
+        if kind == "unreadable" and detail:
+            self.banner.say(_("The settings file could not be read: it is kept as {name}, and the default settings "
+                              "are used.").format(name=detail))
+        elif kind == "unreadable":
+            self.banner.say(_("The settings file could not be read nor set aside: the default settings are used, and "
+                              "no change is written to it."))
+        else:
+            self.banner.say(_("The settings cannot be written: {why}").format(why=plain_error(detail)))
 
     # ------------------------------------------------------------ menus
     def build_menus(self):
