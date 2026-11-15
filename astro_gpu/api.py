@@ -1099,15 +1099,11 @@ def health_checks(p: Project2, dates: dict[int, list[tuple[str, str]]] | None = 
                     ": it is calibrated with the other sessions' master" if shared else
                     f": its lights are not calibrated for {'dark current' if kind == 'darks' else 'vignetting and dust'}"),
                     {"session": s.name, "kind": kind, "shared": bool(shared)}))
-    owner: dict[str, str] = {}                       # the same light file in two sessions: stacked once (together) or
-    dup: dict[tuple[str, str], int] = {}             # dropped from the later session (per session), said in both modes
-    for s in keys.project.sessions:
-        for f, _size in keys.scan.session_frames(keys.project, s)["lights"]:
-            k = os.path.normcase(os.path.normpath(str(f)))
-            if k in owner and owner[k] != s.name:
-                dup[(owner[k], s.name)] = dup.get((owner[k], s.name), 0) + 1
-            else:
-                owner.setdefault(k, s.name)
+    names = {s.id: s.name for s in keys.project.sessions}     # the same shot in two sessions, as the same file or as a
+    dup: dict[tuple[str, str], int] = {}             # copy (name, size and capture date of its header): stacked once,
+    for (sid, _f), (first, _g) in keys.scan.repeats(keys.project, list(keys.project.sessions)).items():   # with the first
+        if first != sid:                             # session, in both stack modes
+            dup[(names[first], names[sid])] = dup.get((names[first], names[sid]), 0) + 1
     for (first, other), cnt in dup.items():
         out.append(Check("warn", "same_frames", f"The same frames are in two sessions: {cnt} light(s) of {other} are also "
                          f"in {first}; they are used once, with {first}", {"first": first, "other": other, "n": cnt}))
