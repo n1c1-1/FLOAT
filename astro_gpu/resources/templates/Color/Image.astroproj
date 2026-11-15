@@ -1,0 +1,130 @@
+{
+ "acquisition": {},
+ "created": "",
+ "current": 1,
+ "current_block": "",
+ "description": "",
+ "devices": {
+  "aux": "",
+  "main": ""
+ },
+ "format": 3,
+ "graph": {
+  "blocks": {
+   "b1": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b1",
+    "kind": "post",
+    "method": null,
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {},
+    "pause": false,
+    "settings": {},
+    "sid": null,
+    "source": null
+   },
+   "b2": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b2",
+    "kind": "image",
+    "method": null,
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {},
+    "pause": false,
+    "settings": {},
+    "sid": null,
+    "source": null
+   }
+  },
+  "calibrate_together": true,
+  "common": {
+   "files": {},
+   "settings": {}
+  },
+  "excluded": [],
+  "name": "Untitled",
+  "next_id": 5,
+  "next_wid": 2,
+  "nights": [],
+  "order": [
+   1
+  ],
+  "rows": [
+   {
+    "align": null,
+    "all_nights": false,
+    "blocks": [
+     "b2"
+    ],
+    "calib": {},
+    "calib_fork": null,
+    "calib_node": true,
+    "end": null,
+    "extra": {},
+    "fork": null,
+    "id": "r3",
+    "legacy": null,
+    "name": "Image",
+    "nights": [],
+    "options": null,
+    "output": {
+     "linked": true,
+     "stretch": "auto"
+    },
+    "pauses": null,
+    "sessions": null,
+    "trial": null,
+    "unset": [],
+    "wid": 1
+   }
+  ],
+  "taps": [],
+  "target": "",
+  "wires": []
+ },
+ "name": "",
+ "post": {
+  "active": 1,
+  "versions": [
+   {
+    "id": 1,
+    "layers": [],
+    "name": "Version 1"
+   }
+  ]
+ },
+ "reference_image": "",
+ "render_bases": {},
+ "scratch_dir": "",
+ "show_all": false,
+ "target": {
+  "dec": null,
+  "focal_mm": null,
+  "name": "",
+  "pixel_um": null,
+  "ra": null
+ },
+ "template": {
+  "card": {
+   "blocks": [],
+   "key": "image",
+   "name": "Image",
+   "opts": {
+    "debruitage": false,
+    "etoiles": "garder",
+    "fond": "simple"
+   },
+   "plain": true,
+   "source": "image",
+   "text": "One image to Post as a layer, a FITS, TIFF, PNG or JPEG file: blocks are added from the palette."
+  }
+ }
+}

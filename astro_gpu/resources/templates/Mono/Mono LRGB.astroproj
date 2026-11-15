@@ -1,0 +1,1278 @@
+{
+ "acquisition": {},
+ "created": "",
+ "current": 1,
+ "current_block": "",
+ "description": "",
+ "devices": {
+  "aux": "",
+  "main": ""
+ },
+ "format": 3,
+ "graph": {
+  "blocks": {
+   "b1": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b1",
+    "kind": "post",
+    "method": null,
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {},
+    "pause": false,
+    "settings": {},
+    "sid": null,
+    "source": null
+   },
+   "b12": {
+    "engine": null,
+    "files": {},
+    "fork": null,
+    "id": "b12",
+    "kind": "session",
+    "method": null,
+    "name": "R",
+    "off": false,
+    "own": null,
+    "params": {},
+    "pause": false,
+    "settings": {},
+    "sid": 2,
+    "source": null
+   },
+   "b13": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b13",
+    "kind": "calibration",
+    "method": null,
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {},
+    "pause": false,
+    "settings": {},
+    "sid": 2,
+    "source": null
+   },
+   "b14": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b14",
+    "kind": "registration",
+    "method": null,
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {
+     "register": {
+      "align": true,
+      "detect_sigma": 8.0,
+      "max_stars": 2500,
+      "min_pairs": 10
+     }
+    },
+    "pause": false,
+    "settings": {},
+    "sid": null,
+    "source": null
+   },
+   "b15": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b15",
+    "kind": "selection",
+    "method": null,
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {
+     "stack": {
+      "max_fwhm_ratio": 2.0,
+      "selection": "min_weight",
+      "selection_transparency": "on"
+     }
+    },
+    "pause": false,
+    "settings": {},
+    "sid": null,
+    "source": null
+   },
+   "b16": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b16",
+    "kind": "stacking",
+    "method": null,
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {
+     "stack": {
+      "classic_cfa_balance": "on",
+      "classic_clamping": "bilinear_guide",
+      "classic_debayer": "rcd",
+      "classic_interpolation": "lanczos4",
+      "classic_rejection": "auto",
+      "kappa": 3.0,
+      "pattern_frames": 48,
+      "pattern_removal": false,
+      "white_balance": false
+     }
+    },
+    "pause": false,
+    "settings": {},
+    "sid": null,
+    "source": null
+   },
+   "b18": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b18",
+    "kind": "gradient",
+    "method": "polynomial",
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {
+     "gradient": {
+      "avoid_emission": true,
+      "degree": 2,
+      "downsample": 4,
+      "exclude_brush": [],
+      "exclude_ellipses": [],
+      "object_clip": 2.5,
+      "protect": true,
+      "protect_amount": 0.5,
+      "protect_sigmas": 0.0,
+      "protect_threshold": 0.05,
+      "rbf_smooth": 0.5,
+      "sample_points": [],
+      "samples": 16,
+      "scale": 5.0,
+      "simple_degree": 1,
+      "simplified": false,
+      "smoothness": 1.0
+     }
+    },
+    "pause": false,
+    "settings": {},
+    "sid": null,
+    "source": null
+   },
+   "b19": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b19",
+    "kind": "denoise",
+    "method": "pretrained",
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {
+     "denoise": {
+      "fast": false,
+      "seed": 0
+     }
+    },
+    "pause": false,
+    "settings": {},
+    "sid": null,
+    "source": null
+   },
+   "b2": {
+    "engine": null,
+    "files": {},
+    "fork": null,
+    "id": "b2",
+    "kind": "session",
+    "method": null,
+    "name": "L",
+    "off": false,
+    "own": null,
+    "params": {},
+    "pause": false,
+    "settings": {},
+    "sid": 1,
+    "source": null
+   },
+   "b22": {
+    "engine": null,
+    "files": {},
+    "fork": null,
+    "id": "b22",
+    "kind": "session",
+    "method": null,
+    "name": "G",
+    "off": false,
+    "own": null,
+    "params": {},
+    "pause": false,
+    "settings": {},
+    "sid": 3,
+    "source": null
+   },
+   "b23": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b23",
+    "kind": "calibration",
+    "method": null,
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {},
+    "pause": false,
+    "settings": {},
+    "sid": 3,
+    "source": null
+   },
+   "b24": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b24",
+    "kind": "registration",
+    "method": null,
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {
+     "register": {
+      "align": true,
+      "detect_sigma": 8.0,
+      "max_stars": 2500,
+      "min_pairs": 10
+     }
+    },
+    "pause": false,
+    "settings": {},
+    "sid": null,
+    "source": null
+   },
+   "b25": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b25",
+    "kind": "selection",
+    "method": null,
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {
+     "stack": {
+      "max_fwhm_ratio": 2.0,
+      "selection": "min_weight",
+      "selection_transparency": "on"
+     }
+    },
+    "pause": false,
+    "settings": {},
+    "sid": null,
+    "source": null
+   },
+   "b26": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b26",
+    "kind": "stacking",
+    "method": null,
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {
+     "stack": {
+      "classic_cfa_balance": "on",
+      "classic_clamping": "bilinear_guide",
+      "classic_debayer": "rcd",
+      "classic_interpolation": "lanczos4",
+      "classic_rejection": "auto",
+      "kappa": 3.0,
+      "pattern_frames": 48,
+      "pattern_removal": false,
+      "white_balance": false
+     }
+    },
+    "pause": false,
+    "settings": {},
+    "sid": null,
+    "source": null
+   },
+   "b28": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b28",
+    "kind": "gradient",
+    "method": "polynomial",
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {
+     "gradient": {
+      "avoid_emission": true,
+      "degree": 2,
+      "downsample": 4,
+      "exclude_brush": [],
+      "exclude_ellipses": [],
+      "object_clip": 2.5,
+      "protect": true,
+      "protect_amount": 0.5,
+      "protect_sigmas": 0.0,
+      "protect_threshold": 0.05,
+      "rbf_smooth": 0.5,
+      "sample_points": [],
+      "samples": 16,
+      "scale": 5.0,
+      "simple_degree": 1,
+      "simplified": false,
+      "smoothness": 1.0
+     }
+    },
+    "pause": false,
+    "settings": {},
+    "sid": null,
+    "source": null
+   },
+   "b29": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b29",
+    "kind": "denoise",
+    "method": "pretrained",
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {
+     "denoise": {
+      "fast": false,
+      "seed": 0
+     }
+    },
+    "pause": false,
+    "settings": {},
+    "sid": null,
+    "source": null
+   },
+   "b3": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b3",
+    "kind": "calibration",
+    "method": null,
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {},
+    "pause": false,
+    "settings": {},
+    "sid": 1,
+    "source": null
+   },
+   "b32": {
+    "engine": null,
+    "files": {},
+    "fork": null,
+    "id": "b32",
+    "kind": "session",
+    "method": null,
+    "name": "B",
+    "off": false,
+    "own": null,
+    "params": {},
+    "pause": false,
+    "settings": {},
+    "sid": 4,
+    "source": null
+   },
+   "b33": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b33",
+    "kind": "calibration",
+    "method": null,
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {},
+    "pause": false,
+    "settings": {},
+    "sid": 4,
+    "source": null
+   },
+   "b34": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b34",
+    "kind": "registration",
+    "method": null,
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {
+     "register": {
+      "align": true,
+      "detect_sigma": 8.0,
+      "max_stars": 2500,
+      "min_pairs": 10
+     }
+    },
+    "pause": false,
+    "settings": {},
+    "sid": null,
+    "source": null
+   },
+   "b35": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b35",
+    "kind": "selection",
+    "method": null,
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {
+     "stack": {
+      "max_fwhm_ratio": 2.0,
+      "selection": "min_weight",
+      "selection_transparency": "on"
+     }
+    },
+    "pause": false,
+    "settings": {},
+    "sid": null,
+    "source": null
+   },
+   "b36": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b36",
+    "kind": "stacking",
+    "method": null,
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {
+     "stack": {
+      "classic_cfa_balance": "on",
+      "classic_clamping": "bilinear_guide",
+      "classic_debayer": "rcd",
+      "classic_interpolation": "lanczos4",
+      "classic_rejection": "auto",
+      "kappa": 3.0,
+      "pattern_frames": 48,
+      "pattern_removal": false,
+      "white_balance": false
+     }
+    },
+    "pause": false,
+    "settings": {},
+    "sid": null,
+    "source": null
+   },
+   "b38": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b38",
+    "kind": "gradient",
+    "method": "polynomial",
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {
+     "gradient": {
+      "avoid_emission": true,
+      "degree": 2,
+      "downsample": 4,
+      "exclude_brush": [],
+      "exclude_ellipses": [],
+      "object_clip": 2.5,
+      "protect": true,
+      "protect_amount": 0.5,
+      "protect_sigmas": 0.0,
+      "protect_threshold": 0.05,
+      "rbf_smooth": 0.5,
+      "sample_points": [],
+      "samples": 16,
+      "scale": 5.0,
+      "simple_degree": 1,
+      "simplified": false,
+      "smoothness": 1.0
+     }
+    },
+    "pause": false,
+    "settings": {},
+    "sid": null,
+    "source": null
+   },
+   "b39": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b39",
+    "kind": "denoise",
+    "method": "pretrained",
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {
+     "denoise": {
+      "fast": false,
+      "seed": 0
+     }
+    },
+    "pause": false,
+    "settings": {},
+    "sid": null,
+    "source": null
+   },
+   "b4": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b4",
+    "kind": "registration",
+    "method": null,
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {
+     "register": {
+      "align": true,
+      "detect_sigma": 8.0,
+      "max_stars": 2500,
+      "min_pairs": 10
+     }
+    },
+    "pause": false,
+    "settings": {},
+    "sid": null,
+    "source": null
+   },
+   "b42": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b42",
+    "kind": "combine",
+    "method": null,
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {},
+    "pause": false,
+    "settings": {
+     "type": "lrgb"
+    },
+    "sid": null,
+    "source": {
+     "recipe": {
+      "description": "Combines the red, green and blue filters into the colour, the luminance filter into the detail: at every pixel the colour of RGB, the lightness of L.",
+      "id": "lrgb",
+      "inputs": [
+       {
+        "channel": "L",
+        "label": "L",
+        "role": "L",
+        "type": "any"
+       },
+       {
+        "channel": "L",
+        "label": "R",
+        "role": "R",
+        "type": "any"
+       },
+       {
+        "channel": "L",
+        "label": "G",
+        "role": "G",
+        "type": "any"
+       },
+       {
+        "channel": "L",
+        "label": "B",
+        "role": "B",
+        "type": "any"
+       }
+      ],
+      "name": "LRGB",
+      "narrowband": false,
+      "output": {
+       "channels": [
+        "R",
+        "G",
+        "B"
+       ],
+       "hues": null,
+       "lightness": "L",
+       "matrix": [
+        [
+         1.0,
+         0.0,
+         0.0
+        ],
+        [
+         0.0,
+         1.0,
+         0.0
+        ],
+        [
+         0.0,
+         0.0,
+         1.0
+        ]
+       ],
+       "radius": 0.0,
+       "saturation": [
+        "R",
+        "G",
+        "B"
+       ],
+       "smoothing": "radius",
+       "strength": 1.0,
+       "weighting": null
+      },
+      "parameters": {},
+      "steps": [
+       {
+        "op": "neutralise_sky"
+       },
+       {
+        "channels": [],
+        "high": 0.875,
+        "low": 1e-07,
+        "op": "linear_match",
+        "reference": "L"
+       }
+      ],
+      "version": 1
+     }
+    }
+   },
+   "b48": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b48",
+    "kind": "color",
+    "method": null,
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {
+     "color": {
+      "min_stars": 50,
+      "on_failure": "fallback",
+      "white_temp": 5778.0
+     }
+    },
+    "pause": false,
+    "settings": {},
+    "sid": null,
+    "source": null
+   },
+   "b5": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b5",
+    "kind": "selection",
+    "method": null,
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {
+     "stack": {
+      "max_fwhm_ratio": 2.0,
+      "selection": "min_weight",
+      "selection_transparency": "on"
+     }
+    },
+    "pause": false,
+    "settings": {},
+    "sid": null,
+    "source": null
+   },
+   "b6": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b6",
+    "kind": "stacking",
+    "method": null,
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {
+     "stack": {
+      "classic_cfa_balance": "on",
+      "classic_clamping": "bilinear_guide",
+      "classic_debayer": "rcd",
+      "classic_interpolation": "lanczos4",
+      "classic_rejection": "auto",
+      "kappa": 3.0,
+      "pattern_frames": 48,
+      "pattern_removal": false,
+      "white_balance": false
+     }
+    },
+    "pause": false,
+    "settings": {},
+    "sid": null,
+    "source": null
+   },
+   "b7": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b7",
+    "kind": "astrometry",
+    "method": null,
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {
+     "astrometry": {
+      "blind": true,
+      "on_failure": "continue",
+      "search_offsets": 0.2,
+      "sip_order": 3
+     },
+     "catalogs": {
+      "cell_deg": 1.0,
+      "xp_gmax": 14.0,
+      "xp_gmin": 7.5,
+      "xp_max": 4000
+     },
+     "surveys": {
+      "min_coverage": 0.95,
+      "survey": "auto"
+     }
+    },
+    "pause": false,
+    "settings": {},
+    "sid": null,
+    "source": null
+   },
+   "b8": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b8",
+    "kind": "gradient",
+    "method": "polynomial",
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {
+     "gradient": {
+      "avoid_emission": true,
+      "degree": 2,
+      "downsample": 4,
+      "exclude_brush": [],
+      "exclude_ellipses": [],
+      "object_clip": 2.5,
+      "protect": true,
+      "protect_amount": 0.5,
+      "protect_sigmas": 0.0,
+      "protect_threshold": 0.05,
+      "rbf_smooth": 0.5,
+      "sample_points": [],
+      "samples": 16,
+      "scale": 5.0,
+      "simple_degree": 1,
+      "simplified": false,
+      "smoothness": 1.0
+     }
+    },
+    "pause": false,
+    "settings": {},
+    "sid": null,
+    "source": null
+   },
+   "b9": {
+    "engine": null,
+    "files": null,
+    "fork": null,
+    "id": "b9",
+    "kind": "denoise",
+    "method": "pretrained",
+    "name": null,
+    "off": false,
+    "own": null,
+    "params": {
+     "denoise": {
+      "fast": false,
+      "seed": 0
+     }
+    },
+    "pause": false,
+    "settings": {},
+    "sid": null,
+    "source": null
+   }
+  },
+  "calibrate_together": false,
+  "common": {
+   "files": {},
+   "settings": {}
+  },
+  "excluded": [],
+  "name": "Untitled",
+  "next_id": 50,
+  "next_wid": 6,
+  "nights": [
+   {
+    "files": {},
+    "filter": "L",
+    "left_out": {},
+    "name": "L",
+    "sid": 1
+   },
+   {
+    "files": {},
+    "filter": "R",
+    "left_out": {},
+    "name": "R",
+    "sid": 2
+   },
+   {
+    "files": {},
+    "filter": "G",
+    "left_out": {},
+    "name": "G",
+    "sid": 3
+   },
+   {
+    "files": {},
+    "filter": "B",
+    "left_out": {},
+    "name": "B",
+    "sid": 4
+   }
+  ],
+  "order": [
+   1,
+   2,
+   3,
+   4,
+   5
+  ],
+  "rows": [
+   {
+    "align": null,
+    "all_nights": false,
+    "blocks": [
+     "b4",
+     "b5",
+     "b6",
+     "b7",
+     "b8",
+     "b9"
+    ],
+    "calib": {
+     "calibrate": {
+      "apply_masters": true,
+      "flat_defect": 0.3,
+      "flat_scale_px": 0.0,
+      "hot_from_lights": true,
+      "hot_method": "persistence",
+      "hot_sigma": 0.6,
+      "saturation": 0.976
+     },
+     "inventory": {
+      "max_lights": 0
+     }
+    },
+    "calib_fork": null,
+    "calib_node": true,
+    "end": null,
+    "extra": {},
+    "fork": null,
+    "id": "r10",
+    "legacy": null,
+    "name": "L",
+    "nights": [
+     [
+      "b2",
+      "b3"
+     ]
+    ],
+    "options": null,
+    "output": {
+     "linked": true,
+     "stretch": "auto"
+    },
+    "pauses": null,
+    "sessions": null,
+    "trial": null,
+    "unset": [],
+    "wid": 1
+   },
+   {
+    "align": {
+     "auto": false,
+     "fork": null,
+     "from": "b7",
+     "from_name": null,
+     "method": "stars",
+     "off": false,
+     "params": {},
+     "ref": "r10",
+     "ref_wid": null
+    },
+    "all_nights": false,
+    "blocks": [
+     "b14",
+     "b15",
+     "b16",
+     "b18",
+     "b19"
+    ],
+    "calib": {
+     "calibrate": {
+      "apply_masters": true,
+      "flat_defect": 0.3,
+      "flat_scale_px": 0.0,
+      "hot_from_lights": true,
+      "hot_method": "persistence",
+      "hot_sigma": 0.6,
+      "saturation": 0.976
+     },
+     "inventory": {
+      "max_lights": 0
+     }
+    },
+    "calib_fork": null,
+    "calib_node": true,
+    "end": null,
+    "extra": {},
+    "fork": null,
+    "id": "r20",
+    "legacy": null,
+    "name": "R",
+    "nights": [
+     [
+      "b12",
+      "b13"
+     ]
+    ],
+    "options": null,
+    "output": {
+     "linked": true,
+     "stretch": "auto"
+    },
+    "pauses": null,
+    "sessions": null,
+    "trial": null,
+    "unset": [],
+    "wid": 2
+   },
+   {
+    "align": {
+     "auto": false,
+     "fork": null,
+     "from": "b7",
+     "from_name": null,
+     "method": "stars",
+     "off": false,
+     "params": {},
+     "ref": "r10",
+     "ref_wid": null
+    },
+    "all_nights": false,
+    "blocks": [
+     "b24",
+     "b25",
+     "b26",
+     "b28",
+     "b29"
+    ],
+    "calib": {
+     "calibrate": {
+      "apply_masters": true,
+      "flat_defect": 0.3,
+      "flat_scale_px": 0.0,
+      "hot_from_lights": true,
+      "hot_method": "persistence",
+      "hot_sigma": 0.6,
+      "saturation": 0.976
+     },
+     "inventory": {
+      "max_lights": 0
+     }
+    },
+    "calib_fork": null,
+    "calib_node": true,
+    "end": null,
+    "extra": {},
+    "fork": null,
+    "id": "r30",
+    "legacy": null,
+    "name": "G",
+    "nights": [
+     [
+      "b22",
+      "b23"
+     ]
+    ],
+    "options": null,
+    "output": {
+     "linked": true,
+     "stretch": "auto"
+    },
+    "pauses": null,
+    "sessions": null,
+    "trial": null,
+    "unset": [],
+    "wid": 3
+   },
+   {
+    "align": {
+     "auto": false,
+     "fork": null,
+     "from": "b7",
+     "from_name": null,
+     "method": "stars",
+     "off": false,
+     "params": {},
+     "ref": "r10",
+     "ref_wid": null
+    },
+    "all_nights": false,
+    "blocks": [
+     "b34",
+     "b35",
+     "b36",
+     "b38",
+     "b39"
+    ],
+    "calib": {
+     "calibrate": {
+      "apply_masters": true,
+      "flat_defect": 0.3,
+      "flat_scale_px": 0.0,
+      "hot_from_lights": true,
+      "hot_method": "persistence",
+      "hot_sigma": 0.6,
+      "saturation": 0.976
+     },
+     "inventory": {
+      "max_lights": 0
+     }
+    },
+    "calib_fork": null,
+    "calib_node": true,
+    "end": null,
+    "extra": {},
+    "fork": null,
+    "id": "r40",
+    "legacy": null,
+    "name": "B",
+    "nights": [
+     [
+      "b32",
+      "b33"
+     ]
+    ],
+    "options": null,
+    "output": {
+     "linked": true,
+     "stretch": "auto"
+    },
+    "pauses": null,
+    "sessions": null,
+    "trial": null,
+    "unset": [],
+    "wid": 4
+   },
+   {
+    "align": null,
+    "all_nights": false,
+    "blocks": [
+     "b42",
+     "b48"
+    ],
+    "calib": {},
+    "calib_fork": null,
+    "calib_node": true,
+    "end": null,
+    "extra": {},
+    "fork": null,
+    "id": "r43",
+    "legacy": null,
+    "name": "LRGB",
+    "nights": [],
+    "options": null,
+    "output": {
+     "linked": true,
+     "stretch": "auto"
+    },
+    "pauses": null,
+    "sessions": null,
+    "trial": null,
+    "unset": [],
+    "wid": 5
+   }
+  ],
+  "taps": [],
+  "target": "",
+  "wires": [
+   {
+    "active": true,
+    "channel": "L",
+    "dst": [
+     "b42",
+     "L"
+    ],
+    "id": "w44",
+    "image": null,
+    "src": [
+     "b9",
+     "image"
+    ],
+    "wid": null
+   },
+   {
+    "active": true,
+    "channel": "L",
+    "dst": [
+     "b42",
+     "R"
+    ],
+    "id": "w45",
+    "image": null,
+    "src": [
+     "b19",
+     "image"
+    ],
+    "wid": null
+   },
+   {
+    "active": true,
+    "channel": "L",
+    "dst": [
+     "b42",
+     "G"
+    ],
+    "id": "w46",
+    "image": null,
+    "src": [
+     "b29",
+     "image"
+    ],
+    "wid": null
+   },
+   {
+    "active": true,
+    "channel": "L",
+    "dst": [
+     "b42",
+     "B"
+    ],
+    "id": "w47",
+    "image": null,
+    "src": [
+     "b39",
+     "image"
+    ],
+    "wid": null
+   },
+   {
+    "active": true,
+    "channel": null,
+    "dst": [
+     "b1",
+     "layers"
+    ],
+    "id": "w49",
+    "image": null,
+    "src": [
+     "b48",
+     "image"
+    ],
+    "wid": null
+   }
+  ]
+ },
+ "name": "",
+ "post": {
+  "active": 1,
+  "removed": [
+   [
+    1,
+    null
+   ],
+   [
+    2,
+    null
+   ],
+   [
+    3,
+    null
+   ],
+   [
+    4,
+    null
+   ]
+  ],
+  "versions": [
+   {
+    "id": 1,
+    "layers": [],
+    "name": "Version 1"
+   }
+  ]
+ },
+ "reference_image": "",
+ "render_bases": {},
+ "scratch_dir": "",
+ "show_all": false,
+ "target": {
+  "dec": null,
+  "focal_mm": null,
+  "name": "",
+  "pixel_um": null,
+  "ra": null
+ },
+ "template": {
+  "card": {
+   "filters": [
+    "L",
+    "R",
+    "G",
+    "B"
+   ],
+   "key": "mono_lrgb",
+   "kind": "fusion",
+   "mono_rgb": true,
+   "name": "Mono LRGB",
+   "opts": {
+    "debruitage": true,
+    "etoiles": "garder",
+    "fond": "simple"
+   },
+   "palette": "LRGB",
+   "text": "A monochrome camera with a luminance filter and red, green and blue ones: each filter stacked on its own, the colour from R, G and B and the detail from L, calibrated once, stars kept."
+  }
+ }
+}
