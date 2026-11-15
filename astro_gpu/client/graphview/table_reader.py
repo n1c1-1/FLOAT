@@ -87,28 +87,84 @@ class Reader:
 
     def __init__(self, delay: float = 0.0):
         self.delay = delay
-        self._folders: dict[str, list[FileInfo]] = {}
-        self._is_folder: dict[str, bool] = {}           # path -> is a folder (noted at drop time)
-        self._infos: dict[str, FileInfo] = {}
+        # the listings are kept by where an entry is on the disk (``_key``: the entry and its place), so that another
+        # project naming the same relative entry, or the same project moved, never gets them
+        self._folders: dict[tuple, list[FileInfo]] = {}
+        self._is_folder: dict[tuple, bool] = {}         # entry -> is a folder (noted at drop time)
+        self._infos: dict[tuple, FileInfo] = {}
+        self._mtimes: dict[tuple, float] = {}          # folder -> its modification time when it was listed
         self._jobs: dict[object, Job] = {}
         self._queue: list[Job] = []
         self._cond = threading.Condition()
         self._thread = None
+        self._closed = False
         self._listeners: list = []
         self._gen = 0
         self._cache: dict[tuple, tuple] = {}
         self._busy = False
-        self._left: dict[str, list] = {}                # folder -> files of its level the engine does not read
-        self._reports: dict[str, dict] = {}             # folder -> {"sub": n, "unreadable": bool}
+        self._left: dict[tuple, list] = {}              # folder -> files of its level the engine does not read
+        self._reports: dict[tuple, dict] = {}           # folder -> {"sub": n, "unreadable": bool}
         self.base = None                                # () -> the project's folder: where a relative entry is read
 
-    def _on_disk(self, s: str) -> str:
+    def on_disk(self, s: str) -> str:
         """Where an entry is on the disk: one written relative to the project is read from the project's folder
-        (a project that holds its own frames), never from the folder the application happens to run in."""
+        (a project that holds its own frames), never from the folder the application happens to run in. Every
+        place of the page that looks at an entry on the disk asks here."""
         if os.path.isabs(s) or self.base is None:
             return s
         root = self.base()
         return os.path.join(str(root), s) if root else s
+
+    def _key(self, s: str) -> tuple:
+        """What a listing is kept under: the entry as written and where it is on the disk."""
+        return s, os.path.normcase(os.path.abspath(self.on_disk(s)))
+
+    def forget(self):
+        """Every listing dropped (another project in the page): the running ones are stopped."""
+        for t in list(self._jobs.values()):
+            t.stop = True
+        with self._cond:
+            self._queue.clear()
+        self._jobs.clear()
+        for d in (self._folders, self._is_folder, self._infos, self._mtimes, self._left, self._reports, self._cache):
+            d.clear()
+        self._gen += 1
+
+    def close(self):
+        """The page is gone: its listings dropped and the worker thread ended, with what it held (the page, through
+        ``base`` and the listeners, and so the project)."""
+        self.forget()
+        self._listeners = []
+        self.base = None
+        with self._cond:
+            self._closed = True
+            self._cond.notify_all()
+
+    def _changed(self, s: str) -> bool:
+        """A folder listed before whose modification time moved since (frames added or taken out): its listing is
+        dropped, to be made again."""
+        k = self._key(s)
+        if k not in self._folders or k not in self._mtimes:
+            return False
+        try:
+            now = os.stat(self.on_disk(s)).st_mtime
+        except OSError:
+            now = None
+        if now == self._mtimes[k]:
+            return False
+        for f in self._folders.pop(k):
+            self._infos.pop(self._key(f.path), None)
+        for d in (self._mtimes, self._left, self._reports):
+            d.pop(k, None)
+        self._gen += 1
+        return True
+
+    @staticmethod
+    def _as_entry(entry: str, infos) -> list:
+        """Files listed in a folder entry written relative to the project, written the same way (the entry's first
+        level): a « Remove » that writes them back keeps the project movable."""
+        root = entry.replace("\\", "/").rstrip("/")
+        return [f._replace(path=f"{root}/{os.path.basename(f.path)}", root=root) for f in infos]
 
     # --------------------------------------------------------------- called from the interface thread
     def listen(self, fn):
@@ -120,11 +176,11 @@ class Reader:
         self._listeners = [x for x in self._listeners if x != fn]
 
     def note(self, path: str, is_folder: bool):
-        self._is_folder[path] = is_folder
+        self._is_folder[self._key(path)] = is_folder
 
     def known(self, path: str):
         """True / False when the path was noted as a folder / a file, None when never seen."""
-        return self._is_folder.get(path)
+        return self._is_folder.get(self._key(path))
 
     def job(self, key) -> Job | None:
         return self._jobs.get(key)
@@ -136,6 +192,9 @@ class Reader:
         """List the entries of a box (cheap when nothing changed): -> its Job, or None when everything is known."""
         sources = tuple(sources)
         t = self._jobs.get(key)
+        if not (t and t.active):
+            for s in sources:
+                self._changed(s)                        # a folder that moved since its listing: listed again
         fresh = self.expand(sources) is not None
         if t and t.sources == sources and (t.active or (t.phase == "done" and fresh)):
             return t
@@ -143,6 +202,8 @@ class Reader:
             t.stop = True
         if fresh:
             self._jobs.pop(key, None)
+            return None
+        if self._closed:
             return None
         t = Job(key, sources)
         self._jobs[key] = t
@@ -163,9 +224,10 @@ class Reader:
         """(files known so far, complete?) at once from what was noted at the drop."""
         n, ok = 0, True
         for s in sources:
-            if s in self._folders:
-                n += len(self._folders[s])
-            elif self._is_folder.get(s) is False or s in self._infos:
+            k = self._key(s)
+            if k in self._folders:
+                n += len(self._folders[k])
+            elif self._is_folder.get(k) is False or k in self._infos:
                 n += 1
             else:
                 ok = False
@@ -173,16 +235,17 @@ class Reader:
 
     def expand(self, sources) -> list[FileInfo] | None:
         """Every file of the entries, or None while one of them is not listed yet."""
-        key = (tuple(sources), self._gen)
+        ks = [self._key(s) for s in sources]
+        key = (tuple(ks), self._gen)
         hit = self._cache.get(key)
         if hit is not None:
             return hit[0]
         out = []
-        for s in sources:
-            if s in self._folders:
-                out.extend(self._folders[s])
-            elif s in self._infos:
-                out.append(self._infos[s])
+        for k in ks:
+            if k in self._folders:
+                out.extend(self._folders[k])
+            elif k in self._infos:
+                out.append(self._infos[k])
             else:
                 out = None
                 break
@@ -193,19 +256,20 @@ class Reader:
 
     def left_out(self, sources) -> list:
         """Files of the (listed) folders' level that the engine does not read (not frames, colour beside raws)."""
-        return [f for s in sources for f in self._left.get(s, [])]
+        return [f for s in sources for f in self._left.get(self._key(s), [])]
 
     def sub_folders(self, sources) -> int:
-        return sum(self._reports.get(s, {}).get("sub", 0) for s in sources)
+        return sum(self._reports.get(self._key(s), {}).get("sub", 0) for s in sources)
 
     def unreadable(self, sources) -> list:
-        return [s for s in sources if self._reports.get(s, {}).get("unreadable")]
+        return [s for s in sources if self._reports.get(self._key(s), {}).get("unreadable")]
 
     def adopt(self, infos):
         """Files already listed (left out by the filter, then taken): known as single files from now on."""
         for f in infos:
-            self._infos[f.path] = f
-            self._is_folder[f.path] = False
+            k = self._key(f.path)
+            self._infos[k] = f
+            self._is_folder[k] = False
         self._gen += 1
 
     def wait(self, timeout=30.0) -> bool:
@@ -231,8 +295,10 @@ class Reader:
     def _loop(self):
         while True:
             with self._cond:
-                while not self._queue:
+                while not self._queue and not self._closed:
                     self._cond.wait()
+                if self._closed:
+                    return
                 t = self._queue.pop(0)
                 self._busy = True
             try:
@@ -248,17 +314,22 @@ class Reader:
         for s in t.sources:
             if t.stop:
                 break
-            if s in self._folders:
-                base_n += len(self._folders[s])
+            k = self._key(s)
+            if k in self._folders:
+                base_n += len(self._folders[k])
                 continue
-            if s in self._infos and s not in self._folders:
+            if k in self._infos and k not in self._folders:
                 base_n += 1
                 continue
-            path = self._on_disk(s)
-            is_folder = self._is_folder.get(s)
+            path = self.on_disk(s)
+            is_folder = self._is_folder.get(k)
             if is_folder is None:
                 is_folder = os.path.isdir(path)
             if is_folder:
+                try:
+                    mtime = os.stat(path).st_mtime        # taken before the listing: a frame written meanwhile
+                except OSError:                           # moves it again
+                    mtime = None
                 def counter(n, b=base_n):
                     t.listed = b + n
                     self._signal(t)
@@ -267,13 +338,15 @@ class Reader:
                                  recursive=False)
                 if t.stop:
                     break
+                if path != s:                     # a relative folder: its files written as the project names them
+                    fs, left = self._as_entry(s, fs), self._as_entry(s, left)
                 if any(frame_kind(f.path) != "colour" for f in fs):   # the engine's rule: colour beside raws aside
                     left += [f for f in fs if frame_kind(f.path) == "colour"]
                     fs = [f for f in fs if frame_kind(f.path) != "colour"]
-                self._left[s], self._reports[s] = left, report
+                self._left[k], self._reports[k], self._mtimes[k] = left, report, mtime
                 for f in fs:
-                    self._infos[f.path] = f
-                self._folders[s] = fs
+                    self._infos[self._key(f.path)] = f
+                self._folders[k] = fs
                 base_n += len(fs)
                 if self.delay:
                     time.sleep(self.delay)
@@ -283,7 +356,7 @@ class Reader:
                     f = FileInfo(s.replace("\\", "/"), st.st_size, st.st_mtime, os.path.dirname(s).replace("\\", "/"))
                 except OSError:
                     f = FileInfo(s.replace("\\", "/"), 0, 0.0, os.path.dirname(s).replace("\\", "/"))
-                self._infos[s] = f
+                self._infos[k] = f
                 base_n += 1
                 t.listed = base_n
                 self._signal(t)

@@ -397,8 +397,28 @@ class Painting:
         b = self.block_of(c)
         if b is None:                                    # the stack has no such block (switched out): nothing to show
             return "—", False, kind, None
-        own = self.doc.own_keys(b)
-        return settings_text(kind, self.doc.effective(b), block=self.doc.graph.blocks.get(b)), bool(own), kind, b
+        eff, blk = self.doc.effective(b), self.doc.graph.blocks.get(b)
+        used = self.doc.stack_used(b) if kind == "stacking" and hasattr(self.doc, "stack_used") else None
+        t = settings_text(kind, eff, block=blk, used=used)
+        # its own: a key of its own, or engine settings of its own that change what it says under either method (a
+        # Stacking set to Classic, or to a median, in its panel), never Common's
+        own = bool(self.doc.own_keys(b)) or any(
+            settings_text(kind, eff, block=blk, used=u) != settings_text(kind, eff, used=u)
+            for u in (None, "classic", "drizzle"))
+        return t, own, kind, b
+
+    def setting_lines(self, c):
+        """(the texts a settings cell tries, longest first; own?; block): « ↑ » only on a cell that follows Common;
+        a cell with nothing to say shows « — » alone."""
+        t, own, kind, b = self.cell_text(c)
+        if t in ("", "—"):
+            return ["—"], own, b
+        common = c.id[1] == COMMON
+        pre = "" if (own or common) else "↑ "
+        used = self.doc.stack_used(b) if kind == "stacking" and b is not None and hasattr(self.doc, "stack_used")             else None
+        ts = settings_text(kind, self.doc.effective(b if b is not None else kind), short=True,
+                           block=self.doc.graph.blocks.get(b) if b is not None else None, used=used)
+        return [pre + t, pre + ts], own, b
 
     def is_own(self, c):
         if c.id[1] == COMMON or str(c.id[1]).startswith(FOLDED):
@@ -415,7 +435,7 @@ class Painting:
         pass
 
     def _setting(self, p, c):
-        t, own, kind, b = self.cell_text(c)
+        lines, own, b = self.setting_lines(c)
         yh = self.y_top(c)
         common = c.id[1] == COMMON
         R = QRectF(c.x + 3, c.y + 3, c.w - 6, c.h - 6)
@@ -434,10 +454,7 @@ class Painting:
             p.setBrush(colour(STATE.get(self.doc.state(b), "#5d6470")))
             p.drawEllipse(QPointF(x + 2, y - 4), 3, 3)
             x += 10
-        pre = "" if (own or common) else "↑ "
-        ts = settings_text(kind, self.doc.effective(b if b is not None else kind), short=True,
-                           block=self.doc.graph.blocks.get(b) if b is not None else None)
-        self._first_fitting(p, x, y, [pre + t, pre + ts], F12, TXT if (own or common) else "#6f7787", R.right() - x - 6)
+        self._first_fitting(p, x, y, lines, F12, TXT if (own or common) else "#6f7787", R.right() - x - 6)
         zs = self.zones(c)
         if "reset" in zs and self.hover == c.id and self.drag is None:
             p.setFont(F13)

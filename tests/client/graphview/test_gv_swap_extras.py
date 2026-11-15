@@ -16,6 +16,9 @@ class Reader:
     def note(self, p, d):
         self.seen[p] = d
 
+    def on_disk(self, p):
+        return p
+
 
 def test_the_combination_card_offers_its_types_and_places_the_one_chosen(bridge):
     pal = Palette(bridge)

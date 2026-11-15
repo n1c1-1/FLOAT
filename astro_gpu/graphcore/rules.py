@@ -499,17 +499,7 @@ def summary_msg(p, b, info=None, ix=None):
     if k == "crop":
         return e["Drawn zone"]
     if k == "stacking":
-        # the engine's settings stored on the block first (the settings panel writes them there): the night test pass
-        # saw "drizzle auto" under a Stacking set to Classic
-        sp = (blk.params or {}).get("stack") or {}
-        drizzle = sp["method"] == "drizzle" if sp.get("method") in ("drizzle", "classic") else e["Method"] == "Drizzle"
-        scale = e["Drizzle scale"] if not isinstance(sp.get("scale"), (int, float)) else f"{float(sp['scale']):g}"
-        m = M("drizzle {scale}", scale=scale) if drizzle else "classic"
-        thr = e["Rejection threshold"] if not isinstance(sp.get("kappa"), (int, float)) else f"{float(sp['kappa']):g} σ"
-        chain = ix.effective(rid) if rid else []
-        if rid and ix.row[ix.root(rid)].nights and not any(p.blocks[x].kind == "selection" for x in chain):
-            return M("{m} · {why}", m=m, why="no Selection: every frame is stacked, same weight")
-        return M("{m} · rejection at {thr}", m=m, thr=thr)
+        return stacking_msg(p, b, ix=ix)
     if k == "image":
         return join([typed(e["Image file"])] + (["stretched"] if e["Stretched image"] else []))
     if k == "astrometry":
@@ -531,6 +521,39 @@ def summary_msg(p, b, info=None, ix=None):
         n = sum(1 for w in p.wires if w.dst[0] == b)
         return "no layer" if n == 0 else ("1 layer" if n == 1 else M("{n} layers", n=n))
     return ""
+
+
+#: the Classic combinations that reject nothing, as the line says them (the mean, the default, keeps its rejection)
+PLAIN_COMBINATIONS = {"median": "classic · median", "maximum": "classic · maximum", "minimum": "classic · minimum",
+                      "sum": "classic · sum"}
+
+
+def stacking_msg(p, b, used=None, ix=None):
+    """The Stacking block's line: its method, the one its last result used when it is known (``used``: "classic" |
+    "drizzle", the automatic choice falls back to Classic when the frames are too few for drizzle), and how it
+    combines. The engine's settings stored on the block come first (the settings panel writes them there: the night
+    test pass saw "drizzle auto" under a Stacking set to Classic). A Classic combination other than the mean rejects
+    nothing: no rejection is named."""
+    ix = ix or Index(p)
+    e = effective(p, b)
+    sp = (p.blocks[b].params or {}).get("stack") or {}
+    if used in ("drizzle", "classic"):
+        drizzle = used == "drizzle"
+    else:
+        drizzle = sp["method"] == "drizzle" if sp.get("method") in ("drizzle", "classic") else e["Method"] == "Drizzle"
+    scale = e["Drizzle scale"] if not isinstance(sp.get("scale"), (int, float)) else f"{float(sp['scale']):g}"
+    m = M("drizzle {scale}", scale=scale) if drizzle else "classic"
+    if not drizzle and sp.get("classic_combination") in PLAIN_COMBINATIONS:
+        m = PLAIN_COMBINATIONS[sp["classic_combination"]]
+        rejection = False
+    else:
+        rejection = True
+    thr = e["Rejection threshold"] if not isinstance(sp.get("kappa"), (int, float)) else f"{float(sp['kappa']):g} σ"
+    rid = ix.row_of.get(b)
+    chain = ix.effective(rid) if rid else []
+    if rid and ix.row[ix.root(rid)].nights and not any(p.blocks[x].kind == "selection" for x in chain):
+        return M("{m} · {why}", m=m, why="no Selection: every frame is stacked, same weight")
+    return M("{m} · rejection at {thr}", m=m, thr=thr) if rejection else m
 
 
 def summary(p, b, info=None, ix=None, tr=None):

@@ -300,3 +300,21 @@ def test_single_files_left_out_by_hand_in_one_step():
     undo_redo(doc)
     reason = refused_inert(doc, "exclude_files", session="common", kind="darks", paths=["x"])
     assert reason == "Common's files are left out in each session"
+
+
+def test_a_row_chain_replaced_keeps_the_wires_its_image_feeds():
+    """A template given to a row: the wires its last block fed (a combination's input) leave from its new last block
+    (they were deleted, and the input stayed to wire)."""
+    doc = Doc.from_template("filters_minimal")
+    q = doc.project
+    ha = next(r for r in q.rows if r.name == "Ha")
+    j = next(b for b, x in q.blocks.items() if x.kind == "combine")
+    before = [(w.dst, w.channel, w.active) for w in q.wires if w.src[0] == ha.blocks[-1]]
+    assert [d for d, _c, _a in before] == [[j, "Hα"]]
+    chain = [{"kind": k} for k in ("registration", "selection", "stacking", "gradient")]
+    ok(doc, "replace_chain", row=ha.id, blocks=chain)
+    q = doc.project
+    ha = next(r for r in q.rows if r.name == "Ha")
+    assert [(w.src, w.dst, w.channel, w.active) for w in q.wires if w.dst[0] == j and w.dst[1] == "Hα"] == \
+        [([ha.blocks[-1], "image"], [j, "Hα"], before[0][1], before[0][2])]
+    engine_ok(doc)
