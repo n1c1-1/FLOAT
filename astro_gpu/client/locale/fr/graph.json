@@ -582,5 +582,7 @@
   "Done with fallback": "Fait avec repli",
   "not identified · no solution": "non identifié · sans solution",
   "refused": "refusé",
-  "a change": "une modification"
+  "a change": "une modification",
+  "This Combine layers puts back the stars of its own Stars/background": "Ce bloc Combiner calques remet les étoiles de son propre Étoiles/fond",
+  "The stars come from a Stars/background or a combination's Output": "Les étoiles viennent d'un bloc Étoiles/fond ou de la sortie d'une combinaison"
 }

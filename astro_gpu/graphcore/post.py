@@ -203,21 +203,31 @@ def _to_post(g):
 
 def _with_sides(g, sides):
     """The Stars side of each Combine layers over a combination's Output wired from the image its layer names (the
-    "· Stars" combination's Output), when it is not wired yet."""
+    "· Stars" combination's Output, or the stars another workflow gives): Post's layer is what it shows, so a wire
+    from another image into that side is replaced (the panel's choice of the stars "did not stick" while the port
+    was wired)."""
     if not sides:
         return g
     have = layer_rows(g)
-    add = []
+    add, drop = [], set()
     for s, src in sides.items():
         if src is None or src[0] not in g.blocks:
             continue
         for rid in have.get(s, []):
             j = next(r for r in g.rows if r.id == rid).blocks[0]
-            if not any(w.dst == [j, "Stars"] for w in g.wires):
+            into = [w for w in g.wires if w.dst == [j, "Stars"]]
+            if any(w.src == list(src) and w.active for w in into):
+                continue
+            drop |= {w.id for w in into if w.active}
+            if not any(w.src == list(src) for w in into):
                 add.append((list(src), j))
-    if not add:
+            else:                                       # drawn, not taken: taken now
+                drop |= {w.id for w in into if w.src == list(src)}
+                add.append((list(src), j))
+    if not add and not drop:
         return g
     q = clone(g)
+    q.wires = [w for w in q.wires if w.id not in drop]
     for src, j in add:
         q.wires.append(Wire(new_id(q, "w"), src, [j, "Stars"]))
     return q

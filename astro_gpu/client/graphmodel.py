@@ -912,6 +912,59 @@ class GraphEditing:
         return g2, Result(True, toast=toast, focus=res.focus, acted=res.acted, created=res.created,
                           dependants=res.dependants)
 
+    def _layer_star_sides(self, steps) -> tuple[list, str]:
+        """The Stars side of a Combine layers drawn for a layer of Post (over a combination's Output), wired or unwired
+        by the user's gesture: [(its layer, the workflow whose stars it reads or None, "stars" | "output")], written to
+        Post in the same step, and why the gesture is refused ("" when it is not). Post is what the graph draws its
+        Combine layers from again at the next gesture: a side not written there was dropped silently (a beta tester's
+        RGB stars wired into the S-H-O's Combine layers, gone at the next edit and at the run)."""
+        from ..graphcore.post import _flows, place_of
+        g = self._g
+        out = []
+        try:
+            bm = self.block_map
+        except Exception:  # noqa: BLE001 - no map of the blocks yet: the gesture as it is
+            return out, ""
+        flows = None
+        for st in steps:
+            if len(st) < 2 or not isinstance(st[1], dict) or st[0] not in ("wire", "unwire"):
+                continue
+            a = st[1]
+            if st[0] == "wire":
+                dst, port, src, sport = a.get("dst"), a.get("dst_port"), a.get("src"), a.get("src_port")
+            else:
+                w = next((x for x in g.wires if x.id == a.get("wire")), None)
+                if w is None:
+                    continue
+                (src, sport), (dst, port) = w.src, w.dst
+            blk = g.blocks.get(dst)
+            if blk is None or blk.kind != "combine_layers" or port != "Stars":
+                continue
+            n = bm.node(dst)
+            lay = self.post_layer(n.lid) if n is not None and n.lid is not None else None
+            if lay is None:                                   # a Combine layers of the graph only (no Background yet)
+                continue
+            flows = flows if flows is not None else _flows(g)
+            if (lay.get("starless") or "starless") != "output":
+                # over a Stars/background's starless image: its stars are that block's own (Post's layer of it)
+                own = place_of(g, int(lay["pid"]), "stars", flows) if lay.get("pid") is not None else None
+                if st[0] == "wire" and own is not None and (src, sport) != own:
+                    return [], _("This Combine layers puts back the stars of its own Stars/background")
+                continue
+            if st[0] == "unwire":
+                out.append((n.lid, None, "stars"))
+                continue
+            image = "stars" if sport == "Stars only" else "output" if sport == "image" else ""
+            part = "stars" if image == "stars" else None
+            pid = next((wid for wid in sorted(flows) if image and place_of(g, wid, part, flows) == (src, sport)), None)
+            if pid is None:
+                return [], _("The stars come from a Stars/background or a combination's Output")
+            why = self.layer_side_problem("stars", pid, image)
+            if why:
+                return [], why
+            out.append((n.lid, pid, image))
+        return out, ""
+
     def _change(self, steps=(), raw=None, view=None, name=None) -> Result:
         """Operations, then ``raw(graph)`` (an edit the core has no operation for, on a copy), as one step."""
         self._absorb()
@@ -919,6 +972,9 @@ class GraphEditing:
         kept = self._row_kept(steps) or self._lights_first(steps)
         if kept:
             return Result(False, reason=kept)
+        sides, refused = self._layer_star_sides(steps)
+        if refused:
+            return Result(False, reason=refused)
         base = self._without_layer_rows(before, steps)
         g, res = (apply_many(base, list(steps), self.graph_view if view is None else view, _) if steps
                   else (base, Result(True)))
@@ -960,6 +1016,8 @@ class GraphEditing:
                 self._post_follow(before, g, wired=any((s[0] == "wire" and isinstance(s[1], dict)
                                                         and s[1].get("dst") == post)
                                                        or s[0] == "send_to_post" for s in steps))
+                for lid, pid, image in sides:                 # the Stars side wired by hand: Post's layer says it
+                    self.set_layer_side(lid, "stars", pid, image)
                 self._follow_post()
         finally:
             self._layer_pool = None
