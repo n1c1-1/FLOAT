@@ -1274,7 +1274,7 @@ class GraphEditing:
                     v["id"] == here["active"] for v in back.get("versions", [])):
                 back["active"] = here["active"]
             self.p.post = back
-            now.after_post = back
+            now.after_post = copy.deepcopy(back)          # its own: Post's edits made since are not the step's
             post_back = back != here
         g = gm.from_dict(json.loads(gjson))
         g.excluded = [[int(a), str(b)] for a, b in self.p.excluded]          # the hand exclusions are not undone

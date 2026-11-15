@@ -324,3 +324,16 @@ def test_a_projection_of_posts_wires_that_fails_keeps_the_wires_and_is_logged(mo
         assert model._with_post_wires(g) is g                                            # the wires kept
     assert any("projection failed" in (r.exc_text or "") + r.getMessage() or
                (r.exc_info and "projection failed" in str(r.exc_info[1])) for r in caplog.records)
+
+
+def test_an_edit_of_post_after_undo_is_not_taken_back_by_redo(model):
+    """After an Undo the step's snapshot kept Post itself: a Post edit made in place then changed the snapshot too, and
+    the next Redo took that edit back."""
+    with model.from_post():
+        model.new_post_version()
+    assert model.undo()
+    assert len(model.p.post["versions"]) == 1
+    model.p.post["versions"][0]["note"] = "edited after undo"            # a Post edit made in place
+    assert model.redo()
+    assert len(model.p.post["versions"]) == 2
+    assert model.p.post["versions"][0].get("note") == "edited after undo"
