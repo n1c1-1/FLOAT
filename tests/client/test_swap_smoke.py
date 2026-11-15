@@ -232,7 +232,7 @@ def choose_every_block(w) -> list:
 
 def template(key: str) -> dict:
     from astro_gpu.client.gallery import GALLERY
-    return next(t for t in GALLERY if t["key"] == key)
+    return dict(next(t for t in GALLERY if t["key"] == key), file="")      # its workflow in place, not a new project
 
 
 def made_from(w, env, key: str) -> Path:

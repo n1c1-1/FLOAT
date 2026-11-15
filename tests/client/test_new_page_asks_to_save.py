@@ -60,7 +60,7 @@ def test_an_edit_on_the_graph_page_waits_for_save_and_new_or_open_asks_first(win
     page, first = win.graph, win.project.root
     assert not win.s.dirty and not win.windowTitle().endswith("*")
     page.show_templates()                                              # the blank page's « From template »
-    page.templates.chosen.emit(next(t for t in GALLERY if t.get("tab") == "frames"))
+    page.templates.chosen.emit(dict(next(t for t in GALLERY if t.get("tab") == "Color"), file=""))
     QApplication.processEvents()
     assert page.bridge.graph.rows and win.s.dirty and win.windowTitle().endswith(" *")
     win.new_project()                                                  # New project: asked, Cancel keeps it
@@ -84,7 +84,7 @@ def _colour_full_saved(win):
     _ready(win)
     page = win.graph
     page.show_templates()
-    page.templates.chosen.emit(next(t for t in GALLERY if t["key"] == "colour_full"))
+    page.templates.chosen.emit(dict(next(t for t in GALLERY if t["key"] == "colour_full"), file=""))
     QApplication.processEvents()
     assert page.bridge.graph.rows and win.s.dirty                       # made from a template: an edit
     assert win.s.flush() and not win.s.dirty
@@ -200,7 +200,7 @@ def _saved_project(win, tmp_path):
     assert win.create_project(root.as_posix(), "Saved", "IC 1805"), win.banner.text.text()
     _ready(win)
     win.graph.show_templates()
-    win.graph.templates.chosen.emit(next(t for t in GALLERY if t["key"] == "colour_full"))
+    win.graph.templates.chosen.emit(dict(next(t for t in GALLERY if t["key"] == "colour_full"), file=""))
     QApplication.processEvents()
     assert win.s.flush() and not win.s.dirty
     return root

@@ -73,7 +73,7 @@ def _saved_from(win, key):
     win.new_project()
     _ready(win)
     win.graph.show_templates()
-    win.graph.templates.chosen.emit(next(t for t in GALLERY if t["key"] == key))
+    win.graph.templates.chosen.emit(dict(next(t for t in GALLERY if t["key"] == key), file=""))
     QApplication.processEvents()
     assert win.s.flush() and not win.s.dirty
     return win.graph
