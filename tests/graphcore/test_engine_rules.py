@@ -183,3 +183,21 @@ def test_calibration_together_and_each_night():
     ok(doc, "add_night", row=doc.project.rows[0].id)                       # a night joining takes the stack's switch
     assert all(doc.project.blocks[c].off for _s, c in doc.project.rows[0].nights)
     engine_ok(doc)
+
+
+def test_calibrated_together_takes_a_night_without_its_calibration_beside_one_switched_off():
+    """A night whose Calibration block was deleted is not calibrated, as one switched off: with the other nights'
+    Calibrations off, Calibrate together is accepted, as the engine accepts it (the core fuzz: refused as a mix)."""
+    doc = Doc.from_template("colour_complete")
+    r = doc.project.rows[0]
+    ok(doc, "add_night", row=r.id)
+    ok(doc, "set_calibrate_together", on=False)
+    r = doc.project.rows[0]
+    ok(doc, "remove_block", block=r.nights[0][1])
+    for _s, c in doc.project.rows[0].nights:
+        if c is not None and not doc.project.blocks[c].off:
+            ok(doc, "switch_off", block=c)
+    nights = doc.project.rows[0].nights
+    assert any(c is None for _s, c in nights) and any(c is not None for _s, c in nights)
+    ok(doc, "set_calibrate_together", on=True)
+    engine_ok(doc)

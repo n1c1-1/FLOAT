@@ -477,7 +477,8 @@ def legality(q, style=None):
                      lab=LABEL[q.blocks[w.src[0]].kind])
     if q.calibrate_together:
         for r in q.rows:
-            offs = {q.blocks[c].off if c is not None else None for _s, c in r.nights}
+            # (a night without its Calibration block is not calibrated: as one switched off, the engine's one node)
+            offs = {q.blocks[c].off if c is not None else True for _s, c in r.nights}
             if len(offs) > 1:
                 return "calibrated together: one setting for all nights"
     return engine_check(q)
