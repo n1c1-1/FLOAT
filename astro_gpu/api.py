@@ -2978,10 +2978,10 @@ def _bounded_by_spectra(infos: list[ParamInfo]) -> None:
 def _origin(p: Project2, w: Workflow) -> str:
     """Where a workflow's image comes from (render/sliders.ORIGINS): a palette fusion of narrow-band filters, a
     monochrome sensor, else a colour camera or an opened image ("")."""
-    from .stages.combine import BY_KIND
+    from .stages.recipes import recipe_of
     fusion = (w.source or {}).get("fusion")
     if fusion:
-        return "palette" if BY_KIND[fusion["type"]].narrowband else ""
+        return "palette" if recipe_of(fusion)["narrowband"] else ""
     return "mono" if w.source is None and p.is_mono(w) else ""
 
 
@@ -3151,6 +3151,143 @@ def export_workflow(p: Project2, wf: int | Workflow, base: Any = None, sliders: 
             "base": base, "sliders": sliders or {}, "created": datetime.now().isoformat(timespec="seconds"),
             "keys": keys.keys(w), "render": lay.info}
     return export_image(p, lay.rgb[:, y0:y1, x0:x1], {"wf": w.id, "origin": (x0, y0), "history": hist}, opts, progress)
+
+
+# ---------------------------------------------------------------------------------------------- combination recipes
+#
+# A combination's recipe (stages/recipes.py) is a TOML file of the application's folder (resources/combinations). The
+# list below is what the graph offers; placing a combination copies the recipe into the workflow's source
+# (``combination_source``), so a project computes the same whatever happens to the file. A file newer than a project's
+# copy is told by ``combination_recipe_status``; the copy changes only by ``apply_combination_recipe``. Memory and
+# small files only: the GUI thread may call them.
+
+def combination_recipes(folder: str | Path | None = None) -> dict[str, Any]:
+    """The recipes the folder offers: {"recipes": [{"id", "name", "version", "description", "narrowband", "inputs":
+    [{"role", "label", "type", "channel"}], "parameters": {name: {"default", "min", "max" or "choices", "label",
+    "help"}}}], in the files' order of names; "refused": [the message of each file that cannot be used, naming the
+    file, the line and the setting]}."""
+    from .stages import recipes
+    found, bad = recipes.available(folder)
+    return {"recipes": [recipes.summary(r) for r in found.values()], "refused": [str(e) for e in bad]}
+
+
+def combination_recipe(recipe_id: str, folder: str | Path | None = None) -> dict[str, Any]:
+    """The folder's recipe of that id, whole (a copy); KeyError when the folder has none (or its file is refused)."""
+    from .stages import recipes
+    found, _bad = recipes.available(folder)
+    if recipe_id not in found:
+        raise KeyError(f"no combination recipe {recipe_id!r}")
+    return copy.deepcopy(found[recipe_id])
+
+
+def combination_source(recipe_id: str, inputs: list[dict] | None = None,
+                       folder: str | Path | None = None) -> dict[str, Any]:
+    """The source of a new combination workflow with the folder's recipe copied in: {"fusion": {"type": its id,
+    "recipe": the copy, "inputs": inputs}} (``inputs``: [{"pid", "role", "channel", "image"}], a port may wait). What
+    placing a combination stores (``Workflow.source``)."""
+    from .stages import recipes
+    return recipes.fusion_source(combination_recipe(recipe_id, folder), inputs)
+
+
+def combination_recipe_status(p: Project2, wf: int | Workflow, folder: str | Path | None = None) -> dict[str, Any]:
+    """A combination workflow's recipe against the folder's: {"id", "name", "project": the copy's version (a project
+    saved before recipes: its type's recipe, version 1), "folder": the file's version (None: no such file now),
+    "newer": the file's version is higher, "changed": the file would compute otherwise, "copy": the project's recipe,
+    "file": the folder's (None)}. Nothing changes until ``apply_combination_recipe``."""
+    from .stages import recipes
+    w = p.workflow(wf)
+    f = (w.source or {}).get("fusion")
+    if not isinstance(f, dict):
+        raise ValueError(f"workflow {w.name!r} is not a combination")
+    mine = recipes.recipe_of(f)
+    found, _bad = recipes.available(folder)
+    st = recipes.status(mine, found)
+    return {**st, "name": mine["name"], "copy": copy.deepcopy(mine),
+            "file": copy.deepcopy(found[mine["id"]]) if mine["id"] in found else None}
+
+
+def apply_combination_recipe(p: Project2, wf: int | Workflow, folder: str | Path | None = None) -> None:
+    """Copy the folder's version of a combination workflow's recipe into it (the user's choice: its results may then
+    be Outdated). The wires of inputs the new version no longer has are dropped; the settings follow the recipe's
+    parameters (those it no longer has are dropped; the block's stage may change, the four types' frozen recipes
+    running on their own: stages/recipes.stage_for). Raises KeyError when the folder has no such recipe; nothing
+    changes when the result would not validate."""
+    from .stages import recipes
+    from .stages.combine import RecipeParams
+    w = p.workflow(wf)
+    f = (w.source or {}).get("fusion")
+    if not isinstance(f, dict):
+        raise ValueError(f"workflow {w.name!r} is not a combination")
+    new = combination_recipe(recipes.recipe_of(f)["id"], folder)
+    before = (copy.deepcopy(w.source), copy.deepcopy(w.params))
+    old_stage = recipes.stage_for(f)
+    nf = {"type": new["id"], "recipe": new,
+          "inputs": [i for i in f.get("inputs") or [] if i["role"] in recipes.roles(new)]}
+    new_stage = recipes.stage_for(nf)
+    mine = dict(w.params.get(old_stage) or {})
+    vals = {**(mine.pop("values", None) or {}), **{k: v for k, v in mine.items() if k != "weights"}}
+    vals = {k: v for k, v in vals.items() if k in new["parameters"]}
+    kept: dict[str, Any] = {}
+    if new_stage == recipes.RECIPE_STAGE:
+        if vals:
+            kept["values"] = vals
+    else:
+        fields = _keys(p).rules.params(new_stage).model_fields
+        kept.update({k: v for k, v in vals.items() if k in fields and k not in RecipeParams.model_fields})
+    weights = {r: x for r, x in (mine.get("weights") or {}).items() if r in recipes.roles(new)}
+    if weights:
+        kept["weights"] = weights
+    params = {k: v for k, v in w.params.items() if k != old_stage}
+    if kept:
+        params[new_stage] = kept
+    try:
+        w.source, w.params = {"fusion": nf}, params
+        p.validate()
+    except Exception:
+        w.source, w.params = before
+        raise
+
+
+def set_recipe_value(p: Project2, wf: int | Workflow, name: str, value: Any = None) -> None:
+    """Set a parameter of a combination workflow's recipe (None: back to the recipe's default): on the four types'
+    stages, their own setting of that name (``set_param``); on the stage of the other recipes, in its ``values``,
+    checked against the recipe. ValueError naming the parameter when it is not one or the value does not fit."""
+    from .stages import recipes
+    from .stages.combine import recipe_value
+    from .core.stage import StageError
+    w = p.workflow(wf)
+    f = (w.source or {}).get("fusion")
+    if not isinstance(f, dict):
+        raise ValueError(f"workflow {w.name!r} is not a combination")
+    spec, stage = recipes.recipe_of(f), recipes.stage_for(f)
+    if name not in spec["parameters"]:
+        raise ValueError(f"the recipe {spec['name']!r} has no parameter {name!r}")
+    if stage != recipes.RECIPE_STAGE:
+        set_param(p, w.id, stage, name, value)
+        return
+    d = dict(w.params.get(stage) or {})
+    vals = dict(d.get("values") or {})
+    if value is None:
+        vals.pop(name, None)
+    else:
+        try:
+            v = recipe_value(type("V", (), {"values": {name: value}})(), spec, name)
+        except StageError as e:
+            raise ValueError(str(e)) from None
+        if v == spec["parameters"][name]["default"]:
+            vals.pop(name, None)
+        else:
+            vals[name] = v
+    if vals:
+        d["values"] = vals
+    else:
+        d.pop("values", None)
+    params = dict(w.params)
+    if d:
+        params[stage] = d
+    else:
+        params.pop(stage, None)
+    w.params = params
 
 
 # ---------------------------------------------------------------------------------------------- lazy re-exports

@@ -485,11 +485,19 @@ class Keys:
         if base(stage) in COMBINE and src:
             # each port's channel and the keys of what it reads: the workflow's Output or its starless image (its
             # Stars/background), and its plate solution; a change in a channel's workflow makes the combination Outdated
-            return {"inputs": [
-                {"role": i["role"], "channel": i.get("channel", "L"), "out": self._input_key(i["pid"], _read(i)),
+            from ..stages import recipes
+            spec = recipes.recipe_of(src["fusion"])
+            part = {"inputs": [
+                {"role": i["role"], "channel": i.get("channel", recipes.default_channel(spec, i["role"])),
+                 "out": self._input_key(i["pid"], _read(i)),
                  "wcs": self._input_key(*self._plate(i["pid"]).get("astrometry", (i["pid"], "")))} | ({"image": i["image"]} if _read(i) != "render_simple"
                                                                     else {})
                 for i in src["fusion"]["inputs"]]}
+            if base(stage) == recipes.RECIPE_STAGE:
+                # the recipe copied into the project (what of it decides the image); the four types' frozen recipes
+                # run on their own stages, keyed as they always were
+                part["recipe"] = recipes.computational(spec)
+            return part
         if stage == "align_on":
             # the keys of what it reads on the reference's side (its image); the reference's id is not part of it
             pid = self.reference_of(w)
@@ -589,13 +597,14 @@ class Keys:
         runner leaves the block and what follows out."""
         w = self._wf(wf)
         if base(stage) in COMBINE:
-            from ..stages.combine import BY_KIND, PORT_NAMES, TO_WIRE, grid_problem
+            from ..stages.combine import PORT_NAMES, TO_WIRE, grid_problem
+            from ..stages.recipes import recipe_of, roles
             f = w.source["fusion"]
-            empty = [PORT_NAMES.get(r, r) for r in BY_KIND[f["type"]].ports if r not in {i["role"] for i in f["inputs"]}]
+            ports = roles(recipe_of(f))
+            empty = [PORT_NAMES.get(r, r) for r in ports if r not in {i["role"] for i in f["inputs"]}]
             if empty:
                 return TO_WIRE.format(names=", ".join(empty))
-            return grid_problem([{"role": i["role"], "grid": self.grid(i["pid"])} for i in f["inputs"]],
-                                BY_KIND[f["type"]].ports)
+            return grid_problem([{"role": i["role"], "grid": self.grid(i["pid"])} for i in f["inputs"]], ports)
         if base(stage) == "align_on" and self.reference_of(w) is None:
             from ..stages.align_on import NO_REFERENCE
             return NO_REFERENCE
@@ -710,7 +719,11 @@ class Keys:
             def plate(pid, file=""):
                 q, x = self._plate(pid).get("astrometry", (pid, "astrometry"))
                 return folder(q, x, file)
-            v["inputs"] = [{"role": i["role"], "channel": i.get("channel", "L"), "pid": i["pid"],
+            from ..stages import recipes
+            spec = recipes.recipe_of(w.source["fusion"])
+            v["recipe"] = w.source["fusion"].get("recipe") or {}
+            v["inputs"] = [{"role": i["role"], "channel": i.get("channel", recipes.default_channel(spec, i["role"])),
+                            "pid": i["pid"],
                             "image": i.get("image", "output"), "dir": folder(i["pid"], _read(i)),
                             "wcs": plate(i["pid"], "wcs.fits"), "grid": self.grid(i["pid"]),
                             "full_scale": self.full_scale(i["pid"]),

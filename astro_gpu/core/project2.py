@@ -574,12 +574,19 @@ def check_source(source: Any, where: str = "source") -> dict[str, Any] | None:
     if source is None:
         return None
     if isinstance(source, dict) and "fusion" in source:
-        from ..stages.combine import BY_KIND, CHANNELS, IMAGES
+        from ..stages import recipes
+        from ..stages.combine import CHANNELS, IMAGES
         f = source["fusion"]
-        if set(source) != {"fusion"} or not isinstance(f, dict) or f.get("type") not in BY_KIND:
-            raise ValueError(f"{where}: a combination is {{'fusion': {{'type': one of {list(BY_KIND)}, 'inputs': "
-                             f"[...]}}}}, not {source!r}")
-        ports = BY_KIND[f["type"]].ports
+        if set(source) != {"fusion"} or not isinstance(f, dict) or not (
+                f.get("type") in recipes.LEGACY or "recipe" in f):
+            raise ValueError(f"{where}: a combination is {{'fusion': {{'type': a recipe's id, 'recipe': the recipe "
+                             f"copied (none: one of {list(recipes.LEGACY)}), 'inputs': [...]}}}}, not {source!r}")
+        if "recipe" in f:
+            # the copy as a file would be read (stages/recipes.py): a project never runs a recipe the engine refuses
+            recipes.check(f["recipe"], f"{where}: its recipe")
+            if f["recipe"]["id"] != f.get("type"):
+                raise ValueError(f"{where}: the type {f.get('type')!r} is not its recipe's id {f['recipe']['id']!r}")
+        ports = recipes.roles(recipes.recipe_of(f))
         ins = f.get("inputs")
         if not isinstance(ins, list) or not all(
                 isinstance(i, dict) and isinstance(i.get("pid"), int) and i.get("role") in ports

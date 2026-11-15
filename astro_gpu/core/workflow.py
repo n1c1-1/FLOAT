@@ -44,6 +44,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
+from ..stages.combine import ALL as COMBINATIONS_ALL
 from ..stages.combine import COMBINATIONS
 from ..stages.combine import STAGES as COMBINE
 
@@ -272,7 +273,7 @@ BLOCKS: dict[str, tuple[str, ...]] = {
     "synth": ("synth_stars",),                      # placed by hand after Stars/background (issue #77)
     "output": ("render_simple",),
 }
-BLOCK_TITLES = {**{c.name: c.title for c in COMBINATIONS}, "image": "Image", "calibration": "Calibration",
+BLOCK_TITLES = {**{c.name: c.title for c in COMBINATIONS_ALL}, "image": "Image", "calibration": "Calibration",
                 "registration": "Registration", "selection": "Selection", "crop": "Crop",
                 "stacking": "Stacking", "align_on": "Align on", "astrometry": "Astrometry", "color": "Color", "deconv": "Deconvolution", "denoise": "Denoise",
                 "synth": "Synthetic stars", "stars": "Stars/background", "gradient": "Gradient", "output": "Output"}
@@ -1040,9 +1041,13 @@ def source_of(w: Any) -> str:
 
 
 def combine_stage(w: Any) -> str:
-    """The stage of the combination a workflow starts from ("combine_sho"), "" when it does not start from one."""
+    """The stage of the combination a workflow starts from ("combine_sho"; "combine_recipe" for a recipe other than
+    the four types' frozen ones, stages/recipes.stage_for), "" when it does not start from one."""
     f = (getattr(w, "source", None) or {}).get("fusion")
-    return BLOCKS_OF_KIND.get(f.get("type"), "") if isinstance(f, dict) else ""
+    if not isinstance(f, dict) or not (f.get("type") in BLOCKS_OF_KIND or isinstance(f.get("recipe"), dict)):
+        return ""
+    from ..stages.recipes import stage_for
+    return stage_for(f)
 
 
 #: a combination's type → its block and stage
