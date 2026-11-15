@@ -1302,6 +1302,8 @@ class PostView(QWidget):
                 # a block's image sent to Post (a branch made for it) is shown at once, as the Split images are
                 sent = getattr(p, "end", None) is not None or getattr(self.s, "is_sent_branch", lambda q: False)(p) or \
                     getattr(self.s, "is_plain_image", lambda q: False)(p)
+                # a variant is made to be looked at: its layer arrives visible
+                sent = sent or getattr(p, "variant_of", None) is not None
                 self.layers.insert(self._place_of(p.pid, paths), new_workflow_layer(
                     p.pid, p.name + (" · " + POST_PART_NAMES["combined"] if stars else ""), bool(sent),
                     part="combined" if stars else None))
