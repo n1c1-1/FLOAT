@@ -2693,7 +2693,7 @@ class _ProjectBase(QObject):
     def title(self, stage: str) -> str:
         names = {"inventory": "Inventory", "calibrate": "Calibration", "register": "Registration",
                  "stack": "Stacking", "astrometry": "Astrometry", "reference": "Reference image",
-                 "catalogs": "Gaia catalogues", "surveys": "H-alpha survey", "color": "Color", "denoise": "Denoise",
+                 "catalogs": "Gaia catalogues", "surveys": "H-alpha survey", "color": "Colour", "denoise": "Denoise",
                  "gradient": "Sky gradient", "render_simple": "Output prep", "star_removal": "Star removal",
                  "deconv": "Deconvolution", "synth_stars": "Synthetic stars"}
         b, sep, n = stage.partition("~")                  # a graph's later block (issue #47): "Denoise 2"

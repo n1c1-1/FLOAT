@@ -33,7 +33,7 @@ from .widgets import ElidedLabel, cap_dialog, label
 #: the stages as the views name them (the blocks they belong to)
 STAGE_BLOCK = {"inventory": "Calibration", "calibrate": "Calibration", "register": "Registration", "stack": "Stacking",
                "astrometry": "Astrometry", "reference": "Astrometry", "catalogs": "Astrometry",
-               "surveys": "Astrometry", "color": "Color", "denoise": "Denoise", "gradient": "Gradient",
+               "surveys": "Astrometry", "color": "Colour", "denoise": "Denoise", "gradient": "Gradient",
                "render_simple": "Output", "star_removal": "Stars"}
 #: the engine's reasons for computing a stage again, as templates the client translates
 REASONS = [(re.compile(r"^algorithm updated \((\w+) -> (\w+)\)$"), "algorithm updated ({0} → {1})"),

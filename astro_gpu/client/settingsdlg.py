@@ -606,7 +606,7 @@ class SettingsDialog(QDialog):
         cat_size = f"{number(sc.total_bytes() / 1e9, 2)} {_('GB')}"
         for kind, name, needed, button, tip in (
                 (sc.KIND, _("Star catalogue"),
-                 _("Positions and colours of the stars, {size} · needed by Astrometry and Color").format(size=cat_size),
+                 _("Positions and colours of the stars, {size} · needed by Astrometry and Colour").format(size=cat_size),
                  _("Install ({size})"),
                  _("Downloads FLOAT's star catalogue ({size}) into the cache folder; a download that stops goes on from "
                    "where it was. The full Gaia extracts are also read when they are on this computer.")),

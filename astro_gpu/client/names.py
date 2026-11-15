@@ -80,9 +80,14 @@ def _copies() -> list[tuple[str, list[re.Pattern]]]:
     return out
 
 
+#: English names of the application's words that are shown otherwise: the engine's and the graph core's own word, and
+#: the name projects made before stored ("Ha · Color"), is shown and stored as the interface writes it
+LEGACY = {"Color": "Colour"}
+
+
 def _word(text: str, to: str) -> str | None:
     """A name of the application in language ``to``, or None when ``text`` is not one."""
-    en = text if text in _bases() else _reverse().get(text)
+    en = LEGACY.get(text) or (text if text in _bases() else _reverse().get(text))
     if en is None:
         return None
     return en if to == "en" else _catalogues().get(to, {}).get(en, en)

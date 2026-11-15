@@ -42,7 +42,7 @@ CLIENT_KEY = {"session": "session", "image": "image", "calibration": "calibratio
 #: the block names of the palette (English; shown through _)
 KIND_TITLE = {"session": "Session", "image": "Image", "calibration": "Calibration", "registration": "Registration",
               "selection": "Selection", "crop": "Crop", "stacking": "Stacking", "astrometry": "Astrometry",
-              "gradient": "Gradient", "deconv": "Deconvolution", "denoise": "Denoise", "color": "Color",
+              "gradient": "Gradient", "deconv": "Deconvolution", "denoise": "Denoise", "color": "Colour",
               "stars": "Stars/background", "synth": "Synthetic stars", "combine": "Combination",
               "combine_layers": "Combine layers", "post": "Post"}
 #: Post: what it does (graph.py POST_WHAT)

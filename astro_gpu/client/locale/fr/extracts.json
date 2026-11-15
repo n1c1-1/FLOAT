@@ -3,7 +3,7 @@
  "The star catalogue finds where the image points on the sky and calibrates the colours. Nothing is fetched while a project runs: install it once here, with the buttons below. Without it, the blocks that need it are marked and left out of the runs.": "Le catalogue d'étoiles trouve où pointe l'image dans le ciel et calibre les couleurs. Rien n'est téléchargé pendant qu'un projet tourne : installez-le une fois ici, avec les boutons ci-dessous. Sans lui, les blocs qui en ont besoin sont signalés et laissés hors des calculs.",
  "Open folder": "Ouvrir dossier",
  "Star catalogue": "Catalogue d'étoiles",
- "Positions and colours of the stars, {size} · needed by Astrometry and Color": "Positions et couleurs des étoiles, {size} · nécessaire à l'astrométrie et à la couleur",
+ "Positions and colours of the stars, {size} · needed by Astrometry and Colour": "Positions et couleurs des étoiles, {size} · nécessaire à l'astrométrie et à la couleur",
  "Install ({size})": "Installer ({size})",
  "Downloads FLOAT's star catalogue ({size}) into the cache folder; a download that stops goes on from where it was. The full Gaia extracts are also read when they are on this computer.": "Télécharge le catalogue d'étoiles de FLOAT ({size}) dans le dossier de cache ; un téléchargement interrompu reprend où il s'était arrêté. Les extraits Gaia complets sont aussi lus quand ils sont sur cet ordinateur.",
  "Installed: {path}": "Installé : {path}",

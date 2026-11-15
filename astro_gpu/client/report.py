@@ -48,7 +48,7 @@ from .widgets import put_back, typed
 #: the sections that are blocks of the chain, in its order: (block key, title)
 BLOCKS = (("calibration", "Calibration"), ("alignement", "Registration"), ("selection", "Selection"),
           ("empilement", "Stacking"), ("astrometrie", "Astrometry"), ("fond", "Gradient"), ("debruitage", "Denoise"),
-          ("couleur", "Color"), ("etoiles", "Stars/background"))
+          ("couleur", "Colour"), ("etoiles", "Stars/background"))
 PAGE_W = 794                                             # the page on the screen, px (A4 at 96 dpi)
 FOOT = 40                                                # the foot of a page, px
 FIG_W = 640                                              # a figure in the page, px

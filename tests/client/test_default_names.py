@@ -86,3 +86,31 @@ def test_a_workflow_made_from_a_template_in_french_is_stored_in_english_and_show
     win.change_language("en")
     settle(win, 3)
     assert [q.name for q in s.paths] == ["Colour full"]                        # and in English, at once
+
+
+def test_the_colour_block_is_written_one_way_and_an_earlier_name_follows():
+    """The testers' pass 2: block "Color", workflow "Colour full" side by side. The interface writes "Colour"; the
+    engine's word and the names projects stored before ("Ha · Color") are shown so too."""
+    from astro_gpu.client.graphnode import TITLES
+    assert TITLES["couleur"] == "Colour"
+    i18n.set_language("en")
+    assert names.shown("Ha · Color") == "Ha · Colour" and names.neutral("Ha · Color") == "Ha · Colour"
+    i18n.set_language("fr")
+    try:
+        assert names.shown("Ha · Color") == "Ha · Couleur" and names.shown("Colour") == "Couleur"
+    finally:
+        i18n.set_language("en")
+
+
+def test_french_agrees_with_the_kind_of_frames():
+    """The testers' pass 2: « 107 brutes ajoutés »."""
+    from astro_gpu.client.i18n import _
+    from astro_gpu.graphcore.msg import M, say
+    i18n.set_language("fr")
+    try:
+        said = say(M("{n} {kind} added to “{t}”", n=7, kind="lights", t="Session 1"), _)
+        assert said == "7 brutes ajoutées à « Session 1 »", said
+        assert say(M("{n} {kind} added to “{t}”", n=7, kind="darks", t="Session 1"), _).startswith("7 darks ajoutés")
+        assert _("{kind} copied to {dest}").format(kind=_("Lights"), dest="x") == "Brutes copiées vers x"
+    finally:
+        i18n.set_language("en")
