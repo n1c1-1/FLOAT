@@ -62,6 +62,36 @@ def test_the_response_of_a_computed_project_is_read_from_its_results():
     assert red > green and red > blue                                   # H-alpha: red first
 
 
+RAN: list = []
+
+
+def _ran(what):
+    RAN.append(what)
+
+
+class _Trap:
+    """An object whose unpickling runs code."""
+
+    def __reduce__(self):
+        return (_ran, ("ran",))
+
+
+def test_a_colour_stars_file_holding_objects_is_refused_without_running_them(tmp_path, monkeypatch):
+    # review 2.7: the file was read with allow_pickle=True: a project received from someone could run code
+    d = tmp_path / "store" / "color" / "k"
+    cat = tmp_path / "store" / "catalogs" / "c"
+    d.mkdir(parents=True)
+    cat.mkdir(parents=True)
+    (d / "manifest.json").write_text('{"inputs": {"catalogs": "c"}}')
+    np.savez(cat / "gaia_xp.npz", source=np.arange(3), flux=np.ones((3, 4)), lam=np.arange(4.0))
+    np.savez(d / "color_stars.npz", source=np.array([_Trap(), 1, 2], dtype=object), used=np.ones(3, bool),
+             flux=np.ones((3, 3)))
+    monkeypatch.setattr(api, "_need", lambda p, wf, stage, which: d)
+    with pytest.raises(api.NotDone):
+        api.spectral_response(None, 1)
+    assert RAN == []
+
+
 def test_no_colour_result_no_curves(tmp_path):
     from astro_gpu.core import project2
     from astro_gpu.core.project import Target

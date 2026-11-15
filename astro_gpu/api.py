@@ -2367,14 +2367,20 @@ def spectral_response(p: Project2, wf: int | Workflow, which: str = "current"):
     cat = d.parent.parent / "catalogs" / str((man.get("inputs") or {}).get("catalogs") or "")
     if not (cat / "gaia_xp.npz").is_file() or not (d / "color_stars.npz").is_file():
         raise NotDone(f"the colour stars of workflow {_wid(wf)} are not stored ({which})")
-    with np.load(d / "color_stars.npz", allow_pickle=True) as z, np.load(cat / "gaia_xp.npz") as x:
-        if not np.array_equal(z["source"], x["source"]):
+    # never with Python objects (review 2.7: a project received from someone could hold a file that runs code); the
+    # stage writes numbers and text only
+    with np.load(d / "color_stars.npz") as z, np.load(cat / "gaia_xp.npz") as x:
+        try:
+            same = np.array_equal(z["source"], x["source"])
+            used, flux = np.asarray(z["used"], bool), np.asarray(z["flux"], float)
+        except ValueError as e:                                       # an array of objects: not read
+            raise NotDone(f"the colour stars of workflow {_wid(wf)} cannot be read: {e}") from e
+        if not same:
             raise NotDone("the colour stars do not match the catalogue's")
-        used = np.asarray(z["used"], bool) & np.isfinite(z["flux"]).all(1)
+        used = used & np.isfinite(flux).all(1)
         if used.sum() < spectral.MIN_STARS:
             raise NotDone(f"{int(used.sum())} colour stars: too few to reconstruct the curves")
-        return spectral.response(np.asarray(x["flux"], float)[used], np.asarray(x["lam"], float),
-                                 np.asarray(z["flux"], float)[used])
+        return spectral.response(np.asarray(x["flux"], float)[used], np.asarray(x["lam"], float), flux[used])
 
 
 def pixel_to_sky(p: Project2, wf: int | Workflow, x: float, y: float, which: str = "current") -> tuple[float, float]:
