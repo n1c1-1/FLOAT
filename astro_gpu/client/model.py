@@ -4481,11 +4481,18 @@ class ProjectModel(QObject):
         iso_gain, integration_h, camera, fwhm_px, grid."""
         inv = self._facts.inventory
         ses = self.sessions
+        files = self._facts.files
+
+        def count(kind: str, key: str) -> int:
+            """The inventory's count; else the distinct files of the sessions (frames two sessions share, a master
+            dark or flat used by both, are counted once)."""
+            if inv.get(f"n_{kind}"):
+                return int(inv[f"n_{kind}"])
+            names = {x for fl in files.values() for x in fl.get(kind, [])}
+            return len(names) if names else sum(s[key] for s in ses)
         return dict(name=self.name, target=self.target,
-                    n_lights=int(inv.get("n_lights") or sum(s["lights"] for s in ses)),
-                    n_darks=int(inv.get("n_darks") or sum(s["darks"] for s in ses)),
-                    n_flats=int(inv.get("n_flats") or sum(s["flats"] for s in ses)),
-                    n_bias=int(inv.get("n_bias") or sum(s["bias"] for s in ses)),
+                    n_lights=count("lights", "lights"), n_darks=count("darks", "darks"),
+                    n_flats=count("flats", "flats"), n_bias=count("bias", "bias"),
                     exposure_s=inv.get("exposure_s"), width=inv.get("width"), height=inv.get("height"),
                     iso_gain=inv.get("iso_gain"), integration_h=inv.get("integration_h"),
                     camera=inv.get("camera", ""), fwhm_px=self._facts.register.get("fwhm_px"),

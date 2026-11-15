@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import filecmp
 import json
 import hashlib
 import os
@@ -156,6 +157,30 @@ class Calibrate(Stage):
         calibrate_lights(ctx, p, frames["lights"], dark, flat, real[0], dark_noise,
                          ctx.metric_of("inventory", "cfa"), float(ctx.metric_of("inventory", "white_level")),
                          darks=darks, rank=rank)
+        link_shared_masters(ctx)
+
+
+def link_shared_masters(ctx: Context) -> None:
+    """A master this session saved that is, byte for byte, one kept for the other sessions (``_shared``) becomes a hard
+    link to it: the disk holds it once, whatever the number of sessions that read it (a shared master dark, flat and
+    flat dark were on the disk three times). Where the disk cannot link (a FAT or network drive), the copy stays."""
+    store = getattr(getattr(ctx, "project", None), "store", None)
+    kept = Path(store.path) / "_masters" if store is not None else None
+    if kept is None or not kept.is_dir():
+        return
+    for name in ("master_dark.npy", "master_flat.npy", "master_flat_dark.npy", "master_bias.npy"):
+        f = ctx.out(name)
+        try:
+            size = f.stat().st_size
+            for c in kept.glob("*.npy"):
+                if c.stat().st_size != size or os.path.samefile(c, f) or not filecmp.cmp(c, f, shallow=False):
+                    continue
+                tmp = f.with_name(f.name + ".lnk")
+                os.link(c, tmp)
+                tmp.replace(f)
+                break
+        except OSError:
+            continue
 
 
 def pass_through(ctx: Context, p: CalibrateParams, lights: list[dict], H: int, W: int, black: float) -> None:

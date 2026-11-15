@@ -406,3 +406,16 @@ def test_latest_reads_the_result_an_outdated_block_had_else_the_current_one(tmp_
     from astro_gpu.client.report import report_data
     d = report_data(p, wf, ("register", "stack"), "x")
     assert d.reg is not None and not d.outdated
+
+
+def test_calibration_frames_two_sessions_share_are_counted_once():
+    """Two sessions that use the same 10 darks and 30 flats: the report says 10 and 30, not 20 and 60."""
+    from types import SimpleNamespace
+    from astro_gpu.client import model as modelmod
+    shared = {"darks": [f"/d/dark{i}.fits" for i in range(10)], "flats": [f"/d/flat{i}.fits" for i in range(30)]}
+    files = {1: {"lights": [f"/a/l{i}.fits" for i in range(12)], **shared},
+             2: {"lights": [f"/b/l{i}.fits" for i in range(12)], **shared}}
+    me = SimpleNamespace(_facts=SimpleNamespace(inventory={}, files=files, register={}, stack={}), name="m", target="t",
+                         sessions=[dict(lights=12, darks=10, flats=30, bias=0)] * 2)
+    got = modelmod.ProjectModel.info(me)
+    assert (got["n_lights"], got["n_darks"], got["n_flats"], got["n_bias"]) == (24, 10, 30, 0)

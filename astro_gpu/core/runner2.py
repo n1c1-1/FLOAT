@@ -883,8 +883,22 @@ class _Worker:
             if status != "handover":
                 if status == "done" and (out["failed"] or out["skipped"]) and not out["done"]:
                     status = "failed"         # never failed as a whole while a block was computed
+                if status == "interrupted":
+                    self._say_scratch(j)
                 j.emit("run_end", status=status, **out)
         return status
+
+    def _say_scratch(self, j: Any) -> None:
+        """A stopped run leaves the calibrated frames of its finished blocks in the scratch folder (the next run reads
+        them: they are no temporary file): how much, and where, is said once (never raises)."""
+        try:
+            where = self.project.scratch
+            size = sum(f.stat().st_size for f in where.rglob("*") if f.is_file()) if where.is_dir() else 0
+            if size >= 0.1 * 2 ** 30:
+                j.emit("log", level="info", msg=f"the scratch folder keeps {size / 2 ** 30:.1f} GB of calibrated frames "
+                       f"for the next run: {Path(where).as_posix()}")
+        except OSError:
+            pass
 
     # ------------------------------------------------------------------ a GPU fault
     def gpu_lost(self) -> bool:
