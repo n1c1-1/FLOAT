@@ -81,9 +81,9 @@ def test_a_session_chosen_with_a_combination_starts_a_stack_of_its_own(world):
 
 
 @pytest.mark.parametrize("filters", [("Ha",), ("Ha", "OIII")])
-def test_a_session_added_to_a_filter_flow_follows_the_filter_of_its_frames(world, tmp_path, filters):
-    """The night test pass: a second session added to the H-alpha flow, given OIII frames, kept the H-alpha filter.
-    Its frames' filter wins: it goes to the OIII flow (made when there is none, with the H-alpha flow's blocks)."""
+def test_a_session_added_to_a_filter_flow_keeps_its_filter_whatever_its_frames_say(world, tmp_path, filters):
+    """The software never decides what a file is: a second session added to the H-alpha flow, given frames whose
+    header says OIII, keeps the H-alpha filter the flow gave it and stays in that flow; no flow is made."""
     W = world(workflows=(), filters=filters, chains={f: ["calibration", "registration", "stacking", "astrometry"]
                                                      for f in filters})
     for q in list(W.m.paths):
@@ -91,13 +91,12 @@ def test_a_session_added_to_a_filter_flow_follows_the_filter_of_its_frames(world
     ha = W.view("Ha")
     sid = W.m.new_session(ha.pid)
     assert W.m.p.session(sid).filter == "Ha"                                  # joined Ha: took its filter
+    flows = sorted(q.name for q in W.m.paths)
     W.m.add_session_entries(sid, "lights", [str(fits_of(tmp_path / "oiii2", "OIII"))])
     W.settle()
-    assert W.m.p.session(sid).filter == "OIII"
-    assert W.m.sessions_of(W.m.view(ha.pid)) == [1]
-    oiii = [q for q in W.m.paths if q.source is None and sid in W.m.sessions_of(q)]
-    assert len(oiii) == 1
-    assert sorted(W.m.filters()) == ["Ha", "OIII"]
+    assert W.m.p.session(sid).filter == "Ha" and len(W.m.p.session(sid).lights) >= 1
+    assert sid in W.m.sessions_of(W.m.view(ha.pid))
+    assert sorted(q.name for q in W.m.paths) == flows and sorted(W.m.filters()) == sorted(filters)
 
 
 def test_names_are_never_empty_nor_another_s(world):
