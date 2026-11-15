@@ -216,9 +216,7 @@ def _whole_variants_follow(q):
                 pair = _night(q, q.blocks[s].name, {k: list(x) for k, x in q.blocks[s].files.items()}, c is not None)
                 q.blocks[pair[0]].sid = sid[s]
                 if c is not None:
-                    n = q.blocks[pair[1]]
-                    n.sid, n.off, n.own = sid[s], q.blocks[c].off, copy.deepcopy(q.blocks[c].own)
-                    n.params = copy.deepcopy(q.blocks[c].params)
+                    _copy_calibration(q, c, pair[1], sid[s])
             nights.append(pair)
         for s, c in mine.values():                        # a session its original no longer draws
             gone = {s, c} - {None}
@@ -559,6 +557,17 @@ def _night(q, name, files=None, calibration=True):
     """A night: its Session, with its Calibration or without (None: its lights taken as they are)."""
     s = new_block(q, "session", name=name, files=files)
     return [s.id, new_block(q, "calibration").id if calibration else None]
+
+
+def _copy_calibration(q, c, to, sid=None):
+    """Night Calibration c copied into Calibration `to` (a variant's, a branch's, a duplicate's night): all it holds,
+    its settings, switch, review pause, engine settings and own files; `sid` the session it calibrates (None: a new
+    one, numbered by the compile)."""
+    a, b = q.blocks[c], q.blocks[to]
+    b.settings, b.off, b.pause = copy.deepcopy(a.settings), a.off, a.pause
+    b.method, b.params, b.own = a.method, copy.deepcopy(a.params), copy.deepcopy(a.own)
+    if sid is not None:
+        b.sid = sid
 
 
 def _stack_calibrated(q, r):
@@ -1070,10 +1079,7 @@ def op_duplicate_row(q, row):
         o = q.blocks[s]
         nn = _night(q, name_of("{_name} copy", _name=o.name), {k: list(v) for k, v in o.files.items()}, c is not None)
         if c is not None:
-            q.blocks[nn[1]].settings = dict(q.blocks[c].settings)
-            q.blocks[nn[1]].off = q.blocks[c].off
-            q.blocks[nn[1]].pause = q.blocks[c].pause
-            q.blocks[nn[1]].params = copy.deepcopy(q.blocks[c].params)
+            _copy_calibration(q, c, nn[1])
         nights.append(nn)
     nr = Row(new_id(q, "r"), free_name(q, name_of("{_name} copy", _name=r.name)), blocks, nights, list(r.fork) if r.fork else None)
     _copy_flow(nr, r)                                       # its workflow's own settings (Output, pauses...)
@@ -2568,9 +2574,7 @@ def op_try_variant(q, block, change, name=None):
             nn = _night(q, q.blocks[s].name, {k: list(v_) for k, v_ in q.blocks[s].files.items()}, c is not None)
             q.blocks[nn[0]].sid = q.blocks[s].sid
             if c is not None:
-                q.blocks[nn[1]].sid = q.blocks[s].sid
-                q.blocks[nn[1]].off, q.blocks[nn[1]].own = q.blocks[c].off, copy.deepcopy(q.blocks[c].own)
-                q.blocks[nn[1]].params = copy.deepcopy(q.blocks[c].params)
+                _copy_calibration(q, c, nn[1], q.blocks[s].sid)
             nights.append(nn)
             if c is not None and c == block:
                 target = nn[1]
@@ -3130,9 +3134,10 @@ def op_add_branch(q, block, kind, flow=None, name=None, method=None):
         for s, c in root.nights:
             nn = _night(q, q.blocks[s].name, {k: list(v) for k, v in q.blocks[s].files.items()}, c is not None)
             q.blocks[nn[0]].sid = q.blocks[s].sid
-            if c is not None:
+            if c == block:                            # the branch's own Calibration: a new block, from its defaults
                 q.blocks[nn[1]].sid = q.blocks[s].sid
-                q.blocks[nn[1]].own = copy.deepcopy(q.blocks[c].own)
+            elif c is not None:                       # the other nights: as in the stack it leaves
+                _copy_calibration(q, c, nn[1], q.blocks[s].sid)
             nights.append(nn)
             if c == block:
                 mine = nn[1]
