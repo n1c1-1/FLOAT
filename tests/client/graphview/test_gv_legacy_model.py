@@ -132,6 +132,10 @@ def _reset(m: ProjectModel):
 def model(world):
     m = world["m"]
     _reset(m)
+    # the states read again from the engine: a test that pinned them (``pin`` patches api.states) left the shared model
+    # with its pinned states once the patch was undone (the what-if and the French tests failed after it)
+    m._sync(prefetch=False)
+    settle(world["w"], n=2)        # the worker's answers to the undone edits arrive now, not during the next test
     yield m
     _reset(m)
 
