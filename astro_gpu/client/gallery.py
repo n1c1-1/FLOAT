@@ -914,7 +914,8 @@ def template_dialog(parent, name: str) -> tuple[str, str] | None:
     cb.setEditable(True)
     for t in templatefiles.tabs():
         cb.addItem(_(t), t)
-    cb.setToolTip(_("A tab of the gallery, or a new one: type its name"))
+    cb.setToolTip(_("An existing tab, or a new name"))
+    cb.lineEdit().setPlaceholderText(_("An existing tab, or a new name"))
     f.addRow(_("Gallery tab"), cb)
     bb = QDialogButtonBox()
     bb.addButton(_("Save"), QDialogButtonBox.AcceptRole)

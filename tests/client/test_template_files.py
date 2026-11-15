@@ -277,3 +277,42 @@ def test_every_shipped_multi_row_shape_is_known_again(win, monkeypatch):
             assert {k: mine.get(k) for k in want} == want, c["key"]
         else:
             assert not mine.get("kind") and mine["blocks"], c["key"]
+
+
+def _in_dialog(fn):
+    """Run ``fn`` on the Save as template dialog once it is open, then close it; -> what fn returned."""
+    from PySide6.QtCore import QTimer
+    from astro_gpu.client import gallery
+    got = []
+
+    def look():
+        d = QApplication.activeModalWidget()
+        if d is None:
+            QTimer.singleShot(20, look)
+            return
+        try:
+            got.append(fn(d))
+        finally:
+            d.reject()
+    QTimer.singleShot(0, look)
+    assert gallery.template_dialog(None, "Night: SHO") is None
+    return got[0]
+
+
+def test_the_tab_field_says_a_new_name_makes_a_new_tab(qapp, settings):
+    from PySide6.QtWidgets import QComboBox
+    got =_in_dialog(lambda d: (d.findChild(QComboBox).lineEdit().placeholderText(), d.findChild(QComboBox).toolTip()))
+    assert got == ("An existing tab, or a new name", "An existing tab, or a new name")
+
+
+def test_a_template_that_cannot_be_written_is_said_in_the_banner(win, monkeypatch):
+    from astro_gpu.client import gallery
+    monkeypatch.setattr(gallery, "template_dialog", lambda parent, name: ("Mine", "Tests nuit"))
+
+    def refused(*a, **k):
+        raise OSError("the disk is full")
+    monkeypatch.setattr(templatefiles, "save_user", refused)
+    said = []
+    monkeypatch.setattr(win.banner, "say", lambda text, *a, **k: said.append(text))
+    win.save_template()
+    assert said and "the disk is full" in said[0]
