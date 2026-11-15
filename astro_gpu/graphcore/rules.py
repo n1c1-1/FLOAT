@@ -416,6 +416,12 @@ def mother_same(p, ix, rid):
         A, B = p.blocks[a], p.blocks[b]
         if A.kind != B.kind or A.off != B.off or effective(p, a) != effective(p, b):
             return False
+        # its method and the engine's settings stored on it too (the night test pass: a variant made with RBF said
+        # "like the mother" while its panel showed RBF)
+        mine, theirs = getattr(B, "params", None) or {}, getattr(A, "params", None) or {}
+        if getattr(A, "method", None) != getattr(B, "method", None) or any(
+                (theirs.get(st) or {}).get(n) != v for st, kv in mine.items() for n, v in (kv or {}).items()):
+            return False
     return True
 
 
@@ -462,11 +468,17 @@ def summary_msg(p, b, info=None, ix=None):
     if k == "crop":
         return e["Drawn zone"]
     if k == "stacking":
-        m = M("drizzle {scale}", scale=e["Drizzle scale"]) if e["Method"] == "Drizzle" else "classic"
+        # the engine's settings stored on the block first (the settings panel writes them there): the night test pass
+        # saw "drizzle auto" under a Stacking set to Classic
+        sp = (blk.params or {}).get("stack") or {}
+        drizzle = sp["method"] == "drizzle" if sp.get("method") in ("drizzle", "classic") else e["Method"] == "Drizzle"
+        scale = e["Drizzle scale"] if not isinstance(sp.get("scale"), (int, float)) else f"{float(sp['scale']):g}"
+        m = M("drizzle {scale}", scale=scale) if drizzle else "classic"
+        thr = e["Rejection threshold"] if not isinstance(sp.get("kappa"), (int, float)) else f"{float(sp['kappa']):g} σ"
         chain = ix.effective(rid) if rid else []
         if rid and ix.row[ix.root(rid)].nights and not any(p.blocks[x].kind == "selection" for x in chain):
             return M("{m} · {why}", m=m, why="no Selection: every frame is stacked, same weight")
-        return M("{m} · rejection at {thr}", m=m, thr=e["Rejection threshold"])
+        return M("{m} · rejection at {thr}", m=m, thr=thr)
     if k == "image":
         return join([typed(e["Image file"])] + (["stretched"] if e["Stretched image"] else []))
     if k == "astrometry":

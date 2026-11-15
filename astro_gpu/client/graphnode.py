@@ -414,6 +414,40 @@ def view_key(kind: str, name: str = "") -> str:
     return ENGINE_BLOCK.get(base, base) + (f"~{n}" if sep else "")
 
 
+def variant_diff(g, bid) -> str:
+    """The first block of a variant: the engine's settings stored on it that differ from its original's block
+    ("Surface degree 3"), "" for any other block (its method is the line itself)."""
+    from ..graphcore.model import Index
+    try:
+        ix = Index(g)
+        rid = ix.row_of.get(bid)
+        r = ix.row[rid] if rid else None
+        if r is None or not r.fork or not r.blocks or r.blocks[0] != bid:
+            return ""
+        par = ix.effective(r.fork[0])
+        tail = par[par.index(r.fork[1]) + 1:]
+        a = g.blocks[tail[0]] if tail else None
+    except (KeyError, ValueError, IndexError, AttributeError):
+        return ""
+    if a is None or a.kind != g.blocks[bid].kind:
+        return ""
+    from .. import texts
+    from .i18n import language
+    from .settings import fmt
+    mine, theirs = getattr(g.blocks[bid], "params", None) or {}, getattr(a, "params", None) or {}
+    out = []
+    for stage, kv in mine.items():
+        for name, v in (kv or {}).items():
+            if (theirs.get(stage) or {}).get(name) != v:
+                try:
+                    label = texts.param_label(stage.partition("@")[0].partition("~")[0], name, language())
+                except (KeyError, ValueError, TypeError):
+                    label = name.replace("_", " ")
+                val = texts.choice_label(v, language()) if isinstance(v, str) else fmt(v)
+                out.append(f"{label} {val}")
+    return ", ".join(out[:2]) + (" …" if len(out) > 2 else "")
+
+
 class BlockMap:
     """The blocks of a stored graph as the run, Inspect, the Report and the panel know them: one ``Node`` per block id,
     over the workflows it is compiled into (``compiled.map``: {block id: [(workflow id, node name)]}, given by
@@ -813,7 +847,10 @@ class BlockMap:
                 if not src.get("path"):
                     return _("file to choose")
                 return Path(str(src["path"])).name + ("  · " + _("stretched") if src.get("stretched") else "")
-        return api.summary(self.graph, bid, tr or _)
+        line = api.summary(self.graph, bid, tr or _)
+        diff = variant_diff(self.graph, bid)
+        return f"{line} · {diff}" if diff and diff not in line else line
+
 
     def _gone(self, bid) -> str:
         """The line of a Session or a Calibration one of whose folders is not found (moved or renamed outside, its

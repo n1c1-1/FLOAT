@@ -368,7 +368,12 @@ class Doc:
             n = bm.node(b)                           # a folder not found, an image's file: the model's
             if n is not None:
                 return bm.summary(n, self.tr) or api.summary(self.graph, b, self.tr)
-        return api.summary(self.graph, b, self.tr)
+        line = api.summary(self.graph, b, self.tr)
+        if self.model is not None and blk is not None:   # a variant's first block: what differs from its original
+            from ..graphnode import variant_diff
+            diff = variant_diff(self.graph, b)
+            line = f"{line} · {diff}" if diff and diff not in line else line
+        return line
 
     def greyed(self, b, model=True) -> str:
         """Why a block cannot run; ``model`` False: the graph's own reason only."""
