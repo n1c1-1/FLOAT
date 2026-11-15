@@ -798,9 +798,11 @@ class BlockMap:
             return next((w for w in STATE_ORDER if w in states), "pending")
         if node.grey or (node.cut and node.key not in ("calibration", "alignement")):
             return "skipped" if node.grey else "done"
-        if node.key == "composition":                 # computed in Post from the Stars block's images, and from the
-            states = {block_state(m, node.paths[0], "etoiles")}   # Synthetic stars on its third input: it waits for
-            states |= set(self._synth_states(node))               # them as for an input still to compute
+        if node.key == "composition":                 # computed in Post from the images wired into it (the Stars
+            states = self._input_states(node)         # block's, a combination's Output, another workflow's stars)
+            if states is None:                        # and from the Synthetic stars on its third input: it waits
+                states = {block_state(m, node.paths[0], "etoiles")}   # for them as for an input still to compute
+            states |= set(self._synth_states(node))
             return next((w for w in STATE_ORDER if w in states), "pending")
         states = {block_state(m, p, node.ref) for p in node.paths}
         last = self._last_nodes()
@@ -812,6 +814,20 @@ class BlockMap:
         states |= {st for st in (block_state(m, p, "post") for p in node.paths
                                  if p.pid in to_post and last.get(p.pid) is node) if st != "skipped"}
         return next((w for w in STATE_ORDER if w in states), "pending")
+
+    def _input_states(self, node) -> set[str] | None:
+        """The states of the blocks wired into a Combine layers' Background and Stars inputs, "pending" for an input
+        not wired yet; None without the graph. Its own workflow's Stars/background was read instead: over a
+        combination's Output there is none, and the block said "Up to date" before any run."""
+        bid, g = self.block_of(node), self.graph
+        if bid is None or g is None:
+            return None
+        out = set()
+        for port in ("Background", "Stars"):
+            src = next((w.src[0] for w in g.wires if w.dst == [bid, port] and w.active), None)
+            n = self._nodes.get(src) if src is not None else None
+            out.add(self.state(n) if n is not None and n.key != "composition" else "pending")
+        return out
 
     def _synth_states(self, node) -> list[str]:
         """The states of the Synthetic stars block wired into a Combine layers' third input, in the workflows it is

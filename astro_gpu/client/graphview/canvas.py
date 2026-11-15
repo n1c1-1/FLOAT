@@ -596,7 +596,8 @@ class GraphCanvas(QGraphicsView):
             if combos.status(blk)["newer"]:
                 newer = _("A newer version of its recipe exists: Update recipe in its panel.")
         what = textwrap.fill(what, 70) if what else ""   # a paragraph of its own: a plain tooltip never wraps by itself
-        tip = "\n".join(t for t in (title, what, summary, newer, "" if grey or blk.off else word,
+        # a Session holds files and is never computed: no state word ("Up to date" before any run, a beta tester)
+        tip = "\n".join(t for t in (title, what, summary, newer, "" if grey or blk.off or kind == "session" else word,
                                     (_("Switched off: the image passes through. D or the menu switches it on again.")
                                      if blk.off else "")) if t)
         if review is not None and blk.off:               # kept, but a block switched off is not run: no stop now
