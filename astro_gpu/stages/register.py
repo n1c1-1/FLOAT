@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import pickle
+import time
 import warnings
 from multiprocessing import get_context
 
@@ -17,7 +18,7 @@ from scipy.spatial import cKDTree
 
 from ..core import devices
 from ..core.params import ADVANCED, Auto, P, StageParams
-from ..core.stage import Context, Stage, StageError
+from ..core.stage import Context, Interrupted, Stage, StageError
 from .calibrate import VALID_MAX, CachedFrames, memory_short, pool_size
 
 #: stars fitted per frame for the Moffat FWHM (core/psf_moffat.py: about 0.1 to 0.2 s a frame)
@@ -28,6 +29,10 @@ MOFFAT_STARS = 150
 #: one of 50 others by chance once in 10 000 tries on a 6 Mpx frame, so three never do; ten, the minimum of star pairs
 #: Siril asks: a frame under it is dropped)
 SPARSE_MIN_MATCHES = 10
+
+
+#: the star catalogues done are saved at least this often (seconds), besides every 50 frames: a stop or a crash keeps them
+CKPT_SECONDS = 15.0
 
 
 class RegisterParams(StageParams):
@@ -99,13 +104,24 @@ class Register(Stage):
             ctx.progress(0.0, f"detecting the stars of {len(todo)} frames ({workers} processes)")
             with devices.one_maths_thread():                   # issue #125: 1 GB less reserved a worker
                 pool = get_context("spawn").Pool(workers, initializer=_init, initargs=init)
-            with pool:
-                for c, res in enumerate(pool.imap_unordered(_catalog_moffat, todo, chunksize=1)):
-                    idx, cat, fw, rb, rd, nz, psf[idx] = res
-                    cats[idx], fwhm[idx], rmsb[idx], rnd[idx], noise[idx] = cat, fw, rb, rd, nz
-                    if (c + 1) % 50 == 0 or c + 1 == len(todo):
-                        cache_p.write_bytes(pickle.dumps((cats, fwhm, rmsb, rnd, noise, psf)))
-                    ctx.progress(0.9 * (n - len(todo) + c + 1) / n, f"stars detected in {n - len(todo) + c + 1}/{n} frames")
+            def save() -> None:                                # atomic: a stop or a crash never leaves half a file
+                tmp = cache_p.with_suffix(".tmp")
+                tmp.write_bytes(pickle.dumps((cats, fwhm, rmsb, rnd, noise, psf)))
+                os.replace(tmp, cache_p)
+            last = time.monotonic()
+            try:
+                with pool:
+                    for c, res in enumerate(pool.imap_unordered(_catalog_moffat, todo, chunksize=1)):
+                        idx, cat, fw, rb, rd, nz, psf[idx] = res
+                        cats[idx], fwhm[idx], rmsb[idx], rnd[idx], noise[idx] = cat, fw, rb, rd, nz
+                        if (c + 1) % 50 == 0 or c + 1 == len(todo) or time.monotonic() - last >= CKPT_SECONDS:
+                            save()
+                            last = time.monotonic()
+                        ctx.progress(0.9 * (n - len(todo) + c + 1) / n,
+                                     f"stars detected in {n - len(todo) + c + 1}/{n} frames")
+            except Interrupted:                                # the frames done are kept: the next run goes on from them
+                save()
+                raise
         nst = np.array([len(c) for c in cats])
         if not p.align:
             self._not_aligned(ctx, p, meta, cats, fwhm, rmsb, rnd, noise, psf, nst, W, H)
