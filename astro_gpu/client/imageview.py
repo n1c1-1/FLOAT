@@ -3526,6 +3526,7 @@ class ImageView(QWidget):
         if self._current() is None:
             return None
         dlg = ImageExportDialog(self, self.window())
+        dlg.setAttribute(Qt.WA_DeleteOnClose)       # its copy of the image goes with it once closed
         dlg.open()
         return dlg
 

@@ -70,3 +70,20 @@ def test_an_unreadable_image_is_never_exported_or_sent_as_the_previous_one(view,
     assert view.export_b.isEnabled() and view.post_b.isEnabled()
     view._send_post()
     assert sent == ["third"]
+
+
+def test_an_export_window_is_freed_once_closed(view, tmp_path):
+    _show(view, iv.ViewImage(_sky(), "First", key="first"))
+    dlg = view.export_dialog()
+    dlg.reject()
+    QApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+    QApplication.processEvents()
+    assert not shiboken6.isValid(dlg)
+    dlg = view.export_dialog()                                    # written, then closed: freed too
+    dlg.dest.setText((tmp_path / "x.fits").as_posix())
+    dlg.go.click()
+    assert dlg.wait(30) and dlg.result_path is not None
+    dlg.go.click()
+    QApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+    QApplication.processEvents()
+    assert not shiboken6.isValid(dlg) and (tmp_path / "x.fits").is_file()
