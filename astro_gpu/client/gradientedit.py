@@ -748,7 +748,7 @@ class GradientEditor(QObject):
             if self.survey is not None and self.survey["pid"] != p.pid:
                 self.survey, self._survey_img = None, None
                 if self.survey_shown:
-                    self._run("survey", fetch=True)     # shown: the survey of the workflow now shown
+                    self._run("survey")     # shown: the survey of the workflow now shown, from this computer only
         self.p = p
         try:
             sig = (p.pid, self._applied_params().model_dump_json(), self._applied_key())
