@@ -70,6 +70,21 @@ def mono_rgb(a: np.ndarray) -> np.ndarray:
     return np.repeat(np.asarray(a)[1:2], 3, axis=0)
 
 
+def mono_planes(record: dict) -> dict:
+    """A monochrome frame's record (per colour lists: "offset", "scale", "sky", "gradient") with its one colour, the
+    green plane's, in the three: the other two have no samples, their zeros are not measurements."""
+    out = dict(record)
+    for k in ("offset", "scale", "sky", "gradient", "cfa_balance"):
+        if isinstance(out.get(k), (list, tuple)) and len(out[k]) == 3:
+            out[k] = [out[k][1]] * 3
+    return out
+
+
+def mono_noise(noise: dict) -> dict:
+    """The noise of a monochrome stack ({"R", "G", "B"}): the green plane's (the only one measured) for the three."""
+    return {c: noise.get("G") for c in "RGB"}
+
+
 def is_supported(cfa) -> bool:
     """A Bayer pattern, monochrome, frames already in colour, or an X-Trans pattern (the three colours in their counts,
     each row and column holding all three)."""

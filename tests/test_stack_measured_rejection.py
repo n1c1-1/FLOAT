@@ -13,6 +13,8 @@ import pytest
 from test_stacking import run_stage, toy_night
 
 N = 30
+PEDESTAL = 3000.0                       # the sky the frames keep above their noise: percentile clipping (3 to 5 frames) judges
+                                        # a deviation against the median, so the toy's 300 ADU sky would be only noise to it
 SAT_MARK = 65000.0                      # what the calibrated cache holds for a saturated pixel
 HOT = (160, 224)                        # a red pixel (row even, column even)
 STAR = (150, 300)                       # where the star is on the sky (output grid)
@@ -36,7 +38,7 @@ def night(root, hot: bool, star: bool, n: int = N, frac: bool = False, outlier: 
     mm = np.memmap(root / "lights.f16", dtype=np.float16, mode="r+", shape=(n, 320, W))
     yy, xx = np.mgrid[0:320, 0:W]
     for i in range(n):
-        f = mm[i].astype(np.float32)
+        f = mm[i].astype(np.float32) + PEDESTAL
         if star:
             peak = 90000.0 if i % 3 == 0 else 45000.0
             f += peak * np.exp(-0.5 * ((xx - (STAR[1] + shift[i])) ** 2 + (yy - (STAR[0] + vs[i])) ** 2) / 1.5 ** 2)
