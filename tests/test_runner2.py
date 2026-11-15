@@ -1273,3 +1273,24 @@ def test_a_truncated_checkpoint_tag_starts_the_block_afresh_instead_of_failing_i
     assert status == "done"
     out = json.loads((Store(proj.root).dir("b", b) / "b.json").read_text())
     assert out == {"steps": 10, "resumed_from": 0}                            # afresh: its checkpoint not trusted
+
+
+def test_a_lock_whose_number_a_later_process_took_is_no_run_anywhere(tmp_path):
+    # review 2.6: Home, the run's follow-up, the API's summary and the old pipeline tested the number alone: after a
+    # crash, a process that took the number kept "running" on screen. One check now (api.run_alive)
+    import os
+
+    from astro_gpu import api
+    from astro_gpu.core import runner
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    lock = logs / runner2.LOCK
+    lock.write_text(json.dumps({"pid": os.getpid(), "run_id": "r", "started": time.time() - 3600}))
+    assert not api.run_alive(tmp_path)                                    # this process started after the lock
+    assert not runner2.process_alive(os.getpid(), time.time() - 3600) and runner2.process_alive(os.getpid())
+    lock.write_text(json.dumps({"pid": os.getpid(), "run_id": "r", "started": time.time()}))
+    assert api.run_alive(tmp_path) and api.process_alive(os.getpid())
+    assert not api.run_alive(tmp_path / "none") and not api.process_alive(None)
+    from types import SimpleNamespace
+    old = SimpleNamespace(logs=logs)
+    assert runner._run_alive(old) is False                               # its own lock (the old pipeline's rule)

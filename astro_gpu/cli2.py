@@ -201,13 +201,11 @@ def _line(e: dict, last: dict[str, float]) -> str:
 
 
 def _alive(pid: int | None) -> bool:
+    """Whether the run's worker still runs (core/runner2.process_alive); without its number, taken as running."""
     if not pid:
         return True
-    try:
-        import psutil
-        return psutil.pid_exists(pid)
-    except Exception:  # noqa: BLE001
-        return True
+    from .core.runner2 import process_alive
+    return process_alive(pid)
 
 
 def follow(p: Any, offset: int, run_id: str | None, pid: int | None = None, poll: float = 0.5,

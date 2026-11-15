@@ -272,11 +272,12 @@ def _run_alive(project: Project) -> bool:
     if not lock.exists():
         return False
     try:
-        pid = json.loads(lock.read_text())["pid"]
-        import psutil
-        return psutil.pid_exists(pid) and pid != os.getpid()
-    except Exception:  # noqa: BLE001
+        holder = json.loads(lock.read_text())
+        pid = int(holder["pid"])
+    except Exception:  # noqa: BLE001 - an unreadable lock is no run
         return False
+    from .runner2 import process_alive                   # the one check (review 2.6): a reused number is not it
+    return pid != os.getpid() and process_alive(pid, float(holder.get("started") or 0))
 
 
 def _ancestors(by_name: dict[str, Stage], name: str) -> set[str]:

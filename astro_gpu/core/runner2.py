@@ -578,12 +578,25 @@ def _lock_holder(lock: Path) -> dict | None:
 def _alive(holder: dict) -> bool:
     """Whether the process named by a lock still runs (a pid reused by a process started after the lock is not)."""
     try:
+        return process_alive(int(holder["pid"]), float(holder.get("started") or 0))
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def process_alive(pid: int | None, started: float = 0.0) -> bool:
+    """Whether a process runs: the one check of the engine and the client (review 2.6). ``started``: when the
+    process was known to run (a lock's time): a process of that number started after it is another one, the number
+    reused after a crash. A zombie is not running."""
+    if not pid:
+        return False
+    try:
         import psutil
-        pid = int(holder["pid"])
-        if not psutil.pid_exists(pid):
+        if not psutil.pid_exists(int(pid)):
             return False
-        started = float(holder.get("started") or 0)
-        return not started or psutil.Process(pid).create_time() <= started + 1.0
+        proc = psutil.Process(int(pid))
+        if proc.status() == psutil.STATUS_ZOMBIE:
+            return False
+        return not started or proc.create_time() <= float(started) + 1.0
     except Exception:  # noqa: BLE001 - psutil.NoSuchProcess, AccessDenied...: a process we cannot see is gone
         return False
 

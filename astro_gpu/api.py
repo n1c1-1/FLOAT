@@ -719,13 +719,17 @@ def _mtime(*paths: Path) -> float:
     return best
 
 
-def _lock_alive(root: Path) -> bool:
-    try:
-        holder = json.loads((root / "logs" / "run.lock").read_text(encoding="utf-8"))
-        import psutil
-        return psutil.pid_exists(int(holder["pid"]))
-    except Exception:  # noqa: BLE001 - no lock, an unreadable one, no psutil: no live run
-        return False
+def run_alive(root: str | Path) -> bool:
+    """Whether a run of the project in folder ``root`` is going: its run.lock names a process that still runs and
+    started before the lock (a number reused after a crash is not it). The one check of a run in progress, for the
+    client too (review 2.6); ``running`` gives the run itself."""
+    return _r2().running(root) is not None
+
+
+def process_alive(pid: int | None, started: float = 0.0) -> bool:
+    """Whether the process ``pid`` runs (a zombie does not); ``started``: when it was known to run, so that a number
+    reused by a later process is not taken for it (core/runner2.process_alive)."""
+    return _r2().process_alive(pid, started)
 
 
 def _summary(d: Path, deep: bool) -> ProjectSummary:
@@ -738,7 +742,7 @@ def _summary(d: Path, deep: bool) -> ProjectSummary:
         return s
     s.name, s.description, s.target = p.name, p.description, p.target.name
     s.nights, s.workflows = sum(1 for x in p.sessions if x.lights), len(p.workflows)
-    s.running = _lock_alive(d)
+    s.running = run_alive(d)
     thumb = d / "cache" / "thumb.jpg"
     s.thumb = str(thumb) if thumb.is_file() else ""
     store = Store(d)
