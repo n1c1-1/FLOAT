@@ -1787,16 +1787,16 @@ class GradientEditor(QObject):
     def _fetch_survey(self, then: str | None = "nebula"):
         """The survey fetched once, on the user's click (never during a run): from Avoid nebulosity (then applies it)
         or the panel's Fetch."""
-        from .services.survey import job
+        from .services.survey import job, where
         j = job()
-        pid = self.p.pid
+        pid, root = self.p.pid, where(self.s.p)
 
-        def ended(epid, why):
+        def ended(eroot, epid, why):
             try:
                 j.finished.disconnect(ended)
             except (RuntimeError, TypeError):
                 pass
-            if epid != pid:
+            if epid != pid or eroot != root:
                 return
             if why:
                 self.say(_("H-alpha survey: {why}").format(why=_(why)))

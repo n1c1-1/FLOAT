@@ -1275,15 +1275,15 @@ class Panel(QWidget):
         nothing. Then the row says the result was made without it and Use survey (one step of Undo) sends that result
         and the ones after it to the trash, to be computed again at the next run, with the survey."""
         from .. import api
-        from .services.survey import job
+        from .services.survey import job, where
         j = job()
         try:
             st = api.survey_state(self.s.p, p.pid)
         except Exception:  # noqa: BLE001 - a result that cannot be read: nothing to say
             st = None
-        if not (st and st.get("missing")) and not j.running(p.pid):
+        if not (st and st.get("missing")) and not j.running(p.pid, self.s.p):
             return
-        if st and st.get("available") and not j.running(p.pid):
+        if st and st.get("available") and not j.running(p.pid, self.s.p):
             self._use_survey_row(p)
             return
         box = QVBoxLayout()
@@ -1295,9 +1295,9 @@ class Panel(QWidget):
         bar.setFixedHeight(6)
         get = QPushButton(_("Get survey"))
         set_icon(get, "catalogue", 16)
-        get.setToolTip(_("Fetches the professional H-alpha survey of this field once, kept on this computer, so that "
-                         "the Gradient block keeps its samples off the faint nebulosity. Nothing is downloaded during a "
-                         "run, and no result changes: Use survey then computes the blocks after it again."))
+        tip = _("Fetches the professional H-alpha survey of this field once, kept on this computer, so that the "
+                "Gradient block keeps its samples off the faint nebulosity. Nothing is downloaded during a run, and no "
+                "result changes: Use survey then computes the blocks after it again.")
         box.addWidget(text)
         box.addWidget(get, 0, Qt.AlignLeft)
         box.addWidget(bar)
@@ -1305,19 +1305,22 @@ class Panel(QWidget):
 
         def show(f=None, msg=None):
             try:
-                on = j.running(p.pid)
+                on = j.running(p.pid, self.s.p)
                 f, msg = (j.last if f is None else (f, msg))
                 bar.setVisible(on)
                 bar.setValue(int(1000 * max(0.0, min(1.0, f))))
                 get.setEnabled(not j.running())
+                get.setToolTip(_("Another survey is being fetched: Get survey comes back when it ends.")
+                               if j.running() and not on else tip)
                 text.setText(_("H-alpha survey: fetching… {pct} %").format(pct=int(100 * f)) if on else
                              _("H-alpha survey: not on this computer"))
             except RuntimeError:                         # the panel was built again meanwhile
                 pass
 
-        def ended(pid, why):
+        def ended(root, pid, why):
             try:
-                if pid != p.pid:
+                if pid != p.pid or root != where(self.s.p):
+                    show()                               # another fetch ended: Get survey is free again
                     return
                 if why:
                     text.setText(_("H-alpha survey: {why}").format(why=_(why)))
