@@ -3721,11 +3721,16 @@ class _ProjectBase(QObject):
         iso_gain, integration_h, camera, fwhm_px, grid."""
         inv = self._facts.inventory
         ses = self.sessions
+
+        def distinct(kind: str) -> int:
+            """The calibration frames of a kind, each file once: the darks two sessions share are 10, not 20 (the
+            engine's sum over the sessions counts them per session: the testers' pass 2)."""
+            return len({norm_path(x) for fs in self._facts.files.values() for x in fs.get(kind) or []})
         return dict(name=self.name, target=self.target,
                     n_lights=int(inv.get("n_lights") or sum(s["lights"] for s in ses)),
-                    n_darks=int(inv.get("n_darks") or sum(s["darks"] for s in ses)),
-                    n_flats=int(inv.get("n_flats") or sum(s["flats"] for s in ses)),
-                    n_bias=int(inv.get("n_bias") or sum(s["bias"] for s in ses)),
+                    n_darks=distinct("darks") or int(inv.get("n_darks") or 0),
+                    n_flats=distinct("flats") or int(inv.get("n_flats") or 0),
+                    n_bias=distinct("bias") or int(inv.get("n_bias") or 0),
                     exposure_s=inv.get("exposure_s"), width=inv.get("width"), height=inv.get("height"),
                     iso_gain=inv.get("iso_gain"), integration_h=inv.get("integration_h"),
                     camera=inv.get("camera", ""), fwhm_px=self._facts.register.get("fwhm_px"),

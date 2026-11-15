@@ -311,6 +311,10 @@ class SidesHost:
         if s is None or not getattr(s, "ready", False):
             return
         try:
+            if getattr(s, "states_pending", lambda: False)():
+                return                                   # the states are being read again (an undo): the time to run
+                #                                          they would give is not known yet ("+ 4 min to run" was said
+                #                                          over blocks all up to date: the testers' pass 2)
             sec = s.total_seconds()
             last = self._last
             said = time.monotonic() - getattr(self, "_said_at", -9.0) < 1.5
@@ -318,7 +322,13 @@ class SidesHost:
             if last is not None and s.paths and len(s.paths) == last[1] and sec - last[0] >= 30 and \
                     s.has_data() and not said and not refused:
                 t = hm(sec - last[0])                    # "≤ 1 min" is already an estimate: one sign only
-                self.toast(_("+ {t} to run").format(t=("" if s.cost().measured or t.startswith("≤") else "≈ ") + t))
+                self._cost_said = _("+ {t} to run").format(t=("" if s.cost().measured or t.startswith("≤") else "≈ ")
+                                                           + t)
+                self.toast(self._cost_said)
+            elif last is not None and sec < last[0]:     # a later change took that time back (an undo): not said on
+                toast = getattr(getattr(self, "canvas", None), "toast", None)
+                if toast is not None and toast.isVisible() and toast.plain == getattr(self, "_cost_said", None):
+                    toast.hide()
             self._last = (sec, len(s.paths))
         except Exception:  # noqa: BLE001 - an estimate is a word of the toast: never a failure of the page
             log.exception("graph page: the run's estimate could not be said")

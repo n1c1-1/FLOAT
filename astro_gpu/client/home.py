@@ -145,6 +145,29 @@ def _manifests(root: Path, stage: str = "*"):
             yield d
 
 
+def _integration(root: Path) -> float | None:
+    """The hours of light of every night of the project: the sum over the distinct inventories its workflows last read
+    (one per session, "inventory@2"), each night once; None when none is done. The newest inventory alone was one
+    night's: a project of two nights of 24 min said 24 min (the testers' pass 2)."""
+    try:
+        keys = {k for lk in project2.read_state(root)["last_keys"].values() for st, k in (lk or {}).items()
+                if st.partition("@")[0] == "inventory" and k}
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    hours: dict = {}                                     # a night by its first light: read twice (two workflows
+    for k in sorted(keys):                              # with their own frame limit), counted once, the longer
+        try:
+            d = json.loads((root / "store" / "inventory" / str(k) / "manifest.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        m = d.get("metrics") or {}
+        h = m.get("integration_h") if d.get("status") == "done" else None
+        if h:
+            night = m.get("first_time") or k
+            hours[night] = max(hours.get(night, 0.0), float(h))
+    return round(sum(hours.values()), 2) if hours else None
+
+
 def _running(root: Path) -> bool:
     lock = root / "logs" / "run.lock"
     if not lock.exists():
@@ -200,7 +223,7 @@ def project_info(root: Path) -> ProjectInfo:
                        n_workflows=len(p.workflows), description=p.description or "")
     inv = max(_manifests(root, "inventory"), key=lambda d: d.get("finished") or "", default=None)
     m = (inv or {}).get("metrics") or {}
-    info.integration_h = m.get("integration_h")
+    info.integration_h = _integration(root) or m.get("integration_h")
     when = m.get("last_time") or p.created
     if not when:
         when = datetime.fromtimestamp((root / project2.FILE).stat().st_mtime).isoformat()
