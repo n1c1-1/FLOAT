@@ -3065,6 +3065,11 @@ def op_replace_chain(q, row, blocks, calibration=None, align=None, options=None,
     gone = set(r.blocks) - set(head)
     new = [new_block(q, n["kind"], method=n.get("method"), off=bool(n.get("off")), fork=n.get("fork"),
                      engine=(n.get("engine") or None) if n["kind"] in wfl.IMAGE_OPS else None).id for n in blocks]
+    last = r.blocks[-1] if r.blocks and r.blocks[-1] in gone else None
+    end = (head + new)[-1] if head + new else None
+    for w in q.wires:              # what its image fed (a combination's input) leaves from its new last block
+        if w.src[0] == last and end is not None and w.dst[0] not in gone and w.src[1] in out_ports(q.blocks[end]):
+            w.src = [end, w.src[1]]
     for b in gone:
         del q.blocks[b]
     q.wires = [w for w in q.wires if w.src[0] not in gone and w.dst[0] not in gone]
