@@ -102,13 +102,21 @@ class Reader:
         self._reports: dict[str, dict] = {}             # folder -> {"sub": n, "unreadable": bool}
         self.base = None                                # () -> the project's folder: where a relative entry is read
 
-    def _on_disk(self, s: str) -> str:
+    def on_disk(self, s: str) -> str:
         """Where an entry is on the disk: one written relative to the project is read from the project's folder
-        (a project that holds its own frames), never from the folder the application happens to run in."""
+        (a project that holds its own frames), never from the folder the application happens to run in. Every
+        place of the page that looks at an entry on the disk asks here."""
         if os.path.isabs(s) or self.base is None:
             return s
         root = self.base()
         return os.path.join(str(root), s) if root else s
+
+    @staticmethod
+    def _as_entry(entry: str, infos) -> list:
+        """Files listed in a folder entry written relative to the project, written the same way (the entry's first
+        level): a « Remove » that writes them back keeps the project movable."""
+        root = entry.replace("\\", "/").rstrip("/")
+        return [f._replace(path=f"{root}/{os.path.basename(f.path)}", root=root) for f in infos]
 
     # --------------------------------------------------------------- called from the interface thread
     def listen(self, fn):
@@ -254,7 +262,7 @@ class Reader:
             if s in self._infos and s not in self._folders:
                 base_n += 1
                 continue
-            path = self._on_disk(s)
+            path = self.on_disk(s)
             is_folder = self._is_folder.get(s)
             if is_folder is None:
                 is_folder = os.path.isdir(path)
@@ -267,6 +275,8 @@ class Reader:
                                  recursive=False)
                 if t.stop:
                     break
+                if path != s:                     # a relative folder: its files written as the project names them
+                    fs, left = self._as_entry(s, fs), self._as_entry(s, left)
                 if any(frame_kind(f.path) != "colour" for f in fs):   # the engine's rule: colour beside raws aside
                     left += [f for f in fs if frame_kind(f.path) == "colour"]
                     fs = [f for f in fs if frame_kind(f.path) != "colour"]

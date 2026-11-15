@@ -684,7 +684,7 @@ class Gestures:
             self.status.emit(_("Nothing to copy here"), 2000)
             return
         m = QMimeData()
-        m.setUrls([QUrl.fromLocalFile(p) for p in lst])
+        m.setUrls([QUrl.fromLocalFile(self.reader.on_disk(p)) for p in lst])   # a relative entry: the project's
         QGuiApplication.clipboard().setMimeData(m)
         self.status.emit(plural(len(lst), "{n} item copied", "{n} items copied"), 2000)
 

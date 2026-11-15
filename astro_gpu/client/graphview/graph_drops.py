@@ -47,7 +47,7 @@ class GraphDrops(QObject):
             return None
         for x in src:
             if self.reader.known(x) is None:
-                self.reader.note(x, os.path.isdir(self.reader._on_disk(x)))    # a relative entry: the project's
+                self.reader.note(x, os.path.isdir(self.reader.on_disk(x)))    # a relative entry: the project's
         return self.reader.request((owner, kind), list(src))
 
     def count(self, src) -> tuple[int, bool]:
@@ -74,7 +74,7 @@ class GraphDrops(QObject):
         for kind, paths in groups.items():
             _src, there = doc.files_of(session, kind)
             res = files.resolve(self.reader, paths, i, existing=there)
-            ignored = files.without_doubles(res, there)
+            ignored = files.without_doubles(res, there, self.reader)
             if kind == "lights":                        # the same night already in another session of the stack
                 files.elsewhere(res, files.stack_lights(doc.graph, session=session))
             lots[kind] = (res, ignored)
@@ -122,7 +122,7 @@ class GraphDrops(QObject):
     # ------------------------------------------------------------------ the toast's links
     def _add(self, session, kind, paths, said):
         there = self.bridge.doc.files_of(session, kind)[1]
-        paths = [p for p in paths if not files.already(p, there)]
+        paths = [p for p in paths if not files.already(p, there, self.reader)]
         if not paths:
             self._say(_("Already there: nothing added"), [])
             return None
