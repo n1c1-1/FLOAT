@@ -77,6 +77,10 @@ def test_a_stars_wire_post_cannot_take_is_refused_at_the_gesture(win, env):
     row = next(r for r in g.rows if r.wid == q.pid)
     mid = next(b for b in row.blocks if g.blocks[b].kind == "denoise")     # an image no workflow ends with
     before = model_json(g)
+    # while the wire is pulled the port is not lit: the page's check says the gesture's reason (the window fuzz: a lit
+    # port, then the gesture refused)
+    why = page.bridge.check_wire(mid, "image", cl, "Stars")
+    assert why, why
     res = page.bridge.act("wire", src=mid, src_port="image", dst=cl, dst_port="Stars")
     settle(win, 3)
     assert model_json(s.stored) == before

@@ -441,7 +441,15 @@ class Doc:
         return api.row_badge(self.graph, r, self.tr)
 
     def wire_check(self, src, src_port, dst, dst_port) -> str:
-        return api.wire_check(self.graph, self.view, src, src_port, dst, dst_port, self.tr)
+        """The core's verdict, then the project model's (a Stars input of a Combine layers that Post cannot take)."""
+        why = api.wire_check(self.graph, self.view, src, src_port, dst, dst_port, self.tr)
+        m = self.model
+        if not why and m is not None and hasattr(m, "wire_refusal"):
+            try:
+                why = m.wire_refusal(src, src_port, dst, dst_port)
+            except Exception:  # noqa: BLE001 - the model cannot judge now: the gesture judges it
+                log.debug("graph page: the model's wire check failed", exc_info=True)
+        return why
 
     def project_state(self):
         return api.project_state(self.graph, self.tr)

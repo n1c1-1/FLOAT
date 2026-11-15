@@ -38,7 +38,7 @@ from ..graphcore.operations import apply_many, new_view, normalise, owned_stages
 from ..graphcore.shapes import Result
 from . import journal
 from .graphnode import BlockMap
-from .i18n import _
+from .i18n import _, quoted
 
 #: the model's own name of a graph block kind that is not a node of its own engine name
 _VIEW_OF_NAME = {"combine": "fusion", "session": "session", "calibration": "calibration", "image": "image",
@@ -896,7 +896,7 @@ class GraphEditing:
         names = [n.get("name") or "" for n in q.nights if n["sid"] in lone]
         q.nights = [n for n in q.nights if n["sid"] not in lone]
         q.excluded = [x for x in q.excluded if x[0] not in lone]
-        said = ", ".join(f"“{n}”" for n in names)
+        said = ", ".join(quoted(n) for n in names)
         toast = M("{m0} · {m1}", m0=res.toast, m1=M("with {sessions} · files kept", sessions=said)) if res.toast \
             else M("with {sessions} · files kept", sessions=said)
         return q, Result(True, toast=toast, focus=res.focus, acted=res.acted, created=res.created,
@@ -917,11 +917,17 @@ class GraphEditing:
                             self.graph_view if view is None else view, _)
         if not r2.ok:
             return g, res
-        names = ", ".join(f"“{r.name}”" for r in bare)
+        names = ", ".join(quoted(r.name) for r in bare)
         toast = M("{m0} · {m1}", m0=res.toast, m1=M("with its branch {names}", names=names)) if res.toast else \
             M("with its branch {names}", names=names)
         return g2, Result(True, toast=toast, focus=res.focus, acted=res.acted, created=res.created,
                           dependants=res.dependants)
+
+    def wire_refusal(self, src, src_port, dst, dst_port) -> str:
+        """Why the model refuses a wire the core accepts ("" when it takes it): the page asks it while a wire is
+        pulled, so that a port it lights is one the gesture is accepted on (``_layer_star_sides``)."""
+        return self._layer_star_sides([("wire", {"src": src, "src_port": src_port, "dst": dst,
+                                                 "dst_port": dst_port})])[1]
 
     def _layer_star_sides(self, steps) -> tuple[list, str]:
         """The Stars side of a Combine layers drawn for a layer of Post (over a combination's Output), wired or unwired
@@ -2726,7 +2732,7 @@ class GraphEditing:
                 names = sorted({others[norm_path(f)] for f in hit})
                 from .i18n import _
                 notes.append(("{name}", _("{n} already in {sessions}: not added").format(
-                    n=len(hit), sessions=", ".join(f"“{x}”" for x in names))))
+                    n=len(hit), sessions=", ".join(quoted(x) for x in names))))
                 twice += hit
         if not new:
             return 0
