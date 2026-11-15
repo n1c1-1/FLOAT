@@ -3,6 +3,7 @@
     python tools/graph_golden.py record <root>... --out <dir> [--recent] [--guard <folder>]... [--origins <json>]
     python tools/graph_golden.py stable <dir>
     python tools/graph_golden.py check <dir> [--out <json>] [--only <name part>]...
+    python tools/graph_golden.py stale <dir> [--out <json>] [--only <name part>]...
 
 It never writes in a project folder (nor in the folders of the frames a project reads). A later change of the
 graph model can be checked against this record: it must show zero difference.
@@ -29,6 +30,11 @@ definition). A project is PROVEN when every session's frame list is non-empty on
 frames reads a non-empty frame list on both sides (a session with no lights in its definition reads none); a project
 of images only: when its image files are there; a project with no session and no workflow is EMPTY (no key to
 compare); else its definition is only shown equal.
+``check`` patches the stage versions to a constant: it cannot see that a newer code makes a project's results stale.
+``stale`` does: for every recorded project as it is on the disk, the blocks today's code calls Outdated, each with why
+(its stage version from -> to, or the key part that moved: settings, input files, upstream), read from the key parts the
+manifests of its results keep; a short table, and the whole in ``<dir>/_stale.json`` (or ``--out``). Nothing is
+computed, nothing written in a project (the same guard and snapshots).
 """
 from __future__ import annotations
 
@@ -774,6 +780,138 @@ def cmd_check(args) -> int:
     return 1 if summary["differing"] or report["failed"] or "ABORTED_AT" in report else 0
 
 
+# ---------------------------------------------------------------------------------------------- stale
+def stale_why(old, cur) -> tuple[str, str]:
+    """(kind, words) of why a stage's last result is not of its key today, as the client reads it (model.outdated_why:
+    the key parts its manifest keeps against today's): "version" (its method was updated: from → to), "settings" (the
+    settings that differ), "files" (its input files), "upstream" (the stages before it whose key moved), "unknown" (no
+    key parts in its manifest), "hash" (the same parts, another key: the key's making changed)."""
+    if not isinstance(old, dict):
+        return "unknown", "its manifest keeps no key parts"
+    if old.get("v") != cur.get("v"):
+        return "version", f"version {old.get('v')} -> {cur.get('v')}"
+    op, cp = old.get("p") or {}, cur.get("p") or {}
+    names = [n for n in list(cp) + [n for n in op if n not in cp] if op.get(n) != cp.get(n)]
+    if names:
+        return "settings", ", ".join(f"{n}: {op.get(n)!r} -> {cp.get(n)!r}" for n in names[:3]) + \
+            (" ..." if len(names) > 3 else "")
+    if old.get("x") != cur.get("x"):
+        return "files", "its input files"
+    ou, cu = old.get("u") or {}, cur.get("u") or {}
+    ups = [d for d in list(cu) + [d for d in ou if d not in cu] if ou.get(d) != cu.get(d)]
+    if ups:
+        return "upstream", "upstream " + ", ".join(ups)
+    if old.get("s") != cur.get("s"):
+        return "stage", f"stage {old.get('s')} -> {cur.get('s')}"
+    return "hash", "the same key parts, another key"
+
+
+def stale_project(folder: Path) -> dict:
+    """The stages of a project that today's code calls Outdated (``api.states(update=False)``: a done result of an
+    earlier key, none of its key today), each with its block and why; nothing computed, nothing written."""
+    from astro_gpu import api
+    from astro_gpu.core import project2
+    p = project2.load(folder)
+    keys, store = api._keys(p), api._store(p)
+    states = api.states(p, update=False)
+    rows, counts = [], {}
+    for w in p.workflows:
+        try:
+            chain = list(keys.chain(w))
+            block_of = {s: b for b, ss in keys.rules.chains.blocks_in(chain) for s in ss}
+        except Exception:  # noqa: BLE001 - a workflow the keys cannot chain: nothing of it is listed
+            continue
+        for s in chain:
+            st = states.get((w.id, s))
+            if st is None or st.state != "stale":
+                continue
+            old = store.manifest(s, st.previous_key).get("key_parts") if store is not None else None
+            try:
+                cur = json.loads(json.dumps(keys.key_parts(w, s), default=str))
+            except Exception as e:  # noqa: BLE001
+                kind, why = "error", f"{type(e).__name__}: {e}"
+            else:
+                kind, why = stale_why(old, cur)
+            counts[kind] = counts.get(kind, 0) + 1
+            rows.append({"workflow": w.id, "name": w.name, "block": block_of.get(s, ""), "stage": s, "kind": kind,
+                         "why": why, "previous_key": st.previous_key, "key": st.key})
+    done = sum(1 for st in states.values() if st.state == "done")
+    return {"stale": rows, "counts": counts, "done": done, "stages": len(states)}
+
+
+def cmd_stale(args) -> int:
+    """Every recorded project as it is on the disk: the blocks today's code calls Outdated and why (a stage version
+    from -> to, or the key part that moved), read from the manifests of its results; under the same write guard and
+    snapshots as ``check``: nothing is computed, nothing written in a project."""
+    gold = Path(args.golden).resolve()
+    index = json.loads((gold / "_index.json").read_text(encoding="utf-8"))
+    os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    tmp = gold / "_check_settings"
+    tmp.mkdir(exist_ok=True)
+    settings = Path(os.environ.get("APPDATA", "")) / "astro_gpu" / "settings.json"
+    if settings.exists():
+        shutil.copy2(settings, tmp / "settings.json")
+    os.environ["ASTRO_GPU_SETTINGS"] = str(tmp / "settings.json")
+    sys.path.insert(0, str(REPO))
+    from astro_gpu import api  # noqa: F401
+    from astro_gpu.stages import v2  # noqa: F401
+    todo = []
+    for src, row in index["projects"].items():
+        if args.only and not any(o in row["name"] for o in args.only):
+            continue
+        q = Path(src)
+        todo.append(q)
+        GUARD.add(q)
+        for e in raw_entries(q):
+            GUARD.add(e)
+    no = os.path.normcase(str(gold))
+    for g in GUARD.roots:
+        if no == g or no.startswith(g + os.sep):
+            print(f"refused: the golden folder {gold} is inside a read-only folder {g}", file=sys.stderr)
+            return 2
+    GUARD.install()
+    report: dict = {"projects": {}, "failed": {}, "absent": []}
+    for q in todo:
+        if not (q / "project.astroproj").is_file():
+            report["absent"].append(q.as_posix())
+            continue
+        before, before_state = snapshot(q), snapshot_state(q)
+        n_viol = len(GUARD.violations)
+        try:
+            report["projects"][q.as_posix()] = stale_project(q)
+        except BaseException as e:  # noqa: BLE001
+            report["failed"][q.as_posix()] = f"{type(e).__name__}: {str(e)[:300]}"
+        d = diff(before, snapshot(q)) + diff(before_state, snapshot_state(q))
+        if d or len(GUARD.violations) != n_viol:
+            report["ABORTED_AT"] = q.as_posix()
+            report["write_proof"] = {"differences": d, "violations": GUARD.violations[n_viol:]}
+            print(f"ABORT: the read-only project {q} changed or a write was attempted", file=sys.stderr)
+            break
+    report.setdefault("write_proof", {"differences": [], "violations": GUARD.violations})
+    GUARD.active = False
+    out = Path(args.out) if args.out else gold / "_stale.json"
+    out.write_text(json.dumps(report, indent=1, ensure_ascii=False, default=str), encoding="utf-8")
+    # the table: one line per project with Outdated blocks, one per block under it (its stages' reasons, once each)
+    lines = []
+    for src, r in report["projects"].items():
+        if not r["stale"]:
+            continue
+        lines.append(f"{Path(src).name[:60]}  ({len(r['stale'])} stale of {r['stages']} stages, {r['done']} done)")
+        seen: dict = {}
+        for x in r["stale"]:
+            where = f"{x['block']}/{x['stage']}" if x["block"] else x["stage"]
+            seen.setdefault((where, x["why"]), []).append(f"{x['workflow']}")
+        for (where, why), wids in seen.items():
+            lines.append(f"    {where:<28} {why}   [workflows {', '.join(dict.fromkeys(wids))}]")
+    clean = sum(1 for r in report["projects"].values() if not r["stale"])
+    print("\n".join(lines) if lines else "no project has an Outdated block")
+    print(json.dumps({"projects": len(report["projects"]), "with_stale": len(report["projects"]) - clean,
+                      "without_stale": clean, "failed": len(report["failed"]), "absent": len(report["absent"]),
+                      "aborted": "ABORTED_AT" in report, "json": out.as_posix()}))
+    return 1 if report["failed"] or "ABORTED_AT" in report else 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -789,8 +927,12 @@ def main() -> int:
     r.add_argument("--origins", help="JSON {copy folder: original folder} of definitions migrated on a copy")
     s = sub.add_parser("stable")
     s.add_argument("out")
+    t = sub.add_parser("stale", help="every recorded project as it is: the blocks today's code calls Outdated, and why")
+    t.add_argument("golden")
+    t.add_argument("--out")
+    t.add_argument("--only", action="append", help="only the projects whose recorded name holds this text")
     a = ap.parse_args()
-    return {"record": cmd_record, "stable": cmd_stable, "check": cmd_check}[a.cmd](a)
+    return {"record": cmd_record, "stable": cmd_stable, "check": cmd_check, "stale": cmd_stale}[a.cmd](a)
 
 
 if __name__ == "__main__":
