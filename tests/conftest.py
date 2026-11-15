@@ -636,7 +636,7 @@ def _private_user_settings(request, tmp_path, monkeypatch):
     monkeypatch.setitem(prefs.DEFAULTS, "temp_dir", (tmp_path / "temp").as_posix())
     home = sys.modules.get("astro_gpu.client.home")
     if home is None and "client" in Path(str(request.fspath)).parts:
-        from astro_gpu.client import home                  # the client's tests only: it needs Qt
+        from astro_gpu.client import home  # the client's tests only: it needs Qt
     if home is not None:
         monkeypatch.setattr(home, "default_location", lambda: tmp_path / "Documents" / "FLOAT")
     prefs.load()

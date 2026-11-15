@@ -8,9 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 import conftest as cf
+import pytest
 
 
 def _real_file() -> Path:
