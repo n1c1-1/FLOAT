@@ -808,13 +808,15 @@ class GraphEditing:
         if not acts:
             return
         active = self.p.post["active"]
-        for what, wid, part in acts:
-            if what == "add":
-                self.add_post_layer(wid, part, None)
-                continue
-            for v in list(self.p.post["versions"]):
-                self.set_post_version(v["id"])
-                self.remove_post_part(wid, part, None)
+        try:
+            for what, wid, part in acts:
+                if what == "add":
+                    self.add_post_layer(wid, part, None)
+                    continue
+                for v in list(self.p.post["versions"]):
+                    self.set_post_version(v["id"])
+                    self.remove_post_part(wid, part, None)
+        finally:                                     # the version shown is given back, a removal that raised too
             self.set_post_version(active)
 
     def _layers_follow(self, before, after):
@@ -842,10 +844,12 @@ class GraphEditing:
                 continue
             if not na:
                 active = self.p.post["active"]
-                for v in list(self.p.post["versions"]):
-                    self.set_post_version(v["id"])
-                    self.remove_post_part(wid, "combined", None)
-                self.set_post_version(active)
+                try:
+                    for v in list(self.p.post["versions"]):
+                        self.set_post_version(v["id"])
+                        self.remove_post_part(wid, "combined", None)
+                finally:
+                    self.set_post_version(active)
                 continue
             mine = [x for x in self.post_version().get("layers") or [] if x.get("kind") == "workflow"
                     and x.get("pid") == wid and x.get("part") == "combined"

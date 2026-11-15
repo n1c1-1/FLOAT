@@ -352,3 +352,25 @@ def test_a_graph_that_does_not_compile_is_not_left_in_place(model, monkeypatch):
         model.apply([("add_block", {"kind": "deconv", "row": row(model).id})])
     monkeypatch.undo()
     assert model_json(model._g) == before and model.compiled is compiled
+
+
+def test_a_removal_from_post_that_raises_gives_the_active_version_back(model, monkeypatch):
+    """A wire to Post removed in the graph takes its image out of every version, each made active in turn: a removal
+    that raised left Post on another version than the one shown."""
+    wid = next(q.pid for q in model.paths if q.name == "Color minimal")
+    model.add_post_layer(wid, None, None)
+    model.new_post_version()
+    first = model.p.post["versions"][0]["id"]
+    model.set_post_version(first)
+    post = next(b for b in model.stored.blocks if model.stored.blocks[b].kind == "post")
+    w = next(x for x in model.stored.wires if x.dst[0] == post)
+    calls = []
+
+    def boom(*_a, **_k):
+        calls.append(model.p.post["active"])
+        if len(calls) == 2:
+            raise RuntimeError("cannot remove")
+    monkeypatch.setattr(model, "remove_post_part", boom)
+    with pytest.raises(RuntimeError):
+        model.apply([("unwire", {"wire": w.id})])
+    assert len(calls) == 2 and model.p.post["active"] == first
