@@ -18,7 +18,7 @@ from functools import partial
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QPoint, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -365,6 +365,8 @@ class SourcesView(QWidget):
         sv.thumbReady.connect(self._thumb)
         sv.statsReady.connect(self._stats_ready)
         self.setAcceptDrops(True)
+        self._said = False
+        self._centre_takes_drags()
         self._fill_sort()
         self.set_mode(1)
 
@@ -394,18 +396,13 @@ class SourcesView(QWidget):
         return w
 
     def _drop_page(self):
-        """What an empty kind shows, in the place of its frames: where its files go."""
+        """What an empty kind shows, in the place of its frames: one plain message, no drop zone (the rows at the left
+        are the places to drop)."""
         w = QWidget()
-        o = QVBoxLayout(w)
-        o.setContentsMargins(24, 24, 24, 24)
-        self.drop_zone = QFrame()
-        self.drop_zone.setObjectName("dropzone")
-        self._drop_hot(False)
-        v = QVBoxLayout(self.drop_zone)
+        v = QVBoxLayout(w)
+        v.setContentsMargins(24, 24, 24, 24)
         v.setAlignment(Qt.AlignCenter)
-        v.addWidget(label(_("No files yet"), "h1"), 0, Qt.AlignHCenter)
-        self.drop_kind = label("", "dim")
-        v.addWidget(self.drop_kind, 0, Qt.AlignHCenter)
+        v.addWidget(para(_("Drop your files on a row at the left, or use Add files.")), 0, Qt.AlignHCenter)
         v.addSpacing(10)
         row = QHBoxLayout()
         row.addStretch(1)
@@ -418,12 +415,7 @@ class SourcesView(QWidget):
         row.addWidget(b)
         row.addStretch(1)
         v.addLayout(row)
-        o.addWidget(self.drop_zone)
         return w
-
-    def _drop_hot(self, on: bool):
-        self.drop_zone.setStyleSheet("QFrame#dropzone { border: 2px dashed " + (ACCENT if on else "#3a4150") +
-                                     "; border-radius: 8px; } QLabel { border: none; }")
 
     def _show_zone(self):
         """An empty kind shows where its files go; the grid, the viewer and the list come back with its first files."""
@@ -433,9 +425,6 @@ class SourcesView(QWidget):
         for b in self.mode_btns + [self.sort_cb]:
             b.setEnabled(not empty)
         self.info.setVisible(self.mode != 1 and not empty)
-        if empty:
-            title = next(t for k, t, _s in GROUPS if k == self.group)
-            self.drop_kind.setText(_("{kind} of “{session}”").format(kind=_(title), session=self._session().name))
 
     # ------------------------------------------------------------ the files of the session
     def _session(self):
@@ -739,27 +728,60 @@ class SourcesView(QWidget):
             r.addWidget(b, 0, Qt.AlignTop)
             self.lv.addLayout(r)
 
+    def _rows_lit(self, on: bool):
+        """The kinds' rows lit as the places to drop, while files are dragged over the rest of the page."""
+        for r in self.findChildren(GroupRow):
+            r._hot(on)
+
     def dragEnterEvent(self, e):                                     # noqa: N802 - Qt's name
-        """Taken, to say where files go when dropped off a row; the page itself is not lit (only the kinds' rows)."""
+        """Over the page off the rows: not allowed (nothing is dropped there), the rows lit as the places to drop,
+        and the page says so once."""
         if e.mimeData().hasUrls() and self.sid is not None:
-            e.acceptProposedAction()
+            e.setDropAction(Qt.IgnoreAction)
+            e.accept()
+            self._rows_lit(True)
+            if not self._said:
+                self._said = True
+                self.toast.emit(_("Drop on a row"))
 
     def dragMoveEvent(self, e):                                      # noqa: N802 - Qt's name
-        """Taken while the files move over the page too (a move event refused made every drop refused, the zone
-        "Drop your files here" included: the testers' pass 2)."""
         if e.mimeData().hasUrls() and self.sid is not None:
-            e.acceptProposedAction()
+            e.setDropAction(Qt.IgnoreAction)
+            e.accept()
 
     def dragLeaveEvent(self, e):                                     # noqa: N802 - Qt's name
-        self._drop_hot(False)
+        self._rows_lit(False)
+        self._said = False
 
     def dropEvent(self, e):                                          # noqa: N802 - Qt's name
         """Dropped anywhere but on a kind's row (a heading, the crumbs, the frames, a blank area): nothing is added and
         the page says where to drop. The kind of a file is the row it is dropped on, never read from it."""
-        self._drop_hot(False)
+        self._rows_lit(False)
+        self._said = False
         if local_paths(e.mimeData()) and self.sid is not None:
-            e.acceptProposedAction()
+            e.setDropAction(Qt.IgnoreAction)
+            e.accept()
             self.toast.emit(_("Drop on a row"))
+
+    def eventFilter(self, obj, e):                                   # noqa: N802 - Qt's name
+        """The frames, the viewer and the list (and their viewports) take no drop: theirs go to the page's."""
+        t = e.type()
+        if t == QEvent.DragEnter:
+            self.dragEnterEvent(e)
+        elif t == QEvent.DragMove:
+            self.dragMoveEvent(e)
+        elif t == QEvent.DragLeave:
+            self.dragLeaveEvent(e)
+        elif t == QEvent.Drop:
+            self.dropEvent(e)
+        else:
+            return False
+        return True
+
+    def _centre_takes_drags(self):
+        for w in [self.stack] + self.stack.findChildren(QWidget):
+            w.setAcceptDrops(True)
+            w.installEventFilter(self)
 
     # ------------------------------------------------------------ data
     def refresh(self):

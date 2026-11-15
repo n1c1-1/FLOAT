@@ -111,3 +111,53 @@ def test_inspect_takes_files_on_a_kind_row_only(qapp, tmp_path, monkeypatch):
     finally:
         view.close()
         close(w, m, page)
+
+
+def test_inspect_centre_takes_no_drop_and_says_so(qapp, tmp_path, monkeypatch):
+    from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
+    from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
+    from PySide6.QtWidgets import QApplication, QLabel
+    from astro_gpu.client import i18n
+    from astro_gpu.client.sources import GroupRow, SourcesView
+    from tests.client.test_sources_import import close, open_page
+    w, m, page = open_page(tmp_path, monkeypatch, sessions=1, workflows=("Full",))
+    view = SourcesView(m)
+    view.resize(1400, 800)
+    view.show()
+    said: list = []
+    view.toast.connect(said.append)
+    try:
+        view.show_session(1, "lights")
+        QApplication.processEvents()
+        darks = labelled(tmp_path / "darks", 2, "OIII", "Dark Frame", "dark")
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(p) for p in darks])
+        lights = list(m.p.session(1).lights)
+        for target in (view.grid.viewport(), view.table.viewport(), view.viewer, view.stack):
+            at = QPoint(20, 20)
+            ev = QDragEnterEvent(at, Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)
+            QApplication.sendEvent(target, ev)
+            assert ev.isAccepted() and ev.dropAction() == Qt.IgnoreAction     # the cursor says not allowed
+            QApplication.sendEvent(target, QDragMoveEvent(at, Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier))
+            assert all("dashed" in r.styleSheet() for r in view.findChildren(GroupRow))   # the rows are lit
+            said.clear()
+            QApplication.sendEvent(target, QDropEvent(QPointF(at), Qt.CopyAction, mime, Qt.LeftButton,
+                                                      Qt.NoModifier))
+            assert said == ["Drop on a row"]
+            assert m.p.session(1).lights == lights and not m.p.session(1).darks and not m.p.session(1).bias
+            assert not any("dashed" in r.styleSheet() for r in view.findChildren(GroupRow))
+        view.show_session(1, "darks")                                   # an empty kind: one plain message
+        QApplication.processEvents()
+        assert view.stack.currentIndex() == 3
+        texts = [x.text() for x in view.stack.currentWidget().findChildren(QLabel)]
+        assert "Drop your files on a row at the left, or use Add files." in texts
+        i18n.set_language("fr")
+        try:
+            assert i18n._("Drop your files on a row at the left, or use Add files.") == (
+                "Déposez vos fichiers sur une ligne à gauche, ou utilisez Ajouter fichiers.")
+            assert i18n._("Drop on a row") == "Déposez sur une ligne"
+        finally:
+            i18n.set_language("en")
+    finally:
+        view.close()
+        close(w, m, page)

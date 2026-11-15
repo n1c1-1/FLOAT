@@ -283,7 +283,6 @@
   "A run is in progress: Run to here comes back when it ends": "Un calcul est en cours : « Jusqu'ici » revient à la fin du calcul",
   "Files": "Fichiers",
   "Add frames": "Ajouter images",
-  "{kind} of “{session}”": "{kind} de « {session} »",
   "Choose files in the list first": "Choisir d'abord des fichiers dans la liste",
   "Take the chosen files out of the session (the files are not touched)": "Retirer de la session les fichiers choisis (les fichiers restent sur le disque)",
   "Locate…": "Localiser…",
@@ -328,6 +327,7 @@
   "Frames go on a Session block's page in Inspect (its Files), or on the block in the Graph": "Les images vont sur la page d'un bloc Session en Inspection (ses Fichiers), ou sur le bloc dans le Graphe",
   "Frames go on a Session block, or on one of its rows, in the Graph": "Les images vont sur un bloc Session, ou sur une de ses lignes, dans le Graphe",
   "“{name}” is already open": "« {name} » est déjà ouvert",
+  "{kind} of “{session}”": "{kind} de « {session} »",
   "Drop on a row": "Déposez sur une ligne",
-  "No files yet": "Aucun fichier"
+  "Drop your files on a row at the left, or use Add files.": "Déposez vos fichiers sur une ligne à gauche, ou utilisez Ajouter fichiers."
 }

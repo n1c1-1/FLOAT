@@ -242,7 +242,7 @@ def test_the_session_files_are_added_taken_out_and_said_kind_by_kind(qapp, tmp_p
     try:
         view.refresh()
         view.select_group("darks")
-        assert view.stack.currentIndex() == 3 and "No files yet" in texts(view)
+        assert view.stack.currentIndex() == 3 and "Drop your files on a row at the left, or use Add files." in texts(view)
         assert not view.mode_btns[0].isEnabled()
         one, other = fits_file(tmp_path / "a" / "D_1.fits"), fits_file(tmp_path / "b" / "D_2.fits")
         assert view.add_files("darks", [str(one), str(other)]) == 2                # from two places
