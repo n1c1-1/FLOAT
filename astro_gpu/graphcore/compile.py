@@ -233,7 +233,6 @@ def compile_into(g, p) -> Compiled:
         for k in gm.FILE_KINDS:
             setattr(s, k, list(blk.files[k] if k in (blk.files or {}) else g.common["files"].get(k, [])))
         sessions.append(s)
-    lit = {s.id for s in sessions if s.lights}          # the sessions that have lights
     # -- workflows
     ends = {}
     for f in flows:
@@ -294,13 +293,6 @@ def compile_into(g, p) -> Compiled:
             sess = None
         else:
             sess = nights
-        if kind == "frames" and rec.sessions is None and lit:
-            # a session with no lights yet changes nothing computed: the workflow reads the sessions that have some
-            # (a beta tester's empty session made the whole project Outdated, 17 min, its target forgotten); its first
-            # lights bring it in at the next gesture
-            every = [s.id for s in sessions] if sess is None else sess
-            if any(x not in lit for x in every):
-                sess = [x for x in every if x in lit] or sess
         if rec.pauses is not None:
             # a workflow's own list: a block that left its chain takes its pause with it
             have = {engine(b) for b in f.chain}
