@@ -173,7 +173,8 @@ def tr_name(n: str, image: bool = False) -> str:
 
 def layer_name(lay: dict) -> str:
     """The name of a layer as shown (``tr_name``)."""
-    return tr_name(lay["name"], lay.get("kind") == "image")
+    from . import names                               # default names follow the interface's language
+    return names.shown(tr_name(lay["name"], lay.get("kind") == "image"))
 
 
 def step_words(old: list[dict], new: list[dict]) -> str:
