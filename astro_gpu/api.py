@@ -2641,6 +2641,8 @@ def _session_lights(p: Project2, wf: int | Workflow, which: str):
     """(lights, session name of each, metrics of the first) of a workflow whose sessions are calibrated each on their
     own, in the order the sessions' join puts them (stages/sessions.py: each session's frames one after the other,
     in the sessions' order); None for any other workflow or when a session's inventory is not there."""
+    if p is None:                                       # (a result read without its project: one inventory)
+        return None
     keys = _keys(p)
     chain = keys.chain(keys.project.workflow(wf))
     ids = [x.partition("@")[2] for x in chain if x.startswith("inventory@")]
