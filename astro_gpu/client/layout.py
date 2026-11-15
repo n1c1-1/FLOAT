@@ -20,7 +20,7 @@ closed when the mouse leaves) or hidden (a small arrow at the window's edge brin
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QPainter
+from PySide6.QtGui import QCursor, QPainter
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QApplication,
@@ -339,7 +339,10 @@ class Dock(QObject):
     def _hover_close(self):
         """The mouse left: closed, unless the user is still at work in it (a button held, a list or a menu open, a text
         being typed), then looked at again later."""
-        if self.state != "auto" or not self._open or self.strip.underMouse() or self.panel.underMouse():
+        # where the cursor is, not underMouse(): a click that builds the panel's rows again (an eye in Post's layers)
+        # takes the row from under the mouse, and the panel is told the mouse left while it is still over it (at
+        # 1250 x 685 the Layers drawer closed after each click on an eye)
+        if self.state != "auto" or not self._open or not self._outside(QCursor.pos()):
             return
         fw = QApplication.focusWidget()
         typing = isinstance(fw, (QLineEdit, QAbstractSpinBox, QTextEdit, QPlainTextEdit)) and self.panel.isAncestorOf(fw)

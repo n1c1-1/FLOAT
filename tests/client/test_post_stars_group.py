@@ -466,3 +466,19 @@ def test_every_image_layer_hidden_gives_a_neutral_canvas_and_says_so_even_with_a
     finally:
         page.shutdown()
         page.deleteLater()
+
+
+def test_a_synthetic_stars_row_as_it_comes_is_not_written_into_the_definition():
+    """The row each load gives (``with_synth_rows``) is saved once it is changed only: a change undone gives back the
+    definition the project had (the sweep of Post: Duplicate then Undo wrote the row the load had added)."""
+    g = pe.new_workflow_layer(1, "W", True, part="combined")
+    rows = pe.with_synth_rows([g], {1: "instrument"})
+    assert [x["kind"] for x in rows] == ["filter", "workflow"]
+    assert pe.save_layers(rows) == pe.save_layers([g])                        # as it comes: not written
+    again = pe.with_synth_rows(pe.load_layers(pe.save_layers(rows), {1}), {1: "instrument"})[0]     # the next load
+    assert pe._untouched_synth(json.loads(json.dumps(pe.snapshot([again])[0], default=list)))
+    for change in (lambda r: r.update(visible=False), lambda r: r.update(opacity=50.0),
+                   lambda r: r["mask"]["parts"][0]["strokes"].append([1.0, 2.0, 30.0, 50.0, True])):
+        r = copy.deepcopy(rows)
+        change(r[0])
+        assert len(pe.save_layers(r)) == 2                                    # changed: written, as any layer

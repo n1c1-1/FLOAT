@@ -1246,6 +1246,9 @@ class PostView(QWidget):
         self._hold_t.timeout.connect(self._show_held)
         self._main_seq = 0                               # the newest draft or release request (the exact view's, Q1)
         self._failed_seq = 0                             # the newest request that failed (no "Updating…" for it)
+        self._exact_wait = None                          # the release whose exact view is on its way (still updating)
+        self._final_kind = "half"                        # the answer of the newest request that is its picture
+        self._done_seq = 0                               # the newest request whose picture is on the screen
         self._region_t = QTimer(self)
         self._region_t.setSingleShot(True)
         self._region_t.timeout.connect(self._send_region)
@@ -1601,6 +1604,7 @@ class PostView(QWidget):
     def _send_draft(self):
         self._draft_dirty = True
         want, overlay = self._selected_wants()
+        self._final_kind = "draft"
         self._main_seq = self.worker.request(Request(kind="draft", layers=snapshot(self.layers),
                                                      level=self.draft_level, want=want, overlay=overlay))
 
@@ -1608,6 +1612,7 @@ class PostView(QWidget):
         """The exact image is long to come: the half one in the meantime."""
         res, self._held = self._held, None
         if res is not None and res.seq == self._main_seq:
+            self._done_seq = res.seq
             self.src.img1, self.src.seq1 = res.rgb, res.seq
             self.src.version += 1
             self.viewer.refresh()
@@ -1632,6 +1637,8 @@ class PostView(QWidget):
         self._rendered_sig = self._visible_sig()
         want, overlay = self._selected_wants()
         cpu = (self._device or self.worker.device) == "cpu"
+        # the CPU's exact quarter before the half is not the picture yet ("Updating…" until the half)
+        self._final_kind = "refine" if self._quarter_enough() else "half"
         if self._quarter_enough():
             # the CPU, zoomed out: the exact quarter (about a second) is what the screen shows; the half comes when the
             # view is zoomed in past a quarter
@@ -1723,7 +1730,11 @@ class PostView(QWidget):
         if res.kind == "inspect":
             return                                              # Inspect's final image, rendered on the same worker
         if res.kind == "exact":                                 # the release's image from the full resolution (Q1)
+            if res.tag == self._exact_wait:
+                self._exact_wait = None
+                self.viewer.update()
             if res.tag == self._main_seq and res.rgb is not None:     # nothing asked since its release
+                self._done_seq = res.tag
                 self._held = None
                 self._hold_t.stop()
                 self.src.img1, self.src.seq1 = res.rgb, res.seq
@@ -1780,6 +1791,8 @@ class PostView(QWidget):
                 self._hold_t.start(HOLD_MS)
             else:
                 self.src.img1, self.src.seq1 = res.rgb, res.seq
+            if res.seq == self._main_seq and res.kind == self._final_kind and self._held is None:
+                self._done_seq = res.seq
             if res.kind == "refine" and res.mask_thumbs:
                 self._take_mask_thumbs(res)
             if res.kind == "refine" and res.layer_thumbs:
@@ -1798,6 +1811,7 @@ class PostView(QWidget):
             if self._exact_wanted(res):
                 self.worker.request(Request(kind="exact", layers=snapshot(self.layers), level=HALF_LEVEL,
                                             tag=res.seq))
+                self._exact_wait = res.seq                     # the picture changes once more: still "Updating…"
         elif res.kind == "region":
             self.src.full = (res.box, res.rgb)
             self.src.version += 1
@@ -1838,6 +1852,9 @@ class PostView(QWidget):
     def _on_failed(self, seq, kind, text):
         if kind in ("draft", "half", "refine"):
             self._failed_seq = max(self._failed_seq, seq)
+            self.viewer.update()
+        elif kind == "exact":                            # the half resolution stays: no more updating to wait for
+            self._exact_wait = None
             self.viewer.update()
         if kind in ("draft", "half", "region", "before", "start"):
             first = _("Image not computed: {why}").format(why=plain_error(text))
@@ -2001,13 +2018,20 @@ class PostView(QWidget):
             return False                                         # nothing shown: the banner speaks
         if self._draft_t.isActive() or self._final_t.isActive() or self._held is not None:
             return True
-        return max(self.src.seq1, self.src.seq2, self._failed_seq) < self._main_seq
+        if self._failed_seq >= self._main_seq:
+            return False
+        if self._exact_wait is not None and self._exact_wait == self._main_seq:
+            return True
+        return self._done_seq < self._main_seq
 
     def _behind_tag(self, p: QPainter, v: Viewer):
         """As the Gradient view: "Updating…" over the top of the picture while it is behind the settings."""
         if self.behind():
             from .imageview import tag
-            tag(p, QPointF(10, 10), _("Updating…"))
+            corner = v.img_to_w(0, 0) if self.src.canvas is not None else QPointF(0, 0)
+            # on the picture's top left corner (not above it when it is letterboxed), inside the view when zoomed in
+            tag(p, QPointF(min(max(corner.x(), 0.0), max(v.width() - 160.0, 0.0)) + 10,
+                           min(max(corner.y(), 0.0), max(v.height() - 40.0, 0.0)) + 10), _("Updating…"))
 
     # ------------------------------------------------------------ the red overlay of the mask being edited
     def _overlay(self, p: QPainter, v: Viewer):
@@ -3452,7 +3476,8 @@ class PostView(QWidget):
         t = QLabel(_(MASK_SOURCES[part["src"]]))
         t.setStyleSheet("font-weight: 600;")
         top.addWidget(t, 1)
-        x = icon_only(QPushButton(), "remove", _("Remove from mask"), 16, box=22)
+        x = icon_only(QPushButton(), "remove", _("Remove {part} from the mask, with what it holds (Ctrl+Z brings it "
+                                                 "back)").format(part=_(MASK_SOURCES[part["src"]])), 16, box=22)
         x.clicked.connect(lambda: self.remove_part(lay, part))
         top.addWidget(x)
         v.addLayout(top)
@@ -3558,6 +3583,8 @@ class PostView(QWidget):
             self.part_sel = None
         self.build_props()
         self.request(final_only=True)
+        # said, as any removal (its strokes went with it): Undo brings it back
+        self.toasted.emit(_("{part} removed from the mask · Ctrl+Z").format(part=_(MASK_SOURCES[part["src"]])))
 
     def _part_set(self, part, key, value):
         self.push()
@@ -3774,7 +3801,7 @@ class PostView(QWidget):
             t = _("Spot healing: click or paint over a defect, healed when released · [ ] size · Alt+click: the "
                   "source by hand · Ctrl+Z: undo · middle button: move the image")
         elif self.sel and mask_selection(self.sel[1]):
-            t = _("Red: where the layer shows · M: mask in gray")
+            t = _("Red: where the layer is hidden · M: mask in gray")
         elif self.b_cmp.isChecked():
             t = _("Drag the divider · Before: the bottom layer, suggested settings")
         else:

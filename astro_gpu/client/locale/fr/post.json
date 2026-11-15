@@ -309,6 +309,7 @@
   "Painting here shows the layer": "Peindre ici montre le calque",
   "Painting here hides the layer": "Peindre ici cache le calque",
   "Updating…": "Mise à jour…",
+  "{part} removed from the mask · Ctrl+Z": "Retiré du masque : {part} · Ctrl+Z",
   "Export the picture to a file (TIFF, PNG, JPEG, FITS) · Ctrl+E": "Exporter l'image dans un fichier (TIFF, PNG, JPEG, FITS) · Ctrl+E",
   "Smaller brush": "Pinceau plus petit",
   "Bigger brush": "Pinceau plus grand",
