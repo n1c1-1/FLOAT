@@ -427,6 +427,7 @@ def export_rgb(rgb: np.ndarray, out_dir: str | Path, options: ExportOptions | di
         elif fmt == "jpeg":
             p = out_dir / f"{o.name}.jpg"
             _safely(p, lambda t: Image.fromarray((hwc * 255 + 0.5).astype(np.uint8)).save(t, quality=o.jpeg_quality,
+                                                                                          subsampling=0,      # 4:4:4: the colour of a star is not smeared
                                                                                           icc_profile=icc))
         else:
             from astropy.io import fits

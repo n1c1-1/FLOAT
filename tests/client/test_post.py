@@ -2354,7 +2354,7 @@ def test_the_export_writes_only_into_the_folder_chosen_and_it_reads_back(exporti
         a = tifffile.imread(s.out / "heart_16bit.tif")
         assert a.dtype == np.uint16 and a.shape == expect.shape
         assert np.abs(a.astype(np.float64) / 65535 - np.clip(expect, 0, 1)).max() < 1e-4
-        hist = json.loads((s.out / "heart_history.json").read_text(encoding="utf-8"))
+        hist = json.loads((s.out / "heart_16bit.tif.history.json").read_text(encoding="utf-8"))
         assert hist["project"] == "HeartSoul" and [x["name"] for x in hist["layers"]] == ["Classic", "Saturation", "Full"]
         d.accept()
         for fmt, name in (("tiff32f", "heart_32bit_float.tif"), ("png16", "heart.png"), ("jpeg", "heart.jpg"),
@@ -2390,12 +2390,17 @@ def test_the_export_writes_only_into_the_folder_chosen_and_it_reads_back(exporti
         assert np.allclose(w.pixel_to_world_values(ox + x, oy + y), w2.pixel_to_world_values(x, cv[1] - 1 - y),
                            atol=1e-9)
     # nothing was written but the files, in the folder chosen: the project and everything else is as it was
+    # (the client's own settings file, which lives in this temporary tree under pytest, keeps the export's choices for
+    # the next export of the project: the last export's memory is the one thing an export writes outside its folder)
     after = tree(s.out.parent)
+    after.pop("settings.json", None)
+    before.pop("settings.json", None)
     new = sorted(set(after) - set(before))
     assert all(p.startswith("chosen/") for p in new), new
     assert {k: v for k, v in before.items()} == {k: after[k] for k in before}
     assert sorted(Path(p).name for p in new) == sorted(
-        ["heart_16bit.tif", "heart_32bit_float.tif", "heart.png", "heart.jpg", "heart.fits", "heart_history.json"])
+        ["heart_16bit.tif", "heart_16bit.tif.history.json", "heart_32bit_float.tif", "heart.png", "heart.jpg", "heart.fits",
+         "heart.fits.history.json"])           # (one file per export: its history is <file>.history.json)
     assert not list((s.root / "export").glob("*")) if (s.root / "export").exists() else True
 
 
@@ -3473,3 +3478,29 @@ def test_the_row_of_a_layer_that_cannot_be_read_shows_not_computed_and_loses_it_
     v._missing_images = set()
     v._refresh_rows()
     assert row.sub.isHidden()
+
+
+def test_the_export_file_button_is_a_save_dialog_with_the_formats_ending(exporting, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    s = exporting
+    d = ExportDialog(s.view)
+    try:
+        seen = {}
+
+        def save(parent, title, start, filt):
+            seen.update(start=start, filt=filt)
+            return (s.out / "my picture.jpg").as_posix(), filt
+        monkeypatch.setattr(QFileDialog, "getSaveFileName", save)
+        monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: pytest.fail("a folder picker"))
+        d.fmt.setCurrentIndex(d.fmt.findData("jpeg"))
+        d._browse()
+        assert seen["start"].endswith("HeartSoul.jpg") and "*.jpg" in seen["filt"]
+        assert d.dest.text() == (s.out / "my picture.jpg").as_posix()
+        # a name typed without the ending takes the format's; a TIFF's long ending is not doubled
+        monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: ((s.out / "m31.tif").as_posix(), ""))
+        d.fmt.setCurrentIndex(d.fmt.findData("tiff16"))
+        d._browse()
+        assert d.dest.text() == (s.out / "m31_16bit.tif").as_posix()
+        assert d.fmt.maxVisibleItems() >= d.fmt.count()
+    finally:
+        d.deleteLater()
