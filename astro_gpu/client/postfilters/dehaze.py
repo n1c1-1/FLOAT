@@ -43,20 +43,44 @@ def mesh_levels(c: np.ndarray, m: int) -> np.ndarray:
     return np.where(np.abs(mean - med) > MODE_TOLERANCE * sd, med, mode)
 
 
+def background_grid(x: np.ndarray, m: int) -> np.ndarray:
+    """The mesh levels of an image (h, w, 3), each channel's grid filtered by a 3 x 3 median: (3, gh, gw)."""
+    out = []
+    for k in range(x.shape[2]):
+        g = mesh_levels(x[..., k], m).astype(np.float32)
+        out.append(cv2.medianBlur(g, 3) if min(g.shape) >= 3 else g)
+    return np.stack(out)
+
+
+def map_of_grid(g: np.ndarray, m: int, h: int, w: int) -> np.ndarray:
+    """The pixels (h, w, 3) of a grid of mesh levels: a bicubic interpolation, each level at its mesh's centre."""
+    _c, gh, gw = g.shape
+    # the grid at the mesh centres, then the pixels: resize with half-mesh alignment, cut to the image
+    return np.stack([cv2.resize(c, (gw * m, gh * m), interpolation=cv2.INTER_CUBIC)[:h, :w] for c in g], -1)
+
+
 def background_map(x: np.ndarray, m: int) -> np.ndarray:
     """The large-scale background of an image (h, w, 3): per channel, the mesh levels, a 3 x 3 median over the grid,
     then a bicubic interpolation back to the pixels (each level at its mesh's centre)."""
     h, w = x.shape[:2]
-    out = np.empty_like(x, dtype=np.float32)
-    for k in range(x.shape[2]):
-        g = mesh_levels(x[..., k], m).astype(np.float32)
-        if min(g.shape) >= 3:
-            g = cv2.medianBlur(g, 3)
-        gh, gw = g.shape
-        # the grid at the mesh centres, then the pixels: resize with half-mesh alignment, cut to the image
-        big = cv2.resize(g, (gw * m, gh * m), interpolation=cv2.INTER_CUBIC)
-        out[..., k] = big[:h, :w]
-    return out
+    return map_of_grid(background_grid(x, m), m, h, w).astype(np.float32)
+
+
+def map_in_region(g: np.ndarray, m: int, hw: tuple[int, int], f: int, box, shape) -> np.ndarray:
+    """The background map of the whole image measured on it ``f`` times smaller (grid ``g`` of meshes ``m``, that image
+    ``hw``), at this rendering's scale over its region ``box`` (x0, y0, ...): (h, w, 3) of ``shape``. Post's region at
+    100 % then takes off the veil of the whole image (review 10.1)."""
+    big = map_of_grid(g, m, *hw)
+    x0, y0 = box[:2]
+    M = np.float32([[1 / f, 0, (x0 + 0.5) / f - 0.5], [0, 1 / f, (y0 + 0.5) / f - 0.5]])
+    return cv2.warpAffine(big, M, (shape[1], shape[0]), flags=cv2.INTER_CUBIC | cv2.WARP_INVERSE_MAP,
+                          borderMode=cv2.BORDER_REPLICATE)
+
+
+def take_off(x: np.ndarray, amount: float, veil_map: np.ndarray) -> np.ndarray:
+    """He's haze model with the white as airlight: (x - h) / (1 - h), h = ``amount`` x the map."""
+    h = np.clip(float(np.clip(amount, 0.0, AMOUNT_MAX)) * veil_map, 0.0, AMOUNT_MAX)
+    return np.clip((x - h) / (1.0 - h), 0.0, 1.0).astype(np.float32)
 
 
 #: the last background maps by what they were measured on: the veil does not depend on Amount, so a drag of that slider
@@ -90,6 +114,8 @@ def dehaze(x: np.ndarray, amount: float, scale_px: float) -> np.ndarray:
     a = float(np.clip(amount, 0.0, AMOUNT_MAX))
     if a <= 0:
         return x
-    m = max(8, int(round(scale_px)))
-    h = np.clip(a * cached_background_map(x, m), 0.0, AMOUNT_MAX)
-    return np.clip((x - h) / (1.0 - h), 0.0, 1.0).astype(np.float32)
+    return take_off(x, a, cached_background_map(x, mesh_of(scale_px)))
+
+
+def mesh_of(scale_px: float) -> int:
+    return max(8, int(round(scale_px)))

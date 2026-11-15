@@ -279,7 +279,8 @@ def background_guard(L, factor: float, ctx=None):
     median and sigma are the whole image's (``ctx.whole_stats``), also when a region is rendered."""
     if factor <= 0:
         return None
-    med, sig = ctx.whole_stats("background", L, _median_sigma) if ctx is not None else _median_sigma(L)
+    ws = getattr(ctx, "whole_stats", None)                # (a filter applied outside a composition: its own image)
+    med, sig = ws("background", L, _median_sigma) if ws is not None else _median_sigma(L)
     thr = factor * (med + sig)
     return np.clip((L - 0.8 * thr) / max(0.4 * thr, 1e-6), 0, 1).astype(np.float32)
 
@@ -337,8 +338,22 @@ def f_faint_smooth(x, p, ctx):
     return pf_detail.faint_smoothing(x, p["amount"], p["threshold"], p["radius"], ctx.level)
 
 
+def _whole_measure(ctx, name, x, measure):
+    """``Ctx.whole_measure``; (None, the level) for a filter applied outside a composition."""
+    wm = getattr(ctx, "whole_measure", None)
+    return wm(name, x, measure) if wm is not None else (None, getattr(ctx, "level", 0))
+
+
 def f_dehaze(x, p, ctx):
-    return pf_dehaze.dehaze(x, p["amount"], p["scale"] / ctx.f)
+    if p["amount"] <= 0:
+        return x
+    m = pf_dehaze.mesh_of(p["scale"] / ctx.f)
+    got, at = _whole_measure(ctx, f"veil {p['scale']}", x, lambda a: (pf_dehaze.background_grid(a, m), m, a.shape[:2]))
+    if got is None or at == ctx.level:               # the whole image: its own map, as always
+        return pf_dehaze.dehaze(x, p["amount"], p["scale"] / ctx.f)
+    g, gm, hw = got                                   # a region: the whole image's map, measured smaller
+    return pf_dehaze.take_off(x, p["amount"], pf_dehaze.map_in_region(g, gm, hw, 2 ** (at - ctx.level), ctx.abox,
+                                                                      x.shape))
 
 
 def f_heal(x, p, ctx):
@@ -354,7 +369,13 @@ def f_ml_sharpen(x, p, ctx):
 
 
 def f_ml_denoise(x, p, ctx):
-    return pf_detail.denoise(x, [p[k] for k in ML_KEYS[:4]], p["amount"], p["target"], ctx.level)
+    ks = [p[k] for k in ML_KEYS[:4]]
+    sig, at = None, ctx.level
+    if p["amount"] > 0 and any(t > 0 for t in ks):
+        sig, at = _whole_measure(ctx, f"noise {p['target']}", x, lambda a: pf_detail.noise_of(a, p["target"]))
+    if sig is not None and at != ctx.level:          # a white noise halves at each halving of the resolution
+        sig = [s * 2 ** (at - ctx.level) for s in sig]
+    return pf_detail.denoise(x, ks, p["amount"], p["target"], ctx.level, sigma=sig)
 
 
 def f_balance(x, p, ctx):
@@ -1236,12 +1257,31 @@ class Ctx:
         k = stats_level(*self.canvas_wh)
         v = measure(x if k == 0 else cv2.resize(x, (max(1, x.shape[1] >> k), max(1, x.shape[0] >> k)),
                                                interpolation=cv2.INTER_AREA))
+        self._keep_stats(key, v)
+        return v
+
+    def _keep_stats(self, key, v) -> None:
         if key is not None:
             self.comp.stats[key] = v
             self.comp.stats.move_to_end(key)
             while len(self.comp.stats) > STATS_KEPT:
                 self.comp.stats.popitem(last=False)
-        return v
+
+    def whole_measure(self, name: str, x: np.ndarray, measure):
+        """(``measure`` of a filter's input, the level it was taken at) for a measure that belongs to its resolution
+        (a noise, a mesh of pixels): a whole-canvas rendering measures what it renders (as it always did) and keeps it
+        at its level; a region takes the whole image's, kept at the measure level (``stats_level``: ``compose``
+        renders it first), for the filter to bring to its own level (review 10.1)."""
+        whole = self.canvas_wh is None or tuple(self.abox) == (0, 0, *self.canvas_wh)
+        if whole:                         # measured (and kept) only at the measure level: elsewhere the filter does
+            if self.canvas_wh is None or self.stats_key is None or stats_level(*self.canvas_wh):
+                return None, self.level
+            v = measure(x)
+            self._keep_stats((self.stats_key, name, self.level), v)
+            return v, self.level
+        at = self.level + stats_level(*self.canvas_wh)
+        got = None if self.stats_key is None else self.comp.stats.get((self.stats_key, name, at))
+        return (got, at) if got is not None else (None, self.level)
 
     def _data(self, name: str) -> np.ndarray:
         if name not in self._memo:
@@ -1270,9 +1310,17 @@ def stats_level(w: int, h: int) -> int:
 
 
 #: the filters a measure of their whole input decides (``Ctx.whole_stats``), when that measure is used
-def _wants_whole(fl) -> bool:
-    return fl["filter"] == "saturation" and float(fl["params"].get("protect", 0.0)) > 0 and \
-        float(fl["params"].get("strength", 0.0)) != 0
+def _wants_whole(fl) -> list[tuple]:
+    """The whole-image measures a filter will use with its settings: ("background",) for ``Ctx.whole_stats``,
+    (name, True) for ``Ctx.whole_measure`` (kept at the measure level)."""
+    p = fl["params"]
+    if fl["filter"] == "saturation" and float(p.get("protect", 0.0)) > 0 and float(p.get("strength", 0.0)) != 0:
+        return [("background",)]
+    if fl["filter"] == "ml_denoise" and float(p.get("amount", 0.0)) > 0 and any(p.get(k, 0) for k in ML_KEYS[:4]):
+        return [(f"noise {p['target']}", True)]
+    if fl["filter"] == "dehaze" and float(p.get("amount", 0.0)) > 0:
+        return [(f"veil {p['scale']}", True)]
+    return []
 
 
 def thumb_of(a: np.ndarray) -> np.ndarray:
@@ -1610,15 +1658,19 @@ class Composer:
         return items
 
     @staticmethod
-    def _stats_keys(items) -> list[tuple]:
-        """The whole-image measures (``Ctx.whole_stats``) the visible filters of a plan use: their input's key, the
-        same at any level and region (made of the rows' ``edit``)."""
+    def _stats_keys(items, at: int) -> list[tuple]:
+        """The whole-image measures (``Ctx.whole_stats``, ``Ctx.whole_measure`` taken at level ``at``) the visible
+        filters of a plan use: their input's key, the same at any level and region (made of the rows' ``edit``)."""
         out, before = [], "empty"
+
+        def keys(base, fl):
+            return [(base, w[0], at) if len(w) > 1 else (base, w[0]) for w in _wants_whole(fl)]
         for it in items:
-            if it.kind == "filter" and _wants_whole(it.lay):
-                out.append((_sig(before, it.lay["id"]), "background"))
+            if it.kind == "filter":
+                out += keys(_sig(before, it.lay["id"]), it.lay)
             elif it.kind == "pixel":
-                out += [(_sig(it.edit, fl["id"]), "background") for fl in it.own if fl["visible"] and _wants_whole(fl)]
+                for fl in it.own:
+                    out += keys(_sig(it.edit, fl["id"]), fl) if fl["visible"] else []
             before = it.edit
         return out
 
@@ -1755,10 +1807,11 @@ class Composer:
 
         stack = list(reversed(layers))                                    # bottom first
         items = self._plan(stack, level, abox, canvas, want, ctx.hist_ids, draft)
-        if abox != (0, 0, W, H) and any(key not in self.stats for key in self._stats_keys(items)):
+        at = level + stats_level(W, H)
+        if abox != (0, 0, W, H) and any(key not in self.stats for key in self._stats_keys(items, at)):
             # a region: the measures of the whole image its filters need, made on the whole canvas at the measure
             # level first (Ctx.whole_stats; review 10.1)
-            self.compose(layers, level + stats_level(W, H), stop=stop, cache=cache, draft=draft)
+            self.compose(layers, at, stop=stop, cache=cache, draft=draft)
         if track:
             self._follow(items)
         start, back = self._start(items, where, thumbs)

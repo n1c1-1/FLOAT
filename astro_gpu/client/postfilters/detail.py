@@ -125,8 +125,23 @@ def noise_sigma(w1: torch.Tensor) -> torch.Tensor:
     return mad / 0.6745 / NOISE_E[0]
 
 
-def denoise(x: np.ndarray, thresholds: list[float], amount: float, target: str, level: int = 0) -> np.ndarray:
-    """Multiscale noise reduction: layer j's coefficients soft-thresholded at k_j sigma_j, mixed by the amount."""
+def noise_of(x: np.ndarray, target: str) -> list[float]:
+    """The noise ``denoise`` measures on an image for a target: each channel's sigma of its first starlet layer."""
+    got: list = []
+
+    def fn(img):
+        layers, _res = starlet(img, 1)
+        got.extend(float(s) for s in noise_sigma(layers[0]))
+        return img
+    _on(x, target, fn)
+    return got
+
+
+def denoise(x: np.ndarray, thresholds: list[float], amount: float, target: str, level: int = 0,
+            sigma: list[float] | None = None) -> np.ndarray:
+    """Multiscale noise reduction: layer j's coefficients soft-thresholded at k_j sigma_j, mixed by the amount.
+    ``sigma``: the noise of each channel at this resolution, measured elsewhere (Post's region at 100 % takes the
+    whole image's); else measured on ``x``."""
     if amount <= 0 or not any(t > 0 for t in thresholds):
         return x
     first = _first_layer(level)
@@ -136,7 +151,7 @@ def denoise(x: np.ndarray, thresholds: list[float], amount: float, target: str, 
 
     def fn(img):
         layers, res = starlet(img, len(ks))
-        sig = noise_sigma(layers[0])                     # the noise of this resolution's finest layer
+        sig = noise_sigma(layers[0]) if sigma is None else torch.tensor(sigma, dtype=torch.float32)
         out = []
         for j, (w, k) in enumerate(zip(layers, ks)):
             if k <= 0:

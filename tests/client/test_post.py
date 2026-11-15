@@ -634,6 +634,25 @@ def test_the_saturations_background_guard_is_measured_on_the_whole_image_in_a_re
     assert len(cp.stats) == n
 
 
+def test_the_noise_and_the_veil_of_a_region_are_the_whole_images(monkeypatch):
+    # review 10.1: the multiscale noise reduction measured its noise, Dehaze its background map, on the region rendered
+    # at 100 % (36 and 14 levels of 255 from the export on this image); the whole image's, measured smaller, now
+    monkeypatch.setattr(postengine, "STATS_SIDE", 400)                    # measured 4 x smaller, as on a real stack
+    pr = ToyProvider(1280, 800)
+    a = pr.img[1]
+    a[200:760, 240:1040] = np.clip(a[200:760, 240:1040] * 1.5, 0, 1)
+    pr.img[1] = np.clip(a + np.random.default_rng(0).normal(0, 0.02, a.shape), 0, 1).astype(np.float32)
+    box = (560, 360, 720, 460)
+    for name, upd, most in (("ml_denoise", dict(l1=3, l2=2, l3=1, amount=1.0), 4.0),
+                            ("dehaze", dict(amount=0.6, scale=128), 2.0)):
+        base = new_workflow_layer(1, "A", True)
+        fl = new_filter_layer(name, None)
+        fl["params"].update(upd)
+        full = Composer(pr).compose([fl, base], 0).rgb[360:460, 560:720]
+        reg = Composer(pr).compose([fl, base], 0, box).rgb
+        assert np.abs(reg - full).max() * 255 < most and np.abs(reg - full).mean() * 255 < 0.25, name
+
+
 def test_a_region_is_the_crop_of_the_whole_and_the_levels_agree():
     pr = ToyProvider(640, 400)
     cp = Composer(pr)
