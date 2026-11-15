@@ -1237,3 +1237,24 @@ def test_a_stopped_run_says_what_it_leaves_in_the_scratch_folder(proj):
     status, info = run(proj, plan_all(proj))
     assert status == "done"
     assert not [e for e in events(proj, info) if e["type"] == "log" and "scratch folder keeps" in e.get("msg", "")]
+
+
+def test_an_unexpected_error_during_a_run_ends_it_failed_with_the_block_named(proj, monkeypatch):
+    # review 2.2: the status was "done" before the loop and written as such by its finally: a journal line failing
+    # (a full disk) ended the run "done", the block being computed in no list
+    plan = plan_all(proj)
+    calls = []
+    real = runner2._Worker.run_job
+
+    def second_fails(self, job):
+        calls.append(job.key)
+        if len(calls) == 2:
+            raise OSError(28, "No space left on device")
+        return real(self, job)
+    monkeypatch.setattr(runner2._Worker, "run_job", second_fails)
+    info = runner2.prepare_run(proj, plan, "cpu")
+    with pytest.raises(OSError):
+        runner2.run_plan(proj.root, info.plan_file, rules=RULES, echo=False)
+    end = events(proj, info)[-1]
+    assert end["type"] == "run_end" and end["status"] == "failed"
+    assert end["failed"] == [plan.keys[1]] and end["done"] == plan.keys[:1] and end["not_started"] == plan.keys[2:]

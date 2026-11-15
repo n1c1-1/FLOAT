@@ -848,9 +848,12 @@ class _Worker:
                                      "skipped": list(r.get("skipped") or []), "interrupted": [], "not_started": []}
         bad: set[str] = set(r.get("bad") or [])
         retried: set[str] = set(r.get("retried") or [])            # jobs already tried again after a GPU fault
-        status = "done"
+        # "done" only once every job went through (review 2.2: an unexpected error, a journal line on a full disk, was
+        # announced "done" with the block being computed in no list)
+        status = "failed"
+        i = 0
         try:
-            for i, job in enumerate(self.jobs):
+            for i, job in enumerate(self.jobs):  # noqa: B007 - (i read after an unexpected error)
                 if self.stop_requested():
                     out["not_started"] = [x.key for x in self.jobs[i:]]
                     status = "interrupted"
@@ -878,6 +881,15 @@ class _Worker:
                     out["not_started"] = [x.key for x in self.jobs[i + 1:]]
                     status = "interrupted"
                     break
+            else:
+                status = "done"
+        except BaseException:
+            listed = {k for v in out.values() for k in v}
+            if self.jobs and self.jobs[i].key not in listed:          # the job it stopped in, and those after it
+                out["failed"].append(self.jobs[i].key)
+            out["not_started"] = [x.key for x in self.jobs[i + 1:] if x.key not in listed]
+            status = "failed"
+            raise
         finally:
             self.journal.job = None
             if status != "handover":
