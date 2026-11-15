@@ -31,7 +31,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, QLibraryInfo, QLocale, Qt, QTimer, QTranslator
+from PySide6.QtCore import QCoreApplication, QEventLoop, QLibraryInfo, QLocale, Qt, QTimer, QTranslator
 from PySide6.QtGui import QAction, QFont, QFontMetrics, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
@@ -1474,7 +1474,7 @@ class Main(QMainWindow):
 
     def name_project(self) -> bool:
         """A project without a name is given its name and folder, once: at its first Save or Run (its results will be
-        written there, and Save as does not move them). False when cancelled."""
+        written there, and Save as copies them). False when cancelled."""
         got = ask_project_name(self, self._suggested_name())
         if got is None:
             return False
@@ -1598,8 +1598,8 @@ class Main(QMainWindow):
             w.clearFocus()                               # editingFinished: what is typed applies before the save
 
     def save_as(self):
-        """The definition of the project, its edits included, in another folder (its results stay where they are),
-        then opened in place of the project, which keeps what it had on disk (as Save As does in reference apps:
+        """The project, its edits included, in another folder with its results (copied: _copy_results), then
+        opened in place of the project, which keeps what it had on disk (as Save As does in reference apps:
         cancelled, nothing is written; GUI exploration 4)."""
         if self.project is None:
             return
@@ -1631,8 +1631,53 @@ class Main(QMainWindow):
         except (OSError, ValueError, project2.LegacyProject) as e:
             self.banner.say(_("The project cannot be saved: {why}").format(why=e))
             return
+        if not self._copy_results(self.project.root, root):
+            return
         self.close_project(go_home=False, discard=True)  # its edits went into the copy: no question
         self.open_project(root)
+
+    def _copy_results(self, old, root) -> bool:
+        """Save as takes the project's results along (the owner: hours of computation were left behind, the copy
+        opened as to compute again): the results, the logs, the run's state and the thumbnail are copied into the
+        new folder, the window kept alive meanwhile; the project left keeps all it had. False, said in the banner,
+        when the copy fails: the project stays open where it was."""
+        import shutil
+        import threading
+        if old is None:
+            return True
+        old, root = Path(old), Path(root)
+        todo = [(old / n, root / n) for n in ("store", "logs", "state.json") if (old / n).exists()]
+        if (old / "cache" / "thumb.jpg").exists():
+            todo.append((old / "cache" / "thumb.jpg", root / "cache" / "thumb.jpg"))
+        if not todo:
+            return True
+        out = {}
+
+        def work():
+            try:
+                for a, b in todo:
+                    if a.is_dir():
+                        shutil.copytree(a, b, dirs_exist_ok=True)
+                    else:
+                        b.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(a, b)
+            except OSError as e:
+                out["error"] = e
+
+        th = threading.Thread(target=work, daemon=True)
+        self.banner.say(_("Copying the results into the new folder…"))
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            th.start()
+            while th.is_alive():
+                QApplication.processEvents(QEventLoop.ExcludeUserInputEvents)
+                th.join(0.05)
+        finally:
+            QApplication.restoreOverrideCursor()
+        if "error" in out:
+            self.banner.say(_("The results could not be copied: {why}").format(why=out["error"]))
+            return False
+        return True
 
     def offer_import(self, root: Path):
         """A project made with an older version: it opens once imported as a new project, in a folder the user

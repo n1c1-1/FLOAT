@@ -1746,6 +1746,11 @@ def test_save_as_writes_the_edits_into_the_copy_only(qapp, tmp_path, monkeypatch
     api.add_workflow(p, "Full", "Full", None)
     api.save(p)
     before = (root / project2.FILE).read_bytes()
+    (root / "store" / "stack" / "k1").mkdir(parents=True)                       # results, a log, the run's state
+    (root / "store" / "stack" / "k1" / "image.npy").write_bytes(b"result")
+    (root / "logs").mkdir(exist_ok=True)
+    (root / "logs" / "journal.md").write_text("ran", encoding="utf-8")
+    (root / "state.json").write_text("{}", encoding="utf-8")
     w = open_window(root, readonly=False)
     try:
         monkeypatch.setattr(type(w), "ask_save", lambda self: pytest.fail("no question on Save As"))
@@ -1762,6 +1767,11 @@ def test_save_as_writes_the_edits_into_the_copy_only(qapp, tmp_path, monkeypatch
         assert project2.load(copy).name == "Copy"                 # Q8: named after its folder, not "Orig" twice
         assert project2.load(root).name == "Orig"
         assert Path(w.s.root) == copy and not w.s.dirty
+        # the results go with the copy (hours of computation were left behind, the copy opened as to compute again);
+        # the project left keeps its own
+        assert (copy / "store" / "stack" / "k1" / "image.npy").read_bytes() == b"result"
+        assert (copy / "logs" / "journal.md").exists() and (copy / "state.json").exists()
+        assert (root / "store" / "stack" / "k1" / "image.npy").read_bytes() == b"result"
     finally:
         w.close()
 

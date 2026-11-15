@@ -42,6 +42,8 @@
   "Recent projects": "Projets récents",
   "Save": "Enregistrer",
   "Save as…": "Enregistrer sous…",
+  "Copying the results into the new folder…": "Copie des résultats dans le nouveau dossier…",
+  "The results could not be copied: {why}": "Les résultats n'ont pas pu être copiés : {why}",
   "Export image…": "Exporter image…",
   "Export as script…": "Exporter en script…",
   "Close project": "Fermer projet",
