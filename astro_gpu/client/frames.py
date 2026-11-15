@@ -251,6 +251,9 @@ def check_lines(data: ProjectFrames | None) -> list[tuple[str, str]]:
             if f > best * 1.1:
                 out.append(("info", _("Session {name}: FWHM {f} px against {b} px — its frames weigh less.").format(
                     name=name, f=number(f), b=number(best))))
+    if any(lvl in ("warn", "info") for lvl, _t in out):   # never "Nothing to worry about" above what is said under it
+        ok = check_text(type("C", (), {"key": "ok", "args": {}})())
+        out = [(lvl, t) for lvl, t in out if not (lvl == "ok" and t == ok)]
     return out
 
 

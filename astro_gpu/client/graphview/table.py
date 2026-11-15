@@ -818,10 +818,9 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
         files.note_paths(self.reader, list(g.paths))
         lots = [files.resolve(self.reader, grp, i) for grp in self._groups(g)]
         new_session = target.kind == "ghost_s"
-        if new_session:                  # the same night already in another session of the stack: said, not added
-            others = files.stack_lights(self.doc.graph, row=target.rid)
-            for r in lots:
-                files.elsewhere(r, others)
+        others = files.stack_lights(self.doc.graph)   # lights already in a session of the project: said, not added
+        for r in lots:                                # (a new session of a stack, or a new stack: the same rule)
+            files.elsewhere(r, others)
         taken = [r for r in lots if r.items]
         every = files.merge(lots)
 

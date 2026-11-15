@@ -84,3 +84,28 @@ def test_gv_shared_darks_are_a_sharing_not_warnings(qapp, tmp_path):
     assert not p.shared.isHidden() and p.shared.text() == f"shared with {', '.join(others)}: one master"
     assert f"shared with {', '.join(others)}: one master" in tip
     b.close()
+
+
+def test_gv_the_same_lights_are_refused_by_every_way_of_adding_them(qapp, tmp_path):
+    """The testers' pass 2: the same lights dropped on « + Session » of another stack (a new filter session) made a
+    second session with them, without a word; an older project whose session lists a folder took its files again.
+    Every way of adding lights reads the same rule: the lights already in any session of the project are said with
+    their count and where they are, and not added (« Add anyway »)."""
+    from astro_gpu.client.graphview import files
+    night = make(tmp_path / "night", 5, "L")
+    b = Bench(1366, sessions=1)
+    s1, = b.sessions()
+    b.drop([night], ("box", s1, "lights"))
+    b.read()
+    n0, stacks = b.steps(), len(b.stacks())
+    b.drop([night], ("ghost_p",))                                   # a new stack of the same night
+    b.read()
+    name1 = b.g.model.session_name(s1)
+    assert b.steps() == n0 and len(b.stacks()) == stacks
+    assert b.t.toast_text == f"5 already in “{name1}”: not added", b.t.toast_text
+    g = b.doc.graph                                                  # a session listing its folder (older project)
+    blk = g.blocks[s1]
+    blk.files = dict(blk.files or {}, lights=[fwd(night)])
+    others = files.stack_lights(g, session="another")
+    assert {k for k in others} == {files.os.path.normcase(files.normalise(fwd(p))) for p in night.iterdir()}
+    b.close()

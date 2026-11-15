@@ -84,3 +84,16 @@ def test_a_date_on_disk_is_never_said_to_be_a_wrong_camera_clock(tmp_path, engli
     assert d.sessions[0].clock is None
     assert not any("Dates" in t for _ok, t in _lines(d))
     assert not any(c.key == "clock" for c in d.checks)
+
+
+def test_the_health_check_never_says_nothing_to_worry_about_above_its_notes(english):
+    """The testers' pass 2: "Nothing to worry about" stood above "Session 2: no darks…" and other notes."""
+    from types import SimpleNamespace as NS
+
+    from astro_gpu.api import Check
+    ok, disk = Check("ok", "ok", "Nothing to worry about"), Check("ok", "disk", "Disk: 3 GB free")
+    alone = NS(checks=[ok, disk], sessions=[])
+    assert [t for _lv, t in check_lines(alone)][0] == "Nothing to worry about"
+    note = Check("info", "session_no_calib", "Session 2: no darks", {"session": "Session 2", "kind": "darks"})
+    said = [t for _lv, t in check_lines(NS(checks=[ok, note, disk], sessions=[]))]
+    assert "Nothing to worry about" not in said and any("Session 2" in t for t in said)

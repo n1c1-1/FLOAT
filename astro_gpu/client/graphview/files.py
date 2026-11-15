@@ -214,19 +214,17 @@ def beside_raws(paths, existing=()) -> list[str]:
 
 
 def stack_lights(graph, session=None, row=None) -> dict[str, str]:
-    """{a light's path, case-folded: the name of the session holding it} of the OTHER sessions of the stack(s) drawing
-    ``session`` (or of stack ``row``): the same night added twice is counted twice on the screen, though the engine
-    reads each file once."""
+    """{a light's path, case-folded: the name of the session holding it} of every OTHER session of the project than
+    ``session`` (``row``: kept for the callers, every session counts): the same frame in two sessions is counted twice
+    on the screen and may be stacked twice. Every way of adding lights reads it (a drop on a box, a new session, a new
+    stack, Inspect's Add files…). A folder entry of an older project counts by the frames the engine reads in it."""
     out: dict[str, str] = {}
-    for r in graph.rows:
-        ids = [s for s, _c in r.nights]
-        if (session is not None and session in ids) or (row is not None and r.id == row):
-            for s in ids:
-                b = graph.blocks.get(s)
-                if s == session or b is None:
-                    continue
-                for f in ((b.files or {}).get("lights") or []):
-                    out.setdefault(os.path.normcase(normalise(f)), b.name or s)
+    for s, b in graph.blocks.items():
+        if s == session or b is None or b.kind != "session":
+            continue
+        for f in ((b.files or {}).get("lights") or []):
+            for x in (engine_frames([f]) if not os.path.splitext(f)[1] and os.path.isdir(f) else [f]):
+                out.setdefault(os.path.normcase(normalise(x)), b.name or s)
     return out
 
 

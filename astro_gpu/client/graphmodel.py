@@ -2579,16 +2579,10 @@ class GraphEditing:
                 notes.append(("{name} left: beside raw frames", summary(aside)))
                 if left is not None:
                     left += sorted(aside)
-        if kind == "lights" and twice is not None:     # the same night already in another session of the stack
-            others: dict = {}
-            for r in self._g.rows:
-                ids = [b for b, _c in r.nights]
-                if any(getattr(self._g.blocks.get(b), "sid", None) == sid for b in ids):
-                    for b in ids:
-                        o = self._g.blocks.get(b)
-                        if o is not None and o.sid != sid:
-                            for e in (o.files or {}).get("lights") or []:
-                                others.setdefault(norm_path(self.p.abspath(e)), o.name or str(o.sid))
+        if kind == "lights" and twice is not None:     # the same frames already in another session of the project
+            from .graphview.files import stack_lights      # (the graph page's own rule: every way of adding reads it)
+            mine = next((b for b, o in self._g.blocks.items() if o.kind == "session" and o.sid == sid), None)
+            others = {norm_path(self.p.abspath(f)): name for f, name in stack_lights(self._g, session=mine).items()}
             hit = [f for f in new if norm_path(f) in others]
             if hit:
                 new = [f for f in new if norm_path(f) not in others]
