@@ -139,7 +139,7 @@ reads them and the health check says whether anything is missing.
 
 ![The Run window](docs/images/guide/4-run.png)
 
-**4. Run.** The window lists the blocks to compute, with the duration and the disk space expected, before anything starts.
+**4. Run.** The window lists the blocks to compute, each with the duration expected, and follows the run; Stop ends it and the finished blocks are kept.
 
 ![The graph after a run](docs/images/guide/5-graph.png)
 
