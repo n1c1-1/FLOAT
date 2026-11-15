@@ -173,19 +173,19 @@ def test_a_users_template_adds_its_workflow_to_a_project_that_holds_sessions(win
 
 
 def test_the_templates_kept_in_the_settings_are_written_once_as_files(qapp, settings):
-    """At start each old template of the settings becomes a blank project file of the tab Mine, once; the settings
+    """At start each old template of the settings becomes a blank project file of the tab My templates, once; the settings
     entry stays; the file's card lists the blocks the old template had."""
     old = [{"key": "u1", "tab": "Mine", "name": "My old one", "text": "Kept.", "source": "frames",
             "blocks": [{"block": b, "name": b, "method": None, "off": False}
                        for b in ("calibration", "registration", "selection", "stacking", "astrometry")]}]
     prefs.set("templates", old)
     first = templatefiles.import_old()
-    assert [f.name for f in first] == ["My old one" + templatefiles.SUFFIX] and first[0].parent.name == "Mine"
+    assert [f.name for f in first] == ["My old one" + templatefiles.SUFFIX] and first[0].parent.name == templatefiles.OLD_TAB
     assert prefs.get("templates") == old and prefs.get("templates_moved")
-    c = templatefiles.cards("Mine")[0]
+    c = templatefiles.cards(templatefiles.OLD_TAB)[0]
     assert c["name"] == "My old one" and c["text"] == "Kept." and c["user"]
     assert [n["block"] for n in c["blocks"]] == ["calibration", "registration", "selection", "stacking", "astrometry"]
-    assert templatefiles.import_old() == [] and len(templatefiles.cards("Mine")) == 1
+    assert templatefiles.import_old() == [] and len(templatefiles.cards(templatefiles.OLD_TAB)) == 1
 
 
 def test_the_version_is_one_number_everywhere():

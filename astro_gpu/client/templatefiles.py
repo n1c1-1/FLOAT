@@ -182,7 +182,7 @@ def project_file(path: str | Path) -> dict:
 
 # ------------------------------------------------------------------------- the templates kept in the settings
 #: the tab of the templates the user made before they were files
-OLD_TAB = "Mine"
+OLD_TAB = "My templates"
 #: the settings entry that says the old templates were written as files
 MOVED = "templates_moved"
 
@@ -217,7 +217,7 @@ def _from_old(entry: dict) -> dict:
 
 def import_old() -> list[Path]:
     """At start: each template the settings keep under the old key is written once as a blank project file in the
-    user's folder, tab "Mine"; the settings entry stays as it is and ``templates_moved`` says it is done. An entry
+    user's folder, tab "My templates"; the settings entry stays as it is and ``templates_moved`` says it is done. An entry
     that cannot be written is left out (it is logged), never written approximately. -> the files written."""
     import logging
     out: list[Path] = []
