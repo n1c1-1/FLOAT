@@ -2017,6 +2017,9 @@ class Main(QMainWindow):
             self.home.sky_changed()
 
     def change_language(self, code: str):
+        if not self.settle_drafts():                     # the project's screen is built again: a draft is asked first
+            prefs.set("language", language())            # Stay: the window keeps its language, the settings too
+            return
         apply_language(code)
         self.build_menus()
         self.b_log.setText(_("Log"))
