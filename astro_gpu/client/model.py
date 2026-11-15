@@ -3727,11 +3727,14 @@ class _ProjectBase(QObject):
         files = self._facts.files
 
         def count(kind: str, key: str) -> int:
-            """The inventory's count; else the distinct files of the sessions (frames two sessions share, a master
-            dark or flat used by both, are counted once)."""
+            """The distinct calibration files of the sessions (frames two sessions share, a master dark or flat used
+            by both, are counted once, whatever an inventory stored by an earlier version summed per session); the
+            inventory's count for the lights and where the files are not known; else the sessions' sum."""
+            names = {norm_path(x) for fl in files.values() for x in fl.get(kind) or []}
+            if kind != "lights" and names:
+                return len(names)
             if inv.get(f"n_{kind}"):
                 return int(inv[f"n_{kind}"])
-            names = {x for fl in files.values() for x in fl.get(kind, [])}
             return len(names) if names else sum(s[key] for s in ses)
         return dict(name=self.name, target=self.target,
                     n_lights=count("lights", "lights"), n_darks=count("darks", "darks"),
