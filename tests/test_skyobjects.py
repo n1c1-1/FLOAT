@@ -480,3 +480,12 @@ def test_real_heart_field_names_the_heart_nebula(tmp_path, monkeypatch):
     assert by["IC 1805"].common_name == "Heart Nebula" and "Sh2-190" in by["IC 1805"].aliases
     assert {"IC 1848", "NGC 896", "NGC 1027"} <= set(by)
     assert objs[0].major >= objs[-1].major
+
+
+def test_an_object_across_ra_zero_is_measured_the_short_way():
+    # review 4.5: a field at 359.9 deg and an object at 0.1 deg were 359.8 deg apart east-west: never covering it
+    from astro_gpu.core.skyobjects import SkyObject, _offset_in_size
+    o = SkyObject("NGC 7814", "", "galaxy", 0.1, 16.0, 30.0, 30.0, 0.0)
+    near = _offset_in_size(o, 359.95, 16.0)
+    same = _offset_in_size(SkyObject("x", "", "galaxy", 180.1, 16.0, 30.0, 30.0, 0.0), 179.95, 16.0)
+    assert near < 1.0 and abs(near - same) < 1e-9

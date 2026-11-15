@@ -775,7 +775,8 @@ def _offset_in_size(o: SkyObject, ra0: float, dec0: float) -> float:
     sep = float(_sep(ra0, dec0, o.ra, o.dec))
     if not o.major > 0:
         return 1.0 + sep
-    east = math.radians(ra0 - o.ra) * math.cos(math.radians(0.5 * (dec0 + o.dec)))
+    dra = (ra0 - o.ra + 180.0) % 360.0 - 180.0          # the short way across RA 0 (review 4.5)
+    east = math.radians(dra) * math.cos(math.radians(0.5 * (dec0 + o.dec)))
     north = math.radians(dec0 - o.dec)
     a = math.radians(o.angle)
     u = (north * math.cos(a) + east * math.sin(a)) * 60 * 180 / math.pi         # along the major axis, arcminutes

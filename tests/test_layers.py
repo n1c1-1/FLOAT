@@ -368,3 +368,21 @@ def test_the_stars_of_a_combination_are_stretched_to_the_white_of_the_image_they
     lit = stars[0] > 20
     clipped = float((out.max(0) >= 0.999)[lit].mean())
     assert own["lum"]["p99995"] < 100 and clipped < 0.1, clipped            # (over the nebula's white: well over half clipped)
+
+
+def test_a_folder_computed_again_drops_the_combined_stars_engines_that_read_it(tmp_path):
+    # review 10.2: the combined stars' engine is kept by the pair "stars|starless"; a refresh evicted the folder's
+    # own key only, and Post showed the old combined stars after a new computation
+    from astro_gpu.render.layers import LayerService
+    svc = LayerService()
+    stars, starless, other = (tmp_path / n for n in ("stars", "starless", "other"))
+    for d in (stars, starless, other):
+        d.mkdir()
+    pair, keep = svc._key(stars) + "|" + svc._key(starless), svc._key(other)
+    for k in (pair, keep):
+        svc._eng[k], svc._size[k] = object(), 1
+    svc.evict(starless)                                                    # the starless combination written again
+    assert pair not in svc._eng and keep in svc._eng
+    svc._eng[pair], svc._size[pair] = object(), 1
+    svc.evict(stars)
+    assert pair not in svc._eng and keep in svc._eng
