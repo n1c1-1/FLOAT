@@ -194,10 +194,34 @@ class Resolution:
         return engine_frames(self.items)
 
 
-def resolve(reader, paths, i: int | None = None, deep: bool = True) -> Resolution:
+def _folder_of(p: str) -> str:
+    return os.path.normcase(os.path.dirname(normalise(p)))
+
+
+def beside_raws(paths, existing=()) -> list[str]:
+    """The colour images (JPEG, PNG, TIFF) of ``paths`` whose folder holds raw or FITS frames among ``paths`` or among
+    ``existing`` (the entries the list already holds): the engine's own rule for a folder (``list_frames``: a camera's
+    JPEGs beside its raws are not more frames, issue #57), kept for single files. The engine takes a file entry as it
+    is, so a JPEG stored beside raws would be read as a frame: the inventory then keeps the pattern of the most frames
+    and drops the others, the raws when the JPEGs are more."""
+    raw = {_folder_of(p) for p in list(paths) + list(existing) if frame_kind(p) in ("raw", "fits")}
+    return [p for p in paths if frame_kind(p) == "colour" and _folder_of(p) in raw]
+
+
+def resolve(reader, paths, i: int | None = None, deep: bool = True, existing=()) -> Resolution:
     """A drop resolved now: each folder's first level read (scandir, names only), the filter applied, the engine's
-    rule compared (see the module's text). ``deep`` False: the sub-folders are not looked for (« Include » itself)."""
-    i = index() if i is None else i
+    rule compared (see the module's text). ``deep`` False: the sub-folders are not looked for (« Include » itself).
+    Whatever the filter, a colour image beside raw or FITS frames of its folder (taken in the same gesture, or already
+    in ``existing``, the list it goes to) is left out (``beside_raws``): « Take all » is the only way to store it."""
+    r = _resolve(reader, paths, index() if i is None else i, deep)
+    aside = set(beside_raws(r.items, existing))
+    if aside:
+        r.items = [p for p in r.items if p not in aside]
+        r.left += [p for p in sorted(aside) if p not in r.left]
+    return r
+
+
+def _resolve(reader, paths, i: int, deep: bool) -> Resolution:
     r = Resolution()
     for p in paths:
         p = normalise(p)

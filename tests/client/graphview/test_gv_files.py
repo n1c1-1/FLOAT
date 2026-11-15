@@ -162,7 +162,9 @@ def test_gv_files_a_filter_unlike_the_engine_rule_stores_single_files(qapp, tmp_
     files.set_index(3)                                                 # All images on a folder of JPEGs only: its files
     drops.drop(sid, "lights", [str(colour)])
     assert bridge.doc.files_of(sid, "lights")[1] == [fwd(colour / f"C_{i:04d}.JPG") for i in range(4)]
-    drops.drop(sid, "lights", [str(mixed)])                            # All images beside raws: unlike the rule
+    drops.drop(sid, "lights", [str(mixed)])                            # All images beside raws: the JPEGs left
+    assert toasts.text.startswith("2 ARW added · 2 JPG left") and "take_all" in toasts.keys
+    drops.link("take_all")                                             # the user's own choice: stored one by one
     lst = bridge.doc.files_of(sid, "lights")[1]
     assert fwd(mixed) not in lst and sum(1 for x in lst if x.startswith(fwd(mixed) + "/")) == 4
     assert len(list_frames(lst)) == 8 and "file_options" not in bridge.doc.view

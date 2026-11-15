@@ -776,12 +776,14 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
         boxes = list(target.boxes)
         i = files.index()
         files.note_paths(self.reader, list(g.paths))
-        res = files.resolve(self.reader, list(g.paths), i)
-        ignored = 0
+        exist = []
         if mode == "add":
             o0, k0 = boxes[0]
             own = None if o0 == COMMON else mp.own_list(o0, k0)
             exist = list(own if own is not None else mp.common_list(k0))
+        res = files.resolve(self.reader, list(g.paths), i, existing=exist)
+        ignored = 0
+        if mode == "add":
             ignored = files.without_doubles(res, exist)
         self._rest = lambda: self._left_steps([(o, k, res.left) for o, k in boxes])
         self._include = lambda: self._include_steps([(o, k, res.subs) for o, k in boxes], i)

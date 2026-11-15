@@ -558,8 +558,11 @@ def test_gv_table_type_filter(qapp, tree):
     sid = b.sessions()[0]
     b.drop([tree["mixed"]], ("box", sid, "lights"))
     b.read()
-    # JPEGs beside raws: the engine would set them aside, so the ten files are stored one by one
-    assert b.box(sid, "lights").n == 10 and "left" not in b.t.toast_text
+    # JPEGs beside raws, even under « All images »: left out (the engine would take a stored JPEG as a frame); « Take
+    # all » is the one way to store them, one by one
+    assert b.box(sid, "lights").n == 5 and "5 ARW added · 5 JPG left" in b.t.toast_text
+    b.t.link("take_all")
+    b.read()
     assert fwd(tree["mixed"]) not in b.own(sid, "lights") and len(b.own(sid, "lights")) == 10
     b.close()
     files.set_index(2)

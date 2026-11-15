@@ -58,8 +58,8 @@ class GraphDrops(QObject):
         self._last = None
         files.note_paths(self.reader, paths)
         i = files.index()
-        res = files.resolve(self.reader, paths, i)
         _src, there = doc.files_of(session, kind)
+        res = files.resolve(self.reader, paths, i, existing=there)
         ignored = files.without_doubles(res, there)
         self._last = (session, kind, res, i)
         if not res.items:
