@@ -49,17 +49,51 @@ class Scan:
         self.mine = set(MINE)                          # the user's own names: the project's workflows and sessions
         self.found: dict[tuple[str, str], str] = {}
         self.count = 0
+        #: proper names the catalogue gives (objects of a solved field, the catalogues' titles): never translated,
+        #: taken out of a text before its words are looked at (its other words still are)
+        self.proper: set[str] = set()
 
     def take(self, shown, step: str):
         for s in shown:
             self.count += 1
             if s.text in KEPT or re.match(r"^[A-Za-z]:[/\\]", s.text):     # a file's path is the user's
                 continue
-            for w in langscan.foreign(s.text, self.lang, self.mine, self.vocab):
+            text = s.text
+            for name in sorted(self.proper, key=len, reverse=True):
+                text = text.replace(name, " ")
+            for w in langscan.foreign(text, self.lang, self.mine, self.vocab):
                 self.found.setdefault((s.text, w), f"{step} / {s.kind} {s.where}")
 
     def report(self) -> list[str]:
         return [f"{step}: {text!r}  ({word})" for (text, word), step in sorted(self.found.items())]
+
+
+def _catalogue_names(w) -> set[str]:
+    """The names the shown astrometric solution takes from the catalogue (where they come from: the sky data the
+    Inspect view paints, its objects and its source note), not a list of words."""
+    v = getattr(getattr(w, "tune", None), "view", None)
+    fn = getattr(v, "annotation_source", None)
+    if fn is None:
+        return set()
+    sky = fn()[0]
+    out = {x for o in sky.objects for x in (o.label, o.name, o.common, *o.aliases) if x}
+    if sky.source:
+        from astro_gpu.core.skyobjects import SOURCE_NAMES
+        out |= {x for n in SOURCE_NAMES.values() for x in (n, n.split(" (")[0]) if x in sky.source}
+    return out
+
+
+def _wait_sky(w, timeout: float = 60.0):
+    """A step whose picture has an astrometric solution: its drawing (grid, stars, named objects) is made in the
+    background; wait for it, so that the names it paints are scanned."""
+    import time
+    t = getattr(w, "tune", None)
+    cur = getattr(t, "_cur", None)
+    if cur is None or not getattr(cur[2], "sky", False):
+        return
+    end = time.monotonic() + timeout
+    while getattr(getattr(t, "view", None), "annotation_source", None) is None and time.monotonic() < end:
+        settle(w, 1)
 
 
 def _page_texts(w, scan: Scan, step: str):
@@ -225,6 +259,8 @@ def test_real_computed_project_shows_no_word_of_the_other_language(win, env, lan
         for _i in range(5):
             default_loader().wait(10)
             settle(win, 2)
+        _wait_sky(win)
+        scan.proper |= _catalogue_names(win)
         _page_texts(win, scan, f"inspect {key}")
     _modes(win, scan, "computed")
     _every_block(win, scan, "computed")
