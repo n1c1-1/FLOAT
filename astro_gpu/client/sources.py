@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QListView,
@@ -138,6 +139,69 @@ class GroupRow(QFrame):
 
     def dragMoveEvent(self, e):                                      # noqa: N802 - Qt's name
         """Taken while the files move over it too (a move event refused made the whole drop refused)."""
+        if e.mimeData().hasUrls():
+            e.acceptProposedAction()
+
+    def dragLeaveEvent(self, e):                                     # noqa: N802 - Qt's name
+        self._hot(False)
+
+    def dropEvent(self, e):                                          # noqa: N802 - Qt's name
+        self._hot(False)
+        paths = local_paths(e.mimeData())
+        if paths:
+            e.acceptProposedAction()
+            self.dropped.emit(self.key, paths)
+
+
+def _ancestors(w):
+    p = w.parentWidget()
+    while p is not None:
+        yield p
+        p = p.parentWidget()
+
+
+class DropZone(QFrame):
+    """A large place to drop the files of ONE kind, in the centre of an empty kind: named, it takes a drop exactly as
+    the kind's row does (``dropped``) and a click opens the file dialog for its kind. The kind is the zone, never read
+    from the files."""
+    dropped = Signal(str, list)                        # kind, the files or folders
+    clicked = Signal(str)
+
+    def __init__(self, key, title, parent=None):
+        super().__init__(parent)
+        self.key = key
+        self.setObjectName("dropzone")
+        self.setCursor(Qt.PointingHandCursor)
+        self.setAcceptDrops(True)
+        self.setMinimumSize(150, 110)
+        self.setToolTip(_("Drop the files of this kind here, or click to choose them"))
+        self._style = "QFrame#dropzone { background: #1c1f26; border: 1px dashed #4a5262; border-radius: 8px; }"
+        self.setStyleSheet(self._style)
+        v = QVBoxLayout(self)
+        v.setAlignment(Qt.AlignCenter)
+        a = QLabel(title)
+        a.setStyleSheet("font-weight: 600; font-size: 12pt; background: transparent;")
+        b = QLabel(_("Drop files here"))
+        b.setObjectName("dim")
+        b.setStyleSheet("background: transparent;")
+        for x in (a, b):
+            x.setAttribute(Qt.WA_TransparentForMouseEvents)
+        v.addWidget(a, 0, Qt.AlignHCenter)
+        v.addWidget(b, 0, Qt.AlignHCenter)
+
+    def mousePressEvent(self, e):                                    # noqa: N802 - Qt's name
+        self.clicked.emit(self.key)
+
+    def _hot(self, on: bool):
+        self.setStyleSheet(self._style + (f" QFrame#dropzone {{ background: #2b3446; border: 1px dashed {ACCENT}; }}"
+                                          if on else ""))
+
+    def dragEnterEvent(self, e):                                     # noqa: N802 - Qt's name
+        if e.mimeData().hasUrls():
+            e.acceptProposedAction()
+            self._hot(True)
+
+    def dragMoveEvent(self, e):                                      # noqa: N802 - Qt's name
         if e.mimeData().hasUrls():
             e.acceptProposedAction()
 
@@ -396,13 +460,22 @@ class SourcesView(QWidget):
         return w
 
     def _drop_page(self):
-        """What an empty kind shows, in the place of its frames: one plain message, no drop zone (the rows at the left
-        are the places to drop)."""
+        """What an empty kind shows, in the place of its frames: a large drop zone for each kind (the rows at the left
+        take drops too); a zone takes the files through the same path as its row."""
         w = QWidget()
         v = QVBoxLayout(w)
         v.setContentsMargins(24, 24, 24, 24)
         v.setAlignment(Qt.AlignCenter)
         v.addWidget(para(_("Drop your files on a row at the left, or use Add files.")), 0, Qt.AlignHCenter)
+        v.addSpacing(10)
+        grid = QGridLayout()
+        grid.setSpacing(12)
+        for i, (key, title, _sec) in enumerate(GROUPS):
+            z = DropZone(key, _(title))
+            z.dropped.connect(self.add_files)
+            z.clicked.connect(self.pick_files)
+            grid.addWidget(z, i // 3, i % 3)
+        v.addLayout(grid)
         v.addSpacing(10)
         row = QHBoxLayout()
         row.addStretch(1)
@@ -780,6 +853,8 @@ class SourcesView(QWidget):
 
     def _centre_takes_drags(self):
         for w in [self.stack] + self.stack.findChildren(QWidget):
+            if isinstance(w, DropZone) or any(isinstance(a, DropZone) for a in _ancestors(w)):
+                continue                                   # a zone takes its own drop
             w.setAcceptDrops(True)
             w.installEventFilter(self)
 
