@@ -351,6 +351,11 @@ def _wires(p, ix, g, d, xs, seq):
                     C = d.boxes[c]
                     d.wires.append(Path(f"n:{s}>{c}", [(S.right, S.y + BH / 2), (C.x, C.y + BH / 2)], "night", s, c))
                 plans.append(("bar", r.id, c if c is not None else s, r.blocks[0], gi))
+        elif r.nights and r.id not in g.folded:           # no stack block yet: a night's Calibration is still wired
+            for s, c in r.nights:                         # to its session (a Calibration placed alone looked loose)
+                if c is not None and s in d.boxes and c in d.boxes:
+                    S, C = d.boxes[s], d.boxes[c]
+                    d.wires.append(Path(f"n:{s}>{c}", [(S.right, S.y + BH / 2), (C.x, C.y + BH / 2)], "night", s, c))
         if r.fork and r.blocks and r.blocks[0] in d.boxes:
             x = r.fork[1]
             gi = gap_after(col_of(x))[0]
