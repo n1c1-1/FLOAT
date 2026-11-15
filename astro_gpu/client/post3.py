@@ -3578,6 +3578,10 @@ class PostView(QWidget):
     def add_part(self, lay, src):
         self.push()
         part = new_part(src)
+        if src == "brush" and not lay["mask"]["parts"]:
+            # an empty mask shows the whole layer: its first brush keeps it so (it takes away from a full mask, as the
+            # Synthetic stars' brush) and paints the effect that changes it, Hide (Show when the mask is inverted)
+            part["op"] = "sub"
         lay["mask"]["parts"].append(part)
         self.part_sel = part["id"] if src == "brush" else None
         self.build_props()

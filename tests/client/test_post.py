@@ -1275,11 +1275,15 @@ def test_mask_brushes_are_named_by_their_effect_and_the_red_marks_what_is_hidden
 
     def brushes():
         return {b.text(): (b.isChecked(), b.toolTip()) for b in widgets_of(v, QPushButton) if b.text() in ("Show", "Hide")}
-    assert brushes() == {"Show": (part["paint"], "Painting here shows the layer"),
-                         "Hide": (not part["paint"], "Painting here hides the layer")}
-    v._part_set(part, "op", "sub")                                   # a subtracting brush hides where it paints
+    # a brush on an empty mask keeps the layer shown everywhere (it takes away from a full mask) and starts on Hide
+    assert part["op"] == "sub" and part["paint"] is True
+    assert brushes() == {"Show": (False, "Painting here shows the layer"),
+                         "Hide": (True, "Painting here hides the layer")}
+    v.add_part(full, "brush")                                         # a brush on a mask that holds something: adds
+    assert full["mask"]["parts"][-1]["op"] == "add"
+    v.remove_part(full, full["mask"]["parts"][-1])
+    v.part_sel = part["id"]
     v.build_props()
-    assert brushes()["Hide"][0] == part["paint"]
     hide = next(b for b in widgets_of(v, QPushButton) if b.text() == "Hide")
     hide.click()
     assert part["paint"] is True                                      # painting hides: the brush adds to the subtraction
@@ -1393,19 +1397,20 @@ def test_the_brush_paints_erases_and_is_one_undo_step(post):
     assert len(xs) > 6 and max(np.diff(xs)) <= part["size"] / 2 / 3 + 1.0
     assert post.settle()
     m = v.mask1
-    assert m[75, 100] > 0.9 and m[75, 130] > 0.9 and m[10, 10] == 0                      # painted where the brush went
-    v.toggle_paint()                                                                     # X: erase
+    # the first brush of an empty mask hides where it paints, the rest of the layer stays shown
+    assert m[75, 100] < 0.1 and m[75, 130] < 0.1 and m[10, 10] == 1                      # painted where the brush went
+    v.toggle_paint()                                                                     # X: the other effect
     assert part["paint"] is False
     v._stroke(200.0, 150.0, True)
     v._stroke_end()
-    assert post.settle() and v.mask1[75, 100] < 0.5
+    assert post.settle() and v.mask1[75, 100] > 0.5
     v.brush_size(1.25)                                                                   # ]
     assert part["size"] == pytest.approx(75.0) and v.viewer.brush_r == pytest.approx(37.5)
     v.do_undo()
-    assert post.settle() and v.mask1[75, 100] > 0.9
+    assert post.settle() and v.mask1[75, 100] < 0.1
     part = named(v, "Full")["mask"]["parts"][0]                                          # Undo brings back other dicts
     v._part_set(part, "strokes", [])                                                     # Clear all
-    assert post.settle() and v.mask1.max() == 0
+    assert post.settle() and v.mask1.min() == 1
 
 
 def test_spot_healing_is_a_brush_healed_on_release_with_nothing_left_on_the_image(post):
