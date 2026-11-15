@@ -31,10 +31,12 @@ also reaches the detached worker through ``Plan.rules``.
 """
 from __future__ import annotations
 
+import contextlib
 import copy
 import hashlib
 import importlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -549,6 +551,25 @@ _CTXS: dict[int, _Ctx] = {}
 _CTX_LOCK = threading.Lock()
 
 
+#: how long the GUI waits for a project's lock before it answers with what it has (a worker holding it must not freeze
+#: the window)
+LOCK_WAIT = 3.0
+
+
+@contextlib.contextmanager
+def _held(c: _Ctx, what: str, wait: float | None = None):
+    """The context's lock with a bounded wait: yields True when held, False after ``wait`` seconds (said in the log),
+    the caller then answers from what it has instead of blocking."""
+    got = c.lock.acquire(timeout=LOCK_WAIT if wait is None else wait)
+    if not got:
+        logging.getLogger(__name__).warning("%s: the project's lock is held by a worker; answered without waiting", what)
+    try:
+        yield got
+    finally:
+        if got:
+            c.lock.release()
+
+
 def _ctx(p: Project2) -> _Ctx:
     k = id(p)
     c = _CTXS.get(k)
@@ -568,7 +589,9 @@ def _keys(p: Project2) -> Keys:
     d = p.to_dict()
     seen = {k: v for k, v in d.items() if k not in ("current_block", "show_all")}   # view state keys nothing
     fp = hashlib.sha1(json.dumps([str(p.root), seen], sort_keys=True, default=str).encode()).hexdigest()
-    with c.lock:
+    with _held(c, "keys") as got:
+        if not got:                                  # a worker holds the lock: the last snapshot, or one for this call only
+            return c.keys if c.keys is not None else Keys(Project2.from_dict(d, p.root), c.rules(), c.scan)
         if c.keys is None or c.fp != fp:
             c.keys = Keys(Project2.from_dict(d, p.root), c.rules(), c.scan)
             c.fp = fp
@@ -580,7 +603,9 @@ def _store(p: Project2) -> Store | None:
         return None
     c = _ctx(p)
     root = os.path.abspath(p.root)
-    with c.lock:
+    with _held(c, "store") as got:
+        if not got:
+            return c.store if c.store is not None else Store(root)
         if c.store is None or c.store_root != root:
             c.store, c.store_root = Store(root), root
         return c.store
@@ -603,7 +628,7 @@ def use_rules(p: Project2, rules: KeyRules | str | None, spec: str | None = None
     """Replace the stage graph of this project (tests and tools): ``rules`` is a KeyRules, or a ``'module:function'``
     spec building one. ``spec`` names the same rules for the detached worker (``Plan.rules``)."""
     c = _ctx(p)
-    with c.lock:
+    with c.lock:                                        # tests and tools: never changed without the lock
         if isinstance(rules, str):
             c.rules_obj, c.spec = _load_rules(rules), rules
         else:
@@ -616,7 +641,9 @@ def refresh(p: Project2, scan: bool = False) -> None:
     """Forget what was cached about the disk: the 'usable' answers and the automatic values (after a run or a stage
     end). ``scan=True`` also forgets the frame files and file ids (the raws changed on disk)."""
     c = _ctx(p)
-    with c.lock:
+    with _held(c, "refresh") as got:
+        if not got:                     # never changed without the lock: the worker holding it reads them; the next
+            return                      # refresh (each stage end, each run) forgets them
         if c.store is not None:
             c.store.forget()
         c.autos.clear()
@@ -643,8 +670,9 @@ def warm(p: Project2, progress: Callable[[float, str], None] | None = None) -> N
             if store is not None and s in ("inventory", "calibrate") and store.done(s, k):
                 store.usable_as_input(s, k)
         est.facts(keys, w, store)                       # reads one raw header (the sensor size) for the estimates
-    with c.lock:
-        c.warm_entries = {_entries(keys.project, s) for s in keys.project.sessions}
+    with _held(c, "warm") as got:
+        if got:                                         # else warmed again at the next call
+            c.warm_entries = {_entries(keys.project, s) for s in keys.project.sessions}
     say(1.0, "ready")
 
 
@@ -1049,9 +1077,40 @@ def health_checks(p: Project2, dates: dict[int, list[tuple[str, str]]] | None = 
     inp = p.inputs()
     n = {k: len(getattr(inp, k)) for k in KINDS}
     if not p.sessions or not n["lights"]:
-        return [Check("warn", "no_lights", "No light frames yet")]
+        out.append(Check("warn", "no_lights", "No light frames yet"))
+        if len(p.sessions) > 1:                      # the sessions with no lights in a project that has none anywhere
+            out += [Check("warn", "session_no_lights", f"{s.name}: no light frames", {"session": s.name})
+                    for s in p.sessions]
+        return out
     from .io.frames import clock_disagreement, colour_session, light_facts, master_kinds, name_date
     keys = _keys(p)
+    for s in keys.project.sessions:                  # a session that adds nothing: blocking, not "nothing to worry about"
+        if not keys.scan.session_frames(keys.project, s)["lights"]:
+            out.append(Check("warn", "session_no_lights", f"{s.name}: no light frames: the session cannot be stacked",
+                             {"session": s.name}))
+    for s in keys.project.sessions:                  # calibration a session lacks: information (said once per kind)
+        fr = keys.scan.session_frames(keys.project, s)
+        if not fr["lights"]:
+            continue
+        for kind in ("darks", "flats"):
+            if not fr[kind]:
+                shared = any(keys.scan.session_frames(keys.project, o)[kind] for o in keys.project.sessions if o is not s)                     and keys.project.stack_mode == "together"
+                out.append(Check("info", "session_no_calib", f"{s.name}: no {kind}" + (
+                    ": it is calibrated with the other sessions' master" if shared else
+                    f": its lights are not calibrated for {'dark current' if kind == 'darks' else 'vignetting and dust'}"),
+                    {"session": s.name, "kind": kind, "shared": bool(shared)}))
+    owner: dict[str, str] = {}                       # the same light file in two sessions: stacked once (together) or
+    dup: dict[tuple[str, str], int] = {}             # dropped from the later session (per session), said in both modes
+    for s in keys.project.sessions:
+        for f, _size in keys.scan.session_frames(keys.project, s)["lights"]:
+            k = os.path.normcase(os.path.normpath(str(f)))
+            if k in owner and owner[k] != s.name:
+                dup[(owner[k], s.name)] = dup.get((owner[k], s.name), 0) + 1
+            else:
+                owner.setdefault(k, s.name)
+    for (first, other), cnt in dup.items():
+        out.append(Check("warn", "same_frames", f"The same frames are in two sessions: {cnt} light(s) of {other} are also "
+                         f"in {first}; they are used once, with {first}", {"first": first, "other": other, "n": cnt}))
     same: dict[tuple, list[str]] = {}               # one warning, the sessions it concerns (nine said once each)
     dated = []                                       # sessions whose file names say a date: nothing else is looked at
     for s in keys.project.sessions:                  # issue #58: a file added by mistake, said before the run
@@ -1126,10 +1185,19 @@ def health_checks(p: Project2, dates: dict[int, list[tuple[str, str]]] | None = 
                              "own search (minutes rather than a second when the focal length is unknown)"
                              if st.missing else f"Astrometry: Asterion cannot run ({st.why}), the field is found by "
                              "FLOAT's own search", {"missing": st.missing, "why": st.why}))
-    with_flats = [s for s in p.sessions if s.flats]
-    if len(with_flats) > 1:
-        out.append(Check("warn", "flats_merged", f"The flats of {len(with_flats)} sessions are merged into one master "
-                         "flat", {"n": len(with_flats), "sessions": [s.name for s in with_flats]}))
+    if p.stack_mode == "together":                   # one master flat per workflow, made of its sessions' flats
+        for w in (p.workflows or [None]):
+            wid = w.id if w is not None else None
+            with_flats = {}
+            for s in p.sessions_of(wid):
+                fl = tuple(sorted(p.abspath(x) for x in (p.own_session(wid, s.id) if wid is not None else s).flats))
+                if fl:
+                    with_flats[s.name] = fl
+            if len(with_flats) > 1 and len(set(with_flats.values())) > 1:       # the same flats twice: one master anyway
+                names = list(with_flats)
+                out.append(Check("warn", "flats_merged", f"{w.name + ': ' if w is not None else ''}the flats of "
+                                 f"{len(names)} sessions are merged into one master flat ({', '.join(names)})",
+                                 {"n": len(names), "sessions": names, "workflow": w.name if w is not None else ""}))
     try:
         for name, v in _fwhm_per_session(p).items():
             out.append(Check("info", "fwhm", f"Star size in {name}: {v:.1f} px", {"session": name, "fwhm": v}))
@@ -1206,6 +1274,9 @@ def _dir(p: Project2, wf: int | Workflow, stage: str, which: str = "current") ->
     stage had), else None. Issue #43: ``which`` may name a session ("current@2": that session's instance of the
     stage, for its Session and Calibration blocks); a stage the chain does not have is read from the stage that stands
     for it (the sessions' join for "inventory" and "calibrate", the image for "stack")."""
+    if which.partition("@")[0] == "latest":              # the current result, else the one an Outdated stage had
+        rest = which[len("latest"):]
+        return _dir(p, wf, stage, "current" + rest) or _dir(p, wf, stage, "previous" + rest)
     store = _store(p)
     if store is None:
         return None
@@ -1238,12 +1309,13 @@ def _wid(wf: int | Workflow) -> int:
     return wf.id if isinstance(wf, Workflow) else wf
 
 
-def _table(p: Project2, wf: int | Workflow, min_t: float | None, max_f: float | None, source: str) -> FrameTable:
+def _table(p: Project2, wf: int | Workflow, min_t: float | None, max_f: float | None, source: str,
+           which: str = "current") -> FrameTable:
     import numpy as np
-    inv = json.loads((_need(p, wf, "inventory") / "frames.json").read_text(encoding="utf-8"))["lights"]
-    reg = np.load(_need(p, wf, "register") / "reg.npz")
+    inv = json.loads((_need(p, wf, "inventory", which) / "frames.json").read_text(encoding="utf-8"))["lights"]
+    reg = np.load(_need(p, wf, "register", which) / "reg.npz")
     n = len(reg["fwhm"])
-    stack = _dir(p, wf, "stack") if source == "stack" else None
+    stack = _dir(p, wf, "stack", which) if source == "stack" else None
     source = "stack" if stack is not None else "preview"
     sess = _light_sessions(p)
     ex = set(p.excluded)
@@ -1281,11 +1353,11 @@ def _stack_thresholds(p: Project2, wf: int | Workflow) -> tuple[float, float]:
     return float(infos["min_transparency"].value), float(infos["max_fwhm_ratio"].value)
 
 
-def frame_table(p: Project2, wf: int | Workflow) -> FrameTable:
+def frame_table(p: Project2, wf: int | Workflow, which: str = "current") -> FrameTable:
     """One row per light frame, with its star size, transparency, registration residual, weight and the reason it is
     left out (what the stack used when Stacking is done, else the selection the current thresholds give). Needs
     Registration done (``NotDone`` otherwise)."""
-    return _table(p, wf, None, None, "stack")
+    return _table(p, wf, None, None, "stack", which)
 
 
 def selection_preview(p: Project2, wf: int | Workflow, min_transparency: float,
@@ -2906,10 +2978,10 @@ def _bounded_by_spectra(infos: list[ParamInfo]) -> None:
 def _origin(p: Project2, w: Workflow) -> str:
     """Where a workflow's image comes from (render/sliders.ORIGINS): a palette fusion of narrow-band filters, a
     monochrome sensor, else a colour camera or an opened image ("")."""
-    from .stages.combine import BY_KIND
+    from .stages.recipes import recipe_of
     fusion = (w.source or {}).get("fusion")
     if fusion:
-        return "palette" if BY_KIND[fusion["type"]].narrowband else ""
+        return "palette" if recipe_of(fusion)["narrowband"] else ""
     return "mono" if w.source is None and p.is_mono(w) else ""
 
 
@@ -3079,6 +3151,143 @@ def export_workflow(p: Project2, wf: int | Workflow, base: Any = None, sliders: 
             "base": base, "sliders": sliders or {}, "created": datetime.now().isoformat(timespec="seconds"),
             "keys": keys.keys(w), "render": lay.info}
     return export_image(p, lay.rgb[:, y0:y1, x0:x1], {"wf": w.id, "origin": (x0, y0), "history": hist}, opts, progress)
+
+
+# ---------------------------------------------------------------------------------------------- combination recipes
+#
+# A combination's recipe (stages/recipes.py) is a TOML file of the application's folder (resources/combinations). The
+# list below is what the graph offers; placing a combination copies the recipe into the workflow's source
+# (``combination_source``), so a project computes the same whatever happens to the file. A file newer than a project's
+# copy is told by ``combination_recipe_status``; the copy changes only by ``apply_combination_recipe``. Memory and
+# small files only: the GUI thread may call them.
+
+def combination_recipes(folder: str | Path | None = None) -> dict[str, Any]:
+    """The recipes the folder offers: {"recipes": [{"id", "name", "version", "description", "narrowband", "inputs":
+    [{"role", "label", "type", "channel"}], "parameters": {name: {"default", "min", "max" or "choices", "label",
+    "help"}}}], in the files' order of names; "refused": [the message of each file that cannot be used, naming the
+    file, the line and the setting]}."""
+    from .stages import recipes
+    found, bad = recipes.available(folder)
+    return {"recipes": [recipes.summary(r) for r in found.values()], "refused": [str(e) for e in bad]}
+
+
+def combination_recipe(recipe_id: str, folder: str | Path | None = None) -> dict[str, Any]:
+    """The folder's recipe of that id, whole (a copy); KeyError when the folder has none (or its file is refused)."""
+    from .stages import recipes
+    found, _bad = recipes.available(folder)
+    if recipe_id not in found:
+        raise KeyError(f"no combination recipe {recipe_id!r}")
+    return copy.deepcopy(found[recipe_id])
+
+
+def combination_source(recipe_id: str, inputs: list[dict] | None = None,
+                       folder: str | Path | None = None) -> dict[str, Any]:
+    """The source of a new combination workflow with the folder's recipe copied in: {"fusion": {"type": its id,
+    "recipe": the copy, "inputs": inputs}} (``inputs``: [{"pid", "role", "channel", "image"}], a port may wait). What
+    placing a combination stores (``Workflow.source``)."""
+    from .stages import recipes
+    return recipes.fusion_source(combination_recipe(recipe_id, folder), inputs)
+
+
+def combination_recipe_status(p: Project2, wf: int | Workflow, folder: str | Path | None = None) -> dict[str, Any]:
+    """A combination workflow's recipe against the folder's: {"id", "name", "project": the copy's version (a project
+    saved before recipes: its type's recipe, version 1), "folder": the file's version (None: no such file now),
+    "newer": the file's version is higher, "changed": the file would compute otherwise, "copy": the project's recipe,
+    "file": the folder's (None)}. Nothing changes until ``apply_combination_recipe``."""
+    from .stages import recipes
+    w = p.workflow(wf)
+    f = (w.source or {}).get("fusion")
+    if not isinstance(f, dict):
+        raise ValueError(f"workflow {w.name!r} is not a combination")
+    mine = recipes.recipe_of(f)
+    found, _bad = recipes.available(folder)
+    st = recipes.status(mine, found)
+    return {**st, "name": mine["name"], "copy": copy.deepcopy(mine),
+            "file": copy.deepcopy(found[mine["id"]]) if mine["id"] in found else None}
+
+
+def apply_combination_recipe(p: Project2, wf: int | Workflow, folder: str | Path | None = None) -> None:
+    """Copy the folder's version of a combination workflow's recipe into it (the user's choice: its results may then
+    be Outdated). The wires of inputs the new version no longer has are dropped; the settings follow the recipe's
+    parameters (those it no longer has are dropped; the block's stage may change, the four types' frozen recipes
+    running on their own: stages/recipes.stage_for). Raises KeyError when the folder has no such recipe; nothing
+    changes when the result would not validate."""
+    from .stages import recipes
+    from .stages.combine import RecipeParams
+    w = p.workflow(wf)
+    f = (w.source or {}).get("fusion")
+    if not isinstance(f, dict):
+        raise ValueError(f"workflow {w.name!r} is not a combination")
+    new = combination_recipe(recipes.recipe_of(f)["id"], folder)
+    before = (copy.deepcopy(w.source), copy.deepcopy(w.params))
+    old_stage = recipes.stage_for(f)
+    nf = {"type": new["id"], "recipe": new,
+          "inputs": [i for i in f.get("inputs") or [] if i["role"] in recipes.roles(new)]}
+    new_stage = recipes.stage_for(nf)
+    mine = dict(w.params.get(old_stage) or {})
+    vals = {**(mine.pop("values", None) or {}), **{k: v for k, v in mine.items() if k != "weights"}}
+    vals = {k: v for k, v in vals.items() if k in new["parameters"]}
+    kept: dict[str, Any] = {}
+    if new_stage == recipes.RECIPE_STAGE:
+        if vals:
+            kept["values"] = vals
+    else:
+        fields = _keys(p).rules.params(new_stage).model_fields
+        kept.update({k: v for k, v in vals.items() if k in fields and k not in RecipeParams.model_fields})
+    weights = {r: x for r, x in (mine.get("weights") or {}).items() if r in recipes.roles(new)}
+    if weights:
+        kept["weights"] = weights
+    params = {k: v for k, v in w.params.items() if k != old_stage}
+    if kept:
+        params[new_stage] = kept
+    try:
+        w.source, w.params = {"fusion": nf}, params
+        p.validate()
+    except Exception:
+        w.source, w.params = before
+        raise
+
+
+def set_recipe_value(p: Project2, wf: int | Workflow, name: str, value: Any = None) -> None:
+    """Set a parameter of a combination workflow's recipe (None: back to the recipe's default): on the four types'
+    stages, their own setting of that name (``set_param``); on the stage of the other recipes, in its ``values``,
+    checked against the recipe. ValueError naming the parameter when it is not one or the value does not fit."""
+    from .stages import recipes
+    from .stages.combine import recipe_value
+    from .core.stage import StageError
+    w = p.workflow(wf)
+    f = (w.source or {}).get("fusion")
+    if not isinstance(f, dict):
+        raise ValueError(f"workflow {w.name!r} is not a combination")
+    spec, stage = recipes.recipe_of(f), recipes.stage_for(f)
+    if name not in spec["parameters"]:
+        raise ValueError(f"the recipe {spec['name']!r} has no parameter {name!r}")
+    if stage != recipes.RECIPE_STAGE:
+        set_param(p, w.id, stage, name, value)
+        return
+    d = dict(w.params.get(stage) or {})
+    vals = dict(d.get("values") or {})
+    if value is None:
+        vals.pop(name, None)
+    else:
+        try:
+            v = recipe_value(type("V", (), {"values": {name: value}})(), spec, name)
+        except StageError as e:
+            raise ValueError(str(e)) from None
+        if v == spec["parameters"][name]["default"]:
+            vals.pop(name, None)
+        else:
+            vals[name] = v
+    if vals:
+        d["values"] = vals
+    else:
+        d.pop("values", None)
+    params = dict(w.params)
+    if d:
+        params[stage] = d
+    else:
+        params.pop(stage, None)
+    w.params = params
 
 
 # ---------------------------------------------------------------------------------------------- lazy re-exports

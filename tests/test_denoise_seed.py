@@ -60,3 +60,32 @@ def test_the_tiles_are_those_of_before_and_a_global_draw_no_longer_moves_them(mo
         assert _adapted() != own                                # a global draw in the middle shifted the tiles
     _hook(monkeypatch)
     assert _adapted() == own                                    # it no longer does
+
+
+def test_stop_acts_between_two_steps_of_the_adaptation_not_after_fifty(monkeypatch):
+    """Stop was looked at every 50 steps: 97 s on a processor. Now a step at most goes by after the request."""
+    import time
+
+    from astro_gpu.core.stage import Interrupted
+    rng = np.random.default_rng(0)
+    A = rng.normal(1.0, 0.1, (3, 256, 256)).astype(np.float32)
+    bk, sg, nm = dn.norm_params(A, np.ones_like(A))
+    net = dn.UNet(w=(8, 16, 32))
+    done = {"steps": 0, "asked_after": None}
+    real = net.forward
+
+    def slow(*a, **k):                                           # a fake slow step
+        done["steps"] += 1
+        time.sleep(0.05)
+        return real(*a, **k)
+    monkeypatch.setattr(net, "forward", slow)
+
+    def check():
+        if done["steps"] >= 3 and done["asked_after"] is None:
+            done["asked_after"] = done["steps"]
+        if done["asked_after"] is not None:
+            raise Interrupted("stop requested")
+    ctx = SimpleNamespace(check_stop=check, progress=lambda *a, **k: None, log=lambda *a, **k: None)
+    with pytest.raises(Interrupted):
+        dn.adapt(ctx, net, A, A.copy(), nm, bk, sg, torch.device("cpu"), 500, 1e-3, 1)
+    assert done["steps"] == 3

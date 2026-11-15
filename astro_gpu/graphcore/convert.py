@@ -143,6 +143,8 @@ class Client:
                 kinds = [n["block"] for n in wfl.graph_of(w)]
             except (KeyError, ValueError):
                 kinds = []
+            if w.blocks is not None:            # its blocks after the combination (a Color block, ...), in their order
+                return ["fusion"] + [node_key(n) for n in self.graph(w) if n["block"] not in ("calibration", "align_on")]
             # (a "· Stars" combination's Synthetic stars after its Output: drawn after the combination)
             return ["fusion"] + (["etoiles"] if "stars" in kinds else []) + (["synth"] if "synth" in kinds else [])
         if w.blocks is not None:

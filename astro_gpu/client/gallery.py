@@ -106,6 +106,14 @@ GALLERY: list[dict] = [
     dict(key="dual_x2", tab="frames", name="Dual-band x2", opts=FULL, kind="fusion", palette=SHO_DEFAULT,
          filters=["O III / H-alpha", "O III / S II"], dual_x2=True,
          text="A colour camera with two dual-band filters (O III/H-alpha and O III/S II) and a session for the stars."),
+    dict(key="mono_rgb", tab="frames", name="Mono RGB", opts=CLASSIC_DN, kind="fusion", palette="RGB",
+         filters=list(PALETTES["RGB"]), mono_rgb=True,
+         text="A monochrome camera with red, green and blue filters: each filter stacked on its own, the three combined "
+              "into the colour image, which is calibrated once, stars kept."),
+    dict(key="mono_lrgb", tab="frames", name="Mono LRGB", opts=CLASSIC_DN, kind="fusion", palette="LRGB",
+         filters=list(PALETTES["LRGB"]), mono_rgb=True,
+         text="A monochrome camera with a luminance filter and red, green and blue ones: each filter stacked on its "
+              "own, the colour from R, G and B and the detail from L, calibrated once, stars kept."),
 ]
 
 #: the template chosen first in the frames' tab
@@ -431,7 +439,7 @@ def draw_filters(t: dict, w: int, h: int, names: bool = False) -> QPixmap:
         if "etoiles" not in cols:
             cols.append("etoiles")
     star_rows = fusion and not rgb and "etoiles" in base           # the stars combined like the starless images
-    n = 1 + len(cols) + (1 if fusion else 0) + (1 if rgb or star_rows else 0)
+    n = 1 + len(cols) + (1 if fusion else 0) + (1 if rgb or star_rows or t.get("mono_rgb") else 0)
     gap = max(4.0, w * (0.008 if names else 0.012))      # with the names: narrower gaps, wider blocks
     bw = (w - 2 * gap - (n - 1) * gap - (gap * 2 if fusion else 0)) / n
     pitch_max = (h - 8) / max(len(rows), 1)
@@ -485,6 +493,9 @@ def draw_filters(t: dict, w: int, h: int, names: bool = False) -> QPixmap:
         for ex, ey, row in ends:
             if row != "RGB":
                 wire(ex, ey, r.left(), yf1)
+        if t.get("mono_rgb"):                             # the colour calibrated once, on the combination
+            c = block(r.right() + gap, yf1, picture_name("couleur"), "#5fbf7f")
+            wire(r.right(), yf1, c.left(), yf1)
         if star_rows:                                     # the same type on the rows' stars, both into Combine layers
             yf2 = yf + bh * 0.6
             r1 = block(x, yf2, _(palette_name(t.get("palette", SHO_DEFAULT))), "#c9a227")
@@ -639,7 +650,7 @@ class TemplatePage(QWidget):
             c = TemplateCard(t)
             what = label(_(t["text"]), "small", wrap=True)
             c.layout().addWidget(what)
-            if t.get("kind") and not t.get("dual_x2"):     # S-H-O by construction: no choice that would do nothing
+            if t.get("kind") and not t.get("dual_x2") and not t.get("mono_rgb"):     # S-H-O / RGB by construction: no choice that would do nothing
                 box = palette_box(t["palette"])
                 box.currentIndexChanged.connect(lambda i, b=box, card=c: card.set_palette(b.itemData(i)))
                 c.layout().addWidget(box)
@@ -849,7 +860,7 @@ class TemplateGallery(QDialog):
 
     def _asks_filters(self, t: dict) -> bool:
         """A type is chosen for a combination block, or for filter workflows of a project without filters yet."""
-        return (t.get("kind") == "fusion" and not t.get("dual_x2")) or (t.get("kind") == "filters" and
+        return (t.get("kind") == "fusion" and not t.get("dual_x2") and not t.get("mono_rgb")) or (t.get("kind") == "filters" and
                                              not (self.s.filters() if hasattr(self.s, "filters") else {}))
 
     def _update(self):

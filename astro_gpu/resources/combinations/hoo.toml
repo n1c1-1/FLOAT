@@ -1,0 +1,46 @@
+# HOO (colour camera dual-band): one colour image shot through a dual-band filter (H-alpha and O III), its channels
+# read apart and composed as they are: H-alpha in red, O III in green and blue.
+#
+# Sources:
+# - Siril's documentation, "Extraction", Extract Ha/OIII: the H-alpha image is made "from the red pixels", and "the
+#   remaining pixels, G and B, are all sensitive to OIII" (siril.readthedocs.io/en/stable/processing/extraction.html).
+#   Here the stacked colour image is read: H-alpha its red, O III the mean of its green and blue (channel GB).
+# - Siril's FAQ (siril.org/faq): the dual-band image's H-alpha and O III stacks are combined by the RGB composition,
+#   the H-alpha stack the reference of the linear match ("pick the Ha stack as reference").
+# - The HOO mapping, H-alpha red and O III green and blue: the dual-band filter's usual palette (the H-O recipe's
+#   default hues 0 and 180 give the same matrix, there composed as lightness and colour; here the channels as they are,
+#   as Siril's RGB composition does, the colour balance left to the Color block after it).
+# Every setting is explained in _example.toml.
+
+id = "hoo"
+name = "HOO (colour camera dual-band)"
+version = 1
+description = "A colour camera's dual-band image: H-alpha read from its red, O III from its green and blue, composed as H-alpha in red and O III in green and blue."
+narrowband = true
+
+[[inputs]]
+role = "Ha"
+label = "Hα"
+type = "colour"
+channel = "R"
+
+[[inputs]]
+role = "OIII"
+label = "O III"
+type = "colour"
+channel = "GB"
+
+[[steps]]
+op = "neutralise_sky"
+
+[[steps]]
+op = "linear_match"
+reference = "Ha"
+low = 1e-7
+high = 0.875
+
+[output]
+channels = ["Ha", "OIII"]
+matrix = [[1, 0],
+          [0, 1],
+          [0, 1]]

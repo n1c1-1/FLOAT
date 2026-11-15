@@ -18,7 +18,8 @@ modified and run again on the same frames or on another night's.
 colour, stars and background, Post.</sub>
 
 - **Partial recomputation.** Each block keeps its result. When a setting changes, only the blocks that
-  depend on it are computed again; an interrupted run resumes where it stopped.
+  depend on it are computed again; after a stop, the finished blocks are kept; the block that was running resumes inside
+  only for calibration and registration, the others start again.
 - **Several workflows on one graph.** A workflow can branch from any block of another, to try a different
   setting or method. The branches meet in Post, as versions to compare or as layers to combine.
 

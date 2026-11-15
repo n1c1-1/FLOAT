@@ -221,6 +221,25 @@ def test_the_inventory_refuses_a_raw_mosaic_dark_for_jpeg_lights(tmp_path):
     assert "the darks (d.fits) are a raw mosaic or monochrome, the lights already in colour" in m["error"]
 
 
+def test_the_inventory_refuses_lights_given_as_files_that_mix_raws_and_jpegs(tmp_path):
+    """Frames picked one by one (the graph page stores files): raws and the camera's JPEGs of one kind are refused
+    with their counts, never stacked by a majority (6 raws + 8 JPEGs stacked the JPEGs and dropped the raws)."""
+    from astropy.io import fits
+    (tmp_path / "L").mkdir()
+    files = []
+    for i in range(3):
+        jpeg(tmp_path / "L" / f"l{i}.jpg")
+        files.append(str(tmp_path / "L" / f"l{i}.jpg"))
+    for i in range(2):
+        fits.writeto(tmp_path / "L" / f"l{i}.fits", np.zeros((40, 60), np.uint16))
+        files.append(str(tmp_path / "L" / f"l{i}.fits"))
+    pr = Project.create(tmp_path / "p", "p", Inputs(lights=files))
+    Pipeline(pr, [Inventory()]).run()
+    m = json.loads((Path(pr.stage_dir("inventory")) / "manifest.json").read_text())
+    assert m["status"] == "failed"
+    assert "the lights mix 2 camera raw or FITS frame(s) and 3 JPEG, PNG or TIFF image(s)" in m["error"]
+
+
 def test_bayer_drizzle_is_refused_with_its_reason():
     assert "Bayer drizzle does not apply to frames already in colour" in COLOUR_NO_DRIZZLE
 

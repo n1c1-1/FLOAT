@@ -1,0 +1,53 @@
+# LRGB: the colour of the red, green and blue filters, the lightness of the luminance filter, at every pixel. Siril
+# substitutes the luminance for the colour data's lightness (its rgbcomp command); on a linear image the substitution
+# that keeps each pixel's chromaticity scales its three channels (stages/combine.py). Where the colour is under its
+# noise floor the pixel is grey at L's level: L's depth is kept on the faint areas.
+# Every setting is explained in _example.toml.
+# This recipe is the LRGB block as it was before recipes: projects that use it keep their results.
+
+id = "lrgb"
+name = "LRGB"
+version = 1
+description = "Combines the red, green and blue filters into the colour, the luminance filter into the detail: at every pixel the colour of RGB, the lightness of L."
+narrowband = false
+
+[[inputs]]
+role = "L"
+type = "any"
+channel = "L"
+
+[[inputs]]
+role = "R"
+type = "any"
+channel = "L"
+
+[[inputs]]
+role = "G"
+type = "any"
+channel = "L"
+
+[[inputs]]
+role = "B"
+type = "any"
+channel = "L"
+
+[[steps]]
+op = "neutralise_sky"
+
+# Siril's RGB compositing tool: the top layer, the luminance, is the reference
+[[steps]]
+op = "linear_match"
+reference = "L"
+low = 1e-7
+high = 0.875
+
+[output]
+channels = ["R", "G", "B"]
+matrix = [[1, 0, 0],
+          [0, 1, 0],
+          [0, 0, 1]]
+lightness = "L"
+# not smoothed (Siril's composition has none; each filter's row has its own Denoise), its strength not raised
+smoothing = "radius"
+radius = 0
+saturation = ["R", "G", "B"]

@@ -369,3 +369,40 @@ def test_without_a_scale_on_the_sky_the_star_size_is_given_in_pixels_saying_so(q
     assert "11 frames, best 2.1 px; in pixels: the scale on the sky is not known" in got["Star FWHM, measured"][1]
     head = page(monkeypatch, d=d)._parts[0][1][1]
     assert head.count("Star FWHM, measured") == 1 and head.count("2.5 px") == 1 and "Median FWHM" not in head
+
+
+def test_a_smart_telescope_has_a_gain_and_the_bias_are_counted():
+    from astro_gpu.client import report as rep
+    d = rep.ReportData(gain=True)
+    info = dict(camera="Seestar S50", iso_gain=80.0, n_darks=0, n_flats=30, n_bias=50)
+    rows = {k: v for k, _w, v in rep.shot_rows(d, info, {}, "en")}
+    assert rows["camera"] == "Seestar S50 · Gain 80" and rows["bias"] == "50" and rows["flats"] == "30"
+    rows = {k: v for k, _w, v in rep.shot_rows(rep.ReportData(), info, {}, "fr")}
+    assert rows["camera"] == "Seestar S50 · ISO 80"
+
+
+def test_the_log_of_a_project_opened_again_is_its_last_run(tmp_path):
+    from astro_gpu.client.logview import last_run_text
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "logs" / "journal.md").write_text("## Run 1\n- a\n\n## Run 2 - stages: stack\n- b\n", encoding="utf-8")
+    assert last_run_text(tmp_path) == "Run 2 - stages: stack\n- b"
+    assert last_run_text(tmp_path / "none") == "" and last_run_text(None) == ""
+
+
+def test_latest_reads_the_result_an_outdated_block_had_else_the_current_one(tmp_path):
+    """The report of a project changed since its run (a night added) is made from the results it had."""
+    from conftest import scratch_project
+
+    from astro_gpu import api
+    folder = scratch_project(tmp_path / "heart")
+    p = api.open_project(folder)
+    wf = p.workflows[0].id
+    try:
+        now = api.frame_table(p, wf)
+    except api.NotDone:
+        import pytest
+        pytest.skip("the test project has no registration")
+    assert [r.name for r in api.frame_table(p, wf, "latest").rows] == [r.name for r in now.rows]
+    from astro_gpu.client.report import report_data
+    d = report_data(p, wf, ("register", "stack"), "x")
+    assert d.reg is not None and not d.outdated

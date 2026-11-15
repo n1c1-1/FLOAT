@@ -1,0 +1,45 @@
+# RGB: the red, green and blue filters of a monochrome camera combined into one colour image (the channel combination
+# of the usual programs). The colour balance is the Color block's, placed after the combination (Siril's RGB
+# composition tutorial, siril.org/tutorials/rgb_composition: "no normalisation is needed", the colour calibration
+# after the composition). Every setting is explained in _example.toml.
+# This recipe is the RGB block as it was before recipes: projects that use it keep their results.
+
+id = "rgb"
+name = "RGB"
+version = 1
+description = "Combines the red, green and blue filters into one colour image, each linearly matched to the red; the colour calibration after it sets the colour balance."
+narrowband = false
+
+[[inputs]]
+role = "R"
+type = "any"
+channel = "L"
+
+[[inputs]]
+role = "G"
+type = "any"
+channel = "L"
+
+[[inputs]]
+role = "B"
+type = "any"
+channel = "L"
+
+[[steps]]
+op = "neutralise_sky"
+
+# Siril's RGB compositing tool: "The top layer loaded (usually Luminance or Red) is taken as the reference channel, and
+# all other channels are automatically linearly matched to it" (siril.readthedocs.io, "RGB compositing")
+[[steps]]
+op = "linear_match"
+reference = "R"
+low = 1e-7
+high = 0.875
+
+[output]
+channels = ["R", "G", "B"]
+matrix = [[1, 0, 0],
+          [0, 1, 0],
+          [0, 0, 1]]
+# the stacks' saturation maps handed on, so that the Color block after leaves the saturated stars out by the map
+saturation = ["R", "G", "B"]

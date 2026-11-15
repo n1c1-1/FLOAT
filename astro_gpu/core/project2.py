@@ -38,6 +38,8 @@ from . import workflow as wfl
 from .files import write_json
 from .project import Inputs, Target
 
+_LOG = logging.getLogger(__name__)
+
 FORMAT = 2
 #: a project file the graph page saved: its stored graph and what is not graph (Post, the project's own fields);
 #: the definition the engine reads (format 2) is compiled from the graph when the file is read
@@ -298,7 +300,29 @@ class Project2:
     def session_inputs(self, sid: int, wid: int | Workflow | None = None) -> Inputs:
         """One session's frames, per kind, as absolute paths (as the workflow ``wid`` reads them)."""
         s = self.own_session(wid, sid) if wid is not None else self.session(sid)
-        return Inputs(**{k: [self.abspath(f) for f in getattr(s, k)] for k in KINDS})
+        out = Inputs(**{k: [self.abspath(f) for f in getattr(s, k)] for k in KINDS})
+        if wid is not None and sid in self.separate_sessions(wid) and out.lights:
+            out.lights = self._without_earlier_lights(wid, sid, out.lights)
+        return out
+
+    def _without_earlier_lights(self, wid: int | Workflow, sid: int, lights: list[str]) -> list[str]:
+        """A session calibrated on its own keeps the lights no earlier session of the workflow has (the first session
+        wins): the same file in two sessions would be stacked twice when they are joined. Said in the log."""
+        from .project import list_frames
+        earlier: set[str] = set()
+        for o in self.sessions_of(wid):
+            if o.id == sid:
+                break
+            earlier.update(os.path.normcase(os.path.normpath(str(f)))
+                           for f in list_frames([self.abspath(x) for x in self.own_session(wid, o.id).lights]))
+        if not earlier:
+            return lights
+        files = list_frames(lights)
+        kept = [f for f in files if os.path.normcase(os.path.normpath(str(f))) not in earlier]
+        if len(kept) == len(files):
+            return lights
+        _LOG.info("session %s: %d light(s) already in an earlier session are not stacked twice", sid, len(files) - len(kept))
+        return [str(f) for f in kept]
 
     def separate_sessions(self, wid: int | Workflow | None = None) -> list[int]:
         """The ids of the sessions calibrated each on its own (issue #43): every session (of the workflow) when the
@@ -684,12 +708,19 @@ def check_source(source: Any, where: str = "source") -> dict[str, Any] | None:
     if source is None:
         return None
     if isinstance(source, dict) and "fusion" in source:
-        from ..stages.combine import BY_KIND, CHANNELS, IMAGES
+        from ..stages import recipes
+        from ..stages.combine import CHANNELS, IMAGES
         f = source["fusion"]
-        if set(source) != {"fusion"} or not isinstance(f, dict) or f.get("type") not in BY_KIND:
-            raise ValueError(f"{where}: a combination is {{'fusion': {{'type': one of {list(BY_KIND)}, 'inputs': "
-                             f"[...]}}}}, not {source!r}")
-        ports = BY_KIND[f["type"]].ports
+        if set(source) != {"fusion"} or not isinstance(f, dict) or not (
+                f.get("type") in recipes.LEGACY or "recipe" in f):
+            raise ValueError(f"{where}: a combination is {{'fusion': {{'type': a recipe's id, 'recipe': the recipe "
+                             f"copied (none: one of {list(recipes.LEGACY)}), 'inputs': [...]}}}}, not {source!r}")
+        if "recipe" in f:
+            # the copy as a file would be read (stages/recipes.py): a project never runs a recipe the engine refuses
+            recipes.check(f["recipe"], f"{where}: its recipe")
+            if f["recipe"]["id"] != f.get("type"):
+                raise ValueError(f"{where}: the type {f.get('type')!r} is not its recipe's id {f['recipe']['id']!r}")
+        ports = recipes.roles(recipes.recipe_of(f))
         ins = f.get("inputs")
         if not isinstance(ins, list) or not all(
                 isinstance(i, dict) and isinstance(i.get("pid"), int) and i.get("role") in ports

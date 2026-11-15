@@ -398,7 +398,7 @@ FILTERS = {
     # ---- stretch
     "ghs": dict(name="Generalised hyperbolic stretch", family="Stretch", fn=f_ghs, graph=pf_tone.ghs_curve, hist=True,
                 source=GHS,
-                params=[P("stretch", "Stretch factor", 0, 10, 0, step=0.01,
+                params=[P("stretch", "Stretch factor", 0, 4, 0, step=0.01,
                           help="ln(D+1) in the formula of this stretch."),
                         P("local", "Local intensity", -5, 15, 0, step=0.1, help="b in the formula of this stretch."),
                         P("symmetry", "Symmetry point", 0, 1, 0, step=0.001),
@@ -408,7 +408,7 @@ FILTERS = {
                         C("model", "Color model", pf_tone.COLOUR_MODES, pf_tone.COLOUR_MODES[0])]),
     "asinh": dict(name="Arcsinh stretch", family="Stretch", fn=f_asinh, graph=pf_tone.asinh_curve, hist=True,
                   source="An arcsinh stretch (after Lupton et al. 2004): the colours kept",
-                  params=[P("stretch", "Stretch factor", 0, 250, 0, step=0.5),
+                  params=[P("stretch", "Stretch factor", 0, 40, 0, step=0.1),
                           P("black", "Black point", 0, 0.2, 0, step=0.001),
                           C("model", "Luminance", pf_tone.COLOUR_MODES[2:0:-1], pf_tone.COLOUR_MODES[2])]),
     "histogram": dict(name="Histogram transformation", family="Stretch", fn=f_histogram, graph=pf_tone.ht_curve,
@@ -485,7 +485,8 @@ FILTERS = {
                        [C("target", "Applies to", pf_detail.TARGETS, pf_detail.TARGETS[0])]),
     # ---- noise
     "denoise": dict(name="Noise reduction", family="Noise", fn=f_denoise,
-                    source="A Gaussian smoothing of the luminance and of the colour",
+                    source="A Gaussian smoothing of the luminance and of the colour. Added at zero it changes nothing: raise "
+                           "Luminance or Color",
                     params=[P("luminance", "Luminance", 0, 1, 0, step=0.01),
                             P("color", "Color", 0, 1, 0, step=0.01)]),
     "ml_denoise": dict(name="Multiscale noise reduction", family="Noise", fn=f_ml_denoise,
@@ -496,7 +497,8 @@ FILTERS = {
                         C("target", "Applies to", pf_detail.NR_TARGETS, pf_detail.NR_TARGETS[0])]),
     "faint_smooth": dict(name="Faint area smoothing", family="Noise", fn=f_faint_smooth,
                          source="Smooths the areas fainter than a level, the brighter ones untouched: the faint "
-                                "extensions can then be raised without their grain",
+                                "extensions can then be raised without their grain. Added at zero it changes nothing: "
+                                "raise Amount",
                          params=[P("amount", "Amount", 0, 1, 0, step=0.01),
                                  P("threshold", "Below", 0.05, 0.8, 0.3, step=0.01),
                                  P("radius", "Radius", 2, 64, 24, "px", 1)]),

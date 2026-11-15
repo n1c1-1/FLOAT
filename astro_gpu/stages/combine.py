@@ -1,8 +1,19 @@
 """The combination of filters (issue #43): the outputs of several workflows (one per filter of a monochrome camera, or
-the channels of one colour workflow shot through a dual-band filter) combined into one colour image. One block per
-type of combination, by what was photographed: S-H-O (S II, H-alpha, O III), H-O (H-alpha, O III), RGB (R, G, B),
-LRGB (L, R, G, B). Each is a subclass of ``Combination``, which does what they share; a subclass declares its named
-inputs (``ports``), its parameters and its own ``combine``. A type added later is a class added here.
+the channels of one colour workflow shot through a dual-band filter) combined into one colour image.
+
+What a combination does is a recipe (stages/recipes.py): a TOML file of the application's folder
+``astro_gpu/resources/combinations`` that names its inputs, the operations on them from a fixed vocabulary (the
+background neutralisation, Siril's linear match, the continuum subtraction) and how they make red, green and blue (a
+hue per filter or a matrix; composed as lightness and colour or mixed as they are; the colour smoothed and its
+strength). ``Combination.run`` carries the recipe out with the functions of this module; the folder's
+``_example.toml`` documents every setting. The recipe is copied into the project when the combination is placed: a
+project computes the same whatever happens to the file.
+
+The four types the application had before recipes, by what was photographed: S-H-O (S II, H-alpha, O III), H-O
+(H-alpha, O III), RGB (R, G, B), LRGB (L, R, G, B), are the shipped recipes ``sho``, ``ho``, ``rgb``, ``lrgb``; each
+keeps its block (a subclass of ``Combination``: its stage, its parameters, its ports), so that their keys and images
+are those they had. Any other recipe runs on the stage ``combine_recipe`` (``CombineRecipe``), its parameters in
+``values``. Below, the methods the four types use, which the recipes' operations are.
 
 A combination workflow starts from other workflows (``Workflow.source = {"fusion": {"type", "inputs"}}``): its stage
 reads, for each port, the image of a channel's workflow (its Output's linear image, render_simple: lin.npy, the sky
@@ -18,10 +29,12 @@ a Stars/background block after it, and the Combine layers block in Post, do (one
    ``GB`` (the mean of green and blue: the O III of a dual-band filter on a colour sensor, whose green and blue pixels
    both see the 501 nm line).
 3. Each channel's sky is taken to 0 (``neutralise_sky``: the background neutralisation, below), then the channel is
-   brought to the same scale. Narrow-band types: Siril's linear match (``linear_match``, below), each filter fitted
-   linearly to the H-alpha's, so that a faint O III weighs as much as a strong H-alpha. RGB and LRGB: each channel
-   divided by a high percentile of its signal (99.5 %, above its sky at 0). The user's weight of a channel scales it
-   after.
+   brought to the same scale by Siril's linear match (``linear_match``, below), each channel fitted linearly to the
+   type's reference (``match_reference``): the H-alpha for the narrow-band types, so that a faint O III weighs as
+   much as a strong H-alpha; the top layer of Siril's RGB compositing tool for the broadband ones (its documentation:
+   "The top layer loaded (usually Luminance or Red) is taken as the reference channel, and all other channels are
+   automatically linearly matched to it", siril.readthedocs.io, "RGB compositing"): the red for RGB, the luminance
+   for LRGB. The user's weight of a channel scales it after.
 4. The type's ``combine`` makes red, green and blue. The narrow-band types give each filter a hue (Rector, Levay,
    Frattare, English & Pu'uohau-Pummill 2007, AJ 133, 598, "Image-processing techniques for the creation of
    presentation-quality astronomical images": each filter's greyscale image is given its own hue and the colourised
@@ -67,6 +80,46 @@ signal: Siril's FAQ (siril.org/faq: linear match the other stacks, "pick the Ha 
 compositing tool, which takes the top layer loaded as the reference, the H-alpha loaded first for narrow-band images.
 The fit's offset moves the sky, which is taken back to 0 after it (the compositions need an empty sky at 0).
 
+The broadband types (RGB, LRGB) give the colour as it was recorded; its balance is the Color block's, placed after the
+combination (the templates Mono RGB and Mono LRGB): the photometric white balance of the stars, one factor per colour,
+as Siril's and the reference processing suite's photometric calibrations of a monochrome camera's R, G and B make it
+(Siril's RGB composition tutorial, siril.org/tutorials/rgb_composition: for RGB "no normalisation is needed", the
+colour calibration after the composition). So the linear match only puts the channels on one scale; a factor it
+leaves is taken off by the Color block's.
+
+- RGB: the channels are the red, green and blue (the channel combination of the usual programs), nothing else.
+- LRGB: the colour of RGB, the lightness of L, at every pixel (``compose`` with the lightness given): each pixel's
+  colour ratios to their own luminance, times L; where the colour's luminance is under its noise floor the pixel is
+  grey (L alone), so the depth of L is kept on the faint areas and the sky, where the colour has no signal. Siril
+  substitutes the luminance for the lightness of the colour data (its rgbcomp command, HSL by default, HSV or CIE
+  L*a*b*), the reference processing suite's LRGBCombination its CIE lightness: on a linear image the substitution
+  that keeps each pixel's chromaticity is this scaling of its three channels. The L is on the colour's scale: the
+  R, G and B are linearly matched to it (above). Siril and the photometric calibrations calibrate the colour on the
+  RGB before L is added (siril.readthedocs.io, "Spectrophotometric Color Calibration": "We recommend processing only
+  RGB with SPCC. The L layer must be added at a later stage"); here the Color block comes after the LRGB. Since L
+  scales a pixel's three channels alike, the colour ratios the Color block measures and sets are those of the RGB,
+  and its factors give the colour the order of the recommendation would give; only the lightness differs, by the
+  luminance's share of the factors (``Y(M c) / Y(c)``, within the factors' spread around the grey's). The colour is
+  not smoothed (Siril's composition has no chrominance smoothing; each filter's row has its own Denoise), and its
+  strength is not raised: the subject's median Oklch chroma of professional broadband composites spreads over a
+  factor five from one object to the next (0.015 to 0.077, nine ESO and ESA/Hubble images: DSS2 B and R plates,
+  B V R or B V I), not one target, and ours lies within it.
+- The stars' saturation: the combination hands on the saturation map of its colour channels' stacks (``saturation.npy``,
+  the stack's own: a pixel near saturation in any of R, G, B), so that the Color block after it leaves out the
+  saturated stars by the map, as after a Stacking, not by its estimate from the image's brightest pixels, which on
+  a combination refused most of a field's stars (M8 LRGB: 160 of 195 Gaia XP stars, its calibration fell back;
+  with the map 129 are measured). The L is not in it: it scales a pixel's three channels alike, so a star
+  saturated in L keeps the colour ratios of its R, G and B.
+
+Continuum subtraction (a recipe's ``continuum_subtract``, the HaRGB recipe): a narrow-band filter records its line
+and the continuum under it; a broadband filter around the line records the continuum (and the line, diluted in its
+width). The stellar method (W. H. Waller 1990, PASP 102, 1217; the standard procedure of H-alpha imaging, e.g.
+Koopmann, Kenney & Young 2001, ApJS 135, 125; Spector, Finkelman & Brosch 2012, MNRAS 419, 2156): the field's stars
+have no line emission, so the ratio of their fluxes in the two images is the scale of the continuum; the line image
+minus the broadband image times that scale is the line alone (``continuum_scale``: aperture photometry of the
+isolated, unsaturated stars, each with its local sky in an annulus, the median of their ratios). The line is then
+divided by the scale: on the broadband image's scale, a star equal in both.
+
 The result's valid area is where every input has data. Its scale: the first input's (its level kept). Any workflow may
 feed any port; a port with no workflow is the empty state, and the block waits for it.
 """
@@ -81,6 +134,7 @@ import numpy as np
 
 from ..core.params import P, StageParams
 from ..core.stage import Context, Stage, StageError
+from . import recipes
 
 CHANNELS = ("L", "R", "G", "B", "GB")
 #: what a port reads of its channel's workflow: its Output's image, or its Stars/background's starless image or stars alone
@@ -187,15 +241,6 @@ def linear_match(ch: np.ndarray, ref: np.ndarray, valid: np.ndarray, low: float 
         raise StageError("the channels cannot be matched: a channel is flat where the reference has data")
     a = float(np.sum((x - mx) * (y - my)) / var)
     return a, float(my - a * mx), n
-
-
-def balance(ch: np.ndarray, valid: np.ndarray, pct: float) -> tuple[np.ndarray, float]:
-    """A channel divided by the given percentile of its valid pixels above 0 (its sky is at 0)."""
-    v = ch[valid]
-    v = v[np.isfinite(v)]
-    top = float(np.percentile(v, pct)) if v.size else 1.0
-    top = top if top > 0 else 1.0
-    return ch / np.float32(top), top
 
 
 def block_medians(a: np.ndarray, b: int) -> np.ndarray:
@@ -333,7 +378,7 @@ def gamut_gain(ratio: np.ndarray, L: np.ndarray, gain: float) -> np.ndarray:
 
 def compose(chans: dict[str, np.ndarray], roles: tuple[str, ...], mat, noise: dict[str, float],
             sigma: float | None = None, sky: np.ndarray | None = None, equal: bool = False,
-            gain: float = 1.0) -> tuple[np.ndarray, dict]:
+            gain: float = 1.0, light: np.ndarray | None = None) -> tuple[np.ndarray, dict]:
     """(3, H, W) of a narrow-band combination composed as luminance and chrominance (issue #163; the LRGB composition,
     the colour of one image and the lightness of another, R. Gendler, "Lessons from the Masters", Springer 2013, and
     Rector et al. 2007 for the colour layers): the lightness is the mean of the channels (``lightness``), the hues give
@@ -345,9 +390,16 @@ def compose(chans: dict[str, np.ndarray], roles: tuple[str, ...], mat, noise: di
     one to two floors the colour comes in: the noise of a weak filter, raised by the balance, no longer paints the sky.
     That noise is measured on the ``sky`` pixels (the channels' common sky, ``sky_mask``) of the smoothed colour's
     luminance: the residues of the channels' skies and their noise's grain, wider than one pixel, are what a white
-    noise's formula would miss; without sky pixels, the formula. Returns (the image, notes for the log)."""
+    noise's formula would miss; without sky pixels, the formula. ``light``: the lightness given (the L of an LRGB)
+    instead of the channels' mean; its noise is then not known, so ``sigma`` must be given. Returns (the image, notes
+    for the log)."""
     rgb = mix(chans, roles, mat)
-    L, noise_l = lightness(chans, noise, equal)
+    if light is None:
+        L, noise_l = lightness(chans, noise, equal)
+    elif sigma is None:
+        raise ValueError("a lightness given needs the colour's smoothing radius")
+    else:
+        L, noise_l = light.astype(np.float32), float("nan")
     lum_w = LUM.astype(np.float64) @ np.asarray(mat, np.float64)     # each channel's share of the colour's luminance
     noise_c = float(np.sqrt(sum((lum_w[i] * noise[r]) ** 2 for i, r in enumerate(roles))))
     sig = chroma_sigma({r: noise[r] for r in roles}, noise_l) if sigma is None else float(sigma)
@@ -369,6 +421,126 @@ def compose(chans: dict[str, np.ndarray], roles: tuple[str, ...], mat, noise: di
     return (ratio * L[None]).astype(np.float32), {"sigma": sig, "noise_l": noise_l, "floor": floor}
 
 
+#: the continuum's scale needs this many measured stars at the least
+MIN_STARS = 5
+#: the detection threshold of the stars (in units of the sky's noise) and their roundness (minor / major axis)
+STAR_SIGMA, STAR_ROUND = 8.0, 0.6
+#: the photometry's circle, in full widths at half maximum of the stars
+APERTURE = 1.5
+
+
+def continuum_scale(line: np.ndarray, cont: np.ndarray, valid: np.ndarray, top_line: float,
+                    top_cont: float) -> tuple[float, int]:
+    """(the scale, the stars used) of a continuum subtraction (module docstring): the median, over the field's stars,
+    of their flux in the line image over their flux in the continuum image. The stars are found on the continuum
+    image (SExtractor's detection, ``sep``, at STAR_SIGMA times the sky's noise; round, unflagged); each is measured
+    in both images in a circle of APERTURE times the stars' full width at half maximum (near the best signal to noise
+    of aperture photometry, S. B. Howell 1989, PASP 101, 616; the same circle in both images, so the share of a star
+    it holds cancels in the ratio), its local sky the mean of an annulus from 1.25 to 2 radii (the nebula under the
+    star taken off, which a line image has; narrow, so that the nebula's curvature biases it least: a wider one, 1.5
+    to 3 radii, gave 3 % less on a synthetic nebula). Left out: a star with a neighbour within its annulus, one whose brightest pixel is above ``top_*`` in either image (saturated), one under 10 times its
+    flux error."""
+    import sep
+
+    from ..core.imgutil import sep_extract
+    bad = ~valid | ~np.isfinite(cont) | ~np.isfinite(line)
+    c = np.ascontiguousarray(np.where(bad, 0, cont), np.float32)
+    ln = np.ascontiguousarray(np.where(bad, 0, line), np.float32)
+    bkg = sep.Background(c, mask=bad, bw=64, bh=64)
+    o = sep_extract(c - bkg.back(), STAR_SIGMA, err=bkg.globalrms, minarea=4, mask=bad, deblend_cont=0.005)
+    o = o[(o["flag"] == 0) & (o["b"] >= STAR_ROUND * o["a"])]
+    if len(o) < MIN_STARS:
+        raise StageError(f"the continuum's scale needs stars: {len(o)} found on the continuum image (at least "
+                         f"{MIN_STARS}); write the scale in the recipe")
+    # the FWHM of a Gaussian of the objects' second moments
+    r = max(float(APERTURE * 2.355 * np.median(np.sqrt(o["a"] * o["b"]))), 2.0)
+    x, y = o["x"].astype(np.float64), o["y"].astype(np.float64)
+    H, W = c.shape
+    inside = (x > 2 * r) & (x < W - 1 - 2 * r) & (y > 2 * r) & (y < H - 1 - 2 * r)
+    from scipy.spatial import cKDTree
+    near = cKDTree(np.c_[x, y]).query_ball_point(np.c_[x, y], r=2 * r, return_length=True)
+    keep = inside & (near <= 1)
+    ri = int(np.ceil(r))
+    for n in np.nonzero(keep)[0]:
+        yi, xi = int(round(y[n])), int(round(x[n]))
+        box = (slice(yi - ri, yi + ri + 1), slice(xi - ri, xi + ri + 1))
+        if bad[box].any() or cont[box].max() > top_cont or line[box].max() > top_line:
+            keep[n] = False
+    x, y = x[keep], y[keep]
+    if len(x) < MIN_STARS:
+        raise StageError(f"the continuum's scale needs stars: {len(x)} isolated and unsaturated (at least "
+                         f"{MIN_STARS}); write the scale in the recipe")
+    rms_l = float(sep.Background(ln, mask=bad, bw=64, bh=64).globalrms)
+    fc, ec, _ = sep.sum_circle(c, x, y, r, err=float(bkg.globalrms), bkgann=(1.25 * r, 2 * r))
+    fl, el, _ = sep.sum_circle(ln, x, y, r, err=rms_l, bkgann=(1.25 * r, 2 * r))
+    ok = (fc > 10 * ec) & (fl > 10 * el)
+    if ok.sum() < MIN_STARS:
+        raise StageError(f"the continuum's scale needs stars: {int(ok.sum())} measured in both images (at least "
+                         f"{MIN_STARS}); write the scale in the recipe")
+    return float(np.median(fl[ok] / fc[ok])), int(ok.sum())
+
+
+def recipe_value(p, spec: dict, name: str):
+    """The value of a recipe's parameter: the block's own setting of that name (the four types' parameters), else the
+    user's value in ``values`` (checked against the recipe), else the recipe's default."""
+    q = spec["parameters"].get(name)
+    if q is None:
+        raise StageError(f"the recipe has no parameter {name!r}")
+    if p is not None and name in getattr(type(p), "model_fields", {}) and name not in RecipeParams.model_fields:
+        return getattr(p, name)
+    v = ((getattr(p, "values", None) or {}) if p is not None else {}).get(name, q["default"])
+    if "choices" in q:
+        if v not in q["choices"]:
+            raise StageError(f"{name}: {v!r} is not one of {', '.join(q['choices'])}")
+        return v
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        raise StageError(f"{name}: {v!r} is not a number")
+    if v < q.get("min", -np.inf) or v > q.get("max", np.inf):
+        raise StageError(f"{name}: {v:g} is outside {q.get('min', -np.inf):g} to {q.get('max', np.inf):g}")
+    return float(v)
+
+
+def recipe_output(ctx, p, spec: dict, chans: dict[str, np.ndarray], noise: dict[str, float],
+                  valid: np.ndarray) -> np.ndarray:
+    """(3, H, W): a recipe's ``output`` (stages/recipes.py) on the balanced channels: a hue per channel
+    (``hue_palette``) or a matrix; mixed as they are, or composed as lightness and colour (``compose``)."""
+    o = spec["output"]
+
+    def get(v):
+        return recipe_value(p, spec, v[1:]) if isinstance(v, str) and v.startswith("$") else v
+    roles = tuple(o["channels"])
+    if o["hues"] is not None:
+        hues = tuple(float(get(h)) for h in o["hues"])
+        try:
+            mat = hue_palette(hues)
+        except ValueError as e:
+            raise StageError(f"{e}: choose hues around the colour wheel") from None
+    else:
+        mat = [[float(get(x)) for x in row] for row in o["matrix"]]
+    if o["lightness"] is None:
+        return mix(chans, roles, mat)
+    smoothing, gain = get(o["smoothing"]), float(get(o["strength"]))
+    if o["lightness"] == "channels":
+        equal = get(o["weighting"]) == "equal"
+        sigma = None if smoothing == "auto" else float(get(o["radius"]))
+        rgb, notes = compose(chans, roles, mat, noise, sigma, sky=sky_mask(chans, valid), equal=equal, gain=gain)
+        colour = ("the hues " + ", ".join(f"{r} {h:g}" for r, h in zip(roles, hues)) if o["hues"] is not None
+                  else "the matrix")
+        ctx.log(f"lightness from the channels {'equally' if equal else 'weighted by their noise'} ("
+                + ", ".join(f"{r} {(notes['noise_l'] / max(noise[r], 1e-12)) ** 2:.2f}" for r in chans)
+                + f"), colour from {colour}" + (f", smoothed over {notes['sigma']:.1f} px" if notes["sigma"] else ""))
+        ctx.metric("chroma_sigma", round(notes["sigma"], 2))
+        return rgb
+    if smoothing == "auto":
+        raise StageError("a lightness taken from an input needs a smoothing radius (its noise is not measured)")
+    light = o["lightness"]
+    rgb, notes = compose(chans, roles, mat, noise, sigma=float(get(o["radius"])), sky=sky_mask(chans, valid),
+                         light=chans[light], gain=gain)
+    ctx.log(f"lightness from {light}, colour from {', '.join(roles[:-1])} and {roles[-1]} (grey under "
+            f"{notes['floor']:.3g}, the colour's sky noise floor)")
+    return rgb
+
+
 # ---------------------------------------------------------------------------------------------- the blocks
 
 class CombinationParams(StageParams):
@@ -384,12 +556,15 @@ class CombinationParams(StageParams):
                        help="The plate solution of the reference row, handed on with the combination's image.")
     weights: dict = P({}, label="Channel weights", level="internal",
                       help="Each channel's weight, after the balance (1: as balanced).")
+    #: set by the project (not keyed here: the combination's source part of the key holds it, stages/recipes.py): the
+    #: recipe copied into the project; empty for a project saved before recipes (its type's frozen recipe)
+    recipe: dict = P({}, label="Recipe", level="internal",
+                     help="The recipe of the combination, as copied into the project.")
 
 
-class BalancedParams(CombinationParams):
-    percentile: float = P(99.5, label="Channel balance", level="advanced", ge=90, le=99.99, step=0.1, unit="%",
-                          help="Each channel is divided by this percentile of its signal before it is combined: the "
-                               "filters weigh alike.")
+class RecipeParams(CombinationParams):
+    values: dict = P({}, label="Recipe settings",
+                     help="The recipe's parameters the user set, by name; the others at the recipe's defaults.")
 
 
 class NarrowbandParams(CombinationParams):
@@ -404,36 +579,68 @@ class NarrowbandParams(CombinationParams):
 
 
 class Combination(Stage):
-    """What every type of combination shares: the named inputs read, checked to overlap, aligned on the first one's
-    grid; the sky neutralised; the balance and the weights; the outputs, the previews and the metrics. A subclass
-    declares ``kind`` (the source's type), ``ports`` (its named inputs, in the order its ``combine`` reads them) and
-    ``narrowband`` (its result's origin for Post), and writes ``combine``."""
+    """What every combination shares: the recipe's named inputs read, checked to overlap, on the first one's grid; the
+    recipe's steps (the skies neutralised, the linear match, the continuum subtraction); the weights; the recipe's
+    output; the outputs, the previews and the metrics. The four types before recipes are subclasses (their stage,
+    ``kind``, ``ports``, parameters), which run their type's recipe (``recipes.LEGACY``) or its copy in the project;
+    ``CombineRecipe`` runs any other recipe."""
 
     kind: ClassVar[str]
     ports: ClassVar[tuple[str, ...]]
     narrowband: ClassVar[bool] = False
+    #: the port every other channel is linearly matched to (module docstring, 3)
+    match_reference: ClassVar[str] = MATCH_REFERENCE
+    #: the ports whose stacks' saturation map the result hands on (module docstring, the broadband types)
+    saturation_ports: ClassVar[tuple[str, ...]] = ()
     Params = CombinationParams
+
+    def spec(self, p) -> dict:
+        """The recipe the block runs: the project's copy (``p.recipe``), else its type's frozen one."""
+        r = getattr(p, "recipe", None) if p is not None else None
+        return r or recipes.legacy_spec(self.kind)
+
+    def title_of(self, spec: dict) -> str:
+        return self.title
 
     def combine(self, ctx: Context, p, chans: dict[str, np.ndarray], noise: dict[str, float],
                 valid: np.ndarray) -> np.ndarray:
-        """(3, H, W): the balanced channels by port (each sky at 0) made into red, green and blue (before the first
-        channel's level is given back). ``noise``: each balanced channel's sky noise."""
-        raise NotImplementedError
+        """(3, H, W): the balanced channels by port (each sky at 0) made into red, green and blue by the recipe's
+        output (before the first channel's level is given back). ``noise``: each balanced channel's sky noise."""
+        return recipe_output(ctx, p, self.spec(p), chans, noise, valid)
+
+    def saturation_of(self, inputs: list[dict], shape: tuple[int, int],
+                      ports: tuple[str, ...] | None = None) -> np.ndarray | None:
+        """The saturation map handed on (module docstring): the stacks' maps of ``ports`` (the recipe's
+        ``saturation``; default ``saturation_ports``; each input's ``saturation``: its Stacking's or Align on's
+        saturation.npy, layer 0 near saturation, 1 saturated) merged, a pixel flagged in any of them flagged; None when
+        a port has none (the Color block then estimates it)."""
+        maps = []
+        for role in self.saturation_ports if ports is None else ports:
+            f = next((i.get("saturation") or "" for i in inputs if i["role"] == role), "")
+            if not f or not Path(f).is_file():
+                return None
+            m = np.load(f)
+            if m.shape[-2:] != tuple(shape):
+                return None
+            maps.append(m)
+        return np.maximum.reduce(maps) if maps else None
 
     def run(self, ctx: Context, p: CombinationParams) -> None:
+        spec = self.spec(p)
+        ports = recipes.roles(spec)
+        title = self.title_of(spec)
         if not p.inputs:
             raise StageError("no workflow to combine: choose the channels of the combination")
-        missing = [r for r in self.ports if r not in {i["role"] for i in p.inputs}]
+        missing = [r for r in ports if r not in {i["role"] for i in p.inputs}]
         if missing:
-            raise StageError(f"{self.title} needs the {', '.join(missing)} channel(s)")
+            raise StageError(f"{title} needs the {', '.join(missing)} channel(s)")
         ref: dict = {}
         wcs_ref = None
         chans: dict[str, np.ndarray] = {}
         valid_all = None
-        tops: dict[str, float] = {}
         shapes: dict[str, list[int]] = {}
-        inputs = [i for i in p.inputs if i["role"] in self.ports]
-        bad = grid_problem(inputs, self.ports)
+        inputs = [i for i in p.inputs if i["role"] in ports]
+        bad = grid_problem(inputs, ports)
         if bad:
             raise StageError(bad)
         for n, inp in enumerate(inputs):
@@ -446,7 +653,8 @@ class Combination(Stage):
                                  if image != "output" else
                                  f"the output of the {inp['role']} channel is not computed")
             valid = np.load(d / "valid.npy")
-            ch = channel_of(np.asarray(np.load(d / name, mmap_mode="r")), inp.get("channel", "L"))
+            ch = channel_of(np.asarray(np.load(d / name, mmap_mode="r")),
+                            inp.get("channel", recipes.default_channel(spec, inp["role"])))
             wcs_f = Path(inp.get("wcs") or "")
             if not ref:
                 ref = {"shape": ch.shape, "dir": d}
@@ -459,39 +667,14 @@ class Combination(Stage):
             chans[inp["role"]] = ch
             ctx.progress(0.6 * (n + 1) / len(inputs), f"channel {inp['role']}")
         # a safety net: the grids said alike, the sizes did not
-        bad = grid_problem([{"role": r, "grid": s} for r, s in shapes.items()], self.ports)
+        bad = grid_problem([{"role": r, "grid": s} for r, s in shapes.items()], ports)
         if bad:
             raise StageError(bad)
         if not valid_all.any():
             raise StageError("the channels do not overlap: no pixel where every one has data")
-        skies = neutralise_sky(chans, valid_all)
-        ctx.log("sky removed (level, noise): " + ", ".join(f"{r} {a:.4g}, {b:.3g}" for r, (a, b) in skies.items()))
-        if self.narrowband:
-            # Siril's linear match of every filter to the H-alpha; the result keeps the H-alpha's scale (top 1)
-            ref_role = MATCH_REFERENCE if MATCH_REFERENCE in chans else next(iter(chans))
-            ref_ch = chans[ref_role]
-            full = float(next(i for i in inputs if i["role"] == ref_role).get("full_scale") or 1.0)
-            for role in list(chans):
-                tops[role] = 1.0
-                if role == ref_role:
-                    continue
-                a, b, used = linear_match(chans[role], ref_ch, valid_all, MATCH_LOW * full, MATCH_HIGH * full)
-                if not a > 0:
-                    raise StageError(f"the {role} channel does not follow the {ref_role} one (a negative fit): "
-                                     "check that they show the same field")
-                chans[role] = (chans[role] * np.float32(a) + np.float32(b)).astype(np.float32)
-                tops[role] = 1.0 / a
-                ctx.log(f"{role} matched to {ref_role} on its pixels between {MATCH_LOW * full:.3g} and "
-                        f"{MATCH_HIGH * full:.5g}: {a:.4g} x + {b:.3g} ({used} pixels)")
-            skies = neutralise_sky(chans, valid_all)           # the fits' offsets taken off: the sky at 0 again
-            level = 1.0
-        else:
-            level = None
-            for role in list(chans):
-                chans[role], tops[role] = balance(chans[role], valid_all, p.percentile)
-                if level is None:
-                    level = tops[role]
-            skies = {r: (skies[r][0], skies[r][1] / tops[r]) for r in chans}
+        tops = {r: 1.0 for r in chans}
+        skies = self.steps(ctx, spec, inputs, chans, valid_all, tops)
+        level = 1.0
         for role in list(chans):
             wgt = float(p.weights.get(role, 1.0))
             if wgt != 1.0:                           # the user's weight: the balance's divisor scaled with it
@@ -506,10 +689,14 @@ class Combination(Stage):
         H, W = ref["shape"]
         ctx.save("drz_full.npy", rgb.astype(np.float32))
         ctx.save("drz_weight.npy", np.repeat(valid_all[None].astype(np.float32), 3, axis=0))
+        sat = self.saturation_of(inputs, (H, W), tuple(spec["output"]["saturation"]))
+        if sat is not None:
+            from .stack import SATURATION
+            ctx.save(SATURATION, sat)
         meta = json.loads((ref["dir"] / "prep_simple.json").read_text(encoding="utf-8")) \
             if (ref["dir"] / "prep_simple.json").is_file() else {}
         ctx.save_json("drz_meta.json", {"scale": float(meta.get("drizzle_scale", 1.0)), "source": "fusion",
-                                        "kind": self.kind, "narrowband": self.narrowband, "width": W, "height": H,
+                                        "kind": spec["id"], "narrowband": spec["narrowband"], "width": W, "height": H,
                                         "sky_neutral": True, "channels": {r: round(t, 4) for r, t in tops.items()}})
         # the reference row's plate solution: the combination is on its grid and crops nothing, so it is the same
         # solution; the files of its Astrometry stages are handed on as Align on does, the blocks after read them
@@ -518,35 +705,73 @@ class Combination(Stage):
         if wcs_ref is not None:
             wcs_ref.to_fits().writeto(ctx.out("wcs.fits"), overwrite=True)
         ctx.metric("channels", sorted(chans))
-        ctx.log(f"{self.title} from {', '.join(chans)}; channel scales " + ", ".join(f"{r} {t:.4g}" for r, t in tops.items()))
+        ctx.log(f"{title} from {', '.join(chans)}; channel scales " + ", ".join(f"{r} {t:.4g}" for r, t in tops.items()))
         v = np.moveaxis(rgb, 0, -1)
         lo, hi = np.percentile(v[valid_all], 1), np.percentile(v[valid_all], 99.7)
         ctx.preview("fusion", np.clip((v - lo) / max(hi - lo, 1e-6), 0, 1) ** 0.5)
 
+    def steps(self, ctx: Context, spec: dict, inputs: list[dict], chans: dict[str, np.ndarray], valid: np.ndarray,
+              tops: dict[str, float]) -> dict[str, tuple[float, float]]:
+        """The recipe's steps on the channels, in place (``tops``: each channel's scale, 1 over the factor it was
+        multiplied by). Returns the last neutralisation's {role: (level, noise)}."""
+        skies: dict[str, tuple[float, float]] = {}
+        first = True
+        for step in spec["steps"]:
+            op = step["op"]
+            if op == "neutralise_sky":
+                skies = neutralise_sky(chans, valid)
+                if first:
+                    ctx.log("sky removed (level, noise): " + ", ".join(f"{r} {a:.4g}, {b:.3g}" for r, (a, b) in skies.items()))
+                first = False
+            elif op == "linear_match":
+                # Siril's linear match of the channels to the reference; the result keeps the reference's scale
+                ref_role = step["reference"]
+                ref_ch = chans[ref_role]
+                full = float(next(i for i in inputs if i["role"] == ref_role).get("full_scale") or 1.0)
+                low, high = step["low"] * full, step["high"] * full
+                for role in list(chans):
+                    if role == ref_role or (step["channels"] and role not in step["channels"]):
+                        continue
+                    a, b, used = linear_match(chans[role], ref_ch, valid, low, high)
+                    if not a > 0:
+                        raise StageError(f"the {role} channel does not follow the {ref_role} one (a negative fit): "
+                                         "check that they show the same field")
+                    chans[role] = (chans[role] * np.float32(a) + np.float32(b)).astype(np.float32)
+                    tops[role] = 1.0 / a
+                    ctx.log(f"{role} matched to {ref_role} on its pixels between {low:.3g} and "
+                            f"{high:.5g}: {a:.4g} x + {b:.3g} ({used} pixels)")
+                skies = neutralise_sky(chans, valid)               # the fits' offsets taken off: the sky at 0 again
+            elif op == "continuum_subtract":
+                line, cont = step["line"], step["continuum"]
+                full = {i["role"]: float(i.get("full_scale") or 1.0) for i in inputs}
+                if step["scale"] == "stars":
+                    mu, n = continuum_scale(chans[line], chans[cont], valid, MATCH_HIGH * full[line],
+                                            MATCH_HIGH * full[cont])
+                    ctx.log(f"{line}'s continuum: {cont} times {mu:.4g}, measured on {n} stars")
+                    ctx.metric("continuum_stars", n)
+                else:
+                    mu = float(step["scale"])
+                    ctx.log(f"{line}'s continuum: {cont} times {mu:.4g}, as the recipe says")
+                if not mu > 0:
+                    raise StageError(f"the {line} channel's continuum scale is not above 0: check that {line} and "
+                                     f"{cont} show the same field")
+                chans[line] = (chans[line] / np.float32(mu) - chans[cont]).astype(np.float32)
+                tops[line] *= mu
+                ctx.metric("continuum_scale", round(mu, 6))
+                skies = neutralise_sky(chans, valid)
+            else:                                   # recipes.parse admits no other
+                raise StageError(f"unknown operation {op!r}")
+        return skies
+
 
 class NarrowbandCombination(Combination):
-    """The narrow-band types: each filter given a hue, composed as lightness and colour (module docstring, 4-5). A
-    subclass names its hue parameters ``hue_<port>``, in its ports' order."""
+    """The narrow-band types (S-H-O, H-O): each filter given a hue, composed as lightness and colour (module
+    docstring, 4-5), their hue parameters ``hue_<port>``."""
 
     narrowband = True
 
     def hues(self, p) -> tuple[float, ...]:
         return tuple(float(getattr(p, f"hue_{r.lower()}")) for r in self.ports)
-
-    def combine(self, ctx, p, chans, noise, valid):
-        try:
-            mat = hue_palette(self.hues(p))
-        except ValueError as e:
-            raise StageError(f"{e}: choose hues around the colour wheel") from None
-        sigma = None if p.smoothing == "auto" else p.radius
-        rgb, notes = compose(chans, self.ports, mat, noise, sigma, sky=sky_mask(chans, valid),
-                             equal=p.lightness == "equal", gain=CHROMA_GAIN)
-        ctx.log(f"lightness from the channels {'weighted by their noise' if p.lightness == 'noise' else 'equally'} ("
-                + ", ".join(f"{r} {(notes['noise_l'] / max(noise[r], 1e-12)) ** 2:.2f}" for r in chans)
-                + "), colour from the hues " + ", ".join(f"{r} {h:g}" for r, h in zip(self.ports, self.hues(p)))
-                + (f", smoothed over {notes['sigma']:.1f} px" if notes["sigma"] else ""))
-        ctx.metric("chroma_sigma", round(notes["sigma"], 2))
-        return rgb
 
 
 class SHOParams(NarrowbandParams):
@@ -595,12 +820,13 @@ class CombineRGB(Combination):
     title = "RGB"
     kind = "rgb"
     ports = ("R", "G", "B")
-    description = "Combines the red, green and blue filters into one colour image, aligned through their plate solutions."
-    Params = BalancedParams
-    version = "2"
-
-    def combine(self, ctx, p, chans, noise, valid):
-        return mix(chans, self.ports, np.eye(3))
+    description = ("Combines the red, green and blue filters into one colour image, each linearly matched to the red; "
+                   "the colour calibration after it sets the colour balance.")
+    Params = CombinationParams
+    match_reference = "R"
+    saturation_ports = ("R", "G", "B")
+    # 3: Siril's linear match to the red instead of a percentile; the stacks' saturation map handed on
+    version = "3"
 
 
 class CombineLRGB(Combination):
@@ -609,26 +835,46 @@ class CombineLRGB(Combination):
     kind = "lrgb"
     ports = ("L", "R", "G", "B")
     description = ("Combines the red, green and blue filters into the colour, the luminance filter into the detail: "
-                   "each pixel's colour scaled so that its luminance is L's.")
-    Params = BalancedParams
-    version = "2"
+                   "at every pixel the colour of RGB, the lightness of L.")
+    Params = CombinationParams
+    match_reference = "L"
+    saturation_ports = ("R", "G", "B")
+    # 3: R, G and B linearly matched to L (Siril) instead of percentiles; L's lightness at every pixel, the colour grey
+    # under its noise floor (before: the colour's own lightness there); the stacks' saturation map handed on
+    version = "3"
 
-    def combine(self, ctx, p, chans, noise, valid):
-        rgb = np.stack([chans["R"], chans["G"], chans["B"]])
-        lum = np.tensordot(LUM, rgb, 1)
-        # the colour ratio only where the colour has signal: with the sky at 0 its luminance is noise around 0, whose
-        # ratio to L's is meaningless; the floor is 3 robust sigmas of the colour's luminance over the frame
-        med = float(np.median(lum))
-        floor = max(1e-6, 3 * 1.4826 * float(np.median(np.abs(lum - med))))
-        k = np.where(lum > floor, chans["L"] / np.maximum(lum, floor), 1.0).astype(np.float32)
-        return (rgb * k[None]).astype(np.float32)
+
+class CombineRecipe(Combination):
+    """Any recipe other than the four types' frozen ones (stages/recipes.py): the recipe copied into the project runs,
+    its parameters in ``values``; the key holds the recipe (core/store.source_part)."""
+
+    name = recipes.RECIPE_STAGE
+    title = "Combination"
+    kind = ""
+    ports = ()
+    description = "Combines the inputs as the combination's recipe says (resources/combinations)."
+    Params = RecipeParams
+    version = "1"
+
+    def spec(self, p) -> dict:
+        if p is None or not p.recipe:
+            raise StageError("the combination has no recipe: place it again from the list of combinations")
+        try:
+            return recipes.check(p.recipe, "the combination's recipe")
+        except recipes.RecipeError as e:
+            raise StageError(str(e)) from None
+
+    def title_of(self, spec: dict) -> str:
+        return spec["name"]
 
 
 #: the types of combination, in the palette's order; adding a type is adding its class here
 COMBINATIONS: tuple[type[Combination], ...] = (CombineSHO, CombineHO, CombineRGB, CombineLRGB)
 BY_KIND: dict[str, type[Combination]] = {c.kind: c for c in COMBINATIONS}
+#: every combination block: the four types', then the one of the other recipes
+ALL: tuple[type[Combination], ...] = (*COMBINATIONS, CombineRecipe)
 #: the stages of the combinations (core/workflow: each the first stage of its workflow)
-STAGES: tuple[str, ...] = tuple(c.name for c in COMBINATIONS)
+STAGES: tuple[str, ...] = tuple(c.name for c in ALL)
 
 
 def stage_of(kind: str) -> str:

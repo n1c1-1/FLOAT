@@ -63,7 +63,10 @@ def test_four_blocks_on_one_base_class_each_with_its_named_inputs_parameters_and
         assert issubclass(c, C.Combination) and c.name == f"combine_{c.kind}" and c.version
         assert "run" not in vars(c)                                     # only its combine: the rest is shared
         assert {"inputs", "weights"} <= set(c.Params.model_fields)
-        assert ("percentile" in c.Params.model_fields) == (not c.narrowband)      # the narrow-band types match to Hα
+        assert "percentile" not in c.Params.model_fields             # every type is balanced by Siril's linear match
+        assert c.match_reference in c.ports
+    assert [c.match_reference for c in C.COMBINATIONS] == ["Ha", "Ha", "R", "L"]   # Hα; Siril's top layer
+    assert [c.saturation_ports for c in C.COMBINATIONS] == [(), (), ("R", "G", "B"), ("R", "G", "B")]
     sho = C.CombineSHO.Params()
     assert (sho.hue_sii, sho.hue_ha, sho.hue_oiii) == C.HUBBLE_HUES        # the measured hues, by default
     assert sho.lightness == "noise" and sho.smoothing == "auto" and sho.radius == 0
@@ -123,12 +126,75 @@ def test_a_combination_aligns_nothing_itself_and_needs_its_ports_and_one_grid(tm
         assert t in texts.WIRING_TEXTS
 
 
-def test_rgb_and_lrgb_combine_as_they_did():
+class _Ctx:
+    """A stage's context for ``combine`` alone: its log."""
+
+    def __init__(self):
+        self.said = []
+
+    def log(self, msg, level="info"):
+        self.said.append(msg)
+
+
+def _pct(ch, valid):
+    """A channel on a scale of its own (its 99.5th percentile at 1), as the tests' sky checks need one."""
+    return ch / np.float32(np.percentile(ch[valid], 99.5))
+
+
+def test_rgb_is_the_channels_and_lrgb_takes_l_as_lightness_everywhere_and_rgb_as_colour():
+    """RGB: the red, green and blue as they are. LRGB: at every pixel the luminance is L's; where the colour has signal
+    its ratios are RGB's, where it has none (a faint area L alone records, the sky) the pixel is grey at L's level: the
+    depth of L is kept there (before version 3 the colour's own lightness was kept under its floor)."""
     one = np.ones((1, 1), np.float32)
     ch = {"R": one, "G": 0.5 * one, "B": 0.25 * one}
     assert np.allclose(C.CombineRGB().combine(None, None, ch, {}, None)[:, 0, 0], [1, 0.5, 0.25])
-    lrgb = C.CombineLRGB().combine(None, None, {"L": 2 * one, "R": one, "G": one, "B": one}, {}, None)
-    assert np.allclose(lrgb, 2.0)                         # the colour of RGB, the luminance of L
+    rng = np.random.default_rng(4)
+    H = W = 96
+    chans = {r: rng.normal(0, 0.01, (H, W)).astype(np.float32) for r in "RGB"}
+    for r, v in zip("RGB", (1.0, 0.5, 0.25)):
+        chans[r][30:60, 30:60] += v
+    lum = C._lum(np.stack([chans[r] for r in "RGB"]))
+    L = (2 * np.where(np.pad(np.ones((30, 30), bool), ((30, 36), (30, 36))), lum, 0)
+         + rng.normal(0, 0.002, (H, W))).astype(np.float32)
+    L[70:90, 10:40] += 0.05                                       # a faint area only L records
+    chans["L"] = L
+    ctx = _Ctx()
+    out = C.CombineLRGB().combine(ctx, None, chans, {"L": 0.002, "R": 0.01, "G": 0.01, "B": 0.01}, np.ones((H, W), bool))
+    assert np.allclose(C._lum(out), L, atol=1e-5)                 # L's lightness, everywhere
+    patch = out[:, 35:55, 35:55].mean((1, 2))
+    assert np.allclose(patch / patch[0], [1, 0.5, 0.25], atol=0.02)      # RGB's colour
+    faint = out[:, 72:88, 12:38]
+    assert np.abs(faint - faint.mean(0, keepdims=True)).mean() < 1e-4 and faint.mean() > 0.04    # grey, L's level
+    assert any("lightness from L" in s for s in ctx.said)
+
+
+def test_rgb_and_lrgb_match_their_channels_to_siril_s_top_layer_and_hand_on_the_saturation_map(tmp_path):
+    """Siril's linear match: the green and blue of an RGB fitted to its red, the R, G, B of an LRGB to its L (the top
+    layer of Siril's RGB compositing tool): one nebula recorded at different levels and offsets comes out grey. The
+    stacks' saturation maps of R, G and B are handed on merged (the Color block after reads them); without one of
+    them, none (the Color block estimates it, as before)."""
+    ch, _ = _sky_field({"L": 5.0, "R": 3.0, "G": -2.0, "B": 7.0}, {"L": 0.02, "R": 0.03, "G": 0.03, "B": 0.03})
+    H, W = ch["R"].shape
+    sat = {}
+    for n, r in enumerate("LRGB"):
+        _output(tmp_path / r, np.repeat((ch[r] / 1000)[None], 3, 0))
+        m = np.zeros((2, H, W), np.uint8)
+        m[0, 10 + 10 * n, 20] = 1                                      # one flagged pixel per stack, apart
+        np.save(tmp_path / r / "saturation.npy", m)
+        sat[r] = str(tmp_path / r / "saturation.npy")
+    ins = {r: {"role": r, "channel": "L", "pid": 1, "dir": str(tmp_path / r), "saturation": sat[r]} for r in "LRGB"}
+    for cls, roles in ((C.CombineRGB, "RGB"), (C.CombineLRGB, "LRGB")):
+        said = []
+        out = _run(tmp_path, cls, cls.Params(inputs=[ins[r] for r in roles]), cls.kind, said)
+        rgb = np.load(out / "drz_full.npy")
+        core = rgb[:, 70:90, 86:106].mean((1, 2))
+        assert np.allclose(core / core.mean(), 1, atol=0.01), (cls.kind, core)     # matched: grey
+        assert any(f"matched to {cls.match_reference}" in str(s) for s in said)
+        m = np.load(out / "saturation.npy")
+        assert m.shape == (2, H, W) and sorted(zip(*np.nonzero(m[0]))) == [(20, 20), (30, 20), (40, 20)]  # R, G, B
+    del ins["B"]["saturation"]
+    out = _run(tmp_path, C.CombineRGB, C.CombineRGB.Params(inputs=[ins[r] for r in "RGB"]), "no_map")
+    assert not (out / "saturation.npy").exists()
 
 
 def test_each_channels_sky_goes_to_zero_so_that_an_empty_sky_is_grey_with_any_hues():
@@ -141,13 +207,13 @@ def test_each_channels_sky_goes_to_zero_so_that_an_empty_sky_is_grey_with_any_hu
         ch, neb = _sky_field({r: off[r] for r in roles}, {r: sig[r] for r in roles})
         sky = C.neutralise_sky(ch, valid)
         assert all(abs(sky[r][0] - off[r]) < 3 * sig[r] / 10 + 0.05 for r in roles)      # the levels found
-        rgb = C.mix({r: C.balance(ch[r], valid, 99.5)[0] for r in roles}, roles, C.hue_palette(hues))
+        rgb = C.mix({r: _pct(ch[r], valid) for r in roles}, roles, C.hue_palette(hues))
         far = ~neb
         far[:, 60:132] = False                                               # the frame's two sides, no nebula
         for c in range(3):
             assert abs(float(np.mean(rgb[c][far]))) < 0.02 * float(rgb[c].max()), (hues, c)
     ch, neb = _sky_field(off, sig)                        # without it the channels carry the cast of their offsets
-    raw = C.mix({r: C.balance(ch[r], valid, 99.5)[0] for r in off}, SHO, C.hue_palette(C.HUBBLE_HUES))
+    raw = C.mix({r: _pct(ch[r], valid) for r in off}, SHO, C.hue_palette(C.HUBBLE_HUES))
     assert abs(float(np.mean(raw[0][~neb]))) > 0.005 * float(raw[0].max())
 
 
@@ -157,16 +223,17 @@ def test_the_neutralised_sky_keeps_a_neutral_nebula_and_lrgb_stays_grey():
     valid = np.ones((160, 192), bool)
     mat = C.hue_palette(C.HUBBLE_HUES)
     ch, neb = _sky_field({r: 0.0 for r in SHO}, {"SII": 0.09, "Ha": 0.4, "OIII": 0.2})
-    before = {r: C.balance(ch[r].copy(), valid, 99.5)[0] for r in SHO}
+    before = {r: _pct(ch[r].copy(), valid) for r in SHO}
     C.neutralise_sky(ch, valid)
-    a, b = C.mix(before, SHO, mat), C.mix({r: C.balance(ch[r], valid, 99.5)[0] for r in SHO}, SHO, mat)
+    a, b = C.mix(before, SHO, mat), C.mix({r: _pct(ch[r], valid) for r in SHO}, SHO, mat)
     core = np.zeros_like(neb)
     core[70:90, 86:106] = True
     ra, rb = a[:, core].mean(1), b[:, core].mean(1)
     assert np.allclose(ra / ra.sum(), rb / rb.sum(), atol=0.01)              # the nebula's hue as before
     chans, _ = _sky_field({r: 0.0 for r in "LRGB"}, {"L": 0.2, "R": 0.3, "G": 0.3, "B": 0.3}, seed=5)
     C.neutralise_sky(chans, valid)
-    rgb = C.CombineLRGB().combine(None, None, {r: C.balance(chans[r], valid, 99.5)[0] for r in chans}, {}, valid)
+    scaled = {r: _pct(chans[r], valid) for r in chans}
+    rgb = C.CombineLRGB().combine(_Ctx(), None, scaled, {r: 0.003 for r in chans}, valid)
     far = ~neb
     far[:, 60:132] = False
     assert float(np.abs(rgb[:, far]).max()) < 0.25 * float(rgb.max())         # no speckle where the sky is noise

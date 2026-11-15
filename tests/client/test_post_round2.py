@@ -259,7 +259,7 @@ def test_the_linked_channels_box_says_it_is_an_output_setting_applied_by_a_run(m
         lay = next(x for x in v.layers if x["kind"] == "workflow")
         v.select(lay["id"], "layer")
         v.build_props()
-        assert v.linked_box.toolTip().startswith("Needs a run") and v.linked_note.text() == "Output setting: applied by a run"
+        assert v.linked_box.toolTip().startswith("Needs a run") and v.linked_note.text() == "Linked channels only: a setting of the output, applied by a run. The sliders below act at once."
     finally:
         page.shutdown()
         page.deleteLater()

@@ -531,6 +531,8 @@ def stack_methods(s, p) -> list[str]:
 
 #: the Classic stack's settings that do not apply to frames already in colour: nothing is demosaiced
 NO_DEBAYER = ("classic_debayer", "classic_cfa_balance")
+#: the stacking settings a monochrome sensor has no use for
+NO_COLOUR_STACK = {("stack", "white_balance"), ("stack", "classic_debayer"), ("stack", "classic_cfa_balance")}
 
 
 def colour_frames(s, p) -> bool:
@@ -595,9 +597,12 @@ def step_settings(s, p, step: str):
     every method uses."""
     spec = prefs.spec()
     cur = stack_method(s, p) if step == "empilement" else None
+    mono = step == "empilement" and bool(getattr(s, "is_mono", lambda _p: False)(p))
 
     def mine(r):
         m = setting_method(r)
+        if mono and (r.get("stage"), r.get("name")) in NO_COLOUR_STACK:       # one plane: no colours to balance or debayer
+            return False
         if cur == "classic" and r.get("name") in NO_DEBAYER and colour_frames(s, p):      # issue #57: no demosaicing
             return False
         return m is None or cur is None or m == cur

@@ -445,3 +445,25 @@ def _split(folder: Path, starless: np.ndarray, stars: np.ndarray):
     np.save(folder / "starless.npy", starless.astype(np.float32))
     np.save(folder / "stars.npy", stars.astype(np.float32))
     np.save(folder / "valid.npy", np.ones(starless.shape[1:], bool))
+
+
+def test_per_session_a_light_in_two_sessions_is_stacked_once_and_said(tmp_path, nights, caplog):
+    p = project(tmp_path / "p", nights, "per_session")
+    p.sessions[1].lights = [str(nights["n1"]), str(nights["n2"])]      # night 1 added again to session 2
+    p.add_workflow("W", FULL) if not p.workflows else None
+    wid = p.workflows[0].id
+    with caplog.at_level("INFO"):
+        second = p.session_inputs(2, wid).lights
+    assert [Path(f).name for f in second] == ["b1.ARW"] and "not stacked twice" in caplog.text
+    assert len(p.session_inputs(1, wid).lights) == 1                   # the first session keeps its folder
+
+
+def test_flats_merged_check_is_per_workflow_and_only_when_together(tmp_path, nights):
+    from astro_gpu import api
+    p = project(tmp_path / "p", nights, "together")
+    other = frames(tmp_path / "raw" / "flats2", {"g1.ARW": 70})
+    p.sessions[1].flats = [str(other)]
+    got = [c for c in api.health_checks(p) if c.key == "flats_merged"]
+    assert len(got) == 1 and got[0].args["workflow"] == "Full" and got[0].args["sessions"] == ["n1", "n2"]
+    p.stack_mode = "per_session"
+    assert not [c for c in api.health_checks(p) if c.key == "flats_merged"]
