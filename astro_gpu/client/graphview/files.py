@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 
 from ...core.project import COLOUR_EXT, FITS_EXT, RAW_EXT, frame_kind, list_frames
 from .. import prefs
-from ..i18n import _, plural
+from ..i18n import _, plural, quoted
 
 #: (English name, the engine's frame kinds it keeps), in the order of the dialog and of the combo. There is no « All
 #: files »: the engine reads frames only, so it could add nothing more than « All images »
@@ -248,7 +248,7 @@ def elsewhere_text(res: Resolution) -> str:
     if not res.elsewhere:
         return ""
     return _("{n} already in {sessions}: not added").format(
-        n=len(res.elsewhere), sessions=", ".join(f"“{s}”" for s in res.elsewhere_in))
+        n=len(res.elsewhere), sessions=", ".join(quoted(s) for s in res.elsewhere_in))
 
 
 def header_filter(paths) -> str:

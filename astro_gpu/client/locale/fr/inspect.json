@@ -181,7 +181,7 @@
   "Neutral sky (display)": "Ciel neutre (affichage)",
   "Neutral sky on before (display)": "Ciel neutre sur avant (affichage)",
   "Each channel scaled on the screen so that the sky is grey and the stars white. The data stay in the camera's colours.": "Chaque canal est ajusté à l'écran pour que le ciel soit gris et les étoiles blanches. Les données restent dans les couleurs de l'appareil.",
-  "The stack output in the camera's colours, before colour calibration: a colour cast it shows is the camera's own, the Color block takes it off.": "La sortie de l'empilement dans les couleurs de l'appareil, avant la calibration des couleurs : une dominante visible est celle de l'appareil, le bloc Couleur l'enlève.",
+  "The stack output in the camera's colours, before colour calibration: a colour cast it shows is the camera's own, the Colour block takes it off.": "La sortie de l'empilement dans les couleurs de l'appareil, avant la calibration des couleurs : une dominante visible est celle de l'appareil, le bloc Couleur l'enlève.",
   "The stack of one filter: one plane, in the sensor's own levels, before any colour is given.": "L'empilement d'un filtre : un seul plan, aux niveaux propres du capteur, avant toute couleur.",
   "In the camera's colours, before colour calibration.": "Dans les couleurs de l'appareil, avant la calibration des couleurs.",
   "Before, left of the divider: the stack output as it is, in the camera's colours. After, right: the same stack colour-calibrated (the colour matrix measured on the Gaia stars, the sky set grey). Drag the divider.": "Avant, à gauche du séparateur : la sortie de l'empilement telle quelle, dans les couleurs de l'appareil. Après, à droite : le même empilement calibré en couleur (la matrice de couleur mesurée sur les étoiles Gaia, le ciel rendu gris). Faites glisser le séparateur.",
@@ -321,5 +321,14 @@
   "No bias: flats are calibrated with the darks' level ({level} ADU).": "Pas d'offsets : les flats sont calibrés avec le niveau des darks ({level} ADU).",
   "{workflow}: the flats of {n} sessions are merged into one master flat ({sessions}).": "{workflow} : les flats de {n} sessions sont fusionnés en un seul master de flat ({sessions}).",
   "{n} file added to {kind}": "{n} fichier ajouté aux {kind}",
-  "{n} files added to {kind}": "{n} fichiers ajoutés aux {kind}"
+  "{n} files added to {kind}": "{n} fichiers ajoutés aux {kind}",
+  "This session has no darks. Calibration subtracts the master bias, or the camera's black level, instead, and finds the hot pixels on the lights. Add a folder of real darks (the cap on, same exposure, ISO and temperature as the lights) to correct the thermal signal.": "Cette session n'a pas de darks. La calibration soustrait à la place le master d'offset, ou le niveau de noir de l'appareil, et trouve les pixels chauds sur les brutes. Ajoutez un dossier de vrais darks (bouchon en place, même pose, même ISO et même température que les brutes) pour corriger le signal thermique.",
+  "This session has no flats: the vignetting and the dust shadows stay in the image. Add a folder of flats taken with the same optics and focus.": "Cette session n'a pas de flats : le vignetage et les ombres des poussières restent dans l'image. Ajoutez un dossier de flats pris avec la même optique et la même mise au point.",
+  "{names} has some: the same files given to this session are shared, one master.": "{names} en a : les mêmes fichiers donnés à cette session sont partagés, un seul master.",
+  "{names} have some: the same files given to this session are shared, one master.": "{names} en ont : les mêmes fichiers donnés à cette session sont partagés, un seul master.",
+  "Frames go on a Session block: New project (or open one), then drop them on it": "Les images vont sur un bloc Session : Nouveau projet (ou ouvrez-en un), puis déposez-les dessus",
+  "Choose a template first (a click on its card), then drop the frames on its Session block": "Choisissez d'abord un modèle (un clic sur sa carte), puis déposez les images sur son bloc Session",
+  "Frames go on a Session block's page in Inspect (its Files), or on the block in the Graph": "Les images vont sur la page d'un bloc Session en Inspection (ses Fichiers), ou sur le bloc dans le Graphe",
+  "Frames go on a Session block, or on one of its rows, in the Graph": "Les images vont sur un bloc Session, ou sur une de ses lignes, dans le Graphe",
+  "“{name}” is already open": "« {name} » est déjà ouvert"
 }

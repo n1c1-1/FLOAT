@@ -939,5 +939,8 @@ def choose_project(parent) -> str | None:
                                         options=QFileDialog.HideNameFilterDetails)   # no file name shown
     if not f:
         return None
+    if Path(f).is_dir():                                   # the project's folder itself chosen: that project (a beta
+        prefs.remember_folder(Path(f).parent)              # tester was told "No project" about the folder above it)
+        return Path(f).as_posix()
     prefs.remember_folder(Path(f).parent.parent)           # the folder the project's folder is in
     return Path(f).parent.as_posix()

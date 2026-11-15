@@ -17,7 +17,7 @@ from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import QAbstractItemView, QHBoxLayout, QListView, QPushButton, QVBoxLayout, QWidget
 
 from ...graphcore.operations import COMMON
-from ..i18n import _, number, plural
+from ..i18n import _, number, plural, quoted
 from . import files
 from .style import label
 from .table_logic import KIND_TITLE
@@ -225,7 +225,7 @@ class FilesPanel(QWidget):
             files.elsewhere(res, files.stack_lights(self.bridge.doc.graph, session=self.owner))
             if res.elsewhere:
                 text = _("{n} also in {sessions}: listed twice").format(
-                    n=len(res.elsewhere), sessions=", ".join(f"“{s}”" for s in res.elsewhere_in))
+                    n=len(res.elsewhere), sessions=", ".join(quoted(s) for s in res.elsewhere_in))
         self.shared.setText(text)
         self.shared.setVisible(bool(text))
         aside, note, button = files.beside_note(self.entries())

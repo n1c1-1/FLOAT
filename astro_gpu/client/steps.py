@@ -115,7 +115,7 @@ DENOISE_NOTE = ("Before (the stack, its gradient removed: what the block reads) 
 ALIGNED_NOTE = ("The image brought onto the grid of its reference: the size and framing of the reference, what overflows is "
               "cut. Compare it with the stack it comes from.")
 STACK_NOTE = ("The stack output in the camera's colours, before colour calibration: a colour cast it shows is the "
-              "camera's own, the Color block takes it off.")
+              "camera's own, the Colour block takes it off.")
 STACK_MONO_NOTE = "The stack of one filter: one plane, in the sensor's own levels, before any colour is given."
 CAMERA_NOTE = "In the camera's colours, before colour calibration."
 GRADIENT_NOTE = ("The stack with its sky gradient removed, in the camera's colours, as every later block reads it (the "

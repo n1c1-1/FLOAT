@@ -48,7 +48,7 @@ from ..core import workflow as wfl
 from . import prefs
 from .graphmodel import confirm_on
 from .graphnode import STATE_WORD, block_state, block_title, kbase
-from .i18n import _, all_workflows, hm, language, number
+from .i18n import _, all_workflows, hm, language, number, plural
 from .names import shown as shown_name
 from .icons import IconLabel, IconText, icon_only, set_icon
 from .layout import Sections
@@ -969,10 +969,33 @@ class Panel(QWidget):
         if not self.tune:
             b = QPushButton(_("Open frames") if n["lights"] else _("Add lights"))
             b.setObjectName("primary")
-            b.setToolTip(_("Opens its files in Inspect: add them there, kind by kind, and review its frames"))
-            b.clicked.connect(self.openTune.emit)
+            if n["lights"]:
+                b.setToolTip(_("Opens its files in Inspect: add them there, kind by kind, and review its frames"))
+                b.clicked.connect(self.openTune.emit)
+            else:                                         # what it says: the file dialog (it opened Inspect, testers)
+                b.setToolTip(_("Choose the light frames of this session; they can also be dropped on its Lights row"))
+                b.clicked.connect(lambda _c=False, i=sid: self.pick_lights(i))
             self.bv.addWidget(b, 0, Qt.AlignLeft)
         self.bv.addStretch(1)
+
+    def pick_lights(self, sid: int):
+        """« Add lights »: the file dialog, then the files go the way a drop on the session's Lights row goes (its
+        headers read, doubles left)."""
+        from PySide6.QtWidgets import QFileDialog
+
+        from . import prefs
+        from .sources import frame_filter
+        got, _f = QFileDialog.getOpenFileNames(self.window(), _("Add lights"), prefs.last_folder(), frame_filter())
+        if not got:
+            return
+        prefs.remember_folder(got[0])
+        if self.drop_files is not None:
+            self.drop_files(sid, "lights", list(got))
+            return
+        notes: list = []
+        n = self.s.add_session_entries(sid, "lights", list(got), notes, [], False, [])
+        said = [plural(n, "{n} light added · Ctrl+Z", "{n} lights added · Ctrl+Z")] if n else []
+        self.toast.emit(" · ".join(said + [_(t).format(name=nm) for t, nm in notes[:2]]) or _("Nothing added"))
 
     def all_nights(self):
         """A project made before issue #43: its nights are calibrated together. They can be calibrated each on its

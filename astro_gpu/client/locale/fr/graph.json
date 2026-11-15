@@ -517,7 +517,7 @@
   "The workflow and its layer": "Le workflow et son calque",
   "“{name}” duplicated: “{copy}” · Ctrl+Z": "« {name} » dupliqué : « {copy} » · Ctrl+Z",
   "Variant “{name}” kept: it replaces “{orig}” · Ctrl+Z": "Variante « {name} » gardée : elle remplace « {orig} » · Ctrl+Z",
-  "Variant “{name}” discarded · Ctrl+Z": "Variante « {name} » abandonnée · Ctrl+Z",
+  "Variant “{name}” discarded · Ctrl+Z": "Variante « {name} » écartée · Ctrl+Z",
   "No layer: a block's image becomes one by “To Post” in its menu, or by pulling its ● onto Post.": "Aucun calque : l'image d'un bloc en devient un par « Vers Post » dans son menu, ou en tirant son ● sur Post.",
   "Its image is no longer a layer": "Son image n'est plus un calque",
   "Post, where the layer is set": "Post, où le calque se règle",
@@ -587,5 +587,11 @@
   "The stars come from a Stars/background or a combination's Output": "Les étoiles viennent d'un bloc Étoiles/fond ou de la sortie d'une combinaison",
   "Recipe: the combination this card places (S-H-O, H-O, RGB, LRGB, HOO, HaRGB…); its block's panel changes it later": "Recette : la combinaison que place cette carte (S-H-O, H-O, RVB, LRVB, HOO, HaRVB…) ; le panneau de son bloc la change ensuite",
   "Another recipe keeps the wires of the inputs it also has; the others go (Ctrl+Z brings them back)": "Une autre recette garde les liens des entrées qu'elle a aussi ; les autres partent (Ctrl+Z les remet)",
-  "no image yet: place its Stacking first": "pas encore d'image : placez d'abord son Empilement"
+  "no image yet: place its Stacking first": "pas encore d'image : placez d'abord son Empilement",
+  "Choose the light frames of this session; they can also be dropped on its Lights row": "Choisissez les brutes de cette session ; elles peuvent aussi être déposées sur sa ligne Brutes",
+  "{n} light added · Ctrl+Z": "{n} brute ajoutée · Ctrl+Z",
+  "{n} lights added · Ctrl+Z": "{n} brutes ajoutées · Ctrl+Z",
+  "Nothing added": "Rien d'ajouté",
+  "nothing computed yet: place blocks, or wire the inputs": "rien de calculé encore : placez des blocs, ou reliez les entrées",
+  "{names}: no block yet": "{names} : pas encore de bloc"
 }

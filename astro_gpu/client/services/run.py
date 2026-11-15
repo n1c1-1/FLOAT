@@ -1145,6 +1145,28 @@ class RunController(QObject):
     def running(self) -> bool:
         return self.phase != "idle"
 
+    @property
+    def phase(self) -> str:
+        return self.__dict__.get("_phase", "idle")
+
+    @phase.setter
+    def phase(self, value: str):
+        was = self.__dict__.get("_phase", "idle")
+        self.__dict__["_phase"] = value
+        if value == "idle" and was != "idle":
+            self._edit_notice_gone()
+
+    def _edit_notice_gone(self):
+        """The run ended or stopped: the strip saying it goes on with what it started with goes with it (it stayed
+        after Stop and after the next run, Stop and Continue on nothing, a beta tester)."""
+        said, self._edit_said = getattr(self, "_edit_said", ""), ""
+        banner = getattr(self.window, "banner", None)
+        try:
+            if said and banner is not None and banner.isVisible() and banner.text.text() == said:
+                banner.hide()
+        except RuntimeError:                              # the window is gone
+            pass
+
     def progress(self) -> float:
         """The fraction of the run done, 0..1."""
         return self.track.fraction() if self.track is not None else 0.0
@@ -1308,6 +1330,7 @@ class RunController(QObject):
                  "by the next run.")
         if banner is not None:
             banner.ask(text, (_("Stop"), self.stop), (_("Continue"), lambda: None))
+            self._edit_said = text
 
     def _replan(self):
         d = self.dialog

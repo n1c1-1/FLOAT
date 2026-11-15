@@ -106,6 +106,12 @@ def _(s: str) -> str:
     return t
 
 
+def quoted(name) -> str:
+    """A name the program puts between quotes in a sentence, with the quotes of the interface's language (« » in
+    French: a beta tester read “Session 1” in a French notice)."""
+    return f"« {name} »" if _lang == "fr" else f"“{name}”"
+
+
 def in_context(context: str, s: str) -> str:
     """``s`` where one English word needs another translation than its usual one (a card's Undo beside its Cancel:
     both « Annuler » in French): the catalogue's « context|s », else ``_(s)``."""

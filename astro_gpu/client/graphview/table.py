@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...graphcore.operations import COMMON
-from ..i18n import _, maybe, plural
+from ..i18n import _, maybe, plural, quoted
 from . import files
 from .table_gestures import INTERNAL_MIME, Gestures, common_tip, undo_link
 from .table_headers import HeaderReadings
@@ -1085,7 +1085,7 @@ class Table(QWidget):
     def _move_menu(self):
         m = QMenu(self)
         for pl in self.grid.model.stacks():
-            m.addAction(f"“{pl['name']}”", lambda r=pl["id"]: self.grid.move_to(self.grid.chosen_sessions(), r))
+            m.addAction(quoted(pl['name']), lambda r=pl["id"]: self.grid.move_to(self.grid.chosen_sessions(), r))
         m.exec(self.b_move.mapToGlobal(QPoint(0, self.b_move.height())))
 
     def _only_differences(self, on):

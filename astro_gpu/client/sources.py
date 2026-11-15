@@ -438,8 +438,19 @@ class SourcesView(QWidget):
             if st.startswith("session@"):
                 self._set_session(int(st.partition("@")[2]))
         ids = [x.id for x in self.s.p.sessions]
+        # the workflow shown in Inspect's selector: its own sessions first (after an Undo or a change of page the list
+        # showed "Session 1"'s files under "Session 4", a beta tester)
+        path = getattr(self.s, "path", None)
+        try:
+            mine = [x.id for x in self.s.p.sessions_of(path.pid)] if path is not None and path.source is None else []
+        except (KeyError, ValueError, AttributeError):
+            mine = []
+        moved = path is not None and getattr(self, "_path_seen", None) not in (None, path.pid)
+        self._path_seen = path.pid if path is not None else None
         if self.sid not in ids:
-            self._set_session(ids[0] if ids else None)
+            self._set_session(mine[0] if mine else ids[0] if ids else None)
+        elif moved and mine and self.sid not in mine and not st.startswith("session@"):
+            self._set_session(mine[0])                    # another workflow chosen: its session, not the last one's
 
     def _set_session(self, sid):
         if sid != self.sid:

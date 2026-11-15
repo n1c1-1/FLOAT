@@ -360,16 +360,30 @@ class FramesView(QWidget):
             self.service.request_frames(s.path.pid if s.path is not None else None)
         self._build()
 
+    def _files_sig(self):
+        """What the sessions hold, as the reading of their headers is asked for."""
+        return tuple((x.id, len(x.lights), len(x.darks), len(x.flats), len(x.bias), len(x.flat_darks))
+                     for x in self.s.p.sessions)
+
     def _data_ready(self, data: ProjectFrames):
         self.data = data
+        self._read_for = self._files_sig()               # the files it was read of (its request came before)
         if self.pages.currentIndex() == 0 and self.isVisibleTo(self.window()):
             self._build()
 
+    def _current_data(self):
+        """The headers' reading when it is of the files the sessions hold now; None while a newer one is read (bias
+        just added: "Bias none" and "No bias" were said until the next visit, a beta tester)."""
+        if self.data is None or getattr(self, "_read_for", None) != self._files_sig():
+            return None
+        return self.data
+
     # ------------------------------------------------------------ the sessions page
     def _rows(self):
-        """The rows of the table: what the worker has read, else what the model counts."""
-        if self.data is not None and len(self.data.sessions) == len(self.s.sessions):
-            return self.data.sessions
+        """The rows of the table: what the worker has read of the files held now, else what the model counts."""
+        data = self._current_data()
+        if data is not None and len(data.sessions) == len(self.s.sessions):
+            return data.sessions
         return None
 
     def _build(self):
@@ -416,8 +430,9 @@ class FramesView(QWidget):
         self.sv.addWidget(t, 0, Qt.AlignLeft)
         self.sv.addSpacing(6)
         self.sv.addWidget(label(_("Health check"), "h2"))
-        lines = check_lines(self.data, channel_lines(s))
-        if self.data is None:
+        data = self._current_data()
+        lines = check_lines(data, channel_lines(s))
+        if data is None:
             self.sv.addWidget(label(_("Reading the frames…"), "dim"))
         for lvl, text in lines:
             self._check_row(lvl, text)

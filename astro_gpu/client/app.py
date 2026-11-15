@@ -62,7 +62,7 @@ from . import APP_MOTTO, APP_NAME, drafts, journal, prefs
 from . import layout as lay
 from .gcguard import GuiGarbageCollector
 from .home import HomeView, ask_project_name, forget_state
-from .i18n import _, language, plain_error, plural, set_language
+from .i18n import _, language, plain_error, plural, quoted, set_language
 from .icons import app_icon
 from .icons import icon as make_icon
 from .icons import IconLabel, icon_only, set_icon
@@ -279,6 +279,7 @@ class Main(QMainWindow):
         self._flash_timer.timeout.connect(self._flash_end)
         self._flash_html = ""                        # the word said with its link, as the status line shows it
         self._post_lists = journal.Lists()           # the stamps of Post's own steps (the window's one order of Undo)
+        self.setAcceptDrops(True)                    # files dropped where no page takes them: said (dropped_elsewhere)
         self.screens = QStackedWidget()
         self.banner = Banner()
         root = QWidget()
@@ -573,12 +574,23 @@ class Main(QMainWindow):
             self.show_home()
 
     def open_other(self):
-        """Open project…: the project is chosen over the screen shown; the project open is left only once one is chosen
-        (``open_project`` asks)."""
+        """Open project…: the project open with edits not saved asks first (Save, Don't save, Cancel), as every way out
+        of it does, before the file dialog (a beta tester was asked only after choosing); it is left only once another
+        project is chosen."""
         from .home import choose_project
+        discard = False
+        if self.unsaved():
+            answer = self.ask_save()
+            if answer == "cancel":
+                return
+            if answer == "save":
+                self.save()
+                if self.unsaved():                       # not saved (named nowhere, or refused): nothing is left
+                    return
+            discard = answer == "discard"
         f = choose_project(self)
         if f:
-            self.open_project(f)
+            self.open_project(f, discard=discard)
 
     def create_project(self, root: str, name: str, target: str = "", details: dict | None = None) -> bool:
         """A new v2 project in ``root``, opened. Its calibrated frames go to <cache folder>/<project folder>.
@@ -609,12 +621,15 @@ class Main(QMainWindow):
             return False, "cpu"
         return True, (None if dev == "auto" else dev)
 
-    def open_project(self, root, created: bool = False, recovered=None, rescued: bool = False) -> bool:
+    def open_project(self, root, created: bool = False, recovered=None, rescued: bool = False,
+                     discard: bool = False) -> bool:
         """``recovered``: the definition found after a crash, in place of the file; ``rescued``: it is the copy kept at
-        the last save of a project whose graph cannot be read (``open_working_copy``)."""
+        the last save of a project whose graph cannot be read (``open_working_copy``); ``discard``: the open project's
+        edits not saved were already answered "Don't save" (``open_other``)."""
         root = Path(root)
         if self.project is not None and root.as_posix().lower() == self.project.root.as_posix().lower():
             self.show_project()
+            self.flash(_("“{name}” is already open").format(name=self.project.name))
             return True
         try:
             d = recovered if recovered is not None else project2.load(root)
@@ -637,7 +652,7 @@ class Main(QMainWindow):
             self.banner.say(_("This project cannot be opened: its file is damaged, or it is not a project file of this "
                               "program."))
             return False
-        if self.close_project(go_home=False) is False:              # unsaved edits kept: Cancel
+        if self.close_project(go_home=False, discard=discard) is False:      # unsaved edits kept: Cancel
             return False
         self.project = OpenProject(root, d)
         forget_state(root)                               # Home reads its state again once it is closed
@@ -1275,7 +1290,17 @@ class Main(QMainWindow):
             elif todo:
                 line += "  ·  " + _("to run: {t}").format(t=duration_text(cost.seconds, cost.measured))
             elif cost is not None:
-                line += "  ·  " + _("all up to date")
+                # "all up to date" only over results computed: never with nothing computed (a combination waiting for
+                # its inputs, sessions without blocks: a beta tester), and the workflows with frames and no block said
+                if not any(s.state(v, st) == "done" for v in s.paths for st in s.all_stages(v)):
+                    line += "  ·  " + _("nothing computed yet: place blocks, or wire the inputs")
+                else:
+                    line += "  ·  " + _("all up to date")
+                    idle = [w.name for w in s.p.workflows if no_block(w) and w.source is None
+                            and any(x.lights for x in s.p.sessions_of(w.id))]
+                    if idle:
+                        line += "  ·  " + plural(len(idle), "{names}: no block yet", "{names}: no block yet",
+                                                 names=", ".join(quoted(x) for x in idle))
         self._line = line
         self.status.setText(self._flash_html or self._flash or line)    # a word's link stays while it is said
 
@@ -1986,6 +2011,48 @@ class Main(QMainWindow):
         lv.addWidget(b, 0, Qt.AlignRight)
         d.resize(760, 640)
         return d
+
+    # ------------------------------------------------------------ files dropped where nothing takes them
+    def dragEnterEvent(self, e):                                      # noqa: N802 - Qt's name
+        """Files dragged over a place of the window that takes none (Home, a template card, Inspect's image or its
+        path of blocks): taken, so that the drop says why (the beta testers: refused there without a word, while the
+        blank page explained)."""
+        if e.mimeData().hasUrls():
+            e.acceptProposedAction()
+
+    def dragMoveEvent(self, e):                                       # noqa: N802 - Qt's name
+        if e.mimeData().hasUrls():
+            e.acceptProposedAction()
+
+    def dropEvent(self, e):                                           # noqa: N802 - Qt's name
+        paths = [u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()]
+        if not paths:
+            return
+        e.acceptProposedAction()
+        self.dropped_elsewhere(paths)
+
+    def dropped_elsewhere(self, paths: list):
+        """What a drop on a place that takes no files says, by the page shown; on Home, a project's folder (or its
+        file) is opened, as Open project would."""
+        from ..core import project2
+        if self.project is None or (self.home is not None and self.screens.currentWidget() is self.home):
+            for p in paths:
+                q = Path(p)
+                root = q if q.is_dir() and (q / project2.FILE).is_file() else q.parent if q.name == project2.FILE \
+                    else None
+                if root is not None:
+                    self.open_project(str(root))
+                    return
+            self.flash(_("Frames go on a Session block: New project (or open one), then drop them on it"))
+            return
+        page = self.graph
+        if self.mode == 0 and page is not None and getattr(page, "templates", None) is not None and \
+                page.centre.currentWidget() is page.templates:
+            self.flash(_("Choose a template first (a click on its card), then drop the frames on its Session block"))
+        elif self.mode == 1:
+            self.flash(_("Frames go on a Session block's page in Inspect (its Files), or on the block in the Graph"))
+        else:
+            self.flash(_("Frames go on a Session block, or on one of its rows, in the Graph"))
 
     def closeEvent(self, e):
         if self.close_project(go_home=False) is False:              # unsaved edits kept: Cancel

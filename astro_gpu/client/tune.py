@@ -81,7 +81,7 @@ from .charts import (
     color_tabs,
 )
 from .chartview import ChartView
-from .i18n import _, hours_text, language, number, plural
+from .i18n import _, hours_text, language, number, plural, quoted
 from .icons import IconLabel, IconText, icon, set_icon
 from .imageview import ImageView, ViewImage, quick_thumbnail, sky_text
 from .layout import Dock, fold_button
@@ -1687,11 +1687,32 @@ class TuneView(QWidget):
     def _calibrated_vi(self, p, path: str, name: str, info: dict | None = None, cfa: str = "") -> ViewImage | None:
         which = self.steps.which_for(p, "calibrate")
         key = self.steps.key_of(p, "calibrate", which)
+        if not key and path:
+            # each session calibrated on its own: the frame's own session's Calibration (Registration's reference
+            # frame said "Calibration: not computed here" with every block up to date, a beta tester)
+            sid = self._session_of_light(path)
+            st = self.s.state_info(p, f"calibrate@{sid}") if sid is not None else None
+            if st is not None:
+                which = f"previous@{sid}" if st.state != "done" and st.previous_key else f"current@{sid}"
+                key = self.steps.key_of(p, "calibrate", which)
         if not key or not path:
             return None
         return ViewImage(si.calframe_source(self.s.p, p.pid, path, which), _("{file}, calibrated").format(file=name),
                          key=("inspect", "calframe", key, path), cfa=cfa or self._cfa(p), camera=True,
                          info=dict(info or {}))
+
+    def _session_of_light(self, path: str):
+        """The id of the session whose lights hold this frame, None."""
+        from .services.worker import norm_path
+        n = norm_path(path)
+        for x in self.s.p.sessions:
+            try:
+                files = self.s.session_files(x.id, "lights")
+            except Exception:  # noqa: BLE001 - a session the model cannot list now: not this one
+                continue
+            if any(norm_path(f) == n for f in files):
+                return x.id
+        return None
 
     def _cfa(self, p) -> str:
         data = self._data.get(("calibration", self._cal_keys(p)))
@@ -1952,12 +1973,19 @@ class TuneView(QWidget):
         return res
 
     def _no_frames(self, kind: str):
-        """No frame of a kind in the project (none was given, or all were left out): what Calibration does then, and
-        the Session's files, where they are added."""
+        """No frame of a kind in the session shown (none was given, or all were left out): what Calibration does then,
+        the other sessions that have some (a beta tester read "no session of this project has darks" while Session 1
+        had 18), and the Session's files, where they are added."""
         title, line = NO_FRAMES.get(kind, ("No frames", "No frames of this kind."))
         box, v = self._card_frame(10)
         v.addWidget(label(_(title), "h2"))
         v.addWidget(label(_(line), "", wrap=True))
+        others = [x.name for x in self.s.p.sessions if getattr(x, kind, None)]
+        if others:
+            v.addWidget(label(plural(len(others), "{names} has some: the same files given to this session are shared, "
+                                     "one master.", "{names} have some: the same files given to this session are "
+                                     "shared, one master.", names=", ".join(quoted(n) for n in others)),
+                              "dim", wrap=True))
         b = QPushButton(_("Open frames"))
         b.setObjectName("primary")
         b.clicked.connect(lambda _x=False, kk=kind: self.open_frames(kk))
@@ -2678,12 +2706,11 @@ class TuneView(QWidget):
 
 #: what Calibration does without frames of a kind, and the button that adds a folder of them (English, translated)
 NO_FRAMES = {
-    "darks": ("No darks", "No session of this project has darks now. Calibration subtracts the master bias, or the "
-                          "camera's black level, instead, and finds the hot pixels on the lights. Add a folder of real "
-                          "darks (the cap on, same exposure, ISO and temperature as the lights) to correct the "
-                          "thermal signal."),
-    "flats": ("No flats", "No session of this project has flats: the vignetting and the dust shadows stay in the "
-                          "image. Add a folder of flats taken with the same optics and focus."),
+    "darks": ("No darks", "This session has no darks. Calibration subtracts the master bias, or the camera's black "
+                          "level, instead, and finds the hot pixels on the lights. Add a folder of real darks (the cap "
+                          "on, same exposure, ISO and temperature as the lights) to correct the thermal signal."),
+    "flats": ("No flats", "This session has no flats: the vignetting and the dust shadows stay in the image. Add a "
+                          "folder of flats taken with the same optics and focus."),
     "bias": ("No bias", "No bias frames: the flats are calibrated with their dark flats, or the camera's black level."),
     "flat_darks": ("No dark flats", "No dark flats: the flats are calibrated with the bias, or the camera's black "
                                     "level."),
