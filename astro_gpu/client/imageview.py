@@ -3088,13 +3088,14 @@ class ImageView(QWidget):
             return ""
         vals, letter = got
         vi = vi or prep.vi
+
+        def whole(v) -> str:                       # a pixel without a value (outside a stack's cover): a dash
+            return str(int(round(v))) if math.isfinite(v) else "–"
         if vi.stretched:                           # a picture for the eye: its levels, without a unit
-            text = "   ".join(f"{c} {int(round(v))}" for c, v in zip("RGB", vals)) if len(vals) == 3 else \
-                str(int(round(vals[0])))
+            text = "   ".join(f"{c} {whole(v)}" for c, v in zip("RGB", vals)) if len(vals) == 3 else whole(vals[0])
             return f"x {xi:>5}  y {yi:>5}    {text}" + self._sky_part(prep, x, y)
         if vi.units == "count":                    # a count per pixel (a rejection map): whole numbers
-            text = str(int(round(vals[0]))) if len(vals) == 1 else \
-                "   ".join(f"{c} {int(round(v))}" for c, v in zip("RGB", vals))
+            text = whole(vals[0]) if len(vals) == 1 else "   ".join(f"{c} {whole(v)}" for c, v in zip("RGB", vals))
             return f"x {xi:>5}  y {yi:>5}    {text}" + self._sky_part(prep, x, y)
         if vi.units not in ("adu", "norm"):        # a number without a unit (a coverage map)
             fmt = [value_text(v, prep.stats) for v in vals]

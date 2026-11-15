@@ -87,3 +87,14 @@ def test_an_export_window_is_freed_once_closed(view, tmp_path):
     QApplication.sendPostedEvents(None, QEvent.DeferredDelete)
     QApplication.processEvents()
     assert not shiboken6.isValid(dlg) and (tmp_path / "x.fits").is_file()
+
+
+@pytest.mark.parametrize("kw", [{}, {"units": "count"}, {"units": ""}, {"units": "norm"}, {"stretched": True}])
+def test_a_pixel_that_is_not_a_number_is_read_out_without_an_error(view, kw):
+    img = _sky()
+    img[:, 10, 20] = np.nan                                       # outside the covered area of a stack
+    _show(view, iv.ViewImage(img, "Holes", key=("nan", str(kw)), **kw))
+    text = view.pixel_text(20.5, 10.5)
+    assert text.startswith("x    20  y    10")
+    if kw.get("units") == "count" or kw.get("stretched"):         # whole numbers: a dash where there is none
+        assert "R –   G –   B –" in text
