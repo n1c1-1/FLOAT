@@ -1641,11 +1641,8 @@ class Main(QMainWindow):
         old = self.project.definition
         if self.s is not None and self.s.path is not None:
             old.current = self.s.path.pid                # the copy opens on the workflow shown
-        p = project2.Project2.from_dict(old.to_dict())
+        p = self.s.copy_for(root)                        # the same graph, its entries as the copy finds them
         p.name = root.name                               # two projects of one name on Home otherwise (GUI exploration 4, Q8)
-        for s in p.sessions:
-            for kind in project2.KINDS:
-                setattr(s, kind, [old.abspath(x) for x in getattr(s, kind)])
         p.reference_image = old.reference_path()
         cache = prefs.get("cache_dir")
         p.scratch_dir = (Path(cache) / root.name).as_posix() if cache else ""

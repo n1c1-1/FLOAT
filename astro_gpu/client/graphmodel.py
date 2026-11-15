@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -397,6 +398,49 @@ class GraphEditing:
         if d.get("format") != project2.GRAPH_FORMAT:
             raise ValueError(_("the graph and what the engine runs differ"))
         return d
+
+    def copy_for(self, root):
+        """The open project as it is written into another folder (Save as, the first naming): a copy of the definition
+        compiled from the same graph (its blocks, wires and view as they are now, edits not saved included), whose
+        entries written relative to the project are made absolute, unless they still find the same file from
+        ``root``; nothing is written. The definition alone made absolute compiled to other sessions than the graph
+        it carried, so the copy was written without its graph."""
+        from ..core import project2
+        self._absorb()
+        old, root = self.p, Path(root)
+
+        def moved(x):
+            if not isinstance(x, str) or Path(x).is_absolute():
+                return x
+            a = old.abspath(x)
+            there = root / x
+            try:
+                same = there.exists() and os.path.samefile(there, a)
+            except OSError:
+                same = False
+            return x if same else a
+
+        def all_moved(files):
+            return {k: (v if k == "fork" or not isinstance(v, list) else [moved(x) for x in v])
+                    for k, v in (files or {}).items()}
+
+        g = gm.clone(self._g)
+        for b in g.blocks.values():
+            if b.files is not None:
+                b.files = all_moved(b.files)
+            if b.own:
+                b.own = all_moved(b.own)
+            if b.kind == "image" and isinstance(b.source, dict) and b.source.get("path"):
+                b.source = {**b.source, "path": moved(b.source["path"])}
+        g.common["files"] = all_moved(g.common["files"])
+        for n in g.nights:
+            n["files"] = all_moved(n.get("files"))
+            if n.get("left_out"):
+                n["left_out"] = all_moved(n["left_out"])
+        p = project2.Project2.from_dict(old.to_dict())
+        compile_into(g, p)
+        p.graph = gm.to_dict(g)
+        return p
 
     def template_card(self) -> dict:
         """What the gallery's card of this project's template draws: the blocks of its first workflow (the recipe that
