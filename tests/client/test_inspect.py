@@ -749,7 +749,7 @@ def test_frames_shows_the_sessions_the_health_checks_and_the_counts(win):
     assert row["Temp."] == "–"
     lines = check_lines(f.data)
     assert ("ok", "Nothing to worry about") in lines
-    assert any(lv == "info" and tx.startswith("No bias: flats are calibrated with the camera black level (512 ADU)")
+    assert any(lv == "info" and tx.startswith("No bias: flats are calibrated with the darks' level (")
                for lv, tx in lines)
     assert any(lv == "ok" and tx.startswith("Disk: about ") and "GB free on the cache drive" in tx for lv, tx in lines)
     assert not any("◇" in x for x in texts_of(f.pages.widget(0)))        # the checks the engine lacks: Spec mode only

@@ -1049,9 +1049,40 @@ def health_checks(p: Project2, dates: dict[int, list[tuple[str, str]]] | None = 
     inp = p.inputs()
     n = {k: len(getattr(inp, k)) for k in KINDS}
     if not p.sessions or not n["lights"]:
-        return [Check("warn", "no_lights", "No light frames yet")]
+        out.append(Check("warn", "no_lights", "No light frames yet"))
+        if len(p.sessions) > 1:                      # the sessions with no lights in a project that has none anywhere
+            out += [Check("warn", "session_no_lights", f"{s.name}: no light frames", {"session": s.name})
+                    for s in p.sessions]
+        return out
     from .io.frames import clock_disagreement, colour_session, light_facts, master_kinds, name_date
     keys = _keys(p)
+    for s in keys.project.sessions:                  # a session that adds nothing: blocking, not "nothing to worry about"
+        if not keys.scan.session_frames(keys.project, s)["lights"]:
+            out.append(Check("warn", "session_no_lights", f"{s.name}: no light frames: the session cannot be stacked",
+                             {"session": s.name}))
+    for s in keys.project.sessions:                  # calibration a session lacks: information (said once per kind)
+        fr = keys.scan.session_frames(keys.project, s)
+        if not fr["lights"]:
+            continue
+        for kind in ("darks", "flats"):
+            if not fr[kind]:
+                shared = any(keys.scan.session_frames(keys.project, o)[kind] for o in keys.project.sessions if o is not s)                     and keys.project.stack_mode == "together"
+                out.append(Check("info", "session_no_calib", f"{s.name}: no {kind}" + (
+                    ": it is calibrated with the other sessions' master" if shared else
+                    f": its lights are not calibrated for {'dark current' if kind == 'darks' else 'vignetting and dust'}"),
+                    {"session": s.name, "kind": kind, "shared": bool(shared)}))
+    owner: dict[str, str] = {}                       # the same light file in two sessions: stacked once (together) or
+    dup: dict[tuple[str, str], int] = {}             # dropped from the later session (per session), said in both modes
+    for s in keys.project.sessions:
+        for f, _size in keys.scan.session_frames(keys.project, s)["lights"]:
+            k = os.path.normcase(os.path.normpath(str(f)))
+            if k in owner and owner[k] != s.name:
+                dup[(owner[k], s.name)] = dup.get((owner[k], s.name), 0) + 1
+            else:
+                owner.setdefault(k, s.name)
+    for (first, other), cnt in dup.items():
+        out.append(Check("warn", "same_frames", f"The same frames are in two sessions: {cnt} light(s) of {other} are also "
+                         f"in {first}; they are used once, with {first}", {"first": first, "other": other, "n": cnt}))
     same: dict[tuple, list[str]] = {}               # one warning, the sessions it concerns (nine said once each)
     dated = []                                       # sessions whose file names say a date: nothing else is looked at
     for s in keys.project.sessions:                  # issue #58: a file added by mistake, said before the run
@@ -1126,10 +1157,19 @@ def health_checks(p: Project2, dates: dict[int, list[tuple[str, str]]] | None = 
                              "own search (minutes rather than a second when the focal length is unknown)"
                              if st.missing else f"Astrometry: Asterion cannot run ({st.why}), the field is found by "
                              "FLOAT's own search", {"missing": st.missing, "why": st.why}))
-    with_flats = [s for s in p.sessions if s.flats]
-    if len(with_flats) > 1:
-        out.append(Check("warn", "flats_merged", f"The flats of {len(with_flats)} sessions are merged into one master "
-                         "flat", {"n": len(with_flats), "sessions": [s.name for s in with_flats]}))
+    if p.stack_mode == "together":                   # one master flat per workflow, made of its sessions' flats
+        for w in (p.workflows or [None]):
+            wid = w.id if w is not None else None
+            with_flats = {}
+            for s in p.sessions_of(wid):
+                fl = tuple(sorted(p.abspath(x) for x in (p.own_session(wid, s.id) if wid is not None else s).flats))
+                if fl:
+                    with_flats[s.name] = fl
+            if len(with_flats) > 1 and len(set(with_flats.values())) > 1:       # the same flats twice: one master anyway
+                names = list(with_flats)
+                out.append(Check("warn", "flats_merged", f"{w.name + ': ' if w is not None else ''}the flats of "
+                                 f"{len(names)} sessions are merged into one master flat ({', '.join(names)})",
+                                 {"n": len(names), "sessions": names, "workflow": w.name if w is not None else ""}))
     try:
         for name, v in _fwhm_per_session(p).items():
             out.append(Check("info", "fwhm", f"Star size in {name}: {v:.1f} px", {"session": name, "fwhm": v}))

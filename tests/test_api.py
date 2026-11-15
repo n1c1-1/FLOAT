@@ -1242,3 +1242,22 @@ def test_the_user_chooses_the_files_of_each_kind(tmp_path, card):
     made = api.add_frames(p, scan)
     assert sum(len(s.darks) for s in made) == 1 and any(str(darks[0]) in s.darks for s in made)
     assert sum(len(s.lights) for s in made) >= 1
+
+
+def test_health_checks_say_empty_sessions_missing_calibration_and_the_same_frames_twice(tmp_path, card):
+    p = api.create_project(tmp_path / "p", "p")
+    api.add_frames(p, api.scan_files({"lights": [card], "darks": [card.parent / "dark"], "flats": [card.parent / "flat"]}))
+    s1 = p.sessions[0]
+    s2 = api.add_session(p, name="Again")
+    s2.lights = list(s1.lights)                      # the same night added twice
+    api.refresh(p, scan=True)
+    got = api.health_checks(p)
+    keys = [c.key for c in got]
+    assert "same_frames" in keys and "ok" not in keys
+    c = next(c for c in got if c.key == "same_frames")
+    assert c.level == "warn" and c.args["first"] == s1.name and c.args["other"] == "Again" and c.args["n"] >= 1
+    assert any(c.key == "session_no_calib" and c.args["session"] == "Again" and c.args["kind"] == "flats"
+               and c.args["shared"] for c in got)
+    s2.lights = []
+    api.refresh(p, scan=True)
+    assert any(c.key == "session_no_lights" and c.level == "warn" for c in api.health_checks(p))

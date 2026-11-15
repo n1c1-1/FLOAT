@@ -303,5 +303,13 @@
   "Session “{name}” added · its files in Inspect": "Session « {name} » ajoutée · ses fichiers dans Inspecter",
   "Opens its files in Inspect: add them there, kind by kind, and review its frames": "Ouvre ses fichiers dans Inspecter : les ajouter type par type, et vérifier ses images",
   "Astrometry: Asterion is not installed, the field is found by FLOAT's own search (minutes rather than a second when the focal length is unknown).": "Astrométrie : Asterion n'est pas installé, le champ est trouvé par la recherche propre à FLOAT (des minutes plutôt qu'une seconde quand la focale est inconnue).",
-  "Astrometry: Asterion cannot run ({why}), the field is found by FLOAT's own search.": "Astrométrie : Asterion ne peut pas tourner ({why}), le champ est trouvé par la recherche propre à FLOAT."
+  "Astrometry: Asterion cannot run ({why}), the field is found by FLOAT's own search.": "Astrométrie : Asterion ne peut pas tourner ({why}), le champ est trouvé par la recherche propre à FLOAT.",
+  "{session}: no light frames: the session cannot be stacked.": "{session} : pas de brutes : la session ne peut pas être empilée.",
+  "{session}: no darks: it is calibrated with the other sessions' master.": "{session} : pas de darks : elle est calibrée avec le master des autres sessions.",
+  "{session}: no flats: it is calibrated with the other sessions' master.": "{session} : pas de flats : elle est calibrée avec le master des autres sessions.",
+  "{session}: no darks: its lights are not calibrated for dark current.": "{session} : pas de darks : ses brutes ne sont pas corrigées du courant d'obscurité.",
+  "{session}: no flats: its lights are not calibrated for vignetting and dust.": "{session} : pas de flats : ses brutes ne sont pas corrigées du vignetage ni des poussières.",
+  "The same frames are in two sessions: {n} light(s) of {other} are also in {first}; they are used once, with {first}.": "Les mêmes images sont dans deux sessions : {n} brute(s) de {other} sont aussi dans {first} ; elles ne servent qu'une fois, avec {first}.",
+  "No bias: flats are calibrated with the darks' level ({level} ADU).": "Pas d'offsets : les flats sont calibrés avec le niveau des darks ({level} ADU).",
+  "{workflow}: the flats of {n} sessions are merged into one master flat ({sessions}).": "{workflow} : les flats de {n} sessions sont fusionnés en un seul master de flat ({sessions})."
 }
