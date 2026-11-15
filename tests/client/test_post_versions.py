@@ -38,11 +38,22 @@ def two(qapp, tmp_path_factory):
     w.stop()
 
 
+def _fresh(m):
+    """The project as the module made it, a new composition and no history: what a test did is undone (a workflow sent
+    to Post from the graph...), and an Undo of the next test never takes back a step of another (the long random
+    sequences undid the steps of the test run before them and found another composition)."""
+    while m.can_undo():
+        m.undo()
+    for steps in (m._undo, m._redo, m._undo_what, m._redo_what):
+        steps.clear()
+    m.p.post = project2.new_post()
+
+
 @pytest.fixture()
 def model(two):
-    two.p.post = project2.new_post()
+    _fresh(two)
     yield two
-    two.p.post = project2.new_post()
+    _fresh(two)
 
 
 def by_name(m, name):
