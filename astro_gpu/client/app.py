@@ -629,6 +629,10 @@ class Main(QMainWindow):
         name, tab = got
         try:
             f = templatefiles.save_user(self.s.template_file(), tab, name)
+        except templatefiles.NameTaken as e:
+            self.banner.say(_("The template “{name}” of this tab would be replaced: choose another name.")
+                            .format(name=e.name))
+            return
         except (OSError, ValueError) as e:
             self.banner.say(_("The template cannot be saved: {why}").format(why=e))
             return
