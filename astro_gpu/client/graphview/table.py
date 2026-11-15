@@ -803,12 +803,20 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
             self.act([self._step(o, k, res.items, mode) for o, k in boxes],
                      files.drop_sentence(base, res, mode, ignored, taken), files.drop_links(res, mode))
         if k0 == "lights" and o0 != COMMON and len(boxes) == 1:
-            sf, flt = files.session_filter(self.doc.graph, o0), files.header_filter(res.items)
-            if sf and flt and flt != sf:                  # their header names another filter: the user chooses
+            sf, flt = files.session_filter(self.doc.graph, o0), files.other_filter(self.doc.graph, o0, res.items)
+            if flt:                                       # their header names another filter: the user chooses
                 self._filter = {"filter_here": go, "filter_own": lambda: self.act(
                     files.own_filter_steps(self.doc.graph, flt, res.items),
                     _("New {f} session added").format(f=flt), undo_link())}
                 self.toast.emit(*files.filter_question(flt, sf, self.session_name(o0)))
+                return
+        if k0 == "flats" and o0 != COMMON:                # flats of another filter than the lights': asked too
+            flt = next((f for o, _k in boxes if (f := files.flat_filter(self.doc.graph, o, res.items))), "")
+            if flt:
+                o1 = next(o for o, _k in boxes if files.flat_filter(self.doc.graph, o, res.items))
+                self._filter = {"filter_here": go}
+                self.toast.emit(*files.flat_question(flt, files.session_filter(self.doc.graph, o1),
+                                                     self.session_name(o1)))
                 return
         go()
 

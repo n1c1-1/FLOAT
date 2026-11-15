@@ -2681,10 +2681,9 @@ class GraphEditing:
         if not new:
             return 0
         flt = ""
-        if kind == "lights" and (not s.filter or not cur):
-            from ..io.frames import frame_filter
-            first = next((f for f in list_frames(new) if frame_kind(f) == "fits"), None)
-            flt = frame_filter(first) if first is not None else ""
+        if kind == "lights" and (not s.filter or not cur):      # the graph page's own reading of the headers
+            from .graphview.files import header_filter
+            flt = header_filter([str(f) for f in list_frames(new)])
         moved = bool(flt) and bool(s.filter) and flt != s.filter
         left = copy.deepcopy(s.left_out)
         probe = type("S", (), {"left_out": left})()

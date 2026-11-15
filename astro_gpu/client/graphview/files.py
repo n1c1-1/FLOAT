@@ -255,6 +255,67 @@ def header_filter(paths) -> str:
     return frame_filter(first) if first is not None else ""
 
 
+#: the operations of the graph page that store lights, and where their paths are
+_LIGHTS_OPS = ("add_files", "add_row", "add_night")
+
+
+def _lights_of(name, args) -> list:
+    """The light paths a step of the graph page stores ([] for any other step)."""
+    if not isinstance(args, dict) or name not in _LIGHTS_OPS:
+        return []
+    if name == "add_files":
+        return list(args.get("paths") or []) if args.get("kind") == "lights" else []
+    if name == "add_row" and args.get("kind") != "session":
+        return []
+    return list((args.get("files") or {}).get("lights") or [])
+
+
+def with_header_filters(graph, steps) -> list:
+    """The steps of a gesture of the graph page, each session that receives its first lights given the filter their
+    FITS header names (``header_filter``). The ONE place where the page's ways of adding lights (a drop on a box, on
+    « + Stack », on a new session, on a Session block, « Add files… ») read the headers, as Inspect's « Add files… »
+    does (graphmodel.add_session_entries, through ``header_filter`` too): frames of a monochrome camera never left
+    « none (colour camera) », which offers debayering and the camera's white balance on them. A session whose filter
+    is already chosen keeps it (frames of another filter are asked about before: ``filter_question``); nothing is read
+    from a name. Steps whose arguments are computed from the earlier ones are of gestures that set the filter
+    themselves (``own_filter_steps``), except a session joining a stack made in the same gesture."""
+    steps = list(steps)
+    extra, seen = [], set()
+    for j, (name, args) in enumerate(steps):
+        if callable(args):
+            if name != "add_night":
+                continue
+            held = {}
+
+            def recorded(outs, f=args, held=held):
+                held.update(f(outs))
+                return held
+            steps[j] = (name, recorded)
+            extra.append(("set_night_filter", lambda outs, j=j, held=held: dict(
+                night=outs[j].created["session"], filter=header_filter(_lights_of("add_night", held)))))
+            continue
+        lights = _lights_of(name, args)
+        if not lights:
+            continue
+        if name == "add_files":
+            s = args.get("session")
+            b = graph.blocks.get(s)
+            if b is None or s in seen or session_filter(graph, s) or (b.files or {}).get("lights"):
+                continue
+            seen.add(s)
+            flt = header_filter(lights)
+            if flt:
+                extra.append(("set_night_filter", dict(night=s, filter=flt)))
+            continue
+        if name == "add_night" and stack_filter(graph, args.get("row")):
+            continue                                       # it takes its stack's filter (asked before when other)
+        flt = header_filter(lights)
+        if flt:
+            extra.append(("set_night_filter", lambda outs, j=j, flt=flt: dict(night=outs[j].created["session"],
+                                                                              filter=flt)))
+    return steps + extra
+
+
 def session_filter(graph, session) -> str:
     """The filter stored for a Session block's night ("" for a colour camera's, or none stored)."""
     b = graph.blocks.get(session)
@@ -268,6 +329,52 @@ def stack_filter(graph, row) -> str:
     r = next((x for x in graph.rows if x.id == row), None)
     flts = {session_filter(graph, s) for s, _c in (r.nights if r is not None else [])}
     return next(iter(flts)) if len(flts) == 1 else ""
+
+
+def row_filter(graph, row_id) -> str:
+    """The one filter of the sessions a workflow stacks (a variant: its original's), "" when they name none or
+    several."""
+    from ...graphcore.model import Index
+    ix = Index(graph)
+    if row_id not in ix.row:
+        return ""
+    root = ix.row[ix.root(row_id)]
+    flts = {session_filter(graph, s) for s, _c in root.nights}
+    return next(iter(flts)) if len(flts) == 1 else ""
+
+
+def channel_mismatch(graph, block, port) -> str:
+    """A Combination input fed by a workflow whose sessions' filter is another one than the input's (a Red stack in
+    « S II »): the sentence said on its wire, its port and in the Health check; "" when they agree, when either names
+    none, or for any other block. Said, never refused: the user may mean it."""
+    from ...core.project2 import FILTERS
+    from ...graphcore import combos
+    from ...graphcore.model import Index
+    b = graph.blocks.get(block)
+    if b is None or b.kind != "combine":
+        return ""
+    role = combos.role_of(b, port)
+    if role not in FILTERS or not role:
+        return ""
+    w = next((w for w in graph.wires if tuple(w.dst) == (block, port)), None)
+    rid = Index(graph).row_of.get(w.src[0]) if w is not None else None
+    flt = row_filter(graph, rid) if rid is not None else ""
+    if not flt or flt == role:
+        return ""
+    return _("Its frames' filter is {f}, this input is for {r}: check the wire").format(f=flt, r=role)
+
+
+def channel_mismatches(graph) -> list[tuple[str, str, str]]:
+    """Every Combination input whose wire brings frames of another filter: [(block, port, sentence)]."""
+    from ...graphcore import combos
+    out = []
+    for bid, b in graph.blocks.items():
+        if b.kind == "combine":
+            for port in combos.ports(b):
+                t = channel_mismatch(graph, bid, port)
+                if t:
+                    out.append((bid, port, t))
+    return out
 
 
 def free_session_name(graph, base: str) -> str:
@@ -290,11 +397,38 @@ def own_filter_steps(graph, flt: str, items) -> list:
                                             mode="add"))]
 
 
+def other_filter(graph, session, items) -> str:
+    """The filter the headers of lights dropped on a Session name when it is not the session's: its filter chosen, or
+    lights already there with none (a colour camera's); "" when they agree, or when the session is still empty (its
+    filter is then read from them: ``with_header_filters``)."""
+    b = graph.blocks.get(session)
+    sf, flt = session_filter(graph, session), header_filter(items)
+    if not flt or flt == sf or b is None or not (sf or (b.files or {}).get("lights")):
+        return ""
+    return flt
+
+
 def filter_question(flt: str, other: str, where: str) -> tuple[str, list]:
     """(text, links) of frames whose header names another filter than the session or stack they are dropped on: the
     user chooses, nothing is added before."""
-    return (_("These frames' header names filter {f}, “{s}” is {g}: where do they go?").format(f=flt, s=where, g=other),
+    text = _("These frames' header names filter {f}, “{s}” is {g}: where do they go?") if other else \
+        _("These frames' header names filter {f}, “{s}” holds a colour camera's: where do they go?")
+    return (text.format(f=flt, s=where, g=other),
             [(_("Add here"), "filter_here"), (_("New {f} session").format(f=flt), "filter_own"), (_("Cancel"), "cancel")])
+
+
+def flat_filter(graph, session, items) -> str:
+    """The filter the headers of flats dropped on a Session name when the session's lights are of another one (its
+    filter chosen); "" when they agree or either names none. A flat of another filter calibrates nothing right."""
+    sf, flt = session_filter(graph, session), header_filter(items)
+    return flt if sf and flt and flt != sf else ""
+
+
+def flat_question(flt: str, other: str, where: str) -> tuple[str, list]:
+    """(text, links) of flats whose header names another filter than the session's lights: the user chooses, nothing
+    is added before (the lights' own question, without « New session »)."""
+    return (_("These flats' header names filter {f}, “{s}” is {g}: add them here?").format(f=flt, s=where, g=other),
+            [(_("Add here"), "filter_here"), (_("Cancel"), "cancel")])
 
 
 def beside_note(stored) -> tuple[list, str, str]:

@@ -223,11 +223,15 @@ class Doc:
         return self.document.revision
 
     def apply(self, name, /, **kwargs) -> Result:
-        return self.guarded(name, lambda: self.document.apply([(name, kwargs)]))
+        return self.apply_many([(name, kwargs)])
 
     def apply_many(self, steps) -> Result:
+        """Steps as one undo step; lights stored by them read their headers first (``files.with_header_filters``: the
+        page's one way of adding lights, whatever the gesture)."""
+        from .files import with_header_filters
         steps = list(steps)
-        return self.guarded(steps[0][0] if steps else "apply", lambda: self.document.apply(steps))
+        return self.guarded(steps[0][0] if steps else "apply",
+                            lambda: self.document.apply(with_header_filters(self.graph, steps)))
 
     def try_many(self, steps) -> Result:
         """Whether these steps would be accepted, nothing changed: -> Result."""
@@ -418,7 +422,20 @@ class Doc:
         return next((w for w in (m.greyed_reason(q, "couleur") for q in n.paths) if w), "")
 
     def wire_tip(self, w) -> str:
-        return api.wire_tip(self.graph, w, self.tr)
+        """The core's words on a wire, and the filter of the frames it brings when the Combination input it feeds is
+        for another one (``files.channel_mismatch``)."""
+        tip = api.wire_tip(self.graph, w, self.tr)
+        wire = next((x for x in self.graph.wires if x.id == w), None)
+        if wire is not None:
+            from .files import channel_mismatch
+            warn = channel_mismatch(self.graph, wire.dst[0], wire.dst[1])
+            tip = "\n".join(t for t in (tip, warn) if t)
+        return tip
+
+    def port_warning(self, b, port) -> str:
+        """What a block's input says beside « wired »: the frames' filter when it is not the input's; ""."""
+        from .files import channel_mismatch
+        return channel_mismatch(self.graph, b, port)
 
     def row_badge(self, r) -> str:
         return api.row_badge(self.graph, r, self.tr)

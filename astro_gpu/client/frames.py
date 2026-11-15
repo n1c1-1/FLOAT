@@ -233,12 +233,12 @@ def check_text(c, data: ProjectFrames | None = None) -> str:
     return texts.translate(c.text, language())
 
 
-def check_lines(data: ProjectFrames | None) -> list[tuple[str, str]]:
+def check_lines(data: ProjectFrames | None, extra=()) -> list[tuple[str, str]]:
     """The health check of the data set: (level, text), level ok | warn | info. A session whose stars are more than 10 %
-    larger than the best one's is said so (its frames weigh less)."""
+    larger than the best one's is said so (its frames weigh less). ``extra``: lines of the graph (channel_lines)."""
     if data is None:
         return []
-    out: list[tuple[str, str]] = []
+    out: list[tuple[str, str]] = list(extra)
     fwhm: dict[str, float] = {}
     for c in data.checks:
         if c.key == "fwhm":
@@ -255,6 +255,18 @@ def check_lines(data: ProjectFrames | None) -> list[tuple[str, str]]:
         ok = check_text(type("C", (), {"key": "ok", "args": {}})())
         out = [(lvl, t) for lvl, t in out if not (lvl == "ok" and t == ok)]
     return out
+
+
+def channel_lines(s) -> list[tuple[str, str]]:
+    """The Combination inputs fed with frames of another filter (graphview/files.channel_mismatch), as warnings of the
+    health check: « “S-H-O” S II: its frames' filter is R… »."""
+    g = getattr(s, "_shown", None)
+    if g is None:
+        return []
+    from .graphview.files import channel_mismatches
+    from ..graphcore import api
+    return [("warn", _("“{block}” {port}: {why}").format(block=api.title(g, b, _), port=_(port), why=t))
+            for b, port, t in channel_mismatches(g)]
 
 
 #: what the engine does not check yet (Spec mode only)
@@ -404,7 +416,7 @@ class FramesView(QWidget):
         self.sv.addWidget(t, 0, Qt.AlignLeft)
         self.sv.addSpacing(6)
         self.sv.addWidget(label(_("Health check"), "h2"))
-        lines = check_lines(self.data)
+        lines = check_lines(self.data, channel_lines(s))
         if self.data is None:
             self.sv.addWidget(label(_("Reading the frames…"), "dim"))
         for lvl, text in lines:

@@ -632,6 +632,9 @@ class GraphCanvas(QGraphicsView):
             else:
                 tip += "\n" + (_("Input {name}: wired") if wired else _("Input {name}: empty, pull a wire here")
                                ).format(name=lab)
+                warn = doc.port_warning(b, name) if wired else ""
+                if warn:                                 # frames of another filter: said, never refused
+                    tip += " · " + warn
         return dict(id=b, kind=kind, title=title, summary=line, state=state, selected=bridge.selected == b,
                     off=bool(blk.off), grey=grey, badge=badge, review=review, own=doc.differs(b),
                     fallback=fallback, broken=broken, missing=missing, warned=bool(bd.get("warned")),

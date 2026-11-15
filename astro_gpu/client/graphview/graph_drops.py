@@ -69,10 +69,16 @@ class GraphDrops(QObject):
             self._say(*files.nothing_to_take(res, ignored))
             return None
         if kind == "lights":                            # their header names another filter: the user chooses first
-            sf, flt = files.session_filter(doc.graph, session), files.header_filter(res.items)
-            if sf and flt and flt != sf:
+            sf, flt = files.session_filter(doc.graph, session), files.other_filter(doc.graph, session, res.items)
+            if flt:
                 self._filter = (session, kind, res, ignored)
                 self._say(*files.filter_question(flt, sf, doc.title(session)))
+                return None
+        if kind == "flats":                             # flats of another filter than the lights': asked the same way
+            flt = files.flat_filter(doc.graph, session, res.items)
+            if flt:
+                self._filter = (session, kind, res, ignored)
+                self._say(*files.flat_question(flt, files.session_filter(doc.graph, session), doc.title(session)))
                 return None
         return self._store(session, kind, res, ignored)
 
