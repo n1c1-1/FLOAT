@@ -382,8 +382,8 @@ def adapt(ctx, net, A, B, nm, bk, sg, dev, steps: int, lr: float, seed: int) -> 
 def apply_net(net, x, nm, bk, sg, dev, tile=512, pad=48, shifts=PASSES, check=None, progress=None):
     """Denoise a (3, H, W) linear image tile by tile with overlap, as the mean of ``shifts``. On a card with little free
     memory the tile is smaller (``devices.tile_that_fits``; a memory error halves it, ``shrink_on_memory``): only then
-    does the result differ, by a fraction of the noise, at the seams of the tiles. ``check``: called at each row of
-    tiles (the run's Stop: a pass takes minutes on the processor). ``progress(done, total)``: after each tile, the tiles
+    does the result differ, by a fraction of the noise, at the seams of the tiles. ``check``: called before each
+    tile (the run's Stop: a pass takes minutes on the processor). ``progress(done, total)``: after each tile, the tiles
     of all the passes done and to do, never going back (a memory error starts the passes again with smaller tiles).
 
     The image stays in the machine's memory and only a tile with its margin goes to the card: what the card holds is a
@@ -434,9 +434,9 @@ def _apply_net(net, x, nm, bk, sg, dev, tile, pad, check=None, step=None):
     bk_t = torch.as_tensor(np.asarray(bk), device=dev)
     sg_t = torch.as_tensor(np.asarray(sg), device=dev)
     for y in range(0, Hh, tile):
-        if check is not None:
-            check()
         for x0 in range(0, Ww, tile):
+            if check is not None:                    # every tile: on a slow processor a row of them takes a minute
+                check()
             y1, x1 = max(0, y - pad), max(0, x0 - pad)
             y2, x2 = min(Hh, y + tile + pad), min(Ww, x0 + tile + pad)
             ph, pw = (y2 - y1), (x2 - x1)
