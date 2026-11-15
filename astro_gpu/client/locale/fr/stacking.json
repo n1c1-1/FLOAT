@@ -23,6 +23,7 @@
  "above it: many pixels were rejected": "au-dessus : beaucoup de pixels rejetés",
  "Rejection: {how}": "Rejet : {how}",
  "Rejection: {how} ({low} / {high} σ), chosen for {n} frames": "Rejet : {how} ({low} / {high} σ), choisi pour {n} images",
+ "Rejection: {how} ({low} / {high} × the median), chosen for {n} frames": "Rejet : {how} ({low} / {high} × la médiane), choisi pour {n} images",
  "red": "rouge",
  "green": "vert",
  "blue": "bleu",

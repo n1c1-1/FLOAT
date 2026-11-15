@@ -37,3 +37,14 @@ def test_the_method_line_names_demosaicing_only_for_a_bayer_sensor():
 def test_the_noise_of_a_stack_measured_on_one_channel_is_one_value():
     assert _noise_text({"R": float("nan"), "G": 0.4702, "B": None}) == "0.470 ADU"
     assert _noise_text({"R": 1.0, "G": 2.0, "B": 3.0}) == "R 1.000 ADU · G 2.000 ADU · B 3.000 ADU"
+
+
+def test_a_percentile_clippings_thresholds_are_not_said_in_sigmas():
+    from astro_gpu.client.tune import rejection_rate_text
+    args = {"n": 3, "low": 0.2, "high": 0.1}
+
+    def said(how):
+        d = SimpleNamespace(rejection={"rejected_pct": 39.0, "classic": how, "reason_template": {"args": args}})
+        return rejection_rate_text(d)
+    assert "0.2 / 0.1 × the median" in said("percentile") and "σ" not in said("percentile")
+    assert "0.2 / 0.1 σ" in said("winsorized")

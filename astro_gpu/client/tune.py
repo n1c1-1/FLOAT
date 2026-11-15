@@ -486,7 +486,10 @@ def rejection_rate_text(d) -> str:
         a = (rej.get("reason_template") or {}).get("args") or {}
         if all(x in a for x in ("n", "low", "high")):      # the method once, its thresholds, why it was chosen
             g = (lambda v: f"{float(v):g}".replace(".", ",")) if language() == "fr" else (lambda v: f"{float(v):g}")
-            line = _("Rejection: {how} ({low} / {high} σ), chosen for {n} frames").format(
+            # a percentile clipping's thresholds are shares of the median, not sigmas
+            line = (_("Rejection: {how} ({low} / {high} × the median), chosen for {n} frames")
+                    if str(rej["classic"]) == "percentile" else
+                    _("Rejection: {how} ({low} / {high} σ), chosen for {n} frames")).format(
                 how=how, low=g(a["low"]), high=g(a["high"]), n=a["n"])
         else:
             line = _("Rejection: {how}").format(how=how)
