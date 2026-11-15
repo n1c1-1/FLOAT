@@ -432,6 +432,11 @@ class Main(QMainWindow):
             # (greyed never on Post: it says why when pressed)
             self.a_undo.setEnabled(self._history_next("undo") is not None or self._post_shown())
             self.a_redo.setEnabled(self._history_next("redo") is not None or self._post_shown())
+            for a, how, words in ((self.a_undo, "undo", _("Undo")), (self.a_redo, "redo", _("Redo"))):
+                held = self._survey_held(how)            # it would move results the run reads
+                if held:
+                    a.setEnabled(False)
+                a.setToolTip(held or words)
             self.a_stop.setEnabled(self.run is not None and self.run.running)
             self.a_stop.setToolTip(_("Stop the run: what is computed is kept") if self.a_stop.isEnabled()
                                    else _("No run in progress"))             # greyed: why (round 2)
@@ -1822,6 +1827,19 @@ class Main(QMainWindow):
             return None                                  # a change was made since: nothing comes back over it
         return best
 
+    def _survey_held(self, how: str) -> str:
+        """Why the next Undo (``how`` "undo") or Redo waits: it is Use survey's, which moves results to the trash or
+        back, and a run in progress reads them; "" when it can be done."""
+        s = self.s
+        if s is None or self.run is None or not self.run.running:
+            return ""
+        steps = s._undo if how == "undo" else s._redo
+        nxt = self._history_next(how)
+        if nxt is None or nxt[0] != "graph" or not steps or getattr(steps[-1], "moved", None) is None:
+            return ""
+        return _("A run is in progress: it reads the results Use survey moved. Undo and Redo of it come back when "
+                 "it ends.")
+
     def _where_shown(self, where: str, extra=None) -> bool:
         """Whether the page shown is the one where a step of ``where`` is undone."""
         if where in ("post", "post_model"):
@@ -1860,6 +1878,10 @@ class Main(QMainWindow):
         nxt = self._history_next(how)
         if nxt is None:
             self.flash(_("Nothing to undo") if undo else _("Nothing to redo"))
+            return
+        held = self._survey_held(how)
+        if held:
+            self.flash(held)
             return
         where, _seq, extra = nxt
         if not there and not self._where_shown(where, extra):

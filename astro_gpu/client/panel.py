@@ -1353,14 +1353,38 @@ class Panel(QWidget):
         box.addWidget(label(_("H-alpha survey: on this computer, this result was made without it"), "warn", wrap=True))
         use = QPushButton(_("Use survey"))
         set_icon(use, "catalogue", 16)
-        use.setToolTip(_("The results made without the survey are computed again at the next run, with it: {names}. "
-                         "They go to the trash, not deleted; Undo (Ctrl+Z) puts them back.").format(names=names))
+        tip = _("The results made without the survey are computed again at the next run, with it: {names}. "
+                "They go to the trash, not deleted; Undo (Ctrl+Z) puts them back.").format(names=names)
         box.addWidget(use, 0, Qt.AlignLeft)
         self.hv.addLayout(box)
 
+        def busy() -> bool:
+            return bool(getattr(self.s, "run_active", False))
+
+        def show(*_a):                                   # a run reads the results it would move: greyed meanwhile
+            try:
+                use.setEnabled(not busy())
+                use.setToolTip(_("A run is in progress: it reads these results. Use survey comes back when it ends.")
+                               if busy() else tip)
+            except RuntimeError:                         # the panel was built again meanwhile
+                pass
+
         def go():
-            self.s.use_survey(p.pid)
+            if not busy():
+                self.s.use_survey(p.pid)
         use.clicked.connect(go)
+        run = getattr(self.window(), "run", None)
+        sig = getattr(run, "runningChanged", None)
+        if sig is not None:
+            sig.connect(show)
+
+            def drop(*_a):
+                try:
+                    sig.disconnect(show)
+                except (RuntimeError, TypeError):
+                    pass
+            use.destroyed.connect(drop)
+        show()
 
     def cut_panel(self, node):
         """A block the user cut, or greyed by a cut: what it means, and the way back."""
