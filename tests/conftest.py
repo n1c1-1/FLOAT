@@ -144,8 +144,8 @@ def _norm(p) -> str:
 
 _WATCHED = [_norm(h) for h in _REAL_HOMES]
 _CACHE = [w + os.sep + "cache" for w in _WATCHED]
-#: the user's real client settings folder: refused by the audit hook only (his open window writes it, so it is not
-#: compared at the end of the session)
+#: the user's real client settings folder (his settings, his templates, his recent projects): refused by the audit hook,
+#: to read, list or write (his open window writes it, so it is not compared at the end of the session)
 _REAL_SETTINGS = _norm(Path(_REAL_APPDATA) / "astro_gpu") if _REAL_APPDATA else None
 
 
@@ -155,6 +155,18 @@ def _is_real_settings(path) -> bool:
     except (TypeError, ValueError):
         return False
     return _REAL_SETTINGS is not None and (s == _REAL_SETTINGS or s.startswith(_REAL_SETTINGS + os.sep))
+
+
+#: where the window proposes new projects (client/home.py default_location): the user's Documents/FLOAT
+_REAL_DOCUMENTS_FLOAT = _norm(Path.home() / "Documents" / "FLOAT")
+
+
+def _is_documents_float(path) -> bool:
+    try:
+        s = _norm(path)
+    except (TypeError, ValueError):
+        return False
+    return s == _REAL_DOCUMENTS_FLOAT or s.startswith(_REAL_DOCUMENTS_FLOAT + os.sep)
 
 
 def _is_watched(path) -> bool:
@@ -212,20 +224,29 @@ def _audit(event: str, args: tuple) -> None:
             path, mode, flags = args[0], args[1], args[2]
             by_mode = isinstance(mode, str) and any(c in mode for c in "wax+")
             if not (by_mode or (isinstance(flags, int) and flags & _WRITE_FLAGS)):
-                return
-            targets = [path]
+                # a read: refused in the user's settings folder only (his settings, templates, recent projects)
+                if isinstance(path, (str, bytes, os.PathLike)) and _is_real_settings(
+                        os.fsdecode(path) if isinstance(path, bytes) else path):
+                    targets, only = [path], _is_real_settings
+                else:
+                    return
+            else:
+                targets, only = [path], None
         elif event == "os.rename":
-            targets = [args[0], args[1]]
+            targets, only = [args[0], args[1]], None
         elif event in ("os.remove", "os.rmdir", "os.mkdir", "os.truncate"):
-            targets = [args[0]]
+            targets, only = [args[0]], None
+        elif event in ("os.listdir", "os.scandir"):
+            targets, only = [args[0]], _is_real_settings
         else:
             return
+        check = only or (lambda p: _is_watched(p) or _is_real_settings(p) or _is_documents_float(p))
         for t in targets:
-            if isinstance(t, (str, bytes, os.PathLike)) and (
-                    lambda p: _is_watched(p) or _is_real_settings(p))(os.fsdecode(t) if isinstance(t, bytes) else t):
+            if isinstance(t, (str, bytes, os.PathLike)) and check(os.fsdecode(t) if isinstance(t, bytes) else t):
                 what = f"{event} {os.fsdecode(t) if isinstance(t, bytes) else os.fspath(t)}"
                 _VIOLATIONS.append(f"{_CURRENT[0]}: {what}")
-                raise UserFolderWrite(f"a test must never write the user's files ({what}; test {_CURRENT[0]}): "
+                raise UserFolderWrite(f"a test must never write the user's files nor read his settings ({what}; test "
+                                      f"{_CURRENT[0]}): "
                                       f"ASTRO_GPU_HOME is {os.environ.get('ASTRO_GPU_HOME')}")
     except UserFolderWrite:
         raise
@@ -530,3 +551,21 @@ def _private_project_registry(tmp_path, monkeypatch):
     """Each test has its own list of recent projects (inside the session's private folder, never the user's)."""
     import astro_gpu.core.project as project
     monkeypatch.setattr(project, "REGISTRY", tmp_path / "projects.json")
+
+
+@pytest.fixture(autouse=True)
+def _private_user_settings(request, tmp_path, monkeypatch):
+    """Each test has the client's user data of its own, read fresh: the settings file (ASTRO_GPU_SETTINGS) in its
+    tmp_path, so the templates folder and the recent projects beside it are the test's too, the cache of calibrated
+    frames and the temporary folder of a project made in the test go there, and so does the Documents folder new projects
+    are proposed in. Nothing a test before it set is left (a settings test passed or failed with the order of the run)."""
+    from astro_gpu.client import prefs
+    monkeypatch.setenv(prefs.ENV, str(tmp_path / "settings.json"))
+    monkeypatch.setitem(prefs.DEFAULTS, "cache_dir", (tmp_path / "scratch").as_posix())
+    monkeypatch.setitem(prefs.DEFAULTS, "temp_dir", (tmp_path / "temp").as_posix())
+    home = sys.modules.get("astro_gpu.client.home")
+    if home is None and "client" in Path(str(request.fspath)).parts:
+        from astro_gpu.client import home                  # the client's tests only: it needs Qt
+    if home is not None:
+        monkeypatch.setattr(home, "default_location", lambda: tmp_path / "Documents" / "FLOAT")
+    prefs.load()
