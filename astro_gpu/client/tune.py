@@ -2784,10 +2784,21 @@ class _Failed:
 
 def _noise_text(v) -> str:
     if isinstance(v, dict):
-        return " · ".join(f"{k} {_stat(x)} ADU" for k, x in v.items())
+        # the channels measured only: a monochrome stack measured on one channel said "R nan · G 0.470 · B nan"
+        got = {k: x for k, x in v.items() if _finite(x)}
+        if len(got) == 1:
+            return f"{_stat(next(iter(got.values())))} ADU"
+        return " · ".join(f"{k} {_stat(x)} ADU" for k, x in got.items()) or "—"
     if isinstance(v, list | tuple | np.ndarray):
         return " / ".join(_stat(x) for x in v)
     return _stat(v)
+
+
+def _finite(v) -> bool:
+    try:
+        return v is not None and bool(np.isfinite(float(v)))
+    except (TypeError, ValueError):
+        return False
 
 
 def _stat(v) -> str:

@@ -487,8 +487,10 @@ class Steps(QObject):
             if prm.get("pixfrac") is not None:
                 bits.append(_("drop {v}").format(v=number(float(prm["pixfrac"]), 2).rstrip("0").rstrip(",.")))
         else:
-            colour = getattr(self, "colour_frames", lambda _p: False)(p)      # issue #57: no demosaicing
-            bits += [b for b in (None if colour else ch("classic_debayer"), ch("classic_interpolation")) if b]
+            # no demosaicing for frames already in colour (issue #57) nor for a monochrome sensor (a beta tester read
+            # "Classic stack · RCD" on his mono stacks)
+            no_mosaic = any(bool(getattr(self.s, f, lambda _p: False)(p)) for f in ("colour_frames", "is_mono"))
+            bits += [b for b in (None if no_mosaic else ch("classic_debayer"), ch("classic_interpolation")) if b]
         return _("Method"), " · ".join(bits)
 
     def _selection_facts(self, p) -> list[tuple[str, str]]:
