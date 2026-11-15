@@ -93,7 +93,7 @@ def test_inspect_drop_on_a_heading_asks_and_files_by_headers(qapp, tmp_path, mon
         heading = view._left_w.mapTo(view, QPoint(150, 790))           # the left column, under its rows
         lights = list(m.p.session(1).lights)
         drop([str(darks)], heading)
-        assert m.p.session(1).lights == lights and len(m.session_files(1, "darks")) == 2
+        assert m.p.session(1).lights == lights and len(m.p.session(1).darks) == 2, said
         view.kind_menu = None
         drop([unknown], heading)
         assert view.kind_menu is not None and m.p.session(1).lights == lights      # asked, nothing added before
@@ -103,7 +103,7 @@ def test_inspect_drop_on_a_heading_asks_and_files_by_headers(qapp, tmp_path, mon
         mid = view.stack.mapTo(view, QPoint(40, 40))                   # on the frames of the kind shown: that kind,
         other = fits_file(tmp_path / "o", "b.fits", "Dark Frame")      # whatever the header says
         drop([other], mid)
-        assert len(m.p.session(1).bias) == 2 and len(m.session_files(1, "darks")) == 2
+        assert len(m.p.session(1).bias) == 2 and len(m.p.session(1).darks) == 2
     finally:
         view.close()
         close(w, m, page)

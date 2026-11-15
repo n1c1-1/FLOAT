@@ -162,7 +162,13 @@ def test_plus_session_joins_the_flow_it_is_drawn_with(qapp, tmp_path, monkeypatc
         page.palette.double_click("session")
         settle(w, page)
         new = max(s.id for s in m.p.sessions)
-        assert new in m.p.workflow(pid).sessions and new not in m.p.workflow(q1.pid).sessions
+        # drawn by the flow's stack (a session with no lights yet is read by no workflow until it has some)
+        g = page.bridge.graph
+
+        def drawn(wid):
+            row = next(r for r in g.rows if r.wid == wid)
+            return {g.blocks[x].sid for x, _c in row.nights}
+        assert new in drawn(pid) and new not in drawn(q1.pid)
     finally:
         close(w, m, page)
 

@@ -233,12 +233,12 @@ def check_text(c, data: ProjectFrames | None = None) -> str:
     return texts.translate(c.text, language())
 
 
-def check_lines(data: ProjectFrames | None, extra=()) -> list[tuple[str, str]]:
+def check_lines(data: ProjectFrames | None) -> list[tuple[str, str]]:
     """The health check of the data set: (level, text), level ok | warn | info. A session whose stars are more than 10 %
-    larger than the best one's is said so (its frames weigh less). ``extra``: lines of the graph (channel_lines)."""
+    larger than the best one's is said so (its frames weigh less)."""
     if data is None:
         return []
-    out: list[tuple[str, str]] = list(extra)
+    out: list[tuple[str, str]] = []
     fwhm: dict[str, float] = {}
     for c in data.checks:
         if c.key == "fwhm":
@@ -431,7 +431,10 @@ class FramesView(QWidget):
         self.sv.addSpacing(6)
         self.sv.addWidget(label(_("Health check"), "h2"))
         data = self._current_data()
-        lines = check_lines(data, channel_lines(s))
+        lines = check_lines(data)
+        extra = channel_lines(s) if data is not None else []
+        if extra:                                         # never "nothing to worry about" above a warning
+            lines = extra + [x for x in lines if x[0] != "ok"]
         if data is None:
             self.sv.addWidget(label(_("Reading the frames…"), "dim"))
         for lvl, text in lines:

@@ -119,6 +119,6 @@ def test_a_combination_input_fed_by_another_filter_is_said_not_refused(qapp, tmp
     data = type("D", (), {"checks": []})()
     model = type("M", (), {"_shown": b.doc.graph})()
     from astro_gpu.client.frames import channel_lines
-    lines = check_lines(data, channel_lines(model))
-    assert lines and lines[0][0] == "warn" and "“Mix” S II" in lines[0][1]
+    lines = channel_lines(model)
+    assert lines and lines[0][0] == "warn" and "“Mix” S II" in lines[0][1] and check_lines(data) == []
     b.close()
