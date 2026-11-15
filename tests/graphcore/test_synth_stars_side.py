@@ -143,8 +143,8 @@ def test_synthetic_stars_never_goes_to_post_by_its_menu_nor_by_a_copy_of_its_row
 
 @pytest.mark.parametrize("switch", [False, True])
 def test_synthetic_stars_is_wired_to_no_other_input_of_a_combine_layers(monkeypatch, switch):
-    """A wire pulled from its output to a Combine layers' Background or Stars is refused with its reason (the window
-    fuzz: one after a combination's row reached a Background that read a starless combination)."""
+    """A wire pulled from its output to a Combine layers' Background or Stars, or to Post, is refused with its reason
+    (the window fuzz: one after a combination's row reached a Background, as the combination it read was starless)."""
     from test_points import refused_inert
     monkeypatch.setattr(model, "SYNTH_ON_STARS_SIDE", switch)
     doc = Doc.from_template("sho_rgb")
@@ -152,5 +152,8 @@ def test_synthetic_stars_is_wired_to_no_other_input_of_a_combine_layers(monkeypa
     ok(doc, "add_block", kind="synth", at={"type": "insert", "row": r.id, "after": r.blocks[-1]})
     syn = star_row(doc).blocks[-1]
     j, _ins = cl_ins(doc)
-    for port in ("Background", "Stars"):
-        assert "Combine layers" in refused_inert(doc, "wire", src=syn, src_port=SYNTH_PORT, dst=j, dst_port=port)
+    assert refused_inert(doc, "wire", src=syn, src_port=SYNTH_PORT, dst=j, dst_port="Background") ==         "the Background port needs a starless image"
+    assert refused_inert(doc, "wire", src=syn, src_port=SYNTH_PORT, dst=j, dst_port="Stars").startswith(
+        "the Stars port takes the real stars")
+    post = Index(doc.project).post
+    assert "Combine layers" in refused_inert(doc, "wire", src=syn, src_port=SYNTH_PORT, dst=post, dst_port="layers")

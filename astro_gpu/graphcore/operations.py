@@ -455,6 +455,13 @@ def legality(q, style=None):
         if w.active and q.blocks[w.dst[0]].kind == "combine" and q.blocks[w.src[0]].kind == "synth":
             return M("{lab} is no input of a combination: it reads an image or a Stars/background",
                      lab=LABEL[q.blocks[w.src[0]].kind])
+        # Synthetic stars feed the third input only, whatever they read (greyed, its image unknown, the ports' types
+        # cannot say it)
+        if w.active and q.blocks[w.dst[0]].kind == "combine_layers" and q.blocks[w.src[0]].kind == "synth":
+            if w.dst[1] == "Background":
+                return "the Background port needs a starless image"
+            if w.dst[1] == "Stars":
+                return "the Stars port takes the real stars: the synthetic ones have their own port"
     bad = need_greyed(evaluate(q, ix, wiring=False))
     if bad:
         b, why = next(iter(bad.items()))
@@ -1729,9 +1736,9 @@ def op_wire(q, src, src_port, dst, dst_port, channel=None):
         raise Refusal("lights first" if not out_ports(s) else M("no output {port}", port=src_port))
     if d.kind == "synth" and dst_port == SYNTH_IN:
         return _synth_on(q, ix, src, src_port, dst)
-    if s.kind == "synth" and d.kind != "combine" and not (d.kind == "combine_layers" and dst_port == SYNTH_PORT):
-        # (to Post, to another input of a Combine layers: its image is only that third input's; a combination says
-        # why in its own words, legality)
+    if s.kind == "synth" and d.kind not in ("combine", "combine_layers"):
+        # (to Post, to the head of a row: its image is only the third input's of a Combine layers; a combination and
+        # the other inputs of a Combine layers say why in their own words, legality)
         raise Refusal("Synthetic stars go to the Synthetic stars input of their Combine layers")
     if dst_port not in in_ports(d) or (d.kind != "post" and ix.pos.get(dst) != 0):
         raise Refusal(M("no input {port}", port=dst_port))
