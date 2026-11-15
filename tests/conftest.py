@@ -354,6 +354,37 @@ def pytest_collection_modifyitems(config, items) -> None:
     for name in ("level3", "slow", "network"):
         _COUNTS[name] = sum(1 for i in items if i.get_closest_marker(name))
     _COUNTS["all"] = len(items)
+    how = os.environ.get(ORDER_ENV, "")
+    if how:                                                # the -m of the run deselects later, keeping this order
+        items[:] = reorder(items, how)
+
+
+#: ASTRO_TEST_ORDER=reverse runs the tests in the reverse order (the modules last to first, each one's tests last to
+#: first); ASTRO_TEST_ORDER=random[:seed] shuffles the modules and the tests inside each one (a module's tests stay
+#: together: its module-scoped fixtures are made once). A test that passes only after another fails then.
+ORDER_ENV = "ASTRO_TEST_ORDER"
+
+
+def reorder(items: list, how: str) -> list:
+    """``items`` in the order ``how`` asks ("reverse", "random", "random:<seed>"); as they are for anything else."""
+    import random
+    groups: dict[str, list] = {}
+    for it in items:
+        groups.setdefault(it.nodeid.split("::")[0], []).append(it)
+    mods = list(groups)
+    if how == "reverse":
+        return [it for m in reversed(mods) for it in reversed(groups[m])]
+    if how.startswith("random"):
+        seed = how.partition(":")[2] or "0"
+        rng = random.Random(seed)
+        rng.shuffle(mods)
+        out = []
+        for m in mods:
+            g = list(groups[m])
+            rng.shuffle(g)
+            out += g
+        return out
+    return items
 
 
 #: seconds one test may take before the process is killed with the traceback of every thread (0: no limit). A test that
@@ -446,6 +477,10 @@ def _time_budget(terminalreporter, config) -> None:
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
+    times_file = os.environ.get("ASTRO_TEST_TIMES")       # every test's setup, call and teardown, in seconds (JSON)
+    if times_file:
+        import json
+        Path(times_file).write_text(json.dumps(_TIMES, indent=0), encoding="utf-8")
     problems, live = _REPORT or ([], [])
     if problems:
         terminalreporter.section("THE USER'S STATE FOLDER WAS TOUCHED BY THE TESTS", red=True, bold=True)
