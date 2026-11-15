@@ -95,7 +95,19 @@ def test_the_gestures_on_the_third_input_and_on_the_side_block(W):
     # the third input takes the synthetic stars only; Stars the real ones only
     assert W.b.check_wire(stars, "Stars only", cl, SYNTH_PORT) == \
         "the Synthetic stars port takes the output of a Synthetic stars block"
-    assert W.b.check_wire(syn, SYNTH_PORT, cl, "Stars").startswith("the Stars port takes the real stars")
+    # the synthetic stars on Background or Stars: refused, and the refusal says what to do instead (Post's layer names)
+    elsewhere = "Synthetic stars go into the third input. To use them alone, hide Real stars in Post."
+    assert W.b.check_wire(syn, SYNTH_PORT, cl, "Stars") == elsewhere
+    assert W.b.check_wire(syn, SYNTH_PORT, cl, "Background") == elsewhere
+    from astro_gpu.client import i18n
+    lang = i18n.language()
+    try:
+        i18n.set_language("fr")
+        assert i18n._(elsewhere) == ("Les étoiles synthétiques vont dans la troisième entrée. Pour les utiliser seules, "
+                                     "masquez Étoiles réelles dans Post.")
+        assert i18n._("Real stars") in i18n._(elsewhere)             # Post's own name of the layer, in French too
+    finally:
+        i18n.set_language(lang)
     assert W.b.check_wire(stars, "Starless", syn, "Stars") == "Synthetic stars read the stars only of a Stars/background"
     # its wire to the third input follows the block: removing the wire says how
     w = next(x for x in W.graph.wires if x.dst == [cl, SYNTH_PORT])

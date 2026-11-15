@@ -104,6 +104,9 @@ SETTINGS = {
         ("Outlier rejection", [S("Rejection threshold", "text", "3 σ"), S("Separate thresholds", "bool", False)]),
         ("Half stacks", [S("Block size", "text", "20 frames", expert=True)])],
 }
+#: a Synthetic stars' image wired to Combine layers' Background or Stars (refused on purpose): what to do instead, in
+#: Post's words (its layer "Real stars")
+SYNTH_ELSEWHERE = "Synthetic stars go into the third input. To use them alone, hide Real stars in Post."
 NO_COMMON = {("registration", "Reference image"): "specific to each stack: a frame chosen in its lights"}
 
 
@@ -301,12 +304,12 @@ def _join(c, b, blk, ev, info, wires):
             why = "Stacking is needed first"
         elif blk.kind == "combine" and not t.linear:
             why = M("no {lab} from a stretched image", lab=lab)
+        elif port in ("Background", "Stars") and t.synth:         # refused on purpose: said what to do instead
+            why = SYNTH_ELSEWHERE
         elif port == "Background" and t.stars != "without":
             why = "the Background port needs a starless image"
         elif port == "Stars" and t.stars != "only":
             why = "the Stars port needs the stars only"
-        elif port == "Stars" and t.synth:
-            why = "the Stars port takes the real stars: the synthetic ones have their own port"
         elif port == SYNTH_PORT and not t.synth:
             why = "the Synthetic stars port takes the output of a Synthetic stars block"
         elif port == SYNTH_PORT and not _synth_of_stars(c, wires, b):

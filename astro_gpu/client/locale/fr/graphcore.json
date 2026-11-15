@@ -153,7 +153,7 @@
   "no image in input": "pas d'image en entrée",
   "the Background port needs a starless image": "le port Fond demande une image sans étoiles",
   "the Stars port needs the stars only": "le port Étoiles demande les étoiles seules",
-  "the Stars port takes the real stars: the synthetic ones have their own port": "le port Étoiles prend les étoiles réelles : celles de synthèse ont leur port",
+  "Synthetic stars go into the third input. To use them alone, hide Real stars in Post.": "Les étoiles synthétiques vont dans la troisième entrée. Pour les utiliser seules, masquez Étoiles réelles dans Post.",
   "the Synthetic stars port takes the output of a Synthetic stars block": "le port Étoiles de synthèse prend la sortie d'un bloc Étoiles de synthèse",
   "these Synthetic stars read other stars than those wired to Stars": "ces Étoiles de synthèse lisent d'autres étoiles que celles câblées sur Étoiles",
   "Synthetic stars goes on the stars of its workflow, never in a branch of its own": "Étoiles de synthèse se place sur les étoiles de son workflow, jamais dans une branche à part",
