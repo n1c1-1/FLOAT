@@ -719,6 +719,10 @@ class NewProjectDialog(QDialog):
         taken = bool(f) and self.folder().exists()
         self.exists.setVisible(taken)
         self.ok.setEnabled(bool(f) and not taken)
+        # greyed: why, on hover (the testers' pass 2: a greyed Save said nothing)
+        self.ok.setToolTip(_("Type the project's name first") if not f else
+                           _("A folder of this name is already there: choose another name or place") if taken else
+                           _("Creates the project's folder and saves the project in it"))
 
 
 def ask_project_name(parent, name: str = "") -> tuple[Path, str] | None:

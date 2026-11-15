@@ -20,5 +20,8 @@
  "focal length, mm (optional)": "focale, mm (facultatif)",
  "pixel size, µm (optional)": "taille des pixels, µm (facultatif)",
  "Found: RA {ra}°, Dec {dec}°": "Trouvée : AD {ra}°, Déc {dec}°",
- "Not in the catalogues here: the field is solved from its stars alone": "Absente des catalogues ici : le champ est résolu à partir de ses étoiles seules"
+ "Not in the catalogues here: the field is solved from its stars alone": "Absente des catalogues ici : le champ est résolu à partir de ses étoiles seules",
+  "Type the project's name first": "Tapez d'abord le nom du projet",
+  "A folder of this name is already there: choose another name or place": "Un dossier de ce nom existe déjà : choisissez un autre nom ou un autre emplacement",
+  "Creates the project's folder and saves the project in it": "Crée le dossier du projet et y enregistre le projet"
 }

@@ -110,8 +110,12 @@ class Card(QFrame):
         """Enabled or greyed with its reason; ``hint``: the card's place in the current workflow is refused (its reason
         in ``reason``) but it can still be dragged elsewhere, said in words; ``due``: enabled, that hint is asked of
         the core when first read."""
+        same = getattr(self, "_shown_state", None) == (bool(enabled), reason or "", hint or "", bool(due))
         self.enabled, self._reason, self._hint = bool(enabled), reason or "", hint or ""
         self._due = bool(due) and self.enabled
+        if same:                     # restyled again while a run goes, the card under the mouse never showed its reason
+            return
+        self._shown_state = (self.enabled, self._reason, self._hint, bool(due))
         on = self.enabled
         self.setCursor(Qt.OpenHandCursor if on else Qt.ForbiddenCursor)
         self.setStyleSheet(f"QFrame#tool {{ background: {'#232831' if on else '#1e2128'}; border: 1px solid "

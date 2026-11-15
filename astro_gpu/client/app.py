@@ -301,6 +301,10 @@ class Main(QMainWindow):
         self.statusBar().addPermanentWidget(self.b_log)
         self.statusBar().setStyleSheet("QStatusBar { background: #1c1f26; border-top: 1px solid #2a2f38; }")
         self.setMinimumSize(*lay.MIN_WINDOW)
+        # a greyed control says why on hover, the window active or not (the run's window, a dialog just closed or another
+        # program in front: Qt shows no tooltip over an inactive window, and the testers saw greyed controls without
+        # their reason, 4 of 5 tried)
+        self.setAttribute(Qt.WA_AlwaysShowToolTips)
         self.size_range = None                       # issue #44: the window's size range (layout.py)
         self.compact = False
         self.build_menus()
