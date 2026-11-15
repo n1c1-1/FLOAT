@@ -317,6 +317,72 @@ class SidesHost:
         variant, Discard or Stay (``blockdraft.settle``); Stay keeps the block chosen. (A gesture of the graph never
         waits: it applies, its toast says what it made stale, with Undo.)"""
         self.bridge.hold = self._hold_selection
+        self.bridge.doc.guard = self._draft_guard
+
+    def _draft_guard(self, steps):
+        """A gesture of the graph or of the Table while a block holds a draft: one that changes that block (rewires it,
+        deletes it, moves it into another row, changes its settings, its workflow's way to it) asks first the question
+        leaving the block asks (Apply, Try variant, Discard, Stay), Stay taking the gesture back (False); one that does
+        not concern it asks nothing and the draft stays (the function given back puts it back after the gesture)."""
+        s, pn = self.s, self.panel
+        d = getattr(s, "pending_change", None) if s is not None else None
+        if not d or pn is None or getattr(self, "_mirroring", False):
+            return True
+        if self._draft_touched(d, steps):
+            from ..blockdraft import settle
+            return settle(pn, self)
+
+        def keep():
+            if getattr(s, "pending_change", None) is None and set(d.pids) <= {q.pid for q in s.paths}:
+                s.pending_change = d                      # each change of the model leaves no draft: this one stays
+                pn.refresh(pn.node)
+        return keep
+
+    def _draft_blocks(self, d) -> set:
+        """The blocks of the graph the draft belongs to (its block in each of its workflows)."""
+        out = set()
+        try:
+            bm = self.s.block_map
+            for pid in d.pids:
+                v = self.s.view(pid)
+                n = bm.node_of(v, d.step) if v is not None else None
+                b = bm.block_of(n) if n is not None else None
+                if b is not None:
+                    out.add(b)
+        except Exception:  # noqa: BLE001 - a map not at hand: no block known (asked as a change of it)
+            return set()
+        return out
+
+    def _draft_touched(self, d, steps) -> bool:
+        """Whether these steps change a block the draft belongs to: the graph they would make (nothing changed)
+        compared on those blocks: gone, their definition, their row and place, their inputs."""
+        from ...graphcore import api as core
+        from ...graphcore.model import Index
+        mine = self._draft_blocks(d)
+        if not mine:
+            return True
+        g = self.bridge.graph
+        try:
+            after, res = core.apply_many(g, list(steps), dict(self.bridge.doc.view), self.bridge.doc.tr)
+        except Exception:  # noqa: BLE001 - a gesture the dry run cannot make: asked, never dropped silently
+            return True
+        if not res.ok or after is g:
+            return False                                  # refused or nothing changed: nothing of the draft's goes
+        ib, ia = Index(g), Index(after)
+
+        def inputs(q, b):
+            return sorted((tuple(w.src), tuple(w.dst), bool(w.active)) for w in q.wires if w.dst[0] == b)
+        for b in mine:
+            if b not in after.blocks or after.blocks[b] != g.blocks[b]:
+                return True
+            if ib.row_of.get(b) != ia.row_of.get(b) or ib.pos.get(b) != ia.pos.get(b):
+                return True
+            if inputs(g, b) != inputs(after, b):
+                return True
+            ra, rb = ia.row.get(ia.row_of.get(b)), ib.row.get(ib.row_of.get(b))
+            if ra is not None and rb is not None and ra.blocks[:ra.blocks.index(b)] != rb.blocks[:rb.blocks.index(b)]:
+                return True                               # a block put or taken before it in its row
+        return False
 
     def answer_draft(self, how: str) -> bool:
         """The draft of the block shown answered as its bar does: "apply", "variant" or "reset". False: none."""

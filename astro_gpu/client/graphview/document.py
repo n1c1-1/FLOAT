@@ -38,6 +38,8 @@ from ..names import shown
 BLOCK_SECONDS = 0.4
 #: the toast of a gesture that raised (English; shown through the translation)
 FAILED = "The gesture failed: nothing changed"
+#: the reason of a gesture the user took back (a block's draft kept by Stay): nothing to say
+STAYED = ""
 log = logging.getLogger(__name__)
 
 
@@ -229,7 +231,18 @@ class Doc:
         """Steps as one undo step. Frames are filed by where they were dropped or added, never by their headers: a
         session's filter is the name the user or the template gives."""
         steps = list(steps)
-        return self.guarded(steps[0][0] if steps else "apply", lambda: self.document.apply(steps))
+        go = self.guard(steps) if self.guard is not None else True
+        if go is False:                                   # a block's draft kept: its question answered Stay
+            return Result(False, reason=STAYED)
+        try:
+            return self.guarded(steps[0][0] if steps else "apply", lambda: self.document.apply(steps))
+        finally:
+            if callable(go):                              # what the guard does once the gesture is made
+                go()
+
+    #: ``guard(steps)`` before a gesture: False stops it, True lets it go, a function lets it go and is called after it
+    #: (the page's: a block holding a draft is asked before a gesture changes it)
+    guard = None
 
     def try_many(self, steps) -> Result:
         """Whether these steps would be accepted, nothing changed: -> Result."""
