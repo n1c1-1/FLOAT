@@ -465,11 +465,17 @@ class Gestures:
         mp = self.model
         steps = []
         cs = [c for c in cs if c is not None]
+        promoted = None
         for c in cs:
             if c.kind == "box":
                 o, k = c.id[1], c.id[2]
                 if o != COMMON and mp.own_list(o, k) is not None:
-                    steps.append(("reset_own_files", dict(session=o, kind=k)))
+                    more = self._promote(o, k) if len(cs) == 1 else []
+                    if more:                              # the frames become Common's: nothing is lost
+                        steps += more
+                        promoted = sum(1 for s in more if s[0] == "reset_own_files")
+                    else:
+                        steps.append(("reset_own_files", dict(session=o, kind=k)))
             elif c.kind in ("setting", "cal") and c.id[1] != COMMON:
                 b = self.block_of(c)
                 if b and self.doc.own_keys(b):
@@ -485,7 +491,11 @@ class Gestures:
         if not steps:
             self.status.emit(_("Nothing of its own here: everything already follows Common"), 3000)
             return
-        if len(steps) == 1 and cs[0].kind == "box":
+        if promoted:
+            txt = plural(promoted, "{kind} of “{s}” are Common's now · {n} session follows them",
+                         "{kind} of “{s}” are Common's now · {n} sessions follow them",
+                         kind=_(KIND_TITLE[cs[0].id[2]]), s=self.session_name(cs[0].id[1]))
+        elif len(steps) == 1 and cs[0].kind == "box":
             txt = _("“{s}” follows Common again: {kind}").format(s=self.session_name(cs[0].id[1]),
                                                                  kind=_(KIND_TITLE[cs[0].id[2]]))
         elif len(cs) == 1 and cs[0].kind in ("setting", "cal"):
@@ -493,6 +503,27 @@ class Gestures:
         else:
             txt = plural(len(steps), "{n} item back to Common", "{n} items back to Common")
         self.act(steps, txt, undo_link())
+
+    def _promote(self, o, k) -> list:
+        """« To Common » on a session's own frames while Common holds none of that kind: those frames become
+        Common's, and every session holding the same list follows Common (a sharing made common); a session that
+        followed the empty Common keeps none of its own, so that nothing changes for it. [] when Common already holds
+        frames of that kind (the session then follows those)."""
+        import os
+        mp = self.model
+        own = mp.own_list(o, k)
+        if not own or mp.common_list(k) or k == "lights":
+            return []
+        key = sorted(os.path.normcase(x) for x in own)
+        steps = [("set_common_files", dict(kind=k, paths=list(own), mode="replace"))]
+        for pl in mp.stacks():
+            for s in pl["sessions"]:
+                lst = mp.own_list(s["sid"], k)
+                if lst is not None and sorted(os.path.normcase(x) for x in lst) == key:
+                    steps.append(("reset_own_files", dict(session=s["sid"], kind=k)))
+                elif lst is None:
+                    steps.append(("add_files", dict(session=s["sid"], kind=k, paths=[], mode="replace")))
+        return steps
 
     def owner_name(self, c):
         """The name a settings cell is said with: its stack's, or its session's (Calibration)."""

@@ -393,5 +393,7 @@
   "These frames' header names filter {f}, “{s}” is {g}: where do they go?": "L'en-tête de ces images indique le filtre {f}, « {s} » est en {g} : où vont-elles ?",
   "Add here": "Ajouter ici",
   "New {f} session": "Session {f}",
-  "New {f} session added": "Session {f} ajoutée"
+  "New {f} session added": "Session {f} ajoutée",
+  "{kind} of “{s}” are Common's now · {n} session follows them": "{kind} de « {s} » passent au commun · {n} session les suit",
+  "{kind} of “{s}” are Common's now · {n} sessions follow them": "{kind} de « {s} » passent au commun · {n} sessions les suivent"
 }

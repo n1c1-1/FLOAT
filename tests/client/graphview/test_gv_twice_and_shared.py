@@ -6,10 +6,12 @@ later session flags them; the same darks in two sessions are a sharing said in I
 from __future__ import annotations
 
 from astro_gpu.core.project import list_frames, stage_graph
+from astro_gpu.core.workflow import chains
 from tests.client.graphview.test_gv_files import Toasts, settle
 from tests.client.graphview.test_gv_table import Bench, fwd, make
 
 stage_graph()             # the engine's stages loaded at collection, not in the first test's time
+chains()
 
 
 def test_gv_twice_lights_of_another_session_are_said_and_counted_once(qapp, tmp_path):

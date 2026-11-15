@@ -7,10 +7,12 @@ from __future__ import annotations
 import numpy as np
 
 from astro_gpu.core.project import stage_graph
+from astro_gpu.core.workflow import chains
 from tests.client.graphview.test_gv_files import Toasts
 from tests.client.graphview.test_gv_table import Bench, fwd
 
 stage_graph()             # the engine's stages loaded at collection, not in the first test's time
+chains()
 
 
 def frames(folder, n, flt):

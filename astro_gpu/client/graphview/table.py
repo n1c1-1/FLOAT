@@ -295,18 +295,18 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
         return res
 
     def undo(self):
-        res = self.bridge.undo()
-        if res.ok and self._built_rev != self.doc.revision:
-            self.after_model()
-        elif not res.ok:
-            self.status.emit(self.bridge.say(res.reason), 3000)
-        return res
+        return self._history(self.bridge.undo())
 
     def redo(self):
-        res = self.bridge.redo()
-        if res.ok and self._built_rev != self.doc.revision:
+        return self._history(self.bridge.redo())
+
+    def _history(self, res):
+        """After an undo or a redo: the table drawn again when the document changed. In the window the bridge's
+        undo is the window's own (bridge.history), which says what it did and gives no Result: the table read
+        ``res.ok`` of None and raised after the step was undone, so a notice's Undo seemed to do nothing."""
+        if self._built_rev != self.doc.revision:
             self.after_model()
-        elif not res.ok:
+        if res is not None and not getattr(res, "ok", True) and getattr(res, "reason", ""):
             self.status.emit(self.bridge.say(res.reason), 3000)
         return res
 
