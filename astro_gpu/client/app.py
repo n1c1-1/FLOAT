@@ -612,7 +612,7 @@ class Main(QMainWindow):
             return
         name, tab = got
         try:
-            f = templatefiles.save_user(self.s.template_file(), tab, name, card_data=self.s.template_card())
+            f = templatefiles.save_user(self.s.template_file(), tab, name)
         except (OSError, ValueError) as e:
             self.banner.say(_("The template cannot be saved: {why}").format(why=e))
             return
@@ -2319,6 +2319,10 @@ def main(argv=None):
     prefs.load()
     if first:                                           # a first launch speaks the system's language
         prefs.set("language", prefs.system_language())
+    try:
+        templatefiles.import_old()                       # the templates kept in the settings become files, once
+    except Exception:  # noqa: BLE001 - never stops the start
+        pass
     app = QApplication.instance() or QApplication(sys.argv[:1])
     app._gc = GuiGarbageCollector(app)                  # cycles collected on the GUI thread only (gcguard.py)
     context_menus_on_release(app)
