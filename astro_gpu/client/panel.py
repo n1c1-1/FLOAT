@@ -1098,9 +1098,28 @@ class Panel(QWidget):
         st = self.graph_state(node)
         top.addWidget(self.state_chip(node, st))
         self.hv.addLayout(top)
-        kind_label = label(combine_title(kind, p), "small")
-        kind_label.setToolTip(recipe_tip(spec))          # its recipe's whole name, what it does, its inputs
-        self.hv.addWidget(kind_label)
+        if hasattr(s, "set_combination_type"):          # its recipe, changed here (the card placed the one chosen)
+            from ..graphcore import combos
+            row = QHBoxLayout()
+            row.addWidget(label(_("Recipe"), "dim"))
+            cb = QComboBox()
+            cb.setObjectName("recipe")
+            for t in combos.offered():
+                cb.addItem(combine_title(t), t)
+                cb.setItemData(cb.count() - 1, recipe_tip(combos.recipe(t)), Qt.ToolTipRole)
+            if cb.findData(kind) < 0:                    # a recipe the application no longer offers: shown as it is
+                cb.addItem(combine_title(kind, p), kind)
+            cb.setCurrentIndex(max(0, cb.findData(kind)))
+            cb.setToolTip(recipe_tip(spec) + "\n" + _("Another recipe keeps the wires of the inputs it also has; "
+                                                      "the others go (Ctrl+Z brings them back)"))
+            cb.activated.connect(lambda k, b=cb, old=kind: b.itemData(k) != old and self._recipe_change(
+                lambda: s.set_combination_type(p, b.itemData(k))))
+            row.addWidget(cb, 1)
+            self.hv.addLayout(row)
+        else:
+            kind_label = label(combine_title(kind, p), "small")
+            kind_label.setToolTip(recipe_tip(spec))      # its recipe's whole name, what it does, its inputs
+            self.hv.addWidget(kind_label)
         acts = QHBoxLayout()                             # as the Image block: its Delete under its name (#34)
         x = QPushButton(_("Delete"))
         x.setToolTip(_("Take this block out, with the blocks after it (Del)"))

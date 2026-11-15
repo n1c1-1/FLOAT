@@ -584,5 +584,8 @@
   "refused": "refusé",
   "a change": "une modification",
   "This Combine layers puts back the stars of its own Stars/background": "Ce bloc Combiner calques remet les étoiles de son propre Étoiles/fond",
-  "The stars come from a Stars/background or a combination's Output": "Les étoiles viennent d'un bloc Étoiles/fond ou de la sortie d'une combinaison"
+  "The stars come from a Stars/background or a combination's Output": "Les étoiles viennent d'un bloc Étoiles/fond ou de la sortie d'une combinaison",
+  "Recipe: the combination this card places (S-H-O, H-O, RGB, LRGB, HOO, HaRGB…); its block's panel changes it later": "Recette : la combinaison que place cette carte (S-H-O, H-O, RVB, LRVB, HOO, HaRVB…) ; le panneau de son bloc la change ensuite",
+  "Another recipe keeps the wires of the inputs it also has; the others go (Ctrl+Z brings them back)": "Une autre recette garde les liens des entrées qu'elle a aussi ; les autres partent (Ctrl+Z les remet)",
+  "no image yet: place its Stacking first": "pas encore d'image : placez d'abord son Empilement"
 }

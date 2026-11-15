@@ -67,6 +67,20 @@ class Card(QFrame):
         small = max(self.title.fontMetrics().horizontalAdvance(w) for w in title.split()) > PALETTE_W - 64
         self.base = "font-weight: 600; font-size: %s;" % ("8pt" if small else "9pt")
         h.addWidget(self.title, 1)
+        self.choose = None
+        if kind == "combine":            # the recipe it places, on the card itself, and its list one click away
+            from ..graphnode import combine_title
+            self.title.setText(combine_title(palette.bridge.combo_type))
+            self.choose = QToolButton()
+            self.choose.setText("▾")
+            self.choose.setAutoRaise(True)
+            self.choose.setObjectName("recipe_choice")
+            self.choose.setToolTip(_("Recipe: the combination this card places (S-H-O, H-O, RGB, LRGB, HOO, HaRGB…); "
+                                     "its block's panel changes it later"))
+            self.choose.setStyleSheet("QToolButton { border: none; padding: 0 2px; color: #8b93a1; } "
+                                      "QToolButton:hover { color: #e8ebf0; }")
+            self.choose.clicked.connect(lambda: palette.combination_types(self))
+            h.addWidget(self.choose, 0, Qt.AlignTop)
         self.set_state(True, "")
 
     # the hint asks the core whether the current workflow takes the card at its natural place: a dry run of the
@@ -149,6 +163,8 @@ class Card(QFrame):
             return
         self.narrow = narrow
         self.title.setVisible(not narrow)
+        if self.choose is not None:
+            self.choose.setVisible(not narrow)
         self.setMaximumWidth(PALETTE_FOLDED_W - 12 if narrow else PALETTE_W - 26)
         self.box.setContentsMargins(*((8, 6, 8, 6) if narrow else (7, 5, 7, 5)))
         self._tip()

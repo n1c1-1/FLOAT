@@ -685,7 +685,18 @@ class GraphEditing:
             if g.blocks[b].kind == "combine":
                 want.setdefault(b, 0)
         for x in self.post_version().get("layers") or []:
-            if x.get("kind") != "workflow" or x.get("part") != "combined" or x.get("starless") != "output" or                     x.get("pid") is None:
+            if x.get("kind") != "workflow" or x.get("part") != "combined" or x.get("pid") is None:
+                continue
+            if x.get("starless", "starless") != "output":
+                # over a Stars/background's starless image: its Stars side reads that block's own stars, or the
+                # stars of the workflow its layer names (another workflow's Stars/background, or a combination's Output)
+                at = stars_side(g, int(x["pid"]), flows)
+                sp = x.get("stars_pid", x["pid"])
+                if at is None or sp is None:
+                    continue
+                part = None if x.get("stars_image") == "output" else "stars"
+                st = place_of(g, int(sp), part, flows)
+                sides.setdefault(at, list(st) if st is not None else None)
                 continue
             at = place_of(g, int(x["pid"]), None, flows)
             if at is None:
@@ -945,14 +956,12 @@ class GraphEditing:
             if lay is None:                                   # a Combine layers of the graph only (no Background yet)
                 continue
             flows = flows if flows is not None else _flows(g)
-            if (lay.get("starless") or "starless") != "output":
-                # over a Stars/background's starless image: its stars are that block's own (Post's layer of it)
-                own = place_of(g, int(lay["pid"]), "stars", flows) if lay.get("pid") is not None else None
-                if st[0] == "wire" and own is not None and (src, sport) != own:
-                    return [], _("This Combine layers puts back the stars of its own Stars/background")
-                continue
+            over_starless = (lay.get("starless") or "starless") != "output"
             if st[0] == "unwire":
-                out.append((n.lid, None, "stars"))
+                # over a Stars/background's starless image: back to that block's own stars (drawn again), else none
+                own = lay.get("pid") if over_starless else None
+                if not over_starless or lay.get("stars_pid", own) != own:
+                    out.append((n.lid, own, "stars"))
                 continue
             image = "stars" if sport == "Stars only" else "output" if sport == "image" else ""
             part = "stars" if image == "stars" else None
@@ -1978,6 +1987,19 @@ class GraphEditing:
         b = next((x for x in reversed(chain) if "image" in gm.out_ports(self._g.blocks[x])), None)
         return b, "image"
 
+    def input_problem(self, p, role: str, pid: int, image: str = "output") -> str:
+        """Why a combination's input cannot read this workflow's image, as the project model says, and a workflow of a
+        Session alone (no block gives an image yet): its list greys it with that reason (a beta tester picked
+        « Session 1 » and got « no workflow », the input left empty)."""
+        why = super().input_problem(p, role, pid, image)
+        if why:
+            return why
+        try:
+            src, _port = self._source_port(int(pid), image)
+        except Exception:  # noqa: BLE001 - a workflow the graph does not draw: nothing to wire from
+            src = None
+        return "" if src is not None else _("no image yet: place its Stacking first")
+
     def _combine_block(self, p):
         r = self._row(p)
         head = r.blocks[0] if r.blocks else None
@@ -2113,6 +2135,28 @@ class GraphEditing:
     def set_recipe_value(self, p, name: str, value) -> bool:
         """A parameter of a combination's recipe (None: back to its default); ValueError saying why it is refused."""
         self._do([("set_recipe_value", {"block": self._combine_block(p), "name": name, "value": value})])
+        return True
+
+    def set_combination_type(self, p, t: str) -> bool:
+        """Another recipe for a combination (its panel's list): the application's recipe of that type copied in, the
+        wires of the inputs it also has kept, one Undo step; the workflow's name follows when it is the recipe's own
+        (« S-H-O 2 » becomes « RGB », never an RGB named S-H-O)."""
+        import re
+        j = self._combine_block(p)
+        blk = self._g.blocks[j]
+        if combos.kind(blk) == t:
+            return False
+        steps = [("set_combination_type", {"block": j, "type": t})]
+        r = self._row(p)
+        old = combos.title(blk)
+        if re.fullmatch(re.escape(old) + r"( \d+)?", r.name or "") or re.fullmatch(re.escape(_(old)) + r"( \d+)?",
+                                                                                   r.name or ""):
+            base, names = combos.type_title(t), {x.name for x in self._g.rows if x.id != r.id}
+            name, k = base, 2
+            while name in names:
+                name, k = f"{base} {k}", k + 1
+            steps.append(("rename_row", {"row": r.id, "name": name}))
+        self._do(steps)
         return True
 
     def update_recipe(self, p) -> bool:

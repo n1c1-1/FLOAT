@@ -45,7 +45,9 @@ def test_hoo_is_placed_shown_saved_and_opened_again(win, env):
     win.graph.bridge.choose(b)
     settle(win, 3)
     texts = _panel_texts(win)
-    assert "HOO" in texts and "<b>Hα</b>" in texts and "<b>O III</b>" in texts
+    from PySide6.QtWidgets import QComboBox
+    recipe = next(x for x in win.graph.panel.findChildren(QComboBox) if x.objectName() == "recipe")
+    assert recipe.currentText() == "HOO" and "<b>Hα</b>" in texts and "<b>O III</b>" in texts
     assert not any(x.text() == "Update recipe" for x in win.graph.panel.findChildren(QPushButton))
     q = next(q for q in win.s.paths if (q.source or {}).get("fusion", {}).get("type") == "hoo")
     assert win.s.p.workflow(q.pid).source == api.combination_source("hoo", [])

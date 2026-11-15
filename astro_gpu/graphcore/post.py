@@ -202,8 +202,9 @@ def _to_post(g):
 
 
 def _with_sides(g, sides):
-    """The Stars side of each Combine layers over a combination's Output wired from the image its layer names (the
-    "· Stars" combination's Output, or the stars another workflow gives): Post's layer is what it shows, so a wire
+    """The Stars side of each Combine layers wired from the image its layer names (over a combination's Output: the
+    "· Stars" combination's Output, or the stars another workflow gives; over a Stars/background's starless image: its
+    own stars, or another workflow's): Post's layer is what it shows, so a wire
     from another image into that side is replaced (the panel's choice of the stars "did not stick" while the port
     was wired)."""
     if not sides:
@@ -217,6 +218,7 @@ def _with_sides(g, sides):
             j = next(r for r in g.rows if r.id == rid).blocks[0]
             into = [w for w in g.wires if w.dst == [j, "Stars"]]
             if any(w.src == list(src) and w.active for w in into):
+                drop |= {w.id for w in into if w.active and w.src != list(src)}     # never two stars into one side
                 continue
             drop |= {w.id for w in into if w.active}
             if not any(w.src == list(src) for w in into):
@@ -252,10 +254,16 @@ def _with_stars_group(g):
     if not heads:
         return g
     want = set()                                      # (src block, src port, Combine layers, its port)
+    # a Combine layers whose Stars side reads the stars of another workflow (another Stars/background's, a
+    # combination's Output: Post's layer names it) keeps them: its own block's stars are not drawn back beside them
+    fed = {w.dst[0] for w in g.wires if w.dst[0] in heads and w.dst[1] == "Stars" and w.active
+           and w.src[0] in g.blocks and g.blocks[w.src[0]].kind != "synth"}
     for w in g.wires:
         if w.dst[0] in heads and w.dst[1] == "Background" and w.src[1] == "Starless" and w.src[0] in g.blocks \
                 and g.blocks[w.src[0]].kind == "stars":
-            want.add((w.src[0], "Stars only", w.dst[0], "Stars"))
+            if w.dst[0] not in fed or any(x.dst == [w.dst[0], "Stars"] and x.src == [w.src[0], "Stars only"]
+                                                and x.active for x in g.wires):
+                want.add((w.src[0], "Stars only", w.dst[0], "Stars"))
             y = _synth_after(g, ix, w.src[0])
             if y is not None and not g.blocks[y].off:     # switched off: Post has no synthetic stars row
                 want.add((y, SYNTH_PORT, w.dst[0], SYNTH_PORT))
