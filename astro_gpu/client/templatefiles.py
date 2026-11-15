@@ -87,10 +87,87 @@ def card(path: Path, tab: str, mine: bool) -> dict | None:
 _NOT_CHAIN = ("session", "calibration", "output", "align_on", "post")
 
 
+def _signature(graph: dict, types: bool = True):
+    """The shape of a graph, whatever its ids, names, files and settings: each row's blocks (kind, method, off), its
+    sessions, what it is aligned on; the wires between the blocks' places (a combination's input by its rank). With
+    ``types``, the type of each combination too."""
+    rows = graph.get("rows") or []
+    blocks = graph.get("blocks") or {}
+    ids = {r.get("id"): i for i, r in enumerate(rows)}
+    where: dict = {}
+    for i, r in enumerate(rows):
+        for j, b in enumerate(r.get("blocks") or []):
+            where[b] = ("row", i, j)
+        for k, pair in enumerate(r.get("nights") or []):
+            for m, b in enumerate(pair or []):
+                where.setdefault(b, ("night", i, k, m))
+
+    def pos(b):
+        return where.get(b, ("free", (blocks.get(b) or {}).get("kind")))
+
+    def recipe_of(b):
+        return ((blocks.get(b) or {}).get("source") or {}).get("recipe") or {}
+
+    def port(b, name):
+        labels = [x.get("label") for x in recipe_of(b).get("inputs") or []]
+        return labels.index(name) if name in labels else name
+
+    out = []
+    for r in rows:
+        al = r.get("align") or None
+        out.append((tuple((blocks[b].get("kind"), blocks[b].get("method"), bool(blocks[b].get("off")))
+                          + ((recipe_of(b).get("id"),) if types and blocks[b].get("kind") == "combine" else ())
+                          for b in r.get("blocks") or [] if b in blocks),
+                    len(r.get("nights") or []),
+                    (ids.get(al.get("ref")), pos(al.get("from")) if al.get("from") else None, al.get("method"),
+                     bool(al.get("off"))) if al else None))
+    wires = sorted(repr((pos(w["src"][0]), port(w["src"][0], w["src"][1]), pos(w["dst"][0]),
+                         port(w["dst"][0], w["dst"][1]), w.get("channel"), bool(w.get("active", True))))
+                   for w in graph.get("wires") or [] if w.get("src") and w.get("dst"))
+    return repr((out, wires))
+
+
+#: the card entries that are a shipped template's own, not its recipe
+_OWN = ("key", "name", "text", "recommended", "tab", "file", "user")
+
+
+def _shipped_like(graph: dict) -> dict | None:
+    """The recipe of the shipped template whose graph has this graph's shape (several rows, a combination: what a
+    project made from it, saved as a template, holds), so that the template adds its whole graph as the shipped one
+    does; the type of a combination the gallery lets choose is the graph's own. None when no shipped one has it."""
+    if len(graph.get("rows") or []) < 2:
+        return None
+    loose = _signature(graph, types=False)
+    for tab in SHIPPED_TABS:
+        for f, mine in files(tab):
+            d = read(f)
+            info = (d or {}).get("template") or {}
+            c = dict(info.get("card") or {}) if isinstance(info, dict) else {}
+            if mine or not c.get("kind") or _signature(d["graph"], types=False) != loose:
+                continue
+            choose = c.get("kind") == "fusion" and not c.get("dual_x2") and not c.get("mono_rgb")
+            if not choose and _signature(d["graph"]) != _signature(graph):
+                continue                                # a combination's type fixed by construction: the same one
+            out = {k: copy.deepcopy(v) for k, v in c.items() if k not in _OWN}
+            if choose:                                  # the type of the graph's combination, as its card's choice
+                from ..stages.combine import COMBINATIONS
+                kinds = [((b.get("source") or {}).get("recipe") or {}).get("id")
+                         for b in (graph.get("blocks") or {}).values() if b.get("kind") == "combine"]
+                hit = next((x for x in COMBINATIONS if kinds and x.kind == kinds[0]), None)
+                if hit is not None:
+                    out.update(palette=hit.title, filters=list(hit.ports))
+            return out
+    return None
+
+
 def recipe(graph: dict) -> dict:
-    """What adds a template's workflow to a project that already holds frames, read from the template's graph: the
-    source of its first workflow and its blocks, in the nodes the gallery adds (``blocks``). A graph without a
-    workflow adds nothing."""
+    """What adds a template's workflow to a project that already holds frames, read from the template's graph: a
+    graph of a shipped multi-row template's shape, that template's recipe (its whole graph); else the source of its
+    first workflow and its blocks, in the nodes the gallery adds (``blocks``). A graph without a workflow adds
+    nothing."""
+    like = _shipped_like(graph)
+    if like is not None:
+        return like
     rows = graph.get("rows") or []
     blocks = graph.get("blocks") or {}
     kinds = [(blocks[b].get("kind"), blocks[b].get("method")) for b in (rows[0].get("blocks") or []) if b in blocks]         if rows else []

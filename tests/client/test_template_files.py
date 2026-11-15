@@ -229,3 +229,51 @@ def test_a_template_saved_in_a_new_tab_shows_in_both_galleries(win, monkeypatch)
     d._show_tab("Tests nuit")
     assert [c.t["name"] for c in d.cards] == ["Night SHO", "Simple"]
     d.close()
+
+
+def test_a_users_multi_row_template_adds_its_whole_graph(win, monkeypatch):
+    """The tester's case: a project made from SHO + RGB stars, saved as a template, came back as one chain (its first
+    row). On a blank project it makes the copy of the whole file; on a project that holds workflows it adds every row,
+    the S-H-O block and Combine layers, wired, as the shipped template does; its card draws the whole graph."""
+    from astro_gpu.client import gallery
+    _from_shipped(win, "sho_rgb")
+    shipped_rows = _rows(win)
+    assert len(shipped_rows) == 6
+    monkeypatch.setattr(gallery, "template_dialog", lambda parent, name: ("Night SHO", "Tests nuit"))
+    win.save_template()
+    mine = templatefiles.cards("Tests nuit")[0]
+    assert mine.get("kind") == "fusion" and mine.get("rgb_stars")              # drawn and added as the shipped one
+    win.new_project()
+    _settle(win, 10)
+    win.graph.show_templates()
+    win.graph.templates.show_tab("Tests nuit")
+    win.graph.templates.chosen.emit(win.graph.templates.cards[0].t)          # a blank project: the file's copy
+    _settle(win, 30)
+    assert _rows(win) == shipped_rows
+    before = len(_rows(win))                                                   # a project with workflows: all added
+    res = win.s.apply_template(mine, "Again", gallery._view_opts(mine))
+    assert res.ok, res.reason
+    g = win.graph.bridge.graph
+    assert len(_rows(win)) == before + 6
+    kinds = [g.blocks[b].kind for r in g.rows for b in r.blocks]
+    assert kinds.count("combine") == 2 and kinds.count("combine_layers") == 2
+
+
+def test_every_shipped_multi_row_shape_is_known_again(win, monkeypatch):
+    """Each shipped template of several rows, made into a project and saved as the user's: its card is the shipped
+    recipe (it adds and draws the whole graph); a template of one row keeps the recipe of its row."""
+    from astro_gpu.client import gallery
+    for c in templatefiles.shipped_cards():
+        if c["key"] == "sho_rgb" or c.get("source") == "image":
+            continue
+        win.new_project()                                    # each on a blank project: the file's copy
+        _settle(win, 10)
+        _from_shipped(win, c["key"])
+        monkeypatch.setattr(gallery, "template_dialog", lambda parent, name, k=c["key"]: (k, "Shapes"))
+        win.save_template()
+        mine = next(x for x in templatefiles.cards("Shapes") if x["name"] == c["key"])
+        if c.get("kind"):
+            want = {k: v for k, v in c.items() if k not in templatefiles._OWN}
+            assert {k: mine.get(k) for k in want} == want, c["key"]
+        else:
+            assert not mine.get("kind") and mine["blocks"], c["key"]
