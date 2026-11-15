@@ -132,7 +132,7 @@ STEPS = [
          what="The part of the field that is stacked and processed: a small target no longer costs the whole frame. "
               "Calibration and Registration keep the whole field."),
     dict(key="empilement", phase=3, title="Stacking", kind="fixed", stages=["stack"],
-         what="Stacks the frames straight from the sensor's color pixels (drizzle without debayering) and rejects "
+         what="Stacks the frames straight from the sensor's pixels (drizzle without debayering for a colour sensor) and rejects "
               "trails and outlier pixels."),
     dict(key="demi_piles", phase=3, title="Half-stacks", kind="auto", stages=[], run=["stack"],
          what="Two independent stacks of about 360 frames each: their difference measures the noise, which lets "

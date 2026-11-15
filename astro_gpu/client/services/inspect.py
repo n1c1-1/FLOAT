@@ -1061,8 +1061,22 @@ def array_source(p, wid: int, stage: str, name: str, which: str = "current", cha
     """An array of a done result (one channel of it with ``channel``)."""
     def load():
         a = _array(p, wid, stage, name, which)
-        return a[channel] if channel is not None and a.ndim == 3 else a
+        if channel is not None and a.ndim == 3:
+            return a[channel]
+        return _one_plane(p, wid, a)
     return load
+
+
+def _one_plane(p, wid: int, a: np.ndarray) -> np.ndarray:
+    """A monochrome sensor's stack is stored as three equal planes (the engine's files are all (3, H, W)): shown as the
+    one plane it is, with one column of statistics and no channels."""
+    try:
+        mono = a.ndim == 3 and a.shape[0] == 3 and p.is_mono(wid)
+    except (KeyError, AttributeError):
+        return a
+    if mono and np.array_equal(a[0, ::7, ::7], a[1, ::7, ::7]) and np.array_equal(a[0, ::7, ::7], a[2, ::7, ::7]):
+        return a[:1]
+    return a
 
 
 def preview_source(p, wid: int, stage: str, name: str, which: str = "current"):
