@@ -478,6 +478,11 @@ class BlockMap:
         paths = {getattr(p, "pid", None): p for p in getattr(model, "paths", None) or []}
         blocks = getattr(graph, "blocks", None) or {}
         separate = graph is not None and not getattr(graph, "calibrate_together", True)
+        # a Calibration is a session's own block ("calibration@1") only when the model calibrates that session on its
+        # own (two or more sessions in the per-session mode): its strip and its panels select it so. A project of one
+        # session saved in that mode drew "calibration@1" while Inspect asked "calibration": the page stayed blank
+        own = getattr(model, "separate_sessions", None)
+        own = set(own() or []) if callable(own) else None
         self._nodes: dict[str, Node] = {}
         self._ids: dict[int, str] = {}
         self._by_path: dict[tuple, Node] = {}
@@ -487,7 +492,8 @@ class BlockMap:
             name = pairs[0][1] if pairs else ""
             key = view_key(kind or name, name)
             sid = None
-            if blk is not None and (kind == "session" or (kind == "calibration" and separate)):
+            if blk is not None and (kind == "session" or (kind == "calibration" and separate and (
+                    own is None or getattr(blk, "sid", None) in own))):
                 sid = getattr(blk, "sid", None)
             n = Node(key, [paths[w] for w, _n in pairs if w in paths], sid=sid, cut=bool(getattr(blk, "off", False)))
             self._nodes[bid] = n
