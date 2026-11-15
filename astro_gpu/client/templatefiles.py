@@ -219,19 +219,37 @@ def blank(d: dict) -> dict:
     return d
 
 
+def _safe(s: str) -> str:
+    return "".join(c for c in s.strip() if c not in '\\/:*?"<>|').strip(" .")
+
+
+def user_file(tab: str, name: str) -> Path | None:
+    """The file a template of the user's named ``name`` in ``tab`` is written to; None without a folder or a name."""
+    root = user_dir()
+    tab, name = _safe(tab), _safe(name)
+    return root / tab / (name + SUFFIX) if root is not None and tab and name else None
+
+
+def replaced(tab: str, name: str) -> str:
+    """The name of the template of that tab that saving under ``name`` replaces (the same file: a name that differs
+    only by characters a file name cannot hold, or by its capitals), "" when none."""
+    f = user_file(tab, name)
+    if f is None or not f.parent.is_dir():
+        return ""
+    want = f.name.casefold()
+    return next((x.stem for x in f.parent.glob("*" + SUFFIX) if x.name.casefold() == want), "")
+
+
 def save_user(d: dict, tab: str, name: str, text: str = "", card_data: dict | None = None) -> Path:
     """The blank project ``d`` as a template of the user's, in the folder ``tab``, under ``name``. An existing file of
-    that name is replaced. -> the file."""
-    root = user_dir()
-    if root is None:
+    that name is replaced (the dialog says so first: ``replaced``). -> the file."""
+    if user_dir() is None:
         raise OSError("no folder for the user's templates")
-    safe = lambda s: "".join(c for c in s.strip() if c not in '\\/:*?"<>|').strip(" .")      # noqa: E731
-    tab, name = safe(tab), safe(name)
-    if not tab or not name:
+    f = user_file(tab, name)
+    if f is None:
         raise ValueError("a template needs a tab and a name")
     out = blank(d)
     out["template"] = {"text": text.strip(), **({"card": card_data} if card_data else {})}
-    f = root / tab / (name + SUFFIX)
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text(json.dumps(out, indent=1, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
     return f

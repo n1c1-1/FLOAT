@@ -305,6 +305,26 @@ def test_the_tab_field_says_a_new_name_makes_a_new_tab(qapp, settings):
     assert got == ("An existing tab, or a new name", "An existing tab, or a new name")
 
 
+def test_save_says_it_replaces_a_template_of_the_same_file(qapp, settings):
+    """13.33: a name that writes the same file as a template of the tab ("Night: SHO" and "Night SHO") replaced it
+    without a word; Save now says it on hover. Another name: nothing said."""
+    from PySide6.QtWidgets import QComboBox, QDialogButtonBox, QLineEdit
+    templatefiles.save_user({"graph": {"blocks": {}, "nights": [], "common": {}}}, "Color", "Night SHO")
+
+    def read(d):
+        save = d.findChild(QDialogButtonBox).buttons()[0]
+        out = [save.toolTip()]
+        d.findChild(QLineEdit).setText("Another one")
+        out.append(save.toolTip())
+        d.findChild(QLineEdit).setText("night sho")                 # the same file on this system
+        d.findChild(QComboBox).setCurrentText("Mono")
+        out.append(save.toolTip())
+        return out
+    first, other, mono = _in_dialog(read)
+    assert "Night SHO" in first and "replace" in first.lower()
+    assert other == "" and mono == ""
+
+
 def test_a_template_that_cannot_be_written_is_said_in_the_banner(win, monkeypatch):
     from astro_gpu.client import gallery
     monkeypatch.setattr(gallery, "template_dialog", lambda parent, name: ("Mine", "Tests nuit"))

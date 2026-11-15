@@ -918,16 +918,26 @@ def template_dialog(parent, name: str) -> tuple[str, str] | None:
     cb.lineEdit().setPlaceholderText(_("An existing tab, or a new name"))
     f.addRow(_("Gallery tab"), cb)
     bb = QDialogButtonBox()
-    bb.addButton(_("Save"), QDialogButtonBox.AcceptRole)
+    save = bb.addButton(_("Save"), QDialogButtonBox.AcceptRole)
     bb.addButton(_("Cancel"), QDialogButtonBox.RejectRole)
     bb.accepted.connect(d.accept)
     bb.rejected.connect(d.reject)
     f.addRow(bb)
+
+    def tab_of() -> str:
+        i = cb.findText(cb.currentText())
+        return cb.itemData(i) if i >= 0 and cb.itemData(i) else cb.currentText().strip()
+
+    def said():
+        """A template of the tab written to the same file is replaced: said on Save (13.33: it went without a word)."""
+        old = templatefiles.replaced(tab_of(), ed.text()) if ed.text().strip() and tab_of() else ""
+        save.setToolTip(_("Replaces the template “{name}” of this tab").format(name=old) if old else "")
+    ed.textChanged.connect(said)
+    cb.currentTextChanged.connect(said)
+    said()
     if d.exec() != QDialog.Accepted or not ed.text().strip() or not cb.currentText().strip():
         return None
-    i = cb.findText(cb.currentText())
-    tab = cb.itemData(i) if i >= 0 and cb.itemData(i) else cb.currentText().strip()
-    return ed.text().strip(), tab
+    return ed.text().strip(), tab_of()
 
 
 def _view_opts(t: dict) -> dict:
