@@ -64,3 +64,16 @@ def test_a_session_is_not_put_into_a_whole_variant_it_goes_into_its_original():
             assert not pl.lit, pl.op
     ok(doc, "add_block", kind="session", at={"type": "night", "row": r.id})
     assert sids(doc, doc.project.rows[1]) == sids(doc, doc.project.rows[0])
+
+
+def test_a_stack_is_not_merged_into_a_whole_variant():
+    """Merging a stack into a whole variant is refused as the other gestures that put a session there: the variant
+    draws its original's sessions, so the merged sessions vanished while the message said « merged »."""
+    from test_points import refused_inert
+    doc = Doc.from_template("colour_minimal")
+    r = doc.project.rows[0]
+    ok(doc, "try_variant", block=of_kind(doc, r, "registration"), change={"param": ["register", "min_pairs", 20]})
+    ok(doc, "add_block", kind="session", at={"type": "row"})
+    v, other = doc.project.rows[1], doc.project.rows[-1]
+    assert v.trial is not None and not v.fork and other.nights
+    assert "draws the sessions of" in refused_inert(doc, "merge_rows", src=other.id, dst=v.id)

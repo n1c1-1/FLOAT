@@ -1056,6 +1056,7 @@ def op_merge_rows(q, src, dst):
     a, b = _row(q, src), _row(q, dst)
     if not a.nights or not b.nights or a is b:
         raise Refusal("two different stacks of lights are needed")
+    _not_into_whole_variant(q, b)
     _no_clash(q, b, a.nights)
     why = ""
     for n in a.nights:
