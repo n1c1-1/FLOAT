@@ -412,11 +412,15 @@ class Gestures:
         t = t.strip()
         if not t:
             return
+        # the session or stack may be gone while its name was typed (an Undo, a change from the graph): nothing to name
         if c.kind == "name":
-            if t != self.model.p.blocks[c.id[1]].name:
+            blk = self.model.p.blocks.get(c.id[1])
+            if blk is not None and t != blk.name:
                 self.act([("rename_night", dict(night=c.id[1], name=t))],
                          _("Session renamed “{t}”").format(t=t), undo_link())
-        elif t != self.model.stack_by_id(c.id[1])["name"]:
+            return
+        st = self.model.stack_by_id(c.id[1])
+        if st is not None and t != st["name"]:
             self.act([("rename_row", dict(row=c.id[1], name=t))], _("Stack renamed “{t}”").format(t=t), undo_link())
 
     # ------------------------------------------------------------------ remove, reset

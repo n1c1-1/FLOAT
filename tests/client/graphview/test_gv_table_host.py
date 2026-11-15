@@ -124,3 +124,24 @@ def test_gv_host_another_document(qapp):
     t = b.host.table
     assert t is not old and len([s for pl in t.grid.model.stacks() for s in pl["sessions"]]) == 2
     b.close()
+
+
+def test_gv_a_name_typed_for_a_stack_undone_meanwhile_names_nothing(qapp, monkeypatch):
+    """« + Stack » opens its name in edit; the stack undone from the page while the name is typed, the name given then
+    (Enter, or the field losing its focus) names nothing and raises nothing: it raised on the missing stack."""
+    import sys
+    errors = []
+    monkeypatch.setattr(sys, "excepthook", lambda t, v, tb: errors.append(v))
+    b = Bench(1366, host=True)
+    g = b.host.table.grid
+    n = len(b.stacks())
+    b.click(("ghost_p",))
+    assert len(b.stacks()) == n + 1 and g._editor is not None
+    ed = g._editor
+    b.bridge.undo()
+    assert len(b.stacks()) == n
+    ed.setText("Hα")
+    ed.returnPressed.emit()
+    qapp.processEvents()
+    assert not errors and len(b.stacks()) == n and all(s["name"] != "Hα" for s in b.stacks())
+    b.close()
