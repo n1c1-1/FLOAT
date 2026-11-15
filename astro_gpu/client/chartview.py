@@ -1315,7 +1315,7 @@ class ChartView(QWidget):
     def wheelEvent(self, e):                                             # noqa: N802
         pos = e.position()
         steps = e.angleDelta().y() / 120.0
-        if not steps:
+        if not steps or not self.panels:                         # a chart without curves: nothing to zoom
             return
         f = 0.8 ** steps
         mods = e.modifiers()
