@@ -149,6 +149,7 @@ def _centre(p: np.ndarray, rad: float) -> tuple[float, float]:
 
 
 def moved(p: np.ndarray, dy: float, dx: float) -> np.ndarray:
+    """``p`` shifted by (-dy, -dx): a star (dy, dx) off the centre is brought to it."""
     M = np.float32([[1, 0, -dx], [0, 1, -dy]])
     return cv2.warpAffine(p, M, (p.shape[1], p.shape[0]), flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT)
 
@@ -171,7 +172,7 @@ def measured_shape(L: np.ndarray, ys, xs, peaks, R: int = R_MEASURED, centre_sha
         if p[rr > 20].max() > 0.03 * p.max():
             continue
         dy, dx = _centre(p, 6.0)
-        st = moved(p, -dy, -dx)
+        st = moved(p, dy, dx)                           # the star brought to the stamp's centre
         st = st - np.median(st[rr > 28])
         stamps.append(st / max(float(st[rr < 24].sum()), 1e-9))
         if len(stamps) >= 300:
@@ -295,6 +296,6 @@ def draw(H: int, W: int, ys, xs, centres, fluxes, shapes, floor: float) -> np.nd
         dy, dx = centres[i]
         for c in range(3):
             st = three[c, R - r:R + r + 1, R - r:R + r + 1]
-            st = moved(st, dy, dx) if r <= 64 else st
+            st = moved(st, -dy, -dx) if r <= 64 else st     # the centred shape taken to the star's place
             out[c, y - r:y + r + 1, x - r:x + r + 1] += fl[c] * st
     return out

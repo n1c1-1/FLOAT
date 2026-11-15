@@ -58,7 +58,9 @@ class SynthStars(Stage):
     description = "Draws the detected stars again, with the shape measured in the image or the instrument's."
     deps = ("star_removal",)
     Params = SynthStarsParams
-    version = "1"
+    # 2: the sub-pixel centring had its sign inverted (review 13.4): the measured shape was the median of stamps
+    # twice their offset from the centre (spread), every star drawn twice its offset away from its place
+    version = "2"
 
     def run(self, ctx: Context, p: SynthStarsParams) -> None:
         # after a combination of stars there is no Stars/background: the stars alone are the combination's Output

@@ -61,6 +61,35 @@ def test_the_image_shape_keeps_each_star_in_its_place_and_colour():
         assert abs(float(drawn[c, y - 12:y + 13, x - 12:x + 13].sum()) / float(drawn[1, y - 12:y + 13, x - 12:x + 13].sum()) - k) < 0.05
 
 
+def _centroid(a):
+    n = a.shape[0] // 2
+    yy, xx = np.mgrid[-n:n + 1, -n:n + 1]
+    q = np.clip(a, 0, None)
+    return float((q * yy).sum() / q.sum()), float((q * xx).sum() / q.sum())
+
+
+def test_a_star_off_its_pixel_is_measured_centred_and_drawn_where_it_was():
+    # review 13.4: moved(p, dy, dx) shifts by -(dy, dx); the measure shifted a star 0.4 px off by +0.4 (0.8 off), the
+    # drawing put it 0.4 px the other side
+    off = (0.4, -0.3)
+    yy, xx = np.mgrid[-32:33, -32:33]
+    L = np.zeros((640, 640), np.float32)
+    pts = [(y, x) for y in range(200, 441, 60) for x in range(200, 441, 60)]
+    for y, x in pts:
+        L[y - 32:y + 33, x - 32:x + 33] += np.exp(-((yy - off[0]) ** 2 + (xx - off[1]) ** 2) / (2 * 1.4 ** 2))
+    L[40, 40] = 5.0                                         # a brighter star far off: these ones are not saturated
+    ys, xs = np.array(pts).T
+    shape = lib.measured_shape(L, ys, xs, L[ys, xs])
+    cy, cx = _centroid(shape)
+    assert abs(cy) < 0.05 and abs(cx) < 0.05
+    centred = np.exp(-(yy ** 2 + xx ** 2) / (2 * 1.4 ** 2)).astype(np.float32)
+    centred /= centred.sum()
+    drawn = lib.draw(200, 200, np.array([100]), np.array([100]), [off], np.full((3, 1), 1000.0, np.float32),
+                     centred, 1e-3)
+    cy, cx = _centroid(drawn[1, 100 - 20:100 + 21, 100 - 20:100 + 21])
+    assert abs(cy - off[0]) < 0.05 and abs(cx - off[1]) < 0.05
+
+
 def test_the_saturated_stars_take_their_light_from_the_catalogue():
     fluxes = np.array([[120.0, 100.0, 80.0]] * 12 + [[50.0, 50.0, 50.0]]).T
     ys = np.arange(13) * 40.0
