@@ -276,7 +276,7 @@ class Steps(QObject):
         if k == "empilement":
             return [V("stack", "Stack", "array", "stack", "drz_full", True, True, camera=True,
                       compare=("calibrated_ref", "raw_half_a", "raw_half_b"),
-                      note=STACK_MONO_NOTE if self.s.is_mono(p) else STACK_NOTE),
+                      note=STACK_MONO_NOTE if getattr(self.s, "is_mono", lambda _p: False)(p) else STACK_NOTE),
                     V("rejection", "Rejection map", "rejection", "stack", note=REJECTION_NOTE),
                     V("coverage", "Coverage", "coverage", "stack", "drz_weight", True, True, camera=False, channel=1,
                       units="", note=COVERAGE_NOTE),
