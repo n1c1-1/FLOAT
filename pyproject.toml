@@ -1,6 +1,6 @@
 [project]
 name = "astro-gpu"
-version = "0.1.0"
+version = "0.2.0"
 description = "GPU astrophotography processing: Gaia-calibrated stacking, physical sky background, modelled stars and interactive rendering"
 readme = "README.md"
 license = "GPL-3.0-or-later"
