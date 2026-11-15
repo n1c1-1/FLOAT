@@ -553,6 +553,77 @@ def _private_project_registry(tmp_path, monkeypatch):
     monkeypatch.setattr(project, "REGISTRY", tmp_path / "projects.json")
 
 
+@pytest.fixture(scope="session")
+def qapp():
+    """The QApplication of the process, with the client's style. A module that defines its own ``qapp`` keeps it.
+
+    It lived with the fixtures below in tests/client/graphview/conftest.py: a command naming files of that folder, then
+    a file of tests/client, then another file of that folder, collects the graphview package twice, and pytest gave the
+    second one none of that conftest's fixtures ("fixture 'qapp' not found", and no English set). A conftest.py in
+    tests/client would be imported as a second module named ``conftest`` (the tests' ``import conftest`` would get it),
+    so they are here."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from astro_gpu.client.widgets import QSS
+    app = QApplication.instance() or QApplication([])
+    app.setStyleSheet(QSS)
+    return app
+
+
+@pytest.fixture(autouse=True)
+def _english_on_the_graph_page(request):
+    """The new graph page's tests (tests/client/graphview) start in English, the source language, whatever the test
+    before them left."""
+    if "graphview" not in Path(str(request.fspath)).parts:
+        yield
+        return
+    from astro_gpu.client import i18n
+    i18n.set_language("en")
+    yield
+    i18n.set_language("en")
+
+
+def _release_held_buttons() -> list:
+    """The mouse buttons Qt still holds down (a test that pressed with QTest and ended before its release, or a drag
+    it simulated), released on a window of their own; the buttons that were held."""
+    if "PySide6.QtWidgets" not in sys.modules:
+        return []
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication, QWidget
+    if QApplication.instance() is None or QApplication.mouseButtons() == Qt.NoButton:
+        return []
+    held = [b for b in (Qt.LeftButton, Qt.RightButton, Qt.MiddleButton) if QApplication.mouseButtons() & b]
+    w = QWidget()
+    w.resize(8, 8)
+    w.show()
+    for b in held:
+        QTest.mouseRelease(w, b, Qt.NoModifier, QPoint(2, 2))
+    w.close()
+    w.deleteLater()
+    QApplication.processEvents()
+    return held
+
+
+@pytest.fixture(autouse=True)
+def _no_mouse_button_held(request):
+    """A client test starts with no mouse button down. Qt keeps the buttons a test pressed for the whole process: after
+    test_gv_page2's drags, the graph page waited for the button to be up before asking about a draft, for ever, and
+    test_gv_confirm failed when it ran after it."""
+    if "client" in Path(str(request.fspath)).parts:
+        _release_held_buttons()
+    yield
+
+
+@pytest.fixture()
+def bridge(qapp):
+    """The new graph page's bridge on a graph held in memory (nothing is written anywhere)."""
+    from astro_gpu.client.graphview.bridge import Bridge
+    from astro_gpu.client.graphview.document import MemoryDocument
+    return Bridge(MemoryDocument())
+
+
 @pytest.fixture(autouse=True)
 def _private_user_settings(request, tmp_path, monkeypatch):
     """Each test has the client's user data of its own, read fresh: the settings file (ASTRO_GPU_SETTINGS) in its

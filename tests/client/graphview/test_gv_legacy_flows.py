@@ -49,17 +49,19 @@ def a_fits(path: Path, shape=(3, 8, 8)) -> str:
 # ---------------------------------------------------------------------------------------------- sessions
 def test_a_second_session_joins_the_chosen_stack_never_in_place_of_its_nights(world):
     """Decision 1: a double-click on the Session card adds the night to the chosen stack: the first night stays read,
-    it says so; Ctrl+Z takes it back."""
+    it says so; Ctrl+Z takes it back. The new night has no lights yet: it is drawn in the stack, and the workflow reads
+    it once it has lights (test_gv_empty_session_costs_nothing.py; before that rule the workflow listed it at once)."""
     W = world()
     full = W.m.paths[0]
     W.choose(W.kinds("session")[0])
     W.g.double_click_palette("session")
     W.settle()
-    assert [s.id for s in W.m.p.sessions_of(full.pid)] == [1, 2] and len(W.m.paths) == 1
+    assert len(row_named(W, "Full").nights) == 2 and [s.id for s in W.m.p.sessions] == [1, 2]
+    assert [s.id for s in W.m.p.sessions_of(full.pid)] == [1] and len(W.m.paths) == 1
     assert "Ctrl+Z" in W.said[-1]
     W.g.double_click_palette("session")                         # a third night: still all three
     W.settle()
-    assert [s.id for s in W.m.p.sessions_of(full.pid)] == [1, 2, 3]
+    assert len(row_named(W, "Full").nights) == 3 and [s.id for s in W.m.p.sessions] == [1, 2, 3]
     W.b.undo()
     W.b.undo()
     W.settle()
