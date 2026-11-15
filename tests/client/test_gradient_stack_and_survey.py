@@ -25,3 +25,52 @@ def test_changing_workflow_with_the_survey_shown_downloads_nothing(ed, monkeypat
     wait(ed)
     assert asked, "the survey of the workflow now shown was not read"
     assert all(not fetch for _pid, fetch in asked), asked
+
+
+class State:
+    def __init__(self, key, state="done", previous_key=None):
+        self.key, self.state, self.previous_key = key, state, previous_key
+
+
+def test_a_new_stack_result_is_read_again(ed, monkeypatch):
+    """The stack run again on a crop: the reduced copy, its size, the block's own samples and the survey are the new
+    result's, so a sample clicked or generated is placed on the new stack."""
+    states = {"stack": State("k1")}
+    monkeypatch.setattr(ed.s, "state_info", lambda p, stage: states.get(stage), raising=False)
+    p = ed.s.path
+    ed._load(p)
+    ed._run("load")
+    wait(ed)
+    assert ed._stack_size() == (900, 600)
+    ed.defaults[p.pid] = [[800.0, 500.0]]
+    ed.survey = {"pid": p.pid, "level": np.zeros((300, 450), np.float32), "title": "H-alpha"}
+    crop = small_stack()
+    crop = {**crop, "arr": crop["arr"][:, :150, :200].copy(), "valid": crop["valid"][:150, :200].copy(),
+            "W": 400, "H": 300}
+    monkeypatch.setattr(ge, "_reduced_stack", lambda project, pid: {**crop, "pid": pid})
+    states["stack"] = State("k2")                                 # the stack computed again, cropped
+    ed._load(p)
+    assert p.pid not in ed.defaults and ed.survey is None
+    ed._run("load")
+    wait(ed)
+    assert ed._stack_size() == (400, 300)
+    pts = np.asarray(ed.grid_points_of())
+    assert pts[:, 0].max() < 400 and pts[:, 1].max() < 300
+
+
+def test_a_copy_read_from_the_replaced_stack_is_not_kept(ed, monkeypatch):
+    """The stack's result changes while its copy is being read: the copy that arrives is the old one's, read again."""
+    states = {"stack": State("k1")}
+    monkeypatch.setattr(ed.s, "state_info", lambda p, stage: states.get(stage), raising=False)
+    p = ed.s.path
+    ed._load(p)
+    ed.small = None
+    sm = small_stack()
+    reads = []
+    monkeypatch.setattr(ge, "_reduced_stack", lambda project, pid: (reads.append(pid),
+                                                                    {**sm, "pid": pid, "W": 900 + 100 * (len(reads) > 1)})[1])
+    ed._run("load")
+    states["stack"] = State("k2")                                 # before the answer is taken
+    ed._load(p)
+    wait(ed)
+    assert ed._stack_size() == (1000, 600)

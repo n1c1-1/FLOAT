@@ -236,7 +236,8 @@ class GradientEditor(QObject):
         self._cmp_name = None                 # the image the preview is compared with, by name
         self._in_show = False
         self._dims = None                      # (pid, W, H) of the stack
-        self._pending = None                   # the request waiting for the one running
+        self._skeys: dict[int, object] = {}    # workflow -> the stack result its copy, size, samples, survey are of
+        self._pending = None                  # the request waiting for the one running
         self._shown_gen = 0                    # the request number when the workflow shown last changed
         self._hover = None
         self._grab = None
@@ -750,6 +751,13 @@ class GradientEditor(QObject):
                 if self.survey_shown:
                     self._run("survey")     # shown: the survey of the workflow now shown, from this computer only
         self.p = p
+        skey = self._stack_key()
+        if self._skeys.get(p.pid, skey) != skey:    # a new stack (run again, cropped, another size): read again
+            self._skeys[p.pid] = skey
+            self._forget_stack(p.pid)
+            if self.survey_shown:
+                self._run("survey")
+        self._skeys[p.pid] = skey
         try:
             sig = (p.pid, self._applied_params().model_dump_json(), self._applied_key())
         except Exception:  # noqa: BLE001 - settings not read yet: as they were
@@ -775,6 +783,28 @@ class GradientEditor(QObject):
             self.result, self.result_ms = None, None   # the computed result is what is shown
         if self.result is None:
             self.samples = self._computed_samples()
+
+    def _stack_key(self, p=None):
+        """The stack result the editor reads for the workflow (its own, else the one an Outdated stack still keeps)."""
+        p = p or self.p
+        st = self.s.state_info(p, "stack") if p is not None and hasattr(self.s, "state_info") else None
+        if st is None:
+            return None
+        return st.key if st.state == "done" else st.previous_key
+
+    def _forget_stack(self, pid: int):
+        """What was read from the workflow's previous stack result: its reduced copy, size, the block's own samples, the
+        survey on its grid, the preview made on it."""
+        self.defaults.pop(pid, None)
+        self.carried.pop(pid, None)
+        if self.small is not None and self.small["pid"] == pid:
+            self.small = None
+        if self._dims is not None and self._dims[0] == pid:
+            self._dims = None
+        if self.survey is not None and self.survey.get("pid") == pid:
+            self.survey, self._survey_img = None, None
+        if self.p is not None and self.p.pid == pid:
+            self.result, self.result_ms, self.samples, self._veil = None, None, None, None
 
     def _computed_samples(self):
         from ..api import stage_outputs
@@ -2296,6 +2326,7 @@ class GradientEditor(QObject):
                 self._preview_due = True
             return
         gen, params, pid, n = self.gen, self._params(), self.p.pid, self._density()
+        skey = self._stack_key()
         sig = params.model_dump_json()
         if what == "preview":
             self.computed += 1
@@ -2327,7 +2358,7 @@ class GradientEditor(QObject):
         def work():
             try:
                 sm = small or _reduced_stack(project, pid)
-                out = {"small": sm, "what": what, "pid": pid}
+                out = {"small": sm, "what": what, "pid": pid, "skey": skey}
                 if want_applied:
                     out["applied"] = {"key": akey, "arr": _applied_small(project, pid, sm)}
                 if what == "points":
@@ -2429,6 +2460,14 @@ class GradientEditor(QObject):
     def _arrived(self, gen: int, out: dict):
         self.busy = False
         self.step_text = ""
+        if self.p is not None and out.get("pid") == self.p.pid and "skey" in out and \
+                out["skey"] != self._stack_key():   # read from a stack result replaced meanwhile: asked again
+            what = out["what"]
+            out = {"what": what, "pid": out["pid"]}
+            if what == "preview":
+                self._preview_due = True
+            elif self._pending is None:
+                self._pending = what
         # for the workflow shown, asked since it is shown: a preview of another one (the same settings) is never shown
         mine = self.p is not None and out.get("pid") == self.p.pid and gen > self._shown_gen
         if out.get("what") == "preview" and "ms" in out and not out.get("abandoned"):
