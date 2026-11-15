@@ -1474,7 +1474,12 @@ class Main(QMainWindow):
         if self.project is not None and drafts.is_untitled(self.project.root):
             self.name_project()
             return
-        if self.s is not None and not self.s.flush():
+        try:
+            saved = self.s is None or self.s.flush()
+        except (OSError, ValueError) as e:               # a full disk, a locked file: said, the edits wait
+            self.banner.say(_("The project cannot be saved: {why}").format(why=plain_error(f"{type(e).__name__}: {e}")))
+            return
+        if not saved:
             self.banner.say(_("Another window of the program saved this project since it was opened here: nothing is "
                               "replaced. Save as… keeps this window's work in another folder."))
             return
