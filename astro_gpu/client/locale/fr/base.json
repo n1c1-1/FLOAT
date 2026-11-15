@@ -626,7 +626,7 @@
   "Size": "Taille",
   "Hardness": "Dureté",
   "Paint on image": "Peindre sur image",
-  "Brush: drag to paint · X paint / erase · [ ] size · M show mask": "Pinceau : glisser pour peindre · X peindre / effacer · [ ] taille · M voir le masque",
+  "Brush: drag to paint · X show / hide · [ ] size · M show mask": "Pinceau : glisser pour peindre · X montrer / cacher · [ ] taille · M voir le masque",
   "Red: where the layer shows · M: mask in gray": "En rouge : là où le calque se voit · M : le masque en gris",
   "Drag the divider · Before: the bottom layer, suggested settings": "Glisser le rideau · Avant : le calque du bas, réglages suggérés",
   "No layers yet": "Pas encore de calque",

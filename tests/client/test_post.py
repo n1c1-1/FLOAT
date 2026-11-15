@@ -1257,6 +1257,38 @@ def test_every_filter_and_every_mask_source_is_offered_without_the_stars_block(p
         s.close()
 
 
+def test_mask_brushes_are_named_by_their_effect_and_the_red_marks_what_is_hidden(post):
+    """The owner's rule: in the thumbnail white shows the layer, black hides it, and the picture agrees (the red of the
+    mask edited on what is hidden, as the reference editor's quick mask); the brushes say what painting does to the
+    layer (Show / Hide), whatever the part's operation; "Updating…" over the picture while it is behind."""
+    from astro_gpu.client.services.render import red_overlay
+    a = red_overlay(np.array([[1.0, 0.0]], np.float32))
+    assert a[0, 0, 3] == 0 and a[0, 1, 3] == 120                      # shown: clear; hidden: red
+    v = post.view
+    full = named(v, "Full")
+    v.select(full["id"], "layer")
+    v.mask_button()
+    v.add_part(full, "brush")
+    part = full["mask"]["parts"][-1]
+    v.part_sel = part["id"]
+    v.build_props()
+
+    def brushes():
+        return {b.text(): (b.isChecked(), b.toolTip()) for b in widgets_of(v, QPushButton) if b.text() in ("Show", "Hide")}
+    assert brushes() == {"Show": (part["paint"], "Painting here shows the layer"),
+                         "Hide": (not part["paint"], "Painting here hides the layer")}
+    v._part_set(part, "op", "sub")                                   # a subtracting brush hides where it paints
+    v.build_props()
+    assert brushes()["Hide"][0] == part["paint"]
+    hide = next(b for b in widgets_of(v, QPushButton) if b.text() == "Hide")
+    hide.click()
+    assert part["paint"] is True                                      # painting hides: the brush adds to the subtraction
+    assert post.settle() and not v.behind()
+    v.request(final_only=True)
+    assert v.behind()                                                 # asked, not shown yet: "Updating…"
+    assert post.settle() and not v.behind()
+
+
 def test_masks_with_parts_show_on_the_image_and_in_the_thumbnails(post):
     v = post.view
     full = named(v, "Full")
@@ -2541,7 +2573,8 @@ def _texts_of_the_code() -> dict[str, list[str]]:
             list(ed.FORMATS) + list(ed.PROFILES) + list(ed.SIZES):
         found.setdefault(t, []).append("tables")
     from astro_gpu.client.model import POST_PART_NAMES
-    for t in ("Paint", "Erase", rsv.NOTE_CPU_TEXT, " (copy)") + tuple(POST_PART_NAMES.values()) + postengine.BLENDS:
+    for t in ("Show", "Hide", "Painting here shows the layer", "Painting here hides the layer", rsv.NOTE_CPU_TEXT,
+              " (copy)") + tuple(POST_PART_NAMES.values()) + postengine.BLENDS:
         found.setdefault(t, []).append("constants")
     for t in list(pc.CHANNEL_TIPS.values()) + pc.INTERPS + ["Classic tone curves", "Astrophotography"] + \
             [x for p in pc.builtin_presets() for x in (p["name"], p["source"])] + list(postengine.OLD_NAMES):

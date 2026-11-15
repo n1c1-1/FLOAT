@@ -627,7 +627,7 @@ class Result:
     rgb: np.ndarray | None                              # uint8 (h, w, 3)
     canvas: Canvas | None
     masks: dict = field(default_factory=dict)           # id -> (h, w) float32
-    overlay: np.ndarray | None = None                   # uint8 (h, w, 4): red where the wanted mask shows the layer
+    overlay: np.ndarray | None = None                   # uint8 (h, w, 4): red where the wanted mask hides the layer
     mask_thumbs: dict = field(default_factory=dict)     # id -> (36, 54) uint8
     layer_thumbs: dict = field(default_factory=dict)    # id -> (36, 54, 3) uint8
     previews: set = field(default_factory=set)          # pids whose layer comes from an outdated result
@@ -654,11 +654,13 @@ def to_u8(a: np.ndarray) -> np.ndarray:
 
 
 def red_overlay(mask: np.ndarray) -> np.ndarray:
-    """Where the layer shows, in red at about half strength (the mask being edited)."""
+    """Where the layer is hidden, in red at about half strength (the mask being edited): the reference image editor's
+    quick mask, the red on the black of the mask's thumbnail, so that the picture and the thumbnail say the same (the
+    red on where it shows read as the opposite of the thumbnail)."""
     m = np.clip(mask, 0, 1)
     a = np.empty(m.shape + (4,), np.uint8)
     a[..., 0], a[..., 1], a[..., 2] = 255, 70, 60
-    a[..., 3] = (m * 120).astype(np.uint8)
+    a[..., 3] = ((1 - m) * 120).astype(np.uint8)
     return a
 
 

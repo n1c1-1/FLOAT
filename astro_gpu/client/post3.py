@@ -943,6 +943,7 @@ class PostView(QWidget):
         self.viewer.overlays.append(self._overlay)
         self.viewer.overlays.append(self._ann_overlay)
         self.viewer.overlays.append(self._heal_overlay)
+        self.viewer.overlays.append(self._behind_tag)
         self.viewer.banner = _("Rendering…")
         self.viewer.crop_box = tuple(self.crop) if self.crop else None
         # a picture from outdated results: said over it, with the Run that brings it up to date (not a pop-up)
@@ -1052,7 +1053,7 @@ class PostView(QWidget):
             want = "" if b in icons else text
             if b.text() != want:
                 b.setText(want)
-        self.b_export.setToolTip(_("Export…"))
+        self.b_export.setToolTip(_("Export the picture to a file (TIFF, PNG, JPEG, FITS) · Ctrl+E"))
         lo, hi = VERSION_W[any(kind == "narrow" for kind, _w in steps[:k])]
         if (self.cb_version.minimumWidth(), self.cb_version.maximumWidth()) != (lo, hi):
             self.cb_version.setMinimumWidth(lo)
@@ -1244,6 +1245,7 @@ class PostView(QWidget):
         self._hold_t.setSingleShot(True)
         self._hold_t.timeout.connect(self._show_held)
         self._main_seq = 0                               # the newest draft or release request (the exact view's, Q1)
+        self._failed_seq = 0                             # the newest request that failed (no "Updating…" for it)
         self._region_t = QTimer(self)
         self._region_t.setSingleShot(True)
         self._region_t.timeout.connect(self._send_region)
@@ -1571,6 +1573,7 @@ class PostView(QWidget):
         if not final_only:
             self._draft_t.start(0)
         self._final_t.start(0 if final_only else 220)
+        self.viewer.update()                              # its "Updating…" at once
 
     def _selected_wants(self):
         want = (self._mask_key(),) if self.sel else ()
@@ -1833,6 +1836,9 @@ class PostView(QWidget):
             self.draft_level, self.draft_ms = self.draft_level - 1, []
 
     def _on_failed(self, seq, kind, text):
+        if kind in ("draft", "half", "refine"):
+            self._failed_seq = max(self._failed_seq, seq)
+            self.viewer.update()
         if kind in ("draft", "half", "region", "before", "start"):
             first = _("Image not computed: {why}").format(why=plain_error(text))
             if first != self.viewer.banner:                  # said once; the program's error in the Log only
@@ -1987,6 +1993,21 @@ class PostView(QWidget):
         W, H = self.src.size()
         x0, y0, x1, y1 = v.crop_box if v.crop_box and not v.crop_edit else (0, 0, W, H)
         paint(p, self._ann, v, self.ann_show, QRectF(v.img_to_w(x0, y0), v.img_to_w(x1, y1)))
+
+    def behind(self) -> bool:
+        """The picture on the screen is behind the settings: a render is asked, or on its way, and not shown yet (one
+        that failed says so in the banner instead)."""
+        if self.src.img1 is None and self.src.img2 is None:
+            return False                                         # nothing shown: the banner speaks
+        if self._draft_t.isActive() or self._final_t.isActive() or self._held is not None:
+            return True
+        return max(self.src.seq1, self.src.seq2, self._failed_seq) < self._main_seq
+
+    def _behind_tag(self, p: QPainter, v: Viewer):
+        """As the Gradient view: "Updating…" over the top of the picture while it is behind the settings."""
+        if self.behind():
+            from .imageview import tag
+            tag(p, QPointF(10, 10), _("Updating…"))
 
     # ------------------------------------------------------------ the red overlay of the mask being edited
     def _overlay(self, p: QPainter, v: Viewer):
@@ -3403,7 +3424,8 @@ class PostView(QWidget):
         self.pbox.addWidget(de)
         inv = QCheckBox(_("Invert"))
         inv.setChecked(m["invert"])
-        inv.toggled.connect(lambda v: (self.push(), m.__setitem__("invert", v), self.request(final_only=True)))
+        inv.toggled.connect(lambda v: (self.push(), m.__setitem__("invert", v), self.request(final_only=True),
+                                       QTimer.singleShot(0, self.build_props)))      # the brushes' names follow
         self.pbox.addWidget(inv)
         if self.part_sel and any(p["id"] == self.part_sel and p["src"] == "brush" for p in m["parts"]):
             self.viewer.mode = "brush"
@@ -3456,8 +3478,13 @@ class PostView(QWidget):
             sl(key, name, lo, hi, unit)
         if src == "brush":
             r = QHBoxLayout()
-            for txt, val in (("Paint", True), ("Erase", False)):
+            # named by their effect on the layer (the owner's rule): a brush of a part that subtracts, or of an
+            # inverted mask, hides where it paints
+            shows = (part["op"] != "sub") != bool((lay["mask"] or {}).get("invert"))
+            for txt, tip, val in (("Show", "Painting here shows the layer", shows),
+                                  ("Hide", "Painting here hides the layer", not shows)):
                 b = QPushButton(_(txt))
+                b.setToolTip(_(tip))
                 b.setCheckable(True)
                 b.setChecked(part["paint"] == val)
                 b.setObjectName("face")
@@ -3742,7 +3769,7 @@ class PostView(QWidget):
 
     def _hint(self):
         if self.viewer.mode == "brush":
-            t = _("Brush: drag to paint · X paint / erase · [ ] size · M show mask")
+            t = _("Brush: drag to paint · X show / hide · [ ] size · M show mask")
         elif self.viewer.mode == "heal":
             t = _("Spot healing: click or paint over a defect, healed when released · [ ] size · Alt+click: the "
                   "source by hand · Ctrl+Z: undo · middle button: move the image")
@@ -3777,7 +3804,7 @@ POST_KEYS = (
     (("1",), "Zoom 100 %", lambda p: p.viewer.zoom_to(1.0)),
     (("+", "=", "Ctrl++"), "Zoom in", lambda p: p.viewer.zoom_by(ZOOM_STEP)),
     (("-", "Ctrl+-"), "Zoom out", lambda p: p.viewer.zoom_by(1 / ZOOM_STEP)),
-    (("X",), "Paint / erase", lambda p: p.toggle_paint()),
+    (("X",), "Brush: show / hide", lambda p: p.toggle_paint()),
     (("[",), "Smaller brush", lambda p: p.brush_size(1 / 1.25)),
     (("]",), "Bigger brush", lambda p: p.brush_size(1.25)),
     (("Ctrl+J",), "Duplicate", lambda p: p.duplicate()),
