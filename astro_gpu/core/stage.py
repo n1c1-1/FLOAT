@@ -172,7 +172,7 @@ class Context:
     def _eta(self, now: float, frac: float, el: float) -> float | None:
         """Seconds to go at the pace of the last stretch; at the mean pace since the start while the stretch is too
         short to tell (``progress`` keeps the samples)."""
-        pace = self._pace
+        pace = self.__dict__.setdefault("_pace", [])      # a context built without __init__ (tests) starts one
         pace.append((now, frac))
         horizon = now - max(self.PACE_MIN_S, self.PACE_SHARE * el)
         while len(pace) > 2 and pace[1][0] <= horizon:
