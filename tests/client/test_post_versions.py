@@ -802,9 +802,10 @@ def test_undoing_a_workflow_setting_a_workflow_rename_or_synthetic_stars_says_wh
     try:
         v._set_workflow_param(full, "render_simple", "linked", False)
         v.do_undo()
-        assert said[-1].startswith("Undone: ") and "linked" in said[-1], said
+        # the setting's label and its value's, never the engine's raw names ("linked: False")
+        assert said[-1].startswith("Undone: ") and "Linked channels" in said[-1], said
         v.do_redo()
-        assert said[-1].startswith("Redone: ") and "linked" in said[-1], said
+        assert said[-1].startswith("Redone: ") and "Linked channels" in said[-1], said
         assert v._model_change(lambda: model.rename(full.pid, "Renamed"), "x · Ctrl+Z")
         v.do_undo()
         assert said[-1] == "Undone: x", said

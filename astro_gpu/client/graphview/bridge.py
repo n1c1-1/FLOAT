@@ -261,11 +261,26 @@ class Bridge(QObject):
         m.last_stale = None
         return c.text()
 
+    #: the window's Undo and Redo, (undo, redo): its one entry point, so that Ctrl+Z, Edit > Undo and a notice's Undo
+    #: link do the same thing on every page; None (a page alone): the graph's own history
+    history = None
+
     def undo(self):
+        if self.history is not None:
+            return self.history[0]()
+        return self.undo_graph()
+
+    def redo(self):
+        if self.history is not None:
+            return self.history[1]()
+        return self.redo_graph()
+
+    def undo_graph(self):
+        """The graph's last step undone (the window's Undo calls it on the graph's page)."""
         was = self.selected
         return self._after_history(self.doc.undo(), "undo", was)
 
-    def redo(self):
+    def redo_graph(self):
         was = self.selected
         return self._after_history(self.doc.redo(), "redo", was)
 

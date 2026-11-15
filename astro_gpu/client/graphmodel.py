@@ -78,6 +78,39 @@ def _not_ported(name):
     raise NotPorted(f"GraphEditing.{name} is not ported to the graph yet")
 
 
+def _step_words(g, steps) -> str:
+    """What a step of a method or a setting did, in the interface's words, for Undo / Redo ("Denoise: adapted network",
+    "Stacking method: Classic"), never the engine's raw names; "" for any other step (its toast names it)."""
+    from .. import texts
+    from ..graphcore.rules import LABEL, setting_spec
+    from ..core import workflow as wfl
+    from .i18n import language
+    from .settings import fmt
+    steps = [s for s in steps if isinstance(s, (tuple, list)) and len(s) == 2 and isinstance(s[1], dict)]
+    same = {(op, kw.get("stage"), kw.get("name"), repr(kw.get("value")), kw.get("method")) for op, kw in steps}
+    if not steps or len(same) != 1:                   # one setting, given to one workflow or to several
+        return ""
+    op, kw = steps[0]
+    try:
+        if op in ("set_method", "set_node_method"):
+            blk = g.blocks.get(kw.get("block"))
+            if blk is None:
+                return ""
+            m, engine, spec = kw.get("method"), wfl.METHODS.get(blk.kind, ()), setting_spec(blk.kind, "Method")
+            word = spec[3][engine.index(m)] if spec and m in engine and len(spec[3]) == len(engine) else \
+                texts.choice_label(str(m), "en")
+            return _("{setting}: {value}").format(setting=_(LABEL.get(blk.kind, blk.kind)), value=_(word))
+        if op in ("set_flow_param", "set_param", "set_trunk_param") and isinstance(kw.get("name"), str):
+            stage, name, v = str(kw.get("stage") or ""), kw["name"], kw.get("value")
+            label = texts.param_label(stage.partition("@")[0].partition("~")[0], name, language()) or name
+            value = _("suggested value") if v is None else (texts.choice_label(v, language()) if isinstance(v, str)
+                                                             else fmt(v))
+            return _("{setting}: {value}").format(setting=label, value=value)
+    except (KeyError, ValueError, TypeError, IndexError, AttributeError):
+        return ""
+    return ""
+
+
 class GraphRefused(ValueError):
     """A gesture the graph core refused: its reason, translated."""
 
@@ -931,7 +964,7 @@ class GraphEditing:
         finally:
             self._layer_pool = None
             self.__dict__.pop("_absorbed", None)
-        text = name or (say(res.toast, _) if res.toast else "")
+        text = name or _step_words(before, steps) or (say(res.toast, _) if res.toast else "")
         if text:
             self.name_step(text)
         return res
