@@ -267,7 +267,6 @@ class FramesView(QWidget):
     """The Session block, inspected: the files of a session and its frames, or the table of the sessions and the health
     check. ``imported`` follows a session added."""
     imported = Signal()
-    stackMode = Signal(str)
 
     def __init__(self, project, browser, parent=None, service=None):
         super().__init__(parent)
@@ -436,28 +435,7 @@ class FramesView(QWidget):
                 lb.setToolTip("◇ " + _("Not in the engine yet."))
                 row.addWidget(lb, 1)
                 self.sv.addLayout(row)
-        if len(sess) > 1:
-            self.sv.addSpacing(6)
-            self.sv.addWidget(label(_("Stacking"), "h2"))
-            row = QHBoxLayout()
-            g = QButtonGroup(self)
-            for text, tip, mode in ((_("All together"), _("All sessions together"), "together"),
-                                    (_("One per session"), _("One stack per session"), "per_session")):
-                if mode == "per_session" and not prefs.spec():
-                    continue                                   # ◇: the engine stacks all the sessions together
-                b = QPushButton(text + ("  ◇" if mode == "per_session" else ""))     # compact names (decision 12)
-                b.setToolTip(tip)
-                b.setObjectName("face")
-                b.setCheckable(True)
-                b.setChecked(s.stack_mode == mode)
-                if mode == "per_session":
-                    b.setEnabled(False)
-                    b.setToolTip("◇ " + _("Not in the engine yet."))
-                b.clicked.connect(lambda _x=False, m=mode: self.stackMode.emit(m))
-                g.addButton(b)
-                row.addWidget(b)
-            row.addStretch(1)
-            self.sv.addLayout(row)
+        # no choice of calibrating the sessions together here: it is the Calibration block's menu on the graph
         self.sv.addStretch(1)
 
     @staticmethod

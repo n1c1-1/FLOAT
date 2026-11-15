@@ -847,8 +847,9 @@ def test_add_session_makes_an_empty_session_shown_in_its_files(win):
         settle(win)
 
 
-def test_two_sessions_merge_their_flats_and_offer_the_stacking_mode(win):
-    """A second night with flats: the engine's check says the flats merge, and the Stacking modes show."""
+def test_two_sessions_merge_their_flats_and_offer_no_stacking_mode(win):
+    """A second night with flats: the engine's check says the flats merge. The Frames page offers no choice of
+    calibrating the sessions together: that is the Calibration block's menu on the graph."""
     s = win.s
     p = s.p
     extra = api.add_session(p, lights=[str(DATA / "lights")], flats=[str(DATA / "flats")], name="Session 2")
@@ -865,14 +866,14 @@ def test_two_sessions_merge_their_flats_and_offer_the_stacking_mode(win):
         # (said per workflow since the merge is per workflow: "<workflow>: the flats of 2 sessions are merged …")
         assert any(lv == "warn" and "the flats of 2 sessions are merged into one master flat" in tx.lower()
                    for lv, tx in lines), lines
-        assert "Stacking" in texts_of(f.pages.widget(0))
-        assert "All together" in texts_of(f.pages.widget(0))          # compact names: the sentence in its tooltip
-        assert "One stack per session" not in " ".join(texts_of(f.pages.widget(0)))        # ◇
-        prefs.set("spec_mode", True)
-        f._build()
-        settle(win)
-        b = [x for x in f.findChildren(QPushButton) if x.text().startswith("One per session")][0]   # compact name
-        assert not b.isEnabled() and "◇" in b.text()
+        for spec in (False, True):                                     # not even as a ◇ preview
+            prefs.set("spec_mode", spec)
+            f._build()
+            settle(win)
+            texts = texts_of(f.pages.widget(0))
+            assert "Stacking" not in texts
+            assert not any(t.startswith(("All together", "One per session")) for t in texts), texts
+            assert not [x for x in f.findChildren(QPushButton) if x.text().startswith(("All together", "One per"))]
         prefs.set("spec_mode", False)
         shot(win, "frames_two_sessions")
     finally:

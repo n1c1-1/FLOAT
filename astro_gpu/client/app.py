@@ -1060,7 +1060,6 @@ class Main(QMainWindow):
         tune.sendToPost.connect(self._send_to_post)
         self.browser.sendToPost.connect(self._send_to_post)
         self.frames.imported.connect(self.request_refresh)
-        self.frames.stackMode.connect(lambda m: s.set_stack_mode(m))
         self.browser.goChain.connect(lambda k: self.select(step=k) if s.path is not None else None)
         self.tune = tune
         return tune
