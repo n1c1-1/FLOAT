@@ -1149,5 +1149,6 @@
   "The last change was made in a block's draft": "La dernière modification a été faite dans le brouillon d'un bloc",
   "The last change undone was made in a block's draft": "La dernière modification annulée a été faite dans le brouillon d'un bloc",
   "{block} draft": "brouillon {block}",
-  "A setting changed on a block with results up to date is a draft until Apply, Try variant or Reset, and an Undo that would compute them again asks first; unchecked, both apply at once (Ctrl+Z takes them back)": "Un réglage changé sur un bloc aux résultats à jour est un brouillon jusqu'à Appliquer, Essayer variante ou Réinitialiser, et une annulation qui les recalculerait demande d'abord ; décoché, les deux s'appliquent aussitôt (Ctrl+Z les reprend)"
+  "A setting changed on a block with results up to date is a draft until Apply, Try variant or Reset, and an Undo that would compute them again asks first; unchecked, both apply at once (Ctrl+Z takes them back)": "Un réglage changé sur un bloc aux résultats à jour est un brouillon jusqu'à Appliquer, Essayer variante ou Réinitialiser, et une annulation qui les recalculerait demande d'abord ; décoché, les deux s'appliquent aussitôt (Ctrl+Z les reprend)",
+  "Settings changed, not applied yet": "Réglages changés, pas encore appliqués"
 }

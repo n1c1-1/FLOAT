@@ -145,3 +145,48 @@ def test_real_inspect_frame_list_draws_no_text_over_another(win, env, size, lang
             break
     assert win.browser.viewer.band.name_l.full_text(), "the viewer shows no frame"
     assert not _crossed(win), _crossed(win)
+
+
+@pytest.mark.parametrize("lang", LANGS)
+@pytest.mark.parametrize("size", SIZES)
+def test_a_blocks_draft_bar_at_the_top_of_the_panel_draws_no_text_over_another(win, env, size, lang):
+    """A block holding a draft (blockdraft.py): its bar pinned under the block's header, above Apply to and the settings,
+    its state word "Draft"; in the Graph page's panel and in Inspect's, no text over another."""
+    from astro_gpu.client.blockdraft import Draft, DraftBar
+    from astro_gpu.client.panel import Panel
+    _window(win, size, lang)
+    made_from(win, env, "colour_full")
+    s, page = win.s, win.graph
+    stack = next(b for b, x in s.stored.blocks.items() if x.kind == "stacking")
+    page.bridge.choose(stack)
+    settle(win, 3)
+    node = page.panel.node
+    d = Draft(node.key, [q.pid for q in node.paths])
+    d.title = "Stacking"
+    for name, v in (("kappa", 4.5), ("pixfrac", 0.7)):
+        d.put({("param", "stack", name): {"ch": {"kind": "param", "stage": "stack", "name": name, "value": v,
+                                                 "suggested": None},
+                                          "what": f"{name}: 1 → {v}", "short": name}})
+    s.pending_change = d
+    try:
+        for mode in (0, 1):
+            win.set_mode(mode)
+            settle(win, 3)
+            pn = page.panel if mode == 0 else next(p for p in win.tune.findChildren(Panel))
+            pn.refresh(pn.node)
+            settle(win, 2)
+            bar = pn.findChild(DraftBar)
+            from PySide6.QtWidgets import QLabel
+            assert bar is not None and bar.isVisibleTo(pn) and not pn._sc.isAncestorOf(bar)      # pinned, at the top
+            assert pn.hv.indexOf(bar) >= 0                 # in the block's header, above Apply to and the settings
+            labels = [pn.hv.itemAt(i).widget() for i in range(pn.hv.count())]
+            scope = [i for i, w in enumerate(labels) if isinstance(w, QLabel) and w.text().rstrip(" :") in
+                     ("Apply to", "Appliquer à")]
+            assert all(pn.hv.indexOf(bar) < i for i in scope)
+            pn.layout().activate()
+            from PySide6.QtWidgets import QLabel
+            word = pn.findChild(QLabel, "draft_state")
+            assert word is not None and word.text() == ("Brouillon" if lang == "fr" else "Draft")
+            assert not _crossed(pn), (mode, _crossed(pn))
+    finally:
+        s.pending_change = None

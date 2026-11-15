@@ -602,12 +602,7 @@ class Panel(QWidget):
         v.addWidget(sc, 1)
         self.details = Details()
         v.addWidget(self.details)
-        foot = QWidget()                                # the panel's foot, at its very bottom: the block's draft bar
-        self.fv = QVBoxLayout(foot)
-        self.fv.setContentsMargins(10, 0, 10, 0)
-        self.fv.setSpacing(0)
-        v.addWidget(foot)
-        self.bar = None                                 # the draft bar shown (blockdraft.DraftBar)
+        self.bar = None                                 # the draft bar shown (blockdraft.DraftBar), in the header
         self._later = QTimer(self)
         self._later.setSingleShot(True)
         self._later.setInterval(0)
@@ -688,8 +683,8 @@ class Panel(QWidget):
     def _refresh(self, node):
         clear(self.hv)
         clear(self.bv)
-        clear(self.fv)
         self.bar = None
+        self._bar_at = None                             # (a panel without its place: at the end of its header)
         self.folds.reset()
         self.details.hide()
         if node is not None and not self._alive(node):     # its block went away (Ctrl+Z, a removal): the page gives
@@ -1464,6 +1459,7 @@ class Panel(QWidget):
         if acts.count():
             acts.addStretch(1)
             self.hv.addLayout(acts)
+        self._bar_at = self.hv.count()                  # the draft bar's place: under the header, above Apply to
         if getattr(node, "missing", ""):                 # its data of the sky is not here (core/sky_data.py)
             self.hv.addWidget(label(_("Cannot run: {why}").format(why=node.missing.rstrip(".")),
                                     "warn", wrap=True))
@@ -1597,7 +1593,7 @@ class Panel(QWidget):
         return c.text() if c.stages else _("Nothing up to date is computed again")
 
     def draft_bar(self, node, p):
-        """The block's draft, pinned at the panel's foot: what changed (old → new), what Apply computes again and how
+        """The block's draft, pinned at the panel's top under its header: what changed (old → new), what Apply computes again and how
         long, and Apply, Try variant, Reset."""
         from .blockdraft import DraftBar
         d = self._draft(node)
@@ -1615,9 +1611,9 @@ class Panel(QWidget):
         bar.variant.connect(lambda: self.draft_variant(q))
         bar.reset.connect(self.draft_reset)
         self.bar = bar
-        self.fv.addSpacing(6)
-        self.fv.addWidget(bar)
-        self.fv.addSpacing(6)
+        # pinned at the top, under the block's header, outside the scroll area: always seen while the settings scroll
+        at = self._bar_at if self._bar_at is not None else self.hv.count()
+        self.hv.insertWidget(at, bar)
 
     def draft_pending(self):
         """(block, its changes, what Apply computes again) of the model's draft, None without one (the question asked
@@ -2108,6 +2104,12 @@ class Panel(QWidget):
     def state_chip(self, node, st=None) -> QLabel:
         """The state line of the block: the graph's word (``graph_state``); an Outdated block says why on hover (the
         setting changed, or the block upstream where the change was made)."""
+        if self._draft(node) is not None:               # the block's draft: said where its state is read
+            chip = QLabel(_("Draft"))
+            chip.setObjectName("draft_state")
+            chip.setStyleSheet(f"color: {WARN}; font-size: 9pt; font-weight: 600;")
+            chip.setToolTip(_("Settings changed, not applied yet"))
+            return chip
         st = st or self.graph_state(node)
         word = _(STATE_WORD[st])
         if st in ("running", "interrupted"):             # how far it runs, what the next run does after a stop
