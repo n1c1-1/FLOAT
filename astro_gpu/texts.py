@@ -488,6 +488,8 @@ CHOICE_TEXTS: dict[str, str] = {
     "bilinear_guide": "Bilinear guide", "lobe_clamp": "Lobe clamping",
     "percentile": "Percentile clipping", "winsorized": "Winsorized sigma clipping", "linear_fit": "Linear fit clipping",
     "gesdt": "Generalized ESD test",
+    # the Classic method's combinations (core/rejection_classic.COMBINATIONS)
+    "mean": "Mean (with rejection)", "median": "Median", "maximum": "Maximum", "minimum": "Minimum", "sum": "Sum",
     # the colour stage's correction (stages/color.py)
     "full": "Full correction", "per_colour": "One factor per colour",
     # the Gradient block's methods (stages/gradient.py)

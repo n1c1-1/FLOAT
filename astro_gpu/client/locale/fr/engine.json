@@ -628,5 +628,16 @@
  "Persistence needs 15 frames or more. Per frame works on any session; it needs a Bayer sensor.": "La persistance demande 15 images ou plus. Pose par pose marche sur toute séance ; elle demande un capteur Bayer.",
  "Focal length ignored": "Focale ignorée",
  "Whether the field was not found at the scale of the entered focal length and was searched again without it.": "Si le champ n'a pas été trouvé à l'échelle de la focale saisie et a été cherché de nouveau sans elle.",
- "the combination's inputs bring no plate solution": "les entrées de la combinaison n'apportent pas de solution astrométrique"
+ "the combination's inputs bring no plate solution": "les entrées de la combinaison n'apportent pas de solution astrométrique",
+ "Combination (Classic)": "Combinaison (Classique)",
+ "With the Classic method: how the frames' values at each pixel make the stack. Mean: the weighted mean of the values the rejection keeps (the usual choice). Median: the middle value, no rejection. Maximum: the brightest value (star trails, meteors, satellites kept). Minimum: the darkest value. Sum: the values added up (the image's levels times the number of frames). The four last reject nothing and give every frame the same weight; the frames are normalised as for the mean.": "Avec la méthode Classique : comment les valeurs des images en chaque pixel font la pile. Moyenne : la moyenne pondérée des valeurs que le rejet garde (le choix habituel). Médiane : la valeur du milieu, sans rejet. Maximum : la valeur la plus brillante (filés d'étoiles, météores, satellites gardés). Minimum : la valeur la plus sombre. Somme : les valeurs additionnées (les niveaux de l'image multipliés par le nombre d'images). Les quatre dernières ne rejettent rien et donnent le même poids à chaque image ; les images sont normalisées comme pour la moyenne.",
+ "Mean (with rejection)": "Moyenne (avec rejet)",
+ "Median": "Médiane",
+ "Maximum": "Maximum",
+ "Minimum": "Minimum",
+ "Sum": "Somme",
+ "median of the values at each pixel, no rejection": "médiane des valeurs en chaque pixel, sans rejet",
+ "pixel maximum: the brightest value at each pixel, no rejection": "maximum par pixel : la valeur la plus brillante en chaque pixel, sans rejet",
+ "pixel minimum: the darkest value at each pixel, no rejection": "minimum par pixel : la valeur la plus sombre en chaque pixel, sans rejet",
+ "sum of the values at each pixel, no rejection": "somme des valeurs en chaque pixel, sans rejet"
 }

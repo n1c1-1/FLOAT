@@ -31,7 +31,7 @@ from .icons import icon_only
 from .imageview import slug
 from .postengine import snapshot
 from .services.render import ExportJob
-from .widgets import WARN, cap_dialog, label
+from .widgets import WARN, cap_dialog, label, single_choice
 
 #: display name -> the engine's format key (None: not in the engine yet)
 FORMATS = {"TIFF 16-bit": "tiff16", "TIFF 32-bit float": "tiff32f", "FITS 32-bit float": "fits32f",
@@ -115,6 +115,7 @@ class ExportDialog(QDialog):
             self.prof.addItem(_(name) + ("" if ok else "  ◇"), name)
             if not ok:
                 self._disable(self.prof, self.prof.count() - 1)
+        single_choice(self.prof)                         # sRGB alone: its text (D5)
         row(_("Color profile"), self.prof)
         self.size_cb = QComboBox()
         for name, px in SIZES.items():

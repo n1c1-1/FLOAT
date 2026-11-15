@@ -23,6 +23,7 @@ def test_off_the_stack_key_is_the_one_before_the_setting():
     p = StackParams()
     d = p.model_dump(mode="json")
     d.pop("white_balance")
+    d.pop("classic_combination")                          # (added later still, left out of the key at its default too)
     before = hashlib.sha256(json.dumps(d, sort_keys=True, default=str).encode()).hexdigest()[:16]
     assert params_hash(p) == before
     assert params_hash(StackParams(white_balance=True)) != before
