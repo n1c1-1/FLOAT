@@ -758,3 +758,44 @@ def objects_in_field(wcs, width: int, height: int, catalogue: Catalogue | Iterab
     keep = cand[hit]
     order = sorted(keep.tolist(), key=lambda i: (-cat.major[i], _rank(cat.names[i])))
     return [cat[i] for i in order]
+
+
+#: the catalogue tiers of ``main_object``: Messier, then NGC and IC together, then Sharpless, then the rest
+_TIER = {"M": 0, "NGC": 1, "IC": 1, "Sh2": 2}
+
+
+def _tier(name: str) -> int:
+    pre = "Sh2" if name.startswith("Sh2-") else name.partition(" ")[0]
+    return _TIER.get(pre, 3)
+
+
+def _offset_in_size(o: SkyObject, ra0: float, dec0: float) -> float:
+    """How far (ra0, dec0) lies from the object's centre in units of its own half-axes along its axes (1: on its
+    outline; an object of unknown size: its distance in degrees, so that it never covers)."""
+    sep = float(_sep(ra0, dec0, o.ra, o.dec))
+    if not o.major > 0:
+        return 1.0 + sep
+    east = math.radians(ra0 - o.ra) * math.cos(math.radians(0.5 * (dec0 + o.dec)))
+    north = math.radians(dec0 - o.dec)
+    a = math.radians(o.angle)
+    u = (north * math.cos(a) + east * math.sin(a)) * 60 * 180 / math.pi         # along the major axis, arcminutes
+    v = (east * math.cos(a) - north * math.sin(a)) * 60 * 180 / math.pi
+    return math.hypot(u / (0.5 * o.major), v / (0.5 * (o.minor or o.major)))
+
+
+def main_object(wcs, width: int, height: int, catalogue: Catalogue | Iterable[SkyObject] | None = None,
+                objects: Sequence[SkyObject] | None = None) -> SkyObject | None:
+    """The object that names a field: among the objects of the field (``objects_in_field``, or ``objects``), those
+    whose outline covers the field's centre come first; then the catalogue's tier (Messier, NGC and IC, Sharpless,
+    the rest), then the nearest to the centre in its own size, then the name. A very large region that merely lies
+    over the field (Sh2-109 is 18 degrees wide) so never names a field that is centred on a smaller NGC / IC object,
+    and the choice depends on the solution and the grid alone, not on how many frames made the stack."""
+    objs = list(objects) if objects is not None else objects_in_field(wcs, width, height, catalogue)
+    if not objs:
+        return None
+    ra0, dec0 = (float(v) for v in wcs.all_pix2world((width - 1) / 2, (height - 1) / 2, 0))
+
+    def key(o: SkyObject):
+        r = _offset_in_size(o, ra0, dec0)
+        return (r > 1.0, _tier(o.name), r, _rank(o.name))
+    return min(objs, key=key)

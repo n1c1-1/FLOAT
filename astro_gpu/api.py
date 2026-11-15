@@ -1099,15 +1099,11 @@ def health_checks(p: Project2, dates: dict[int, list[tuple[str, str]]] | None = 
                     ": it is calibrated with the other sessions' master" if shared else
                     f": its lights are not calibrated for {'dark current' if kind == 'darks' else 'vignetting and dust'}"),
                     {"session": s.name, "kind": kind, "shared": bool(shared)}))
-    owner: dict[str, str] = {}                       # the same light file in two sessions: stacked once (together) or
-    dup: dict[tuple[str, str], int] = {}             # dropped from the later session (per session), said in both modes
-    for s in keys.project.sessions:
-        for f, _size in keys.scan.session_frames(keys.project, s)["lights"]:
-            k = os.path.normcase(os.path.normpath(str(f)))
-            if k in owner and owner[k] != s.name:
-                dup[(owner[k], s.name)] = dup.get((owner[k], s.name), 0) + 1
-            else:
-                owner.setdefault(k, s.name)
+    names = {s.id: s.name for s in keys.project.sessions}     # the same shot in two sessions, as the same file or as a
+    dup: dict[tuple[str, str], int] = {}             # copy (name, size and capture date of its header): stacked once,
+    for (sid, _f), (first, _g) in keys.scan.repeats(keys.project, list(keys.project.sessions)).items():   # with the first
+        if first != sid:                             # session, in both stack modes
+            dup[(names[first], names[sid])] = dup.get((names[first], names[sid]), 0) + 1
     for (first, other), cnt in dup.items():
         out.append(Check("warn", "same_frames", f"The same frames are in two sessions: {cnt} light(s) of {other} are also "
                          f"in {first}; they are used once, with {first}", {"first": first, "other": other, "n": cnt}))
@@ -2379,9 +2375,14 @@ def sky_objects(p: Project2, wf: int | Workflow, which: str = "current") -> list
     is not computed; ``CatalogueUnavailable`` (a plain message) when the catalogue shipped with the package is
     incomplete. Where the names come from: ``core.skyobjects.catalogue_source()``. The first call of a session reads
     the catalogue (a few tens of ms from its cache, about a second the first time): worker thread."""
-    import numpy as np
-
     from .core import skyobjects as so
+    wcs, w, h = _field_of(p, wf, which)
+    return so.objects_in_field(wcs, w, h)
+
+
+def _field_of(p: Project2, wf: int | Workflow, which: str = "current"):
+    """(the astropy WCS of the workflow's solution, width, height) of the stack grid it was solved on."""
+    import numpy as np
     d = _need(p, wf, "astrometry", which)
     f = d / "wcs.fits"
     if not f.is_file():
@@ -2399,7 +2400,17 @@ def sky_objects(p: Project2, wf: int | Workflow, which: str = "current") -> list
         w, h = int(meta["width"]), int(meta["height"])
     else:
         h, w = np.load(st / "drz_full.npy", mmap_mode="r").shape[-2:]
-    return so.objects_in_field(hit[1], w, h)
+    return hit[1], w, h
+
+
+def main_sky_object(p: Project2, wf: int | Workflow, which: str = "current") -> SkyObject | None:
+    """The object that names the field of the workflow's solution: the most prominent one covering the field's centre
+    (``core.skyobjects.main_object``: Messier, then NGC / IC, then Sharpless, then the rest; the nearest to the centre
+    in its own size), None when the field holds no named object. Whatever the number of frames: it reads the solution
+    and the grid alone. Same errors as ``sky_objects``."""
+    from .core import skyobjects as so
+    wcs, w, h = _field_of(p, wf, which)
+    return so.main_object(wcs, w, h)
 
 
 # ---------------------------------------------------------------------------------------------- diagnostics of the basics

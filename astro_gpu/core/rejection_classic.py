@@ -77,7 +77,12 @@ REASONS = {
     "gesdt": "{n} frames: generalized ESD test (up to {low:.0%} outliers, significance {high:g}), the usual advice "
              "above 50 frames",
     "chosen": "{method} chosen ({low:g} / {high:g})",
+    "weak_sky": "{n} frames: no rejection; the sky ({level:.1f}) is too weak against the noise ({sigma:.1f}) for "
+                "percentile clipping, whose {high:g} of the median is {ratio:.1f} sigma (it would reject noise: "
+                "{pct:.0f} % of the points; {need:.1f} sigma are needed to keep it under {limit:.1f} %)",
 }
+#: the share of noise points percentile clipping may reject by itself: the top of the usual rejected range (0.1 to 0.5 %)
+NOISE_REJECTION_LIMIT = 0.005
 
 
 @dataclass(frozen=True)
@@ -88,6 +93,8 @@ class Choice:
     high: float
     template: str
     args: dict = field(default_factory=dict)
+    #: chosen by the frame count (``method="auto"``), not named by the user: the weak-sky guard applies to it alone
+    auto: bool = False
 
     @property
     def reason(self) -> str:
@@ -115,7 +122,7 @@ def choose(n_frames: int, method: str = "auto", low: float | None = None, high: 
             m = "linear_fit"
         lo, hi = DEFAULTS[m]
         lo, hi = (lo if low is None else low), (hi if high is None else high)
-        return Choice(m, lo, hi, REASONS[m], {"n": n, "low": lo, "high": hi})
+        return Choice(m, lo, hi, REASONS[m], {"n": n, "low": lo, "high": hi}, auto=True)
     if method not in METHODS:
         raise ValueError(f"unknown rejection {method!r}: one of {('auto',) + METHODS}")
     if method == "none":
@@ -123,6 +130,43 @@ def choose(n_frames: int, method: str = "auto", low: float | None = None, high: 
     lo, hi = DEFAULTS[method]
     lo, hi = (lo if low is None else low), (hi if high is None else high)
     return Choice(method, lo, hi, REASONS["chosen"], {"method": method, "low": lo, "high": hi})
+
+
+def guard_percentile(choice: Choice, v: torch.Tensor, valid: torch.Tensor | None = None,
+                     max_points: int = 1_000_000) -> Choice:
+    """``choice`` itself, or no rejection when it is the automatic percentile clipping and the data cannot carry it.
+
+    Percentile clipping rejects a value that is more than ``low`` (below) or ``high`` (above) times the MEDIAN away from
+    the median [S1][P1]: a relative threshold, made for frames that keep a pedestal (bias, sky) far above their noise.
+    On frames calibrated with a master dark that holds the bias, the sky left is a few ADU in a narrowband filter, and
+    ``high`` x median is under the noise: it rejects the noise itself (89 % of the points of a 4 frame SII stack). The
+    rule is kept only when the noise alone would reject at most NOISE_REJECTION_LIMIT of the points: sigma = the
+    median over the points of the standard deviation of their values, corrected to the standard deviation of the
+    population (chi-square median of n - 1 degrees of freedom), against ``high`` x the median level. ``v`` (N, P): a
+    sample of the points (about ``max_points``), NaN where a frame gives nothing."""
+    if not (choice.auto and choice.method == "percentile"):
+        return choice
+    from scipy.stats import chi2, norm
+    valid = torch.isfinite(v) if valid is None else valid
+    n = _count(valid)
+    ok = n >= 2
+    if not bool(ok.any()):
+        return choice
+    step = max(1, int(ok.sum()) // max_points)
+    cols = torch.nonzero(ok)[:, 0][::step]
+    vv, va = v[:, cols], valid[:, cols]
+    level = float(median(vv, va).median())
+    nn = int(torch.median(n[cols]).item())
+    sd = float(std(vv, va).median())
+    sigma = sd / math.sqrt(float(chi2.ppf(0.5, max(nn - 1, 1))) / max(nn - 1, 1))
+    need = float(norm.ppf(1.0 - NOISE_REJECTION_LIMIT))
+    ratio = choice.high * level / sigma if sigma > 0 else float("inf")
+    if ratio >= need:
+        return choice
+    pct = 100.0 * float(norm.sf(max(ratio, 0.0)))
+    return Choice("none", 0.0, 0.0, REASONS["weak_sky"],
+                  {"n": choice.args.get("n", nn), "level": level, "sigma": sigma, "high": choice.high,
+                   "ratio": ratio, "pct": pct, "need": need, "limit": 100 * NOISE_REJECTION_LIMIT})
 
 
 # ------------------------------------------------------------------------------------------------ statistics

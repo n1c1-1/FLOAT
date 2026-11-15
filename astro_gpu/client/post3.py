@@ -3804,6 +3804,11 @@ class PostPage3(QWidget):
         ev.addWidget(self.empty_title, 0, Qt.AlignHCenter)
         self.empty_note = label(_("Each computed workflow becomes a layer here."), "dim")
         ev.addWidget(self.empty_note, 0, Qt.AlignHCenter)
+        # the project's last picture (its cache's thumbnail, as Home and the Report show it) when its results are no
+        # longer kept: the page says so and shows it, rather than an empty page
+        self.empty_pic = QLabel()
+        self.empty_pic.hide()
+        ev.addWidget(self.empty_pic, 0, Qt.AlignHCenter)
         self.empty_list = QVBoxLayout()
         self.empty_list.setSpacing(2)
         ev.addLayout(self.empty_list)
@@ -3835,6 +3840,20 @@ class PostPage3(QWidget):
         self._asked = lid
         self.update_page()
 
+    def _last_picture(self):
+        """The project's last picture (cache/thumb.jpg), scaled for the page; None when it has none."""
+        from pathlib import Path
+
+        from PySide6.QtGui import QPixmap
+        root = getattr(getattr(self.s, "p", None), "root", None)
+        if root is None:
+            return None
+        f = Path(root) / "cache" / "thumb.jpg"
+        if not f.is_file():
+            return None
+        pm = QPixmap(str(f))
+        return None if pm.isNull() else pm.scaled(480, 320, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
     def coming_layers(self) -> list[tuple[str, int | None]]:
         """The layers Post will have, top first, as the graph counts them: (name as saved, workflow id)."""
         try:
@@ -3850,9 +3869,17 @@ class PostPage3(QWidget):
             return
         clear(self.empty_list)
         coming = self.coming_layers()
-        self.empty_title.setText(_("Nothing computed yet") if coming else _("No layers yet"))
-        self.empty_note.setText(_("The layers Post will have once their workflows are computed:") if coming else
-                                _("Each computed workflow becomes a layer here."))
+        last = self._last_picture() if coming else None
+        self.empty_title.setText(_("Results no longer kept") if last is not None else
+                                 _("Nothing computed yet") if coming else _("No layers yet"))
+        self.empty_note.setText(
+            _("The project's last picture; its workflows' results are no longer kept (removed or outdated): compute "
+              "them again to work on it here. The layers it will have:") if last is not None else
+            _("The layers Post will have once their workflows are computed:") if coming else
+            _("Each computed workflow becomes a layer here."))
+        self.empty_pic.setVisible(last is not None)
+        if last is not None:
+            self.empty_pic.setPixmap(last)
         asked = self.view.layer(self._asked) if self._asked is not None else None
         if asked is None and self._asked is not None and hasattr(self.s, "post_layer"):
             asked = self.s.post_layer(self._asked)

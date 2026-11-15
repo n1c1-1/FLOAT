@@ -67,6 +67,7 @@ import torch.nn.functional as F
 from pydantic import field_validator
 
 from ..core import cfa as cfa_mod
+from ..core import rejection_classic as rc_mod
 from ..core.imgutil import asinh_preview
 from ..core.params import ADVANCED, Auto, P, StageParams, check_choice
 from ..core.stack_classic import HIGH_SHIFT
@@ -123,6 +124,9 @@ CLASSIC_CHOICES = {"classic_debayer": ("rcd", "bilinear"), "classic_interpolatio
 #: it (``Stack.key_version``: the Classic method, the drizzle with the integration's rejection) and of no other.
 #: 2: the white balance before RCD
 CLASSIC_VERSION = "2"
+#: 1: the automatic percentile clipping of 3 to 5 frames gives way to no rejection where the sky is too weak against
+#: the noise for it (core/rejection_classic.guard_percentile): the key of a monochrome workflow of few frames only
+WEAK_SKY_REVISION = "1"
 #: The reference processing suite's DRIZZLE_BOUNDS_TOLERANCE: the reference pixel of an output pixel is the one holding its top-left corner
 #: moved by this much (DrizzleIntegrationInstance.cpp)
 DRIZZLE_BOUNDS_TOLERANCE = 1.0e-5
@@ -294,6 +298,14 @@ class Stack(Stage):
         a change of that part makes those results again and no other."""
         uses = values.get("method") == "classic" or values.get("drizzle_rejection") == "integration"
         return f"{self.version}+classic{CLASSIC_VERSION}" if uses else str(self.version)
+
+    def mono_key_version(self, values: dict, lights: int) -> str:
+        """The version in the store key of a monochrome workflow of ``lights`` frames: with the weak-sky guard of the
+        percentile clipping (core/rejection_classic.guard_percentile) when it has few enough frames for that
+        rejection to be the automatic one (WEAK_SKY_REVISION). No other key moves."""
+        base = self.key_version(values)
+        few = 0 < lights < rc_mod.WINSORIZED_FROM
+        return f"{base}+weaksky{WEAK_SKY_REVISION}" if few else base
 
     def auto(self, ctx: Context) -> dict[str, Auto]:
         a: dict[str, Auto] = {}
@@ -748,10 +760,14 @@ class Stack(Stage):
                    "transparency": float(transp[i]), **nd,
                    "half": "A" if in_a[int(i)] else "B", "rejected_low": lo, "rejected_high": hi_n,
                    "rejected_outside": outside}
+            if mono:                                # one colour: its figures in the three, not zeros for no samples
+                rec = cfa_mod.mono_planes(rec)
             if integ is not None:                   # the integration's own counts (values of the registered frame)
                 rec["tested"] = integ.frames[k_]["tested"]
             frames_d.append(rec)
         noise = {c: (v if np.isfinite(v) else None) for c, v in halves_noise(halves[0], halves[1], w_a, w_b).items()}
+        if mono:
+            noise = cfa_mod.mono_noise(noise)
         diag = {"frames": frames_d, "noise": noise, "noise_sample_step": step, "half_weights": [w_a, w_b],
                 "kappa": p.kappa,
                 "rejection": {"file": REJECTION, "factor": rmap.f, "grid": [Wo, Ho], "shape": [rmap.Hr, rmap.Wr]}}
@@ -1556,8 +1572,9 @@ def stack_classic(ctx: Context, p: StackParams, *, wb=None, load, coef, used, we
         q, sky = norm[i]
         nd = {"scale": [float(1.0 / transp[i])] * 3, "offset": [float(v) for v in q[:, 0]],
               "gradient": q.tolist(), "sky": sky.tolist()}
-        frames_d.append({"index": i, "path": meta[i]["path"], "weight": float(weight[i]),
-                         "transparency": float(transp[i]), **nd, **f})
+        rec = {"index": i, "path": meta[i]["path"], "weight": float(weight[i]),
+               "transparency": float(transp[i]), **nd, **f}
+        frames_d.append(cfa_mod.mono_planes(rec) if mono else rec)
     diag = {**res.diagnostics(), "frames": frames_d, "kappa": p.kappa, "switches": switches}
     diag["rejection"].update(method="classic", classic=res.choice.method,
                              reason_template={"template": res.choice.template, "args": res.choice.args})
@@ -1746,7 +1763,8 @@ def count_pass(ctx, p: StackParams, frame_model, frame_extent, used, weight, chm
                 continue
             if choice[c] is None:                       # the middle band's median count of values per point
                 cnt = valid.sum(0)
-                choice[c] = rc.choose(int(torch.median(cnt[cnt > 0]).item()))
+                choice[c] = rc.guard_percentile(rc.choose(int(torch.median(cnt[cnt > 0]).item())),
+                                                Vn[:, c] / Vd[:, c].clamp(min=1e-12), valid)
                 ctx.log(f"colour {'RGB'[c]}: {choice[c].reason}")
             v = torch.where(valid, Vn[:, c] / Vd[:, c].clamp(min=1e-12), torch.full_like(Vd[:, c], float("nan")))
             lo, hi = rc.reject(v, choice[c], valid)

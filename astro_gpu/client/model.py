@@ -342,6 +342,8 @@ class Facts:
     lights: dict = field(default_factory=dict)
     #: the named objects of the first field solved, biggest first (core/skyobjects.SkyObject)
     in_field: list = field(default_factory=list)
+    #: the one of them that names the field (api.main_sky_object: covering its centre, Messier > NGC / IC > Sharpless)
+    main_object: object = None
 
 
 # ---------------------------------------------------------------------------------------------- worker jobs
@@ -390,6 +392,7 @@ def _facts_job(p) -> Facts:
     for w in p.workflows:
         try:
             f.in_field = list(api.sky_objects(p, w.id))
+            f.main_object = api.main_sky_object(p, w.id)
             break
         except Exception:  # noqa: BLE001 - not solved, no astrometry in it, no catalogue: nothing to say from it
             continue
@@ -1690,7 +1693,7 @@ class _ProjectBase(QObject):
         t = self.p.target
         typed = (t.name or "").strip()
         field_ = self._facts.in_field
-        main = field_[0] if field_ else None
+        main = (self._facts.main_object or field_[0]) if field_ else None
         if not typed:
             if main is not None:
                 return TargetState("known", main.name, _("Found by Astrometry in the field"))
@@ -3721,16 +3724,18 @@ class _ProjectBase(QObject):
         iso_gain, integration_h, camera, fwhm_px, grid."""
         inv = self._facts.inventory
         ses = self.sessions
+        files = self._facts.files
 
-        def distinct(kind: str) -> int:
-            """The calibration frames of a kind, each file once: the darks two sessions share are 10, not 20 (the
-            engine's sum over the sessions counts them per session: the testers' pass 2)."""
-            return len({norm_path(x) for fs in self._facts.files.values() for x in fs.get(kind) or []})
+        def count(kind: str, key: str) -> int:
+            """The inventory's count; else the distinct files of the sessions (frames two sessions share, a master
+            dark or flat used by both, are counted once)."""
+            if inv.get(f"n_{kind}"):
+                return int(inv[f"n_{kind}"])
+            names = {x for fl in files.values() for x in fl.get(kind, [])}
+            return len(names) if names else sum(s[key] for s in ses)
         return dict(name=self.name, target=self.target,
-                    n_lights=int(inv.get("n_lights") or sum(s["lights"] for s in ses)),
-                    n_darks=distinct("darks") or int(inv.get("n_darks") or 0),
-                    n_flats=distinct("flats") or int(inv.get("n_flats") or 0),
-                    n_bias=distinct("bias") or int(inv.get("n_bias") or 0),
+                    n_lights=count("lights", "lights"), n_darks=count("darks", "darks"),
+                    n_flats=count("flats", "flats"), n_bias=count("bias", "bias"),
                     exposure_s=inv.get("exposure_s"), width=inv.get("width"), height=inv.get("height"),
                     iso_gain=inv.get("iso_gain"), integration_h=inv.get("integration_h"),
                     camera=inv.get("camera", ""), fwhm_px=self._facts.register.get("fwhm_px"),

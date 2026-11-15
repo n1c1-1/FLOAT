@@ -454,7 +454,7 @@ def test_per_session_a_light_in_two_sessions_is_stacked_once_and_said(tmp_path, 
     wid = p.workflows[0].id
     with caplog.at_level("INFO"):
         second = p.session_inputs(2, wid).lights
-    assert [Path(f).name for f in second] == ["b1.ARW"] and "not stacked twice" in caplog.text
+    assert [Path(f).name for f in second] == ["b1.ARW"] and "stacked once" in caplog.text
     assert len(p.session_inputs(1, wid).lights) == 1                   # the first session keeps its folder
 
 

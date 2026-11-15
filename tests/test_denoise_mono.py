@@ -114,7 +114,13 @@ def test_a_monochrome_workflows_other_stages_have_the_versions_of_a_colour_one(t
     mono = Keys(project(tmp_path / "m", "Ha"))
     shared = [s for s in mono.chain(1) if s in colour.chain(1) and s != "denoise"]
     assert "stack" in shared
-    assert all(mono.key_parts(1, s)["v"] == colour.key_parts(1, s)["v"] for s in shared)
+    # the stack of a mono workflow of fewer than 6 lights also has its own (the weak-sky guard of the percentile
+    # clipping, stages/stack.mono_key_version); every other stage, the colour one's
+    from astro_gpu.core import rejection_classic as rc
+    few = 0 < mono.mono_lights(mono.project.workflow(1)) < rc.WINSORIZED_FROM
+    assert all(mono.key_parts(1, s)["v"] == colour.key_parts(1, s)["v"] for s in shared if not (few and s == "stack"))
+    if few:
+        assert mono.key_parts(1, "stack")["v"].endswith("+weaksky1")
 
 
 def test_the_setting_removed_is_ignored_where_it_is_stored(tmp_path, mono_file):

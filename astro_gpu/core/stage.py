@@ -63,6 +63,7 @@ class Context:
         self.device_name = device
         self._t0 = time.time()
         self._last_progress = 0.0
+        self._pace: list[tuple[float, float]] = []      # (time, fraction) of the last reports: the pace the ETA follows
         self.metrics: dict[str, Any] = {}
         #: why the stage ended on its declared fallback ("" when it did not): ``fallback``
         self.fallback_reason = ""
@@ -159,8 +160,29 @@ class Context:
             return
         self._last_progress = now
         el = now - self._t0
-        eta = el / frac * (1 - frac) if frac > 0.02 else None
+        eta = self._eta(now, frac, el)
         self.journal.emit("progress", stage=self.stage.name, frac=float(frac), msg=msg, eta=eta, elapsed=el)
+
+    #: the ETA follows the pace of the last stretch of the stage, this share of the time since it began (at least
+    #: PACE_MIN_S): a stage whose passes weigh what its fractions do not say (a stack's debayering is 60 % of its bar and
+    #: a tenth of its time) is not read at the mean pace of its first part, which said "1 min left" for 10 minutes
+    PACE_SHARE = 0.25
+    PACE_MIN_S = 5.0
+
+    def _eta(self, now: float, frac: float, el: float) -> float | None:
+        """Seconds to go at the pace of the last stretch; at the mean pace since the start while the stretch is too
+        short to tell (``progress`` keeps the samples)."""
+        pace = self.__dict__.setdefault("_pace", [])      # a context built without __init__ (tests) starts one
+        pace.append((now, frac))
+        horizon = now - max(self.PACE_MIN_S, self.PACE_SHARE * el)
+        while len(pace) > 2 and pace[1][0] <= horizon:
+            pace.pop(0)
+        if frac <= 0.02:
+            return None
+        t0, f0 = pace[0]
+        if now - t0 >= self.PACE_MIN_S and frac - f0 > 1e-4:
+            return (now - t0) / (frac - f0) * (1 - frac)
+        return el / frac * (1 - frac)
 
     def preview(self, name: str, rgb: np.ndarray, max_side: int = 1600) -> Path:
         """Save a preview: (H, W, 3), (3, H, W) or greyscale (H, W), float [0,1] or uint8, and announce it."""

@@ -91,6 +91,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from . import cfa
 from . import debayer as db
 from . import rejection_classic as rc
 from . import resample as rs
@@ -483,6 +484,17 @@ def stack_classic(load: Callable, coef, bad=None, norm: Norm | None = None, weig
         log(f"classic: debayering and resampling done in {(t1 - t0) / 60:.1f} min, of which {t_load:.0f} s reading "
             f"the frames")
 
+    if choice.auto and choice.method == "percentile":    # the weak-sky guard, on a sample of the normalised frames
+        step = max(1, int(np.ceil(np.sqrt(H * W / 1e6))))
+        guarded = []
+        for c in ((1,) if mono else range(3)):
+            sm = torch.from_numpy(np.ascontiguousarray(np.asarray(store[:, c, ::step, ::step]))).float()
+            sm = sm.reshape(nu, -1)
+            guarded.append(rc.guard_percentile(choice, sm))
+        choice = next((g for g in guarded if g.method == "none"), choice)      # the weakest colour decides for all
+        if choice.method == "none" and log is not None:
+            log(f"classic: {choice.reason}")
+
     # ---------------- pass 2: rejection and the weighted means, by bands of rows
     full = np.zeros((3, H, W), np.float32)
     A = np.zeros_like(full)
@@ -557,6 +569,9 @@ def stack_classic(load: Callable, coef, bad=None, norm: Norm | None = None, weig
     tested = int(tested_c.sum())
     rate = 100.0 * float(rej_c.sum()) / max(tested, 1)
     rate_rgb = [round(100.0 * float(rej_c[c]) / max(int(tested_c[c]), 1), 4) for c in range(3)]
+    if mono:                                      # the one plane is every colour: the same figures in the three
+        rate_rgb = [rate_rgb[1]] * 3
+        frames[:] = [cfa.mono_planes(f) for f in frames]
     for k in range(nu):
         frames[k].update({"rejected_low": int(rej_lo_f[k]), "rejected_high": int(rej_hi_f[k]),
                           "tested": int(tested_f[k])})
@@ -564,6 +579,8 @@ def stack_classic(load: Callable, coef, bad=None, norm: Norm | None = None, weig
     w_b = float(sum(Wt[i] for k, i in enumerate(used) if not in_a[k]))
     step = max(1, int(np.sqrt(H * W / 4e6)))                 # stack.noise_step
     noise = halves_noise(A[:, ::step, ::step], B[:, ::step, ::step], w_a, w_b)
+    if mono:                                      # only the green plane holds samples: its noise is the image's
+        noise = cfa.mono_noise(noise)
     sat_u8 = np.ceil(255 * np.clip(sat_share, 0, 1)).astype(np.uint8)
     return ClassicResult(full, A, B, wsum, sat_u8, _reduce(low_cnt, f), _reduce(high_cnt, f), f, round(rate, 4),
                          rate_rgb, tested, choice, frames, noise, [w_a, w_b], p,

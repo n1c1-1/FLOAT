@@ -318,12 +318,12 @@ def test_denoise_halves_the_tile_on_a_memory_error():
     assert np.allclose(out, x, atol=1e-5)
 
 
-def test_denoise_looks_at_stop_at_each_row_of_tiles():
+def test_denoise_looks_at_stop_before_each_tile():
     """The night test pass: Stop waited for the end of a pass of the network (6 min on the processor)."""
     x, nm, bk, sg = _denoise_input()
     rows = []
     dn.apply_net(EchoUNet(), x, nm, bk, sg, torch.device("cpu"), tile=128, shifts=dn.PASSES[:1], check=lambda: rows.append(1))
-    assert len(rows) == 3                                          # 300 rows in tiles of 128
+    assert len(rows) == 12                                         # 300 x 400 in tiles of 128: 3 rows of 4, one look each
 
     def stop():
         raise RuntimeError("stop requested")
@@ -520,3 +520,4 @@ def test_the_same_rows_are_rejected_on_every_device():
     a = rc.reject(v, ch, valid)
     b = rc.reject(v.cuda(), ch, valid.cuda())
     assert all(bool((x == y.cpu()).all()) for x, y in zip(a, b))
+

@@ -664,3 +664,20 @@ def _num(v) -> float | None:
 def cfa_channel_map(cfa: str) -> list[int]:
     """Output channel (0=R, 1=G, 2=B) of each position k = P row + col of the pattern (P: 2, or 6 for X-Trans)."""
     return ["RGB".index(c) for c in cfa]
+
+
+def shot_date(path: str | Path) -> str | None:
+    """The capture date a frame's own header gives (FITS DATE-OBS, a raw file's EXIF DateTimeOriginal); None when it
+    has none or cannot be read. Never the file's date on disk: a copy's."""
+    p = Path(path)
+    try:
+        kind = frame_kind(p)
+        if kind == "fits":
+            v = str(fits_header(p).get("DATE-OBS", "")).strip()
+            return v or None
+        if kind == "raw":
+            v = exif_tags(p).get("EXIF DateTimeOriginal")
+            return str(v).strip() or None if v else None
+    except Exception:  # noqa: BLE001 - a header that cannot be read: no date, the frame is not taken for another
+        return None
+    return None

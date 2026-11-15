@@ -189,6 +189,9 @@ def versions_problem(post: dict[str, Any]) -> str | None:
     return "two layers of the versions share an id" if len(ids) != len(set(ids)) else None
 
 
+_LOGGED: set = set()                              # the repeats the log has said already
+
+
 @dataclass
 class Project2:
     """The definition of a v2 project. ``root`` is where it lives (None for a definition built in memory)."""
@@ -286,7 +289,8 @@ class Project2:
 
     def inputs(self, wid: int | Workflow | None = None) -> Inputs:
         """The union of the sessions (of a workflow's), per kind, as absolute paths (one master dark and one master
-        flat, as in v1)."""
+        flat, as in v1). A light that is the same shot as an earlier session's (``repeated_lights``) is left out: the
+        first session keeps it."""
         out = Inputs()
         for kind in KINDS:
             got: list[str] = getattr(out, kind)
@@ -295,6 +299,13 @@ class Project2:
                     a = self.abspath(f)
                     if a not in got:
                         got.append(a)
+        groups = self._light_files(wid)
+        rep = self._repeats(groups)
+        if rep:
+            kept: list[str] = []
+            for sid, files in groups:
+                kept += [str(f) for f, _n in files if (sid, f) not in rep and str(f) not in kept]
+            out.lights = kept
         return out
 
     def session_inputs(self, sid: int, wid: int | Workflow | None = None) -> Inputs:
@@ -302,27 +313,56 @@ class Project2:
         s = self.own_session(wid, sid) if wid is not None else self.session(sid)
         out = Inputs(**{k: [self.abspath(f) for f in getattr(s, k)] for k in KINDS})
         if wid is not None and sid in self.separate_sessions(wid) and out.lights:
-            out.lights = self._without_earlier_lights(wid, sid, out.lights)
+            out.lights = self._without_repeated_lights(wid, sid, out.lights)
         return out
 
-    def _without_earlier_lights(self, wid: int | Workflow, sid: int, lights: list[str]) -> list[str]:
-        """A session calibrated on its own keeps the lights no earlier session of the workflow has (the first session
-        wins): the same file in two sessions would be stacked twice when they are joined. Said in the log."""
+    def _light_files(self, wid: int | Workflow | None) -> list[tuple[int, list[tuple[Path, int]]]]:
+        """[(session id, [(light file, size)])] of the sessions (of a workflow's), in order, folders listed."""
         from .project import list_frames
-        earlier: set[str] = set()
-        for o in self.sessions_of(wid):
-            if o.id == sid:
-                break
-            earlier.update(os.path.normcase(os.path.normpath(str(f)))
-                           for f in list_frames([self.abspath(x) for x in self.own_session(wid, o.id).lights]))
-        if not earlier:
+        out = []
+        for s in self.sessions_of(wid):
+            own = self.own_session(wid, s.id) if wid is not None else s
+            files = []
+            for f in list_frames([self.abspath(x) for x in own.lights]):
+                try:
+                    files.append((f, f.stat().st_size))
+                except OSError:                      # gone since the listing
+                    pass
+            out.append((s.id, files))
+        return out
+
+    def _repeats(self, groups) -> dict:
+        from .shots import repeated
+        if sum(len(files) for _s, files in groups) < 2:
+            return {}
+        rep = repeated(groups)
+        if rep:
+            tally: dict[tuple[int, int], int] = {}
+            for (sid, _f), (first, _g) in rep.items():
+                tally[(first, sid)] = tally.get((first, sid), 0) + 1
+            key = (str(self.root), tuple(sorted(tally.items())))
+            if key not in _LOGGED:
+                _LOGGED.add(key)
+                for (first, sid), n in sorted(tally.items()):
+                    _LOG.info("session %s: %d light(s) are the same shots as session %s's (same name, size and capture "
+                              "date): stacked once, with session %s", sid, n, first, first)
+        return rep
+
+    def repeated_lights(self, wid: int | Workflow | None = None) -> dict:
+        """{(session id, file): (first session id, first file)} of the lights of the sessions (of a workflow's) that
+        are the same shot as an earlier file (the same path, or a copy with the same name, size and capture date)."""
+        return self._repeats(self._light_files(wid))
+
+    def _without_repeated_lights(self, wid: int | Workflow, sid: int, lights: list[str]) -> list[str]:
+        """A session calibrated on its own keeps the lights no earlier file of the workflow has (the first session
+        wins): the same shot in two sessions would be stacked twice when they are joined. Said in the log."""
+        rep = self.repeated_lights(wid)
+        if not rep:
             return lights
+        from .project import list_frames
         files = list_frames(lights)
-        kept = [f for f in files if os.path.normcase(os.path.normpath(str(f))) not in earlier]
-        if len(kept) == len(files):
-            return lights
-        _LOG.info("session %s: %d light(s) already in an earlier session are not stacked twice", sid, len(files) - len(kept))
-        return [str(f) for f in kept]
+        kept = [f for f in files if (sid, f) not in rep]
+        return lights if len(kept) == len(files) else [str(f) for f in kept]
 
     def separate_sessions(self, wid: int | Workflow | None = None) -> list[int]:
         """The ids of the sessions calibrated each on its own (issue #43): every session (of the workflow) when the

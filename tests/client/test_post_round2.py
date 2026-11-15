@@ -76,6 +76,29 @@ def test_nothing_computed_the_page_lists_the_layers_the_graph_counts(m):
         page.deleteLater()
 
 
+def test_results_no_longer_kept_show_the_projects_last_picture(m):
+    """A project once computed whose results are gone (removed or outdated): Post says so and shows its last picture
+    (cache/thumb.jpg, as Home and the Report do), not an empty page that says nothing was ever computed."""
+    from pathlib import Path
+
+    from PySide6.QtGui import QImage
+    f = Path(m.p.root) / "cache" / "thumb.jpg"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    img = QImage(64, 40, QImage.Format_RGB32)
+    img.fill(0x334455)
+    assert img.save(str(f))
+    page = _page(m)
+    try:
+        assert page.pages.currentIndex() == 0
+        texts = [lb.text() for lb in page.empty.findChildren(QLabel) if not lb.isHidden()]
+        assert "Results no longer kept" in texts and "Nothing computed yet" not in texts
+        assert page.empty_pic.isVisibleTo(page.empty) and not page.empty_pic.pixmap().isNull()
+    finally:
+        page.shutdown()
+        page.deleteLater()
+        f.unlink()
+
+
 def test_a_layer_deleted_in_post_leaves_its_sent_branch_and_the_other_versions_and_undo_brings_it_back(m):
     classic = next(v for v in m.paths if v.name == "Classic stack")
     m.add_exit(classic, "stacking", "Raw stack")

@@ -364,6 +364,8 @@ def facts(keys: Any, wf: Any, store: Any = None) -> Facts:
             ml = int(given("inventory").get("max_lights") or 0)
             f.lights = min(len(lights), ml) if ml else len(lights)
             f.frames = len(frames) - len(lights) + f.lights
+        elif sessions:                 # sessions with no frame yet (a filter's workflow waiting for its lights): nothing to
+            f.lights = f.frames = 0    # compute, not the reference project's 721 lights (4 lights announced 1 h 26)
     sampling = inv.get("pixel_scale")
     if not sampling and inv.get("pixel_um") and inv.get("focal_mm"):
         sampling = 206.265 * inv["pixel_um"] / inv["focal_mm"]

@@ -233,6 +233,7 @@ class InputScan:
         self._sessions: dict[tuple, dict[str, list[tuple[Path, int]]]] = {}
         self._files: dict[str, list] = {}
         self._abs: dict[tuple[str, str], str] = {}
+        self._repeats: dict[tuple, dict] = {}
         self._frames: dict[tuple, list[list]] = {}     # frames(): the estimates of a large project ask it thousands
                                                         # of times (GUI exploration 4: 9 to 40 s at its opening)
 
@@ -241,6 +242,7 @@ class InputScan:
         self._files.clear()
         self._abs.clear()
         self._frames.clear()
+        self._repeats.clear()
 
     def _entries(self, project: Project2, session: Any) -> tuple:
         """A session's folder and file lists, absolute: what its frames are found from."""
@@ -273,7 +275,20 @@ class InputScan:
             self._sessions[entries] = got
         return got
 
-    def frames(self, project: Project2, sid: int | None = None, sessions: list | None = None) -> list[list]:
+    def repeats(self, project: Project2, sessions: list) -> dict:
+        """{(session id, file): (first session id, first file)} of the light files of ``sessions`` that are the same
+        shot as an earlier file of the list (core/shots): the same path, or a copy with the same name, size and
+        capture date of its header. Cached with the sessions' file lists."""
+        from .shots import repeated
+        memo = tuple((s.id, self._entries(project, s)[0]) for s in sessions)
+        got = self._repeats.get(memo)
+        if got is None:
+            got = self._repeats[memo] = repeated([(s.id, self.session_frames(project, s)["lights"])
+                                                  for s in sessions])
+        return got
+
+    def frames(self, project: Project2, sid: int | None = None, sessions: list | None = None,
+               after: list | None = None) -> list[list]:
         """inventory's project part: [kind, file name, size] of each frame of the union of the sessions (``sid``: of
         that session only), per kind, in the order the inventory reads them (list_frames: by full path). Names and
         sizes, so copied raws keep the key; ordered, because the half-stack blocks follow the order.
@@ -283,22 +298,30 @@ class InputScan:
         clock was reset), so that two nights' frames would be taken for the same ones. The first session's frames
         carry none: a project of one session, and the first night of several, keep their keys.
 
+        A light that is the same shot as an earlier file (``repeats``; of ``after``, sessions that come before these
+        ones and are not listed, then of these) is left out: it is stacked once, with the first session.
+
         The list is cached (until ``forget``) and shared: read it, never change it."""
         first = min((s.id for s in project.sessions), default=None)
         sessions = (sessions if sessions is not None else project.sessions) if sid is None else [project.session(sid)]
-        memo = (first, tuple((s.id, self._entries(project, s)) for s in sessions))
+        after = list(after or [])
+        memo = (first, tuple((s.id, self._entries(project, s)) for s in sessions),
+                tuple((s.id, self._entries(project, s)[0]) for s in after))
         got = self._frames.get(memo)
         if got is None:
-            got = self._frames[memo] = self._list_frames(project, sessions, first)
+            got = self._frames[memo] = self._list_frames(project, sessions, first, after)
         return got
 
-    def _list_frames(self, project: Project2, sessions: list, first: int | None) -> list[list]:
+    def _list_frames(self, project: Project2, sessions: list, first: int | None, after: list = ()) -> list[list]:
         out: list[list] = []
+        rep = self.repeats(project, [*after, *sessions])
         for kind in KINDS:
             sizes: dict[Path, int] = {}
             tag: dict[Path, int | None] = {}
             for s in sessions:
                 for f, n in self.session_frames(project, s)[kind]:
+                    if kind == "lights" and (s.id, f) in rep:      # the same shot as an earlier file: stacked once
+                        continue
                     sizes.setdefault(f, n)
                     tag.setdefault(f, None if s.id == first else s.id)
             out += [[kind, f.name, sizes[f]] + ([tag[f]] if tag[f] is not None else []) for f in sorted(sizes)]
@@ -459,7 +482,14 @@ class Keys:
             elif sid is None and w is not None and w.sessions is not None:     # a filter's workflow: its sessions'
                 frames, sessions = self.scan.frames(p, None, p.sessions_of(w)), p.sessions_of(w)
             else:
-                frames = self.scan.frames(p, int(sid) if sid is not None else None)
+                # a session calibrated on its own stacks no shot an earlier session of its workflow has
+                before = []
+                if sid is not None and w is not None and int(sid) in p.separate_sessions(w):
+                    for o in p.sessions_of(w):
+                        if o.id == int(sid):
+                            break
+                        before.append(o)
+                frames = self.scan.frames(p, int(sid) if sid is not None else None, None, before)
                 sessions = p.sessions if sid is None else [p.session(int(sid))]
             # frames whose header gives a useful area only: the key of every other project stays what it was
             areas = self.scan.useful_areas(p, sessions)

@@ -1220,3 +1220,20 @@ def test_a_worker_imports_the_astro_gpu_of_the_process_that_started_it(tmp_path)
     out = subprocess.run([sys.executable, "-c", "import astro_gpu; print(astro_gpu.__file__)"], cwd=tmp_path,
                          env=runner2._own_package_first(dict(os.environ)), capture_output=True, text=True, check=True)
     assert Path(out.stdout.strip()).resolve().parents[1] == Path(here)
+
+
+def test_a_stopped_run_says_what_it_leaves_in_the_scratch_folder(proj):
+    """The calibrated frames of finished blocks stay in the scratch folder for the next run: how much and where is
+    said once in the run's log, and a run that is not stopped says nothing."""
+    big = proj.scratch / "somekey" / "calibrate"
+    big.mkdir(parents=True)
+    with open(big / "lights.f16", "wb") as f:
+        f.truncate(300 * 2 ** 20)                              # 0.3 GB, sparse
+    B.stop_at = 4
+    status, info = run(proj, plan_all(proj))
+    assert status == "interrupted"
+    said = [e["msg"] for e in events(proj, info) if e["type"] == "log" and "scratch folder keeps" in e.get("msg", "")]
+    assert len(said) == 1 and said[0].startswith("the scratch folder keeps 0.3 GB of calibrated frames for the next run: ")
+    status, info = run(proj, plan_all(proj))
+    assert status == "done"
+    assert not [e for e in events(proj, info) if e["type"] == "log" and "scratch folder keeps" in e.get("msg", "")]
