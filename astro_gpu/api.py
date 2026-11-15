@@ -628,7 +628,7 @@ def use_rules(p: Project2, rules: KeyRules | str | None, spec: str | None = None
     """Replace the stage graph of this project (tests and tools): ``rules`` is a KeyRules, or a ``'module:function'``
     spec building one. ``spec`` names the same rules for the detached worker (``Plan.rules``)."""
     c = _ctx(p)
-    with _held(c, "use_rules"):
+    with c.lock:                                        # tests and tools: never changed without the lock
         if isinstance(rules, str):
             c.rules_obj, c.spec = _load_rules(rules), rules
         else:
@@ -641,7 +641,9 @@ def refresh(p: Project2, scan: bool = False) -> None:
     """Forget what was cached about the disk: the 'usable' answers and the automatic values (after a run or a stage
     end). ``scan=True`` also forgets the frame files and file ids (the raws changed on disk)."""
     c = _ctx(p)
-    with _held(c, "refresh"):
+    with _held(c, "refresh") as got:
+        if not got:                     # never changed without the lock: the worker holding it reads them; the next
+            return                      # refresh (each stage end, each run) forgets them
         if c.store is not None:
             c.store.forget()
         c.autos.clear()
@@ -668,8 +670,9 @@ def warm(p: Project2, progress: Callable[[float, str], None] | None = None) -> N
             if store is not None and s in ("inventory", "calibrate") and store.done(s, k):
                 store.usable_as_input(s, k)
         est.facts(keys, w, store)                       # reads one raw header (the sensor size) for the estimates
-    with _held(c, "warm"):
-        c.warm_entries = {_entries(keys.project, s) for s in keys.project.sessions}
+    with _held(c, "warm") as got:
+        if got:                                         # else warmed again at the next call
+            c.warm_entries = {_entries(keys.project, s) for s in keys.project.sessions}
     say(1.0, "ready")
 
 
