@@ -825,6 +825,7 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
             self.sel = {c.id}
             self.ensure_visible(c)
             self.toolbar_changed.emit()
+            self.open_cell.emit(c.id)                 # the panel shows the session just made, the one framed
 
     # ---- internal moves
     def start_internal(self, desc):

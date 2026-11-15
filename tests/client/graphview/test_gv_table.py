@@ -822,8 +822,12 @@ def test_gv_table_add_session_and_add_stack_buttons(qapp):
     g.end_edit()
     assert t.b_add_session.isEnabled() and "stack of the chosen cell" in t.b_add_session.toolTip()
     n0 = b.steps()
+    shown = []
+    g.open_cell.connect(shown.append)
     t.b_add_session.click()                                          # nothing chosen: the first stack
     assert len(b.stacks()[0]["sessions"]) == 2 and b.steps() == n0 + 1
+    new = b.stacks()[0]["sessions"][-1]["sid"]
+    assert g.sel == {("name", new)} and shown[-1] == ("name", new)   # framed and shown in the panel
     t.b_add_stack.click()
     b.wait(0.02)
     g.end_edit()
