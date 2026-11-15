@@ -990,6 +990,11 @@ class Run:
             self.G.key("Ctrl+Z", target=self.canvas)
         if self.js() != before:
             raise Failure("d", "Ctrl+Z did not give back the graph before the gesture")
+        m = getattr(self.doc, "model", None)
+        if MODEL_ROOT and m is not None and not m.ready:
+            # the step brought files back (a session of a workflow deleted, files taken out): the project is read
+            # again (model.reload_sources, no disk access in the window's thread) and its states come with that reading
+            self.settle_states(" after Ctrl+Z, the project read again")
         now = self._model_snap()
         if MODEL_ROOT and now != self.snap0:
             st = sorted(set(now[0]) ^ set(self.snap0[0]))[:6]
