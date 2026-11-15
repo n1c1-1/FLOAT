@@ -1837,11 +1837,15 @@ class Panel(QWidget):
         mine = [x for x in layers if x.get("part") == "combined"]          # its Combine layers blocks (their layers)
         self.bv.addWidget(self.group_title(_("Outputs")))
         names = {"starless": _("Starless image"), "stars": _("Stars alone")}
+        wired = self._wired_outputs(node)
         for what, _word in STAR_OUTPUTS:
-            to = [block_title(None, "composition") + (f" ({self.s.view(x['pid']).name})" if len(node.paths) > 1 and
-                                                      self.s.view(x["pid"]) is not None else "") for x in mine]
-            if any(x.get("part") == what for x in layers):
-                to.append(_("Post layer"))
+            if wired is not None:                        # the graph's wires: the one truth of where each image goes
+                to = list(wired[what])
+            else:
+                to = [block_title(None, "composition") + (f" ({self.s.view(x['pid']).name})" if len(node.paths) > 1
+                                                          and self.s.view(x["pid"]) is not None else "") for x in mine]
+                if any(x.get("part") == what for x in layers):
+                    to.append(_("Post layer"))
             to = to or [_("unused: drag to Post or Composition")]
             lb = QLabel(f"<span style='color:{IMAGE_COL[what]}'>●</span> <b>{html.escape(names[what])}</b>"
                         + "".join(f"<br>&nbsp;&nbsp;&nbsp;→ {html.escape(t)}" for t in to))
@@ -1872,6 +1876,36 @@ class Panel(QWidget):
             nb.clicked.connect(lambda _c=False, pp=node.paths[0]: self._new_composition(pp))
             self.bv.addWidget(nb, 0, Qt.AlignLeft)
         self.bv.addSpacing(6)
+
+    def _wired_outputs(self, node) -> dict | None:
+        """Where the graph's wires take a Stars/background block's two images: {"starless": [...], "stars": [...]},
+        each the block it goes to by its graph title (a combination's input, a Combine layers, Synthetic stars) or
+        "Post layer"; None when the graph is not at hand. The panel said "unused" for an image wired into a
+        combination, reading only Post's layers (a beta tester's OIII starless image, wired into the S-H-O)."""
+        s = self.s
+        g, bm = getattr(s, "stored", None), getattr(s, "block_map", None)
+        if g is None or bm is None:
+            return None
+        try:
+            b = bm.block_of(node)
+            if b is None:                                # a node of an earlier map: the block of the same workflows
+                pids = {q.pid for q in node.paths}
+                b = next((x for x, blk in g.blocks.items() if blk.kind == "stars" and bm.node(x) is not None
+                          and bm.node(x).key == node.key and {q.pid for q in bm.node(x).paths} == pids), None)
+        except Exception:  # noqa: BLE001 - a node the map does not know: as before
+            return None
+        if b is None or b not in g.blocks:
+            return None
+        from ..graphcore.rules import title
+        out = {"starless": [], "stars": []}
+        for w in g.wires:
+            part = {"Starless": "starless", "Stars only": "stars"}.get(str(w.src[1]))
+            if w.src[0] != b or part is None or not w.active or w.dst[0] not in g.blocks:
+                continue
+            t = _("Post layer") if g.blocks[w.dst[0]].kind == "post" else title(g, w.dst[0], tr=_)
+            if t not in out[part]:
+                out[part].append(t)
+        return out
 
     def _part_to_post(self, p, part):
         """One of the Stars block's images sent to Post as a layer of its own (as dragging its dot onto Post)."""
