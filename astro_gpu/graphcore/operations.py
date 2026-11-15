@@ -533,6 +533,13 @@ def _follow_stack(q, r, n):
     return ""
 
 
+def _row_image(q, blocks):
+    """The block whose image a new row sends to Post: its last one, a side block (Synthetic stars, read by a Combine
+    layers' third input, never a layer of its own) left out."""
+    trunk = [b for b in blocks if q.blocks[b].kind != "synth"]
+    return trunk[-1] if trunk else None
+
+
 def _to_post(q, b, port=None):
     post = Index(q).post
     port = port or out_ports(q.blocks[b])[0]
@@ -832,8 +839,9 @@ def op_add_stack(q, name, nights, blocks=None, align="auto", all_nights=False, c
     elif align is not None:
         raise Refusal("unknown place")
     q.rows.append(r)
-    if chain and out_ports(q.blocks[chain[-1]]):
-        _to_post(q, chain[-1])
+    end = _row_image(q, chain)
+    if end is not None and out_ports(q.blocks[end]):
+        _to_post(q, end)
     return Out(M("“{_name}” added", _name=r.name), pairs[0][0], new=pairs[0][0])
 
 
@@ -992,8 +1000,9 @@ def op_duplicate_row(q, row):
     elif r.nights and not r.fork:
         nr.align = new_align(r.id)
     q.rows.insert(_after_subtree(q, r.id), nr)
-    if blocks and q.blocks[blocks[-1]].kind not in JOIN_KINDS and out_ports(q.blocks[blocks[-1]]):
-        _to_post(q, blocks[-1])
+    end = _row_image(q, blocks)
+    if end is not None and q.blocks[end].kind not in JOIN_KINDS and out_ports(q.blocks[end]):
+        _to_post(q, end)
     first = nights[0][0] if nights else blocks[0]
     return Out(M("“{_new}” drawn under “{_row}”", _new=nr.name, _row=r.name), first, new=first)
 
@@ -1774,6 +1783,8 @@ def op_send_to_post(q, block, name=None):
     b = _blk(q, block)
     if not out_ports(b):
         raise Refusal("lights first")
+    if b.kind == "synth":               # never a layer of its own: the third input of its Combine layers (op_wire)
+        raise Refusal("Synthetic stars go to the Synthetic stars input of their Combine layers")
     ix = Index(q)
     post = ix.post
     if any(w.src[0] == block and w.dst[0] == post for w in q.wires):

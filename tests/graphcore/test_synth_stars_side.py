@@ -106,3 +106,36 @@ def test_the_layout_of_synthetic_stars_after_the_stars_combination_whatever_the_
         doc.view["folded"] = folded
         d = drawn_under(doc, syn)
         assert d.boxes[j].x > d.boxes[syn].right
+
+
+@pytest.mark.parametrize("switch", [False, True])
+def test_synthetic_stars_never_goes_to_post_by_its_menu_nor_by_a_copy_of_its_row(monkeypatch, switch):
+    """Its image goes only to a Combine layers' third input: "To Post" on it is refused with the wire's reason, and a
+    row ending in it duplicated sends its last other block's image to Post (or none), never the Synthetic stars' (the
+    window fuzz: a To Post and a Ctrl+D on such a row wired it to Post's layers)."""
+    from test_points import refused_inert
+    monkeypatch.setattr(model, "SYNTH_ON_STARS_SIDE", switch)
+    for start, kind in (("sho_rgb", None), ("filters_complete", "combine")):
+        doc = Doc.from_template(start)
+        if kind is None:
+            r = star_row(doc)
+            at = {"type": "insert", "row": r.id, "after": r.blocks[-1]}
+        else:
+            j, _ins = cl_ins(doc)
+            combo = next(w.src[0] for w in doc.project.wires if w.dst == [j, "Stars"])
+            r = Index(doc.project).row[Index(doc.project).row_of[combo]]
+            at = {"type": "insert", "row": r.id, "after": combo}
+            if try_op(doc.project, "add_block", {"kind": "synth", "at": at}):
+                continue
+        ok(doc, "add_block", kind="synth", at=at)
+        r = Index(doc.project).row[r.id]
+        syn = next(b for b in r.blocks if doc.project.blocks[b].kind == "synth")
+        assert "Combine layers" in refused_inert(doc, "send_to_post", block=syn)
+        ok(doc, "duplicate_row", row=r.id)
+        p = doc.project
+        post = Index(p).post
+        assert not [w for w in p.wires if p.blocks[w.src[0]].kind == "synth" and w.dst[0] == post]
+        copy = p.rows[-1] if p.rows[-1].name.endswith("copy") else next(x for x in p.rows if x.name == r.name + " copy")
+        last = [b for b in copy.blocks if p.blocks[b].kind != "synth"][-1]
+        sent = any(w.src[0] == last and w.dst[0] == post for w in p.wires)
+        assert sent == (p.blocks[last].kind not in model.JOIN_KINDS)
