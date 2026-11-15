@@ -120,3 +120,35 @@ def test_a_duplicated_stack_copies_its_whole_workflow_and_owns_its_copies():
     p, _ = compiled(doc)
     assert p.workflows[1].params.get("render_simple") == {"linked": True}
     assert p.workflows[1].params["stack"]["min_transparency"] == 0.6
+
+
+# ---------------------------------------------------------------------------------------------------- 13.2
+def _own_darks():
+    doc = Doc.from_template("colour_minimal")
+    s = doc.project.rows[0].nights[0][0]
+    ok(doc, "set_common_files", kind="darks", paths=["D:/c/1.fit", "D:/c/2.fit"], mode="replace")
+    ok(doc, "add_files", session=s, kind="darks", paths=["D:/s/1.fit"], mode="replace")
+    return doc, s
+
+
+def _darks(doc, s):
+    p, _ = compiled(doc)
+    return p.session(doc.project.blocks[s].sid).darks
+
+
+def test_a_session_s_own_list_emptied_stays_its_own_empty_list_until_it_follows_common_again():
+    doc, s = _own_darks()
+    assert _darks(doc, s) == ["D:/s/1.fit"]
+    ok(doc, "remove_files", session=s, kind="darks", paths=["D:/s/1.fit"])
+    assert _darks(doc, s) == []                                   # no dark, never Common's in silence
+    ok(doc, "reset_own_files", session=s, kind="darks")           # the Table's "follows Common again"
+    assert _darks(doc, s) == ["D:/c/1.fit", "D:/c/2.fit"]
+    doc, s = _own_darks()
+    ok(doc, "move_files", src_session=s, src_kind="darks", dst_session=s, dst_kind="flats")
+    assert _darks(doc, s) == []
+    doc, s = _own_darks()
+    ok(doc, "split_by", session=s, groups=[{"into": "night", "files": {"darks": ["D:/s/1.fit"]}}])
+    assert _darks(doc, s) == []
+    doc, s = _own_darks()
+    ok(doc, "move_files", src_session=s, src_kind="darks", dst_session="common", dst_kind="darks")
+    assert _darks(doc, s) == ["D:/c/1.fit", "D:/c/2.fit", "D:/s/1.fit"]     # its files Common's: Common followed

@@ -1937,11 +1937,9 @@ def op_remove_files(q, session, kind, paths):
     s = _session(q, session)
     _kind(kind)
     rm = set(paths)
-    left = [x for x in _eff_list(q, session, kind) if x not in rm]
-    if left:
-        s.files[kind] = left
-    else:
-        s.files.pop(kind, None)
+    # emptied, the list stays the session's own (none of that kind), never Common's in silence: following Common is
+    # a gesture of its own (op_reset_own_files); a list equal to Common's goes at the normalisation
+    s.files[kind] = [x for x in _eff_list(q, session, kind) if x not in rm]
     return Out(M("{kind} of “{t}” removed · files kept", kind=rules.FILE_LABEL[kind], t=title_msg(q, session)), session)
 
 
@@ -2008,10 +2006,8 @@ def _set_list(q, s, kind, lst):
         if kind == "lights":
             raise Refusal("lights go on a session, not on Common")
         q.common["files"][kind] = lst
-    elif lst:
-        q.blocks[s].files[kind] = lst
     else:
-        q.blocks[s].files.pop(kind, None)
+        q.blocks[s].files[kind] = lst                 # emptied: its own empty list (op_remove_files)
 
 
 def op_move_files(q, src_session, src_kind, dst_session, dst_kind, paths=None, copy=False):
@@ -2026,6 +2022,8 @@ def op_move_files(q, src_session, src_kind, dst_session, dst_kind, paths=None, c
     if not copy:
         rm = set(paths)
         _set_list(q, src_session, src_kind, [x for x in src if x not in rm])
+        if (dst_session, dst_kind) == (COMMON, src_kind) and not _list_of(q, src_session, src_kind):
+            q.blocks[src_session].files.pop(src_kind, None)     # all its files now Common's: it follows Common
     dst = _list_of(q, dst_session, dst_kind)
     _set_list(q, dst_session, dst_kind, dst + [x for x in paths if x not in dst])
     where = "common" if dst_session == COMMON else M("“{t}”", t=title_msg(q, dst_session))
@@ -2045,13 +2043,12 @@ def op_split_by(q, session, groups):
     if not allp or any(not any(x in v for v in own.values()) for x in allp):
         raise Refusal("files absent from the session")
     rm = set(allp)
+    common = {k for g in groups if g.get("into") == "common" for k in g.get("files", {})}
     for k in list(s.files):
-        left = [x for x in s.files[k] if x not in rm]
-        if left:
-            s.files[k] = left
-        else:
-            del s.files[k]
-    calib = {k: list(v) for k, v in s.files.items() if k != "lights"}
+        s.files[k] = [x for x in s.files[k] if x not in rm]       # emptied: its own empty list (op_remove_files)
+        if not s.files[k] and k in common:
+            del s.files[k]                                         # ...unless its files went to Common: followed
+    calib = {k: list(v) for k, v in s.files.items() if k != "lights" and v}
     at, made, rows_at = r.nights.index(n) + 1, 0, _after_subtree(q, r.id)
     focus = session
     for g in groups:
