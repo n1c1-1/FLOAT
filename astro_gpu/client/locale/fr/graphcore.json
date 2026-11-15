@@ -452,5 +452,10 @@
   "{_name} added to “{_row}”: it stacks with its sessions": "{_name} ajoutée à « {_row} » : elle s'empile avec ses sessions",
   "Selection computes nothing of its own: set the pause on Registration": "La Sélection ne calcule rien elle-même : mettez la pause sur l'Alignement",
   "{n} also in {kind} of “{t}”": "{n} aussi dans {kind} de « {t} »",
-  "{n} listed twice": "{n} en double"
+  "{n} listed twice": "{n} en double",
+  "the application no longer has this recipe": "l'application n'a plus cette recette",
+  "the recipe is up to date": "la recette est à jour",
+  "{t}: recipe version {v}": "{t} : recette version {v}",
+  "{key} back to its default": "{key} revient à sa valeur par défaut",
+  "{key}: {_value}": "{key} : {_value}"
 }

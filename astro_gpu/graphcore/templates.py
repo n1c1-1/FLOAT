@@ -15,7 +15,7 @@ Nothing is read from file or folder names: the filters are those the sessions st
 from __future__ import annotations
 
 from ..core import workflow as wfl
-from .model import COMBO_PORTS
+from . import combos
 from .msg import name_of
 
 #: the views' options as the engine's (client/model.to_engine, Qt-free copy)
@@ -25,10 +25,6 @@ GRADIENT_ENGINE = {"simple": "polynomial", "rbf": "rbf", "auto": "automatic"}
 #: the gallery's block keys as the engine's blocks (client/blocks.KEY_ENGINE_BLOCK, the ones a template names)
 KEY_ENGINE_BLOCK = {"empilement": "stacking", "alignement": "registration", "astrometrie": "astrometry",
                     "fond": "gradient", "couleur": "color", "debruitage": "denoise", "etoiles": "stars"}
-#: a combination type's ports (graph names) by the engine's roles (stages/combine.py)
-PORT_OF_ROLE = {"SII": "S II", "Ha": "Hα", "OIII": "O III", "L": "L", "R": "R", "G": "G", "B": "B"}
-#: a combination type by its title (stages/combine.COMBINATIONS)
-KIND_OF_TITLE = {"S-H-O": "sho", "H-O": "ho", "RGB": "rgb", "LRGB": "lrgb"}
 
 
 def to_engine(o: dict) -> dict:
@@ -277,7 +273,7 @@ _white_balance = camera_white_balance
 
 def _build_filters(plan, g, t, name, opts):
     stars = opts.get("etoiles") == "retirer"
-    kind = KIND_OF_TITLE.get(t.get("palette"), "sho")
+    kind = combos.type_of_title(t.get("palette"))
     if t.get("dual_x2"):
         return _dual_x2(plan, g, name, opts)
     have = _filters(g)
@@ -339,9 +335,11 @@ def _combine(plan, name, kind, rows, image, channels=None):
     nm = plan.unique_name(name)
     plan.names.add(nm)
     (fus,), (j,) = plan.op("add_combination", made_rows=1, made_blocks=1, type=kind, name=nm)
-    ports = COMBO_PORTS[kind]
+    by_role = combos.type_ports(kind)
+    ports = list(by_role.values())
     for i, (f, r, b) in enumerate(rows):
-        port = PORT_OF_ROLE.get(f, f) if PORT_OF_ROLE.get(f, f) in ports else ports[i]
+        # a filter that is one of its inputs (by role or by name), else the inputs in order
+        port = by_role[f] if f in by_role else f if f in ports else ports[i]
         if image in ("starless", "stars"):
             src, sport = b["stars"], ("Starless" if image == "starless" else "Stars only")
         else:

@@ -1,5 +1,6 @@
 """No two visible texts drawn over each other, at the screens' usual sizes (1250 x 685, 1366 x 768, 1920 x 1080), in
-French and in English, on: the empty graph, the template gallery, a graph with one template, Inspect's list of frames;
+French and in English, on: the empty graph, the template gallery, a graph with one template, a graph with a
+combination of every recipe, Inspect's list of frames;
 and the tabs of the project bar keep their place when the project's name gets longer (a long name is cut, whole in its
 tooltip).
 
@@ -72,6 +73,31 @@ def test_a_graph_with_one_template_draws_no_text_over_another(win, env, size, la
     win.set_mode(1)                                       # Inspect, on the workflow made
     settle(win, 3)
     assert not _crossed(win), _crossed(win)
+
+
+@pytest.mark.parametrize("lang", LANGS)
+@pytest.mark.parametrize("size", SIZES)
+def test_the_combinations_of_every_recipe_draw_no_text_over_another(win, env, size, lang):
+    """Each recipe of the application placed from the Combination card's list (S-H-O... HOO, HaRGB) and chosen: the
+    graph's drawing, the palette, and the block's panel, each on its own (on a small screen the automatic panel opens
+    over the graph: the drawing under it is hidden, not crossed); then undone, the next one placed."""
+    from astro_gpu.graphcore import combos
+    _window(win, size, lang)
+    made_from(win, env, "filters_min")
+    page = win.graph
+    pal = page.palette
+    for rid in combos.offered():
+        pal.set_combination_type(rid)
+        before = {b for b, x in win.s.stored.blocks.items() if x.kind == "combine"}
+        pal.double_click("combine")
+        settle(win, 2)
+        new = next(b for b, x in win.s.stored.blocks.items() if x.kind == "combine" and b not in before)
+        page.bridge.choose(new)
+        settle(win, 3)
+        for part in (page.canvas, pal, page.panel):
+            assert not _crossed(part), (rid, _crossed(part))
+        win.s.undo(graph=True)
+        settle(win, 2)
 
 
 @pytest.mark.parametrize("lang", LANGS)

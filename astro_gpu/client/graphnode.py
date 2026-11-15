@@ -12,7 +12,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..stages.combine import BY_KIND as COMBINE_KINDS
 from ..stages.combine import STAGES as COMBINE
 from .i18n import _, plural
 
@@ -42,9 +41,24 @@ def combine_kind(q) -> str:
     return str(f.get("type") or "") if isinstance(f, dict) else ""
 
 
-def combine_title(kind: str) -> str:
-    """A type of combination's block name (S-H-O, H-O, RGB, LRGB), translated; the group's for none."""
-    return _(COMBINE_KINDS[kind].title) if kind in COMBINE_KINDS else _("Combination")
+def combine_spec(q) -> dict | None:
+    """The recipe a workflow's combination runs (its copy; a project saved before recipes: its type's frozen one),
+    None for another workflow."""
+    from ..stages.recipes import LEGACY, recipe_of
+    f = (getattr(q, "source", None) or {}).get("fusion") if isinstance(getattr(q, "source", None), dict) else None
+    if not isinstance(f, dict) or not (f.get("recipe") or f.get("type") in LEGACY):
+        return None
+    return recipe_of(f)
+
+
+def combine_title(kind: str, q=None) -> str:
+    """A combination's block name, translated: its recipe's (S-H-O, HOO...: the words before a parenthesis, the whole
+    name in its tooltip), the workflow's copy first; the group's for none."""
+    from ..graphcore import combos
+    spec = combine_spec(q) if q is not None else None
+    if spec is not None:
+        return _(combos.short(spec["name"]))
+    return _(combos.type_title(kind)) if kind else _("Combination")
 
 
 def port_name(role: str) -> str:
@@ -265,7 +279,7 @@ def node_title(s, n) -> str:
             if combine_kind(q) == kind and ident(q) not in same:
                 same.append(ident(q))
         mine = ident(n.paths[0])
-        title = combine_title(kind)
+        title = combine_title(kind, n.paths[0])
         return f"{title} {same.index(mine) + 1}" if len(same) > 1 and mine in same else title
     if n.paths and "~" in n.key or (n.paths and n.key in ("fond", "couleur", "debruitage")):
         # issue #47: a block placed twice, numbered left to right; shared by a branch that has it twice: numbered

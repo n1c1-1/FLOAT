@@ -121,11 +121,13 @@ def test_combination_input_channel_weight_image_and_its_stars_twin():
 
 
 def test_a_new_combination_is_stored_as_the_engine_stores_one():
+    """Placed, a combination copies its recipe in, as the engine's placing does (api.combination_source)."""
+    from astro_gpu import api
     doc = Doc.from_template("filters_minimal")
     ok(doc, "add_combination", type="ho", name="H-O nebula")
     p, _ = compiled(doc)
     w = wf(p, "H-O nebula")
-    assert w.source == {"fusion": {"type": "ho", "inputs": []}} and w.blocks is None
+    assert w.source == api.combination_source("ho", []) and w.blocks is None
     assert w.options == {"denoise": None, "stars": None, "gradient": "polynomial", "deconvolution": None}
 
 

@@ -29,7 +29,8 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tests", "graphcore"))
 from astro_gpu import graphcore  # noqa: E402
 from astro_gpu.graphcore import layout, COMMON  # noqa: E402
-from astro_gpu.graphcore.model import check, Index, out_ports, in_ports, FILE_KINDS, COMBO_PORTS, model_json  # noqa: E402
+from astro_gpu.graphcore.model import check, Index, out_ports, in_ports, FILE_KINDS, model_json  # noqa: E402
+from astro_gpu.graphcore import combos  # noqa: E402
 from astro_gpu.graphcore.rules import ORDER, SETTINGS, structure  # noqa: E402
 from astro_gpu.graphcore.placement import candidates, judge  # noqa: E402
 from astro_gpu.graphcore.msg import say  # noqa: E402
@@ -175,7 +176,7 @@ def gen(rng, doc):
         lambda: ("op", "own_grid", {"row": pick(rng, rows)}),
         lambda: ("op", "set_align_off", {"row": pick(rng, rows)}),
         lambda: ("op", "set_calibrate_together", {"on": rng.random() < 0.5}),
-        lambda: ("op", "set_combination_type", {"block": pick(rng, joins or blocks), "type": pick(rng, COMBO_PORTS)}),
+        lambda: ("op", "set_combination_type", {"block": pick(rng, joins or blocks), "type": pick(rng, combos.offered())}),
         lambda: _wire(rng, p),
         lambda: ("op", "unwire", {"wire": pick(rng, wires)}),
         lambda: ("op", "switch_off", {"block": pick(rng, blocks)}),
@@ -222,7 +223,7 @@ def gen(rng, doc):
         lambda: _set_input(rng, p, joins),
         lambda: ("op", "add_stars_combination", {"block": pick(rng, [j for j in joins if any(
             w.dst[0] == j and w.src[1] == "Starless" for w in p.wires)] or joins or blocks)}),
-        lambda: ("op", "add_combination", {"type": pick(rng, list(COMBO_PORTS) + ["x"]), "name": pick(rng, NAMES)}),
+        lambda: ("op", "add_combination", {"type": pick(rng, combos.offered() + ["x"]), "name": pick(rng, NAMES)}),
         lambda: _share(rng, p, sess),
         lambda: _template(rng, p),
         lambda: ("op", "set_night_filter", {"night": pick(rng, sess), "filter": pick(rng, ["Ha", "OIII", ""])}),

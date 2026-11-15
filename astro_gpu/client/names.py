@@ -44,11 +44,12 @@ def _catalogues() -> dict[str, dict[str, str]]:
 @lru_cache(maxsize=1)
 def _bases() -> frozenset[str]:
     """The English names the application gives, whole: its blocks, templates, combinations, ports and a few words."""
-    from ..graphcore.model import COMBO_LABEL, LAYER_PORTS, PAIR_PORTS
+    from ..graphcore import combos
+    from ..graphcore.model import LAYER_PORTS, PAIR_PORTS
     from ..graphcore.rules import LABEL
     from .gallery import GALLERY, PALETTES
     from .graphnode import TITLES
-    out = set(LABEL.values()) | set(COMBO_LABEL.values()) | set(LAYER_PORTS) | set(PAIR_PORTS) | set(TITLES.values())
+    out = set(LABEL.values()) | combos.titles() | set(LAYER_PORTS) | set(PAIR_PORTS) | set(TITLES.values())
     out |= {t["name"] for t in GALLERY} | set(PALETTES) | set(_WORDS)
     return frozenset(out)
 

@@ -1080,11 +1080,14 @@ class Panel(QWidget):
         """A combination block (issue #43; stages/combine.py): its workflow's name, its type, its named inputs (the
         workflow each reads, its Output or its starless image, its weight), then its settings as any block's; its
         output is a layer of Post."""
-        from .graphnode import COMBINE_KINDS, combine_kind, combine_title, port_name
+        from .graphnode import combine_kind, combine_spec, combine_title
+        from .graphview.palette import recipe_tip
+        from ..core.workflow import combine_stage
         s = self.s
         p = node.paths[0]
         f = (p.source or {}).get("fusion") or {}
         kind = combine_kind(p)
+        spec = combine_spec(p)
         top = QHBoxLayout()
         ed = QLineEdit(p.name)
         ed.setStyleSheet("QLineEdit { font-size: 13pt; font-weight: 600; background: transparent; border: none; "
@@ -1095,12 +1098,22 @@ class Panel(QWidget):
         st = self.graph_state(node)
         top.addWidget(self.state_chip(node, st))
         self.hv.addLayout(top)
-        self.hv.addWidget(label(combine_title(kind), "small"))
+        kind_label = label(combine_title(kind, p), "small")
+        kind_label.setToolTip(recipe_tip(spec))          # its recipe's whole name, what it does, its inputs
+        self.hv.addWidget(kind_label)
         acts = QHBoxLayout()                             # as the Image block: its Delete under its name (#34)
         x = QPushButton(_("Delete"))
         x.setToolTip(_("Take this block out, with the blocks after it (Del)"))
         x.clicked.connect(self.removeTool.emit)
         acts.addWidget(x)
+        st_recipe = s.recipe_status(p) if hasattr(s, "recipe_status") else {}
+        if st_recipe.get("newer"):                       # the application's recipe is newer: said, applied on a click
+            up = QPushButton(_("Update recipe"))
+            up.setToolTip(_("The application has version {new} of this recipe; this project keeps version {old} until "
+                            "you update it. Its results will then be outdated.").format(
+                new=st_recipe.get("folder"), old=st_recipe.get("project")))
+            up.clicked.connect(lambda: self._recipe_change(lambda: s.update_recipe(p)))
+            acts.addWidget(up)
         acts.addStretch(1)
         self.hv.addLayout(acts)
         if node.broken:                                  # why Run is refused, as the graph's red circle says (round 3)
@@ -1111,15 +1124,20 @@ class Panel(QWidget):
         self.bv.addWidget(self.group_title(_("Inputs")))
         words = {"L": _("grey"), "R": _("red"), "G": _("green"), "B": _("blue"),
                  "GB": _("green + blue")}
-        weights = (s.p.workflow(p.pid).params.get(COMBINE_KINDS[kind].name) or {}).get("weights") or {} \
-            if kind in COMBINE_KINDS else {}
+        stage = combine_stage(s.p.workflow(p.pid))
+        weights = (s.p.workflow(p.pid).params.get(stage) or {}).get("weights") or {} if stage else {}
         by_role = {i["role"]: i for i in f.get("inputs") or []}
-        for role in (COMBINE_KINDS[kind].ports if kind in COMBINE_KINDS else ()):
-            i = by_role.get(role, {"pid": None, "role": role, "channel": "L"})
+        types = {"mono": _("A monochrome image (a filter's stack)"), "colour": _("A colour image"),
+                 "any": _("A monochrome or colour image")}
+        ins = s.recipe_inputs(p) if hasattr(s, "recipe_inputs") else (spec or {}).get("inputs", [])
+        for spec_in in ins:                              # the recipe's inputs (role, label, type), in its order
+            role = spec_in["role"]
+            i = by_role.get(role, {"pid": None, "role": role, "channel": spec_in.get("channel", "L")})
             q = s.view(i["pid"]) if i["pid"] is not None else None
             row = QHBoxLayout()
             row.setSpacing(10)                             # the input's name apart from its text (#27)
-            name = label(f"<b>{html.escape(port_name(role))}</b>", None)
+            name = label(f"<b>{html.escape(_(spec_in.get('label') or role))}</b>", None)
+            name.setToolTip(types.get(spec_in.get("type"), ""))
             name.setMinimumWidth(36)
             row.addWidget(name, 0)
             row.addWidget(self.channel_source(p, i, q, words.get(i.get("channel", "L"), "")), 1)
@@ -1146,12 +1164,56 @@ class Panel(QWidget):
             if q is not None and any(n["block"] == "stars" and not n.get("off") for n in s.graph(q)):
                 self.bv.addWidget(self.image_choice(p, i))
         self.bv.addSpacing(6)
-        self.settings(p, "fusion")
+        self.recipe_settings(p)
+        self.settings(p, "fusion", groups=[(g, [r for r in rs if r.get("name") != "values"])
+                                           for g, rs in self._groups(p, "fusion")])
         self.bv.addSpacing(6)
         self.bv.addWidget(label(_("Each input is any workflow's image, wired on the graph or picked here. They must be on "
                                   "one grid: an Align on block after the Stacking of the others brings them there. Its "
                                   "output is a layer of Post."), "small", wrap=True))
         self.bv.addStretch(1)
+
+    def _recipe_change(self, do):
+        """A change of a combination's recipe (a parameter, its newer version): made at once, one Undo step; refused,
+        the reason in the toast."""
+        try:
+            do()
+        except ValueError as e:
+            self.toast.emit(_(str(e)))
+        self.changed.emit()
+
+    def recipe_settings(self, p):
+        """The parameters of a recipe other than the four types' frozen ones (theirs are their stage's settings, shown
+        as any block's): one row each, its name, its value, its help in the tooltip."""
+        s = self.s
+        params = s.recipe_parameters(p) if hasattr(s, "recipe_parameters") else {}
+        if not params:
+            return
+        self.bv.addWidget(self.group_title(_("Recipe")))
+        for name, q in params.items():
+            row = QHBoxLayout()
+            lab = label(_(q.get("label") or name), None)
+            tip = _(q["help"]) if q.get("help") else ""
+            lab.setToolTip(tip)
+            row.addWidget(lab, 1)
+            if "choices" in q:
+                w = QComboBox()
+                for c in q["choices"]:
+                    w.addItem(_(c), c)
+                w.setCurrentIndex(max(0, w.findData(q["value"])))
+                w.activated.connect(lambda k, n=name, b=w, v=q["value"]: b.itemData(k) != v and self._recipe_change(
+                    lambda: s.set_recipe_value(p, n, b.itemData(k))))
+            else:
+                w = QDoubleSpinBox()
+                w.setRange(float(q.get("min", -1e6)), float(q.get("max", 1e6)))
+                w.setDecimals(2)
+                w.setSingleStep(float(q.get("step") or 1.0))
+                w.setValue(float(q["value"]))
+                w.editingFinished.connect(lambda n=name, b=w, v=float(q["value"]): b.value() != v and self._recipe_change(
+                    lambda: s.set_recipe_value(p, n, b.value())))
+            w.setToolTip(tip)
+            row.addWidget(w)
+            self.bv.addLayout(row)
 
     def image_choice(self, p, i: dict):
         """What an input reads of a workflow that has Stars/background: its Output (with its stars), or its starless

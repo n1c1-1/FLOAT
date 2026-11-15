@@ -19,6 +19,7 @@ import copy
 import json
 
 from ..core import workflow as wfl
+from . import combos
 from . import model as gm
 
 #: the views' keys of the engine's blocks (client/blocks.ENGINE_BLOCK)
@@ -30,9 +31,6 @@ KEY_ENGINE = {v: k for k, v in ENGINE_KEY.items()}
 #: the order display_keys puts the cut and greyed blocks of a workflow made before the free graph in
 WANT = ["image", "calibration", "alignement", "selection", "crop", "empilement", "astrometrie", "fond", "couleur",
         "debruitage", "etoiles", "synth", "post"]
-#: a combination's roles (stages/combine.py) and the graph's port names
-PORT_OF_ROLE = {"SII": "S II", "Ha": "Hα", "OIII": "O III", "L": "L", "R": "R", "G": "G", "B": "B"}
-ROLE_OF_PORT = {v: k for k, v in PORT_OF_ROLE.items()}
 #: the settings of the stack stage Selection owns (it has no stage of its own)
 SELECTION_KEYS = ("min_transparency", "max_fwhm_ratio", "selection", "selection_transparency")
 
@@ -365,9 +363,11 @@ class Converter:
         if e["kind"] == "image":
             b = gm.new_block(self.g, "image", engine="image", source=copy.deepcopy(w.source))
         elif e["kind"] == "combine":
-            t = w.source["fusion"]["type"]
+            f = w.source["fusion"]
+            t = f["type"]
             b = gm.new_block(self.g, "combine", settings={"type": t} if t != "sho" else {},
-                             engine=wfl.combine_stage(w))
+                             engine=wfl.combine_stage(w),
+                             source={"recipe": copy.deepcopy(f["recipe"])} if f.get("recipe") is not None else None)
         else:
             b = gm.new_block(self.g, e["kind"], engine=n["name"], method=n.get("method"), off=bool(n.get("off")),
                              fork=n.get("fork"))
@@ -553,7 +553,7 @@ class Converter:
             return first("stacking")
         if stage == "image":
             return first("image")
-        if stage in wfl.BLOCKS_OF_KIND.values():
+        if stage in wfl.COMBINE:
             return first("combine")
         if stage in wfl.ASTROMETRY_STAGES:
             return first("astrometry")
@@ -650,7 +650,7 @@ class Converter:
                     self.log.append(f"workflow {w.id}: its input {i['role']} reads workflow {i['pid']}, which has "
                                     "no block to wire from")
                     continue
-                g.wires.append(gm.Wire(gm.new_id(g, "w"), [b, port], [head, PORT_OF_ROLE.get(i["role"], i["role"])],
+                g.wires.append(gm.Wire(gm.new_id(g, "w"), [b, port], [head, combos.port_of(g.blocks[head], i["role"])],
                                        True, i["pid"], i.get("channel"), i.get("image")))
 
     # ------------------------------------------------------------------ alignment

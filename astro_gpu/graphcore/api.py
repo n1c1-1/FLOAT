@@ -15,7 +15,8 @@ Texts: Result.reason / .toast and Place.reason / .tip are messages (msg.py), wri
 function; English when None).
 
 Operations: apply(graph, name, **kwargs) -> (graph2, Result), argument names fixed:
-  add_block(kind, at=None, row=None)   at = a place spec (Place.op carries it); at None = natural place
+  add_block(kind, at=None, row=None, type=None)   at = a place spec (Place.op carries it); at None = natural place;
+                                       type: a Combination's recipe id (None: the default one)
                                        (double-click) in `row` (or the first row); a Calibration's place is
                                        {"type": "calib", "night": session id} (calibrated together: every night of
                                        its stack gets one, the engine's one Calibration of the stack)
@@ -27,7 +28,7 @@ Operations: apply(graph, name, **kwargs) -> (graph2, Result), argument names fix
   move_night(night, row=None, before=None)  row None = its own new row; before = a session of `row` (reorder)
   merge_nights(a, b)                   split_night(night, lights)     lights = list of paths taken out
   add_variant(block)                   take_alternative(wire)         set_reference(row)
-  set_combination_type(block, type)    type "sho" | "ho" | "rgb" | "lrgb"
+  set_combination_type(block, type)    type: a recipe id of the folder (combos.offered(): "sho", "hoo"...)
   wire(src, src_port, dst, dst_port)   unwire(wire)                   send_to_post(block)
   switch_off(block)                    set_pause(block)
   rename_row(row, name)                rename_night(night, name)      duplicate_row(row)
@@ -57,7 +58,9 @@ Operations: apply(graph, name, **kwargs) -> (graph2, Result), argument names fix
   set_param(block, stage, name, value)  the engine's setting by its real key on the block owning it (value None: back
                                        to the suggestion); set_row_param(row, stage, name, value) for calibrate /
                                        inventory (the stack's), render_simple (its Output), align_on
-  set_method(block, method)            add_combination(type="sho", name=None)
+  set_method(block, method)            add_combination(type="sho", name=None): a recipe id, copied in
+  update_recipe(block)                 the folder's newer version of its recipe copied in (the user's click)
+  set_recipe_value(block, name, value) a parameter of a recipe run on combine_recipe (None: its default)
   wire(..., channel=None)              set_input(block, port, channel=None, weight=None, image=None)
   add_stars_combination(block)         "<name> · Stars": the same type reading the stars alone
   new_night(name=None, filter="")      a session no stack draws yet
@@ -91,8 +94,8 @@ Operations: apply(graph, name, **kwargs) -> (graph2, Result), argument names fix
 apply_many(graph, [(name, kwargs | f(results_so_far) -> kwargs), ...]) = one step, all or nothing.
 """
 from .shapes import Box, Path, Drawing, Place, Result  # noqa: F401
-from .model import (Project, Block, Row, Wire, Index, FILE_KINDS, FRAME_KINDS, JOIN_KINDS, COMBO_PORTS,  # noqa: F401
-                    COMBO_LABEL, blank_project, check, clone, to_dict, from_dict)
+from .model import (Project, Block, Row, Wire, Index, FILE_KINDS, FRAME_KINDS, JOIN_KINDS,  # noqa: F401
+                    blank_project, check, clone, to_dict, from_dict)
 from .msg import M, say  # noqa: F401
 from .operations import apply, apply_many, new_view, COMMON, try_op  # noqa: F401
 from .rules import LABEL, SETTINGS, FILE_LABEL, defaults, setting_spec  # noqa: F401

@@ -7,8 +7,9 @@ text to a view (title, summary, describe...) come in two forms: `x_msg` gives th
 import dataclasses
 from dataclasses import dataclass
 
-from .model import (Index, topo, in_ports, out_ports, combo_type, FILE_KINDS, FRAME_KINDS, JOIN_KINDS, COMBO_PORTS,
-                    COMBO_LABEL, OPTIONAL_PORTS, SYNTH_PORT)
+from .model import (Index, topo, in_ports, out_ports, combo_type, FILE_KINDS, FRAME_KINDS, JOIN_KINDS,
+                    OPTIONAL_PORTS, SYNTH_PORT)
+from . import combos
 from .msg import M, say, join, typed
 from ..core import workflow as wfl
 
@@ -116,7 +117,7 @@ def setting_spec(kind, key):
             if it[0] == key:
                 return it
     if kind == "combine" and key == "type":
-        return ("type", "choice", "sho", list(COMBO_PORTS), False)
+        return ("type", "choice", combos.DEFAULT, combos.offered(), False)
     return None
 
 
@@ -124,7 +125,7 @@ def inherited(p, kind):
     """What a block of `kind` follows when it has no own value: Common, else default."""
     d = defaults(kind)
     if kind == "combine":
-        d["type"] = "sho"
+        d["type"] = combos.DEFAULT
     d.update(p.common["settings"].get(kind, {}))
     return d
 
@@ -290,7 +291,7 @@ def _join(c, b, blk, ev, info, wires):
         t = outs(p, w.src[0], si, c.blk(w.src[0])).get(w.src[1])
         if t is not None:
             got[w.dst[1]] = t
-    lab = COMBO_LABEL[combo_type(blk)] if blk.kind == "combine" else LABEL[blk.kind]
+    lab = combos.title(blk) if blk.kind == "combine" else LABEL[blk.kind]
     for port in ports:
         t = got.get(port)
         if t is None:
@@ -362,17 +363,20 @@ def title_msg(p, b, ix=None):
         return "Calibration"
     if k == "combine":
         t = combo_type(blk)
+        names = combos.titles()
+
         def default_named(r):               # "S-H-O", "H-O 2"...: a name the combination was given, not the user
             base = (r.name or "").strip()
             head, _sp, tail = base.rpartition(" ")
-            return base in COMBO_LABEL.values() or (tail.isdigit() and head in COMBO_LABEL.values())
+            return base in names or (tail.isdigit() and head in names)
         r = ix.row.get(ix.row_of.get(b))
         if r is not None and r.blocks and r.blocks[0] == b and (r.name or "").strip() and not default_named(r):
             return typed(r.name)            # a combination is a workflow: titled by its name ("S-H-O · Stars")
         same = [r.blocks[0] for r in p.rows if r.blocks and p.blocks[r.blocks[0]].kind == "combine"
                 and combo_type(p.blocks[r.blocks[0]]) == t and default_named(r)]
         n = same.index(b) + 1 if b in same else 1
-        return COMBO_LABEL[t] if n == 1 else M("{label} {n}", label=COMBO_LABEL[t], n=n)
+        lab = combos.title(blk)
+        return lab if n == 1 else M("{label} {n}", label=lab, n=n)
     if k == "combine_layers":
         same = [r.blocks[0] for r in p.rows if r.blocks and p.blocks[r.blocks[0]].kind == k]
         n = same.index(b) + 1 if b in same else 1
@@ -517,7 +521,7 @@ def summary_msg(p, b, info=None, ix=None):
     if k == "color":
         return M("{ref} · {bal}", ref=e["White reference"], bal=e["Balance"])
     if k == "combine":
-        return join(COMBO_PORTS[combo_type(blk)], ", ")
+        return join(combos.ports(blk), ", ")
     if k == "combine_layers":
         return M("stars in {mode}", mode=e["Stars mode"])
     if k == "post":

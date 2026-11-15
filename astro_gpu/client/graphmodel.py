@@ -29,6 +29,7 @@ import json
 from contextlib import contextmanager
 from pathlib import Path
 
+from ..graphcore import combos
 from ..graphcore import model as gm
 from ..graphcore.compile import compile_into
 from ..graphcore.convert import convert
@@ -45,9 +46,7 @@ _VIEW_OF_NAME = {"combine": "fusion", "session": "session", "calibration": "cali
 _SELECTION = ("min_transparency", "max_fwhm_ratio", "selection", "selection_transparency")
 #: the stages a stack holds for all its nights (calibrated together), its Output's, its Align on's
 _ROW_STAGES = ("inventory", "calibrate", "render_simple", "align_on")
-_PORT_OF_ROLE = {"SII": "S II", "Ha": "Hα", "OIII": "O III", "L": "L", "R": "R", "G": "G", "B": "B"}
 _PORT_OF_IMAGE = {"starless": "Starless", "stars": "Stars only"}
-_TITLE_OF_KIND = {"sho": "S-H-O", "ho": "H-O", "rgb": "RGB", "lrgb": "LRGB"}
 
 
 #: Save writes the project file as the stored graph (format 3); until then, the definition as today (format 2)
@@ -1856,14 +1855,15 @@ class GraphEditing:
             raise GraphRefused(_("not in workflow"))
         return head
 
-    def _wire_steps(self, j, inputs):
+    def _wire_steps(self, j, inputs, ports):
+        """The wires of a combination's inputs; ``ports``: {role: the block's port} (its recipe's labels)."""
         steps, fix = [], []
         for i in inputs:
             image = i.get("image", "output") or "output"
             src, port = self._source_port(int(i["pid"]), image)
             if src is None:
                 raise ValueError(_("no workflow"))
-            dport = _PORT_OF_ROLE.get(str(i["role"]), str(i["role"]))
+            dport = ports.get(str(i["role"]), str(i["role"]))
             steps.append(("wire", (lambda res, src=src, port=port, dport=dport, ch=str(i.get("channel", "L")):
                                    {"src": src, "src_port": port, "dst": j(res), "dst_port": dport, "channel": ch})))
             fix.append((dport, int(i["pid"]), None if image == "output" else image))
@@ -1882,7 +1882,7 @@ class GraphEditing:
         def j(res):
             return res[0].created["block"]
         steps = [("add_combination", {"type": kind, "name": self.unique_name(name)})]
-        more, fix = self._wire_steps(j, inputs or [])
+        more, fix = self._wire_steps(j, inputs or [], combos.type_ports(kind))
         steps += more
 
         def raw(g):
@@ -1907,7 +1907,8 @@ class GraphEditing:
             raise ValueError(why)
         j = self._combine_block(p)
         ch = (cur or {}).get("channel") or self._default_channel(p, role, self.view(int(pid)))
-        steps, fix = self._wire_steps(lambda res: j, [{"pid": pid, "role": role, "channel": ch, "image": image}])
+        steps, fix = self._wire_steps(lambda res: j, [{"pid": pid, "role": role, "channel": ch, "image": image}],
+                                      {role: self._port(j, role)})
         self._do(steps, raw=lambda g: self._fix_wires(g, j, fix))
         return True
 
@@ -1918,7 +1919,7 @@ class GraphEditing:
         if cur is None or channel not in CHANNELS or cur.get("channel", "L") == channel:
             return False
         j = self._combine_block(p)
-        self._do([("set_input", {"block": j, "port": _PORT_OF_ROLE.get(role, role), "channel": channel})])
+        self._do([("set_input", {"block": j, "port": self._port(j, role), "channel": channel})])
         return True
 
     def set_fusion_image(self, p, role: str, image: str) -> bool:
@@ -1933,7 +1934,7 @@ class GraphEditing:
         if cur.get(role, 1.0) == weight:
             return False
         j = self._combine_block(p)
-        self._do([("set_input", {"block": j, "port": _PORT_OF_ROLE.get(role, role), "weight": weight})])
+        self._do([("set_input", {"block": j, "port": self._port(j, role), "weight": weight})])
         return True
 
     def clear_fusion_input(self, p, role: str) -> bool:
@@ -1941,11 +1942,53 @@ class GraphEditing:
         if not any(i["role"] == role for i in f["inputs"]):
             return False
         j = self._combine_block(p)
-        port = _PORT_OF_ROLE.get(role, role)
+        port = self._port(j, role)
         w = next((w for w in self._g.wires if w.dst == [j, port] and w.active), None)
         if w is None:
             return False
         self._do([("unwire", {"wire": w.id})])
+        return True
+
+    def _port(self, j, role: str) -> str:
+        """The port of combination block ``j`` that takes ``role`` (its recipe's label)."""
+        return combos.port_of(self._g.blocks[j], role)
+
+    def _default_channel(self, p, role: str, q) -> str:
+        """The channel a new input reads: the one the recipe gives the input when it is not the grey (a dual-band
+        image's red for H-alpha), else as the four types always did (model.py)."""
+        from ..stages import recipes
+        f = self.p.workflow(p.pid).source["fusion"]
+        ch = recipes.default_channel(recipes.recipe_of(f), role)
+        return ch if ch != "L" else super()._default_channel(p, role, q)
+
+    def recipe_inputs(self, p) -> list[dict]:
+        """A combination's inputs as its recipe gives them: [{"role", "label", "type", "channel"}]."""
+        return combos.inputs(self._g.blocks[self._combine_block(p)])
+
+    def recipe_status(self, p) -> dict:
+        """A combination's recipe against the application's: {"id", "project", "folder", "newer", "changed"}."""
+        return combos.status(self._g.blocks[self._combine_block(p)])
+
+    def recipe_parameters(self, p) -> dict:
+        """The parameters of a combination's recipe {name: {"default", "min", "max" or "choices", "label", "help"}}
+        with their value in this project ("value"), when its stage reads them in ``values`` (the recipes other than
+        the four types' frozen ones; theirs are the stage's own settings, shown as any block's): {} else."""
+        from ..stages import recipes
+        b = self._g.blocks[self._combine_block(p)]
+        if combos.stage(b) != recipes.RECIPE_STAGE:
+            return {}
+        vals = (b.params.get(recipes.RECIPE_STAGE) or {}).get("values") or {}
+        return {n: {**q, "value": vals.get(n, q["default"])} for n, q in combos.parameters(b).items()}
+
+    def set_recipe_value(self, p, name: str, value) -> bool:
+        """A parameter of a combination's recipe (None: back to its default); ValueError saying why it is refused."""
+        self._do([("set_recipe_value", {"block": self._combine_block(p), "name": name, "value": value})])
+        return True
+
+    def update_recipe(self, p) -> bool:
+        """The application's newer version of a combination's recipe copied into it: the user's click, one Undo
+        step; the results it changes become Outdated."""
+        self._do([("update_recipe", {"block": self._combine_block(p)})])
         return True
 
     # ------------------------------------------------------------------ alignment (#165, INTEGRATION 4.3)
@@ -2045,7 +2088,7 @@ class GraphEditing:
 
     def add_sho_rgb(self, name: str, kind: str, filters: list[str], opts: dict):
         self._absorb()
-        t = {"kind": "fusion", "rgb_stars": True, "filters": list(filters), "palette": _TITLE_OF_KIND.get(kind, kind)}
+        t = {"kind": "fusion", "rgb_stars": True, "filters": list(filters), "palette": combos.type_title(kind)}
         res = self._run_plan(self._template(t, name, opts))
         return self._view_of_wid(self._fusion_made(res))
 
@@ -2059,7 +2102,7 @@ class GraphEditing:
         """The "Mono RGB" / "Mono LRGB" templates (graphcore.templates): one row per filter, the combination of type
         ``kind`` reading their Outputs, one Color block after it; one Undo step. Returns the combination."""
         self._absorb()
-        t = {"kind": "fusion", "mono_rgb": True, "filters": list(filters), "palette": _TITLE_OF_KIND.get(kind, kind)}
+        t = {"kind": "fusion", "mono_rgb": True, "filters": list(filters), "palette": combos.type_title(kind)}
         res = self._run_plan(self._template(t, name, opts))
         return self._view_of_wid(self._fusion_made(res))
 

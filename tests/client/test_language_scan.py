@@ -111,6 +111,30 @@ def _all_kinds(w, scan: Scan, step: str):
     return done
 
 
+def _every_recipe(w, scan: Scan, step: str):
+    """Each combination recipe of the application placed from the Combination card's list: its name in the list and
+    its tooltip, the block, its panel."""
+    from astro_gpu.graphcore import combos
+    page = w.graph
+    pal = page.palette
+    m = pal.combination_types(pal.cards["combine"], run=False)
+    scan.take([langscan.Shown(a.text(), "menu", None, "combination list") for a in m.actions()] +
+              [langscan.Shown(a.toolTip(), "tooltip", None, "combination list") for a in m.actions()], step + " list")
+    for rid in combos.offered():
+        pal.set_combination_type(rid)
+        before = {b for b, x in w.s.stored.blocks.items() if x.kind == "combine"}
+        pal.double_click("combine")
+        settle(w, 2)
+        new = [b for b, x in w.s.stored.blocks.items() if x.kind == "combine" and b not in before]
+        assert new, rid
+        page.bridge.choose(new[0])
+        settle(w, 1)
+        scan.take(langscan.texts(page.panel), f"{step} {rid} panel")
+        scan.take([langscan.Shown(page.canvas.blocks[new[0]].d["tip"], "tooltip", None, rid)], f"{step} {rid} tip")
+    pal.set_combination_type(combos.DEFAULT)
+    _page_texts(w, scan, step)
+
+
 def walk(w, env, lang: str) -> Scan:
     scan = Scan(lang)
     w.change_language(lang)
@@ -144,6 +168,7 @@ def walk(w, env, lang: str) -> Scan:
                 d.close()
         if t["key"] == "filters_full":
             _all_kinds(w, scan, "every kind")
+            _every_recipe(w, scan, "every recipe")
     return scan
 
 

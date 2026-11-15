@@ -15,7 +15,9 @@ its definition and what its call returned). A replay compares the new project wi
 key tables of both computed now, in this process (a stage version bumped since changes both alike).
 
 Normalised (each cause given): the creation time stamp and the project folder (two projects); the ids of Post's
-layers (a counter of the process, never read by a key) renumbered in their order."""
+layers (a counter of the process, never read by a key) renumbered in their order; the recipe a combination copies in
+when it is placed (stages/recipes.py, after the old way was recorded) left out when it is one of the four types'
+frozen content, which the recordings' combinations stand for (the same stage, the same keys)."""
 from __future__ import annotations
 
 import json
@@ -251,14 +253,26 @@ def differences_to(recorded: dict, p) -> list[str]:
     one read in ``p``'s folder."""
     from astro_gpu.client.graphdefaults import strip_defaults, strip_override_defaults
     recorded = under_the_all_rule(recorded)
-    d = _first_diff(_whole(recorded), _whole(strip_defaults(p.to_dict(), recorded)), "definition")
+    d = _first_diff(_whole(recorded), _whole(_without_frozen_recipes(strip_defaults(p.to_dict(), recorded))),
+                    "definition")
     if d:
         return [d]
     q = project2.Project2.from_dict(json.loads(json.dumps(recorded)), p.root)
-    rules = _key_rules()
+    mine = project2.Project2.from_dict(_without_frozen_recipes(p.to_dict()), p.root)    # (the stage is handed the
+    rules = _key_rules()                                                   # copy: the frozen content, the same keys)
     d = _first_diff(_rooted(strip_override_defaults(keys_table(q, rules, _NoDisk()), rules)),
-                    _rooted(strip_override_defaults(keys_table(p, rules, _NoDisk()), rules)), "keys")
+                    _rooted(strip_override_defaults(keys_table(mine, rules, _NoDisk()), rules)), "keys")
     return [d] if d else []
+
+
+def _without_frozen_recipes(d: dict) -> dict:
+    """The definition without the recipe copies that are one of the four types' frozen content (the module's text)."""
+    from astro_gpu.stages import recipes
+    for w in d.get("workflows") or []:
+        f = (w.get("source") or {}).get("fusion") if isinstance(w.get("source"), dict) else None
+        if isinstance(f, dict) and isinstance(f.get("recipe"), dict) and recipes.is_legacy(f["recipe"]):
+            f.pop("recipe")
+    return d
 
 
 def _rooted(table):

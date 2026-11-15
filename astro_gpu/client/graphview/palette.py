@@ -29,6 +29,19 @@ def _capital(text: str) -> str:
     return text[:1].upper() + text[1:]
 
 
+def recipe_tip(spec: dict | None) -> str:
+    """A combination recipe's tooltip: its whole name, what it does, its inputs (translated)."""
+    if not spec:
+        return ""
+    words = {"mono": _("monochrome"), "colour": _("colour"), "any": _("any image")}
+    ins = ", ".join(f"{_(i.get('label') or i['role'])} ({words.get(i.get('type'), '')})" for i in spec["inputs"])
+    out = [_(spec["name"])]
+    if spec.get("description"):
+        out.append(textwrap.fill(_(spec["description"]), 70))
+    out.append(_("Inputs: {names}").format(names=ins))
+    return "\n".join(out)
+
+
 class Card(QFrame):
     """A block of the palette; narrow (folded or automatic): its icon alone, its name in the tooltip."""
 
@@ -113,6 +126,9 @@ class Card(QFrame):
     def _tip(self):
         on, reason, hint = self.enabled, self._reason, self._hint
         what = textwrap.fill(kind_what(self.kind), 70)
+        if self.kind == "combine":                       # the recipe it places now (its list: a click on the card)
+            from ...graphcore import combos
+            what += "\n\n" + recipe_tip(combos.recipe(self.palette.bridge.combo_type))
         if on and hint:
             tip = what + "\n" + _capital(reason) + "\n" + hint
         elif on or not reason:
@@ -457,18 +473,21 @@ class Palette(QScrollArea):
             bridge.act("add_block", kind=kind, row=r.id if r is not None else None)
 
     def combination_types(self, card, run=True):
-        """The Combination card's flyout (graph.py GroupFlyout): S-H-O, H-O, RGB or LRGB, the type the card then
-        places (dragged or double-clicked); its name on the card. -> the menu (``run`` False: not shown, tests)."""
+        """The Combination card's flyout (graph.py GroupFlyout): the application's combination recipes (S-H-O, HOO,
+        HaRGB...: graphcore.combos, in the folder's order), the one the card then places (dragged or double-clicked);
+        its name on the card, its whole name and what it does in the tooltip. -> the menu (``run`` False: not shown,
+        tests)."""
         from PySide6.QtWidgets import QMenu
 
-        from ...graphcore.model import COMBO_LABEL
+        from ...graphcore import combos
         from ..graphnode import combine_title
         m = QMenu(self)
-        for t in COMBO_LABEL:
+        m.setToolTipsVisible(True)
+        for t in combos.offered():
             a = m.addAction(combine_title(t))
             a.setCheckable(True)
             a.setChecked(t == self.bridge.combo_type)
-            a.setToolTip(_("A combination of this type: dragged, or double-clicked, the card places it"))
+            a.setToolTip(recipe_tip(combos.recipe(t)))
             a.triggered.connect(lambda _c=False, t=t: self.set_combination_type(t))
         if run:
             m.exec(card.mapToGlobal(card.rect().bottomLeft()))

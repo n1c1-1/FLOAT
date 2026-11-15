@@ -5,7 +5,8 @@ from dataclasses import dataclass
 
 from .shapes import Result
 from .model import (Index, Row, Wire, Tap, check, clone, model_json, new_block, new_id, in_ports, out_ports, edges,
-                    FILE_KINDS, FRAME_KINDS, JOIN_KINDS, COMBO_PORTS, COMBO_LABEL, LAYER_PORTS, POST_PORT, SYNTH_PORT)
+                    FILE_KINDS, FRAME_KINDS, JOIN_KINDS, LAYER_PORTS, POST_PORT, SYNTH_PORT)
+from . import combos
 from . import rules
 from . import model as _model
 from .msg import M, join, typed, name_of, TR
@@ -1118,9 +1119,12 @@ def op_set_calibrate_together(q, on):
 
 
 # ---------------------------------------------------------------------------------------------------- blocks
-def op_add_block(q, kind, at=None, row=None, _block=None):
+def op_add_block(q, kind, at=None, row=None, _block=None, type=None):  # noqa: A002
+    """``type``: a Combination's recipe (its id; None: the default one), placed with its name and its inputs."""
     if kind not in LABEL or kind == "post":
         raise Refusal("unknown block")
+    if type is not None and kind != "combine":
+        raise Refusal("unknown type")
     if at is None:
         at = natural(q, kind, row)
     t = at.get("type")
@@ -1131,7 +1135,7 @@ def op_add_block(q, kind, at=None, row=None, _block=None):
     if t == "row":
         return op_add_row(q, kind)
     if t == "comp":
-        return _add_join(q, kind, at.get("after"))
+        return _add_join(q, kind, at.get("after"), type)
     if t == "port":
         return _add_port_row(q, kind, at["block"], at["port"])
     if t == "calib":
@@ -1246,11 +1250,17 @@ def op_add_variant(q, block):
     return _make_variant(q, frow, x, copies, tail, ix.row[frow].name)
 
 
-def _add_join(q, kind, after):
+def _add_join(q, kind, after, type=None):  # noqa: A002
     if kind not in JOIN_KINDS:
         raise Refusal("the composition takes a Combination or Combine layers")
-    j = new_block(q, kind)
-    name = free_name(q, name_of(COMBO_LABEL["sho"] if kind == "combine" else LABEL[kind]))
+    if kind == "combine":                                   # its recipe (the default one) copied in
+        if (type or combos.DEFAULT) not in combos.offered():
+            raise Refusal("unknown type")
+        settings, source = combos.placed(type or combos.DEFAULT)
+        j = new_block(q, kind, settings=settings, source=source)
+    else:
+        j = new_block(q, kind)
+    name = free_name(q, name_of(combos.title(j) if kind == "combine" else LABEL[kind]))
     q.rows.append(Row(new_id(q, "r"), name, [j.id], legacy=fusion_legacy() if kind == "combine" else None))
     if after is not None:
         a = _blk(q, after, ("stars", "synth"))
@@ -1622,13 +1632,24 @@ def op_apply_to_rows(q, block, key):
 
 # ---------------------------------------------------------------------------------------------------- wires
 def op_set_combination_type(q, block, type):
+    """A combination of another type: the folder's recipe of that type copied in; the wires into inputs it does not
+    have go, and its settings of its former stage with them (the weights of the inputs kept stay)."""
     j = _blk(q, block, ("combine",))
-    if type not in COMBO_PORTS:
+    if type not in combos.offered():
         raise Refusal("unknown type")
-    j.settings["type"] = type
-    gone = [w for w in q.wires if w.dst[0] == block and w.dst[1] not in COMBO_PORTS[type]]
+    old = combos.stage(j)
+    j.settings, j.source = combos.placed(type)
+    ports = combos.ports(j)
+    new = combos.stage(j)
+    if new != old and old in j.params:
+        mine = j.params.pop(old)
+        roles = {combos.role_of(j, p) for p in ports}
+        weights = {r: v for r, v in (mine.get("weights") or {}).items() if r in roles}
+        if weights:
+            j.params[new] = {"weights": weights}
+    gone = [w for w in q.wires if w.dst[0] == block and w.dst[1] not in ports]
     q.wires = [w for w in q.wires if w not in gone]
-    toast = M("{t}: {ports}", t=title_msg(q, block), ports=join(COMBO_PORTS[type], ", "))
+    toast = M("{t}: {ports}", t=title_msg(q, block), ports=join(ports, ", "))
     if gone:
         toast = join([toast, M("removed: {gone}", gone=join(
             [M("wire from “{t}” on {port}", t=title_msg(q, w.src[0]), port=w.dst[1]) for w in gone], ", "))])
@@ -1658,8 +1679,9 @@ def op_wire(q, src, src_port, dst, dst_port, channel=None):
     if d.kind != "post":
         q.wires = [w for w in q.wires if not (w.dst == [dst, dst_port] and w.active)]
     w = Wire(new_id(q, "w"), [src, src_port], [dst, dst_port])
-    if d.kind == "combine":                 # a combination's input reads a channel of the image (grey by default)
-        w.channel = _channel(channel or "L")
+    if d.kind == "combine":                 # a combination's input reads a channel of the image (its recipe's: grey
+        default = next((i["channel"] for i in combos.inputs(d) if i["label"] == dst_port), "L")    # but a dual-band's
+        w.channel = _channel(channel or default)                                                   # red for H-alpha)
     q.wires.append(w)
     return Out(M("wire {a} → {b}", a=title_msg(q, src), b=title_msg(q, dst)), w.id)
 
@@ -2014,7 +2036,7 @@ def owned_stages(q, b):
     if k == "synth":
         return ["synth_stars"]
     if k == "combine":
-        return [wfl.BLOCKS_OF_KIND.get(q.blocks[b].settings.get("type", "sho"), "combine")]
+        return [combos.stage(blk)]
     if k == "image":
         return ["image"]
     return []
@@ -2205,15 +2227,99 @@ def _channel(ch):
     return ch
 
 
-def op_add_combination(q, type="sho", name=None):  # noqa: A002
-    """A combination (its type's named inputs), empty, its image a layer of Post."""
-    if type not in COMBO_PORTS:
+def op_add_combination(q, type=combos.DEFAULT, name=None):  # noqa: A002
+    """A combination of a recipe of the folder (its named inputs), its recipe copied in, empty, its image a layer of
+    Post."""
+    if type not in combos.offered():
         raise Refusal("unknown type")
-    j = new_block(q, "combine", settings={"type": type} if type != "sho" else {})
-    base = (name or "").strip() or name_of(COMBO_LABEL[type])
+    settings, source = combos.placed(type)
+    j = new_block(q, "combine", settings=settings, source=source)
+    base = (name or "").strip() or name_of(combos.title(j))
     r = Row(new_id(q, "r"), free_name(q, base), [j.id], legacy=fusion_legacy())
     q.rows.append(r)
     return Out(M("{_name} added", _name=r.name), j.id, new=j.id)
+
+
+def op_update_recipe(q, block):
+    """The folder's version of a combination's recipe copied into the block (the user's click, never by itself;
+    api.apply_combination_recipe on the block): the wires of inputs it no longer has go, the others follow their role;
+    its settings follow the recipe's parameters (those it no longer has go; the block's stage may change)."""
+    from ..stages import recipes as rc
+    from ..stages.combine import ALL
+    j = _blk(q, block, ("combine",))
+    new = combos.recipe(combos.kind(j))
+    if new is None:
+        raise Refusal("the application no longer has this recipe")
+    st = combos.status(j)
+    if not (st["newer"] or st["changed"]):
+        raise Refusal("the recipe is up to date")
+    old_stage, old_ports = combos.stage(j), {p: combos.role_of(j, p) for p in combos.ports(j)}
+    j.source = {"recipe": new}
+    new_stage = combos.stage(j)
+    roles = set(rc.roles(new))
+    mine = dict(j.params.pop(old_stage, None) or {})
+    vals = {**(mine.pop("values", None) or {}), **{k: v for k, v in mine.items() if k != "weights"}}
+    vals = {k: v for k, v in vals.items() if k in new["parameters"]}
+    kept = {}
+    if new_stage == rc.RECIPE_STAGE:
+        if vals:
+            kept["values"] = vals
+    else:
+        cls = next(c for c in ALL if c.name == new_stage)
+        kept.update({k: v for k, v in vals.items() if k in cls.Params.model_fields})
+    weights = {r: x for r, x in (mine.get("weights") or {}).items() if r in roles}
+    if weights:
+        kept["weights"] = weights
+    if kept:
+        j.params[new_stage] = kept
+    gone = []
+    for w in q.wires:
+        if w.dst[0] != block:
+            continue
+        role = old_ports.get(w.dst[1], w.dst[1])
+        if role in roles:
+            w.dst = [block, combos.port_of(j, role)]
+        else:
+            gone.append(w)
+    q.wires = [w for w in q.wires if w not in gone]
+    return Out(M("{t}: recipe version {v}", t=title_msg(q, block), v=new["version"]), block)
+
+
+def op_set_recipe_value(q, block, name, value=None):
+    """A parameter of the combination's recipe (value None: back to its default), where its stage reads it: the
+    four types' frozen recipes, their stage's own setting of that name; another recipe, its ``values``, checked against
+    the recipe (api.set_recipe_value on the block)."""
+    from ..stages import recipes as rc
+    from ..stages.combine import recipe_value
+    from ..core.stage import StageError
+    j = _blk(q, block, ("combine",))
+    spec, st = combos.spec(j), combos.stage(j)
+    if spec is None or name not in spec["parameters"]:
+        raise Refusal("unknown setting")
+    if st != rc.RECIPE_STAGE:
+        _put(j.params, st, name, None if value is None else check_param(st, name, value))
+        return _recipe_said(spec, name, value, block)
+    vals = dict((j.params.get(st) or {}).get("values") or {})
+    if value is None:
+        vals.pop(name, None)
+    else:
+        try:
+            v = recipe_value(type("V", (), {"values": {name: value}})(), spec, name)
+        except StageError as e:
+            raise Refusal(M("{_why}", _why=str(e))) from None
+        if v == spec["parameters"][name]["default"]:
+            vals.pop(name, None)
+        else:
+            vals[name] = v
+    _put(j.params, st, "values", vals or None)
+    return _recipe_said(spec, name, value, block)
+
+
+def _recipe_said(spec, name, value, block):
+    lab = spec["parameters"][name].get("label") or name
+    if value is None:
+        return Out(M("{key} back to its default", key=lab), block)
+    return Out(M("{key}: {_value}", key=lab, _value=str(value)), block)
 
 
 def _input(q, block, port):
@@ -2243,7 +2349,7 @@ def op_set_input(q, block, port, channel=None, weight=None, image=None):
             raise Refusal("a weight is a number") from None
         st = owned_stages(q, block)[0]
         cur = dict((j.params.get(st) or {}).get("weights") or {})
-        role = _role(port)
+        role = combos.role_of(j, port)
         cur[role] = weight
         cur = {k: v for k, v in cur.items() if v != 1.0}
         _put(j.params, st, "weights", cur or None)
@@ -2254,11 +2360,6 @@ def op_set_input(q, block, port, channel=None, weight=None, image=None):
     if not said:
         raise Refusal("nothing to change")
     return Out(join([M("{port}:", port=port)] + said, " "), block)
-
-
-def _role(port):
-    from .compile import ROLE_OF_PORT
-    return ROLE_OF_PORT.get(port, port)
 
 
 def _reimage(q, w, image):
@@ -2296,8 +2397,8 @@ def op_add_stars_combination(q, block):
     if not ins:
         raise Refusal("its inputs read no starless image")
     r = ix.row[ix.row_of[block]]
-    t = j.settings.get("type", "sho")
-    nj = new_block(q, "combine", settings={"type": t} if t != "sho" else {})
+    nj = new_block(q, "combine", settings={k: v for k, v in j.settings.items() if k == "type"},
+                   source=copy.deepcopy(j.source))                                       # the same recipe
     nr = Row(new_id(q, "r"), free_name(q, name_of("{_name} · Stars", _name=r.name)), [nj.id], legacy=fusion_legacy())
     q.rows.insert(q.rows.index(r), nr)
     for w in ins:

@@ -21,8 +21,10 @@ def test_the_combination_card_offers_its_types_and_places_the_one_chosen(bridge)
     pal = Palette(bridge)
     m = pal.combination_types(pal.cards["combine"], run=False)
     names = [a.text() for a in m.actions()]
-    assert names == ["S-H-O", "H-O", "RGB", "LRGB"]
-    m.actions()[1].trigger()                                       # H-O
+    from astro_gpu.graphcore import combos
+    assert names == [combos.type_title(t) for t in combos.offered()]       # the application's recipes, in its order
+    assert {"S-H-O", "H-O", "RGB", "LRGB", "HOO", "HaRGB"} <= set(names)
+    next(a for a in m.actions() if a.text() == "H-O").trigger()
     assert bridge.combo_type == "ho" and pal.cards["combine"].title.text() == "H-O"
     pal.double_click("combine")
     js = [b for b in bridge.doc.graph.blocks.values() if b.kind == "combine"]

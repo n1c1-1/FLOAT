@@ -12,9 +12,7 @@ FILE_KINDS = ("lights", "darks", "flats", "bias", "flat_darks")
 FRAME_KINDS = ("registration", "selection", "crop", "stacking")
 JOIN_KINDS = ("combine", "combine_layers")
 SOURCE_KINDS = ("session", "image")
-COMBO_PORTS = {"sho": ["S II", "Hα", "O III"], "ho": ["Hα", "O III"], "rgb": ["R", "G", "B"],
-               "lrgb": ["L", "R", "G", "B"]}
-COMBO_LABEL = {"sho": "S-H-O", "ho": "H-O", "rgb": "RGB", "lrgb": "LRGB"}
+#: a Combination's types, titles, inputs and settings are its recipe's (combos.py, stages/recipes.py)
 #: Combine layers' inputs, one per level of the layer Post holds: the starless image, the real stars, and the stars of
 #: a Synthetic stars block of the same workflow (optional: empty without one)
 SYNTH_PORT = "Synthetic stars"
@@ -43,7 +41,7 @@ class Block:
     params: dict = field(default_factory=dict)   # the engine settings it owns: {stage entry: {param: value}}
     sid: object = None       # Session / Calibration of a night: the session id (None: a night not compiled yet)
     own: object = None       # Calibration of a night with its own files: {"fork": n, kind: [paths]}
-    source: object = None    # Image: {"path", "stretched"} as stored
+    source: object = None    # Image: {"path", "stretched"} as stored; Combination: {"recipe": its recipe's copy}
 
 
 @dataclass
@@ -164,12 +162,14 @@ def blank_project(name="Project"):
 
 # ---------------------------------------------------------------------------------------------------- ports
 def combo_type(b):
-    return b.settings.get("type", "sho")
+    from .combos import kind
+    return kind(b)
 
 
 def in_ports(b):
     if b.kind == "combine":
-        return list(COMBO_PORTS[combo_type(b)])
+        from .combos import ports
+        return ports(b)
     if b.kind == "combine_layers":
         return list(LAYER_PORTS)
     if b.kind == "post":

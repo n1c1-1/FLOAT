@@ -11,6 +11,7 @@ import logging
 
 from PySide6.QtCore import QObject, Signal
 
+from ...graphcore import combos
 from ...graphcore.shapes import Result
 from ..i18n import _
 from ..names import shown
@@ -144,16 +145,16 @@ class Bridge(QObject):
         res = self.doc.apply_many(steps)
         return self.after(res, quiet, before=before)
 
-    #: the type a Combination card makes (the palette's flyout of types: S-H-O, H-O, RGB, LRGB)
-    combo_type = "sho"
+    #: the recipe a Combination card places (the palette's list of the application's recipes: graphcore.combos)
+    combo_type = combos.DEFAULT
 
-    def _steps(self, name, kw):
-        """The operation of a place or a card; a Combination of the type chosen in the palette's flyout."""
-        steps = [(name, dict(kw or {}))]
-        if (kw or {}).get("kind") == "combine" and self.combo_type != "sho":
-            t = self.combo_type
-            steps.append(("set_combination_type", lambda res: {"block": res[0].created["block"], "type": t}))
-        return steps
+    def _kw(self, name, kw) -> dict:
+        """The arguments of a place's or a card's operation; a Combination of the recipe chosen in the palette's list,
+        placed as that recipe and named by it in one step (never an "S-H-O 2" made an HOO after)."""
+        kw = dict(kw or {})
+        if kw.get("kind") == "combine" and name == "add_block" and self.combo_type != combos.DEFAULT:
+            kw["type"] = self.combo_type
+        return kw
 
     def drop(self, place):
         """Drop on a Place: its operation (a refused place gives its reason)."""
@@ -163,19 +164,13 @@ class Bridge(QObject):
             return res
         name, kw = place.op
         before = self.doc.graph
-        steps = self._steps(name, kw)
-        res = self.doc.apply(name, **(kw or {})) if len(steps) == 1 else self.doc.apply_many(steps)
-        return self.after(res, False, (kw or {}).get("kind"), before=before)
+        kw = self._kw(name, kw)
+        res = self.doc.apply(name, **kw)
+        return self.after(res, False, kw.get("kind"), before=before)
 
     def add_combination(self, **kw):
-        """The Combination card double-clicked: placed at its natural place, of the type chosen in the flyout."""
-        steps = self._steps("add_block", {"kind": "combine", **kw})
-        if len(steps) == 1:
-            return self.act("add_block", kind="combine", **kw)
-        res = self.act_many(steps)
-        if res.ok:
-            self.acted.emit("add_block", res)
-        return res
+        """The Combination card double-clicked: placed at its natural place, of the recipe chosen in its list."""
+        return self.act("add_block", **self._kw("add_block", {"kind": "combine", **kw}))
 
     def _drawable(self, back=None) -> bool:
         """The graph a change gave can be drawn; when its drawing raises, the error is logged and ``back()`` takes the

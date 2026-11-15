@@ -583,8 +583,16 @@ class GraphCanvas(QGraphicsView):
         if bd.get("nights"):                             # a Session of several nights says so (graph.py block_what)
             what = _("{nights}: their light frames and the dark, flat and bias frames chosen for them, and the "
                      "filter.").format(nights=bd["nights"])
+        newer = ""
+        if kind == "combine":                            # its recipe: what it does; a newer version said, never applied
+            from ...graphcore import combos
+            spec = combos.spec(blk)
+            if spec is not None and spec.get("description"):
+                what = _(spec["name"]) + ": " + _(spec["description"])
+            if combos.status(blk)["newer"]:
+                newer = _("A newer version of its recipe exists: Update recipe in its panel.")
         what = textwrap.fill(what, 70) if what else ""   # a paragraph of its own: a plain tooltip never wraps by itself
-        tip = "\n".join(t for t in (title, what, summary, "" if grey or blk.off else word,
+        tip = "\n".join(t for t in (title, what, summary, newer, "" if grey or blk.off else word,
                                     (_("Switched off: the image passes through. D or the menu switches it on again.")
                                      if blk.off else "")) if t)
         if review is not None and blk.off:               # kept, but a block switched off is not run: no stop now

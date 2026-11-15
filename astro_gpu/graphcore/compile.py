@@ -20,10 +20,9 @@ import copy
 from dataclasses import dataclass, field
 
 from ..core import workflow as wfl
+from . import combos
 from . import model as gm
 
-#: a combination's roles (stages/combine.py) and the graph's port names
-ROLE_OF_PORT = {"S II": "SII", "Hα": "Ha", "O III": "OIII", "L": "L", "R": "R", "G": "G", "B": "B"}
 IMAGE_OF_PORT = {"Starless": "starless", "Stars only": "stars"}
 #: the graph's chain kinds that are an engine node of the same name
 NODE_KINDS = ("registration", "selection", "crop", "stacking", "astrometry", "gradient", "deconv", "denoise", "color",
@@ -151,7 +150,7 @@ def _source(g, ix, f, root, ports_wid, out: Compiled):
         pid = ports_wid(w)
         if pid < 0:
             continue                                   # said by _flows
-        i = {"pid": pid, "role": ROLE_OF_PORT.get(w.dst[1], w.dst[1])}
+        i = {"pid": pid, "role": combos.role_of(head, w.dst[1])}       # the port's role in the block's recipe
         if w.channel is not None:
             i["channel"] = w.channel
         image = w.image if w.image is not None else IMAGE_OF_PORT.get(w.src[1])
@@ -161,7 +160,7 @@ def _source(g, ix, f, root, ports_wid, out: Compiled):
             out.problems.append(f"the wire {w.id} leaves a {g.blocks[w.src[0]].kind} block: the engine reads an "
                                 "Output or a Stars/background")
         ins.append(i)
-    return {"fusion": {"type": gm.combo_type(head), "inputs": ins}}, "fusion"
+    return combos.fusion(head, ins), "fusion"          # its recipe's copy with it (api.combination_source)
 
 
 def _settings(g, f, root, holder) -> dict:
@@ -197,7 +196,7 @@ def compile_into(g, p) -> Compiled:
     def engine(b):
         blk = g.blocks[b]
         if blk.kind == "combine":
-            return wfl.BLOCKS_OF_KIND.get(gm.combo_type(blk), "combine")
+            return combos.stage(blk)
         return blk.engine or names.get(b) or blk.kind
     # -- nights
     sids = [n["sid"] for n in g.nights]
@@ -463,11 +462,11 @@ def _wiring(g, p, c):
         except (KeyError, ValueError):
             continue
         aligned = "align_on" in ch
-        combo = next((i for i, x in enumerate(ch) if wfl.base(x) in wfl.BLOCKS_OF_KIND.values()), None)
+        combo = next((i for i, x in enumerate(ch) if wfl.base(x) in wfl.COMBINE), None)
         for st in ch:
             bst = wfl.base(st)
             # (after a combination: a block reading the plate solution its inputs bring, Synthetic stars on its stars)
-            if not (bst in wfl.BLOCKS_OF_KIND.values() or bst == "align_on" or
+            if not (bst in wfl.COMBINE or bst == "align_on" or
                     aligned and ch.index(st) > ch.index("align_on") or combo is not None and ch.index(st) > combo):
                 continue
             why = k.wiring_problem(w, st)
@@ -475,7 +474,7 @@ def _wiring(g, p, c):
                 continue
             blk = None
             mine = [b for b in flows.get(w.id, []) if b in ix.row_of]
-            if bst in wfl.BLOCKS_OF_KIND.values():
+            if bst in wfl.COMBINE:
                 blk = next((b for b in mine if g.blocks[b].kind == "combine"), None)
             elif bst == "align_on":
                 chain = _chain_of(g, ix, mine)
@@ -592,7 +591,7 @@ def engine_problems(g, keys=True, info=None) -> list[tuple[str, str]]:
                 said.add(b)
                 ev = info.get(b)
                 ok = ev is not None and (ev.cat == "wiring" and say(ev.reason) == say(msg) or ev.cat == "downstream"
-                                         or ev.cat == "port" and wfl.base(st) in wfl.BLOCKS_OF_KIND.values())
+                                         or ev.cat == "port" and wfl.base(st) in wfl.COMBINE)
                 if not ok:
                     out.append(("wiring", f"{wfl.base(st).split('_')[0]}: {_template(say(msg))} [core: "
                                           f"{ev.cat if ev else 'absent'}]"))
