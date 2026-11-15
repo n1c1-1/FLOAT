@@ -1161,10 +1161,12 @@ class RunController(QObject):
         return self._titles[1].get(j.key) or self.stage_title(j.stage)
 
     def groups(self, plan) -> list[list[str]]:
-        """The job keys of each block of the run window (runs.build_rows): what the console counts (#3)."""
+        """The job keys of each block of the run window (runs.build_rows): what the console and the status line count
+        (#3), the window's rows as it ticks them, a Selection's row (its Registration's jobs) included (the night test
+        pass: "1 block done" under two ticks)."""
         from ..runs import build_rows
         try:
-            return [list(r.keys) for r in build_rows(self.model, plan.jobs, self.names) if not r.echo]
+            return [list(r.keys) for r in build_rows(self.model, plan.jobs, self.names) if r.keys]
         except Exception:  # noqa: BLE001 - a graph that cannot be built now: one block per job
             return [[j.key] for j in plan.jobs]
 

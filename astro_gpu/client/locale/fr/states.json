@@ -14,5 +14,8 @@
  "Nothing to redo in the Graph: the next change is Post's": "Rien à rétablir dans le Graphe : le changement suivant est celui de Post",
  "Undo there": "Y annuler",
  "Redo there": "Y rétablir",
+ "Stopped · {n} block done, kept": "Arrêtée · {n} bloc terminé, gardé",
+ "Stopped · {n} blocks done, kept": "Arrêtée · {n} blocs terminés, gardés",
+ "Stopped · no block done in this run": "Arrêtée · aucun bloc terminé dans cette exécution",
  "{name} is a raw frame: raw frames are stacked from a Session. Make a new project and add them to its Session.": "{name} est une image brute : les images brutes s'empilent depuis une Session. Créez un nouveau projet et ajoutez-les à sa Session."
 }

@@ -1192,7 +1192,8 @@ def test_stop_keeps_the_results_and_the_next_run_resumes_the_checkpoint(env):
         stopped_at = _checkpoint(w)
         assert 0 < stopped_at < 120
         assert d.phase() == "end" and d.summary.text() == "Run stopped"
-        assert any(x.startswith("Stopped · results kept") for x in texts_of(d.recap))
+        assert any(x.startswith("Stopped · ") and ("done, kept" in x or "no block done" in x)
+                   for x in texts_of(d.recap))
         assert "Stopped during Denoise" in texts_of(d.recap)
         text = w.console()
         assert "Run stopped: " in text and "Stop asked" in text and "Denoise · stopped" in text

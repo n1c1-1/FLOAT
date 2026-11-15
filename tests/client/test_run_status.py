@@ -892,3 +892,42 @@ def test_the_selection_row_shows_a_dash_once_done_not_an_empty_time(world):
         assert all(r.dur.text() == "—" for r in sel)
     finally:
         d.close()
+
+
+# ---------------------------------------------------------------------------------------------- one count after a stop
+def test_after_a_stop_the_status_the_console_and_the_window_say_the_rows_it_ticks(tmp_path):
+    """The night test pass: "1 block done" in the status bar under two ticks in the run window (Registration and the
+    Selection that follows it), and "Stopped · results kept" next to "Run stopped: 0 blocks done". One count: the
+    window's rows ticked."""
+    from astro_gpu.client.runs import RunDialog
+    from astro_gpu.client.services.run import INTERRUPTED
+    sel = [{"block": "calibration"}, {"block": "registration"}, {"block": "selection"}, {"block": "stacking"},
+           {"block": "gradient"}]
+    w = World(project(tmp_path, sel))
+    try:
+        plan = w.m.plan_all()
+        t = RunTrack.of_plan(plan, "r1")
+        t.plan, t.groups = plan, w.ctl.groups(plan)
+        k = {j.stage: j.key for j in plan.jobs}
+        ev = [{"t": 1.0, "type": "run_start", "run": "r1", "device": "cpu", "pid": 1}]
+        for st in ("inventory", "calibrate", "register"):
+            ev.append({"t": 2.0, "type": "stage_end", "run": "r1", "stage": st, "key": k[st], "status": "done",
+                       "duration": 1.0})
+        ev += [{"t": 3.0, "type": "stage_start", "run": "r1", "stage": "stack", "key": k["stack"]},
+               {"t": 4.0, "type": "stage_end", "run": "r1", "stage": "stack", "key": k["stack"],
+                "status": "interrupted", "duration": 1.0},
+               {"t": 5.0, "type": "run_end", "run": "r1", "status": "interrupted"}]
+        t.apply(ev)
+        d = RunDialog(w.m, plan, "Run", track=t)
+        d.refresh()
+        ticked = [r.row.title for r in d.rows if r.mark.state == DONE]
+        assert "Selection" in ticked and t.block_count()[DONE] == len(ticked), (ticked, t.block_count())
+        n = len(ticked)
+        assert render_line(t.lines[-1]).endswith(f"Run stopped: {n} blocks done") or \
+            f"Run stopped: {n} block" in render_line(t.lines[-1])
+        recap = [lb.text() for lb in d.findChildren(QLabel) if lb.text().startswith("Stopped · ")]
+        assert recap and recap[0].startswith(f"Stopped · {n} block"), recap
+        assert any(j.state == INTERRUPTED for j in t.jobs)
+        d.close()
+    finally:
+        w.close()

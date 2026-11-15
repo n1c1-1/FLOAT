@@ -839,7 +839,9 @@ class RunDialog(QDialog):
         elif t.lost:
             lines.append((_("Run ended unexpectedly · results kept"), WARN))
         elif t.status == "interrupted":
-            lines.append((_("Stopped · results kept"), WARN))
+            n = t.block_count()[DONE]                      # the count the status line says, the rows ticked above
+            lines.append((plural(n, "Stopped · {n} block done, kept", "Stopped · {n} blocks done, kept") if n
+                          else _("Stopped · no block done in this run"), WARN))
             if stopped:
                 lines.append((_("Stopped during {blocks}").format(blocks=", ".join(named[id(r)] for r in stopped)), ""))
         listed = set()
