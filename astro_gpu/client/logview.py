@@ -63,6 +63,18 @@ def event_text(row) -> tuple[str, str]:
     return row[0], row[1]
 
 
+def last_run_text(root) -> str:
+    """The text of the project's last run, from the engine's own log (``logs/journal.md``, kept with the results): the
+    console of a project opened again, or computed by another session, is not empty. '' when there is none."""
+    try:
+        f = Path(root) / "logs" / "journal.md"
+        parts = f.read_text(encoding="utf-8", errors="replace").split("\n## ")
+    except (OSError, TypeError, ValueError):
+        return ""
+    last = parts[-1].strip() if parts else ""
+    return last.removeprefix("## ").strip()
+
+
 class LogPanel(QFrame):
     def __init__(self, project, parent=None):
         super().__init__(parent)
@@ -101,6 +113,7 @@ class LogPanel(QFrame):
         h.addWidget(self.console, 2)
         v.addLayout(h)
         self.refresh()
+        self.console.setPlainText(last_run_text(getattr(self.s, "root", None)))   # a run of an earlier session stays
 
     def sizeHint(self):                                              # noqa: N802 - Qt's name
         s = super().sizeHint()

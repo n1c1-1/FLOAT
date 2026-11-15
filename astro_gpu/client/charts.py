@@ -367,7 +367,7 @@ class RegistrationData:
         return first if first == last else f"{first} → {last}"
 
 
-def registration_data(project, wf) -> RegistrationData:
+def registration_data(project, wf, which: str = "current") -> RegistrationData:
     """Read what the Registration charts draw. ``project``: the api's project, ``wf``: the workflow (id or object).
     Reads files: call it from the worker thread. Raises ``api.NotDone`` when registration is not computed.
 
@@ -377,23 +377,23 @@ def registration_data(project, wf) -> RegistrationData:
     reference's (``coef`` is 0-based in the sensor's pixels; the sensor's size is the calibration cache's).
     The scale comes from the Astrometry stage when it is done, else from the focal length and the pixel size."""
     from .. import api
-    table = api.frame_table(project, wf)
-    with api.stage_array(project, wf, "register", "reg.npz") as z:
+    table = api.frame_table(project, wf, which)
+    with api.stage_array(project, wf, "register", "reg.npz", which=which) as z:
         reg = {k: np.array(z[k]) for k in z.files}
     rows = table.rows
     n = len(rows)
     width = height = None
-    out = api.stage_outputs(project, wf, "calibrate")
+    out = api.stage_outputs(project, wf, "calibrate", which)
     if out is not None:
         f = Path(out.dir) / "cache.json"
         if f.is_file():
             cache = json.loads(f.read_text(encoding="utf-8"))
             width, height = float(cache["width"]), float(cache["height"])
     scale = None
-    ast = api.stage_outputs(project, wf, "astrometry")
+    ast = api.stage_outputs(project, wf, "astrometry", which)
     if ast is not None and ast.metrics.get("sensor_scale_arcsec"):
         scale = float(ast.metrics["sensor_scale_arcsec"])
-    inv_dir = api.stage_outputs(project, wf, "inventory")
+    inv_dir = api.stage_outputs(project, wf, "inventory", which)
     if inv_dir is not None and (width is None or scale is None):
         f = Path(inv_dir.dir) / "frames.json"
         if f.is_file():

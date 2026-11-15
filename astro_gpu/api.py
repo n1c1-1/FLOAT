@@ -1274,6 +1274,9 @@ def _dir(p: Project2, wf: int | Workflow, stage: str, which: str = "current") ->
     stage had), else None. Issue #43: ``which`` may name a session ("current@2": that session's instance of the
     stage, for its Session and Calibration blocks); a stage the chain does not have is read from the stage that stands
     for it (the sessions' join for "inventory" and "calibrate", the image for "stack")."""
+    if which.partition("@")[0] == "latest":              # the current result, else the one an Outdated stage had
+        rest = which[len("latest"):]
+        return _dir(p, wf, stage, "current" + rest) or _dir(p, wf, stage, "previous" + rest)
     store = _store(p)
     if store is None:
         return None
@@ -1306,12 +1309,13 @@ def _wid(wf: int | Workflow) -> int:
     return wf.id if isinstance(wf, Workflow) else wf
 
 
-def _table(p: Project2, wf: int | Workflow, min_t: float | None, max_f: float | None, source: str) -> FrameTable:
+def _table(p: Project2, wf: int | Workflow, min_t: float | None, max_f: float | None, source: str,
+           which: str = "current") -> FrameTable:
     import numpy as np
-    inv = json.loads((_need(p, wf, "inventory") / "frames.json").read_text(encoding="utf-8"))["lights"]
-    reg = np.load(_need(p, wf, "register") / "reg.npz")
+    inv = json.loads((_need(p, wf, "inventory", which) / "frames.json").read_text(encoding="utf-8"))["lights"]
+    reg = np.load(_need(p, wf, "register", which) / "reg.npz")
     n = len(reg["fwhm"])
-    stack = _dir(p, wf, "stack") if source == "stack" else None
+    stack = _dir(p, wf, "stack", which) if source == "stack" else None
     source = "stack" if stack is not None else "preview"
     sess = _light_sessions(p)
     ex = set(p.excluded)
@@ -1349,11 +1353,11 @@ def _stack_thresholds(p: Project2, wf: int | Workflow) -> tuple[float, float]:
     return float(infos["min_transparency"].value), float(infos["max_fwhm_ratio"].value)
 
 
-def frame_table(p: Project2, wf: int | Workflow) -> FrameTable:
+def frame_table(p: Project2, wf: int | Workflow, which: str = "current") -> FrameTable:
     """One row per light frame, with its star size, transparency, registration residual, weight and the reason it is
     left out (what the stack used when Stacking is done, else the selection the current thresholds give). Needs
     Registration done (``NotDone`` otherwise)."""
-    return _table(p, wf, None, None, "stack")
+    return _table(p, wf, None, None, "stack", which)
 
 
 def selection_preview(p: Project2, wf: int | Workflow, min_transparency: float,

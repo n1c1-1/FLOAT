@@ -71,10 +71,10 @@ ENTERED = ACQUISITION
 HIDDEN = ("Star FWHM range", "Cache size", "Flat minimum", "Integration", "Stacked exposure", "Drift")
 #: the words of the shooting details, in the language of the forum whatever the language of the screen
 WORDS = {"en": dict(camera="Camera", instrument="Instrument", mount="Mount", filter="Filter", location="Location",
-                    date="Date", frames="Frames", darks="Darks", flats="Flats", field="Field", sampling="Sampling",
+                    date="Date", frames="Frames", darks="Darks", flats="Flats", bias="Bias", field="Field", sampling="Sampling",
                     fwhm="Median FWHM", kept="Frames kept", processing="Processing"),
          "fr": dict(camera="Appareil", instrument="Instrument", mount="Monture", filter="Filtre", location="Lieu",
-                    date="Date", frames="Poses", darks="Darks", flats="Flats", field="Champ",
+                    date="Date", frames="Poses", darks="Darks", flats="Flats", bias="Offsets", field="Champ",
                     sampling="Échantillonnage", fwhm="FWHM médiane", kept="Poses gardées", processing="Traitement")}
 #: a value that names a place on a disk: never in a report
 PATHS = re.compile(r"[A-Za-z]:[\\/]|\\\\|(^|\s)/[^\s]+/")
@@ -118,6 +118,8 @@ class ReportData:
     astro: dict = field(default_factory=dict)            # the Astrometry block's metrics
     metrics: dict = field(default_factory=dict)          # {stage: its metrics} of the stages the head quotes
     thumb: bytes | None = None                           # the picture Post last showed
+    gain: bool = False                                   # the frames carry a gain (an astro camera), not an ISO speed
+    outdated: bool = False                               # read from the results an Outdated block had (not the current ones)
 
 
 def shareable(v) -> bool:
@@ -126,7 +128,7 @@ def shareable(v) -> bool:
 
 
 # ------------------------------------------------------------ reading (worker thread)
-def _settings(project, wf, stages) -> list:
+def _settings(project, wf, stages, which: str = "current") -> list:
     from .. import api
     from ..stages.v2 import V2_STAGES
     known = {st.name: st for st in V2_STAGES()}
@@ -136,7 +138,7 @@ def _settings(project, wf, stages) -> list:
         if st is not None and st.name == "inventory":    # what was read, not a choice
             continue
         try:
-            out = api.stage_outputs(project, wf, stage) if st is not None else None
+            out = api.stage_outputs(project, wf, stage, which) if st is not None else None
         except (OSError, ValueError, KeyError):
             out = None
         if out is None:
@@ -152,12 +154,12 @@ def _settings(project, wf, stages) -> list:
     return rows
 
 
-def _sky_levels(project, wf, n: int) -> np.ndarray | None:
+def _sky_levels(project, wf, n: int, which: str = "current") -> np.ndarray | None:
     """The sky level of each frame: calibrate's statistics, those of the sessions together when they are apart."""
     from .. import api
     for stage in ("sessions", "calibrate"):
         try:
-            out = api.stage_outputs(project, wf, stage)
+            out = api.stage_outputs(project, wf, stage, which)
         except (OSError, ValueError, KeyError):
             continue
         f = Path(out.dir) / "frame_stats.npy" if out is not None else None
@@ -168,10 +170,10 @@ def _sky_levels(project, wf, n: int) -> np.ndarray | None:
     return None
 
 
-def _exposures(project, wf, table) -> np.ndarray:
+def _exposures(project, wf, table, which: str = "current") -> np.ndarray:
     from .. import api
     out = np.full(len(table.rows), np.nan)
-    inv = api.stage_outputs(project, wf, "inventory")
+    inv = api.stage_outputs(project, wf, "inventory", which)
     f = Path(inv.dir) / "frames.json" if inv is not None else None
     if f is not None and f.is_file():
         lights = json.loads(f.read_text(encoding="utf-8")).get("lights") or []
@@ -182,12 +184,36 @@ def _exposures(project, wf, table) -> np.ndarray:
 
 
 def report_data(project, wf, stages=(), title: str = "") -> ReportData:
-    """Worker thread. What is not computed yet is left empty: its section says so."""
+    """Worker thread. What is not computed yet is left empty: its section says so. A block that is Outdated (a night
+    added since the run) keeps the result it had, as Inspect shows it: the report is then made from those results and
+    says so, instead of claiming nothing is computed."""
+    d = _report_data(project, wf, stages, title, "current")
+    if d.reg is None:
+        old = _report_data(project, wf, stages, title, "latest")
+        if old.reg is not None:
+            old.outdated = True
+            return old
+    return d
+
+
+def _gain_unit(project, wf, which: str) -> bool:
+    """Whether the first light's header names a gain (an astro camera, a smart telescope) rather than an ISO speed."""
     from .. import api
-    d = ReportData(settings=_settings(project, wf, stages))
+    from ..io.frames import read_info
     try:
-        d.reg = registration_data(project, wf)
-        table = api.frame_table(project, wf)
+        inv = api.stage_outputs(project, wf, "inventory", which)
+        lights = json.loads((Path(inv.dir) / "frames.json").read_text(encoding="utf-8")).get("lights") or []
+        return bool(lights) and bool(read_info(Path(lights[0]["path"])).iso_is_gain)
+    except Exception:  # noqa: BLE001 - a file that is gone or unreadable: the usual word
+        return False
+
+
+def _report_data(project, wf, stages, title: str, which: str) -> ReportData:
+    from .. import api
+    d = ReportData(settings=_settings(project, wf, stages, which))
+    try:
+        d.reg = registration_data(project, wf, which)
+        table = api.frame_table(project, wf, which)
     except (api.NotDone, OSError, KeyError, ValueError):
         d.reg = None
     if d.reg is not None:
@@ -198,25 +224,26 @@ def report_data(project, wf, stages=(), title: str = "") -> ReportData:
         names = {s.id: s.name for s in project.sessions}
         d.sessions = [(names.get(sid, ""), idx) for sid, idx in by.items()]
         d.kept = np.array([not r.status and not r.excluded for r in table.rows], bool)
-        with api.stage_array(project, wf, "register", "reg.npz") as z:
+        with api.stage_array(project, wf, "register", "reg.npz", which=which) as z:
             if "fwhm_moffat" in z.files:
                 d.fwhm = np.array(z["fwhm_moffat"][:n], float)
             if "roundness_moffat" in z.files:
                 d.roundness = np.array(z["roundness_moffat"][:n], float)
-        d.sky = _sky_levels(project, wf, n)
-        d.exposure = _exposures(project, wf, table)
+        d.sky = _sky_levels(project, wf, n, which)
+        d.exposure = _exposures(project, wf, table, which)
     try:
-        d.spectral = api.spectral_response(project, wf)
+        d.spectral = api.spectral_response(project, wf, which)
     except Exception:  # noqa: BLE001 - a diagnostic that cannot be made: its figure is left out
         d.spectral = None
     try:
-        ast = api.stage_outputs(project, wf, "astrometry")
+        ast = api.stage_outputs(project, wf, "astrometry", which)
     except (OSError, ValueError, KeyError):
         ast = None
     d.astro = dict(ast.metrics) if ast is not None else {}
+    d.gain = _gain_unit(project, wf, which)
     for stage in HEAD_STAGES:
         try:
-            out = api.stage_outputs(project, wf, stage)
+            out = api.stage_outputs(project, wf, stage, which)
         except (OSError, ValueError, KeyError):
             out = None
         if out is not None:
@@ -411,7 +438,7 @@ def shot_rows(d: ReportData, info: dict, entered: dict, lang: str) -> list:
     only from there, a camera's clock may be wrong. An empty value is one nobody knows yet."""
     w = WORDS[lang]
     rows = [("camera", w["camera"], " · ".join(x for x in (str(info.get("camera") or ""), (
-        f"ISO {_whole(info['iso_gain'])}" if info.get("iso_gain") else "")) if x))]
+        f"{'Gain' if d.gain else 'ISO'} {_whole(info['iso_gain'])}" if info.get("iso_gain") else "")) if x))]
     focal = d.astro.get("focal_estimate_mm")
     rows.append(("instrument", w["instrument"], entered.get("instrument", "")))
     rows.append(("focal", "Focale" if lang == "fr" else "Focal length", f"{float(focal):.0f} mm" if focal else ""))
@@ -421,7 +448,7 @@ def shot_rows(d: ReportData, info: dict, entered: dict, lang: str) -> list:
         exp = exp[np.isfinite(exp)]
         groups = " + ".join(f"{int((np.round(exp) == t).sum())} × {t:g} s" for t in sorted(set(np.round(exp).tolist())))
         rows.append(("frames", w["frames"], f"{groups} ({exact_time(float(exp.sum()))})"))
-    for k, n in (("darks", info.get("n_darks")), ("flats", info.get("n_flats"))):
+    for k, n in (("darks", info.get("n_darks")), ("flats", info.get("n_flats")), ("bias", info.get("n_bias"))):
         if n:
             rows.append((k, w[k], str(n)))
     fld = d.astro.get("field_deg")
@@ -911,6 +938,8 @@ class ReportPage(QWidget):
             self._images["thumb"] = QImage.fromData(d.thumb)
             out += ("<p align='center'><img src='thumb' width='560'/></p>"
                     f"<p align='center' style='{small}'>{_('Figure 1. The final image, as Post last showed it.')}</p>")
+        if d is not None and d.outdated:
+            out += (f"<p class='state'>{html.escape(_('The workflow changed since its last run: this report shows the results it had. Run it to update.'))}</p>")
         # the program, in one small line just above the tables (a picture of them takes it along)
         out += (f"<p style='font-size:8pt; color:#555555;'><img src='logo' width='12' height='12' "
                 f"style='vertical-align: middle;'/>&nbsp;{APP_NAME} &middot; {_('Processing report')} &middot; "
