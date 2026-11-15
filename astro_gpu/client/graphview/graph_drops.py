@@ -26,10 +26,16 @@ class GraphDrops(QObject):
         super().__init__()
         self.bridge = bridge
         self.reader = Reader()
+        self.reader.base = self._project_folder
         self.reader.listen(self.progress.emit)
         self.progress.connect(self._on_progress)
         self._last = None             # (session, kind, Resolution, filter) of the last drop: its links
         bridge.replaced.connect(self._forget)
+
+    def _project_folder(self):
+        """The folder of the project shown, or None (a graph held in memory, a project not saved yet)."""
+        m = self.bridge.doc.model
+        return getattr(m, "root", None) if m is not None else None
 
     def _forget(self):
         self._last = None
