@@ -418,11 +418,35 @@ def mother_same(p, ix, rid):
             return False
         # its method and the engine's settings stored on it too (the night test pass: a variant made with RBF said
         # "like the mother" while its panel showed RBF)
-        mine, theirs = getattr(B, "params", None) or {}, getattr(A, "params", None) or {}
-        if getattr(A, "method", None) != getattr(B, "method", None) or any(
-                (theirs.get(st) or {}).get(n) != v for st, kv in mine.items() for n, v in (kv or {}).items()):
+        if getattr(A, "method", None) != getattr(B, "method", None) or own_params_differ(A, B):
             return False
     return True
+
+
+def own_params_differ(A, B) -> bool:
+    """Whether block B holds an engine setting of its own that its original A has not: a value A stores otherwise, or
+    one A does not store that is not the setting's default (a default filled in by a later block, such as the
+    catalogues' a Color added after it brings, is no difference)."""
+    mine, theirs = getattr(B, "params", None) or {}, getattr(A, "params", None) or {}
+    for st, kv in mine.items():
+        for n, v in (kv or {}).items():
+            have = theirs.get(st) or {}
+            if n in have:
+                if have[n] != v:
+                    return True
+            elif v != _param_default(st, n, v):
+                return True
+    return False
+
+
+def _param_default(stage, name, value):
+    """The engine's default of a setting (``value`` itself when it is not known: no difference is invented)."""
+    try:
+        from .. import texts
+        spec = texts._stages()[stage.partition("@")[0].partition("~")[0]]["params"][name]
+    except (KeyError, ValueError, TypeError, ImportError):
+        return value
+    return spec.get("default", value)
 
 
 def summary_msg(p, b, info=None, ix=None):

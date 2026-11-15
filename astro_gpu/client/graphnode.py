@@ -432,13 +432,15 @@ def variant_diff(g, bid) -> str:
     if a is None or a.kind != g.blocks[bid].kind:
         return ""
     from .. import texts
+    from ..graphcore.rules import _param_default
     from .i18n import language
     from .settings import fmt
     mine, theirs = getattr(g.blocks[bid], "params", None) or {}, getattr(a, "params", None) or {}
     out = []
     for stage, kv in mine.items():
         for name, v in (kv or {}).items():
-            if (theirs.get(stage) or {}).get(name) != v:
+            have = theirs.get(stage) or {}
+            if (have[name] != v) if name in have else (v != _param_default(stage, name, v)):
                 try:
                     label = texts.param_label(stage.partition("@")[0].partition("~")[0], name, language())
                 except (KeyError, ValueError, TypeError):
