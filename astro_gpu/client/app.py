@@ -2181,6 +2181,43 @@ def context_menus_on_release(app):
         hints.setContextMenuTrigger(Qt.ContextMenuTrigger.Release)
 
 
+#: the file every unexpected error is added to, in the application's own folder (beside its settings)
+CRASH_LOG = "crashes.log"
+
+
+def crash_log_file() -> Path:
+    return drafts._base() / CRASH_LOG
+
+
+def page_shown(w) -> str:
+    """The page the window shows, in a few words for the crash log ("Inspect · Calibration · Full")."""
+    try:
+        if w is None or w.project is None:
+            return "Home"
+        page = ("Graph", "Inspect", "Post", "Report")[w.mode] if w.mode in (0, 1, 2, 3) else str(w.mode)
+        s = w.s
+        bits = [page, w.project.name]
+        if s is not None and w.mode == 1:
+            bits += [str(s.sel_step or ""), s.path.name if s.path is not None else ""]
+        return " · ".join(b for b in bits if b)
+    except Exception:  # noqa: BLE001 - the crash is written all the same
+        return "?"
+
+
+def log_crash(text: str, page: str = "") -> Path | None:
+    """An unexpected error added to the crash log with its date, the program's version and the page shown, so that it
+    can be read afterwards (the box shows it once). A disk that refuses it costs only the log."""
+    from datetime import datetime
+    f = crash_log_file()
+    try:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        with open(f, "a", encoding="utf-8") as out:
+            out.write(f"===== {datetime.now():%Y-%m-%d %H:%M:%S} · {APP_NAME} {__version__} · {page}\n{text}\n")
+        return f
+    except OSError:
+        return None
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     f = prefs.settings_file()
@@ -2199,15 +2236,20 @@ def main(argv=None):
     app.setStyleSheet(QSS + EXTRA_QSS)
     apply_language(prefs.get("language"))
 
+    shown = {}
+
     def show_error(t, v, tb):
+        text = "".join(traceback.format_exception(t, v, tb))
+        log_crash(text, page_shown(shown.get("w")))
         box = QMessageBox(QMessageBox.Critical, APP_NAME, _("The program hit an unexpected error. The details below "
                                                             "help to find it."))
-        box.setDetailedText("".join(traceback.format_exception(t, v, tb))[-3000:])
+        box.setDetailedText(text[-3000:])
         box.exec()
 
     sys.excepthook = show_error
     threading.Thread(target=_warm_up, name="warm-up", daemon=True).start()
     w = Main()
+    shown["w"] = w
     size_within(w, 1680, 1000)                          # a laptop: no taller than its screen (issue #44)
     w.showMaximized()
     if argv:
