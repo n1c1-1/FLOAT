@@ -58,7 +58,6 @@
   "Delete too": "Supprimer aussi",
   "drizzle {scale}": "drizzle {scale}",
   "drop between two sessions": "déposez entre deux sessions",
-  "Drop here: the kind is asked; or on one of the rows": "Déposer ici : le type est demandé ; ou sur une des lignes",
   "Drop the frames on a Session block, or on one of its rows": "Déposez les images sur un bloc Session, ou sur une de ses lignes",
   "No Session block yet: choose a template or place a Session, then drop the frames on it": "Pas encore de bloc Session : choisissez un modèle ou placez une Session, puis déposez-y les images",
   "drop on a file cell": "déposez sur une case de fichiers",
@@ -392,10 +391,6 @@
   "{n} also in {sessions}: listed twice": "{n} aussi dans {sessions} : en double",
   "{n} already in another session of the stack: not added": "{n} déjà dans une autre session de la pile : non ajoutées",
   "Adds them to this session too: the same files listed twice": "Les ajoute aussi à cette session : les mêmes fichiers en double",
-  "These frames' header names filter {f}, “{s}” is {g}: where do they go?": "L'en-tête de ces images indique le filtre {f}, « {s} » est en {g} : où vont-elles ?",
-  "Add here": "Ajouter ici",
-  "New {f} session": "Session {f}",
-  "New {f} session added": "Session {f} ajoutée",
   "{kind} of “{s}” are Common's now · {n} session follows them": "{kind} de « {s} » passent au commun · {n} session les suit",
   "{kind} of “{s}” are Common's now · {n} sessions follow them": "{kind} de « {s} » passent au commun · {n} sessions les suivent",
   "HaRGB": "HaRVB",
@@ -416,8 +411,7 @@
   "A colour image": "Une image couleur",
   "A monochrome or colour image": "Une image monochrome ou couleur",
   "A newer version of its recipe exists: Update recipe in its panel.": "Une version plus récente de sa recette existe : Mettre à jour, dans son panneau.",
-  "These frames' header names filter {f}, “{s}” holds a colour camera's: where do they go?": "L'en-tête de ces images indique le filtre {f}, « {s} » contient celles d'un capteur couleur : où vont-elles ?",
-  "These flats' header names filter {f}, “{s}” is {g}: add them here?": "L'en-tête de ces flats indique le filtre {f}, « {s} » est en {g} : les ajouter ici ?",
   "Input {name} ← {source}": "Entrée {name} ← {source}",
-  "“{block}” {port}: {why}": "« {block} » {port} : {why}"
+  "“{block}” {port}: {why}": "« {block} » {port} : {why}",
+  "Drop lights": "Déposer brutes"
 }

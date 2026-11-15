@@ -841,7 +841,7 @@ def test_add_session_makes_an_empty_session_shown_in_its_files(win):
     try:
         assert len(s.p.sessions) == n + 1 and got == [1] and not s.p.sessions[-1].lights
         assert win.browser.sid == s.p.sessions[-1].id and win.frames.pages.currentIndex() == 1
-        assert win.browser.stack.currentIndex() == 3 and "Drop your files here" in texts_of(win.browser)
+        assert win.browser.stack.currentIndex() == 3 and "No files yet" in texts_of(win.browser)
     finally:
         assert s.undo()
         settle(win)

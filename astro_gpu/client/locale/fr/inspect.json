@@ -283,7 +283,6 @@
   "A run is in progress: Run to here comes back when it ends": "Un calcul est en cours : « Jusqu'ici » revient à la fin du calcul",
   "Files": "Fichiers",
   "Add frames": "Ajouter images",
-  "Drop your files here": "Déposer les fichiers ici",
   "{kind} of “{session}”": "{kind} de « {session} »",
   "Choose files in the list first": "Choisir d'abord des fichiers dans la liste",
   "Take the chosen files out of the session (the files are not touched)": "Retirer de la session les fichiers choisis (les fichiers restent sur le disque)",
@@ -320,8 +319,6 @@
   "The same frames are in two sessions: {n} light(s) of {other} are also in {first}; they are used once, with {first}.": "Les mêmes images sont dans deux sessions : {n} brute(s) de {other} sont aussi dans {first} ; elles ne servent qu'une fois, avec {first}.",
   "No bias: flats are calibrated with the darks' level ({level} ADU).": "Pas d'offsets : les flats sont calibrés avec le niveau des darks ({level} ADU).",
   "{workflow}: the flats of {n} sessions are merged into one master flat ({sessions}).": "{workflow} : les flats de {n} sessions sont fusionnés en un seul master de flat ({sessions}).",
-  "{n} file added to {kind}": "{n} fichier ajouté aux {kind}",
-  "{n} files added to {kind}": "{n} fichiers ajoutés aux {kind}",
   "This session has no darks. Calibration subtracts the master bias, or the camera's black level, instead, and finds the hot pixels on the lights. Add a folder of real darks (the cap on, same exposure, ISO and temperature as the lights) to correct the thermal signal.": "Cette session n'a pas de darks. La calibration soustrait à la place le master d'offset, ou le niveau de noir de l'appareil, et trouve les pixels chauds sur les brutes. Ajoutez un dossier de vrais darks (bouchon en place, même pose, même ISO et même température que les brutes) pour corriger le signal thermique.",
   "This session has no flats: the vignetting and the dust shadows stay in the image. Add a folder of flats taken with the same optics and focus.": "Cette session n'a pas de flats : le vignetage et les ombres des poussières restent dans l'image. Ajoutez un dossier de flats pris avec la même optique et la même mise au point.",
   "{names} has some: the same files given to this session are shared, one master.": "{names} en a : les mêmes fichiers donnés à cette session sont partagés, un seul master.",
@@ -330,5 +327,7 @@
   "Choose a template first (a click on its card), then drop the frames on its Session block": "Choisissez d'abord un modèle (un clic sur sa carte), puis déposez les images sur son bloc Session",
   "Frames go on a Session block's page in Inspect (its Files), or on the block in the Graph": "Les images vont sur la page d'un bloc Session en Inspection (ses Fichiers), ou sur le bloc dans le Graphe",
   "Frames go on a Session block, or on one of its rows, in the Graph": "Les images vont sur un bloc Session, ou sur une de ses lignes, dans le Graphe",
-  "“{name}” is already open": "« {name} » est déjà ouvert"
+  "“{name}” is already open": "« {name} » est déjà ouvert",
+  "Drop on a row": "Déposez sur une ligne",
+  "No files yet": "Aucun fichier"
 }

@@ -1979,33 +1979,10 @@ class GraphCanvas(QGraphicsView):
                 has = any(b.kind == "session" for b in self.bridge.graph.blocks.values())
                 self.say(_("Drop the frames on a Session block, or on one of its rows") if has else
                          _("No Session block yet: choose a template or place a Session, then drop the frames on it"))
-            elif target is None:                         # on the block itself: the kind is the user's, asked here
-                self.ask_kind(e.position().toPoint(), session, paths)
             else:
-                self.bridge.drops.drop(session, target, paths)       # the table's own path (files.py)
-
-    #: the kinds a drop on a Session block itself asks for (nothing is deduced from the files' or folders' names)
-    ASKED_KINDS = ("lights", "darks", "flats", "bias")
-
-    def ask_kind(self, vp: QPoint, session, paths):
-        """Files dropped on a Session block, not on one of its rows: those whose FITS header says their kind go to it
-        at once (files.by_header_kind: a master dark and a master flat dropped together are a dark and a flat), one
-        undo step; for the others a small menu at the drop point says which kind they are (Lights, Darks, Flats,
-        Bias); nothing of them is added before the choice. Nothing is deduced from a name."""
-        from . import files
-        told, paths = files.by_header_kind(paths)
-        if told:
-            self.bridge.drops.drop_groups(session, told)
-        if not paths:
-            return
-        m = QMenu(self)
-        m.setObjectName("drop_kind")
-        for k in self.ASKED_KINDS:
-            a = m.addAction(_(FILE_LABEL[k]))
-            a.setData(k)
-            a.triggered.connect(lambda _c=False, kk=k: self.bridge.drops.drop(session, kk, list(paths)))
-        self.kind_menu = m
-        m.popup(self.viewport().mapToGlobal(vp))
+                # the place is the kind: a Session block itself is the place of lights, a target beside it its own
+                # kind's; nothing is read from the files' headers or names
+                self.bridge.drops.drop(session, target or "lights", paths)       # the table's own path (files.py)
 
     def _session_under(self, vp: QPoint):
         """The Session block (id) a file drag is over: a Session block, or its night's Calibration."""
@@ -2055,8 +2032,7 @@ class GraphCanvas(QGraphicsView):
                 c.hot = h
                 c.update()
         if session is not None and st["target"] is None:
-            self.tip.set(_("Drop here: the kind is asked; or on one of the rows"),
-                         self.blocks[session].sceneBoundingRect(), False)
+            self.tip.set(_("Drop lights"), self.blocks[session].sceneBoundingRect(), False)
         else:
             self.tip.hide()
 

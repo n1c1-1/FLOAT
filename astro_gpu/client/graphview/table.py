@@ -762,7 +762,7 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
         return steps, []
 
     def drop_files(self, target, g):
-        self._rest = self._include = self._rather = self._anyway = self._filter = None
+        self._rest = self._include = self._rather = self._anyway = None
         if target.kind == "box":
             self._drop_on_boxes(target, g)
         elif target.kind in ("ghost_s", "ghost_p"):
@@ -800,27 +800,8 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
         o0, k0 = boxes[0]
         base = files.drop_toast(k0, None if o0 == COMMON else self.session_name(o0), len(taken), mode, len(boxes))
         self._rather = [self._step(o, k, res.items, "add") for o, k in boxes]
-
-        def go():
-            self.act([self._step(o, k, res.items, mode) for o, k in boxes],
-                     files.drop_sentence(base, res, mode, ignored, taken), files.drop_links(res, mode))
-        if k0 == "lights" and o0 != COMMON and len(boxes) == 1:
-            sf, flt = files.session_filter(self.doc.graph, o0), files.other_filter(self.doc.graph, o0, res.items)
-            if flt:                                       # their header names another filter: the user chooses
-                self._filter = {"filter_here": go, "filter_own": lambda: self.act(
-                    files.own_filter_steps(self.doc.graph, flt, res.items),
-                    _("New {f} session added").format(f=flt), undo_link())}
-                self.toast.emit(*files.filter_question(flt, sf, self.session_name(o0)))
-                return
-        if k0 == "flats" and o0 != COMMON:                # flats of another filter than the lights': asked too
-            flt = next((f for o, _k in boxes if (f := files.flat_filter(self.doc.graph, o, res.items))), "")
-            if flt:
-                o1 = next(o for o, _k in boxes if files.flat_filter(self.doc.graph, o, res.items))
-                self._filter = {"filter_here": go}
-                self.toast.emit(*files.flat_question(flt, files.session_filter(self.doc.graph, o1),
-                                                     self.session_name(o1)))
-                return
-        go()
+        self.act([self._step(o, k, res.items, mode) for o, k in boxes],      # filed by the box, never by a header
+                 files.drop_sentence(base, res, mode, ignored, taken), files.drop_links(res, mode))
 
     def _drop_new_sessions(self, target, g):
         """Each dropped folder (and the loose files together) a new session of the stack, or a new stack."""
@@ -834,10 +815,9 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
         taken = [r for r in lots if r.items]
         every = files.merge(lots)
 
-        def steps_for(groups, names=None):
-            if new_session:
-                return [("add_night", dict(row=target.rid, files={"lights": grp}, name=(names or {}).get(j)))
-                        for j, grp in enumerate(groups)]
+        def steps_for(groups):
+            if new_session:                # lights, as dropped: no filter is set from the frames
+                return [("add_night", dict(row=target.rid, files={"lights": grp})) for grp in groups]
             if not groups:
                 return []
             out = [("add_row", dict(kind="session", files={"lights": groups[0]}))]
@@ -855,22 +835,6 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
             txt = plural(len(taken), "{n} session added", "{n} sessions added")
         else:
             txt = _("New stack added") if len(taken) == 1 else _("New stack added ({n} sessions)").format(n=len(taken))
-        sf = files.stack_filter(self.doc.graph, target.rid) if new_session else ""
-        flts = [files.header_filter(r.items) if sf else "" for r in taken]
-        odd = {j: f for j, f in enumerate(flts) if f and f != sf}
-        if odd:                          # frames whose header names another filter than the stack's: the user chooses
-            # « Add here »: in this stack, each named after its own frames' filter (never « R 2 » for green frames)
-            names = {j: files.free_session_name(self.doc.graph, f) for j, f in odd.items()}
-            own = [s for j, r in enumerate(taken) if j in odd for s in files.own_filter_steps(self.doc.graph, odd[j],
-                                                                                                r.items)]
-            rest = steps_for([r.items for j, r in enumerate(taken) if j not in odd])
-            self._filter = {"filter_here": lambda: self._new_sessions_made(
-                                steps_for([r.items for r in taken], names), txt, every, taken, lots, steps_for, i),
-                            "filter_own": lambda: self.act(rest + own, _("New {f} session added").format(
-                                f=", ".join(sorted(set(odd.values())))), undo_link())}
-            self.toast.emit(*files.filter_question(", ".join(sorted(set(odd.values()))), sf,
-                                                   self.model.stack_by_id(target.rid)["name"]))
-            return
         self._new_sessions_made(steps_for([r.items for r in taken]), txt, every, taken, lots, steps_for, i)
 
     def _new_sessions_made(self, steps, txt, every, taken, lots, steps_for, i):
@@ -1180,13 +1144,6 @@ class Table(QWidget):
             steps = [s for s in (g._rest() if g._rest else []) if s[1].get("paths")]
             if steps:
                 g.act(steps, _("All taken"), undo_link())
-        elif key in ("filter_here", "filter_own"):           # frames of another filter: the user's choice
-            do = (getattr(g, "_filter", None) or {}).get(key)
-            g._filter = None
-            if do is not None:
-                do()
-        elif key == "cancel":
-            g._filter = None
         elif key == "add_anyway":
             steps = g._anyway() if getattr(g, "_anyway", None) else []
             if steps:

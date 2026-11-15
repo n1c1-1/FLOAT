@@ -100,6 +100,7 @@ class GroupRow(QFrame):
         self.setStyleSheet(("QFrame { background: #2b3446; border-radius: 4px; }" if selected else
                             "QFrame { background: transparent; border-radius: 4px; } QFrame:hover "
                             "{ background: #232831; }") + " QLabel { background: transparent; }")
+        self._style = self.styleSheet()
         h = QHBoxLayout(self)
         h.setContentsMargins(8, 5, 4, 5)
         v = QVBoxLayout()
@@ -125,16 +126,26 @@ class GroupRow(QFrame):
     def mousePressEvent(self, e):                                    # noqa: N802 - Qt's name
         self.clicked.emit(self.key)
 
+    def _hot(self, on: bool):
+        """Lit while files are dragged over it: a kind's row is the one place of the page that takes them."""
+        self.setStyleSheet(self._style + (f" QFrame {{ background: #2b3446; border: 1px dashed {ACCENT}; }}"
+                                          if on else ""))
+
     def dragEnterEvent(self, e):                                     # noqa: N802 - Qt's name
         if e.mimeData().hasUrls():
             e.acceptProposedAction()
+            self._hot(True)
 
     def dragMoveEvent(self, e):                                      # noqa: N802 - Qt's name
         """Taken while the files move over it too (a move event refused made the whole drop refused)."""
         if e.mimeData().hasUrls():
             e.acceptProposedAction()
 
+    def dragLeaveEvent(self, e):                                     # noqa: N802 - Qt's name
+        self._hot(False)
+
     def dropEvent(self, e):                                          # noqa: N802 - Qt's name
+        self._hot(False)
         paths = local_paths(e.mimeData())
         if paths:
             e.acceptProposedAction()
@@ -392,7 +403,7 @@ class SourcesView(QWidget):
         self._drop_hot(False)
         v = QVBoxLayout(self.drop_zone)
         v.setAlignment(Qt.AlignCenter)
-        v.addWidget(label(_("Drop your files here"), "h1"), 0, Qt.AlignHCenter)
+        v.addWidget(label(_("No files yet"), "h1"), 0, Qt.AlignHCenter)
         self.drop_kind = label("", "dim")
         v.addWidget(self.drop_kind, 0, Qt.AlignHCenter)
         v.addSpacing(10)
@@ -729,8 +740,8 @@ class SourcesView(QWidget):
             self.lv.addLayout(r)
 
     def dragEnterEvent(self, e):                                     # noqa: N802 - Qt's name
+        """Taken, to say where files go when dropped off a row; the page itself is not lit (only the kinds' rows)."""
         if e.mimeData().hasUrls() and self.sid is not None:
-            self._drop_hot(True)
             e.acceptProposedAction()
 
     def dragMoveEvent(self, e):                                      # noqa: N802 - Qt's name
@@ -743,51 +754,12 @@ class SourcesView(QWidget):
         self._drop_hot(False)
 
     def dropEvent(self, e):                                          # noqa: N802 - Qt's name
-        """Dropped on the frames of the kind shown (its list, or « Drop your files here »): into that kind. Anywhere
-        else but on a kind's row (a heading, the side panels): asked, as on the graph's Session block (a folder of
-        darks dropped on the « Calibration » heading became lights, a beta tester)."""
+        """Dropped anywhere but on a kind's row (a heading, the crumbs, the frames, a blank area): nothing is added and
+        the page says where to drop. The kind of a file is the row it is dropped on, never read from it."""
         self._drop_hot(False)
-        paths = local_paths(e.mimeData())
-        if paths and self.sid is not None:
+        if local_paths(e.mimeData()) and self.sid is not None:
             e.acceptProposedAction()
-            pos = e.position().toPoint()
-            if self.stack.rect().contains(self.stack.mapFrom(self, pos)):
-                self.add_files(self.group, paths)
-            else:
-                self.ask_kind(paths, self.mapToGlobal(pos))
-
-    #: the kinds a drop that is not on a kind's own place asks for (the graph's Session block asks the same)
-    ASKED_KINDS = ("lights", "darks", "flats", "bias")
-
-    def ask_kind(self, paths: list, where):
-        """Files dropped where no kind is meant: those whose FITS header says their kind go to it at once (one undo
-        step), a small menu asks the kind of the others; nothing of them is added before the choice."""
-        from .graphview.files import by_header_kind
-        from ..graphcore.rules import FILE_LABEL
-        told, rest = by_header_kind(paths)
-        if told:
-            said = []
-            with self.s.batch():
-                for kind, lst in told.items():
-                    notes: list = []
-                    n = self.s.add_session_entries(self.sid, kind, lst, notes, [], False, [])
-                    if n:
-                        said.append(plural(n, "{n} file added to {kind}", "{n} files added to {kind}",
-                                           kind=_(FILE_LABEL[kind])))
-                    said += [_(t).format(name=nm) for t, nm in notes[:1]]
-            if said:
-                self.select_group(next(iter(told)))
-                self.toast.emit(" · ".join(said) + " · Ctrl+Z")
-        if not rest:
-            return
-        m = QMenu(self)
-        m.setObjectName("drop_kind")
-        for k in self.ASKED_KINDS:
-            a = m.addAction(_(FILE_LABEL[k]))
-            a.setData(k)
-            a.triggered.connect(lambda _c=False, kk=k: self.add_files(kk, list(rest)))
-        self.kind_menu = m
-        m.popup(where)
+            self.toast.emit(_("Drop on a row"))
 
     # ------------------------------------------------------------ data
     def refresh(self):

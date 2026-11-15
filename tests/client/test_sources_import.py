@@ -177,7 +177,8 @@ def test_one_workflow_per_filter_works_on_a_new_project(qapp, tmp_path, monkeypa
 
 def test_files_added_to_a_session_stay_listed_and_removable(qapp, tmp_path, monkeypatch):
     """7.4, 7.5: a folder gives its files, once for all; a file already there, a folder twice, an empty folder: said,
-    not added; the lights' filter from their FITS header; one file taken out alone, the others kept."""
+    not added; the session's filter untouched by their FITS header (a name the user gives); one file taken out alone,
+    the others kept."""
     w, m, page = open_page(tmp_path, monkeypatch)
     try:
         sid = m.add_filter_session("")
@@ -188,7 +189,7 @@ def test_files_added_to_a_session_stay_listed_and_removable(qapp, tmp_path, monk
         notes: list = []
         assert m.add_session_entries(sid, "lights", [str(folder)], notes) == 4 and not notes
         assert sorted(Path(e).name for e in m.p.session(sid).lights) == ["S_0.fits", "S_1.fits", "S_2.fits", "S_3.fits"]
-        assert m.p.session(sid).filter == "SII"                            # from the header
+        assert m.p.session(sid).filter == ""                               # never read from the header
         assert m.add_session_entries(sid, "lights", [str(files[1]), str(folder)], notes) == 0
         assert [t for t, _n in notes] == ["“{name}” is already in the session."] * 2
         notes.clear()
@@ -241,7 +242,7 @@ def test_the_session_files_are_added_taken_out_and_said_kind_by_kind(qapp, tmp_p
     try:
         view.refresh()
         view.select_group("darks")
-        assert view.stack.currentIndex() == 3 and "Drop your files here" in texts(view)
+        assert view.stack.currentIndex() == 3 and "No files yet" in texts(view)
         assert not view.mode_btns[0].isEnabled()
         one, other = fits_file(tmp_path / "a" / "D_1.fits"), fits_file(tmp_path / "b" / "D_2.fits")
         assert view.add_files("darks", [str(one), str(other)]) == 2                # from two places

@@ -226,12 +226,10 @@ class Doc:
         return self.apply_many([(name, kwargs)])
 
     def apply_many(self, steps) -> Result:
-        """Steps as one undo step; lights stored by them read their headers first (``files.with_header_filters``: the
-        page's one way of adding lights, whatever the gesture)."""
-        from .files import with_header_filters
+        """Steps as one undo step. Frames are filed by where they were dropped or added, never by their headers: a
+        session's filter is the name the user or the template gives."""
         steps = list(steps)
-        return self.guarded(steps[0][0] if steps else "apply",
-                            lambda: self.document.apply(with_header_filters(self.graph, steps)))
+        return self.guarded(steps[0][0] if steps else "apply", lambda: self.document.apply(steps))
 
     def try_many(self, steps) -> Result:
         """Whether these steps would be accepted, nothing changed: -> Result."""

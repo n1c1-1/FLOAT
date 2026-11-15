@@ -92,9 +92,10 @@ def _drop(widget, paths, pt=None):
     return True
 
 
-def test_sources_take_dropped_files_on_the_page_and_on_a_kinds_row(qapp, tmp_path, monkeypatch):
-    """The testers' pass 2: in Inspect's Files page every drop was refused, the zone "Drop your files here" included:
-    the page took the files as they entered, not as they moved over it."""
+def test_sources_take_dropped_files_on_a_kinds_row_and_say_it_elsewhere(qapp, tmp_path, monkeypatch):
+    """The testers' pass 2: in Inspect's Files page every drop was refused (the page took the files as they entered,
+    not as they moved over it). A kind's row is the place that takes them; anywhere else the drop is taken, adds
+    nothing and says where to drop."""
     from astro_gpu.client.sources import GroupRow, SourcesView
     darks = [x for x in night(tmp_path / "darks") if x.endswith(".fits")][:2]
     w, m, page = open_page(tmp_path, monkeypatch, sessions=1, workflows=("Full",))
@@ -102,8 +103,12 @@ def test_sources_take_dropped_files_on_the_page_and_on_a_kinds_row(qapp, tmp_pat
     try:
         sid = m.p.sessions[0].id
         view.show_session(sid, "darks")
-        mid = view.stack.mapTo(view, view.stack.rect().center())  # on the kind shown (elsewhere: asked)
-        assert _drop(view, [darks[0]], mid) and len(m.p.session(sid).darks) == 1
+        said: list = []
+        view.toast.connect(said.append)
+        mid = view.stack.mapTo(view, view.stack.rect().center())  # off the rows: nothing added, said
+        assert _drop(view, [darks[0]], mid) and not m.p.session(sid).darks and said[-1] == "Drop on a row"
+        assert _drop(next(r for r in view.findChildren(GroupRow) if r.key == "darks"), [darks[0]])
+        assert len(m.p.session(sid).darks) == 1
         view.refresh()
         row = next(r for r in view.findChildren(GroupRow) if r.key == "flats")
         assert _drop(row, [darks[1]])

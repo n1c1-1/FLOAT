@@ -249,24 +249,21 @@ def _drop_raw(B, point, paths):
     pump()
 
 
-def test_s02b_files_on_the_session_block_itself_ask_their_kind(B, tmp_path):
-    """The testers' pass 2: a master dark and a master flat dropped on a Session block were added as "2 lights" (the
-    block itself assumed lights). The kind is the user's: a small menu at the drop point asks it, nothing is added before;
-    the notice says the kind they were added as, with Undo."""
+def test_s02b_files_on_the_session_block_itself_are_lights(B, tmp_path):
+    """A Session block is the place of lights: files dropped on it are lights, whatever they are named (the darks of
+    the test), with no question; the notice says so, with Undo. The kind is the place, never the files'."""
     B.install().setup(("add_row", dict(kind="session")))
     s = B.one("session")
     darks = make(tmp_path / "darks", 3, "fits", "D")
     before = B.steps()
     B.g._see(B.g.block_point(s))
     _drop_raw(B, B.g.block_point(s), sorted(str(p) for p in darks.iterdir()))
-    menu = B.canvas.kind_menu
-    assert [a.text() for a in menu.actions()] == ["Lights", "Darks", "Flats", "Bias"] and B.steps() == before
-    next(a for a in menu.actions() if a.data() == "darks").trigger()
     pump()
     settle(B)
-    assert "3 darks" in B.canvas.blocks[s].d["summary"] and not (B.graph.blocks[s].files or {}).get("lights")
+    assert B.steps() == before + 1 and len((B.graph.blocks[s].files or {}).get("lights") or []) == 3
+    assert not (B.graph.blocks[s].files or {}).get("darks")
     toast = B.canvas.toast
-    assert "dark" in toast.plain.lower() and [k for _t, k in toast.links()] == ["undo"], toast.plain
+    assert "3 lights added" in toast.plain and [k for _t, k in toast.links()] == ["undo"], toast.plain
 
 
 def test_s02c_files_dropped_where_nothing_takes_them_are_said(B, tmp_path):

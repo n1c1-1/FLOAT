@@ -29,7 +29,6 @@ class GraphDrops(QObject):
         self.reader.listen(self.progress.emit)
         self.progress.connect(self._on_progress)
         self._last = None             # (session, kind, Resolution, filter) of the last drop: its links
-        self._filter = None           # a drop held while the user chooses where frames of another filter go
         bridge.replaced.connect(self._forget)
 
     def _forget(self):
@@ -55,10 +54,10 @@ class GraphDrops(QObject):
         return self.drop_groups(session, {kind: list(paths)})
 
     def drop_groups(self, session, groups):
-        """Files / folders onto several lists of a Session at once ({kind: paths}: a drop on the block whose headers
-        told the kind of each), resolved at once and stored as ONE undo step; a filter that does not match is asked
-        about first, for the whole drop. -> the core's Result, or None when nothing was added."""
-        bridge, doc = self.bridge, self.bridge.doc
+        """Files / folders onto several lists of a Session at once ({kind: paths}, each kind the place they were
+        dropped on), resolved at once and stored as ONE undo step. Nothing is read from their headers or names.
+        -> the core's Result, or None when nothing was added."""
+        doc = self.bridge.doc
         groups = {k: [files.normalise(p) for p in v] for k, v in groups.items() if v}
         if not groups or session not in doc.graph.blocks:
             return None
@@ -82,46 +81,25 @@ class GraphDrops(QObject):
                                                                               sum(x[1] for x in lots.values()))
             self._say(*files.nothing_to_take(res, ignored))
             return None
-        if "lights" in lots_in:                         # their header names another filter: the user chooses first
-            sf = files.session_filter(doc.graph, session)
-            flt = files.other_filter(doc.graph, session, lots_in["lights"][0].items)
-            if flt:
-                self._filter = (session, lots_in)
-                self._say(*files.filter_question(flt, sf, doc.title(session)))
-                return None
-        if "flats" in lots_in:                          # flats of another filter than the lights': asked the same way
-            flt = files.flat_filter(doc.graph, session, lots_in["flats"][0].items)
-            if flt:
-                self._filter = (session, lots_in)
-                self._say(*files.flat_question(flt, files.session_filter(doc.graph, session), doc.title(session)))
-                return None
         return self._store(session, lots_in)
 
-    def _store(self, session, lots, own_lights=None):
-        """The lots ({kind: (Resolution, doubles ignored)}) into the session, one undo step; ``own_lights``: the
-        filter of a session of their own the lights go to instead (« New {f} session »)."""
+    def _store(self, session, lots):
+        """The lots ({kind: (Resolution, doubles ignored)}) into the session, one undo step."""
         bridge, doc = self.bridge, self.bridge.doc
-        steps = []
-        for kind, (res, _ig) in lots.items():
-            if kind == "lights" and own_lights:
-                steps += files.own_filter_steps(doc.graph, own_lights, res.items)
-            else:
-                steps.append(("add_files", dict(session=session, kind=kind, paths=res.items, mode="add")))
+        steps = [("add_files", dict(session=session, kind=kind, paths=res.items, mode="add"))
+                 for kind, (res, _ig) in lots.items()]
         out = bridge.act_many(steps, quiet=True)
         if not out.ok:
             self._say(bridge.say(out.reason) if out.reason else _("Not possible"), [])
             return out
         said = []
         for kind, (res, ignored) in lots.items():
-            if kind == "lights" and own_lights:
-                said.append(_("New {f} session added").format(f=own_lights))
-                continue
             self.read(session, kind, doc.files_of(session, kind)[1])
             taken = res.frames()
             base = files.drop_toast(kind, doc.title(session), len(taken), "add")
             said.append(files.drop_sentence(base, res, "add", ignored, taken))
         note = bridge.take_stale()                      # a computed stack: what it computes again, said too
-        one = next(iter(lots.values()))[0] if len(lots) == 1 and not own_lights else None
+        one = next(iter(lots.values()))[0] if len(lots) == 1 else None
         self._say(" · ".join(said) + (" · " + note if note else ""),
                   files.drop_links(one, "add") if one is not None else [(_("Undo"), "undo")])
         return out
@@ -154,16 +132,6 @@ class GraphDrops(QObject):
         bridge = self.bridge
         if key == "undo":
             bridge.undo()
-            return
-        if key in ("filter_here", "filter_own", "cancel"):     # frames of another filter: the user's choice
-            held, self._filter = self._filter, None
-            if held is None or key == "cancel":
-                return
-            session, lots = held
-            if key == "filter_here" or "lights" not in lots:
-                self._store(session, lots)
-                return
-            self._store(session, lots, own_lights=files.header_filter(lots["lights"][0].items))
             return
         if self._last is None:
             return

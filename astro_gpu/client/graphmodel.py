@@ -2466,7 +2466,7 @@ class GraphEditing:
         o = wfl.check_options(mm.to_engine(opts))
         if w.blocks is None:
             src = wfl.source_of(w)
-            self._replace_chain(p, self._legacy_nodes(o, w.end, src, self.is_mono(p)), options=o)
+            self._replace_chain(p, self._legacy_nodes(o, w.end, src, self.is_mono(p, frames=False)), options=o)
             return
         src = wfl.source_of(w)
         try:
@@ -2736,18 +2736,12 @@ class GraphEditing:
                 twice += hit
         if not new:
             return 0
-        flt = ""
-        if kind == "lights" and (not s.filter or not cur):      # the graph page's own reading of the headers
-            from .graphview.files import header_filter
-            flt = header_filter([str(f) for f in list_frames(new)])
-        moved = bool(flt) and bool(s.filter) and flt != s.filter
+        # frames are filed by where they are added, never by their headers: the session's filter stays the user's
         left = copy.deepcopy(s.left_out)
         probe = type("S", (), {"left_out": left})()
         mm.ProjectModel._note_left_out(probe, kind, new, False)
         with self._edit():
-            self._night_edit(sid, files={kind: cur + new}, flt=flt or None, left_out=probe.left_out)
-            if moved:
-                self._refile_session(sid)
+            self._night_edit(sid, files={kind: cur + new}, left_out=probe.left_out)
         self.reload_sources()
         return len(new)
 
