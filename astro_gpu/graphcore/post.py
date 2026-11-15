@@ -15,8 +15,9 @@ from __future__ import annotations
 from . import model as _model
 from .model import Index, Row, Wire, POST_PORT, SYNTH_PORT, clone, new_id
 
-PART_OF_PORT = {"image": None, "Starless": "starless", "Stars only": "stars"}
-PORT_OF_PART = {v: k for k, v in PART_OF_PORT.items()}
+PORT_OF_PART = {None: "image", "starless": "Starless", "stars": "Stars only"}
+#: a Synthetic stars' image sent to Post is the image of a workflow of its own (a tap ending at the block)
+PART_OF_PORT = {"image": None, "Starless": "starless", "Stars only": "stars", SYNTH_PORT: None}
 
 
 def shared_images(post: dict, defaults=()) -> set:
@@ -56,6 +57,8 @@ def place_of(g, wid, part, flows=None):
             return None
         return chain[kinds.index("stars")], PORT_OF_PART[part]
     if part is None:
+        if g.blocks[chain[-1]].kind == "synth" and any(t.wid == wid for t in g.taps):
+            return chain[-1], SYNTH_PORT              # Synthetic stars sent to Post: its tap's image
         for b in reversed(chain):
             if "image" in _ports(g, b):
                 return b, "image"

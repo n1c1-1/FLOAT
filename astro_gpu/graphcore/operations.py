@@ -1721,8 +1721,6 @@ def op_wire(q, src, src_port, dst, dst_port, channel=None):
         raise Refusal("lights first" if not out_ports(s) else M("no output {port}", port=src_port))
     if d.kind == "synth" and dst_port == SYNTH_IN:
         return _synth_on(q, ix, src, src_port, dst)
-    if s.kind == "synth" and d.kind == "post":
-        raise Refusal("Synthetic stars go to the Synthetic stars input of their Combine layers")
     if dst_port not in in_ports(d) or (d.kind != "post" and ix.pos.get(dst) != 0):
         raise Refusal(M("no input {port}", port=dst_port))
     if any(w.src == [src, src_port] and w.dst == [dst, dst_port] for w in q.wires):
@@ -1836,7 +1834,9 @@ def op_send_to_post(q, block, name=None):
     post = ix.post
     if any(w.src[0] == block and w.dst[0] == post for w in q.wires):
         raise Refusal("already in Post")
-    if block in ix.row_of and not _flow_ends(q, ix, block) and not _is_layers_row(q, ix, ix.row_of[block]):
+    # (Synthetic stars: a workflow of its own too, its image beside the Combine layers it feeds, a layer of Post)
+    synth = b.kind == "synth"
+    if block in ix.row_of and (synth or not _flow_ends(q, ix, block)) and not _is_layers_row(q, ix, ix.row_of[block]):
         if b.off:
             raise Refusal(M("{lab} is switched off: its image is its input's", lab=LABEL[b.kind]))
         _post_tap(q, block, name)

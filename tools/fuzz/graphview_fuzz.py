@@ -22,8 +22,8 @@ Checks after every gesture:
   f  what is painted is the core's Drawing (an item per box and card at its box, a wire item per path with its ends),
      the bridge's cached Drawing is the current one, no item of a drag is left; no Python exception, no Qt warning
   g  a side block (Synthetic stars) is under its row's line after the block whose stars it reads, reached by their
-     wire from that block's stars port, its image only into a Combine layers' Synthetic stars input; an optional input
-     left empty is greyed (a and b hold for it as for any block, at every zoom)
+     wire from that block's stars port, its image only into a Combine layers or to Post; an optional input left empty
+     is greyed (a and b hold for it as for any block, at every zoom)
   h  on a project model, the graph and Post agree on Combine layers: each block stands for a layer Post shows, with
      its wire to Post, as many blocks as layers
   i  on a project model, once the worker has answered the edit (its keys and states read in the background, the page
@@ -886,8 +886,10 @@ class Run:
             if path is None or path.points[-1] != d.ports.get((b, SIDE_IN, "in")) or \
                     path.points[0] != d.ports.get((a, "Stars only", "out"), path.points[0]):
                 raise Failure("g", f"the stars of {a} do not reach the input of {b}{when}", core=True)
+            # (its image may go to Post as a layer of its own and to a Combine layers' inputs, the core judging which:
+            # never into a chain)
             for w in g.wires:
-                if w.src[0] == b and (g.blocks[w.dst[0]].kind != "combine_layers" or w.dst[1] != SYNTH_PORT):
+                if w.src[0] == b and g.blocks[w.dst[0]].kind not in ("combine_layers", "post"):
                     raise Failure("g", f"{b}'s image goes to {w.dst}{when}", core=True)
 
     def check_post(self, when=""):

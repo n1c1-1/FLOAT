@@ -549,6 +549,15 @@ class GraphEditing:
         return True
 
     # ------------------------------------------------------------------ Post's wires (INTEGRATION 4.7)
+    def post_default_part(self, p):
+        """ProjectModel's; a Synthetic stars sent to Post (a workflow of its own ending at the block) gives its image,
+        a layer of its own, never a Combine layers of its own."""
+        g = self.__dict__.get("_proj_g") or getattr(self, "_g", None)      # (the graph being projected first)
+        if g is not None and any(t.wid == p.pid and t.block in g.blocks and g.blocks[t.block].kind == "synth"
+                                 for t in g.taps):
+            return None
+        return super().post_default_part(p)
+
     def shared_post_images(self) -> set:
         """The images some version of Post shows, and those Post shows by default: (workflow id, part)."""
         from ..graphcore.post import shared_images
@@ -582,12 +591,15 @@ class GraphEditing:
     def _with_post_wires(self, g):
         """The graph whose wires to Post are those of the shared images (nothing else changes)."""
         from ..graphcore.post import with_layer_rows, with_post_wires
+        self.__dict__["_proj_g"] = g
         try:
             q = with_post_wires(g, self.shared_post_images())
             q = with_layer_rows(q, *self._layer_rows_wanted(q))
             q = self._layer_ids_kept(g, q)
         except Exception:  # noqa: BLE001 - a graph the projection cannot read keeps its wires
             return g
+        finally:
+            self.__dict__.pop("_proj_g", None)
         if [(w.src, w.dst, w.wid) for w in q.wires] == [(w.src, w.dst, w.wid) for w in g.wires] and \
                 [r.id for r in q.rows] == [r.id for r in g.rows]:
             return g

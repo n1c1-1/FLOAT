@@ -160,3 +160,31 @@ def test_a_graph_saved_with_synthetic_stars_in_the_trunk_opens_drawn_as_now_with
     compile_into(old, p2)
     assert p1.to_dict()["workflows"] == p2.to_dict()["workflows"]
     assert stars in gm.Index(old).row[gm.Index(old).row_of[syn]].blocks
+
+
+def test_synthetic_stars_to_post_on_its_own_is_a_layer_saved_reopened_and_compiled(W, tmp_path):
+    """Synthetic stars may go to Post as a layer of its own, beside feeding its Combine layers (the owner's design: an
+    image may feed several places): To Post makes its wire and its layer, kept by a save and a reopening, compiled
+    as the engine reads it."""
+    from astro_gpu.core import project2
+    from astro_gpu.client.model import ProjectModel
+    m = W.m
+    syn = add_synth(W)
+    post = W.one("post")
+    assert m.apply([("send_to_post", {"block": syn})]).ok
+    W.settle()
+    g = W.graph
+    assert any(w.src[0] == syn and w.dst[0] == post for w in g.wires)
+    assert ins(W, W.one("combine_layers"))[SYNTH_PORT] == ("synth", SYNTH_PORT)      # still the third input too
+    layers = m.post_layers()
+    assert len(layers) >= 2, layers
+    p2 = project2.Project2(name="c")
+    compile_into(g, p2)                                    # the compiled definition takes it
+    m.flush()
+    W.settle()
+    m2 = ProjectModel(project2.load(m.p.root), W.w, readonly=True)
+    W.w.wait(60)
+    g2 = m2._g if hasattr(m2, "_g") else None
+    assert g2 is not None and any(w.src[0] == syn and w.dst[0] == post for w in g2.wires)
+    assert len(m2.post_layers()) == len(layers)
+    m2.close(save=False)
