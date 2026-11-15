@@ -181,3 +181,42 @@ def test_the_layers_of_images_opened_together_follow_the_order_chosen_whichever_
     finally:
         page.shutdown()
         page.deleteLater()
+
+
+# ------------------------------------------------------------------ the night test pass: Open images from Home
+def test_from_home_with_a_project_left_open_the_images_are_a_new_project_and_the_other_is_untouched(env, tmp_path):
+    """Opened from Home, the images make a project of their own: the project that was open is left (asked first when
+    anything is unsaved), never given the images, never saved by itself."""
+    from astro_gpu.core import project2
+    w = main(env)
+    other = tmp_path / "ws" / "Other"
+    assert w.create_project(other.as_posix(), "Other", "M 31")
+    w.worker.wait()
+    settle(w, 12)
+    before = (other / project2.FILE).read_bytes()
+    w.show_home()                                     # Home over it (as the window shows it for a test)
+    settle(w)
+    w.home.openImages.emit()
+    w.worker.wait()
+    settle(w, 14)
+    assert w.project is not None and w.project.root != other and drafts.is_untitled(w.project.root)
+    assert [q.name for q in w.s.paths] == ["a", "b"]
+    assert (other / project2.FILE).read_bytes() == before
+
+
+def test_raw_frames_and_unreadable_files_are_said_at_once_and_nothing_is_made(env, tmp_path):
+    w = main(env)
+    raw = tmp_path / "IMG_0001.CR2"
+    raw.write_bytes(b"II*\x00" + bytes(60))
+    env["mp"].setattr(gallery.QFileDialog, "getOpenFileNames", lambda *a, **k: ([str(raw)], ""))
+    w.show_home()
+    settle(w)
+    w.home.openImages.emit()
+    settle(w, 2)
+    assert w.project is None and "raw frame" in w.banner.text.text() and not env["launched"]
+    txt = tmp_path / "notes.png"
+    txt.write_text("not an image")
+    env["mp"].setattr(gallery.QFileDialog, "getOpenFileNames", lambda *a, **k: ([str(txt)], ""))
+    w.home.openImages.emit()
+    settle(w, 2)
+    assert w.project is None and "notes.png" in w.banner.text.text()
