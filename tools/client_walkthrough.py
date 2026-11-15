@@ -67,6 +67,7 @@ FORBIDDEN = Path("F:/astro_projets")                                 # the user'
 def setup_environment(tmp: Path):
     """Before Qt and the engine are imported: offscreen, CPU only, private settings and engine state."""
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    os.environ.setdefault("FLOAT_SAVE_ANSWER", "discard")     # nobody answers the save question: edits are dropped
     if Path("C:/Windows/Fonts").is_dir():
         os.environ.setdefault("QT_QPA_FONTDIR", "C:/Windows/Fonts")
     os.environ["CUDA_VISIBLE_DEVICES"] = "-1"                       # an empty value does not hide the GPUs here

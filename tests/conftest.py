@@ -49,6 +49,9 @@ import pytest
 WORKER = os.environ.get("PYTEST_XDIST_WORKER")
 # no test opens a window: Qt draws offscreen in this process and in each worker (set QT_QPA_PLATFORM to see them)
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# nobody answers the window's save question in a test: closing a project with edits drops them (a test that checks the
+# question replaces Main.ask_save); the application itself always asks (client/app.py SAVE_ANSWER_ENV)
+os.environ.setdefault("FLOAT_SAVE_ANSWER", "discard")
 _REAL_ENV = "ASTRO_GPU_TEST_REAL_HOME"
 _T0 = time.time()
 

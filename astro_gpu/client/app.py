@@ -197,6 +197,9 @@ class PageHolder(QWidget):
 
 #: an edit is copied for the recovery after a crash this long after it (ms)
 RECOVERY_MS = 3000
+#: an unattended run (the test suite, a walkthrough script) answers the save question beforehand: "save", "discard" or
+#: "cancel"; never set, the question is asked, with or without a screen
+SAVE_ANSWER_ENV = "FLOAT_SAVE_ANSWER"
 
 
 class Banner(QFrame):
@@ -327,7 +330,7 @@ class Main(QMainWindow):
             return a
 
         f = mb.addMenu(_("File"))
-        act(f, _("Home"), self.show_home, "Ctrl+H", role="home")
+        act(f, _("Home"), self.go_home, "Ctrl+H", role="home")
         act(f, _("New project"), self.new_project, "Ctrl+N", role="new")
         act(f, _("Open images…"), self.open_images, role="open")
         act(f, _("Open project…"), self.open_other, "Ctrl+O", role="open")
@@ -532,13 +535,29 @@ class Main(QMainWindow):
         self.setWindowTitle(f"{APP_NAME} · " + _("Home"))
         self.update_spec_note()
 
+    def go_home(self):
+        """File > Home: the project is left (closed, asked first when anything is unsaved); Cancel stays in it. A run in
+        progress goes on: opening the project follows it again."""
+        if self.project is None:
+            self.show_home()
+        else:
+            self.close_project(go_home=True)
+
     def new_project(self):
-        """The graph at once: the project has no name until its first Save or Run (``name_project``)."""
-        self.create_project(drafts.new_root().as_posix(), _("Untitled"))
+        """The graph at once: the project has no name until its first Save or Run (``name_project``). The project open
+        is left first (asked when anything is unsaved), before anything is made."""
+        if self.project is not None and not self.close_project(go_home=False):
+            return
+        if not self.create_project(drafts.new_root().as_posix(), _("Untitled")) and self.project is None:
+            self.show_home()
 
     def open_other(self):
-        self.show_home()
-        self.home.open_other()
+        """Open project…: the project is chosen over the screen shown; the project open is left only once one is chosen
+        (``open_project`` asks)."""
+        from .home import choose_project
+        f = choose_project(self)
+        if f:
+            self.open_project(f)
 
     def create_project(self, root: str, name: str, target: str = "", details: dict | None = None) -> bool:
         """A new v2 project in ``root``, opened. Its calibrated frames go to <cache folder>/<project folder>.
@@ -711,11 +730,23 @@ class Main(QMainWindow):
             self.screens.setCurrentWidget(self.proj_screen)
             self.refresh()
 
+    def unsaved(self) -> bool:
+        """THE question every way out of the project asks first: is anything not saved? What is being typed, Post's
+        last edit (a slider, a filter, a version) are taken into the definition first; then every kind of edit (the
+        graph, the table, a block's settings, a combination, Post, the project's form) is the model's one mark."""
+        if self.project is None or self.s is None:
+            return False
+        self._commit_typing()
+        self._flush_post()
+        return bool(self.s.dirty)
+
     def ask_save(self) -> str:
-        """The project has edits not saved: "save", "discard" or "cancel", as the user answers (offscreen, a test
-        harness: nobody can answer, and a project changes on the disk only when Save is chosen: "discard")."""
-        if QApplication.platformName() == "offscreen":
-            return "discard"
+        """The project has edits not saved: "save", "discard" or "cancel", as the user answers. The window may be drawn
+        without a screen (a usability session answers the box as a user would): it is asked all the same. Only an
+        unattended run (the test suite) gives its answer beforehand, in ``SAVE_ANSWER_ENV``."""
+        preset = os.environ.get(SAVE_ANSWER_ENV, "")
+        if preset in ("save", "discard", "cancel"):
+            return preset
         box = QMessageBox(QMessageBox.Warning, _("Unsaved changes"),
                           _('Save the changes made to "{name}"?').format(name=self.project.name), parent=self)
         box.setInformativeText(_("Without saving, the changes since the last save are lost (the computed results "
@@ -733,8 +764,7 @@ class Main(QMainWindow):
         (Save As wrote them elsewhere)."""
         save = not discard
         if self.project is not None and not discard:
-            self._flush_post()
-            if self.s is not None and self.s.dirty:
+            if self.unsaved():
                 answer = self.ask_save()
                 if answer == "cancel":
                     return False

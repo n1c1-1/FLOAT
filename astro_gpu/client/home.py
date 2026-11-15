@@ -897,10 +897,18 @@ class HomeView(QWidget):
 
     # ------------------------------------------------------------ actions
     def open_other(self):
-        f, _x = QFileDialog.getOpenFileName(self, _("Open project"), prefs.last_folder(),
-                                            # one kind of file for the user: a project, of this version or older
-                                            _("FLOAT project") + " (*.astroproj project.json)",
-                                            options=QFileDialog.HideNameFilterDetails)   # no file name shown
+        f = choose_project(self)
         if f:
-            prefs.remember_folder(Path(f).parent.parent)       # the folder the project's folder is in
-            self.openProject.emit(Path(f).parent.as_posix())
+            self.openProject.emit(f)
+
+
+def choose_project(parent) -> str | None:
+    """Open project…'s file dialog: the folder of the project chosen, or None."""
+    f, _x = QFileDialog.getOpenFileName(parent, _("Open project"), prefs.last_folder(),
+                                        # one kind of file for the user: a project, of this version or older
+                                        _("FLOAT project") + " (*.astroproj project.json)",
+                                        options=QFileDialog.HideNameFilterDetails)   # no file name shown
+    if not f:
+        return None
+    prefs.remember_folder(Path(f).parent.parent)           # the folder the project's folder is in
+    return Path(f).parent.as_posix()

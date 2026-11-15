@@ -375,8 +375,8 @@ def test_open_and_close_a_project(env):
     cb.activated.emit(cb.count() - 1)                           # the CPU chosen in the combo
     assert prefs.get("device") == "cpu" and w.s.device == "cpu" and cb.currentData() == "cpu"
     file_menu = {a.text(): a for a in w.menuBar().actions()[0].menu().actions()}
-    file_menu["Home"].trigger()                               # the project stays open behind Home
-    assert w.project is not None and w.screens.currentWidget() is w.home
+    file_menu["Home"].trigger()                               # Home leaves the project: none stays open behind it
+    assert w.project is None and w.screens.currentWidget() is w.home
     assert w.open_project(env["ws"] / "Heart") and w.screens.currentWidget() is w.proj_screen
     file_menu = {a.text(): a for a in w.menuBar().actions()[0].menu().actions()}
     file_menu["Close project"].trigger()
