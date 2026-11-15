@@ -211,7 +211,7 @@ def test_get_survey_fetches_it_outside_the_run_and_the_next_run_uses_it(qapp, tm
         assert _api.survey_state(m.p, wf.id)["available"] is False
         j = survey_job.job()
         ended = []
-        j.finished.connect(lambda pid, why: ended.append((pid, why)))
+        j.finished.connect(lambda root, pid, why: ended.append((pid, why)))      # (the project's folder, its id, why)
         get.click()
         import time
         t0 = time.monotonic()
