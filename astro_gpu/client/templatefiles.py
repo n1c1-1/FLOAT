@@ -78,9 +78,27 @@ def card(path: Path, tab: str, mine: bool) -> dict | None:
     if mine:
         c["key"] = f"user:{tab}/{stem}"
     c.update(tab=tab, file=Path(path).as_posix(), user=mine)
-    if not info.get("card"):                            # a graph alone: its blocks are not known here
-        c["source"], c["blocks"] = "frames", []
+    if not any(k in c for k in ("kind", "blocks", "source")) and not info.get("card", {}).get("opts"):
+        c.update(recipe(d["graph"]))                    # no recipe stored: it is read from the file's graph
     return c
+
+
+#: the blocks of a row that are not a workflow's own chain (they are the project's: sessions, calibration, outputs)
+_NOT_CHAIN = ("session", "calibration", "output", "align_on", "post")
+
+
+def recipe(graph: dict) -> dict:
+    """What adds a template's workflow to a project that already holds frames, read from the template's graph: the
+    source of its first workflow and its blocks, in the nodes the gallery adds (``blocks``). A graph without a
+    workflow adds nothing."""
+    rows = graph.get("rows") or []
+    blocks = graph.get("blocks") or {}
+    kinds = [(blocks[b].get("kind"), blocks[b].get("method")) for b in (rows[0].get("blocks") or []) if b in blocks]         if rows else []
+    if kinds and kinds[0][0] == "image":
+        return {"source": "image", "blocks": []}
+    nodes = [{"block": "calibration", "name": "calibration", "method": None, "off": False}] if kinds else []
+    nodes += [{"block": k, "name": k, "method": m, "off": False} for k, m in kinds if k and k not in _NOT_CHAIN]
+    return {"source": "frames", "blocks": nodes}
 
 
 def cards(tab: str) -> list[dict]:
@@ -160,3 +178,61 @@ def project_file(path: str | Path) -> dict:
     d = copy.deepcopy(d)
     d.pop("template", None)
     return d
+
+
+# ------------------------------------------------------------------------- the templates kept in the settings
+#: the tab of the templates the user made before they were files
+OLD_TAB = "Mine"
+#: the settings entry that says the old templates were written as files
+MOVED = "templates_moved"
+
+
+def _from_old(entry: dict) -> dict:
+    """The blank project file of a template kept in the settings ({name, text, source, blocks}): the workflow the
+    gallery made of it on an empty project, its graph as the application writes one."""
+    import tempfile
+    from ..core import project2
+    from ..core.project import Target
+    from ..graphcore import model as gm
+    from ..graphcore import templates
+    from ..graphcore.compile import compile_into
+    from ..graphcore.convert import convert
+    from ..graphcore.operations import apply_many
+    t = {"key": entry.get("key") or "", "name": entry["name"], "source": entry.get("source") or "frames",
+         "blocks": [dict(n) for n in entry.get("blocks") or []]}
+    with tempfile.TemporaryDirectory(prefix="float_old_template_") as tmp:
+        p = project2.create(Path(tmp), "Untitled", Target())
+        g = convert(p, block_keys=lambda wid: [])
+        plan = templates.build(g, t, entry["name"], dict(USER_OPTS))
+        g2, res = apply_many(g, plan.steps)
+        if not res.ok:
+            raise ValueError(res.reason_text())
+        compile_into(g2, p)
+        p.graph = gm.to_dict(g2)
+        d = project2.file_dict(p)
+    if d.get("format") != project2.GRAPH_FORMAT:
+        raise ValueError("its graph does not compile")
+    return d
+
+
+def import_old() -> list[Path]:
+    """At start: each template the settings keep under the old key is written once as a blank project file in the
+    user's folder, tab "Mine"; the settings entry stays as it is and ``templates_moved`` says it is done. An entry
+    that cannot be written is left out (it is logged), never written approximately. -> the files written."""
+    import logging
+    out: list[Path] = []
+    if user_dir() is None or prefs.get(MOVED):
+        return out
+    for e in prefs.get("templates") or []:
+        try:
+            if not isinstance(e, dict) or not str(e.get("name") or "").strip():
+                continue
+            name = str(e["name"]).strip()
+            safe = "".join(c for c in name if c not in '\\/:*?"<>|').strip(" .")
+            if safe and (user_dir() / OLD_TAB / (safe + SUFFIX)).exists():
+                continue
+            out.append(save_user(_from_old(e), OLD_TAB, name, text=str(e.get("text") or "")))
+        except Exception:  # noqa: BLE001 - one template that cannot be turned into a file does not stop the others
+            logging.getLogger(__name__).exception("the template %r could not be written as a file", e.get("name") if isinstance(e, dict) else e)
+    prefs.set(MOVED, True)
+    return out

@@ -22,6 +22,8 @@ DEFAULTS = {
     "last_folder": "",
     # the user's own templates (issue #47): {key, tab, name, text, source, blocks}, made with Save as template…
     "templates": [],
+    # set once the templates above are written as files, tab "Mine" (templatefiles.import_old); the entries stay
+    "templates_moved": False,
     # the last export of each project, by its folder: format, size, content, folder (proposed at the next opening)
     "export_last": {},
     # the sections of Home (Settings › Folders), under the recent projects: each lists the projects of a folder and of

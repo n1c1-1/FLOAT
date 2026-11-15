@@ -152,3 +152,47 @@ def test_save_as_template_round_trip(win, monkeypatch):
     win.graph.templates.chosen.emit(win.graph.templates.cards[0].t)
     _settle(win, 30)
     assert "Colour minimal" in _rows(win)
+
+
+def test_a_users_template_adds_its_workflow_to_a_project_that_holds_sessions(win, monkeypatch):
+    """What a user's template adds is read from its file's graph, as a shipped template's is: the same blocks, and the
+    workflow it adds to a project that already holds a session."""
+    from astro_gpu.client import gallery
+    shipped = next(c for c in templatefiles.shipped_cards() if c["key"] == "colour_min")
+    win.graph.show_templates()
+    win.graph.templates.chosen.emit(shipped)
+    _settle(win, 30)
+    monkeypatch.setattr(gallery, "template_dialog", lambda parent, name: ("My colour", "Mine"))
+    win.save_template()
+    mine = templatefiles.cards("Mine")[0]
+    kinds = lambda c: [n["block"] for n in gallery.template_blocks(c) if n["block"] not in ("calibration", "output")]      # noqa: E731
+    assert mine["source"] == "frames" and kinds(mine) == kinds(shipped) and kinds(mine)
+    before = len(_rows(win))
+    res = win.s.apply_template(mine, "Added", gallery._view_opts(mine))
+    assert res.ok and len(_rows(win)) == before + 1 and "Added" in _rows(win)
+
+
+def test_the_templates_kept_in_the_settings_are_written_once_as_files(qapp, settings):
+    """At start each old template of the settings becomes a blank project file of the tab Mine, once; the settings
+    entry stays; the file's card lists the blocks the old template had."""
+    old = [{"key": "u1", "tab": "Mine", "name": "My old one", "text": "Kept.", "source": "frames",
+            "blocks": [{"block": b, "name": b, "method": None, "off": False}
+                       for b in ("calibration", "registration", "selection", "stacking", "astrometry")]}]
+    prefs.set("templates", old)
+    first = templatefiles.import_old()
+    assert [f.name for f in first] == ["My old one" + templatefiles.SUFFIX] and first[0].parent.name == "Mine"
+    assert prefs.get("templates") == old and prefs.get("templates_moved")
+    c = templatefiles.cards("Mine")[0]
+    assert c["name"] == "My old one" and c["text"] == "Kept." and c["user"]
+    assert [n["block"] for n in c["blocks"]] == ["calibration", "registration", "selection", "stacking", "astrometry"]
+    assert templatefiles.import_old() == [] and len(templatefiles.cards("Mine")) == 1
+
+
+def test_the_version_is_one_number_everywhere():
+    """The window, the About box and the log read astro_gpu.__version__; the project file and the installer carry the
+    same number."""
+    import re
+    from astro_gpu import __version__
+    assert __version__ == "0.2.0"
+    assert re.search(r'^version = "([^"]+)"', (ROOT / "pyproject.toml").read_text(encoding="utf-8"), re.M).group(1) == __version__
+    assert f'#define AppVersion "{__version__}"' in (ROOT / "installer" / "float.iss").read_text(encoding="utf-8")
