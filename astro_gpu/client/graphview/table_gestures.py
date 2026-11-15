@@ -134,10 +134,8 @@ class Gestures:
             p0, c, z = self._press
             if (pos - p0).manhattanLength() > 7:
                 self._press = None
-                desc = None
-                if z == "grip" and not self.multiple_selection():
-                    desc = ("session", c.id[1])
-                elif c.kind == "box" and self.model.box(c.id[1], c.id[2]).mode == "own" and \
+                desc = None                      # a session is never dragged: its menu moves it (Move up, Move to…)
+                if c.kind == "box" and self.model.box(c.id[1], c.id[2]).mode == "own" and \
                         not (c.id[1] == COMMON and c.id[2] == "lights"):
                     desc = ("box", c.id[1], c.id[2])
                 elif c.kind == "stack" and z != "chevron":
@@ -861,10 +859,15 @@ class Gestures:
             out += [None, (_("Delete stack"), self.delete, True)]
         elif k == "name":
             sids = self.chosen_sessions() or [c.id[1]]
+            order = [s["sid"] for pl in mp.stacks() for s in pl["sessions"]]
             out += [(_("Rename (F2)"), lambda: self.rename(c), len(sids) == 1),
                     (_("Duplicate (Ctrl+D)"), self.duplicate, len(sids) == 1),
                     (_("To Common"), lambda: self.back_to_common([self.cell(("name", s)) for s in sids]), True,
                      common_tip()),
+                    (_("Move up"), lambda: self.move_step(-1), len(sids) == 1 and order[:1] != sids,
+                     _("One place up in its stack, or to the stack above (Ctrl+Shift+Up)")),
+                    (_("Move down"), lambda: self.move_step(1), len(sids) == 1 and order[-1:] != sids,
+                     _("One place down in its stack, or to the stack below (Ctrl+Shift+Down)")),
                     None, (_("New stack"), lambda: self.move_to(sids, None), True)]
             for p2 in mp.stacks():
                 out.append((_("Move to “{p}”").format(p=p2["name"]), lambda r=p2["id"]: self.move_to(sids, r), True))

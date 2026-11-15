@@ -147,8 +147,6 @@ class Painting:
                 z["reset"] = QRectF(c.x + c.w - 20, self.y_top(c) + 2, 16, 16)
         elif k == "stack":
             z["chevron"] = QRectF(c.x + 2, self.y_top(c) + 4, 16, 16)
-        elif k == "name":
-            z["grip"] = QRectF(c.x + 1, c.y + 8, 10, 24)
         return z
 
     def y_top(self, c: Cell):
@@ -326,10 +324,6 @@ class Painting:
             p.setPen(Qt.NoPen)
             p.setBrush(colour("#2a2f39"))
             p.drawRoundedRect(R, 4, 4)
-            p.setBrush(colour(DIM))
-            for i in range(3):
-                for j in range(2):
-                    p.drawEllipse(QPointF(R.x() + 4 + j * 4, R.y() + R.height() / 2 - 6 + i * 6), 1.2, 1.2)
         date = self.model.date_text(sid)              # its night(s) and the time its lights add up to (headers)
         if date:
             self._text(p, R.x() + 14, R.y() + 14, self.model.session_name(sid), F13, TXT, R.width() - 16)
@@ -533,7 +527,6 @@ class Painting:
             if c.y + c.h < vis0 or c.y > vis1:
                 continue
             self.paint_cell(p, c)
-        self.paint_body_overlay(p)
         p.restore()
         p.fillRect(0, 0, W, top, colour(BG))
         self.paint_header(p, W)
@@ -542,12 +535,6 @@ class Painting:
         p.setPen(colour("#323846"))
         p.drawLine(0, top - 1, W, top - 1)
         self.paint_drag(p, W, H)
-
-    def paint_body_overlay(self, p):
-        if self.insertion is not None:
-            p.setPen(Qt.NoPen)
-            p.setBrush(colour(ACCENT))
-            p.drawRect(QRectF(self.xs["session"][0] + 2, self.insertion - 1, self.total_width - self.xs["session"][0] - 4, 2))
 
     def paint_drag(self, p, W, H):
         if self.drag is None or self.hot is None or not self.hot.label:

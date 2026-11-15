@@ -760,14 +760,32 @@ def test_gv_table_structure(qapp, tree):
     b.wait(0.02)
     assert b.stacks()[1]["name"] == "Hα"
     s1, _s2, s3 = b.sessions()
-    hot = b.hover([], ("name", s1), fy=0.9, internal=("session", s3))
-    assert hot.kind == "insertion" and g.insertion is not None
-    b.end_hover()
-    b.drop([], ("name", s1), fy=0.9, internal=("session", s3))
-    assert b.g.model.stack_of(s3)["id"] == rid and b.sessions()[1] == s3
+    # a session is never dragged (nobody knew what it meant): pressed on its name and moved, no drag starts
+    started = []
+    g._start_qdrag = lambda desc: started.append(desc)
+    p0 = b.pos(("name", s1), 0.05, 0.5)
+    for typ, p, btns in ((QEvent.MouseButtonPress, p0, Qt.LeftButton), (QEvent.MouseMove, p0 + QPoint(0, 40), Qt.LeftButton),
+                         (QEvent.MouseButtonRelease, p0 + QPoint(0, 40), Qt.NoButton)):
+        QApplication.sendEvent(b.vp, QMouseEvent(typ, QPointF(p), QPointF(b.vp.mapToGlobal(p)), Qt.LeftButton, btns,
+                                                 Qt.NoModifier))
+    assert started == [] and "grip" not in g.zones(g.cell(("name", s1)))
+    del g._start_qdrag
+    # what its drag did stays in the session's menu: up / down (its order), into a stack, a new stack
+    g.select(g.cell(("name", s3)))
+    texts = {e[0]: e for e in g.menu_entries(g.cell(("name", s3))) if e}
+    assert {"Move up", "Move down", "New stack"} <= set(texts) and any(t.startswith("Move to") for t in texts)
+    assert texts["Move up"][2] and not texts["Move down"][2]                      # the last session: no lower place
+    texts["Move up"][1]()                                            # into the stack above, at its end
+    assert b.g.model.stack_of(s3)["id"] == rid and b.sessions()[2] == s3
+    g.select(g.cell(("name", s3)))
+    dict((e[0], e) for e in g.menu_entries(g.cell(("name", s3))) if e)["Move up"][1]()    # then one place up
+    assert b.sessions()[1] == s3
+    b.key(Qt.Key_Z, Qt.ControlModifier)
     b.key(Qt.Key_Z, Qt.ControlModifier)
     assert b.g.model.stack_of(s3)["id"] != rid
-    b.drop([], ("ghost_p",), internal=("session", b.sessions()[1]))
+    g.select(g.cell(("name", s1)))
+    assert not dict((e[0], e) for e in g.menu_entries(g.cell(("name", s1))) if e)["Move up"][2]   # already at the top
+    g.move_to([b.sessions()[1]], None)
     assert len(b.stacks()) == 3
     b.key(Qt.Key_Z, Qt.ControlModifier)
     texts = [e[0] for e in g.menu_entries(g.cell(("stack", rid))) if e]

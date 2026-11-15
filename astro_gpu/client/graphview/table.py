@@ -105,7 +105,7 @@ class Drag:
 
 @dataclass
 class Target:
-    kind: str                       # box | ghost_s | ghost_p | refused | insertion | merge
+    kind: str                       # box | ghost_s | ghost_p | refused | merge
     ok: bool = True
     label: str = ""
     owner: str = ""
@@ -181,7 +181,6 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
         self.drag: Drag | None = None
         self.hot: Target | None = None
         self.drag_pos = QPoint(0, 0)
-        self.insertion = None
         self.manual_columns: set = set()
         self.only_differences = False
         self.compact = True
@@ -518,7 +517,6 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
         self.drag_pos = e.position().toPoint()
         self.drag.copy = bool(e.modifiers() & Qt.ControlModifier)
         self.hot = self.target_at(self.drag_pos)
-        self.insertion = self.hot.before if self.hot and self.hot.kind == "insertion" else None
         h = self.viewport().height()
         y = self.drag_pos.y()
         top = HEAD + self.common_h
@@ -548,7 +546,7 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
         self.end_drag()
 
     def end_drag(self):
-        self.drag, self.hot, self.insertion = None, None, None
+        self.drag, self.hot = None, None
         self._tick.stop()
         self._internal = None
         self.viewport().update()
@@ -672,33 +670,6 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
             lab = (_("Copy → {dest}").format(dest=dest) if g.copy else
                    _("Move → {dest} · Ctrl: copy").format(dest=dest))
             return Target("box", True, lab, owner, kind, cells={c.id}, boxes=[(owner, kind)])
-        if kind_of == "session":
-            sid = g.internal[1]
-            if c is None:
-                return refused(nothing.format(why=_("outside the sessions")))
-            if c.kind in ("name", "box", "cal") and c.id[1] != COMMON and not str(c.id[1]).startswith(FOLDED):
-                tsid = c.id[1]
-                ln = next(x for x in self.lines if x.get("sid") == tsid and x["kind"] == "session")
-                upper = self.content_pos(c, pos).y() < ln["y"] + ln["h"] / 2
-                pl = mp.stack_of(tsid)
-                names = [s["sid"] for s in pl["sessions"]]
-                i = names.index(tsid)
-                if upper:
-                    before, y = tsid, ln["y"]
-                else:
-                    before = names[i + 1] if i + 1 < len(names) else ""
-                    y = ln["y"] + ln["h"]
-                if not self._moves(sid, pl["id"], before):
-                    return refused(nothing.format(why=_("the session is already there")))
-                return Target("insertion", True, _("“{s}” goes into “{p}”").format(s=self.session_name(sid), p=pl["name"]),
-                              rid=pl["id"], before=y)
-            if c.kind == "ghost_s":
-                pl = mp.stack_by_id(c.id[1])
-                return Target("insertion", True, _("“{s}” goes into “{p}”").format(s=self.session_name(sid), p=pl["name"]),
-                              rid=pl["id"], before=c.y)
-            if c.kind in ("ghost_p", "body"):
-                return Target("ghost_p", True, _("“{s}” → new stack").format(s=self.session_name(sid)), cells={c.id})
-            return refused(nothing.format(why=_("drop between two sessions")))
         if kind_of == "stack":
             rid = g.internal[1]
             if c is not None and c.kind == "stack" and c.id[1] != rid:
@@ -710,15 +681,6 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
                 return Target("merge", True, lab, rid=c.id[1], cells={c.id})
             return refused(nothing.format(why=_("drop on another stack to merge them")))
         return refused(_("Nothing dropped"))
-
-    def _moves(self, sid, rid, before):
-        pl = self.model.stack_by_id(rid)
-        names = [s["sid"] for s in pl["sessions"]]
-        if sid in names:
-            i = names.index(sid)
-            nxt = names[i + 1] if i + 1 < len(names) else ""
-            return before not in (sid, nxt)
-        return True
 
     def own_settings_text(self, rid):
         parts = []
@@ -877,21 +839,6 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
             steps = [("move_files", dict(src_session=so, src_kind=sk, dst_session=owner, dst_kind=kind, copy=g.copy))]
             src = _("{kind} copied to {dest}") if g.copy else _("{kind} moved to {dest}")
             self.act(steps, src.format(kind=_(KIND_TITLE[sk]), dest=self.box_title(owner, kind)), undo_link())
-            return
-        if kind_of == "session":
-            sid = g.internal[1]
-            if target.kind == "ghost_p":
-                self.act([("move_night", dict(night=sid, row=None))],
-                         _("“{s}” in a new stack").format(s=self.session_name(sid)), undo_link())
-                return
-            pl = mp.stack_by_id(target.rid)
-            args = dict(night=sid, row=target.rid)
-            ln = next((x for x in self.lines if x["kind"] == "session" and x["rid"] == target.rid
-                       and abs(x["y"] - target.before) < 1), None)
-            if ln:
-                args["before"] = ln["sid"]
-            self.act([("move_night", args)], _("“{s}” goes into “{p}”").format(s=self.session_name(sid), p=pl["name"]),
-                     undo_link())
             return
         if kind_of == "stack":
             self.merge(g.internal[1], target.rid)
