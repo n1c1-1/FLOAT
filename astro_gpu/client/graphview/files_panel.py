@@ -3,8 +3,9 @@
 The entries (folders or files) with, for each, its type filter, whether sub-folders are read, and its count; an entry
 unfolds to its files grouped by folder (a flat model read by a QListView: only the visible rows are asked for, so
 thousands of files stay light). Entries or files are chosen and « Remove » takes them out: an entry goes through the
-core (``remove_files`` / ``set_common_files``, ONE undo step); a single file inside a dropped folder is kept as an
-EXCLUSION in ``view["exclusions"]`` (view side, like the filter; the counts elsewhere do not follow it). A cell that
+core (``remove_files`` / ``set_common_files``, ONE undo step); a single file inside a dropped folder makes that
+folder's entry its other files, so the engine no longer reads it (the same one step). ``view["exclusions"]`` (files
+struck through by earlier versions, which the engine never read) is still shown and taken out with them. A cell that
 follows Common says so, with a link that selects the Common cell.
 """
 from __future__ import annotations
@@ -295,26 +296,38 @@ class FilesPanel(QWidget):
         singles = [p for k, e, _t, p in chosen if k == FILE and e not in entries]
         if not entries and not singles:
             return
-        view = bridge.doc.view
         if singles:
-            rec = view.setdefault(EXCLUSIONS, {})
-            key = f"{self.owner}|{self.kind}"
-            rec[key] = sorted(set(rec.get(key, [])) | set(singles))
-        if entries:
-            left = [x for x in self.held() if x not in entries]
+            # files chosen inside a folder entry: the entry becomes the folder's other files (what the engine reads
+            # there, the listing's), so that the stack loses them too; the whole Remove is one undo step
+            gone = set(singles) | self.excluded()
+            folders = {e for k, e, _t, p in chosen if k == FILE and p in singles}
+            left = []
+            for x in self.held():
+                if x in entries:
+                    continue
+                if x in folders:
+                    rest = [f.path for f in self.reader.expand((x,)) or [] if f.path not in gone]
+                    for f in rest:
+                        self.reader.note(f, False)
+                    left += [f for f in rest if f not in left]
+                elif x not in left:
+                    left.append(x)
             if self.owner == COMMON:
                 res = bridge.act("set_common_files", quiet=True, kind=self.kind, paths=left, mode="replace")
             else:
-                res = bridge.act("remove_files", quiet=True, session=self.owner, kind=self.kind, paths=entries)
-            if not res.ok:
-                bridge.toast.emit(bridge.say(res.reason) if res.reason else _("Not possible"))
-                return
+                res = bridge.act("add_files", quiet=True, session=self.owner, kind=self.kind, paths=left,
+                                 mode="replace")
+        elif self.owner == COMMON:
+            left = [x for x in self.held() if x not in entries]
+            res = bridge.act("set_common_files", quiet=True, kind=self.kind, paths=left, mode="replace")
         else:
-            bridge.view_changed()
+            res = bridge.act("remove_files", quiet=True, session=self.owner, kind=self.kind, paths=entries)
+        if not res.ok:
+            bridge.toast.emit(bridge.say(res.reason) if res.reason else _("Not possible"))
+            return
         n = len(entries) + len(singles)
         note = bridge.take_stale()                    # a computed stack: what it computes again, said too
-        bridge.toast.emit(plural(n, "{n} removed", "{n} removed") + (" · " + note if note else "")
-                          + (" · Ctrl+Z" if entries else ""))
+        bridge.toast.emit(plural(n, "{n} removed", "{n} removed") + (" · " + note if note else "") + " · Ctrl+Z")
         if shiboken6.isValid(self):                   # the page may have built a new panel meanwhile
             self.refresh()
 
