@@ -154,7 +154,7 @@ def compose() -> QImage:
         rect = QRect(pos, g.size())
         is_dialog = w.windowType() not in (Qt.Popup, Qt.ToolTip)
         if is_dialog:                                   # a title bar, as the window's frame would show it
-            bar = QRect(rect.x(), max(rect.y() - 26, 0), rect.width(), 26)
+            bar = QRect(rect.x(), max(rect.y() - BAR_H, 0), rect.width(), BAR_H)
             p.fillRect(bar, QColor("#2b3446"))
             p.setPen(QColor("#e6e6e6"))
             f = QFont(p.font())
@@ -342,8 +342,29 @@ def _release_after_drag(gp, button, mods):
     QTest.mouseRelease(w.windowHandle(), button, mods, w.mapFromGlobal(gp))
 
 
+#: the title bar the screenshots draw over a dialog (``compose``): its height, and the width of its close box
+BAR_H, CLOSE_W = 26, 30
+
+
+def close_box_at(gp: QPoint):
+    """The dialog whose drawn close box ("x" of the title bar ``compose`` draws) is at this screen point, else None: a
+    press there closes it as the system's close box would (a real close event: the dialog's own answer to it)."""
+    for w in reversed(tops()):
+        if w.windowType() in (Qt.Popup, Qt.ToolTip):
+            continue
+        pos = w.mapToGlobal(QPoint(0, 0))
+        if QRect(pos.x() + w.width() - CLOSE_W, pos.y() - BAR_H, CLOSE_W, BAR_H).contains(gp):
+            return w
+    return None
+
+
 def mouse(kind: str, x, y, button=Qt.LeftButton, mods=Qt.NoModifier):
     gp = origin() + QPoint(int(x), int(y))
+    box = close_box_at(gp) if kind in ("press", "release", "dclick") and DRAG.get("loop") is None else None
+    if box is not None:
+        if kind == "release":
+            QTimer.singleShot(0, box.close)
+        return
     if os.environ.get("TESTER_DEBUG") == "1":
         print("mouse", kind, x, y, bool(DRAG), flush=True)
     if DRAG.get("loop") is not None and "result" not in DRAG and kind in ("move", "release"):
@@ -408,6 +429,9 @@ def press_key(combo: str):
         raise ValueError(f"unknown key: {combo}")
     kc = seq[0]
     w = key_target()
+    if kc.key() == Qt.Key_F4 and kc.keyboardModifiers() == Qt.AltModifier:
+        QTimer.singleShot(0, w.close)                # the system's Alt+F4: the active window gets a close event
+        return
     QTest.keyClick(w.windowHandle(), kc.key(), kc.keyboardModifiers())
 
 
@@ -650,6 +674,12 @@ def quit_session(sock=None, why="quit"):
         for w in tops():
             if isinstance(w, QDialog):
                 w.reject()
+        # the session ends: a question about unsaved changes would wait for an answer nobody gives (quit hung, the
+        # testers' pass 2); the edits not saved are left as a killed session leaves them, and said
+        unsaved = getattr(MAIN, "unsaved", None)
+        if callable(unsaved) and getattr(MAIN, "project", None) is not None and unsaved():
+            NOTES.append("Quit: the changes not saved were not saved.")
+        os.environ["FLOAT_SAVE_ANSWER"] = "discard"
         MAIN.close()
     except Exception:  # noqa: BLE001
         traceback.print_exc()
