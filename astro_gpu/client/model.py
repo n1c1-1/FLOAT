@@ -1929,7 +1929,13 @@ class _ProjectBase(QObject):
             return refused_text(e) if e is not None else ""
         if block == "color" and self.is_mono(p):
             return _(wfl.MONO_NO_COLOUR)
-        e = wfl.palette_problem(self.graph(p), self.source_kind(p), block)
+        g, src = self.graph(p), self.source_kind(p)
+        e = wfl.palette_problem(g, src, block)
+        from ..graphcore.placement import place_only
+        if e is not None and place_only(e.template):     # a place too early: the requirement it misses where its input
+            need = (wfl.place_problem(g, src, block, i) for i in range(len(g), -1, -1))     # is right, when one says it
+            e = next((x for x in need if x is not None and getattr(x, "block", block) == block
+                      and not place_only(x.template)), e)
         if e is not None and block == "calibration" and self._nights_as_one(p):
             return _("calibrate per night first")   # one Calibration of all the nights: none to set beside it
         return refused_text(e) if e is not None else self._synth_solution_reason(p, block)

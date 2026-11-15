@@ -211,9 +211,24 @@ def palette_state(p, view, kind):
     B = base(p, view)
     first = (M("{lab} belongs to a stack: between the Session and the Stacking", lab=LABEL[kind])
              if kind in FRAME_KINDS else "")
+    need = ""
     for at in specs(B, kind):
         why = fast(B, "add_block", {"kind": kind, "at": at})[0]
         if not why:
             return True, ""
         first = first or why
-    return False, first or M("{lab}: no place", lab=LABEL[kind])
+        need = need or ("" if place_only(why) else why)
+    # the block's unmet requirement where its input is right ("needs Astrometry first"), before the reason of a place
+    # too early in the chain (the night test pass: "Color needs Stacking first" beside a Stacking, Astrometry missing)
+    return False, need or first or M("{lab}: no place", lab=LABEL[kind])
+
+
+def place_only(why) -> bool:
+    """Whether a refusal only says that the place is wrong (another place in the chain may take the block: its input is
+    not there yet, the frame blocks' order, the Align on's place), not a requirement the block misses."""
+    from ..core import workflow as wfl
+    from . import rules
+    template = why[0] if isinstance(why, tuple) else why
+    return template in (wfl.WHY_STACK_FIRST, wfl.WHY_INPUT, wfl.WHY_FRAME_ORDER, wfl.WHY_ALIGN_PLACE,
+                        wfl.WHY_AFTER_OUTPUT, wfl.WHY_OUTPUT_LAST, wfl.WHY_OUTPUT_AUTO, rules.HEAD_ONLY,
+                        rules.FRAME_BAND, rules.FRAME_ORDER, rules.AFTER_LAYERS)
