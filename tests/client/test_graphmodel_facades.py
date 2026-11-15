@@ -84,11 +84,13 @@ def view(m, name):
 
 def both(rec, m, fn):
     """A gesture on the model; its project must be the one the old model reached: (the old call's answer, this one's)."""
+    from astro_gpu.client.names import neutral
     a = fn(m)
     old = rec.check(m.p, a)
     if not RECORD:
         assert m.graph_rebuilds == 0, "the definition was changed outside the graph"
-    return old, h1._plain(a)
+    # a name as stored now (the colour block's word is "Colour" since the recordings: test_h1_old_way's text)
+    return (neutral(old) if isinstance(old, str) else old), h1._plain(a)
 
 
 # ---------------------------------------------------------------------------------------------- blocks of a workflow

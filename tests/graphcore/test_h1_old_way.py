@@ -17,7 +17,8 @@ key tables of both computed now, in this process (a stage version bumped since c
 Normalised (each cause given): the creation time stamp and the project folder (two projects); the ids of Post's
 layers (a counter of the process, never read by a key) renumbered in their order; the recipe a combination copies in
 when it is placed (stages/recipes.py, after the old way was recorded) left out when it is one of the four types'
-frozen content, which the recordings' combinations stand for (the same stage, the same keys)."""
+frozen content, which the recordings' combinations stand for (the same stage, the same keys); a workflow's default
+name as stored now (the colour block's word is "Colour" since the recordings: "Ha · Color" is "Ha · Colour")."""
 from __future__ import annotations
 
 import json
@@ -203,8 +204,12 @@ def new_way(root, t, sessions):
 
 
 def _whole(d: dict) -> dict:
+    from astro_gpu.client.names import neutral
     d = json.loads(json.dumps(d, default=str))
     d.pop("created", None)
+    for w in d.get("workflows") or []:                 # a default name as stored now (the colour block: "Colour")
+        if isinstance(w.get("name"), str):
+            w["name"] = neutral(w["name"])
     ids = {}
     for v in d["post"].get("versions") or []:
         for lay in v.get("layers") or []:
