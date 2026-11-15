@@ -176,6 +176,7 @@
  "simple output {0} x {1} from {2}, useful frame x {3}-{4}, y {5}-{6}; sky: {7}": "rendu simple {0} x {1} à partir de {2}, zone utile x {3}-{4}, y {5}-{6} ; ciel : {7}",
  "Open in Inspect": "Ouvrir dans Inspection",
  "Continue": "Continuer",
+ "The run goes on with the frames and settings it started with: the changes made since are computed by the next run.": "L'exécution continue avec les images et les réglages de son départ : les changements faits depuis seront calculés par la prochaine exécution.",
  "+{n} pause after: {blocks}": "+{n} pause ensuite : {blocks}",
  "+{n} pauses after: {blocks}": "+{n} pauses ensuite : {blocks}",
  "Workflow: {names}": "Workflow : {names}",

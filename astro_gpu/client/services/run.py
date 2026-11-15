@@ -1111,6 +1111,10 @@ class RunController(QObject):
             sig = getattr(model, name, None)
             if sig is not None and hasattr(sig, "connect"):
                 sig.connect(self._graph_changed)
+        self._told_edit = False              # the run was told once that the project changed since it started
+        sig = getattr(model, "editMade", None)
+        if sig is not None and hasattr(sig, "connect"):
+            sig.connect(self._edited_while_running)
 
     # ------------------------------------------------------------ state
     @property
@@ -1249,6 +1253,38 @@ class RunController(QObject):
         if self.dialog is not None and self.phase == "idle" and self._planner is not None:
             self._follow_timer.start()
 
+    @staticmethod
+    def _computed_part(p) -> str:
+        """What of a definition a run computes: its sessions and workflows as the engine reads them, the frames left
+        out by hand, the target (never Post's composition nor the view's choices)."""
+        import dataclasses
+        import json
+
+        def plain(x):
+            return dataclasses.asdict(x) if dataclasses.is_dataclass(x) else getattr(x, "__dict__", x)
+        return json.dumps({"sessions": [plain(x) for x in p.sessions], "workflows": [plain(w) for w in p.workflows],
+                           "excluded": p.excluded, "target": plain(p.target), "mode": p.stack_mode},
+                          default=str, sort_keys=True)
+
+    def _edited_while_running(self, *_a):
+        """The project changed while a run goes (a session added, a setting): the run goes on with the frames and the
+        settings it started with (its definition was taken when it started). Said once a run, with Stop: the testers'
+        pass 2 saw a run go on 23 minutes on inputs made stale meanwhile, without a word."""
+        if not self.running or self._told_edit or self._snapshot is None:
+            return
+        try:
+            same = self._computed_part(self._snapshot) == self._computed_part(self.model.p)
+        except Exception:  # noqa: BLE001 - not comparable: said, the safe side
+            same = False
+        if same:
+            return
+        self._told_edit = True
+        banner = getattr(self.window, "banner", None)
+        text = _("The run goes on with the frames and settings it started with: the changes made since are computed "
+                 "by the next run.")
+        if banner is not None:
+            banner.ask(text, (_("Stop"), self.stop), (_("Continue"), lambda: None))
+
     def _replan(self):
         d = self.dialog
         if d is None or self.running or self._planner is None or d.phase() != "plan":
@@ -1348,6 +1384,7 @@ class RunController(QObject):
         self.track.plan = plan
         self.names = {}
         self.phase = "starting"
+        self._told_edit = False
         self.track.groups = self.groups(plan)                 # #3: the console counts blocks, as the window shows
         self.track.lines.append((time.time(), "starting", {"n": len(self.track.groups)}))
         self.set_console()
