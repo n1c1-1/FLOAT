@@ -36,6 +36,9 @@ def _small_with_blocks(win):
 
 
 def test_stay_leaves_the_drawer_open_on_the_block(win, monkeypatch):
+    from PySide6.QtCore import Qt
+    # the question waits for the mouse button to be up: a button another test left down never lets it come
+    monkeypatch.setattr(QApplication, "mouseButtons", staticmethod(lambda: Qt.NoButton))
     page, kinds = _small_with_blocks(win)
     page.bridge.choose(kinds["calibration"])
     _pump(win)
