@@ -1290,3 +1290,22 @@ def test_a_lock_held_by_a_worker_does_not_freeze_the_caller(tmp_path, monkeypatc
         release.set()
         t.join()
     assert api._keys(p) is not None
+
+
+def test_frames_mono_follows_the_inventorys_reading_of_the_frames(toy, monkeypatch):
+    """The sensor's pattern the Inventory read decides (a technical fact of the files): True mono, False colour,
+    None while no Inventory says; the definition (no filter named) does not."""
+    p = toy
+    w = p.workflows[0]
+    assert api.frames_mono(p, w.id) is None                              # not computed yet
+    d = Path(p.root) / "fake_inventory"
+    d.mkdir()
+    real = api._dir
+
+    def fake(pp, wf, stage, which="current"):
+        return d if stage == "inventory" and which.startswith("current") else real(pp, wf, stage, which)
+    monkeypatch.setattr(api, "_dir", fake)
+    (d / "manifest.json").write_text(json.dumps({"metrics": {"cfa": "GGGG", "mono": True}}), encoding="utf-8")
+    assert api.frames_mono(p, w.id) is True
+    (d / "manifest.json").write_text(json.dumps({"metrics": {"cfa": "RGGB"}}), encoding="utf-8")
+    assert api.frames_mono(p, w.id) is False

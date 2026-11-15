@@ -3349,3 +3349,31 @@ def __getattr__(name: str) -> Any:
         from .core import import_v1 as iv
         return getattr(iv, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def frames_mono(p: Project2, wf: int | Workflow) -> bool | None:
+    """Whether the workflow's frames are monochrome, as its Inventory read them (the sensor's pattern: a technical fact
+    of the files, never a label of their headers): True monochrome, False colour, None while no Inventory says (not
+    computed yet, an image source). The stack already follows the frames; the interface uses this to show a mono
+    workflow's settings when its sessions name no filter."""
+    from .core import cfa as cfa_mod
+    try:
+        keys = _keys(p)
+        w = keys.project.workflow(wf)
+        chain = keys.chain(w)
+    except (KeyError, ValueError):
+        return None
+    stages = [s for s in chain if s.partition("@")[0] == "inventory"]
+    found = []
+    for st in stages:
+        sid = st.partition("@")[2]
+        for which in ("current", "previous"):
+            d = _dir(p, w, "inventory", f"{which}@{sid}" if sid else which)
+            if d is not None:
+                m = _manifest_of(d).get("metrics") or {}
+                cfa = m.get("cfa")
+                found.append(bool(m.get("mono")) or (cfa is not None and cfa_mod.is_mono(cfa)))
+                break
+    if not found:
+        return None
+    return all(found)
