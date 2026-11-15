@@ -43,7 +43,7 @@ def by_name(m, name):
 
 def _make(world, key):
     t = next(c for c in GALLERY if c["key"] == key)
-    world.page.template_chosen(t, "Colour")
+    world.page.template_chosen(t, "Color")
     world.settle()
     return world.m, t
 
@@ -52,7 +52,7 @@ def _make(world, key):
 def test_the_template_makes_its_rows_its_combination_and_its_color(world, key):
     kind, filters = KEYS[key]
     m, t = _make(world, key)
-    assert [q.name for q in m.paths] == filters + ["Colour"]
+    assert [q.name for q in m.paths] == filters + ["Color"]
     rows = [by_name(m, f) for f in filters]
     for q in rows:
         blocks = [n["block"] for n in m.graph(q)]
@@ -61,14 +61,14 @@ def test_the_template_makes_its_rows_its_combination_and_its_color(world, key):
         assert ("align_on" in blocks) == (q is not rows[0])
         assert ("astrometry" in blocks) == (q is rows[0])
         assert (m.align_reference(q) == rows[0].pid) == (q is not rows[0])
-    fus = by_name(m, "Colour")
+    fus = by_name(m, "Color")
     f = m.p.workflow(fus.pid).source["fusion"]
     assert f["type"] == kind and [(i["role"], i["pid"]) for i in f["inputs"]] == [(r, by_name(m, r).pid) for r in filters]
     assert all(i.get("image", "output") == "output" for i in f["inputs"])
     assert [n["block"] for n in m.graph(fus)] == ["color"]
     from astro_gpu.graphcore.convert import convert                   # the project reopened keeps the Color block
     g = convert(m.p)
-    row = next(r for r in g.rows if r.name == "Colour")
+    row = next(r for r in g.rows if r.name == "Color")
     assert [g.blocks[b].kind for b in row.blocks] == ["combine", "color"]
     gone = {int(a) for a, _b in m.p.post["removed"]}          # Post's default layers: the rows' are left out
     assert gone == {r.pid for r in rows} and fus.pid not in gone
@@ -82,7 +82,7 @@ def test_the_plan_lists_the_combination_then_color(world, key):
     from astro_gpu import api
     kind, _f = KEYS[key]
     m, _t = _make(world, key)
-    fus = by_name(m, "Colour")
+    fus = by_name(m, "Color")
     plan = api.plan_all(m.p)
     stages = [st for pid, st in plan.targets if pid == fus.pid]
     cls = next(c for c in COMBINATIONS if c.kind == kind)
@@ -106,7 +106,7 @@ def test_a_missing_filter_gets_an_empty_session(world):
     m.add_filter_session("G")
     world.settle()
     t = next(c for c in GALLERY if c["key"] == "mono_rgb")
-    world.page.template_chosen(t, "Colour")
+    world.page.template_chosen(t, "Color")
     world.settle()
     assert sorted(m.filters()) == ["B", "G", "R"]
-    assert [q.name for q in m.paths] == ["R", "G", "B", "Colour"]
+    assert [q.name for q in m.paths] == ["R", "G", "B", "Color"]

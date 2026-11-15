@@ -127,7 +127,7 @@ def test_a_graph_gesture_applies_at_once_says_what_it_made_stale_and_undo_gives_
     assert res.ok and page.bridge.graph.blocks[grad].off and len(model._undo) == undo + 1   # applied: no question
     assert model.state(model.view(1), "color") == "stale"
     said = _toast(page)
-    assert "switched off" in said and "Computes again: Denoise, Colour" in said and "Output" not in said, said
+    assert "switched off" in said and "Computes again: Denoise, Color" in said and "Output" not in said, said
     assert [k for _t, k in page.canvas.toast.links()] == ["undo"]
     assert "Replace" not in said and "Do not ask" not in said
     if SHOTS:
@@ -271,7 +271,7 @@ def test_an_undo_or_a_redo_is_costed_as_a_gesture(world, model, page):
     settle(world["w"], page)
     assert computed_but_stars(model, model.view(1))
     cost = model.history_cost("redo")
-    assert cost.lost and "Denoise" in cost.blocks and "Colour" in cost.blocks and "Output" not in cost.text()
+    assert cost.lost and "Denoise" in cost.blocks and "Color" in cost.blocks and "Output" not in cost.text()
     page.bridge.redo()
     settle(world["w"], page)
     page.bridge.undo()

@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 import invariants as inv  # noqa: E402
 from fixtures import Doc  # noqa: E402
-import astro_gpu.client.names  # noqa: E402,F401  (the names as the window shows them: the engine's "Color" is "Colour")
+import astro_gpu.client.names  # noqa: E402,F401  (the names as the window shows them: the engine's "Color" as the interface writes it)
 from astro_gpu.graphcore import layout, places, COMMON  # noqa: E402
 from astro_gpu.graphcore.model import Index, check  # noqa: E402
 
@@ -349,8 +349,8 @@ def test_a20_a21_switch_off_and_needed():
     ok(doc, "switch_off", block=g)
     assert doc.summary(g) == "off: image passed on"
     a = of_kind(doc, r, "astrometry")
-    assert refused_inert(doc, "switch_off", block=a) == "needed by Colour: switch Colour off first"
-    assert refused_inert(doc, "remove_block", block=a) == "needed by Colour"
+    assert refused_inert(doc, "switch_off", block=a) == "needed by Color: switch Color off first"
+    assert refused_inert(doc, "remove_block", block=a) == "needed by Color"
 
 
 def test_a24_debruitage_needs_half_stacks():

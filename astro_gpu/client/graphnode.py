@@ -28,7 +28,7 @@ TITLES = {"align_on": "Align on", "sources": "Frames", "final": "Post", "image":
           "calibration": "Calibration",
           "alignement": "Registration",
           "selection": "Selection", "crop": "Crop", "empilement": "Stacking", "astrometrie": "Astrometry", "fond": "Gradient",
-          "couleur": "Colour", "debruitage": "Denoise", "deconv": "Deconvolution",
+          "couleur": "Color", "debruitage": "Denoise", "deconv": "Deconvolution",
           "etoiles": "Stars/background", "synth": "Synthetic stars",
           "post": "Output", "demi_piles": "Half-stacks", "composition": "Combine layers"}
 #: a combination's named inputs as the user reads them (stages/combine.py ports)
@@ -158,7 +158,7 @@ STEPS = [
          stages=["astrometry", "reference", "catalogs"],
          what="Finds where the image points on the sky by matching its stars to Gaia, then fetches the catalogue "
               "stars."),
-    dict(key="couleur", phase=4, title="Colour", kind="fixed", stages=["color"],
+    dict(key="couleur", phase=4, title="Color", kind="fixed", stages=["color"],
          what="Measures the sensor's response on the Gaia spectra of the field stars, then the matrix to the true "
               "sky colors."),
     dict(key="synth", phase=4, title="Synthetic stars", kind="fixed", stages=["synth_stars"],

@@ -89,7 +89,7 @@ def both(rec, m, fn):
     old = rec.check(m.p, a)
     if not RECORD:
         assert m.graph_rebuilds == 0, "the definition was changed outside the graph"
-    # a name as stored now (the colour block's word is "Colour" since the recordings: test_h1_old_way's text)
+    # a name as stored now (test_h1_old_way's text)
     return (neutral(old) if isinstance(old, str) else old), h1._plain(a)
 
 

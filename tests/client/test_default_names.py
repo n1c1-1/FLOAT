@@ -89,12 +89,13 @@ def test_a_workflow_made_from_a_template_in_french_is_stored_in_english_and_show
 
 
 def test_the_colour_block_is_written_one_way_and_an_earlier_name_follows():
-    """The testers' pass 2: block "Color", workflow "Colour full" side by side. The interface writes "Colour"; the
-    engine's word and the names projects stored before ("Ha · Color") are shown so too."""
+    """The colour block is written one way, "Color" (the engine owner's spelling, the engine's and the graph core's own
+    word); the names projects stored for a while with "Colour" ("Ha · Colour") are shown and stored so too."""
     from astro_gpu.client.graphnode import TITLES
-    assert TITLES["couleur"] == "Colour"
+    assert TITLES["couleur"] == "Color"
     i18n.set_language("en")
-    assert names.shown("Ha · Color") == "Ha · Colour" and names.neutral("Ha · Color") == "Ha · Colour"
+    assert names.shown("Ha · Colour") == "Ha · Color" and names.neutral("Ha · Colour") == "Ha · Color"
+    assert names.shown("Ha · Color") == "Ha · Color"
     i18n.set_language("fr")
     try:
         assert names.shown("Ha · Color") == "Ha · Couleur" and names.shown("Colour") == "Couleur"

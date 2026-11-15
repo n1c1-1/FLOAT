@@ -80,9 +80,10 @@ def _copies() -> list[tuple[str, list[re.Pattern]]]:
     return out
 
 
-#: English names of the application's words that are shown otherwise: the engine's and the graph core's own word, and
-#: the name projects made before stored ("Ha · Color"), is shown and stored as the interface writes it
-LEGACY = {"Color": "Colour"}
+#: English names of the application's words that are shown otherwise: the name projects saved for a while stored for
+#: the colour block ("Ha · Colour") is shown and stored as the interface writes it, the engine's and the graph core's
+#: own word, "Color"
+LEGACY = {"Colour": "Color"}
 
 
 def _word(text: str, to: str) -> str | None:

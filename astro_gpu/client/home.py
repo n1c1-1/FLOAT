@@ -757,7 +757,7 @@ class HomeView(QWidget):
         sv = QVBoxLayout(self.sky_box)
         sv.setContentsMargins(0, 0, 0, 0)
         sv.setSpacing(4)
-        self.sky_text = label(_("Star catalogue not installed: Astrometry and Colour need it"), "small", wrap=True)
+        self.sky_text = label(_("Star catalogue not installed: Astrometry and Color need it"), "small", wrap=True)
         sv.addWidget(self.sky_text)
         inst = QPushButton(_("Install catalogue"))
         set_icon(inst, "catalogue", 16)

@@ -224,11 +224,11 @@ CATALOG = {
               "Where the sky background is made neutral grey.",
               choices=["Automatic: nebula-free", "Drawn on the image"], reason=AS_TODAY),
         ]),
-        ("Colour measurement", [
+        ("Color measurement", [
             E("color", "aperture", "expert", help="Radius of the light measurement of each star."),
         ]),
         ("Fallback", [E("color", "on_failure"), E("color", "min_stars")]),
-        ("Colour stars (Gaia)", [
+        ("Color stars (Gaia)", [
             E("catalogs", "xp_gmin", "expert", help="Magnitude of the brightest star used for the color."),
             E("catalogs", "xp_gmax", "expert", help="Magnitude of the faintest."),
             E("catalogs", "xp_max", "expert", help="Maximum number of stars used."),
@@ -356,7 +356,7 @@ UNITS = {"x median": "× median", "frames": "frames", "deg": "°", "sigma": "σ"
 # where each stage is computed, as the chain names it
 STAGE_STEP = {"inventory": "Calibration", "calibrate": "Calibration", "register": "Registration",
               "stack": "Stacking", "astrometry": "Astrometry", "catalogs": "Astrometry", "surveys": "Astrometry",
-              "reference": "Astrometry", "color": "Colour", "denoise": "Denoise", "gradient": "Gradient",
+              "reference": "Astrometry", "color": "Color", "denoise": "Denoise", "gradient": "Gradient",
               "render_simple": "Output", "star_removal": "Stars"}
 ENGINE_LEVEL = {"basic": "normal", "advanced": "expert", "expert": "expert", "system": "system"}
 TYPES = {"int": "int", "float": "float", "bool": "bool", "str": "str", "float | None": "optfloat"}

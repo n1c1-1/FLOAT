@@ -109,7 +109,7 @@ def test_the_section_shows_the_folder_the_state_and_the_two_downloads(env, qapp)
     assert "Offline star data" in shown and "Nothing is fetched while a project runs" in " ".join(shown)
     assert "online" not in " ".join(_gaia(shown))
     assert "Star catalogue" in shown and "Install (1.85 GB)" in shown
-    assert "Positions and colours of the stars, 1.85 GB · needed by Astrometry and Colour" in shown
+    assert "Positions and colours of the stars, 1.85 GB · needed by Astrometry and Color" in shown
     assert _gaia(shown).count("Not installed") == 2 and "Open folder" in shown        # the bright stars too
     assert not [t for t in shown if "Zenodo" in t or "Download positions" in t or "Download spectra" in t
                 or "Star spectra" in t or "Star positions" in t]                       # the full extracts are not offered
@@ -125,7 +125,7 @@ def test_the_section_shows_the_folder_the_state_and_the_two_downloads(env, qapp)
 
 
 def test_the_row_says_which_blocks_need_the_catalogue(env, qapp):
-    needed = "Positions and colours of the stars, 1.85 GB · needed by Astrometry and Colour"
+    needed = "Positions and colours of the stars, 1.85 GB · needed by Astrometry and Color"
     d, page = _page(qapp)
     shown = _gaia(_texts(page))
     assert shown.index("Star catalogue") < shown.index(needed)

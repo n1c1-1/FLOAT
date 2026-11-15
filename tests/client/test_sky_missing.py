@@ -137,7 +137,7 @@ def test_home_says_once_when_the_star_catalogue_is_not_installed(qapp, tmp_path,
     try:
         home.resize(1200, 700)
         assert home.sky_box.isVisibleTo(home)
-        assert home.sky_text.text() == "Star catalogue not installed: Astrometry and Colour need it"
+        assert home.sky_text.text() == "Star catalogue not installed: Astrometry and Color need it"
         # at the top of the left column, above its buttons, not at the foot where it was missed
         home.show()
         new = _button(home, "New project")

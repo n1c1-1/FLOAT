@@ -46,7 +46,7 @@ def test_s20_d_switches_off_then_refuses_a_needed_block(B):
     n = B.steps()
     B.key("D")
     assert not B.graph.blocks[a].off and B.steps() == n
-    assert B.toast() == "needed by Colour: switch Colour off first"
+    assert B.toast() == "needed by Color: switch Color off first"
 
 
 def test_s21_del_on_a_needed_block_is_refused_with_its_reason(B):
@@ -56,7 +56,7 @@ def test_s21_del_on_a_needed_block_is_refused_with_its_reason(B):
     n, before = B.steps(), B.boxes()
     B.key("Del")
     assert a in B.graph.blocks and B.boxes() == before and B.steps() == n
-    assert B.toast() == "needed by Colour"
+    assert B.toast() == "needed by Color"
 
 
 def test_s22_review_pause_from_the_menu(B):
@@ -411,7 +411,7 @@ def test_s41_refused_delete_cross_frames_the_dependants_and_deletes_them_too(B):
     B.g.click_cross(a)
     assert a in B.graph.blocks and B.steps() == n0
     assert B.canvas.blocks[c].alert and not B.canvas.blocks[a].alert
-    assert B.toast() == "needed by Colour" and B.canvas.toast.links() == [("Delete too", "delete_too")]
+    assert B.toast() == "needed by Color" and B.canvas.toast.links() == [("Delete too", "delete_too")]
     assert ALERT_MS == 1500
     pump(1.6)
     assert not B.canvas.blocks[c].alert

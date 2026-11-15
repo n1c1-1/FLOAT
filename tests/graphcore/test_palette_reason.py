@@ -7,7 +7,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from fixtures import Doc  # noqa: E402
-import astro_gpu.client.names  # noqa: E402,F401  (the names as the window shows them: the engine's "Color" is "Colour")
+import astro_gpu.client.names  # noqa: E402,F401  (the names as the window shows them: the engine's "Color" as the interface writes it)
 from test_points import ok  # noqa: E402
 
 
@@ -34,4 +34,4 @@ def test_color_and_stars_name_what_they_miss_beside_a_stacking():
 def test_without_any_stacking_the_stacking_is_what_is_missing():
     doc = Doc()
     ok(doc, "add_row", kind="session", files={"lights": ["L1.fit", "L2.fit"]})
-    assert doc.palette_state("color") == (False, "Colour needs Stacking first")
+    assert doc.palette_state("color") == (False, "Color needs Stacking first")
