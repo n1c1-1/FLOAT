@@ -146,3 +146,20 @@ def test_settings_that_change_no_result_apply_at_once_and_keep_every_key(qapp, t
             W.settle(1)
     finally:
         W.close()
+
+
+@pytest.mark.parametrize("mode", ["together", "per_session"])
+def test_the_stacking_panel_of_two_sessions_has_no_sessions_choice(qapp, tmp_path, mode):
+    """Which sessions a stack reads is drawn by the graph's wires (and Calibrate together or separately is the
+    Calibration block's menu): the Stacking panel shows no "Sessions" choice, which acted on nothing."""
+    from tests.client.graphview.legacy import World
+    from tests.client.graphview.test_gv_legacy_model import texts_of
+    W = World(tmp_path / "w", nights=2, stack_mode=mode)
+    try:
+        W.choose(W.one("stacking"))
+        W.settle(2)
+        texts = texts_of(W.page.panel)
+        assert W.page.panel.node.key == "empilement"
+        assert "Sessions" not in texts and not any(t.startswith(("All together", "One per session")) for t in texts)
+    finally:
+        W.close()

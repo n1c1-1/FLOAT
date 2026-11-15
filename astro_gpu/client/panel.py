@@ -1541,8 +1541,6 @@ class Panel(QWidget):
         if k == "selection":
             groups, extra = self.selection_rule(p, groups)
             self.selection(p)
-        if k == "empilement" and len(s.sessions) > 1:
-            self.stack_sessions()
         if k == "empilement":
             self.stack_methods(p)
         if k == "post" and p.end:
@@ -1554,24 +1552,6 @@ class Panel(QWidget):
         else:
             self.settings(p, sk, groups, extra)
         self.bv.addStretch(1)
-
-    def stack_sessions(self):
-        """Several nights: one stack of all (one per night is ◇: the engine stacks all the sessions together)."""
-        self.bv.addWidget(self.group_title(_("Sessions")))
-        row = QHBoxLayout()
-        for text, mode in ((_("All together"), "together"), (_("One per session"), "per_session")):
-            if mode == "per_session" and not prefs.spec():
-                continue
-            b = QPushButton(text + ("  ◇" if mode == "per_session" else ""))
-            b.setCheckable(True)
-            b.setObjectName("face")
-            b.setChecked(self.s.stack_mode == mode)
-            b.setEnabled(mode == "together")
-            if mode == "per_session":
-                b.setToolTip("◇ " + _("Not in the engine yet."))
-            row.addWidget(b)
-        row.addStretch(1)
-        self.bv.addLayout(row)
 
     # ------------------------------------------------------------ the block's draft (blockdraft.py)
     def _draft(self, node=None):
