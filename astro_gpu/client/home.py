@@ -647,7 +647,11 @@ def projects_location(avoid: str = "") -> str:
     return default_location().as_posix()
 
 
-DEFAULT_NAME = "NGC 7000"
+def default_name() -> str:
+    """The name proposed for a project that has none and no target: "Project" and today's date, a real value that
+    says nothing false (an object's name was proposed for frames of another object)."""
+    import datetime
+    return _("Project") + " " + datetime.date.today().isoformat()
 
 
 def default_location() -> Path:
@@ -706,7 +710,7 @@ class NewProjectDialog(QDialog):
         bb.addWidget(self.ok)
         v.addLayout(bb)
         self.name.textChanged.connect(self._update)
-        self.name.setText(name or DEFAULT_NAME)       # a real value, selected: typing replaces it, Save is enabled
+        self.name.setText(name or default_name())       # a real value, selected: typing replaces it, Save is enabled
         self.name.setFocus()
         self.name.selectAll()
         self._update()

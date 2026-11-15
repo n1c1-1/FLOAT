@@ -1699,6 +1699,7 @@ class Main(QMainWindow):
         if "error" in out:
             self.banner.say(_("The results could not be moved: {why}").format(why=out["error"]))
             return False
+        self.banner.hide()                               # the move is over: its notice goes with it
         return True
 
     def offer_import(self, root: Path):

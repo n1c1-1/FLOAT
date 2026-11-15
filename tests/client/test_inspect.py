@@ -1773,6 +1773,7 @@ def test_save_as_writes_the_edits_into_the_copy_only(qapp, tmp_path, monkeypatch
         assert (copy / "logs" / "journal.md").exists() and (copy / "state.json").exists()
         assert not (root / "store" / "stack" / "k1").exists() and not (root / "state.json").exists()
         assert (root / project2.FILE).read_bytes() == before
+        assert w.banner.isHidden()                                # the notice of the move goes when it is over
     finally:
         w.close()
 

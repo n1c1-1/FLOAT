@@ -36,6 +36,8 @@ def test_gv_no_project_name_from_a_folder(qapp, tmp_path):
     d = NewProjectDialog(str(tmp_path), "")
     d.show()
     qapp.processEvents()
-    assert d.name.text() == "NGC 7000" and d.name.selectedText() == "NGC 7000" and d.focusWidget() is d.name
+    import datetime
+    proposed = "Project " + datetime.date.today().isoformat()     # never an object's name the frames may not be of
+    assert d.name.text() == proposed and d.name.selectedText() == proposed and d.focusWidget() is d.name
     assert d.ok.isEnabled()                        # a real default name, selected: Save is not greyed
     d.reject()
