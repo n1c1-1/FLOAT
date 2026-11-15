@@ -1394,10 +1394,12 @@ def test_the_console_survives_a_rebuilt_panel_and_a_change_of_language(toy):
     english = toy.console()
     assert toy.track.status == "done", english                  # the whole console when a stage failed
     assert "Run finished: 5 blocks in" in english
-    # the Log panel is built again with the project screen (a change of language): the console is filled again
+    # the Log panel is built again with the project screen (a change of language): it first shows the last run of the
+    # engine's journal, as for a project opened again (logview.last_run_text), then the console is written again
+    from astro_gpu.client.logview import last_run_text
     appmod.apply_language("fr")
     toy.logp = LogPanel(toy.model)
-    assert toy.console() == ""
+    assert toy.console() == last_run_text(toy.p.root) != ""
     toy.ctl.retranslate()
     french = toy.console()
     assert "Exécution terminée : 5 blocs en" in french and "Empilement · terminé en" in french
