@@ -396,11 +396,34 @@ class Doc:
     def title(self, b) -> str:
         return shown(api.title(self.graph, b, self.tr))          # a row's default name, in the interface's language
 
+    def stack_used(self, b):
+        """The method the Stacking ``b``'s last result used ("classic" | "drizzle"), or what it will use when the
+        engine knows it (its automatic choice falls back to Classic for too few frames); None when nothing says it
+        yet, or without a project model."""
+        m = self.model
+        bm = getattr(m, "block_map", None) if m is not None else None
+        n = bm.node(b) if bm is not None else None
+        if n is None or not getattr(n, "paths", None) or not hasattr(m, "param_info"):
+            return None
+        info = m.param_info(n.paths[0], "stack", "method")
+        if info is None:
+            return None
+        if info.drift and info.result_value in ("drizzle", "classic"):
+            return info.result_value
+        if (info.origin == "user" or info.suggestion_known) and info.value in ("drizzle", "classic"):
+            return info.value
+        return None
+
     def summary(self, b, model=True) -> str:
         """The line under a block's name; ``model`` False: the graph's own (never what the project model reads)."""
         m = self.model if model else None
         bm = getattr(m, "block_map", None) if m is not None else None
         blk = self.graph.blocks.get(b)
+        if m is not None and blk is not None and blk.kind == "stacking" and not blk.off:
+            used = self.stack_used(b)                # the method its result used: Classic when drizzle fell back
+            if used is not None:
+                from ...graphcore import rules
+                return rules.say(rules.stacking_msg(self.graph, b, used=used), self.tr)
         if bm is not None and blk is not None and blk.kind == "post" and hasattr(bm, "post_line"):
             return bm.post_line()                    # Post's layers as Post lists them (an image's own layer too)
         if bm is not None and blk is not None and blk.kind in ("session", "calibration", "image"):

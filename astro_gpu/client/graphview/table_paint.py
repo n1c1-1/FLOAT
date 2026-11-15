@@ -398,10 +398,13 @@ class Painting:
         if b is None:                                    # the stack has no such block (switched out): nothing to show
             return "—", False, kind, None
         eff, blk = self.doc.effective(b), self.doc.graph.blocks.get(b)
-        t = settings_text(kind, eff, block=blk)
-        # its own: a key of its own, or engine settings of its own that change what it says (a Stacking set to
-        # Classic in its panel), never Common's
-        own = bool(self.doc.own_keys(b)) or t != settings_text(kind, eff)
+        used = self.doc.stack_used(b) if kind == "stacking" and hasattr(self.doc, "stack_used") else None
+        t = settings_text(kind, eff, block=blk, used=used)
+        # its own: a key of its own, or engine settings of its own that change what it says under either method (a
+        # Stacking set to Classic, or to a median, in its panel), never Common's
+        own = bool(self.doc.own_keys(b)) or any(
+            settings_text(kind, eff, block=blk, used=u) != settings_text(kind, eff, used=u)
+            for u in (None, "classic", "drizzle"))
         return t, own, kind, b
 
     def setting_lines(self, c):
@@ -412,8 +415,9 @@ class Painting:
             return ["—"], own, b
         common = c.id[1] == COMMON
         pre = "" if (own or common) else "↑ "
+        used = self.doc.stack_used(b) if kind == "stacking" and b is not None and hasattr(self.doc, "stack_used")             else None
         ts = settings_text(kind, self.doc.effective(b if b is not None else kind), short=True,
-                           block=self.doc.graph.blocks.get(b) if b is not None else None)
+                           block=self.doc.graph.blocks.get(b) if b is not None else None, used=used)
         return [pre + t, pre + ts], own, b
 
     def is_own(self, c):

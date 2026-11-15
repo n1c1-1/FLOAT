@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 from ...graphcore.model import FILE_KINDS
 from ...graphcore.operations import COMMON
-from ...graphcore.rules import defaults
+from ...graphcore.rules import PLAIN_COMBINATIONS, defaults
 from ..i18n import _, maybe, plural
 from ..names import shown
 
@@ -97,7 +97,7 @@ def short_count(n: int, kind: str) -> str:
     return _(SHORT[kind]).format(n=n)
 
 
-def settings_text(kind: str, eff: dict, short=False, block=None) -> str:
+def settings_text(kind: str, eff: dict, short=False, block=None, used=None) -> str:
     """Text of a settings cell from the core's effective settings: the same words as the block's summary in the graph
     (rules.summary_msg); `short` = the value only (a cell that follows Common in a narrow column). ``block``: the
     Stacking's block, whose engine settings stored by the settings panel come first, as in the graph (a beta tester
@@ -119,7 +119,12 @@ def settings_text(kind: str, eff: dict, short=False, block=None) -> str:
         return v.split(" · ")[0] if short else v
     sp = ((getattr(block, "params", None) or {}).get("stack") or {}) if kind == "stacking" else {}
     thr = str(eff.get("Rejection threshold", "")) if not isinstance(sp.get("kappa"), (int, float)) else         f"{float(sp['kappa']):g} σ"
-    drizzle = sp["method"] == "drizzle" if sp.get("method") in ("drizzle", "classic") else eff.get("Method") == "Drizzle"
+    if used in ("drizzle", "classic"):              # the method its last result used (the graph's own words)
+        drizzle = used == "drizzle"
+    else:
+        drizzle = sp["method"] == "drizzle" if sp.get("method") in ("drizzle", "classic") else eff.get("Method") == "Drizzle"
+    if not drizzle and sp.get("classic_combination") in PLAIN_COMBINATIONS:     # no rejection named: it has none
+        return _(PLAIN_COMBINATIONS[sp["classic_combination"]])
     if drizzle:
         scale = f"{float(sp['scale']):g}" if isinstance(sp.get("scale"), (int, float)) else str(eff.get("Drizzle scale", ""))
         m = _("drizzle {scale}").format(scale=maybe(scale))
