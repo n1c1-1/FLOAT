@@ -36,6 +36,8 @@
   "Unticked: every color stretched apart, which neutralizes the background": "Décochée : chaque couleur étirée à part, ce qui neutralise le fond",
   "Unticked: every color stretched apart, which neutralizes the background (the workflow's output is prepared again)": "Décochée : chaque couleur étirée à part, ce qui neutralise le fond (la sortie du workflow est préparée à nouveau)",
   "Nothing computed yet": "Rien de calculé",
+  "Results no longer kept": "Résultats plus gardés",
+  "The project's last picture; its workflows' results are no longer kept (removed or outdated): compute them again to work on it here. The layers it will have:": "La dernière image du projet ; les résultats de ses workflows ne sont plus gardés (retirés ou obsolètes) : calculez-les de nouveau pour la retravailler ici. Les calques qu'elle aura :",
   "The layers Post will have once their workflows are computed:": "Les calques que Post aura une fois leurs workflows calculés :",
   "{name}  ·  not computed yet": "{name}  ·  pas encore calculé",
   "Layer \"{name}\" deleted: its branch went with it · Ctrl+Z": "Calque « {name} » supprimé : sa branche aussi · Ctrl+Z",
