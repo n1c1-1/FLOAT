@@ -367,6 +367,7 @@ def test_open_and_close_a_project(env):
     assert w.status.text().startswith("3 workflows")
     cb = w.device_cb                    # left of Run: Automatic, the GPUs and the CPU, as Settings > Compute (6.9)
     assert cb.currentText() == "Automatic" and cb.itemData(cb.count() - 1) == "cpu"
+    assert w.device_name.text() == "GPU" and cb.itemText(0) == "Automatic"             # the list's name, top right
     assert "NVIDIA RTX 4060 Ti" in cb.itemData(0, Qt.ToolTipRole) and cb.itemText(cb.count() - 1) == "CPU only"
     for i in (1, 2, 0):
         w.set_mode(i)

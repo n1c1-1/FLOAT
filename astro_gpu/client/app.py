@@ -893,6 +893,9 @@ class Main(QMainWindow):
             h.addWidget(b)
             self.mode_btns.append(b)
         h.addStretch(1)
+        self.device_name = QLabel(_("GPU"))           # the list's name, the same word in both languages
+        self.device_name.setToolTip(_("Where the run computes"))
+        h.addWidget(self.device_name)
         self.device_cb = QComboBox()                  # where the run computes: a GPU of the machine, or the CPU
         self.device_cb.setToolTip(_("Where the run computes"))
         self.device_cb.setSizeAdjustPolicy(QComboBox.AdjustToContents)
