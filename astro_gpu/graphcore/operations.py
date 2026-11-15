@@ -370,6 +370,28 @@ def normalise(q):
                        and b.files[k] != q.common["files"].get(k, [])}
     q.common["files"] = {k: q.common["files"][k] for k in FILE_KINDS if q.common["files"].get(k)}
     q.common["settings"] = {k: dict(sorted(v.items())) for k, v in q.common["settings"].items() if v}
+    _norm_params(q)
+
+
+def _norm_params(q):
+    """An image block's engine settings are its node's. One whose node name is given by the compile (moved into a
+    chain already holding its name, or copied) may hold them under another name, another node's of its chain (a
+    second Gradient's settings applied to the first): they are put under the name it is given, which it keeps."""
+    late = [b for r in q.rows for b in r.blocks if b in q.blocks and q.blocks[b].kind in wfl.IMAGE_OPS
+            and q.blocks[b].engine is None and q.blocks[b].params]
+    if not late:
+        return
+    from ..core.project2 import Project2
+    from .compile import compile_into
+    names = compile_into(q, Project2(name="names")).names
+    for b in late:
+        blk, name = q.blocks[b], names.get(b)
+        if name is None or list(blk.params) == [name]:
+            continue
+        mine = {}
+        for kv in blk.params.values():
+            mine.update(kv)
+        blk.engine, blk.params = name, {name: mine}
 
 
 def _mid_row(ix, b):
