@@ -2408,11 +2408,12 @@ class GraphEditing:
         return sid
 
     def add_session_entries(self, sid: int, kind: str, paths, notes: list | None = None, left: list | None = None,
-                            all_images: bool = False) -> int:
+                            all_images: bool = False, twice: list | None = None) -> int:
         """Files or folders into a kind of a session, each frame stored on its own. A colour image (JPEG, PNG, TIFF)
         beside raw or FITS frames of its folder, given now or already in the kind, is not added (the engine reads a
         file entry as it is: it would be one more frame), unless ``all_images`` (the user's explicit « Take all »):
-        its paths go to ``left`` and a note says it."""
+        its paths go to ``left`` and a note says it. With a ``twice`` list, lights already in another session of the
+        same stack are not added either: their paths go there and a note says it (« Add anyway » passes None)."""
         from ..core.project import frame_kind, list_frames
         from .services.worker import norm_path
         mm = _mm()
@@ -2451,6 +2452,24 @@ class GraphEditing:
                 notes.append(("{name} left: beside raw frames", summary(aside)))
                 if left is not None:
                     left += sorted(aside)
+        if kind == "lights" and twice is not None:     # the same night already in another session of the stack
+            others: dict = {}
+            for r in self._g.rows:
+                ids = [b for b, _c in r.nights]
+                if any(getattr(self._g.blocks.get(b), "sid", None) == sid for b in ids):
+                    for b in ids:
+                        o = self._g.blocks.get(b)
+                        if o is not None and o.sid != sid:
+                            for e in (o.files or {}).get("lights") or []:
+                                others.setdefault(norm_path(self.p.abspath(e)), o.name or str(o.sid))
+            hit = [f for f in new if norm_path(f) in others]
+            if hit:
+                new = [f for f in new if norm_path(f) not in others]
+                names = sorted({others[norm_path(f)] for f in hit})
+                from .i18n import _
+                notes.append(("{name}", _("{n} already in {sessions}: not added").format(
+                    n=len(hit), sessions=", ".join(f"“{x}”" for x in names))))
+                twice += hit
         if not new:
             return 0
         flt = ""

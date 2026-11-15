@@ -762,7 +762,7 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
         return steps, []
 
     def drop_files(self, target, g):
-        self._rest = self._include = self._rather = None
+        self._rest = self._include = self._rather = self._anyway = self._filter = None
         if target.kind == "box":
             self._drop_on_boxes(target, g)
         elif target.kind in ("ghost_s", "ghost_p"):
@@ -785,6 +785,10 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
         ignored = 0
         if mode == "add":
             ignored = files.without_doubles(res, exist)
+        o0, k0 = boxes[0]
+        if k0 == "lights" and o0 != COMMON and len(boxes) == 1:          # the same night already in another session
+            files.elsewhere(res, files.stack_lights(self.doc.graph, session=o0))
+        self._anyway = lambda: self._left_steps([(o, k, res.elsewhere) for o, k in boxes])
         self._rest = lambda: self._left_steps([(o, k, res.left) for o, k in boxes])
         self._include = lambda: self._include_steps([(o, k, res.subs) for o, k in boxes], i)
         if not res.items:
@@ -794,21 +798,37 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
         o0, k0 = boxes[0]
         base = files.drop_toast(k0, None if o0 == COMMON else self.session_name(o0), len(taken), mode, len(boxes))
         self._rather = [self._step(o, k, res.items, "add") for o, k in boxes]
-        self.act([self._step(o, k, res.items, mode) for o, k in boxes],
-                 files.drop_sentence(base, res, mode, ignored, taken), files.drop_links(res, mode))
+
+        def go():
+            self.act([self._step(o, k, res.items, mode) for o, k in boxes],
+                     files.drop_sentence(base, res, mode, ignored, taken), files.drop_links(res, mode))
+        if k0 == "lights" and o0 != COMMON and len(boxes) == 1:
+            sf, flt = files.session_filter(self.doc.graph, o0), files.header_filter(res.items)
+            if sf and flt and flt != sf:                  # their header names another filter: the user chooses
+                self._filter = {"filter_here": go, "filter_own": lambda: self.act(
+                    files.own_filter_steps(self.doc.graph, flt, res.items),
+                    _("New {f} session added").format(f=flt), undo_link())}
+                self.toast.emit(*files.filter_question(flt, sf, self.session_name(o0)))
+                return
+        go()
 
     def _drop_new_sessions(self, target, g):
         """Each dropped folder (and the loose files together) a new session of the stack, or a new stack."""
         i = files.index()
         files.note_paths(self.reader, list(g.paths))
         lots = [files.resolve(self.reader, grp, i) for grp in self._groups(g)]
+        new_session = target.kind == "ghost_s"
+        if new_session:                  # the same night already in another session of the stack: said, not added
+            others = files.stack_lights(self.doc.graph, row=target.rid)
+            for r in lots:
+                files.elsewhere(r, others)
         taken = [r for r in lots if r.items]
         every = files.merge(lots)
-        new_session = target.kind == "ghost_s"
 
-        def steps_for(groups):
+        def steps_for(groups, names=None):
             if new_session:
-                return [("add_night", dict(row=target.rid, files={"lights": grp})) for grp in groups]
+                return [("add_night", dict(row=target.rid, files={"lights": grp}, name=(names or {}).get(j)))
+                        for j, grp in enumerate(groups)]
             if not groups:
                 return []
             out = [("add_row", dict(kind="session", files={"lights": groups[0]}))]
@@ -819,13 +839,32 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
                 subs = (files.include(self.reader, r.subs, i) for r in lots if r.subs)
                 return steps_for([x.items for x in subs if x.items]), []
             self._include = included
+            self._anyway = lambda: steps_for([r.elsewhere for r in lots if r.elsewhere])
             self.toast.emit(*files.nothing_to_take(every, 0))
             return
-        steps = steps_for([r.items for r in taken])
         if new_session:
             txt = plural(len(taken), "{n} session added", "{n} sessions added")
         else:
             txt = _("New stack added") if len(taken) == 1 else _("New stack added ({n} sessions)").format(n=len(taken))
+        sf = files.stack_filter(self.doc.graph, target.rid) if new_session else ""
+        flts = [files.header_filter(r.items) if sf else "" for r in taken]
+        odd = {j: f for j, f in enumerate(flts) if f and f != sf}
+        if odd:                          # frames whose header names another filter than the stack's: the user chooses
+            # « Add here »: in this stack, each named after its own frames' filter (never « R 2 » for green frames)
+            names = {j: files.free_session_name(self.doc.graph, f) for j, f in odd.items()}
+            own = [s for j, r in enumerate(taken) if j in odd for s in files.own_filter_steps(self.doc.graph, odd[j],
+                                                                                                r.items)]
+            rest = steps_for([r.items for j, r in enumerate(taken) if j not in odd])
+            self._filter = {"filter_here": lambda: self._new_sessions_made(
+                                steps_for([r.items for r in taken], names), txt, every, taken, lots, steps_for, i),
+                            "filter_own": lambda: self.act(rest + own, _("New {f} session added").format(
+                                f=", ".join(sorted(set(odd.values())))), undo_link())}
+            self.toast.emit(*files.filter_question(", ".join(sorted(set(odd.values()))), sf,
+                                                   self.model.stack_by_id(target.rid)["name"]))
+            return
+        self._new_sessions_made(steps_for([r.items for r in taken]), txt, every, taken, lots, steps_for, i)
+
+    def _new_sessions_made(self, steps, txt, every, taken, lots, steps_for, i):
         res = self.act(steps, files.drop_sentence(txt, every, "add"), files.drop_links(every, "add"))
         if not res.ok:
             return
@@ -833,6 +872,8 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
                 if b in self.doc.graph.blocks and self.doc.graph.blocks[b].kind == "session"]
         self._rest = lambda: self._left_steps([(sid, "lights", r.left) for sid, r in zip(made, taken)])
         self._include = lambda: self._include_steps([(sid, "lights", r.subs) for sid, r in zip(made, taken)], i)
+        self._anyway = lambda: (self._left_steps([(sid, "lights", r.elsewhere) for sid, r in zip(made, taken)])
+                                + steps_for([r.elsewhere for r in lots if not r.items and r.elsewhere]))
         self.focus_last_session()
 
     def focus_last_session(self):
@@ -1063,13 +1104,16 @@ class Table(QWidget):
     # ---- status line and toasts
     def summary(self):
         mp = self.grid.model
-        ns = nb = w = 0
+        ns = nb = w = tw = 0
         for pl in mp.stacks():
             a, b, v = mp.totals(pl)
             ns += a
             nb += b
             w += v
+            tw += mp.twice(pl)
         t = plural(ns, "{n} session", "{n} sessions") + " · " + count_text(nb, "lights")
+        if tw:
+            t += " · " + plural(tw, "{n} listed twice", "{n} listed twice")
         return t + " · " + plural(w, "{n} warn.", "{n} warn.") if w else t
 
     def _status_default(self):
@@ -1123,6 +1167,17 @@ class Table(QWidget):
             steps = [s for s in (g._rest() if g._rest else []) if s[1].get("paths")]
             if steps:
                 g.act(steps, _("All taken"), undo_link())
+        elif key in ("filter_here", "filter_own"):           # frames of another filter: the user's choice
+            do = (getattr(g, "_filter", None) or {}).get(key)
+            g._filter = None
+            if do is not None:
+                do()
+        elif key == "cancel":
+            g._filter = None
+        elif key == "add_anyway":
+            steps = g._anyway() if getattr(g, "_anyway", None) else []
+            if steps:
+                g.act(steps, _("Added anyway"), undo_link())
         elif key == "include":
             steps = (g._include() if g._include else ([], []))[0]
             if steps:

@@ -185,6 +185,8 @@ class Resolution:
     ``empty`` folders that gave nothing."""
     items: list = field(default_factory=list)
     left: list = field(default_factory=list)
+    elsewhere: list = field(default_factory=list)      # lights already in another session of the stack (not added)
+    elsewhere_in: list = field(default_factory=list)   # the names of those sessions
     others: int = 0
     subs: list = field(default_factory=list)
     unreadable: list = field(default_factory=list)
@@ -206,6 +208,92 @@ def beside_raws(paths, existing=()) -> list[str]:
     and drops the others, the raws when the JPEGs are more."""
     raw = {_folder_of(p) for p in list(paths) + list(existing) if frame_kind(p) in ("raw", "fits")}
     return [p for p in paths if frame_kind(p) == "colour" and _folder_of(p) in raw]
+
+
+def stack_lights(graph, session=None, row=None) -> dict[str, str]:
+    """{a light's path, case-folded: the name of the session holding it} of the OTHER sessions of the stack(s) drawing
+    ``session`` (or of stack ``row``): the same night added twice is counted twice on the screen, though the engine
+    reads each file once."""
+    out: dict[str, str] = {}
+    for r in graph.rows:
+        ids = [s for s, _c in r.nights]
+        if (session is not None and session in ids) or (row is not None and r.id == row):
+            for s in ids:
+                b = graph.blocks.get(s)
+                if s == session or b is None:
+                    continue
+                for f in ((b.files or {}).get("lights") or []):
+                    out.setdefault(os.path.normcase(normalise(f)), b.name or s)
+    return out
+
+
+def elsewhere(res: Resolution, others: dict[str, str]) -> None:
+    """The lights of a drop already in another session of the stack (``stack_lights``) taken out of its items: said,
+    not added (« Add anyway » adds them)."""
+    hit = [p for p in res.items if os.path.normcase(normalise(p)) in others]
+    if hit:
+        gone = set(hit)
+        res.items = [p for p in res.items if p not in gone]
+        res.elsewhere = hit
+        res.elsewhere_in = sorted({others[os.path.normcase(normalise(p))] for p in hit})
+
+
+def elsewhere_text(res: Resolution) -> str:
+    """« 60 already in “Session 1”: not added », "" when none."""
+    if not res.elsewhere:
+        return ""
+    return _("{n} already in {sessions}: not added").format(
+        n=len(res.elsewhere), sessions=", ".join(f"“{s}”" for s in res.elsewhere_in))
+
+
+def header_filter(paths) -> str:
+    """The filter the FITS header of the first FITS frame of ``paths`` names (its FILTER value, read as the engine
+    reads it: io.frames.frame_filter); "" for raws or no filter. Never a file's or a folder's name."""
+    from ...io.frames import frame_filter
+    first = next((p for p in paths if frame_kind(p) == "fits"), None)
+    return frame_filter(first) if first is not None else ""
+
+
+def session_filter(graph, session) -> str:
+    """The filter stored for a Session block's night ("" for a colour camera's, or none stored)."""
+    b = graph.blocks.get(session)
+    sid = getattr(b, "sid", None)
+    e = next((n for n in graph.nights if n.get("sid") == sid), None) if sid is not None else None
+    return str((e or {}).get("filter") or "")
+
+
+def stack_filter(graph, row) -> str:
+    """The one filter of a stack's nights, "" when they name none or several."""
+    r = next((x for x in graph.rows if x.id == row), None)
+    flts = {session_filter(graph, s) for s, _c in (r.nights if r is not None else [])}
+    return next(iter(flts)) if len(flts) == 1 else ""
+
+
+def free_session_name(graph, base: str) -> str:
+    """``base``, else « base 2 », « base 3 »…: a name no session has (the name of the frames' own filter)."""
+    names = {b.name for b in graph.blocks.values() if b.kind == "session"} | {n.get("name") for n in graph.nights}
+    k, name = 2, base
+    while name in names:
+        name, k = f"{base} {k}", k + 1
+    return name
+
+
+def own_filter_steps(graph, flt: str, items) -> list:
+    """« New {f} session »: a stack of its own for frames whose header names filter ``flt``: its night (that filter,
+    named after it), its stack, then its lights."""
+    from ...graphcore.operations import _next_sid
+    sid, name = _next_sid(graph), free_session_name(graph, flt)
+    return [("new_night", dict(name=name, filter=flt)),
+            ("add_stack", dict(name=name, nights=[sid])),
+            ("add_files", lambda outs: dict(session=outs[-1].created["session"], kind="lights", paths=list(items),
+                                            mode="add"))]
+
+
+def filter_question(flt: str, other: str, where: str) -> tuple[str, list]:
+    """(text, links) of frames whose header names another filter than the session or stack they are dropped on: the
+    user chooses, nothing is added before."""
+    return (_("These frames' header names filter {f}, “{s}” is {g}: where do they go?").format(f=flt, s=where, g=other),
+            [(_("Add here"), "filter_here"), (_("New {f} session").format(f=flt), "filter_own"), (_("Cancel"), "cancel")])
 
 
 def beside_note(stored) -> tuple[list, str, str]:
@@ -280,6 +368,8 @@ def merge(parts) -> Resolution:
         r.subs += x.subs
         r.unreadable += x.unreadable
         r.empty += x.empty
+        r.elsewhere += x.elsewhere
+        r.elsewhere_in = sorted(set(r.elsewhere_in) | set(x.elsewhere_in))
     return r
 
 
@@ -317,6 +407,7 @@ def drop_sentence(base_text, res: Resolution, mode, ignored=0, taken=None):
         parts.append(_("unreadable folder"))
     if ignored:
         parts.append(plural(ignored, "{n} already there, ignored", "{n} already there, ignored"))
+    parts.append(elsewhere_text(res))
     return " · ".join(p for p in parts if p)
 
 
@@ -330,14 +421,18 @@ def drop_links(res: Resolution, mode, undo=True):
         links.append((_("Take all"), "take_all"))
     if res.subs:
         links.append((_("Include"), "include"))
+    if res.elsewhere:
+        links.append((_("Add anyway"), "add_anyway"))
     return links
 
 
 def nothing_to_take(res: Resolution, ignored):
-    """(text, links) of a drop that adds nothing: frames all left out by the filter, sub-folders only, doubles, or
-    nothing the engine can read."""
+    """(text, links) of a drop that adds nothing: frames all left out by the filter, sub-folders only, doubles, lights
+    of another session of the stack, or nothing the engine can read."""
     if res.left or res.subs:
         return drop_sentence("", res, "add", ignored, taken=[]), drop_links(res, "add", undo=False)
+    if res.elsewhere:
+        return elsewhere_text(res), drop_links(res, "add", undo=False)
     if ignored:
         return _("Already there: nothing added"), []
     if res.others:

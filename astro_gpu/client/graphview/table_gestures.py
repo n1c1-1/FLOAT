@@ -208,6 +208,9 @@ class Gestures:
             if len(src) > 3:
                 t.append(_("… {n} more").format(n=len(src) - 3))
             if owner != COMMON:
+                shared = mp.shared_with(owner, kind)
+                if shared:                                # Inspect's words: a sharing, not a warning
+                    t.append(_("shared with {names}: one master").format(names=", ".join(shared)))
                 t += [w.text for w in mp.box_warnings(owner, kind)]
             return "\n".join(x for x in t if x)
         if c.kind in ("setting", "cal"):
@@ -224,7 +227,9 @@ class Gestures:
             if pl is None:
                 return ""
             ns, nb, _w = mp.totals(pl)
-            return " · ".join([pl["name"], plural(ns, "{n} session", "{n} sessions"), count_text(nb, "lights")])
+            tw = mp.twice(pl)
+            return " · ".join([pl["name"], plural(ns, "{n} session", "{n} sessions"), count_text(nb, "lights")]
+                              + ([plural(tw, "{n} listed twice", "{n} listed twice")] if tw else []))
         return ""
 
     # ------------------------------------------------------------------ clicks on a cell's buttons

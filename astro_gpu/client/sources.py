@@ -222,6 +222,7 @@ class SourcesView(QWidget):
         self._group_token = 0
         self._reading = False                              # the frames of the kind shown are being read
         self._left: dict = {}                              # {(session, kind): colour images left by the last add}
+        self._twice: dict = {}                             # {(session, kind): lights found in another session}
         self._seq_order: list[int] = []                  # the viewer's sequence: indices of ``items``
         self._syncing = False
         outer = QVBoxLayout(self)
@@ -440,15 +441,19 @@ class SourcesView(QWidget):
         """A new session, without frames: shown here, where they are added."""
         self.show_session(self.s.new_session())
 
-    def add_files(self, kind: str, paths: list, all_images: bool = False) -> int:
+    def add_files(self, kind: str, paths: list, all_images: bool = False, anyway: bool = False) -> int:
         """Files or folders into a kind of the session shown (a folder is a shortcut for its frames); said, and shown.
-        A camera's JPEGs beside its raws are left (« Take all » beside the kind adds them: ``all_images``)."""
+        A camera's JPEGs beside its raws are left (« Take all » beside the kind adds them: ``all_images``); lights
+        already in another session of the stack too (« Add anyway »: ``anyway``)."""
         if self.sid is None:
             return 0
         notes: list = []                                   # what was not added, said (GUI exploration 7.5)
         left: list = []
-        n = self.s.add_session_entries(self.sid, kind, paths, notes, left, all_images)
+        twice: list | None = None if anyway else []
+        n = self.s.add_session_entries(self.sid, kind, paths, notes, left, all_images, twice)
         self._left = {(self.sid, kind): left} if left else {}
+        self._twice = {(self.sid, kind): twice} if twice else {}
+        left = left or twice
         said = [_(t).format(name=nm) for t, nm in notes[:2]] + (["…"] if len(notes) > 2 else [])
         if n:
             said.insert(0, plural(n, "{n} file added to “{session}” · Ctrl+Z", "{n} files added to “{session}” · Ctrl+Z",
@@ -464,6 +469,12 @@ class SourcesView(QWidget):
         left = self._left.pop((self.sid, kind), [])
         if left:
             self.add_files(kind, left, all_images=True)
+
+    def add_anyway(self, kind: str):
+        """« Add anyway »: the lights the last addition found in another session of the stack, added as chosen."""
+        twice = self._twice.pop((self.sid, kind), [])
+        if twice:
+            self.add_files(kind, twice, anyway=True)
 
     def beside_raws(self, kind: str) -> list[str]:
         """The colour images a kind of the session holds beside raw or FITS frames of their folder (stored before
@@ -483,6 +494,11 @@ class SourcesView(QWidget):
         if left:
             lines.append(("info", _("{name} left: beside raw frames").format(name=summary(left)), _("Take all"),
                           _("Adds them as frames too: the engine then reads each as one more frame"), self.take_all))
+        twice = self._twice.get((self.sid, kind))
+        if twice:
+            lines.append(("info", _("{n} already in another session of the stack: not added").format(n=len(twice)),
+                          _("Add anyway"), _("Adds them to this session too: the same files listed twice"),
+                          self.add_anyway))
         stored, note, button = beside_note([self.s.p.abspath(e) for e in getattr(self._session(), kind)])  # the
         # graph page's own words
         if stored:

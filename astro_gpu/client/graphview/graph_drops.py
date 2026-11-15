@@ -29,6 +29,7 @@ class GraphDrops(QObject):
         self.reader.listen(self.progress.emit)
         self.progress.connect(self._on_progress)
         self._last = None             # (session, kind, Resolution, filter) of the last drop: its links
+        self._filter = None           # a drop held while the user chooses where frames of another filter go
         bridge.replaced.connect(self._forget)
 
     def _forget(self):
@@ -61,10 +62,22 @@ class GraphDrops(QObject):
         _src, there = doc.files_of(session, kind)
         res = files.resolve(self.reader, paths, i, existing=there)
         ignored = files.without_doubles(res, there)
+        if kind == "lights":                            # the same night already in another session of the stack
+            files.elsewhere(res, files.stack_lights(doc.graph, session=session))
         self._last = (session, kind, res, i)
         if not res.items:
             self._say(*files.nothing_to_take(res, ignored))
             return None
+        if kind == "lights":                            # their header names another filter: the user chooses first
+            sf, flt = files.session_filter(doc.graph, session), files.header_filter(res.items)
+            if sf and flt and flt != sf:
+                self._filter = (session, kind, res, ignored)
+                self._say(*files.filter_question(flt, sf, doc.title(session)))
+                return None
+        return self._store(session, kind, res, ignored)
+
+    def _store(self, session, kind, res, ignored):
+        bridge, doc = self.bridge, self.bridge.doc
         out = bridge.act("add_files", quiet=True, session=session, kind=kind, paths=res.items, mode="add")
         if not out.ok:
             self._say(bridge.say(out.reason) if out.reason else _("Not possible"), [])
@@ -106,6 +119,19 @@ class GraphDrops(QObject):
         if key == "undo":
             bridge.undo()
             return
+        if key in ("filter_here", "filter_own", "cancel"):     # frames of another filter: the user's choice
+            held, self._filter = self._filter, None
+            if held is None or key == "cancel":
+                return
+            session, kind, res, ignored = held
+            if key == "filter_here":
+                self._store(session, kind, res, ignored)
+                return
+            flt = files.header_filter(res.items)
+            out = bridge.act_many(files.own_filter_steps(bridge.doc.graph, flt, res.items), quiet=True)
+            if out.ok:
+                self._say(_("New {f} session added").format(f=flt), [(_("Undo"), "undo")])
+            return
         if self._last is None:
             return
         session, kind, res, i = self._last
@@ -113,6 +139,8 @@ class GraphDrops(QObject):
             for p in res.left:
                 self.reader.note(p, False)
             self._add(session, kind, list(res.left), _("All taken"))
+        elif key == "add_anyway" and res.elsewhere:
+            self._add(session, kind, list(res.elsewhere), _("Added anyway"))
         elif key == "include" and res.subs:
             sub = files.include(self.reader, res.subs, i)
             if sub.items:

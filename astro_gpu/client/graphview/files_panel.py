@@ -137,6 +137,8 @@ class FilesPanel(QWidget):
             v.addWidget(self.link, 0, Qt.AlignLeft)
         self.summary = label("", "small", wrap=True)
         v.addWidget(self.summary)
+        self.shared = label("", "small", wrap=True)     # the same frames as another session: Inspect's words
+        v.addWidget(self.shared)
         bar = QHBoxLayout()                               # colour images saved beside raws: said, one click out
         self.beside = label("", "warn", wrap=True)
         bar.addWidget(self.beside, 1)
@@ -216,6 +218,16 @@ class FilesPanel(QWidget):
                 parts.append(plural(exc, "{n} excluded", "{n} excluded"))
             text = " · ".join(parts)
         self.summary.setText(text)
+        names = self.shared_with()
+        text = _("shared with {names}: one master").format(names=", ".join(names)) if names else ""
+        if self.kind == "lights" and self.owner != COMMON:   # the same night in another session of the stack
+            res = files.Resolution(items=list(self.held()))
+            files.elsewhere(res, files.stack_lights(self.bridge.doc.graph, session=self.owner))
+            if res.elsewhere:
+                text = _("{n} also in {sessions}: listed twice").format(
+                    n=len(res.elsewhere), sessions=", ".join(f"“{s}”" for s in res.elsewhere_in))
+        self.shared.setText(text)
+        self.shared.setVisible(bool(text))
         aside, note, button = files.beside_note(self.entries())
         self.beside.setText(note)
         self.b_beside.setText(button)
@@ -223,6 +235,18 @@ class FilesPanel(QWidget):
         self.b_beside.setVisible(bool(aside))
         self.rows.rebuild()
         self._update_button()
+
+    def shared_with(self) -> list[str]:
+        """The other sessions whose own list of this calibration kind is this one's (a sharing, never a warning)."""
+        g = self.bridge.doc.graph
+        if self.owner == COMMON or self.kind == "lights" or self.inherited:
+            return []
+        mine = sorted(os.path.normcase(x) for x in self.held())
+        if not mine:
+            return []
+        return [g.blocks[s].name or self.bridge.doc.title(s) for r in g.rows for s, _c in r.nights
+                if s != self.owner and s in g.blocks
+                and sorted(os.path.normcase(x) for x in ((g.blocks[s].files or {}).get(self.kind) or [])) == mine]
 
     def remove_beside(self):
         """« Remove JPG »: the colour images beside raws taken out of the list, one undo step."""

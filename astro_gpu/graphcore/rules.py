@@ -596,18 +596,43 @@ def warnings(p, scope=None):
             if f in p.blocks[s].files:
                 for path in p.blocks[s].files[f]:
                     where.setdefault(path, []).append((s, f))
+    order = {s: i for i, s in enumerate(sess)}
+
+    def double(s, f, s2, f2):
+        """A file of kind f of session s also listed as (s2, f2) by mistake. The same calibration frames in two
+        sessions are a sharing, never a warning; the same lights in two sessions are said once, on the later one."""
+        if (s2, f2) == (s, f):
+            return False
+        if f2 == f and s2 != s:
+            return f == "lights" and order.get(s2, 0) < order.get(s, 0)
+        return True
     for s in mine:
         if s not in any_flats and any_flats - {s} and files_of(p, s, "lights")[1]:     # a session with lights
             out.append((s, "flats", "No flats: the other sessions have some", None))
         for f in FILE_KINDS:
+            hit, first = [], None
             for path in p.blocks[s].files.get(f, []):
-                other = [(s2, f2) for s2, f2 in where.get(path, []) if (s2, f2) != (s, f)]
+                other = [(s2, f2) for s2, f2 in where.get(path, []) if double(s, f, s2, f2)]
                 if other:
-                    s2, f2 = other[0]
-                    out.append((s, f, M("Also in {kind} of “{t}”", kind=FILE_LABEL[f2], t=title_msg(p, s2, ix)),
-                                ("remove_files", {"session": s, "kind": f, "paths": [path]})))
-                    break
+                    hit.append(path)
+                    first = first or other[0]
+            if hit:
+                s2, f2 = first
+                out.append((s, f, M("{n} also in {kind} of “{t}”", n=len(hit), kind=FILE_LABEL[f2],
+                                    t=title_msg(p, s2, ix)),
+                            ("remove_files", {"session": s, "kind": f, "paths": hit})))
     return out
+
+
+def stack_light_count(p, r) -> tuple[int, int]:
+    """(the distinct lights of a stack's sessions, how many of them are listed in two sessions or more): the engine
+    reads each file once, so the same night added to two sessions is not twice the frames."""
+    import os
+    seen: dict[str, int] = {}
+    for s, _c in r.nights:
+        for path in set(os.path.normcase(x.replace("\\", "/")) for x in files_of(p, s, "lights")[1]):
+            seen[path] = seen.get(path, 0) + 1
+    return len(seen), sum(1 for v in seen.values() if v > 1)
 
 
 def card_summary_msg(p, rid):
@@ -616,9 +641,11 @@ def card_summary_msg(p, rid):
     if not r.nights:
         return ""
     n = len(r.nights)
-    lights = sum(len(files_of(p, s, "lights")[1]) for s, _c in r.nights)
+    lights, twice = stack_light_count(p, r)
     stk = next((b for b in r.blocks if p.blocks[b].kind == "stacking"), None)
     parts = [M("{n} session" if n == 1 else "{n} sessions", n=n), _count(lights, "lights")]
+    if twice:
+        parts.append(M("{n} listed twice", n=twice))
     if stk:
         parts.append(_first_part(summary_msg(p, stk, ix=ix)))
     return join(parts)

@@ -506,12 +506,25 @@ class TableModel:
                         for x in (self.reader.expand(tuple(own)) or []):
                             if x.path in where and where[x.path][0] != (s["sid"], kind):
                                 (osid, okind), name = where[x.path]
-                                if osid != s["sid"] or okind != kind:
+                                shared = okind == kind and osid != s["sid"] and kind != "lights"   # a sharing,
+                                if (osid != s["sid"] or okind != kind) and not shared:              # not a mistake
                                     out.setdefault(s["sid"], {}).setdefault(kind, (name, okind))
                             else:
                                 where.setdefault(x.path, ((s["sid"], kind), s["name"]))
             return out
         return self._memo(("doubles",), f)
+
+    def shared_with(self, sid, kind) -> list[str]:
+        """The names of the other sessions whose own list of a calibration kind is this one's (Inspect's « shared
+        with … : one master »): a sharing the user made, said as such, never as a warning."""
+        import os
+        if kind == "lights":
+            return []
+        mine = sorted(os.path.normcase(x) for x in (self.own_list(sid, kind) or []))
+        if not mine:
+            return []
+        return [s["name"] for pl in self.stacks() for s in pl["sessions"] if s["sid"] != sid
+                and sorted(os.path.normcase(x) for x in (self.own_list(s["sid"], kind) or [])) == mine]
 
     def all_warnings(self):
         out = []
@@ -525,16 +538,35 @@ class TableModel:
 
     # ------------------------------------------------------------------ stack totals, rows
     def totals(self, pl):
-        """(sessions, lights listed, warnings) of a stack."""
+        """(sessions, distinct lights, warnings) of a stack: a light listed in two of its sessions is one frame (the
+        engine reads each file once); ``twice`` says how many are."""
         def f():
-            ns, nb = len(pl["sessions"]), 0
-            for s in pl["sessions"]:
-                own = self.own_list(s["sid"], "lights")
-                if own:
-                    nb += self.file_list(own).n
+            ns = len(pl["sessions"])
+            nb = len(self._stack_lights(pl))
             w = sum(len(self.session_warnings(s["sid"])) for s in pl["sessions"])
             return ns, nb, w
         return self._memo(("tot", pl["id"]), f)
+
+    def _stack_lights(self, pl) -> dict:
+        """{a light's path, case-folded: in how many of the stack's sessions it is listed}."""
+        import os
+
+        def f():
+            seen: dict = {}
+            for s in pl["sessions"]:
+                own = self.own_list(s["sid"], "lights")
+                if not own:
+                    continue
+                fs = self.reader.expand(tuple(own))
+                paths = [x.path for x in fs] if fs is not None else list(own)
+                for x in {os.path.normcase(str(x).replace("\\", "/")) for x in paths}:
+                    seen[x] = seen.get(x, 0) + 1
+            return seen
+        return self._memo(("lights", pl["id"]), f)
+
+    def twice(self, pl) -> int:
+        """How many lights of a stack are listed in two of its sessions or more."""
+        return sum(1 for v in self._stack_lights(pl).values() if v > 1)
 
     def has_difference(self, sid, pl):
         """Row kept by « Only differences »: an own value, or a warning."""

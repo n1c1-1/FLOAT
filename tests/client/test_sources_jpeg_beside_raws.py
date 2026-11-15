@@ -49,3 +49,25 @@ def test_sources_jpeg_beside_raws_left_taken_and_removed(qapp, tmp_path, monkeyp
     finally:
         view.close()
         close(w, m, page)
+
+
+def test_sources_lights_of_another_session_of_the_stack_are_said_not_added(qapp, tmp_path, monkeypatch):
+    from astro_gpu.client.sources import SourcesView
+    w, m, page = open_page(tmp_path, monkeypatch, sessions=2, workflows=("Full",))
+    view = SourcesView(m)
+    said: list = []
+    view.toast.connect(said.append)
+    try:
+        first = m.session_files(1, "lights")
+        view.show_session(2, "lights")
+        before = list(m.p.session(2).lights)
+        assert view.add_files("lights", first) == 0 and m.p.session(2).lights == before
+        assert said[-1] == "3 already in “night 1”: not added"
+        settle(w, page)
+        view.refresh()
+        assert "Add anyway" in texts(view)
+        view.add_anyway("lights")
+        assert len(m.p.session(2).lights) == len(before) + 3
+    finally:
+        view.close()
+        close(w, m, page)

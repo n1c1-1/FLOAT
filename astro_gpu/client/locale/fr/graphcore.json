@@ -450,5 +450,7 @@
   "all frames · none left out": "toutes · aucune écartée",
   "“{_name}” joins “{_row}”": "« {_name} » rejoint « {_row} »",
   "{_name} added to “{_row}”: it stacks with its sessions": "{_name} ajoutée à « {_row} » : elle s'empile avec ses sessions",
-  "Selection computes nothing of its own: set the pause on Registration": "La Sélection ne calcule rien elle-même : mettez la pause sur l'Alignement"
+  "Selection computes nothing of its own: set the pause on Registration": "La Sélection ne calcule rien elle-même : mettez la pause sur l'Alignement",
+  "{n} also in {kind} of “{t}”": "{n} aussi dans {kind} de « {t} »",
+  "{n} listed twice": "{n} en double"
 }

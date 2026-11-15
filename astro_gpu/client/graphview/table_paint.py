@@ -374,7 +374,10 @@ class Painting:
         ns, nb, wv = self.model.totals(pl)
         if ns >= 2:
             parts = [plural(ns, "{n} session", "{n} sessions"), count_text(nb, "lights")]
-            sec = self.model.seconds(pl)                 # the time its lights add up to (headers)
+            tw = self.model.twice(pl)                    # the same files in two sessions: one frame each
+            if tw:
+                parts.append(plural(tw, "{n} listed twice", "{n} listed twice"))
+            sec = self.model.seconds(pl)                # the time its lights add up to (headers)
             if sec:
                 parts.append(duration(sec))
             full = " · ".join(parts + ([plural(wv, "{n} warn.", "{n} warn.")] if wv else []))
