@@ -767,6 +767,7 @@ class PostView(QWidget):
         self._heal_src = None                           # Alt+click: the source set by hand (x, y), then its offset
         self._heal_off = None                           # (dx, dy) of the strokes since, as the reference image editor's Aligned
         self.show_mask = False
+        self.show_tint = True                            # the red over the picture while a mask is edited
         self.crop = None                                 # [x0, y0, x1, y1] of the canvas, or None: a setting of the composition
         self._big = None                                 # the larger thumbnail under the mouse
         self.mask1 = None                               # the selected layer's mask at half resolution (float)
@@ -2036,7 +2037,7 @@ class PostView(QWidget):
 
     # ------------------------------------------------------------ the red overlay of the mask being edited
     def _overlay(self, p: QPainter, v: Viewer):
-        if not self.sel or not mask_selection(self.sel[1]) or self._overlay_img is None or self.show_mask or \
+        if not self.sel or not mask_selection(self.sel[1]) or self._overlay_img is None or self.show_mask or not self.show_tint or \
                 self.b_cmp.isChecked() or self.src.canvas is None:
             return
         W, H = self.src.size()
@@ -3429,6 +3430,12 @@ class PostView(QWidget):
         rm.clicked.connect(lambda: self.remove_mask(lay))
         top.addWidget(rm)
         self.pbox.addLayout(top)
+        tint = QCheckBox(_("Red tint"))
+        tint.setToolTip(_("The red over the picture, where the mask hides the layer. Off: the picture as it is, the "
+                          "brush still paints the mask."))
+        tint.setChecked(self.show_tint)
+        tint.toggled.connect(self._tint_view)
+        self.pbox.addWidget(tint)
         if not m["parts"]:
             self.pbox.addWidget(label(_("Empty: the layer shows everywhere."), "small"))
         for j, part in enumerate(m["parts"]):
@@ -3789,6 +3796,12 @@ class PostView(QWidget):
         if not has and self.b_mask.isChecked():
             self.b_mask.setChecked(False)
 
+    def _tint_view(self, on):
+        """The red of the mask being edited, shown or not: a choice of the view, kept while the page lives."""
+        self.show_tint = on
+        self.viewer.update()
+        self._hint()
+
     def _mask_view(self, on):
         self.show_mask = on
         self.src.version += 1
@@ -3802,7 +3815,7 @@ class PostView(QWidget):
             t = _("Spot healing: click or paint over a defect, healed when released · [ ] size · Alt+click: the "
                   "source by hand · Ctrl+Z: undo · middle button: move the image")
         elif self.sel and mask_selection(self.sel[1]):
-            t = _("Red: where the layer is hidden · M: mask in gray")
+            t = _("Red: where the layer is hidden · M: mask in gray") if self.show_tint else _("M: mask in gray")
         elif self.b_cmp.isChecked():
             t = _("Drag the divider · Before: the bottom layer, suggested settings")
         else:

@@ -1338,6 +1338,27 @@ def test_masks_with_parts_show_on_the_image_and_in_the_thumbnails(post):
     assert m.shape == (232, 344) and 0 <= m.min() and m.max() <= 1
     assert np.array_equal(m, reference(post, want=(full["id"],)).masks[full["id"]])
     assert v._overlay_img is not None and v._overlay_img.width() == 344                  # the red overlay of the mask edited
+    # the red tint is the user's to show or not while the mask is edited: off, nothing is drawn over the picture
+    from PySide6.QtGui import QImage, QPainter
+    from PySide6.QtWidgets import QCheckBox
+
+    def drawn():
+        im = QImage(v.viewer.width(), v.viewer.height(), QImage.Format_ARGB32)
+        im.fill(0)
+        qp = QPainter(im)
+        v._overlay(qp, v.viewer)
+        qp.end()
+        return any(im.pixel(x, y) for x in range(0, im.width(), 7) for y in range(0, im.height(), 7))
+
+    tint = next(c for c in widgets_of(v, QCheckBox) if c.text() == "Red tint")
+    assert tint.isChecked() and drawn()
+    tint.setChecked(False)
+    assert not v.show_tint and not drawn() and "Red" not in v.hint.text()
+    v.build_props()                                                                     # the choice outlives a rebuild
+    tint = next(c for c in widgets_of(v, QCheckBox) if c.text() == "Red tint")
+    assert not tint.isChecked()
+    tint.setChecked(True)
+    assert drawn()
     pm = v._mthumbs[full["id"]]
     assert (pm.width(), pm.height()) == (54, 36)
     # the whole mask: feather, density, invert
