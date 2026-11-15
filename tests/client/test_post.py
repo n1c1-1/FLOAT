@@ -1807,7 +1807,7 @@ def test_a_name_typed_in_place_has_its_rows_width_and_shows_its_start(post):
     field takes the row's width, the name shown from its start; the note is back after."""
     v = post.view
     lay = named(v, "Full")
-    lay["name"], lay["mode"], lay["opacity"] = "Colour full · Combine layers", "Screen", 60.0
+    lay["name"], lay["mode"], lay["opacity"] = "Color full · Combine layers", "Screen", 60.0
     v.rebuild()
     QApplication.processEvents()
 

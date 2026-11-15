@@ -68,7 +68,7 @@ def test_the_backgrounds_are_the_computed_images_in_the_order_of_the_workflow():
             "star_removal": "done"}
     assert keys(full) == ["stack", "color", "denoised", "color_denoised", "result", "output"]
     captions = [b.caption for b in steps_of(full).backgrounds(P)]
-    assert captions == ["Stack", "Colour-calibrated stack", "Denoised stack", "Colour-calibrated denoised stack",
+    assert captions == ["Stack", "Color-calibrated stack", "Denoised stack", "Color-calibrated denoised stack",
                         "Gradient removed", "Final image"]
 
 
@@ -160,7 +160,7 @@ def test_real_astrometry_tab_lists_the_images_and_remembers_the_choice(window):
     settle(w)
     cb = next(c for c in t.findChildren(QComboBox) if c.isVisibleTo(t) and c.findData("stack") >= 0)
     assert [cb.itemData(i) for i in range(cb.count())] == [b.key for b in t.steps.backgrounds(p)]
-    assert [cb.itemText(i) for i in range(cb.count())][:2] == ["Stack", "Colour-calibrated stack"]
+    assert [cb.itemText(i) for i in range(cb.count())][:2] == ["Stack", "Color-calibrated stack"]
     assert cb.currentData() == "stack"                           # the default
     v = t.view
     assert not v.cmp_box.isVisibleTo(v) and not v._targets      # nothing to compare with, nothing from the bench either

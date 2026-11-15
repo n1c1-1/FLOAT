@@ -542,7 +542,7 @@ def test_the_template_gallery_on_the_model(qapp, tmp_path):
     from astro_gpu.client.gallery import template_blocks
     d = TemplateGallery(FakeModel())
     assert d.tab_keys == ["Color", "Mono", "copy"]
-    assert d.choice["key"] == "colour_full" and d.name.text() == "Colour full"   # the recommended one first (#11)
+    assert d.choice["key"] == "colour_full" and d.name.text() == "Color full"    # the recommended one first (#11)
     assert d.ok.isEnabled() and d.opts["etoiles"] == "retirer" and "cut" not in d.opts
     assert {c.t["key"] for c in d.cards} == {"colour_min", "colour_full", "image", "sho_rgb", "images", "dual_x2"}
     minimal = next(c.t for c in d.cards if c.t["key"] == "colour_min")

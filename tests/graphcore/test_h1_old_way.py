@@ -326,7 +326,8 @@ def _blk(g, r, kind):
 
 
 def _view(m, name):
-    return next(q for q in m.paths if q.name == name)
+    from astro_gpu.client.names import shown
+    return next(q for q in m.paths if q.name in (name, shown(name)))     # by its stored name too
 
 
 def test_insert_a_block_as_the_old_model_does(qapp, tmp_path, recording):

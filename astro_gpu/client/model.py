@@ -1296,9 +1296,11 @@ class _ProjectBase(QObject):
         its Stars block's (the starless image, the stars alone, or a new Stars and background block). Returns its
         id. ``keep_default`` False: it is the layer Post shows by default for the workflow, made real (its first
         setting)."""
+        from .names import neutral
         from .postengine import new_workflow_layer
         p = self.view(pid)
-        name = p.name + ("" if part is None else " · " + POST_PART_NAMES[part])
+        base = neutral(p.name)                               # its workflow's name as stored, not as shown
+        name = base + ("" if part is None else " · " + POST_PART_NAMES[part])
 
         def change(layers):
             lay = new_workflow_layer(pid, name, True, part)   # made once the layers are loaded: its id is a fresh one
@@ -1307,7 +1309,7 @@ class _ProjectBase(QObject):
                 # the image Post shows by default for this workflow stays: a Combine layers added is a second one, the
                 # first double-click of its card included (2nd round)
                 d = self.post_default_part(p)
-                layers.insert(0, new_workflow_layer(pid, p.name + ("" if d is None else " · " + POST_PART_NAMES[d]),
+                layers.insert(0, new_workflow_layer(pid, base + ("" if d is None else " · " + POST_PART_NAMES[d]),
                                                     True, d))
             same = [x for x in layers if x.get("kind") == "workflow" and x.get("pid") == pid and x.get("part") == part]
             if part == "combined" and same:               # several Combine layers of one workflow: numbered (2nd round)
@@ -1334,6 +1336,7 @@ class _ProjectBase(QObject):
         split block, its Combine layers block; else its Output image: post3.sync_paths, the graph draws them before), so
         that an image sent on top does not take their place (issue #29). ``skip``: a workflow whose Combine layers block is
         the one being added."""
+        from .names import neutral
         from .postengine import new_workflow_layer
         if any(x.get("kind") == "workflow" for x in layers):
             return
@@ -1342,7 +1345,8 @@ class _ProjectBase(QObject):
             stars = self.post_default_part(q) == "combined"       # (a Synthetic stars sent to Post: its image)
             if q.pid == skip and stars:
                 continue
-            made.append(new_workflow_layer(q.pid, q.name + (" · " + POST_PART_NAMES["combined"] if stars else ""),
+            made.append(new_workflow_layer(q.pid, neutral(q.name) + (" · " + POST_PART_NAMES["combined"] if stars
+                                                                     else ""),
                                            bool(q.end) or self.is_sent_branch(q),     # a block's image sent: shown,
                                            "combined" if stars else None))           # as the Split's (2nd round)
         if made:
@@ -2115,11 +2119,12 @@ class _ProjectBase(QObject):
                 old = self.view(x.get("pid"))
                 new = self.view(int(pid))
                 if old is not None and new is not None and old.name != new.name:   # the default name follows the side
-                    m = re.fullmatch(re.escape(old.name + " · " + POST_PART_NAMES["combined"]) + r"( \d+)?",
-                                     str(x.get("name") or ""))
+                    from .names import neutral
+                    m = re.fullmatch(re.escape(neutral(old.name) + " · " + POST_PART_NAMES["combined"]) + r"( \d+)?",
+                                     neutral(str(x.get("name") or "")))
                     if m:
                         x["name"] = self._free_layer_name(
-                            layers, new.name + " · " + POST_PART_NAMES["combined"] + (m.group(1) or ""), lid)
+                            layers, neutral(new.name) + " · " + POST_PART_NAMES["combined"] + (m.group(1) or ""), lid)
                 x["pid"], x["starless"] = int(pid), ("output" if image == "output" else "starless")
             else:
                 x["stars_pid"] = None if pid is None else int(pid)

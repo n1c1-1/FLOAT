@@ -79,7 +79,8 @@ def pair(qapp, tmp_path, recording):
 
 
 def view(m, name):
-    return next(q for q in m.paths if q.name == name)
+    from astro_gpu.client.names import shown
+    return next(q for q in m.paths if q.name in (name, shown(name)))     # by its stored name too
 
 
 def both(rec, m, fn):
@@ -89,8 +90,10 @@ def both(rec, m, fn):
     old = rec.check(m.p, a)
     if not RECORD:
         assert m.graph_rebuilds == 0, "the definition was changed outside the graph"
-    # a name as stored now (test_h1_old_way's text)
-    return (neutral(old) if isinstance(old, str) else old), h1._plain(a)
+    # a name as stored now (test_h1_old_way's text), on both sides (a view is named as the interface shows it)
+    def stored(x):
+        return neutral(x) if isinstance(x, str) else [stored(y) for y in x] if isinstance(x, (list, tuple)) else x
+    return stored(old), stored(h1._plain(a))
 
 
 # ---------------------------------------------------------------------------------------------- blocks of a workflow

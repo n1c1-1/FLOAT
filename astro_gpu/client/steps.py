@@ -293,7 +293,7 @@ class Steps(QObject):
                       base=("stack", "drz_full"), compare=("stack",), open_compare=True, note=COLOR_NOTE,
                       shown="After: colour-calibrated", compare_names=("Before: stack output, camera colours",)),
                     V("spectral", "Approximate spectral response", "chart", "color", "0", note=SPECTRAL_NOTE),
-                    V("lines", "Colour of the lines", "chart", "color", "1", note=LINES_NOTE),
+                    V("lines", "Color of the lines", "chart", "color", "1", note=LINES_NOTE),
                     V("fit", "Star colours", "colorfit", "color")]
         if k == "deconv":
             return [V("deconvolved", "Deconvolved stack", "array", "deconv", "deconv_full", True, True, camera=True,
@@ -342,10 +342,10 @@ class Steps(QObject):
         if key == "whole" and "render_simple" in stages:
             return V("whole", "Image with stars", "array", "render_simple", "lin", True, True, camera=False)
         if key == "color" and "color" in stages:
-            return V("color", "Colour-calibrated stack", "color", "color", "", True, True, camera=False,
+            return V("color", "Color-calibrated stack", "color", "color", "", True, True, camera=False,
                      base=(stk, "drz_full"))
         if key == "color_denoised" and "color" in stages and "denoise" in stages:
-            return V("color_denoised", "Colour-calibrated denoised stack", "color", "color", "", True, True,
+            return V("color_denoised", "Color-calibrated denoised stack", "color", "color", "", True, True,
                      camera=False, base=("denoise", "n2n_full"))
         if key == "result" and "gradient" in stages:
             return V("result", "Gradient removed", "gradient", "gradient", "", True, True, camera=True)

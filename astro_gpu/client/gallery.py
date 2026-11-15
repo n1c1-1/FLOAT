@@ -500,7 +500,7 @@ class TemplateCard(QFrame):
         self.pic = QLabel()
         self.pic.setPixmap(draw_graph(t, 214, 76))
         v.addWidget(self.pic)
-        name = _(t["name"]) + ("  ·  " + _("Recommended") if t.get("recommended") else "")
+        name = shown(t["name"]) + ("  ·  " + _("Recommended") if t.get("recommended") else "")
         lb = QLabel(name)
         lb.setStyleSheet("font-weight: 600; background: transparent;")
         v.addWidget(lb)
@@ -800,7 +800,7 @@ class TemplateGallery(QDialog):
         for c in self.cards:
             c.set_selected(c.t is t)
         self.preview.setPixmap(draw_graph(t, PREVIEW_W, 190, names=True))
-        self.title.setText(_(t["name"]) if not t.get("copy") else t["name"])
+        self.title.setText(shown(t["name"]) if not t.get("copy") else t["name"])
         self.text.setText(_(t["text"]) if not t.get("copy") else t["text"])
         self.palette_row.setVisible(self._asks_filters(t))
         self.palette.blockSignals(True)
@@ -817,7 +817,7 @@ class TemplateGallery(QDialog):
             except Exception:  # noqa: BLE001 - an estimate is a hint
                 dur = ""
         self.duration.setText(dur)
-        base = t["name"] if t.get("copy") else _(palette_name(t["palette"])) if t.get("kind") == "fusion" else _(t["name"])
+        base = t["name"] if t.get("copy") else _(palette_name(t["palette"])) if t.get("kind") == "fusion" else shown(t["name"])
         if t.get("copy"):
             base = _("{name} (copy)").format(name=t["copy"].name)
         self.name.setText(shown(self.s.unique_name(base)) if hasattr(self.s, "unique_name") else base)

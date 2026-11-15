@@ -84,38 +84,47 @@ def _copies() -> list[tuple[str, list[re.Pattern]]]:
 #: the colour block ("Ha · Colour") is shown and stored as the interface writes it, the engine's and the graph core's
 #: own word, "Color"
 LEGACY = {"Colour": "Color"}
+#: names stored as they are (projects and templates keep them) but shown otherwise: the two colour templates, spelt
+#: as the interface spells "Color" (its tab, its block)
+SHOWN = {"Colour full": "Color full", "Colour minimal": "Color minimal"}
+#: a name shown so, read back (a view's name given again, "Color full · Gradient"): stored as it was
+_STORED = {v: k for k, v in SHOWN.items()}
 
 
-def _word(text: str, to: str) -> str | None:
-    """A name of the application in language ``to``, or None when ``text`` is not one."""
-    en = LEGACY.get(text) or (text if text in _bases() else _reverse().get(text))
+def _word(text: str, to: str, show: bool = False) -> str | None:
+    """A name of the application in language ``to``, or None when ``text`` is not one; ``show``: as it is shown."""
+    en = LEGACY.get(text) or _STORED.get(text) or (text if text in _bases() else _reverse().get(text))
     if en is None:
         return None
+    if show:
+        en = SHOWN.get(en, en)
     return en if to == "en" else _catalogues().get(to, {}).get(en, en)
 
 
-def convert(name: str, to: str) -> str:
-    """``name`` with its default parts written in language ``to`` ("en", "fr"); anything else as it is."""
+def convert(name: str, to: str, show: bool = False) -> str:
+    """``name`` with its default parts written in language ``to`` ("en", "fr"); anything else as it is. ``show``: as
+    the interface shows it (``SHOWN``), not as it is stored."""
     if not name or not isinstance(name, str):
         return name
     if SEP in name:
-        return SEP.join(convert(p, to) for p in name.split(SEP))
+        return SEP.join(convert(p, to, show) for p in name.split(SEP))
     for tmpl, rxs in _copies():
         m = next((m for m in (rx.match(name) for rx in rxs) if m), None)
         if m:
             form = tmpl if to == "en" else _catalogues().get(to, {}).get(tmpl, tmpl)
-            return form.replace("{_name}", convert(m.group("n"), to)).replace("{name}", convert(m.group("n"), to))
+            return form.replace("{_name}", convert(m.group("n"), to, show)).replace("{name}",
+                                                                                   convert(m.group("n"), to, show))
     m = re.fullmatch(r"(.+?)((?: \d+)+)", name)             # "Denoise 2", "Colour minimal 2 2"
     if m:
-        w = _word(m.group(1), to)
+        w = _word(m.group(1), to, show)
         if w is not None:
             return w + m.group(2)
-    return _word(name, to) or name
+    return _word(name, to, show) or name
 
 
 def shown(name: str) -> str:
     """A name as the interface shows it: a default name in the interface's language, a typed name as typed."""
-    return convert(name, i18n.language())
+    return convert(name, i18n.language(), show=True)
 
 
 def neutral(name: str) -> str:

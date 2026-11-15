@@ -313,7 +313,7 @@ class ColorLinesChart(ChartView):
     signal of a pure line. The emission lines of the nebulae (Hβ, [OIII], Hα) sit where their colour is read."""
 
     def __init__(self, r, parent=None):
-        super().__init__(_("Colour the camera gives to each wavelength"), parent, zoom="xy", readout="x",
+        super().__init__(_("Color the camera gives to each wavelength"), parent, zoom="xy", readout="x",
                          export_name="line_colours")
         self.setMinimumHeight(260)
         self.r = r
@@ -330,7 +330,7 @@ class ColorLinesChart(ChartView):
 
 def color_tabs(r) -> list[tuple[str, ChartView]]:
     """The charts of the Color block as (tab title, widget). ``r``: ``api.spectral_response``. No I/O."""
-    return [(_("Approximate spectral response"), SpectralChart(r)), (_("Colour of the lines"), ColorLinesChart(r))]
+    return [(_("Approximate spectral response"), SpectralChart(r)), (_("Color of the lines"), ColorLinesChart(r))]
 
 
 # ============================================================================================ Registration

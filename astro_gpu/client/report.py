@@ -528,7 +528,7 @@ def highlights(d: ReportData, lang: str) -> list:
     ch = (m.get("stack") or {}).get("channel_offsets") or {}
     if ch.get("applied") and ch.get("centre_px"):
         r, b = (float(np.hypot(*ch["centre_px"][c])) for c in ("R", "B"))
-        out.append((f"{dec(max(r, b), 2)} px", _("Colours offset, corrected"),
+        out.append((f"{dec(max(r, b), 2)} px", _("Colors offset, corrected"),
                     _("red {r} px and blue {b} px from green, measured on {n} stars").format(
                         r=dec(r, 2), b=dec(b, 2), n=int(ch.get("stars") or 0))))
     dn = m.get("denoise") or {}

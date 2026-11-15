@@ -386,7 +386,7 @@ def test_the_output_block_shows_the_final_image_the_render_worker_makes(win):
     r, g, b = (int(c) for c in ref.rgb[120, 100])
     assert txt.startswith(f"x   100  y   120    R {r}   G {g}   B {b}") and "RA " in txt
     names = [v.cmp_cb.itemText(i) for i in range(v.cmp_cb.count())]
-    assert "Gradient removed" in names and "Colour-calibrated stack" in names
+    assert "Gradient removed" in names and "Color-calibrated stack" in names
     # compared with Gradient removed: put on the final image's grid (its crop of the stack, at half size), said
     v.set_compare(names.index("Gradient removed") - 1)
     assert v.wait(120)

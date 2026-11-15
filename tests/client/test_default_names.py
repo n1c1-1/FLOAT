@@ -41,14 +41,14 @@ def test_a_default_name_is_shown_in_the_language_of_the_interface():
         i18n.set_language("fr")
         assert names.shown(stored) == fr
         i18n.set_language("en")
-        assert names.shown(stored) == stored
+        assert names.shown(stored) == names.SHOWN.get(stored, stored)       # "Colour full" shown "Color full"
         assert names.neutral(stored) == stored
 
 
 def test_a_name_made_in_french_by_an_earlier_version_follows_the_interface_too():
     for old, en in (("Couleur complet", "Colour full"), ("Combiner calques 2", "Combine layers 2"),
                     ("Débruitage 2 copie", "Denoise 2 copy"), ("Ha · Débruitage", "Ha · Denoise")):
-        assert names.shown(old) == en and names.neutral(old) == en
+        assert names.shown(old) == names.SHOWN.get(en, en) and names.neutral(old) == en
         i18n.set_language("fr")
         assert names.shown(old) == old
         i18n.set_language("en")
@@ -85,7 +85,8 @@ def test_a_workflow_made_from_a_template_in_french_is_stored_in_english_and_show
     assert row.name == "Colour full"
     win.change_language("en")
     settle(win, 3)
-    assert [q.name for q in s.paths] == ["Colour full"]                        # and in English, at once
+    assert [q.name for q in s.paths] == ["Color full"]                         # and in English, at once (shown
+    assert [w.name for w in s.p.workflows] == ["Colour full"]                 # as the interface spells it)
 
 
 def test_the_colour_block_is_written_one_way_and_an_earlier_name_follows():
