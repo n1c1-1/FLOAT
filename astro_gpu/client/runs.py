@@ -73,6 +73,10 @@ RECAP_MAX_H = 170
 
 
 # ---------------------------------------------------------------------------------------------- the rows
+#: the stages that resume inside the block after a stop (core/stage checkpoints used by the stage's code)
+RESUMES = ("calibrate", "register")
+
+
 @dataclass
 class Row:
     """A line of the dialog: one block of the graph, the jobs (stage keys) the run computes in it."""
@@ -839,9 +843,19 @@ class RunDialog(QDialog):
         elif t.lost:
             lines.append((_("Run ended unexpectedly · results kept"), WARN))
         elif t.status == "interrupted":
-            lines.append((_("Stopped · results kept"), WARN))
-            if stopped:
-                lines.append((_("Stopped during {blocks}").format(blocks=", ".join(named[id(r)] for r in stopped)), ""))
+            lines.append((_("Stopped · finished blocks kept"), WARN))
+            by = {id(r): js for r, js in by_row}
+            # only these stages keep a checkpoint inside the block (Calibration: frame by frame; Registration: the
+            # catalogues): every other block, the stack included, starts again from its beginning
+            part = [r for r in stopped if any(j.state == INTERRUPTED and j.stage.split("@")[0] in RESUMES
+                                              for j in by[id(r)])]
+            again = [r for r in stopped if r not in part]
+            if again:
+                lines.append((_("Stopped during {blocks}: it starts again from its beginning").format(
+                    blocks=", ".join(named[id(r)] for r in again)), ""))
+            if part:
+                lines.append((_("Stopped during {blocks}: it goes on from the frames already done").format(
+                    blocks=", ".join(named[id(r)] for r in part)), ""))
         listed = set()
         for r, js in failed:
             bad = next(j for j in js if j.state == FAILED)
