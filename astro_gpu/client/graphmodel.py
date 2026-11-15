@@ -1222,6 +1222,11 @@ class GraphEditing:
         from dataclasses import asdict
         if self.__dict__.pop("_absorbed", None) != (id(self.__dict__.get("_graph")), self.revision):
             self._absorb()
+        # each session's frames excluded by hand, kept aside: a session removed then brought back by Undo gets them
+        # back (the exclusions themselves are no step of Undo)
+        aside = self.__dict__.setdefault("_excluded_aside", {})
+        for s in self.p.sessions:
+            aside[int(s.id)] = [str(b) for a, b in self.p.excluded if int(a) == int(s.id)]
         post = json.dumps(getattr(self.p, "post", None) or {}, sort_keys=True)
         return mm._Snap((self._graph_json(), self.p.current, self.p.stack_mode, None, post, asdict(self.p.target),
                          self.p.description, self.p.name, dict(self.p.acquisition)))
@@ -1272,6 +1277,9 @@ class GraphEditing:
         g = gm.from_dict(json.loads(gjson))
         g.excluded = [[int(a), str(b)] for a, b in self.p.excluded]          # the hand exclusions are not undone
         g.excluded = [x for x in g.excluded if any(n["sid"] == x[0] for n in g.nights)]
+        back = [n["sid"] for n in g.nights if not any(o["sid"] == n["sid"] for o in old_g.nights)]
+        g.excluded += [[sid, f] for sid in back for f in self.__dict__.get("_excluded_aside", {}).get(sid, ())
+                       if [sid, f] not in g.excluded]                # a session back: its exclusions with it
         self._g = g
         self.compiled = compile_into(g, self.p)
         if current is not None and any(w.id == current for w in self.p.workflows):
