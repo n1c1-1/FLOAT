@@ -101,7 +101,7 @@ one-shot colour) and monochrome cameras with filters.
 
 ### With the installer (Windows, recommended)
 
-**[Download FLOAT-Setup.exe](https://github.com/n1c1-1/FLOAT/releases/latest/download/FLOAT-Setup.exe)** (375 MB)
+**[Download FLOAT-Setup.exe](https://github.com/n1c1-1/FLOAT/releases/latest/download/FLOAT-Setup.exe)** (483 MB)
 and run it. It installs FLOAT for your user with everything it needs: its own Python, the plate solver and its index. During the
 installation it fetches the star catalogue once (1.85 GB); after that, FLOAT works offline and never downloads
 anything while it processes.
@@ -139,7 +139,7 @@ reads them and the health check says whether anything is missing.
 
 ![The Run window](docs/images/guide/4-run.png)
 
-**4. Run.** The window lists the blocks to compute, with the duration and the disk space expected, before anything starts.
+**4. Run.** The window lists the blocks to compute, each with the duration expected, and follows the run; Stop ends it and the finished blocks are kept.
 
 ![The graph after a run](docs/images/guide/5-graph.png)
 
