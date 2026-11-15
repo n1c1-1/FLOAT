@@ -678,6 +678,29 @@ def parse(text: str, r: dict):
     return "" if t == "—" else t
 
 
+def decimals_shown(value, least: int) -> int:
+    """The decimals of a decimal field: ``least`` (from its step), and at least those its value has, up to 6. A field
+    showing fewer would round the value (33.33 with a step of 1 shown 33.3)."""
+    try:
+        t = f"{abs(float(value)):.6f}".rstrip("0")
+    except (TypeError, ValueError):
+        return least
+    return max(least, len(t.split(".")[1]))
+
+
+def on_edited(spin, done):
+    """Calls ``done()`` at the end of an edit of the spin box only when the user changed its value (typed, arrows,
+    wheel): passing through the field (Tab, a click elsewhere) sends nothing. Connected once its value is set."""
+    edited = []
+    spin.valueChanged.connect(lambda *_a: edited or edited.append(True))
+
+    def end():
+        if edited:
+            edited.clear()
+            done()
+    spin.editingFinished.connect(end)
+
+
 # ======================================================================== how one setting is shown
 class RangeBar(QWidget):
     """The range of a numeric setting: the suggestion (tick) and the current value (dot)."""
@@ -793,13 +816,13 @@ class SettingRow(QFrame):
             v = float(r["suggested"] or 0)
             step = r.get("step") or (10 ** (math.floor(math.log10(abs(v))) - 1) if v else 0.1)
             dec = max(0, int(-math.floor(math.log10(step)))) if step < 1 else 0
-            e.setDecimals(min(dec + 1, 5))
+            e.setDecimals(decimals_shown(cur, min(dec + 1, 5)))
             e.setRange(r["min"] if r.get("min") is not None else -1e9, r["max"] if r.get("max") is not None else 1e9)
             e.setSingleStep(step)
             e.setValue(float(cur))
             e.setFixedWidth(110)
-            e.editingFinished.connect(lambda: abs(e.value() - float(self.r["value"])) > 1e-12
-                                      and self.changed.emit(self.r, round(e.value(), 6)))
+            on_edited(e, lambda: abs(e.value() - float(self.r["value"])) > 1e-12
+                      and self.changed.emit(self.r, round(e.value(), 6)))
         else:
             e = QLineEdit("" if cur is None else fmt(cur, typ) if typ == "optfloat" else str(cur))
             e.setFixedWidth(160)

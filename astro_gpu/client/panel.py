@@ -53,7 +53,8 @@ from .names import shown as shown_name
 from .icons import IconLabel, IconText, icon_only, set_icon
 from .layout import Sections
 from .model import NotInEngine, method_of, method_value, methods_of
-from .settings import RangeBar, SettingRow, fmt, needed_stages, selection_rule_text, step_settings
+from .settings import (RangeBar, SettingRow, decimals_shown, fmt, needed_stages, on_edited, selection_rule_text,
+                       step_settings)
 from .settings import loading as settings_loading
 from .widgets import ACCENT, BAD, NEW, OK, WARN, clear, hline, label, put_back, typed
 
@@ -1246,12 +1247,11 @@ class Panel(QWidget):
             else:
                 w = QDoubleSpinBox()
                 w.setRange(float(q.get("min", -1e6)), float(q.get("max", 1e6)))
-                w.setDecimals(2)
+                w.setDecimals(decimals_shown(shown, 2))
                 w.setSingleStep(float(q.get("step") or 1.0))
                 w.setValue(float(shown))
-                w.editingFinished.connect(lambda n=name, b=w, v=float(q["value"]), sh=float(shown), lb=text:
-                                          b.value() != sh and self.propose_recipe(
-                                              n, b.value(), v, lb, number(v), number(b.value())))
+                on_edited(w, lambda n=name, b=w, v=float(q["value"]), sh=float(shown), lb=text:
+                          b.value() != sh and self.propose_recipe(n, b.value(), v, lb, number(v), number(b.value())))
             w.setToolTip(tip)
             row.addWidget(w)
             self.bv.addLayout(row)
@@ -2238,13 +2238,13 @@ class Panel(QWidget):
             row.addWidget(name_label(name), 1)
             e = QDoubleSpinBox()
             e.setLocale(QLocale())                     # a decimal comma in French
-            e.setDecimals(0 if which == "t" else 1)
+            e.setDecimals(decimals_shown(val, 0 if which == "t" else 1))
             e.setRange(lo, hi)
             e.setSingleStep(step)
             e.setValue(val)
             e.setFixedWidth(EDITOR_W)
             e.setEnabled(live)
-            e.editingFinished.connect(lambda ed=e, wh=which: self._sel(ed.value(), wh))
+            on_edited(e, lambda ed=e, wh=which: self._sel(ed.value(), wh))
             row.addWidget(e)
             row.addWidget(unit_label(unit, self._unit_w))
             room = QWidget()                               # where the ↺ of a setting row is
