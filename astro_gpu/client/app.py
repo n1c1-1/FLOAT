@@ -905,6 +905,13 @@ class Main(QMainWindow):
                     self.banner.say(_("Another window of the program saved this project since it was opened here: "
                                       "nothing is replaced. Save as… keeps this window's work in another folder."))
                     return False
+        if self.project is not None and save and self.s is not None:
+            try:                                         # written before anything is let go: a failure keeps it open
+                self.s.flush()
+            except Exception as e:  # noqa: BLE001 - a full disk, a locked file: said, nothing closed
+                self.banner.say(_("The project cannot be saved: {why}").format(
+                    why=plain_error(f"{type(e).__name__}: {e}")))
+                return False
         if self.project is not None:
             self._recovery_timer.stop()
             if self.run is not None:
