@@ -24,15 +24,34 @@ import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, QObject, Qt, QThread, Signal, Slot
+from PySide6.QtCore import QCoreApplication, QObject, Qt, Signal, Slot
 
 
-class _Thread(QThread):
+class _Relay(QObject):
     result = Signal(str, int, bool, object)          # channel, request number, ok, value (or error text)
 
+
+class _Thread:
+    """The worker's thread: a Python thread, not a QThread. When the program quits, the Qt bindings destroy every Qt
+    object without a parent that Python holds, and Qt aborts the program when a QThread is destroyed while it runs (a
+    request still reading a slow disk): no reference kept prevents it. A Python thread is no Qt object; its results go
+    to the GUI thread through a small Qt object (a queued signal), which, destroyed at exit, only refuses them."""
+
     def __init__(self, owner: ApiWorker):
-        super().__init__()
         self.owner = owner
+        self.relay = _Relay()
+        self.result = self.relay.result
+        self._t = threading.Thread(target=self.run, name="api-worker", daemon=True)
+
+    def start(self):
+        self._t.start()
+
+    def isRunning(self) -> bool:                      # noqa: N802 - as QThread's, which callers know
+        return self._t.is_alive()
+
+    def wait(self, timeout_ms: int) -> bool:
+        self._t.join(timeout_ms / 1000)
+        return not self._t.is_alive()
 
     def run(self):
         while True:
@@ -44,7 +63,10 @@ class _Thread(QThread):
                 value, ok = fn(*args, **kwargs), True
             except Exception as e:  # noqa: BLE001 - every failure goes back to the GUI as text
                 value, ok = f"{type(e).__name__}: {e}\n{traceback.format_exc(limit=6)}", False
-            self.result.emit(channel, n, ok, value)
+            try:
+                self.relay.result.emit(channel, n, ok, value)
+            except RuntimeError:                     # the program is quitting: its Qt side is gone
+                return
 
 
 class ApiWorker(QObject):
