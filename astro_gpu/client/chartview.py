@@ -33,7 +33,7 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCharts import QAreaSeries, QChart, QLineSeries, QScatterSeries, QValueAxis
-from PySide6.QtCore import QEvent, QMargins, QPoint, QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QBuffer, QEvent, QIODevice, QMargins, QPoint, QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QFontMetricsF, QImage, QLinearGradient, QPainter, QPen
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -47,7 +47,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .i18n import _, language, number
+from .i18n import _, language, number, plain_error
 
 # ---------------------------------------------------------------------------------------------- theme (widgets.py)
 BG = QColor("#181b21")                      # the background of every chart
@@ -1472,9 +1472,19 @@ class ChartView(QWidget):
                                                    _("CSV files (*.csv)"))
         if not path:
             return None
-        Path(path).write_text(self.csv_text(), encoding="utf-8-sig" if language() == "fr" else "utf-8", newline="")
+        try:
+            Path(path).write_text(self.csv_text(), encoding="utf-8-sig" if language() == "fr" else "utf-8", newline="")
+        except OSError as e:
+            return self._not_written(e)
         _last_dir[:] = [str(Path(path).parent)]
         return str(path)
+
+    def _not_written(self, e: OSError) -> None:
+        """A file that cannot be written (a folder gone, no permission, a full disk): said over the chart."""
+        QToolTip.showText(self.mapToGlobal(self.rect().center()),
+                          _("This file cannot be written: {why}").format(why=plain_error(f"{type(e).__name__}: {e}")),
+                          self)
+        return None
 
     def render_image(self, scale: float = 2.0) -> QImage:
         """The chart as a picture (without the cursor), ``scale`` times the size on screen."""
@@ -1499,7 +1509,13 @@ class ChartView(QWidget):
                                                    _("PNG images (*.png)"))
         if not path:
             return None
-        self.render_image().save(str(path), "PNG")
+        buf = QBuffer()                                  # encoded here, written as a file: its error is the system's
+        buf.open(QIODevice.WriteOnly)
+        self.render_image().save(buf, "PNG")
+        try:
+            Path(path).write_bytes(bytes(buf.data()))
+        except OSError as e:
+            return self._not_written(e)
         _last_dir[:] = [str(Path(path).parent)]
         return str(path)
 

@@ -35,3 +35,26 @@ def test_the_wheel_on_an_empty_chart_does_nothing(qapp):
     assert not v.panels
     _wheel(v)                                                    # raised IndexError
     v.close()
+
+
+def _chart():
+    v = cv.ChartView("Test chart", export_name="t")
+    p = v.add_panel("Level (u)", "u", digits=1)
+    v.set_x("Time", "s", kind="num")
+    v.add_line("a", np.arange(10.0), np.arange(10.0) ** 2, panel=p, color=cv.BLUE)
+    v.fit()
+    v.resize(500, 300)
+    return v
+
+
+def test_an_export_that_cannot_be_written_is_said(qapp, tmp_path, monkeypatch):
+    said = []
+    monkeypatch.setattr(cv.QToolTip, "showText", lambda *a, **k: said.append(a[1]))
+    v = _chart()
+    bad = tmp_path / "no such folder" / "x"
+    assert v.export_csv(str(bad) + ".csv") is None
+    assert v.export_png(str(bad) + ".png") is None
+    assert len(said) == 2 and all(s.startswith("This file cannot be written") for s in said)
+    ok = tmp_path / "x.png"
+    assert v.export_png(str(ok)) == str(ok) and ok.stat().st_size > 0
+    assert v.export_csv(str(tmp_path / "x.csv")) == str(tmp_path / "x.csv")
