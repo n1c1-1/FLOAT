@@ -97,6 +97,7 @@ class Reader:
         self._queue: list[Job] = []
         self._cond = threading.Condition()
         self._thread = None
+        self._closed = False
         self._listeners: list = []
         self._gen = 0
         self._cache: dict[tuple, tuple] = {}
@@ -128,6 +129,16 @@ class Reader:
         for d in (self._folders, self._is_folder, self._infos, self._mtimes, self._left, self._reports, self._cache):
             d.clear()
         self._gen += 1
+
+    def close(self):
+        """The page is gone: its listings dropped and the worker thread ended, with what it held (the page, through
+        ``base`` and the listeners, and so the project)."""
+        self.forget()
+        self._listeners = []
+        self.base = None
+        with self._cond:
+            self._closed = True
+            self._cond.notify_all()
 
     def _changed(self, s: str) -> bool:
         """A folder listed before whose modification time moved since (frames added or taken out): its listing is
@@ -191,6 +202,8 @@ class Reader:
             t.stop = True
         if fresh:
             self._jobs.pop(key, None)
+            return None
+        if self._closed:
             return None
         t = Job(key, sources)
         self._jobs[key] = t
@@ -282,8 +295,10 @@ class Reader:
     def _loop(self):
         while True:
             with self._cond:
-                while not self._queue:
+                while not self._queue and not self._closed:
                     self._cond.wait()
+                if self._closed:
+                    return
                 t = self._queue.pop(0)
                 self._busy = True
             try:

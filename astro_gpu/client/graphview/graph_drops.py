@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 
+import shiboken6
 from PySide6.QtCore import QObject, Signal
 
 from ..i18n import _
@@ -31,6 +32,7 @@ class GraphDrops(QObject):
         self.progress.connect(self._on_progress)
         self._last = None             # (session, kind, Resolution, filter) of the last drop: its links
         bridge.replaced.connect(self._forget)
+        bridge.destroyed.connect(self.reader.close)     # the page gone: its reader's thread ends, the project is let go
 
     def _project_folder(self):
         """The folder of the project shown, or None (a graph held in memory, a project not saved yet)."""
@@ -115,6 +117,8 @@ class GraphDrops(QObject):
 
     # ------------------------------------------------------------------ the reader moved on
     def _on_progress(self, job):
+        if not shiboken6.isValid(self.bridge):          # a progress queued before the page was deleted
+            return
         self.bridge.rich_toast_refresh.emit()
         if job.phase in ("done", "stopped"):
             self.finished.emit()
