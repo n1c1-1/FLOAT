@@ -1840,6 +1840,22 @@ class Main(QMainWindow):
         super().closeEvent(e)
 
 
+def image_refusal(files) -> str:
+    """Why Open images… cannot open these files, in a sentence, "" when it can: raw frames are a Session's (stacked
+    from it), the other files as the Image block says (stages/image.py)."""
+    from ..core.project import RAW_EXT
+    from ..stages.image import image_problem
+    for f in files:
+        name = Path(f).name
+        if Path(f).suffix.lower() in RAW_EXT:
+            return _("{name} is a raw frame: raw frames are stacked from a Session. Make a new project and add them "
+                     "to its Session.").format(name=name)
+        why = image_problem(f)
+        if why:
+            return _(why).format(name=name)
+    return ""
+
+
 def _gb_text(n_bytes: int) -> str:
     from .i18n import number
     gb = n_bytes / 1e9
