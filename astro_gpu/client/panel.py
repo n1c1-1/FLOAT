@@ -28,7 +28,6 @@ from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QApplication,
     QComboBox,
-    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -53,7 +52,7 @@ from .names import shown as shown_name
 from .icons import IconLabel, IconText, icon_only, set_icon
 from .layout import Sections
 from .model import NotInEngine, method_of, method_value, methods_of
-from .settings import (RangeBar, SettingRow, decimals_shown, fmt, needed_stages, on_edited, selection_rule_text,
+from .settings import (DoubleSpinBox, RangeBar, SettingRow, decimals_shown, fmt, needed_stages, on_edited, selection_rule_text,
                        step_settings)
 from .settings import loading as settings_loading
 from .widgets import ACCENT, BAD, NEW, OK, WARN, clear, hline, label, put_back, typed, wheel_scrolls
@@ -1191,7 +1190,7 @@ class Panel(QWidget):
                                 "green + blue for a dual-band colour image"))
                 ch.activated.connect(lambda k, r=role, b=ch: s.set_fusion_channel(p, r, b.itemData(k)))
                 row.addWidget(ch)
-            sp = QDoubleSpinBox()
+            sp = DoubleSpinBox()
             sp.setRange(0.0, 5.0)
             sp.setSingleStep(0.05)
             sp.setDecimals(2)
@@ -1246,7 +1245,7 @@ class Panel(QWidget):
                 w.activated.connect(lambda k, n=name, b=w, v=q["value"], lb=text: self.propose_recipe(
                     n, b.itemData(k), v, lb, _(str(v)), b.itemText(k)))
             else:
-                w = QDoubleSpinBox()
+                w = DoubleSpinBox()
                 w.setRange(float(q.get("min", -1e6)), float(q.get("max", 1e6)))
                 w.setDecimals(decimals_shown(shown, 2))
                 w.setSingleStep(float(q.get("step") or 1.0))
@@ -2237,7 +2236,7 @@ class Panel(QWidget):
             row.setContentsMargins(4, 2, 2, 2)
             row.setSpacing(6)
             row.addWidget(name_label(name), 1)
-            e = QDoubleSpinBox()
+            e = DoubleSpinBox()
             e.setLocale(QLocale())                     # a decimal comma in French
             e.setDecimals(decimals_shown(val, 0 if which == "t" else 1))
             e.setRange(lo, hi)

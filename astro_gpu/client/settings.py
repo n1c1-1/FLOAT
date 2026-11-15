@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import QLocale, QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QLocale, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QCheckBox, QComboBox, QDoubleSpinBox, QFrame, QLineEdit, QPushButton, QSpinBox, QWidget
 
@@ -703,6 +703,25 @@ def on_edited(spin, done):
     spin.editingFinished.connect(end)
 
 
+class _StepIsAnEdit:
+    """A step (the arrows, the Up and Down keys, the wheel of the focused field) ends an edit as Enter does: its value
+    is sent at once, not when the field is left. Sent once the event is over (the panel may be built again by it)."""
+
+    def stepBy(self, steps):                                          # noqa: N802 - Qt's name
+        before = self.value()
+        super().stepBy(steps)
+        if self.value() != before:
+            QTimer.singleShot(0, self, self.editingFinished.emit)
+
+
+class SpinBox(_StepIsAnEdit, QSpinBox):
+    pass
+
+
+class DoubleSpinBox(_StepIsAnEdit, QDoubleSpinBox):
+    pass
+
+
 # ======================================================================== how one setting is shown
 class RangeBar(QWidget):
     """The range of a numeric setting: the suggestion (tick) and the current value (dot)."""
@@ -805,7 +824,7 @@ class SettingRow(QFrame):
                     self.changed.emit(self.r, int(round(v)) if typ == "int" else round(v, 6))
             e.editingFinished.connect(typed)
         elif typ == "int":
-            e = QSpinBox()
+            e = SpinBox()
             e.setLocale(QLocale())                  # the language's numbers: a widget keeps its parent's locale
             e.setRange(int(r["min"]) if r.get("min") is not None else -10 ** 9,
                        int(r["max"]) if r.get("max") is not None else 10 ** 9)
@@ -815,7 +834,7 @@ class SettingRow(QFrame):
             e.setFixedWidth(110)
             e.editingFinished.connect(lambda: e.value() != self.r["value"] and self.changed.emit(self.r, e.value()))
         elif typ == "float":
-            e = QDoubleSpinBox()
+            e = DoubleSpinBox()
             e.setLocale(QLocale())                  # a decimal comma in French
             v = float(r["suggested"] or 0)
             step = r.get("step") or (10 ** (math.floor(math.log10(abs(v))) - 1) if v else 0.1)
