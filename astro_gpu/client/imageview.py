@@ -2795,6 +2795,7 @@ class ImageView(QWidget):
         self.canvas.busy = self.canvas.display is not None
         self.canvas.message = "" if self.canvas.display is not None else _("Loading the image…")
         self.canvas.update()
+        self._update_actions()                      # the picture still shown is the previous one: not written as this
         self.loader.request(vi, 0)
 
     def image(self) -> ViewImage | None:
@@ -2828,10 +2829,12 @@ class ImageView(QWidget):
             self.canvas.busy = False
             self.canvas.message = why if key in self.loader.unavailable else \
                 _("This image cannot be shown: {why}").format(why=plain_error(why))
+            self._failed_text = self.canvas.message
             log_detail(getattr(self.window(), "s", None), why)      # the program's error: in the Log only
             if not self._frames:
                 self.canvas.set_display(None)
             self.canvas.update()
+            self._update_actions()
         if self._cmp_i is not None and self._cmp_i < len(self._targets) and \
                 self._targets[self._cmp_i].identity() == key:
             self._cmp_failed = key                  # the compared image cannot be read: said, and not waited for
@@ -2842,6 +2845,12 @@ class ImageView(QWidget):
             self.toasted.emit(text)
 
     _cmp_failed = None
+    _failed_text = ""
+
+    def _current(self) -> Prepared | None:
+        """The prepared image when it is the one asked for: None while another is read, or could not be."""
+        p = self._prep
+        return p if p is not None and p.key == self._want else None
 
     def _show(self, prep: Prepared):
         """Show a prepared image. Its stretch: the automatic one of its kind, computed for it (the mode and the linked
@@ -2905,9 +2914,16 @@ class ImageView(QWidget):
         has = self._prep is not None
         for b in (self.export_b, self.post_b, self.copy_b, self.out_b, self.fit_b, self.one_b, self.zoom_b, self.auto_b):
             b.setEnabled(has)
+        # the image asked for is not the one prepared (still read, or unreadable): never written or sent as it
+        why = "" if self._want is None or self._current() is not None else \
+            self._failed_text if self._failed_key == self._want else _("Loading the image…")
+        if why:
+            self.export_b.setEnabled(False)
+            self.post_b.setEnabled(False)
+        self.export_b.setToolTip(why or _("Write the image to a file: FITS, TIFF, PNG or JPEG (Ctrl+E)"))
         if not self._post_ok:
             self.post_b.setEnabled(False)
-        self.post_b.setToolTip(_("Use this image in Post") if self._post_ok else self._post_tip)
+        self.post_b.setToolTip(self._post_tip if not self._post_ok else why or _("Use this image in Post"))
         self.cmp_box.setVisible(self._compare_allowed and bool(self._targets))
 
     # ------------------------------------------------------------ the stretch
@@ -3482,7 +3498,7 @@ class ImageView(QWidget):
 
     # ------------------------------------------------------------ actions
     def _send_post(self):
-        if self._prep is not None:
+        if self._current() is not None:
             self.sendToPost.emit(self._prep.key)
 
     def grab_view(self) -> QImage:
@@ -3501,13 +3517,13 @@ class ImageView(QWidget):
     def export(self, path: str | os.PathLike, fmt: str | None = None, content: str = "data",
                area: tuple[int, int, int, int] | None = None, wcs: bool = True) -> Path:
         """Write the image shown (in the GUI thread: the dialog runs it in a worker)."""
-        if self._prep is None:
+        if self._current() is None:
             raise RuntimeError("no image")
         return export_image(path, self._prep, self._st, fmt=fmt, content=content, area=area, with_wcs=wcs,
                             vi=self._vi)
 
     def export_dialog(self):
-        if self._prep is None:
+        if self._current() is None:
             return None
         dlg = ImageExportDialog(self, self.window())
         dlg.open()
