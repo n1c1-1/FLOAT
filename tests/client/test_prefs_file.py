@@ -18,6 +18,7 @@ from astro_gpu.client import prefs  # noqa: E402
 def said(tmp_path, monkeypatch):
     """The settings in tmp_path; what the settings say of their file, collected."""
     monkeypatch.setenv(prefs.ENV, str(tmp_path / "settings.json"))
+    prefs.watch(None)                                  # a window of an earlier test is told nothing more
     out = []
     yield out
     prefs.watch(None)
