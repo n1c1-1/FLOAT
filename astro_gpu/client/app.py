@@ -1031,7 +1031,12 @@ class Main(QMainWindow):
         page.goWorkflow.connect(lambda: self.set_mode(0))
         page.openImages.connect(self.open_images)
         page.view.openImages.connect(self.open_images)
-        page.view.runAsked.connect(self.launch)
+        # nothing is computed without the user's Run: Post's own Run (its bar over outdated results) runs; what Post asks
+        # by itself (an image's kind changed) is marked to compute and said, with a Run link (the testers: changing the
+        # kind started a run)
+        page.view.stale_run.clicked.disconnect()
+        page.view.stale_run.clicked.connect(lambda _c=False: self.launch())
+        page.view.runAsked.connect(self._post_to_compute)
         page.view.goResults.connect(self._go_results)
         page.view.card_source = self.report              # the night card, for its Export
         page.view.undoChanged.connect(self._update_actions)   # Edit > Undo / Redo follow each step (a crop too)
@@ -1063,6 +1068,12 @@ class Main(QMainWindow):
                 view.flush()
             except RuntimeError:                     # gone with the window
                 pass
+
+    def _post_to_compute(self):
+        """Post asked for a computation by itself (an image's kind changed): its change is in the definition, so what it
+        changes is to compute (Outdated or not computed, on the graph and in Post); the status line says so, with a
+        Run link. Only the user's Run computes it."""
+        self.flash(_("Image kind changed: to compute at the next run"), (_("Run"), self.launch))
 
     def _send_to_post(self, name: str, source, key):
         """Send to Post of a viewer of Inspect: the image becomes a layer of Post, which is shown."""

@@ -177,5 +177,6 @@
  "Opened from the copy kept at its last save: its graph is drawn again from it. The project file is left as it is until you save.": "Ouvert depuis la copie gardée à son dernier enregistrement : son graphe est redessiné d'après elle. Le fichier du projet reste tel quel jusqu'à ce que vous enregistriez.",
  "Opened from the copy kept at its last save: its graph could not be read": "Ouvert depuis la copie gardée à son dernier enregistrement : son graphe ne pouvait pas être lu",
  "Saved in the previous format, without its graph: {why}": "Enregistré dans le format précédent, sans son graphe : {why}",
- "Saved in the previous format: the graph and what the engine runs differ. The details are in the Log.": "Enregistré dans le format précédent : le graphe et ce que le moteur exécute diffèrent. Le détail est dans le Journal."
+ "Saved in the previous format: the graph and what the engine runs differ. The details are in the Log.": "Enregistré dans le format précédent : le graphe et ce que le moteur exécute diffèrent. Le détail est dans le Journal.",
+ "Image kind changed: to compute at the next run": "Type d'image changé : à calculer à la prochaine exécution"
 }

@@ -127,7 +127,9 @@ def test_post_has_its_button_and_its_empty_page_asks_for_images(env):
     assert asked
 
 
-def test_the_kind_of_an_image_is_changed_on_its_layer_and_computed_again(env):
+def test_the_kind_of_an_image_changed_on_its_layer_is_to_compute_and_said_with_a_run(env):
+    """Nothing is computed without the user's Run (the testers: changing the kind started a run): the change is marked
+    to compute and said in the status line with a Run link; Post's own Run, over outdated results, runs."""
     w = main(env)
     w.new_project()
     w.worker.wait()
@@ -137,12 +139,17 @@ def test_the_kind_of_an_image_is_changed_on_its_layer_and_computed_again(env):
     w.set_mode(2)
     settle(w)
     view, q = w.post_holder.page.view, w.s.paths[0]
-    seen = []
-    view.runAsked.connect(lambda: seen.append(1))
     assert not q.source["stretched"]
     view.set_stretched(q, True)
     settle(w)
-    assert w.s.view(q.pid).source["stretched"] and seen
+    assert w.s.view(q.pid).source["stretched"] and not env["launched"]
+    assert w.s.block_map.state(w.s.block_map.node_of(w.s.view(q.pid), "image")) != "done"
+    said = w.status.text()
+    assert "Image kind changed: to compute at the next run" in said and ">Run</a>" in said, said
+    w._flash_linked()                                   # its Run link
+    assert env["launched"] == [True]
+    view.stale_run.click()                              # Post's own Run: the user's gesture
+    assert env["launched"] == [True, True]
 
 
 def test_a_linear_image_alone_can_be_run(env):
