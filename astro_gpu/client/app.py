@@ -528,7 +528,7 @@ class Main(QMainWindow):
             self.home = HomeView(self.worker, last=last)
             self.home.openProject.connect(self.open_project)
             self.home.newProject.connect(self.new_project)
-            self.home.openImages.connect(self.open_images)
+            self.home.openImages.connect(lambda: self.open_images(new=True))     # its own project
             self.screens.insertWidget(0, self.home)
         else:
             self.home.rescan()
@@ -1339,14 +1339,22 @@ class Main(QMainWindow):
         self._said_saved()
         return True
 
-    def open_images(self):
-        """Images as layers of Post, one Image workflow each (the graph follows); from nothing, the project is made
-        first. Computed at once: only then does Post have them."""
+    def open_images(self, new: bool = False):
+        """Images as layers of Post, one Image workflow each (the graph follows), computed at once: only then does Post
+        have them. From Home (``new``) or with no project open, they are a new project of their own, the project open
+        left first (asked when anything is unsaved), never another project; from a project's File menu or Post, they
+        join it. A file this version cannot open is said at once, before anything is made."""
         from .gallery import ask_files
         files = ask_files(self, {"images": 1})
         if not files:
             return
-        if self.project is None:
+        why = image_refusal(files)
+        if why:
+            self.banner.say(why)
+            return
+        if new or self.project is None:
+            if self.project is not None and not self.close_project(go_home=False):
+                return
             self.new_project()
         if self.project is not None and self.graph.place_images(files) is not None:
             self.set_mode(2)

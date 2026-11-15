@@ -622,7 +622,7 @@ class SourcesView(QWidget):
                            lambda k=kind, oid=o.id: self.s.use_from_session(oid, self.sid, k))
 
     def _file_box(self, kind: str, was: tuple):
-        """The files of the kind shown, under its row, by folder when there are several; ``was``: the selection and the
+        """The files of the kind shown, under the kinds' rows, by folder when there are several; ``was``: the selection and the
         scrolling of the list before it was built again."""
         files = self.s.session_files(self.sid, kind)
         flagged = self._flagged(kind)
@@ -880,8 +880,14 @@ class SourcesView(QWidget):
                 self.lv.addWidget(ic.IconText("warning", text, "warning", "warn"))
             self._beside_rows(key)
             self._not_found_rows(key)
-            if key == self.group and n:
-                self._file_box(key, was)
+        # the files of the kind shown, under all the kinds' rows: listed between two rows, they pushed the rows below
+        # (and their +) down at each addition, and the next click landed on another row
+        if self.group and self.count_of(self.group):
+            self.lv.addSpacing(6)
+            title = next(t for k, t, _s in GROUPS if k == self.group)
+            self.lv.addWidget(label(_("{kind} of “{session}”").format(kind=_(title), session=self._session().name),
+                                    "small"))
+            self._file_box(self.group, was)
         self.lv.addSpacing(10)
         self.lv.addWidget(hline())
         self.lv.addWidget(label(_("Calibration matching"), "h2"))
