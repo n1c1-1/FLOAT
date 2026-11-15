@@ -453,6 +453,26 @@ def view_key(kind: str, name: str = "") -> str:
     return ENGINE_BLOCK.get(base, base) + (f"~{n}" if sep else "")
 
 
+#: the longest settings line a block's tooltip or line carries
+LINE_MAX = 120
+
+
+def value_words(name: str, v) -> str | None:
+    """A setting's value as a block line or a tooltip may say it, one source with the Gradient panel's header: a list,
+    a dict, an array or a long string is never printed raw, it is said by its count with its own words when they exist
+    ("307 samples", "exclusions"), else None (the setting is left out)."""
+    if isinstance(v, (str, bytes)):
+        return str(v) if len(v) <= 40 else None
+    if isinstance(v, (list, tuple, dict, set)) or hasattr(v, "shape"):
+        n = len(v)
+        if name == "sample_points":
+            return _("{n} samples").format(n=n) if n else None
+        if name.startswith("exclude_"):
+            return _("exclusions") if n else None
+        return None
+    return None
+
+
 def variant_diff(g, bid) -> str:
     """The first block of a variant: the engine's settings stored on it that differ from its original's block
     ("Surface degree 3"), "" for any other block (its method is the line itself)."""
@@ -484,9 +504,16 @@ def variant_diff(g, bid) -> str:
                     label = texts.param_label(stage.partition("@")[0].partition("~")[0], name, language())
                 except (KeyError, ValueError, TypeError):
                     label = name.replace("_", " ")
+                if isinstance(v, (list, tuple, dict, set)) or hasattr(v, "shape") or \
+                        (isinstance(v, str) and len(v) > 40):
+                    words = value_words(name, v)
+                    if words:
+                        out.append(words)           # said by its count with its own words, never raw
+                    continue
                 val = texts.choice_label(v, language()) if isinstance(v, str) else fmt(v)
                 out.append(f"{label} {val}")
-    return ", ".join(out[:2]) + (" …" if len(out) > 2 else "")
+    line = ", ".join(out[:2]) + (" …" if len(out) > 2 else "")
+    return line if len(line) <= LINE_MAX else line[:LINE_MAX - 2].rstrip() + " …"
 
 
 class BlockMap:

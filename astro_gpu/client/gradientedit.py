@@ -472,8 +472,9 @@ class GradientEditor(QObject):
         bits = []
         if m is not None:
             bits.append(_(METHOD_NAME[m]))
+        from .graphnode import value_words
         if d["vals"].get("sample_points"):
-            bits.append(_("{n} samples").format(n=len(d["vals"]["sample_points"])))
+            bits.append(value_words("sample_points", d["vals"]["sample_points"]))
         if any(k in d["vals"] for k in ("exclude_ellipses", "exclude_brush")):
             bits.append(_("exclusions"))
         short = ", ".join(bits) or _("gradient draft")
