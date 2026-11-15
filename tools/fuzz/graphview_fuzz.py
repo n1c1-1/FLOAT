@@ -664,7 +664,8 @@ class Run:
             return None
         why = self.bridge.check_wire(src, g["sport"], dst, g["dport"])
         self.G.pull_wire(src, g["sport"], dst, g["dport"])
-        if kind in JOIN_KINDS or kind == "post":
+        # (a wire to a Synthetic stars' input puts the block on those stars: a change too, operations._synth_on)
+        if kind in JOIN_KINDS or kind == "post" or kind in SIDE_KINDS:
             return ("message" if why else "change"), False
         return "none", False
 
