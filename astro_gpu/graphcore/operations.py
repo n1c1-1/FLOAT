@@ -1708,7 +1708,9 @@ def op_wire(q, src, src_port, dst, dst_port, channel=None):
         raise Refusal("lights first" if not out_ports(s) else M("no output {port}", port=src_port))
     if d.kind == "synth" and dst_port == SYNTH_IN:
         return _synth_on(q, ix, src, src_port, dst)
-    if s.kind == "synth" and d.kind == "post":
+    if s.kind == "synth" and d.kind != "combine" and not (d.kind == "combine_layers" and dst_port == SYNTH_PORT):
+        # (to Post, to another input of a Combine layers: its image is only that third input's; a combination says
+        # why in its own words, legality)
         raise Refusal("Synthetic stars go to the Synthetic stars input of their Combine layers")
     if dst_port not in in_ports(d) or (d.kind != "post" and ix.pos.get(dst) != 0):
         raise Refusal(M("no input {port}", port=dst_port))
