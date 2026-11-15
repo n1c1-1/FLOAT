@@ -58,7 +58,7 @@ from PySide6.QtWidgets import (
 from .. import __version__, api
 from ..core import project2
 from ..core.project import Target
-from . import APP_MOTTO, APP_NAME, drafts, prefs
+from . import APP_MOTTO, APP_NAME, drafts, journal, prefs
 from . import layout as lay
 from .gcguard import GuiGarbageCollector
 from .home import HomeView, ask_project_name, forget_state
@@ -195,6 +195,8 @@ class PageHolder(QWidget):
         self.ensure()
 
 
+#: a word said with a link (Undo, Undo there) stays at least this long (ms), and while the mouse is over it
+LINK_MS = 10000
 #: an edit is copied for the recovery after a crash this long after it (ms)
 RECOVERY_MS = 3000
 #: the place of the project's name in the bar above the pages: fixed, so that the tabs never move with a name's length
@@ -275,6 +277,8 @@ class Main(QMainWindow):
         self._flash_timer = QTimer(self)
         self._flash_timer.setSingleShot(True)
         self._flash_timer.timeout.connect(self._flash_end)
+        self._flash_html = ""                        # the word said with its link, as the status line shows it
+        self._post_lists = journal.Lists()           # the stamps of Post's own steps (the window's one order of Undo)
         self.screens = QStackedWidget()
         self.banner = Banner()
         root = QWidget()
@@ -406,8 +410,9 @@ class Main(QMainWindow):
         if s is None:
             return
         try:
-            self.a_undo.setEnabled(s.can_undo() or self._post_shown())      # (greyed never: it says why when pressed)
-            self.a_redo.setEnabled(s.can_redo() or self._post_shown())
+            # (greyed never on Post: it says why when pressed)
+            self.a_undo.setEnabled(self._history_next("undo") is not None or self._post_shown())
+            self.a_redo.setEnabled(self._history_next("redo") is not None or self._post_shown())
             self.a_stop.setEnabled(self.run is not None and self.run.running)
             self.a_stop.setToolTip(_("Stop the run: what is computed is kept") if self.a_stop.isEnabled()
                                    else _("No run in progress"))             # greyed: why (round 2)
@@ -1023,6 +1028,9 @@ class Main(QMainWindow):
         page.view.goResults.connect(self._go_results)
         page.view.card_source = self.report              # the night card, for its Export
         page.view.undoChanged.connect(self._update_actions)   # Edit > Undo / Redo follow each step (a crop too)
+        page.view.undoChanged.connect(self._post_seen)        # its steps stamped as they come (journal.py)
+        for b in (page.view.b_undo, page.view.b_redo):        # (its own arrows: read after they acted)
+            b.clicked.connect(self._post_seen)
         page.view.toasted.connect(self.flash)            # what a change of Post did beyond Post (a branch removed)
         page.view.goProcessing.connect(lambda pid, k: (self.select(index=self.s.index_of(pid), step=k),
                                                        self.set_mode(1)))
@@ -1249,7 +1257,7 @@ class Main(QMainWindow):
             elif cost is not None:
                 line += "  ·  " + _("all up to date")
         self._line = line
-        self.status.setText(self._flash or line)
+        self.status.setText(self._flash_html or self._flash or line)    # a word's link stays while it is said
 
     def run_refusal(self, cost=None) -> str:
         """Why Run cannot run now, translated ('' when it can): one place for the Run button's tooltip (GUI exploration
@@ -1365,6 +1373,8 @@ class Main(QMainWindow):
         drafts.clear_recovery(old)
         drafts.discard(old)
         prefs.add_recent(root.as_posix(), name, p.target.name or "")
+        if hasattr(self.s, "named"):
+            self.s.named(name)                           # no Undo gives the saved project back its "Untitled"
         self.title.setText(self.project_name())
         self._title()
         self._said_saved()
@@ -1575,69 +1585,155 @@ class Main(QMainWindow):
 
     def undo(self):
         """Edit > Undo, Ctrl+Z on any page and a notice's Undo link: the window's one entry point (the focus never
-        decides). Two histories by design: Post keeps its own steps (its layers, its crop, its versions), the graph the
-        workflows'. The page shown undoes its own last step; with none, it says so and offers the other page's step:
-        the link opens that page and undoes there."""
+        decides). One chronological order for the window (journal.py): the latest change is taken back wherever it
+        was made, never an older one of the page shown. The workflows' steps are undone on the Graph and in Inspect,
+        Post's on Post, the Gradient draft's in its view; a step of another page is said with an "Undo there" link
+        that opens that page and undoes there. A step that would compute again results computed and up to date asks
+        first (HistoryCard), as a change of setting does."""
         self._history("undo")
 
     def redo(self):
+        """Edit > Redo: the latest step undone, while nothing was changed since (one order for the window)."""
         self._history("redo")
 
-    def _history(self, how: str):
+    def _post_view(self):
+        page = self._post_holder.page if self._post_holder is not None else None
+        return getattr(page, "view", None)
+
+    def _post_seen(self, *_a):
+        """Post's lists read again (journal.Lists): its new steps get their stamp now."""
+        view = self._post_view()
+        if view is not None:
+            for steps in (view.undo, view.redo):
+                self._post_lists.seen(steps)
+
+    def _history_tops(self, how: str) -> list:
+        from .post3 import ModelStep
+        s = self.s
+        out = []
+        steps = s._undo if how == "undo" else s._redo
+        if steps:
+            out.append(("post_model" if steps[-1].from_post else "graph", journal.seq_of(steps[-1]), None))
+        view = self._post_view()
+        own = getattr(view, how, None) if view is not None else None
+        if own and not isinstance(own[-1], ModelStep):
+            out.append(("post", self._post_lists.top(own), None))
+        ed = self._grad_editor()
+        top = ed.history_top(how) if ed is not None else None
+        if top is not None:
+            out.append(("draft", top[0], top[1]))
+        return out
+
+    def _grad_editor(self):
+        return getattr(self._tune, "grad_editor", None) if self._tune is not None else None
+
+    def _history_next(self, how: str):
+        """The step the window's Undo (``how`` "undo") or Redo takes next: (where, stamp, extra) with ``where`` "graph"
+        (a step of the workflows), "post_model" (a step of the workflows made in Post), "post" (Post's own step) or
+        "draft" (the Gradient draft's, ``extra`` its workflow); None when there is none (for Redo: also when a change
+        was made since the latest Undo)."""
+        if self.s is None:
+            return None
+        self._post_seen()
+        found = self._history_tops(how)
+        if not found:
+            return None
+        best = max(found, key=lambda c: c[1])
+        if how == "redo" and any(c[1] > best[1] for c in self._history_tops("undo")):
+            return None                                  # a change was made since: nothing comes back over it
+        return best
+
+    def _where_shown(self, where: str, extra=None) -> bool:
+        """Whether the page shown is the one where a step of ``where`` is undone."""
+        if where in ("post", "post_model"):
+            return self._post_shown()
+        if where == "draft":
+            ed = self._grad_editor()
+            return self.mode == 1 and ed is not None and ed.view is not None and ed.p is not None and ed.p.pid == extra
+        return not self._post_shown()
+
+    #: where the step of the next Undo / Redo was made, as the status line says it when another page is shown
+    _ELSEWHERE = {"undo": {"graph": "The last change was made in the Graph", "post": "The last change was made in Post",
+                           "post_model": "The last change was made in Post",
+                           "draft": "The last change was made in the Gradient draft"},
+                  "redo": {"graph": "The last change undone was made in the Graph",
+                           "post": "The last change undone was made in Post",
+                           "post_model": "The last change undone was made in Post",
+                           "draft": "The last change undone was made in the Gradient draft"}}
+
+    def _history(self, how: str, there: bool = False):
         s = self.s
         if s is None:
             return
-        undo = how == "undo"
-        graph_can = (s.can_undo if undo else s.can_redo)(graph=True)
-        if self._post_shown():
-            view = self.post_holder.page.view
-            if not self._post_has(view, how) and graph_can:
-                self.flash(_("Nothing to undo in Post: the last change is the Graph's") if undo else
-                           _("Nothing to redo in Post: the next change is the Graph's"),
-                           (_("Undo there") if undo else _("Redo there"), lambda: self._history_in(0, how)))
-            else:                                        # Post's own step, or Post says there is none
-                (view.do_undo if undo else view.do_redo)()
+        card = getattr(self, "_history_card", None)
+        try:
+            waiting = card is not None and card.isVisible()
+        except RuntimeError:                             # its widget is gone
+            waiting = False
+        if waiting:
+            card.ok.setFocus()                           # a question waits: it is answered first
             return
-        if graph_can:
-            if (s.undo if undo else s.redo)(graph=True):
-                self._say_restored(*(("Undone", "Undone: {what}") if undo else ("Redone", "Redone: {what}")))
-        elif self._post_pending(how):
-            self.flash(_("Nothing to undo in the Graph: the last change is Post's") if undo else
-                       _("Nothing to redo in the Graph: the next change is Post's"),
-                       (_("Undo there") if undo else _("Redo there"), lambda: self._history_in(2, how)))
-        else:
+        undo = how == "undo"
+        nxt = self._history_next(how)
+        if nxt is None:
             self.flash(_("Nothing to undo") if undo else _("Nothing to redo"))
+            return
+        where, _seq, extra = nxt
+        if not there and not self._where_shown(where, extra):
+            self.flash(_(self._ELSEWHERE[how][where]),
+                       (_("Undo there") if undo else _("Redo there"), lambda: self._history_in(where, how, extra)))
+            return
+        if where in ("graph", "post_model"):
+            from .graphmodel import confirm_on
+            cost = s.history_cost(how) if confirm_on() and hasattr(s, "history_cost") else None
+            if cost is not None and cost.lost:
+                from .historycard import HistoryCard
+                step = (s._undo if undo else s._redo)[-1]
+                self._history_card = HistoryCard(self, how, s.next_words(how), cost,
+                                                 lambda: self._history_do(where, how, extra, step), said=self.flash)
+                return
+        self._history_do(where, how, extra)
 
-    @staticmethod
-    def _post_has(view, how: str) -> bool:
-        """Whether Post's page has a step of its own to undo (``how`` "undo") or redo."""
-        steps = getattr(view, how, None)
-        if not steps:
-            return False
-        from .post3 import ModelStep
-        last = steps[-1]
-        return not isinstance(last, ModelStep) or bool(view._model_mine(last, "_" + how))
-
-    def _post_pending(self, how: str) -> bool:
-        """Whether Post has a step to undo (or redo) while another page is shown: a step of the workflows Post made, or
-        one of Post's own page."""
+    def _history_do(self, where: str, how: str, extra=None, step=None):
+        """The step taken back (or redone) where it was made; ``step``: the workflows' step a question was asked for
+        (nothing is done when another one came meanwhile)."""
         s = self.s
-        if (s.can_undo if how == "undo" else s.can_redo)():
-            return True
-        page = self._post_holder.page if self._post_holder is not None else None
-        view = getattr(page, "view", None)
-        return view is not None and self._post_has(view, how)
+        undo = how == "undo"
+        if s is None:
+            return
+        if step is not None:
+            steps = s._undo if undo else s._redo
+            if not steps or steps[-1] is not step:
+                return
+        if where in ("post", "post_model"):
+            view = self._post_view()
+            if view is not None and self._post_shown():
+                (view.do_undo if undo else view.do_redo)()
+                self._post_seen()
+            elif where == "post_model" and (s.undo if undo else s.redo)():
+                self._say_restored(*(("Undone", "Undone: {what}") if undo else ("Redone", "Redone: {what}")))
+            return
+        if where == "draft":
+            ed = self._grad_editor()
+            if ed is not None and (ed.undo if undo else ed.redo)(extra):
+                self.flash((_("Undone: {what}") if undo else _("Redone: {what}")).format(what=_("Gradient draft")))
+            return
+        if (s.undo if undo else s.redo)(graph=True):
+            self._say_restored(*(("Undone", "Undone: {what}") if undo else ("Redone", "Redone: {what}")))
 
-    def _history_in(self, mode: int, how: str):
-        """A notice's link: the other page shown, and its step undone (or redone) there."""
+    def _history_in(self, where: str, how: str, extra=None):
+        """A notice's link: the page of the step shown, and the step undone (or redone) there."""
         if self.project is None:
             return
-        self.set_mode(mode)
-        if mode == 2 and not self._post_shown():
-            return
-        if mode == 0 and self._post_shown():
-            return
-        self._history(how)
+        if where in ("post", "post_model"):
+            self.set_mode(2)
+        elif where == "draft":
+            if self.s is not None and self.s.view(extra) is not None:
+                self.select(index=self.s.index_of(extra), step="fond")
+            self.set_mode(1)
+        elif self._post_shown():
+            self.set_mode(0)
+        self._history(how, there=True)
 
     def _say_restored(self, plain: str, said: str):
         """The Undo / Redo message and Log line: what was undone or redone, in the words of its step."""
@@ -1758,33 +1854,37 @@ class Main(QMainWindow):
     def flash(self, text, link=None):
         """A word for four seconds, in place of the status line (the status bar's own message would leave the line
         under it when the bar is laid out again meanwhile). ``link``: (words, function), a link after the text that
-        does it (eight seconds then, to reach it)."""
+        does it: ten seconds then, and longer while the mouse is over it (it was gone before it could be reached)."""
         self._flash = text
         self._flash_link = link[1] if link else None
         if link:
-            self.status.setText(f"{html.escape(text)} · <a href='do' style='color: #5ea1ff;'>{html.escape(link[0])}</a>")
+            self._flash_html = f"{html.escape(text)} · <a href='do' style='color: #5ea1ff;'>{html.escape(link[0])}</a>"
+            self.status.setText(self._flash_html)
         else:
+            self._flash_html = ""
             self.status.setText(text)
-        self._flash_timer.start(8000 if link else 4000)
+        self._flash_timer.start(LINK_MS if link else 4000)
 
     def _flash_linked(self, _href=""):
         fn, self._flash_link = getattr(self, "_flash_link", None), None
-        self._flash_end()
+        self._flash_end(force=True)
         if fn is not None:
             fn()
 
     def _unflash(self):
         """No word said any more, nor a status line: a project closed, Home shown (issue #149: the Undo of one project
         was said over the next one, opened from its window without Home between them)."""
-        self._flash = ""
+        self._flash = self._flash_html = ""
         self._flash_timer.stop()
         self._line = ""
         self.status.setText("")
 
-    def _flash_end(self):
-        self._flash = ""
-        if self.project is not None and self.proj_screen is not None and \
-                self.screens.currentWidget() is self.proj_screen:
+    def _flash_end(self, force: bool = False):
+        if not force and self._flash_html and self.status.underMouse():
+            self._flash_timer.start(1000)            # its link under the mouse: it stays
+            return
+        self._flash = self._flash_html = ""
+        if self.project is not None and self.proj_screen is not None and                 self.screens.currentWidget() is self.proj_screen:
             self.status.setText(getattr(self, "_line", ""))
         else:
             self.status.setText("")

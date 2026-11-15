@@ -337,6 +337,23 @@ def test_reset_and_the_draft_undo(ed):
     assert not ed.has_draft() and ed.value("method") == "polynomial" and ed.s.changes == []
 
 
+def test_the_drafts_steps_take_their_place_in_the_windows_one_order_of_undo(ed):
+    """The window's Undo reads the draft's latest step (history_top) on the clock every history stamps with: a draft
+    step made after another change of the window is the later one (the testers' pass 2: Ctrl+Z in the Gradient view
+    undid an earlier "variant discarded" instead of the sample edit just made)."""
+    from astro_gpu.client import journal
+    assert ed.history_top("undo") is None
+    before = journal.tick()                            # a change elsewhere in the window
+    ed.set_draft({"degree": 3})
+    seq, pid = ed.history_top("undo")
+    assert seq > before and pid == ed.p.pid and ed.history_top("redo") is None
+    later = journal.tick()
+    assert ed.undo(pid) and ed.value("degree") != 3
+    rseq, _p = ed.history_top("redo")
+    assert rseq > later and ed.history_top("undo") is None
+    assert ed.redo() and ed.value("degree") == 3 and ed.history_top("undo")[0] > rseq
+
+
 def test_leaving_with_a_draft_asks_in_the_notice_strip(ed):
     m, p = ed.s, ed.s.path
     ed.set_draft({"degree": 3})

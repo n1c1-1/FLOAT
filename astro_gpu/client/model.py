@@ -57,6 +57,7 @@ from ..core.project2 import join_problem as engine_join_problem
 from .graphnode import COLUMNS, KEY_ENGINE_BLOCK, TOOLS, TRUNK, block_state, kbase, knum, port_name  # noqa: F401  (TOOLS: test_model_surface)
 from .graphnode import ENGINE_BLOCK as ENGINE_KEY
 from .graphmodel import GraphEditing
+from . import journal
 from .i18n import _, hm
 from .names import shown as shown_name
 from .services.worker import ApiWorker, norm_path
@@ -542,6 +543,8 @@ class _Snap(tuple):
     from_post = False
     moved = None                   # Use survey's step: the results it moved to the trash (api.use_survey)
     after_post = None              # the composition right after the step: what it changed is what Undo / Redo puts back
+    seq = 0                        # when it was pushed to its list, on the window's one clock (journal.py)
+    named = None                   # the name the project was given at its first Save, after this step (``named``)
 
 
 def _set_values(stored: dict, stage: str) -> dict:
@@ -1601,6 +1604,7 @@ class _ProjectBase(QObject):
                 if after != before:
                     before.from_post = self._post_depth > 0
                     before.after_post = json.loads(after[4])
+                    journal.stamp(before)
                     self._undo.append(before)
                     del self._undo[:-200]
                     self._redo.clear()
@@ -1743,6 +1747,7 @@ class _ProjectBase(QObject):
         step = _Snap(self._snapshot())
         step.moved = moved
         step.after_post = json.loads(step[4])
+        journal.stamp(step)
         self._undo.append(step)
         del self._undo[:-200]
         self._redo.clear()
@@ -1754,6 +1759,7 @@ class _ProjectBase(QObject):
     def _move_survey_results(self, src: list, dst: list, back: bool) -> bool:
         """Undo (``back``) or Redo of Use survey: the results come back from the trash, or go to it again."""
         step = src.pop()
+        journal.stamp(step)
         dst.append(step)
         move = api.put_back_survey if back else api.trash_survey_again
         done, skipped = move(self.p, step.moved)
@@ -1828,7 +1834,18 @@ class _ProjectBase(QObject):
                 return what[0].format(**what[1])
         return what or ""
 
-
+    def next_words(self, how: str = "undo") -> str:
+        """The words of the step the next Undo (``how`` "undo") or Redo would take, nothing moved; "" when not said."""
+        stack, words = (self._undo, self._undo_what) if how == "undo" else (self._redo, self._redo_what)
+        if not stack or not words:
+            return ""
+        what = words[-1]                                   # the lists stay aligned on their last steps (_move_what)
+        if isinstance(what, tuple):
+            try:
+                return _(what[0]).format(**what[1])
+            except (KeyError, IndexError, ValueError):
+                return what[0].format(**what[1])
+        return what or ""
 
     # ------------------------------------------------------------ stages, keys, states
     def all_stages(self, p: WorkflowView | None = None) -> list[str]:

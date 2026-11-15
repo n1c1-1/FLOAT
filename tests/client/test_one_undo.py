@@ -1,7 +1,8 @@
 """One Undo for the window: Ctrl+Z (wherever the focus is), Edit > Undo and a notice's Undo link do the same thing (the
-night test pass: Ctrl+Z did nothing in the Graph while the menu worked, a notice's Undo did nothing). Post and the graph
-keep two histories by design: a page with nothing to undo says so and offers the other page's step, which its link
-undoes there. What was undone is said in the interface's words, never the engine's raw names."""
+night test pass: Ctrl+Z did nothing in the Graph while the menu worked, a notice's Undo did nothing). One chronological
+order for the window (the second testers' pass: Ctrl+Z on the Graph after a gesture in Post undid an older gesture of
+the Graph): the latest change is taken back wherever it was made; made on another page, it is said with a link that
+undoes it there. What was undone is said in the interface's words, never the engine's raw names."""
 from __future__ import annotations
 
 import os
@@ -107,7 +108,7 @@ def test_post_with_nothing_of_its_own_offers_the_graphs_step(win):
     assert win._post_shown()
     win.undo()
     said = win.status.text()
-    assert "Nothing to undo in Post" in said and "Undo there" in said and _method(win) == "rbf"
+    assert "The last change was made in the Graph" in said and "Undo there" in said and _method(win) == "rbf"
     win._flash_linked("do")                                          # the link
     _settle(win, 3)
     assert win.mode == 0 and _method(win) != "rbf"
@@ -122,7 +123,133 @@ def test_the_graph_with_posts_step_last_offers_it(win):
     assert s.can_undo() and not s.can_undo(graph=True)
     win.undo()
     said = win.status.text()
-    assert "Nothing to undo in the Graph" in said and "Undo there" in said
+    assert "The last change was made in Post" in said and "Undo there" in said
     win._flash_linked("do")
     _settle(win, 3)
     assert win.mode == 2
+
+
+def test_a_gesture_in_post_is_undone_before_an_older_gesture_of_the_graph(win):
+    """The testers' pass 2: "Sky -1" in Post, then Ctrl+Z on the Graph undid an older gesture of the Graph (the lights
+    added): the project went "Untitled", every block Outdated. The latest change is Post's: said, never the Graph's."""
+    _set_rbf(win)
+    win.set_mode(2)
+    _settle(win, 3)
+    view = win.post.view
+    n = len(view.undo)
+    view.push()                                                      # a step of Post's own, after the Graph's
+    _settle(win, 2)
+    win.set_mode(0)
+    _settle(win, 2)
+    win.undo()
+    said = win.status.text()
+    assert "The last change was made in Post" in said and "Undo there" in said and _method(win) == "rbf"
+    win._flash_linked("do")                                          # its link: Post shown, its step undone there
+    _settle(win, 3)
+    assert win.mode == 2 and len(view.undo) == n and _method(win) == "rbf"
+    win.undo()                                                       # the Graph's step is now the latest one
+    assert "The last change was made in the Graph" in win.status.text() and _method(win) == "rbf"
+
+
+def test_redo_never_comes_back_over_a_later_change(win):
+    _set_rbf(win)
+    win.undo()
+    _settle(win, 3)
+    assert _method(win) != "rbf"
+    win.set_mode(2)
+    _settle(win, 3)
+    win.post.view.push()                                             # a change made since, in Post
+    _settle(win, 2)
+    win.set_mode(0)
+    _settle(win, 2)
+    win.redo()
+    assert win.status.text() == "Nothing to redo" and _method(win) != "rbf"
+
+
+class _Draft:
+    """A Gradient draft as the window reads it (gradientedit.GradientEditor.history_top / undo)."""
+
+    def __init__(self, pid):
+        from astro_gpu.client import journal
+        self.view = self.p = None
+        self.pid, self.taken = pid, []
+        self.top = (journal.tick(), pid)
+
+    def history_top(self, how):
+        return self.top if how == "undo" else None
+
+    def undo(self, pid=None):
+        self.taken.append(pid)
+        self.top = None
+        return True
+
+
+def test_the_gradient_drafts_step_is_undone_before_an_older_step_of_the_workflows(win, monkeypatch):
+    """The testers' pass 2: in the Gradient view, Ctrl+Z undid an earlier "variant discarded" instead of the sample edit
+    just made in the draft."""
+    _set_rbf(win)
+    draft = _Draft(win.s.paths[0].pid)                               # a draft step made after the Graph's
+    monkeypatch.setattr(win, "_grad_editor", lambda: draft)
+    win.undo()
+    assert "The last change was made in the Gradient draft" in win.status.text() and _method(win) == "rbf"
+    win._flash_linked("do")
+    _settle(win, 3)
+    assert draft.taken == [win.s.paths[0].pid] and win.mode == 1 and _method(win) == "rbf"
+
+
+def test_an_undo_never_gives_a_saved_project_back_its_untitled(win, tmp_path, monkeypatch):
+    """The testers' pass 2: an Undo of a step made before the first Save renamed the saved project "Untitled"."""
+    _set_rbf(win)                                                    # a step made before the project is named
+    monkeypatch.setattr(appmod, "ask_project_name", lambda *_a, **_k: (tmp_path / "lab", "M33 lab"))
+    assert win.name_project()
+    assert win.s.p.name == "M33 lab"
+    win.undo()
+    _settle(win, 3)
+    assert _method(win) != "rbf" and win.s.p.name == "M33 lab" and "M33 lab" in win.project_name()
+    win.redo()
+    _settle(win, 3)
+    assert _method(win) == "rbf" and win.s.p.name == "M33 lab"
+
+
+def test_an_undo_that_would_compute_again_asks_first(win, monkeypatch):
+    """An Undo or a Redo that makes results computed and up to date stale asks as a change of setting does: Undo /
+    Cancel, nothing changed until then; "Confirm changes" off: at once."""
+    from PySide6.QtWidgets import QLabel
+
+    from astro_gpu.client.graphmodel import ChangeCost
+    _set_rbf(win)
+    monkeypatch.setattr(win.s, "history_cost", lambda how="undo": ChangeCost(["Gradient", "Denoise"],
+                                                                           [(1, "gradient"), (1, "denoise")], 90))
+    win.undo()
+    card = win._history_card
+    assert card.isVisible() and _method(win) == "rbf"
+    assert card.findChild(QLabel, "history_cost").text().startswith("Computes again: Gradient, Denoise")
+    assert "Undo: " in " ".join(x.text() for x in card.findChildren(QLabel))
+    win.undo()                                                       # a question waits: it is answered first
+    assert _method(win) == "rbf"
+    card.cancel()
+    _settle(win, 2)
+    assert _method(win) == "rbf"
+    win.undo()
+    win._history_card.accept()
+    _settle(win, 3)
+    assert _method(win) != "rbf"
+    prefs.set("confirm_changes", False)
+    try:
+        win.redo()                                                   # the preference off: at once
+        _settle(win, 3)
+        assert _method(win) == "rbf"
+    finally:
+        prefs.set("confirm_changes", True)
+
+
+def test_a_link_stays_long_enough_and_while_the_mouse_is_over_it(win):
+    from astro_gpu.client.graphview.canvas import LINK_MS
+    assert appmod.LINK_MS >= 10000 and LINK_MS >= 10000
+    win.flash("Something", ("Undo", lambda: None))
+    assert win._flash_timer.interval() >= 10000
+    win.refresh()                                                    # the status line read again: the link stays
+    assert "<a href" in win.status.text()
+    toast = win.graph.canvas.toast
+    toast.say_links("Lights added", [("Undo", "undo")])
+    assert toast.timer.interval() >= 10000

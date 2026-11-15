@@ -36,6 +36,7 @@ from ..graphcore.convert import convert
 from ..graphcore.msg import M, say
 from ..graphcore.operations import apply_many, new_view, normalise, owned_stages
 from ..graphcore.shapes import Result
+from . import journal
 from .graphnode import BlockMap
 from .i18n import _
 
@@ -1006,6 +1007,44 @@ class GraphEditing:
                 self._redo_what.pop()
         return done
 
+    def named(self, name: str):
+        """The project was given its name at its first Save (Main.name_project; no step of Undo): the steps made before
+        keep it, so that an Undo never gives a saved project back its "Untitled"."""
+        for steps in (self._undo, self._redo):
+            for st in steps:
+                st.named = name
+
+    def history_cost(self, how: str = "undo") -> ChangeCost:
+        """What the window's next Undo (``how`` "undo") or Redo of the workflows would compute again among the results
+        computed and up to date, nothing changed (``ChangeCost``; ``lost`` False: nothing to ask). Read as a gesture's
+        cost is: the step's graph compiled into a copy of the definition, its keys against the ones of now."""
+        from .. import api
+        from ..core.project import Target
+        steps = self._undo if how == "undo" else self._redo
+        if not self.ready or not steps or getattr(steps[-1], "moved", None) is not None:
+            return ChangeCost()
+        if not any(self.state(v, st) == "done" for v in self.paths for st in self.all_stages(v)):
+            return ChangeCost()
+        try:
+            snap = steps[-1]
+            g = gm.from_dict(json.loads(snap[0]))
+            g.excluded = [[int(a), str(b)] for a, b in self.p.excluded if any(n["sid"] == int(a) for n in g.nights)]
+            p2 = self._what_if_project(g)
+            p2.target = Target(**snap[5])
+            there = {w.id for w in p2.workflows}
+            lost = []
+            for v in self.paths:
+                if v.pid in there:
+                    lost += self._lost(v, set(api.chain(p2, v.pid)), lambda st, w=v.pid: api.stage_key(p2, w, st))
+            if not lost:
+                return ChangeCost()
+            wids = sorted({w for w, _s in lost})
+            after = api.cost(p2, wids, self.device, self._history_est)
+            before = self.cost(wids)
+            return ChangeCost(self._lost_blocks(lost), lost, after.seconds - before.seconds, after.measured)
+        except (ValueError, KeyError, TypeError, gm.Invalid, _mm().NotInEngine):
+            return ChangeCost()
+
     def _prune_post(self):
         """Post follows the graph (ProjectModel._prune_post), then the graph's wires to Post follow Post: the step ends
         with the graph and Post agreeing, so an undo gives both back as they were shown. Post's page is told when its
@@ -1065,6 +1104,8 @@ class GraphEditing:
         now = self._snapshot()
         now.from_post = src[-1].from_post
         step_after = src[-1].after_post                   # Post as the step left it (model._Snap)
+        named = src[-1].named                             # a step made before the project's first Save keeps its name
+        journal.stamp(now)
         dst.append(now)
         had = {v.pid: self.block_keys(v) for v in self.paths}
         old_keys = self.block_keys(self.path) if self.path is not None else []
@@ -1078,6 +1119,8 @@ class GraphEditing:
                 pred = None
         files_before = [(s.id, *(tuple(getattr(s, k)) for k in gm.FILE_KINDS)) for s in self.p.sessions]
         gjson, current, _mode, _none, post, target, description, name, acquisition = src.pop()
+        if named is not None:
+            name = named
         self.p.target, self.p.description, self.p.name, self.p.acquisition = Target(**target), description, name, \
             dict(acquisition)
         # Post first, then the graph and the views: the graph's wires to Post are read from Post and the workflows,

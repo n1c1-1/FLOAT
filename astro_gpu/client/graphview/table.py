@@ -1135,7 +1135,8 @@ class Table(QWidget):
         self._toast_fn = text if callable(text) else None
         self._toast_links = links
         self._show_toast(text() if callable(text) else text)
-        self._toast_timer.start()
+        from .canvas import LINK_MS
+        self._toast_timer.start(LINK_MS if links else 6000)    # a link stays long enough to be reached
 
     def _show_toast(self, t):
         self.toast_w.setText(self._html(t, self._toast_links))
@@ -1152,6 +1153,9 @@ class Table(QWidget):
     def _toast_end(self):
         if self.grid.model.readings():                 # still listing: the toast waits for the final count
             self._toast_timer.start()
+            return
+        if self._toast_links and self.toast_w.underMouse():
+            self._toast_timer.start(1000)              # its link under the mouse: it stays
             return
         self.toast_w.hide()
         self._toast_fn = None

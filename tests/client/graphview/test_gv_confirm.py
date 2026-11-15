@@ -256,3 +256,24 @@ def test_no_question_when_nothing_up_to_date_is_lost(world, model, page):
     assert not model.change_cost(dict(ch), [full]).lost
     # a pause changes no key: nothing
     assert not model.change_cost([("set_pause", {"block": block_of(page, node(page, "fond", 1))})]).lost
+
+
+def test_an_undo_or_a_redo_is_costed_as_a_gesture(world, model, page):
+    """The window asks before an Undo or a Redo that would compute again results computed and up to date (the testers'
+    pass 2: one Ctrl+Z after a run went back before it, every block Outdated, no question): ``history_cost`` reads it as
+    a gesture's cost. An Undo that gives results back loses nothing."""
+    grad = block_of(page, node(page, "fond", 1))
+    assert not model.history_cost("undo").lost                 # the steps before the run: nothing computed since
+    res = page.bridge.act("switch_off", block=grad)
+    settle(world["w"], page)
+    assert res.ok and not model.history_cost("undo").lost     # its Undo gives the results back
+    page.bridge.undo()
+    settle(world["w"], page)
+    assert computed_but_stars(model, model.view(1))
+    cost = model.history_cost("redo")
+    assert cost.lost and "Denoise" in cost.blocks and "Color" in cost.blocks and "Output" not in cost.text()
+    page.bridge.redo()
+    settle(world["w"], page)
+    page.bridge.undo()
+    settle(world["w"], page)
+    assert computed_but_stars(model, model.view(1))

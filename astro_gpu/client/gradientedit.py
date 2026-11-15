@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import journal
 from .i18n import _
 from .icons import icon_only
 from .widgets import WARN, label
@@ -363,6 +364,8 @@ class GradientEditor(QObject):
         if undo:
             d["undo"].append(before)
             d["redo"].clear()
+            d.setdefault("useq", []).append(journal.tick())     # the window's one order of Undo (journal.py)
+            d["rseq"] = []
         d["told"] = False
         self._draft_changed(set(before) | set(d["vals"]) | set(updates))
         return True
@@ -397,24 +400,42 @@ class GradientEditor(QObject):
         self.samples = self._computed_samples()
         self._present()
 
-    def undo(self):
-        """The draft's last step taken back (the window's Undo is the project's)."""
-        d = self._draft()
-        if not d or not d["undo"]:
-            return
-        names = set(d["vals"]) | set(d["undo"][-1])
-        d["redo"].append(copy.deepcopy(d["vals"]))
-        d["vals"] = d["undo"].pop()
-        self._draft_changed(names)
+    def undo(self, pid: int | None = None) -> bool:
+        """The draft's last step taken back (the panel's arrow; the window's Undo when the draft's step is the latest
+        change of the window: ``history_top``). ``pid``: the draft of another workflow than the one shown (its step is
+        taken back, nothing on screen changes)."""
+        return self._move(pid, "undo", "redo")
 
-    def redo(self):
-        d = self._draft()
-        if not d or not d["redo"]:
-            return
-        names = set(d["vals"]) | set(d["redo"][-1])
-        d["undo"].append(copy.deepcopy(d["vals"]))
-        d["vals"] = d["redo"].pop()
-        self._draft_changed(names)
+    def redo(self, pid: int | None = None) -> bool:
+        return self._move(pid, "redo", "undo")
+
+    def _move(self, pid, src: str, dst: str) -> bool:
+        d = self._draft(pid)
+        if not d or not d[src]:
+            return False
+        names = set(d["vals"]) | set(d[src][-1])
+        d[dst].append(copy.deepcopy(d["vals"]))
+        d["vals"] = d[src].pop()
+        sq, dq = d.setdefault(src[0] + "seq", []), d.setdefault(dst[0] + "seq", [])
+        del sq[len(d[src]):]
+        dq.append(journal.tick())
+        del dq[:max(0, len(dq) - len(d[dst]))]
+        if pid is None or (self.p is not None and pid == self.p.pid):
+            self._draft_changed(names)
+        return True
+
+    def history_top(self, how: str = "undo") -> tuple[int, int] | None:
+        """(stamp, workflow) of the draft step the window's Undo (``how`` "undo") or Redo would take next, the latest of
+        every workflow's draft; None without one."""
+        best = None
+        for pid, d in self.drafts.items():
+            steps = d.get(how) or []
+            seqs = d.get(how[0] + "seq") or []
+            if steps:
+                seq = seqs[-1] if len(seqs) == len(steps) else 0
+                if best is None or seq > best[0]:
+                    best = (seq, pid)
+        return best
 
     def _paths(self, q):
         paths = self.s.scope_paths()
@@ -1276,10 +1297,10 @@ class GradientEditor(QObject):
                 dv.addWidget(cr)
         title("Draft")
         row = QHBoxLayout()
-        for key, tip, fn in (("undo", "Undo the draft's last step (Ctrl+Z on the image)", self.undo),
-                             ("redo", "Redo (Ctrl+Y on the image)", self.redo)):
+        for key, tip, fn in (("undo", "Undo the draft's last step (Ctrl+Z)", self.undo),
+                             ("redo", "Redo the draft's step (Ctrl+Y)", self.redo)):
             b = icon_only(QPushButton(), key, _(tip), 16)
-            b.clicked.connect(fn)
+            b.clicked.connect(lambda _c=False, f=fn: f())
             row.addWidget(b)
             u[key] = b
         row.addStretch(1)
@@ -1699,23 +1720,15 @@ class GradientEditor(QObject):
             self.set_draft({"avoid_emission": bool(on)})
 
     def wants(self, e) -> bool:
-        """Whether the image takes this key before the shortcuts (the canvas asks, ShortcutOverride): the tools' keys,
-        and Ctrl+Z / Ctrl+Y while the draft has steps."""
-        if e.modifiers() & Qt.ControlModifier and e.key() in (Qt.Key_Z, Qt.Key_Y):
-            d = self._draft()
-            return bool(d and (d["undo"] or d["redo"]))
+        """Whether the image takes this key before the shortcuts (the canvas asks, ShortcutOverride): the tools' keys.
+        Ctrl+Z / Ctrl+Y are the window's: its one order of Undo takes the draft's step when it is the latest change."""
+        if e.modifiers() & Qt.ControlModifier:
+            return False
         return e.key() in TOOL_KEYS and not e.modifiers() & (Qt.ControlModifier | Qt.AltModifier)
 
     def key(self, e) -> bool:
         """The keys of the tool, from the canvas (it has the focus while a tool is on)."""
         k = e.key()
-        if e.modifiers() & Qt.ControlModifier and k in (Qt.Key_Z, Qt.Key_Y):
-            d = self._draft()
-            if not d or not (d["undo"] or d["redo"]):
-                return False
-            redo = k == Qt.Key_Y or bool(e.modifiers() & Qt.ShiftModifier)
-            (self.redo if redo else self.undo)()
-            return True
         if e.modifiers() & (Qt.ControlModifier | Qt.AltModifier):
             return False
         if k == Qt.Key_BracketLeft and self.mode in ("brush", "eraser"):

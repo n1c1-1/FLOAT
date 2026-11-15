@@ -94,6 +94,10 @@ def _fields(message) -> list:
     return out
 
 
+#: a toast with a link (Undo) stays at least this long (ms), and while the mouse is over it
+LINK_MS = 10000
+
+
 class Toast(QLabel):
     """"… · Ctrl+Z", bottom-left over the canvas, gone after a few seconds; never a pop-up window. ``say_links`` gives
     it links ("Undo", "Take all", "Include", "Delete too"): the text may be a function (a count that follows a
@@ -106,7 +110,7 @@ class Toast(QLabel):
         self.setStyleSheet("QLabel#toast { background: #262a33; color: #e8ebf0; border: 1px solid #3a4150; "
                            "border-radius: 6px; padding: 6px 12px; }")
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
-        self.timer = QTimer(self, singleShot=True, interval=4500)
+        self.timer = QTimer(self, singleShot=True, interval=4500)       # a toast with links: LINK_MS, and under the mouse
         self.timer.timeout.connect(self._end)
         self._fn, self._links, self._keep = None, None, None
         self.plain = ""
@@ -137,8 +141,8 @@ class Toast(QLabel):
         return self._links() if callable(self._links) else list(self._links or [])
 
     def _end(self):
-        if self._keep is not None and self._keep():
-            self.timer.start()
+        if (self._keep is not None and self._keep()) or (self._links and self.underMouse()):
+            self.timer.start(1000 if self._links and self.underMouse() else self.timer.interval())
             return
         self.hide()
 
@@ -160,7 +164,7 @@ class Toast(QLabel):
         self.move(16, self.parentWidget().height() - self.height() - 16)
         self.show()
         self.raise_()
-        self.timer.start()
+        self.timer.start(LINK_MS if rich and self._links else 4500)   # a link stays long enough to be reached
 
 
 class Minimap(QWidget):
