@@ -63,3 +63,4 @@ def test_the_time_to_run_is_never_said_while_the_states_are_read_and_goes_with_a
     h.s.sec = 0.0                                            # an undo: all up to date again
     SidesHost.cost_toast(h)
     assert not h.canvas.toast.shown and h.said_texts == ["+ 4 min to run"]
+

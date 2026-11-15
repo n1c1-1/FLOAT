@@ -838,9 +838,11 @@ class GraphCanvas(QGraphicsView):
             # state of the scene's building (the night test pass: a red Stacking said "Up to date")
             it.setToolTip(it.d.get("tip", ""))
             it.update()
-        if waited:
-            self.minimap.rects = [(r, QColor(STATE_COL.get(it.d["state"], "#5d6470")))
-                                  for (r, _c), it in zip(self.minimap.rects, self.blocks.values())]
+        # the overview takes the blocks' states every time, not only after an edit's: a run's end, an undo whose states
+        # came later (the testers' pass 2: after an undo the overview stayed orange over blocks all up to date)
+        self.minimap.rects = [(r, QColor(STATE_COL.get(it.d["state"], "#5d6470")))
+                              for (r, _c), it in zip(self.minimap.rects, self.blocks.values())]
+        self.minimap.update()
         pi = self.project_item
         if pi is not None:                               # the project's target and details change no block
             pi.title, pi.summary, pi.state, tip = self.doc.project_block()

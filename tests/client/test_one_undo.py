@@ -253,3 +253,18 @@ def test_a_link_stays_long_enough_and_while_the_mouse_is_over_it(win):
     toast = win.graph.canvas.toast
     toast.say_links("Lights added", [("Undo", "undo")])
     assert toast.timer.interval() >= 10000
+
+
+def test_the_overview_map_takes_the_blocks_states_after_an_undo(win):
+    """The testers' pass 2: after an undo the overview map stayed orange over blocks all up to date."""
+    from PySide6.QtGui import QColor
+
+    from astro_gpu.client.graphview.style import STATE_COL
+    _set_rbf(win)
+    win.undo()
+    _settle(win, 6)
+    cv = win.graph.canvas
+    cv.minimap.rects = [(r, QColor("#ff8800")) for r, _c in cv.minimap.rects]   # the colours an earlier state left
+    cv.update_states()                                               # the states told again, no edit waited for
+    want = [QColor(STATE_COL.get(it.d["state"], "#5d6470")).name() for it in cv.blocks.values()]
+    assert [c.name() for _r, c in cv.minimap.rects] == want
