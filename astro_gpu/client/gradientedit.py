@@ -843,7 +843,7 @@ class GradientEditor(QObject):
                 clear(cover.layout())
                 box = cover.layout()
                 box.addStretch(1)
-                box.addWidget(label(_("Not computed yet"), "h2"), 0, Qt.AlignHCenter)
+                box.addWidget(label(_("Not computed: run to see the picture"), "dim"), 0, Qt.AlignHCenter)
                 box.addSpacing(8)
                 rb = self.tv._run_button(self.p, "fond")
                 rb.setObjectName("primary")
@@ -998,7 +998,7 @@ class GradientEditor(QObject):
         bl.addWidget(gv)
         cover = QFrame(gv)                             # shown over the image while the stack does not exist
         cover.setObjectName("gradcover")
-        cover.setAutoFillBackground(True)
+        cover.setStyleSheet("QFrame#gradcover { background: #15171c; }")     # the dark empty state of the other views
         QVBoxLayout(cover).setContentsMargins(0, 0, 0, 0)
         cover.hide()
         self._ui["cover"] = cover
