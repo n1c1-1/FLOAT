@@ -134,6 +134,7 @@
      "stack": {
       "classic_cfa_balance": "on",
       "classic_clamping": "bilinear_guide",
+      "classic_combination": "mean",
       "classic_debayer": "rcd",
       "classic_interpolation": "lanczos4",
       "classic_rejection": "auto",
@@ -328,6 +329,7 @@
      "stack": {
       "classic_cfa_balance": "on",
       "classic_clamping": "bilinear_guide",
+      "classic_combination": "mean",
       "classic_debayer": "rcd",
       "classic_interpolation": "lanczos4",
       "classic_rejection": "auto",
@@ -522,6 +524,7 @@
      "stack": {
       "classic_cfa_balance": "on",
       "classic_clamping": "bilinear_guide",
+      "classic_combination": "mean",
       "classic_debayer": "rcd",
       "classic_interpolation": "lanczos4",
       "classic_rejection": "auto",
@@ -838,6 +841,7 @@
      "stack": {
       "classic_cfa_balance": "on",
       "classic_clamping": "bilinear_guide",
+      "classic_combination": "mean",
       "classic_debayer": "rcd",
       "classic_interpolation": "lanczos4",
       "classic_rejection": "auto",
