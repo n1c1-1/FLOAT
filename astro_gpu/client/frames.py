@@ -87,7 +87,7 @@ def target_far_text(a: dict) -> str:
 
 def mixed_exposures_text(times) -> str:
     """A session of lights of several exposure times (``stages.calibrate.mixed_exposures``), said as information."""
-    names = [f"{t:g} s" for t in times]
+    names = [(f"{t:g}".replace(".", ",") if language() == "fr" else f"{t:g}") + " s" for t in times]
     return _("This session mixes lights of {times}: put each exposure time in a session of its own, with its "
              "darks.").format(times=(", ".join(names[:-1]) + _(" and ") + names[-1]) if len(names) > 1 else names[0])
 
