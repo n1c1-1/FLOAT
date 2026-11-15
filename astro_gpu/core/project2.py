@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import os
 from collections import Counter
 from dataclasses import asdict, dataclass, field, fields, replace
@@ -33,6 +34,8 @@ from typing import Any
 from . import workflow as wfl
 from .files import write_json
 from .project import Inputs, Target
+
+_LOG = logging.getLogger(__name__)
 
 FORMAT = 2
 FILE = "project.astroproj"
@@ -254,7 +257,29 @@ class Project2:
     def session_inputs(self, sid: int, wid: int | Workflow | None = None) -> Inputs:
         """One session's frames, per kind, as absolute paths (as the workflow ``wid`` reads them)."""
         s = self.own_session(wid, sid) if wid is not None else self.session(sid)
-        return Inputs(**{k: [self.abspath(f) for f in getattr(s, k)] for k in KINDS})
+        out = Inputs(**{k: [self.abspath(f) for f in getattr(s, k)] for k in KINDS})
+        if wid is not None and sid in self.separate_sessions(wid) and out.lights:
+            out.lights = self._without_earlier_lights(wid, sid, out.lights)
+        return out
+
+    def _without_earlier_lights(self, wid: int | Workflow, sid: int, lights: list[str]) -> list[str]:
+        """A session calibrated on its own keeps the lights no earlier session of the workflow has (the first session
+        wins): the same file in two sessions would be stacked twice when they are joined. Said in the log."""
+        from .project import list_frames
+        earlier: set[str] = set()
+        for o in self.sessions_of(wid):
+            if o.id == sid:
+                break
+            earlier.update(os.path.normcase(os.path.normpath(str(f)))
+                           for f in list_frames([self.abspath(x) for x in self.own_session(wid, o.id).lights]))
+        if not earlier:
+            return lights
+        files = list_frames(lights)
+        kept = [f for f in files if os.path.normcase(os.path.normpath(str(f))) not in earlier]
+        if len(kept) == len(files):
+            return lights
+        _LOG.info("session %s: %d light(s) already in an earlier session are not stacked twice", sid, len(files) - len(kept))
+        return [str(f) for f in kept]
 
     def separate_sessions(self, wid: int | Workflow | None = None) -> list[int]:
         """The ids of the sessions calibrated each on its own (issue #43): every session (of the workflow) when the
