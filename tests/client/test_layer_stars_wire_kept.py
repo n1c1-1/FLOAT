@@ -56,7 +56,7 @@ def test_a_stars_wire_into_the_combinations_combine_layers_is_kept(win, env):
     s = win.s
     assert model_json(s.stored) == stored
     assert s.post_layer(over["id"])["stars_pid"] == other.pid
-    # the panel's list picks the stars of another workflow: the graph's wire follows it (it "did not stick")
+    # Post's layer reads the stars of another workflow: the graph's wire follows it (it "did not stick")
     third = next(q for q in s.paths if q.pid not in (over["pid"], other.pid) and _stars_of(s, q.pid) is not None)
     assert s.set_layer_side(over["id"], "stars", third.pid, "stars")
     settle(win, 3)

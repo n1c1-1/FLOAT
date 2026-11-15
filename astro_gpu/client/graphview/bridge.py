@@ -61,7 +61,9 @@ class Bridge(QObject):
         return self.doc.document
 
     def install(self, document):
+        guard = self.doc.guard                           # the page's question before a gesture stays with it
         self.doc = Doc(document)
+        self.doc.guard = guard
         self.file_cell = None
         self._drawing = None
         self.replaced.emit()

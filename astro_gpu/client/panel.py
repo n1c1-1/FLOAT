@@ -751,45 +751,38 @@ class Panel(QWidget):
         alive = {q.pid for q in self.s.paths}
         return bool(node.paths) and all(q.pid in alive for q in node.paths)
 
-    def workflow_choice(self, choices, current, none: str | None, tip: str, chosen) -> QComboBox:
-        """The list of workflows a join's input can read (issue #165): every workflow, each refused one greyed with its
-        reason on hover, and ``none`` (a text) to leave the input empty; ``chosen(pid or None)`` runs the change, a
-        refusal is said in the page's toast, never a window."""
-        cb = QComboBox()
-        cb.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
-        cb.setMinimumContentsLength(10)
-        if none is not None:
-            cb.addItem(none, None)
-        for q, why in choices:
-            cb.addItem(q.name, q.pid)
-            if why:
-                item = cb.model().item(cb.count() - 1)
-                item.setEnabled(False)
-                item.setToolTip(why)
-        cb.setCurrentIndex(max(0, cb.findData(current)))
-        cb.setToolTip(tip)
+    PART_WORDS = {"starless": "starless image", "stars": "stars alone"}
 
-        def pick(k):
-            try:
-                chosen(cb.itemData(k))
-            except ValueError as e:
-                self.toast.emit(str(e))
-                self.refresh(self.node)
-        cb.activated.connect(pick)
-        return cb
+    def wired_text(self, pid, tip: str, part: str | None = None) -> QLabel:
+        """What a wire of the graph chooses, shown read-only (the owner's rule: it is chosen with the wires, never in
+        the panel): the workflow it reads (and which of its images), or "not wired" in dim text; the tooltip says
+        where it is chosen."""
+        q = self.s.view(pid) if pid is not None else None
+        if q is None:
+            lb = label(_("not wired"), "dim", wrap=True)
+        else:
+            words = _(self.PART_WORDS[part]) if part in self.PART_WORDS else ""
+            lb = label(html.escape(" · ".join(x for x in (q.name, words) if x)), None, wrap=True)
+        lb.setObjectName("wired")
+        lb.setToolTip(tip + "\n" + _("Chosen by its wire on the graph, or in the Table view"))
+        return lb
+
+    def wired_row(self, name: str, pid, tip: str, part: str | None = None) -> QHBoxLayout:
+        """One input and what is wired into it: its name in bold, then ``wired_text``."""
+        row = QHBoxLayout()
+        row.setSpacing(10)                                 # the input's name apart from its text (#27)
+        row.addWidget(label(f"<b>{html.escape(name)}</b>", None), 0)
+        row.addWidget(self.wired_text(pid, tip, part), 1)
+        return row
 
     def reference_row(self, node):
-        """Align on: the workflow whose image it brings this one onto (its reference), chosen in a list of every other
-        workflow; the wire on the graph does the same."""
+        """Align on: the workflow whose image it brings this one onto (its reference), as its wire on the graph
+        chooses it."""
         s = self.s
         p = node.paths[0]
-        self.bv.addWidget(self.group_title(_("Reference")))
-        self.bv.addWidget(self.workflow_choice(
-            s.reference_choices(p), s.align_reference(p), _("none"),
-            _("The workflow whose image this one is brought onto: it takes its size and framing"),
-            lambda pid: s.set_align_reference(p, pid)))
-        if not s.align_reference(p):
-            self.bv.addWidget(label(_("reference to wire"), "warn", wrap=True))
+        self.bv.addLayout(self.wired_row(_("Aligned on"), s.align_reference(p),
+                                         _("The workflow whose image this one is brought onto: it takes its size and "
+                                           "framing")))
 
     def project_panel(self):
         """The Project block: what it misses to be complete, the target and what is known of the capture, the comments;
@@ -1183,7 +1176,10 @@ class Panel(QWidget):
             name.setToolTip(types.get(spec_in.get("type"), ""))
             name.setMinimumWidth(36)
             row.addWidget(name, 0)
-            row.addWidget(self.channel_source(p, i, q, words.get(i.get("channel", "L"), "")), 1)
+            row.addWidget(self.wired_text(
+                i["pid"] if q is not None else None,
+                _("The workflow this input reads: its Output, or its starless image or its stars alone"),
+                i.get("image", "output")), 1)
             if q is not None:                              # the channel of its image this input reads: a setting
                 ch = QComboBox()
                 for c, word in words.items():
@@ -1204,16 +1200,14 @@ class Panel(QWidget):
             sp.editingFinished.connect(lambda r=role, b=sp: s.set_fusion_weight(p, r, b.value()))
             row.addWidget(sp)
             self.bv.addLayout(row)
-            if q is not None and any(n["block"] == "stars" and not n.get("off") for n in s.graph(q)):
-                self.bv.addWidget(self.image_choice(p, i))
         self.bv.addSpacing(6)
         self.recipe_settings(p)
         self.settings(p, "fusion", groups=[(g, [r for r in rs if r.get("name") != "values"])
                                            for g, rs in self._groups(p, "fusion")])
         self.bv.addSpacing(6)
-        self.bv.addWidget(label(_("Each input is any workflow's image, wired on the graph or picked here. They must be on "
-                                  "one grid: an Align on block after the Stacking of the others brings them there. Its "
-                                  "output is a layer of Post."), "small", wrap=True))
+        self.bv.addWidget(label(_("Each input is any workflow's image, wired on the graph or in the Table view. They "
+                                  "must be on one grid: an Align on block after the Stacking of the others brings them "
+                                  "there. Its output is a layer of Post."), "small", wrap=True))
         self.bv.addStretch(1)
 
     def _recipe_change(self, do):
@@ -1227,7 +1221,8 @@ class Panel(QWidget):
 
     def recipe_settings(self, p):
         """The parameters of a recipe other than the four types' frozen ones (theirs are their stage's settings, shown
-        as any block's): one row each, its name, its value, its help in the tooltip."""
+        as any block's): one row each, its name, its value, its help in the tooltip. A change goes the way of every
+        block's (``propose_recipe``): a draft on a block with results up to date."""
         s = self.s
         params = s.recipe_parameters(p) if hasattr(s, "recipe_parameters") else {}
         if not params:
@@ -1235,54 +1230,44 @@ class Panel(QWidget):
         self.bv.addWidget(self.group_title(_("Recipe")))
         for name, q in params.items():
             row = QHBoxLayout()
-            lab = label(_(q.get("label") or name), None)
+            text = _(q.get("label") or name)
+            lab = label(text, None)
             tip = _(q["help"]) if q.get("help") else ""
             lab.setToolTip(tip)
             row.addWidget(lab, 1)
+            shown = self.draft_recipe(name, q["value"])      # the block's draft, at once
             if "choices" in q:
                 w = QComboBox()
                 for c in q["choices"]:
                     w.addItem(_(c), c)
-                w.setCurrentIndex(max(0, w.findData(q["value"])))
-                w.activated.connect(lambda k, n=name, b=w, v=q["value"]: b.itemData(k) != v and self._recipe_change(
-                    lambda: s.set_recipe_value(p, n, b.itemData(k))))
+                w.setCurrentIndex(max(0, w.findData(shown)))
+                w.activated.connect(lambda k, n=name, b=w, v=q["value"], lb=text: self.propose_recipe(
+                    n, b.itemData(k), v, lb, _(str(v)), b.itemText(k)))
             else:
                 w = QDoubleSpinBox()
                 w.setRange(float(q.get("min", -1e6)), float(q.get("max", 1e6)))
                 w.setDecimals(2)
                 w.setSingleStep(float(q.get("step") or 1.0))
-                w.setValue(float(q["value"]))
-                w.editingFinished.connect(lambda n=name, b=w, v=float(q["value"]): b.value() != v and self._recipe_change(
-                    lambda: s.set_recipe_value(p, n, b.value())))
+                w.setValue(float(shown))
+                w.editingFinished.connect(lambda n=name, b=w, v=float(q["value"]), sh=float(shown), lb=text:
+                                          b.value() != sh and self.propose_recipe(
+                                              n, b.value(), v, lb, number(v), number(b.value())))
             w.setToolTip(tip)
             row.addWidget(w)
             self.bv.addLayout(row)
 
-    def image_choice(self, p, i: dict):
-        """What an input reads of a workflow that has Stars/background: its Output (with its stars), or its starless
-        image (the palette made on starless channels)."""
-        s = self.s
-        cb = QComboBox()
-        cb.addItem(_("Output image"), "output")
-        cb.addItem(_("Starless image"), "starless")
-        cb.addItem(_("Stars alone"), "stars")
-        cb.setCurrentIndex(cb.findData(i.get("image", "output")))
-        cb.setToolTip(_("The image this input reads: its workflow's Output, or the starless image or the stars alone of "
-                        "its Stars/background block"))
-        cb.activated.connect(lambda k, r=i["role"]: s.set_fusion_image(p, r, cb.itemData(k)))
-        return cb
+    def propose_recipe(self, name, value, applied, text, old, new):
+        """A parameter of a combination's recipe changed: a draft of the block, as any block's setting."""
+        self._propose(dict(kind="recipe", name=name, value=value),
+                      _("{label}: {old} → {new}").format(label=text, old=old, new=new), f"{text.lower()} {new}",
+                      same=value == applied)
 
-    def channel_source(self, p, i: dict, q, word: str):
-        """What an input reads (issue #165): any workflow, picked in a list of all of them (the refused ones greyed with
-        their reason: a loop, an image already stretched) or none; the same as a wire dropped on the input."""
-        s = self.s
-        role = i["role"]
-        return self.workflow_choice(
-            s.input_choices(p, role), i["pid"], _("none"),
-            _("The workflow this input reads: its Output, or its starless image (any workflow, none leaves the input "
-              "empty and the block waits)"),
-            lambda pid: s.clear_fusion_input(p, role) if pid is None else s.set_fusion_input(
-                p, role, pid, i.get("image", "output")))
+    def draft_recipe(self, name, default):
+        """A parameter of the recipe as the block's draft has it."""
+        for c in self._draft_entries():
+            if c["kind"] == "recipe" and c["name"] == name:
+                return c["value"]
+        return default
 
     def survey_row(self, p):
         """The H-alpha survey the Gradient block keeps its samples away from, when the field's is not on this computer:
@@ -1684,6 +1669,13 @@ class Panel(QWidget):
     def _change_id(c):
         if c["kind"] == "param":
             return "param", c["stage"], c["name"]
+        if c["kind"] == "recipe":
+            return "recipe", c["name"]
+        if c["kind"] == "method":
+            return "method", c["key"]
+        if c["kind"] == "layer":                         # one slider, or the blend mode, of a Combine layers
+            v = c["values"]
+            return ("layer", c["lid"], "slider", v["slider"][0]) if "slider" in v else ("layer", c["lid"], "blend")
         if c["kind"] == "params":
             return ("params",) + tuple((st, nm) for st, nm, _v in c["items"])
         return "opt", c.get("key")
@@ -1771,6 +1763,7 @@ class Panel(QWidget):
         s = self.s
         from .model import METHOD_OPT
         cur = method_of(p, k)                           # a block placed twice ("fond~2"): its own node's (round 3)
+        node_key = k
         again, k = "~" in k or k == "synth", k.partition("~")[0]          # Synthetic stars: a block of the graph only
         self.bv.addWidget(self.group_title(_("Method")))
         opt = METHOD_OPT[k]
@@ -1779,6 +1772,10 @@ class Panel(QWidget):
             want = self.draft_opt(opt, None)
             cur = next((m["key"] for m in methods_of(k)
                         if want is not None and method_value(k, m["key"]) == want), cur)
+        else:                                           # a block of the graph only: its node's method, drafted too
+            want = next((c["method"] for c in self._draft_entries() if c["kind"] == "method"
+                         and c["key"] == node_key), None)
+            cur = next((m["key"] for m in methods_of(k) if want is not None and m["engine_key"] == want), cur)
         spec = prefs.spec()
         for m in methods_of(k):
             if m["new"] and not spec:
@@ -1799,7 +1796,9 @@ class Panel(QWidget):
                 ok, why = False, _("Needs the image's scale: place the Astrometry block in this workflow.")
             card = MethodCard(m, on, ok, times, "gpu" if s.gpu else "cpu", why)
             if not on and ok and again:
-                card.clicked.connect(lambda ek=m["engine_key"], nm=m["name"]: self._node_method(ek, _(nm)))
+                card.clicked.connect(lambda ek=m["engine_key"], nm=m["name"], sh=m["short"], mk=m["key"]: self._propose(
+                    dict(kind="method", key=node_key, method=ek), self._method_words(k, applied, nm), _(sh),
+                    same=mk == applied))
             elif not on and ok:
                 card.clicked.connect(lambda mk=m["key"], nm=m["name"], sh=m["short"]: self.propose_opt(
                     opt, method_value(k, mk), self._method_words(k, applied, nm), _(sh), same=mk == applied))
@@ -1812,17 +1811,6 @@ class Panel(QWidget):
         if old is None:
             return _("Method: {name}").format(name=_(name))
         return _("Method: {old} → {new}").format(old=old, new=_(name))
-
-    def _node_method(self, method: str, name: str):
-        """The method of a block placed twice, chosen on its cards: stored on its node, one Undo step, said (round 3:
-        its Method list was greyed "Set by the options of the workflow")."""
-        from .graphnode import node_title
-        node = self.node
-        if node is None or not node.paths:
-            return
-        if self.s.set_node_method(node.paths, node.key, method):
-            self.toast.emit(_("{block}: {method} · Ctrl+Z").format(block=node_title(self.s, node), method=name))
-        self.changed.emit()
 
     def stack_methods(self, p):
         """The stacking methods the engine offers, as cards; the method the engine chose is marked "Automatic" (with its
@@ -2012,32 +2000,38 @@ class Panel(QWidget):
             self.bv.addWidget(label(_("Waiting: {why}").format(why=node.waits.rstrip(".")), "warn", wrap=True))
         self.bv.addWidget(self.group_title(_("Inputs")))
         stars_pid = lay.get("stars_pid", p.pid) if lay else p.pid
-        first = QHBoxLayout()                              # the starless side: a Stars/background's, or a combination's
-        first.addWidget(label(f"<b>{html.escape(_('Starless'))}</b>", None), 0)
-        first.addWidget(self.workflow_choice(
-            [(q, s.layer_side_problem("starless", q.pid, "output" if is_fusion_view(q) else "starless"))
-             for q in s.paths], lay.get("pid", p.pid) if lay else p.pid, None,
+        back_pid = lay.get("pid", p.pid) if lay else p.pid
+        # its two sides, as their wires on the graph choose them (the owner's rule: chosen with the wires)
+        self.bv.addLayout(self.wired_row(
+            _("Starless"), back_pid,
             _("The workflow whose starless image (or whose Output, for a combination) this block combines"),
-            lambda pid: s.set_layer_side(lid(), "starless", pid, "output" if is_fusion_view(s.view(pid)) else "starless")), 1)
-        self.bv.addLayout(first)
-        second = QHBoxLayout()                             # the stars side: another workflow's Stars/background
-        second.addWidget(label(f"<b>{html.escape(_('Stars'))}</b>", None), 0)
-        second.addWidget(self.workflow_choice(
-            [(q, s.layer_side_problem("stars", q.pid, "output" if is_fusion_view(q) else "stars")) for q in s.paths],
-            stars_pid, _("none"),
+            None if is_fusion_view(s.view(back_pid)) else "starless"))
+        self.bv.addLayout(self.wired_row(
+            _("Stars"), stars_pid,
             _("The workflow whose stars this block puts back (its Stars/background block's stars alone, or the Output "
               "of a combination of stars)"),
-            lambda pid: s.set_layer_side(lid(), "stars", pid, "output" if is_fusion_view(s.view(pid)) else "stars")), 1)
-        self.bv.addLayout(second)
+            None if stars_pid is None or is_fusion_view(s.view(stars_pid)) else "stars"))
         sliders = dict(lay.get("sliders") or {})
+        drafted = {}                                      # the block's draft: its values shown at once
+        for c in self._draft_entries():
+            if c["kind"] == "layer" and c["lid"] == node.lid:
+                drafted.update({"blend": c["values"]["blend"]} if "blend" in c["values"] else
+                               {("slider", c["values"]["slider"][0]): c["values"]["slider"][1]})
 
-        def commit(key, v):
-            if abs(v - 2) < 0.02:
-                sliders.pop(key, None)
-            else:
-                sliders[key] = v
+        def commit(key, v, name):
+            """A slider moved: a change of the block as any block's (a draft when its image is up to date)."""
+            old = sliders.get(key, 2.0)
             with s.batch():                               # its layer made real and the value: one undo step (decision 7)
-                s.set_post_layer(lid(), self, sliders=dict(sliders))
+                self._propose(dict(kind="layer", lid=lid(), values={"slider": [key, v]}),
+                              _("{label}: {old} → {new}").format(label=name, old=offset_text(old), new=offset_text(v)),
+                              f"{name.lower()} {offset_text(v)}", same=abs(v - old) < 0.02)
+
+        def blend(b):
+            old = lay.get("blend") or BLENDS[0]
+            with s.batch():
+                self._propose(dict(kind="layer", lid=lid(), values={"blend": b}),
+                              _("{label}: {old} → {new}").format(label=_("Star blend mode"), old=_(old), new=_(b)),
+                              _(b).lower(), same=b == old)
         group = None
         infos = [x for x in s.slider_infos(p, "combined") if x.available]     # the stars first: what the block is for
         for sd in sorted(infos, key=lambda x: x.group != STARS_GROUP):
@@ -2052,16 +2046,16 @@ class Panel(QWidget):
                         cb.addItem(_(b), b)
                     cb.setToolTip(_("How the stars go back on the starless image: Screen (the usual way), Linear "
                                     "dodge (add) or Lighten"))
-                    cb.setCurrentIndex(max(0, BLENDS.index(lay.get("blend") or BLENDS[0])))
-                    cb.currentIndexChanged.connect(lambda i, cb=cb: self._one_step(
-                        lambda: s.set_post_layer(lid(), self, blend=cb.itemData(i))))
+                    cb.setCurrentIndex(max(0, BLENDS.index(drafted.get("blend") or lay.get("blend") or BLENDS[0])))
+                    cb.activated.connect(lambda i, cb=cb: blend(cb.itemData(i)))
                     row.addWidget(cb, 1)
                     self.bv.addLayout(row)
-            sl = ContSlider(_(sd.name), 0, 4, sliders.get(sd.key, 2.0), 2, ends=[_(e) for e in sd.ends],
-                            show=offset_text)
+            sl = ContSlider(_(sd.name), 0, 4, drafted.get(("slider", sd.key), sliders.get(sd.key, 2.0)), 2,
+                            ends=[_(e) for e in sd.ends], show=offset_text)
             ok, why, _need = s.slider_state(p, sd.key, "combined")
             sl.set_available(ok, why)
-            sl.done.connect(lambda v, k=sd.key: commit(k, v))
+            name = _(sd.name)
+            sl.done.connect(lambda v, k=sd.key, nm=name: commit(k, v, nm))
             self.bv.addWidget(sl)
         self.bv.addSpacing(8)
         b = QPushButton(_("Open Post"))

@@ -568,7 +568,7 @@ def response():
 def test_the_spectral_chart_says_approximate_and_reads_the_curves_between_the_samples():
     r = response()
     tabs = charts.color_tabs(r)
-    assert [t for t, _w in tabs] == ["Approximate spectral response", "Colour of the lines"]
+    assert [t for t, _w in tabs] == ["Approximate spectral response", "Color of the lines"]
     ch = show(tabs[0][1], (900, 420))
     assert ch.title.startswith("Approximate sensor response, rebuilt from 1234 stars")
     assert [t.name for t in ch.traces] == ["Red", "Green", "Blue"] and len(ch.vlines) == 3

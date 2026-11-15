@@ -780,6 +780,7 @@ class BlockMap:
         feeds = getattr(m, "feeds_fusion", None)
         removed = getattr(m, "post_removed", lambda: set())()
         gives = getattr(m, "gives_post", lambda q: True)
+        from .names import neutral
         try:
             from .model import POST_PART_NAMES
         except Exception:  # noqa: BLE001 - without the model's module: the part's own word
@@ -791,7 +792,7 @@ class BlockMap:
                     not (feeds is not None and feeds(p)) and gives(p):
                 stars = opts.get("etoiles") == "retirer" and self.node_of(p, "etoiles") is not None
                 layers.insert(0, {"kind": "workflow", "pid": p.pid, "part": "combined" if stars else None, "id": None,
-                                  "name": p.name + (" · " + POST_PART_NAMES["combined"] if stars else "")})
+                                  "name": neutral(p.name) + (" · " + POST_PART_NAMES["combined"] if stars else "")})
         for lay in layers:
             if lay.get("kind") == "image":
                 out.append((str(lay.get("name") or "?"), None))

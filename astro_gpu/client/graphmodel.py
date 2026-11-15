@@ -1659,6 +1659,25 @@ class GraphEditing:
                 if ch["kind"] == "param":
                     self._patch_rows([q.pid], ch["stage"], ch["name"], ch.get("value"))
             return notes
+        if ch["kind"] in ("recipe", "method"):
+            steps = self._block_steps(paths, ch)
+            if steps:
+                self._do(steps)
+            return notes
+        if ch["kind"] == "layer":                         # a Combine layers' value: its layer of Post, one step
+            vals = ch["values"]
+            with self.batch():
+                if "slider" in vals:                      # one slider: the layer's others kept (2: its neutral place)
+                    key, v = vals["slider"]
+                    sliders = dict((self.post_layer(ch["lid"]) or {}).get("sliders") or {})
+                    if abs(float(v) - 2) < 0.02:
+                        sliders.pop(key, None)
+                    else:
+                        sliders[key] = v
+                    self.set_post_layer(ch["lid"], None, sliders=sliders)
+                else:
+                    self.set_post_layer(ch["lid"], None, blend=vals["blend"])
+            return notes
         steps, seen = [], set()
         for q in paths:
             for bid, method in self._method_change(q, ch):
@@ -1668,6 +1687,25 @@ class GraphEditing:
         if steps:
             self._do(steps)
         return notes
+
+    def _block_steps(self, paths, ch) -> list:
+        """The graph core's steps of a change made on one block of these workflows: a parameter of a combination's
+        recipe (``recipe``: name, value) or the method of a block placed on the graph only (``method``: the view's key,
+        the engine's method), each block once."""
+        steps, seen = [], set()
+        for q in paths:
+            if ch["kind"] == "recipe":
+                bid = self._combine_block(q)
+                op = ("set_recipe_value", {"block": bid, "name": ch["name"], "value": ch["value"]})
+            else:
+                bid = self._bid(q, ch["key"])
+                if bid is None or self._g.blocks[bid].method == ch["method"]:
+                    continue
+                op = ("set_method", {"block": bid, "method": ch["method"]})
+            if bid is not None and bid not in seen:
+                seen.add(bid)
+                steps.append(op)
+        return steps
 
     def _method_change(self, q, ch):
         """A change of an option that is a block's method: [(block, method)]; ◇ raises NotInEngine; an option that
@@ -1721,6 +1759,18 @@ class GraphEditing:
     def _variant_steps(self, p, ch, title: str) -> list:
         """The graph core's steps of Try variant for one change of the panel (a setting, settings, a method)."""
         mm = _mm()
+        if ch["kind"] == "layer":                         # a layer of Post: no workflow to copy
+            raise GraphRefused(_("{lab}: no variant from here").format(lab=_("Combine layers")))
+        if ch["kind"] in ("recipe", "method"):            # the change made on the copy of its block
+            op, kw = (self._block_steps([p], ch) or [(None, None)])[0]
+            if op is None:
+                raise ValueError(_("not in workflow"))
+            change = {"method": kw["method"]} if op == "set_method" else None
+            steps = [("try_variant", {"block": kw["block"], "change": change or {"off": False},
+                                      "name": self.unique_name(title)})]
+            if change is None:                            # a recipe's value: set on the variant's copy of the block
+                steps.append(("set_recipe_value", lambda res, kw=kw: dict(kw, block=res[0].focus)))
+            return steps
         if ch["kind"] in ("param", "params"):
             items = [(c["stage"], c["name"], c["value"]) for c in mm.ProjectModel._api_changes(ch)]
             kind, bid, _st = self._owner(self._g, p.pid, items[0][0])
@@ -1830,6 +1880,11 @@ class GraphEditing:
     def _panel_cost(self, ch, paths) -> ChangeCost:
         from .. import api
         subs = ch["changes"] if ch["kind"] == "many" else [ch]
+        if all(c["kind"] in ("recipe", "method") for c in subs):     # made on the graph's block: costed as that gesture
+            steps = [s for c in subs for s in self._block_steps(paths, c)]
+            return self._steps_cost(steps) if steps else ChangeCost()
+        if all(c["kind"] == "layer" for c in subs):
+            return self._layer_cost(subs, paths)
         if all(c["kind"] == "opt" and c.get("key") in self._METHOD_KEYS for c in subs):
             steps, seen = [], set()
             for c in subs:
@@ -1863,6 +1918,21 @@ class GraphEditing:
             wids = sorted({w for w, _s in down})
             seconds += api.cost(p2, wids, self.device, self._history_est).seconds - self.cost(wids).seconds
         return ChangeCost(self._lost_blocks(lost + down), lost + down, seconds, after.measured)
+
+    def _layer_cost(self, subs, paths) -> ChangeCost:
+        """A change of a Combine layers' values: its layer of Post is made again from the two images, nothing of the
+        engine; a block whose image is up to date loses it (a draft, as any block's), else nothing is lost."""
+        try:
+            bm = self.block_map
+            lids = {c["lid"] for c in subs}
+            nodes = [n for n in bm.nodes if n.key == "composition" and n.lid in lids]
+            done = [n for n in nodes if bm.state(n) == "done"]
+        except Exception:  # noqa: BLE001 - no map of the blocks: nothing said lost
+            return ChangeCost()
+        if not done:
+            return ChangeCost()
+        pid = paths[0].pid if paths else done[0].paths[0].pid
+        return ChangeCost([_("Combine layers")], [(pid, "composition")], 0.0)
 
     def _what_if_workflows(self, changed):
         """The project with these workflows changed (what-if copies of ``_changed``), apart from the project (the

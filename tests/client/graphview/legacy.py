@@ -95,7 +95,8 @@ class World:
         return self.m.block_map
 
     def view(self, name):
-        return next(q for q in self.m.paths if q.name == name)
+        from astro_gpu.client.names import shown
+        return next(q for q in self.m.paths if q.name in (name, shown(name)))     # by its stored name too
 
     def block(self, key, p=None):
         """The block id of a view key ("fond", "calibration@2", "post" = the block holding the Output) in a workflow

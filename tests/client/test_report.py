@@ -339,7 +339,7 @@ def test_the_session_card_quotes_only_what_was_measured():
     got = {t: (v, h) for v, t, h in rep.highlights(d, "en")}
     assert got["Focal length, measured"][0] == "894 mm" and "242 stars, residual 0.37″" in got["Focal length, measured"][1]
     assert got["Field drift"][0] == "48″" and "17.0″ a minute" in got["Field drift"][1]
-    assert got["Colours offset, corrected"][0] == "0.60 px" and got["Sky noise"][0] == "÷ 14.8"
+    assert got["Colors offset, corrected"][0] == "0.60 px" and got["Sky noise"][0] == "÷ 14.8"
     assert got["Gaia DR3 stars in the field"][0] == "3 203" and got["Transparency changes"][0] == "27 %"
     assert not rep.highlights(rep.ReportData(), "en")                      # nothing measured: nothing quoted
 

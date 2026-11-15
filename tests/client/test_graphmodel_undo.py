@@ -82,7 +82,7 @@ def test_a_refused_gesture_changes_nothing_and_is_no_step(model):
 
 
 def test_graph_post_graph_then_the_graphs_undo_twice_and_posts_undo(model):
-    wid = view_pid = next(q.pid for q in model.paths if q.name == "Colour minimal")
+    wid = view_pid = next(q.pid for q in model.paths if q.name == "Color minimal")     # shown as the interface spells it
     model.apply([("add_block", {"kind": "deconv", "row": row(model).id})])               # graph
     with model.from_post():
         model.new_post_version()                                                          # Post's
@@ -166,7 +166,7 @@ def test_the_graph_page_drives_the_model(model):
 def test_a_wire_to_post_removed_in_the_graph_leaves_every_version(model):
     """Engine review 3: a layer deleted in one version only leaves the graph's wire; the wire removed in the graph
     takes the image out of every version."""
-    wid = next(q.pid for q in model.paths if q.name == "Colour minimal")
+    wid = next(q.pid for q in model.paths if q.name == "Color minimal")     # shown as the interface spells it
     model.add_post_layer(wid, None, None)
     model.new_post_version()
 

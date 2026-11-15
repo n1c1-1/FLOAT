@@ -527,13 +527,8 @@ def test_a_linear_image_is_chosen_as_a_fusion_channel_on_its_row(world, tmp_path
     assert W.m.set_fusion_input(fu, "Ha", W.m.paths[0].pid)
     W.settle()
     W.choose(W.kinds("combine")[0])
-    rows = [c for c in W.page.panel.findChildren(QComboBox) if c.findData(img.pid) >= 0]
-    assert len(rows) == 2                                                        # Ha, OIII
-    grey = rows[1].model().item(rows[1].findData(stretched.pid))
-    assert not grey.isEnabled() and "stretch" in grey.toolTip()
-    i = rows[1].findData(img.pid)
-    rows[1].setCurrentIndex(i)
-    rows[1].activated.emit(i)
+    assert not [c for c in W.page.panel.findChildren(QComboBox) if c.findData(img.pid) >= 0]   # chosen by its wire
+    assert W.m.set_fusion_input(fu, "OIII", img.pid)                            # the wire's gesture
     W.settle()
     fu = W.m.view(fu.pid)
     assert [x["pid"] for x in fu.source["fusion"]["inputs"]] == [W.m.paths[0].pid, img.pid]

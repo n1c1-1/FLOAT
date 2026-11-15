@@ -291,7 +291,7 @@ def test_the_fusion_panel_lists_its_palette_s_channels_and_can_delete(qapp, tmp_
         tx = texts(page.panel) + [c.currentText() for c in page.panel.findChildren(QComboBox)]    # #55: a channel's list
         assert "Delete" in tx
         assert "Ha" in tx and "OIII" in tx                                         # the workflow each input reads
-        assert any(c.findText("SII") >= 0 for c in page.panel.findChildren(QComboBox))   # every workflow is listed (#165)
+        assert not any(c.findText("SII") >= 0 for c in page.panel.findChildren(QComboBox))   # chosen by its wire
         assert {"<b>Hα</b>", "<b>O III</b>"} <= set(tx)                         # its named inputs
     finally:
         close(w, m, page)

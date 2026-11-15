@@ -31,11 +31,11 @@ def test_a_starless_combine_layers_takes_another_workflows_stars(win, env):
     page.bridge.act("rename_row", row=next(r.id for r in s.stored.rows if r.wid == s.paths[0].pid), name="Renamed")
     settle(win, 3)
     assert _stars_in(s, cl) == [list(src)] and s.post_layer(over["id"])["stars_pid"] == other.pid
-    # its own stars again, picked in the panel's list: the graph follows
+    # its own stars again, written to Post's layer: the graph follows
     assert s.set_layer_side(over["id"], "stars", over["pid"], "stars")
     settle(win, 3)
     assert _stars_in(s, cl) == [list(_stars_of(s, over["pid"]))]
-    assert s.set_layer_side(over["id"], "stars", other.pid, "stars")          # and another's, by the list
+    assert s.set_layer_side(over["id"], "stars", other.pid, "stars")          # and another's
     settle(win, 3)
     assert _stars_in(s, cl) == [list(src)] and s.post_layer(over["id"])["stars_pid"] == other.pid
     assert not env["errors"], env["errors"]
