@@ -47,6 +47,9 @@ QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{ background: #12141a; border: 1
 QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled {{ color: {DISABLED};
     border-color: #2a2f39; }}
 QComboBox QAbstractItemView {{ background: #1c1f26; border: 1px solid #353b47; }}
+QComboBox {{ combobox-popup: 0; }}
+QComboBox[single="true"] {{ background: transparent; border: none; padding-left: 0; }}
+QComboBox[single="true"]::drop-down {{ width: 0; border: none; }}
 QCheckBox::indicator, QRadioButton::indicator {{ width: 14px; height: 14px; }}
 QRadioButton::indicator {{ width: 12px; height: 12px; border: 2px solid #6b7280; border-radius: 8px; background: #12141a; }}
 QRadioButton::indicator:checked {{ border: 2px solid {ACCENT}; background: qradialgradient(cx:0.5, cy:0.5,
@@ -191,6 +194,19 @@ def hline() -> QFrame:
     return f
 
 
+def single_choice(cb) -> None:
+    """A list with one choice shows as its text (the laptop's D5: a list that opened on its only entry); it turns back
+    into a list when it has more. Every list opens under its box, whole up to ten rows (``combobox-popup: 0`` in the
+    style: placed over its current entry, a list on a small window was cut, its last row out of reach, D2)."""
+    one = cb.count() <= 1
+    if bool(cb.property("single")) != one:
+        cb.setProperty("single", one)
+        cb.setAttribute(Qt.WA_TransparentForMouseEvents, one)
+        cb.setFocusPolicy(Qt.NoFocus if one else Qt.StrongFocus)
+        cb.style().unpolish(cb)
+        cb.style().polish(cb)
+
+
 def clear(layout):
     while layout.count():
         it = layout.takeAt(0)
@@ -259,7 +275,8 @@ class ElidedLabel(QLabel):
 
     def _elide(self):
         self.ensurePolished()
-        shown = self.fontMetrics().elidedText(self._full, self._mode, max(self.width(), 1))
+        m = self.contentsMargins()
+        shown = self.fontMetrics().elidedText(self._full, self._mode, max(self.width() - m.left() - m.right(), 1))
         QLabel.setText(self, shown)
         self.setToolTip(self._full if shown != self._full else "")
 

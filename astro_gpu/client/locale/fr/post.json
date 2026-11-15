@@ -277,6 +277,8 @@
   "blend mode": "mode de fusion",
   "mask": "masque",
   "“{name}” changed": "« {name} » modifié",
+  "Above “{name}”": "Au-dessus de « {name} »",
+  "At the bottom": "Tout en bas",
   "Where the image is redder than green, the hydrogen glow of the workflow at the bottom (its starless image when it has one): nothing at its middle value, all at its brightest 3 %. Feather, Density and Invert act on it.": "Là où l'image est plus rouge que verte, la lueur de l'hydrogène du workflow du bas (son image sans étoiles s'il en a une) : rien à sa valeur médiane, tout à ses 3 % les plus lumineux. Progressif, Densité et Inverser s'y appliquent.",
   "reading the registration…": "lecture de l'alignement…",
   "One of the images of “{name}”: it stays in its layer. Duplicate, rename, move or delete the layer itself": "Une des images de « {name} » : elle reste dans son calque. Dupliquez, renommez, déplacez ou supprimez le calque lui-même",

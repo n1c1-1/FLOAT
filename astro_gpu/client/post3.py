@@ -119,7 +119,7 @@ from .postengine import (
 )
 from .services.render import CPU_DRAFT_LEVEL, DRAFT_LEVEL, HALF_LEVEL, RenderWorker, Request, default_device_pref
 from .viewer import Viewer, to_qimage
-from .widgets import ACCENT, WARN, ElidedLabel, clear, label
+from .widgets import ACCENT, WARN, ElidedLabel, clear, label, single_choice
 
 NL = "\n"                                                   # a line break in a tooltip
 
@@ -413,6 +413,12 @@ class ContSlider(QWidget):
 #: the sides' widths: by default, and the limits of the user's drag
 PANEL_W, PANEL_MIN, PANEL_MAX = 400, 320, 760          # the settings, on the right
 LAYERS_W, LAYERS_MIN, LAYERS_MAX = 300, 230, 520       # the layers, on the left
+
+
+def layers_default(window_w: int) -> int:
+    """The layers' width before the user sets one: a fifth of a wide window, LAYERS_W at least (the laptop's D6: 300 px
+    on a 1920 px screen cut the names of a Combine layers layer's rows)."""
+    return min(LAYERS_MAX, max(LAYERS_W, round(0.18 * window_w)))
 SUB_MAX = 120                                          # a layer row's blend, at most (its name keeps the rest)
 CENTRE_MIN = 480                                       # the image: its tools go into "…" rather than push the sides out
 VERSION_W = ((120, 200), (95, 120))                    # the version list's least and most width, then narrowed (#146)
@@ -1002,7 +1008,8 @@ class PostView(QWidget):
         self.stale.hide()
         mv.addWidget(self.stale)
         mv.addWidget(self.viewer, 1)
-        self.hint = label("", "small")
+        # one line, cut with "…" when the window is narrow and whole on hover (the laptop's D3: cut at 1250 px)
+        self.hint = ElidedLabel("", "small", Qt.ElideRight)
         self.hint.setContentsMargins(10, 3, 10, 5)
         mv.addWidget(self.hint)
         return mid
@@ -1015,13 +1022,15 @@ class PostView(QWidget):
     def _bar_steps(self) -> tuple:
         """The bar narrowed one step at a time when the centre has no room (a laptop, Windows' scale at 125 or 150 %),
         the least used first: the tools go into "…", then Export by its icon, the word "Version", a narrower list, New
-        version by its icon (#123: its name is what makes it found); then Fit and 100 % (the zoom's menu has them), Undo
-        and Redo (the Edit menu has them too), the bin and New version into "…": at the centre's narrowest, the crop's
+        version by its icon (#123: its name is what makes it found); then 100 % (the zoom's menu has it), the bin and New
+        version into "…", Redo and Undo (the Edit menu has them too), Fit the last (the laptop's D1: the most used, it
+        went first with Before / after on a laptop's window): at the centre's narrowest, the crop's
         Apply and Cancel shown, the bar still fits (#142). The names stay in the tooltips and in "…"."""
         return (("hide", self.b_names), ("hide", self.b_grid), ("hide", self.b_mask), ("hide", self.b_cmp),
                 ("hide", self.b_heal), ("hide", self.b_crop), ("icon", self.b_export), ("hide", self.version_lab),
-                ("narrow", self.cb_version), ("icon", self.b_version_new), ("hide", self.b_fit), ("hide", self.b_100),
-                ("hide", self.b_undo), ("hide", self.b_redo), ("hide", self.b_version_del), ("hide", self.b_version_new))
+                ("narrow", self.cb_version), ("icon", self.b_version_new), ("hide", self.b_100),
+                ("hide", self.b_version_del), ("hide", self.b_version_new), ("hide", self.b_redo), ("hide", self.b_undo),
+                ("hide", self.b_fit))
 
     def _bar_texts(self) -> dict:
         """The buttons of the bar that go to their icon, and their name."""
@@ -1173,12 +1182,13 @@ class PostView(QWidget):
         head = QHBoxLayout()
         head.addWidget(label(_("Layers"), "h2"))
         head.addStretch(1)
-        # while a row is dragged between two others: what the drop does, beside the panel's title (a drop onto a layer
-        # says it in that layer's row)
+        # while a row is dragged between two others: where it lands and what the drop does, over the drop's line in the
+        # list (the laptop's D4: in the panel's title it was cut and said nothing of where); a drop onto a layer says it
+        # in that layer's row
         self.drop_text = QLabel()
-        self.drop_text.setStyleSheet(f"color: {ACCENT}; font-weight: 600;")
+        self.drop_text.setStyleSheet(f"color: {ACCENT}; font-weight: 600; background: #1b1f27; padding: 0 4px; "
+                                     "border-radius: 3px;")
         self.drop_text.hide()
-        head.addWidget(self.drop_text)
         self.lmenu_b = self._menu_button()
         head.addWidget(self.lmenu_b, 0, Qt.AlignTop)
         lv.addLayout(head)
@@ -1422,6 +1432,7 @@ class PostView(QWidget):
         self.cb_version.setToolTip(f"{self.cb_version.currentText()}\n{tip}" if self.cb_version.count() else tip)
         j = self.cb_cmp.findData(kept)
         self.cb_cmp.setCurrentIndex(max(j, 0))
+        single_choice(self.cb_cmp)                       # Suggested alone: its text (D5)
         self.b_version_del.setEnabled(len(versions) > 1)
         self.b_version_del.setToolTip(_("Delete this version") if len(versions) > 1 else
                                       _("The only version cannot be deleted"))
@@ -2554,9 +2565,18 @@ class PostView(QWidget):
             self.drop_dot.show()
             self.drop_line.raise_()
             self.drop_dot.raise_()
-            if d["text"]:
-                self.drop_text.setText(d["text"])
-                self.drop_text.show()
+            below = next((r for r in self.rows if r.geometry().top() - 2 == d["y"]), None)
+            where = _("Above “{name}”").format(name=below.n.full_text()) if below is not None else _("At the bottom")
+            text = where + (" · " + d["text"] if d["text"] else "")
+            if self.drop_text.parent() is not holder:
+                self.drop_text.setParent(holder)
+            room = max(w - d["x0"] - 8, 40)
+            self.drop_text.setText(self.drop_text.fontMetrics().elidedText(text, Qt.ElideRight, room - 10))
+            self.drop_text.setToolTip(text)
+            self.drop_text.adjustSize()
+            self.drop_text.move(d["x0"] + 4, max(d["y"] - self.drop_text.height() - 1, 0))
+            self.drop_text.show()
+            self.drop_text.raise_()
 
     def drag_cancel(self):
         """The drag ends without a drop: the hints go, nothing moves."""
@@ -2788,6 +2808,12 @@ class PostView(QWidget):
             self.split.addWidget(w)
         self._fit_split()
 
+    def resizeEvent(self, e):                                       # noqa: N802 - Qt's name
+        super().resizeEvent(e)
+        # no width chosen for the layers: their default follows the window's (D6)
+        if not prefs.get("post_layers_width") and self.left.parent() is self.split and                 layers_default(e.oldSize().width()) != layers_default(self.width()):
+            self._fit_split()
+
     def showEvent(self, e):                                         # noqa: N802 - Qt's name
         """Shown (the Post tab clicked): the keyboard comes to the image, so that R, C, V… answer at once (the night
         test pass: it stayed on the tab's button)."""
@@ -2829,7 +2855,7 @@ class PostView(QWidget):
 
     def _fit_split(self):
         """The docked sides at their widths (the user's, else the default), the image the rest."""
-        wide = {id(self.left): int(prefs.get("post_layers_width") or LAYERS_W),
+        wide = {id(self.left): int(prefs.get("post_layers_width") or layers_default(self.width())),
                 id(self.right): int(prefs.get("post_panel_width") or PANEL_W)}
         ws = [self.split.widget(i) for i in range(self.split.count())]
         for i, w in enumerate(ws):

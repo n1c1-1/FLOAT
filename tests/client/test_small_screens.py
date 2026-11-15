@@ -726,7 +726,9 @@ def test_post_sides_are_shown_as_chosen_and_remembered(env):
     view._panel_moved()
     w.reset_layout()
     _settle(w)
-    assert abs(view.left.width() - post3.LAYERS_W) <= 2 and abs(view.right.width() - post3.PANEL_W) <= 2
+    assert abs(view.left.width() - post3.layers_default(view.width())) <= 2
+    assert abs(view.right.width() - post3.PANEL_W) <= 2
+    assert post3.layers_default(view.width()) > post3.LAYERS_W          # a wide window, wider layers (D6)
 
 
 def test_posts_keys_answer_right_after_its_tab_is_clicked(env):
@@ -820,8 +822,9 @@ def test_posts_tools_go_into_more_rather_than_push_the_sides_out(env, size, lang
     view._fit_split()
     _settle(w)
     _bar_fits(view)
-    if lang == "en":                                             # (the French names are longer: one tool or two in "…")
-        assert not view.b_more.isVisible() and view.b_names.isVisible()
+    # a wide window: the layers wider (the laptop's D6), the least used tools (up to three in French) in "…", in order
+    hidden = [b for b in view._overflow() if b.isHidden()]
+    assert len(hidden) <= 3 and hidden == list(view._overflow()[:len(hidden)])
     assert view.b_crop.isVisible() and view.b_undo.isVisible() and view.b_version_new.text()
 
 

@@ -1357,7 +1357,7 @@ def test_masks_with_parts_show_on_the_image_and_in_the_thumbnails(post):
     tint = next(c for c in widgets_of(v, QCheckBox) if c.text() == "Red tint")
     assert tint.isChecked() and drawn()
     tint.setChecked(False)
-    assert not v.show_tint and not drawn() and "Red" not in v.hint.text()
+    assert not v.show_tint and not drawn() and "Red" not in v.hint.full_text()
     v.build_props()                                                                     # the choice outlives a rebuild
     tint = next(c for c in widgets_of(v, QCheckBox) if c.text() == "Red tint")
     assert not tint.isChecked()
@@ -1663,7 +1663,9 @@ def _drag(v, row, target_row, rel=0.5, x=None):
     v.drag_start(row)
     v.drag_move(row, holder.mapToGlobal(pt))
     framed = [r for r in v.rows if r.property("drop")]                                  # a nest: the row says it
-    text = v.drop_text.text() if v.drop_text.isVisible() else (framed[0].sub.full_text() if framed else "")
+    # (the line's label: where it lands, then what the drop does)
+    text = v.drop_text.toolTip().split(" · ")[-1] if v.drop_text.isVisible() else (framed[0].sub.full_text() if framed
+                                                                                  else "")
     seen = dict(v._drop or {}), v.drop_line.isVisible(), text, [bool(r.property("drop")) for r in v.rows]
     v.drag_end(row, holder.mapToGlobal(pt))
     return seen
@@ -1687,6 +1689,7 @@ def test_dragging_a_row_nests_or_unnests_a_filter_with_clear_hints(post):
     # to the top, between rows: a row of its own, on everything below
     d, line, text, frames = _drag(v, row(f["id"]), row(classic["id"]), 0.1)
     assert d["parent"] is None and d["index"] == 0 and line and text == "On all below"
+    assert v.drop_text.toolTip() == "Above “Classic” · On all below"
     assert not any(frames) and f["target"] is None
     assert order() == [("Green removal", 0), ("Classic", 0), ("Full", 0), ("Curves", 1)]
     # onto the Classic row: nested in it, the row framed
@@ -1988,7 +1991,7 @@ def test_before_and_after(post):
     base = new_workflow_layer(1, "Full", True)                                           # the bottom layer, suggested settings
     assert np.array_equal(v.before.img1, reference(post, layers=[base]).rgb)
     assert not np.array_equal(v.before.img1, shown(v))
-    assert v.hint.text().startswith("Drag the divider")
+    assert v.hint.full_text().startswith("Drag the divider")
     v.b_cmp.setChecked(False)
     assert v.viewer.compare is None
 
@@ -2255,10 +2258,10 @@ def test_the_engine_note_is_said_in_the_hint(preps, qapp):
     try:
         s.view.request(final_only=True)
         assert s.settle()
-        assert "GPU memory full: rendered on the CPU" in s.view.hint.text()
+        assert "GPU memory full: rendered on the CPU" in s.view.hint.full_text()
         i18n.set_language("fr")
         s.view._hint()
-        assert "moire de la carte graphique pleine" in s.view.hint.text()
+        assert "moire de la carte graphique pleine" in s.view.hint.full_text()
     finally:
         s.close()
 
@@ -2686,7 +2689,7 @@ def test_the_french_switch_translates_every_thing_the_page_and_the_dialog_show(p
         v.b_mask.setChecked(True)
         v.b_cmp.setChecked(True)
         assert s.settle()
-        assert v.hint.text()
+        assert v.hint.full_text()
         v.b_cmp.setChecked(False)
         v.select(full_layer(v)["id"], "mask")
         post_texts = [w.text() for w in widgets_of(v, QPushButton)] + [w.text() for w in widgets_of(v, QLabel)]
@@ -3694,5 +3697,18 @@ def test_the_night_card_line_says_it_is_being_read_while_it_is_greyed(exporting)
         d.card = SimpleNamespace(card_ready=lambda: True, card_loading=lambda: False)
         d._card_state()
         assert d.c_card.isEnabled() and d.c_card.text() == "Attach the night card (a PNG beside the image)"
+    finally:
+        d.close()
+
+
+def test_the_bar_lets_fit_go_last_and_a_single_choice_list_reads_as_its_text(exporting):
+    """The laptop's D1 and D5: Fit went first on a laptop's window with Before / after on; a list with one choice
+    (Before: Suggested, the export's sRGB) opened on that one entry."""
+    v = exporting.view
+    assert v._bar_steps()[-1] == ("hide", v.b_fit)
+    assert v.cb_cmp.count() == 1 and v.cb_cmp.property("single") is True
+    d = ExportDialog(v)
+    try:
+        assert d.prof.count() == 1 and d.prof.property("single") is True
     finally:
         d.close()
