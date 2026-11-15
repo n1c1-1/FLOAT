@@ -402,6 +402,7 @@ class RegRow:
     transparency: float = float("nan")   # star flux relative to the reference frame
     reference: bool = False
     reason: str = ""
+    session: str = ""                    # the session's name when its sessions are calibrated each on their own
     # register's Moffat fit on the green samples (FWHM px, roundness minor / major, beta); None for a registration
     # result made before it
     fwhm_moffat: float | None = None
@@ -2636,6 +2637,31 @@ def calibrated_light(frame: CalFrame) -> np.ndarray:
         del mm
 
 
+def _session_lights(p: Project2, wf: int | Workflow, which: str):
+    """(lights, session name of each, metrics of the first) of a workflow whose sessions are calibrated each on their
+    own, in the order the sessions' join puts them (stages/sessions.py: each session's frames one after the other,
+    in the sessions' order); None for any other workflow or when a session's inventory is not there."""
+    if p is None:                                       # (a result read without its project: one inventory)
+        return None
+    keys = _keys(p)
+    chain = keys.chain(keys.project.workflow(wf))
+    ids = [x.partition("@")[2] for x in chain if x.startswith("inventory@")]
+    if not ids:
+        return None
+    names = {str(x.id): x.name for x in p.sessions}
+    lights, owner, metrics = [], [], None
+    for sid in ids:
+        inv = _dir(p, wf, "inventory", f"{which.partition('@')[0]}@{sid}")
+        if inv is None:
+            return None
+        one = _json(inv / "frames.json").get("lights") or []
+        lights += one
+        owner += [names.get(sid, sid)] * len(one)
+        if metrics is None:
+            metrics = _manifest_of(inv).get("metrics") or {}
+    return lights, owner, metrics
+
+
 def registration_table(p: Project2, wf: int | Workflow, which: str = "current") -> RegTable:
     """One row per light frame as registration aligned it: dx, dy (px), rotation (degrees), scale, stars matched and
     detected, FWHM, roundness, whether it was aligned (``RegRow``). ``NotDone`` when Registration is not computed.
@@ -2650,6 +2676,13 @@ def registration_table(p: Project2, wf: int | Workflow, which: str = "current") 
     inv = _upstream(p, wf, d, "inventory", which)
     lights = (_json(inv / "frames.json").get("lights") or []) if inv is not None else []
     im = (_manifest_of(inv).get("metrics") or {}) if inv is not None else {}
+    joined = _session_lights(p, wf, which)         # sessions calibrated each on their own: reg.npz holds them all
+    if joined is not None and len(joined[0]) == n:
+        lights, sessions_of, first = joined
+        if im.get("width") is None:
+            im = first
+    else:
+        sessions_of = []
     width, height = _num(im.get("width")), _num(im.get("height"))
     if (width is None or height is None) and lights:
         width, height = _num(lights[0].get("width")), _num(lights[0].get("height"))
@@ -2676,6 +2709,7 @@ def registration_table(p: Project2, wf: int | Workflow, which: str = "current") 
                      int(reg["nstars"][i]) if "nstars" in reg else 0, float(reg["fwhm"][i]), r, bool(aligned[i]),
                      i, f.get("path", ""), float(rms[i]), float(reg["transp"][i]), i == ref,
                      "" if aligned[i] else "not aligned")
+        row.session = sessions_of[i] if i < len(sessions_of) else ""
         row.fwhm_moffat, row.roundness_moffat, row.beta_moffat = (opt(k, i) for k in ("fwhm_moffat",
                                                                                        "roundness_moffat",
                                                                                        "beta_moffat"))
@@ -3315,3 +3349,31 @@ def __getattr__(name: str) -> Any:
         from .core import import_v1 as iv
         return getattr(iv, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def frames_mono(p: Project2, wf: int | Workflow) -> bool | None:
+    """Whether the workflow's frames are monochrome, as its Inventory read them (the sensor's pattern: a technical fact
+    of the files, never a label of their headers): True monochrome, False colour, None while no Inventory says (not
+    computed yet, an image source). The stack already follows the frames; the interface uses this to show a mono
+    workflow's settings when its sessions name no filter."""
+    from .core import cfa as cfa_mod
+    try:
+        keys = _keys(p)
+        w = keys.project.workflow(wf)
+        chain = keys.chain(w)
+    except (KeyError, ValueError):
+        return None
+    stages = [s for s in chain if s.partition("@")[0] == "inventory"]
+    found = []
+    for st in stages:
+        sid = st.partition("@")[2]
+        for which in ("current", "previous"):
+            d = _dir(p, w, "inventory", f"{which}@{sid}" if sid else which)
+            if d is not None:
+                m = _manifest_of(d).get("metrics") or {}
+                cfa = m.get("cfa")
+                found.append(bool(m.get("mono")) or (cfa is not None and cfa_mod.is_mono(cfa)))
+                break
+    if not found:
+        return None
+    return all(found)

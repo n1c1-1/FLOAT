@@ -1302,6 +1302,8 @@ class PostView(QWidget):
                 # a block's image sent to Post (a branch made for it) is shown at once, as the Split images are
                 sent = getattr(p, "end", None) is not None or getattr(self.s, "is_sent_branch", lambda q: False)(p) or \
                     getattr(self.s, "is_plain_image", lambda q: False)(p)
+                # a variant is made to be looked at: its layer arrives visible
+                sent = sent or getattr(p, "variant_of", None) is not None
                 self.layers.insert(self._place_of(p.pid, paths), new_workflow_layer(
                     p.pid, p.name + (" · " + POST_PART_NAMES["combined"] if stars else ""), bool(sent),
                     part="combined" if stars else None))
@@ -1709,6 +1711,9 @@ class PostView(QWidget):
         for lay in pixel:
             if is_group(lay) and lay.get("visible", True) and not any((lay.get("shown") or {}).values()):
                 return _("Both images of “{name}” are hidden").format(name=layer_name(lay))
+        if any(x.get("visible", True) and not (is_group(x) and not any((x.get("shown") or {}).values()))
+               for x in pixel):
+            return _("Waiting for the layers' results")        # visible layers whose image does not exist yet
         return _("Every image layer is hidden")
 
     def _on_result(self, res):
