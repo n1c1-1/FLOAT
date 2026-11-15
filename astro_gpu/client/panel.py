@@ -1664,9 +1664,19 @@ class Panel(QWidget):
         return dict(kind="many", changes=cores, what="; ".join(whats), short=" · ".join(shorts), whats=whats,
                     shorts=shorts)
 
+    def _change_paths(self) -> list:
+        """The workflows a change of the block shown goes to: the scope chosen, within the block's own workflows. The
+        model's scope can still be another block's (Inspect showed a variant's block, then the same block of the graph
+        was clicked again): the block shown wins, never another workflow's."""
+        paths = self.s.scope_paths()
+        node = self.node
+        if node is None or not node.paths:
+            return paths
+        return [q for q in paths if q in node.paths] or list(node.paths)
+
     def _propose(self, ch, what, short):
         s = self.s
-        paths = s.scope_paths()
+        paths = self._change_paths()
         old = s.pending_change
         if old and self.node is not None and old["step"] == self.node.key:
             paths = [q for q in s.paths if q.pid in old["pids"]] or paths
