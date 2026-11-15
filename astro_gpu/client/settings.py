@@ -158,6 +158,7 @@ CATALOG = {
                    "number of frames (percentile under 6 frames, winsorized sigma clipping from 6 to 15, linear fit "
                    "clipping from 16).", method="classic"),
             E("stack", "classic_cfa_balance", method="classic"),
+            E("stack", "classic_combination", method="classic"),
         ]),
         ("Pixel rejection", [
             E("stack", "drizzle_rejection", method="drizzle"),
