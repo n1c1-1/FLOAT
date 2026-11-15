@@ -1333,9 +1333,15 @@ class _ProjectBase(QObject):
         """The Combine layers Post shows by default for a workflow, made a layer of its own to open it in Post: what Post
         shows does not change, so it is not an undo step (decision 7: opening is never one)."""
         n, redo = len(self._undo), list(self._redo)
+        words, redo_words, naming, dirty = list(self._undo_what), list(self._redo_what), self._naming, self._dirty
         lid = self.add_post_layer(pid, "combined", None, keep_default=False)
         del self._undo[n:]
         self._redo[:] = redo
+        self._undo_what[:], self._redo_what[:] = words, redo_words   # each Undo / Redo keeps its own words
+        self._naming = naming                            # the next words named are not given to the step before
+        if not dirty and self._dirty:                    # nor is the project changed by an opening
+            self._dirty = False
+            self.dirtyChanged.emit(False)
         return lid
 
     def _filled(self, layers: list[dict], skip: int | None = None):
