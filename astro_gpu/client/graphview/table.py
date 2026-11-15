@@ -59,6 +59,8 @@ W_BOTH = {"stack": 118, "session": 88, "lights": 96, "darks": 88, "flats": 88, "
 ORDER = ["stack", "session", "lights", "darks", "flats", "bias", "flat_darks", "cal", "reg", "sel", "stk"]
 HINT = "One row per session. Drop each folder in its cell. The Common row: what serves every session."
 FOOTNOTE = "Read from the files, for information: nothing is decided from it without your consent"
+ADD_SESSION_TIP = "A new session in the stack of the chosen cell, else in the first stack: its light frames go in its cells"
+ADD_STACK_TIP = "A new stack at the bottom of the table, with one session: its light frames go in its cells"
 
 
 def widths(W, opts):
@@ -969,6 +971,15 @@ class Table(QWidget):
         h = QHBoxLayout(w)
         h.setContentsMargins(8, 3, 10, 3)
         h.setSpacing(10)
+        g = self.grid
+        self.b_add_session = QPushButton(_("Add session"))
+        self.b_add_session.clicked.connect(g.add_session_here)
+        self.b_add_stack = QPushButton(_("Add stack"))
+        self.b_add_stack.setToolTip(_(ADD_STACK_TIP))
+        self.b_add_stack.clicked.connect(g.add_stack)
+        for b in (self.b_add_session, self.b_add_stack):
+            b.setFixedHeight(28)
+            h.addWidget(b)
         self.b_cols = QPushButton(_("+ columns"))
         self.b_cols.setFixedHeight(28)
         self.b_cols.setToolTip(_("Flat darks · optional"))
@@ -1065,6 +1076,9 @@ class Table(QWidget):
             self.l_batch.setText(plural(len(sids), "{n} session chosen", "{n} sessions chosen"))
         else:
             self.bar.setCurrentIndex(0)
+        has_stack = bool(mp.stacks())
+        self.b_add_session.setEnabled(has_stack)            # greyed with its reason: there is no stack to put it in
+        self.b_add_session.setToolTip(_(ADD_SESSION_TIP) if has_stack else _("No stack yet: add a stack first"))
         n = len(mp.all_warnings())
         self.b_warn.setText(plural(n, "{n} warning ▸", "{n} warnings ▸") if n else "")
         self.b_warn.setVisible(bool(n))

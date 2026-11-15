@@ -22,6 +22,10 @@ STATE = style.STATE_COL
 KIND_TIP = {"lights": "Lights = the images of the target", "darks": "Darks = closed-cap frames, same exposure",
             "flats": "Flats = frames of an even light", "bias": "Bias = shortest frames",
             "flat_darks": "Flat darks = closed-cap frames at the flats' exposure"}
+#: the tooltips of the « + Session » and « + Stack » places (English; shown through _): files dropped there are lights,
+#: the software never sorts lights, darks and flats by itself
+GHOST_TIP = {"ghost_s": "Light frames dropped here make a new session",
+             "ghost_p": "Light frames dropped here make a new stack"}
 #: the column headers (English; shown through _)
 HEADER = {"stack": "Stacks", "session": "Session", "lights": "Lights", "darks": "Darks", "flats": "Flats",
           "bias": "Bias", "flat_darks": "Flat darks", "cal": "Calibration", "reg": "Registration",
@@ -458,10 +462,10 @@ class Painting:
         self._text(p, R.x() + 12, R.y() + R.height() / 2 + 4, text, F11, TXT if hot else DIM, R.width() - 16)
 
     def p_ghost_s(self, p, c: Cell):
-        self._ghost(p, c, _("+ Session · drop a session's folder"))
+        self._ghost(p, c, _("+ Session"))           # what a drop there does: its tooltip (GHOST_TIP)
 
     def p_ghost_p(self, p, c: Cell):
-        self._ghost(p, c, _("+ Stack · drop a session's folder"))
+        self._ghost(p, c, _("+ Stack"))
 
     def p_warn(self, p, c: Cell):
         """The amber warning of a box: its whole text on its own line under the row, with its button."""

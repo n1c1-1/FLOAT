@@ -13,7 +13,7 @@ from .. import prefs
 from ..i18n import _, maybe, plural
 from . import files
 from .table_logic import BLOCK_TITLE, FOLDED, KIND_TITLE, KINDS, count_text
-from .table_paint import HEAD, KIND_TIP, ROW
+from .table_paint import GHOST_TIP, HEAD, KIND_TIP, ROW
 
 INTERNAL_MIME = "application/x-float-table"
 
@@ -193,6 +193,8 @@ class Gestures:
             return ""
         if self.zone_at(c, pos) == "picker":
             return _("Files: add, replace, remove, back to Common")
+        if c.kind in GHOST_TIP:
+            return _(GHOST_TIP[c.kind])
         mp = self.model
         if c.kind == "box" and not c.id[1].startswith(FOLDED):
             owner, kind = c.id[1], c.id[2]
@@ -337,6 +339,33 @@ class Gestures:
             self.status.emit(target.why, 4000)
             return
         self.drop_files(target, g)
+
+    def chosen_stack(self):
+        """The stack « Add session » acts on: the one of the chosen cell (a stack, a session, its files or settings, its
+        « + Session » place), else the first; None when the table has no stack."""
+        pls = self.model.stacks()
+        if not pls:
+            return None
+        f = self.focus or ()
+        rid = None
+        if len(f) > 1 and isinstance(f[1], str):
+            if f[0] in ("stack", "setting", "ghost_s", "folded_name"):
+                rid = f[1]
+            elif f[1].startswith(FOLDED):
+                rid = f[1][len(FOLDED):]
+            elif f[0] in ("name", "box", "cal") and f[1] != COMMON:
+                pl = self.model.stack_of(f[1])
+                rid = pl["id"] if pl else None
+        pl = self.model.stack_by_id(rid) if rid else None
+        return pl or pls[0]
+
+    def add_session_here(self):
+        """« Add session »: an empty session in the chosen stack (its lights are dropped or added in its cells)."""
+        pl = self.chosen_stack()
+        if pl is None:
+            self.status.emit(_("No stack yet: add a stack first"), 3000)
+            return
+        self.add_session(pl["id"])
 
     def add_session(self, rid):
         r = self.act([("add_night", dict(row=rid))], _("Session added"), undo_link())

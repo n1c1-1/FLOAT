@@ -789,6 +789,44 @@ def test_gv_table_structure(qapp, tree):
     b.close()
 
 
+def test_gv_table_add_session_and_add_stack_buttons(qapp):
+    """The two buttons of the Table's bar: Add session (into the chosen cell's stack, else the first; greyed with its
+    reason while there is no stack) and Add stack. The dashed places say + Session / + Stack, and their tooltip that
+    files dropped there are light frames: no text speaks of a session's folder."""
+    b = Bench(1366, blank=True)
+    g, t = b.g, b.t
+    assert t.b_add_session.text() == "Add session" and t.b_add_stack.text() == "Add stack"
+    assert t.b_add_session.isVisible() and t.b_add_stack.isVisible() and t.b_add_stack.isEnabled()
+    assert not t.b_add_session.isEnabled() and t.b_add_session.toolTip() == "No stack yet: add a stack first"
+    t.b_add_stack.click()
+    b.wait(0.02)
+    assert len(b.stacks()) == 1 and len(b.sessions()) == 1
+    g.end_edit()
+    assert t.b_add_session.isEnabled() and "stack of the chosen cell" in t.b_add_session.toolTip()
+    n0 = b.steps()
+    t.b_add_session.click()                                          # nothing chosen: the first stack
+    assert len(b.stacks()[0]["sessions"]) == 2 and b.steps() == n0 + 1
+    t.b_add_stack.click()
+    b.wait(0.02)
+    g.end_edit()
+    second = b.stacks()[1]["id"]
+    g.select(g.cell(("stack", second)))
+    t.b_add_session.click()                                          # the chosen stack
+    assert [len(pl["sessions"]) for pl in b.stacks()] == [2, 2]
+    g.select(g.cell(("box", b.stacks()[0]["sessions"][0]["sid"], "darks")))
+    t.b_add_session.click()                                          # a session's cell: its stack
+    assert [len(pl["sessions"]) for pl in b.stacks()] == [3, 2]
+    # the dashed places: honest words, the drop said in the tooltip
+    assert g.tooltip_text(b.pos(("ghost_s", second), 0.3)) == "Light frames dropped here make a new session"
+    assert g.tooltip_text(b.pos(("ghost_p",), 0.3)) == "Light frames dropped here make a new stack"
+    drawn = []
+    g._ghost = lambda p, c, text: drawn.append(text)
+    g.viewport().repaint()
+    del g._ghost
+    assert set(drawn) == {"+ Session", "+ Stack"}
+    b.close()
+
+
 def test_gv_table_variant_shown(qapp):
     b = Bench(1366)
     rid = b.stacks()[0]["id"]
