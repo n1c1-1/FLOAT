@@ -56,7 +56,7 @@ from .model import NotInEngine, method_of, method_value, methods_of
 from .settings import (RangeBar, SettingRow, decimals_shown, fmt, needed_stages, on_edited, selection_rule_text,
                        step_settings)
 from .settings import loading as settings_loading
-from .widgets import ACCENT, BAD, NEW, OK, WARN, clear, hline, label, put_back, typed
+from .widgets import ACCENT, BAD, NEW, OK, WARN, clear, hline, label, put_back, typed, wheel_scrolls
 
 STATE_COLOR = {"done": "#5fbf7f", "pending": "#8b93a1", "stale": WARN, "running": ACCENT, "failed": BAD,
                "interrupted": WARN, "skipped": "#8b93a1"}
@@ -660,6 +660,7 @@ class Panel(QWidget):
         scroll = self._sc.verticalScrollBar().value() if same else 0
         self._refresh(node)
         self._finish_sections()
+        wheel_scrolls(self, self._sc)                    # the wheel scrolls the panel, not the list under the cursor
         for ed in self.findChildren(QLineEdit):          # what the user types (not what a build puts in) until applied
             ed.textEdited.connect(self._typed, Qt.UniqueConnection)
             ed.editingFinished.connect(self._applied, Qt.UniqueConnection)
