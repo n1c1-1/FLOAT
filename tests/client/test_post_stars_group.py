@@ -22,7 +22,7 @@ from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from astro_gpu import api  # noqa: E402
-from astro_gpu.client import i18n, prefs  # noqa: E402
+from astro_gpu.client import i18n, post3, prefs  # noqa: E402
 from astro_gpu.client import postengine as pe  # noqa: E402
 from astro_gpu.client.postengine import Canvas, Composer, Provider  # noqa: E402
 
@@ -307,7 +307,19 @@ def test_the_panel_shows_the_group_in_french_with_an_eye_each(project):
         own = [a.text() for a in v.layer_menu_of(synth.lay).actions() if a.text()]
         assert "Supprimer" in own and "Dupliquer" not in own and "Ajouter un filtre" not in own
         v.select(synth.lay["id"], "layer")
-        assert not v.b_dup.isEnabled()
+        assert not v.b_dup.isEnabled() and v.b_dup.toolTip().startswith("Un seul calque Étoiles de synthèse")
+        # one of the group's images (the laptop's B2, B3): Duplicate, Rename, Delete greyed with why, in its menu
+        # and on the buttons; Ctrl+J and Del do nothing (they copied or deleted the whole layer)
+        why = f"Une des images de « {post3.layer_name(g)} » : elle reste dans son calque"
+        for a in v.layer_menu_of(pe.sub_row(g, "starless")).actions():
+            if a.text() in ("Dupliquer", "Renommer", "Supprimer"):
+                assert not a.isEnabled() and a.toolTip().startswith(why)
+        v.select(g["id"], "starless")
+        assert not v.b_dup.isEnabled() and not v.b_del.isEnabled() and v.b_dup.toolTip().startswith(why)
+        n = len(v.layers)
+        v.duplicate()
+        v.delete()
+        assert len(v.layers) == n
     finally:
         i18n.set_language("en")
         page.shutdown()

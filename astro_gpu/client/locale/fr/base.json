@@ -1029,7 +1029,7 @@
   "Draw the zone to stack on the frame.": "Tracez sur l'image la zone à empiler.",
   "{w} x {h} px, {pct} % of the field, sky {sky} %": "{w} x {h} px, {pct} % du champ, ciel {sky} %",
   "little sky left for the Gradient": "peu de ciel restant pour le Gradient",
-  "The version shown; type here to rename it": "La version affichée ; saisissez ici pour la renommer",
+  "The version shown: a click opens the list, a double-click renames it": "La version affichée : un clic ouvre la liste, un double-clic la renomme",
   "New version: a copy of this one": "Nouvelle version : une copie de celle-ci",
   "What the picture is compared with; V shows one then the other whole": "Ce à quoi l'image est comparée ; V montre l'une puis l'autre en entier",
   "Delete this version": "Supprimer cette version",

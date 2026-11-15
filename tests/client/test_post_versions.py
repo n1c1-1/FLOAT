@@ -816,3 +816,43 @@ def test_undoing_a_workflow_setting_a_workflow_rename_or_synthetic_stars_says_wh
         page.shutdown()
         page.deleteLater()
         QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_a_click_opens_the_versions_list_a_double_click_renames_and_a_pick_gives_the_keys_back(model, monkeypatch):
+    """The laptop's B4, B5, B6: a click on the name put a text cursor; after a pick the field kept the keys (Ctrl+Z did
+    nothing); a new version and a deleted one said nothing."""
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    page = _page(model)
+    v = page.view
+    try:
+        said = []
+        v.toasted.connect(said.append)
+        ed = v.cb_version.lineEdit()
+        opened = []
+        monkeypatch.setattr(v.cb_version, "showPopup", lambda: opened.append(1))
+        v._version_click.timeout.disconnect()
+        v._version_click.timeout.connect(v.cb_version.showPopup)
+
+        def mouse(kind):
+            return QMouseEvent(kind, QPointF(5, 5), QPointF(5, 5), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+        QApplication.sendEvent(ed, mouse(QEvent.MouseButtonPress))
+        QApplication.sendEvent(ed, mouse(QEvent.MouseButtonRelease))
+        assert v._version_click.isActive() and not ed.hasFocus()
+        v._version_click.timeout.emit()
+        assert opened == [1]                                            # a click: the list
+        QApplication.sendEvent(ed, mouse(QEvent.MouseButtonPress))
+        QApplication.sendEvent(ed, mouse(QEvent.MouseButtonDblClick))
+        assert not v._version_click.isActive() and ed.selectedText() == ed.text()   # a double-click: the name to type
+        v.viewer.setFocus()
+        old = v.cb_version.currentText()
+        v._version_new()
+        new = v.cb_version.currentText()
+        assert said[-1] == f"“{new}”, a copy of “{old}”: its own Undo starts here"
+        ed.setFocus()
+        v._version_picked(v.cb_version.findText(old))
+        assert not ed.hasFocus()                                        # the keys back to the page
+        v._version_delete()
+        assert said[-1] == f"“{old}” deleted · Ctrl+Z"
+    finally:
+        _close(page)

@@ -199,10 +199,19 @@ def step_words(old: list[dict], new: list[dict]) -> str:
             return _("“{old}” renamed “{name}”").format(old=layer_name(was), name=name)
         if was.get("visible") != lay.get("visible"):
             return (_("“{name}” shown") if lay.get("visible") else _("“{name}” hidden")).format(name=name)
-        for key, word in (("opacity", _("opacity")), ("mode", _("blend mode")), ("blend", _("blend mode")),
-                          ("mask", _("mask"))):
+        for sub, v in (lay.get("shown") or {}).items():             # the eye of one of a group's images
+            if (was.get("shown") or {}).get(sub) != v:
+                side = _(SUB_NAMES.get(sub, sub))
+                return (_("“{name}” shown") if v else _("“{name}” hidden")).format(name=side)
+        for key, word in (("opacity", _("opacity")), ("mode", _("blend mode")), ("blend", _("blend mode"))):
             if was.get(key) != lay.get(key):
                 return _("{what} of “{name}”").format(what=word.capitalize(), name=name)
+        if was.get("mask") != lay.get("mask"):
+            return mask_words(was.get("mask"), lay.get("mask"), name)
+        sa, sb = was.get("side_masks") or {}, lay.get("side_masks") or {}
+        for sub in sorted(set(sa) | set(sb)):
+            if sa.get(sub) != sb.get(sub):
+                return mask_words(sa.get(sub), sb.get(sub), _(SUB_NAMES.get(sub, sub)))
         for field in ("sliders", "params"):
             ka, kb = was.get(field) or {}, lay.get(field) or {}
             for k in kb:
@@ -210,6 +219,31 @@ def step_words(old: list[dict], new: list[dict]) -> str:
                     return _("{what} of “{name}”").format(what=_(str(k).replace("_", " ").capitalize()), name=name)
         return _("“{name}” changed").format(name=name)
     return _("Crop changed") if getattr(old, "crop", None) != getattr(new, "crop", None) else ""
+
+
+def mask_words(old: dict | None, new: dict | None, name: str) -> str:
+    """What changed in the mask of the layer named ``name`` (``step_words``): added, deleted, a part added or
+    removed, a stroke, a part's setting, a setting of the whole mask."""
+    if old is None:
+        return _("Mask added to “{name}”").format(name=name)
+    if new is None:
+        return _("Mask of “{name}” deleted").format(name=name)
+    pa, pb = {p["id"]: p for p in old["parts"]}, {p["id"]: p for p in new["parts"]}
+    for i, p in pb.items():
+        if i not in pa:
+            return _("{part} added to the mask of “{name}”").format(part=_(MASK_SOURCES[p["src"]]), name=name)
+    for i, p in pa.items():
+        if i not in pb:
+            return _("{part} removed from the mask of “{name}”").format(part=_(MASK_SOURCES[p["src"]]), name=name)
+    for i, p in pb.items():
+        if pa[i] != p:
+            if pa[i].get("strokes") != p.get("strokes"):
+                return _("Brush stroke on the mask of “{name}”").format(name=name)
+            return _("{part} of the mask of “{name}”").format(part=_(MASK_SOURCES[p["src"]]), name=name)
+    for key, word in (("feather", "Feather"), ("density", "Density"), ("invert", "Invert")):
+        if old.get(key) != new.get(key):
+            return _("{what} of the mask of “{name}”").format(what=_(word), name=name)
+    return _("{what} of “{name}”").format(what=_("mask").capitalize(), name=name)
 
 
 def _pieces(n: str, fn) -> str:
@@ -622,8 +656,12 @@ class LayerRow(QFrame):
         if e.button() == Qt.LeftButton:
             self._press = e.position().toPoint()
             self._dragging = False
-        elif e.button() == Qt.RightButton:                # a sub-layer too: its filters (#120)
-            self.panel.layer_menu(self.lay, e.globalPosition().toPoint())
+
+    def contextMenuEvent(self, e):                                # noqa: N802 - Qt's name
+        # a sub-layer too: its filters (#120); opened on the context menu event (at the release, see app.py
+        # context_menus_on_release), never at the press: the release then chose the entry under the pointer
+        self.panel.layer_menu(self.lay, e.globalPos())
+        e.accept()
 
     def mouseMoveEvent(self, e):
         if self.lay["kind"] == "sub" or is_synth(self.lay):     # a sub-layer, the synthetic stars stay in their group
@@ -889,7 +927,7 @@ class PostView(QWidget):
         # its name's start shown, "…" at its end (#146); made in the list, the list's own field: made apart, it was styled
         # as a field of its own, its padding and border inside the list's, its text 13 px high, a g's tail cut (#152)
         self.cb_version.setLineEdit(NameEdit("", self.cb_version))
-        self.cb_version.setToolTip(_("The version shown; type here to rename it"))
+        self.cb_version.setToolTip(_("The version shown: a click opens the list, a double-click renames it"))
         # one width whatever its names, today's (about "Version 1"), within bounds: a long name never pushes the bar, it
         # is cut (#146; as wide as its names, the list resized itself after the bar's layout and covered New version)
         self.cb_version.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
@@ -902,6 +940,8 @@ class PostView(QWidget):
         for w in (self.version_lab, self.cb_version, self.b_version_new, self.b_version_del):
             bar.addWidget(w)
         self._entering = False
+        self._version_click = QTimer(self, singleShot=True)
+        self._version_click.timeout.connect(self.cb_version.showPopup)
         self.cb_version.lineEdit().installEventFilter(self)
         self.cb_version.activated.connect(self._version_picked)
         self.cb_version.lineEdit().editingFinished.connect(self._version_renamed)
@@ -1092,6 +1132,19 @@ class PostView(QWidget):
                 self._fill_versions()                    # the name as it was
                 self.viewer.setFocus(Qt.OtherFocusReason)
             return True
+        if hasattr(self, "cb_version") and obj is self.cb_version.lineEdit() and not obj.hasFocus():
+            # the name not being typed in: a click opens the list (the laptop's B5: it put a text cursor), a double-click
+            # types in it to rename, as a layer's name; the click waits a double-click's time to know which
+            if e.type() == QEvent.MouseButtonPress and e.button() == Qt.LeftButton:
+                self._version_click.start(QApplication.doubleClickInterval())
+                return True
+            if e.type() == QEvent.MouseButtonDblClick and e.button() == Qt.LeftButton:
+                self._version_click.stop()
+                obj.setFocus(Qt.MouseFocusReason)
+                obj.selectAll()
+                return True
+            if e.type() == QEvent.MouseButtonRelease:
+                return True
         if e.type() == QEvent.KeyPress and e.key() in (Qt.Key_Return, Qt.Key_Enter) and                 obj is self.cb_version.lineEdit():
             self._entering = True                       # Enter typed in the version's name: a renaming, not a pick
             QTimer.singleShot(0, lambda: setattr(self, "_entering", False))
@@ -1365,7 +1418,7 @@ class PostView(QWidget):
         i = self.cb_version.findData(self._version)
         self.cb_version.setCurrentIndex(max(i, 0))
         self.cb_version.lineEdit().setCursorPosition(0)  # its start, Enter's renaming too (#146)
-        tip = _("The version shown; type here to rename it")
+        tip = _("The version shown: a click opens the list, a double-click renames it")
         self.cb_version.setToolTip(f"{self.cb_version.currentText()}\n{tip}" if self.cb_version.count() else tip)
         j = self.cb_cmp.findData(kept)
         self.cb_cmp.setCurrentIndex(max(j, 0))
@@ -1408,13 +1461,17 @@ class PostView(QWidget):
         if vid is not None and vid != self._version:
             self._save()
             self.s.set_post_version(vid)
+        self.viewer.setFocus(Qt.OtherFocusReason)       # the keys back to the page: Ctrl+Z undoes the version's edits (B4)
 
     def _version_new(self):
         self._save()
+        old = self.cb_version.currentText()
         with self._from_post():
             self.s.new_post_version()
         self.redo.clear()                                # (making a version is no step of Undo: the new one starts empty)
         self._undo_buttons()
+        self.toasted.emit(_("“{name}”, a copy of “{old}”: its own Undo starts here").format(
+            name=self.cb_version.currentText(), old=old))
 
     def _version_renamed(self):
         """The name typed for the version shown: refused with its reason when empty or already another version's, the
@@ -1442,8 +1499,10 @@ class PostView(QWidget):
         if p is None or len(p.post["versions"]) < 2:
             return
         self._save()
+        gone = self.cb_version.currentText()
         with self._from_post():
             self.s.delete_post_version(self._version)
+        self.toasted.emit(_("“{name}” deleted").format(name=gone) + " · Ctrl+Z")      # (the model's words for its step)
         self.undo.append(self._model_mark("_undo"))                     # (the delete showed the other version: its own Undo now)
         self.redo.clear()
         self._undo_buttons()
@@ -2314,11 +2373,15 @@ class PostView(QWidget):
             QTimer.singleShot(0, lambda: (self.lsc.ensureWidgetVisible(sel_row, 0, 10),
                                           self.lsc.horizontalScrollBar().setValue(0)))
         lay = self.layer(self.sel[0]) if self.sel else None
-        self.b_dup.setEnabled(lay is not None and not is_synth(lay))      # one Synthetic stars layer per group
-        self.b_del.setEnabled(lay is not None and (not is_pixel(lay) or sum(map(is_pixel, self.layers)) > 1))
+        image = self._image_of_group()                    # one of a group's images: it goes with its layer (B2, B3)
+        self.b_dup.setEnabled(lay is not None and not is_synth(lay) and not image)  # one Synthetic stars layer per group
+        self.b_dup.setToolTip(_("Duplicate (Ctrl+J)") if self.b_dup.isEnabled() else
+                              _("Choose a layer first") if lay is None else image or
+                              _("One Synthetic stars layer per Stars group: it cannot be duplicated"))
+        self.b_del.setEnabled(lay is not None and not image and (not is_pixel(lay) or sum(map(is_pixel, self.layers)) > 1))
         # greyed, it says why (control round): the last image layer stays, or nothing chosen
         self.b_del.setToolTip(_("Delete the selected layer") if self.b_del.isEnabled() else
-                              _("Choose a layer first") if lay is None else
+                              _("Choose a layer first") if lay is None else image or
                               _("The last image layer stays: Post needs an image (hide it with its eye)"))
         own = self.mask_owner()
         real = lay is not None and self.sel[1] == "real"           # the real stars have no mask of their own
@@ -2578,6 +2641,14 @@ class PostView(QWidget):
             if lay["sub"] == "stars":                    # its synthetic stars too (#93)
                 m.addSeparator()
                 self._synth_action(m, self.layer(lay["id"]))
+            m.addSeparator()                             # what it cannot do, greyed with why (B2, B3)
+            why = _("One of the images of “{name}”: it stays in its layer. Duplicate, rename, move or delete the "
+                    "layer itself").format(name=layer_name(self.layer(lay["id"]) or lay))
+            for txt in ("Duplicate", "Rename", "Delete"):
+                a = m.addAction(_(txt))
+                a.setEnabled(False)
+                a.setToolTip(why)
+            m.setToolTipsVisible(True)
             return m
         m.addSeparator()
         if is_group(lay):
@@ -2895,10 +2966,20 @@ class PostView(QWidget):
                 part["id"] = new_id()
         return d
 
+    def _image_of_group(self) -> str:
+        """When the selection is one of a Combine layers layer's images (or its mask): why it cannot be duplicated,
+        renamed, moved or deleted apart (the laptop's B2, B3: Duplicate with Stars chosen copied the whole layer, and
+        nothing said the images stay in place); else ""."""
+        if not self.sel or self.sel[1] not in SUB_ROWS and selection_side(self.sel[1]) is None:
+            return ""
+        lay = self.layer(self.sel[0])
+        return _("One of the images of “{name}”: it stays in its layer. Duplicate, rename, move or delete the layer "
+                 "itself").format(name=layer_name(lay)) if lay is not None else ""
+
     def duplicate(self):
         """A copy above; a pixel layer comes with its own filters."""
         lay = self.layer(self.sel[0]) if self.sel else None
-        if lay is None:
+        if lay is None or self._image_of_group():
             return
         self.push()
         d = self._copy(lay)
@@ -2926,6 +3007,8 @@ class PostView(QWidget):
     def delete(self):
         """A pixel layer goes with its own filters; the last pixel layer stays."""
         lay = self.layer(self.sel[0]) if self.sel else None
+        if self._image_of_group():
+            return
         others = [x for x in self.layers if x["id"] != lay["id"] and x.get("target") != lay["id"]] if lay else []
         if lay is None or not any(is_pixel(x) for x in others) and is_pixel(lay):
             return
@@ -2971,6 +3054,19 @@ class PostView(QWidget):
 
     # ------------------------------------------------------------ properties of the selection
     def build_props(self):
+        """The properties panel made again. Of the same selection (a mask edited, an Undo), it stays where it was
+        scrolled (the laptop's B7: on a small window it went back to the top, or jumped as the rows came back)."""
+        key = (self.sel, self.b_crop.isChecked())
+        sb = self.psc.verticalScrollBar() if hasattr(self, "psc") else None
+        keep = sb.value() if sb is not None and key == getattr(self, "_props_key", None) else 0
+        self._props_key = key
+        self._build_props()
+        if keep:
+            self.psc.widget().adjustSize()
+            sb.setValue(keep)
+            QTimer.singleShot(0, lambda: sb.setValue(min(keep, sb.maximum())))
+
+    def _build_props(self):
         clear(self.pbox)
         self.folds.reset()
         self.curves_editor = self.function_graph = None
@@ -3456,13 +3552,23 @@ class PostView(QWidget):
         self.pbox.addWidget(de)
         inv = QCheckBox(_("Invert"))
         inv.setChecked(m["invert"])
-        inv.toggled.connect(lambda v: (self.push(), m.__setitem__("invert", v), self.request(final_only=True),
-                                       QTimer.singleShot(0, self.build_props)))      # the brushes' names follow
+        inv.toggled.connect(lambda v: self._invert_mask(m, v))
         self.pbox.addWidget(inv)
         if self.part_sel and any(p["id"] == self.part_sel and p["src"] == "brush" for p in m["parts"]):
             self.viewer.mode = "brush"
             part = next(p for p in m["parts"] if p["id"] == self.part_sel)
             self.viewer.brush_r = part["size"] / 2
+
+    def _invert_mask(self, m, v):
+        """Invert: the brushes keep the effect chosen (Hide stays Hide), so the next stroke does what it said; the
+        strokes already painted follow the mask, as the rest of it."""
+        self.push()
+        m["invert"] = v
+        for p in m["parts"]:
+            if p["src"] == "brush":
+                p["paint"] = not p["paint"]
+        self.request(final_only=True)
+        QTimer.singleShot(0, self.build_props)
 
     def part_box(self, lay, part, j):
         on = part["id"] == self.part_sel
@@ -3491,6 +3597,10 @@ class PostView(QWidget):
         v.addLayout(top)
         src = part["src"]
         default = new_part(src)
+        if src == "halpha":                              # no setting of its own: what it is made of (the laptop's B9)
+            v.addWidget(label(_("Where the image is redder than green, the hydrogen glow of the workflow at the bottom "
+                                "(its starless image when it has one): nothing at its middle value, all at its "
+                                "brightest 3 %. Feather, Density and Invert act on it."), "small", wrap=True))
 
         def sl(key, name, lo, hi, unit=""):
             s = ContSlider(_(name), lo, hi, part[key], default[key], unit=unit, step=1)
@@ -3525,6 +3635,8 @@ class PostView(QWidget):
                 r.addWidget(b)
             r.addStretch(1)
             cl = QPushButton(_("Clear all"))
+            cl.setToolTip(_("Removes every stroke of this brush. One stroke: paint the other effect over it, or "
+                            "Ctrl+Z for the last one"))
             cl.clicked.connect(lambda: self._part_set(part, "strokes", []))
             r.addWidget(cl)
             v.addLayout(r)
@@ -3578,6 +3690,10 @@ class PostView(QWidget):
     def add_part(self, lay, src):
         self.push()
         part = new_part(src)
+        if src == "brush" and not lay["mask"]["parts"]:
+            # an empty mask shows the whole layer: its first brush keeps it so (it takes away from a full mask, as the
+            # Synthetic stars' brush) and paints the effect that changes it, Hide (Show when the mask is inverted)
+            part["op"] = "sub"
         lay["mask"]["parts"].append(part)
         self.part_sel = part["id"] if src == "brush" else None
         self.build_props()

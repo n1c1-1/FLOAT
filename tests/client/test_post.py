@@ -1275,11 +1275,15 @@ def test_mask_brushes_are_named_by_their_effect_and_the_red_marks_what_is_hidden
 
     def brushes():
         return {b.text(): (b.isChecked(), b.toolTip()) for b in widgets_of(v, QPushButton) if b.text() in ("Show", "Hide")}
-    assert brushes() == {"Show": (part["paint"], "Painting here shows the layer"),
-                         "Hide": (not part["paint"], "Painting here hides the layer")}
-    v._part_set(part, "op", "sub")                                   # a subtracting brush hides where it paints
+    # a brush on an empty mask keeps the layer shown everywhere (it takes away from a full mask) and starts on Hide
+    assert part["op"] == "sub" and part["paint"] is True
+    assert brushes() == {"Show": (False, "Painting here shows the layer"),
+                         "Hide": (True, "Painting here hides the layer")}
+    v.add_part(full, "brush")                                         # a brush on a mask that holds something: adds
+    assert full["mask"]["parts"][-1]["op"] == "add"
+    v.remove_part(full, full["mask"]["parts"][-1])
+    v.part_sel = part["id"]
     v.build_props()
-    assert brushes()["Hide"][0] == part["paint"]
     hide = next(b for b in widgets_of(v, QPushButton) if b.text() == "Hide")
     hide.click()
     assert part["paint"] is True                                      # painting hides: the brush adds to the subtraction
@@ -1393,19 +1397,20 @@ def test_the_brush_paints_erases_and_is_one_undo_step(post):
     assert len(xs) > 6 and max(np.diff(xs)) <= part["size"] / 2 / 3 + 1.0
     assert post.settle()
     m = v.mask1
-    assert m[75, 100] > 0.9 and m[75, 130] > 0.9 and m[10, 10] == 0                      # painted where the brush went
-    v.toggle_paint()                                                                     # X: erase
+    # the first brush of an empty mask hides where it paints, the rest of the layer stays shown
+    assert m[75, 100] < 0.1 and m[75, 130] < 0.1 and m[10, 10] == 1                      # painted where the brush went
+    v.toggle_paint()                                                                     # X: the other effect
     assert part["paint"] is False
     v._stroke(200.0, 150.0, True)
     v._stroke_end()
-    assert post.settle() and v.mask1[75, 100] < 0.5
+    assert post.settle() and v.mask1[75, 100] > 0.5
     v.brush_size(1.25)                                                                   # ]
     assert part["size"] == pytest.approx(75.0) and v.viewer.brush_r == pytest.approx(37.5)
     v.do_undo()
-    assert post.settle() and v.mask1[75, 100] > 0.9
+    assert post.settle() and v.mask1[75, 100] < 0.1
     part = named(v, "Full")["mask"]["parts"][0]                                          # Undo brings back other dicts
     v._part_set(part, "strokes", [])                                                     # Clear all
-    assert post.settle() and v.mask1.max() == 0
+    assert post.settle() and v.mask1.min() == 1
 
 
 def test_spot_healing_is_a_brush_healed_on_release_with_nothing_left_on_the_image(post):
@@ -3587,3 +3592,107 @@ def test_the_export_file_button_is_a_save_dialog_with_the_formats_ending(exporti
         assert d.fmt.maxVisibleItems() >= d.fmt.count()
     finally:
         d.deleteLater()
+
+
+def test_the_brush_keeps_its_effect_across_invert_and_density(post):
+    """The laptop's A1: with Hide chosen, ticking Invert or letting go of Density put the brush back on Show."""
+    v = post.view
+    full = named(v, "Full")
+    v.select(full["id"], "layer")
+    v.mask_button()
+    v.add_part(full, "luminance")
+    part = v.add_part(full, "brush")                                 # on a mask that holds something: adds
+    v.part_sel = part["id"]
+    v.build_props()
+
+    def checked():
+        return [b.text() for b in widgets_of(v, QPushButton) if b.text() in ("Show", "Hide") and b.isChecked()]
+    next(b for b in widgets_of(v, QPushButton) if b.text() == "Hide").click()
+    assert checked() == ["Hide"]
+    de = next(s for s in widgets_of(v, post3.ContSlider) if s.name.text() == "Density")
+    de.done.emit(60.0)
+    post.settle()
+    QApplication.processEvents()
+    assert checked() == ["Hide"]
+    inv = next(c for c in widgets_of(v, post3.QCheckBox) if c.text() == "Invert")
+    inv.setChecked(True)
+    post.settle()
+    QApplication.processEvents()
+    assert checked() == ["Hide"]
+
+
+def test_a_right_click_on_a_row_opens_its_menu_at_the_release_not_at_the_press(post, monkeypatch):
+    """The laptop's A2: the menu opened inside the press, and the release of the same click chose the entry under the
+    pointer (a mask added, a layer duplicated, no menu seen)."""
+    from PySide6.QtCore import QPoint, QPointF
+    from PySide6.QtGui import QContextMenuEvent, QMouseEvent
+    v = post.view
+    row = v.rows[0]
+    seen = []
+    monkeypatch.setattr(v, "layer_menu", lambda lay, gpos: seen.append(lay["id"]))
+    press = QMouseEvent(QMouseEvent.MouseButtonPress, QPointF(5, 5), QPointF(5, 5), Qt.RightButton, Qt.RightButton,
+                        Qt.NoModifier)
+    QApplication.sendEvent(row, press)
+    assert seen == []                                                 # nothing at the press
+    QApplication.sendEvent(row, QContextMenuEvent(QContextMenuEvent.Mouse, QPoint(5, 5), row.mapToGlobal(QPoint(5, 5))))
+    assert seen == [row.lay["id"]]
+
+
+def test_undo_names_the_eye_of_a_groups_image_and_each_mask_edit():
+    """The laptop's B1: an eye or any mask edit was undone as "“Full · Combine layers” changed"."""
+    from astro_gpu.client.post3 import step_words
+    g = {"id": 1, "kind": "pixel", "name": "Full", "visible": True, "shown": {"stars": True, "starless": True},
+         "mask": None}
+
+    def after(**kw):
+        return [dict(g, **kw)]
+    assert step_words([g], after(shown={"stars": False, "starless": True})) == "“Stars” hidden"
+    mask = new_mask()
+    assert step_words([g], after(mask=mask)) == "Mask added to “Full”"
+    brush = dict(new_part("brush"), op="sub")
+    one = dict(mask, parts=[brush])
+    assert step_words(after(mask=mask), after(mask=one)) == "Brush added to the mask of “Full”"
+    painted = dict(one, parts=[dict(brush, strokes=[(1.0, 2.0, 3.0, 50.0, True)])])
+    assert step_words(after(mask=one), after(mask=painted)) == "Brush stroke on the mask of “Full”"
+    assert step_words(after(mask=one), after(mask=dict(one, density=50.0))) == "Density of the mask of “Full”"
+    assert step_words(after(mask=one), after(mask=None)) == "Mask of “Full” deleted"
+    assert step_words([g], after(side_masks={"starless": one})) == "Mask added to “Starless image”"
+
+
+def test_the_properties_panel_stays_where_it_was_scrolled_when_it_is_made_again(post):
+    """The laptop's B7: on a small window the panel went back to the top after a mask edit or an Undo."""
+    v = post.view
+    full = named(v, "Full")
+    v.select(full["id"], "layer")
+    v.mask_button()
+    for src in ("luminance", "color", "gradient", "brush"):
+        v.add_part(full, src)
+    post.page.resize(1250, 420)
+    v.build_props()
+    for _ in range(3):
+        QApplication.processEvents()
+    sb = v.psc.verticalScrollBar()
+    assert v.psc.isVisible() and sb.maximum() > 100, (v.psc.isVisible(), v.psc.height(), v.psc.widget().height())
+    sb.setValue(sb.maximum() - 20)
+    at = sb.value()
+    v.build_props()
+    sb.setValue(0)                                                    # the jump seen when a layout pass came between
+    QApplication.processEvents()
+    QApplication.processEvents()
+    assert sb.value() == at
+    post.page.resize(1500, 900)
+
+
+def test_the_night_card_line_says_it_is_being_read_while_it_is_greyed(exporting):
+    """The laptop's B8: greyed a second, then active, with no reason seen (on hover only)."""
+    s = exporting
+    d = ExportDialog(s.view)
+    try:
+        d.card = SimpleNamespace(card_ready=lambda: False, card_loading=lambda: True)
+        d._card_state()
+        assert not d.c_card.isEnabled() and d.c_card.text().endswith(" · reading the registration…")
+        d.card = SimpleNamespace(card_ready=lambda: True, card_loading=lambda: False)
+        d._card_state()
+        assert d.c_card.isEnabled() and d.c_card.text() == "Attach the night card (a PNG beside the image)"
+    finally:
+        d.close()

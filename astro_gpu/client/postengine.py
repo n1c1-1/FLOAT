@@ -1898,7 +1898,9 @@ def _reads_image(m: dict | None) -> bool:
 
 def _settings_of(lay: dict) -> str:
     """What a layer or a filter does to the image: all of it but its name and place in the list. A brush's strokes
-    count by their number and a digest (written out whole, each request of a painted mask grew with its strokes)."""
+    count by their number and a digest (written out whole, each request of a painted mask grew with its strokes); a
+    mask part's id is no setting (a new version copies its layers with ids of their own: the same settings are the
+    same images, its switch reuses what the other one computed)."""
     d = {k: v for k, v in lay.items() if k not in ("id", "name", "target", "visible")}
     for key in ("mask", "side_masks"):
         if d.get(key):
@@ -1914,9 +1916,9 @@ def _strokes_digest(strokes) -> str:
 def _light_masks(m, several: bool):
     if several:
         return {k: _light_masks(v, False) for k, v in m.items()}
-    if not any(p.get("strokes") for p in m.get("parts", [])):
+    if not m.get("parts"):
         return m
-    return dict(m, parts=[dict(p, strokes=_strokes_digest(p["strokes"])) if p.get("strokes") else p
+    return dict(m, parts=[{k: (_strokes_digest(v) if k == "strokes" and v else v) for k, v in p.items() if k != "id"}
                           for p in m["parts"]])
 
 
