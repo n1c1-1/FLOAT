@@ -622,8 +622,12 @@ class LayerRow(QFrame):
         if e.button() == Qt.LeftButton:
             self._press = e.position().toPoint()
             self._dragging = False
-        elif e.button() == Qt.RightButton:                # a sub-layer too: its filters (#120)
-            self.panel.layer_menu(self.lay, e.globalPosition().toPoint())
+
+    def contextMenuEvent(self, e):                                # noqa: N802 - Qt's name
+        # a sub-layer too: its filters (#120); opened on the context menu event (at the release, see app.py
+        # context_menus_on_release), never at the press: the release then chose the entry under the pointer
+        self.panel.layer_menu(self.lay, e.globalPos())
+        e.accept()
 
     def mouseMoveEvent(self, e):
         if self.lay["kind"] == "sub" or is_synth(self.lay):     # a sub-layer, the synthetic stars stay in their group
@@ -3456,13 +3460,23 @@ class PostView(QWidget):
         self.pbox.addWidget(de)
         inv = QCheckBox(_("Invert"))
         inv.setChecked(m["invert"])
-        inv.toggled.connect(lambda v: (self.push(), m.__setitem__("invert", v), self.request(final_only=True),
-                                       QTimer.singleShot(0, self.build_props)))      # the brushes' names follow
+        inv.toggled.connect(lambda v: self._invert_mask(m, v))
         self.pbox.addWidget(inv)
         if self.part_sel and any(p["id"] == self.part_sel and p["src"] == "brush" for p in m["parts"]):
             self.viewer.mode = "brush"
             part = next(p for p in m["parts"] if p["id"] == self.part_sel)
             self.viewer.brush_r = part["size"] / 2
+
+    def _invert_mask(self, m, v):
+        """Invert: the brushes keep the effect chosen (Hide stays Hide), so the next stroke does what it said; the
+        strokes already painted follow the mask, as the rest of it."""
+        self.push()
+        m["invert"] = v
+        for p in m["parts"]:
+            if p["src"] == "brush":
+                p["paint"] = not p["paint"]
+        self.request(final_only=True)
+        QTimer.singleShot(0, self.build_props)
 
     def part_box(self, lay, part, j):
         on = part["id"] == self.part_sel
@@ -3525,6 +3539,8 @@ class PostView(QWidget):
                 r.addWidget(b)
             r.addStretch(1)
             cl = QPushButton(_("Clear all"))
+            cl.setToolTip(_("Removes every stroke of this brush. One stroke: paint the other effect over it, or "
+                            "Ctrl+Z for the last one"))
             cl.clicked.connect(lambda: self._part_set(part, "strokes", []))
             r.addWidget(cl)
             v.addLayout(r)

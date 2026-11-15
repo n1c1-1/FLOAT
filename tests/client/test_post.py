@@ -3592,3 +3592,47 @@ def test_the_export_file_button_is_a_save_dialog_with_the_formats_ending(exporti
         assert d.fmt.maxVisibleItems() >= d.fmt.count()
     finally:
         d.deleteLater()
+
+
+def test_the_brush_keeps_its_effect_across_invert_and_density(post):
+    """The laptop's A1: with Hide chosen, ticking Invert or letting go of Density put the brush back on Show."""
+    v = post.view
+    full = named(v, "Full")
+    v.select(full["id"], "layer")
+    v.mask_button()
+    v.add_part(full, "luminance")
+    part = v.add_part(full, "brush")                                 # on a mask that holds something: adds
+    v.part_sel = part["id"]
+    v.build_props()
+
+    def checked():
+        return [b.text() for b in widgets_of(v, QPushButton) if b.text() in ("Show", "Hide") and b.isChecked()]
+    next(b for b in widgets_of(v, QPushButton) if b.text() == "Hide").click()
+    assert checked() == ["Hide"]
+    de = next(s for s in widgets_of(v, post3.ContSlider) if s.name.text() == "Density")
+    de.done.emit(60.0)
+    post.settle()
+    QApplication.processEvents()
+    assert checked() == ["Hide"]
+    inv = next(c for c in widgets_of(v, post3.QCheckBox) if c.text() == "Invert")
+    inv.setChecked(True)
+    post.settle()
+    QApplication.processEvents()
+    assert checked() == ["Hide"]
+
+
+def test_a_right_click_on_a_row_opens_its_menu_at_the_release_not_at_the_press(post, monkeypatch):
+    """The laptop's A2: the menu opened inside the press, and the release of the same click chose the entry under the
+    pointer (a mask added, a layer duplicated, no menu seen)."""
+    from PySide6.QtCore import QPoint, QPointF
+    from PySide6.QtGui import QContextMenuEvent, QMouseEvent
+    v = post.view
+    row = v.rows[0]
+    seen = []
+    monkeypatch.setattr(v, "layer_menu", lambda lay, gpos: seen.append(lay["id"]))
+    press = QMouseEvent(QMouseEvent.MouseButtonPress, QPointF(5, 5), QPointF(5, 5), Qt.RightButton, Qt.RightButton,
+                        Qt.NoModifier)
+    QApplication.sendEvent(row, press)
+    assert seen == []                                                 # nothing at the press
+    QApplication.sendEvent(row, QContextMenuEvent(QContextMenuEvent.Mouse, QPoint(5, 5), row.mapToGlobal(QPoint(5, 5))))
+    assert seen == [row.lay["id"]]
