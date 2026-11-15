@@ -369,9 +369,9 @@ def read_file(path: str | os.PathLike, frame: bool = False) -> tuple[np.ndarray,
         return tifffile.imread(p), "", None
     if suf in (".png", ".jpg", ".jpeg", ".bmp"):
         if suf == ".png":
-            import cv2
-            a = cv2.imread(str(p), cv2.IMREAD_UNCHANGED)
-            if a is not None and a.ndim == 3:
+            from ..io import cvfile                       # any path (review 13.1)
+            a = cvfile.read(p)
+            if a.ndim == 3:
                 a = a[:, :, 2::-1] if a.shape[2] >= 3 else a
             return a, "", None
         from PIL import Image
@@ -3722,10 +3722,8 @@ def export_image(path: str | os.PathLike, prep: Prepared, st: sm.Stretch | None 
         tifffile.imwrite(path, out, photometric="rgb" if out.ndim == 3 else "minisblack", compression="zlib",
                          metadata=None)
     elif fmt == "png16":
-        import cv2
-        ok = cv2.imwrite(str(path), out[:, :, ::-1] if out.ndim == 3 else out)
-        if not ok:
-            raise OSError(f"cannot write {path}")
+        from ..io import cvfile                           # any path (review 13.1)
+        cvfile.write(path, out[:, :, ::-1] if out.ndim == 3 else out)
     else:
         from PIL import Image
         im = Image.fromarray(out)

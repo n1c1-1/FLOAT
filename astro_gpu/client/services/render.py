@@ -228,9 +228,8 @@ def load_image(source) -> np.ndarray:
     if suf in (".tif", ".tiff"):
         import tifffile
         return tifffile.imread(path)
-    a = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
-    if a is None:
-        raise OSError(f"cannot read the image {path}")
+    from ...io import cvfile                              # any path (review 13.1)
+    a = cvfile.read(path)
     return a[..., ::-1] if a.ndim == 3 else a
 
 

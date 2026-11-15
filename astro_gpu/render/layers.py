@@ -298,8 +298,8 @@ def _png_with_icc(path, icc: bytes) -> None:
 
 
 def _write_png16(path, hwc, icc: bytes) -> None:
-    import cv2
-    cv2.imwrite(str(path), (hwc * 65535 + 0.5).astype(np.uint16)[:, :, ::-1])
+    from ..io import cvfile                               # any path (review 13.1)
+    cvfile.write(path, (hwc * 65535 + 0.5).astype(np.uint16)[:, :, ::-1])
     _png_with_icc(path, icc)
 
 

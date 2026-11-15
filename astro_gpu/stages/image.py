@@ -148,10 +148,11 @@ def read_image(path: str | Path) -> np.ndarray:
         if a.ndim == 3 and a.shape[-1] in (1, 3, 4):
             a = np.moveaxis(a[..., :3], -1, 0)
     elif suf in (".png", ".jpg", ".jpeg"):            # a stretched image (8 or 16 bits)
-        import cv2
-        a = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
-        if a is None:
-            raise StageError(f"{path.name}: the image cannot be read")
+        from ..io import cvfile                           # any path (review 13.1)
+        try:
+            a = cvfile.read(path)
+        except OSError as e:
+            raise StageError(f"{path.name}: the image cannot be read") from e
         a = a.astype(np.float32)
         a = np.moveaxis(a[..., :3][..., ::-1], -1, 0) if a.ndim == 3 else a
     else:

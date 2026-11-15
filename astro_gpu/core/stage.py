@@ -199,7 +199,8 @@ class Context:
             a = cv2.resize(a, None, fx=f, fy=f, interpolation=cv2.INTER_AREA)
         p = self.dir / "previews" / f"{name}.jpg"
         p.parent.mkdir(exist_ok=True)
-        cv2.imwrite(str(p), np.ascontiguousarray(a[:, :, ::-1]), [cv2.IMWRITE_JPEG_QUALITY, 90])
+        from ..io import cvfile                            # any path (a folder "Nébuleuse": review 13.1)
+        cvfile.write(p, a[:, :, ::-1], [cv2.IMWRITE_JPEG_QUALITY, 90])
         self.journal.emit("preview", stage=self.stage.name, name=name, path=str(p))
         return p
 
