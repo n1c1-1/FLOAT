@@ -174,12 +174,16 @@ class Pipeline:
             inputs["_project_inputs"] = _inputs_fingerprint(self.project)
         ck_meta = ctx.dir / "_ckpt" / "meta.json"
         tag = {"params_hash": ph, "inputs": inputs, "version": st.version}
-        if not (ck_meta.exists() and json.loads(ck_meta.read_text()) == tag):
+        try:
+            same = json.loads(ck_meta.read_text(encoding="utf-8")) == tag
+        except (OSError, ValueError):     # none, or cut short (review 2.5): not this tag, the block starts afresh
+            same = False
+        if not same:
             ctx.clear_ckpt()
             _clear_outputs(ctx.dir)
         ctx.origin, ctx.auto_reasons = dict(origin), dict(auto)
         ctx.ckpt  # noqa: B018  (creates the folder)
-        ck_meta.write_text(json.dumps(tag))
+        write_json(ck_meta, tag, indent=None)
         m = {"stage": st.name, "title": st.title, "version": st.version, "status": "running",
              "params": p.model_dump(mode="json"), "origin": origin,
              "auto_reasons": {k: a.reason for k, a in auto.items()}, "params_hash": ph, "inputs": inputs,

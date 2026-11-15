@@ -1112,7 +1112,7 @@ class _Worker:
         write_json(tmp / MASTERS, {"params": result_params(p), "metrics": om.get("metrics") or {},
                                    "from": str(old)})
         ck.parent.mkdir(parents=True, exist_ok=True)
-        ck.write_text(json.dumps(tag))
+        write_json(ck, tag, indent=None)
         self.journal.emit("log", stage=job.stage, level="info",
                           msg="the calibrated frames were lost: they are rebuilt with the masters of the result")
 

@@ -1258,3 +1258,18 @@ def test_an_unexpected_error_during_a_run_ends_it_failed_with_the_block_named(pr
     end = events(proj, info)[-1]
     assert end["type"] == "run_end" and end["status"] == "failed"
     assert end["failed"] == [plan.keys[1]] and end["done"] == plan.keys[:1] and end["not_started"] == plan.keys[2:]
+
+
+def test_a_truncated_checkpoint_tag_starts_the_block_afresh_instead_of_failing_it(proj):
+    # review 2.5: _ckpt/meta.json was written without a temporary file and read without a guard: cut short (a crash
+    # while writing it), the block failed at each run
+    B.stop_at = 4
+    status, _info = run(proj, plan_all(proj))
+    assert status == "interrupted"
+    b = K(proj).key(DENOISE, "b")
+    tmp = Store(proj.root).tmp_dir("b", b)
+    (tmp / "_ckpt" / "meta.json").write_text('{"params_hash": "')            # cut short
+    status, _info = run(proj, plan_all(proj))
+    assert status == "done"
+    out = json.loads((Store(proj.root).dir("b", b) / "b.json").read_text())
+    assert out == {"steps": 10, "resumed_from": 0}                            # afresh: its checkpoint not trusted
