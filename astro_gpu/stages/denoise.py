@@ -339,6 +339,7 @@ def adapt(ctx, net, A, B, nm, bk, sg, dev, steps: int, lr: float, seed: int) -> 
     run = 0.0
     t0 = time.time()
     for it in range(steps):
+        ctx.check_stop()                         # every step: on the processor one lasts seconds, Stop acts at once
         ys = torch.randint(0, Hh - PATCH, (BATCH * 2,), device="cpu", generator=gen)
         xs = torch.randint(0, Ww - PATCH, (BATCH * 2,), device="cpu", generator=gen)
         xin, tgt, nmp = [], [], []
@@ -373,7 +374,6 @@ def adapt(ctx, net, A, B, nm, bk, sg, dev, steps: int, lr: float, seed: int) -> 
         sched.step()
         run = 0.98 * run + 0.02 * loss.item() if it else loss.item()
         if (it + 1) % 50 == 0:
-            ctx.check_stop()
             ctx.progress(0.9 * (it + 1) / steps, f"adapting to the image: step {it + 1}/{steps}, loss {run:.4f}")
     ctx.log(f"adapted to the image in {steps} steps ({(time.time() - t0) / 60:.1f} min), loss {run:.4f}")
 

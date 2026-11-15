@@ -114,7 +114,9 @@ DENOISE_NOTE = ("Before (the stack, its gradient removed: what the block reads) 
                 "stretch on both. Drag the divider.")
 ALIGNED_NOTE = ("The image brought onto the grid of its reference: the size and framing of the reference, what overflows is "
               "cut. Compare it with the stack it comes from.")
-STACK_NOTE = "The stack output in the camera's colours, before colour calibration: its green cast is normal."
+STACK_NOTE = ("The stack output in the camera's colours, before colour calibration: a colour cast it shows is the "
+              "camera's own, the Color block takes it off.")
+STACK_MONO_NOTE = "The stack of one filter: one plane, in the sensor's own levels, before any colour is given."
 CAMERA_NOTE = "In the camera's colours, before colour calibration."
 GRADIENT_NOTE = ("The stack with its sky gradient removed, in the camera's colours, as every later block reads it (the "
                  "colour calibration comes next). The sky keeps its level. Compare it with the stack.")
@@ -273,7 +275,8 @@ class Steps(QObject):
                     V("table", "Frames", "regtable", "register")]
         if k == "empilement":
             return [V("stack", "Stack", "array", "stack", "drz_full", True, True, camera=True,
-                      compare=("calibrated_ref", "raw_half_a", "raw_half_b"), note=STACK_NOTE),
+                      compare=("calibrated_ref", "raw_half_a", "raw_half_b"),
+                      note=STACK_MONO_NOTE if getattr(self.s, "is_mono", lambda _p: False)(p) else STACK_NOTE),
                     V("rejection", "Rejection map", "rejection", "stack", note=REJECTION_NOTE),
                     V("coverage", "Coverage", "coverage", "stack", "drz_weight", True, True, camera=False, channel=1,
                       units="", note=COVERAGE_NOTE),

@@ -1242,3 +1242,51 @@ def test_the_user_chooses_the_files_of_each_kind(tmp_path, card):
     made = api.add_frames(p, scan)
     assert sum(len(s.darks) for s in made) == 1 and any(str(darks[0]) in s.darks for s in made)
     assert sum(len(s.lights) for s in made) >= 1
+
+
+def test_health_checks_say_empty_sessions_missing_calibration_and_the_same_frames_twice(tmp_path, card):
+    p = api.create_project(tmp_path / "p", "p")
+    api.add_frames(p, api.scan_files({"lights": [card], "darks": [card.parent / "dark"], "flats": [card.parent / "flat"]}))
+    s1 = p.sessions[0]
+    s2 = api.add_session(p, name="Again")
+    s2.lights = list(s1.lights)                      # the same night added twice
+    api.refresh(p, scan=True)
+    got = api.health_checks(p)
+    keys = [c.key for c in got]
+    assert "same_frames" in keys and "ok" not in keys
+    c = next(c for c in got if c.key == "same_frames")
+    assert c.level == "warn" and c.args["first"] == s1.name and c.args["other"] == "Again" and c.args["n"] >= 1
+    assert any(c.key == "session_no_calib" and c.args["session"] == "Again" and c.args["kind"] == "flats"
+               and c.args["shared"] for c in got)
+    s2.lights = []
+    api.refresh(p, scan=True)
+    assert any(c.key == "session_no_lights" and c.level == "warn" for c in api.health_checks(p))
+
+
+def test_a_lock_held_by_a_worker_does_not_freeze_the_caller(tmp_path, monkeypatch, card):
+    import threading
+    import time
+    p = api.create_project(tmp_path / "p", "p")
+    api.add_frames(p, api.scan_files({"lights": [card]}))
+    first = api._keys(p)                             # a snapshot exists already
+    monkeypatch.setattr(api, "LOCK_WAIT", 0.3)
+    c = api._ctx(p)
+    held, release = threading.Event(), threading.Event()
+
+    def worker():
+        with c.lock:
+            held.set()
+            release.wait(10)
+    t = threading.Thread(target=worker)
+    t.start()
+    held.wait(5)
+    try:
+        t0 = time.time()
+        assert api._keys(p) is first                 # the last snapshot, after the bounded wait
+        assert api._store(p) is not None
+        api.refresh(p)
+        assert time.time() - t0 < 3.0
+    finally:
+        release.set()
+        t.join()
+    assert api._keys(p) is not None

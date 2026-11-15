@@ -44,6 +44,13 @@ class Inventory(Stage):
         groups = {k: list_frames(getattr(cfg, k)) for k in kinds}
         if not groups["lights"]:
             raise StageError("no light frame found: add at least one folder of light frames")
+        for k, files in groups.items():                # a kind of frames is one kind of file: never a majority chosen
+            got = Counter(frame_kind(f) for f in files)
+            if got["colour"] and (got["raw"] or got["fits"]):
+                raw = got["raw"] + got["fits"]
+                raise StageError(f"the {k.replace('_', ' ')} mix {raw} camera raw or FITS frame(s) and {got['colour']} "
+                                 f"JPEG, PNG or TIFF image(s): a stack takes one kind; take the images (or the raws) "
+                                 f"out of the session")
         if p.max_lights and p.max_lights < len(groups["lights"]):
             keep = np.unique(np.linspace(0, len(groups["lights"]) - 1, p.max_lights).round().astype(int))
             groups["lights"] = [groups["lights"][i] for i in keep]

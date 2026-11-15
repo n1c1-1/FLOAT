@@ -1,0 +1,74 @@
+# H-O: the H-alpha and O III filters (two filters of a monochrome camera, or a dual-band image's channels read by the
+# wires: H-alpha from its red, O III from its green and blue) combined into one colour image.
+# Every setting is explained in _example.toml; the methods and their sources in stages/combine.py.
+# This recipe is the H-O block as it was before recipes: projects that use it keep their results.
+
+id = "ho"
+name = "H-O"
+version = 1
+description = "Combines the H-alpha and O III filters (two filters, or a dual-band image's channels) into one colour image: each filter a hue, the lightness from the filters weighted by their noise."
+narrowband = true
+
+[[inputs]]
+role = "Ha"
+label = "Hα"
+type = "any"
+channel = "L"
+
+[[inputs]]
+role = "OIII"
+label = "O III"
+type = "any"
+channel = "L"
+
+# the dual-band filter's usual mapping: H-alpha red, O III cyan (green and blue)
+[parameters.hue_ha]
+default = 0.0
+min = 0
+max = 360
+label = "Hα hue"
+help = "The colour of the H-alpha filter (0 red, 120 green, 240 blue)."
+
+[parameters.hue_oiii]
+default = 180.0
+min = 0
+max = 360
+label = "O III hue"
+help = "The colour of the O III filter (180: green and blue)."
+
+[parameters.lightness]
+default = "noise"
+choices = ["noise", "equal"]
+label = "Lightness"
+help = "How the filters make the lightness: weighted by their noise, or equally."
+
+[parameters.smoothing]
+default = "auto"
+choices = ["auto", "radius"]
+label = "Colour smoothing"
+help = "Auto takes the colour's smoothing radius from the filters' noise; Radius takes the one set."
+
+[parameters.radius]
+default = 0.0
+min = 0
+max = 50
+label = "Smoothing radius"
+help = "The colour's smoothing radius when Colour smoothing is Radius; 0: none."
+
+[[steps]]
+op = "neutralise_sky"
+
+[[steps]]
+op = "linear_match"
+reference = "Ha"
+low = 1e-7
+high = 0.875
+
+[output]
+channels = ["Ha", "OIII"]
+hues = ["$hue_ha", "$hue_oiii"]
+lightness = "channels"
+weighting = "$lightness"
+smoothing = "$smoothing"
+radius = "$radius"
+strength = 1.9

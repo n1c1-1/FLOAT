@@ -169,8 +169,23 @@ def check_text(c, data: ProjectFrames | None = None) -> str:
         return _("Nothing to worry about")
     if c.key == "no_lights":
         return _("No light frames yet")
+    if c.key == "session_no_lights":
+        return _("{session}: no light frames: the session cannot be stacked.").format(session=a.get("session", ""))
+    if c.key == "session_no_calib":
+        kind, who = a.get("kind", ""), a.get("session", "")
+        if a.get("shared"):
+            return (_("{session}: no darks: it is calibrated with the other sessions' master.") if kind == "darks" else
+                    _("{session}: no flats: it is calibrated with the other sessions' master.")).format(session=who)
+        return (_("{session}: no darks: its lights are not calibrated for dark current.") if kind == "darks" else
+                _("{session}: no flats: its lights are not calibrated for vignetting and dust.")).format(session=who)
+    if c.key == "same_frames":
+        return _("The same frames are in two sessions: {n} light(s) of {other} are also in {first}; they are used once, "
+                 "with {first}.").format(n=a.get("n", 0), other=a.get("other", ""), first=a.get("first", ""))
     if c.key == "no_bias":
         black = (data.camera.get("black") if data is not None else None)
+        dark = data.dark_level if data is not None else None
+        if dark:                                          # the engine corrects the flats with the darks' level then
+            return _("No bias: flats are calibrated with the darks' level ({level} ADU).").format(level=int(dark))
         if black:
             return _("No bias: flats are calibrated with the camera black level ({black} ADU).").format(
                 black=int(black))
@@ -205,6 +220,9 @@ def check_text(c, data: ProjectFrames | None = None) -> str:
         return _("Astrometry: Asterion cannot run ({why}), the field is found by FLOAT's own search.").format(
             why=a.get("why", ""))
     if c.key == "flats_merged":
+        if a.get("workflow"):
+            return _("{workflow}: the flats of {n} sessions are merged into one master flat ({sessions}).").format(
+                workflow=a["workflow"], n=a.get("n", 0), sessions=", ".join(a.get("sessions", [])))
         return _("The flats of {n} sessions are merged into one master flat.").format(n=a.get("n", 0))
     if c.key == "disk":
         t = _("Disk: about {gb} GB needed for the calibrated frames; {free} GB free on the cache drive.").format(

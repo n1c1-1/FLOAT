@@ -1,0 +1,97 @@
+# S-H-O: the S II, H-alpha and O III filters of a monochrome camera combined into one colour image.
+# Every setting is explained in _example.toml; the methods and their sources in stages/combine.py.
+# This recipe is the S-H-O block as it was before recipes: projects that use it keep their results.
+
+id = "sho"
+name = "S-H-O"
+version = 1
+description = "Combines the S II, H-alpha and O III filters into one colour image: each filter a hue, the lightness from the filters weighted by their noise."
+# a palette of narrow-band filters: each line is its own channel (Post's H-alpha slider is off)
+narrowband = true
+
+[[inputs]]
+role = "SII"
+label = "S II"
+type = "any"
+channel = "L"
+
+[[inputs]]
+role = "Ha"
+label = "Hα"
+type = "any"
+channel = "L"
+
+[[inputs]]
+role = "OIII"
+label = "O III"
+type = "any"
+channel = "L"
+
+# The hues are measured on five public S-H-O composites of the Hubble teams (ESA/Hubble heic1501a, opo9544a,
+# heic1007a, heic1520a, heic0707a), in Oklch (B. Ottosson 2020): S II on the warm areas' lower quartile (Oklch 36.0),
+# H-alpha on their median (57.1), O III on the blue areas' median (244.7); here as hues of the HSV wheel.
+[parameters.hue_sii]
+default = 15.5
+min = 0
+max = 360
+label = "S II hue"
+help = "The colour of the S II filter (on the colour wheel: 0 red, 120 green, 240 blue)."
+
+[parameters.hue_ha]
+default = 31.4
+min = 0
+max = 360
+label = "Hα hue"
+help = "The colour of the H-alpha filter (0 red, 120 green, 240 blue)."
+
+[parameters.hue_oiii]
+default = 202.2
+min = 0
+max = 360
+label = "O III hue"
+help = "The colour of the O III filter (0 red, 120 green, 240 blue)."
+
+[parameters.lightness]
+default = "noise"
+choices = ["noise", "equal"]
+label = "Lightness"
+help = "How the filters make the lightness: weighted by their noise, or equally."
+
+[parameters.smoothing]
+default = "auto"
+choices = ["auto", "radius"]
+label = "Colour smoothing"
+help = "Auto takes the colour's smoothing radius from the filters' noise; Radius takes the one set."
+
+[parameters.radius]
+default = 0.0
+min = 0
+max = 50
+label = "Smoothing radius"
+help = "The colour's smoothing radius when Colour smoothing is Radius; 0: none."
+
+# Rector, Levay, Frattare, English & Pu'uohau-Pummill 2007 (AJ 133, 598): each filter's background set to 0 first.
+[[steps]]
+op = "neutralise_sky"
+
+# Siril's linear match (src/filters/linear_match.c), every filter to the H-alpha, the strongest signal (siril.org/faq:
+# "pick the Ha stack as reference"); bounds of Siril's RGB compositing tool, fractions of the full scale.
+[[steps]]
+op = "linear_match"
+reference = "Ha"
+low = 1e-7
+high = 0.875
+
+[output]
+channels = ["SII", "Ha", "OIII"]
+# Rector et al. 2007: each filter given a hue, the layers added, balanced so that equal filters give a grey
+hues = ["$hue_sii", "$hue_ha", "$hue_oiii"]
+# composed as lightness and colour (the LRGB composition, R. Gendler, "Lessons from the Masters", 2013)
+lightness = "channels"
+weighting = "$lightness"
+# the colour smoothed where the noisiest filter's grain would show (K. T. Mullen 1985, J. Physiol. 359, 381)
+smoothing = "$smoothing"
+radius = "$radius"
+# the nebula's chroma brought to the Hubble composites' median (0.054 in Oklch), under the display's gamut
+# (Morovic & Luo 2001, chroma clipping at constant lightness)
+strength = 1.9

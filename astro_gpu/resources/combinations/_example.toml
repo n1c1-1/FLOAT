@@ -1,0 +1,131 @@
+# How a combination recipe is written. This file is documentation: a name starting with "_" is not listed. Every
+# other *.toml file of this folder (astro_gpu/resources/combinations) is a recipe that the Combination block offers.
+#
+# A recipe says how the images of several workflows (one per filter, or the channels of one colour image) make one
+# colour image. It uses only the operations below, which the engine implements (stages/combine.py documents each
+# one and its published source). Write next to each setting where its value comes from.
+#
+# When a combination is placed in a project, its recipe is copied into the project: changing or deleting this file
+# later never changes a project already made. A project whose copy is older than the file is told so (the file's
+# version is higher); it changes only when the user applies the file. So: raise "version" whenever a change of the
+# file changes the image.
+#
+# A file with an error is left out of the list, with a message naming the file, the line and the setting.
+
+# ---------------------------------------------------------------------------------------------- what it is
+# id: a stable name, never changed once shipped (lower-case letters, digits, _). It is stored in the projects.
+id = "example"
+# name: what the Combination block shows
+name = "Example (S-H-O, plain hues)"
+# version: a whole number, raised at every change that changes the image
+version = 1
+# description: one sentence, shown as the block's tip
+description = "An S-H-O with the plain hues: S II red, H-alpha green, O III blue."
+# narrowband: true for a palette of narrow-band filters (each line its own channel: Post's H-alpha slider is off),
+# false for a colour image recorded as it is (RGB, LRGB...)
+narrowband = true
+
+# ---------------------------------------------------------------------------------------------- the inputs
+# One [[inputs]] table per input, in the order the block shows them. Each is fed by a workflow's image.
+#   role:    its name in the steps and the output (letters, digits, _): Ha, OIII, SII, L, R, G, B...
+#   label:   how the block writes it (default: the role)
+#   type:    "mono" (a filter of a monochrome camera), "colour" (a colour camera's image) or "any"
+#   channel: what is read of the image by default: "L" (a monochrome image's grey; a colour image's luminance),
+#            "R", "G", "B", or "GB" (the mean of green and blue: the O III of a dual-band filter). A mono input is read
+#            as "L". The project's wire may read another channel of a colour image.
+[[inputs]]
+role = "SII"
+label = "S II"
+type = "mono"
+channel = "L"
+
+[[inputs]]
+role = "Ha"
+label = "Hα"
+type = "mono"
+
+[[inputs]]
+role = "OIII"
+label = "O III"
+type = "mono"
+
+# ---------------------------------------------------------------------------------------------- the parameters
+# The settings the user may change in the block, one [parameters.<name>] table each: a number (default, and
+# optionally min and max) or a choice (default and choices). label and help are what the block shows. An operation's
+# value written "$<name>" takes the parameter's value. A recipe may have none.
+[parameters.lightness]
+default = "noise"
+choices = ["noise", "equal"]
+label = "Lightness"
+help = "How the filters make the lightness: weighted by their noise, or equally."
+
+[parameters.radius]
+default = 2.0
+min = 0
+max = 50
+label = "Smoothing radius"
+help = "The colour's smoothing radius; 0: none."
+
+# ---------------------------------------------------------------------------------------------- the steps
+# The operations on the channels, in order. "op" is one of:
+#
+#   neutralise_sky       Each channel's sky level, measured on the pixels that are sky in all of them, taken off: an
+#                        empty sky is then (0, 0, 0) whatever the colours (Rector et al. 2007, AJ 133, 598). It is
+#                        always the first step.
+#
+#   linear_match         Siril's linear match (its linear_match command and the RGB compositing tool): each channel
+#                        fitted by least squares to the reference, reference = a * channel + b, on the pixels where
+#                        the reference lies between low and high, then the skies taken to 0 again.
+#                        reference: an input (the strongest signal: Ha for narrow-band filters; Siril's top layer,
+#                        R or L, for broadband ones)
+#                        channels:  the inputs matched (default [] : all the others)
+#                        low, high: fractions of the reference's full scale (default 1e-7 and 0.875, the RGB
+#                        compositing tool's own)
+#
+#   continuum_subtract   A narrow-band line image minus its continuum, recorded by a broadband input: the stellar
+#                        method (W. H. Waller 1990, PASP 102, 1217): the scale is the median ratio of the two images'
+#                        fluxes on the field's isolated, unsaturated stars, which have no line emission. The line
+#                        input becomes line / scale - continuum: its net line emission on the continuum input's scale.
+#                        line:      the narrow-band input (Ha)
+#                        continuum: the broadband input (R)
+#                        scale:     "stars" (measured, the default) or a number (the ratio line / continuum of a star)
+#
+# After the steps, the block's channel weights (1 by default) scale each channel.
+[[steps]]
+op = "neutralise_sky"
+
+[[steps]]
+op = "linear_match"
+reference = "Ha"
+channels = []
+low = 1e-7
+high = 0.875
+
+# ---------------------------------------------------------------------------------------------- the output
+# How the channels make red, green and blue.
+#   channels:   the inputs mixed, in the order of the hues or of the matrix's columns
+#   hues:       one hue per channel (2 or 3; degrees on the colour wheel: 0 red, 120 green, 240 blue, or "$parameter"):
+#               each channel tinted with its hue and the layers added, balanced so that equal channels give a grey
+#               (Rector et al. 2007); or
+#   matrix:     3 rows (red, green, blue) of one number per channel: red = row 1 . channels, etc.
+#   lightness:  absent: the plain mix (the colour as recorded). Else the image is composed as lightness and colour
+#               (each pixel's colour ratios times the lightness; R. Gendler, "Lessons from the Masters", 2013):
+#               "channels" (the mean of all the channels, weighted as "weighting" says) or an input's role (its image
+#               is the lightness, as the L of an LRGB). Where the colour is under its noise floor the pixel is grey.
+#   weighting:  with lightness = "channels": "noise" (each channel by 1 over its sky noise squared) or "equal"
+#   smoothing:  with lightness: "auto" (the colour smoothed over the radius where the noisiest channel's grain
+#               comes down to the lightness's noise; K. T. Mullen 1985) or "radius" (the radius below; required when
+#               the lightness is an input's)
+#   radius:     the colour's smoothing radius in pixels (0: none)
+#   strength:   with lightness: the colour's departure from grey times this, held back where the display's top would
+#               flatten it (gamut compression at constant lightness, Morovic & Luo 2001). Default 1: as recorded.
+#   saturation: the inputs whose stacks' saturation maps the result hands on to the Color block after it
+[output]
+channels = ["SII", "Ha", "OIII"]
+hues = [0, 120, 240]
+lightness = "channels"
+weighting = "$lightness"
+smoothing = "radius"
+radius = "$radius"
+strength = 1.0
+saturation = []

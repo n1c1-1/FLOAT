@@ -1,0 +1,63 @@
+# HaRGB: the red, green and blue filters of a monochrome camera, and its H-alpha filter added to the red (and a little
+# to the blue) once its continuum is taken off.
+#
+# Sources:
+# - Continuum subtraction, the stellar method: the narrow-band image minus the broadband one scaled by the ratio of
+#   their fluxes measured on the field's stars, which have no line emission (W. H. Waller 1990, PASP 102, 1217; the
+#   "standard procedure" of H-alpha imaging, e.g. Koopmann, Kenney & Young 2001, ApJS 135, 125, arXiv:astro-ph/0106335;
+#   the scale is the inverse of Spector, Finkelman & Brosch 2012's wide-to-narrow continuum ratio, MNRAS 419, 2156,
+#   arXiv:1110.5636). The line image is then on the red's scale (a star has the same value in both), so it adds to it.
+# - The recombination: the continuum-subtracted H-alpha added to the red, and 0.2 of it to the blue, the green left
+#   (A. Curry, "Integrating Ha data with continuum subtraction", Telescope Live tutorials: R = Red + Q*HaCS, G = Green,
+#   B = Blue + Q*HaCS*0.2). The source leaves the amount Q to the user; here Q is the H-alpha channel's weight in the
+#   block's channel weights, 1 by default (the line as the H-alpha filter records it on the red's scale).
+# - The red, green and blue as the RGB recipe: Siril's linear match to the red, the colour balance by the Color block
+#   after the combination.
+# Every setting is explained in _example.toml.
+
+id = "hargb"
+name = "HaRGB"
+version = 1
+description = "The red, green and blue filters, and the H-alpha filter, its continuum taken off by the red (measured on the stars), added to the red and a fifth of it to the blue."
+narrowband = false
+
+[[inputs]]
+role = "R"
+type = "mono"
+
+[[inputs]]
+role = "G"
+type = "mono"
+
+[[inputs]]
+role = "B"
+type = "mono"
+
+[[inputs]]
+role = "Ha"
+label = "Hα"
+type = "mono"
+
+[[steps]]
+op = "neutralise_sky"
+
+# the green and blue matched to the red (the H-alpha is scaled by the stars below, not by a fit over the nebula)
+[[steps]]
+op = "linear_match"
+reference = "R"
+channels = ["G", "B"]
+low = 1e-7
+high = 0.875
+
+[[steps]]
+op = "continuum_subtract"
+line = "Ha"
+continuum = "R"
+scale = "stars"
+
+[output]
+channels = ["R", "G", "B", "Ha"]
+matrix = [[1, 0, 0, 1.0],
+          [0, 1, 0, 0.0],
+          [0, 0, 1, 0.2]]
+saturation = ["R", "G", "B"]

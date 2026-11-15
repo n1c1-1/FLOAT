@@ -190,6 +190,10 @@ _METRIC_ROWS: list[tuple] = [
     ("matched_stars", "Stars matched", "", "d", "Stars of the image matched to the reference's, to align it."),
     ("chroma_sigma", "Colour smoothing", "px", ".1f", "Radius the colour was smoothed at, from the filters' noise; the "
                                                       "lightness keeps its full detail."),
+    # a recipe's continuum subtraction (stages/recipes.py, the HaRGB recipe)
+    ("continuum_scale", "Continuum scale", "", ".4g", "The line filter's flux over the broadband filter's on the "
+                                                      "field's stars: the continuum taken off the line."),
+    ("continuum_stars", "Continuum stars", "", "d", "Stars the continuum's scale was measured on."),
     # register
     ("reference_frame", "Reference frame", "", "", "The frame all the others are aligned on."),
     ("aligned", "Aligned frames", "", "d", "Frames that could be aligned."),

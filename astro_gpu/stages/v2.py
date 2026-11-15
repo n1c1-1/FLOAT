@@ -37,9 +37,12 @@ RETIRED: dict[str, frozenset[str]] = {
     "denoise": frozenset({"iterations", "patch", "batch", "learning_rate", "reuse_model", "mono_adapt"}),
     # the deep catalogue and the faint stars of the star model (the Stars block before its network)
     "catalogs": frozenset({"deep_stars", "g_deep", "g_faint", "max_faint"}),
-    # the narrow-band combinations' balance is Siril's linear match to the H-alpha (stages/combine.py), not a percentile
+    # the combinations' balance is Siril's linear match (stages/combine.py), not a percentile: to the H-alpha for the
+    # narrow-band ones, to the red (RGB) or the luminance (LRGB) for the broadband ones
     "combine_sho": frozenset({"percentile"}),
     "combine_ho": frozenset({"percentile"}),
+    "combine_rgb": frozenset({"percentile"}),
+    "combine_lrgb": frozenset({"percentile"}),
 }
 #: removed settings whose last value stays in every key, so that the results computed with it keep their keys:
 #: {stage: {field: value}} (the Moffat star measure and the drizzle coverage rule are now the only behaviour)
@@ -57,8 +60,9 @@ NON_KEY: dict[str, frozenset[str]] = {
 from .combine import STAGES as _COMBINE  # noqa: E402 (the combinations' stages)
 
 # a combination's inputs' folders: their workflows' keys stand for them (core/store.source_part)
-# and the folders of the plate solution it hands on (the keys of the solution's stages stand for them)
-NON_KEY.update({st: frozenset({"inputs", "solution"}) for st in _COMBINE})
+# and the folders of the plate solution it hands on (the keys of the solution's stages stand for them); its recipe is in
+# its source part (core/store.source_part; the four types' frozen recipes are their stages and versions)
+NON_KEY.update({st: frozenset({"inputs", "solution", "recipe"}) for st in _COMBINE})
 #: the stages only v2 workflows have (issue #43: the sessions' join and the image source)
 NEW_STAGES = ("gradient", "render_simple", "star_removal", "sessions", "image", "align_on", *_COMBINE, "deconv",
               "synth_stars")
@@ -66,7 +70,7 @@ NEW_STAGES = ("gradient", "render_simple", "star_removal", "sessions", "image", 
 
 def new_stages() -> list[Stage]:
     from .align_on import AlignOn
-    from .combine import COMBINATIONS
+    from .combine import ALL as COMBINATIONS
     from .deconv import Deconv
     from .gradient import Gradient
     from .image import ImageSource

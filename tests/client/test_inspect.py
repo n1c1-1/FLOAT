@@ -749,7 +749,7 @@ def test_frames_shows_the_sessions_the_health_checks_and_the_counts(win):
     assert row["Temp."] == "–"
     lines = check_lines(f.data)
     assert ("ok", "Nothing to worry about") in lines
-    assert any(lv == "info" and tx.startswith("No bias: flats are calibrated with the camera black level (512 ADU)")
+    assert any(lv == "info" and tx.startswith("No bias: flats are calibrated with the darks' level (")
                for lv, tx in lines)
     assert any(lv == "ok" and tx.startswith("Disk: about ") and "GB free on the cache drive" in tx for lv, tx in lines)
     assert not any("◇" in x for x in texts_of(f.pages.widget(0)))        # the checks the engine lacks: Spec mode only
@@ -1023,6 +1023,11 @@ def test_a_variant_is_shown_compared_with_its_original(scratch):
         assert "Not computed yet" in texts_of(t)
         return
     names = [v.cmp_cb.itemText(i) for i in range(v.cmp_cb.count())]
+    if s.state(full, "debruitage") != "done" or s.state(q, "debruitage") != "done":
+        # the test project computes no Denoise: the original has no picture here to compare with, and none is offered
+        # (an entry is the other workflow's computed picture, never a name with nothing behind it)
+        assert not any(n.startswith(full.name + "  ·  ") for n in names) and v.compare_mode() != "side"
+        return
     assert any(n.startswith(full.name + "  ·  ") for n in names) and v.compare_mode() == "side"
 
 

@@ -314,5 +314,8 @@
  "{0}: trying again without trusting the entered focal length of {1} mm (scale unknown)": "{0} : nouvel essai sans se fier à la focale saisie de {1} mm (échelle inconnue)",
  "No star catalogue of the field: fallback balance used": "Pas de catalogue d'étoiles du champ : balance de repli utilisée",
  "the stars of the image match no star of the catalogue around the target, and the all-sky solver cannot try: its star index is not installed (Settings › Catalogs & astrometry installs it); otherwise check the focal length and the pixel size": "les étoiles de l'image ne correspondent à aucune étoile du catalogue autour de la cible, et le solveur de tout le ciel ne peut pas essayer : son index d'étoiles n'est pas installé (Réglages › Catalogues et astrométrie l'installe) ; sinon vérifiez la focale et la taille du pixel",
- "the Gaia stars of the field were not available (the Catalogues step did not run or failed): no star with a spectrum to calibrate the colours on": "les étoiles Gaia du champ n'étaient pas disponibles (l'étape Catalogues n'a pas tourné ou a échoué) : aucune étoile avec spectre pour calibrer les couleurs"
+ "the Gaia stars of the field were not available (the Catalogues step did not run or failed): no star with a spectrum to calibrate the colours on": "les étoiles Gaia du champ n'étaient pas disponibles (l'étape Catalogues n'a pas tourné ou a échoué) : aucune étoile avec spectre pour calibrer les couleurs",
+ "Stopped · finished blocks kept": "Arrêtée · blocs terminés gardés",
+ "Stopped during {blocks}: it starts again from its beginning": "Arrêtée pendant {blocks} : il recommence depuis le début",
+ "Stopped during {blocks}: it goes on from the frames already done": "Arrêtée pendant {blocks} : il reprend aux images déjà faites"
 }

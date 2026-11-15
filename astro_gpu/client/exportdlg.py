@@ -40,6 +40,7 @@ PROFILES = {"sRGB": True, "Adobe RGB (1998)": False, "Display P3": False, "Linea
 SIZES = {"Full resolution": 0, "Web (2048 px)": 2048, "Web (4096 px)": 4096}
 #: the file each format gives (render/layers.export_rgb): name + suffix
 SUFFIX = {"tiff16": "_16bit.tif", "tiff32f": "_32bit_float.tif", "png16": ".png", "jpeg": ".jpg", "fits32f": ".fits"}
+KNOWN_EXTENSIONS = (".tif", ".tiff", ".jpg", ".jpeg", ".png", ".fits", ".fit")
 KNOWN_ENDINGS = tuple(sorted(list(SUFFIX.values()) + [".tiff", ".jpeg", ".fit"], key=len, reverse=True))
 
 
@@ -102,6 +103,9 @@ class ExportDialog(QDialog):
             self.fmt.addItem(_(name) + ("  ◇" if key is None else ""), key)
             if key is None:
                 self._disable(self.fmt, self.fmt.count() - 1)
+        # every format shown at once: the list opens under the box, whole, never scrolled with JPEG out of sight
+        self.fmt.setMaxVisibleItems(max(10, self.fmt.count()))
+        self.fmt.setStyleSheet("QComboBox { combobox-popup: 0; }")
         row(_("Format"), self.fmt)
         self.prof = QComboBox()
         self.prof.setModel(QStandardItemModel(self.prof))
@@ -117,9 +121,9 @@ class ExportDialog(QDialog):
             self.size_cb.addItem(_(name), px)
         row(_("Size"), self.size_cb)
         self.dest = QLineEdit(self.default_file("tiff16"))
-        self.browse = icon_only(QPushButton(), "open", _("Choose the folder"), 16)
+        self.browse = icon_only(QPushButton(), "open", _("Choose the file"), 16)
         self.browse.setFixedWidth(max(30, self.browse.sizeHint().width()))
-        self.browse.setToolTip(_("Choose the folder"))
+        self.browse.setToolTip(_("Choose the folder and the name of the file"))
         row(_("File"), self.dest, self.browse)
         self.warn = label("", "warn")
         self.warn.setWordWrap(True)
@@ -313,11 +317,19 @@ class ExportDialog(QDialog):
         self._check_dest()
 
     def _browse(self):
+        """A Save dialog for the file: its folder and its name, with the format's ending (a name typed in a folder
+        picker made a folder)."""
         folder, name = split_file(self.dest.text())
-        d = QFileDialog.getExistingDirectory(self, _("Choose the folder"), folder or prefs.last_folder())
-        prefs.remember_folder(d)
-        if d:
-            self.dest.setText(f"{Path(d).as_posix()}/{name or slug(self.file_base)}{SUFFIX[self.format_key()]}")
+        key = self.format_key()
+        ext = SUFFIX[key]
+        start = f"{folder or prefs.last_folder()}/{name or slug(self.file_base)}{ext}"
+        path, _f = QFileDialog.getSaveFileName(self, _("Choose the file"), start,
+                                               f"{self.fmt.currentText().strip(' ◇')} (*{ext[ext.rfind('.'):]})")
+        if path:
+            p = Path(path)
+            stem = p.name[:-len(ext)] if p.name.lower().endswith(ext.lower()) else p.stem if p.suffix.lower() in                 KNOWN_EXTENSIONS else p.name
+            prefs.remember_folder(p.parent.as_posix())
+            self.dest.setText(f"{p.parent.as_posix()}/{stem or slug(self.file_base)}{ext}")
 
     def problem(self) -> str:
         """Why the export cannot start (shown under the File line), or ''."""
