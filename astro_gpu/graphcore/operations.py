@@ -1073,11 +1073,16 @@ def op_duplicate_row(q, row):
             q.blocks[nn[1]].settings = dict(q.blocks[c].settings)
             q.blocks[nn[1]].off = q.blocks[c].off
             q.blocks[nn[1]].pause = q.blocks[c].pause
+            q.blocks[nn[1]].params = copy.deepcopy(q.blocks[c].params)
         nights.append(nn)
     nr = Row(new_id(q, "r"), free_name(q, name_of("{_name} copy", _name=r.name)), blocks, nights, list(r.fork) if r.fork else None)
-    nr.pauses = copy.deepcopy(r.pauses)                     # its review pauses (those the blocks do not hold)
+    _copy_flow(nr, r)                                       # its workflow's own settings (Output, pauses...)
+    if r.nights:                                            # its own nights' copies, in its order
+        nr.sessions = None
+    nr.legacy = None                                        # (a new row: made from its blocks, as a variant)
+    nr.calib_node, nr.calib_fork, nr.calib = r.calib_node, r.calib_fork, copy.deepcopy(r.calib)
     if r.align:
-        nr.align = {**r.align, "params": dict(r.align.get("params") or {}), "from": r.align.get("from")}
+        nr.align = copy.deepcopy(r.align)
     elif r.nights and not r.fork:
         nr.align = new_align(r.id)
     q.rows.insert(_after_subtree(q, r.id), nr)

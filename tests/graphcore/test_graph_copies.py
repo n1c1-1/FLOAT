@@ -91,3 +91,32 @@ def test_a_merged_session_s_exclusions_go_to_the_session_that_absorbs_it_and_it_
     assert sid2 not in [x.id for x in p.sessions]
     assert sorted(p.excluded) == [(sid, "1.fit"), (sid, "3.fit"), (sid, "4.fit")]
     engine_ok(doc)
+
+
+# ---------------------------------------------------------------------------------------------------- 4.5
+def test_a_duplicated_stack_copies_its_whole_workflow_and_owns_its_copies():
+    doc = Doc.from_template("colour_minimal")
+    r = doc.project.rows[0]
+    r.output = {"linked": False}
+    r.extra = {"stack": {"min_transparency": 0.6}}
+    r.calib = {"calibrate": {"hot_sigma": 6.0}}
+    r.align = {**r.align, "params": {"k": [1]}} if r.align else None
+    cal = doc.project.blocks[r.nights[0][1]]
+    cal.params = {"calibrate": {"hot_sigma": 5.0}}
+    doc.project.__dict__.pop("_json", None)
+    ok(doc, "duplicate_row", row=r.id)
+    o, c = doc.project.rows[0], doc.project.rows[1]
+    for k in ("output", "extra", "unset", "options", "end", "calib", "calib_node", "calib_fork", "all_nights",
+              "pauses"):
+        assert getattr(c, k) == getattr(o, k), k
+    ccal = doc.project.blocks[c.nights[0][1]]
+    assert ccal.params == cal.params and ccal.params is not cal.params
+    c.output["linked"] = True
+    c.calib["calibrate"]["hot_sigma"] = 3.0
+    assert o.output == {"linked": False} and o.calib["calibrate"]["hot_sigma"] == 6.0
+    if o.align:
+        c.align["params"]["k"].append(2)
+        assert o.align["params"]["k"] == [1]
+    p, _ = compiled(doc)
+    assert p.workflows[1].params.get("render_simple") == {"linked": True}
+    assert p.workflows[1].params["stack"]["min_transparency"] == 0.6
