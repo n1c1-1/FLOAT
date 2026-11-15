@@ -142,19 +142,42 @@ def blank(d: dict) -> dict:
     return d
 
 
+class NameTaken(ValueError):
+    """The file a template would be saved in holds a template of another name (``name``): a character a file name
+    cannot hold was taken out of the name typed, or only the case differs on a disk that ignores it."""
+
+    def __init__(self, name: str):
+        super().__init__(f"the template {name!r} would be replaced")
+        self.name = name
+
+
+def _same_file(f: Path) -> Path | None:
+    """The file of the folder that ``f`` names, as it is written on the disk (a disk may ignore the case)."""
+    if not f.exists():
+        return None
+    return next((x for x in f.parent.iterdir() if x.name.lower() == f.name.lower()), f)
+
+
 def save_user(d: dict, tab: str, name: str, text: str = "", card_data: dict | None = None) -> Path:
     """The blank project ``d`` as a template of the user's, in the folder ``tab``, under ``name``. An existing file of
-    that name is replaced. -> the file."""
+    that name is replaced; one holding a template of another name is not (``NameTaken``). -> the file."""
     root = user_dir()
     if root is None:
         raise OSError("no folder for the user's templates")
     safe = lambda s: "".join(c for c in s.strip() if c not in '\\/:*?"<>|').strip(" .")      # noqa: E731
+    typed = name.strip()
     tab, name = safe(tab), safe(name)
     if not tab or not name:
         raise ValueError("a template needs a tab and a name")
     out = blank(d)
     out["template"] = {"text": text.strip(), **({"card": card_data} if card_data else {})}
     f = root / tab / (name + SUFFIX)
+    there = _same_file(f)
+    if there is not None:
+        c = card(there, tab, True)
+        held = c["name"] if c is not None else there.stem
+        if held != typed:
+            raise NameTaken(held)
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text(json.dumps(out, indent=1, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
     return f

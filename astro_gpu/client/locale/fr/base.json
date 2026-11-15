@@ -281,6 +281,7 @@
   "Download spectra ({size})": "Télécharger spectres ({size})",
   "A tab of the gallery, or a new one: type its name": "Un onglet de la galerie, ou un nouveau : tapez son nom",
   "The template cannot be saved: {why}": "Le modèle ne peut pas être enregistré : {why}",
+  "The template “{name}” of this tab would be replaced: choose another name.": "Le modèle « {name} » de cet onglet serait remplacé : choisissez un autre nom.",
   "Linear images": "Images linéaires",
   "Angular units": "Unités angulaires",
   "Not run yet: the durations shown are those measured on the reference machine.": "Pas encore exécuté : les durées affichées sont celles mesurées sur la machine de référence.",

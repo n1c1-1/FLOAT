@@ -29,6 +29,8 @@ class CardTest(QObject):
         self.state = "idle"                            # idle | running
         self.note = ""                                 # why the last test did not give a profile
         self._proc = None
+        self._stopped = False                          # the program quits: no child is launched any more
+        self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self.runner = st.run_test                      # (tests) the test itself
         self._result.connect(self._store, Qt.QueuedConnection)
@@ -51,21 +53,37 @@ class CardTest(QObject):
         return True
 
     def stop(self):
-        p = self._proc
+        """Quitting: the child is killed, or kept from starting when it is not launched yet."""
+        with self._lock:
+            self._stopped = True
+            p = self._proc
+        self._kill(p)
+
+    @staticmethod
+    def _kill(p):
         if p is not None and p.poll() is None:
             try:
                 p.kill()
             except OSError:
                 pass
 
+    def _launched(self, p):
+        with self._lock:
+            self._proc = p
+            stopped = self._stopped
+        if stopped:                                    # a stop came while the child was being launched
+            self._kill(p)
+
     def _run(self, pref: str, device: str, force: bool):
         profile, note = None, ""
         try:
             card, driver = st.card_identity(device)
             old = st.profile_of(prefs.get("compute_profiles"), device)
-            if card and (force or not st.still_valid(old, card, driver)):
+            if self._stopped:
+                pass                                   # quitting: nothing launched
+            elif card and (force or not st.still_valid(old, card, driver)):
                 if force or not st.card_busy(device):
-                    results = self.runner(device, on_proc=lambda p: setattr(self, "_proc", p))
+                    results = self.runner(device, on_proc=self._launched)
                     profile = st.make_profile(device, card, driver, results, pref == "auto") if results else None
                 else:
                     note = "busy"

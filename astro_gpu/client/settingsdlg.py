@@ -45,7 +45,7 @@ from .icons import icon
 from .services import extracts
 from .services.selftest import job as card_test_job
 from .services.worker import Machine, disk_usage
-from .widgets import cap_dialog, label, spec_mark
+from .widgets import cap_dialog, label, spec_mark, wheel_scrolls
 
 # (key, title, ◇ page)
 PAGES = [("general", "General", False), ("folders", "Folders & disk", False), ("compute", "Compute", False),
@@ -170,6 +170,7 @@ class SettingsDialog(QDialog):
             sc.setWidgetResizable(True)
             sc.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
             sc.setWidget(w)
+            wheel_scrolls(w, sc)                         # the wheel scrolls the page, not the list under the cursor
             w = sc
             self.pages.addWidget(w)
             self.keys.append(key)

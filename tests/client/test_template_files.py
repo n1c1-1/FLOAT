@@ -196,3 +196,30 @@ def test_the_version_is_one_number_everywhere():
     assert __version__ == "0.2.0"
     assert re.search(r'^version = "([^"]+)"', (ROOT / "pyproject.toml").read_text(encoding="utf-8"), re.M).group(1) == __version__
     assert f'#define AppVersion "{__version__}"' in (ROOT / "installer" / "float.iss").read_text(encoding="utf-8")
+
+
+def test_a_saved_template_never_replaces_one_of_another_name(win, monkeypatch):
+    """Two names that make the same file (a character a file name cannot hold taken out, or only the case differing on
+    a disk that ignores it) are two templates: the second one is refused, said in the banner, the first kept. A
+    template saved again under its own name replaces itself, as before; a write that fails is said in the banner."""
+    from astro_gpu.client import gallery
+    d = {"graph": {"blocks": {}, "nights": [], "common": {}}}
+    f = templatefiles.save_user(d, "Narrow", "NGC 7000 HOO", text="first")
+    for other in ("NGC 7000: HOO", "ngc 7000 hoo"):
+        with pytest.raises(templatefiles.NameTaken):
+            templatefiles.save_user(d, "Narrow", other, text="second")
+        assert json.loads(f.read_text(encoding="utf-8"))["template"]["text"] == "first"
+    templatefiles.save_user(d, "Narrow", "NGC 7000 HOO", text="again")                # its own name: replaced
+    assert json.loads(f.read_text(encoding="utf-8"))["template"]["text"] == "again"
+    monkeypatch.setattr(gallery, "template_dialog", lambda parent, name: ("NGC 7000: HOO", "Narrow"))
+    win.save_template()
+    assert win.banner.isVisible() and "NGC 7000 HOO" in win.banner.text.text()
+    assert json.loads(f.read_text(encoding="utf-8"))["template"]["text"] == "again"
+    win.banner.hide()
+
+    def full(*a, **k):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(gallery, "template_dialog", lambda parent, name: ("Other", "Narrow"))
+    monkeypatch.setattr(Path, "write_text", full)
+    win.save_template()
+    assert win.banner.isVisible() and win.banner.text.text().startswith("The template cannot be saved")

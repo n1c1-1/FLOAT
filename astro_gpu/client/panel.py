@@ -28,7 +28,6 @@ from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QApplication,
     QComboBox,
-    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -53,9 +52,10 @@ from .names import shown as shown_name
 from .icons import IconLabel, IconText, icon_only, set_icon
 from .layout import Sections
 from .model import NotInEngine, method_of, method_value, methods_of
-from .settings import RangeBar, SettingRow, fmt, needed_stages, selection_rule_text, step_settings
+from .settings import (DoubleSpinBox, RangeBar, SettingRow, decimals_shown, fmt, needed_stages, on_edited, selection_rule_text,
+                       step_settings)
 from .settings import loading as settings_loading
-from .widgets import ACCENT, BAD, NEW, OK, WARN, clear, hline, label, put_back, typed
+from .widgets import ACCENT, BAD, NEW, OK, WARN, clear, hline, label, put_back, typed, wheel_scrolls
 
 STATE_COLOR = {"done": "#5fbf7f", "pending": "#8b93a1", "stale": WARN, "running": ACCENT, "failed": BAD,
                "interrupted": WARN, "skipped": "#8b93a1"}
@@ -659,6 +659,7 @@ class Panel(QWidget):
         scroll = self._sc.verticalScrollBar().value() if same else 0
         self._refresh(node)
         self._finish_sections()
+        wheel_scrolls(self, self._sc)                    # the wheel scrolls the panel, not the list under the cursor
         for ed in self.findChildren(QLineEdit):          # what the user types (not what a build puts in) until applied
             ed.textEdited.connect(self._typed, Qt.UniqueConnection)
             ed.editingFinished.connect(self._applied, Qt.UniqueConnection)
@@ -1189,7 +1190,7 @@ class Panel(QWidget):
                                 "green + blue for a dual-band colour image"))
                 ch.activated.connect(lambda k, r=role, b=ch: s.set_fusion_channel(p, r, b.itemData(k)))
                 row.addWidget(ch)
-            sp = QDoubleSpinBox()
+            sp = DoubleSpinBox()
             sp.setRange(0.0, 5.0)
             sp.setSingleStep(0.05)
             sp.setDecimals(2)
@@ -1244,14 +1245,13 @@ class Panel(QWidget):
                 w.activated.connect(lambda k, n=name, b=w, v=q["value"], lb=text: self.propose_recipe(
                     n, b.itemData(k), v, lb, _(str(v)), b.itemText(k)))
             else:
-                w = QDoubleSpinBox()
+                w = DoubleSpinBox()
                 w.setRange(float(q.get("min", -1e6)), float(q.get("max", 1e6)))
-                w.setDecimals(2)
+                w.setDecimals(decimals_shown(shown, 2))
                 w.setSingleStep(float(q.get("step") or 1.0))
                 w.setValue(float(shown))
-                w.editingFinished.connect(lambda n=name, b=w, v=float(q["value"]), sh=float(shown), lb=text:
-                                          b.value() != sh and self.propose_recipe(
-                                              n, b.value(), v, lb, number(v), number(b.value())))
+                on_edited(w, lambda n=name, b=w, v=float(q["value"]), sh=float(shown), lb=text:
+                          b.value() != sh and self.propose_recipe(n, b.value(), v, lb, number(v), number(b.value())))
             w.setToolTip(tip)
             row.addWidget(w)
             self.bv.addLayout(row)
@@ -2236,15 +2236,15 @@ class Panel(QWidget):
             row.setContentsMargins(4, 2, 2, 2)
             row.setSpacing(6)
             row.addWidget(name_label(name), 1)
-            e = QDoubleSpinBox()
+            e = DoubleSpinBox()
             e.setLocale(QLocale())                     # a decimal comma in French
-            e.setDecimals(0 if which == "t" else 1)
+            e.setDecimals(decimals_shown(val, 0 if which == "t" else 1))
             e.setRange(lo, hi)
             e.setSingleStep(step)
             e.setValue(val)
             e.setFixedWidth(EDITOR_W)
             e.setEnabled(live)
-            e.editingFinished.connect(lambda ed=e, wh=which: self._sel(ed.value(), wh))
+            on_edited(e, lambda ed=e, wh=which: self._sel(ed.value(), wh))
             row.addWidget(e)
             row.addWidget(unit_label(unit, self._unit_w))
             room = QWidget()                               # where the ↺ of a setting row is

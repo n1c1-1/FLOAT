@@ -194,6 +194,32 @@ def hline() -> QFrame:
     return f
 
 
+class _WheelScrolls(QObject):
+    """The wheel over a list, a spin box or a slider of a scrolled panel scrolls the panel, unless that editor has the
+    keyboard focus (the wheel goes to what is under the cursor: focused and under it, it changes as before)."""
+
+    def __init__(self, area):
+        super().__init__(area)
+        self.area = area
+
+    def eventFilter(self, obj, e):                                    # noqa: N802 - Qt's name
+        if e.type() == QEvent.Wheel and not obj.hasFocus():
+            QApplication.sendEvent(self.area.viewport(), e)
+            return True
+        return False
+
+
+def wheel_scrolls(root: QWidget, area) -> None:
+    """Every list, spin box and slider in ``root`` changes with the wheel only when it has the focus, else the wheel
+    scrolls ``area`` (a scroll area); the wheel never gives them the focus. Called again after each build."""
+    from PySide6.QtWidgets import QAbstractSpinBox, QComboBox, QSlider
+    guard = next((c for c in area.children() if isinstance(c, _WheelScrolls)), None) or _WheelScrolls(area)
+    for w in root.findChildren(QComboBox) + root.findChildren(QAbstractSpinBox) + root.findChildren(QSlider):
+        if w.focusPolicy() == Qt.WheelFocus:
+            w.setFocusPolicy(Qt.StrongFocus)
+        w.installEventFilter(guard)                    # (installed again: moved, never doubled)
+
+
 def single_choice(cb) -> None:
     """A list with one choice shows as its text (the laptop's D5: a list that opened on its only entry); it turns back
     into a list when it has more. Every list opens under its box, whole up to ten rows (``combobox-popup: 0`` in the

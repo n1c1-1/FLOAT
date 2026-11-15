@@ -204,6 +204,9 @@ def settle(holder, parent) -> bool:
     block, lines, cost = pending
     answer = ask_leave(parent, block, lines, cost)
     if answer == "stay":
+        dock = getattr(parent, "dock", None)             # a small window's drawer, closed by the click that left:
+        if dock is not None and getattr(dock, "state", "") in ("icons", "auto"):
+            dock.open_overlay()                          # open again on the block, its draft in sight
         return False
     if answer == "apply":
         return bool(holder.draft_apply())
