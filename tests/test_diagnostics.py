@@ -689,3 +689,31 @@ def test_the_master_frames_are_read_in_their_place_whichever_is_read_first(monke
     cal._read_frames(paths, put, 1, ticks.append)
     assert got[0, 0, 0] == -1.0 and [float(v) for v in got[1:, 0, 0]] == [float(i) for i in range(1, 12)]
     assert ticks == list(range(2, 13))
+
+
+def test_registration_table_names_every_frame_of_sessions_calibrated_each_on_its_own(tmp_path):
+    raw = tmp_path / "raw"
+    for name, files in (("n1", ("a1.ARW", "a2.ARW")), ("n2", ("b1.ARW", "b2.ARW", "b3.ARW"))):
+        (raw / name).mkdir(parents=True)
+        for f in files:
+            (raw / name / f).write_bytes(b"\0" * 100)
+    p = api.create_project(tmp_path / "p", "p")
+    p.stack_mode = "per_session"
+    api.add_session(p, lights=[str(raw / "n1")], name="night 1")
+    api.add_session(p, lights=[str(raw / "n2")], name="night 2")
+    api.add_workflow(p, "Classic stack", "Classic stack")
+    api.save(p)
+    for sid, files, m in ((1, ("a1", "a2"), "2026-01-01"), (2, ("b1", "b2", "b3"), "2026-01-02")):
+        fake_done(p, 1, f"inventory@{sid}", {"width": 96, "height": 64}, files={"frames.json": {"lights": [
+            {"path": f"C:/x/{x}.fits", "time": f"{m}T00:0{i}:00"} for i, x in enumerate(files)]}})
+    d = fake_done(p, 1, "register")
+    n = 5
+    coef = np.zeros((n, 2, 10))
+    coef[:, 0, :3] = [48, 48, 0]
+    coef[:, 1, :3] = [32, 0, 32]
+    np.savez(d / "reg.npz", coef=coef, fwhm=np.full(n, 2.5), transp=np.ones(n), nmatch=np.full(n, 300),
+             rms=np.zeros(n), ref=3, nstars=np.full(n, 350))
+    t = api.registration_table(p, 1)
+    assert [r.name for r in t] == ["a1.fits", "a2.fits", "b1.fits", "b2.fits", "b3.fits"]
+    assert [r.session for r in t] == ["night 1"] * 2 + ["night 2"] * 3
+    assert t[3].time == "2026-01-02T00:01:00" and [r.reference for r in t] == [False, False, False, True, False]
