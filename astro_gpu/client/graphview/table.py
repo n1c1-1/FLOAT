@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 
 from ...graphcore.operations import COMMON
 from ..i18n import _, maybe, plural, quoted
+from ..names import shown
 from . import files
 from .table_gestures import INTERNAL_MIME, Gestures, common_tip, undo_link
 from .table_headers import HeaderReadings
@@ -674,7 +675,7 @@ class Grid(Gestures, Painting, QAbstractScrollArea):
             rid = g.internal[1]
             if c is not None and c.kind == "stack" and c.id[1] != rid:
                 src, dst = mp.stack_by_id(rid), mp.stack_by_id(c.id[1])
-                lab = plural(len(src["sessions"]), "{n} session joins “{p}”", "{n} sessions join “{p}”", p=dst["name"])
+                lab = plural(len(src["sessions"]), "{n} session joins “{p}”", "{n} sessions join “{p}”", p=shown(dst["name"]))
                 own = self.own_settings_text(rid)
                 if own:
                     lab += " · " + _("own settings dropped: {list}").format(list=own)

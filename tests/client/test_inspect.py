@@ -1767,11 +1767,12 @@ def test_save_as_writes_the_edits_into_the_copy_only(qapp, tmp_path, monkeypatch
         assert project2.load(copy).name == "Copy"                 # Q8: named after its folder, not "Orig" twice
         assert project2.load(root).name == "Orig"
         assert Path(w.s.root) == copy and not w.s.dirty
-        # the results go with the copy (hours of computation were left behind, the copy opened as to compute again);
-        # the project left keeps its own
+        # the results go with the copy (hours of computation were left behind, the copy opened as to compute again),
+        # moved, not copied: no second set of results is left on the disk; the folder left keeps its project file
         assert (copy / "store" / "stack" / "k1" / "image.npy").read_bytes() == b"result"
         assert (copy / "logs" / "journal.md").exists() and (copy / "state.json").exists()
-        assert (root / "store" / "stack" / "k1" / "image.npy").read_bytes() == b"result"
+        assert not (root / "store" / "stack" / "k1").exists() and not (root / "state.json").exists()
+        assert (root / project2.FILE).read_bytes() == before
     finally:
         w.close()
 

@@ -15,6 +15,7 @@ from ...graphcore.model import FILE_KINDS
 from ...graphcore.operations import COMMON
 from ...graphcore.rules import defaults
 from ..i18n import _, maybe, plural
+from ..names import shown
 
 KINDS = FILE_KINDS          # lights darks flats bias flat_darks
 #: the column title of a file kind (English; shown through _)
@@ -204,7 +205,7 @@ class TableModel:
                     continue
                 out.append({"id": r.id, "name": r.name, "ref": r.id == ref, "folded": r.id in self.folded, "row": r,
                             "badge": self.doc.row_badge(r.id),
-                            "sessions": [{"sid": s, "cid": c, "name": self.p.blocks[s].name or self.doc.title(s)}
+                            "sessions": [{"sid": s, "cid": c, "name": shown(self.p.blocks[s].name or self.doc.title(s))}
                                          for s, c in r.nights]})
             return out
         return self._memo(("stacks",), f)
@@ -271,7 +272,7 @@ class TableModel:
 
     def session_name(self, sid):
         b = self.p.blocks.get(sid)
-        return (b.name if b is not None else None) or sid
+        return shown((b.name if b is not None else None) or sid)
 
     # ------------------------------------------------------------------ lists
     def file_list(self, sources) -> FileList:

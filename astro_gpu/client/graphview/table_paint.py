@@ -8,6 +8,7 @@ from PySide6.QtGui import QColor, QFont, QFontMetrics, QPen, QPolygonF
 
 from ...graphcore.operations import COMMON
 from ..i18n import _, plural
+from ..names import shown
 from . import style
 from .table_logic import FOLDED, KIND_TITLE, count_text, duration, settings_text, short_count
 
@@ -356,7 +357,7 @@ class Painting:
             p.drawPolygon(QPolygonF([QPointF(cx - 2, cy - 4), QPointF(cx + 3, cy), QPointF(cx - 2, cy + 4)]))
         else:
             p.drawPolygon(QPolygonF([QPointF(cx - 4, cy - 2), QPointF(cx + 4, cy - 2), QPointF(cx, cy + 3)]))
-        self._text(p, x, yh + 17, pl["name"], F13B, TXT, w - 16)
+        self._text(p, x, yh + 17, shown(pl["name"]), F13B, TXT, w - 16)
         ref_word = _("reference")
         wb = width_of(ref_word, F10B) + 12
 
@@ -483,7 +484,7 @@ class Painting:
         p.setBrush(colour("#1a1d24"))
         p.drawRoundedRect(R, 4, 4)
         if v:
-            name = _("↳ Variant “{name}”").format(name=v["name"])
+            name = _("↳ Variant “{name}”").format(name=shown(v["name"]))
             self._first_fitting(p, R.x() + 12, R.y() + R.height() / 2 + 4, [f"{name} · {v['text']}", name], F11, DIM,
                                 R.width() - 16)
 

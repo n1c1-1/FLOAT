@@ -1474,7 +1474,7 @@ class Main(QMainWindow):
 
     def name_project(self) -> bool:
         """A project without a name is given its name and folder, once: at its first Save or Run (its results will be
-        written there, and Save as copies them). False when cancelled."""
+        written there, and Save as moves them). False when cancelled."""
         got = ask_project_name(self, self._suggested_name())
         if got is None:
             return False
@@ -1598,7 +1598,7 @@ class Main(QMainWindow):
             w.clearFocus()                               # editingFinished: what is typed applies before the save
 
     def save_as(self):
-        """The project, its edits included, in another folder with its results (copied: _copy_results), then
+        """The project, its edits included, in another folder with its results (moved: _move_results), then
         opened in place of the project, which keeps what it had on disk (as Save As does in reference apps:
         cancelled, nothing is written; GUI exploration 4)."""
         if self.project is None:
@@ -1631,16 +1631,18 @@ class Main(QMainWindow):
         except (OSError, ValueError, project2.LegacyProject) as e:
             self.banner.say(_("The project cannot be saved: {why}").format(why=e))
             return
-        if not self._copy_results(self.project.root, root):
+        if not self._move_results(self.project.root, root):
             return
         self.close_project(go_home=False, discard=True)  # its edits went into the copy: no question
         self.open_project(root)
 
-    def _copy_results(self, old, root) -> bool:
+    def _move_results(self, old, root) -> bool:
         """Save as takes the project's results along (the owner: hours of computation were left behind, the copy
-        opened as to compute again): the results, the logs, the run's state and the thumbnail are copied into the
-        new folder, the window kept alive meanwhile; the project left keeps all it had. False, said in the banner,
-        when the copy fails: the project stays open where it was."""
+        opened as to compute again), MOVED, never copied (his rule: no copies of several gigabytes left on the
+        disks): the results, the logs, the run's state and the thumbnail go into the new folder, the window kept
+        alive meanwhile; the folder left keeps its project file, to compute again if it is ever opened. On one disk
+        the move is a rename; across disks each part is copied whole, then taken away from where it was. False,
+        said in the banner, when it fails: the project stays open where it was."""
         import shutil
         import threading
         if old is None:
@@ -1656,16 +1658,13 @@ class Main(QMainWindow):
         def work():
             try:
                 for a, b in todo:
-                    if a.is_dir():
-                        shutil.copytree(a, b, dirs_exist_ok=True)
-                    else:
-                        b.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(a, b)
+                    b.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(a), str(b))
             except OSError as e:
                 out["error"] = e
 
         th = threading.Thread(target=work, daemon=True)
-        self.banner.say(_("Copying the results into the new folder…"))
+        self.banner.say(_("Moving the results into the new folder…"))
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             th.start()
@@ -1675,7 +1674,7 @@ class Main(QMainWindow):
         finally:
             QApplication.restoreOverrideCursor()
         if "error" in out:
-            self.banner.say(_("The results could not be copied: {why}").format(why=out["error"]))
+            self.banner.say(_("The results could not be moved: {why}").format(why=out["error"]))
             return False
         return True
 
