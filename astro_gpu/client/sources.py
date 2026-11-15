@@ -57,7 +57,7 @@ from .frames import (
     target_far_text,
     type_warning_text,
 )
-from .i18n import _, hours_text, number, plural
+from .i18n import _, hours_text, number, plain_error, plural
 from .imageview import ImageView, ViewImage, quick_thumbnail
 from .services.inspect import FrameItem, ProjectFrames, calib_checks, flat_pct, light_thumb, service_of, set_calibration_excluded
 from .services.worker import norm_path
@@ -312,6 +312,8 @@ class SourcesView(QWidget):
         self._icons: dict[str, list[QListWidgetItem]] = {}
         self._group_token = 0
         self._reading = False                              # the frames of the kind shown are being read
+        self._read_why: dict = {}                          # {"group" / "frames": why its reading failed}
+        self._stats_why: dict = {}                         # {path: why its level and noise could not be read}
         self._left: dict = {}                              # {(session, kind): colour images left by the last add}
         self._twice: dict = {}                             # {(session, kind): lights found in another session}
         self._seq_order: list[int] = []                  # the viewer's sequence: indices of ``items``
@@ -428,6 +430,7 @@ class SourcesView(QWidget):
         sv.framesReady.connect(self._frames_ready)
         sv.thumbReady.connect(self._thumb)
         sv.statsReady.connect(self._stats_ready)
+        sv.readFailed.connect(self._read_failed)
         self.setAcceptDrops(True)
         self._said = False
         self._centre_takes_drags()
@@ -870,13 +873,32 @@ class SourcesView(QWidget):
         wid = self.s.path.pid if self.s.path is not None else None
         self._group_token = self.service.request_group(wid, self.group, self.sid)
         self._reading = True
+        self._read_why = {}
         self.service.request_frames(wid)
         self.build_left()
         self.build_right()
         self._show_zone()
         self.update_count()
 
+    def _read_failed(self, what: str, req, why: str):
+        """A reading that failed is said where the page waited for it (it said "Reading the frames…" for ever)."""
+        if what == "stats":
+            self._stats_why[req] = plain_error(why)
+            if self.items and req == self.items[min(self.cur, len(self.items) - 1)].path:
+                self._info_line()
+            return
+        if what == "group" and req != self._group_token or what not in ("group", "frames"):
+            return
+        self._read_why[what] = plain_error(why)
+        if what == "group":
+            self._reading = False
+            self.update_count()
+        elif self.pages.currentIndex() == 1 and self.isVisibleTo(self.window()):
+            self.build_left()
+            self.build_right()
+
     def _frames_ready(self, data: ProjectFrames):
+        self._read_why.pop("frames", None)
         self.data = data
         self.current_session()
         if self.pages.currentIndex() == 1 and self.isVisibleTo(self.window()):
@@ -1058,7 +1080,9 @@ class SourcesView(QWidget):
         d = self.data
         out = []
         if d is None:
-            return [(None, _("Reading the frames…"))]
+            why = getattr(self, "_read_why", {}).get("frames")
+            return [(False, _("The frames cannot be read: {why}").format(why=why))] if why else \
+                [(None, _("Reading the frames…"))]
         # the session's own frames (its Calibration reads them), never the project's: a project of three sessions of
         # one flat each said "3 frames" on each; what they contradict by the Calibration's rules is a warning
         ref = self._row()
@@ -1368,10 +1392,12 @@ class SourcesView(QWidget):
 
     def update_count(self):
         waiting = self._reading and not self.items and self.sid is not None and bool(self.held(self.group))
-        self.viewer.canvas.message = _("Reading the frames…") if waiting else ""     # never a zero that is not one (#60)
+        why = getattr(self, "_read_why", {}).get("group")
+        failed = _("The frames cannot be read: {why}").format(why=why) if why and not self.items else ""
+        self.viewer.canvas.message = _("Reading the frames…") if waiting else failed   # never a false zero (#60)
         self.viewer.canvas.update()
-        if waiting:
-            self.count.setText(_("Reading the frames…"))
+        if waiting or failed:
+            self.count.setText(_("Reading the frames…") if waiting else failed)
             return
         n_ex = sum(self.excluded(i) for i in range(len(self.items)))
         noun = {"lights": "lights", "darks": "darks", "flats": "flats"}.get(self.group, "frames")
@@ -1436,9 +1462,11 @@ class SourcesView(QWidget):
                 transp=tr, weight=number(f.weight, 2) if f.weight is not None else "–")
         else:
             st = self.service.stats.get(f.path)
+            why = getattr(self, "_stats_why", {}).get(f.path)
             t = (_("{file} · {date} · level {level} ADU · noise {noise} ADU").format(
                 file=f.name, date=(f.time or "")[:10], level=number(st["black"] + st["level"], 0),
-                noise=number(st["noise"], 2)) if st else f"{f.name} · {(f.time or '')[:10]}")
+                noise=number(st["noise"], 2)) if st else f"{f.name} · {(f.time or '')[:10]}" +
+                (" · " + _("level and noise cannot be read: {why}").format(why=why) if why else ""))
         self.info.setText(t + (" · " + _("EXCLUDED") if self.by_hand(self.cur) else ""))
 
     def _stats_ready(self, path: str, st: dict):

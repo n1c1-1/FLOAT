@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 
 from .. import texts
 from . import prefs
-from .i18n import _, language, number, plural
+from .i18n import _, language, number, plain_error, plural
 from .icons import IconLabel
 from .imageview import exposure_text
 from .services.inspect import ProjectFrames, service_of
@@ -312,6 +312,7 @@ class FramesView(QWidget):
         self.browser = browser
         self.pages.addWidget(browser)
         self.service.framesReady.connect(self._data_ready)
+        self.service.readFailed.connect(self._read_failed)
         # the Files page, not read yet: Inspect reads it when it shows a Session block (#115: every light's header was
         # read as the project opened, Inspect hidden, beside the worker's first reads)
         self.pages.setCurrentIndex(1)
@@ -352,7 +353,18 @@ class FramesView(QWidget):
         return tuple((x.id, len(x.lights), len(x.darks), len(x.flats), len(x.bias), len(x.flat_darks))
                      for x in self.s.p.sessions)
 
+    _why = ""                                            # why the last reading of the frames failed
+
+    def _read_failed(self, what: str, _req, why: str):
+        """The headers could not be read: said in the health check (it said "Reading the frames…" for ever)."""
+        if what != "frames":
+            return
+        self._why = plain_error(why)
+        if self.pages.currentIndex() == 0 and self.isVisibleTo(self.window()):
+            self._build()
+
     def _data_ready(self, data: ProjectFrames):
+        self._why = ""
         self.data = data
         self._read_for = self._files_sig()               # the files it was read of (its request came before)
         if self.pages.currentIndex() == 0 and self.isVisibleTo(self.window()):
@@ -420,7 +432,8 @@ class FramesView(QWidget):
         data = self._current_data()
         lines = check_lines(data)
         if data is None:
-            self.sv.addWidget(label(_("Reading the frames…"), "dim"))
+            self.sv.addWidget(label(_("The frames cannot be read: {why}").format(why=self._why) if self._why else
+                                    _("Reading the frames…"), "dim", wrap=bool(self._why)))
         for lvl, text in lines:
             self._check_row(lvl, text)
         if prefs.spec():

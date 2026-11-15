@@ -1940,6 +1940,9 @@ class InspectService(QObject):
     previewReady = Signal(int, int, int)            # token, kept, total: what the thresholds of Selection keep
     jobReady = Signal(str, int, object)             # name, token, result of ``request_job``
     jobFailed = Signal(str, int, str)               # name, token, reason (its first line)
+    # a reading that failed: what (frames, group, outputs, preview, stats), its request (the token; (workflow id, stage,
+    # which) for outputs; the path for stats; None for frames), the reason
+    readFailed = Signal(str, object, str)
 
     def __init__(self, model):
         super().__init__()
@@ -2007,6 +2010,17 @@ class InspectService(QObject):
             self.imageFailed.emit(slot, self._tokens.get(channel, 0), why)
         elif head == "inspect.table":
             self.tableReady.emit(int(channel.split(":")[1]), self._tokens.get(channel, 0), why)
+        elif head == "inspect.frames":
+            self.readFailed.emit("frames", None, why)
+        elif head in ("inspect.group", "inspect.preview"):
+            self.readFailed.emit(head.split(".")[1], self._tokens.get(channel, 0), why)
+        elif head == "inspect.outputs":
+            _h, wid, stage, which = channel.split(":", 3)
+            self.readFailed.emit("outputs", (int(wid), stage, which), why)
+        elif head == "inspect.stats":
+            self.readFailed.emit("stats", self._stats_path, why)
+
+    _stats_path = None                               # the frame whose statistics were last asked (``request_stats``)
 
     def _token(self, channel: str) -> int:
         self._tokens[channel] = self._tokens.get(channel, 0) + 1
@@ -2138,11 +2152,13 @@ class InspectService(QObject):
         self._rin_req = self._rq.pop(slot)
         token, wid, spec, which, key, layer = self._rin_req
         self._rin = (slot, token, key, wid, spec, which)
-        self._renderer().request(Request(kind="inspect", layers=[layer], level=HALF_LEVEL, tag="inspect"))
+        self._rin_seq = self._renderer().request(Request(kind="inspect", layers=[layer], level=HALF_LEVEL, tag="inspect"))
+
+    _rin_seq = None                                  # the render worker's number of the request in ``_rin``
 
     def _rendered(self, res):
-        if res.kind != "inspect" or self._rin is None:
-            return
+        if res.kind != "inspect" or self._rin is None or res.seq != self._rin_seq:
+            return                                   # another request's answer (an older one, another page's)
         slot, token, key, wid, spec, which = self._rin
         self._rin = None
         try:
@@ -2166,8 +2182,8 @@ class InspectService(QObject):
             im.grid, im.origin = (cv.W, cv.H), (float(cv.origin[0]), float(cv.origin[1]))
         return im
 
-    def _render_failed(self, _seq: int, kind: str, text: str):
-        if kind not in ("inspect", "start"):
+    def _render_failed(self, seq: int, kind: str, text: str):
+        if kind not in ("inspect", "start") or (kind == "inspect" and seq != self._rin_seq):
             return
         why = text.splitlines()[0] if text else "?"
         if self._rin is not None:
@@ -2294,6 +2310,7 @@ class InspectService(QObject):
             self.statsReady.emit(path, self.stats[path])
             return
         self.requests += 1
+        self._stats_path = path
         self.view.submit("inspect.stats", self._stats_job, path)
 
     def _stats_job(self, path):

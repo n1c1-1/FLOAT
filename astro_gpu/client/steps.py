@@ -20,7 +20,7 @@ from PySide6.QtGui import QColor, QPainter, QPen
 from .. import texts
 from . import APP_NAME
 from .graphnode import BY_KEY, STEPS, fmt_int
-from .i18n import _, hours_text, language, number
+from .i18n import _, hours_text, language, number, plain_error
 from .imageview import ViewImage
 from .services.inspect import SkyData, VisualSpec, service_of
 from .widgets import WARN
@@ -183,9 +183,19 @@ class Steps(QObject):
         self.s = model
         self.service = service or service_of(model)
         self._asked: set[tuple] = set()
+        self._asked_key: dict[tuple, str] = {}           # (workflow id, stage, which) -> the result last asked
+        self._unread: dict[tuple, str] = {}               # (workflow id, stage, which, key) -> why it was not read
         self.service.outputsReady.connect(self._arrived)
+        self.service.readFailed.connect(self._read_failed)
 
     def _arrived(self, *_a):
+        self.changed.emit()
+
+    def _read_failed(self, what: str, req, why: str):
+        """The measurements of a result could not be read: said in the block's facts (they stayed empty, unsaid)."""
+        if what != "outputs" or req not in self._asked_key:
+            return
+        self._unread[(*req, self._asked_key[req])] = why
         self.changed.emit()
 
     # ------------------------------------------------------------ the results a block holds
@@ -227,8 +237,14 @@ class Steps(QObject):
         got = self.service.outputs_of(p.pid, stage, which, key)
         if got is None and (p.pid, stage, which, key) not in self._asked:
             self._asked.add((p.pid, stage, which, key))
+            self._asked_key[(p.pid, stage, which)] = key
             self.service.request_outputs(p.pid, stage, which, key)
         return got
+
+    def unread(self, p, stage: str, which: str = "current") -> str:
+        """Why the measurements of the result could not be read ("" when they were, or are being read)."""
+        key = self.key_of(p, stage, which)
+        return self._unread.get((p.pid, stage, which, key), "") if key is not None else ""
 
     # ------------------------------------------------------------ the pictures
     def read_stage(self, p, stage: str) -> str:
@@ -444,10 +460,13 @@ class Steps(QObject):
         if k == "selection":
             return self._selection_facts(p)
         rows: list[tuple[str, str]] = []
+        unread = ""
         for stage, key in FACTS.get(k, []):
             if stage not in s.all_stages(p):
                 continue
             out = self.outputs(p, stage, self.which_for(p, stage))
+            if out is None:
+                unread = unread or self.unread(p, stage, self.which_for(p, stage))
             if out is None or key not in out.metrics:
                 continue
             value = out.metrics[key]
@@ -465,6 +484,9 @@ class Steps(QObject):
                     n=fmt_int(out.params["iterations"]))))
         if k == "post":
             rows += self._output_facts(p)
+        if unread:
+            rows.append((html.escape(_("Measurements")), html.escape(
+                _("cannot be read: {why}").format(why=plain_error(unread)))))
         return rows
 
     def _method_fact(self, p) -> tuple[str, str] | None:

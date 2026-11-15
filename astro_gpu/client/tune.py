@@ -81,7 +81,7 @@ from .charts import (
     color_tabs,
 )
 from .chartview import ChartView
-from .i18n import _, hours_text, language, number, plural, quoted
+from .i18n import _, hours_text, language, number, plain_error, plural, quoted
 from .icons import IconLabel, IconText, icon, set_icon
 from .imageview import ImageView, ViewImage, quick_thumbnail, sky_text
 from .layout import Dock, fold_button
@@ -720,6 +720,7 @@ class TuneView(QWidget):
         sv.jobReady.connect(self._job_ready)
         sv.jobFailed.connect(self._job_failed)
         sv.statsReady.connect(self._stats_ready)
+        sv.readFailed.connect(self._read_failed)
         esc = QShortcut(QKeySequence("Escape"), self)
         esc.setContext(Qt.WidgetWithChildrenShortcut)
         esc.activated.connect(self.back.emit)
@@ -2652,6 +2653,17 @@ class TuneView(QWidget):
         if token == getattr(self, "_preview_token", None):
             self._kept_n = (kept, total)
             self._kept_text()
+
+    def _read_failed(self, what: str, req, why: str):
+        """The count of the frames the thresholds keep could not be made: said where the count is (it stayed the
+        previous thresholds' count)."""
+        if what != "preview" or req != getattr(self, "_preview_token", None) or self.chart is None or \
+                getattr(self, "kept_label", None) is None:
+            return
+        try:
+            self.kept_label.setText(_("The frames kept cannot be counted: {why}").format(why=plain_error(why)))
+        except RuntimeError:                                  # the label went with a rebuild
+            pass
 
     def _kept_text(self):
         if self.chart is None or getattr(self, "kept_label", None) is None:
