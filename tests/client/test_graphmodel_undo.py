@@ -310,3 +310,17 @@ def test_a_gesture_elsewhere_keeps_the_combine_layers_block_and_undo_chooses_not
     finally:
         m.close(save=False)
         worker.stop()
+
+
+def test_a_projection_of_posts_wires_that_fails_keeps_the_wires_and_is_logged(model, monkeypatch, caplog):
+    import logging
+    from astro_gpu.graphcore import post
+
+    def broken(g, shared):
+        raise ValueError("projection failed")
+    monkeypatch.setattr(post, "with_post_wires", broken)
+    g = model.stored
+    with caplog.at_level(logging.WARNING):
+        assert model._with_post_wires(g) is g                                            # the wires kept
+    assert any("projection failed" in (r.exc_text or "") + r.getMessage() or
+               (r.exc_info and "projection failed" in str(r.exc_info[1])) for r in caplog.records)

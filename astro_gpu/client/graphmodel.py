@@ -617,6 +617,8 @@ class GraphEditing:
             q = with_layer_rows(q, *self._layer_rows_wanted(q))
             q = self._layer_ids_kept(g, q)
         except Exception:  # noqa: BLE001 - a graph the projection cannot read keeps its wires
+            import logging
+            logging.getLogger(__name__).exception("the wires to Post could not be made again from Post's layers")
             return g
         finally:
             self.__dict__.pop("_proj_g", None)

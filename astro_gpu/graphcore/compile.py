@@ -17,11 +17,14 @@ Post's wires are not compiled (Post's layers are the engine's: ``Project2.post``
 from __future__ import annotations
 
 import copy
+import logging
 from dataclasses import dataclass, field
 
 from ..core import workflow as wfl
 from . import combos
 from . import model as gm
+
+log = logging.getLogger(__name__)
 
 IMAGE_OF_PORT = {"Starless": "starless", "Stars only": "stars"}
 #: the graph's chain kinds that are an engine node of the same name
@@ -520,7 +523,8 @@ def engine_wiring(g) -> dict:
         for _wid, _st, b, msg in probs:
             if b is not None:
                 out.setdefault(b, msg)
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
+        log.warning("the wiring the engine reads could not be checked: %s: %s", type(e).__name__, e)
         out = {}                     # a graph the engine cannot read: its legality says why (engine_problems)
     _MEMO[:] = [g, out]
     return out
