@@ -1730,7 +1730,35 @@ class GraphEditing:
         if not lost:
             return ChangeCost()
         after, before = self.cost(changed), self.cost([q.pid for q in paths])
-        return ChangeCost(self._lost_blocks(lost), lost, after.seconds - before.seconds, after.measured)
+        seconds = after.seconds - before.seconds
+        # the workflows that read them (a combination of their images) compute again too: their keys follow (the card
+        # said "Stacking, Astrometry" and left the S-H-O out, as the gestures' cost does not)
+        mine = {q.pid for q in paths}
+        others = [v for v in self.paths if v.pid not in mine]
+        p2 = self._what_if_workflows(changed) if others else None
+        down = []
+        for v in others if p2 is not None else ():
+            try:
+                down += self._lost(v, set(api.chain(p2, v.pid)), lambda st, w=v.pid: api.stage_key(p2, w, st))
+            except (ValueError, KeyError):
+                continue
+        if down:
+            wids = sorted({w for w, _s in down})
+            seconds += api.cost(p2, wids, self.device, self._history_est).seconds - self.cost(wids).seconds
+        return ChangeCost(self._lost_blocks(lost + down), lost + down, seconds, after.measured)
+
+    def _what_if_workflows(self, changed):
+        """The project with these workflows changed (what-if copies of ``_changed``), apart from the project (the
+        engine's caches of the frames and its rules shared, as ``_what_if_project``)."""
+        from .. import api
+        from ..core.project2 import Project2
+        p2 = Project2.from_dict(self.p.to_dict(), self.p.root)
+        by = {w.id: w for w in changed}
+        p2.workflows = [copy.deepcopy(by[w.id]) if w.id in by else w for w in p2.workflows]
+        c1, c2 = api._ctx(self.p), api._ctx(p2)
+        c2.scan, c2.rules_obj, c2.spec = c1.scan, c1.rules(), c1.spec
+        c2.autos, c2.stretch, c2.warm_entries = c1.autos, c1.stretch, c1.warm_entries
+        return p2
 
     def _dry_graph(self, steps):
         """The graph a gesture would give, nothing changed (as ``_change`` makes it); None when refused."""
@@ -1785,12 +1813,13 @@ class GraphEditing:
         such as the survey Astrometry fetches, is not named)."""
         from .graphnode import block_title
         out = []
-        for _wid, stage in lost:
+        for wid, stage in lost:
             _base, sep, num = stage.partition("@")[0].partition("~")
             key = self._block_of_stage(stage)
             if key is None:
                 continue
-            t = block_title(None, f"{key}~{num}" if sep else key)
+            v = self.view(wid) if key == "fusion" else None          # a combination: by its name ("S-H-O")
+            t = v.name if v is not None else block_title(None, f"{key}~{num}" if sep else key)
             if t not in out:
                 out.append(t)
         return out
