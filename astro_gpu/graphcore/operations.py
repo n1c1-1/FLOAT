@@ -545,8 +545,11 @@ def _map_port(blk, port):
 
 
 def _copy_block(q, b):
+    """A variant's copy of chain block b: its settings, its switch, its method and its engine settings (a Gradient
+    variant of an RBF Gradient is an RBF Gradient with the same settings, as the original's panel shows them)."""
     o = q.blocks[b]
-    return new_block(q, o.kind, settings=dict(o.settings), off=o.off).id
+    return new_block(q, o.kind, settings=dict(o.settings), off=o.off, method=o.method,
+                     params=copy.deepcopy(o.params)).id
 
 
 def _after_subtree(q, rid):
