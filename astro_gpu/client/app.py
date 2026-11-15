@@ -2066,6 +2066,15 @@ def _warm_up():
         pass
 
 
+def context_menus_on_release(app):
+    """A right click opens its menu once the button is up, on every system, as on Windows. Opened at the press (the
+    other systems' default), the release of the same click fell on the menu and chose the entry under the pointer: a
+    beta tester's right click on a block made a variant at once, no menu seen."""
+    hints = app.styleHints()
+    if hasattr(hints, "setContextMenuTrigger"):         # Qt 6.8 and later
+        hints.setContextMenuTrigger(Qt.ContextMenuTrigger.Release)
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     f = prefs.settings_file()
@@ -2075,6 +2084,7 @@ def main(argv=None):
         prefs.set("language", prefs.system_language())
     app = QApplication.instance() or QApplication(sys.argv[:1])
     app._gc = GuiGarbageCollector(app)                  # cycles collected on the GUI thread only (gcguard.py)
+    context_menus_on_release(app)
     app.setApplicationName(APP_NAME)
     app.setWindowIcon(app_icon())
     if sys.platform == "win32":                         # the taskbar shows this program's icon, not Python's
