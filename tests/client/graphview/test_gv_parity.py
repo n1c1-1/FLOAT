@@ -180,6 +180,8 @@ def test_the_blank_page_link_opens_the_gallery_and_a_template_makes_its_workflow
     QTest.mouseClick(link, Qt.LeftButton)
     pump()
     assert asked and p.centre.currentWidget() is p.templates and p.templates.cards
+    assert [c.t["key"] for c in p.templates.cards] == ["colour_min", "colour_full", "image", "filters_min", "filters_full",
+                                                       "sho_rgb", "images", "dual_x2", "mono_rgb", "mono_lrgb"]
     card = next(c for c in p.templates.cards if c.t["key"] == "colour_min")
     p.templates.chosen.emit(card.t)
     pump()

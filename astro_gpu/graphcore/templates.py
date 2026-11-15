@@ -1,6 +1,6 @@
 """The gallery's templates as operations of the core (INTEGRATION §12 step 3): what the current builders make
 (client/graph.GraphPage.make_from_template, make_filters; client/model.ProjectModel.add_sho_rgb,
-add_filters_combination, add_dual_x2), as ONE list of steps for ``operations.apply_many`` (one Undo step), and the
+add_filters_combination, add_dual_x2, add_mono_combination), as ONE list of steps for ``operations.apply_many`` (one Undo step), and the
 Post actions that follow it (Post's layers are Post's: the caller runs them with its own Post functions once the
 graph is compiled).
 
@@ -281,7 +281,7 @@ def _build_filters(plan, g, t, name, opts):
     if t.get("dual_x2"):
         return _dual_x2(plan, g, name, opts)
     have = _filters(g)
-    if t.get("rgb_stars"):
+    if t.get("rgb_stars") or t.get("mono_rgb"):
         filters = list(t["filters"])
     else:
         filters = (sorted(have) or list(t["filters"])) if t["kind"] == "filters" else list(t["filters"])
@@ -306,6 +306,8 @@ def _build_filters(plan, g, t, name, opts):
         _align_without_astrometry(plan, r, b, ref, ref_blocks)
     if t["kind"] == "filters":
         return
+    if t.get("mono_rgb"):
+        return _mono_combination(plan, name, kind, rows, opts)
     if not stars:
         _combination(plan, name, kind, rows, "output")
         return
@@ -319,6 +321,21 @@ def _build_filters(plan, g, t, name, opts):
 
 def _combination(plan, name, kind, rows, image, channels=None):
     """model.add_fusion: a combination of type kind reading the rows' images (channel L unless given)."""
+    return _combine(plan, name, kind, rows, image, channels)[0]
+
+
+def _mono_combination(plan, name, kind, rows, opts):
+    """model.add_mono_combination ("Mono RGB", "Mono LRGB"): the combination of type kind reads the filter rows'
+    Outputs, one Color block after it calibrates the colour once; Post shows the combination only."""
+    fus, j = _combine(plan, name, kind, rows, "output")
+    plan.op("add_block", made_blocks=1, kind="color", at={"type": "insert", "row": fus, "after": j})
+    part = "combined" if opts.get("etoiles") == "retirer" else None       # model.post_default_part of a filter row
+    plan.actions.append(("removed", [(r, part) for _f, r, _b in rows]))
+    return fus
+
+
+def _combine(plan, name, kind, rows, image, channels=None):
+    """_combination's row and its combination block."""
     nm = plan.unique_name(name)
     plan.names.add(nm)
     (fus,), (j,) = plan.op("add_combination", made_rows=1, made_blocks=1, type=kind, name=nm)
@@ -332,7 +349,7 @@ def _combination(plan, name, kind, rows, image, channels=None):
             src, sport = b[last], "image"
         plan.op("wire", src=src, src_port=sport, dst=j, dst_port=port,
                 channel=(channels or {}).get(f, "L"))
-    return fus
+    return fus, j
 
 
 def _stars_back(plan, fus, stars_row, filter_rows, extra_removed):

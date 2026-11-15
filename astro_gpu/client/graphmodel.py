@@ -2055,6 +2055,14 @@ class GraphEditing:
         res = self._run_plan(self._template(t, name, opts))
         return self._view_of_wid(self._fusion_made(res))
 
+    def add_mono_combination(self, name: str, kind: str, filters: list[str], opts: dict):
+        """The "Mono RGB" / "Mono LRGB" templates (graphcore.templates): one row per filter, the combination of type
+        ``kind`` reading their Outputs, one Color block after it; one Undo step. Returns the combination."""
+        self._absorb()
+        t = {"kind": "fusion", "mono_rgb": True, "filters": list(filters), "palette": _TITLE_OF_KIND.get(kind, kind)}
+        res = self._run_plan(self._template(t, name, opts))
+        return self._view_of_wid(self._fusion_made(res))
+
     def _fusion_made(self, res):
         """The last combination a gesture made reading starless images (or the last one)."""
         out = None
@@ -2728,7 +2736,8 @@ PORTED = (
     "apply_change", "add_variant", "keep_variant", "drop_variant", "rename", "_rename", "duplicate", "remove_path",
     "delete_workflow", "send_to_post", "set_image_file", "add_fusion", "remove_fusion", "set_fusion_input",
     "set_fusion_channel", "set_fusion_image", "set_fusion_weight", "clear_fusion_input", "set_align_reference",
-    "set_align_on", "align_without_astrometry", "add_sho_rgb", "add_dual_x2", "add_filters_combination", "add_path",
+    "set_align_on", "align_without_astrometry", "add_sho_rgb", "add_dual_x2", "add_mono_combination",
+    "add_filters_combination", "add_path",
     "add_graph_workflow", "ensure_frames_workflow", "filter_workflow", "add_image_workflow", "image_name", "set_graph",
     "set_opts", "add_exit", "remove_session", "join_session", "add_parallel_flow", "_refile_session",
     # today's code, unchanged, on ported facades: new_session, delete_workflow
