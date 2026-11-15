@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
     QLineEdit,
-    QMenu,
     QMessageBox,
     QScrollBar,
     QWidget,
@@ -242,13 +241,36 @@ def gestures(w: QWidget) -> list[tuple[str, object]]:
 
 
 def definition(m) -> str:
-    """The project's definition as the model holds it (the graph), as text."""
+    """The project's definition as the model holds it (the graph), as text; the light frames excluded by hand apart:
+    by design Undo never takes them back (Include does: graphmodel's undo keeps them)."""
     from astro_gpu.graphcore import model as gm
     g = getattr(m, "_g", None)
     if g is None:
         return ""
     d = gm.to_dict(g)
+    d.pop("excluded", None)
     return json.dumps(d, sort_keys=True, default=str)
+
+
+def first_difference(a: str, b: str, path: str = "") -> str:
+    """Where two definitions (as ``definition`` gives them) first differ, as a path and the two values."""
+    x, y = (json.loads(a), json.loads(b)) if isinstance(a, str) else (a, b)
+    if type(x) is not type(y):
+        return f"{path}: {str(x)[:80]} -> {str(y)[:80]}"
+    if isinstance(x, dict):
+        for k in sorted(set(x) | set(y), key=str):
+            if x.get(k) != y.get(k):
+                return first_difference(x.get(k), y.get(k), f"{path}/{k}")
+    elif isinstance(x, list) and len(x) == len(y):
+        for i, (u, v) in enumerate(zip(x, y)):
+            if u != v:
+                return first_difference(u, v, f"{path}[{i}]")
+    return f"{path}: {str(x)[:80]} -> {str(y)[:80]}"
+
+
+def differs(after: str, before: str, m) -> str:
+    """The failure of a definition not given back: after what, and where it differs."""
+    return f"the definition differs after {after}: " + first_difference(before, definition(m))
 
 
 class Sweep:

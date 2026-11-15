@@ -21,7 +21,7 @@ from astro_gpu.client.blockdraft import DRAFT_ANSWER_ENV, DraftBar
 from tests.client.graphview.legacy import World
 from tests.client.graphview.test_gv_loop_guard import _computed
 from tests.client.pagehelp import qapp  # noqa: F401  (the fixture, by name)
-from tests.client.sweep import Oracle, Sweep, controls, definition, gestures
+from tests.client.sweep import Oracle, Sweep, controls, definition, differs, gestures
 
 LANGS = ("en", "fr")
 SHAPES = ("colour", "sho")
@@ -118,7 +118,7 @@ def drive_panel(S: Sweep, m, get_panel, prefix: str, settle, restore=lambda: Non
                 if not getattr(m, "pending_change", None):            # applied at once, or a gesture of the view
                     _undo_to(m, n, settle)
                     if definition(m) != before:
-                        S.fail(path, "the definition differs after its Undo")
+                        S.fail(path, differs("its Undo", before, m))
                     restore()
                     break
                 bar = _bar(get_panel())
@@ -139,7 +139,7 @@ def drive_panel(S: Sweep, m, get_panel, prefix: str, settle, restore=lambda: Non
                     settle()
                 _undo_to(m, n, settle)
                 if definition(m) != before:
-                    S.fail(f"{path}/{how}", "the definition differs after the answer and its Undo")
+                    S.fail(f"{path}/{how}", differs("the answer and its Undo", before, m))
                 restore()
 
 
@@ -213,7 +213,7 @@ def test_sweep_graph_panels(qapp, tmp_path, oracle, monkeypatch, shape, lang):
                     W.settle(1)
                 _undo_to(m, n, lambda: W.settle(1))
                 if definition(m) != before:
-                    S.fail(f"{t}/leave with a draft/{how}", "the definition differs after its Undo")
+                    S.fail(f"{t}/leave with a draft/{how}", differs("its Undo", before, m))
             if get() is not None:
                 get().expert = False
     finally:
@@ -278,7 +278,7 @@ def test_sweep_graph_menus_and_palette(qapp, tmp_path, oracle, shape, lang):
                         pass
                 _undo_to(m, n, lambda: W.settle(1))
                 if definition(m) != before:
-                    S.fail(f"{t}/{name}", "the definition differs after its Undo")
+                    S.fail(f"{t}/{name}", differs("its Undo", before, m))
         # the palette: every card placed (a double click), then undone
         W.page.palette.finish()
         for kind, card in list(W.page.palette.cards.items()):
@@ -288,7 +288,7 @@ def test_sweep_graph_menus_and_palette(qapp, tmp_path, oracle, shape, lang):
             S.drive(f"palette/{kind}", lambda kind=kind: W.g.double_click_palette(kind))
             _undo_to(m, n, lambda: W.settle(1))
             if definition(m) != before:
-                S.fail(f"palette/{kind}", "the definition differs after its Undo")
+                S.fail(f"palette/{kind}", differs("its Undo", before, m))
     finally:
         W.close()
     print(f"greyed entries: {len(greyed)}; without a reason: " + "; ".join(g for g in greyed if "(no reason)" in g))
@@ -340,14 +340,14 @@ def test_sweep_table(qapp, tmp_path, oracle, shape, lang):
                         pass
                 _undo_to(m, n, lambda: W.settle(1))
                 if definition(m) != before:
-                    S.fail(path, "the definition differs after its Undo")
+                    S.fail(path, differs("its Undo", before, m))
         for name, w in controls(t, skip=[grid]):
             for gname, do in gestures(w):
                 n, before = len(m._undo), definition(m)
                 S.drive(f"button/{name}/{gname}", do)
                 _undo_to(m, n, lambda: W.settle(1))
                 if definition(m) != before:
-                    S.fail(f"button/{name}/{gname}", "the definition differs after its Undo")
+                    S.fail(f"button/{name}/{gname}", differs("its Undo", before, m))
                 if W.page.table_host is not host or not host.isVisible():
                     W.page.positions["table"].click()
                     W.settle(1)
@@ -359,6 +359,7 @@ def test_sweep_table(qapp, tmp_path, oracle, shape, lang):
 # ---------------------------------------------------------------------------------------------- Inspect and the window
 def _window(tmp_path_factory, qapp):
     from conftest import scratch_project
+
     from tests.client.test_inspect import open_window
     folder = scratch_project(tmp_path_factory.mktemp("sweep") / "proj")
     win = open_window(folder)
@@ -371,8 +372,9 @@ def test_sweep_inspect(qapp, tmp_path_factory, oracle, lang):
     from conftest import HAVE_TEST_PROJECT, NO_TEST_PROJECT
     if not HAVE_TEST_PROJECT:
         pytest.skip(NO_TEST_PROJECT)
-    from tests.client.test_inspect import settle
     from PySide6.QtWidgets import QPushButton, QTabBar
+
+    from tests.client.test_inspect import settle
     _lang(lang)
     win = _window(tmp_path_factory, qapp)
     S = Sweep(oracle, lambda: settle(win, 2), f"inspect[{lang}]")
@@ -445,7 +447,7 @@ def test_sweep_inspect(qapp, tmp_path_factory, oracle, lang):
                         settle(win, 2)
                     _undo_to(s, n, lambda: settle(win, 2))
                     if definition(s) != before:
-                        S.fail(f"{name}/page/{bname}/{gname}", "the definition differs after its Undo")
+                        S.fail(f"{name}/page/{bname}/{gname}", differs("its Undo", before, s))
                     restore()
     finally:
         win.close()

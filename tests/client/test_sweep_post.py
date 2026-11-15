@@ -8,7 +8,7 @@ import pytest
 from astro_gpu.client import prefs
 from astro_gpu.client.blockdraft import DRAFT_ANSWER_ENV
 from tests.client.pagehelp import qapp  # noqa: F401  (the fixture, by name)
-from tests.client.sweep import Oracle, Sweep, controls, definition, gestures
+from tests.client.sweep import Oracle, Sweep, controls, definition, differs, gestures
 
 LANGS = ("en", "fr")
 
@@ -72,7 +72,7 @@ def test_sweep_post(qapp, tmp_path_factory, oracle, lang):
                         settle(win, 2)
                         k += 1
                     if definition(s) != before:
-                        S.fail(f"{name}/{gname}", "the definition differs after its Undo")
+                        S.fail(f"{name}/{gname}", differs("its Undo", before, s))
                     if not page.isVisible():
                         page.show()
                         settle(win, 2)
