@@ -1617,8 +1617,8 @@ class Main(QMainWindow):
     @staticmethod
     def _commit_typing():
         w = QApplication.focusWidget()
-        if isinstance(w, (QLineEdit, QAbstractSpinBox)):
-            w.clearFocus()                               # editingFinished: what is typed applies before the save
+        if isinstance(w, (QLineEdit, QAbstractSpinBox, QPlainTextEdit)):
+            w.clearFocus()                               # editingFinished (a note: its focus out): what is typed applies
 
     def save_as(self):
         """The project, its edits included, in another folder with its results (moved: _move_results), then
