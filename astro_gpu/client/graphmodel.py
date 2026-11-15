@@ -102,14 +102,21 @@ def _step_words(g, steps) -> str:
                 texts.choice_label(str(m), "en")
             return _("{setting}: {value}").format(setting=_(LABEL.get(blk.kind, blk.kind)), value=_(word))
         if op in ("set_flow_param", "set_param", "set_trunk_param") and isinstance(kw.get("name"), str):
-            stage, name, v = str(kw.get("stage") or ""), kw["name"], kw.get("value")
-            label = texts.param_label(stage.partition("@")[0].partition("~")[0], name, language()) or name
-            value = _("suggested value") if v is None else (texts.choice_label(v, language()) if isinstance(v, str)
-                                                             else fmt(v))
-            return _("{setting}: {value}").format(setting=label, value=value)
+            return _param_words(str(kw.get("stage") or ""), kw["name"], kw.get("value"))
     except (KeyError, ValueError, TypeError, IndexError, AttributeError):
         return ""
     return ""
+
+
+def _param_words(stage, name, v) -> str:
+    """A setting and its value in the interface's words ("Hot pixel threshold: 0.7"), never the engine's names."""
+    from .. import texts
+    from .i18n import language
+    from .settings import fmt
+    label = texts.param_label(stage.partition("@")[0].partition("~")[0], name, language()) or name
+    value = _("suggested value") if v is None else (texts.choice_label(v, language()) if isinstance(v, str)
+                                                     else fmt(v))
+    return _("{setting}: {value}").format(setting=label, value=value)
 
 
 class GraphRefused(ValueError):
@@ -1792,7 +1799,17 @@ class GraphEditing:
                 for c in ch["changes"][1:]:
                     self.apply_change([q], c)
             return self.view(q.pid) or q
-        res = self._do(self._variant_steps(p, ch, title))
+        steps = self._variant_steps(p, ch, title)
+        words = ""
+        if ch["kind"] in ("param", "params"):             # Undo names it in the user's words, as a setting's step
+            try:
+                first = _mm().ProjectModel._api_changes(ch)[0]
+                words = _param_words(first["stage"], first["name"], first["value"])
+            except (KeyError, ValueError, TypeError, IndexError, AttributeError):
+                words = ""
+        else:
+            words = _step_words(self._g, [("set_method", steps[0][1]["change"] | {"block": steps[0][1]["block"]})])                 if "method" in steps[0][1].get("change", {}) else ""
+        res = self._do(steps, name=f"{_('Try variant')} · {words}" if words else None)
         return self._view_of_wid(self._made_wid(res))
 
     #: the stages a variant takes from the stack's start: its frames, their calibration, registration and stack

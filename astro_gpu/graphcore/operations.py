@@ -2620,7 +2620,7 @@ def op_try_variant(q, block, change, name=None):
     v.legacy = None
     v.trial = r.wid
     _apply_change(q, target, change)
-    out.toast = M("variant “{_name}”: Keep or Discard", _name=v.name)
+    out.toast = M("variant “{_name}” under “{_base}”", _name=v.name, _base=r.name)    # a row like another: no header
     out.focus = target
     return out
 

@@ -374,3 +374,14 @@ def test_a_removal_from_post_that_raises_gives_the_active_version_back(model, mo
     with pytest.raises(RuntimeError):
         model.apply([("unwire", {"wire": w.id})])
     assert len(calls) == 2 and model.p.post["active"] == first
+
+
+def test_the_undo_text_of_a_variant_tried_names_its_setting_in_the_users_words(model):
+    """Undo after Try variant read "variant “…”: Keep or Discard · hot_sigma: 0.7": a header that is gone and the
+    engine's own name of the setting."""
+    p = next(q for q in model.paths if q.name == "Color minimal")
+    ch = {"kind": "param", "stage": "calibrate", "name": "hot_sigma", "value": 0.7}
+    model.add_variant(p, ch, f"{p.name} · hot_sigma: 0.7")
+    text = model._undo_what[-1]
+    assert "Keep or Discard" not in text and "hot_sigma" not in text
+    assert text == "Try variant · Hot pixel threshold: 0.7"
