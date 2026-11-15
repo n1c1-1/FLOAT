@@ -1,7 +1,7 @@
 """Operations (§4). Every operation runs on a clone of the graph; refused = nothing changes. No history here:
 the caller keeps the graphs it wants to go back to."""
 import copy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .shapes import Result
 from .model import (Index, Row, Wire, Tap, check, clone, model_json, new_block, new_id, in_ports, out_ports, edges,
@@ -1279,7 +1279,7 @@ def _make_variant(q, frow, x, blocks, origin, base):
         for w in list(q.wires):
             if w.src[0] == ob:
                 act = q.blocks[w.dst[0]].kind == "post"
-                q.wires.append(Wire(new_id(q, "w"), [nb, w.src[1]], list(w.dst), act))
+                q.wires.append(replace(w, id=new_id(q, "w"), src=[nb, w.src[1]], dst=list(w.dst), active=act))
     v = Row(new_id(q, "r"), free_name(q, base, False), blocks, [], [frow, x])
     if any(q.blocks[b].kind == "stacking" for b in blocks):
         ix = Index(q)
@@ -2546,7 +2546,8 @@ def op_try_variant(q, block, change, name=None):
         for nb, ob in zip(copies, root.blocks):
             for w in list(q.wires):
                 if w.src[0] == ob:
-                    q.wires.append(Wire(new_id(q, "w"), [nb, w.src[1]], list(w.dst), q.blocks[w.dst[0]].kind == "post"))
+                    q.wires.append(replace(w, id=new_id(q, "w"), src=[nb, w.src[1]], dst=list(w.dst),
+                                           active=q.blocks[w.dst[0]].kind == "post"))
         if target is None:
             target = copies[root.blocks.index(block)]
         out = Out(M("variant “{_name}” under “{_base}”", _name=base, _base=r.name), copies[0] if copies else nights[0][0],
