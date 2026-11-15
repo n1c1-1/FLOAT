@@ -723,13 +723,14 @@ class Main(QMainWindow):
         self.project.log("Project created" if created else "Project opened")
         if not drafts.is_untitled(root):
             prefs.add_recent(root.as_posix(), d.name, d.target.name or "")
-        self._recovery_mine = recovered is not None and not rescued
+        self._recovery_mine = False                      # a crash's copy is kept until the screen is built
         try:
             self.make_model()
             self.mode = 0
             self._last_step = None
             self.build_menus()
             self.build_project()
+            self._recovery_mine = recovered is not None and not rescued
         except Exception as e:  # noqa: BLE001 - the night test pass: a project that failed to build stayed half open,
             import logging      # invisible, the next gestures acting on it; closed, said, the detail in the output
             logging.getLogger(__name__).exception("the project could not be shown")
