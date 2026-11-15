@@ -135,6 +135,7 @@ class ClassicParams:
     high: float | None = None
     gesd_above_50: bool = False
     half_block: int = 20
+    combination: str = "mean"            # rejection_classic.COMBINATIONS: the others reject nothing
     store_dtype: str = "float32"         # "float16" halves the memory of the resampled frames
     band_pixels: int = 1 << 20           # pixels per rejection band on the device
 
@@ -364,7 +365,8 @@ def stack_classic(load: Callable, coef, bad=None, norm: Norm | None = None, weig
                                           and (np.asarray(nm.scale[i]) > 0).all())]
     if unmeasured:
         raise ValueError(f"no normalisation for frame(s) {unmeasured}: leave them out of ``used``")
-    choice = rc.choose(nu, p.rejection, p.low, p.high, p.gesd_above_50)
+    plain = p.combination != "mean"         # median, maximum, minimum or sum: no rejection, the frames' weights not used
+    choice = rc.Choice("none", 0.0, 0.0, rc.COMBINATION_REASONS[p.combination], {}) if plain else         rc.choose(nu, p.rejection, p.low, p.high, p.gesd_above_50)
     in_a = np.array([(i // p.half_block) % 2 == 0 for i in used])
     wu = torch.as_tensor(Wt[used], dtype=torch.float32, device=dev)            # (nu,)
     sat_t = None
@@ -527,16 +529,26 @@ def stack_classic(load: Callable, coef, bad=None, norm: Norm | None = None, weig
             valid = torch.isfinite(v)
             lo, hi = rc.reject(v, choice, valid)
             keep = valid & ~lo & ~hi
-            w = wu
-            mean, den, kept = rc.combine(v, keep, w)
-            mean = torch.where(valid.any(0), mean, torch.zeros_like(mean))
+            w = torch.ones_like(wu) if plain else wu
             wk = torch.where(keep, w[:, None].expand_as(v), torch.zeros_like(v))
             x0 = torch.where(keep, v, torch.zeros_like(v))
             half = []
-            for sel in (ina, ~ina):
-                ws = wk * sel[:, None]
-                num, d = (ws * x0).sum(0), ws.sum(0)
-                half.append(torch.where(d > 0, num / torch.where(d > 0, d, torch.ones_like(d)), torch.zeros_like(d)))
+            if plain:
+                mean, den, kept = rc.combine_plain(v, valid, p.combination), wk.sum(0), valid.sum(0)
+                for sel in (ina, ~ina):                  # each half combined the same way; a sum's halves at the
+                    vh = valid & sel[:, None]            # scale of the whole (their mean times its count)
+                    h = rc.combine_plain(v, vh, p.combination)
+                    if p.combination == "sum":
+                        h = h / vh.sum(0).clamp(min=1) * kept
+                    half.append(torch.where(torch.isfinite(h), h, torch.zeros_like(h)))
+            else:
+                mean, den, kept = rc.combine(v, keep, w)
+                for sel in (ina, ~ina):
+                    ws = wk * sel[:, None]
+                    num, d = (ws * x0).sum(0), ws.sum(0)
+                    half.append(torch.where(d > 0, num / torch.where(d > 0, d, torch.ones_like(d)),
+                                            torch.zeros_like(d)))
+            mean = torch.where(valid.any(0), mean, torch.zeros_like(mean))
             for j, m in enumerate((near_b, clip_b)):
                 sh = (wk * m).sum(0) / torch.where(den > 0, den, torch.ones_like(den))
                 shares[j] = torch.maximum(shares[j], torch.where(den > 0, sh, torch.zeros_like(sh)))

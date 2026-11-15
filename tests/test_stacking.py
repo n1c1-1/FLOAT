@@ -610,3 +610,17 @@ def test_a_project_saved_with_the_old_clamping_names_opens_with_the_new_ones():
         assert StackParams(classic_clamping=old).classic_clamping == new
         assert StackParams(classic_clamping=old).model_dump() == StackParams(classic_clamping=new).model_dump()
     assert StackParams().classic_clamping == "bilinear_guide"
+
+
+def test_the_classic_combination_at_its_mean_leaves_the_keys_as_they_were(tmp_path):
+    """B11: the Classic method's combination (mean, median, maximum, minimum, sum) is a setting added later: at its
+    default, stored or not, no key moves; another value makes another stack."""
+    from astro_gpu.core.store import Keys
+    p = _project2(tmp_path)
+    w = p.workflows[1]
+    w.params["stack"]["method"] = "classic"
+    before = Keys(p).key(w.id, "stack")
+    w.params["stack"]["classic_combination"] = "mean"
+    assert Keys(p).key(w.id, "stack") == before
+    w.params["stack"]["classic_combination"] = "maximum"
+    assert Keys(p).key(w.id, "stack") != before

@@ -77,6 +77,11 @@ REASONS = {
     "gesdt": "{n} frames: generalized ESD test (up to {low:.0%} outliers, significance {high:g}), the usual advice "
              "above 50 frames",
     "chosen": "{method} chosen ({low:g} / {high:g})",
+    # the combinations that reject nothing (``COMBINATIONS``)
+    "median": "median of the values at each pixel, no rejection",
+    "maximum": "pixel maximum: the brightest value at each pixel, no rejection",
+    "minimum": "pixel minimum: the darkest value at each pixel, no rejection",
+    "sum": "sum of the values at each pixel, no rejection",
     "weak_sky": "{n} frames: no rejection; the sky ({level:.1f}) is too weak against the noise ({sigma:.1f}) for "
                 "percentile clipping, whose {high:g} of the median is {ratio:.1f} sigma (it would reject noise: "
                 "{pct:.0f} % of the points; {need:.1f} sigma are needed to keep it under {limit:.1f} %)",
@@ -622,6 +627,31 @@ def reject(v: torch.Tensor, choice: Choice, valid: torch.Tensor | None = None):
     if choice.method == "gesdt":
         return gesd_clip(v, choice.low, choice.high, valid)
     raise ValueError(f"unknown rejection {choice.method!r}")
+
+
+#: how the values of a pixel are combined: the weighted mean of what the rejection keeps (the default), or one of the
+#: other stacking methods of the reference program [S1] (median, pixel maximum, pixel minimum, sum), which reject
+#: nothing and weigh every frame the same
+COMBINATIONS = ("mean", "median", "maximum", "minimum", "sum")
+COMBINATION_REASONS = {k: REASONS[k] for k in COMBINATIONS[1:]}
+
+
+def combine_plain(v: torch.Tensor, valid: torch.Tensor, how: str) -> torch.Tensor:
+    """(P,) the median, maximum, minimum or sum (``how``) of the valid values of each column of v (N, P), NaN where
+    there is none: the reference program's median, pixel maximum, pixel minimum and sum stacking [S1], every frame
+    the same weight."""
+    n = valid.sum(0)
+    if how == "median":
+        out = median(v, valid)
+    elif how == "maximum":
+        out = torch.where(valid, v, torch.full_like(v, float("-inf"))).max(0).values
+    elif how == "minimum":
+        out = torch.where(valid, v, torch.full_like(v, float("inf"))).min(0).values
+    elif how == "sum":
+        out = torch.where(valid, v, torch.zeros_like(v)).sum(0)
+    else:
+        raise ValueError(f"unknown combination {how!r}: one of {COMBINATIONS[1:]}")
+    return torch.where(n > 0, out, torch.full_like(out, float("nan")))
 
 
 def combine(v: torch.Tensor, keep: torch.Tensor, w: torch.Tensor):

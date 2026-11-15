@@ -53,6 +53,7 @@ its top-left corner (+ DRIZZLE_BOUNDS_TOLERANCE); a source pixel of CFA channel 
 """
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import math
 import os
@@ -119,7 +120,7 @@ CLASSIC_MODULES = ("debayer", "resample", "rejection_classic", "stack_classic")
 CLASSIC_CHOICES = {"classic_debayer": ("rcd", "bilinear"), "classic_interpolation": ("lanczos4", "bilinear"),
                    "classic_clamping": ("bilinear_guide", "lobe_clamp", "none"),
                    "classic_rejection": ("auto", "none", "percentile", "winsorized", "linear_fit", "gesdt"),
-                   "classic_cfa_balance": ON_OFF}
+                   "classic_cfa_balance": ON_OFF, "classic_combination": rc_mod.COMBINATIONS}
 #: the revision of the Classic part (core/stack_classic.py and its modules), in the store key of the results that use
 #: it (``Stack.key_version``: the Classic method, the drizzle with the integration's rejection) and of no other.
 #: 2: the white balance before RCD
@@ -234,6 +235,15 @@ class StackParams(StageParams):
                                       "as raw converters do, so that "
                                       "RCD does not move green light into the blue and red of the stars. Off: the "
                                       "debayering without balance.")
+    classic_combination: str = P("mean", label="Combination (Classic)", level=ADVANCED,
+                                 choices=list(CLASSIC_CHOICES["classic_combination"]), key_neutral="mean",
+                                 help="With the Classic method: how the frames' values at each pixel make the stack. "
+                                      "Mean: the weighted mean of the "
+                                      "values the rejection keeps (the usual choice). Median: the middle value, no "
+                                      "rejection. Maximum: the brightest value (star trails, meteors, satellites "
+                                      "kept). Minimum: the darkest value. Sum: the values added up (the image's "
+                                      "levels times the number of frames). The four last reject nothing and give "
+                                      "every frame the same weight; the frames are normalised as for the mean.")
     drizzle_rejection: str = P("own", label="Rejection (drizzle)", level=ADVANCED, choices=list(DRIZZLE_REJECTIONS),
                                help="With the Bayer drizzle: how outliers (hot pixels, satellites, cosmic rays) are "
                                     "found. On the raw pixels: each sample is compared with the mean and spread "
@@ -1590,7 +1600,8 @@ def classic_params(p: StackParams):
     from ..core import stack_classic as sc
     return sc.ClassicParams(debayer=p.classic_debayer, cfa_balance=p.classic_cfa_balance == "on",
                             interpolation=p.classic_interpolation, clamping=p.classic_clamping,
-                            rejection=p.classic_rejection, half_block=p.half_block)
+                            rejection=p.classic_rejection, half_block=p.half_block,
+                            combination=p.classic_combination)
 
 
 def integration_rejection(ctx: Context, p: StackParams, load, coef, used, weight, norm, transp, ch_of_k, H: int, W: int,
@@ -1608,8 +1619,9 @@ def integration_rejection(ctx: Context, p: StackParams, load, coef, used, weight
     from ..core import stack_classic as sc
     meta = ctx.load_json("inventory", "frames.json")["lights"]
     res = sc.stack_classic(load, coef, bad=None, norm=sc.Norm.from_drizzle(norm, transp), weights=weight,
-                           params=classic_params(p), device=dev, used=used, ch_of_k=ch_of_k, H=H, W=W,
-                           sat_level=satval, masks=True, raw_template=raw_template(meta, used, ch_of_k),
+                           # (the rejection is what is used here: always the mean's, whatever the combination)
+                           params=dataclasses.replace(classic_params(p), combination="mean"), device=dev, used=used,
+                           ch_of_k=ch_of_k, H=H, W=W, sat_level=satval, masks=True, raw_template=raw_template(meta, used, ch_of_k),
                            progress=lambda f, msg: ctx.progress(0.3 + 0.4 * f, f"integration's rejection: {msg}"),
                            **within_memory(ctx))
     res.full = res.A = res.B = res.weight = None            # only the rejection is used: free the images

@@ -416,3 +416,37 @@ def test_the_compiled_linear_fit_clipping_gives_the_tensor_one_s_rejections(n):
         assert all(bool((x == y).all()) for x, y in zip(a, b))
         total += int(a[0].sum() + a[1].sum())
     assert total > 0
+
+
+def test_combine_plain_is_the_median_maximum_minimum_and_sum_of_the_values_there():
+    v = torch.tensor([[1.0, 5.0, float("nan")], [3.0, float("nan"), float("nan")], [2.0, 7.0, float("nan")]])
+    valid = torch.isfinite(v)
+    for how, want in (("median", [2.0, 6.0]), ("maximum", [3.0, 7.0]), ("minimum", [1.0, 5.0]), ("sum", [6.0, 12.0])):
+        out = rc.combine_plain(v, valid, how)
+        assert out[:2].tolist() == want and math.isnan(float(out[2])), how
+
+
+@pytest.mark.parametrize("how", ["median", "maximum", "minimum", "sum"])
+def test_the_classic_path_combines_by_median_maximum_minimum_or_sum_without_rejection(how):
+    """B11: the reference program's other stacking methods. The trail of one frame is kept by the maximum, gone from
+    the minimum and the median; the sum is the mean times the number of frames."""
+    coef, frames, norm = make_frames()
+    mean = sc.stack_classic(lambda i: frames[i], coef, None, norm, None, sc.ClassicParams(half_block=4), "cpu",
+                            used=range(NF), ch_of_k=[0, 1, 1, 2], H=H, W=W)
+    res = sc.stack_classic(lambda i: frames[i], coef, None, norm, None,
+                           sc.ClassicParams(half_block=4, combination=how), "cpu",
+                           used=range(NF), ch_of_k=[0, 1, 1, 2], H=H, W=W)
+    assert res.choice.method == "none" and res.rejected_pct == 0 and how in res.choice.reason
+    m = 12
+    yy, xx = np.mgrid[0:H, 0:W]
+    on = (np.abs(yy - (0.4 * xx + 10)) < 1.0)[m:-m, m:-m]
+    trail = (res.full - mean.full)[1, m:-m, m:-m][on]
+    if how == "maximum":
+        assert np.median(trail) > 100                                 # the trail is there
+    elif how in ("minimum", "median"):
+        assert abs(float(np.median(trail))) < 25                      # gone, as from the mean
+    else:
+        ratio = res.full[1, m:-m, m:-m] / np.where(mean.full[1, m:-m, m:-m] == 0, 1, mean.full[1, m:-m, m:-m])
+        assert abs(float(np.median(ratio)) - NF) < 0.5
+        assert abs(float(np.median(res.A[1, m:-m, m:-m] / res.full[1, m:-m, m:-m])) - 1) < 0.1   # at the whole's scale
+    assert np.isfinite(res.full).all() and np.isfinite(res.A).all() and np.isfinite(res.B).all()
