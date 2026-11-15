@@ -466,7 +466,7 @@ class SourcesView(QWidget):
         v = QVBoxLayout(w)
         v.setContentsMargins(24, 24, 24, 24)
         v.setAlignment(Qt.AlignCenter)
-        v.addWidget(para(_("Drop your files on a row at the left, or use Add files.")), 0, Qt.AlignHCenter)
+        v.addWidget(para(_("Drop your files on their zone, or use Add files.")), 0, Qt.AlignHCenter)
         v.addSpacing(10)
         grid = QGridLayout()
         grid.setSpacing(12)

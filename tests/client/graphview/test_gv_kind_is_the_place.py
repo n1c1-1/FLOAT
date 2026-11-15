@@ -150,11 +150,11 @@ def test_inspect_centre_takes_no_drop_and_says_so(qapp, tmp_path, monkeypatch):
         QApplication.processEvents()
         assert view.stack.currentIndex() == 3
         texts = [x.text() for x in view.stack.currentWidget().findChildren(QLabel)]
-        assert "Drop your files on a row at the left, or use Add files." in texts
+        assert "Drop your files on their zone, or use Add files." in texts
         i18n.set_language("fr")
         try:
-            assert i18n._("Drop your files on a row at the left, or use Add files.") == (
-                "Déposez vos fichiers sur une ligne à gauche, ou utilisez Ajouter fichiers.")
+            assert i18n._("Drop your files on their zone, or use Add files.") == (
+                "Déposez vos fichiers sur leur zone, ou utilisez Ajouter fichiers.")
             assert i18n._("Drop on a row") == "Déposez sur une ligne"
         finally:
             i18n.set_language("en")
