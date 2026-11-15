@@ -150,14 +150,46 @@ def test_inspect_centre_takes_no_drop_and_says_so(qapp, tmp_path, monkeypatch):
         QApplication.processEvents()
         assert view.stack.currentIndex() == 3
         texts = [x.text() for x in view.stack.currentWidget().findChildren(QLabel)]
-        assert "Drop your files on a row at the left, or use Add files." in texts
+        assert "Drop your files on their zone, or use Add files." in texts
         i18n.set_language("fr")
         try:
-            assert i18n._("Drop your files on a row at the left, or use Add files.") == (
-                "Déposez vos fichiers sur une ligne à gauche, ou utilisez Ajouter fichiers.")
+            assert i18n._("Drop your files on their zone, or use Add files.") == (
+                "Déposez vos fichiers sur leur zone, ou utilisez Ajouter fichiers.")
             assert i18n._("Drop on a row") == "Déposez sur une ligne"
         finally:
             i18n.set_language("en")
+    finally:
+        view.close()
+        close(w, m, page)
+
+
+def test_an_empty_kind_shows_one_drop_zone_per_kind_and_each_takes_its_own(qapp, tmp_path, monkeypatch):
+    from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
+    from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
+    from PySide6.QtWidgets import QApplication
+    from astro_gpu.client.sources import GROUPS, DropZone, SourcesView
+    from tests.client.test_sources_import import close, open_page
+    w, m, page = open_page(tmp_path, monkeypatch, sessions=1, workflows=("Full",))
+    view = SourcesView(m)
+    view.resize(1400, 800)
+    view.show()
+    try:
+        view.show_session(1, "darks")
+        QApplication.processEvents()
+        assert view.stack.currentIndex() == 3
+        zones = {z.key: z for z in view.stack.currentWidget().findChildren(DropZone)}
+        assert list(zones) == [k for k, _t, _s in GROUPS]               # one per kind, flat darks too
+        assert not m.p.session(1).flats
+        files = labelled(tmp_path / "f", 2, "OIII", "Dark Frame", "dark")      # what the files say is not read
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(p) for p in files])
+        at = QPoint(10, 10)
+        target = zones["flats"]
+        QApplication.sendEvent(target, QDragEnterEvent(at, Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier))
+        QApplication.sendEvent(target, QDragMoveEvent(at, Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier))
+        QApplication.sendEvent(target, QDropEvent(QPointF(at), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier))
+        QApplication.processEvents()
+        assert len(m.p.session(1).flats) == 2 and not m.p.session(1).darks     # the zone is the kind
     finally:
         view.close()
         close(w, m, page)

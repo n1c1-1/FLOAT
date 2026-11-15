@@ -956,7 +956,8 @@ def test_before_the_stack_exists_the_gradient_view_shows_with_only_its_method_li
         cover = u["cover"]
         assert cover.isVisible() and cover.geometry() == ed.gv.rect()
         texts = [x.text() for x in cover.findChildren(QLabel)] + [x.text() for x in cover.findChildren(QPushButton)]
-        assert "Not computed yet" in texts and any(t.startswith("Run to here") for t in texts), texts
+        assert "Not computed: run to see the picture" in texts and any(t.startswith("Run to here") for t in texts), texts
+        assert "#15171c" in cover.styleSheet()                        # dark, never the palette's white
         g0 = _geometry(w, ed)
         u["method"].setCurrentIndex(u["method"].findData("rbf"))     # a choice of the method: the draft's path
         u["method"].activated.emit(u["method"].currentIndex())

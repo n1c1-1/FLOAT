@@ -630,9 +630,9 @@ def projects_location(avoid: str = "") -> str:
     reads), never in a folder of frames (GUI exploration 4: the darks just added to a session were the last folder
     used)."""
     bad = Path(avoid).resolve() if avoid else None
-    last = Path(prefs.last_folder())
+    last = Path(prefs.get("last_folder") or "")      # the setting itself: the home folder is never a last-used one
     sections = [Path(r["folder"]) for r in prefs.get("home_sections") or [] if isinstance(r, dict) and r.get("folder")]
-    for c in [Path(r["path"]).parent for r in prefs.recent()] + sections + [last, Path.home()]:
+    for c in [Path(r["path"]).parent for r in prefs.recent()] + sections + ([last] if str(last) != "." else []):
         try:
             if not c.is_dir():
                 continue
@@ -644,7 +644,17 @@ def projects_location(avoid: str = "") -> str:
         if c is last and holds_frames(c):
             continue
         return c.as_posix()
-    return (bad.parent if bad is not None else Path.home()).as_posix()
+    return default_location().as_posix()
+
+
+DEFAULT_NAME = "NGC 7000"
+
+
+def default_location() -> Path:
+    """Where projects go when nothing else is known: FLOAT, in the user's Documents folder."""
+    from PySide6.QtCore import QStandardPaths
+    docs = QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation)
+    return (Path(docs) if docs else Path.home() / "Documents") / "FLOAT"
 
 
 class NewProjectDialog(QDialog):
@@ -665,7 +675,6 @@ class NewProjectDialog(QDialog):
         rows.append(lb)
         row.addWidget(lb)
         self.name = QLineEdit()
-        self.name.setPlaceholderText("NGC 7000")
         row.addWidget(self.name, 1)
         v.addLayout(row)
         row = QHBoxLayout()
@@ -697,8 +706,8 @@ class NewProjectDialog(QDialog):
         bb.addWidget(self.ok)
         v.addLayout(bb)
         self.name.textChanged.connect(self._update)
-        self.name.setText(name)
-        self.name.setFocus()                          # typed at once (empty when nothing was given: no name guessed)
+        self.name.setText(name or DEFAULT_NAME)       # a real value, selected: typing replaces it, Save is enabled
+        self.name.setFocus()
         self.name.selectAll()
         self._update()
 
