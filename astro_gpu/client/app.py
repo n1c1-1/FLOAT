@@ -728,14 +728,20 @@ class Main(QMainWindow):
         worker)."""
         holder = self._post_holder
         page = holder.page if holder is not None else None
-        img = getattr(getattr(getattr(page, "view", None), "src", None), "img1", None)
+        view = getattr(page, "view", None)
+        src = getattr(view, "src", None)
+        img = getattr(src, "img1", None)
         if img is None or self.s is None or self.s.readonly or self.project is None:
             return
-        if img is self._thumb_of:
+        crop = getattr(view, "crop", None)              # the picture as Post shows it: its crop applied (the report and
+        crop = tuple(crop) if crop else None            # Home showed the whole canvas)
+        if self._thumb_of == (id(img), crop):
             return                                   # written already
-        self._thumb_of = img
+        self._thumb_of = (id(img), crop)
+        size = src.size() if hasattr(src, "size") else None
         from .home import THUMB
-        self.worker.submit(f"thumb:{self.project.root}", _write_thumb, self.project.root / THUMB, img.copy())
+        self.worker.submit(f"thumb:{self.project.root}", _write_thumb, self.project.root / THUMB,
+                           cropped_half(img, crop, size).copy())
 
     def show_project(self):
         if self.proj_screen is not None:
@@ -1887,6 +1893,20 @@ def _gb_text(n_bytes: int) -> str:
     from .i18n import number
     gb = n_bytes / 1e9
     return number(gb, 1 if gb >= 0.1 else 2) + " " + _("GB")
+
+
+def cropped_half(rgb, crop, size):
+    """Post's half-resolution picture (``rgb``, H/2 x W/2) cut to its crop (``crop``: [x0, y0, x1, y1] of the canvas of
+    ``size`` (W, H)); the whole picture without a crop."""
+    if not crop or not size:
+        return rgb
+    h, w = rgb.shape[:2]
+    W, H = size
+    sx, sy = w / max(W, 1), h / max(H, 1)
+    x0, y0, x1, y1 = crop
+    a, b = max(0, int(round(x0 * sx))), max(0, int(round(y0 * sy)))
+    c, d = min(w, max(a + 1, int(round(x1 * sx)))), min(h, max(b + 1, int(round(y1 * sy))))
+    return rgb[b:d, a:c]
 
 
 def _write_thumb(path: Path, rgb) -> None:

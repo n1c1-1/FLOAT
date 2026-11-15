@@ -224,3 +224,40 @@ def test_the_question_is_asked_without_a_screen_unless_the_run_answers_it(win, m
     monkeypatch.setenv(appmod.SAVE_ANSWER_ENV, "discard")
     shown.clear()
     assert ORIGINAL_ASK(win) == "discard" and not shown
+
+
+def test_the_projects_picture_is_post_as_shown_its_crop_applied(win, tmp_path):
+    """The report's and Home's picture of the project (``cache/thumb.jpg``) is what Post shows: with a crop set, the
+    picture has the crop's shape, not the whole canvas'."""
+    import numpy as np
+    from PIL import Image
+
+    from astro_gpu.client.home import THUMB
+    root = tmp_path / "ws" / "Pic"
+    assert win.create_project(root.as_posix(), "Pic", "M 31")
+    _ready(win)
+    half = np.full((200, 300, 3), 90, np.uint8)                       # a 600 x 400 canvas, at half resolution
+
+    class Src:
+        img1 = half
+
+        @staticmethod
+        def size():
+            return (600, 400)
+
+    class View:
+        src, crop = Src(), [100, 0, 300, 400]                         # 200 x 400: taller than wide
+
+    class Holder:
+        page = type("P", (), {"view": View()})()
+    win._post_holder = Holder()
+    win._leave_thumbnail()
+    win.worker.wait(30)
+    w, h = Image.open(root / THUMB).size
+    assert h > w and abs(w / h - 0.5) < 0.02, (w, h)
+    View.crop = None
+    win._leave_thumbnail()
+    win.worker.wait(30)
+    w, h = Image.open(root / THUMB).size
+    assert abs(w / h - 1.5) < 0.02, (w, h)
+    win._post_holder = None
