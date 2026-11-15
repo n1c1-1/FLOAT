@@ -179,5 +179,8 @@
  "Saved in the previous format, without its graph: {why}": "Enregistré dans le format précédent, sans son graphe : {why}",
  "Saved in the previous format: the graph and what the engine runs differ. The details are in the Log.": "Enregistré dans le format précédent : le graphe et ce que le moteur exécute diffèrent. Le détail est dans le Journal.",
  "the graph and what the engine runs differ": "le graphe et ce que le moteur exécute diffèrent",
- "Image kind changed: to compute at the next run": "Type d'image changé : à calculer à la prochaine exécution"
+ "Image kind changed: to compute at the next run": "Type d'image changé : à calculer à la prochaine exécution",
+ "The settings file could not be read: it is kept as {name}, and the default settings are used.": "Le fichier des réglages est illisible : il est gardé sous le nom {name}, et les réglages par défaut sont utilisés.",
+ "The settings file could not be read nor set aside: the default settings are used, and no change is written to it.": "Le fichier des réglages est illisible et n'a pas pu être mis de côté : les réglages par défaut sont utilisés, et aucun changement n'y est écrit.",
+ "The settings cannot be written: {why}": "Les réglages ne peuvent pas être enregistrés : {why}"
 }

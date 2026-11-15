@@ -63,6 +63,12 @@ DEFAULTS = {
 
 _data: dict = {}
 FILE: Path | None = None
+#: what went wrong with the settings file and is not said yet: (kind, detail), kind "unreadable" (detail: the name it
+#: is kept under, "" when it could not be set aside) or "unwritable" (detail: the error)
+_trouble: list[tuple[str, str]] = []
+_listener = None
+_write_failed = False                 # said once until a write succeeds again
+_frozen = False                       # an unreadable file that could not be set aside: never written over
 
 
 def settings_file() -> Path | None:
@@ -77,16 +83,64 @@ def settings_file() -> Path | None:
     return Path(base) / "astro_gpu" / "settings.json"
 
 
+def watch(fn) -> None:
+    """``fn(kind, detail)`` is told what goes wrong with the settings file (the window's banner): what happened before
+    it was given at once, then each trouble as it comes. None: told no more."""
+    global _listener
+    _listener = fn
+    while fn is not None and _trouble:
+        _tell(*_trouble.pop(0))
+
+
+def _tell(kind: str, detail: str) -> None:
+    if _listener is None:
+        _trouble.append((kind, detail))
+        return
+    try:
+        _listener(kind, detail)
+    except RuntimeError:                              # a window already gone
+        pass
+
+
+def _read_disk():
+    """The settings file's object, None when there is none or it is not readable as one."""
+    if FILE is None or not FILE.exists():
+        return {}
+    try:
+        got = json.loads(FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return got if isinstance(got, dict) else None
+
+
+def _set_aside() -> None:
+    """An unreadable settings file kept as settings.json.bad (.bad2... when one is there: never written over), said."""
+    global _frozen
+    n, kept = 1, None
+    while kept is None or kept.exists():
+        kept = FILE.with_name(FILE.name + ".bad" + (str(n) if n > 1 else ""))
+        n += 1
+    try:
+        os.replace(FILE, kept)
+    except OSError:
+        _frozen = True
+        _tell("unreadable", "")
+        return
+    _tell("unreadable", kept.name)
+
+
 def load():
-    global _data, FILE
+    global _data, FILE, _frozen, _write_failed
     FILE = settings_file()
+    _frozen = _write_failed = False
+    _trouble.clear()                                  # those of a file read before
     _data = dict(DEFAULTS)
     _data["recent"] = []
-    if FILE is not None and FILE.exists():
-        try:
-            _data.update(json.loads(FILE.read_text(encoding="utf-8")))
-        except (OSError, ValueError):
-            pass
+    got = _read_disk()
+    if got is None:
+        _set_aside()
+    else:
+        _data.update(got)
     return _data
 
 
@@ -112,20 +166,35 @@ def set(key, value):                  # noqa: A001 - a settings store
     if not _data:
         load()
     _data[key] = value
-    save()
+    save(key)
 
 
-def save():
-    """Write the settings atomically (nothing when there is no settings file: pytest without ASTRO_GPU_SETTINGS)."""
-    if FILE is None:
+def save(key=None):
+    """Write the settings atomically (nothing when there is no settings file: pytest without ASTRO_GPU_SETTINGS). The
+    file is read again first: another window of the program may have written it since, so its settings are kept and
+    only ``key``, the one being changed, is this window's (all of them without a key). A failure is said once."""
+    global _write_failed
+    if FILE is None or _frozen:
         return
+    disk = _read_disk()
+    if disk is None:
+        _set_aside()
+        if _frozen:
+            return
+    elif key is not None:
+        mine = _data.get(key)
+        _data.update(disk)
+        _data[key] = mine
     try:
         FILE.parent.mkdir(parents=True, exist_ok=True)
         tmp = FILE.with_name(FILE.name + ".tmp")
         tmp.write_text(json.dumps(_data, indent=2, ensure_ascii=False), encoding="utf-8")
         os.replace(tmp, FILE)
-    except OSError:
-        pass
+        _write_failed = False
+    except OSError as e:
+        if not _write_failed:
+            _write_failed = True
+            _tell("unwritable", f"{type(e).__name__}: {e}")
 
 
 def spec() -> bool:

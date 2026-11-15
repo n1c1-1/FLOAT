@@ -237,6 +237,7 @@ class GradientEditor(QObject):
         self._in_show = False
         self._dims = None                      # (pid, W, H) of the stack
         self._pending = None                   # the request waiting for the one running
+        self._shown_gen = 0                    # the request number when the workflow shown last changed
         self._hover = None
         self._grab = None
         self._ell = None                       # the ellipse being drawn (two corners, stack px)
@@ -739,6 +740,7 @@ class GradientEditor(QObject):
             if self.p is not None:
                 self.set_mode(None)
             self.p = p
+            self._shown_gen = self.gen         # the answers of the requests made before are another workflow's
             self.result, self.result_ms, self.samples = None, None, None
             self._sel, self._selpt, self._veil = None, None, None
             if self.small is not None and self.small["pid"] != p.pid:
@@ -1785,16 +1787,16 @@ class GradientEditor(QObject):
     def _fetch_survey(self, then: str | None = "nebula"):
         """The survey fetched once, on the user's click (never during a run): from Avoid nebulosity (then applies it)
         or the panel's Fetch."""
-        from .services.survey import job
+        from .services.survey import job, where
         j = job()
-        pid = self.p.pid
+        pid, root = self.p.pid, where(self.s.p)
 
-        def ended(epid, why):
+        def ended(eroot, epid, why):
             try:
                 j.finished.disconnect(ended)
             except (RuntimeError, TypeError):
                 pass
-            if epid != pid:
+            if epid != pid or eroot != root:
                 return
             if why:
                 self.say(_("H-alpha survey: {why}").format(why=_(why)))
@@ -2325,7 +2327,7 @@ class GradientEditor(QObject):
         def work():
             try:
                 sm = small or _reduced_stack(project, pid)
-                out = {"small": sm, "what": what}
+                out = {"small": sm, "what": what, "pid": pid}
                 if want_applied:
                     out["applied"] = {"key": akey, "arr": _applied_small(project, pid, sm)}
                 if what == "points":
@@ -2361,7 +2363,7 @@ class GradientEditor(QObject):
                         out["survey"] = {"pid": pid, "error": _survey_why(e)}
                 self._done.emit(gen, out)
             except Exception as e:  # noqa: BLE001 - said in the bar, the editor goes on
-                self._done.emit(gen, {"error": str(e), "what": what})
+                self._done.emit(gen, {"error": str(e), "what": what, "pid": pid})
         QThreadPool.globalInstance().start(_Job(work))
 
     def _stepped(self, gen: int, text: str):
@@ -2427,6 +2429,8 @@ class GradientEditor(QObject):
     def _arrived(self, gen: int, out: dict):
         self.busy = False
         self.step_text = ""
+        # for the workflow shown, asked since it is shown: a preview of another one (the same settings) is never shown
+        mine = self.p is not None and out.get("pid") == self.p.pid and gen > self._shown_gen
         if out.get("what") == "preview" and "ms" in out and not out.get("abandoned"):
             self._ms_of[out.get("method", "")] = out["ms"]
         if out.get("small") is not None:
@@ -2450,7 +2454,7 @@ class GradientEditor(QObject):
             if out.get("avoided") is False:
                 self.tv.toasted.emit(_("The H-alpha survey shows no clear nebulosity here: no sample left out"))
             self._commit()
-        elif "result" in out and self.p is not None and out.get("sig") == self._wanted_sig() and \
+        elif "result" in out and mine and out.get("sig") == self._wanted_sig() and \
                 (self.has_draft() or not self.done):  # the draft as it is now: a preview it has left is never shown
             self.painted += 1
             self.result, self.result_ms = out["result"], out.get("ms")
@@ -2465,7 +2469,8 @@ class GradientEditor(QObject):
         if self._pending is not None:
             what, self._pending = self._pending, None
             self._run(what)
-        elif (out.get("what") == "preview" and out.get("sig") != self._wanted_sig() or self._preview_due) and \
+        elif (out.get("what") == "preview" and (out.get("sig") != self._wanted_sig() or not mine) or
+              self._preview_due) and \
                 self.has_draft() and not self._timer.isActive():
             self._preview_due = False
             self.preview()                     # the draft changed meanwhile: one preview, of the latest

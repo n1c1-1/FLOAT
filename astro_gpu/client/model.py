@@ -58,7 +58,7 @@ from .graphnode import COLUMNS, KEY_ENGINE_BLOCK, TOOLS, TRUNK, block_state, kba
 from .graphnode import ENGINE_BLOCK as ENGINE_KEY
 from .graphmodel import GraphEditing
 from . import journal
-from .i18n import _, hm
+from .i18n import _, hm, number, plural
 from .names import shown as shown_name
 from .services.worker import ApiWorker, norm_path
 
@@ -1716,7 +1716,8 @@ class _ProjectBase(QObject):
         if field_ and not any(_norm(typed) in {_norm(x) for x in (o.name, o.common_name, *o.aliases) if x} for o in field_):
             return TargetState("unknown", typed, _("Not in the solved field, which shows {name}").format(name=main.name),
                                main.name)
-        return TargetState("known", typed, _("Found: RA {ra}°, Dec {dec}°").format(ra=f"{found[0]:.3f}", dec=f"{found[1]:+.3f}"))
+        return TargetState("known", typed, _("Found: RA {ra}°, Dec {dec}°").format(
+            ra=number(found[0], 3), dec=("+" if found[1] >= 0 else "") + number(found[1], 3)))   # a decimal comma in French
 
     def relocated(self, root):
         """The project was given its folder (it had none of its own yet)."""
@@ -1802,7 +1803,8 @@ class _ProjectBase(QObject):
         sk = getattr(self, "survey_skipped", [])
         if not sk:
             return what
-        return what + " · " + _("{n} result(s) computed again since: kept").format(n=len(sk))
+        return what + " · " + plural(len(sk), "{n} result computed again since: kept",
+                                     "{n} results computed again since: kept")
 
     def redo(self, graph: bool = False) -> bool:
         self.refused = ""
