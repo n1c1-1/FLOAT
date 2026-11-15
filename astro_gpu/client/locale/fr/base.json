@@ -959,6 +959,8 @@
   "Use survey": "Utiliser relevé",
   "The results made without the survey are computed again at the next run, with it: {names}. They go to the trash, not deleted; Undo (Ctrl+Z) puts them back.": "Les résultats faits sans le relevé seront recalculés à la prochaine exécution, avec lui : {names}. Ils vont à la corbeille, sans être supprimés ; Annuler (Ctrl+Z) les remet.",
   "Survey used: the blocks after it are computed again at the next run": "Relevé utilisé : les blocs qui le suivent seront recalculés à la prochaine exécution",
+  "Not done: a run is in progress": "Rien de fait : un calcul est en cours",
+  "Not done: a result could not be moved ({why})": "Rien de fait : un résultat n'a pas pu être déplacé ({why})",
   "{n} result(s) computed again since: kept": "{n} résultat(s) recalculé(s) depuis : gardé(s)",
   "Install catalogue": "Installer catalogue",
   "Opens Settings › Catalogs & astrometry, where the offline star catalogue is installed. Nothing is downloaded during a run: the runs leave this block out until then.": "Ouvre Réglages › Catalogues et astrométrie, où s'installe le catalogue d'étoiles hors ligne. Rien n'est téléchargé pendant une exécution : d'ici là, les exécutions laissent ce bloc de côté.",

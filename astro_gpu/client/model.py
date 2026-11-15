@@ -720,6 +720,7 @@ class _ProjectBase(QObject):
         self._redo_what: list = []
         self._naming = False                               # the last step still takes its words (the same gesture)
         self.restored: str = ""                            # what the last Undo / Redo put back, in words
+        self.refused: str = ""                             # why the last Undo / Redo did nothing, when it says
         self._depth = 0
         self._dirty = False
         self._post_removed_from_edited()
@@ -1769,23 +1770,29 @@ class _ProjectBase(QObject):
 
     def _move_survey_results(self, src: list, dst: list, back: bool) -> bool:
         """Undo (``back``) or Redo of Use survey: the results come back from the trash, or go to it again."""
+        move = api.put_back_survey if back else api.trash_survey_again
+        try:
+            done, skipped = move(self.p, src[-1].moved)
+        except (api.RunInProgress, OSError) as e:           # during a run, or a move failed (undone): the step stays
+            self.refused = (_("Not done: a run is in progress") if isinstance(e, api.RunInProgress)
+                            else _("Not done: a result could not be moved ({why})").format(why=e))
+            return False
+        what = self._move_what(src, *((self._undo_what, self._redo_what) if back
+                                      else (self._redo_what, self._undo_what)))
         step = src.pop()
         journal.stamp(step)
         dst.append(step)
-        move = api.put_back_survey if back else api.trash_survey_again
-        done, skipped = move(self.p, step.moved)
         self.results_changed()
         self.survey_skipped = skipped
+        self.restored = self._survey_words(what)
         return True
 
     def undo(self, graph: bool = False) -> bool:
+        self.refused = ""
         if not self.can_undo(graph):
             return False
         if getattr(self._undo[-1], "moved", None) is not None:
-            what = self._move_what(self._undo, self._undo_what, self._redo_what)
-            done = self._move_survey_results(self._undo, self._redo, True)
-            self.restored = self._survey_words(what)
-            return done
+            return self._move_survey_results(self._undo, self._redo, True)
         what = self._move_what(self._undo, self._undo_what, self._redo_what)
         done = self._restore(self._undo, self._redo)
         self.restored = what if done else ""
@@ -1798,13 +1805,11 @@ class _ProjectBase(QObject):
         return what + " · " + _("{n} result(s) computed again since: kept").format(n=len(sk))
 
     def redo(self, graph: bool = False) -> bool:
+        self.refused = ""
         if not self.can_redo(graph):
             return False
         if getattr(self._redo[-1], "moved", None) is not None:
-            what = self._move_what(self._redo, self._redo_what, self._undo_what)
-            done = self._move_survey_results(self._redo, self._undo, False)
-            self.restored = self._survey_words(what)
-            return done
+            return self._move_survey_results(self._redo, self._undo, False)
         what = self._move_what(self._redo, self._redo_what, self._undo_what)
         done = self._restore(self._redo, self._undo)
         self.restored = what if done else ""

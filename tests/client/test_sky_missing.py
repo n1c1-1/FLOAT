@@ -317,3 +317,37 @@ def test_use_survey_puts_back_what_is_not_recomputed_and_says_the_rest(tmp_path,
     done, skipped = api.put_back_survey(p, moved)
     assert done == ["surveys"] and skipped == ["gradient"]
     assert (s.trash / "gradient-0123456789abcdef-survey-x").exists()
+
+
+def test_use_survey_refuses_during_a_run_and_a_failed_move_puts_back_what_moved(tmp_path, monkeypatch):
+    # review 2.1: a run reads these results; and a move Windows refuses half way lost the list Undo needs
+    import os
+
+    import pytest
+
+    from astro_gpu import api
+    from astro_gpu.core import project2, runner2, store as st
+    from astro_gpu.core.project import Target
+    p = project2.create(tmp_path / "P", "P", Target())
+    s = st.Store(p.root)
+    moved = [{"stage": x, "key": "0123456789abcdef", "trash": f"{x}-0123456789abcdef-survey-x"}
+             for x in ("surveys", "gradient", "color")]
+    for m in moved:
+        s.dir(m["stage"], m["key"]).mkdir(parents=True)
+    monkeypatch.setattr(runner2, "running", lambda root: {"pid": 1})
+    for f in (api.use_survey, api.put_back_survey, api.trash_survey_again):
+        with pytest.raises(api.RunInProgress):
+            f(p, 1 if f is api.use_survey else moved)
+    assert all(s.dir(m["stage"], m["key"]).exists() for m in moved)
+    monkeypatch.setattr(runner2, "running", lambda root: None)
+    real = os.replace
+
+    def refuse_the_third(a, b):
+        if "color" in str(a):
+            raise PermissionError("held open")
+        real(a, b)
+    monkeypatch.setattr(api.os, "replace", refuse_the_third)
+    with pytest.raises(OSError):
+        api.trash_survey_again(p, moved)
+    assert all(s.dir(m["stage"], m["key"]).exists() for m in moved)            # all back where they were
+    assert not any((s.trash / m["trash"]).exists() for m in moved)

@@ -2256,6 +2256,7 @@ def use_survey(p: Project2, wf: int | Workflow) -> list[dict]:
     trash (never deleted), so that the next run computes them with the survey now on this computer (their keys do not
     change: the definition did not). Returns what it moved, in the chain's order, {"stage", "key", "trash"} each, for
     ``put_back_survey`` (Undo). Nothing moves when the result was not made without the survey."""
+    _no_run(p, "using the survey")
     keys, store = _keys(p), _store(p)
     st = survey_state(p, wf)
     if store is None or not (st and st["missing"]):
@@ -2269,31 +2270,53 @@ def use_survey(p: Project2, wf: int | Workflow) -> list[dict]:
 
 def put_back_survey(p: Project2, moved: list[dict]) -> tuple[list[str], list[str]]:
     """Undo of ``use_survey``: the results go back from the trash to the store. Returns (the stages put back, the
-    stages left in the trash because a result of the same key was computed since)."""
+    stages left in the trash because a result of the same key was computed since). Refuses during a run."""
+    _no_run(p, "putting the results back")
     store = _store(p)
     return _move_results(store, moved, back=True) if store is not None else ([], [m["stage"] for m in moved])
 
 
 def trash_survey_again(p: Project2, moved: list[dict]) -> tuple[list[str], list[str]]:
-    """Redo of ``use_survey``: the same results go to the trash again (those no more there are skipped)."""
+    """Redo of ``use_survey``: the same results go to the trash again (those no more there are skipped). Refuses
+    during a run."""
+    _no_run(p, "using the survey")
     store = _store(p)
     return _move_results(store, moved, back=False) if store is not None else ([], [m["stage"] for m in moved])
 
 
+def _no_run(p: Project2, what: str) -> None:
+    """RunInProgress while a run of the project is going: the results it reads must not move (review 2.1)."""
+    if p.root is not None and _r2().running(Path(p.root)) is not None:
+        raise RunInProgress(f"a run is in progress: wait for it or stop it before {what}")
+
+
 def _move_results(store, moved: list[dict], back: bool) -> tuple[list[str], list[str]]:
+    """Moves the results to the trash or back. All or nothing: when one move fails (a file held open), those already
+    made are undone and the OSError raised, so that the list Undo holds still says where every result is."""
     done: list[str] = []
     skipped: list[str] = []
+    made: list[tuple[Path, Path]] = []
     store.trash.mkdir(parents=True, exist_ok=True)
-    for m in moved:
-        here, away = store.dir(m["stage"], m["key"]), store.trash / m["trash"]
-        src, dst = (away, here) if back else (here, away)
-        if not src.exists() or dst.exists():
-            skipped.append(m["stage"])
-            continue
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(src, dst)
-        done.append(m["stage"])
-    store.forget()
+    try:
+        for m in moved:
+            here, away = store.dir(m["stage"], m["key"]), store.trash / m["trash"]
+            src, dst = (away, here) if back else (here, away)
+            if not src.exists() or dst.exists():
+                skipped.append(m["stage"])
+                continue
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(src, dst)
+            made.append((src, dst))
+            done.append(m["stage"])
+    except OSError:
+        for src, dst in reversed(made):
+            try:
+                os.replace(dst, src)
+            except OSError:
+                pass
+        raise
+    finally:
+        store.forget()
     return done, skipped
 
 

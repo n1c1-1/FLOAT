@@ -198,7 +198,7 @@ class GraphDocument:
         m = self.model
         done = m.done_count()
         if not m.undo(graph=True):
-            return Result(False, reason="Nothing to undo")
+            return Result(False, reason=m.refused or "Nothing to undo")
         said = M("Undone: {label}", label=m.restored or _("a change"))
         if m.states_pending():                    # the states being read: said again once they are (``late_said``)
             def later(m=m, said=said, done=done):
@@ -211,7 +211,7 @@ class GraphDocument:
 
     def redo(self) -> Result:
         if not self.model.redo(graph=True):
-            return Result(False, reason="Nothing to redo")
+            return Result(False, reason=self.model.refused or "Nothing to redo")
         return Result(True, toast=M("Redone: {label}", label=self.model.restored or _("a change")))
 
     @property
