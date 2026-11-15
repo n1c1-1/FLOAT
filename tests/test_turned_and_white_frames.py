@@ -254,6 +254,32 @@ def test_a_white_frame_does_not_change_the_measure_of_the_others():
     assert (sig[1:] == 2.0).all() and weight[0] == 0.0 and (weight[1:] == 1.0).all()
 
 
+def test_frames_without_stars_leave_the_others_weighted_and_selected():
+    # a frame where the registration found no star has a width of 0 (cloud, dew): 6 of 100, then 60 of 100, made the
+    # 5th percentile then the median 0, every weight NaN or every frame "large stars"
+    for starless in (6, 60):
+        n = 100
+        stats, rms = np.ones((n, 4, 2)), np.full(n, 0.2)
+        fwhm = np.linspace(2.5, 3.5, n)
+        fwhm[:starless] = 0.0
+        rms[:starless] = np.inf                                   # no star: not aligned
+        weight, reasons = select_frames(np.ones(n), fwhm, rms, stats, 0.6, 2.0)
+        assert np.isfinite(weight).all() and weight.max() == 1.0
+        assert (weight[starless:] > 0).all() and (weight[:starless] == 0).all()
+        assert set(reasons[:starless]) == {"not aligned"} and not any(reasons[starless:])
+
+
+def test_the_sharpness_reference_only_scales_the_weights():
+    # the weights are divided by the best: the reference width cancels, so measuring it on the frames with stars only
+    # changes no weight of a night that was computed (no starless frame, or too few to make it 0)
+    stats, rms = np.ones((20, 4, 2)), np.full(20, 0.2)
+    fwhm = np.linspace(2.0, 4.0, 20)
+    w0, _ = quality_weights(np.ones(20), fwhm, rms, stats)
+    fwhm[0], rms[0] = 0.0, np.inf
+    w1, _ = quality_weights(np.ones(20), fwhm, rms, stats)
+    assert np.allclose(w0[1:] / w0[1:].max(), w1[1:])
+
+
 def test_a_block_that_fails_before_it_starts_is_recorded_as_failed(tmp_path):
     job = SimpleNamespace(stage="stack", key="k1")
     me = SimpleNamespace(store=SimpleNamespace(tmp_dir=lambda s, k: tmp_path / f"{s}-{k}.tmp"))

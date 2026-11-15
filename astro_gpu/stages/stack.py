@@ -1463,6 +1463,15 @@ def saturated_frames(stats) -> np.ndarray:
     return ~np.isfinite(np.asarray(stats, float)[:, :, :2]).all((1, 2))
 
 
+def star_width(fwhm, q: float) -> float:
+    """The ``q``-th percentile of the star width of the frames where the registration measured stars (a frame without
+    any, cloud or dew, has a width of 0: counted, 6 % of them made the sharpness reference 0, every weight NaN). NaN
+    when no frame has stars."""
+    f = np.asarray(fwhm, float)
+    f = f[np.isfinite(f) & (f > 0)]
+    return float(np.percentile(f, q)) if f.size else float("nan")
+
+
 def quality_weights(transp, fwhm, rms, stats, noise=None) -> tuple[np.ndarray, np.ndarray]:
     """The weight of every aligned frame, (transparency / noise)^2 x sharpness, the best = 1 (0 when not aligned),
     before any frame is left out; and the noise it used: the registration's (``noise``, reg.npz since
@@ -1473,7 +1482,7 @@ def quality_weights(transp, fwhm, rms, stats, noise=None) -> tuple[np.ndarray, n
     if noise is not None and np.isfinite(np.asarray(noise)[on]).all() and (np.asarray(noise)[on] > 0).all():
         sig = np.asarray(noise, float)
     with np.errstate(divide="ignore", invalid="ignore"):     # a saturated frame's noise of 0: left out just below
-        weight = (transp / sig) ** 2 * (np.percentile(fwhm, 5) / fwhm) ** 2
+        weight = (transp / sig) ** 2 * (star_width(fwhm, 5) / fwhm) ** 2
     weight = np.where(on & np.isfinite(weight), weight, 0.0)
     weight /= weight.max()
     return weight, sig
@@ -1494,7 +1503,7 @@ def select_frames(transp, fwhm, rms, stats, min_transparency: float, max_fwhm_ra
     if exclude is not None:
         reasons[(reasons == "") & np.asarray(exclude, bool)] = EXCLUDED
     reasons[(reasons == "") & (transp < tmin)] = "low transparency"
-    reasons[(reasons == "") & (fwhm > max_fwhm_ratio * np.median(fwhm))] = "large stars"
+    reasons[(reasons == "") & (fwhm > max_fwhm_ratio * star_width(fwhm, 50))] = "large stars"
     weight[reasons != ""] = 0.0
     return weight, reasons
 
