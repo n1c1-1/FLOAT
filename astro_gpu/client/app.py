@@ -544,20 +544,45 @@ class Main(QMainWindow):
         view.set_compact(lay.compact(cls))
 
     def _tab(self):
-        fw = QApplication.focusWidget()
-        if self.project is None or isinstance(fw, (QLineEdit, QAbstractSpinBox, QTextEdit, QPlainTextEdit)) or \
-                (isinstance(fw, QComboBox) and fw.isEditable()):
-            self.focusNextPrevChild(True)
-        else:
-            self.toggle_panels("hidden")
+        self._tab_key(True, "hidden")
 
     def _shift_tab(self):
+        self._tab_key(False, "right_hidden")
+
+    def _tab_key(self, forward: bool, panels: str):
+        """Tab (Shift+Tab): the focus goes on in a field, as in a form, and in a block's settings; elsewhere it hides
+        the panels (the right one)."""
         fw = QApplication.focusWidget()
-        if self.project is None or isinstance(fw, (QLineEdit, QAbstractSpinBox, QTextEdit, QPlainTextEdit)) or \
-                (isinstance(fw, QComboBox) and fw.isEditable()):
-            self.focusNextPrevChild(False)
-        else:
-            self.toggle_panels("right_hidden")
+        took = "on" if self.project is None or isinstance(fw, (QLineEdit, QAbstractSpinBox, QTextEdit, QPlainTextEdit)) \
+            or (isinstance(fw, QComboBox) and fw.isEditable()) else self._settings_take_tab(fw, forward)
+        if took == "on":
+            self.focusNextPrevChild(forward)
+        elif not took:
+            self.toggle_panels(panels)
+
+    def _settings_take_tab(self, fw, forward: bool) -> str:
+        """Tab never hides the side bars while a settings field could take it: "on" with the focus in a block's
+        settings (a list, a box to tick: the focus goes on), "in" with their drawer open over the page (a small window)
+        and the focus elsewhere (the focus goes to its first field); "" otherwise."""
+        for page in (getattr(self, "graph", None), getattr(self, "_tune", None)):
+            pn, dock = getattr(page, "panel", None), getattr(page, "dock", None)
+            if pn is None:
+                continue
+            try:
+                if fw is not None and pn.isAncestorOf(fw):
+                    return "on"
+                if dock is not None and dock.is_open() and pn.isVisible():
+                    if forward:
+                        w = pn.nextInFocusChain()
+                        while w is not pn and not (pn.isAncestorOf(w) and w.isVisible() and w.isEnabled()
+                                                   and w.focusPolicy() & Qt.TabFocus):
+                            w = w.nextInFocusChain()
+                        if w is not pn:
+                            w.setFocus(Qt.TabFocusReason)    # the drawer's first field
+                    return "in"
+            except RuntimeError:                         # a page being closed
+                continue
+        return ""
 
     def toggle_panels(self, key: str):
         """Tab (hidden), Shift+Tab (right_hidden), Ctrl+Space (max): a toggle, remembered for this size range."""
