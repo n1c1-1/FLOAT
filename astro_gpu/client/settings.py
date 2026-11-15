@@ -672,6 +672,8 @@ def parse(text: str, r: dict):
         if typ == "optfloat" and t.lower() in ("", "auto", "none"):
             return None
         x = float(t.replace(" ", "").replace(",", "."))
+        if not math.isfinite(x):                         # "nan", "inf": text float() reads, not a number typed
+            raise ValueError(t)
         if r.get("min") is not None and x < r["min"] or r.get("max") is not None and x > r["max"]:
             raise ValueError(_("out of range {lo} to {hi}").format(lo=fmt(r.get("min")), hi=fmt(r.get("max"))))
         return int(round(x)) if typ == "int" else x
@@ -793,6 +795,8 @@ class SettingRow(QFrame):
                 try:
                     v = float(t) if t else None
                 except ValueError:
+                    return
+                if v is not None and not math.isfinite(v):     # "nan", "inf": not a number typed
                     return
                 if v is not None:
                     lo, hi = r.get("min"), r.get("max")

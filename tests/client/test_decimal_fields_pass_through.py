@@ -102,3 +102,26 @@ def test_a_tab_through_a_selection_threshold_or_a_recipe_parameter_proposes_noth
     assert len(rec) == 1 and abs(rec[0].value() - 0.333) < 1e-9
     _pass_through(rec[0])
     assert pn.proposed == []
+
+
+def test_nan_and_inf_are_not_numbers_a_field_takes():
+    """"nan" and "inf" (and their kin) typed in a numeric field are refused, as any text that is not a number: they
+    passed every range check and went into the settings."""
+    import pytest
+
+    from astro_gpu.client.settings import parse
+    _app()
+    for typ in ("float", "optfloat", "int"):
+        r = dict(type=typ, min=0, max=100)
+        for text in ("nan", "inf", "-inf", "Infinity", "NaN"):
+            with pytest.raises(ValueError):
+                parse(text, r)
+        assert parse("33,5", r) == (34 if typ == "int" else 33.5)
+    for typ in ("float", "int"):                            # a value set from the data, not known yet: "auto"
+        row = CompactRow(dict(_row(None, False), type=typ, pending_auto=True))
+        sent = []
+        row.changed.connect(lambda r, v: sent.append(v))
+        for text in ("nan", "inf"):
+            row.editor.setText(text)
+            row.editor.editingFinished.emit()
+        assert sent == [], typ
