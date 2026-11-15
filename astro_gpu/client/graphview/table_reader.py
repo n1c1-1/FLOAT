@@ -100,6 +100,15 @@ class Reader:
         self._busy = False
         self._left: dict[str, list] = {}                # folder -> files of its level the engine does not read
         self._reports: dict[str, dict] = {}             # folder -> {"sub": n, "unreadable": bool}
+        self.base = None                                # () -> the project's folder: where a relative entry is read
+
+    def _on_disk(self, s: str) -> str:
+        """Where an entry is on the disk: one written relative to the project is read from the project's folder
+        (a project that holds its own frames), never from the folder the application happens to run in."""
+        if os.path.isabs(s) or self.base is None:
+            return s
+        root = self.base()
+        return os.path.join(str(root), s) if root else s
 
     # --------------------------------------------------------------- called from the interface thread
     def listen(self, fn):
@@ -245,7 +254,7 @@ class Reader:
             if s in self._infos and s not in self._folders:
                 base_n += 1
                 continue
-            path = s
+            path = self._on_disk(s)
             is_folder = self._is_folder.get(s)
             if is_folder is None:
                 is_folder = os.path.isdir(path)
@@ -270,7 +279,7 @@ class Reader:
                     time.sleep(self.delay)
             else:
                 try:
-                    st = os.stat(s)
+                    st = os.stat(path)
                     f = FileInfo(s.replace("\\", "/"), st.st_size, st.st_mtime, os.path.dirname(s).replace("\\", "/"))
                 except OSError:
                     f = FileInfo(s.replace("\\", "/"), 0, 0.0, os.path.dirname(s).replace("\\", "/"))
