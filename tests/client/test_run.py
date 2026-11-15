@@ -650,7 +650,7 @@ def test_the_plan_dialog_lists_the_blocks_the_sharing_workflows_the_durations_an
     # (issue #47: Color comes after Denoise and does not read it: one Color for both)
     # the Output is never a block: its job is the workflow's last block's (the lead's round 2 decision)
     assert rows == [("Calibration", ["Plain", "Trained"]), ("Stacking", ["Plain", "Trained"]),
-                    ("Color", ["Plain", "Trained"]), ("Denoise", ["Trained"]), ("Color", ["Trained"])]
+                    ("Colour", ["Plain", "Trained"]), ("Denoise", ["Trained"]), ("Colour", ["Trained"])]
     # a block every workflow shares says so, as the panel's scope does; else the workflows by name
     assert [r.who.full_text() for r in d.rows[:3]] == ["both workflows", "both workflows", "both workflows"]
     plan = toy.model.plan_all()
