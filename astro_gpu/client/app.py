@@ -31,7 +31,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, QEventLoop, QLibraryInfo, QLocale, Qt, QTimer, QTranslator
+from PySide6.QtCore import QCoreApplication, QEvent, QEventLoop, QLibraryInfo, QLocale, QObject, Qt, QTimer, QTranslator
 from PySide6.QtGui import QAction, QFont, QFontMetrics, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
@@ -244,9 +244,39 @@ class Banner(QFrame):
         self.show()
 
 
+class _FieldUndo(QObject):
+    """Ctrl+Z (Ctrl+Y) with the cursor in a field of the window: the field's own Undo while it has something to undo
+    (what was typed in it), else the window's Undo, as Edit > Undo (after Apply, the notice says Ctrl+Z while the cursor
+    is often still in the field: the field took the key and did nothing)."""
+
+    def __init__(self, window):
+        super().__init__(window)
+        self.window = window
+
+    def eventFilter(self, obj, e):                                    # noqa: N802 - Qt's name
+        if e.type() != QEvent.ShortcutOverride or not isinstance(obj, (QLineEdit, QPlainTextEdit, QAbstractSpinBox)):
+            return False
+        undo = e.matches(QKeySequence.Undo)
+        if not (undo or e.matches(QKeySequence.Redo)) or obj.window() is not self.window:
+            return False
+        field = obj.findChild(QLineEdit) if isinstance(obj, QAbstractSpinBox) else obj    # a spin box's own text
+        if isinstance(field, QLineEdit):
+            left = field.isUndoAvailable() if undo else field.isRedoAvailable()
+        elif isinstance(field, QPlainTextEdit):
+            doc = field.document()
+            left = doc.isUndoAvailable() if undo else doc.isRedoAvailable()
+        else:
+            left = True
+        if left:
+            return False
+        e.ignore()                                     # not the field's: the window's shortcut takes the key
+        return True
+
+
 class Main(QMainWindow):
     def __init__(self, worker: ApiWorker | None = None):
         super().__init__()
+        QApplication.instance().installEventFilter(_FieldUndo(self))
         self.worker = worker or ApiWorker(self)
         self.worker.done.connect(self._worker_done)
         from .services.selftest import job as card_test_job
