@@ -292,7 +292,10 @@
        "white_balance": true
       }
      },
-     "sessions": null,
+     "sessions": [
+      1,
+      2
+     ],
      "source": null,
      "variant_of": null
     }

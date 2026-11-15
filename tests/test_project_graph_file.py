@@ -48,6 +48,26 @@ def round_trip(p: Project2, folder: Path):
     return d, project2.load(folder)
 
 
+def under_the_empty_session_rule(p: Project2, name: str) -> Project2:
+    """A recorded definition holding a session with no lights, as its graph compiles it now: its all-nights workflows
+    read the sessions that have lights (an empty session is ignored by the computation). Only those workflows' session
+    lists may differ from the record, and only by leaving out the sessions with no lights."""
+    empty = {s.id for s in p.sessions if not s.lights}
+    if not empty:
+        return p
+    q = Project2.from_dict(p.to_dict(), p.root)
+    compile_into(convert(p), q)
+    a, b = p.to_dict(), q.to_dict()
+    every = [s.id for s in p.sessions]
+    for wa, wb in zip(a["workflows"], b["workflows"]):
+        if wa.get("sessions") != wb.get("sessions"):
+            was = wa.get("sessions") if wa.get("sessions") is not None else every
+            assert wb.get("sessions") == [x for x in was if x not in empty], (name, wa["id"])
+            wa["sessions"] = wb.get("sessions")
+    assert a == b, f"{name}: more than the sessions of the workflows changed"
+    return q
+
+
 def same(p: Project2, back: Project2):
     a, b = p.to_dict(), back.to_dict()
     assert a == b
@@ -74,6 +94,7 @@ def test_every_golden_definition_saved_with_its_graph_reads_back_the_same(tmp_pa
             p = Project2.from_dict(d0, tmp_path / f.stem)
         except project2.EarlierVersionProject:
             continue
+        p = under_the_empty_session_rule(p, f.stem)
         _d, back = round_trip(p, tmp_path / f.stem)
         assert _d["format"] == project2.GRAPH_FORMAT, f.stem          # never silently the definition (format 2)
         same(p, back)
