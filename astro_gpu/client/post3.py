@@ -1711,6 +1711,9 @@ class PostView(QWidget):
         for lay in pixel:
             if is_group(lay) and lay.get("visible", True) and not any((lay.get("shown") or {}).values()):
                 return _("Both images of “{name}” are hidden").format(name=layer_name(lay))
+        if any(x.get("visible", True) and not (is_group(x) and not any((x.get("shown") or {}).values()))
+               for x in pixel):
+            return _("Waiting for the layers' results")        # visible layers whose image does not exist yet
         return _("Every image layer is hidden")
 
     def _on_result(self, res):
