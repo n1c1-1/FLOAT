@@ -419,3 +419,34 @@ def test_calibration_frames_two_sessions_share_are_counted_once():
                          sessions=[dict(lights=12, darks=10, flats=30, bias=0)] * 2)
     got = modelmod.ProjectModel.info(me)
     assert (got["n_lights"], got["n_darks"], got["n_flats"], got["n_bias"]) == (24, 10, 30, 0)
+
+
+def test_a_run_that_ends_reads_the_report_again(qapp, monkeypatch):
+    """The Report shown while a run ends: its figures, settings, night map and Outdated line follow, as its tables do
+    (they stayed those of the reading before)."""
+    p = page(monkeypatch)
+    keys = {"stack": "k1"}
+    p.s.state_info = lambda q, st: SimpleNamespace(state="done", key=keys.get(st), previous_key=None)
+    asked = []
+    monkeypatch.setattr(p.service, "request_job", lambda name, fn, *a: (asked.append(name), 7)[1])
+    p.show()
+    p.load()
+    p._ready("report", 7, data())
+    asked.clear()
+    p.steps.changed.emit()                                       # outputs read again, the results as they were
+    assert asked == []
+    keys["stack"] = "k2"                                         # the run ended: another result
+    p.steps.changed.emit()
+    assert asked == ["report"]
+    p.hide()
+
+
+def test_a_failed_reading_says_so(qapp, monkeypatch):
+    p = page(monkeypatch)
+    p.load()
+    p._failed("report", p._token, "the disk is gone")
+    t = text(p)
+    assert "Nothing computed yet" not in t and "the disk is gone" in t
+    p.load()
+    p._ready("report", p._token, data())                         # read again: the report, the reason gone
+    assert "the disk is gone" not in text(p)

@@ -42,7 +42,7 @@ from .charts import LINES, RegistrationData, registration_data
 from .. import texts
 from ..core.params import ADVANCED
 from ..core.project2 import ACQUISITION
-from .i18n import _, language, number, plural
+from .i18n import _, language, log_detail, number, plain_error, plural
 from .widgets import put_back, typed
 
 #: the sections that are blocks of the chain, in its order: (block key, title)
@@ -754,11 +754,21 @@ class ReportPage(QWidget):
             self.data = None
             self.build()
             return
+        self._read_at = (p.pid, self._results(p))
         self._token = self.service.request_job("report", report_data, p.pid, tuple(self.s.all_stages(p)), self.title())
+
+    def _results(self, p):
+        """The results the workflow has now (each stage's state and keys): another run, another reading."""
+        info = getattr(self.s, "state_info", None)
+        if info is None:
+            return None
+        return tuple((st, getattr(i, "state", None), getattr(i, "key", None), getattr(i, "previous_key", None))
+                     for st in self.s.all_stages(p) for i in (info(p, st),))
 
     def _ready(self, name, token, result):
         if name == "report" and token == self._token:
             self._token = None
+            self._why = ""
             self.data = result
             self.build()
             self.loaded.emit()
@@ -766,12 +776,21 @@ class ReportPage(QWidget):
     def _failed(self, name, token, why):
         if name == "report" and token == self._token:
             self._token = None
+            self._why = plain_error(why)
+            log_detail(self.s, why)                      # the program's error: in the Log only
             self.data = ReportData()
             self.build()
             self.loaded.emit()
 
+    _read_at = None
+    _why = ""                                            # why the last reading failed
+
     def _facts_changed(self):
         if self.data is not None and self.isVisible():
+            p = self.path()
+            if p is not None and self._read_at != (p.pid, self._results(p)):
+                self.load()                              # a run ended: its figures, settings, map read again
+                return
             self.build()
 
     # ------------------------------------------------------------ what the user gives, what can be pasted
@@ -894,7 +913,9 @@ class ReportPage(QWidget):
         version = self.s.post_version_label() if hasattr(self.s, "post_version_label") else ""
         head = self._head(d, p, many, version)
         if d is None or p is None or d.reg is None:
-            return [("", head + f"<p>{_('Nothing computed yet: run the workflow first.')}</p>")]
+            said = _("The report could not be read: {why}").format(why=self._why) if self._why else \
+                _("Nothing computed yet: run the workflow first.")
+            return [("", head + f"<p>{html.escape(said)}</p>")]
         out = [(_("Session card"), head)] + self._observation(d)
         n, keys = 0, self.s.block_keys(p)                 # the observation is the head's Table 1: blocks from 1
         for key, title in BLOCKS:

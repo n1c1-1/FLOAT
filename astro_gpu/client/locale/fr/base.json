@@ -160,6 +160,7 @@
   "Worst FWHM": "Pire FWHM",
   "Median roundness": "Rondeur médiane",
   "Nothing computed yet: run the workflow first.": "Rien de calculé : lancer d'abord le workflow.",
+  "The report could not be read: {why}": "Le rapport n'a pas pu être lu : {why}",
   "The workflow changed since its last run: this report shows the results it had. Run it to update.": "Le workflow a changé depuis son dernier calcul : ce rapport montre les résultats qu'il avait. Lancez-le pour le mettre à jour.",
   "Attach the night card (a PNG beside the image)": "Joindre la fiche de nuit (un PNG à côté de l'image)",
   "No registration result yet": "Pas encore de résultat d'alignement",
