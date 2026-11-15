@@ -675,6 +675,8 @@ class NewProjectDialog(QDialog):
         v.addLayout(bb)
         self.name.textChanged.connect(self._update)
         self.name.setText(name)
+        self.name.setFocus()                          # typed at once (empty when nothing was given: no name guessed)
+        self.name.selectAll()
         self._update()
 
     def folder(self) -> Path:

@@ -1287,20 +1287,14 @@ class Main(QMainWindow):
             self.flash(_("Project saved"))
 
     def _suggested_name(self) -> str:
-        """The name a project without one is proposed: the name typed in its form (issue #89), else its target, else the
-        folder of its images."""
+        """The name a project without one is proposed: the name typed in its form (issue #89), else its target the
+        user gave, else none (the field empty and focused): never a name taken from a folder or a file ("lights", the
+        folder of its frames, was proposed: nothing is deduced from names)."""
         s = self.s
         if s.name and s.name not in ("Untitled", _("Untitled")):
             return s.name
         if s.target_state().name:
             return s.target_state().name
-        for ses in s.p.sessions:
-            for e in ses.lights:
-                f = Path(s.p.abspath(e))
-                return f.parent.name if f.suffix else f.name
-        for w in s.p.workflows:
-            if w.source and w.source.get("path"):
-                return Path(w.source["path"]).stem
         return ""
 
     def name_project(self) -> bool:

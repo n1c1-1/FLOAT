@@ -136,7 +136,10 @@ def normalise(p: str) -> str:
 
 
 def note_paths(reader, paths) -> tuple[int, int]:
-    """Tell the reader which dropped paths are folders (a stat each, immediate). -> (folders, files)."""
+    """Tell the reader which dropped paths are folders (a stat each, immediate). -> (folders, files). The folder of
+    the first one is where the next file dialog opens (a drop is a use: « Add lights » proposed the home folder)."""
+    if paths:
+        prefs.remember_folder(list(paths)[0])
     nd = nf = 0
     for p in paths:
         d = os.path.isdir(p)

@@ -447,6 +447,8 @@ class SourcesView(QWidget):
         already in another session of the stack too (« Add anyway »: ``anyway``)."""
         if self.sid is None:
             return 0
+        if paths:                                          # a drop is a use: the next dialog opens there
+            prefs.remember_folder(paths[0])
         notes: list = []                                   # what was not added, said (GUI exploration 7.5)
         left: list = []
         twice: list | None = None if anyway else []
