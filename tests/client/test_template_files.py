@@ -196,3 +196,36 @@ def test_the_version_is_one_number_everywhere():
     assert __version__ == "0.2.0"
     assert re.search(r'^version = "([^"]+)"', (ROOT / "pyproject.toml").read_text(encoding="utf-8"), re.M).group(1) == __version__
     assert f'#define AppVersion "{__version__}"' in (ROOT / "installer" / "float.iss").read_text(encoding="utf-8")
+
+
+def _from_shipped(win, key):
+    card = next(c for c in templatefiles.shipped_cards() if c["key"] == key)
+    win.graph.show_templates()
+    win.graph.templates.chosen.emit(card)
+    _settle(win, 30)
+
+
+def test_a_template_saved_in_a_new_tab_shows_in_both_galleries(win, monkeypatch):
+    """The tester's case: saved into a new tab, the template's card is in the blank page's gallery (it was an empty
+    tab there) as in New workflow, the same cards."""
+    from astro_gpu.client import gallery
+    _from_shipped(win, "sho_rgb")
+    monkeypatch.setattr(gallery, "template_dialog", lambda parent, name: ("Night SHO", "Tests nuit"))
+    win.save_template()
+    _from_shipped(win, "colour_min")
+    monkeypatch.setattr(gallery, "template_dialog", lambda parent, name: ("Simple", "Tests nuit"))
+    win.save_template()
+    win.new_project()
+    _settle(win, 10)
+    win.graph.show_templates()
+    page = win.graph.templates
+    page.show_tab("Tests nuit")
+    QApplication.processEvents()
+    assert [c.t["name"] for c in page.cards] == ["Night SHO", "Simple"]
+    # a card without a text was 0 px tall: an empty wrapped label gives no height for its width
+    assert all(c.isVisible() and c.height() >= c.pic.height() + 20 for c in page.cards), \
+        [(c.isVisible(), c.height()) for c in page.cards]
+    d = gallery.TemplateGallery(win.s)
+    d._show_tab("Tests nuit")
+    assert [c.t["name"] for c in d.cards] == ["Night SHO", "Simple"]
+    d.close()

@@ -665,7 +665,9 @@ class TemplatePage(QWidget):
             # top. Its own height is that of its text wrapped in its width (a label's size hint guesses a wider one)
             c.layout().addStretch(1)
             c.ensurePolished()
-            c.own_h = c.heightForWidth(CARD_W)
+            # a card without a text (a user's template) has no height for its width: -1, which made it 0 px tall
+            own = c.heightForWidth(CARD_W)
+            c.own_h = own if own > 0 else c.sizeHint().height()
             c.clicked.connect(self.chosen.emit)
             self.cards.append(c)
         self._cols = 0
