@@ -510,7 +510,11 @@ class Keys:
         src = getattr(w, "source", None)
         if stage == "image" and src:
             # 7.7: with a sample of its content, so that two images alike by name, size and date differ
-            fid = self.scan.image_id(_absolute(self.project, src["path"])) if src["path"] else ["", None, None]
+            path = _absolute(self.project, src["path"]) if src["path"] else ""
+            fid = self.scan.image_id(path) if path else ["", None, None]
+            # review 4.1: a FITS stored bottom up, read upside down before, is read top row first (no other key moves)
+            from ..stages.image import bottom_up
+            fid = fid + ["rows-up-1"] if path and bottom_up(path) else fid
             return fid + ["stretched"] if src.get("stretched") else fid
         if base(stage) in COMBINE and src:
             # each port's channel and the keys of what it reads: the workflow's Output or its starless image (its

@@ -220,7 +220,11 @@ def load_image(source) -> np.ndarray:
         from astropy.io import fits
         with fits.open(path) as h:
             hdu = next(x for x in h if x.data is not None and x.data.ndim >= 2)
-            return np.asarray(hdu.data, np.float32)
+            a = np.asarray(hdu.data, np.float32)
+            if str(hdu.header.get("ROWORDER", "")).strip().upper() == "BOTTOM-UP":    # top row first, as everywhere
+                last = a.ndim == 3 and a.shape[0] not in (1, 3) and a.shape[-1] in (1, 3)
+                a = a[::-1] if last else a[..., ::-1, :]
+            return np.ascontiguousarray(a)
     if suf in (".tif", ".tiff"):
         import tifffile
         return tifffile.imread(path)

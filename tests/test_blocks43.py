@@ -278,6 +278,30 @@ def test_the_image_stage_writes_a_stack(tmp_path):
         st.run(ctx, ImageParams(path=str(tmp_path / "gone.fits")))
 
 
+def test_a_fits_stored_bottom_up_is_read_top_row_first_and_only_its_key_moves(tmp_path, nights):
+    # review 4.1: the raw frames honour ROWORDER, the Image block read such a stack upside down (FLOAT's own FITS
+    # export is stored bottom up)
+    from astropy.io import fits
+
+    from astro_gpu.client.services.render import load_image
+    from astro_gpu.stages.image import read_image
+    top = np.arange(3 * 4 * 5, dtype=np.float32).reshape(3, 4, 5)
+    up, down = tmp_path / "up.fits", tmp_path / "down.fits"
+    h = fits.Header()
+    h["ROWORDER"] = "BOTTOM-UP"
+    fits.PrimaryHDU(top[:, ::-1, :], header=h).writeto(up)
+    fits.PrimaryHDU(top).writeto(down)
+    assert np.array_equal(read_image(up), top) and np.array_equal(read_image(down), top)
+    assert np.array_equal(load_image(str(up)), top)                     # a file layer of Post too
+    p = project(tmp_path / "p", nights, "per_session")                  # the key says it, of that image only
+    xs = []
+    for f in (down, up):
+        w = p.add_workflow(f.stem, FULL)
+        w.source = {"path": str(f), "stretched": False}
+        xs.append(Keys(p).key_parts(w.id, "image")["x"])
+    assert "rows-up-1" not in xs[0] and xs[1][-1] == "rows-up-1" and len(xs[1]) == len(xs[0]) + 1
+
+
 def test_the_definition_checks_the_new_fields(tmp_path, nights):
     p = project(tmp_path / "p", nights, "per_session")
     p.sessions[0].filter = "Ha"
