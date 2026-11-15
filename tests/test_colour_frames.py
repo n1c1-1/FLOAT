@@ -360,3 +360,27 @@ def test_calibrate_divides_the_flat_colour_by_colour(tmp_path):
         assert abs(centre / corner - 1) < 0.02, c                              # the vignetting taken out
     assert 0.55 < np.median(fr[2]) / np.median(fr[0]) < 0.65                   # the colours kept
     assert np.load(d / "master_flat_rgb.npy").shape == (3, H, W) and np.load(d / "master_dark.npy").shape == (H, W)
+
+
+def test_a_colour_flat_without_light_once_corrected_stops_with_its_name(tmp_path):
+    # review 3.4: the raw path's guard was missing for frames already in colour: flats under the level they are
+    # corrected with (here the lights' darks, no bias) gave a flat of NaN and every frame rejected later
+    L, F, D = tmp_path / "L", tmp_path / "F", tmp_path / "D"
+    for q in (L, F, D):
+        q.mkdir()
+    H, W = 60, 80
+    import tifffile
+    for i in range(3):
+        tifffile.imwrite(L / f"l{i}.tif", np.full((H, W, 3), 2000, np.uint16))
+        tifffile.imwrite(F / f"f{i}.tif", np.full((H, W, 3), 300, np.uint16))
+        tifffile.imwrite(D / f"d{i}.tif", np.full((H, W, 3), 900, np.uint16))
+    pr = Project.create(tmp_path / "p", "p", Inputs(lights=[str(L)], flats=[str(F)], darks=[str(D)]))
+    pr.config.devices = {"main": "cpu"}
+    pr.config.params = {"calibrate": {"workers": 1}}
+    pr.save()
+    try:
+        Pipeline(pr, [Inventory(), Calibrate()]).run()
+    except Exception:  # noqa: BLE001 - the stage's failure is read from its manifest
+        pass
+    m = json.loads((Path(pr.stage_dir("calibrate")) / "manifest.json").read_text())
+    assert m["status"] == "failed" and "f0.tif has no light left at its centre" in m["error"]

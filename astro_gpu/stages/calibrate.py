@@ -1479,15 +1479,26 @@ def _colour_flat(paths: list[str], fd_paths: list[str], bias: np.ndarray | None,
     y0, y1, x0, x1 = H // 2 - 200, H // 2 + 200, W // 2 - 200, W // 2 + 200
     with frame_stack(ctx, len(paths), (3, H, W), "flats") as fl:
         def put(i, a):
+            _flat_finite(a, paths[i])
             fl[i] = a - fdark
 
         _read_frames(paths, put, 0, lambda c: _tick(ctx, f"reading flats {c}/{len(paths)}"), read_colour)
-        fl /= np.median(fl[:, :, max(y0, 0):y1, max(x0, 0):x1], axis=(2, 3), keepdims=True)
+        level = np.median(fl[:, :, max(y0, 0):y1, max(x0, 0):x1], axis=(2, 3), keepdims=True)
+        for i, c in zip(*np.nonzero(~(level[:, :, 0, 0] > 0))):    # the raw path's guard (review 3.4): a flat whose
+            raise ValueError(                                         # centre is not above the level taken off
+                f"the flat {Path(paths[i]).name} has no light left at its centre in {'RGB'[c]} once the level it is "
+                f"corrected with ({float(np.median(fdark)):.0f}) is taken off (it reads {float(level[i, c, 0, 0]):.3g}): "
+                "give its flat darks or a bias")
+        fl /= level
         flat = np.stack([_flats_mean(fl[:, c]) for c in range(3)])
     for c in range(3):
         if flat_scale_px > 0:
             flat[c] = cv2.GaussianBlur(flat[c], (0, 0), flat_scale_px)
-        flat[c] /= np.median(flat[c, max(y0, 0):y1, max(x0, 0):x1])
+        m = float(np.median(flat[c, max(y0, 0):y1, max(x0, 0):x1]))
+        if not m > 0:
+            raise ValueError(f"the master flat has no light at its centre in {'RGB'[c]} (it reads {m:.3g})")
+        flat[c] /= m
+    _flat_finite(flat, "master flat")
     if flat_scale_px > 0:
         ctx.log(f"master flat kept above {flat_scale_px:.0f} px only (vignetting, not dust)")
     return flat
