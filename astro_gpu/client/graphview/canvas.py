@@ -575,6 +575,9 @@ class GraphCanvas(QGraphicsView):
         fallback = list(bd.get("fallback") or []) if state == "done" and not grey else []
         broken, missing = bd.get("broken") or "", bd.get("missing") or ""
         word = _(FALLBACK_WORD) if fallback else state_word(state)
+        if state == "stale" and not pending:             # Outdated: why, in a few words (the setting, the block)
+            why = doc.why(b)
+            word = f"{word} · {why}" if why else word
         what = kind_what(kind)
         if bd.get("nights"):                             # a Session of several nights says so (graph.py block_what)
             what = _("{nights}: their light frames and the dark, flat and bias frames chosen for them, and the "
@@ -814,8 +817,9 @@ class GraphCanvas(QGraphicsView):
             it.d = self.card_data(b, drawing.cards[b]) if card else self.block_data(b, drawing.boxes[b])
             if dim is not None:
                 it.d["dim"] = dim
-            if waited:
-                it.setToolTip(it.d.get("tip", ""))
+            # the tooltip says the state just drawn, whatever brought it (a run's end, a failure, an edit): it kept the
+            # state of the scene's building (the night test pass: a red Stacking said "Up to date")
+            it.setToolTip(it.d.get("tip", ""))
             it.update()
         if waited:
             self.minimap.rects = [(r, QColor(STATE_COL.get(it.d["state"], "#5d6470")))

@@ -289,6 +289,18 @@ class Doc:
     def state(self, b) -> str:
         return self.document.state(b)
 
+    def why(self, b) -> str:
+        """Why the block is Outdated, in a few words (the model's ``BlockMap.why``); "" otherwise or without a model."""
+        m = self.model
+        g = getattr(m, "block_map", None) if m is not None else None
+        if g is None:
+            return ""
+        try:
+            return g.why(g.node(b))
+        except Exception:  # noqa: BLE001 - a reason the model cannot give now: the state word alone
+            log.debug("graph page: no reason for %s", b, exc_info=True)
+            return ""
+
     def review(self, b):
         f = getattr(self.document, "review", None)
         return f(b) if f is not None else None

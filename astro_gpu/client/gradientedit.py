@@ -1575,8 +1575,8 @@ class GradientEditor(QObject):
                                         "later block reads it. The sky keeps its level."))
                 stale = self.s.state(self.p, "gradient") == "stale" and not draft
                 u["tag"].setText(_("Previous settings") if stale else "")
-                u["tag"].setToolTip(_("Computed with the previous settings: this is the result the block had. Run to "
-                                      "here computes it with the current ones.") if stale else "")
+                from .tune import previous_tip
+                u["tag"].setToolTip(previous_tip(self.s, self.p, "fond") if stale else "")
             if "before" in u:
                 b = u["before"]
                 b.blockSignals(True)
@@ -2629,7 +2629,9 @@ def _points_job(sm: dict, params, req, level, project, pid) -> dict:
 def _reduced_stack(project, pid: int) -> dict:
     """The stack of the workflow reduced to about PREVIEW_PIXELS (block means), its covered pixels."""
     from ..api import stage_outputs
-    out = stage_outputs(project, pid, "stack")
+    # an Outdated stack: its earlier result, still kept, as the page shows it ("Previous settings"; the night test pass:
+    # the page showed the earlier stack and the preview said "The stack is not computed")
+    out = stage_outputs(project, pid, "stack") or stage_outputs(project, pid, "stack", which="previous")
     if out is None:
         raise ValueError(_("The stack is not computed"))
     arr = np.load(f"{out.dir}/drz_full.npy", mmap_mode="r")

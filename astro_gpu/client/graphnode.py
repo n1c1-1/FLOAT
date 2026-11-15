@@ -774,6 +774,27 @@ class BlockMap:
                 out.append(block_state(m, q, "synth"))
         return out
 
+    def why(self, node) -> str:
+        """Why the block is Outdated, in a few words (the model's ``outdated_why`` of its first Outdated stage: the
+        setting that changed, the block upstream where the change was made, else "an input changed"); "" when it is
+        not Outdated."""
+        m = self.model
+        if node is None or self.state(node) != "stale" or not hasattr(m, "outdated_why"):
+            return ""
+        key = "etoiles" if node.key == "composition" else node.ref
+        for p in node.paths:
+            stages = (self.session_stages(p, node.sid) if node.key == "calibration" and node.sid is not None
+                      else run_stages(m, p, key))
+            last = self._last_nodes().get(p.pid) is node
+            if last:
+                stages = list(stages) + list(run_stages(m, p, "post"))
+            for x in stages:
+                if m.state(p, x) == "stale":
+                    why = m.outdated_why(p, x)
+                    if why:
+                        return why
+        return _("an input changed")
+
     def summary(self, node, tr=None) -> str:
         """The one line under a block's name: the stored graph's own summary of the block."""
         bid = self.block_of(node)

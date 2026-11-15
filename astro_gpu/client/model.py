@@ -2686,6 +2686,76 @@ class _ProjectBase(QObject):
         p = p or self.path
         return self._states.get((p.pid, stage)) if p is not None else None
 
+    def outdated_why(self, p: WorkflowView | None, stage: str, _depth: int = 0) -> str:
+        """Why an Outdated stage is, in a few words: the settings that changed ("Rejection kappa: 3 → 4"), else the
+        block upstream whose result changed ("Stacking changed"), else "an input changed"; "" for a stage that is not
+        Outdated. Read from the engine's keys: the parts its previous result was keyed by (its manifest) against the
+        parts it is keyed by now; kept per (stage, key, previous key), which never change."""
+        p = p or self.path
+        st = self.state_info(p, stage) if p is not None else None
+        if st is None or st.state != "stale":
+            return ""
+        return self._why(p, stage, _depth)[1]
+
+    def _why(self, p, stage, depth=0) -> tuple[str, str]:
+        """(kind, words): kind "own" (its settings, its method, its files) or "upstream" (the words name the block where
+        the change was made) or "any"."""
+        st = self.state_info(p, stage)
+        if st is None or st.state != "stale":
+            return "any", ""
+        from .i18n import language
+        cache = self.__dict__.setdefault("_whys", {})
+        ck = (p.pid, stage, st.key, st.previous_key, language())
+        if ck not in cache:
+            cache[ck] = self._outdated_why(p, stage, st, depth)
+        return cache[ck]
+
+    def _outdated_why(self, p, stage, st, depth) -> tuple[str, str]:
+        from .. import texts
+        from .i18n import language
+        from .settings import fmt
+        anything = _("an input changed")
+        try:
+            store, keys = api._store(self.p), api._keys(self.p)
+            old = store.manifest(stage, st.previous_key).get("key_parts") if store is not None else None
+            cur = json.loads(json.dumps(keys.key_parts(p.pid, stage), default=str))
+        except Exception:  # noqa: BLE001 - a key the engine cannot give now: the plain words
+            return "any", anything
+        if not isinstance(old, dict):
+            return "any", anything
+        if old.get("v") != cur.get("v"):
+            return "own", _("its method was updated")
+        op, cp = old.get("p") or {}, cur.get("p") or {}
+        names = [n for n in list(cp) + [n for n in op if n not in cp] if op.get(n) != cp.get(n)]
+        if names:
+            base, lang = stage.partition("@")[0].partition("~")[0], language()
+
+            def words(n):
+                try:
+                    label = texts.param_label(base, n, lang)
+                except (KeyError, ValueError, TypeError):
+                    label = ""
+                label = label or n.replace("_", " ")
+
+                def val(v):
+                    return texts.choice_label(v, lang) if isinstance(v, str) else fmt(v)
+                return _("{setting}: {old} → {new}").format(setting=label, old=val(op.get(n)), new=val(cp.get(n)))
+            out = ", ".join(words(n) for n in names[:2])
+            return "own", out + (" …" if len(names) > 2 else "")
+        if old.get("x") != cur.get("x"):
+            return "own", _("its input files changed")
+        ou, cu = old.get("u") or {}, cur.get("u") or {}
+        chain = self._chains.get(p.pid, [])
+        ups = [d for d in cu if ou.get(d) != cu.get(d)]
+        ups.sort(key=lambda d: chain.index(d) if d in chain else -1)
+        for d in ups:                                   # the block upstream where the change was made
+            full = next((x for x in chain if x == d or x.partition("~")[0] == d), d)
+            kind, words_ = self._why(p, full, depth + 1) if depth < 12 else ("any", "")
+            if kind == "upstream":
+                return kind, words_                     # it names the block where the change was made
+            return "upstream", _("{block} changed").format(block=self.title(full.partition("@")[0]))
+        return "any", anything
+
     def previous_key(self, p: WorkflowView | None, stage: str) -> str | None:
         st = self.state_info(p, stage)
         return st.previous_key if st is not None else None

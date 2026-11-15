@@ -126,6 +126,19 @@ def scrolled_part(part: QWidget) -> QScrollArea:
     return sa
 
 
+def previous_tip(s, p, k) -> str:
+    """The tooltip of the Previous settings tag: what the result shown is, and what changed since (the graph's reason of
+    the Outdated block: the setting, or the block upstream where the change was made)."""
+    text = _("Computed with the previous settings: this is the result the block had. Run to here computes it with the "
+             "current ones.")
+    try:
+        g = s.block_map
+        why = g.why(g.node_of(p, k))
+    except Exception:  # noqa: BLE001 - no reason readable now: the tag's own words
+        why = ""
+    return text + ("\n" + _("Changed since: {why}").format(why=why) if why else "")
+
+
 class Strip(QFrame):
     """The current workflow, block after block."""
     picked = Signal(str)
@@ -235,7 +248,8 @@ class Strip(QFrame):
                             f"border-bottom: 1px solid {ACCENT if sel else '#353b47'}; "
                             f"{'font-weight: 600; color: #ffffff;' if sel else 'color: #8b93a1;' if off else ''} }}")
             b.setToolTip(_("{block} switched off: the image passes through unchanged").format(block=title) if off else
-                         "" if k == "sources" or k.startswith("session") else _(STATE_WORD[st]))
+                         "" if k == "sources" or k.startswith("session") else
+                         _(STATE_WORD[st]) + (f" · {g.why(node)}" if st == "stale" and g.why(node) else ""))
             b.clicked.connect(lambda _x=False, kk=k: self.picked.emit(kk))
             self.h.addWidget(b)
             if sel:
@@ -1104,8 +1118,7 @@ class TuneView(QWidget):
     def _previous_tag(self, p, k):
         tag = QLabel(_("Previous settings"))
         tag.setStyleSheet(f"color: {WARN}; border: 1px solid {WARN}; border-radius: 9px; padding: 1px 8px;")
-        tag.setToolTip(_("Computed with the previous settings: this is the result the block had. Run to here computes "
-                         "it with the current ones."))
+        tag.setToolTip(previous_tip(self.s, p, k))
         self.head.addWidget(tag)
         self.head.addWidget(self._run_button(p, k))
 

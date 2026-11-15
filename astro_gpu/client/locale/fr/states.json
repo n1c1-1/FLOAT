@@ -1,0 +1,9 @@
+{
+ "an input changed": "une entrée a changé",
+ "its method was updated": "sa méthode a été mise à jour",
+ "{setting}: {old} → {new}": "{setting} : {old} → {new}",
+ "its input files changed": "ses fichiers d'entrée ont changé",
+ "{block} changed": "{block} a changé",
+ "Outdated: {why}": "Obsolète : {why}",
+ "Changed since: {why}": "Changé depuis : {why}"
+}

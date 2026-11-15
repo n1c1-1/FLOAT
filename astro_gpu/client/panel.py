@@ -716,7 +716,7 @@ class Panel(QWidget):
                     rows.append((html.escape(tr_name(name, True)), _("image")))
                     continue
                 src = _("from {block}").format(block=block_title(q, q.end)) if q.end else ""
-                st = _("Up to date") if q.rendered and q.computed else (_("Outdated") if q.rendered else _("Not computed yet"))
+                st = _(STATE_WORD[self.output_state(q)])           # the graph's state of its last block (BlockMap)
                 rows.append((html.escape(tr_name(name)), " · ".join(x for x in (st, src) if x)))
             if rows:
                 self.bv.addWidget(self.group_title(_("Layers")))
@@ -1092,9 +1092,7 @@ class Panel(QWidget):
         ed.editingFinished.connect(lambda: self.name_edited(ed, p.name, pid=p.pid))
         top.addWidget(ed, 1)
         st = self.graph_state(node)
-        chip = QLabel(_(STATE_WORD[st]))
-        chip.setStyleSheet(f"color: {STATE_COLOR[st]}; font-size: 9pt;")
-        top.addWidget(chip)
+        top.addWidget(self.state_chip(node, st))
         self.hv.addLayout(top)
         self.hv.addWidget(label(combine_title(kind), "small"))
         acts = QHBoxLayout()                             # as the Image block: its Delete under its name (#34)
@@ -1325,9 +1323,7 @@ class Panel(QWidget):
                 title += " · " + s.session(node.sid).name
             top.addWidget(label(title, "h1", wrap=True), 1)     # a long name (#36) wraps, never cut
         st = self.graph_state(node)
-        chip = QLabel(_(STATE_WORD[st]))
-        chip.setStyleSheet(f"color: {STATE_COLOR[st]}; font-size: 9pt;")
-        top.addWidget(chip)
+        top.addWidget(self.state_chip(node, st))
         kb = k.partition("~")[0]
         graph_block = kb not in ("sources", "final", "session", "composition", "fusion", "image", "post") and \
             (node.sid is None or kb == "calibration") and not self.tune      # a session's Calibration too (expl. 2)
@@ -1860,10 +1856,8 @@ class Panel(QWidget):
         top = QHBoxLayout()
         from .graphnode import node_title
         top.addWidget(label(node_title(s, node), "h1", wrap=True), 1)        # "Combine layers 2": as the graph names it
-        st = block_state(s, p, "etoiles")
-        chip = QLabel(_(STATE_WORD[st]))
-        chip.setStyleSheet(f"color: {STATE_COLOR[st]}; font-size: 9pt;")
-        top.addWidget(chip)
+        st = self.graph_state(node)                  # the graph's state of the block (BlockMap), as everywhere
+        top.addWidget(self.state_chip(node, st))
         x = QPushButton(_("Delete"))
         x.setToolTip(_("Take this block out of Post (the Stars/background block's images stay computed)"))
         x.clicked.connect(self.removeTool.emit)
@@ -1961,6 +1955,30 @@ class Panel(QWidget):
         self.bv.addLayout(row)
         self.bv.addStretch(1)
         self._finish_sections()
+
+    def state_chip(self, node, st=None) -> QLabel:
+        """The state line of the block: the graph's word (``graph_state``); an Outdated block says why on hover (the
+        setting changed, or the block upstream where the change was made)."""
+        st = st or self.graph_state(node)
+        chip = QLabel(_(STATE_WORD[st]))
+        chip.setStyleSheet(f"color: {STATE_COLOR[st]}; font-size: 9pt;")
+        if st == "stale":
+            try:
+                why = self.s.block_map.why(self._same_node(node))
+            except (KeyError, ValueError, AttributeError, IndexError):
+                why = ""
+            chip.setToolTip(_("Outdated: {why}").format(why=why) if why else "")
+        return chip
+
+    def _same_node(self, node):
+        g = self.s.block_map
+        return (g.node_of(node.paths[0], node.ref) if node.paths else None) or node
+
+    def output_state(self, q) -> str:
+        """The state of the workflow's image for Post: the graph's state of the block that holds its Output."""
+        g = self.s.block_map
+        node = g._last_nodes().get(q.pid)
+        return g.state(node) if node is not None else ("done" if q.rendered and q.computed else "pending")
 
     def graph_state(self, node):
         """The block's state as the graph shows it (round 3: a session's Calibration said "Up to date" never computed,
