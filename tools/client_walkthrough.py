@@ -455,7 +455,7 @@ class Walk:
         self.settle()
         self.shot("gallery_new_project")
         # issue #47: the template is chosen before the frames (an import no longer makes a workflow of its own)
-        next(c for c in w.graph.templates.cards if c.t["key"] == "colour_full").mousePressEvent(None)
+        w.graph.templates.card("colour_full").mousePressEvent(None)
         self.settle()
 
         def named(d):

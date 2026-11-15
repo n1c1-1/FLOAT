@@ -58,6 +58,7 @@ class GraphPage(SidesHost, QWidget):
     toasted = Signal(str)                # a toast was shown
     sideChosen = Signal(str, str)        # a side folded or pinned: "right" | "left", its state
     sidesShown = Signal()                # the arrow of a hidden side: the panels come back
+    templateProject = Signal(str)        # a template chosen on a blank project: its file, to open as a new project (#167)
     templatesAsked = Signal()            # the blank page's « From template »: the gallery is shown in its place
 
     def __init__(self, document=None, steps=None, parent=None):
@@ -665,6 +666,10 @@ class GraphPage(SidesHost, QWidget):
             return
         self.template_chosen(t, name or None)
 
+    def _template_projects(self) -> bool:
+        """Whether the window takes a template file as a new project (the page alone, in tests, makes the workflow)."""
+        return self.receivers("2templateProject(QString)") > 0
+
     def template_chosen(self, t: dict, name: str | None = None):
         """A template of the gallery: its workflow made in one step by the core's operations (graphcore.templates), its
         Post actions by the project model when there is one. ``name``: the one typed in the New workflow window."""
@@ -674,6 +679,9 @@ class GraphPage(SidesHost, QWidget):
         doc = self.bridge.doc
         if t.get("copy") is not None:                    # a copy is Ctrl+D on its workflow, not a template
             self.hide_templates()
+            return
+        if t.get("file") and self.is_blank() and not self.bridge.graph.nights and self._template_projects():
+            self.templateProject.emit(t["file"])             # a template is a blank project: a new project, its copy
             return
         from ..names import neutral
         base = neutral(name) if name else (t["palette"] if t.get("kind") == "fusion" else t["name"])   # stored in English

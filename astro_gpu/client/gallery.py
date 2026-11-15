@@ -19,9 +19,6 @@ Texts are English and go through _() where shown.
 """
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
@@ -42,7 +39,7 @@ from PySide6.QtWidgets import (
 
 from ..core import workflow as wfl
 from ..stages.combine import COMBINATIONS, FORMER_PALETTES, CombineSHO
-from . import prefs
+from . import prefs, templatefiles
 from .graphnode import KEY_ENGINE_BLOCK, TITLES, TRUNK
 from .i18n import _, hm
 from .names import shown
@@ -53,10 +50,8 @@ FULL = dict(debruitage=True, etoiles="retirer", fond="simple")
 CLASSIC_DN = dict(debruitage=True, etoiles="garder", fond="simple")
 CLASSIC = dict(debruitage=False, etoiles="garder", fond="simple")
 
-#: the tabs, in order: key and title
-TABS = (("frames", "Templates"), ("mine", "My templates"), ("copy", "Workflow copy"))    # compact names (decision 12)
-#: a user's template file (Export / Import)
-TEMPLATE_SUFFIX = ".sftemplate"
+#: the tab of the workflows' copies (the others are the template folders: templatefiles.tabs)
+COPY_TAB = "copy"
 
 #: the filters a Filters template is for, by the type of combination they make (stages/combine.py: its block's
 #: name and its named inputs); S II, H-alpha and O III first
@@ -76,45 +71,10 @@ def palette_kind(name: str) -> str:
 def palette_name(name: str) -> str:
     """A template's choice as a type's name (a former palette's name becomes its type's)."""
     return next(c.title for c in COMBINATIONS if c.kind == palette_kind(name))
-#: the templates: key, tab, name, what it is for, the workflow's options (the views'), and: kind and palette (Filters),
-#: source ("image"), plain (each image straight to Post), images (several files), recommended
-GALLERY: list[dict] = [
-    dict(key="colour_min", tab="frames", name="Colour minimal", opts=CLASSIC,
-         text="Calibration, registration, selection and stacking, then astrometry, the sky gradient and the colours. "
-              "The quickest complete workflow, without a neural network."),
-    dict(key="colour_full", tab="frames", name="Colour full", opts=FULL, recommended=True,
-         text="The same, then denoise on the two half-stacks and the stars taken off: the starless image and the stars "
-              "come to Post as two layers."),
-    dict(key="image", tab="frames", name="Image", opts=CLASSIC, source="image", plain=True, blocks=[],
-         text="One image to Post as a layer, a FITS, TIFF, PNG or JPEG file: blocks are added from the palette."),
-    dict(key="filters_min", tab="frames", name="Filters minimal", opts=CLASSIC, kind="filters", palette="H-O",
-         filters=PALETTES["H-O"],
-         text="A monochrome camera: each filter gets its own workflow, the others aligned on the first one, and each "
-              "result is a layer of Post."),
-    dict(key="filters_full", tab="frames", name="Filters full", opts=FULL, kind="fusion", palette=SHO_DEFAULT,
-         filters=PALETTES[SHO_DEFAULT],
-         text="Each filter's workflow with denoise and its stars taken off, the others aligned on the first one; the "
-              "combination of the filters chosen here makes the colour nebula from their starless images, a second one "
-              "of the same type makes the colour stars from their stars, and a Combine layers block puts them back."),
-    dict(key="sho_rgb", tab="frames", name="SHO + RGB stars", opts=FULL, kind="fusion", palette=SHO_DEFAULT,
-         filters=PALETTES[SHO_DEFAULT], rgb_stars=True,
-         text="The nebula from the narrow bands, the stars from a colour camera: each filter's workflow and a colour "
-              "workflow take their stars off, the others aligned on the first filter; the combination reads the "
-              "starless images, and a Combine layers block puts the colour stars back on its image."),
-    dict(key="images", tab="frames", name="Several images", opts=CLASSIC, source="image", plain=True, blocks=[], images=3,
-         text="Several images to Post, one layer each: each Image block takes its file in the graph."),
-    dict(key="dual_x2", tab="frames", name="Dual-band x2", opts=FULL, kind="fusion", palette=SHO_DEFAULT,
-         filters=["O III / H-alpha", "O III / S II"], dual_x2=True,
-         text="A colour camera with two dual-band filters (O III/H-alpha and O III/S II) and a session for the stars."),
-    dict(key="mono_rgb", tab="frames", name="Mono RGB", opts=CLASSIC_DN, kind="fusion", palette="RGB",
-         filters=list(PALETTES["RGB"]), mono_rgb=True,
-         text="A monochrome camera with red, green and blue filters: each filter stacked on its own, the three combined "
-              "into the colour image, which is calibrated once, stars kept."),
-    dict(key="mono_lrgb", tab="frames", name="Mono LRGB", opts=CLASSIC_DN, kind="fusion", palette="LRGB",
-         filters=list(PALETTES["LRGB"]), mono_rgb=True,
-         text="A monochrome camera with a luminance filter and red, green and blue ones: each filter stacked on its "
-              "own, the colour from R, G and B and the detail from L, calibrated once, stars kept."),
-]
+#: the templates shipped with the application, read from their files (astro_gpu/resources/templates/<Tab>/<name>): key,
+#: tab, name, what it is for, the workflow's options (the views'), and: kind and palette (Filters), source ("image"),
+#: plain (each image straight to Post), images (several files), recommended. tools/make_templates.py writes the files.
+GALLERY: list[dict] = templatefiles.shipped_cards()
 
 #: the template chosen first in the frames' tab
 RECOMMENDED = "colour_full"
@@ -585,6 +545,13 @@ def ask_files(parent, t: dict) -> list[str]:
     return files
 
 
+TAB_QSS = (f"QTabBar::tab {{ color: #c9cfd8; background: #232831; border: 1px solid #353b47; "
+           f"padding: 6px 14px; margin-right: 2px; border-top-left-radius: 6px; "
+           f"border-top-right-radius: 6px; }} QTabBar::tab:selected {{ color: #ffffff; "
+           f"background: #2b3446; border-color: {ACCENT}; font-weight: 600; }} "
+           f"QTabBar::tab:hover {{ color: #ffffff; }}")
+
+
 class TemplatePage(QWidget):
     """The templates in place of the blank graph: a click on a card makes its workflow, asking for nothing (issue #114:
     its Image blocks wait for their file, chosen in their panel); ``back``: the blank page again."""
@@ -604,6 +571,11 @@ class TemplatePage(QWidget):
         self.back_b.clicked.connect(self.back.emit)
         top.addWidget(self.back_b)
         out.addLayout(top)
+        self.tabs = QTabBar()                          # one tab per folder of templates (issue #167)
+        self.tabs.setStyleSheet(TAB_QSS)
+        self.tab_names: list[str] = []
+        self.tabs.currentChanged.connect(self._tab)
+        out.addWidget(self.tabs)
         self.scroll = sc = QScrollArea()
         sc.setWidgetResizable(True)
         sc.setFrameShape(QFrame.NoFrame)
@@ -637,8 +609,42 @@ class TemplatePage(QWidget):
             c.setFixedHeight(max(x.own_h for x in row))
             self.grid.addWidget(c, n // cols, n % cols)
 
-    def build(self):
-        """The cards, the user's templates after the six."""
+    def build(self, tab: str | None = None):
+        """The tabs, one per folder of templates, and the cards of the one shown (``tab``, else the one shown before,
+        else the first)."""
+        keep = tab or (self.tab_names[self.tabs.currentIndex()] if 0 <= self.tabs.currentIndex() < len(self.tab_names)
+                       else None)
+        self.tab_names = templatefiles.tabs()
+        self.tabs.blockSignals(True)
+        while self.tabs.count():
+            self.tabs.removeTab(0)
+        for n in self.tab_names:
+            self.tabs.addTab(_(n))
+        self.tabs.blockSignals(False)
+        if self.tab_names:
+            self.tabs.setCurrentIndex(self.tab_names.index(keep) if keep in self.tab_names else 0)
+        self.tabs.setVisible(len(self.tab_names) > 1)
+        self._fill(self.tab_names[self.tabs.currentIndex()] if self.tab_names else None)
+
+    def _tab(self, i: int):
+        if 0 <= i < len(self.tab_names):
+            self._fill(self.tab_names[i])
+
+    def show_tab(self, name: str):
+        if name in self.tab_names:
+            self.tabs.setCurrentIndex(self.tab_names.index(name))
+
+    def card(self, key: str):
+        """The card of the template with this key, its tab shown first; None when no tab holds it."""
+        for n in self.tab_names:
+            if any(c["key"] == key for c in templatefiles.cards(n)):
+                if self.tab_names[self.tabs.currentIndex()] != n:
+                    self.show_tab(n)
+                return next(c for c in self.cards if c.t["key"] == key)
+        return None
+
+    def _fill(self, tab: str | None):
+        """The cards of a tab: the shipped templates, then the user's."""
         while self.grid.count():
             w = self.grid.takeAt(0).widget()
             if w is not None:
@@ -646,7 +652,7 @@ class TemplatePage(QWidget):
                 w.setParent(None)
                 w.deleteLater()
         self.cards = []
-        for t in GALLERY + user_templates():
+        for t in (templatefiles.cards(tab) if tab else []):
             c = TemplateCard(t)
             what = label(_(t["text"]), "small", wrap=True)
             c.layout().addWidget(what)
@@ -673,7 +679,7 @@ class TemplateGallery(QDialog):
     def __init__(self, session, start=None, parent=None, templates: list[dict] | None = None):
         super().__init__(parent)
         self.s = session
-        self.templates = list(GALLERY if templates is None else templates)
+        self.templates = list(templatefiles.all_cards() if templates is None else templates)
         self.setWindowTitle(_("New workflow"))
         # never taller than a 1366 x 768 screen's room: 768 less the task bar and this window's title bar (control
         # round: 700 was taller than that)
@@ -687,19 +693,12 @@ class TemplateGallery(QDialog):
         root.addWidget(label(_("Choose how the workflow starts: every block can then be changed, added from the "
                                "palette, removed or switched off."), "small", wrap=True))
         self.tabs = QTabBar()
-        self.tabs.setStyleSheet(f"QTabBar::tab {{ color: #c9cfd8; background: #232831; border: 1px solid #353b47; "
-                                f"padding: 6px 14px; margin-right: 2px; border-top-left-radius: 6px; "
-                                f"border-top-right-radius: 6px; }} QTabBar::tab:selected {{ color: #ffffff; "
-                                f"background: #2b3446; border-color: {ACCENT}; font-weight: 600; }} "
-                                f"QTabBar::tab:hover {{ color: #ffffff; }}")
+        self.tabs.setStyleSheet(TAB_QSS)
         self.tab_keys = []
-        self.templates += user_templates()
-        for key, title in TABS:
-            if key == "copy" and not getattr(session, "paths", None):
+        for key in templatefiles.tabs() + [COPY_TAB]:
+            if key == COPY_TAB and not getattr(session, "paths", None):
                 continue
-            if key == "mine" and not any(t["tab"] == "mine" for t in self.templates):
-                continue
-            self.tabs.addTab(_(title))
+            self.tabs.addTab(_("Workflow copy") if key == COPY_TAB else _(key))
             self.tab_keys.append(key)
         self.tabs.currentChanged.connect(self._tab)
         root.addWidget(self.tabs)
@@ -747,14 +746,6 @@ class TemplateGallery(QDialog):
         nr.addWidget(self.name, 1)
         sv.addLayout(nr)
         bb = QHBoxLayout()
-        imp = set_icon(QPushButton(_("Import…")), "import", 16)
-        imp.setToolTip(_("A template saved as a file (Export… of a template of yours)"))
-        imp.clicked.connect(self._import)
-        bb.addWidget(imp)
-        self.export_b = set_icon(QPushButton(_("Export…")), "export", 16)
-        self.export_b.setToolTip(_("Save this template of yours as a file, to share it"))
-        self.export_b.clicked.connect(self._export)
-        bb.addWidget(self.export_b)
         self.delete_b = set_icon(QPushButton(_("Delete")), "delete", 16)
         self.delete_b.clicked.connect(self._delete)
         bb.addWidget(self.delete_b)
@@ -785,7 +776,7 @@ class TemplateGallery(QDialog):
                          name=p.name)) for p in self.s.paths]
 
     def _tab(self, i: int):
-        key = self.tab_keys[i] if 0 <= i < len(self.tab_keys) else "frames"
+        key = self.tab_keys[i] if 0 <= i < len(self.tab_keys) else (self.tab_keys[0] if self.tab_keys else "")
         while self.grid.count():
             w = self.grid.takeAt(0).widget()
             if w is not None:
@@ -816,7 +807,6 @@ class TemplateGallery(QDialog):
         self.palette.setCurrentIndex(max(0, self.palette.findData(palette_name(t.get("palette", SHO_DEFAULT)))))
         self.palette.blockSignals(False)
         mine = bool(t.get("user"))
-        self.export_b.setVisible(mine)
         self.delete_b.setVisible(mine)
         dur = ""
         if t.get("source") != "image" and not t.get("kind") and not t.get("user") and hasattr(self.s, "opts_seconds"):
@@ -878,53 +868,23 @@ class TemplateGallery(QDialog):
             return
         self.accept()
 
-    # ------------------------------------------------------------ the user's templates (issue #47)
+    # ------------------------------------------------------------ the user's templates (issue #167)
     def _reload(self):
-        self.templates = [t for t in self.templates if not t.get("user")] + user_templates()
-
-    def _import(self):
-        f, _x = QFileDialog.getOpenFileName(self, _("Import a template"), prefs.last_folder(),
-                                            _("Templates (*{suffix})").format(suffix=TEMPLATE_SUFFIX))
-        if not f:
-            return
-        prefs.remember_folder(f)
-        try:
-            t = import_template(f)
-        except (OSError, ValueError):                      # said once, plainly (GUI exploration 7.5)
-            self.duration.setText(_("“{name}” is not a template file of this program.").format(name=Path(f).name))
-            return
-        self._reload()
-        self._show_tab("mine")
-        self.pick(next(c.t for c in self.cards if c.t.get("key") == t["key"]))
-
-    def _export(self):
-        t = self.choice or {}
-        if not t.get("user"):
-            return
-        f, _x = QFileDialog.getSaveFileName(self, _("Export the template"),
-                                            str(Path(prefs.last_folder()) / (t["name"] + TEMPLATE_SUFFIX)),
-                                            _("Templates (*{suffix})").format(suffix=TEMPLATE_SUFFIX))
-        if f:
-            prefs.remember_folder(f)
-            export_template(t, f)
+        self.templates = templatefiles.all_cards()
 
     def _delete(self):
         t = self.choice or {}
         from PySide6.QtWidgets import QMessageBox
         if t.get("user") and QMessageBox.question(
-                self, _("Delete"), _("Delete the template “{name}”? It cannot be undone.").format(name=t["name"])) \
-                == QMessageBox.Yes:
-            delete_user_template(t["key"])
+                self, _("Delete"), _("Delete the template “{name}”? It cannot be undone.").format(name=t["name"]))                 == QMessageBox.Yes:
+            templatefiles.delete_user(t["file"])
             self._reload()
-            self._show_tab(t["tab"] if any(x["tab"] == t["tab"] for x in self.templates) else "frames")
+            self._show_tab(t["tab"] if any(x["tab"] == t["tab"] for x in self.templates) else self.tab_keys[0])
 
     def _show_tab(self, key: str):
-        if key not in self.tab_keys:                      # a tab that had no template yet
-            i = [k for k, _t in TABS if k in self.tab_keys or k == key].index(key)
-            self.tabs.insertTab(i, _(dict(TABS)[key]))
-            self.tab_keys.insert(i, key)
-        self.tabs.setCurrentIndex(self.tab_keys.index(key))
-        self._tab(self.tab_keys.index(key))
+        if key in self.tab_keys:
+            self.tabs.setCurrentIndex(self.tab_keys.index(key))
+            self._tab(self.tab_keys.index(key))
 
     # ------------------------------------------------------------ what the page reads
     @property
@@ -938,19 +898,20 @@ def image_filter() -> str:
 
 
 def template_dialog(parent, name: str) -> tuple[str, str] | None:
-    """Save as template: its name and its gallery tab, in one dialog (issue #47). None when cancelled."""
+    """Save as template: its name and its tab, in one dialog (issue #167): a tab of the list, or a new one typed. None
+    when cancelled."""
     from PySide6.QtWidgets import QComboBox, QDialogButtonBox, QFormLayout
     d = QDialog(parent)
-    d.setWindowTitle(_("Save template"))
+    d.setWindowTitle(_("Save as template"))
     f = QFormLayout(d)
     ed = QLineEdit(name)
     ed.selectAll()
     f.addRow(_("Name"), ed)
     cb = QComboBox()
-    for k, t in TABS:
-        if k != "copy":
-            cb.addItem(_(t), k)
-    cb.setCurrentIndex(cb.findData("mine"))
+    cb.setEditable(True)
+    for t in templatefiles.tabs():
+        cb.addItem(_(t), t)
+    cb.setToolTip(_("A tab of the gallery, or a new one: type its name"))
     f.addRow(_("Gallery tab"), cb)
     bb = QDialogButtonBox()
     bb.addButton(_("Save"), QDialogButtonBox.AcceptRole)
@@ -958,52 +919,11 @@ def template_dialog(parent, name: str) -> tuple[str, str] | None:
     bb.accepted.connect(d.accept)
     bb.rejected.connect(d.reject)
     f.addRow(bb)
-    if d.exec() != QDialog.Accepted or not ed.text().strip():
+    if d.exec() != QDialog.Accepted or not ed.text().strip() or not cb.currentText().strip():
         return None
-    return ed.text().strip(), cb.currentData()
-
-
-def user_templates() -> list[dict]:
-    """The user's own templates (issue #47), from the preferences."""
-    out = []
-    for t in prefs.get("templates") or []:
-        if isinstance(t, dict) and t.get("key") and isinstance(t.get("blocks"), list):
-            out.append({**t, "user": True, "tab": t["tab"] if t.get("tab") in dict(TABS) else "mine", "opts": CLASSIC})
-    return out
-
-
-def make_template(name: str, tab: str, text: str, source: str, blocks: list[dict]) -> dict:
-    """A user's template of a workflow's graph (checked)."""
-    blocks = wfl.check_blocks(wfl.with_output(blocks, source), source)       # its Output where it belongs (#49)
-    key = "user:" + "".join(c if c.isalnum() else "_" for c in name.lower()).strip("_")
-    return {"key": key, "tab": tab if tab in dict(TABS) and tab != "copy" else "mine", "name": name.strip(),
-            "text": text.strip(), "source": source, "blocks": blocks}
-
-
-def save_user_template(t: dict) -> dict:
-    """Keep a template in the preferences (one of the same name is replaced)."""
-    keep = [x for x in prefs.get("templates") or [] if isinstance(x, dict) and x.get("key") != t["key"]]
-    prefs.set("templates", keep + [{k: t[k] for k in ("key", "tab", "name", "text", "source", "blocks")}])
-    return t
-
-
-def delete_user_template(key: str) -> None:
-    prefs.set("templates", [x for x in prefs.get("templates") or [] if isinstance(x, dict) and x.get("key") != key])
-
-
-def export_template(t: dict, path: str) -> None:
-    Path(path).write_text(json.dumps({"format": "float-template", "version": 1,
-                                      **{k: t[k] for k in ("tab", "name", "text", "source", "blocks")}},
-                                     indent=1, ensure_ascii=False), encoding="utf-8")
-
-
-def import_template(path: str) -> dict:
-    d = json.loads(Path(path).read_text(encoding="utf-8"))
-    if not isinstance(d, dict) or d.get("format") != "float-template":
-        raise ValueError(_("not a template file"))
-    return save_user_template(make_template(str(d.get("name") or Path(path).stem), str(d.get("tab") or "mine"),
-                                            str(d.get("text") or ""), str(d.get("source") or "frames"),
-                                            list(d.get("blocks") or [])))
+    i = cb.findText(cb.currentText())
+    tab = cb.itemData(i) if i >= 0 and cb.itemData(i) else cb.currentText().strip()
+    return ed.text().strip(), tab
 
 
 def _view_opts(t: dict) -> dict:

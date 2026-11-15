@@ -141,7 +141,7 @@ def _open_new_workflow(W):
 def test_the_new_workflow_link_opens_the_window_of_templates_and_copies(world):
     W = world()
     d = _open_new_workflow(W)
-    assert "copy" in d.tab_keys and "frames" in d.tab_keys
+    assert "copy" in d.tab_keys and "Color" in d.tab_keys
     n = len(W.m.paths)
     d.pick(next(c.t for c in d.cards if c.t.get("key") == "colour_min"))
     d.name.setText("Second")
@@ -167,6 +167,7 @@ def test_a_filters_template_is_offered_again_on_sessions_that_have_filters(world
     n = len(W.m.paths)
     assert n >= 2
     d = _open_new_workflow(W)
+    d._show_tab("Mono")
     t = next((c.t for c in d.cards if c.t.get("key") == "filters_min"), None)
     assert t is not None
     d.pick(t)

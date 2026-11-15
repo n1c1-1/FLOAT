@@ -560,7 +560,6 @@ class Panel(QWidget):
     renamed = Signal(int, str)
     openLayer = Signal(int)             # Open in Post (a Post layer's id)
     removeTool = Signal()
-    saveTemplate = Signal(int)              # issue #47: Save as template… of a workflow
     variantMade = Signal(int, int)      # new workflow, the one it is a variant of
     toast = Signal(str)                 # a word to say (what came with a change, why it was refused)
     cutToggled = Signal()               # the block's switch: cut it, or restore it (issue #43)
@@ -1450,11 +1449,6 @@ class Panel(QWidget):
             cut.setEnabled(not why_off)
             cut.clicked.connect(self.cutToggled.emit)
             acts.addWidget(cut)
-        if k == "post" and not self.tune:                # the workflow as a template of the gallery
-            tpl = QPushButton(_("Save template…"))
-            tpl.setToolTip(_("Keep this workflow's graph as a template of the gallery"))
-            tpl.clicked.connect(lambda: self.saveTemplate.emit(p.pid))
-            acts.addWidget(tpl)
         self.hv.addLayout(top)
         if acts.count():
             acts.addStretch(1)

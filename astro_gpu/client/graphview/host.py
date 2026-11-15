@@ -95,7 +95,6 @@ class SidesHost:
         pn.restoreBlock.connect(self.restore_block)
         pn.toast.connect(self.toast)
         pn.removeTool.connect(lambda: self.remove_tool(self.current_node(), None))
-        pn.saveTemplate.connect(self.save_template)
         pn.openLayer.connect(self.openLayer.emit)
         pn.cutToggled.connect(self.toggle_cut)
         pn.drop_files = self.panel_drop
@@ -271,27 +270,6 @@ class SidesHost:
         b = bm.block_of(n) if n is not None else None
         if b is not None and self.bridge.block(b) is not None and self.bridge.block(b).off:
             self.bridge.act("switch_off", block=b)
-
-    def save_template(self, pid):
-        """Save template… (issue #47): the workflow's graph, under a name, in a tab of the gallery (graph.py)."""
-        from ..gallery import TABS, make_template, save_user_template, template_dialog
-        s = self.s
-        p = s.view(pid)
-        if p is None:
-            return
-        src = s.source_kind(p)
-        if src == "fusion":
-            self.toast(_("Combination: no template"))
-            return
-        got = template_dialog(self, p.name)
-        if got is None:
-            return
-        name, tab = got
-        what = _(dict(TABS)[tab])
-        t = save_user_template(make_template(name, tab, _("Made from the workflow “{name}”.").format(name=p.name),
-                                             src, s.graph(p)))
-        s.log('Template "{name}" saved', name=t["name"])
-        self.toast(_("Template “{name}” saved · {tab}").format(name=t["name"], tab=what))
 
     def _post_changed(self, source=None):
         """Post's composition changed: the page follows, not for a slider of the panel (it stays under the mouse)."""

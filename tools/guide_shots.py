@@ -46,7 +46,7 @@ def main():
     w.graph.show_templates()
     walk.settle()
     walk.shot("2_gallery")
-    next(c for c in w.graph.templates.cards if c.t["key"] == "colour_full").mousePressEvent(None)
+    w.graph.templates.card("colour_full").mousePressEvent(None)
     walk.settle()
 
     def named(d):

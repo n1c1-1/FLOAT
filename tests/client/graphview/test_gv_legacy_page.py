@@ -277,7 +277,7 @@ def test_the_mouse_over_and_on_every_block_works(world):
 def test_a_filters_template_on_a_new_project_makes_its_empty_sessions(world):
     W = world(workflows=(), nights=0)
     W.page.show_templates()
-    card = next(c for c in W.page.templates.cards if c.t["key"] == "filters_full")
+    card = W.page.templates.card("filters_full")
     card.set_palette("H-O")
     card.mousePressEvent(None)
     W.settle()
@@ -289,7 +289,7 @@ def test_a_filters_template_on_a_new_project_makes_its_empty_sessions(world):
 def test_the_filters_card_makes_the_palette_chosen_on_it(world):
     W = world(workflows=(), nights=0)
     W.page.show_templates()
-    card = next(c for c in W.page.templates.cards if c.t["key"] == "filters_full")
+    card = W.page.templates.card("filters_full")
     card.set_palette("LRGB")
     card.mousePressEvent(None)
     W.settle()
@@ -302,9 +302,8 @@ def test_the_dual_band_x2_card_offers_no_combination_choice(world):
     from PySide6.QtWidgets import QComboBox
     W = world(workflows=(), nights=0)
     W.page.show_templates()
-    by_key = {c.t["key"]: c for c in W.page.templates.cards}
-    assert not by_key["dual_x2"].findChildren(QComboBox)
-    assert by_key["filters_full"].findChildren(QComboBox)
+    assert not W.page.templates.card("dual_x2").findChildren(QComboBox)
+    assert W.page.templates.card("filters_full").findChildren(QComboBox)
 
 
 def test_the_template_cards_take_the_height_of_their_content_in_a_grid_that_wraps(world):
@@ -349,7 +348,7 @@ def test_no_template_asks_for_a_file_it_only_places_its_blocks(world, monkeypatc
     W = world(workflows=(), nights=0)
     for t in [t for t in GALLERY if t.get("copy") is None]:
         W.page.show_templates()
-        next(c for c in W.page.templates.cards if c.t["key"] == t["key"]).mousePressEvent(None)
+        W.page.templates.card(t["key"]).mousePressEvent(None)
         W.settle()
         assert not asked, (t["key"], asked)
         assert W.m.paths and W.page.centre.currentWidget() is W.page.canvas, t["key"]

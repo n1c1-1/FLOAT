@@ -78,7 +78,7 @@ def card(path: Path, tab: str, mine: bool) -> dict | None:
     if mine:
         c["key"] = f"user:{tab}/{stem}"
     c.update(tab=tab, file=Path(path).as_posix(), user=mine)
-    if "blocks" not in c and "kind" not in c and "source" not in c:
+    if not info.get("card"):                            # a graph alone: its blocks are not known here
         c["source"], c["blocks"] = "frames", []
     return c
 

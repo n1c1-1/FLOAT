@@ -386,6 +386,26 @@ class GraphEditing:
                                "are in the Log.")
         return ok
 
+    def template_file(self) -> dict:
+        """The open project as the content of a template file (issue #167): its graph and settings in the project
+        file's format, as they are now (edits not saved included), nothing is written. The caller blanks it."""
+        from ..core import project2
+        self._absorb()
+        p = project2.Project2.from_dict(self.p.to_dict())
+        p.graph = gm.to_dict(self._g)
+        d = project2.file_dict(p)
+        if d.get("format") != project2.GRAPH_FORMAT:
+            raise ValueError(_("the graph and what the engine runs differ"))
+        return d
+
+    def template_card(self) -> dict:
+        """What the gallery's card of this project's template draws: the blocks of its first workflow (the recipe that
+        adds it to a project holding frames), nothing when it has none or is not a stack of frames."""
+        p = self.paths[0] if self.paths else None
+        if p is None or self.source_kind(p) not in ("frames", "image"):
+            return {}
+        return {"source": self.source_kind(p), "blocks": self.graph(p)}
+
     def _keep_format_2(self):
         from ..core.project2 import FILE, FORMAT
         f = Path(self.root) / FILE

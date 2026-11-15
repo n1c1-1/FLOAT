@@ -162,7 +162,7 @@ def template_card(page, key):
     """« From template » on the blank page: the gallery shown in place of the graph, the card of this template."""
     page.show_templates()
     QApplication.processEvents()
-    return next(c for c in page.templates.cards if c.t["key"] == key)
+    return page.templates.card(key)
 
 
 def from_template(page, key):

@@ -301,7 +301,7 @@ def test_a_combination_panel_shows_its_named_inputs_and_its_settings(world):
     from PySide6.QtWidgets import QComboBox, QDoubleSpinBox, QLabel
     W = world(workflows=(), filters=("Ha", "OIII"))
     W.page.show_templates()
-    card = next(c for c in W.page.templates.cards if c.t["key"] == "filters_full")
+    card = W.page.templates.card("filters_full")
     card.set_palette("H-O")
     card.mousePressEvent(None)
     W.settle()
@@ -326,7 +326,7 @@ def test_filters_make_one_workflow_each_and_their_combinations(world):
     combination and the nebula's, each row its own Stars/background, Post's layer puts the stars on."""
     W = world(workflows=(), filters=("Ha", "OIII"))
     W.page.show_templates()
-    card = next(c for c in W.page.templates.cards if c.t["key"] == "filters_full")
+    card = W.page.templates.card("filters_full")
     card.set_palette("H-O")
     card.mousePressEvent(None)
     W.settle()

@@ -28,6 +28,7 @@ import sys
 import threading
 import time
 import traceback
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, QLibraryInfo, QLocale, Qt, QTimer, QTranslator
@@ -57,8 +58,9 @@ from PySide6.QtWidgets import (
 
 from .. import __version__, api
 from ..core import project2
+from ..core.files import write_json
 from ..core.project import Target
-from . import APP_MOTTO, APP_NAME, drafts, journal, prefs
+from . import APP_MOTTO, APP_NAME, drafts, journal, prefs, templatefiles
 from . import layout as lay
 from .gcguard import GuiGarbageCollector
 from .home import HomeView, ask_project_name, forget_state
@@ -354,6 +356,7 @@ class Main(QMainWindow):
         f.addSeparator()
         act(f, _("Save"), self.save, "Ctrl+S", enabled=has, role="save")
         act(f, _("Save as…"), self.save_as, enabled=has, role="save")
+        act(f, _("Save as template"), self.save_template, enabled=has, role="save")
         f.addSeparator()
         self.a_export = act(f, _("Export image…"), self.export, "Ctrl+E", enabled=has, role="export")
         if spec:
@@ -572,6 +575,49 @@ class Main(QMainWindow):
             return
         if not self.create_project(drafts.new_root().as_posix(), _("Untitled")) and self.project is None:
             self.show_home()
+
+    def new_project_from_template(self, file) -> bool:
+        """A template is a blank project: a new project that is its copy (its graph, no frames, no results). The
+        project open is left first, as New project does."""
+        if self.project is not None and not self.close_project(go_home=False):
+            return False
+        try:
+            d = templatefiles.project_file(file)
+            root = drafts.new_root()
+            d["name"] = _("Untitled")
+            d["created"] = datetime.now().isoformat(timespec="seconds")
+            cache = prefs.get("cache_dir")
+            d["scratch_dir"] = (Path(cache) / root.name).as_posix() if cache else ""
+            root.mkdir(parents=True, exist_ok=True)
+            write_json(root / project2.FILE, d, indent=2, default=None)
+            project2.load(root)                              # read at once: a file that is not a project fails here
+        except (OSError, ValueError, KeyError, project2.LegacyProject) as e:
+            self.banner.say(_("The project cannot be created: {why}").format(why=e))
+            if self.project is None:
+                self.show_home()
+            return False
+        return self.open_project(root, created=True)
+
+    def save_template(self):
+        """File > Save as template: the graph of the open project, without frames, results or paths, in the user's
+        folder, in a tab and under a name asked in one small dialog."""
+        if self.project is None or self.s is None:
+            return
+        self._commit_typing()
+        if not self.settle_drafts():
+            return
+        from .gallery import template_dialog
+        got = template_dialog(self, "" if drafts.is_untitled(self.project.root) else self.project.name)
+        if got is None:
+            return
+        name, tab = got
+        try:
+            f = templatefiles.save_user(self.s.template_file(), tab, name, card_data=self.s.template_card())
+        except (OSError, ValueError) as e:
+            self.banner.say(_("The template cannot be saved: {why}").format(why=e))
+            return
+        self.project.log('Template "{name}" saved', name=name)
+        self.flash(_("Template “{name}” saved · {tab}").format(name=f.stem, tab=_(tab)))
 
     def open_other(self):
         """Open project…: the project open with edits not saved asks first (Save, Don't save, Cancel), as every way out
@@ -967,6 +1013,7 @@ class Main(QMainWindow):
         page.openBlock.connect(lambda: self.set_mode(2 if self.s.sel_step == "final" else 1))
         page.openPost.connect(lambda: self.set_mode(2))
         page.openLayer.connect(self.open_layer)
+        page.templateProject.connect(lambda f: QTimer.singleShot(0, lambda: self.new_project_from_template(f)))
         page.addSession.connect(self.add_session)
         page.variantMade.connect(self._variant_made)
         page.changed.connect(self.request_refresh)
