@@ -225,6 +225,12 @@ def judge_branch(B, kind, rid, y):
 
 
 def judge_night(B, rid):
+    from . import operations as ops
+    from .msg import M
+    r = B.ix.row.get(rid)
+    o = ops.whole_original(B.p, r) if r is not None else None
+    if o is not None:                            # it draws its original's sessions (the operation's refusal)
+        return M(ops.WHOLE_VARIANT, _row=r.name, _orig=o.name), None
     if rid in B.g.folded:
         return "", (B.chain_line[rid], 0)
     mine = [i for i, (k, _o, rr) in enumerate(B.g.lines) if rr == rid and (k == "night" or i == B.chain_line[rid])]

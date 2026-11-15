@@ -175,6 +175,24 @@ def _sync_shared(q, before):
             entry[sid]["name"] = src.name
 
 
+#: a session put into a whole variant: it draws its original's sessions (_whole_variants_follow took it out again)
+WHOLE_VARIANT = "“{_row}” draws the sessions of “{_orig}”: a session goes into “{_orig}”"
+
+
+def whole_original(q, r):
+    """The stack a whole variant ``r`` draws the sessions of (_whole_variants_follow), or None."""
+    if r.trial is None or r.fork or not r.nights:
+        return None
+    o = next((x for x in q.rows if x.wid == r.trial and x is not r), None)
+    return o if o is not None and not o.fork and o.nights else None
+
+
+def _not_into_whole_variant(q, t):
+    o = whole_original(q, t)
+    if o is not None:
+        raise Refusal(M(WHOLE_VARIANT, _row=t.name, _orig=o.name))
+
+
 def _whole_variants_follow(q):
     """A variant of a whole stack (op_try_variant from a block before which no variant forks) draws its original's
     sessions: a session added to the original, or taken out of it, is the variant's too, in the original's order (a
@@ -770,6 +788,7 @@ def op_add_night(q, row, files=None, name=None):
     r = _row(q, row)
     if not r.nights:
         raise Refusal("a session joins a stack of lights")
+    _not_into_whole_variant(q, r)
     # a stack of one filter's nights: the night joining it takes that filter and is named after it ("Ha 2"), as
     # today's page did
     by_sid = {x["sid"]: x for x in q.nights}
@@ -888,6 +907,7 @@ def op_share_night(q, night, row):
     t = _row(q, row)
     if not t.nights or t.fork:
         raise Refusal("a session joins a stack of lights")
+    _not_into_whole_variant(q, t)
     s = q.blocks[night]
     if t is r or (s.sid is not None and any(q.blocks[x].sid == s.sid for x, _c in t.nights)):
         raise Refusal(M("“{_name}” is already in “{_row}”", _name=s.name, _row=t.name))
@@ -940,6 +960,7 @@ def op_move_night(q, night, row=None, before=None):
     if before is not None and before not in [x[0] for x in t.nights]:
         raise Refusal("session not found in this stack")
     if t is not r:
+        _not_into_whole_variant(q, t)
         _no_clash(q, t, [n])
     if t is r and (before is None or before == night):
         if before is None and t.nights[-1] is not n:

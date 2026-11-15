@@ -457,5 +457,6 @@
   "the recipe is up to date": "la recette est à jour",
   "{t}: recipe version {v}": "{t} : recette version {v}",
   "{key} back to its default": "{key} revient à sa valeur par défaut",
-  "{key}: {_value}": "{key} : {_value}"
+  "{key}: {_value}": "{key} : {_value}",
+  "“{_row}” draws the sessions of “{_orig}”: a session goes into “{_orig}”": "« {_row} » reprend les sessions de « {_orig} » : une session va dans « {_orig} »"
 }

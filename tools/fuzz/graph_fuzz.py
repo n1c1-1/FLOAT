@@ -113,6 +113,8 @@ GESTURE = {
     "Synthetic stars go to the Synthetic stars input of their Combine layers",
     "Synthetic stars read the stars only of a Stars/background",
     "this port empties with its Synthetic stars block: delete it or switch it off",
+    # a whole variant draws its original's sessions: a session put into it would be taken out by the same gesture
+    ops.WHOLE_VARIANT,
     # a switch-off of a block that is not switched (the engine's off_problem says the same for its own nodes)
     "— {takes} → {gives}, essential",
 }

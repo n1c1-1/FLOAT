@@ -40,3 +40,27 @@ def test_a_whole_stack_variant_follows_its_originals_sessions():
     doc.undo()
     v, r = doc.project.rows[-1], doc.project.rows[0]
     assert len(v.nights) == 2 and sids(doc, v) == sids(doc, r)
+
+
+def test_a_session_is_not_put_into_a_whole_variant_it_goes_into_its_original():
+    """A session added to a whole variant, dragged into it or shared with it is refused with where it goes: the
+    variant draws its original's sessions, the same gesture took it out again (the core fuzz: a lit place, the session
+    shown nowhere)."""
+    from astro_gpu.graphcore.placement import places
+    from test_points import refused_inert
+    doc = Doc.from_template("colour_minimal")
+    r = doc.project.rows[0]
+    ok(doc, "try_variant", block=of_kind(doc, r, "registration"), change={"param": ["register", "min_pairs", 20]})
+    ok(doc, "add_block", kind="session", at={"type": "row"})
+    v = doc.project.rows[1]
+    other = doc.project.rows[-1].nights[0][0]
+    assert v.trial is not None and not v.fork
+    for op, kw in (("add_block", {"kind": "session", "at": {"type": "night", "row": v.id}}),
+                   ("move_night", {"night": other, "row": v.id}),
+                   ("share_night", {"night": other, "row": v.id})):
+        assert "draws the sessions of" in refused_inert(doc, op, **kw), op
+    for pl in places(doc.project, doc.view, kind="session") + places(doc.project, doc.view, block=other):
+        if pl.op[1].get("row") == v.id or (pl.op[1].get("at") or {}).get("row") == v.id:
+            assert not pl.lit, pl.op
+    ok(doc, "add_block", kind="session", at={"type": "night", "row": r.id})
+    assert sids(doc, doc.project.rows[1]) == sids(doc, doc.project.rows[0])
