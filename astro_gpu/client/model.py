@@ -1338,7 +1338,7 @@ class _ProjectBase(QObject):
             return
         made = []
         for q in self.post_defaults(layers):                   # #47, #49, #52
-            stars = q.opts.get("etoiles") == "retirer"
+            stars = self.post_default_part(q) == "combined"       # (a Synthetic stars sent to Post: its image)
             if q.pid == skip and stars:
                 continue
             made.append(new_workflow_layer(q.pid, q.name + (" · " + POST_PART_NAMES["combined"] if stars else ""),
@@ -1403,6 +1403,7 @@ class _ProjectBase(QObject):
             self._stale = 0
             QTimer.singleShot(0, self, self._told)
         self._install(self._read_states())
+        self._mono_frames = self._read_mono_frames()
         if prefetch:
             self.worker.submit(f"model.estimates:{id(self)}", self._prefetch_estimates, False)
 
@@ -1489,6 +1490,7 @@ class _ProjectBase(QObject):
         self.forced_syncs += 1
         self.worker.cancel(f"model.states:{id(self)}")
         self._install(self._read_states())
+        self._mono_frames = self._read_mono_frames()
         self.worker.submit(f"model.estimates:{id(self)}", self._prefetch_estimates, False)
         QTimer.singleShot(0, self, self._told)
 
@@ -1521,7 +1523,7 @@ class _ProjectBase(QObject):
             cost = api.cost(self.p, None, device, self._history_est)
         except (ValueError, KeyError, OSError):
             cost = None
-        return n, (got, device, cost)
+        return n, (got, device, cost, self._read_mono_frames())
 
     def _states_came(self, result):
         """The worker's answer: taken when it is the newest edit's (an older one, or one read here meanwhile, is
@@ -1531,8 +1533,9 @@ class _ProjectBase(QObject):
         if not n or n != self._stale or got is None:
             return
         self._stale = 0
-        states, device, cost = got
+        states, device, cost, mono = got
         self._install(states)
+        self._mono_frames = mono
         if cost is not None and device == self.device:
             self._cache.setdefault(("cost", None, device), cost)
             self._run_all = (device, self._cache[("cost", None, device)])
@@ -2526,12 +2529,29 @@ class _ProjectBase(QObject):
 
 
 
-    def is_mono(self, p: WorkflowView) -> bool:
-        """A workflow of monochrome frames: each of its sessions names a filter."""
+    def is_mono(self, p: WorkflowView, frames: bool = True) -> bool:
+        """A workflow of monochrome frames: each of its sessions names a filter, or (``frames``) its Inventory read
+        monochrome frames (``api.frames_mono``, read with the states, never when drawn). The one answer the views
+        ask; ``frames`` False: the definition's alone (a chain rebuilt from its options)."""
         try:
-            return p.source is None and self.p.is_mono(p.pid)
+            if p.source is not None:
+                return False
+            if self.p.is_mono(p.pid):
+                return True
         except KeyError:
             return False
+        return frames and (self.__dict__.get("_mono_frames") or {}).get(p.pid) is True
+
+    def _read_mono_frames(self) -> dict[int, bool | None]:
+        """{workflow id: whether its Inventory read monochrome frames, None before it} (either thread: a manifest per
+        workflow), read with the states."""
+        out: dict[int, bool | None] = {}
+        for w in list(self.p.workflows):
+            try:
+                out[w.id] = api.frames_mono(self.p, w.id) if w.source is None else None
+            except (OSError, ValueError, KeyError):
+                out[w.id] = None
+        return out
 
     def sessions_of(self, p: WorkflowView) -> list[int]:
         """The ids of the sessions a workflow stacks."""
