@@ -1,18 +1,20 @@
-"""A change of setting in the panel that would compute again results computed and up to date waits at the panel's foot
-for Replace / Try variant / Cancel; nothing in the project changes while it waits; several edits of a block are asked
-once; another block chosen meanwhile asks first; the preference "Confirm changes" off applies at once; after Replace,
-Ctrl+Z gives the results back at once. A gesture of the graph never waits: it applies (the gesture is the validation)
-and its toast says what it made stale ("Computes again") or added ("To compute"), with Undo; the compile's own nodes
-(the automatic Output) never count. On the computed test project of test_gv_legacy_model (its fixtures and
-helpers)."""
+"""One way to set a block (blockdraft.py), the Gradient view's: on a block with computed results a change of setting is
+a DRAFT of the block, shown at once (the radio checked, the value typed), nothing outdated, nothing recomputed; one bar
+pinned at the panel's foot says what changed (old → new), what Apply computes again and how long, with Apply, Try
+variant and Reset. Leaving the block asks Apply / Try variant / Discard / Stay; a block never computed has no draft;
+the preference "Confirm changes" off applies at once. A gesture of the graph never waits: it applies, its toast says
+what it made stale ("Computes again") or added ("To compute"), with Undo. On the computed test project of
+test_gv_legacy_model (its fixtures and helpers)."""
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
+import pytest
 from PySide6.QtWidgets import QLabel
 
 from astro_gpu.client import prefs
+from astro_gpu.client.blockdraft import DRAFT_ANSWER_ENV, DraftBar
 from tests.client.graphview.test_gv_legacy_model import (  # noqa: F401  (the fixtures are used by name)
     _edit_kappa,
     block_of,
@@ -20,6 +22,7 @@ from tests.client.graphview.test_gv_legacy_model import (  # noqa: F401  (the fi
     computed_but_stars,
     env,
     live_rows,
+    method_cards,
     model,
     needs_test_project,
     node,
@@ -31,7 +34,7 @@ from tests.client.graphview.test_gv_legacy_model import (  # noqa: F401  (the fi
 )
 
 pytestmark = needs_test_project
-SHOTS = os.environ.get("FLOAT_CONFIRM_SHOTS")      # a folder: the two captures of the question are written there
+SHOTS = os.environ.get("FLOAT_CONFIRM_SHOTS")      # a folder: the captures of the bar are written there
 
 
 def _states(m):
@@ -45,30 +48,53 @@ def _edit(page, key, value):
     return row.r
 
 
-def test_a_panel_change_waits_and_nothing_changes_until_its_answer(world, model, page):
-    select_node(page, node(page, "empilement"))
+def _bar(page) -> DraftBar | None:
+    bars = [b for b in page.panel.findChildren(DraftBar) if b.isVisibleTo(page.panel)]
+    assert len(bars) <= 1
+    return bars[0] if bars else None
+
+
+def _change(page):
+    return page.panel.draft_change(page.s.pending_change)
+
+
+def _denoise_other(page):
+    cards = method_cards(page)
+    on = [c for c in cards if c.on]
+    other = next(c for c in cards if not c.on and c.ok)
+    return on[0], other
+
+
+def test_a_click_on_denoise_method_checks_it_at_once_and_outdates_nothing(world, model, page):
+    select_node(page, node(page, "debruitage", 1))
     settle(world["w"], page)
     undo, states, run = len(model._undo), _states(model), model.total_seconds()
-    _edit_kappa(page, 4.0)
+    was, other = _denoise_other(page)
+    name, was_name = other.findChildren(QLabel)[0].text(), was.findChildren(QLabel)[0].text()
+    other.clicked.emit()
     settle(world["w"], page)
-    ch = model.pending_change
-    assert ch and ch["cost"].lost
+    now = [c for c in method_cards(page) if c.on]
+    assert len(now) == 1 and now[0].findChildren(QLabel)[0].text() == name     # checked at once
     assert len(model._undo) == undo and _states(model) == states and model.total_seconds() == run
-    assert all((q.params.get("stack") or {}).get("kappa") != 4.0 for q in model.paths)
-    said = page.panel.findChild(QLabel, "choice_cost").text()
-    assert said.startswith("Computes again: Stacking, Astrometry, Gradient") and "min" in said
-    kappa = next(r for r in live_rows(page) if r.r["key"] == "stack.kappa")
-    assert kappa.r["value"] == 4.0                              # what was typed stays shown while it waits
-    assert page.panel.findChild(QLabel, "choice_never") is not None
+    assert model.view(1).opts["dn"] != _change(page)["value"]                   # the workflow is unchanged
+    bar = _bar(page)
+    assert bar is not None and bar.b_apply.text() == "Apply" and bar.b_variant.text() == "Try variant" \
+        and bar.b_reset.text() == "Reset"
+    assert "Method:" in bar.what.text() and "→" in bar.what.text()
+    assert bar.cost.text().startswith("Computes again: Denoise") and "min" in bar.cost.text()
+    assert not any(t in ("Replace", "Cancel", "Keep", "Discard", "Do not ask") for t in texts_of(page.panel))
+    # pinned: the bar is the panel's last widget, outside its scroll area
+    assert bar.parentWidget().parentWidget() is page.panel and not page.panel._sc.isAncestorOf(bar)
     if SHOTS:
         Path(SHOTS).mkdir(parents=True, exist_ok=True)
-        page.panel.grab().save(str(Path(SHOTS) / "confirm_panel.png"))
-    assert page.answer_change("cancel")                         # Esc
+        page.panel.grab().save(str(Path(SHOTS) / "draft_panel.png"))
+    bar.b_reset.click()                                     # Reset: back to the applied method, nothing changed
     settle(world["w"], page)
-    assert model.pending_change is None and len(model._undo) == undo and _states(model) == states
+    assert not model.pending_change and _bar(page) is None and _states(model) == states
+    assert [c for c in method_cards(page) if c.on][0].findChildren(QLabel)[0].text() == was_name
 
 
-def test_several_edits_of_a_block_are_asked_once_and_undone_at_once(world, model, page):
+def test_several_edits_are_listed_on_the_bar_and_applied_as_one_step(world, model, page):
     select_node(page, node(page, "empilement"))
     settle(world["w"], page)
     undo = len(model._undo)
@@ -78,17 +104,18 @@ def test_several_edits_of_a_block_are_asked_once_and_undone_at_once(world, model
     new_pix = 0.7 if pix.r["value"] != 0.7 else 0.6
     _edit(page, "stack.pixfrac", new_pix)
     _edit(page, "stack.kappa", 3.5)                             # the same setting again: the later value
-    ch = model.pending_change
-    assert ch["kind"] == "many" and len(ch["changes"]) == 2 and len(ch["whats"]) == 2
-    assert [c["value"] for c in ch["changes"]] == [3.5, new_pix]
-    assert len(page.panel.findChildren(QLabel, "choice_cost")) == 1 and len(model._undo) == undo
+    ch = _change(page)
+    assert ch["kind"] == "many" and len(ch["changes"]) == 2 and [c["value"] for c in ch["changes"]] == [3.5, new_pix]
+    said = _bar(page).what.text()
+    assert "Rejection threshold: 3 → 3.5" in said and "Drop size: 1 → " in said.split("<br>")[1], said
+    assert next(r for r in live_rows(page) if r.r["key"] == "stack.kappa").r["value"] == 3.5     # shown at once
     told = []
     page.toasted.connect(told.append)
-    button(page.panel, "Replace").click()
+    _bar(page).b_apply.click()
     settle(world["w"], page)
     assert len(model._undo) == undo + 1                         # one step for both
     assert all(q.params["stack"]["kappa"] == 3.5 and q.params["stack"]["pixfrac"] == new_pix for q in model.paths)
-    assert model.state(model.paths[0], "stack") == "stale"
+    assert model.state(model.paths[0], "stack") == "stale" and _bar(page) is None
     page.bridge.undo()                                          # Ctrl+Z: the values back, the blocks up to date at once
     settle(world["w"], page)
     assert computed_but_stars(model, model.paths[0]) and model.state(model.paths[0], "stack") == "done"
@@ -96,20 +123,140 @@ def test_several_edits_of_a_block_are_asked_once_and_undone_at_once(world, model
     page.panel.expert = False
 
 
-def test_another_block_chosen_while_a_change_waits_asks_first(world, model, page):
+def test_a_setting_back_to_its_value_leaves_the_draft(world, model, page):
+    select_node(page, node(page, "empilement"))
+    settle(world["w"], page)
+    r = _edit_kappa(page, 4.0)
+    assert model.pending_change and _bar(page) is not None
+    _edit(page, "stack.kappa", r["applied"])
+    assert not model.pending_change and _bar(page) is None
+
+
+def test_the_draft_steps_are_undone_one_by_one(world, model, page):
+    select_node(page, node(page, "empilement"))
+    settle(world["w"], page)
+    page.panel.expert = True
+    _edit_kappa(page, 4.0)
+    _edit(page, "stack.kappa", 4.5)
+    d = model.pending_change
+    assert d.top("undo") is not None and len(d.undo) == 2
+    d.move("undo")
+    model.draftChanged.emit()
+    settle(world["w"], page)
+    assert next(r for r in live_rows(page) if r.r["key"] == "stack.kappa").r["value"] == 4.0
+    d.move("undo")
+    model.draftChanged.emit()
+    settle(world["w"], page)
+    assert not model.pending_change and _bar(page) is None          # no draft left: the applied value
+    d.move("redo")
+    model.draftChanged.emit()
+    settle(world["w"], page)
+    assert _bar(page) is not None
+    _bar(page).b_reset.click()
+    page.panel.expert = False
+
+
+def test_try_variant_keeps_the_original_computed(world, model, page):
+    select_node(page, node(page, "debruitage", 1))
+    settle(world["w"], page)
+    n = len(model.paths)
+    _was, other = _denoise_other(page)
+    other.clicked.emit()
+    settle(world["w"], page)
+    _bar(page).b_variant.click()
+    settle(world["w"], page)
+    assert len(model.paths) == n + 1 and not model.pending_change
+    q = model.paths[-1]
+    assert q.variant_of == 1 and computed_but_stars(model, model.view(1))
+    assert not any("Variant of" in t for t in texts_of(page.panel))          # a variant is a row like another
+    model.undo()
+    settle(world["w"], page)
+
+
+@pytest.mark.parametrize("answer", ["stay", "discard", "apply", "variant"])
+def test_leaving_a_block_with_a_draft_asks_and_each_answer_does_what_it_says(world, model, page, monkeypatch, answer):
+    monkeypatch.setenv(DRAFT_ANSWER_ENV, answer)
     stack = block_of(page, node(page, "empilement"))
     select_node(page, node(page, "empilement"))
     settle(world["w"], page)
+    n, undo, states = len(model.paths), len(model._undo), _states(model)
     _edit_kappa(page, 4.0)
     settle(world["w"], page)
     other = block_of(page, node(page, "fond", 1))
     page.bridge.choose(other)
     settle(world["w"], page)
-    assert page.bridge.selected == stack and model.pending_change is not None    # the choice stays, nothing lost
-    assert page.panel.findChild(QLabel, "choice_first") is not None
-    button(page.panel, "Cancel").click()
+    if answer == "stay":                                    # the block stays chosen, its draft as it was
+        assert page.bridge.selected == stack and model.pending_change and _bar(page) is not None
+        page.panel.draft_reset()
+        return
+    assert page.bridge.selected == other and not model.pending_change    # never a draft left behind
+    if answer == "discard":
+        assert len(model._undo) == undo and _states(model) == states and len(model.paths) == n
+    elif answer == "apply":
+        assert len(model._undo) == undo + 1 and all(q.params["stack"]["kappa"] == 4.0 for q in model.paths)
+    else:
+        assert len(model.paths) == n + 1 and model.paths[-1].params["stack"]["kappa"] == 4.0
+        assert computed_but_stars(model, model.view(1))
+    page.panel.expert = False
+
+
+def test_no_draft_on_a_block_never_computed(world, model, page):
+    classic = model.view(2)                                     # computed up to its Color, its Output never
+    n = node(page, "post", 2)
+    assert model.state(classic, "render_simple") != "done" and n.paths == [classic]
+    select_node(page, n)
     settle(world["w"], page)
-    assert model.pending_change is None and page.bridge.selected == other       # then the block chosen is shown
+    undo = len(model._undo)
+    page.panel.propose("render_simple", "linked", True, None, "Linked: no → yes", "linked")
+    settle(world["w"], page)
+    assert not model.pending_change and _bar(page) is None and len(model._undo) == undo + 1      # applied at once
+    model.undo()
+    settle(world["w"], page)
+
+
+def test_the_preference_off_applies_a_setting_at_once(world, model, page):
+    prefs.set("confirm_changes", False)
+    try:
+        select_node(page, node(page, "empilement"))
+        settle(world["w"], page)
+        undo = len(model._undo)
+        _edit_kappa(page, 4.0)
+        settle(world["w"], page)
+        assert not model.pending_change and _bar(page) is None and len(model._undo) == undo + 1
+        assert all(q.params["stack"]["kappa"] == 4.0 for q in model.paths)
+        model.undo()
+        settle(world["w"], page)
+    finally:
+        prefs.set("confirm_changes", True)
+
+
+def test_deleting_a_variants_original_leaves_the_variant_whole_and_computed(world, model, page):
+    """A variant is removed by deleting it, and preferred by deleting its original: the original's row deleted, the
+    variant keeps the blocks it shared and its results, nothing is outdated."""
+    select_node(page, node(page, "empilement", 1))
+    _edit_kappa(page, 3.5)
+    settle(world["w"], page)
+    _bar(page).b_variant.click()
+    settle(world["w"], page)
+    q = model.paths[-1]
+    assert q.variant_of == 1
+    done_before = {st for st in model.all_stages(q) if model.state(q, st) == "done"}
+    keys = {st: model.stage_key(q, st) for st in model.all_stages(q)}
+    full_row = next(r for r in page.bridge.graph.rows if r.wid == 1)          # the original's own row
+    v_row = next(r for r in page.bridge.graph.rows if r.wid == q.pid)
+    assert v_row.trial == 1
+    res = page.bridge.act("delete_row", row=full_row.id)
+    settle(world["w"], page, 20)
+    assert res.ok, res.reason
+    v = model.view(q.pid)
+    assert v is not None and model.view(1) is None, (q.pid, [(x.pid, x.name) for x in model.paths], res.toast)
+    assert {st: model.stage_key(v, st) for st in model.all_stages(v)} == keys        # nothing outdated
+    assert {st for st in model.all_stages(v) if model.state(v, st) == "done"} == done_before
+    assert {"calibrate", "register"} <= done_before
+    model.undo()
+    settle(world["w"], page)
+    model.undo()
+    settle(world["w"], page)
 
 
 def _toast(page):
@@ -130,9 +277,6 @@ def test_a_graph_gesture_applies_at_once_says_what_it_made_stale_and_undo_gives_
     assert "switched off" in said and "Computes again: Denoise, Color" in said and "Output" not in said, said
     assert [k for _t, k in page.canvas.toast.links()] == ["undo"]
     assert "Replace" not in said and "Do not ask" not in said
-    if SHOTS:
-        Path(SHOTS).mkdir(parents=True, exist_ok=True)
-        page.root.grab().save(str(Path(SHOTS) / "confirm_graph.png"))
     told = []
     page.toasted.connect(told.append)
     page.canvas.toast.link.emit("undo")                     # its Undo: the block back, its results up to date at once
@@ -202,56 +346,10 @@ def test_a_drop_on_a_lit_place_always_places_the_block(world, model, page):
             settle(world["w"], page, 4)
 
 
-def test_the_preference_off_applies_a_setting_at_once(world, model, page):
-    prefs.set("confirm_changes", False)
-    try:
-        select_node(page, node(page, "empilement"))
-        settle(world["w"], page)
-        undo = len(model._undo)
-        _edit_kappa(page, 4.0)
-        settle(world["w"], page)
-        assert model.pending_change is None and len(model._undo) == undo + 1
-        assert all(q.params["stack"]["kappa"] == 4.0 for q in model.paths)
-        model.undo()
-        settle(world["w"], page)
-    finally:
-        prefs.set("confirm_changes", True)
-
-
-def test_do_not_ask_turns_the_preference_off_and_says_where(world, model, page):
-    select_node(page, node(page, "empilement"))
-    settle(world["w"], page)
-    _edit_kappa(page, 4.0)
-    settle(world["w"], page)
-    told = []
-    page.toasted.connect(told.append)
-    try:
-        page.panel.findChild(QLabel, "choice_never").linkActivated.emit("never")
-        assert prefs.get("confirm_changes") is False and model.pending_change is not None    # the question waits
-        assert any("Settings › General" in t for t in told), told
-        button(page.panel, "Cancel").click()
-        settle(world["w"], page)
-        assert model.pending_change is None
-    finally:
-        prefs.set("confirm_changes", True)
-
-
-def test_no_question_when_nothing_up_to_date_is_lost(world, model, page):
-    classic = model.view(2)                                     # computed but its Output
-    n = node(page, "post", 2)
-    assert model.state(classic, "render_simple") != "done" and n.paths == [classic]
-    ch = dict(kind="param", stage="render_simple", name="linked", value=True, suggested=None)
-    assert not model.change_cost(ch, n.paths).lost
-    select_node(page, n)
-    settle(world["w"], page)
-    undo = len(model._undo)
-    page.panel.propose("render_simple", "linked", True, None, "Linked: no → yes", "linked")
-    settle(world["w"], page)
-    assert model.pending_change is None and len(model._undo) == undo + 1
-    model.undo()
-    settle(world["w"], page)
-    # Full's Output is computed, but it is the compile's own node: a change only it would compute again asks nothing
+def test_no_draft_when_nothing_up_to_date_is_lost(world, model, page):
     full = model.view(1)
+    ch = dict(kind="param", stage="render_simple", name="linked", value=True, suggested=None)
+    # Full's Output is computed, but it is the compile's own node: a change only it would compute again asks nothing
     assert model.state(full, "render_simple") == "done"
     assert not model.change_cost(dict(ch), [full]).lost
     # a pause changes no key: nothing

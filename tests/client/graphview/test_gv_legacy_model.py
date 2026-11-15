@@ -358,26 +358,27 @@ def test_a_shared_stage_is_one_key(world, model):
 
 
 # ---------------------------------------------------------------------------------------------- replace / variant
-def test_a_change_on_a_shared_done_block_offers_replace_or_variant(world, model, page):
+def test_a_change_on_a_shared_done_block_is_a_draft_with_apply_or_variant(world, model, page):
     select_node(page, node(page, "empilement"))
     settle(world["w"], page)
     assert model.scope == [v.pid for v in model.paths]
     r = _edit_kappa(page, 4.0)
     settle(world["w"], page)
-    ch = model.pending_change
-    assert ch and ch["step"] == "empilement" and ch["value"] == 4.0 and len(ch["pids"]) == 4
-    assert button(page.panel, "Replace") and button(page.panel, "Try variant")
-    paths = [q for q in model.paths if q.pid in ch["pids"]]
-    cost = model.change_cost(ch, paths)                     # what it computes again, said in the panel's foot
+    d = model.pending_change
+    ch = page.panel.draft_change(d)
+    assert d and d.step == "empilement" and ch["value"] == 4.0 and len(d.pids) == 4
+    assert button(page.panel, "Apply") and button(page.panel, "Try variant") and button(page.panel, "Reset")
+    paths = [q for q in model.paths if q.pid in d.pids]
+    cost = model.change_cost(ch, paths)                     # what it computes again, said on the draft bar
     assert cost.lost and cost.blocks[0] == "Stacking" and cost.seconds > 0
-    said = page.panel.findChild(QLabel, "choice_cost").text()
+    said = page.panel.findChild(QLabel, "draft_cost").text()
     assert "Computes again: Stacking" in said and hm(cost.seconds) in said
     assert all("kappa" not in (q.params.get("stack") or {}) or q.params["stack"]["kappa"] != 4.0 for q in model.paths)
-    button(page.panel, "Cancel").click()
+    button(page.panel, "Reset").click()
     from astro_gpu.stages.stack import StackParams
-    assert model.pending_change is None and r["value"] == StackParams.model_fields["kappa"].default
+    assert not model.pending_change and r["applied"] == StackParams.model_fields["kappa"].default
     _edit_kappa(page, 4.0)
-    button(page.panel, "Replace").click()
+    button(page.panel, "Apply").click()
     settle(world["w"], page)
     assert all(q.params["stack"]["kappa"] == 4.0 for q in model.paths)
     assert model.state(model.paths[0], "stack") == "stale" and model.state(model.paths[0], "render_simple") == "stale"
@@ -410,28 +411,21 @@ def test_try_as_variant_keeps_the_original_and_shares_the_blocks_before(world, m
     assert bm.node_of(q, "empilement") is not bm.node_of(full, "empilement")
     select_node(page, bm.node_of(q, "empilement"))
     settle(world["w"], page)
-    assert any("Variant of" in t for t in texts_of(page.panel))
-    assert button(page.panel, "Keep") and button(page.panel, "Discard")
-    button(page.panel, "Discard").click()
+    texts = texts_of(page.panel)                                 # a variant is a row like another: its name only
+    assert not any("Variant of" in t for t in texts) and "Keep" not in texts and "Discard" not in texts
+    v_row = next(r for r in page.bridge.graph.rows if r.wid == q.pid)
+    res = page.bridge.act("delete_row", row=v_row.id)             # removed by deleting it
     settle(world["w"], page)
-    assert len(model.paths) == n_before and model.path.pid == full.pid
-    select_node(page, node(page, "empilement", 1))
-    _edit_kappa(page, 3.5)
-    button(page.panel, "Try variant").click()
+    assert res.ok and len(model.paths) == n_before and model.view(q.pid) is None
+    assert computed_but_stars(model, full)
+    model.undo()
     settle(world["w"], page)
-    q = model.paths[-1]
-    select_node(page, model.block_map.node_of(q, "empilement"))
+    model.undo()
     settle(world["w"], page)
-    told = []
-    page.toasted.connect(told.append)
-    button(page.panel, "Keep").click()
-    settle(world["w"], page)
-    assert len(model.paths) == n_before and model.path.name == "Full" and model.path.params["stack"]["kappa"] == 3.5
-    assert model.path.variant_of is None
 
 
 def test_a_method_card_asks_the_same_question(world, model, page):
-    """Gradient's method card follows the rule too: on a computed Gradient it offers Replace / variant."""
+    """Gradient's method card follows the rule too: on a computed Gradient it is a draft, Apply or Try variant."""
     select_node(page, node(page, "fond", 1))
     settle(world["w"], page)
     cards = method_cards(page)
@@ -439,8 +433,10 @@ def test_a_method_card_asks_the_same_question(world, model, page):
     other = next(c for c in cards if "Automatic" in c.findChildren(QLabel)[0].text())
     other.clicked.emit()
     settle(world["w"], page)
-    assert model.pending_change and model.pending_change["key"] == "fond"
-    assert "Method: Automatic" in model.pending_change["what"]
+    ch = page.panel.draft_change(model.pending_change)
+    assert ch and ch["key"] == "fond" and "→ Automatic" in ch["what"] and ch["what"].startswith("Method: ")
+    assert [c for c in method_cards(page) if c.on][0] is not None and \
+        "Automatic" in [c for c in method_cards(page) if c.on][0].findChildren(QLabel)[0].text()
     button(page.panel, "Try variant").click()
     settle(world["w"], page)
     q = model.paths[-1]
@@ -659,7 +655,7 @@ def test_a_settings_row_changes_marks_and_goes_back_to_the_suggestion(world, mod
         back.click()
         settle(world["w"], page)
         if model.pending_change:
-            button(page.panel, "Replace").click()
+            button(page.panel, "Apply").click()
             settle(world["w"], page)
         rows = {r.r["key"]: r for r in live_rows(page)}
         assert not rows["gradient.degree"].r["changed"] and rows["gradient.degree"].r["value"] == 2
@@ -703,10 +699,12 @@ def test_the_stacking_method_is_chosen_on_cards_and_shows_only_its_own_settings(
     done = model.state(model.view(1), "stack") == "done"
     cards[1].clicked.emit()
     settle(world["w"], page)
-    ch = model.pending_change
+    ch = page.panel.draft_change(model.pending_change)
     if done:
         assert ch and (ch["stage"], ch["name"], ch["value"]) == ("stack", "method", "classic")
-        button(page.panel, "Replace").click()
+        assert [c.on for c in stack_cards(page)] == [False, True]                    # checked at once
+        assert model.view(1).params["stack"].get("method") != "classic"              # nothing changed yet
+        button(page.panel, "Apply").click()
         settle(world["w"], page)
     assert model.view(1).params["stack"]["method"] == "classic"
     assert [c.on for c in stack_cards(page)] == [False, True]
@@ -829,9 +827,10 @@ def test_selection_thresholds_come_from_the_stack_settings(world, model, page):
         assert n > 0 and model.kept_frames() == n and any(f"{n} of {n} frames kept" in t for t in texts_of(page.panel))
         page.panel.propose_selection(70, f)
         settle(world["w"], page)
-        assert model.pending_change and model.pending_change["kind"] == "params"
-        assert model.pending_change["items"][0] == ("stack", "min_transparency", 0.7)
-        button(page.panel, "Cancel").click()
+        ch = page.panel.draft_change(model.pending_change)
+        assert ch and ch["kind"] == "params" and ch["items"][0] == ("stack", "min_transparency", 0.7)
+        assert page.panel.thresholds_shown()[0] == 70                             # shown at once
+        button(page.panel, "Reset").click()
         model.request_selection(70, f)
         settle(world["w"], page)
         assert model.kept_frames() <= n and model.selection_total() == n
@@ -889,9 +888,9 @@ def test_the_french_switch_translates_every_panel_and_the_page(world, model):
         assert not untranslated(t), untranslated(t)
         words = [x for x in i18n.missing() if re.sub(r"\{\w+\}|[\W\d]", "", x)]      # (a bare "{m0} · {m1}" says nothing)
         assert not words, sorted(words)
-        assert "Remplacer" in " ".join(t) and "Essayer variante" in " ".join(t)
+        assert "Appliquer" in t and "Essayer variante" in t and "Réinitialiser" in t
         assert any(x.startswith("Suggéré : ") for x in t)
-        button(page.panel, "Annuler").click()
+        button(page.panel, "Réinitialiser").click()
         assert "Blocs" in t
     finally:
         appmod.apply_language("en")

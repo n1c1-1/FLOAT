@@ -165,9 +165,9 @@ def _world(tmp_path, kind):
 
 
 def _answer(W, watch, rnd):
-    """A question waiting at the panel's foot: answered (Replace, Cancel or Try variant)."""
+    """A draft at the panel's foot: answered (Apply, Reset or Try variant)."""
     if W.m.pending_change:
-        W.page.answer_change(rnd.choice(("replace", "cancel", "cancel", "variant")))
+        W.page.answer_draft(rnd.choice(("apply", "reset", "reset", "variant")))
         watch.beat()
         watch.pump(0.05)
 
@@ -260,13 +260,16 @@ def test_clicking_the_method_cards_of_a_computed_denoise_while_the_worker_is_beh
                 watch.pump(0.05)
             assert cards, "Denoise shows its method cards"
             for c in cards:
-                c.mousePressEvent(None)
+                try:
+                    c.mousePressEvent(None)
+                except RuntimeError:                     # the click made a draft: the panel was built again under it
+                    break
                 watch.beat()
                 watch.pump(0.02 * (i % 3))
             if m.pending_change:
                 asked += 1
-                assert m.pending_change["cost"].lost
-                W.page.answer_change("replace" if i % 2 else "cancel")
+                assert W.page.panel.draft_change(m.pending_change)
+                W.page.answer_draft("apply" if i % 2 else "reset")
             watch.beat()
             if i % 3 == 2:
                 W.b.undo()

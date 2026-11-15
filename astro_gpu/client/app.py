@@ -579,6 +579,8 @@ class Main(QMainWindow):
         project is chosen."""
         from .home import choose_project
         discard = False
+        if not self.settle_drafts():
+            return
         if self.unsaved():
             answer = self.ask_save()
             if answer == "cancel":
@@ -673,7 +675,7 @@ class Main(QMainWindow):
             self.banner.say(_("This project cannot be shown: {why}").format(why=plain_error(f"{type(e).__name__}: {e}")))
             return False
         self.run.attach()                            # a run that goes on (started before, or elsewhere): follow it
-        self.run.before_run = self._named_for_run
+        self.run.before_run = lambda: self.settle_drafts() and self._named_for_run()
         if recovered is not None:
             self.s.edited()                              # it waits for Save, as before the crash
         if rescued:
@@ -775,6 +777,25 @@ class Main(QMainWindow):
             self.screens.setCurrentWidget(self.proj_screen)
             self.refresh()
 
+    def settle_drafts(self, gradient_only: bool = False) -> bool:
+        """A block holding a draft is left (another page, Home, Close, Run, Save): its question first (Apply, Try
+        variant, Discard, Stay; blockdraft.settle). False when the user stays. ``gradient_only``: only the Gradient
+        view's draft (the panels show theirs on the Graph and in Inspect alike)."""
+        if self.project is None or self.s is None:
+            return True
+        from .blockdraft import settle
+        self._commit_typing()                            # what is typed goes to the draft first
+        if not settle(self._grad_editor(), self):
+            return False
+        if gradient_only:
+            return True
+        pn = None
+        for holder in (self.graph, self._tune):
+            pn = getattr(holder, "panel", None) if holder is not None else None
+            if pn is not None:
+                break
+        return settle(pn, self)
+
     def unsaved(self) -> bool:
         """THE question every way out of the project asks first: is anything not saved? What is being typed, Post's
         last edit (a slider, a filter, a version) are taken into the definition first; then every kind of edit (the
@@ -809,6 +830,8 @@ class Main(QMainWindow):
         (Save As wrote them elsewhere)."""
         save = not discard
         if self.project is not None and not discard:
+            if not self.settle_drafts():
+                return False
             if self.unsaved():
                 answer = self.ask_save()
                 if answer == "cancel":
@@ -1111,7 +1134,11 @@ class Main(QMainWindow):
             self._post_holder.page is not None
 
     def select(self, index=None, step=None):
-        """Select a workflow and a block (the scope follows the block, as a click on the graph does)."""
+        """Select a workflow and a block (the scope follows the block, as a click on the graph does); a block holding a
+        draft asks first."""
+        s = self.s
+        if s is not None and ((step is not None and step != s.sel_step) or (index is not None and index != s.current))                 and not self.settle_drafts():
+            return
         if self.graph is not None:
             self.graph.select(index, step)
         else:
@@ -1126,6 +1153,8 @@ class Main(QMainWindow):
             self.screens.setCurrentWidget(self.proj_screen)
         was_post = self.mode == 2 and s is not None and s.sel_step == "final"
         was = self.mode
+        if i != self.mode and not self.settle_drafts(gradient_only=i in (0, 1)):
+            return                                       # a block's draft: Stay
         if s is not None and i == 1 and s.sel_step == "composition":
             # a Stars and background block is a layer of Post: Inspect shows it there
             self.open_layer(s.sel_layer) if s.sel_layer is not None else self.set_mode(2)
@@ -1365,6 +1394,8 @@ class Main(QMainWindow):
         """Save: the edits written into the project (nothing is written before, issue #1), a field still being typed
         in included (its focus taken away: it applies what it holds, as Enter would)."""
         self._commit_typing()
+        if not self.settle_drafts():
+            return
         self._flush_post()
         if self.project is not None and drafts.is_untitled(self.project.root):
             self.name_project()
@@ -1527,6 +1558,8 @@ class Main(QMainWindow):
         if self.project is None:
             return
         self._commit_typing()
+        if not self.settle_drafts():
+            return
         self._flush_post()                               # Post's last edit into the definition (not written)
         d = QFileDialog.getExistingDirectory(self, _("Save as…"), prefs.last_folder())
         prefs.remember_folder(d)
@@ -1663,6 +1696,10 @@ class Main(QMainWindow):
         top = ed.history_top(how) if ed is not None else None
         if top is not None:
             out.append(("draft", top[0], top[1]))
+        d = getattr(s, "pending_change", None)          # a block's draft in the panel: its edits are steps too
+        top = d.top(how) if d is not None else None
+        if top is not None:
+            out.append(("block_draft", top, None))
         return out
 
     def _grad_editor(self):
@@ -1691,16 +1728,20 @@ class Main(QMainWindow):
         if where == "draft":
             ed = self._grad_editor()
             return self.mode == 1 and ed is not None and ed.view is not None and ed.p is not None and ed.p.pid == extra
+        if where == "block_draft":
+            return self.mode in (0, 1)
         return not self._post_shown()
 
     #: where the step of the next Undo / Redo was made, as the status line says it when another page is shown
     _ELSEWHERE = {"undo": {"graph": "The last change was made in the Graph", "post": "The last change was made in Post",
                            "post_model": "The last change was made in Post",
-                           "draft": "The last change was made in the Gradient draft"},
+                           "draft": "The last change was made in the Gradient draft",
+                           "block_draft": "The last change was made in a block's draft"},
                   "redo": {"graph": "The last change undone was made in the Graph",
                            "post": "The last change undone was made in Post",
                            "post_model": "The last change undone was made in Post",
-                           "draft": "The last change undone was made in the Gradient draft"}}
+                           "draft": "The last change undone was made in the Gradient draft",
+                           "block_draft": "The last change undone was made in a block's draft"}}
 
     def _history(self, how: str, there: bool = False):
         s = self.s
@@ -1765,6 +1806,13 @@ class Main(QMainWindow):
             ed = self._grad_editor()
             if ed is not None and (ed.undo if undo else ed.redo)(extra):
                 self.flash((_("Undone: {what}") if undo else _("Redone: {what}")).format(what=_("Gradient draft")))
+            return
+        if where == "block_draft":
+            d = s.pending_change
+            if d is not None and d.move(how) is not None:
+                s.draftChanged.emit()
+                self.flash((_("Undone: {what}") if undo else _("Redone: {what}")).format(
+                    what=_("{block} draft").format(block=getattr(d, "title", ""))))
             return
         words = s.next_words(how)
         if (s.undo if undo else s.redo)(graph=True):

@@ -24,7 +24,7 @@ def test_try_variant_shows_the_variants_block(world, model, page):
     _edit_kappa(page, 4.0)
     settle(world["w"], page)
     assert model.pending_change
-    assert page.answer_change("variant")
+    assert page.answer_draft("variant")
     settle(world["w"], page, 4)
     g = page.bridge.graph
     new = [r for r in g.rows if r.id not in rows]

@@ -141,8 +141,8 @@ def graph_shots():
         other[0].clicked.emit()
         walk.settle()
         walk.shot("stack_method_changed", panel())
-        if s.pending_change is not None:                 # a computed stack: Replace / Try as variant, cancelled
-            panel()._cancel()
+        if s.pending_change:                             # a computed stack: a draft (Apply / Try variant), reset
+            panel().draft_reset()
         else:                                            # an outdated stack: changed at once (in memory), undone
             print("  changed at once (the stack is not computed): undone", flush=True)
             while len(s._undo) > depth:

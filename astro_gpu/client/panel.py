@@ -396,7 +396,7 @@ class MethodCard(QFrame):
 
     def __init__(self, m, on, ok, times, here, why="", parent=None):
         super().__init__(parent)
-        self.ok = ok
+        self.ok, self.on = ok, on
         self.setObjectName("meth")
         self.setCursor(Qt.PointingHandCursor if ok and not on else Qt.ArrowCursor)
         border = ACCENT if on else "#353b47"
@@ -567,7 +567,7 @@ class Panel(QWidget):
     selectBlock = Signal(str)           # a greyed block's reason: select the block that was cut
     restoreBlock = Signal(str)          # a greyed block's panel: restore the block that was cut
     sectionsChanged = Signal()          # its sections were built (issue #44: the strip of icons follows)
-    answered = Signal()                 # a change waiting for its confirmation was answered (Replace, variant, Cancel)
+    draftChanged = Signal()             # the block's draft changed, was applied, made a variant or reset
 
     def __init__(self, project, steps=None, tune=False, parent=None):
         super().__init__(parent)
@@ -600,14 +600,14 @@ class Panel(QWidget):
         sc.setWidget(host)
         self.folds = Sections(self.bv, sc)              # its section titles fold (issue #44)
         v.addWidget(sc, 1)
-        foot = QWidget()                                # the panel's foot: a change waiting for its confirmation
+        self.details = Details()
+        v.addWidget(self.details)
+        foot = QWidget()                                # the panel's foot, at its very bottom: the block's draft bar
         self.fv = QVBoxLayout(foot)
         self.fv.setContentsMargins(10, 0, 10, 0)
         self.fv.setSpacing(0)
         v.addWidget(foot)
-        self.pending_next = None                        # a block chosen while a change waited: shown once answered
-        self.details = Details()
-        v.addWidget(self.details)
+        self.bar = None                                 # the draft bar shown (blockdraft.DraftBar)
         self._later = QTimer(self)
         self._later.setSingleShot(True)
         self._later.setInterval(0)
@@ -617,6 +617,8 @@ class Panel(QWidget):
             project.postChanged.connect(self._post_changed)
         for sig in (project.selectionChanged, project.readyChanged):
             sig.connect(self._again)
+        if hasattr(project, "draftChanged"):             # the draft's step undone or redone by the window
+            project.draftChanged.connect(self._again)
 
     def _again(self, *_a):
         """What the worker was asked for arrived: build the panel again (once, whatever the count of answers)."""
@@ -685,6 +687,7 @@ class Panel(QWidget):
         clear(self.hv)
         clear(self.bv)
         clear(self.fv)
+        self.bar = None
         self.folds.reset()
         self.details.hide()
         if node is not None and not self._alive(node):     # its block went away (Ctrl+Z, a removal): the page gives
@@ -738,6 +741,8 @@ class Panel(QWidget):
             self.composition(node)
         else:
             self.block(node)
+        if node.paths and k not in ("project", "sources", "final"):    # every block's draft: its bar at the foot
+            self.draft_bar(node, self.s.path if self.s.path in node.paths else node.paths[0])
 
     def _alive(self, node) -> bool:
         """Whether a block shown is still in the project: its session and its workflows (GUI exploration 1.6)."""
@@ -1499,8 +1504,6 @@ class Panel(QWidget):
             self.hv.addLayout(box)
         elif k != "post":
             self.hv.addWidget(label(p.name, "small"))
-        self.variant_row(p)
-        self.choice_box(node, p)
         # measurements, in Inspect
         if self.tune and self.steps is not None and st != "pending":
             facts = self.steps.facts(p, k)
@@ -1570,111 +1573,140 @@ class Panel(QWidget):
         row.addStretch(1)
         self.bv.addLayout(row)
 
-    # ------------------------------------------------------------ replace or try as a variant
-    def variant_row(self, p):
-        """A variant says what it is a variant of, and is kept or discarded from here."""
-        src = self.s.view(p.variant_of) if p.variant_of is not None else None
-        if src is None:
-            return
-        row = QHBoxLayout()
-        row.addWidget(label(_('Variant of "{name}"').format(name=src.name), "dim"), 1)
-        keep = QPushButton(_("Keep"))
-        keep.setToolTip(_('Replaces "{name}" and takes its name').format(name=src.name))
-        # what each did, said with Ctrl+Z (control round, decision 11)
-        keep.clicked.connect(lambda: (self.s.keep_variant(p), self.changed.emit(), self.toast.emit(
-            _("Variant “{name}” kept: it replaces “{orig}” · Ctrl+Z").format(name=p.name, orig=src.name))))
-        drop = QPushButton(_("Discard"))
-        drop.clicked.connect(lambda: (self.s.drop_variant(p), self.changed.emit(), self.toast.emit(
-            _("Variant “{name}” discarded · Ctrl+Z").format(name=p.name))))
-        row.addWidget(keep)
-        row.addWidget(drop)
-        self.hv.addLayout(row)
+    # ------------------------------------------------------------ the block's draft (blockdraft.py)
+    def _draft(self, node=None):
+        """The model's draft of the block shown (or of ``node``), None without one."""
+        d = getattr(self.s, "pending_change", None)
+        node = self.node if node is None else node
+        if not d or node is None or d.step != node.key or not node.paths:
+            return None
+        return d if set(d.pids) <= {q.pid for q in node.paths} else None
 
-    def choice_box(self, node, p):
-        """A change that would compute again results computed and up to date waits here, at the panel's foot, for its
-        answer: what it is, what it computes again and the time, Replace, Try variant (the default: Enter), Cancel
-        (Esc), and "Do not ask"; nothing in the project changes until then."""
-        ch = self.s.pending_change
-        if not ch or ch["step"] != node.key:
+    @staticmethod
+    def draft_change(d) -> dict | None:
+        """The draft as one change of the panel's kind (a setting ``param``, settings ``params``, a method ``opt``;
+        several: ``many``), with its words (``what``, ``short``; ``whats``, ``shorts`` for several)."""
+        if not d:
+            return None
+        ents = list(d.vals.values())
+        if len(ents) == 1:
+            e = ents[0]
+            return dict(e["ch"], what=e["what"], short=e["short"])
+        whats, shorts = [e["what"] for e in ents], [e["short"] for e in ents]
+        return dict(kind="many", changes=[dict(e["ch"]) for e in ents], what="; ".join(whats),
+                    short=" · ".join(shorts), whats=whats, shorts=shorts)
+
+    def _draft_paths(self, d) -> list:
+        return [q for q in self.s.paths if q.pid in d.pids]
+
+    def _draft_cost(self, d) -> str:
+        """What Apply computes again and how long (the model's cost of the draft, read again when it changed)."""
+        sig = repr(sorted((repr(k), repr(v)) for k, v in d.vals.items())) + repr(d.pids)
+        if getattr(d, "cost_sig", None) != sig:
+            d.cost_sig = sig
+            try:
+                d.cost = self.s.change_cost(self.draft_change(d), self._draft_paths(d)) \
+                    if hasattr(self.s, "change_cost") else None
+            except Exception:  # noqa: BLE001 - the cost is a hint: Apply works without it
+                d.cost = None
+        c = d.cost
+        if c is None:
+            return ""
+        return c.text() if c.stages else _("Nothing up to date is computed again")
+
+    def draft_bar(self, node, p):
+        """The block's draft, pinned at the panel's foot: what changed (old → new), what Apply computes again and how
+        long, and Apply, Try variant, Reset."""
+        from .blockdraft import DraftBar
+        d = self._draft(node)
+        if d is None:
             return
-        s = self.s
-        paths = [q for q in s.paths if q.pid in ch["pids"]]
-        f = QFrame()
-        f.setObjectName("choice")
-        f.setStyleSheet(f"QFrame#choice {{ background: #2a2316; border: 1px solid {WARN}; border-radius: 6px; }}"
-                        " QLabel { background: transparent; }")
-        v = QVBoxLayout(f)
-        v.setContentsMargins(10, 8, 10, 8)
-        v.setSpacing(6)
-        whats = ch.get("whats") or [ch["what"]]
-        v.addWidget(label("<br>".join(f"<b>{html.escape(w)}</b>" for w in whats), wrap=True))
-        cost = ch.get("cost")
-        if cost is not None:
-            what = label(html.escape(cost.text()), "small", wrap=True)
-            what.setObjectName("choice_cost")
-            v.addWidget(what)
-        if self.pending_next is not None:
-            first = label(_("Answer first: the change waits for Replace, Try variant or Cancel."), "warn", wrap=True)
-            first.setObjectName("choice_first")
-            v.addWidget(first)
-        row = QHBoxLayout()
-        row.setSpacing(6)
-        rep = QPushButton(_("Replace"))
-        rep.setObjectName("choice_replace")
-        rep.setToolTip(_("The change goes to {names}; their results are computed again (Ctrl+Z gives them back)").format(
-            names=", ".join(q.name for q in paths)))
-        rep.clicked.connect(self._replace)
-        var = QPushButton(_("Try variant"))
-        var.setObjectName("primary")
-        var.setDefault(True)
-        var.setToolTip(_('"{name}" stays as it is, its results kept; the variant shares everything up to this block '
-                         '(Enter)').format(name=p.name))
-        var.clicked.connect(lambda: self._variant(p))
-        cancel = QPushButton(_("Cancel"))
-        cancel.setToolTip(_("The setting goes back to its value (Esc)"))
-        cancel.clicked.connect(self._cancel)
-        for b in (rep, var, cancel):
-            row.addWidget(b)
-        row.addStretch(1)
-        v.addLayout(row)
-        never = QLabel(f'<a href="never"><span style="color:#8b93a1">{html.escape(_("Do not ask"))}</span></a>')
-        never.setObjectName("choice_never")
-        never.setToolTip(_("Changes apply at once from now on; Edit › Settings › General turns the question on again"))
-        never.linkActivated.connect(lambda _k: self._never_ask())
-        v.addWidget(never, 0, Qt.AlignLeft)
+        bar = DraftBar()
+        ch = self.draft_change(d)
+        bar.show_draft(ch.get("whats") or [ch["what"]], self._draft_cost(d))
+        q = p if p.pid in d.pids else (self._draft_paths(d) or [p])[0]
+        why = self.s.variant_refusal(q, ch) if hasattr(self.s, "variant_refusal") else ""
+        if why:                                          # never an error: greyed, its reason on hover
+            bar.b_variant.setEnabled(False)
+            bar.b_variant.setToolTip(_("No variant: {why}").format(why=why))
+        bar.apply.connect(self.draft_apply)
+        bar.variant.connect(lambda: self.draft_variant(q))
+        bar.reset.connect(self.draft_reset)
+        self.bar = bar
         self.fv.addSpacing(6)
-        self.fv.addWidget(f)
+        self.fv.addWidget(bar)
         self.fv.addSpacing(6)
 
-    def answer(self, how: str) -> bool:
-        """The waiting change answered from the keyboard: "default" (Enter: Try variant), "cancel" (Esc), "replace".
-        False when no change waits here."""
-        ch = self.s.pending_change
-        node = self.node
-        if not ch or node is None or ch["step"] != node.key or not node.paths:
+    def draft_pending(self):
+        """(block, its changes, what Apply computes again) of the model's draft, None without one (the question asked
+        before its block is left)."""
+        d = getattr(self.s, "pending_change", None)
+        if not d:
+            return None
+        ch = self.draft_change(d)
+        return d.title, ch.get("whats") or [ch["what"]], self._draft_cost(d)
+
+    def draft_apply(self) -> bool:
+        """Apply: the draft becomes the block's settings in its workflows, one step of the window's Undo."""
+        d = self.s.pending_change
+        if not d:
+            return True
+        ch, paths = self.draft_change(d), self._draft_paths(d)
+        self.s.pending_change = None
+        try:
+            notes = self.s.apply_change(paths, ch)
+        except (ValueError, wfl.OptionRefused) as e:
+            self.s.pending_change = d                     # refused: the draft stays, its reason said
+            self.toast.emit(_(str(e)))
+            self.changed.emit()
             return False
-        if how == "cancel":
-            self._cancel()
-        elif how == "replace":
-            self._replace()
-        else:
-            p = next((q for q in node.paths if q.pid == ch["pids"][0]), node.paths[0])
-            self._variant(p)
+        names = ", ".join(q.name for q in paths)
+        self.s.log("{what} · applied in {names}", what=ch["what"], names=names)
+        said = _("{what} · applied in {names}").format(what=ch["what"], names=names)
+        self.toast.emit(" · ".join([said] + [_(n) for n in notes] + ["Ctrl+Z"]))
+        self.changed.emit()
+        self.draftChanged.emit()
         return True
 
-    def _never_ask(self):
-        """"Do not ask": the preference is turned off (the change waiting still waits for its answer)."""
-        prefs.set("confirm_changes", False)
-        self.toast.emit(_("Changes apply at once from now on · Edit › Settings › General turns the question on again"))
+    def draft_variant(self, p=None) -> bool:
+        """Try variant: the draft on a variant of the workflow; what is computed stays as it is."""
+        d = self.s.pending_change
+        if not d:
+            return True
+        paths = self._draft_paths(d)
+        if p is None or p.pid not in d.pids:
+            p = paths[0] if paths else None
+        ch = self.draft_change(d)
+        if p is None:
+            return False
+        self.s.pending_change = None
+        try:
+            q = self.s.add_variant(p, ch, f"{p.name} · {ch['short']}")
+        except (ValueError, wfl.OptionRefused, NotImplementedError) as e:
+            self.s.pending_change = d
+            self.toast.emit(_("No variant: {why}").format(why=_(str(e))))
+            self.changed.emit()
+            return False
+        self.s.log('Variant "{name}" created', name=q.name)
+        self.variantMade.emit(q.pid, p.pid)
+        self.draftChanged.emit()
+        return True
 
-    def propose(self, stage, name, value, suggested, what, short):
-        """A change of setting: made at once when nothing computed and up to date is lost; otherwise it waits for
-        Replace, Try variant or Cancel."""
-        self._propose(dict(kind="param", stage=stage, name=name, value=value, suggested=suggested), what, short)
+    def draft_reset(self) -> bool:
+        """Reset: the draft goes, the block shows its applied settings; nothing in the project changed."""
+        self.s.pending_change = None
+        self.changed.emit()
+        self.draftChanged.emit()
+        return True
 
-    def propose_opt(self, key, value, what, short):
+    def propose(self, stage, name, value, suggested, what, short, same=False):
+        """A change of setting: on a block with results computed and up to date, a draft of the block (shown at once,
+        nothing outdated); else made at once. ``same``: the value is the applied one (it leaves the draft)."""
+        self._propose(dict(kind="param", stage=stage, name=name, value=value, suggested=suggested), what, short, same)
+
+    def propose_opt(self, key, value, what, short, same=False):
         """A change of option, such as a method."""
-        self._propose(dict(kind="opt", key=key, value=value), what, short)
+        self._propose(dict(kind="opt", key=key, value=value), what, short, same)
 
     @staticmethod
     def _change_id(c):
@@ -1683,28 +1715,6 @@ class Panel(QWidget):
         if c["kind"] == "params":
             return ("params",) + tuple((st, nm) for st, nm, _v in c["items"])
         return "opt", c.get("key")
-
-    @classmethod
-    def _merged(cls, old, ch, what, short):
-        """A second edit of the block while the first waits: both confirmed together (one question, one cost); an edit
-        of the same setting replaces the earlier one."""
-        olds = old["changes"] if old["kind"] == "many" else [old]
-        whats = list(old.get("whats") or [old["what"]])
-        shorts = list(old.get("shorts") or [old["short"]])
-        cores = [{k: v for k, v in c.items() if k not in ("what", "short", "whats", "shorts", "step", "pids", "cost")}
-                 for c in olds]
-        new = dict(ch)
-        i = next((j for j, c in enumerate(cores) if cls._change_id(c) == cls._change_id(new)), None)
-        if i is None:
-            cores.append(new)
-            whats.append(what)
-            shorts.append(short)
-        else:
-            cores[i], whats[i], shorts[i] = new, what, short
-        if len(cores) == 1:
-            return dict(cores[0], what=whats[0], short=shorts[0])
-        return dict(kind="many", changes=cores, what="; ".join(whats), short=" · ".join(shorts), whats=whats,
-                    shorts=shorts)
 
     def _change_paths(self) -> list:
         """The workflows a change of the block shown goes to: the scope chosen, within the block's own workflows. The
@@ -1716,73 +1726,72 @@ class Panel(QWidget):
             return paths
         return [q for q in paths if q in node.paths] or list(node.paths)
 
-    def _propose(self, ch, what, short):
+    def _propose(self, ch, what, short, same=False):
+        from .blockdraft import Draft
+        from .graphnode import node_title
         s = self.s
+        entry = {self._change_id(ch): dict(ch=ch, what=what, short=short)}
+        d = self._draft()
+        if d is not None:                                # the block holds a draft: the edit goes to it
+            if d.put(entry, same=lambda _k, _v: bool(same)):
+                self.changed.emit()
+                self.draftChanged.emit()
+            return
         paths = self._change_paths()
-        old = s.pending_change
-        if old and self.node is not None and old["step"] == self.node.key:
-            paths = [q for q in s.paths if q.pid in old["pids"]] or paths
-            ch = self._merged(old, ch, what, short)
-            what, short = ch.pop("what"), ch.pop("short")
         try:
             cost = s.change_cost(ch, paths) if confirm_on() and hasattr(s, "change_cost") else None
-            if cost is not None and cost.lost:
-                s.pending_change = dict(ch, what=what, short=short, step=self.node.key, pids=[q.pid for q in paths],
-                                        cost=cost)
+            if cost is not None and cost.lost:           # results computed and up to date: a draft, nothing outdated
+                d = Draft(self.node.key, [q.pid for q in paths])
+                d.title = node_title(s, self.node) if self.node.paths else block_title(paths[0], self.node.key)
+                d.put(entry)
+                s.pending_change = d
+                self.draftChanged.emit()
             else:
                 s.pending_change = None
                 notes = s.apply_change(paths, ch)
                 s.log("{what} · {names}", what=what, names=", ".join(q.name for q in paths))
                 if notes:
                     self.toast.emit(" · ".join(_(n) for n in notes))
-                if old:
-                    self.answered.emit()
         except NotInEngine:
-            s.pending_change = None
             self.toast.emit("◇ " + _("Not in the engine yet."))
         except (ValueError, wfl.OptionRefused) as e:
-            s.pending_change = None
             self.toast.emit(_(str(e)))
         self.changed.emit()
+
+    def _draft_entries(self):
+        d = self._draft()
+        return [e["ch"] for e in d.vals.values()] if d is not None else []
 
     def pending_value(self, r):
-        """The row of a setting as it shows while its change waits for its confirmation (else as it is)."""
-        ch = self.s.pending_change
-        if not ch or self.node is None or ch["step"] != self.node.key:
-            return r
-        for c in (ch["changes"] if ch["kind"] == "many" else [ch]):
+        """The row of a setting as the block's draft has it (``applied``: its value in the workflow)."""
+        r = dict(r, applied=r.get("value"), applied_changed=r.get("changed"))
+        for c in self._draft_entries():
             if c["kind"] == "param" and c["stage"] == r.get("stage") and c["name"] == r.get("name"):
-                return dict(r, value=r.get("suggested") if c["value"] is None else c["value"])
+                return dict(r, value=r.get("suggested") if c["value"] is None else c["value"],
+                            changed=c["value"] is not None)
+            if c["kind"] == "params":
+                for st, nm, v in c["items"]:
+                    if st == r.get("stage") and nm == r.get("name"):
+                        return dict(r, value=v)
         return r
 
-    def _replace(self):
-        ch, self.s.pending_change = self.s.pending_change, None
-        paths = [q for q in self.s.paths if q.pid in ch["pids"]]
-        try:
-            notes = self.s.apply_change(paths, ch)
-        except (ValueError, wfl.OptionRefused) as e:
-            self.toast.emit(_(str(e)))
-            self.changed.emit()
-            self.answered.emit()
-            return
-        self.s.log("{what} · replaced in {names}", what=ch["what"], names=", ".join(q.name for q in paths))
-        said = _("{what} · replaced in {names}").format(what=ch["what"], names=", ".join(q.name for q in paths))
-        self.toast.emit(" · ".join([said] + [_(n) for n in notes] + ["Ctrl+Z"]))     # said, as the others (decision 11)
-        self.changed.emit()
-        self.answered.emit()
+    def draft_opt(self, key, default):
+        """An option (a method) as the block's draft has it."""
+        for c in self._draft_entries():
+            if c["kind"] == "opt" and c.get("key") == key:
+                return c["value"]
+        return default
 
-    def _variant(self, p):
-        ch, self.s.pending_change = self.s.pending_change, None
-        try:
-            q = self.s.add_variant(p, ch, f"{p.name} · {ch['short']}")
-        except (ValueError, wfl.OptionRefused) as e:
-            self.toast.emit(_(str(e)))
-            self.changed.emit()
-            self.answered.emit()
-            return
-        self.s.log('Variant "{name}" created', name=q.name)
-        self.variantMade.emit(q.pid, p.pid)
-        self.answered.emit()
+    def draft_param(self, stage, name, default):
+        """A setting as the block's draft has it."""
+        for c in self._draft_entries():
+            if c["kind"] == "param" and c["stage"] == stage and c["name"] == name:
+                return default if c["value"] is None else c["value"]
+            if c["kind"] == "params":
+                for st, nm, v in c["items"]:
+                    if st == stage and nm == name:
+                        return v
+        return default
 
     # ------------------------------------------------------------ the method of a block
     def methods(self, p, k):
@@ -1793,6 +1802,11 @@ class Panel(QWidget):
         again, k = "~" in k or k == "synth", k.partition("~")[0]          # Synthetic stars: a block of the graph only
         self.bv.addWidget(self.group_title(_("Method")))
         opt = METHOD_OPT[k]
+        applied = cur
+        if not again:                                   # the block's draft: its method checked at once
+            want = self.draft_opt(opt, None)
+            cur = next((m["key"] for m in methods_of(k)
+                        if want is not None and method_value(k, m["key"]) == want), cur)
         spec = prefs.spec()
         for m in methods_of(k):
             if m["new"] and not spec:
@@ -1816,8 +1830,16 @@ class Panel(QWidget):
                 card.clicked.connect(lambda ek=m["engine_key"], nm=m["name"]: self._node_method(ek, _(nm)))
             elif not on and ok:
                 card.clicked.connect(lambda mk=m["key"], nm=m["name"], sh=m["short"]: self.propose_opt(
-                    opt, method_value(k, mk), _("Method: {name}").format(name=_(nm)), _(sh)))
+                    opt, method_value(k, mk), self._method_words(k, applied, nm), _(sh), same=mk == applied))
             self.bv.addWidget(card)
+
+    @staticmethod
+    def _method_words(k, applied, name) -> str:
+        """"Method: Pretrained network → Adapted network": the applied method, then the one chosen."""
+        old = next((_(m["name"]) for m in methods_of(k) if m["key"] == applied), None)
+        if old is None:
+            return _("Method: {name}").format(name=_(name))
+        return _("Method: {old} → {new}").format(old=old, new=_(name))
 
     def _node_method(self, method: str, name: str):
         """The method of a block placed twice, chosen on its cards: stored on its node, one Undo step, said (round 3:
@@ -1847,26 +1869,22 @@ class Panel(QWidget):
         info = self.s.param_info(p, *STACK_METHOD)
         advice = method_advice(self.s, p)
         self.bv.addWidget(self.group_title(_("Method")))
+        shown = self.draft_param(STACK_METHOD[0], STACK_METHOD[1], info.value)     # the block's draft, at once
         for key in keys:
             rec = advice is not None and advice[0] == key
-            card = StackMethodCard(key, key == info.value, rec, advice[1] if rec else "", not info.locked)
+            card = StackMethodCard(key, key == shown, rec, advice[1] if rec else "", not info.locked)
             if card.ok:
                 name = method_text(key)[0]
-                card.clicked.connect(lambda k_=key, nm=name: self.propose(
-                    STACK_METHOD[0], STACK_METHOD[1], k_, None, _("Stacking method: {name}").format(name=nm),
-                    nm.lower()))
+                words = _("Stacking method: {old} → {new}").format(old=method_text(info.value)[0], new=name) \
+                    if info.value in keys else _("Stacking method: {name}").format(name=name)
+                card.clicked.connect(lambda k_=key, nm=name, w=words: self.propose(
+                    STACK_METHOD[0], STACK_METHOD[1], k_, None, w, nm.lower(), same=k_ == info.value))
             self.bv.addWidget(card)
         if advice is None and self.s.state(p, "register") != "done":
             # the advice reads the registration (star size, coverage of the frames kept): none without it
             why = label(_("The automatic method shows once the registration is computed."), "small", wrap=True)
             why.setObjectName("advice_pending")
             self.bv.addWidget(why)
-
-    def _cancel(self):
-        """Cancel: the change waiting is dropped, its fields show their values again; nothing in the project changed."""
-        self.s.pending_change = None
-        self.changed.emit()
-        self.answered.emit()
 
     def outputs(self, node):
         """The Stars block's two images, in the colours of its ports, and where each goes (its Stars and background
@@ -2163,6 +2181,9 @@ class Panel(QWidget):
         return next((w for w in STATE_ORDER if w in states), "pending")
 
     def _scope(self, pids):
+        d = self._draft()
+        if d is not None:                                # the draft goes to the workflows chosen now
+            d.pids = list(pids)
         self.s.scope = list(pids)
         if self.s.path is None or self.s.path.pid not in pids:
             self.s.current = self.s.index_of(pids[0])
@@ -2199,7 +2220,7 @@ class Panel(QWidget):
 
     def selection(self, p):
         s = self.s
-        t, f = s.thresholds_now()
+        t, f = self.thresholds_shown()
         px = s.thresholds_unit() == "px"
         live = s.thresholds_active(p)
         self.bv.addWidget(self.group_title(_("Thresholds")))
@@ -2238,8 +2259,20 @@ class Panel(QWidget):
         else:
             self.bv.addWidget(label(_("The count appears once registration is computed."), "small", wrap=True))
 
+    def thresholds_shown(self) -> tuple[float, float]:
+        """The Selection's thresholds as the block's draft has them (else the settings')."""
+        s = self.s
+        t, f = s.thresholds_now()
+        dt = self.draft_param("stack", "min_transparency", None)
+        df = self.draft_param("stack", "max_fwhm_ratio", None)
+        if dt is not None:
+            t = 100 * float(dt)
+        if df is not None:
+            f = float(df) * (s.fwhm_median() or 1.0)
+        return t, f
+
     def _sel(self, value, which):
-        t, f = self.s.thresholds_now()
+        t, f = self.thresholds_shown()
         if which == "t" and abs(value - t) > 1e-9:
             self.propose_selection(value, f)
         elif which == "f" and abs(value - f) > 1e-9:
@@ -2251,9 +2284,11 @@ class Panel(QWidget):
         ch = dict(kind="params", items=[("stack", "min_transparency", round(tmin / 100, 4)),
                                         ("stack", "max_fwhm_ratio", ratio)])
         unit = "px" if m else "× median"
+        t0, f0 = self.s.thresholds_now()
+        same = abs(t0 - tmin) < 1e-6 and abs(f0 - fmax) < 1e-6
         self._propose(ch, _("Selection: transparency ≥ {t} %, FWHM ≤ {f} {unit}").format(
             t=f"{tmin:.0f}", f=number(fmax), unit=unit),
-            _("selection {t} % / {f} {unit}").format(t=f"{tmin:.0f}", f=number(fmax), unit=unit))
+            _("selection {t} % / {f} {unit}").format(t=f"{tmin:.0f}", f=number(fmax), unit=unit), same=same)
 
     def _groups(self, p, k) -> list:
         """[(group title, [resolved settings])] of the block, with the half-stacks where they belong."""
@@ -2337,8 +2372,10 @@ class Panel(QWidget):
         if r["kind"] == "new":
             return
         self.focus_key = r["key"]
-        old = fmt(r["value"], r["type"], r.get("choices"))
+        applied = r.get("applied", r["value"])           # the workflow's value (the row shows the draft's)
+        same = (not r.get("applied_changed", r.get("changed"))) if value is None else value == applied
+        old = fmt(applied, r["type"], r.get("choices"))
         new = fmt(r["suggested"] if value is None else value, r["type"], r.get("choices"))
         self.propose(r["stage"], r["name"], value, r["suggested"],
                      _("{label}: {old} → {new}").format(label=r["label"], old=old, new=new),
-                     f"{r['label'].lower()} {new}")
+                     f"{r['label'].lower()} {new}", same=same)

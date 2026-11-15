@@ -52,6 +52,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # nobody answers the window's save question in a test: closing a project with edits drops them (a test that checks the
 # question replaces Main.ask_save); the application itself always asks (client/app.py SAVE_ANSWER_ENV)
 os.environ.setdefault("FLOAT_SAVE_ANSWER", "discard")
+# nor the question of a block left with a draft (client/blockdraft.py DRAFT_ANSWER_ENV): its draft is discarded
+os.environ.setdefault("FLOAT_DRAFT_ANSWER", "discard")
 _REAL_ENV = "ASTRO_GPU_TEST_REAL_HOME"
 _T0 = time.time()
 

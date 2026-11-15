@@ -295,8 +295,9 @@ class SettingsDialog(QDialog):
         self.row(v, _("Interface density"), dens)
         conf = QCheckBox(_("Confirm changes"))
         conf.setObjectName("confirm_changes")
-        conf.setToolTip(_("A change that would compute again results already up to date waits for Replace, Try "
-                          "variant or Cancel; unchecked, it applies at once (Ctrl+Z takes it back)"))
+        conf.setToolTip(_("A setting changed on a block with results up to date is a draft until Apply, Try variant "
+                          "or Reset, and an Undo that would compute them again asks first; unchecked, both apply at "
+                          "once (Ctrl+Z takes them back)"))
         conf.setChecked(bool(prefs.get("confirm_changes")))
         conf.toggled.connect(lambda x: prefs.set("confirm_changes", bool(x)))
         self.row(v, _("Computed results"), conf)

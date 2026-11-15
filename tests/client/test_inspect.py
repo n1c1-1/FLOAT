@@ -566,7 +566,7 @@ def test_the_selection_chart_updates_the_kept_count_through_selection_preview(wi
         want = api.selection_preview(win.s.p, 1, ch.tmin / 100, ch.fmax / win.s.fwhm_median()).kept
         assert want < N_LIGHTS and ch.kept() == want
         assert t.kept_label.text().startswith(f"{want} of {N_LIGHTS} frames kept")
-        assert win.s.pending_change is not None and win.s.pending_change["step"] == "selection"
+        assert win.s.pending_change and win.s.pending_change.step == "selection"      # the block's draft
         assert any(b.text().startswith("Try variant") for b in t.panel.findChildren(QPushButton))
         win.s.pending_change = None
         shot(win, "inspect_selection")

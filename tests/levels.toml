@@ -29,6 +29,8 @@ level3 = [
     "tests/test_colour_frames.py::test_calibrate_divides_the_flat_colour_by_colour",               # heavy: spawned workers
     # ---- client -------------------------------------------------------------------------------------------------
     "tests/client/test_walkthrough.py",                                                            # screenshots + real data + worker, 64 s
+    "tests/client/test_draft_inspect.py",                                                          # real data: Inspect's window, 28 s
+    "tests/client/graphview/test_gv_draft_walk.py::test_every_setting_of_every_block_is_a_draft_whose_apply_and_variant_never_raise",  # heavy: every setting, 45 s
     # test_inspect.py: the test project, screenshots
     "tests/client/test_inspect.py::test_a_variant_is_shown_compared_with_its_original",
     "tests/client/test_inspect.py::test_an_outdated_block_shows_its_previous_result",

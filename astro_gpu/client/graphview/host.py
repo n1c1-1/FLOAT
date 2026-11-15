@@ -333,61 +333,29 @@ class SidesHost:
         except Exception:  # noqa: BLE001 - an estimate is a word of the toast: never a failure of the page
             log.exception("graph page: the run's estimate could not be said")
 
-    # ------------------------------------------------------------------ a change waiting for its confirmation
+    # ------------------------------------------------------------------ the block's draft (blockdraft.py)
     def _build_confirm(self, pn):
-        """A change of setting in the panel that would compute again results computed and up to date waits at the
-        panel's foot for Replace / Try variant / Cancel; Enter answers the default (Try variant), Esc cancels; choosing
-        another block meanwhile asks first. (A gesture of the graph never waits: it applies, its toast says what it
-        made stale, with Undo.)"""
-        from PySide6.QtCore import Qt
-        from PySide6.QtGui import QKeySequence, QShortcut
-        self._confirm_keys = []
-        for key, how in ((Qt.Key_Return, "default"), (Qt.Key_Enter, "default"), (Qt.Key_Escape, "cancel")):
-            sc = QShortcut(QKeySequence(key), self)
-            sc.setContext(Qt.WidgetWithChildrenShortcut)
-            sc.setEnabled(False)
-            sc.activated.connect(lambda h=how: self.answer_change(h))
-            self._confirm_keys.append(sc)
+        """A block holding a draft is left only once its question is answered: another block chosen asks Apply, Try
+        variant, Discard or Stay (``blockdraft.settle``); Stay keeps the block chosen. (A gesture of the graph never
+        waits: it applies, its toast says what it made stale, with Undo.)"""
         self.bridge.hold = self._hold_selection
-        pn.answered.connect(self._change_answered)
-        pn.changed.connect(self._confirm_keys_follow)
 
-    def _confirm_keys_follow(self, *_a):
-        """Enter and Esc answer the question only while one waits (else they are the page's and the fields' own)."""
-        s = self.s
-        on = bool(getattr(s, "pending_change", None))
-        for sc in getattr(self, "_confirm_keys", ()):
-            sc.setEnabled(on)
-
-    def answer_change(self, how: str) -> bool:
-        """The change waiting answered: "default" (Enter), "replace", "variant", "cancel" (Esc). False: none waits."""
-        s = self.s
-        if s is None:
+    def answer_draft(self, how: str) -> bool:
+        """The draft of the block shown answered as its bar does: "apply", "variant" or "reset". False: none."""
+        pn = self.panel
+        if self.s is None or pn is None or not getattr(self.s, "pending_change", None):
             return False
-        if getattr(s, "pending_change", None) and self.panel is not None:
-            done = self.panel.answer(how)
-            self._confirm_keys_follow()
-            return done
-        self._confirm_keys_follow()
-        return False
+        if how == "apply":
+            return pn.draft_apply()
+        if how == "variant":
+            return pn.draft_variant(self.s.path)
+        return pn.draft_reset()
 
     def _hold_selection(self, ident) -> bool:
-        """Another block chosen while a change of the panel waits: the choice stays, the panel asks to answer first;
-        the block chosen is shown once the change is answered (never a silent loss of what was typed)."""
+        """Another block chosen while the block shown holds a draft: the question first; True (the choice held) when
+        the user stays."""
         s, pn = self.s, self.panel
         if s is None or pn is None or not getattr(s, "pending_change", None) or self._mirroring:
             return False
-        pn.pending_next = (ident,)                       # (None: nothing chosen, a click on the empty page)
-        pn.refresh(pn.node)
-        self.toast(_("Answer first: Replace, Try variant or Cancel"))
-        return True
-
-    def _change_answered(self):
-        """The change of the panel answered: the block chosen meanwhile is chosen now."""
-        pn = self.panel
-        self._confirm_keys_follow()
-        if pn is None or pn.pending_next is None:
-            return
-        (ident,), pn.pending_next = pn.pending_next, None
-        if ident is None or ident == PROJECT or ident in self.bridge.graph.blocks or self.bridge.row(ident) is not None:
-            self.bridge.choose(ident)
+        from ..blockdraft import settle
+        return not settle(pn, self)

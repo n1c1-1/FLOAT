@@ -173,7 +173,7 @@ def test_a_draft_never_changes_the_project(ed):
     wait(ed)
     assert m.changes == [] and m.variants == [] and p.params == {"gradient": {}}
     assert m.stage_key(p, "gradient") == key
-    assert sorted(ed._draft()["vals"]) == ["avoid_emission", "exclude_ellipses", "method", "rbf_smooth",
+    assert sorted(ed._draft().vals) == ["avoid_emission", "exclude_ellipses", "method", "rbf_smooth",
                                            "sample_points"]
     assert ed.result is not None and ed.tag_text().startswith("Draft preview")
 
@@ -354,19 +354,24 @@ def test_the_drafts_steps_take_their_place_in_the_windows_one_order_of_undo(ed):
     assert ed.redo() and ed.value("degree") == 3 and ed.history_top("undo")[0] > rseq
 
 
-def test_leaving_with_a_draft_asks_in_the_notice_strip(ed):
+@pytest.mark.parametrize("answer", ["stay", "discard", "apply", "variant"])
+def test_leaving_with_a_draft_asks_and_each_answer_does_what_it_says(ed, monkeypatch, answer):
+    """The question every block asks before it is left (blockdraft.settle): no "Later", a draft never survives."""
+    from astro_gpu.client.blockdraft import DRAFT_ANSWER_ENV, settle
     m, p = ed.s, ed.s.path
     ed.set_draft({"degree": 3})
-    ed._check_left()                                   # the view hidden: the block is not the one shown
-    n = ed._notice
-    assert n is not None and n.parentWidget() is ed.tv.window()   # over the window, in no layout: nothing moves
-    assert [b.text() for b in n.buttons] == ["Apply", "Try variant", "Reset", "Later"]
-    ed._check_left()
-    assert ed._notice is n                             # said once
-    n.buttons[3].click()
-    assert ed.has_draft() and m.changes == [] and n.isHidden()    # Later: kept
-    ed.apply()
-    assert p.params["gradient"]["degree"] == 3 and not ed.has_draft()
+    block, lines, _cost = ed.draft_pending()
+    assert block.startswith("Gradient") and lines and lines[0].startswith("Gradient draft")
+    monkeypatch.setenv(DRAFT_ANSWER_ENV, answer)
+    assert settle(ed, None) == (answer != "stay")
+    if answer == "stay":
+        assert ed.has_draft() and m.changes == []
+    elif answer == "discard":
+        assert not ed.has_draft() and m.changes == [] and "degree" not in p.params["gradient"]
+    elif answer == "apply":
+        assert p.params["gradient"]["degree"] == 3 and not ed.has_draft()
+    else:
+        assert not ed.has_draft(p.pid) and m.variants and ed.draft_pending() is None
 
 
 def test_a_removed_sample_has_a_visible_control(ed):
@@ -558,8 +563,16 @@ def test_the_image_never_moves_through_a_session(qapp, tmp_path, size):
             ed.dock.close_overlay()
             idle()
             check("settings closed")
-        go("empilement")
-        assert ed._notice is not None and ed._notice.isVisible()      # leaving with a draft: asked, over the window
+        assert ed.has_draft()
+        os.environ["FLOAT_DRAFT_ANSWER"] = "stay"
+        try:
+            t.select(step="empilement")                # leaving with a draft: asked; Stay keeps the block and its draft
+        finally:
+            os.environ["FLOAT_DRAFT_ANSWER"] = "discard"
+        assert s.sel_step == "fond" and ed.has_draft()
+        from astro_gpu.client.blockdraft import DraftBar
+        assert isinstance(ed._ui["bar"], DraftBar) and ed._ui["apply"].text() == "Apply"     # the shared bar
+        check("stayed")
         go("fond")
         check("came back")
         ed._ui["reset"].click()

@@ -1,7 +1,7 @@
-"""The window's question before an Undo or a Redo that would compute again results computed and up to date: the same
-card as a change of setting on a computed project (panel.choice_box), over the foot of the window: what the step is,
-what it computes again and the time, Undo (or Redo, Enter) and Keep (Esc), and "Do not ask" (the preference
-``confirm_changes`` that turns every such question off). While a run goes, every Undo or Redo of the workflows asks
+"""The window's question before an Undo or a Redo that would compute again results computed and up to date (a change of
+setting is a block's draft instead, blockdraft.py), over the foot of the window: what the step is, what it computes
+again and the time, Undo (or Redo, Enter) and Keep (Esc), and "Do not ask" (the preference ``confirm_changes`` that
+turns every such question off, and the drafts with it: a change of setting then applies at once). While a run goes, every Undo or Redo of the workflows asks
 here too, saying that the run goes on with what it started with (a change made meanwhile is said the same way)."""
 from __future__ import annotations
 

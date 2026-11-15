@@ -882,6 +882,24 @@ class GraphEditing:
                     return _("lights first")
         return ""
 
+    def _variants_kept(self, steps):
+        """A variant is preferred by deleting its original: Delete of a row a variant on trial was made from keeps the
+        variant in its place (``keep_variant``: the blocks they share stay, with their results; the variant's own
+        blocks and results stay), under the variant's own name, never the whole stack deleted with it."""
+        g = self._g
+        out = []
+        for s in steps:
+            r = next((x for x in g.rows if x.id == s[1].get("row")), None) \
+                if s[0] == "delete_row" and isinstance(s[1], dict) else None
+            v = next((x for x in g.rows if r is not None and r.wid is not None and x.trial == r.wid and x is not r),
+                     None)
+            if v is None:
+                out.append(s)
+                continue
+            kept = r.id if v.fork and v.fork[0] == r.id else v.id      # the row that holds the variant afterwards
+            out += [("keep_variant", {"row": v.id}), ("rename_row", {"row": kept, "name": v.name})]
+        return out
+
     def _row_kept(self, steps) -> str:
         """Why a Delete workflow is refused (today's decision 3): a workflow a combination reads as a channel, or the
         reference of an Align on, is kept, said with the reason; "" when it may go."""
@@ -999,6 +1017,7 @@ class GraphEditing:
         kept = self._row_kept(steps) or self._lights_first(steps)
         if kept:
             return Result(False, reason=kept)
+        steps = self._variants_kept(steps)
         sides, refused = self._layer_star_sides(steps)
         if refused:
             return Result(False, reason=refused)
@@ -1643,20 +1662,45 @@ class GraphEditing:
             kind, method = "gradient", mm.GRADIENT_ENGINE.get(v, "polynomial")
         elif key in ("deconv_m",):
             kind, method = "deconv", mm.DECONV_ENGINE.get(v, "rl")
-        else:
-            _not_ported(f"apply_change({key})")
+        else:                                           # a method of no block of the graph: said, never raised raw
+            raise mm.NotInEngine(mm.NOT_IN_ENGINE)
         b = next((b for b in self._chain(q.pid) if self._g.blocks[b].kind == kind), None)
         return [(b, method)] if b is not None else []
 
     def add_variant(self, p, ch, title: str):
         """Try as variant: a copy of the workflow through the changed block, the change made on the copy."""
-        mm = _mm()
         if ch["kind"] == "many":                          # the first edit makes the variant, the others go on it
             with self.batch():
                 q = self.add_variant(p, ch["changes"][0], title)
                 for c in ch["changes"][1:]:
                     self.apply_change([q], c)
             return self.view(q.pid) or q
+        res = self._do(self._variant_steps(p, ch, title))
+        return self._view_of_wid(self._made_wid(res))
+
+    #: the stages a variant takes from the stack's start: its frames, their calibration, registration and stack
+    _STACK_STAGES = ("inventory", "calibrate", "register", "stack")
+
+    def _variant_fork(self, p, stage: str):
+        """The block a variant of a setting no block holds starts from: a setting of the stack's start (a Calibration
+        held by the stack, the frames' limit) copies the whole stack, drawing the same nights (its night's Calibration,
+        else the stack's first block); any other (the Output, Align on) the workflow's last block."""
+        base = stage.partition("@")[0].partition("~")[0]
+        chain = self._chain(p.pid)
+        if base in self._STACK_STAGES:
+            f = self._flow(p.pid)
+            root = self._root(f) if f is not None else None
+            if root is not None:
+                c = next((c for _s, c in root.nights if c is not None), None)
+                if c is not None:
+                    return c
+                if root.blocks:
+                    return root.blocks[0]
+        return chain[-1] if chain else None
+
+    def _variant_steps(self, p, ch, title: str) -> list:
+        """The graph core's steps of Try variant for one change of the panel (a setting, settings, a method)."""
+        mm = _mm()
         if ch["kind"] in ("param", "params"):
             items = [(c["stage"], c["name"], c["value"]) for c in mm.ProjectModel._api_changes(ch)]
             kind, bid, _st = self._owner(self._g, p.pid, items[0][0])
@@ -1664,21 +1708,41 @@ class GraphEditing:
                 own = "selection" if items[0][1] in _SELECTION else "crop" if items[0][1] == "zone" else "stacking"
                 bid = next((b for b in self._chain(p.pid) if self._g.blocks[b].kind == own), bid)
             if kind != "block":
-                _not_ported("add_variant(a setting no block holds)")
+                # held by the workflow's row or its leftovers (a one-session stack's Calibration, the Output): the
+                # variant is made from the block it starts from, unchanged, and the settings go to the variant's row
+                bid = self._variant_fork(p, items[0][0])
+                if bid is None:
+                    raise GraphRefused(_("No variant from here: this workflow has no block to start one from"))
+                steps = [("try_variant", {"block": bid, "change": {"off": bool(self._g.blocks[bid].off)},
+                                          "name": self.unique_name(title)})]
+                for st, nm, v in items:
+                    steps.append(("set_flow_param", lambda res, st=st, nm=nm, v=v: {
+                        "flow": (res[0].created or {}).get("row"), "stage": st, "name": nm, "value": v}))
+                return steps
             stage = items[0][0].partition("@")[0]
             steps = [("try_variant", {"block": bid, "change": {"param": [stage, items[0][1], items[0][2]]},
                                       "name": self.unique_name(title)})]
             for st, nm, v in items[1:]:
                 steps.append(("set_param", lambda res, st=st, nm=nm, v=v: {"block": res[0].focus, "stage": st,
                                                                             "name": nm, "value": v}))
-        else:
-            pairs = self._method_change(p, ch)
-            if not pairs:
-                raise ValueError(_("not in workflow"))
-            bid, method = pairs[0]
-            steps = [("try_variant", {"block": bid, "change": {"method": method}, "name": self.unique_name(title)})]
-        res = self._do(steps)
-        return self._view_of_wid(self._made_wid(res))
+            return steps
+        pairs = self._method_change(p, ch)
+        if not pairs:
+            raise ValueError(_("not in workflow"))
+        bid, method = pairs[0]
+        return [("try_variant", {"block": bid, "change": {"method": method}, "name": self.unique_name(title)})]
+
+    def variant_refusal(self, p, ch) -> str:
+        """Why Try variant cannot be made of this change in workflow ``p`` (translated), "" when it can: the steps tried
+        on a copy of the graph, nothing changed."""
+        try:
+            first = ch["changes"][0] if ch["kind"] == "many" else ch
+            steps = self._variant_steps(p, first, f"{p.name} · variant")
+            view = copy.deepcopy(self.graph_view)
+            _g, res = apply_many(self._without_layer_rows(self._g, steps), list(steps), view, _)
+        except (ValueError, KeyError, NotPorted, gm.Invalid) as e:
+            return str(e) or _("No variant from here")
+        return "" if res.ok else (say(res.reason, _) or _("No variant from here"))
 
     def keep_variant(self, q):
         self._do([("keep_variant", {"row": self._row(q).id})])
@@ -1798,6 +1862,7 @@ class GraphEditing:
         before = self._g
         if self._row_kept(steps) or self._lights_first(steps):
             return None
+        steps = self._variants_kept(steps)
         base = self._without_layer_rows(before, steps)
         view = copy.deepcopy(self.graph_view)
         g, res = apply_many(base, list(steps), view, _)
@@ -1962,7 +2027,7 @@ class GraphEditing:
         ix = gm.Index(self._g)
         kids = [c for c in ix.children[f.id]]
         if kids:                                          # its variants become workflows of their own: not ported
-            _not_ported("remove_path(a workflow its variants start from)")
+            raise GraphRefused(_("Its variants start from this workflow: delete them first, or delete its row in the graph"))
         self._do([("delete_row", {"row": f.id})])
 
     # ------------------------------------------------------------------ a block's image to Post
@@ -2402,7 +2467,7 @@ class GraphEditing:
     def add_graph_workflow(self, name: str, blocks: list[dict], source: dict | None = None,
                            sessions: list[int] | None = None):
         if source is not None:
-            _not_ported("add_graph_workflow(from an image)")
+            raise GraphRefused(_("A workflow from an image is made by placing the image on the graph"))
         sids = list(sessions) if sessions is not None else [s.id for s in self.p.sessions]
         params = self._path_params(None)
         with self._edit():
@@ -2512,7 +2577,8 @@ class GraphEditing:
         r = self._row(p.pid)
         ix = gm.Index(self._g)
         if r.fork or ix.children[r.id] or any(t.block in r.blocks for t in self._g.taps):
-            _not_ported("set_graph / set_opts(a row variants or taps start from)")
+            raise GraphRefused(_("Variants or Post layers start from this workflow: its blocks are changed one by one in the "
+                                  "graph"))
         chain, align, cal = [], None, None
         for n in blocks:
             k = n["block"]

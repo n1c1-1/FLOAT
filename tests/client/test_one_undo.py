@@ -183,6 +183,9 @@ class _Draft:
         self.top = None
         return True
 
+    def draft_pending(self):                       # its draft is a step only: nothing asked when its page is left
+        return None
+
 
 def test_the_gradient_drafts_step_is_undone_before_an_older_step_of_the_workflows(win, monkeypatch):
     """The testers' pass 2: in the Gradient view, Ctrl+Z undid an earlier "variant discarded" instead of the sample edit
@@ -268,3 +271,23 @@ def test_the_overview_map_takes_the_blocks_states_after_an_undo(win):
     cv.update_states()                                               # the states told again, no edit waited for
     want = [QColor(STATE_COL.get(it.d["state"], "#5d6470")).name() for it in cv.blocks.values()]
     assert [c.name() for _r, c in cv.minimap.rects] == want
+
+
+def test_a_blocks_draft_step_is_undone_before_an_older_step_and_redone(win):
+    """A block's draft (blockdraft.Draft, in the panel) holds its edits as steps of the window's one Undo order: Ctrl+Z
+    takes the latest draft edit back before an older step of the workflows, Ctrl+Shift+Z makes it again."""
+    from astro_gpu.client.blockdraft import Draft
+    _set_rbf(win)                                                    # a step of the workflows, older
+    d = Draft("fond", [win.s.paths[0].pid])
+    d.title = "Gradient"
+    d.put({("param", "gradient", "degree"): {"ch": {"kind": "param", "stage": "gradient", "name": "degree",
+                                                    "value": 3, "suggested": None},
+                                             "what": "Degree: 2 → 3", "short": "degree 3"}})
+    win.s.pending_change = d
+    win.undo()
+    _settle(win, 3)
+    assert not d and _method(win) == "rbf" and "Gradient draft" in win.status.text()     # the draft's step only
+    win.redo()
+    _settle(win, 3)
+    assert d and _method(win) == "rbf"
+    win.s.pending_change = None

@@ -9,9 +9,10 @@ the previous image kept on screen until the next one is ready; it is compared wi
 grid (read from the block's own sky model, never computed again) or with the stack, Split or Side by side.
 
 When it looks right: **Apply** (the draft becomes the block's settings, one step of the window's Undo; what it
-computes again and how long is said first, on the button and on the bar), **Try variant** (the draft goes on a variant
-of the workflow: the computed chain stays as it is) or **Reset** (back to the applied settings). Leaving the block with
-a draft asks the same in the window's notice strip; Later keeps it, and coming back shows it again.
+computes again and how long is said on the draft bar), **Try variant** (the draft goes on a variant of the workflow:
+the computed chain stays as it is) or **Reset** (back to the applied settings): the draft bar every block's panel has
+(blockdraft.py), where its buttons were. Leaving the block with a draft asks the question every block asks (Apply, Try
+variant, Discard, Stay): a draft never survives leaving its block.
 
 The tools are on a bar above the image, as the reference photo editors have them: Samples (click adds, drag moves,
 Remove or a right click removes the one selected), Brush (paint / erase the areas left out, X, [ ]), Ellipse (drag,
@@ -47,7 +48,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import journal
+from .blockdraft import Draft, DraftBar
 from .i18n import _
 from .icons import icon_only
 from .widgets import WARN, label
@@ -202,7 +203,7 @@ class GradientEditor(QObject):
         self.paint = True
         self.size = 60.0                       # brush diameter, stack pixels
         self.shown = True                      # what is drawn over the image (M, Marks)
-        self.drafts: dict[int, dict] = {}      # workflow -> {"vals": {setting: value}, "undo", "redo", "told"}
+        self.drafts: dict[int, Draft] = {}     # workflow -> its draft (blockdraft.Draft: {setting: value}, its Undo)
         self.work: dict[str, list] = {f: [] for f in FIELDS}
         self.done = False                      # the block is computed with its applied settings
         self.gesture = False
@@ -229,8 +230,6 @@ class GradientEditor(QObject):
         self._syncing = False
         self._cost = None                      # (workflow, settings, what Apply computes again)
         self._applied_at = None
-        self._banner_for = None
-        self._notice = None                    # the notice of a draft left (Notice), over the window's foot
         self._win = None                       # the window whose resizing the editor follows
         self._held = None                      # Inspect held from painting until its layout settles (hold)
         self._restore = None                   # (image key, view state) to give back when the preview shows
@@ -297,19 +296,19 @@ class GradientEditor(QObject):
 
     def has_draft(self, pid: int | None = None) -> bool:
         d = self._draft(pid)
-        return bool(d and d["vals"])
+        return bool(d)
 
     def value(self, name: str):
         """A setting as the draft has it (the applied one when the draft does not change it)."""
         d = self._draft()
-        if d is not None and name in d["vals"]:
-            return copy.deepcopy(d["vals"][name])
+        if d is not None and name in d.vals:
+            return copy.deepcopy(d.vals[name])
         return self._applied_value(name)
 
     def _explicit_empty(self) -> bool:
         """No sample, by the user's choice (Clear all): the block must not choose its own then."""
         d = self._draft()
-        return bool(d and "sample_points" in d["vals"] and d["vals"]["sample_points"] == [])
+        return bool(d and "sample_points" in d.vals and d.vals["sample_points"] == [])
 
     def _fields(self) -> dict:
         """The marks on screen: the draft's; while the samples were never touched, the ones the block places by itself
@@ -350,27 +349,17 @@ class GradientEditor(QObject):
         """Settings of the draft: one step of its Undo; a setting back to its applied value leaves the draft."""
         if self.p is None:
             return False
-        d = self.drafts.setdefault(self.p.pid, {"vals": {}, "undo": [], "redo": [], "told": False})
-        before = copy.deepcopy(d["vals"])
-        for k, v in updates.items():
-            v = _norm(k, v)
-            if k == "sample_points" and v == [] and self._applied_value(k) == []:
-                d["vals"][k] = []              # none, by choice: not the block's own choice (Clear all)
-            elif v == self._applied_value(k):
-                d["vals"].pop(k, None)
-            else:
-                d["vals"][k] = copy.deepcopy(v)
-        if d["vals"] == before:
+        d = self.drafts.setdefault(self.p.pid, Draft("fond", [self.p.pid]))
+        before = set(d.vals)
+        norm = {k: _norm(k, v) for k, v in updates.items()}
+        # back to its applied value, a setting leaves the draft; no sample by choice (Clear all) stays one, never the
+        # block's own choice
+        if not d.put(norm, same=lambda k, v: v == self._applied_value(k) and not (k == "sample_points" and v == []),
+                     step=undo):
             self.work = self._fields()
             self._sync()
             return False
-        if undo:
-            d["undo"].append(before)
-            d["redo"].clear()
-            d.setdefault("useq", []).append(journal.tick())     # the window's one order of Undo (journal.py)
-            d["rseq"] = []
-        d["told"] = False
-        self._draft_changed(set(before) | set(d["vals"]) | set(updates))
+        self._draft_changed(before | set(d.vals) | set(updates))
         if undo:
             self.historyChanged.emit()
         return True
@@ -416,15 +405,9 @@ class GradientEditor(QObject):
 
     def _move(self, pid, src: str, dst: str) -> bool:
         d = self._draft(pid)
-        if not d or not d[src]:
+        names = d.move(src) if d is not None else None
+        if names is None:
             return False
-        names = set(d["vals"]) | set(d[src][-1])
-        d[dst].append(copy.deepcopy(d["vals"]))
-        d["vals"] = d[src].pop()
-        sq, dq = d.setdefault(src[0] + "seq", []), d.setdefault(dst[0] + "seq", [])
-        del sq[len(d[src]):]
-        dq.append(journal.tick())
-        del dq[:max(0, len(dq) - len(d[dst]))]
         if pid is None or (self.p is not None and pid == self.p.pid):
             self._draft_changed(names)
         self.historyChanged.emit()
@@ -435,12 +418,9 @@ class GradientEditor(QObject):
         every workflow's draft; None without one."""
         best = None
         for pid, d in self.drafts.items():
-            steps = d.get(how) or []
-            seqs = d.get(how[0] + "seq") or []
-            if steps:
-                seq = seqs[-1] if len(seqs) == len(steps) else 0
-                if best is None or seq > best[0]:
-                    best = (seq, pid)
+            seq = d.top(how)
+            if seq is not None and (best is None or seq > best[0]):
+                best = (seq, pid)
         return best
 
     def _paths(self, q):
@@ -457,10 +437,10 @@ class GradientEditor(QObject):
         its words (``what``, ``short``); None without a draft."""
         q = self._view_of(pid)
         d = self.drafts.get(q.pid) if q is not None else None
-        if not d or not d["vals"]:
+        if not d:
             return None
         from .model import GRADIENT_VIEW
-        vals = dict(d["vals"])
+        vals = dict(d.vals)
         chs = []
         m = vals.pop("method", None)
         if m is not None:
@@ -473,9 +453,9 @@ class GradientEditor(QObject):
         if m is not None:
             bits.append(_(METHOD_NAME[m]))
         from .graphnode import value_words
-        if d["vals"].get("sample_points"):
-            bits.append(value_words("sample_points", d["vals"]["sample_points"]))
-        if any(k in d["vals"] for k in ("exclude_ellipses", "exclude_brush")):
+        if d.vals.get("sample_points"):
+            bits.append(value_words("sample_points", d.vals["sample_points"]))
+        if any(k in d.vals for k in ("exclude_ellipses", "exclude_brush")):
             bits.append(_("exclusions"))
         short = ", ".join(bits) or _("gradient draft")
         ch.update(what=_("Gradient draft: {what}").format(what=short), short=short)
@@ -502,13 +482,13 @@ class GradientEditor(QObject):
                 text = _("Computes again · about {t}").format(t=hm(c.seconds))
         except Exception:  # noqa: BLE001 - the cost is a hint: Apply works without it
             text = ""
-        self._cost = (self.p.pid, repr(sorted(self._draft()["vals"].items())), text)
+        self._cost = (self.p.pid, repr(sorted(self._draft().vals.items())), text)
         self._sync()
 
     def cost_text(self) -> str:
         d = self._draft()
         if self._cost is None or d is None or self._cost[0] != self.p.pid or \
-                self._cost[1] != repr(sorted(d["vals"].items())):
+                self._cost[1] != repr(sorted(d.vals.items())):
             return ""
         return self._cost[2]
 
@@ -540,7 +520,6 @@ class GradientEditor(QObject):
             return
         self.s.log("{what} · {names}", what=ch["what"], names=", ".join(x.name for x in paths))
         self.drafts.pop(q.pid, None)
-        self._hide_banner(q.pid)
         self.tv.toasted.emit(_("Gradient: draft applied · Run to here computes it · Ctrl+Z"))
         if self.p is not None and q.pid == self.p.pid:
             self.work = self._fields()
@@ -574,7 +553,6 @@ class GradientEditor(QObject):
         self.s.log('Variant "{name}" created', name=v.name)
         d = self.drafts.pop(q.pid, None)
         self._stashed[v.pid] = (q.pid, copy.deepcopy(d))       # an Undo of the variant gives the draft back
-        self._hide_banner(q.pid)
         if self.p is not None and q.pid == self.p.pid:
             # what was tuned goes with the variant: its preview, and the original's result to compare it with
             if self.result is not None and self.small is not None and self.small["pid"] == q.pid:
@@ -590,7 +568,6 @@ class GradientEditor(QObject):
         if q is None or q.pid not in self.drafts:
             return
         self.drafts.pop(q.pid, None)
-        self._hide_banner(q.pid)
         if self.p is not None and q.pid == self.p.pid:
             self._draft_changed({"method"})
 
@@ -611,11 +588,6 @@ class GradientEditor(QObject):
             self.hold()                        # the window docked TuneView's panel again: away while the page shows
             QTimer.singleShot(0, lambda: self._side(False) if self._page_shown() else None)
         elif t == QEvent.Resize and obj is self._win:
-            if self._notice is not None:
-                try:
-                    self._notice.place()
-                except RuntimeError:
-                    self._notice = None
             if self.view is not None and self.dock is not None:
                 want = self._side_state()      # no choice of the user yet: the window's width chooses
                 if want != self.dock.state:
@@ -690,25 +662,39 @@ class GradientEditor(QObject):
         except RuntimeError:
             return False
 
-    def _check_left(self):
-        """The block left with a draft: said once in the window's notice strip, with Apply, Try variant, Reset and
-        Later (the draft kept); never dropped nor applied silently."""
-        for pid, d in list(self.drafts.items()):
-            if not d["vals"] or d["told"] or self._here(pid):
-                continue
-            q = self.s.view(pid)
-            if q is None:
-                continue
-            d["told"] = True
-            text = _("Gradient · {name}: a draft is not applied. It is kept while the project is open.").format(
-                name=q.name)
-            self._hide_banner(self._banner_for)
-            self._banner_for = pid
-            self._notice = Notice(self.tv.window(), text, [
-                (_("Apply"), lambda pp=pid: self.apply(pp)), (_("Try variant"), lambda pp=pid: self.try_variant(pp)),
-                (_("Reset"), lambda pp=pid: self.reset(pp)), (_("Later"), lambda: None)])
-            self._watch_window()
-            return
+    # the question every block asks before it is left (blockdraft.settle): this view's draft
+    def _pending_pid(self):
+        """The workflow whose Gradient draft is not applied (the one shown first), None."""
+        if self.p is not None and self.has_draft(self.p.pid):
+            return self.p.pid
+        return next((pid for pid, d in self.drafts.items() if d and self.s.view(pid) is not None), None)
+
+    def draft_pending(self):
+        pid = self._pending_pid()
+        if pid is None:
+            return None
+        ch = self.draft_change(pid)
+        q = self.s.view(pid)
+        cost = self.cost_text() if self.p is not None and pid == self.p.pid else ""
+        return (_("Gradient") + (f" · {q.name}" if q is not None else ""), [ch["what"]] if ch else [], cost)
+
+    def draft_apply(self) -> bool:
+        pid = self._pending_pid()
+        if pid is not None:
+            self.apply(pid)
+        return pid is None or not self.has_draft(pid)
+
+    def draft_variant(self) -> bool:
+        pid = self._pending_pid()
+        if pid is not None:
+            self.try_variant(pid)
+        return pid is None or not self.has_draft(pid)
+
+    def draft_reset(self) -> bool:
+        pid = self._pending_pid()
+        if pid is not None:
+            self.reset(pid)
+        return True
 
     def _watch_window(self):
         win = self.tv.window()
@@ -720,16 +706,6 @@ class GradientEditor(QObject):
                     pass
             self._win = win
             win.installEventFilter(self)
-
-    def _hide_banner(self, pid):
-        if pid is not None and self._banner_for == pid and self._notice is not None:
-            self._banner_for = None
-            try:
-                self._notice.hide()
-                self._notice.deleteLater()
-            except RuntimeError:
-                pass
-            self._notice = None
 
     # ------------------------------------------------------------ the workflow and the viewer
     def _method(self) -> str:
@@ -757,7 +733,7 @@ class GradientEditor(QObject):
             if self.s.view(vpid) is None:      # the variant undone: the draft it took is the original's again
                 self._stashed.pop(vpid)
                 self.carried.pop(vpid, None)
-                if d and d.get("vals") and not self.has_draft(opid):
+                if d and not self.has_draft(opid):
                     self.drafts[opid] = d
         if self.p is None or p.pid != self.p.pid:
             if self.p is not None:
@@ -782,9 +758,7 @@ class GradientEditor(QObject):
             self.applied = None
             d = self._draft()
             if d is not None:                  # what the draft now holds as the applied value leaves it
-                for k in list(d["vals"]):
-                    if d["vals"][k] == self._applied_value(k):
-                        d["vals"].pop(k)
+                d.drop_pending({k for k, v in d.vals.items() if v != self._applied_value(k)})
             if not first and self.has_draft():
                 self._schedule()
         self.work = self._fields()
@@ -825,7 +799,6 @@ class GradientEditor(QObject):
         if self._page_ok() and self.tv.center.indexOf(self.page) >= 0:
             self.hold()
             self._side(True)
-        QTimer.singleShot(0, self._check_left)
 
     def _page_ok(self) -> bool:
         if self.page is None:
@@ -949,10 +922,6 @@ class GradientEditor(QObject):
         self._load(p)
         self.view = self.gv
         self._watch_window()
-        d = self._draft()
-        if d is not None:
-            d["told"] = False
-        self._hide_banner(p.pid)
         nostack = self.no_input(p)
         if self._ui.get("cover") is not None:
             self._ui["cover"].hide()                   # built again below with the block's present state
@@ -979,7 +948,6 @@ class GradientEditor(QObject):
         if self.tv.view is self.gv:
             self.tv.view = None
         self.view = None
-        QTimer.singleShot(0, self._check_left)
 
     def _build_page(self):
         """Built once, whole: nothing is added to or taken from it afterwards (a control that does not apply is greyed
@@ -1202,30 +1170,18 @@ class GradientEditor(QObject):
         return w
 
     def _actions_part(self) -> QWidget:
-        """The draft's state in a few words, Reset and Try variant side by side, Apply under them."""
+        """The draft bar every block's panel has (blockdraft.DraftBar), in the column's width: the draft's state or its
+        changes, what Apply computes again, Reset and Try variant side by side, Apply under them. Always there (greyed
+        without a draft): the image never moves."""
         u = self._ui
-        w = QWidget()
-        lay = QVBoxLayout(w)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(6)
-        state = label("", "small", wrap=True)
-        state.setMinimumHeight(2 * state.fontMetrics().height() + 4)
-        u["state"] = state
-        lay.addWidget(state)
-        pair = QHBoxLayout()
-        for key, text, fn in (("reset", "Reset", self.reset), ("variant", "Try variant", self.try_variant),
-                              ("apply", "Apply", self.apply)):
-            b = QPushButton(_(text))
-            if key == "apply":
-                b.setObjectName("primary")
-            b.clicked.connect(lambda _c=False, f=fn: f())
-            if key == "apply":
-                lay.addLayout(pair)
-                lay.addWidget(b)
-            else:
-                pair.addWidget(b)
-            u[key] = b
-        return w
+        bar = DraftBar(narrow=True)
+        bar.what.setMinimumHeight(2 * bar.what.fontMetrics().height() + 4)
+        bar.apply.connect(lambda: self.apply())
+        bar.variant.connect(lambda: self.try_variant())
+        bar.reset.connect(lambda: self.reset())
+        u["bar"], u["state"] = bar, bar.what
+        u["apply"], u["variant"], u["reset"] = bar.b_apply, bar.b_variant, bar.b_reset
+        return bar
 
     def kinds(self) -> tuple:
         """The kinds of marks the draft's method reads (MARK_KINDS)."""
@@ -1491,9 +1447,9 @@ class GradientEditor(QObject):
     def draft_row(self, r: dict) -> dict:
         """A settings row as the draft has it."""
         d = self._draft()
-        if d is None or r.get("name") not in d["vals"]:
+        if d is None or r.get("name") not in d.vals:
             return r
-        val = d["vals"][r["name"]]
+        val = d.vals[r["name"]]
         return {**r, "value": val, "changed": val != r.get("suggested")}
 
     def draft_setting(self, r: dict, value):
@@ -1506,7 +1462,7 @@ class GradientEditor(QObject):
 
     def _status(self) -> str:
         if self.has_draft():
-            n = len(self._draft()["vals"])
+            n = len(self._draft())
             text = _("Draft · 1 change") if n == 1 else _("Draft · {n} changes").format(n=n)
         elif self.result is not None and not self.done:
             text = _("Preview · not computed yet")
@@ -1594,8 +1550,9 @@ class GradientEditor(QObject):
             if "method" in u:
                 u["method"].setCurrentIndex(METHODS.index(method) if method in METHODS else 0)
                 u["method"].setToolTip(_(METHOD_TIP.get(method, "")))
-            if "state" in u:
-                u["state"].setText(self._status())
+            if "bar" in u:                     # the shared draft bar: its changes and what Apply computes again
+                ch = self.draft_change() if draft else None
+                u["bar"].show_draft([self._status()] + ([ch["what"]] if ch else []), self.cost_text() if draft else "")
                 u["state"].setStyleSheet(f"color: {WARN};" if draft else "color: #8b95a5;")
             if "title" in u:
                 u["title"].setText(_("Gradient") + "  ·  " + self.p.name)
@@ -1621,8 +1578,8 @@ class GradientEditor(QObject):
                     b.blockSignals(False)
             d = self._draft()
             if "undo" in u:
-                u["undo"].setEnabled(bool(d and d["undo"]))
-                u["redo"].setEnabled(bool(d and d["redo"]))
+                u["undo"].setEnabled(bool(d is not None and d.undo))
+                u["redo"].setEnabled(bool(d is not None and d.redo))
             if "size_l" in u:
                 u["size_l"].setText(f"{int(self.size)} px")
             if self.no_input():                # no stack: only the method is live; the rest says why
@@ -2131,7 +2088,7 @@ class GradientEditor(QObject):
                 vals[name] = v
         d = self._draft()
         if d is not None:
-            vals.update(copy.deepcopy(d["vals"]))
+            vals.update(copy.deepcopy(d.vals))
         vals.update(work if work is not None else self.work)
         if not self.value("sample_points"):    # the block's own placement (or none): the stage chooses as it will
             vals["sample_points"] = []

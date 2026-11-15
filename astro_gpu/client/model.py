@@ -669,6 +669,7 @@ class _ProjectBase(QObject):
     postChanged = Signal(object)           # the Post composition changed (the object that changed it, or None)
     dirtyChanged = Signal(bool)            # there are edits not saved yet (True), or they were saved (False)
     editMade = Signal()                    # any edit of the definition: the recovery copy is written some time after
+    draftChanged = Signal()                # a block's draft (blockdraft.Draft) had a step undone or redone
 
     def __init__(self, project, worker: ApiWorker | None = None, *, readonly: bool = False,
                  history: list | None = None, gpu: bool = True, device: str | None = None):
@@ -686,7 +687,7 @@ class _ProjectBase(QObject):
         self.sel_step = "sources"
         self.sel_layer: int | None = None                  # the Post layer of the selected Stars and background block
         self.scope: list[int] | None = None
-        self.pending_change: dict | None = None
+        self.pending_change = None                 # the draft of the block shown (blockdraft.Draft), None
         self.gpu = gpu
         self.device = device if device else (None if gpu else "cpu")
         self.history = history if history is not None else []

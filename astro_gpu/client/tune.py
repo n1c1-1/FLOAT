@@ -751,8 +751,20 @@ class TuneView(QWidget):
         self.strip.setVisible(strip_shown)
         self.strip.set_compact(compact)
 
+    def leave_ok(self, index=None, step=None) -> bool:
+        """Another block (or workflow) chosen while the block shown holds a draft: asked first (blockdraft.settle);
+        False when the user stays. The same block again asks nothing."""
+        s = self.s
+        same = (step is None or step == s.sel_step) and (index is None or index == s.current)
+        if same:
+            return True
+        from .blockdraft import settle
+        return settle(getattr(self, "grad_editor", None), self) and settle(self.panel, self)
+
     def select(self, index=None, step=None):
         s = self.s
+        if not self.leave_ok(index, step):
+            return
         s.pending_change = None
         s.select(index, step)
         g = s.block_map
@@ -2491,17 +2503,8 @@ class TuneView(QWidget):
 
     # ------------------------------------------------------------ Selection: the frames chart and the frames
     def _thresholds(self) -> tuple[float, float]:
-        """The thresholds the chart shows: the settings', or the ones just dragged while Replace / Try as variant is asked."""
-        s = self.s
-        t, f = s.thresholds_now()
-        ch = s.pending_change
-        if ch and ch.get("kind") == "params" and ch.get("step") == "selection":
-            for _stage, name, v in ch["items"]:
-                if name == "min_transparency":
-                    t = 100 * float(v)
-                elif name == "max_fwhm_ratio":
-                    f = float(v) * (s.fwhm_median() or 1.0)
-        return t, f
+        """The thresholds the chart shows: as the Selection block's draft has them, else the settings'."""
+        return self.panel.thresholds_shown()
 
     def crop_center(self, p):
         """The Crop block (issue #79): the reference frame, the zone drawn on it, how much sky it leaves."""

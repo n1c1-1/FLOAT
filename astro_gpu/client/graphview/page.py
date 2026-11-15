@@ -442,7 +442,6 @@ class GraphPage(SidesHost, QWidget):
             return
         self._mirroring = True
         try:
-            s.pending_change = None
             if ident == PROJECT:
                 s.scope = None
                 s.sel_step = ""

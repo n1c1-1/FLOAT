@@ -594,11 +594,11 @@ class Walk:
         s.scope = [p.pid]
         self.set_setting(w.graph.panel, "stack", "kappa", 4.0)
         if not s.pending_change:
-            self.problem("no Replace / Try as variant choice on a computed Stacking")
+            self.problem("no draft (Apply / Try variant) on a computed Stacking")
             return
         self.shot("variant_choice")
         p = s.paths[0]
-        w.graph.panel._variant(p)
+        w.graph.panel.draft_variant(p)
         self.settle()
         self.shot("variant_made")
         v = next((q for q in s.paths if q.variant_of == p.pid), None)
@@ -804,13 +804,13 @@ class Walk:
             self.set_setting(w.graph.panel, "stack", "kappa", 4.5)
             if s.pending_change:
                 self.shot("variant_choice")
-                w.graph.panel._cancel()
+                w.graph.panel.draft_reset()
             # Replace on a cheap block, and its run: the plan, the progress and the recap in French
             self.select("fond", p.pid)
             self.set_setting(w.graph.panel, "gradient", "degree", 3)
             if s.pending_change:
                 self.shot("replace_choice")
-                w.graph.panel._replace()
+                w.graph.panel.draft_apply()
                 self.settle()
             self.select("post", p.pid)
             w.run_to_here()
