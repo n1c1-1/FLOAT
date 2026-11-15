@@ -309,5 +309,6 @@
   "{n} {type} beside raw frames: not usual, each read as one more frame": "{n} {type} à côté des fichiers RAW : inhabituel, chacun lu comme une image de plus",
   "Remove {type}": "Retirer {type}",
   "Adds them as frames too: the engine then reads each as one more frame": "Les ajoute aussi comme images : le moteur lit alors chacune comme une image de plus",
-  "Takes them out of the session (the files are not touched); Ctrl+Z brings them back": "Les retire de la session (les fichiers ne sont pas touchés) ; Ctrl+Z les remet"
+  "Takes them out of the session (the files are not touched); Ctrl+Z brings them back": "Les retire de la session (les fichiers ne sont pas touchés) ; Ctrl+Z les remet",
+  "{w} × {h} px, monochrome": "{w} × {h} px, monochrome"
 }

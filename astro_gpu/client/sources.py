@@ -179,6 +179,16 @@ def frame_filter() -> str:
     return _("Frames ({patterns})").format(patterns=pats) + ";;" + _("All files (*)")
 
 
+def sensor_text(cam: dict) -> str:
+    """The sensor line of the Files view: its size and its colour pattern; a monochrome sensor has no pattern (it
+    read "4656 × 3520 px, pattern" with an empty one)."""
+    from ..core import cfa as cfa_mod
+    c = cam.get("cfa") or ""
+    if not c or cfa_mod.is_mono(c):
+        return _("{w} × {h} px, monochrome").format(w=cam.get("width"), h=cam.get("height"))
+    return _("{w} × {h} px, {cfa} pattern").format(w=cam.get("width"), h=cam.get("height"), cfa=c)
+
+
 def master_text(kind: str, n: int) -> str:
     """The matching line of a master dark or bias given as one file (io/frames.master_count: ``n`` its frames, 0 when
     its header does not say): the Calibration uses it as it is."""
@@ -1354,8 +1364,7 @@ class SourcesView(QWidget):
             n = row0.lights
             hours = n * (row0.exposure or 0) / 3600
             rows = [(_("Camera"), cam.get("camera") or "–"),
-                    (_("Sensor"), _("{w} × {h} px, {cfa} pattern").format(w=cam.get("width"), h=cam.get("height"),
-                                                                          cfa=cam.get("cfa"))),
+                    (_("Sensor"), sensor_text(cam)),
                     (_("Exposure"), fexp(row0.exposure)), (iso_word(row0.gain), f"{int(row0.iso)}" if row0.iso else "–"),
                     (_("First frame"), (row0.first or "–").replace("T", " ")[:16]),
                     (_("Last frame"), (row0.last or "–").replace("T", " ")[:16]),

@@ -35,3 +35,10 @@ def test_sources_rows_stay_in_place_when_files_are_added(qapp, tmp_path, monkeyp
     finally:
         view.close()
         close(w, m, page)
+
+
+def test_sources_a_mono_sensor_has_no_pattern_wording():
+    from astro_gpu.client.sources import sensor_text
+    assert sensor_text({"width": 4656, "height": 3520, "cfa": "GGGG"}) == "4656 × 3520 px, monochrome"
+    assert sensor_text({"width": 4656, "height": 3520, "cfa": ""}) == "4656 × 3520 px, monochrome"
+    assert sensor_text({"width": 6000, "height": 4000, "cfa": "RGGB"}) == "6000 × 4000 px, RGGB pattern"
