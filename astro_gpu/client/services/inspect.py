@@ -1964,6 +1964,7 @@ class InspectService(QObject):
         self._rw_own = False                         # made here (and stopped here), not lent by the window
         self._rq: dict[int, tuple] = {}              # slot -> the final image waiting to be rendered
         self._rin: tuple | None = None               # (slot, token, key, wid, spec, which) being rendered
+        self._rin_req: tuple | None = None           # its request as it waited in ``_rq`` (asked again elsewhere)
 
     # ------------------------------------------------------------ the workers' answers
     def _done(self, channel: str, _n: int, result):
@@ -2074,8 +2075,13 @@ class InspectService(QObject):
         render and stops it with itself."""
         if worker is None or worker is self._rw:
             return
+        if self._rin is not None:                    # under way on the worker let go: its answer never comes here,
+            slot = self._rin[0]                      # asked again of this one (unless a newer one waits in its slot)
+            self._rq.setdefault(slot, self._rin_req)
+            self._rin = None
         self._drop_renderer()
         self._set_renderer(worker, own=False)
+        self._pump()
 
     def _set_renderer(self, worker, own: bool):
         self._rw, self._rw_own = worker, own
@@ -2129,7 +2135,8 @@ class InspectService(QObject):
             return
         from .render import HALF_LEVEL, Request
         slot = min(self._rq)
-        token, wid, spec, which, key, layer = self._rq.pop(slot)
+        self._rin_req = self._rq.pop(slot)
+        token, wid, spec, which, key, layer = self._rin_req
         self._rin = (slot, token, key, wid, spec, which)
         self._renderer().request(Request(kind="inspect", layers=[layer], level=HALF_LEVEL, tag="inspect"))
 
