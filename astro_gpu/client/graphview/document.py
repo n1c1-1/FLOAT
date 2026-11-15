@@ -302,6 +302,29 @@ class Doc:
             log.debug("graph page: no reason for %s", b, exc_info=True)
             return ""
 
+    def run_word(self, b) -> str:
+        """The block's state word as the run says it ("Running · 40 %", "Stopped"); "" without a model."""
+        g = getattr(self.model, "block_map", None) if self.model is not None else None
+        if g is None:
+            return ""
+        try:
+            return g.word(g.node(b))
+        except Exception:  # noqa: BLE001 - the plain state word then
+            log.debug("graph page: no run word for %s", b, exc_info=True)
+            return ""
+
+    def run_detail(self, b) -> str:
+        """What the next run does with a stopped block, in the run window's words; "" otherwise or without a model."""
+        g = getattr(self.model, "block_map", None) if self.model is not None else None
+        if g is None:
+            return ""
+        try:
+            n = g.node(b)
+            return g.stopped(n) if g.state(n) == "interrupted" else ""
+        except Exception:  # noqa: BLE001
+            log.debug("graph page: no stop words for %s", b, exc_info=True)
+            return ""
+
     def review(self, b):
         f = getattr(self.document, "review", None)
         return f(b) if f is not None else None

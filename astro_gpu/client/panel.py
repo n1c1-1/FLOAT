@@ -717,7 +717,7 @@ class Panel(QWidget):
                     rows.append((html.escape(tr_name(name, True)), _("image")))
                     continue
                 src = _("from {block}").format(block=block_title(q, q.end)) if q.end else ""
-                st = _(STATE_WORD[self.output_state(q)])           # the graph's state of its last block (BlockMap)
+                st = self.output_word(q)                           # the graph's state of its last block (BlockMap)
                 rows.append((html.escape(tr_name(name)), " · ".join(x for x in (st, src) if x)))
             if rows:
                 self.bv.addWidget(self.group_title(_("Layers")))
@@ -2067,7 +2067,15 @@ class Panel(QWidget):
         """The state line of the block: the graph's word (``graph_state``); an Outdated block says why on hover (the
         setting changed, or the block upstream where the change was made)."""
         st = st or self.graph_state(node)
-        chip = QLabel(_(STATE_WORD[st]))
+        word = _(STATE_WORD[st])
+        if st in ("running", "interrupted"):             # how far it runs, what the next run does after a stop
+            try:
+                g = self.s.block_map
+                same = self._same_node(node)
+                word, then = g.word(same, st) or word, g.detail(same, st)
+            except (KeyError, ValueError, AttributeError, IndexError, TypeError):
+                then = ""
+        chip = QLabel(word)
         chip.setStyleSheet(f"color: {STATE_COLOR[st]}; font-size: 9pt;")
         if st == "stale":
             try:
@@ -2075,11 +2083,22 @@ class Panel(QWidget):
             except (KeyError, ValueError, AttributeError, IndexError):
                 why = ""
             chip.setToolTip(_("Outdated: {why}").format(why=why) if why else "")
+        elif st == "interrupted":
+            chip.setToolTip(then)
         return chip
 
     def _same_node(self, node):
         g = self.s.block_map
         return (g.node_of(node.paths[0], node.ref) if node.paths else None) or node
+
+    def output_word(self, q) -> str:
+        """The state of the workflow's image for Post in a word ("Running · 40 %" while its last block runs)."""
+        st = self.output_state(q)
+        if st != "running":
+            return _(STATE_WORD[st])
+        g = self.s.block_map
+        node = g._last_nodes().get(q.pid)
+        return g.word(node, st) if node is not None else _(STATE_WORD[st])
 
     def output_state(self, q) -> str:
         """The state of the workflow's image for Post: the graph's state of the block that holds its Output."""

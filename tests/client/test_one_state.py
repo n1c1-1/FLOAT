@@ -154,6 +154,57 @@ def test_never_computed_interrupted_and_failed_are_said_alike(win, state):
     assert STATE_WORD[state] in tip.splitlines()
 
 
+def test_a_block_that_runs_or_was_stopped_says_so_everywhere(win):
+    """While a block is computed, and after a stop, every view says it as the run does: "Running · N %" with its
+    progress, "Stopped" with what the next run does (the run window's words), never "Not computed yet" (the testers:
+    the engine had no trace of it yet, or no more). A run of another key (an edit since) says nothing of it."""
+    import time as _t
+
+    from astro_gpu.client.graphnode import run_stages
+    from astro_gpu.client.services.run import INTERRUPTED, RUNNING, JobState, RunTrack
+    s = win.s
+    full = s.paths[0]
+    g = s.block_map
+    b = _block(win, "gradient")
+    node = g.node(b)
+    stages = run_stages(s, full, node.ref)
+    keys = {x: (s.state_info(full, x).key if s.state_info(full, x) is not None else "k" + x) for x in stages}
+    for x in stages:                                     # the engine has no trace of it (no folder yet, or no more)
+        s._states[(full.pid, x)] = api.StageState("pending", "", keys[x])
+    jobs = [JobState(keys[x], x, "gradient", [full.pid], est_s=100.0) for x in stages]
+    t = RunTrack(jobs)
+    t.status, t.t0 = "running", _t.time() - 40
+    jobs[0].state, jobs[0].started, jobs[0].frac = RUNNING, _t.time() - 40, 0.4
+    s.run_track = t
+    try:
+        got, tip, _c = said(win, "gradient")
+        assert {got[k] for k in ("model", "item", "tooltip")} == {"running"}, got
+        pct = int(round(100 * t.progress(jobs)))
+        line = f"Running · {pct} %"
+        assert win.graph.canvas.blocks[b].d["summary"] == line and line in tip.splitlines(), tip
+        assert win.graph.panel.state_chip(node).text() == line
+        assert _strip_word(win, "fond") == "running"
+        # stopped: the run window's words for what the next run does
+        jobs[0].state, t.status = INTERRUPTED, "interrupted"
+        got, tip, chip_tip = said(win, "gradient")
+        assert {got[k] for k in ("model", "item", "tooltip", "panel")} == {"interrupted"}, got
+        then = "Stopped during Gradient: it starts again from its beginning"
+        assert then in tip.splitlines() and chip_tip == then, (tip, chip_tip)
+        assert win.graph.canvas.blocks[b].d["summary"] == "Stopped"
+        appmod.apply_language("fr")
+        try:
+            chip = win.graph.panel.state_chip(node)
+            assert chip.text() == "Arrêté" and chip.toolTip().startswith("Arrêtée pendant "), chip.toolTip()
+        finally:
+            appmod.apply_language("en")
+        # an edit since: the run computed another key, the engine's state is the block's
+        for x in stages:
+            s._states[(full.pid, x)] = api.StageState("pending", "", keys[x] + "x")
+        assert g.state(node) == "pending"
+    finally:
+        s.run_track = None
+
+
 def test_the_gradient_preview_reads_the_earlier_stack_of_an_outdated_one(win):
     """The Gradient view of an Outdated stack shows its earlier result: its preview reads that one too, never "The
     stack is not computed"."""

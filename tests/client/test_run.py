@@ -1366,6 +1366,10 @@ def test_the_graph_shows_the_running_blocks_and_their_progress(env):
         assert f == pytest.approx(w.track.progress(j for g in w.track.groups if jb().key in g
                                                    for j in w.track.jobs if j.key in g), abs=0.01)
         assert all(ov.fraction_of(it.node) is None for it in items if it.d["state"] != "running")
+        # its line under its name and its tooltip say how far it is, as its bar does (never "Not computed yet")
+        page.graph.run_progressed()
+        assert running[0].d["summary"].startswith("Running · ") and running[0].d["summary"].endswith(" %")
+        assert running[0].d["summary"] in running[0].toolTip().splitlines()
         shot = ov.parent().grab()                             # the overlay paints without error
         assert not shot.isNull()
         assert not status.isHidden() and status.bar.value() > 0 and status.text.text().startswith("Running")
@@ -1377,6 +1381,9 @@ def test_the_graph_shows_the_running_blocks_and_their_progress(env):
         assert pump(lambda: [it.d["state"] for it in block_items(page) if it.node.key == "debruitage"] == ["interrupted"],
                     10), [(it.node.key, it.d["state"]) for it in block_items(page)]
         assert ov.fraction_of(running[0].node) is None and status.isHidden()
+        stopped = next(it for it in block_items(page) if it.node.key == "debruitage")
+        assert stopped.d["summary"] == "Stopped"         # and what the next run does, in the run window's words
+        assert "Stopped during Denoise: it starts again from its beginning" in stopped.toolTip().splitlines()
     finally:
         root.close()
         w.close()

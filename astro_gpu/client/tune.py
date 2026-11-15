@@ -249,7 +249,7 @@ class Strip(QFrame):
                             f"{'font-weight: 600; color: #ffffff;' if sel else 'color: #8b93a1;' if off else ''} }}")
             b.setToolTip(_("{block} switched off: the image passes through unchanged").format(block=title) if off else
                          "" if k == "sources" or k.startswith("session") else
-                         _(STATE_WORD[st]) + (f" · {g.why(node)}" if st == "stale" and g.why(node) else ""))
+                         " · ".join(x for x in (g.word(node, st), g.detail(node, st)) if x))
             b.clicked.connect(lambda _x=False, kk=k: self.picked.emit(kk))
             self.h.addWidget(b)
             if sel:
@@ -2433,6 +2433,14 @@ class TuneView(QWidget):
                                   "settings."), "dim"), 0, Qt.AlignHCenter)
         elif state == "pending":
             box.addWidget(label(_("Not computed yet"), "h2"), 0, Qt.AlignHCenter)
+        elif state in ("running", "interrupted"):        # the graph's words: how far it is, what the next run does
+            g = s.block_map
+            node = g.node_of(p, self._full_key(k))
+            box.addWidget(label(g.word(node, state) if node is not None else _(STATE_WORD[state]), "h2"), 0,
+                          Qt.AlignHCenter)
+            then = g.detail(node, state) if node is not None else ""
+            if then:
+                box.addWidget(label(then, "dim"), 0, Qt.AlignHCenter)
         else:
             box.addWidget(label(_(STATE_WORD[state]), "h2"), 0, Qt.AlignHCenter)
             st = next((s.state_info(p, x) for x in stages_of(s, p, k) if s.state(p, x) == state), None)

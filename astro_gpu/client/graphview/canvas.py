@@ -576,6 +576,7 @@ class GraphCanvas(QGraphicsView):
         title = doc.title(b)
         summary = (old.get("summary") if prev and kind in MODEL_SUMMARY else doc.summary(b, model=False)) \
             if pending else doc.summary(b)
+        line = summary                                   # the line under its name (the tooltip keeps the summary)
         bd = {k: old.get(k) for k in ("fallback", "broken", "missing", "warned")} if pending else doc.badges(b)
         fallback = list(bd.get("fallback") or []) if state == "done" and not grey else []
         broken, missing = bd.get("broken") or "", bd.get("missing") or ""
@@ -583,6 +584,13 @@ class GraphCanvas(QGraphicsView):
         if state == "stale" and not pending:             # Outdated: why, in a few words (the setting, the block)
             why = doc.why(b)
             word = f"{word} · {why}" if why else word
+        if state in ("running", "interrupted") and not pending and kind not in ("session", "post"):
+            # what the run says of it, in its line too (the testers: "Not computed yet" while it ran, and after a
+            # stop): how far it is, or what the next run does with it
+            word = doc.run_word(b) or word
+            line = word
+            then = doc.run_detail(b)
+            word = f"{word}\n{then}" if then else word
         what = kind_what(kind)
         if bd.get("nights"):                             # a Session of several nights says so (graph.py block_what)
             what = _("{nights}: their light frames and the dark, flat and bias frames chosen for them, and the "
@@ -624,7 +632,7 @@ class GraphCanvas(QGraphicsView):
             else:
                 tip += "\n" + (_("Input {name}: wired") if wired else _("Input {name}: empty, pull a wire here")
                                ).format(name=lab)
-        return dict(id=b, kind=kind, title=title, summary=summary, state=state, selected=bridge.selected == b,
+        return dict(id=b, kind=kind, title=title, summary=line, state=state, selected=bridge.selected == b,
                     off=bool(blk.off), grey=grey, badge=badge, review=review, own=doc.differs(b),
                     fallback=fallback, broken=broken, missing=missing, warned=bool(bd.get("warned")),
                     w=box.w, h=box.h, x=box.x, y=box.y, inputs=inputs, outputs=outputs,
@@ -817,6 +825,28 @@ class GraphCanvas(QGraphicsView):
             if below:
                 need = max(need, t.bottom() + 3 - min(below))
         return float(int(need + 0.999)) if need > 0 else 0.0
+
+    def run_progressed(self):
+        """A run moved on (its window's clock, a progress): the blocks that run, or ran until now, say it in their line
+        and tooltip ("Running · 40 %"); the others are left as drawn (``update_states`` follows the engine's states)."""
+        if self._behind_table() or self.doc.states_pending():
+            return
+        drawing = None
+        for b, it in self.blocks.items():
+            if it.d.get("kind") in ("card", "session", "post"):
+                continue
+            if it.d.get("state") != "running" and self.doc.state(b) != "running":
+                continue
+            drawing = drawing or self.bridge.drawing()
+            box = drawing.boxes.get(b)
+            if box is None:
+                continue
+            dim = it.d.get("dim")
+            it.d = self.block_data(b, box)
+            if dim is not None:
+                it.d["dim"] = dim
+            it.setToolTip(it.d.get("tip", ""))
+            it.update()
 
     def update_states(self):
         """The run states changed: the items are given them again (in place: the scene is not built again). While the

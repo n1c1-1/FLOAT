@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .graphnode import ENGINE_BLOCK, PAUSE_COL, Node, block_title, node_title
+from .graphnode import ENGINE_BLOCK, PAUSE_COL, RESUMES, Node, block_title, node_title, run_jobs, view_block
 from .i18n import _, all_workflows, hm, plural
 from .icons import IconText, draw, set_icon
 from .services.run import (
@@ -73,10 +73,6 @@ RECAP_MAX_H = 170
 
 
 # ---------------------------------------------------------------------------------------------- the rows
-#: the stages that resume inside the block after a stop (core/stage checkpoints used by the stage's code)
-RESUMES = ("calibrate", "register")
-
-
 @dataclass
 class Row:
     """A line of the dialog: one block of the graph, the jobs (stage keys) the run computes in it."""
@@ -95,16 +91,6 @@ class Row:
         if self.everyone and len(self.who) > 1:
             return all_workflows(len(self.who))
         return ", ".join(self.who)
-
-
-def view_block(block: str) -> str | None:
-    """The views' key of an engine block of a job: a graph's later block (issue #47) "gradient~2" → "fond~2", a
-    session's "calibration@2" → "calibration@2" (exploration 6.1); None for a block the views do not have."""
-    b, sep, n = block.partition("~")
-    b, at, sid = b.partition("@")
-    if b not in ENGINE_BLOCK:
-        return None
-    return ENGINE_BLOCK[b] + (f"~{n}" if sep else "") + (f"@{sid}" if at else "")
 
 
 def _node(g, v, bk):
@@ -980,6 +966,7 @@ class RunOverlay(QWidget):
         self.setAttribute(Qt.WA_NoSystemBackground)
         view.installEventFilter(self)
         controller.updated.connect(self.update)
+        controller.updated.connect(self._moved)
         view.horizontalScrollBar().valueChanged.connect(lambda _v: self.update())
         view.verticalScrollBar().valueChanged.connect(lambda _v: self.update())
         view.scene().changed.connect(lambda _r: self.update())
@@ -995,16 +982,18 @@ class RunOverlay(QWidget):
         self.setGeometry(self.view.viewport().geometry())
         self.raise_()
 
+    def _moved(self):
+        """The run moved on: the view's running blocks say how far they are in their line (a graph that can)."""
+        f = getattr(self.view, "run_progressed", None)
+        if f is not None:
+            f()
+
     def fraction_of(self, node: Node) -> float | None:
         """How far a block that runs is, as its row in the run window says it, or None when nothing of it runs."""
         t = self.c.track
         if t is None or not self.c.running:
             return None
-        pids = {p.pid for p in node.paths}
-        keys = {j.key for j in t.jobs if view_block(j.block) == node.ref and pids & set(j.wf)}     # "fond~2" too (4.2)
-        # its row's jobs: those of the blocks the graph does not show are folded into it (#136: its bar left them out)
-        keys |= {k for g in t.groups or [] if keys & set(g) for k in g}
-        jobs = [j for j in t.jobs if j.key in keys]
+        jobs = run_jobs(t, node)            # its row's jobs (#136: those of the blocks the graph does not show too)
         if not jobs or not any(j.state == RUNNING for j in jobs):
             return None
         return t.progress(jobs)

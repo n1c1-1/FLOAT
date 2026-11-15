@@ -78,6 +78,28 @@ ENGINE_BLOCK = {"fusion": "fusion", "align_on": "align_on", "image": "image", "c
                 "stacking": "empilement", "astrometry": "astrometrie", "color": "couleur", "denoise": "debruitage",
                 "deconv": "deconv", "synth": "synth", "stars": "etoiles", "gradient": "fond", "output": "post"}
 KEY_ENGINE_BLOCK = {v: k for k, v in ENGINE_BLOCK.items()}
+
+
+def view_block(block: str) -> str | None:
+    """The views' key of an engine block of a job: a graph's later block (issue #47) "gradient~2" → "fond~2", a
+    session's "calibration@2" → "calibration@2" (exploration 6.1); None for a block the views do not have."""
+    b, sep, n = block.partition("~")
+    b, at, sid = b.partition("@")
+    if b not in ENGINE_BLOCK:
+        return None
+    return ENGINE_BLOCK[b] + (f"~{n}" if sep else "") + (f"@{sid}" if at else "")
+
+
+def run_jobs(track, node) -> list:
+    """The jobs of a run (``services.run.RunTrack``) that compute a block of the graph, as its row in the run window
+    holds them: its own, and those of the blocks the graph does not show folded into it (#136: the Output's in the
+    last block); [] without a run or a node."""
+    if track is None or node is None:
+        return []
+    pids = {getattr(p, "pid", None) for p in node.paths}
+    keys = {j.key for j in track.jobs if view_block(j.block) == node.ref and pids & set(j.wf)}     # "fond~2" too (4.2)
+    keys |= {k for g in getattr(track, "groups", None) or [] if keys & set(g) for k in g}
+    return [j for j in track.jobs if j.key in keys]
 # the wires that are not the chain: what a block takes from a block further back, shown when it is selected
 SIDE_INPUTS = {
     "debruitage": [("empilement", "half-stacks")],
@@ -91,7 +113,10 @@ FRAME_KEYS = ["calibration", "alignement", "selection", "crop", "empilement"]
 
 # every state a block can be in: up to date, pending, outdated, and what a run adds
 STATE_WORD = {"done": "Up to date", "pending": "Not computed yet", "stale": "Outdated", "running": "Running",
-              "failed": "Failed", "interrupted": "Interrupted", "skipped": "Skipped"}
+              "failed": "Failed", "interrupted": "Stopped", "skipped": "Skipped"}
+#: the stages that resume inside the block after a stop (core/stage checkpoints used by the stage's code); every other
+#: block, the stack included, starts again from its beginning
+RESUMES = ("calibrate", "register")
 #: a block done with its declared fallback (Graph.fallback): drawn in orange, its reasons after this
 FALLBACK_WORD = "Done with fallback"
 # worst first: a block is as bad as its worst stage in any of its workflows
@@ -778,7 +803,88 @@ class BlockMap:
 
     def state(self, node) -> str:
         """done | pending | stale | running | failed | interrupted | skipped: the worst over the workflows going through
-        the block (today's ``blocks.Graph.state``); "done" for a block of no workflow without run answers."""
+        the block (today's ``blocks.Graph.state``); "done" for a block of no workflow without run answers. The run in
+        progress (the model's ``run_track``) has the last word while it computes the block, and after a stop for a
+        block the engine left no trace of (stopped before its folder was made): it says "Not computed yet" no more."""
+        st = self._engine_state(node)
+        if st in ("running", "interrupted", "failed", "done") or node is None or node.key in ("sources", "final",
+                                                                                            "session"):
+            return st
+        t = getattr(self.model, "run_track", None)
+        jobs = run_jobs(t, node) if t is not None else []
+        if not jobs:
+            return st
+        if t.running and any(j.state == "running" for j in jobs):
+            return "running"
+        if t.finished and st in ("pending", "stale") and any(j.state == "interrupted" and self._current(j, node)
+                                                             for j in jobs):
+            return "interrupted"
+        return st
+
+    def _current(self, job, node) -> bool:
+        """Whether a job of a run computes what the block is keyed by now (an edit since the run makes it another)."""
+        info = getattr(self.model, "state_info", None)
+        for p in node.paths:
+            if info is not None and p.pid in job.wf:
+                got = info(p, job.stage)
+                if got is not None and getattr(got, "key", None) == job.key:
+                    return True
+        return False
+
+    def progress(self, node) -> float | None:
+        """How far a block that runs is, as its row in the run window says it (0 to 1), or None when nothing of it runs
+        or the run does not say."""
+        t = getattr(self.model, "run_track", None)
+        if t is None or not t.running:
+            return None
+        jobs = run_jobs(t, node)
+        if not any(j.state == "running" for j in jobs):
+            return None
+        try:
+            return float(t.progress(jobs))
+        except (AttributeError, TypeError, ValueError, ZeroDivisionError):
+            return None
+
+    def word(self, node, st: str | None = None) -> str:
+        """The block's state in a word, translated: "Running · 40 %" while it runs and the run says how far."""
+        st = st or self.state(node)
+        if st == "running":
+            f = self.progress(node)
+            if f is not None:
+                return _("Running · {pct} %").format(pct=int(round(100 * f)))
+        return _(STATE_WORD.get(st, ""))
+
+    def detail(self, node, st: str | None = None) -> str:
+        """What follows the word, translated, "" for none: why an Outdated block is, what the next run does with a
+        stopped one (the run window's words)."""
+        st = st or self.state(node)
+        if st == "stale":
+            return self.why(node)
+        if st == "interrupted":
+            return self.stopped(node)
+        return ""
+
+    def stopped(self, node) -> str:
+        """What the next run does with a block stopped during a run, in the run window's words: it starts again from
+        its beginning, or (Calibration, Registration) goes on from the frames already done."""
+        m = self.model
+        stages: list[str] = []
+        t = getattr(m, "run_track", None)
+        stages += [j.stage for j in run_jobs(t, node) if j.state == "interrupted"] if t is not None else []
+        if not stages and hasattr(m, "state"):
+            for p in node.paths:
+                stages += [x for x in (self.session_stages(p, node.sid) if node.key == "calibration" and
+                                       node.sid is not None else run_stages(m, p, node.ref))
+                           if m.state(p, x) == "interrupted"]
+        try:
+            name = node_title(m, node)
+        except Exception:  # noqa: BLE001 - a name the model cannot give now: the block's plain one
+            name = block_title(None, node.key)
+        if any(x.partition("@")[0].partition("~")[0] in RESUMES for x in stages):
+            return _("Stopped during {blocks}: it goes on from the frames already done").format(blocks=name)
+        return _("Stopped during {blocks}: it starts again from its beginning").format(blocks=name)
+
+    def _engine_state(self, node) -> str:
         m = self.model
         if not hasattr(m, "all_stages") or not hasattr(m, "state"):
             return "done" if not node.paths else "pending"

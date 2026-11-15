@@ -1560,6 +1560,9 @@ class RunController(QObject):
         elif not running:
             self._clock.stop()
         self.model.run_active = running                  # the views grey their Run to here meanwhile (issue #33)
+        # the blocks' states read the run too (graphnode.BlockMap.state): Running with its progress while it computes
+        # them, Stopped after a stop
+        self.model.run_track = self.track
         self.runningChanged.emit(running)
         self.statusChanged.emit(self.status_text())
         self.updated.emit()
