@@ -85,7 +85,7 @@ def test_from_home_the_project_is_made_the_graph_follows_and_post_is_shown(env):
     assert [s.p.workflow(q.pid).source["stretched"] for q in s.paths] == [True, False]
     g = s.block_map
     assert {q.pid for q in s.paths} <= set(g.to_post) and [n.key for n in g.nodes].count("image") == 2
-    assert env["launched"]
+    assert not env["launched"]                     # nothing is computed without the user's Run (the testers' pass 2)
 
 
 def test_cancelling_the_files_makes_no_project(env):
@@ -220,3 +220,21 @@ def test_raw_frames_and_unreadable_files_are_said_at_once_and_nothing_is_made(en
     w.home.openImages.emit()
     settle(w, 2)
     assert w.project is None and "notes.png" in w.banner.text.text()
+
+
+def test_a_fits_raw_frame_is_refused_by_its_header(env, tmp_path):
+    """The testers' pass 2: a smart telescope's lights (FITS with a Bayer pattern) opened as five grey images, and a run
+    started by itself. A FITS file whose header gives a Bayer pattern is a raw frame: refused at once, nothing made."""
+    import numpy as np
+    from astropy.io import fits
+    w = main(env)
+    raw = tmp_path / "frame_0001.fit"
+    hd = fits.Header()
+    hd["BAYERPAT"] = "GRBG"
+    fits.PrimaryHDU(np.zeros((8, 8), np.uint16), header=hd).writeto(raw)
+    env["mp"].setattr(gallery.QFileDialog, "getOpenFileNames", lambda *a, **k: ([str(raw)], ""))
+    w.show_home()
+    settle(w)
+    w.home.openImages.emit()
+    settle(w, 2)
+    assert w.project is None and "frame_0001.fit is a raw frame" in w.banner.text.text() and not env["launched"]

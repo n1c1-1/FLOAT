@@ -1381,10 +1381,11 @@ class Main(QMainWindow):
         return True
 
     def open_images(self, new: bool = False):
-        """Images as layers of Post, one Image workflow each (the graph follows), computed at once: only then does Post
-        have them. From Home (``new``) or with no project open, they are a new project of their own, the project open
-        left first (asked when anything is unsaved), never another project; from a project's File menu or Post, they
-        join it. A file this version cannot open is said at once, before anything is made."""
+        """Images as layers of Post, one Image workflow each (the graph follows), computed by the user's Run: nothing is
+        ever computed without it (the testers' pass 2: a run started by itself once the name was saved). From Home
+        (``new``) or with no project open, they are a new project of their own, the project open left first (asked
+        when anything is unsaved), never another project; from a project's File menu or Post, they join it. A file
+        this version cannot open, or a raw frame, is said at once, before anything is made."""
         from .gallery import ask_files
         files = ask_files(self, {"images": 1})
         if not files:
@@ -1399,15 +1400,6 @@ class Main(QMainWindow):
             self.new_project()
         if self.project is not None and self.graph.place_images(files) is not None:
             self.set_mode(2)
-            self._launch_when_ready()
-
-    def _launch_when_ready(self):
-        if self.s is None:
-            return
-        if self.s.ready:
-            self.launch()
-        else:
-            QTimer.singleShot(50, self._launch_when_ready)
 
     def _named_for_run(self) -> bool:
         """Before a run: a project never saved is named and saved (asked, as Save asks); a saved one with edits is saved
@@ -1976,17 +1968,30 @@ class Main(QMainWindow):
 def image_refusal(files) -> str:
     """Why Open images… cannot open these files, in a sentence, "" when it can: raw frames are a Session's (stacked
     from it), the other files as the Image block says (stages/image.py)."""
-    from ..core.project import RAW_EXT
+    from ..core.project import RAW_EXT, frame_kind
     from ..stages.image import image_problem
     for f in files:
         name = Path(f).name
-        if Path(f).suffix.lower() in RAW_EXT:
+        if Path(f).suffix.lower() in RAW_EXT or (frame_kind(Path(f)) == "fits" and _mosaic(f)):
             return _("{name} is a raw frame: raw frames are stacked from a Session. Make a new project and add them "
                      "to its Session.").format(name=name)
         why = image_problem(f)
         if why:
             return _(why).format(name=name)
     return ""
+
+
+def _mosaic(path) -> bool:
+    """Whether a FITS file is a camera's raw frame: one plane whose header gives its Bayer pattern (a smart telescope's
+    lights, a camera's own capture). Read from its header, never from its name; a file that cannot be read is said by
+    the Image block."""
+    from ..core import cfa as cfa_mod
+    from ..io.frames import read_info
+    try:
+        pat = read_info(path).cfa
+    except Exception:  # noqa: BLE001 - unreadable: image_problem says why
+        return False
+    return bool(pat) and not cfa_mod.is_colour(pat) and not cfa_mod.is_mono(pat)
 
 
 def _gb_text(n_bytes: int) -> str:
