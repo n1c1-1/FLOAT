@@ -106,6 +106,15 @@ def _(s: str) -> str:
     return t
 
 
+def in_context(context: str, s: str) -> str:
+    """``s`` where one English word needs another translation than its usual one (a card's Undo beside its Cancel:
+    both « Annuler » in French): the catalogue's « context|s », else ``_(s)``."""
+    if _lang == "en" or not s:
+        return s
+    t = _cat.get(f"{context}|{s}")
+    return t if t is not None else _(s)
+
+
 def maybe(s: str) -> str:
     """A text the program made that may have no translation (a file name, an image layer's name): translated when the
     catalogue has it, else as it is (not counted as missing)."""

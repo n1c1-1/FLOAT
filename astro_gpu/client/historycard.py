@@ -1,7 +1,8 @@
 """The window's question before an Undo or a Redo that would compute again results computed and up to date: the same
 card as a change of setting on a computed project (panel.choice_box), over the foot of the window: what the step is,
-what it computes again and the time, Undo (or Redo, Enter) and Cancel (Esc), and "Do not ask" (the preference
-``confirm_changes`` that turns every such question off)."""
+what it computes again and the time, Undo (or Redo, Enter) and Keep (Esc), and "Do not ask" (the preference
+``confirm_changes`` that turns every such question off). While a run goes, every Undo or Redo of the workflows asks
+here too, saying that the run goes on with what it started with (a change made meanwhile is said the same way)."""
 from __future__ import annotations
 
 import html
@@ -11,7 +12,7 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
 from . import prefs
-from .i18n import _
+from .i18n import _, in_context
 from .widgets import WARN, label
 
 
@@ -19,7 +20,7 @@ class HistoryCard(QFrame):
     """``how`` "undo" or "redo"; ``what``: the step's words; ``cost``: a ChangeCost; ``accept`` / ``cancel``: what the
     answers do (each closes the card first); ``said``: the window's status line (for "Do not ask")."""
 
-    def __init__(self, win, how: str, what: str, cost, accept, cancel=None, said=None):
+    def __init__(self, win, how: str, what: str, cost, accept, cancel=None, said=None, running: bool = False):
         super().__init__(win)
         self.setObjectName("historycard")
         self.setStyleSheet(f"QFrame#historycard {{ background: #2a2316; border: 1px solid {WARN}; border-radius: 6px; }}"
@@ -30,16 +31,25 @@ class HistoryCard(QFrame):
         v.setSpacing(6)
         head = _("Undo: {what}") if how == "undo" else _("Redo: {what}")
         v.addWidget(label("<b>" + html.escape(head.format(what=what or _("a change"))) + "</b>", wrap=True))
-        c = label(html.escape(cost.text()), "small", wrap=True)
-        c.setObjectName("history_cost")
-        v.addWidget(c)
+        if cost is not None and cost.lost:
+            c = label(html.escape(cost.text()), "small", wrap=True)
+            c.setObjectName("history_cost")
+            v.addWidget(c)
+        if running:
+            r = label(html.escape(_("The run goes on with the frames and settings it started with: the changes made "
+                                    "since are computed by the next run.")), "small", wrap=True)
+            r.setObjectName("history_running")
+            v.addWidget(r)
         row = QHBoxLayout()
         row.setSpacing(6)
-        self.ok = QPushButton(_("Undo") if how == "undo" else _("Redo"))
+        # its two answers never share a word (French had « Annuler » twice: the Undo and the Cancel)
+        self.ok = QPushButton(in_context("history", "Undo") if how == "undo" else in_context("history", "Redo"))
         self.ok.setObjectName("primary")
-        self.ok.setToolTip(_("Their results are computed again at the next run (Enter)"))
+        self.ok.setToolTip(_("Their results are computed again at the next run (Enter)") if cost is not None and
+                           cost.lost else _("Takes the step back now (Enter)") if how == "undo" else
+                           _("Makes the step again now (Enter)"))
         self.ok.clicked.connect(self.accept)
-        self.no = QPushButton(_("Cancel"))
+        self.no = QPushButton(in_context("history", "Keep"))
         self.no.setObjectName("history_cancel")
         self.no.setToolTip(_("Nothing changes (Esc)"))
         self.no.clicked.connect(self.cancel)

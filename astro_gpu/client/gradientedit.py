@@ -188,6 +188,9 @@ class GradientEditor(QObject):
     ``tool`` while a tool is on. ``gesture``: the mouse is down on the image (Inspect is not built again under it)."""
 
     _done = Signal(int, object)                # (request number, result of the thread)
+    #: a step of a draft's Undo made, taken back or made again: the window's Edit › Undo / Redo follow it (a beta
+    #: tester's Ctrl+Y did nothing after a Ctrl+Z on the draft, Edit › Redo greyed, while the panel's arrow worked)
+    historyChanged = Signal()
     _step = Signal(int, str)                   # (request number, how far the automatic preview is)
 
     def __init__(self, tune):
@@ -368,6 +371,8 @@ class GradientEditor(QObject):
             d["rseq"] = []
         d["told"] = False
         self._draft_changed(set(before) | set(d["vals"]) | set(updates))
+        if undo:
+            self.historyChanged.emit()
         return True
 
     def _draft_changed(self, names: set):
@@ -422,6 +427,7 @@ class GradientEditor(QObject):
         del dq[:max(0, len(dq) - len(d[dst]))]
         if pid is None or (self.p is not None and pid == self.p.pid):
             self._draft_changed(names)
+        self.historyChanged.emit()
         return True
 
     def history_top(self, how: str = "undo") -> tuple[int, int] | None:

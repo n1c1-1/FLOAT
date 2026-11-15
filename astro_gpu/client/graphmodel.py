@@ -1103,6 +1103,12 @@ class GraphEditing:
             for v in self.paths:
                 if v.pid in there:
                     lost += self._lost(v, set(api.chain(p2, v.pid)), lambda st, w=v.pid: api.stage_key(p2, w, st))
+            if lost:
+                # the state after the step as the store holds it: a result of its keys computed before (the
+                # threshold set back to 6, computed at 6 an hour ago) is up to date again, never announced as computed
+                # again (a beta tester's card said "Computes again: Registration..." and Registration stayed green)
+                after_states = api.states(p2, update=False)
+                lost = [(w, st) for w, st in lost if getattr(after_states.get((w, st)), "state", "") != "done"]
             if not lost:
                 return ChangeCost()
             wids = sorted({w for w, _s in lost})
@@ -2631,7 +2637,7 @@ class GraphEditing:
         steps = [("new_night", {"name": name, "filter": flt})]
         if len(self.p.sessions) + 1 >= 2 and self.p.stack_mode == "together":
             steps.append(("set_calibrate_together", {"on": False}))
-        self._do(steps)
+        self._do(steps, name=_("session “{name}” added").format(name=name))     # its Undo says what it takes back
         return self._g.nights[-1]["sid"]
 
     def add_session(self, name: str = "", lights=(), **calibration) -> int | None:
@@ -2661,7 +2667,7 @@ class GraphEditing:
                     if pair[1] is not None:
                         g.blocks[pair[1]].off = g.blocks[last].off if g.calibrate_together and last else False
                     r.nights.append(pair)
-        self._do(raw=raw)
+        self._do(raw=raw, name=_("session “{name}” added").format(name=nm))       # its Undo says what it takes back
         self.reload_sources()
         return sid
 

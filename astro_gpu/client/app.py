@@ -1009,6 +1009,8 @@ class Main(QMainWindow):
         tune.openPost.connect(lambda: self.set_mode(2))
         tune.removeTool.connect(self._remove_tool)
         tune.toasted.connect(self.flash)
+        if getattr(tune, "grad_editor", None) is not None:   # the draft's own steps: Edit › Undo / Redo follow them
+            tune.grad_editor.historyChanged.connect(self._update_actions)
         tune.sideChosen.connect(lambda st: self._side_chosen("right", st))
         tune.sidesShown.connect(self._show_sides)
         tune.can_post = self.browser.can_post = lambda: True    # Post takes Inspect's images as layers
@@ -1696,12 +1698,16 @@ class Main(QMainWindow):
             return
         if where in ("graph", "post_model"):
             from .graphmodel import confirm_on
-            cost = s.history_cost(how) if confirm_on() and hasattr(s, "history_cost") else None
-            if cost is not None and cost.lost:
+            # while a run goes, a step of the workflows taken back is asked as a change made meanwhile is said: the run
+            # goes on with what it started with (a beta tester's Ctrl+Z took the lights out without a word)
+            running = bool(getattr(getattr(self, "run", None), "running", False))
+            cost = s.history_cost(how) if (confirm_on() or running) and hasattr(s, "history_cost") else None
+            if running or (cost is not None and cost.lost and confirm_on()):
                 from .historycard import HistoryCard
                 step = (s._undo if undo else s._redo)[-1]
                 self._history_card = HistoryCard(self, how, s.next_words(how), cost,
-                                                 lambda: self._history_do(where, how, extra, step), said=self.flash)
+                                                 lambda: self._history_do(where, how, extra, step), said=self.flash,
+                                                 running=running)
                 return
         self._history_do(where, how, extra)
 
@@ -1721,16 +1727,20 @@ class Main(QMainWindow):
             if view is not None and self._post_shown():
                 (view.do_undo if undo else view.do_redo)()
                 self._post_seen()
-            elif where == "post_model" and (s.undo if undo else s.redo)():
-                self._say_restored(*(("Undone", "Undone: {what}") if undo else ("Redone", "Redone: {what}")))
+            elif where == "post_model":
+                words = s.next_words(how)
+                if (s.undo if undo else s.redo)():
+                    self._say_restored(*(("Undone", "Undone: {what}") if undo else ("Redone", "Redone: {what}")),
+                                       words=words or _("a change of the workflows (Post)"))
             return
         if where == "draft":
             ed = self._grad_editor()
             if ed is not None and (ed.undo if undo else ed.redo)(extra):
                 self.flash((_("Undone: {what}") if undo else _("Redone: {what}")).format(what=_("Gradient draft")))
             return
+        words = s.next_words(how)
         if (s.undo if undo else s.redo)(graph=True):
-            self._say_restored(*(("Undone", "Undone: {what}") if undo else ("Redone", "Redone: {what}")))
+            self._say_restored(*(("Undone", "Undone: {what}") if undo else ("Redone", "Redone: {what}")), words=words)
 
     def _history_in(self, where: str, how: str, extra=None):
         """A notice's link: the page of the step shown, and the step undone (or redone) there."""
@@ -1746,9 +1756,11 @@ class Main(QMainWindow):
             self.set_mode(0)
         self._history(how, there=True)
 
-    def _say_restored(self, plain: str, said: str):
-        """The Undo / Redo message and Log line: what was undone or redone, in the words of its step."""
-        what = getattr(self.s, "restored", "")
+    def _say_restored(self, plain: str, said: str, words: str = ""):
+        """The Undo / Redo message and Log line: what was undone or redone, in the words of its step (``words``: the
+        step's words read before it moved). A step without words is said as a change of the workflows, never a bare
+        "Undone" (a beta tester in Inspect could not tell what had gone)."""
+        what = getattr(self.s, "restored", "") or words or _("a change of the workflows (Graph)")
         if what:
             self.s.log(said, what=what)
             self.flash(_(said).format(what=what))

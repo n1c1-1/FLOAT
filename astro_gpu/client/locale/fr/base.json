@@ -446,7 +446,7 @@
   "Parallel workers": "Calculs parallèles",
   "Detection threshold": "Seuil détection",
   "Stars per frame": "Étoiles par image",
- "Min pairs": "Paires min",
+  "Min pairs": "Paires min",
   "Drizzle scale": "Échelle drizzle",
   "Minimum transparency": "Transparence minimale",
   "Maximum star size": "Taille max étoiles",
@@ -1119,5 +1119,13 @@
   "results up to date again": "résultats de nouveau à jour",
   "variant": "variante",
   "To compute: {blocks} · {time}": "À calculer : {blocks} · {time}",
-  "{block} added to “{workflow}”": "{block} ajouté à « {workflow} »"
+  "{block} added to “{workflow}”": "{block} ajouté à « {workflow} »",
+  "history|Undo": "Défaire",
+  "history|Redo": "Rétablir",
+  "history|Keep": "Garder",
+  "Takes the step back now (Enter)": "Défait l'étape maintenant (Entrée)",
+  "Makes the step again now (Enter)": "Rétablit l'étape maintenant (Entrée)",
+  "session “{name}” added": "session « {name} » ajoutée",
+  "a change of the workflows (Graph)": "un changement des workflows (Graphe)",
+  "a change of the workflows (Post)": "un changement des workflows (Post)"
 }
