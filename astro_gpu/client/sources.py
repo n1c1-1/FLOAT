@@ -221,7 +221,8 @@ class SourcesView(QWidget):
         self._icons: dict[str, list[QListWidgetItem]] = {}
         self._group_token = 0
         self._reading = False                              # the frames of the kind shown are being read
-        self._seq_order: list[int] = []                    # the viewer's sequence: indices of ``items``
+        self._left: dict = {}                              # {(session, kind): colour images left by the last add}
+        self._seq_order: list[int] = []                  # the viewer's sequence: indices of ``items``
         self._syncing = False
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -439,19 +440,73 @@ class SourcesView(QWidget):
         """A new session, without frames: shown here, where they are added."""
         self.show_session(self.s.new_session())
 
-    def add_files(self, kind: str, paths: list) -> int:
-        """Files or folders into a kind of the session shown (a folder is a shortcut for its frames); said, and shown."""
+    def add_files(self, kind: str, paths: list, all_images: bool = False) -> int:
+        """Files or folders into a kind of the session shown (a folder is a shortcut for its frames); said, and shown.
+        A camera's JPEGs beside its raws are left (« Take all » beside the kind adds them: ``all_images``)."""
         if self.sid is None:
             return 0
         notes: list = []                                   # what was not added, said (GUI exploration 7.5)
-        n = self.s.add_session_entries(self.sid, kind, paths, notes)
+        left: list = []
+        n = self.s.add_session_entries(self.sid, kind, paths, notes, left, all_images)
+        self._left = {(self.sid, kind): left} if left else {}
         said = [_(t).format(name=nm) for t, nm in notes[:2]] + (["…"] if len(notes) > 2 else [])
         if n:
             said.insert(0, plural(n, "{n} file added to “{session}” · Ctrl+Z", "{n} files added to “{session}” · Ctrl+Z",
                                   session=self._session().name))
             self.select_group(kind)
         self.toast.emit(" · ".join(said) if said else _("Nothing added: no frame in what was dropped"))
+        if left and not n:
+            self.refresh()                                 # nothing added: the « Take all » line still shows
         return n
+
+    def take_all(self, kind: str):
+        """« Take all »: the colour images left beside raws by the last addition, added as the user chose."""
+        left = self._left.pop((self.sid, kind), [])
+        if left:
+            self.add_files(kind, left, all_images=True)
+
+    def beside_raws(self, kind: str) -> list[str]:
+        """The colour images a kind of the session holds beside raw or FITS frames of their folder (stored before
+        they were left at the addition): the engine reads each as one more frame."""
+        from .graphview.files import beside_raws
+        if self.sid is None:
+            return []
+        stored = [self.s.p.abspath(e) for e in getattr(self._session(), kind)]
+        return beside_raws(stored, stored)
+
+    def _beside_rows(self, kind: str):
+        """Under a kind: the colour images the last addition left beside raws (« Take all »), and those a session
+        saved before holds beside its raws (« Remove JPG »): said, never removed without the user's click."""
+        from .graphview.files import summary
+        lines = []
+        left = self._left.get((self.sid, kind))
+        if left:
+            lines.append(("info", _("{name} left: beside raw frames").format(name=summary(left)), _("Take all"),
+                          _("Adds them as frames too: the engine then reads each as one more frame"), self.take_all))
+        stored = self.beside_raws(kind)
+        if stored:
+            typ = ", ".join(sorted({x.split(" ", 1)[1] for x in summary(stored).split(", ")}))
+            lines.append(("warning", plural(len(stored), "{n} {type} beside raw frames: not usual, read as one more frame",
+                                            "{n} {type} beside raw frames: not usual, each read as one more frame",
+                                            type=typ),
+                          _("Remove {type}").format(type=typ),
+                          _("Takes them out of the session (the files are not touched); Ctrl+Z brings them back"),
+                          self.remove_beside_raws))
+        for icon, text, btn, tip, act in lines:
+            h = QHBoxLayout()
+            h.setContentsMargins(0, 0, 0, 0)
+            h.addWidget(ic.IconText(icon, text, "warning" if icon == "warning" else "dim", "warn"), 1)
+            b = QPushButton(btn)
+            b.setToolTip(tip)
+            b.clicked.connect(lambda _c=False, f=act, k=kind: f(k))
+            h.addWidget(b, 0, Qt.AlignTop)
+            self.lv.addLayout(h)
+
+    def remove_beside_raws(self, kind: str):
+        """« Remove JPG »: those colour images taken out of the kind (the files are not touched), one undo step."""
+        out = self.beside_raws(kind)
+        if out:
+            self.files_out(kind, out)
 
     def pick_files(self, kind: str):
         got, _f = QFileDialog.getOpenFileNames(self.window(), _("Add files…"), prefs.last_folder(), frame_filter())
@@ -504,8 +559,12 @@ class SourcesView(QWidget):
 
     def anomalies(self, kind: str) -> list[str]:
         """What may be a mistake in a kind's files, said beside it as long as it holds (issue #58): a file not read or
-        of another type, the same files in two kinds, and lights with the exposure of flats."""
-        out = [type_warning_text(w) for w in self.s.file_warnings(self.sid) if w["kind"] == kind]
+        of another type, the same files in two kinds, and lights with the exposure of flats. Colour images stored beside
+        raws are said on their own line (``beside_raws``: the engine does read them, as more frames)."""
+        from ..core.project import file_type
+        beside = {file_type(f) for f in self.beside_raws(kind)}
+        out = [type_warning_text(w) for w in self.s.file_warnings(self.sid) if w["kind"] == kind
+               and not (w["key"] == "unread" and w.get("type") in beside)]
         row = self._row()
         if kind == "lights" and row is not None and row.exposure is not None and row.exposure < FLAT_LIKE_S:
             out.append(_("Lights at {exp}: the exposure of flats. Right row?").format(exp=fexp(row.exposure)))
@@ -804,6 +863,7 @@ class SourcesView(QWidget):
                 self.lv.addWidget(ic.IconText("link", _("shared with {names}: one master").format(names=names), "dim", "small"))
             for text in self.anomalies(key):               # beside its kind, as long as it holds
                 self.lv.addWidget(ic.IconText("warning", text, "warning", "warn"))
+            self._beside_rows(key)
             self._not_found_rows(key)
             if key == self.group and n:
                 self._file_box(key, was)

@@ -2407,7 +2407,12 @@ class GraphEditing:
         self.reload_sources()
         return sid
 
-    def add_session_entries(self, sid: int, kind: str, paths, notes: list | None = None) -> int:
+    def add_session_entries(self, sid: int, kind: str, paths, notes: list | None = None, left: list | None = None,
+                            all_images: bool = False) -> int:
+        """Files or folders into a kind of a session, each frame stored on its own. A colour image (JPEG, PNG, TIFF)
+        beside raw or FITS frames of its folder, given now or already in the kind, is not added (the engine reads a
+        file entry as it is: it would be one more frame), unless ``all_images`` (the user's explicit « Take all »):
+        its paths go to ``left`` and a note says it."""
         from ..core.project import frame_kind, list_frames
         from .services.worker import norm_path
         mm = _mm()
@@ -2422,9 +2427,14 @@ class GraphEditing:
         def known(f) -> bool:
             return norm_path(f) in have or (bool(frame_kind(Path(f))) and norm_path(str(Path(f).parent)) in folders)
         new: list[str] = []
+        set_aside: list[str] = []               # a folder's JPEGs beside its raws (list_frames's own rule), said too
         for x in paths:
             px = Path(x)
             files = [str(f) for f in list_frames([str(px)])] if px.is_dir() else [str(px)]
+            if px.is_dir():
+                set_aside += [q.as_posix() for q in sorted(px.iterdir())
+                              if q.is_file() and frame_kind(q) == "colour" and str(q) not in files
+                              and not known(str(q))]
             if not files:
                 notes.append(("“{name}” holds no frames (camera raw, FITS, JPEG, PNG or TIFF): not added.", px.name))
             elif all(known(f) for f in files):
@@ -2433,6 +2443,14 @@ class GraphEditing:
                 if not known(f):
                     new.append(Path(f).as_posix())
                     have.add(norm_path(f))
+        if not all_images:
+            from .graphview.files import beside_raws, summary
+            aside = set(beside_raws(new, [self.p.abspath(e) for e in cur])) | set(set_aside)
+            if aside:
+                new = [f for f in new if f not in aside]
+                notes.append(("{name} left: beside raw frames", summary(aside)))
+                if left is not None:
+                    left += sorted(aside)
         if not new:
             return 0
         flt = ""
