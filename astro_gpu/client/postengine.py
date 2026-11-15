@@ -992,12 +992,34 @@ def load_layers(raw, alive: set[int]) -> list[dict]:
 
 
 def save_layers(layers: list[dict]) -> list[dict]:
-    """The composition as JSON-able dicts (a filter on no sub-layer saved as before them)."""
+    """The composition as JSON-able dicts (a filter on no sub-layer saved as before them). A Synthetic stars row as it
+    comes (``new_synth_layer``, nothing changed in it) is not saved: ``with_synth_rows`` gives it at each load, so the
+    definition holds what the user made, and a change undone gives back the definition it had (it was written there at
+    the first save after the load, whatever the change)."""
     out = json.loads(json.dumps(snapshot(layers), default=list))
     for d in out:
         if d.get("kind") == "filter" and d.get("sub") is None:
             d.pop("sub", None)
-    return out
+    return [d for d in out if not _untouched_synth(d)]
+
+
+def _untouched_synth(d: dict) -> bool:
+    if not is_synth(d) or d.get("sub") != "stars" or any(p.get("strokes") for p in (d.get("mask") or {}).get("parts", [])):
+        return False                                    # painted: changed (and no copy of its strokes at each save)
+
+    def plain(x):
+        x = json.loads(json.dumps(x, default=list))
+        x.pop("id", None)
+        for part in (x.get("mask") or {}).get("parts", []):
+            part.pop("id", None)
+        return x
+    global _SYNTH_AS_IT_COMES
+    if _SYNTH_AS_IT_COMES is None:                      # made once: its ids are taken out of the comparison
+        _SYNTH_AS_IT_COMES = plain(snapshot([new_synth_layer(0)])[0])
+    return plain(d) == dict(_SYNTH_AS_IT_COMES, target=d.get("target"))
+
+
+_SYNTH_AS_IT_COMES: dict | None = None
 
 
 # ======================================================================== what the composition reads
@@ -1410,13 +1432,14 @@ class Composer:
         raise ValueError(src)
 
     def brush_raster(self, part, level, abox, canvas: Canvas) -> np.ndarray:
-        """The strokes of a brush part at a level. Above level 0 the whole canvas, kept: only the new strokes are
-        stamped. At level 0 only the box asked for."""
+        """The strokes of a brush part at a level. The whole canvas, kept: only the new strokes are stamped (the exact
+        view and the export compose the whole canvas at level 0: stamped again from the first stroke, each stroke made
+        the next picture longer, +35 ms a stroke on a laptop). A region at level 0: only its box, stamped again."""
         strokes = part["strokes"]
         n, last = len(strokes), (strokes[-1] if strokes else None)
         f = 2 ** level
         W, H = canvas.size(level)
-        if level == 0:
+        if level == 0 and tuple(abox) != (0, 0, W, H):  # a region at full resolution: its box only, stamped again
             x0, y0, x1, y1 = abox
             r = np.zeros((y1 - y0, x1 - x0), np.float32)
             for x, y, rad, hard, paint in strokes:
@@ -1874,9 +1897,27 @@ def _reads_image(m: dict | None) -> bool:
 
 
 def _settings_of(lay: dict) -> str:
-    """What a layer or a filter does to the image: all of it but its name and place in the list."""
-    return json.dumps({k: v for k, v in lay.items() if k not in ("id", "name", "target", "visible")}, sort_keys=True,
-                      default=str)
+    """What a layer or a filter does to the image: all of it but its name and place in the list. A brush's strokes
+    count by their number and a digest (written out whole, each request of a painted mask grew with its strokes)."""
+    d = {k: v for k, v in lay.items() if k not in ("id", "name", "target", "visible")}
+    for key in ("mask", "side_masks"):
+        if d.get(key):
+            d[key] = _light_masks(d[key], key == "side_masks")
+    return json.dumps(d, sort_keys=True, default=str)
+
+
+def _strokes_digest(strokes) -> str:
+    # tuples of numbers and booleans hash the same in every process (no hash seed for them)
+    return f"{len(strokes)}:{hash(tuple(map(tuple, strokes)))}"
+
+
+def _light_masks(m, several: bool):
+    if several:
+        return {k: _light_masks(v, False) for k, v in m.items()}
+    if not any(p.get("strokes") for p in m.get("parts", [])):
+        return m
+    return dict(m, parts=[dict(p, strokes=_strokes_digest(p["strokes"])) if p.get("strokes") else p
+                          for p in m["parts"]])
 
 
 def visible_signature(layers: list[dict], want=()) -> str:

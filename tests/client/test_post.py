@@ -1287,6 +1287,35 @@ def test_mask_brushes_are_named_by_their_effect_and_the_red_marks_what_is_hidden
     v.request(final_only=True)
     assert v.behind()                                                 # asked, not shown yet: "Updating…"
     assert post.settle() and not v.behind()
+    v._exact_wait = v._main_seq                                       # the exact view on its way: still updating
+    assert v.behind()
+    v._on_failed(v._main_seq + 1, "exact", "x")                       # it failed: the half stays, nothing to wait for
+    assert not v.behind()
+    said = []
+    v.toasted.connect(said.append)
+    x = next(b for b in widgets_of(v, QPushButton) if b.toolTip().startswith("Remove Brush from the mask"))
+    x.click()                                                         # the ×: said, with its Undo
+    assert part not in full["mask"]["parts"] and said == ["Brush removed from the mask · Ctrl+Z"]
+
+
+def test_the_full_resolution_brush_stamps_only_the_new_strokes():
+    """The exact view composes the whole canvas at level 0: its brush plane is kept as the reduced ones are (each
+    stroke made the next picture longer when it was stamped again from the first one)."""
+    c = postengine.Composer.__new__(postengine.Composer)
+    c._brush = {}
+    canvas = postengine.Canvas(120, 80)
+    part = dict(postengine.new_part("brush"), op="sub")
+    part["strokes"] += [(30.0, 30.0, 6.0, 50.0, True)]
+    a = c.brush_raster(part, 0, (0, 0, 120, 80), canvas)
+    part["strokes"] += [(80.0, 40.0, 6.0, 50.0, True)]
+    b = c.brush_raster(part, 0, (0, 0, 120, 80), canvas)
+    assert np.shares_memory(a, b) and b[40, 80] > 0.9 and b[30, 30] > 0.9   # the same plane, the new stroke on it
+    whole = np.zeros((80, 120), np.float32)
+    for s in part["strokes"]:
+        postengine.Composer.stamp(whole, *s)
+    assert np.array_equal(b, whole)
+    region = c.brush_raster(part, 0, (60, 20, 100, 60), canvas)       # a region: its box, as before
+    assert np.array_equal(region, whole[20:60, 60:100])
 
 
 def test_masks_with_parts_show_on_the_image_and_in_the_thumbnails(post):
