@@ -293,7 +293,13 @@ class ModelDocument:
         return range(self.model._undo.net)
 
     def close(self):
+        """As the window closes a project (app.py close_project): its Inspect service taken out and stopped too (the
+        Table's file headers start it; its threads left running ended the process with 127 when Qt was torn down)."""
+        from astro_gpu.client.services.inspect import _services
+        sv = _services.pop(self.model, None)
         self.model.close(save=False)
+        if sv is not None:
+            sv.stop()
         self.worker.stop()
 
 
