@@ -3636,3 +3636,24 @@ def test_a_right_click_on_a_row_opens_its_menu_at_the_release_not_at_the_press(p
     assert seen == []                                                 # nothing at the press
     QApplication.sendEvent(row, QContextMenuEvent(QContextMenuEvent.Mouse, QPoint(5, 5), row.mapToGlobal(QPoint(5, 5))))
     assert seen == [row.lay["id"]]
+
+
+def test_undo_names_the_eye_of_a_groups_image_and_each_mask_edit():
+    """The laptop's B1: an eye or any mask edit was undone as "“Full · Combine layers” changed"."""
+    from astro_gpu.client.post3 import step_words
+    g = {"id": 1, "kind": "pixel", "name": "Full", "visible": True, "shown": {"stars": True, "starless": True},
+         "mask": None}
+
+    def after(**kw):
+        return [dict(g, **kw)]
+    assert step_words([g], after(shown={"stars": False, "starless": True})) == "“Stars” hidden"
+    mask = new_mask()
+    assert step_words([g], after(mask=mask)) == "Mask added to “Full”"
+    brush = dict(new_part("brush"), op="sub")
+    one = dict(mask, parts=[brush])
+    assert step_words(after(mask=mask), after(mask=one)) == "Brush added to the mask of “Full”"
+    painted = dict(one, parts=[dict(brush, strokes=[(1.0, 2.0, 3.0, 50.0, True)])])
+    assert step_words(after(mask=one), after(mask=painted)) == "Brush stroke on the mask of “Full”"
+    assert step_words(after(mask=one), after(mask=dict(one, density=50.0))) == "Density of the mask of “Full”"
+    assert step_words(after(mask=one), after(mask=None)) == "Mask of “Full” deleted"
+    assert step_words([g], after(side_masks={"starless": one})) == "Mask added to “Starless image”"

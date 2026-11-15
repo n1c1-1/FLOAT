@@ -199,10 +199,19 @@ def step_words(old: list[dict], new: list[dict]) -> str:
             return _("“{old}” renamed “{name}”").format(old=layer_name(was), name=name)
         if was.get("visible") != lay.get("visible"):
             return (_("“{name}” shown") if lay.get("visible") else _("“{name}” hidden")).format(name=name)
-        for key, word in (("opacity", _("opacity")), ("mode", _("blend mode")), ("blend", _("blend mode")),
-                          ("mask", _("mask"))):
+        for sub, v in (lay.get("shown") or {}).items():             # the eye of one of a group's images
+            if (was.get("shown") or {}).get(sub) != v:
+                side = _(SUB_NAMES.get(sub, sub))
+                return (_("“{name}” shown") if v else _("“{name}” hidden")).format(name=side)
+        for key, word in (("opacity", _("opacity")), ("mode", _("blend mode")), ("blend", _("blend mode"))):
             if was.get(key) != lay.get(key):
                 return _("{what} of “{name}”").format(what=word.capitalize(), name=name)
+        if was.get("mask") != lay.get("mask"):
+            return mask_words(was.get("mask"), lay.get("mask"), name)
+        sa, sb = was.get("side_masks") or {}, lay.get("side_masks") or {}
+        for sub in sorted(set(sa) | set(sb)):
+            if sa.get(sub) != sb.get(sub):
+                return mask_words(sa.get(sub), sb.get(sub), _(SUB_NAMES.get(sub, sub)))
         for field in ("sliders", "params"):
             ka, kb = was.get(field) or {}, lay.get(field) or {}
             for k in kb:
@@ -210,6 +219,31 @@ def step_words(old: list[dict], new: list[dict]) -> str:
                     return _("{what} of “{name}”").format(what=_(str(k).replace("_", " ").capitalize()), name=name)
         return _("“{name}” changed").format(name=name)
     return _("Crop changed") if getattr(old, "crop", None) != getattr(new, "crop", None) else ""
+
+
+def mask_words(old: dict | None, new: dict | None, name: str) -> str:
+    """What changed in the mask of the layer named ``name`` (``step_words``): added, deleted, a part added or
+    removed, a stroke, a part's setting, a setting of the whole mask."""
+    if old is None:
+        return _("Mask added to “{name}”").format(name=name)
+    if new is None:
+        return _("Mask of “{name}” deleted").format(name=name)
+    pa, pb = {p["id"]: p for p in old["parts"]}, {p["id"]: p for p in new["parts"]}
+    for i, p in pb.items():
+        if i not in pa:
+            return _("{part} added to the mask of “{name}”").format(part=_(MASK_SOURCES[p["src"]]), name=name)
+    for i, p in pa.items():
+        if i not in pb:
+            return _("{part} removed from the mask of “{name}”").format(part=_(MASK_SOURCES[p["src"]]), name=name)
+    for i, p in pb.items():
+        if pa[i] != p:
+            if pa[i].get("strokes") != p.get("strokes"):
+                return _("Brush stroke on the mask of “{name}”").format(name=name)
+            return _("{part} of the mask of “{name}”").format(part=_(MASK_SOURCES[p["src"]]), name=name)
+    for key, word in (("feather", "Feather"), ("density", "Density"), ("invert", "Invert")):
+        if old.get(key) != new.get(key):
+            return _("{what} of the mask of “{name}”").format(what=_(word), name=name)
+    return _("{what} of “{name}”").format(what=_("mask").capitalize(), name=name)
 
 
 def _pieces(n: str, fn) -> str:
