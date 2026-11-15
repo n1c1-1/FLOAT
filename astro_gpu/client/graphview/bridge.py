@@ -66,6 +66,8 @@ class Bridge(QObject):
         self.doc.guard = guard
         self.file_cell = None
         self._drawing = None
+        if self._drops is not None:                      # another project: none of the listings is its own
+            self._drops.reader.forget()
         self.replaced.emit()
         self.changed.emit()
         self.selection.emit(self.selected)
