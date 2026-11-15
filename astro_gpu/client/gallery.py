@@ -903,6 +903,7 @@ def template_dialog(parent, name: str) -> tuple[str, str] | None:
     from PySide6.QtWidgets import QComboBox, QDialogButtonBox, QFormLayout
     d = QDialog(parent)
     d.setWindowTitle(_("Save as template"))
+    d.setMinimumWidth(460)                              # the name of a project is long: its field shows it
     f = QFormLayout(d)
     ed = QLineEdit(name)
     ed.selectAll()
