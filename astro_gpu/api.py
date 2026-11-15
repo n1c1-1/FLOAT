@@ -794,25 +794,6 @@ def save(p: Project2) -> Path:
     return p2.save(p)
 
 
-def save_as(p: Project2, root: str | Path) -> Project2:
-    """Copy the definition to a new folder (definition only: no results) and return that project; ``p`` stays where
-    it was. Relative paths become absolute, so that the copy still finds the frames and the reference image."""
-    root = Path(root)
-    if (root / p2.FILE).exists():
-        raise FileExistsError(f"a project already exists in {root}")
-    q = Project2.from_dict(p.to_dict(), None)
-    for s in q.sessions:
-        for kind in KINDS:
-            setattr(s, kind, [p.abspath(f) for f in getattr(s, kind)])
-    if q.reference_image:
-        q.reference_image = p.reference_path()
-    if q.scratch_dir:
-        q.scratch_dir = p.abspath(q.scratch_dir)
-    q.created = datetime.now().isoformat(timespec="seconds")
-    p2.save(q, root)
-    return q
-
-
 def import_v1(old_root: str | Path, new_root: str | Path, path_map: dict[str, Any] | None = None,
               dry_run: bool = False, *, rules: KeyRules | str | None = None,
               progress: Callable[[str], None] | None = None) -> ImportReport:
@@ -1009,15 +990,6 @@ def add_frames(p: Project2, scan: ScanResult, session: int | None = None) -> lis
                     _put(getattr(s, kind), f)
     p.validate()
     return made
-
-
-def remove_session(p: Project2, session: int) -> Session:
-    """Remove a session and the frames of it excluded by hand; returns it."""
-    s = p.session(session)
-    p.sessions.remove(s)
-    p.excluded = [pair for pair in p.excluded if pair[0] != session]
-    p.validate()
-    return s
 
 
 def set_excluded(p: Project2, pairs: Iterable[tuple[int, str]], excluded: bool = True) -> None:
