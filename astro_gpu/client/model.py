@@ -3017,7 +3017,12 @@ class _ProjectBase(QObject):
             return api.Plan()
         k = ("plan_to", p.pid, key, self.device)
         if k not in self._cache:
-            self._cache[k] = api.plan_to_block(self.p, p.pid, engine_name(key), self.device, self._history_est)
+            block = engine_name(key)
+            if wfl.base(block) == "fusion":              # a combination: the engine's block is its own stage
+                block = wfl.combine_stage(self.p.workflow(p.pid))   # ("combine_sho"; "unknown block" else)
+                if not block:
+                    return api.Plan()
+            self._cache[k] = api.plan_to_block(self.p, p.pid, block, self.device, self._history_est)
         return self._cache[k]
 
     # ------------------------------------------------------------ breakpoints: pause for the user to check
