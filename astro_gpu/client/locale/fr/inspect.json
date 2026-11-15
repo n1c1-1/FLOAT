@@ -319,5 +319,7 @@
   "{session}: no flats: its lights are not calibrated for vignetting and dust.": "{session} : pas de flats : ses brutes ne sont pas corrigées du vignetage ni des poussières.",
   "The same frames are in two sessions: {n} light(s) of {other} are also in {first}; they are used once, with {first}.": "Les mêmes images sont dans deux sessions : {n} brute(s) de {other} sont aussi dans {first} ; elles ne servent qu'une fois, avec {first}.",
   "No bias: flats are calibrated with the darks' level ({level} ADU).": "Pas d'offsets : les flats sont calibrés avec le niveau des darks ({level} ADU).",
-  "{workflow}: the flats of {n} sessions are merged into one master flat ({sessions}).": "{workflow} : les flats de {n} sessions sont fusionnés en un seul master de flat ({sessions})."
+  "{workflow}: the flats of {n} sessions are merged into one master flat ({sessions}).": "{workflow} : les flats de {n} sessions sont fusionnés en un seul master de flat ({sessions}).",
+  "{n} file added to {kind}": "{n} fichier ajouté aux {kind}",
+  "{n} files added to {kind}": "{n} fichiers ajoutés aux {kind}"
 }

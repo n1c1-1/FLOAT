@@ -73,14 +73,14 @@ def test_sources_lights_of_another_session_of_the_stack_are_said_not_added(qapp,
         close(w, m, page)
 
 
-def _drop(widget, paths):
+def _drop(widget, paths, pt=None):
     """Files dropped as the Explorer sends them: enter, a move (a fresh event, not accepted beforehand), the drop."""
     from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
     from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
     from PySide6.QtWidgets import QApplication
     mime = QMimeData()
     mime.setUrls([QUrl.fromLocalFile(p) for p in paths])
-    pt = QPoint(10, 10)
+    pt = QPoint(10, 10) if pt is None else pt
     enter = QDragEnterEvent(pt, Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)
     QApplication.sendEvent(widget, enter)
     move = QDragMoveEvent(pt, Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)
@@ -102,7 +102,8 @@ def test_sources_take_dropped_files_on_the_page_and_on_a_kinds_row(qapp, tmp_pat
     try:
         sid = m.p.sessions[0].id
         view.show_session(sid, "darks")
-        assert _drop(view, [darks[0]]) and len(m.p.session(sid).darks) == 1
+        mid = view.stack.mapTo(view, view.stack.rect().center())  # on the kind shown (elsewhere: asked)
+        assert _drop(view, [darks[0]], mid) and len(m.p.session(sid).darks) == 1
         view.refresh()
         row = next(r for r in view.findChildren(GroupRow) if r.key == "flats")
         assert _drop(row, [darks[1]])

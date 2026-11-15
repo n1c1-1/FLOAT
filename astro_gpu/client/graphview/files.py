@@ -316,6 +316,67 @@ def with_header_filters(graph, steps) -> list:
     return steps + extra
 
 
+#: the frame-type keywords of a FITS header, in the order they are read (capture programs write IMAGETYP; a few
+#: write FRAMETYP or FRAME), and their values as the kinds of a session (read case-folded, by their words)
+KIND_KEYS = ("IMAGETYP", "FRAMETYP", "FRAME")
+
+
+def _kind_of_type(value: str) -> str:
+    v = " " + str(value or "").strip().lower().replace("_", " ").replace("-", " ") + " "
+    dark, flat = "dark" in v, "flat" in v
+    if dark and flat:
+        return "flat_darks"
+    if flat:
+        return "flats"
+    if dark:
+        return "darks"
+    if "bias" in v or "offset" in v or " zero " in v:
+        return "bias"
+    if "light" in v or " object " in v or " science " in v:
+        return "lights"
+    return ""
+
+
+def header_kind(path) -> str:
+    """The kind of frames a FITS file's header says it is (its IMAGETYP, else FRAMETYP or FRAME, read by the engine's
+    header reader): "lights", "darks", "flats", "bias", "flat_darks"; "" for a raw, a colour image or a header that
+    says none. Never a file's or a folder's name."""
+    if frame_kind(path) != "fits":
+        return ""
+    from ...io.frames import fits_header
+    try:
+        hd = fits_header(path)
+    except Exception:  # noqa: BLE001 - a header that cannot be read says nothing: the user is asked
+        return ""
+    for key in KIND_KEYS:
+        k = _kind_of_type(hd.get(key, ""))
+        if k:
+            return k
+    return ""
+
+
+def by_header_kind(paths, kinds=None) -> tuple[dict[str, list], list]:
+    """Dropped paths sorted by what their headers say (``header_kind``): ({kind: [paths]}, [the paths whose header
+    does not tell]). A folder is told when every frame of its first level is FITS and says the same kind (read
+    once each); ``kinds``: the kinds that may be told (others are asked)."""
+    told: dict[str, list] = {}
+    rest: list = []
+    for p in paths:
+        p = normalise(p)
+        if os.path.isdir(p):
+            fs, _ds, bad = _level(p)
+            frames = [f for f in fs if frame_kind(f)]
+            got = {header_kind(f) for f in frames} if frames and not bad else {""}
+            k = next(iter(got)) if len(got) == 1 else ""
+        else:
+            k = header_kind(p)
+        if k and (kinds is None or k in kinds):
+            told.setdefault(k, []).append(p)
+        else:
+            rest.append(p)
+    return told, rest
+
+
 def session_filter(graph, session) -> str:
     """The filter stored for a Session block's night ("" for a colour camera's, or none stored)."""
     b = graph.blocks.get(session)

@@ -732,12 +732,51 @@ class SourcesView(QWidget):
         self._drop_hot(False)
 
     def dropEvent(self, e):                                          # noqa: N802 - Qt's name
-        """Dropped anywhere but on a kind's row: into the kind shown."""
+        """Dropped on the frames of the kind shown (its list, or « Drop your files here »): into that kind. Anywhere
+        else but on a kind's row (a heading, the side panels): asked, as on the graph's Session block (a folder of
+        darks dropped on the « Calibration » heading became lights, a beta tester)."""
         self._drop_hot(False)
         paths = local_paths(e.mimeData())
         if paths and self.sid is not None:
             e.acceptProposedAction()
-            self.add_files(self.group, paths)
+            pos = e.position().toPoint()
+            if self.stack.rect().contains(self.stack.mapFrom(self, pos)):
+                self.add_files(self.group, paths)
+            else:
+                self.ask_kind(paths, self.mapToGlobal(pos))
+
+    #: the kinds a drop that is not on a kind's own place asks for (the graph's Session block asks the same)
+    ASKED_KINDS = ("lights", "darks", "flats", "bias")
+
+    def ask_kind(self, paths: list, where):
+        """Files dropped where no kind is meant: those whose FITS header says their kind go to it at once (one undo
+        step), a small menu asks the kind of the others; nothing of them is added before the choice."""
+        from .graphview.files import by_header_kind
+        from ..graphcore.rules import FILE_LABEL
+        told, rest = by_header_kind(paths)
+        if told:
+            said = []
+            with self.s.batch():
+                for kind, lst in told.items():
+                    notes: list = []
+                    n = self.s.add_session_entries(self.sid, kind, lst, notes, [], False, [])
+                    if n:
+                        said.append(plural(n, "{n} file added to {kind}", "{n} files added to {kind}",
+                                           kind=_(FILE_LABEL[kind])))
+                    said += [_(t).format(name=nm) for t, nm in notes[:1]]
+            if said:
+                self.select_group(next(iter(told)))
+                self.toast.emit(" · ".join(said) + " · Ctrl+Z")
+        if not rest:
+            return
+        m = QMenu(self)
+        m.setObjectName("drop_kind")
+        for k in self.ASKED_KINDS:
+            a = m.addAction(_(FILE_LABEL[k]))
+            a.setData(k)
+            a.triggered.connect(lambda _c=False, kk=k: self.add_files(kk, list(rest)))
+        self.kind_menu = m
+        m.popup(where)
 
     # ------------------------------------------------------------ data
     def refresh(self):

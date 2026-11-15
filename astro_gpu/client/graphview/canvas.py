@@ -1987,8 +1987,16 @@ class GraphCanvas(QGraphicsView):
     ASKED_KINDS = ("lights", "darks", "flats", "bias")
 
     def ask_kind(self, vp: QPoint, session, paths):
-        """Files dropped on a Session block, not on one of its rows: a small menu at the drop point says which kind
-        they are (Lights, Darks, Flats, Bias); nothing is added before the choice."""
+        """Files dropped on a Session block, not on one of its rows: those whose FITS header says their kind go to it
+        at once (files.by_header_kind: a master dark and a master flat dropped together are a dark and a flat), one
+        undo step; for the others a small menu at the drop point says which kind they are (Lights, Darks, Flats,
+        Bias); nothing of them is added before the choice. Nothing is deduced from a name."""
+        from . import files
+        told, paths = files.by_header_kind(paths)
+        if told:
+            self.bridge.drops.drop_groups(session, told)
+        if not paths:
+            return
         m = QMenu(self)
         m.setObjectName("drop_kind")
         for k in self.ASKED_KINDS:
