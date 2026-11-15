@@ -518,9 +518,10 @@ class GraphEditing:
                           default=str)
 
     def _commit(self, g):
-        """The graph ``g`` becomes the truth: compiled into the same definition, the views read again."""
-        self._g = g
-        self.compiled = compile_into(g, self.p)
+        """The graph ``g`` becomes the truth: compiled into the same definition, the views read again. Compiled first:
+        a graph that does not compile is never left in place of the one the definition was compiled from."""
+        c = compile_into(g, self.p)
+        self._g, self.compiled = g, c
         self._rebuild_views()
         self._sig = self._def_sig()
         self.revision += 1

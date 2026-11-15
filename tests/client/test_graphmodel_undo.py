@@ -337,3 +337,18 @@ def test_an_edit_of_post_after_undo_is_not_taken_back_by_redo(model):
     assert model.redo()
     assert len(model.p.post["versions"]) == 2
     assert model.p.post["versions"][0].get("note") == "edited after undo"
+
+
+def test_a_graph_that_does_not_compile_is_not_left_in_place(model, monkeypatch):
+    """The graph was replaced before it was compiled: a compilation that raised left the new graph with the old
+    definition. It is compiled first, and replaces the graph only then."""
+    from astro_gpu.client import graphmodel
+    before, compiled = model_json(model._g), model.compiled
+
+    def boom(*_a, **_k):
+        raise RuntimeError("does not compile")
+    monkeypatch.setattr(graphmodel, "compile_into", boom)
+    with pytest.raises(RuntimeError):
+        model.apply([("add_block", {"kind": "deconv", "row": row(model).id})])
+    monkeypatch.undo()
+    assert model_json(model._g) == before and model.compiled is compiled
