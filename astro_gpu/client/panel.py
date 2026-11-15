@@ -1221,7 +1221,8 @@ class Panel(QWidget):
 
     def recipe_settings(self, p):
         """The parameters of a recipe other than the four types' frozen ones (theirs are their stage's settings, shown
-        as any block's): one row each, its name, its value, its help in the tooltip."""
+        as any block's): one row each, its name, its value, its help in the tooltip. A change goes the way of every
+        block's (``propose_recipe``): a draft on a block with results up to date."""
         s = self.s
         params = s.recipe_parameters(p) if hasattr(s, "recipe_parameters") else {}
         if not params:
@@ -1229,28 +1230,44 @@ class Panel(QWidget):
         self.bv.addWidget(self.group_title(_("Recipe")))
         for name, q in params.items():
             row = QHBoxLayout()
-            lab = label(_(q.get("label") or name), None)
+            text = _(q.get("label") or name)
+            lab = label(text, None)
             tip = _(q["help"]) if q.get("help") else ""
             lab.setToolTip(tip)
             row.addWidget(lab, 1)
+            shown = self.draft_recipe(name, q["value"])      # the block's draft, at once
             if "choices" in q:
                 w = QComboBox()
                 for c in q["choices"]:
                     w.addItem(_(c), c)
-                w.setCurrentIndex(max(0, w.findData(q["value"])))
-                w.activated.connect(lambda k, n=name, b=w, v=q["value"]: b.itemData(k) != v and self._recipe_change(
-                    lambda: s.set_recipe_value(p, n, b.itemData(k))))
+                w.setCurrentIndex(max(0, w.findData(shown)))
+                w.activated.connect(lambda k, n=name, b=w, v=q["value"], lb=text: self.propose_recipe(
+                    n, b.itemData(k), v, lb, _(str(v)), b.itemText(k)))
             else:
                 w = QDoubleSpinBox()
                 w.setRange(float(q.get("min", -1e6)), float(q.get("max", 1e6)))
                 w.setDecimals(2)
                 w.setSingleStep(float(q.get("step") or 1.0))
-                w.setValue(float(q["value"]))
-                w.editingFinished.connect(lambda n=name, b=w, v=float(q["value"]): b.value() != v and self._recipe_change(
-                    lambda: s.set_recipe_value(p, n, b.value())))
+                w.setValue(float(shown))
+                w.editingFinished.connect(lambda n=name, b=w, v=float(q["value"]), sh=float(shown), lb=text:
+                                          b.value() != sh and self.propose_recipe(
+                                              n, b.value(), v, lb, number(v), number(b.value())))
             w.setToolTip(tip)
             row.addWidget(w)
             self.bv.addLayout(row)
+
+    def propose_recipe(self, name, value, applied, text, old, new):
+        """A parameter of a combination's recipe changed: a draft of the block, as any block's setting."""
+        self._propose(dict(kind="recipe", name=name, value=value),
+                      _("{label}: {old} → {new}").format(label=text, old=old, new=new), f"{text.lower()} {new}",
+                      same=value == applied)
+
+    def draft_recipe(self, name, default):
+        """A parameter of the recipe as the block's draft has it."""
+        for c in self._draft_entries():
+            if c["kind"] == "recipe" and c["name"] == name:
+                return c["value"]
+        return default
 
     def survey_row(self, p):
         """The H-alpha survey the Gradient block keeps its samples away from, when the field's is not on this computer:
@@ -1652,6 +1669,13 @@ class Panel(QWidget):
     def _change_id(c):
         if c["kind"] == "param":
             return "param", c["stage"], c["name"]
+        if c["kind"] == "recipe":
+            return "recipe", c["name"]
+        if c["kind"] == "method":
+            return "method", c["key"]
+        if c["kind"] == "layer":                         # one slider, or the blend mode, of a Combine layers
+            v = c["values"]
+            return ("layer", c["lid"], "slider", v["slider"][0]) if "slider" in v else ("layer", c["lid"], "blend")
         if c["kind"] == "params":
             return ("params",) + tuple((st, nm) for st, nm, _v in c["items"])
         return "opt", c.get("key")
@@ -1739,6 +1763,7 @@ class Panel(QWidget):
         s = self.s
         from .model import METHOD_OPT
         cur = method_of(p, k)                           # a block placed twice ("fond~2"): its own node's (round 3)
+        node_key = k
         again, k = "~" in k or k == "synth", k.partition("~")[0]          # Synthetic stars: a block of the graph only
         self.bv.addWidget(self.group_title(_("Method")))
         opt = METHOD_OPT[k]
@@ -1747,6 +1772,10 @@ class Panel(QWidget):
             want = self.draft_opt(opt, None)
             cur = next((m["key"] for m in methods_of(k)
                         if want is not None and method_value(k, m["key"]) == want), cur)
+        else:                                           # a block of the graph only: its node's method, drafted too
+            want = next((c["method"] for c in self._draft_entries() if c["kind"] == "method"
+                         and c["key"] == node_key), None)
+            cur = next((m["key"] for m in methods_of(k) if want is not None and m["engine_key"] == want), cur)
         spec = prefs.spec()
         for m in methods_of(k):
             if m["new"] and not spec:
@@ -1767,7 +1796,9 @@ class Panel(QWidget):
                 ok, why = False, _("Needs the image's scale: place the Astrometry block in this workflow.")
             card = MethodCard(m, on, ok, times, "gpu" if s.gpu else "cpu", why)
             if not on and ok and again:
-                card.clicked.connect(lambda ek=m["engine_key"], nm=m["name"]: self._node_method(ek, _(nm)))
+                card.clicked.connect(lambda ek=m["engine_key"], nm=m["name"], sh=m["short"], mk=m["key"]: self._propose(
+                    dict(kind="method", key=node_key, method=ek), self._method_words(k, applied, nm), _(sh),
+                    same=mk == applied))
             elif not on and ok:
                 card.clicked.connect(lambda mk=m["key"], nm=m["name"], sh=m["short"]: self.propose_opt(
                     opt, method_value(k, mk), self._method_words(k, applied, nm), _(sh), same=mk == applied))
@@ -1780,17 +1811,6 @@ class Panel(QWidget):
         if old is None:
             return _("Method: {name}").format(name=_(name))
         return _("Method: {old} → {new}").format(old=old, new=_(name))
-
-    def _node_method(self, method: str, name: str):
-        """The method of a block placed twice, chosen on its cards: stored on its node, one Undo step, said (round 3:
-        its Method list was greyed "Set by the options of the workflow")."""
-        from .graphnode import node_title
-        node = self.node
-        if node is None or not node.paths:
-            return
-        if self.s.set_node_method(node.paths, node.key, method):
-            self.toast.emit(_("{block}: {method} · Ctrl+Z").format(block=node_title(self.s, node), method=name))
-        self.changed.emit()
 
     def stack_methods(self, p):
         """The stacking methods the engine offers, as cards; the method the engine chose is marked "Automatic" (with its
@@ -1992,14 +2012,26 @@ class Panel(QWidget):
               "of a combination of stars)"),
             None if stars_pid is None or is_fusion_view(s.view(stars_pid)) else "stars"))
         sliders = dict(lay.get("sliders") or {})
+        drafted = {}                                      # the block's draft: its values shown at once
+        for c in self._draft_entries():
+            if c["kind"] == "layer" and c["lid"] == node.lid:
+                drafted.update({"blend": c["values"]["blend"]} if "blend" in c["values"] else
+                               {("slider", c["values"]["slider"][0]): c["values"]["slider"][1]})
 
-        def commit(key, v):
-            if abs(v - 2) < 0.02:
-                sliders.pop(key, None)
-            else:
-                sliders[key] = v
+        def commit(key, v, name):
+            """A slider moved: a change of the block as any block's (a draft when its image is up to date)."""
+            old = sliders.get(key, 2.0)
             with s.batch():                               # its layer made real and the value: one undo step (decision 7)
-                s.set_post_layer(lid(), self, sliders=dict(sliders))
+                self._propose(dict(kind="layer", lid=lid(), values={"slider": [key, v]}),
+                              _("{label}: {old} → {new}").format(label=name, old=offset_text(old), new=offset_text(v)),
+                              f"{name.lower()} {offset_text(v)}", same=abs(v - old) < 0.02)
+
+        def blend(b):
+            old = lay.get("blend") or BLENDS[0]
+            with s.batch():
+                self._propose(dict(kind="layer", lid=lid(), values={"blend": b}),
+                              _("{label}: {old} → {new}").format(label=_("Star blend mode"), old=_(old), new=_(b)),
+                              _(b).lower(), same=b == old)
         group = None
         infos = [x for x in s.slider_infos(p, "combined") if x.available]     # the stars first: what the block is for
         for sd in sorted(infos, key=lambda x: x.group != STARS_GROUP):
@@ -2014,16 +2046,16 @@ class Panel(QWidget):
                         cb.addItem(_(b), b)
                     cb.setToolTip(_("How the stars go back on the starless image: Screen (the usual way), Linear "
                                     "dodge (add) or Lighten"))
-                    cb.setCurrentIndex(max(0, BLENDS.index(lay.get("blend") or BLENDS[0])))
-                    cb.currentIndexChanged.connect(lambda i, cb=cb: self._one_step(
-                        lambda: s.set_post_layer(lid(), self, blend=cb.itemData(i))))
+                    cb.setCurrentIndex(max(0, BLENDS.index(drafted.get("blend") or lay.get("blend") or BLENDS[0])))
+                    cb.activated.connect(lambda i, cb=cb: blend(cb.itemData(i)))
                     row.addWidget(cb, 1)
                     self.bv.addLayout(row)
-            sl = ContSlider(_(sd.name), 0, 4, sliders.get(sd.key, 2.0), 2, ends=[_(e) for e in sd.ends],
-                            show=offset_text)
+            sl = ContSlider(_(sd.name), 0, 4, drafted.get(("slider", sd.key), sliders.get(sd.key, 2.0)), 2,
+                            ends=[_(e) for e in sd.ends], show=offset_text)
             ok, why, _need = s.slider_state(p, sd.key, "combined")
             sl.set_available(ok, why)
-            sl.done.connect(lambda v, k=sd.key: commit(k, v))
+            name = _(sd.name)
+            sl.done.connect(lambda v, k=sd.key, nm=name: commit(k, v, nm))
             self.bv.addWidget(sl)
         self.bv.addSpacing(8)
         b = QPushButton(_("Open Post"))
