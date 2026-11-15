@@ -2113,7 +2113,7 @@ class SideScroll(QScrollArea):
     frame's facts and the viewer's tools are wider than a small screen). A scroll bar under the row only when it is
     needed."""
 
-    def __init__(self, inner: QWidget, parent=None):
+    def __init__(self, inner: QWidget, parent=None, min_width: int = 240):
         super().__init__(parent)
         self.setWidget(inner)
         self.setWidgetResizable(True)
@@ -2121,7 +2121,7 @@ class SideScroll(QScrollArea):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.setMinimumWidth(240)
+        self.setMinimumWidth(min_width)
         self.setStyleSheet("QScrollArea { background: transparent; border: none; }")
         self.viewport().setAutoFillBackground(False)
         inner.setAutoFillBackground(False)
@@ -2734,7 +2734,7 @@ class ImageView(QWidget):
         self.blink_b.setToolTip(_("Plays the frames at 5 frames/s (Space)"))
         self.blink_b.toggled.connect(self._blink_toggled)
         row.addWidget(self.blink_b)
-        self.lock_c = QCheckBox(_("Same stretch for all frames"))
+        self.lock_c = QCheckBox(_("Same stretch"))
         self.lock_c.setToolTip(_("Keeps the stretch of the frame shown for the next frames of the same kind, so that "
                                  "blinking shows what changes. Off: each frame gets its own automatic stretch."))
         self.lock_c.setChecked(False)
@@ -2743,7 +2743,9 @@ class ImageView(QWidget):
         row.addSpacing(14)
         self.band = InfoBand()
         self.band.excludeClicked.connect(self.toggle_excluded)
-        row.addWidget(SideScroll(self.band), 1)       # never wider than the window: it scrolls sideways instead
+        # never wider than the window: it scrolls sideways instead; its room is what the row's other controls leave
+        # (the bar's smallest width is under a 1366 x 768 window's Inspect pane, so that nothing is drawn over another)
+        row.addWidget(SideScroll(self.band, min_width=110), 1)
         for w in (self.band.state, self.band.toggle):  # Included / Exclude stay in view, out of the scrolled row
             self.band.layout().removeWidget(w)
             row.addWidget(w)

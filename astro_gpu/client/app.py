@@ -31,7 +31,7 @@ import traceback
 from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, QLibraryInfo, QLocale, Qt, QTimer, QTranslator
-from PySide6.QtGui import QAction, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QFont, QFontMetrics, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QApplication,
@@ -197,6 +197,8 @@ class PageHolder(QWidget):
 
 #: an edit is copied for the recovery after a crash this long after it (ms)
 RECOVERY_MS = 3000
+#: the place of the project's name in the bar above the pages: fixed, so that the tabs never move with a name's length
+TITLE_W = 250
 #: an unattended run (the test suite, a walkthrough script) answers the save question beforehand: "save", "discard" or
 #: "cancel"; never set, the question is asked, with or without a screen
 SAVE_ANSWER_ENV = "FLOAT_SAVE_ANSWER"
@@ -336,13 +338,10 @@ class Main(QMainWindow):
         act(f, _("New project"), self.new_project, "Ctrl+N", role="new")
         act(f, _("Open images…"), self.open_images, role="open")
         act(f, _("Open project…"), self.open_other, "Ctrl+O", role="open")
-        rec = f.addMenu(_("Recent projects"))
-        for r in prefs.recent():
-            text = r["name"] + (f" · {r['target']}" if r.get("target") else "")
-            a = act(rec, text, lambda _x=False, path=r["path"]: self.open_project(path))
-            a.setToolTip(r["path"])
-        rec.setEnabled(bool(prefs.recent()))
-        rec.setToolTipsVisible(True)
+        self._recent_menu = f.addMenu(_("Recent projects"))
+        self._recent_menu.setToolTipsVisible(True)
+        self._fill_recent()
+        f.aboutToShow.connect(self._fill_recent)         # a project saved or opened since is listed when the menu opens
         f.addSeparator()
         act(f, _("Save"), self.save, "Ctrl+S", enabled=has, role="save")
         act(f, _("Save as…"), self.save_as, enabled=has, role="save")
@@ -389,6 +388,17 @@ class Main(QMainWindow):
             m.setToolTipsVisible(True)
         self._update_actions()
         self._sync_layout_marks()
+
+    def _fill_recent(self):
+        """File > Recent projects, from the settings as they are now (a project just saved is in them)."""
+        rec = self._recent_menu
+        rec.clear()
+        for r in prefs.recent():
+            text = r["name"] + (f" · {r['target']}" if r.get("target") else "")
+            a = rec.addAction(text)
+            a.triggered.connect(lambda _x=False, path=r["path"]: self.open_project(path))
+            a.setToolTip(r["path"])
+        rec.setEnabled(bool(prefs.recent()))
 
     def _update_actions(self):
         """What the menus allow now: Undo / Redo, Stop, Export."""
@@ -836,6 +846,7 @@ class Main(QMainWindow):
         h.setContentsMargins(12, 0, 12, 0)
         self.title = QLabel()
         self.title.setStyleSheet("font-size: 11pt;")
+        self.title.setFixedWidth(TITLE_W)             # the tabs keep their place: a long name is cut, whole in the tooltip
         h.addWidget(self.title)
         h.addSpacing(30)
         self.mode_btns = []
@@ -1120,9 +1131,23 @@ class Main(QMainWindow):
             self.setWindowTitle(f"{APP_NAME} · {self.project.name}{star}")
 
     def project_name(self) -> str:
+        """The project's name (bold) and its target in the title's place, cut with "…" to fit it (the whole text goes
+        to the tooltip): the tabs after the title never move with the length of a name."""
         pr = self.project
-        name = "<b>" + html.escape(pr.name) + "</b>"
-        return name + ("  ·  " + html.escape(pr.target) if pr.target else "")
+        self.title.ensurePolished()                  # its style sheet's size
+        font = self.title.font()
+        bold = QFont(font)
+        bold.setBold(True)
+        room = TITLE_W - 4
+        name = QFontMetrics(bold).elidedText(pr.name, Qt.ElideRight, room)
+        out = "<b>" + html.escape(name) + "</b>"
+        sep = "  ·  "
+        left = room - QFontMetrics(bold).horizontalAdvance(name) - QFontMetrics(font).horizontalAdvance(sep)
+        if pr.target and left > 40:
+            out += sep + html.escape(QFontMetrics(font).elidedText(pr.target, Qt.ElideRight, left))
+        whole = pr.name + (sep + pr.target if pr.target else "")
+        self.title.setToolTip(whole if QFontMetrics(bold).horizontalAdvance(whole) > room else "")
+        return out
 
     def request_refresh(self, *_a):
         if not self._pending:
@@ -1674,6 +1699,8 @@ class Main(QMainWindow):
         self.show_home(last)
         if self.project is not None:
             self._flush_post()                       # Post is made again from the project: its last edit first
+            if self.s is not None:
+                self.s._rebuild_views()              # the workflows' default names, in the new language
             self.build_project()
             if on_home:
                 self.show_home()
@@ -1699,8 +1726,6 @@ class Main(QMainWindow):
         if self.s is not None:
             self.s.set_machine(*self._device())
         if self.render is not None:                  # Post picks its device again before its next render
-            if self.s is not None:
-                self.s._rebuild_views()              # the workflows' default names, in the new language
             from .services.render import default_device_pref
             self.render.pref = default_device_pref() if self._device()[0] else "cpu"
             self.render._busy_at, self.render._last_busy = 0.0, "?"

@@ -33,6 +33,7 @@ from ...graphcore.shapes import Result
 from .. import prefs
 from ..graphnode import SIDE_INPUTS, STAR_OUTPUTS
 from ..i18n import _, number, plural
+from ..names import shown
 from ..layout import pinch_factor, wheel_gesture
 from ..widgets import Spinner
 from . import style
@@ -725,10 +726,10 @@ class GraphCanvas(QGraphicsView):
             self.blocks[r] = it
             rects.append((QRectF(box.x, box.y, box.w, box.h), QColor(STATE_COL.get(it.d["state"], "#5d6470"))))
         for row_id, text, x, y in drawing.captions:
-            sc.addItem(CaptionItem(x, y, text, badge=doc.row_badge(row_id)))
+            sc.addItem(CaptionItem(x, y, shown(text), badge=doc.row_badge(row_id)))
         self.minimap.rects = rects
         nw = drawing.extras.get("new_workflow")
-        if nw is not None and (drawing.boxes or drawing.cards):
+        if nw is not None and bridge.graph.rows:        # a blank page has its own link, « From template »
             self.new_link = LinkItem(QPointF(nw.x + nw.w / 2, nw.y + nw.h / 2), _("New workflow"))
             self.new_link.setToolTip(_("A further workflow from a template, a copy of a workflow or a template file"))
             sc.addItem(self.new_link)
@@ -741,6 +742,7 @@ class GraphCanvas(QGraphicsView):
         self.project_item = ProjectItem(pr, title, line, state, bridge.selected == PROJECT, tip)
         sc.addItem(self.project_item)
         rect = sc.itemsBoundingRect()                    # the drawing's own box (blocks, bands, wires, captions)...
+        self._drawn_bottom = rect.bottom()               # (the blank page's words go below it)
         if rect.width() < 10 or rect.height() < 10:
             rect = rect.united(QRectF(rect.x(), rect.y(), 10, 10))
         rect = rect.adjusted(-MARGIN, -MARGIN, MARGIN, MARGIN)   # ...plus a margin: the canvas never scrolls beyond it
@@ -760,6 +762,8 @@ class GraphCanvas(QGraphicsView):
         if show:
             self._show(*show)
         self._update_buttons()
+        if not self.blank.isHidden():                       # the view's zoom is set now: the words go below the drawing
+            self._place_blank()
         self.show_wait()
         self.viewport().update()
 
@@ -1053,10 +1057,16 @@ class GraphCanvas(QGraphicsView):
             self._blank_built = True
         if blank:
             self.blank.resize(560, 110)
-            vp = self.viewport()
-            self.blank.move((vp.width() - 560) // 2, vp.height() // 2 - 150)
+            self._place_blank()
             self.blank.show()
             self.blank.raise_()
+
+    def _place_blank(self):
+        """The blank page's words in the middle of the view, below the drawing (the bands, their titles and Post are
+        drawn at the top, never under the words)."""
+        vp = self.viewport()
+        below = self.mapFromScene(QPointF(0, getattr(self, "_drawn_bottom", 0))).y() + 16
+        self.blank.move(max(0, (vp.width() - 560) // 2), max(0, min(below, vp.height() - 110)))
 
     # ================================================================== zoom, view
     def _content(self) -> QRectF:
@@ -1079,6 +1089,8 @@ class GraphCanvas(QGraphicsView):
             self.horizontalScrollBar().setValue(self.horizontalScrollBar().minimum())
             self.verticalScrollBar().setValue(self.verticalScrollBar().minimum())
         self.b_zoom.setText(f"{round(k * 100)} %")
+        if not self.blank.isHidden():
+            self._place_blank()
 
     # ------------------------------------------------------------------ the user's zoom, kept with the project
     def _project_key(self):
@@ -1145,9 +1157,16 @@ class GraphCanvas(QGraphicsView):
         vp = self.viewport()
         self.auto = False
         self._keep_in_view = ()
-        self._k = max(MIN_ZOOM, min(MAX_AUTO, min(vp.width() / r.width(), vp.height() / r.height())))
+        fit = min(vp.width() / r.width(), vp.height() / r.height())
+        # never smaller than the readable size of the default view (0.75: below it the titles cannot be read, 1366 x 768
+        # gave 40 %): the old page's default view kept this floor and went to the left end, Post a click away
+        self._k = max(MIN_AUTO, min(MAX_AUTO, fit))
         self.setTransform(QTransform.fromScale(self._k, self._k))
-        self.centerOn(r.center())
+        if fit >= MIN_AUTO:
+            self.centerOn(r.center())
+        else:
+            self.horizontalScrollBar().setValue(self.horizontalScrollBar().minimum())
+            self.verticalScrollBar().setValue(self.verticalScrollBar().minimum())
         self.b_zoom.setText(f"{round(self._k * 100)} %")
         self.b_all.setChecked(True)
         self._update_buttons()
@@ -1244,12 +1263,19 @@ class GraphCanvas(QGraphicsView):
             self._show(*self._keep_in_view, follow=True)
         self._update_buttons()
         self._place_wait()
-        if self.blank.isVisible():
-            self.blank.move((self.viewport().width() - 560) // 2, self.viewport().height() // 2 - 150)
+        if not self.blank.isHidden():
+            self._place_blank()
+
+    def showEvent(self, e):                                           # noqa: N802
+        super().showEvent(e)
+        if not self.blank.isHidden():                    # built while hidden, sized since: the words go where it is now
+            self._place_blank()
 
     def scrollContentsBy(self, dx, dy):                               # noqa: N802
         super().scrollContentsBy(dx, dy)
         self._update_buttons()
+        if not self.blank.isHidden():
+            self._place_blank()
         if not self.auto:
             self.remember_view()
 
@@ -1453,7 +1479,7 @@ class GraphCanvas(QGraphicsView):
         if rows:
             m.addSeparator()
         for r in rows:
-            m.addAction(_("Copy of “{name}”").format(name=r.name),
+            m.addAction(_("Copy of “{name}”").format(name=shown(r.name)),
                         lambda _c=False, rid=r.id: bridge.act("duplicate_row", row=rid))
         m.exec(global_pos)
 
@@ -1621,18 +1647,18 @@ class GraphCanvas(QGraphicsView):
         blk = bridge.block(ident) if it.d["kind"] != "card" else None
         if row is not None:                              # the menu's "Workflow > Rename": the row's name
             r = bridge.row(row)
-            name = r.name
-            fn = lambda t: bridge.act("rename_row", row=row, name=t)               # noqa: E731
+            name = shown(r.name)
+            fn = lambda t: t == name or bridge.act("rename_row", row=row, name=t)  # noqa: E731 - unchanged: as stored
         elif it.d["kind"] == "card":
             r = bridge.row(ident)
-            name = r.name if r else ""
-            fn = lambda t: bridge.act("rename_row", row=ident, name=t)             # noqa: E731
+            name = shown(r.name) if r else ""
+            fn = lambda t: t == name or bridge.act("rename_row", row=ident, name=t)  # noqa: E731
         elif blk.kind == "session" and r is not None and len(r.nights) > 1:
             name = blk.name or it.d["title"]
             fn = lambda t: bridge.act("rename_night", night=ident, name=t)         # noqa: E731
         elif r is not None:
-            name = r.name
-            fn = lambda t: bridge.act("rename_row", row=r.id, name=t)              # noqa: E731
+            name = shown(r.name)
+            fn = lambda t: t == name or bridge.act("rename_row", row=r.id, name=t)   # noqa: E731
         else:
             return
         ed = NameEdit(self.viewport(), name, fn)
