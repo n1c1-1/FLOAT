@@ -57,7 +57,7 @@ W_NONE = {"stack": 124, "session": 92, "lights": 100, "darks": 96, "flats": 96, 
 W_BOTH = {"stack": 118, "session": 88, "lights": 96, "darks": 88, "flats": 88, "bias": 88, "flat_darks": 88,
           "cal": 80, "reg": 90, "sel": 100, "stk": 110}
 ORDER = ["stack", "session", "lights", "darks", "flats", "bias", "flat_darks", "cal", "reg", "sel", "stk"]
-HINT = "One row per session. Drop each folder in its cell. The Common row: what serves every session."
+HINT = "One row per session. Drop the files in their cell. The Common row: what serves every session."
 FOOTNOTE = "Read from the files, for information: nothing is decided from it without your consent"
 ADD_SESSION_TIP = "A new session in the stack of the chosen cell, else in the first stack: its light frames go in its cells"
 ADD_STACK_TIP = "A new stack at the bottom of the table, with one session: its light frames go in its cells"

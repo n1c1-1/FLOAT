@@ -143,7 +143,7 @@
   "nothing to replace: the cell is empty": "rien à remplacer : la case est vide",
   "Nothing to undo": "Rien à annuler",
   "on ref. grid": "grille réf.",
-  "One row per session. Drop each folder in its cell. The Common row: what serves every session.": "Une ligne par session. Déposez chaque dossier dans sa case. La ligne Commun : ce qui sert à toutes les sessions.",
+  "One row per session. Drop the files in their cell. The Common row: what serves every session.": "Une ligne par session. Déposez les fichiers dans leur case. La ligne Commun : ce qui sert à toutes les sessions.",
   "Only differences": "Écarts seulement",
   "Only the files of this type (by their extension) are taken at import; the others are left out.": "Seuls les fichiers de ce type (par leur extension) sont pris à l'import ; les autres sont laissés.",
   "outside the cells": "hors des cases",
