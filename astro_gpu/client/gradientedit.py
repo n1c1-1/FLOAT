@@ -1797,14 +1797,21 @@ class GradientEditor(QObject):
             self.say(_("{n} samples removed").format(n=n0))
         elif key == "generate":
             pts = self.grid_points_of()
+            if pts is None:
+                self.say(_("The stack is not computed"))
+                return
             self.set_draft({"sample_points": pts})
             self.say(_("{n} samples on a grid").format(n=len(pts)))
         elif key in ("objects", "nebula"):
             self._run_points([key], [list(x) for x in self.work["sample_points"]])
 
-    def grid_points_of(self) -> list:
-        """A regular grid of ``samples`` per shorter side (the stage's generated grid's places), in stack pixels."""
-        W, H = self._stack_size()
+    def grid_points_of(self) -> list | None:
+        """A regular grid of ``samples`` per shorter side (the stage's generated grid's places), in stack pixels; None
+        while no stack can be read."""
+        size = self._stack_size()
+        if size is None:
+            return None
+        W, H = size
         n = self._density()
         step = min(H, W) / n
         return [[round(float(x), 1), round(float(y), 1)] for y in np.arange(step / 2, H, step)
@@ -1861,25 +1868,28 @@ class GradientEditor(QObject):
     def cursor(self):
         return Qt.BlankCursor if self.mode in ("brush", "eraser") else Qt.CrossCursor
 
-    def _stack_size(self) -> tuple[int, int]:
-        """(W, H) of the stack: the reduced copy's, else read from the stack (the block may not be computed)."""
+    def _stack_size(self) -> tuple[int, int] | None:
+        """(W, H) of the stack: the reduced copy's, else read from the stack (the block may not be computed; an
+        Outdated stack: its previous result, the one shown); None while no stack can be read."""
         if self.small is not None and self.small["pid"] == self.p.pid:
             return self.small["W"], self.small["H"]
         if self._dims is None or self._dims[0] != self.p.pid:
             from ..api import stage_outputs
             try:
-                out = stage_outputs(self.s.p, self.p.pid, "stack")
+                out = stage_outputs(self.s.p, self.p.pid, "stack") or \
+                    stage_outputs(self.s.p, self.p.pid, "stack", which="previous")
                 H, W = np.load(f"{out.dir}/drz_full.npy", mmap_mode="r").shape[1:]
             except (OSError, ValueError, AttributeError):
-                return 1, 1
+                return None
             self._dims = (self.p.pid, int(W), int(H))
         return self._dims[1], self._dims[2]
 
     def _f(self, canvas) -> float:
         """Displayed image pixels per stack pixel."""
-        if canvas.display is None:
+        size = self._stack_size()
+        if canvas.display is None or size is None:
             return 1.0
-        return canvas.display.size()[0] / max(self._stack_size()[0], 1)
+        return canvas.display.size()[0] / max(size[0], 1)
 
     def _pick(self, canvas, sx, sy) -> int | None:
         pts = self.work["sample_points"]
@@ -1896,6 +1906,8 @@ class GradientEditor(QObject):
         return took
 
     def _press(self, canvas, ix, iy, button) -> bool:
+        if self.mode is not None and self._stack_size() is None:
+            return True                        # no stack to place it on: nothing recorded at a wrong place
         f = self._f(canvas)
         sx, sy = ix / f, iy / f
         if self.mode == "points":
@@ -2273,7 +2285,7 @@ class GradientEditor(QObject):
             same = (s is not None and s.get("manual") and len(s["x"]) == len(P)
                     and np.allclose(np.c_[s["x"], s["y"]], P, atol=0.6))
             used = list(s["used"]) if same else [None] * len(P)
-            W, H = self._stack_size()
+            W, H = self._stack_size() or (1, 1)
             box = s["box"] if s is not None else max(4, int(min(W, H) / self._density() / 2))
             ex = self._excluded()
             if ex is not None:                 # in an excluded area: not used, whatever the last preview said

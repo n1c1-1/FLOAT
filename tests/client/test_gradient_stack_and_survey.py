@@ -74,3 +74,39 @@ def test_a_copy_read_from_the_replaced_stack_is_not_kept(ed, monkeypatch):
     ed._load(p)
     wait(ed)
     assert ed._stack_size() == (1000, 600)
+
+
+class _Out:
+    def __init__(self, d):
+        self.dir = str(d)
+
+
+class _Canvas:
+    """What the tool reads of the image: its displayed size and zoom."""
+    scale = 1.0
+    display = type("D", (), {"size": lambda self: (900, 600)})()
+
+
+def test_an_outdated_stack_gives_its_previous_size(ed, monkeypatch, tmp_path):
+    from astro_gpu import api
+    np.save(tmp_path / "drz_full.npy", np.zeros((3, 40, 70), np.float32))
+    monkeypatch.setattr(api, "stage_outputs", lambda project, pid, stage, which="current":
+                        _Out(tmp_path) if stage == "stack" and which == "previous" else None)
+    ed.small, ed._dims = None, None
+    assert ed._stack_size() == (70, 40)
+    pts = np.asarray(ed.grid_points_of())
+    assert pts[:, 0].max() > 35 and pts[:, 1].max() > 20
+
+
+def test_no_sample_is_placed_while_the_stack_size_is_unknown(ed, monkeypatch):
+    from astro_gpu import api
+    monkeypatch.setattr(api, "stage_outputs", lambda *a, **k: None)
+    ed.small, ed._dims = None, None
+    ed.set_mode("points")
+    ed.small = None                                               # its reading did not come back
+    monkeypatch.setattr(ed, "_run", lambda *a, **k: None)
+    before = [list(x) for x in ed.work["sample_points"]]
+    ed._press(_Canvas(), 450.0, 300.0, ge.Qt.LeftButton)          # a quick click
+    assert ed.work["sample_points"] == before
+    ed.act("generate")
+    assert [list(x) for x in ed.work["sample_points"]] == before
