@@ -1302,7 +1302,7 @@ class RenderWorker(QThread):
                 import traceback
                 if lane == "export":
                     self.exported.emit([], f"{type(e).__name__}: {e}")
-                else:
+                elif work is not None:                  # (the release has no request: nothing to answer)
                     self.failed.emit(work.seq, work.kind, f"{type(e).__name__}: {e}\n{traceback.format_exc(limit=5)}")
             finally:
                 with self._cond:
