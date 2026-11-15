@@ -2375,9 +2375,14 @@ def sky_objects(p: Project2, wf: int | Workflow, which: str = "current") -> list
     is not computed; ``CatalogueUnavailable`` (a plain message) when the catalogue shipped with the package is
     incomplete. Where the names come from: ``core.skyobjects.catalogue_source()``. The first call of a session reads
     the catalogue (a few tens of ms from its cache, about a second the first time): worker thread."""
-    import numpy as np
-
     from .core import skyobjects as so
+    wcs, w, h = _field_of(p, wf, which)
+    return so.objects_in_field(wcs, w, h)
+
+
+def _field_of(p: Project2, wf: int | Workflow, which: str = "current"):
+    """(the astropy WCS of the workflow's solution, width, height) of the stack grid it was solved on."""
+    import numpy as np
     d = _need(p, wf, "astrometry", which)
     f = d / "wcs.fits"
     if not f.is_file():
@@ -2395,7 +2400,17 @@ def sky_objects(p: Project2, wf: int | Workflow, which: str = "current") -> list
         w, h = int(meta["width"]), int(meta["height"])
     else:
         h, w = np.load(st / "drz_full.npy", mmap_mode="r").shape[-2:]
-    return so.objects_in_field(hit[1], w, h)
+    return hit[1], w, h
+
+
+def main_sky_object(p: Project2, wf: int | Workflow, which: str = "current") -> SkyObject | None:
+    """The object that names the field of the workflow's solution: the most prominent one covering the field's centre
+    (``core.skyobjects.main_object``: Messier, then NGC / IC, then Sharpless, then the rest; the nearest to the centre
+    in its own size), None when the field holds no named object. Whatever the number of frames: it reads the solution
+    and the grid alone. Same errors as ``sky_objects``."""
+    from .core import skyobjects as so
+    wcs, w, h = _field_of(p, wf, which)
+    return so.main_object(wcs, w, h)
 
 
 # ---------------------------------------------------------------------------------------------- diagnostics of the basics

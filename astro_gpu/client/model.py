@@ -334,6 +334,8 @@ class Facts:
     lights: dict = field(default_factory=dict)
     #: the named objects of the first field solved, biggest first (core/skyobjects.SkyObject)
     in_field: list = field(default_factory=list)
+    #: the one of them that names the field (api.main_sky_object: covering its centre, Messier > NGC / IC > Sharpless)
+    main_object: object = None
 
 
 # ---------------------------------------------------------------------------------------------- worker jobs
@@ -382,6 +384,7 @@ def _facts_job(p) -> Facts:
     for w in p.workflows:
         try:
             f.in_field = list(api.sky_objects(p, w.id))
+            f.main_object = api.main_sky_object(p, w.id)
             break
         except Exception:  # noqa: BLE001 - not solved, no astrometry in it, no catalogue: nothing to say from it
             continue
@@ -1520,7 +1523,7 @@ class ProjectModel(QObject):
         t = self.p.target
         typed = (t.name or "").strip()
         field_ = self._facts.in_field
-        main = field_[0] if field_ else None
+        main = (self._facts.main_object or field_[0]) if field_ else None
         if not typed:
             if main is not None:
                 return TargetState("known", main.name, _("Found by Astrometry in the field"))
