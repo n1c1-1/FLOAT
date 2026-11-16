@@ -56,7 +56,17 @@ from .core import workflow as wfl
 from .core.project import Target, type_warnings
 from .core.project2 import KINDS, Project2, Session, Workflow
 from .core.skyobjects import CatalogueUnavailable, SkyObject  # noqa: F401 - re-exported: sky_objects raises it
-from .core.store import InputScan, KeyRules, Keys, Store, StoreProject, Upstream, earlier_version
+from .core.store import (
+    InputScan,
+    KeyRules,
+    Keys,
+    Store,
+    StoreProject,
+    Upstream,
+    earlier_version,
+    find_earlier,
+    use_earlier,
+)
 
 if TYPE_CHECKING:
     import numpy as np
@@ -541,6 +551,8 @@ class _Ctx:
         self.rules_obj: KeyRules | None = None
         self.spec: str | None = None
         self.fp: str | None = None
+        self.earlier_fp: str | None = None              # the definition the results under earlier labels were found for
+        self.earlier_seen: dict = {}                     # the manifests read for it, kept until ``refresh``
         self.keys: Keys | None = None
         self.store: Store | None = None
         self.store_root: str | None = None
@@ -619,7 +631,32 @@ def _store(p: Project2) -> Store | None:
             return c.store if c.store is not None else Store(root)
         if c.store is None or c.store_root != root:
             c.store, c.store_root = Store(root), root
-        return c.store
+            c.earlier_fp, c.earlier_seen = None, {}
+        store = c.store
+    _find_earlier(p, c, store)
+    return store
+
+
+def _find_earlier(p: Project2, c: _Ctx, store: Store) -> None:
+    """The results of the project made under earlier key labels, for the stages without a result of today's key
+    (core/store.find_earlier): found once per state of the definition and of the disk (``refresh`` asks again), and
+    handed to the store's folders, where every reader finds them. In memory: nothing is written in the project.
+    What was found for a key stays true whatever the definition becomes (a key says everything its result depends
+    on): after an edit, only the new keys are still to look for, at the first call that follows ``_keys``."""
+    if c.fp is not None and c.earlier_fp == c.fp:       # found for this definition (the usual call: nothing to do)
+        return
+    keys = _keys(p)
+    if c.earlier_fp == c.fp:
+        return
+    with _held(c, "earlier") as got:
+        if not got or (c.fp is not None and c.earlier_fp == c.fp):
+            return
+        fp = c.fp
+        try:
+            use_earlier(store, find_earlier(keys, store, c.earlier_seen))
+        except (KeyError, ValueError, OSError):         # a definition whose keys cannot be made now: none found
+            use_earlier(store, {})
+        c.earlier_fp = fp
 
 
 def _r2() -> Any:
@@ -645,6 +682,7 @@ def use_rules(p: Project2, rules: KeyRules | str | None, spec: str | None = None
         else:
             c.rules_obj, c.spec = rules, spec
         c.fp = None
+        c.earlier_fp = None
         c.autos.clear()
 
 
@@ -662,6 +700,8 @@ def refresh(p: Project2, scan: bool = False) -> None:
             c.scan.forget()
             c.warm_entries.clear()
         c.fp = None
+        c.earlier_fp = None
+        c.earlier_seen = {}
 
 
 def warm(p: Project2, progress: Callable[[float, str], None] | None = None) -> None:
@@ -671,11 +711,16 @@ def warm(p: Project2, progress: Callable[[float, str], None] | None = None) -> N
     say = progress or (lambda f, m: None)
     say(0.0, "loading the stage graph")
     keys = _keys(p)
-    store = _store(p)
     c = _ctx(p)
     ws = keys.project.workflows
     for i, w in enumerate(ws):
         say(0.1 + 0.8 * i / max(len(ws), 1), f"keys of {w.name}")
+        for s in keys.chain(w):
+            keys.key(w, s)
+    # the store once the keys are made: it looks for the results made under earlier key labels, which needs them all
+    # (asked first, it made them before the first word of progress)
+    store = _store(p)
+    for w in ws:
         for s in keys.chain(w):
             k = keys.key(w, s)
             if store is not None and s in ("inventory", "calibrate") and store.done(s, k):
@@ -1261,10 +1306,10 @@ def _dir(p: Project2, wf: int | Workflow, stage: str, which: str = "current") ->
     if which.partition("@")[0] == "latest":              # the current result, else the one an Outdated stage had
         rest = which[len("latest"):]
         return _dir(p, wf, stage, "current" + rest) or _dir(p, wf, stage, "previous" + rest)
+    keys = _keys(p)                                       # (before the store: it finds the results of these keys)
     store = _store(p)
     if store is None:
         return None
-    keys = _keys(p)
     w = keys.project.workflow(wf)
     which, _at, sid = which.partition("@")
     chain = keys.chain(w)
@@ -1278,7 +1323,9 @@ def _dir(p: Project2, wf: int | Workflow, stage: str, which: str = "current") ->
     if which == "previous":
         k = (p2.read_state(p.root)["last_keys"].get(str(w.id)) or {}).get(stage)
         # (its own key: the result of a stage that is Outdated because the block before it was recomputed in its place)
-        if not k or (k == keys.key(w, stage) and not Upstream(keys, store).redone(w, stage)):
+        # (or the folder of a result found under earlier key labels, which state.json names by its own key)
+        now = keys.key(w, stage)
+        if not k or (k in (now, store.found_key(stage, now)) and not Upstream(keys, store).redone(w, stage)):
             return None
     return store.dir(stage, k) if store.done(stage, k) else None
 
@@ -1830,7 +1877,7 @@ def states(p: Project2, update: bool = True) -> dict[tuple[int, str], StageState
                 bad.add(s)
                 continue
             m = up.manifest(s, k)
-            if m.get("status") == "done" and m.get("key", k) == k:          # store.done, its manifest read once
+            if store is not None and store.is_done(s, k, m):                # store.done, its manifest read once
                 # a result exists: it is used, whatever version of the method computed it (said, never recomputed by
                 # itself); unless it was made from an upstream result recomputed in its place since
                 earlier = earlier_version(keys, w, s, m)
@@ -1838,7 +1885,10 @@ def states(p: Project2, update: bool = True) -> dict[tuple[int, str], StageState
                     out[(w.id, s)] = StageState("stale", REASON_UPSTREAM_REDONE, k, k, earlier=earlier)
                 else:
                     out[(w.id, s)] = StageState("done", "", k, fallback=str(m.get("fallback") or ""), earlier=earlier)
-                new_last.setdefault(str(w.id), {})[s] = k
+                # the key of the folder that holds it (a result found under earlier key labels: its own key, as
+                # state.json has it since it was computed: nothing changes there, and it stays the "previous result"
+                # of the stage once a setting changes)
+                new_last.setdefault(str(w.id), {})[s] = store.found_key(s, k)
                 continue
             prev = prev_keys.get(s)
             if prev == k or not prev or store is None or not store.done(s, prev):
@@ -1904,6 +1954,7 @@ def cache_usage(p: Project2) -> CacheUsage:
     for w in keys.project.workflows:
         for s in keys.chain(w):
             now.add((s, keys.key(w, s)))
+            now.add((wfl.base(s), store.found_key(s, keys.key(w, s))))     # a result found under earlier labels: used
     ref = set(now)
     for kv in p2.read_state(p.root)["last_keys"].values():
         ref |= {(s, k) for s, k in kv.items()}
@@ -1980,7 +2031,7 @@ def clear_unused(p: Project2, items: Iterable[CacheItem] | None = None, include_
             freed += it.bytes
         except OSError:
             pass
-    _store(p).forget()
+    refresh(p)                                           # (the results under earlier labels are looked for again)
     return freed
 
 

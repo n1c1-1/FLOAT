@@ -843,8 +843,23 @@ class Store:
         return key
 
     def dir(self, stage: str, key: str) -> Path:
-        """``store/<stage>/<key>``; an instance's result lives in its stage's folder."""
+        """``store/<stage>/<key>``; an instance's result lives in its stage's folder. When the project has no result
+        of that key but one made under earlier key labels (``find_earlier``), that result's folder: every reader
+        goes through here, so the blocks after it, the runs, Post and Inspect read it as the block's result."""
+        return self.path / base(stage) / self.found_key(stage, key)
+
+    def own_dir(self, stage: str, key: str) -> Path:
+        """``store/<stage>/<key>`` itself, never an earlier result's folder: where a job of this key puts its result."""
         return self.path / base(stage) / self._check(key)
+
+    def found_key(self, stage: str, key: str) -> str:
+        """The key of the folder that holds the result of this key: the key itself, or that of the result made under
+        earlier key labels that stands for it (``find_earlier``; in memory only)."""
+        return _EARLIER.get(_store_id(self), {}).get((base(stage), self._check(key)), key)
+
+    def is_done(self, stage: str, key: str, manifest: Mapping[str, Any]) -> bool:
+        """``done``, the manifest of ``dir(stage, key)`` already read."""
+        return is_done(manifest, self.found_key(stage, key))
 
     def tmp_dir(self, stage: str, key: str) -> Path:
         return self.path / base(stage) / (self._check(key) + TMP)
@@ -865,9 +880,9 @@ class Store:
             return {}
 
     def done(self, stage: str, key: str) -> bool:
-        """Whether ``store/<stage>/<key>/`` holds a done result of that key (a ``.tmp`` folder never does)."""
-        m = self.manifest(stage, key)
-        return m.get("status") == "done" and m.get("key", key) == key
+        """Whether ``store/<stage>/<key>/`` holds a done result of that key (a ``.tmp`` folder never does), or the
+        project has a result made under earlier key labels that stands for it (``find_earlier``)."""
+        return self.is_done(stage, key, self.manifest(stage, key))
 
     def usable_as_input(self, stage: str, key: str) -> bool:
         """Whether a done result can feed a job: false when it lost data outside its folder (inventory: a frame of
@@ -883,8 +898,126 @@ class Store:
 
 
 def is_done(manifest: Mapping[str, Any], key: str) -> bool:
-    """Whether a manifest is that of a done result of this key (``Store.done``, the manifest already read)."""
+    """Whether a manifest is that of a done result of this key (the key of its folder)."""
     return manifest.get("status") == "done" and manifest.get("key", key) == key
+
+
+#: {store folder: {(stage, today's key): the key of the result made under earlier labels that stands for it}}, set by
+#: ``use_earlier``. In memory only: nothing of it is ever written in a project.
+_EARLIER: dict[str, dict[tuple[str, str], str]] = {}
+
+
+def _store_id(store: Store) -> str:
+    """A store's folder as ``_EARLIER`` names it: the same for every Store object of a project."""
+    return os.path.normcase(str(store.path))
+
+
+def use_earlier(store: Store, found: Mapping[tuple[str, str], str]) -> None:
+    """From now on, in this process, the readers of this store find these results (``find_earlier``)."""
+    _EARLIER[_store_id(store)] = dict(found)
+
+
+def drop_earlier(store: Store, stage: str, key: str) -> None:
+    """A result of this key was just computed: its own folder is read from now on."""
+    _EARLIER.get(_store_id(store), {}).pop((base(stage), key), None)
+
+
+def _stands_for(manifest: Mapping[str, Any], folder_key: str) -> set[str]:
+    """The keys a result answers to in the records of the results made from it: its folder's, and those of the earlier
+    results it was made again in the place of without changing (``same_as``: a result that had lost its data outside
+    its folder)."""
+    same = manifest.get("same_as")
+    return {folder_key, *(str(k) for k in same)} if isinstance(same, list) else {folder_key}
+
+
+def find_earlier(keys: Keys, store: Store, seen: dict | None = None) -> dict[tuple[str, str], str]:
+    """The results of a project made under EARLIER KEY LABELS, for the stages that have no result of today's key.
+
+    Before the labels were frozen, a new version of a stage's method changed the label in its keys: the results of a
+    project computed then are under other keys than today's. {(stage, today's key): the key found}: a done result of
+    the same stage in the project's store whose recorded key parts are today's (same settings, same input files) but
+    for the labels: its own ("v"), and the keys of the results it read, each of which must itself be the result found
+    for today's key of that stage (a result of today's key, or one found the same way). The most recent such result.
+
+    A result that was made again in its place after it lost its data outside its folder answers to the earlier
+    result's key too (``same_as``), so what was made from the earlier one is still found.
+
+    Reads manifests only: one per stage of the project, and, for a stage without a result of today's key, those of
+    its stage's folder (once). ``seen``: what a caller keeps of them from one call to the next, while the disk does
+    not change (the API: until ``refresh``), so that an edit of the definition reads nothing again. Nothing is
+    written; the caller hands the answer to ``use_earlier``."""
+    project = keys.project
+    seen = {} if seen is None else seen
+    listed: dict[str, list[tuple[str, dict]]] = seen.setdefault("listed", {})
+    manifests: dict[tuple[str, str], dict] = seen.setdefault("manifests", {})
+
+    def read(b: str, k: str) -> dict:
+        if (b, k) not in manifests:
+            try:
+                manifests[(b, k)] = json.loads((store.path / b / k / "manifest.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                manifests[(b, k)] = {}
+        return manifests[(b, k)]
+
+    def results(b: str) -> list[tuple[str, dict]]:
+        if b not in listed:
+            try:
+                names = [n for n in os.listdir(store.path / b) if _KEY.match(n)]
+            except OSError:
+                names = []
+            got = [(n, m) for n, m in ((n, read(b, n)) for n in names)
+                   if is_done(m, n) and isinstance(m.get("key_parts"), dict)]
+            got.sort(key=lambda r: (str(r[1].get("finished") or ""), r[0]), reverse=True)     # the most recent first
+            listed[b] = got
+        return listed[b]
+
+    todo: list[tuple[Workflow, str, str]] = []
+    for w in project.workflows:
+        try:
+            todo += [(w, s, keys.key(w, s)) for s in keys.chain(w)]
+        except (KeyError, ValueError):                   # a workflow whose keys cannot be made now: nothing of it
+            continue
+    answers: dict[str, set[str]] = {}                    # today's key: the keys its result answers to in the records
+    found: dict[tuple[str, str], str] = {}
+
+    def same(recorded: Any, today: Any) -> bool:
+        """The recorded part is today's, a key of today standing for the result found for it."""
+        if isinstance(today, str) and today in answers:
+            return isinstance(recorded, str) and recorded in answers[today]
+        if isinstance(today, dict):
+            return isinstance(recorded, dict) and recorded.keys() == today.keys() and \
+                all(same(recorded[n], x) for n, x in today.items())
+        if isinstance(today, list):
+            return isinstance(recorded, list) and len(recorded) == len(today) and \
+                all(same(r, x) for r, x in zip(recorded, today))
+        return recorded == today
+
+    for _pass in range(len(todo) + 1):                   # a result is found once those it read are: until none is new
+        new = False
+        for w, s, k in todo:
+            if k in answers:
+                continue
+            b = base(s)
+            m = read(b, k)
+            if is_done(m, k):
+                answers[k] = _stands_for(m, k)
+                new = True
+                continue
+            try:
+                parts = json.loads(json.dumps(keys.key_parts(w, s), default=str))
+            except (KeyError, ValueError):
+                continue
+            for n, om in results(b):
+                old = om["key_parts"]
+                if old.get("s") == parts["s"] and old.get("p") == parts["p"] and same(old.get("u"), parts["u"]) \
+                        and same(old.get("x"), parts["x"]):
+                    answers[k] = _stands_for(om, n)
+                    found[(b, k)] = n
+                    new = True
+                    break
+        if not new:
+            break
+    return found
 
 
 def recorded_version(manifest: Mapping[str, Any]) -> str | None:
@@ -949,7 +1082,7 @@ class Upstream:
 
     def _check(self, wf: int | Workflow, stage: str, key: str) -> bool:
         m = self.manifest(stage, key)
-        if not is_done(m, key):
+        if self.store is None or not self.store.is_done(stage, key, m):
             return False
         rec = m.get("upstream")
         try:
@@ -964,7 +1097,7 @@ class Upstream:
             if k in self.redo:
                 return True
             um = self.manifest(st, k)
-            if not is_done(um, k):
+            if not self.store.is_done(st, k, um):
                 continue                                 # no result there now: nothing says it changed
             if isinstance(rec, dict):
                 r = rec.get(name)

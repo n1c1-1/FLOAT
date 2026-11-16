@@ -71,7 +71,20 @@ from .params import params_hash
 from .project2 import Project2, Workflow, is_image
 from .runner import Pipeline, read_manifest
 from .stage import StageError
-from .store import InputScan, KeyRules, Keys, Store, StoreProject, Upstream, earlier_version, is_done, key_rules
+from .store import (
+    InputScan,
+    KeyRules,
+    Keys,
+    Store,
+    StoreProject,
+    Upstream,
+    _stands_for,
+    drop_earlier,
+    earlier_version,
+    find_earlier,
+    key_rules,
+    use_earlier,
+)
 from .workflow import base, session_of
 
 LOCK = "run.lock"
@@ -415,7 +428,7 @@ def plan_recompute(project: Project2, wf: int | Workflow, block: str, **kw: Any)
     for s in keys.rules.chains.run_to(block, keys.chain(w)):
         k = keys.key(w, s)
         m = store.manifest(s, k)
-        if is_done(m, k):
+        if store.is_done(s, k, m):
             mine.append((k, earlier_version(keys, w, s, m) is not None))
     redo = {k for k, earlier in mine if earlier} or {k for k, _e in mine}
     p = Planner(project, redo=redo, **kw)
@@ -866,6 +879,10 @@ class _Worker:
         self.rules = rules or _rules(d.get("rules"))
         self.keys = Keys(self.project, self.rules, InputScan())
         self.store = Store(root)
+        try:                                          # the results made under earlier key labels: read as the planner
+            use_earlier(self.store, find_earlier(self.keys, self.store))            # read them (core/store.py)
+        except (KeyError, ValueError, OSError):
+            pass
         self.journal = RunJournal(root / "logs", self.run_id, echo)
         self.jobs = Plan.from_dict(d).jobs
         same_gpu = os.environ.get("CUDA_VISIBLE_DEVICES") == d.get("visible")
@@ -1151,7 +1168,7 @@ class _Worker:
         out = {}
         for name, k in job.deps.items():
             um = self.store.manifest(name.split("#", 1)[0], k)
-            if is_done(um, k):
+            if self.store.is_done(name.split("#", 1)[0], k, um):
                 out[name] = {"key": k, "stamp": str(um.get("stamp") or "")}
         return out
 
@@ -1173,7 +1190,7 @@ class _Worker:
             try:
                 k = self.keys.key(pid, st)
                 m = self.store.manifest(st, k)
-                ev = earlier_version(self.keys, pid, st, m) if is_done(m, k) else None
+                ev = earlier_version(self.keys, pid, st, m) if self.store.is_done(st, k, m) else None
             except (KeyError, ValueError):
                 continue
             if ev:
@@ -1185,17 +1202,23 @@ class _Worker:
         """``<key>.tmp`` → ``<key>`` with the key fields in its manifest; a done folder it replaces goes to
         ``_trash`` only now, and comes back if the rename fails. The manifest gets the version of the method it was
         computed with, the stamps of the results it read and its own stamp: a new one, unless it only makes again a
-        result that lost its data outside its folder (the same result: what was made from it stays valid)."""
-        tmp, final = sp.stage_dir(job.stage), self.store.dir(job.stage, job.key)
+        result that lost its data outside its folder (the same result: what was made from it stays valid; when the
+        result it makes again was one found under earlier key labels, it says so, ``same_as``, and still stands for
+        it)."""
+        tmp, final = sp.stage_dir(job.stage), self.store.own_dir(job.stage, job.key)
         mf = tmp / "manifest.json"
         m = json.loads(mf.read_text(encoding="utf-8"))
         m.update(key=job.key, key_parts=self.keys.key_parts(w, job.stage), adopted_from=None, run=self.run_id,
                  algorithm_version=self.keys.algorithm_version(w, job.stage), upstream=self._upstream_of(job))
-        was = self.store.manifest(job.stage, job.key) if final.exists() else {}
-        if is_done(was, job.key) and not job.redo:
+        was = self.store.manifest(job.stage, job.key)             # the result it takes the place of, when there is one
+        had = self.store.is_done(job.stage, job.key, was)
+        if had and not job.redo:
             stamp, replaced = was.get("stamp"), bool(was.get("replaced"))
+            same = sorted(_stands_for(was, self.store.found_key(job.stage, job.key)) - {job.key})
+            if same:
+                m["same_as"] = same
         else:
-            stamp, replaced = uuid.uuid4().hex, is_done(was, job.key)
+            stamp, replaced = uuid.uuid4().hex, had
         if stamp:
             m["stamp"] = stamp
         if replaced:
@@ -1213,6 +1236,7 @@ class _Worker:
             if old is not None:
                 _rename(old, final)
             raise
+        drop_earlier(self.store, job.stage, job.key)  # its own folder is the one read from now on
         self.store.forget()
         try:
             f = est.facts(self.keys, w, self.store)

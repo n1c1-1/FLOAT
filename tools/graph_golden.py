@@ -840,6 +840,8 @@ def stale_project(folder: Path) -> dict:
                 kind, why = "error", f"{type(e).__name__}: {e}"
             else:
                 kind, why = stale_why(old, cur)
+                if kind not in ("earlier version", "unknown") and old.get("v") != cur.get("v"):
+                    why += f" (and version {old.get('v')} -> {cur.get('v')}, which alone would not make it Outdated)"
             counts[kind] = counts.get(kind, 0) + 1
             rows.append({"workflow": w.id, "name": w.name, "block": block_of.get(s, ""), "stage": s, "kind": kind,
                          "why": why, "previous_key": st.previous_key, "key": st.key})
