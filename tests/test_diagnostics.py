@@ -519,6 +519,14 @@ def test_calibration_frames_gives_the_masters_the_frame_measures_and_the_calibra
     assert [f.index for f in ls] == [0, 1, 2] and ls[1].stats["median"] == 1100.0 and ls[1].calibrated == str(cache)
     assert float(api.calibrated_light(ls[2]).mean()) == 2.0
     assert not [n for n in rep.notes if "darks are" in n or "No " in n]      # darks and lights of 60 s
+    assert api.MANY_EXCLUDED_NOTE not in rep.notes                           # no share of excluded pixels known
+    for pct, said in ((4.9, False), (5.0, False), (5.1, True), (12.5, True)):    # above the share the setting's tip names
+        fake_done(project, 1, "calibrate", {"dark_level": 500.0, "bad_pixels_pct": pct})
+        assert (api.MANY_EXCLUDED_NOTE in api.calibration_frames(project, 1).notes) is said, pct
+    from astro_gpu import texts
+    assert "5 %" in api.MANY_EXCLUDED_NOTE and texts.has_translation(api.MANY_EXCLUDED_NOTE, "fr")
+    assert "5 %" in texts.translate(api.MANY_EXCLUDED_NOTE, "fr")
+    fake_done(project, 1, "calibrate", {"dark_level": 500.0})
     cache.unlink()
     rep = api.calibration_frames(project, 1)
     assert not [f for f in rep.frames if f.kind == "lights" and f.calibrated]

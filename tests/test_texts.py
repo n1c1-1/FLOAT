@@ -415,6 +415,7 @@ def test_engine_json_is_clean():
     wanted |= set(texts.CHOICE_TEXTS.values())
     from astro_gpu import api
     wanted |= set(api.CALIBRATION_NOTES.values())        # the notes of a kind of frame no session has
+    wanted.add(api.MANY_EXCLUDED_NOTE)                   # and of a share of excluded pixels that is too high
     for s in texts._stages().values():
         wanted |= {s["title"], s["description"]}
         for d in s["params"].values():

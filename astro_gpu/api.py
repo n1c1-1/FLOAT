@@ -2490,6 +2490,13 @@ CALIBRATION_NOTES = {
              "found by the bad pixel map instead.",
     "flats": "No flats: vignetting and dust are not corrected.",
 }
+#: the share of excluded pixels (the calibration's ``bad_pixels_pct``) above which ``calibration_frames`` says so: the
+#: one the Hot pixel threshold's tip names ("Raise it if more than ~5 % of the pixels get excluded")
+MANY_EXCLUDED_PCT = 5.0
+#: its note: a fixed sentence (the interface translates a note as a whole); the share itself is the Excluded pixels
+#: measure of the block
+MANY_EXCLUDED_NOTE = ("More than 5 % of the pixels are excluded as defective (Excluded pixels): check the darks, or "
+                      "raise the Hot pixel threshold.")
 
 
 def calibration_frames(p: Project2, session_id: int, wf: int | Workflow | None = None, which: str = "current", *,
@@ -2619,6 +2626,9 @@ def calibration_frames(p: Project2, session_id: int, wf: int | Workflow | None =
         rep.frames += rows
 
     # ---------------- notes
+    excluded = _num(metrics.get("bad_pixels_pct"))
+    if excluded is not None and excluded > MANY_EXCLUDED_PCT:      # first: the interface shows the first notes only
+        rep.notes.insert(0, MANY_EXCLUDED_NOTE)
     if len(proj.sessions) > 1 and d is not None:
         rep.notes.append(f"The masters are made from the frames of all {len(proj.sessions)} sessions together (one "
                          "master dark, one master flat).")
