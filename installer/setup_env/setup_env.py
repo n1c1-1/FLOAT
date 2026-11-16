@@ -87,8 +87,7 @@ TEXTS = {
         "card_unknown": "The driver of your {name} could not be read: FLOAT will compute on the processor.\n"
                         "To use the card, update its driver from https://www.nvidia.com/drivers, then run this installer "
                         "again.",
-        "card_other": "Your {name} is not supported by default yet: FLOAT will compute on the processor. "
-                      "Settings > Compute has the beta options.",
+        "card_other": "Your {name} is not supported yet: FLOAT will compute on the processor.",
         "cuda_no": "PyTorch does not see your NVIDIA card yet. FLOAT works on the processor; updating the driver "
                    "from https://www.nvidia.com/drivers should fix it.",
         "asterion_program": "The Asterion plate solver does not start in this installation. FLOAT works all the same: "
@@ -153,8 +152,7 @@ TEXTS = {
         "card_unknown": "Le pilote de votre {name} n'a pas pu être lu : FLOAT calculera sur le processeur.\n"
                         "Pour utiliser la carte, mettez à jour son pilote depuis https://www.nvidia.com/drivers, puis "
                         "relancez cette installation.",
-        "card_other": "Votre {name} n'est pas encore prise en charge par défaut : FLOAT calculera sur le "
-                      "processeur. Réglages > Calcul propose les options bêta.",
+        "card_other": "Votre {name} n'est pas encore prise en charge : FLOAT calculera sur le processeur.",
         "cuda_no": "PyTorch ne voit pas encore votre carte NVIDIA. FLOAT fonctionne sur le processeur ; mettre à "
                    "jour le pilote depuis https://www.nvidia.com/drivers devrait résoudre cela.",
         "asterion_program": "Le solveur astrométrique Asterion ne démarre pas dans cette installation. FLOAT fonctionne "
