@@ -1849,6 +1849,8 @@ def test_the_report_of_a_computed_project(win, tmp_path):
     page.build()
     QApplication.processEvents()
     assert "Table 1. Acquisition" in page.document().toPlainText() and not rep.PATHS.search(page.document().toPlainText())
+    stars = page.document().toPlainText().split("Stars/background")[1].split("Recipe")[0]      # it was an empty section
+    assert "Neural network" in stars and "Starless image · Stars alone" in stars and "Network grid" in stars
     from PySide6.QtTest import QTest
     QTest.qWait(2500)                                  # the reader draws its pages in the background
     win.grab().save(str(shots_dir() / "report_window.png"))

@@ -275,7 +275,7 @@ _METRIC_ROWS: list[tuple] = [
     ("response_source", "Sensitivity curves", "", "", "Where the camera's sensitivity curves come from."),
     ("correction", "Colour correction", "", "", "What turned the camera colours into true colours: a colour matrix or "
                                                 "one factor per colour."),
-    ("stars", "Color stars", "", "d", "Stars measured for the colour calibration."),
+    ("stars", "Color stars", "", "d", "Stars measured for the color calibration."),
     ("fit_residual", "Fit residual", "", ".4f", "Relative error of the fit in red, green and blue."),
     ("chromaticity_residual", "Color residual", "", ".4f", "Typical gap between the measured and the predicted star colors."),
     ("white_balance", "White balance", "", ".3f",

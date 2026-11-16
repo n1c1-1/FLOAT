@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 
 from . import APP_NAME
 from .graphnode import STATE_WORD, block_state
+from .steps import metric_row
 from .charts import LINES, RegistrationData, registration_data
 from .. import texts
 from ..core.params import ADVANCED
@@ -60,7 +61,7 @@ INTRO = {"calibration": "Removes what comes from the sensor and the optics: its 
          "astrometrie": "Finds where the image is on the sky, from its stars.",
          "fond": "Removes the smooth gradient of the sky left by light pollution, the Moon and the vignetting.",
          "debruitage": "Reduces the noise of the stacked image.",
-         "couleur": "Sets the colours from stars whose real colours are known.",
+         "couleur": "Sets the colors from stars whose real colors are known.",
          "etoiles": "Separates the stars from the sky, to process them apart."}
 ZOOM_STEP = 1.15                                         # the reader's zoom, per step
 #: what the files do not say: entered with a click, kept in the project (the Project block's form in Inspect edits the
@@ -75,7 +76,7 @@ WORDS = {"en": dict(camera="Camera", instrument="Instrument", mount="Mount", fil
                     fwhm="Median FWHM", kept="Frames kept", processing="Processing"),
          "fr": dict(camera="Appareil", instrument="Instrument", mount="Monture", filter="Filtre", location="Lieu",
                     date="Date", frames="Poses", darks="Darks", flats="Flats", bias="Offsets", field="Champ",
-                    sampling="Échantillonnage", fwhm="FWHM médiane", kept="Poses gardées", processing="Traitement")}
+                    sampling="Échantillonnage", fwhm="FWHM médiane", kept="Images gardées", processing="Traitement")}
 #: a value that names a place on a disk: never in a report
 PATHS = re.compile(r"[A-Za-z]:[\\/]|\\\\|(^|\s)/[^\s]+/")
 STYLE = {"font.family": "DejaVu Serif", "font.size": 8, "axes.linewidth": 0.6, "xtick.major.width": 0.6,
@@ -120,6 +121,71 @@ class ReportData:
     thumb: bytes | None = None                           # the picture Post last showed
     gain: bool = False                                   # the frames carry a gain (an astro camera), not an ISO speed
     outdated: bool = False                               # read from the results an Outdated block had (not the current ones)
+    stacked: tuple | None = None                         # (frames the stack used, frames it was given), from its record
+    left_out: list = field(default_factory=list)         # why the others were left out (``left_out``)
+
+
+class Choice(str):
+    """A setting's value that is one of its choices: shown by the word the panels show for it (``texts.choice_label``),
+    in the language of the screen; a text the user typed is shown as typed."""
+
+
+def kept_text(kept: int, n: int, lang: str | None = None) -> str:
+    """Frames kept out of the frames there are, written one way wherever the report gives it: 435 of 436."""
+    return texts.translate("{kept} of {n}", lang or language()).format(kept=int(kept), n=int(n))
+
+
+def left_out(frames: list, auto: dict) -> list:
+    """Why the stack left frames out, from what it recorded: [(frames, template, args)], a reason of the engine
+    (``texts.format_reason``) and the frames it holds for. ``frames``: the stack's frames.json (each left-out frame
+    has its reasons); ``auto``: what each filter of its selection did (diagnostics.json). A frame out for several
+    causes counts for the first. Frames out for one cause each with its own numbers (two weights under the minimum)
+    are given by the selection's own sentence for that cause, which counts them (frames None), else by their count
+    alone (an empty template). Nothing is worked out here."""
+    by: dict = {}
+    for f in frames:
+        if float(f.get("weight") or 0) > 0:
+            continue
+        ex = (f.get("exclusions") or [{"code": "", "template": str(f.get("excluded") or ""), "args": None}])[0]
+        by.setdefault(str(ex.get("code") or ex.get("template") or ""), []).append(
+            (str(ex.get("template") or ""), ex.get("args")))
+    out = []
+    for code, rows in by.items():
+        said = auto.get("min_weight" if code == "weight" else f"filter_{code}") or {}
+        if all(r == rows[0] for r in rows):
+            out.append((len(rows), *rows[0]))
+        elif (said.get("args") or {}).get("n"):
+            out.append((None, str(said["template"]), said["args"]))
+        else:
+            out.append((len(rows), "", None))
+    return out
+
+
+def left_out_text(rows: list) -> str:
+    """``left_out`` in the language shown: 1 (weight 3.2 % of the best frame's, under the minimum of 5 %); 2 (not
+    aligned)."""
+    lang = language()
+    parts = []
+    for n, template, args in rows:
+        why = texts.format_reason(template, args, lang) if template else ""
+        parts.append(why if n is None else f"{n} ({why})" if why else str(n))
+    return " ; ".join(parts) if lang == "fr" else "; ".join(parts)
+
+
+def _stacked(project, wf, which: str) -> tuple:
+    """(``ReportData.stacked``, ``ReportData.left_out``) of the stack's result; (None, []) without one."""
+    from .. import api
+    try:
+        out = api.stage_outputs(project, wf, "stack", which)
+        frames = json.loads((Path(out.dir) / "frames.json").read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 - not stacked, or a record that cannot be read: nothing is said
+        return None, []
+    try:
+        diag = json.loads((Path(out.dir) / "diagnostics.json").read_text(encoding="utf-8"))
+        auto = (diag.get("selection") or {}).get("auto") or {}
+    except (OSError, ValueError):
+        auto = {}
+    return (sum(1 for f in frames if float(f.get("weight") or 0) > 0), len(frames)), left_out(frames, auto)
 
 
 def shareable(v) -> bool:
@@ -150,6 +216,8 @@ def _settings(project, wf, stages, which: str = "current") -> list:
             extra = info.json_schema_extra or {}
             changed = value != info.default
             if changed or extra.get("level") != ADVANCED:   # the rest changes nothing a reader needs
+                if isinstance(value, str) and extra.get("choices"):
+                    value = Choice(value)
                 rows.append((st.title, extra.get("label", key), value, changed))
     return rows
 
@@ -241,6 +309,7 @@ def _report_data(project, wf, stages, title: str, which: str) -> ReportData:
         ast = None
     d.astro = dict(ast.metrics) if ast is not None else {}
     d.gain = _gain_unit(project, wf, which)
+    d.stacked, d.left_out = _stacked(project, wf, which)
     for stage in HEAD_STAGES:
         try:
             out = api.stage_outputs(project, wf, stage, which)
@@ -310,7 +379,7 @@ def card_rows(d: ReportData, idx: list) -> list:
     """The figures of a session."""
     kept = d.kept[idx]
     exp = d.exposure[idx] if d.exposure is not None else np.full(len(idx), np.nan)
-    rows = [(_("Frames kept"), f"{int(kept.sum())} / {len(idx)}")]
+    rows = [(_("Frames kept"), kept_text(kept.sum(), len(idx)))]
     if np.isfinite(exp[kept]).any():
         rows.append((_("Total exposure"), exact_time(float(np.nansum(exp[kept])))))
     size, k, unit = size_of(d)
@@ -462,13 +531,13 @@ def shot_rows(d: ReportData, info: dict, entered: dict, lang: str) -> list:
         s = s[np.isfinite(s)]
         if len(s):
             rows.append(("fwhm", w["fwhm"], size_text(float(np.median(s)), k, unit, lambda x: _dec(x, 1, lang))))
-        rows.append(("kept", w["kept"], f"{int(d.kept.sum())}/{len(d.kept)}"))
+        rows.append(("kept", w["kept"], kept_text(d.kept.sum(), len(d.kept), lang)))
     rows.append(("processing", w["processing"], APP_NAME))
     return rows
 
 
-#: the stages whose figures the head of the report quotes
-HEAD_STAGES = ("inventory", "register", "stack", "catalogs", "gradient", "denoise", "color")
+#: the stages whose figures the head of the report quotes, and the Stars block's (its section is written from them)
+HEAD_STAGES = ("inventory", "register", "stack", "catalogs", "gradient", "denoise", "color", "star_removal")
 
 
 def sky_position(ra: float, dec: float) -> str:
@@ -528,12 +597,15 @@ def highlights(d: ReportData, lang: str) -> list:
     ch = (m.get("stack") or {}).get("channel_offsets") or {}
     if ch.get("applied") and ch.get("centre_px"):
         r, b = (float(np.hypot(*ch["centre_px"][c])) for c in ("R", "B"))
-        out.append((f"{dec(max(r, b), 2)} px", _("Colors offset, corrected"),
+        out.append((f"{dec(max(r, b), 2)} px", _("Color offsets, corrected"),
                     _("red {r} px and blue {b} px from green, measured on {n} stars").format(
                         r=dec(r, 2), b=dec(b, 2), n=int(ch.get("stars") or 0))))
     dn = m.get("denoise") or {}
     if dn.get("noise_reduction"):
-        out.append((f"÷ {dec(dn['noise_reduction'])}", _("Sky noise"),
+        # the result's figure by the measure's own format, as the Denoise section writes it (÷ 7.8 here, 7.77 × there)
+        factor = texts.format_metric("noise_reduction", dn["noise_reduction"], lang)
+        factor = factor.removesuffix(texts.metric_unit("noise_reduction", lang)).strip()
+        out.append((f"÷ {factor}", _("Sky noise"),
                     _("measured on the sky before and after Denoise")))
     gr = m.get("gradient") or {}
     if gr.get("gradient_pct"):
@@ -546,7 +618,7 @@ def highlights(d: ReportData, lang: str) -> list:
                     _("{n} of them with their measured spectrum").format(n=int(cat.get("xp_spectra") or 0))))
     if d.spectral is not None and getattr(d.spectral, "stars", 0):
         out.append((str(int(d.spectral.stars)), _("Sensor response, rebuilt"),
-                    _("stars whose spectra rebuilt the sensor's colour response")))
+                    _("stars whose spectra rebuilt the sensor's color response")))
     if reg.get("transparency_p10_p90"):
         lo, hi = (float(x) for x in reg["transparency_p10_p90"])
         if hi > 0:
@@ -919,9 +991,10 @@ class ReportPage(QWidget):
         out = [(_("Session card"), head)] + self._observation(d)
         n, keys = 0, self.s.block_keys(p)                 # the observation is the head's Table 1: blocks from 1
         for key, title in BLOCKS:
-            if key in keys:
+            body = self._block(n + 1, p, key, title, d) if key in keys else ""
+            if body:                                     # a block with nothing to say has no empty numbered section
                 n += 1
-                out.append((f"{n}. {_(title)}", self._block(n, p, key, title, d)))
+                out.append((f"{n}. {_(title)}", body))
         out.append((f"{n + 1}. {_('Recipe')}", self._recipe(n + 1, keys, d)))
         return out + self._appendix(n + 2, d)
 
@@ -1006,7 +1079,14 @@ class ReportPage(QWidget):
         if state != "done":
             out.append(f"<p class='state'>{_(STATE_WORD.get(state, state))}</p>")
         hidden = [html.escape(_(h)) for h in HIDDEN]
-        out.append(_explained([r for r in self.steps.facts(p, key) if r[0] not in hidden]))
+        rows = [r for r in self.steps.facts(p, key) if r[0] not in hidden]
+        if key == "etoiles":
+            rows += self._stars_rows(d)
+        if key == "empilement" and d.stacked is not None:
+            rows = self._stacked_rows(rows, d)
+        if state == "done" and not rows:
+            return ""
+        out.append(_explained(rows))
         if key == "alignement" and d.drift is not None:
             out.append(self._figure(d.drift, _("Offset of each frame from the reference frame, and alignment residual.")))
         if key == "couleur" and d.response is not None:
@@ -1015,9 +1095,37 @@ class ReportPage(QWidget):
         return "".join(out)
 
     @staticmethod
+    def _stacked_rows(rows: list, d: ReportData) -> list:
+        """The Stacking block's rows with the frames stacked out of the frames there are and, when some were left
+        out, why, as the stack recorded it (aligned 436, stacked 435: the reader was left to guess)."""
+        label = html.escape(texts.metric_label("frames_used", language()))
+        out = []
+        for name, value in rows:
+            if name != label:
+                out.append((name, value))
+                continue
+            out.append((name, html.escape(kept_text(*d.stacked))))
+            if d.left_out:
+                out.append((html.escape(_("Frames left out")), html.escape(left_out_text(d.left_out))))
+        return out
+
+    @staticmethod
+    def _stars_rows(d: ReportData) -> list:
+        """What the Stars block did, from its done result: its method (it has one, the network), the two images it
+        gives and the measure it records. [] when it is not computed."""
+        m = d.metrics.get("star_removal")
+        if m is None:
+            return []
+        esc = lambda t: html.escape(t)                    # noqa: E731
+        rows = [(esc(_("Method")), esc(texts.choice_label("neural", language()))),
+                (esc(_("Images produced")), esc(_("Starless image") + " · " + _("Stars alone")))]
+        return rows + [metric_row("star_removal", k, m[k]) for k in ("grid_peaks",) if k in m]
+
+    @staticmethod
     def _value(value) -> str:
         text = _("Yes") if value is True else _("No") if value is False else \
-            number(value, 3).rstrip("0").rstrip(",.") if isinstance(value, float) else str(value)
+            number(value, 3).rstrip("0").rstrip(",.") if isinstance(value, float) else \
+            texts.choice_label(str(value), language()) if isinstance(value, Choice) else str(value)
         return html.escape(text)
 
     def _recipe(self, n: int, keys, d: ReportData) -> str:
@@ -1025,7 +1133,7 @@ class ReportPage(QWidget):
         names = dict(BLOCKS)
         chain = " &rarr; ".join(html.escape(_(names[k])) for k in keys if k in names)
         rows = [(f"{html.escape(_(block))} · {html.escape(_(name))}", self._value(value))
-                for block, name, value, changed in d.settings if changed]
+                for block, name, value, changed in d.settings if changed and value != ""]
         return (f"<h2>{n}. {_('Recipe')}</h2><p>{chain}</p>" +
                 (_table(rows) if rows else f"<p>{_('All the settings are the defaults.')}</p>"))
 
@@ -1035,7 +1143,7 @@ class ReportPage(QWidget):
         other = "(drizzle)" if classic else "(Classic)"
         by: dict = {}
         for block, name, value, _changed in d.settings:
-            if other not in name:
+            if other not in name and value != "":        # a setting left empty has no line
                 by.setdefault(block, []).append((html.escape(_(name)), self._value(value)))
         out = []
         for i, (block, rows) in enumerate(by.items()):
