@@ -867,7 +867,9 @@ def test_posts_tools_go_into_more_rather_than_push_the_sides_out(env, size, lang
     # a wide window: the layers wider (the laptop's D6), the least used tools (up to three in French) in "…", in order
     hidden = [b for b in view._overflow() if b.isHidden()]
     assert len(hidden) <= 3 and hidden == list(view._overflow()[:len(hidden)])
-    assert view.b_crop.isVisible() and view.b_undo.isVisible() and view.b_version_new.text()
+    # New version keeps its name while no tool is in "…" (it gives it up before a tool goes there, by its icon)
+    assert view.b_crop.isVisible() and view.b_heal.isVisible() and view.b_undo.isVisible()
+    assert bool(view.b_version_new.text()) == (not hidden) and view.b_version_new.toolTip()
 
 
 def test_a_long_version_name_shows_its_start_and_never_pushes_the_bar(env):

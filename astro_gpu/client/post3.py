@@ -1083,14 +1083,17 @@ class PostView(QWidget):
 
     def _bar_steps(self) -> tuple:
         """The bar narrowed one step at a time when the centre has no room (a laptop, Windows' scale at 125 or 150 %),
-        the least used first: the tools go into "…", then Export by its icon, the word "Version", a narrower list, New
-        version by its icon (#123: its name is what makes it found); then 100 % (the zoom's menu has it), the bin and New
+        the least used first. Export and New version give up their text before any tool goes into "…" (their icon
+        alone, their name on hover: in French the bar is about 113 px wider, and Spot healing went into "…" where the
+        English bar still showed it); then the view's aids go into "…", the word "Version", a narrower list, 100 % (the
+        zoom's menu has it); the tools one works with, Spot healing and Crop, only then; the bin and New
         version into "…", Redo and Undo (the Edit menu has them too), Fit the last (the laptop's D1: the most used, it
         went first with Before / after on a laptop's window): at the centre's narrowest, the crop's
         Apply and Cancel shown, the bar still fits (#142). The names stay in the tooltips and in "…"."""
-        return (("hide", self.b_names), ("hide", self.b_grid), ("hide", self.b_mask), ("hide", self.b_cmp),
-                ("hide", self.b_heal), ("hide", self.b_crop), ("icon", self.b_export), ("hide", self.version_lab),
-                ("narrow", self.cb_version), ("icon", self.b_version_new), ("hide", self.b_100),
+        return (("icon", self.b_export), ("icon", self.b_version_new),
+                ("hide", self.b_names), ("hide", self.b_grid), ("hide", self.b_mask), ("hide", self.b_cmp),
+                ("hide", self.version_lab), ("narrow", self.cb_version), ("hide", self.b_100),
+                ("hide", self.b_heal), ("hide", self.b_crop),
                 ("hide", self.b_version_del), ("hide", self.b_version_new), ("hide", self.b_redo), ("hide", self.b_undo),
                 ("hide", self.b_fit))
 
