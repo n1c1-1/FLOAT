@@ -281,6 +281,8 @@ PATTERNS: list[tuple[re.Pattern, str, tuple]] = [
          r"residual too large\)$",
          "{0} frame(s) could not be aligned and will be ignored (no trustworthy match: under {1} star pairs, or a "
          "residual too large)", ()),
+        (r"^(\d+) frame\(s\) have no star in common with the reference and will be ignored$",
+         "{0} frame(s) have no star in common with the reference and will be ignored", ()),
         (r"^(.+) left out: no stars detected \(a dark or a covered frame\?\)$",
          "{0} left out: no stars detected (a dark or a covered frame?)", ()),
         (r"^(.+) left out: only (\d+) stars detected, too few to match$",
