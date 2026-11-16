@@ -523,15 +523,16 @@ def test_on_ic443_the_h_o_block_is_titled_h_o(qapp, tmp_path):
         g = s._g
         titles = {rules.title(g, r.blocks[0]) for r in g.rows if r.blocks and g.blocks[r.blocks[0]].kind == "combine"}
         assert titles == {"H-O", "H-O · Stars"}, titles
-        # the workflows' names, everywhere they are shown (Inspect's list, the run, Post): the recipe's title in them
-        assert {x.name for x in s.paths if x.source and x.source.get("fusion")} == {"H-O", "H-O · Stars"}
+        # what the project stores stays as it is (an existing project opens, converts and keys the same): its names
+        # are shown with the recipe's title, never written so
+        assert {x.name for x in s.paths if x.source and x.source.get("fusion")} == {"S-H-O", "S-H-O · Stars"}
         stars = next(x for x in s.paths if x.name.endswith("· Stars"))
         n = len(s._undo)
         said = s.set_combination_type(stars, "rgb")          # its inputs are S II-less: Hα and O III go
         assert len(s._undo) == n + 1 and "removed" in said and "Hα" in said and "O III" in said
         assert s.view(stars.pid).name == "RGB · Stars"        # the recipe's title in its name follows it
         s.undo()
-        assert s.view(stars.pid).name == "H-O · Stars"
+        assert s.view(stars.pid).name == "S-H-O · Stars"
     finally:
         w.close()
 

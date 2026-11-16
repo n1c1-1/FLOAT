@@ -62,8 +62,13 @@ def test_inspect_on_a_computed_combination_shows_the_combined_image(win, env):
     settle(win, 6)
     service_of(s).wait(30)
     settle(win, 6)
+    ed = win.tune.comb_editor                             # its editor (combineedit.py), its result as the Output shows it
+    for _i in range(200):
+        settle(win, 1)
+        if not ed.busy and win.tune.view is not None and win.tune.view.image() is not None:
+            break
     texts = [x.text() for x in win.tune.findChildren(QLabel) if x.isVisible()]
     assert "No image for this block." not in texts, texts
     img = win.tune.view.image() if win.tune.view is not None else None
-    assert img is not None and img.name == "Combined image", texts
+    assert img is not None and img.name == "Applied result", texts
     assert not env["errors"], env["errors"]

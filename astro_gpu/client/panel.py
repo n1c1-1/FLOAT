@@ -1858,7 +1858,11 @@ class Panel(QWidget):
         paths = self._change_paths()
         try:
             cost = s.change_cost(ch, paths) if confirm_on() and hasattr(s, "change_cost") else None
-            if (always and confirm_on()) or (cost is not None and cost.lost):   # a draft, nothing outdated
+            # ``always`` (a combination's settings): a draft whenever the block has a result to show, computed or
+            # Outdated, as the Gradient block's (gradientedit.drafting); never computed, made at once as any block's
+            has = always and any(s.state(q, st) in ("done", "stale") for q in paths
+                                 for st in (s.all_stages(q)[:1] if hasattr(s, "all_stages") else []))
+            if (has and confirm_on()) or (cost is not None and cost.lost):     # a draft, nothing outdated
                 d = Draft(self.node.key, [q.pid for q in paths])
                 d.title = node_title(s, self.node) if self.node.paths else block_title(paths[0], self.node.key)
                 d.put(entry)

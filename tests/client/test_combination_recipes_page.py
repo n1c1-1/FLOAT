@@ -114,11 +114,14 @@ def test_the_parameters_of_a_recipe_run_on_its_own_stage_are_set_in_the_panel(wi
         next(x for x in win.graph.panel.findChildren(QPushButton) if x.text() == "Update recipe").click()
         settle(win, 3)
         assert combos.stage(win.s.stored.blocks[b]) == recipes.RECIPE_STAGE
-        assert "Recipe" in _panel_texts(win) and "O III hue" in _panel_texts(win)
-        spins = [x for x in win.graph.panel.findChildren(QDoubleSpinBox) if x.maximum() == 300.0]
-        assert len(spins) == 1
-        spins[0].setValue(190.0)
-        spins[0].editingFinished.emit()
+        # its hues are set in the combination's editor (Adjust); the panel sums them up, by the recipe's names
+        from PySide6.QtWidgets import QLabel
+        assert "Recipe" in _panel_texts(win) and not [x for x in win.graph.panel.findChildren(QDoubleSpinBox)
+                                                      if x.maximum() == 300.0]
+        tips = {x.toolTip() for x in win.graph.panel.findChildren(QLabel) if x.objectName() == "swatch"}
+        assert tips == {"Hα hue 0°", "O III hue 180°"}, tips
+        q = next(v for v in win.s.paths if (v.source or {}).get("fusion"))
+        win.s.apply_change([q], {"kind": "combine", "values": {"hue_oiii": 190.0}})   # the editor's Apply
         settle(win, 3)
         assert win.s.stored.blocks[b].params[recipes.RECIPE_STAGE]["values"]["hue_oiii"] == 190.0
     finally:

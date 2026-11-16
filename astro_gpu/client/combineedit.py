@@ -275,6 +275,8 @@ def applied_small(result_dir: str, k: int) -> dict | None:
     if d is None or not (d / "drz_full.npy").is_file():
         return None
     arr = np.load(d / "drz_full.npy", mmap_mode="r")
+    if k is None:                                       # the inputs not read: the same rule on the result's size
+        k = max(1, int(math.ceil(math.sqrt(arr.shape[-2] * arr.shape[-1] / PREVIEW_PIXELS))))
     rgb = np.stack([reduce_mean(arr[c], k) for c in range(3)])
     meta = json.loads((d / "drz_meta.json").read_text(encoding="utf-8")) if (d / "drz_meta.json").is_file() else {}
     return {"img": output_render(rgb), "tops": meta.get("channels") or {}}
@@ -869,11 +871,20 @@ class CombineEditor(QObject):
         gv.layout().itemAt(0).widget().hide()          # its own toolbar: the page's comparison in its title row
         gv.imageShown.connect(self._shown)
         bl.addWidget(gv, 1)
-        cover = label("", "dim", wrap=True)            # over the image while there is nothing to show: why
-        cover.setAlignment(Qt.AlignCenter)
+        cover = QFrame()                               # under the image while there is nothing to show: why, and Run
+        cl = QVBoxLayout(cover)
+        cl.setContentsMargins(0, 6, 0, 6)
+        head = label("", "dim")
+        head.setAlignment(Qt.AlignCenter)
+        cl.addWidget(head)
+        text = label("", "dim", wrap=True)
+        text.setAlignment(Qt.AlignCenter)
+        cl.addWidget(text)
+        runs = QHBoxLayout()
+        cl.addLayout(runs)
         cover.hide()
         bl.addWidget(cover)
-        u["cover"] = cover
+        u["cover"], u["cover_head"], u["cover_text"], u["cover_runs"] = cover, head, text, runs
         body.addWidget(box, 1)
         v.addLayout(body, 1)
         self.page, self.gv = page, gv
@@ -1131,13 +1142,33 @@ class CombineEditor(QObject):
             for key in STARS:
                 if "stars_" + key in u:
                     _lit(u["stars_" + key], st == key)
-            cover = u["cover"]
-            cover.setText(self.error)
-            cover.setVisible(bool(self.error))
+            self._update_cover()
         except RuntimeError:
             pass
         finally:
             self._syncing = False
+
+    def _update_cover(self):
+        """Under the image: why there is nothing to show (an input not computed, an input to wire, hues the stage
+        refuses); a block never computed says "Not computed yet" with its Run to here, as every block's page."""
+        u = self._ui
+        if "cover" not in u:
+            return
+        st = self.s.state(self.p, self._stage()) if self._stage() else ""
+        never = st not in ("done", "stale")
+        u["cover_head"].setText(_("Not computed yet") if never else "")
+        u["cover_head"].setVisible(never)
+        u["cover_text"].setText(self.error)
+        u["cover_text"].setVisible(bool(self.error))
+        box = u["cover_runs"]
+        if never and box.count() == 0 and hasattr(self.tv, "_run_button"):
+            try:
+                box.addStretch(1)
+                box.addWidget(self.tv._run_button(self.p, "fusion"))
+                box.addStretch(1)
+            except Exception:  # noqa: BLE001 - no Run button here (a stand-in window): the words alone
+                pass
+        u["cover"].setVisible(never or bool(self.error))
 
     # ------------------------------------------------------------ the preview
     def _sig(self):
@@ -1209,10 +1240,10 @@ class CombineEditor(QObject):
         want_applied = self.applied_cache is None or self.applied_cache.get("key") != req["result"]
 
         def work():
+            out = {"req": req}
+            sm = small
             try:
                 t0 = time.perf_counter()
-                out = {"req": req}
-                sm = small
                 if sm is None:
                     sm = {**_reduced_for(req["project"], req["pid"], req["stage"], req["spec"]),
                           "pid": req["pid"], "sig": req["sig"]}
@@ -1225,13 +1256,17 @@ class CombineEditor(QObject):
                 p = params_of(cls, req["spec"], req["stored"], req["values"])
                 rgb = mixed(sm, b, req["stage"], req["spec"], p, req["off"], req["solo"])
                 out["result"] = output_render(rgb)
-                if want_applied:
-                    out["applied"] = {"pid": req["pid"], "key": req["result"],
-                                      **(_applied_for(req["project"], req["pid"], req["stage"], sm["k"]) or
-                                         {"img": None, "tops": {}})}
                 out["ms"] = 1000 * (time.perf_counter() - t0)
             except Exception as e:  # noqa: BLE001 - said over the image, the editor goes on
-                out = {"req": req, "error": str(e)}
+                out["error"] = str(e)
+            if want_applied:          # the block's own result: shown even when its inputs cannot be read now
+                try:
+                    out["applied"] = {"pid": req["pid"], "key": req["result"],
+                                      **(_applied_for(req["project"], req["pid"], req["stage"],
+                                                      sm["k"] if sm is not None else None) or
+                                         {"img": None, "tops": {}})}
+                except Exception:  # noqa: BLE001 - no result to read: Applied greyed
+                    pass
             try:
                 self._done.emit(req["gen"], out)
             except RuntimeError:                       # the window closed meanwhile: nobody to tell
@@ -1253,6 +1288,8 @@ class CombineEditor(QObject):
         if "error" in out:
             if mine:
                 self.error = _(out["error"])
+                if "applied" in out:
+                    self._present()             # the block's own result, though its inputs cannot be read now
         elif mine:
             self.error = ""
             b = out.get("bal") or self.bal.get((req["pid"], req["sig"], req["balance"]))
