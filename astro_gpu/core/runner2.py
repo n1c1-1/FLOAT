@@ -1265,7 +1265,10 @@ class _Worker:
             pass
         om = self.store.manifest(job.stage, job.key)
         same = result_values(om.get("params") or {}) == result_params(p)
-        if not same or not all((old / n).is_file() for n in MASTER_FILES):
+        # a result recomputed in its place (Recompute (current version)) makes its masters again: that is what is asked
+        # (the hot-pixel map of version 12 differs from version 11's with the same settings); a cache merely lost is
+        # rebuilt with the result's own masters, whatever version made them, so that what was made from it still holds
+        if getattr(job, "redo", False) or not same or not all((old / n).is_file() for n in MASTER_FILES):
             return                                              # a full calibration
         _empty(tmp)
         for n in MASTER_FILES:

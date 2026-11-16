@@ -266,3 +266,35 @@ def test_the_golden_tool_reports_an_earlier_version_apart_from_outdated(monkeypa
     old = {"s": "b", "v": "1", "p": {}, "u": {"stack": "k"}, "x": None}
     assert graph_golden.stale_why(old, {**old, "v": "2"}) == ("earlier version", "version 1 -> 2")
     assert graph_golden.stale_why(old, {**old, "v": "2", "p": {"steps": 12}})[0] == "settings"
+
+
+def test_recompute_of_a_calibration_makes_its_masters_again(tmp_path, monkeypatch):
+    """Recompute (current version) on Calibration: the masters are made again, not copied from the earlier result
+    (a new hot-pixel map with the same settings came out 12.5 % where it should be 3.3 %). A frame cache merely lost
+    is still rebuilt with the result's own masters."""
+    from types import SimpleNamespace
+
+    from astro_gpu.core import runner2
+    from astro_gpu.stages.calibrate import MASTER_FILES, MASTERS, CalibrateParams, result_params
+    old = tmp_path / "old"
+    old.mkdir()
+    for n in MASTER_FILES:
+        (old / n).write_bytes(b"x")
+    params = CalibrateParams()
+    store = SimpleNamespace(dir=lambda s, k: old,
+                            manifest=lambda s, k: {"params": result_params(params), "metrics": {}, "version": "11"})
+    monkeypatch.setattr(runner2, "read_manifest", lambda project, d: {})
+
+    def give(redo: bool) -> bool:
+        tmp = tmp_path / f"job_{redo}"
+        tmp.mkdir()
+        pipe = SimpleNamespace(project=SimpleNamespace(stage_dir=lambda s: tmp),
+                               effective_params=lambda st: (params, None, None))
+        worker = SimpleNamespace(store=store, _read_stamps=lambda job: {},
+                                 journal=SimpleNamespace(emit=lambda *a, **k: None))
+        st = SimpleNamespace(deps=(), version="12")
+        runner2._Worker._give_masters(worker, pipe, st, SimpleNamespace(stage="calibrate", key="k", redo=redo))
+        return (tmp / MASTERS).is_file()
+
+    assert give(redo=False)              # a lost cache: the result's own masters, whatever version made them
+    assert not give(redo=True)           # Recompute (current version): a full calibration
