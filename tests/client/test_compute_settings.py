@@ -62,7 +62,8 @@ def _texts(page):
 
 
 def test_the_page_says_each_block_and_the_card(env, qapp):
-    prefs.set("compute_profiles", {"auto": _profile(sampling=st.WRONG, post=st.SLOWER)})
+    # the Stack block is on the processor as a whole only when no way of stacking keeps the card
+    prefs.set("compute_profiles", {"auto": _profile(drizzle=st.WRONG, classic=st.WRONG, post=st.SLOWER)})
     d, page = _dialog(qapp)
     texts = _texts(page)
     assert any("RTX 4060 Ti" in t and "610.88" in t for t in texts)

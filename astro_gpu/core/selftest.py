@@ -240,13 +240,36 @@ def check(name: str, card: str, op: Callable[[str], dict] | None = None, toleran
 
 
 # ---------------------------------------------------------------------------------------------- the profile
+def stack_operations(method: str, rejection: str = "own") -> tuple[str, ...]:
+    """The operations tested that a stack of these settings repeats (stages/stack.py: ``method``,
+    ``drizzle_rejection``): the Classic method its own; the drizzle its deposit, with the sampling of the prediction
+    when it rejects on the raw pixels ('own'), or the Classic method's integration when the rejection comes from it
+    ('integration'); by frame count ('by_count') the deposit alone."""
+    if method == "classic":
+        return ("classic",)
+    return ("drizzle",) + {"own": ("sampling",), "integration": ("classic",)}.get(rejection, ())
+
+
+#: every way of stacking (method, drizzle rejection): the Stack block is on the CPU as a whole only when none keeps the card
+STACK_WAYS = (("drizzle", "own"), ("drizzle", "by_count"), ("drizzle", "integration"), ("classic", "own"))
+
+
+def _lost(r: dict) -> bool:
+    return r.get("verdict") not in (OK, ABSENT)
+
+
 def judge(results: list[dict]) -> dict[str, str]:
     """{stage: 'card' | 'cpu'}: the card is kept for a stage when every operation of it says so (a stage not tested
-    keeps it, as it would without the self-test)."""
+    keeps it, as it would without the self-test). The Stack block has several ways of stacking, each with its own
+    operations (``stack_operations``): an operation that lost sends to the CPU the stacks that use it and no other
+    (``cpu_jobs``, ``stack_why``); the block is 'cpu' here only when no way of stacking keeps the card."""
     out = {s: "card" for s in STAGES}
+    lost = {r["op"] for r in results if _lost(r)}
     for r in results:
-        if r["verdict"] not in (OK, ABSENT):
+        if _lost(r) and r["stage"] != "stack":
             out[r["stage"]] = "cpu"
+    if all(lost.intersection(stack_operations(m, rej)) for m, rej in STACK_WAYS):
+        out["stack"] = "cpu"
     return out
 
 
@@ -282,17 +305,31 @@ def stage_on_cpu(profiles: dict | None, device: str | None, stage: str) -> bool:
     return bool(p) and (p.get("stages") or {}).get(stage) == "cpu"
 
 
-def cpu_jobs(profile: dict | None, plan: Any) -> dict[str, str]:
-    """{key: why} of the jobs of a plan that the profile sends to the CPU (their stage has 'cpu' in it)."""
+def cpu_jobs(profile: dict | None, plan: Any) -> dict[str, Any]:
+    """{key: why} of the jobs of a plan that the profile sends to the CPU (their stage has 'cpu' in it). A job of the
+    Stack block: {operation: why} of its operations that lost, since which of them the job uses depends on its
+    settings, the automatic ones known only in the run (``stack_why``, core/runner2.py)."""
     if not profile:
         return {}
     from .workflow import base
-    out: dict[str, str] = {}
+    out: dict[str, Any] = {}
+    lost = {n: STAGE_ON_CPU.format(why=REASONS.get(r.get("verdict"), REASONS[ERROR]))
+            for n, r in (profile.get("ops") or {}).items() if r.get("stage") == "stack" and _lost(r)}
     for j in plan.jobs:
+        if base(j.stage) == "stack":
+            if lost:
+                out[j.key] = dict(lost)
+            continue
         why = stage_reason(profile, base(j.stage))
         if why:
             out[j.key] = STAGE_ON_CPU.format(why=why)
     return out
+
+
+def stack_why(lost: dict[str, str], method: str, rejection: str = "own") -> str:
+    """Why a stack of these settings goes to the CPU, '' when it keeps the card: the reason of the first operation it
+    uses among those that lost (``lost``: a Stack job's entry of ``cpu_jobs``)."""
+    return next((lost[n] for n in stack_operations(method, rejection) if n in lost), "")
 
 
 # ---------------------------------------------------------------------------------------------- the card

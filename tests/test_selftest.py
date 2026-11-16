@@ -151,13 +151,66 @@ def ok(name):
 
 
 def test_judge_needs_every_operation_of_a_stage():
-    res = [ok("drizzle"), {**ok("sampling"), "verdict": selftest.WRONG}, ok("denoise"), ok("stars"), ok("post")]
+    res = [ok("drizzle"), ok("sampling"), {**ok("denoise"), "verdict": selftest.WRONG}, ok("stars"), ok("post")]
     stages = selftest.judge(res)
-    assert stages["stack"] == "cpu" and stages["denoise"] == "card" and stages["post"] == "card"
+    assert stages["stack"] == "card" and stages["denoise"] == "cpu" and stages["post"] == "card"
+
+
+def timed(name, card_s, cpu_s):
+    """An operation's result with these times and the verdict the plain comparison gives them."""
+    return {**ok(name), "card_s": card_s, "cpu_s": cpu_s, "verdict": selftest.SLOWER if card_s >= cpu_s else selftest.OK}
+
+
+def test_a_slower_classic_operation_does_not_send_a_drizzle_stack_to_the_processor():
+    """A 436-frame drizzle stack went to the processor (25.7 min, 13.6 min on the card) because the Classic method's
+    operation, which that stack does not use, was slower on the card."""
+    res = [ok("drizzle"), timed("sampling", 0.38, 0.63), timed("classic", 5.10, 2.40), ok("denoise"), ok("stars"),
+           ok("post")]
+    prof = selftest.make_profile("cuda:0", "x", "1", res)
+    assert prof["stages"]["stack"] == "card"                    # a way of stacking keeps the card: not the whole block
+    bad = selftest.cpu_jobs(prof, StackPlan)["s"]
+    assert selftest.stack_why(bad, "drizzle", "own") == ""
+    assert selftest.stack_why(bad, "drizzle", "by_count") == ""
+    assert "slower" in selftest.stack_why(bad, "classic", "own")
+    assert "slower" in selftest.stack_why(bad, "drizzle", "integration")     # that rejection is the Classic method's
+    assert set(selftest.cpu_jobs(prof, StackPlan)) == {"s"}
+
+
+def test_each_way_of_stacking_is_judged_on_the_operations_it_uses():
+    assert selftest.stack_operations("classic", "own") == ("classic",)
+    assert selftest.stack_operations("drizzle", "own") == ("drizzle", "sampling")
+    assert selftest.stack_operations("drizzle", "by_count") == ("drizzle",)
+    assert selftest.stack_operations("drizzle", "integration") == ("drizzle", "classic")
+    res = [ok("drizzle"), timed("sampling", 0.7, 0.6), ok("classic"), ok("denoise"), ok("stars"), ok("post")]
+    bad = selftest.cpu_jobs(selftest.make_profile("cuda:0", "x", "1", res), StackPlan)["s"]
+    assert "slower" in selftest.stack_why(bad, "drizzle", "own")
+    assert selftest.stack_why(bad, "drizzle", "by_count") == "" and selftest.stack_why(bad, "classic", "own") == ""
+    res = [{**ok("drizzle"), "verdict": selftest.WRONG}, ok("sampling"), ok("classic")]
+    bad = selftest.cpu_jobs(selftest.make_profile("cuda:0", "x", "1", res), StackPlan)["s"]
+    assert "wrong" in selftest.stack_why(bad, "drizzle", "by_count") and selftest.stack_why(bad, "classic", "own") == ""
+
+
+def test_the_stack_block_is_on_the_processor_only_when_no_way_of_stacking_keeps_the_card():
+    res = [timed("drizzle", 2.0, 1.0), ok("sampling"), timed("classic", 5.1, 2.4)]
+    prof = selftest.make_profile("cuda:0", "x", "1", res)
+    assert prof["stages"]["stack"] == "cpu"
+    assert selftest.stage_reason(prof, "stack") == selftest.REASONS[selftest.SLOWER]
+    res = [timed("drizzle", 2.0, 1.0), ok("sampling"), ok("classic")]
+    assert selftest.judge(res)["stack"] == "card"
+
+
+class J:
+    def __init__(self, key, stage):
+        self.key, self.stage = key, stage
+
+
+class StackPlan:
+    jobs = [J("s", "stack"), J("d", "denoise")]
 
 
 def test_the_profile_keeps_the_card_and_driver_and_says_why():
-    res = [ok("drizzle"), {**ok("sampling"), "verdict": selftest.SLOWER}, ok("denoise"), ok("stars"), ok("post")]
+    res = [{**ok("drizzle"), "verdict": selftest.SLOWER}, ok("sampling"), {**ok("classic"), "verdict": selftest.SLOWER},
+           ok("denoise"), ok("stars"), ok("post")]
     prof = selftest.make_profile("cuda:0", "RTX 4060 Ti", "610.88", res, auto=True)
     assert json.loads(json.dumps(prof))["card"] == "RTX 4060 Ti"                # goes into the settings' JSON
     assert selftest.still_valid(prof, "RTX 4060 Ti", "610.88")
@@ -173,18 +226,17 @@ def test_the_profile_keeps_the_card_and_driver_and_says_why():
 
 
 def test_cpu_jobs_of_a_plan():
-    res = [ok("drizzle"), {**ok("sampling"), "verdict": selftest.ERROR}, ok("denoise"), ok("stars"), ok("post")]
+    res = [ok("drizzle"), {**ok("sampling"), "verdict": selftest.ERROR}, ok("denoise"),
+           {**ok("stars"), "verdict": selftest.ERROR}, ok("post")]
     prof = selftest.make_profile("cuda:0", "x", "1", res)
 
-    class J:
-        def __init__(self, key, stage):
-            self.key, self.stage = key, stage
-
     class P:
-        jobs = [J("a", "stack"), J("b", "stack@2"), J("c", "denoise")]
+        jobs = [J("a", "stack"), J("b", "stack@2"), J("c", "denoise"), J("d", "star_removal")]
 
     jobs = selftest.cpu_jobs(prof, P)
-    assert set(jobs) == {"a", "b"} and "the card failed" in jobs["a"]
+    # a whole block: its reason; the Stack block: the reason of each of its operations that lost, the run chooses
+    assert set(jobs) == {"a", "b", "d"} and "the card failed" in jobs["d"]
+    assert set(jobs["a"]) == {"sampling"} and "the card failed" in jobs["b"]["sampling"]
     assert selftest.cpu_jobs(None, P) == {}
 
 
@@ -249,6 +301,24 @@ def test_a_job_the_profile_sends_to_the_cpu_runs_there(tmp_path, monkeypatch, pr
     w = runner2._Worker(Path(proj.root), body, tr.RULES, False)
     assert w.device_of(job) == "cpu"
     assert w.device_of(plan.jobs[-1]) == w.device
+
+
+@pytest.mark.parametrize("method, rejection, where", [("drizzle", "own", "card"), ("drizzle", "by_count", "card"),
+                                                      ("classic", "own", "cpu"), ("drizzle", "integration", "cpu")])
+def test_a_stack_job_goes_to_the_processor_only_for_the_operations_its_settings_use(proj, monkeypatch, method,  # noqa: F811
+                                                                                    rejection, where):
+    """The method of a stack is known in the run (Automatic: once the registration is there): the run judges there."""
+    from types import SimpleNamespace
+    plan = tr.plan_all(proj)
+    job = next(j for j in plan.jobs if j.stage == "stack")
+    why = selftest.STAGE_ON_CPU.format(why=selftest.REASONS[selftest.SLOWER])
+    info = runner2.prepare_run(proj, plan, "cuda:0", {job.key: {"classic": why}})
+    body = json.loads(open(info.plan_file, encoding="utf-8").read())
+    monkeypatch.setattr(runner2.Pipeline, "effective_params",
+                        lambda self, st: (SimpleNamespace(method=method, drizzle_rejection=rejection), {}, {}))
+    w = runner2._Worker(Path(proj.root), body, tr.RULES, False)
+    assert w.device_of(job) == ("cpu" if where == "cpu" else w.device)
+    assert w.cpu_why(job) == (why if where == "cpu" else "")
 
 
 # ---------------------------------------------------------------------------------------------- the memory of the Stack stage
