@@ -333,6 +333,8 @@ class Main(QMainWindow):
         self._flash_timer.timeout.connect(self._flash_end)
         self._flash_html = ""                        # the word said with its link, as the status line shows it
         self._post_lists = journal.Lists()           # the stamps of Post's own steps (the window's one order of Undo)
+        self._undone_at: dict[int, int] = {}         # an undone step's stamp -> the stamp its change had (see _history_do)
+        self._made_at: dict[int, int] = {}           # a redone step's stamp -> the stamp its change had before its Undo
         self.setAcceptDrops(True)                    # files dropped where no page takes them: said (dropped_elsewhere)
         self.screens = QStackedWidget()
         self.banner = Banner()
@@ -1936,7 +1938,18 @@ class Main(QMainWindow):
             for steps in (view.undo, view.redo):
                 self._post_lists.seen(steps)
 
-    def _history_tops(self, how: str) -> list:
+    def _history_tops(self, how: str, raw: bool = False) -> list:
+        """The next step of each history of the window: [(where, stamp, extra)]. A step redone counts in the Undo
+        lists at the time its change was made, not at the time of its Redo (``raw``: the stamps as they are)."""
+        found = self._history_lists(how)
+        if raw or how != "undo":
+            return found
+        return [(where, self._made_at.get(seq, seq), extra) for where, seq, extra in found]
+
+    #: the list a step lives in: the workflows' steps are one list, whether made in the Graph or in Post
+    _HISTORY_OF = {"graph": "model", "post_model": "model"}
+
+    def _history_lists(self, how: str) -> list:
         from .post3 import ModelStep
         s = self.s
         out = []
@@ -1972,8 +1985,13 @@ class Main(QMainWindow):
         if not found:
             return None
         best = max(found, key=lambda c: c[1])
-        if how == "redo" and any(c[1] > best[1] for c in self._history_tops("undo")):
-            return None                                  # a change was made since: nothing comes back over it
+        # a change made since: nothing comes back over it. A later step of the same list is a step redone (a change
+        # there empties its Redo), and a step redone elsewhere counts at the time of its change: neither is a change
+        # made since (in Post, the second Ctrl+Y after two Ctrl+Z said "Nothing to redo")
+        mine = self._HISTORY_OF.get(best[0], best[0])
+        if how == "redo" and any(c[1] > best[1] and self._HISTORY_OF.get(c[0], c[0]) != mine
+                                 for c in self._history_tops("undo")):
+            return None
         return best
 
     def history_words(self, how: str) -> str:
@@ -2081,6 +2099,24 @@ class Main(QMainWindow):
         self._history_do(where, how, extra)
 
     def _history_do(self, where: str, how: str, extra=None, step=None):
+        """``_history_step``, and the time of the change kept with the step it moved: undone, a step goes to a Redo
+        list, and comes back, redone, to an Undo list where it counts at the time its change was made. Else every
+        step redone looked like a change made after the Undo of the steps still to redo."""
+        self._post_seen()
+        other = "redo" if how == "undo" else "undo"
+        taken = max((c[1] for c in self._history_tops(how)), default=0)
+        mark = journal.now()
+        self._history_step(where, how, extra, step)
+        if self.s is None:
+            return
+        self._post_seen()
+        for _where, seq, _extra in self._history_tops(other, raw=True):
+            if seq > mark and how == "undo":
+                self._undone_at[seq] = taken
+            elif seq > mark and taken in self._undone_at:
+                self._made_at[seq] = self._undone_at.pop(taken)
+
+    def _history_step(self, where: str, how: str, extra=None, step=None):
         """The step taken back (or redone) where it was made; ``step``: the workflows' step a question was asked for
         (nothing is done when another one came meanwhile)."""
         s = self.s

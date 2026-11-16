@@ -16,6 +16,11 @@ def tick() -> int:
     return _clock[0]
 
 
+def now() -> int:
+    """The latest stamp given: a step stamped later was pushed after this call."""
+    return _clock[0]
+
+
 def stamp(step) -> None:
     """A step pushed to a list of Undo or Redo now: its stamp (an object that cannot hold one is left as it is)."""
     try:
