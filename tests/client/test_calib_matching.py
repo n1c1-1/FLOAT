@@ -180,3 +180,14 @@ def test_a_session_without_darks_or_flats_says_so(tmp_path):
         i18n.set_language("en")
     p.sessions[0].lights = []                                # nothing to match yet: said too
     assert _lines(p, 1) == [(None, "No light frames yet")]
+
+
+def test_darks_of_a_session_without_lights_are_not_compared_with_lights(tmp_path):
+    """A session with shared darks only said "Darks: exposure 13 s, ISO 4000, same as the lights": it has no lights."""
+    p = _project(tmp_path, 2, 508.0, np.full((H, W), 8400 / 65535, np.float32), {"STACKCNT": 30})
+    p.sessions[0].lights, p.sessions[0].flats, p.sessions[0].bias = [], [], []
+    lines = _lines(p, 1)
+    assert lines[0] == (None, "No light frames yet"), lines
+    assert not any("the lights." in t and t.startswith("Darks: exposure") for _ok, t in lines), lines
+    assert not any(t.startswith("Lights of") for _ok, t in lines), lines
+    assert any("same as the lights" in t for _ok, t in _lines(p, 2))        # a session with lights: still compared
