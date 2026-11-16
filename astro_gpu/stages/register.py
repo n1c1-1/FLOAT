@@ -267,7 +267,10 @@ class Register(Stage):
 
     def _not_aligned(self, ctx: Context, p: RegisterParams, meta, cats, fwhm, rmsb, rnd, noise, psf, nst, W, H):
         """The Registration block cut (issue #43): every frame stays where it is (the identity map), its stars still
-        matched to the reference's within 3 px for the residual and the transparency."""
+        matched to the reference's within 3 px for the residual and the transparency. A frame none of whose stars is
+        matched (no star found in it: clouds, a lost frame) carries no measure, as a frame the alignment could not fit
+        (residual infinite, transparency 0: the selection leaves it out); it had a residual of 0 and a transparency
+        of 1, the best marks. When the reference has no star nothing can be measured: every frame stays in."""
         n = len(cats)
         ctx.log("Registration cut: the frames are taken as already aligned")
         ref = int(np.argmin(np.where(nst >= np.percentile(nst, 50), fwhm, np.inf)))
@@ -278,15 +281,19 @@ class Register(Stage):
         ident[1, 0], ident[1, 2] = H / 2, H / 2
         coef = np.repeat(ident[None], n, axis=0)
         nmatch, rms, transp = np.zeros(n, int), np.zeros(n), np.ones(n)
+        measurable = cats[ref] is not None and len(cats[ref]) > 0
         for i in range(n):
             c = cats[i]
-            if c is None or not len(c):
+            m = np.zeros(0, bool)
+            if c is not None and len(c):
+                d, j = tree.query(c[:, :2], distance_upper_bound=3.0)
+                m = np.isfinite(d)
+            if not m.any():
+                if measurable:
+                    rms[i], transp[i] = np.inf, 0.0
                 continue
-            d, j = tree.query(c[:, :2], distance_upper_bound=3.0)
-            m = np.isfinite(d)
             nmatch[i] = int(m.sum())
-            if m.any():
-                rms[i] = float(np.sqrt(np.mean(d[m] ** 2)))
+            rms[i] = float(np.sqrt(np.mean(d[m] ** 2)))
             if m.sum() >= 5:
                 transp[i] = float(np.median(c[m, 2] / refcat[j[m], 2]))
         extra = moffat_arrays(psf)
@@ -294,10 +301,14 @@ class Register(Stage):
                  nstars=nst, bkgrms=rmsb, roundness=rnd, noise=noise, **extra)
         ctx.metric("registration_cut", True)
         ctx.metric("reference_frame", os.path.basename(meta[ref]["path"]))
-        ctx.metric("aligned", n)
-        ctx.metric("rms_px", round(float(np.median(rms)), 3))
+        ok = np.isfinite(rms)
+        ctx.metric("aligned", int(ok.sum()))
+        if not ok.all():
+            ctx.metric("not_aligned", int((~ok).sum()))
+            ctx.log(f"{int((~ok).sum())} frame(s) have no star in common with the reference and will be ignored",
+                    "warning")
+        ctx.metric("rms_px", round(float(np.median(rms[ok])), 3))
         ctx.metric("fwhm_px", round(float(np.median(fwhm)), 2))
-        ok = np.ones(n, bool)
         ctx.metric("drift_px", 0.0)
         ctx.preview("frame_quality", quality_plot(meta, fwhm, transp, ok))
 

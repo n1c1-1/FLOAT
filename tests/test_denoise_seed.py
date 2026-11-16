@@ -89,3 +89,26 @@ def test_stop_acts_between_two_steps_of_the_adaptation_not_after_fifty(monkeypat
     with pytest.raises(Interrupted):
         dn.adapt(ctx, net, A, A.copy(), nm, bk, sg, torch.device("cpu"), 500, 1e-3, 1)
     assert done["steps"] == 3
+
+
+@pytest.mark.parametrize("shape", [(100, 150), (192, 192), (192, 300), (5, 300)])
+def test_an_image_smaller_than_a_tile_is_adapted_on_tiles_of_its_size(shape):
+    """The adaptation drew its 192 px tiles from an image at least that large: a smaller one (a crop, a small sensor)
+    stopped the block with an error of the random draw. Its tiles are now cut to the image; under 8 px a side there is
+    nothing to learn from: the pretrained network is used as it is, and the log says so."""
+    rng = np.random.default_rng(0)
+    A = rng.normal(1.0, 0.1, (3, *shape)).astype(np.float32)
+    B = rng.normal(1.0, 0.1, (3, *shape)).astype(np.float32)
+    bk, sg, nm = dn.norm_params(A, np.ones_like(A))
+    net = dn.UNet(w=(8, 16, 32))
+    start = b"".join(v.numpy().tobytes() for v in net.state_dict().values())
+    said = []
+    ctx = SimpleNamespace(check_stop=lambda: None, progress=lambda *a, **k: None,
+                          log=lambda m, level="info": said.append((level, m)))
+    dn.adapt(ctx, net, A, B, nm, bk, sg, torch.device("cpu"), 3, 1e-3, 3)
+    after = b"".join(v.numpy().tobytes() for v in net.state_dict().values())
+    if min(shape) >= 8:
+        assert after != start and said[-1][1].startswith("adapted to the image in 3 steps")
+    else:
+        assert after == start and said == [("warning", "the image is too small to adapt the network to it (300 x 5 px): "
+                                                       "the pretrained network is used as it is")]

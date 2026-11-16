@@ -281,6 +281,8 @@ PATTERNS: list[tuple[re.Pattern, str, tuple]] = [
          r"residual too large\)$",
          "{0} frame(s) could not be aligned and will be ignored (no trustworthy match: under {1} star pairs, or a "
          "residual too large)", ()),
+        (r"^(\d+) frame\(s\) have no star in common with the reference and will be ignored$",
+         "{0} frame(s) have no star in common with the reference and will be ignored", ()),
         (r"^(.+) left out: no stars detected \(a dark or a covered frame\?\)$",
          "{0} left out: no stars detected (a dark or a covered frame?)", ()),
         (r"^(.+) left out: only (\d+) stars detected, too few to match$",
@@ -591,6 +593,7 @@ class RunTrack:
         self.pid: int | None = None
         self.error = ""                          # why the run ended badly, as the worker said it
         self.lost = False                        # the worker ended without saying run_end (killed, crashed)
+        self.unread = False                      # its events could no longer be read: it stopped being followed
         self.stop_asked = False
         self._shown: dict[tuple, float] = {}     # the highest progress shown for each set of jobs (#158: a bar never goes back)
         self.lines: list[Line] = []
@@ -740,6 +743,15 @@ class RunTrack:
         self.lost = True
         self._end("interrupted", time.time(), {"error": why}, out)
         self.lines[-1] = (self.lines[-1][0], "run_lost", {"error": why, **self.counts})
+        out.lines[-1] = self.lines[-1]
+        return out
+
+    def end_unread(self, why: str = "") -> Batch:
+        """The run's events can no longer be read (its drive unplugged, its folder refused): it is no longer followed.
+        Shown as a run that ended without saying so; ``error`` keeps why the read failed."""
+        out = self.end_lost(why)
+        self.unread = True
+        self.lines[-1] = (self.lines[-1][0], "run_unread", self.lines[-1][2])
         out.lines[-1] = self.lines[-1]
         return out
 
@@ -941,6 +953,8 @@ def render_line(line: Line, title=lambda stage: stage) -> str:
             block=d.get("name") or review_title(d["block"]))
     elif kind == "run_lost":
         text = _("Run ended unexpectedly")
+    elif kind == "run_unread":
+        text = _("Run no longer followed: its progress cannot be read")
     elif kind == "not_started":
         text = _("Run not started: {why}").format(why=_(d["why"]))
     elif kind == "start_detail":                 # the worker's own words, under the plain sentence (exploration 2)
@@ -1061,9 +1075,19 @@ class RunFollower(QObject):
         self.worker.submit(self.channel, _poll_job, self.p, self.offset, self.track.run_id or self.info.run_id,
                            self.info.pid, self.info.log_file)
 
-    def _failed(self, channel: str, _n: int, _text: str):
-        if channel == self.channel:
-            self._busy = False                   # a read that failed is asked again at the next tick
+    def _failed(self, channel: str, _n: int, text: str):
+        if channel != self.channel:
+            return
+        self._busy = False                       # a read that failed is asked again at the next tick
+        if self.track.finished:
+            return
+        self._dead += 1                          # as a read that finds the run gone: a second one in a row ends it
+        if self._dead >= 2:
+            b = self.track.end_unread((text or "").strip().splitlines()[0] if (text or "").strip() else "")
+            b.stage_changed = b.progressed = b.ended = True
+            self.batch.emit(b)
+            self._timer.stop()
+            self.ended.emit()
 
     def _done(self, channel: str, _n: int, result):
         if channel != self.channel:
@@ -1570,6 +1594,9 @@ class RunController(QObject):
             if c[FAILED]:                                    # done: what could be computed is in Post; the rest is said
                 text += " · " + plural(c[FAILED], "{n} block failed", "{n} blocks failed")
                 self.model.log("Blocks failed: {n}", n=c[FAILED])
+        elif t.unread:                                       # not stopped: its events cannot be read any more
+            text = _("Run no longer followed: its progress cannot be read")
+            self.model.log("Run no longer followed: its progress cannot be read")
         elif t.status == "interrupted":
             text = plural(c[DONE], "Run stopped: {n} block done", "Run stopped: {n} blocks done")
             self.model.log("Run stopped")

@@ -1,6 +1,6 @@
 """The Classic stacking method: debayer every frame, put it on the reference
 grid, normalise it, reject outliers pixel by pixel, average what is kept. It is how the reference program (its OSC_Preprocessing
-script) and the reference processing suite (WBPP without drizzle) stack colour frames, and the method core/coverage.py advises when the
+script) and the reference processing suite (its batch script without drizzle) stack colour frames, and the method core/coverage.py advises when the
 frames are too few or too little dithered for a Bayer drizzle (the weight map varies by more than 20 %, DrizzlePac's
 rule).
 
@@ -16,7 +16,7 @@ The steps, each a published method (sources in the modules named):
 3. **Normalisation** (the drizzle's: stages/stack.py ``frame_norm``, an additive sky difference to the reference, a
    quadratic per colour, and the frame's transparency as its scale): every colour c of a frame becomes
    (value - Q_c(X, Y)) / scale_c at its reference position (X, Y) = the output pixel.
-4. **Rejection by the number of frames, the reference processing suite's WBPP rule** (core/rejection_classic.py): percentile 0.2 / 0.1
+4. **Rejection by the number of frames, the reference processing suite's batch script's rule** (core/rejection_classic.py): percentile 0.2 / 0.1
    for 3 to 5 frames, winsorized sigma clipping 3 / 3 for 6 to 15, linear fit clipping 5 / 3.5 from 16, the
    generalized ESD test as an option above 50; per frame, colour and pixel.
 5. **The weighted mean** of the kept values, with the frame weights of the drizzle (one per frame), as the reference program's
@@ -75,7 +75,7 @@ frame for debayering and resampling, on a mid-range GPU or on eight CPU cores (c
 rejection and the means.
 
 Sources: see core/debayer.py, core/resample.py, core/rejection_classic.py; [S7] the reference program's OSC_Preprocessing.ssf;
-[S12] https://siril.org/tutorials/tuto-manual/ ; [P15] WBPP.
+[S12] https://siril.org/tutorials/tuto-manual/ ; [P15] the reference processing suite's batch script.
 """
 from __future__ import annotations
 
@@ -130,7 +130,7 @@ class ClassicParams:
     interpolation: str = "lanczos4"      # resample.METHODS
     clamping: str = "bilinear_guide"              # resample.CLAMPINGS
     clamp_threshold: float = rs.PCL_CLAMPING_THRESHOLD
-    rejection: str = "auto"              # "auto" (WBPP's rule) or rejection_classic.METHODS
+    rejection: str = "auto"              # "auto" (the batch script's rule) or rejection_classic.METHODS
     low: float | None = None             # None: the method's published thresholds
     high: float | None = None
     gesd_above_50: bool = False

@@ -303,3 +303,21 @@ def test_the_viewer_reads_a_camera_frame_in_adu_and_any_other_fits_as_it_is(tmp_
     _write(tmp_path / "dark.fit", _mosaic(level=508 / 65535), BAYERPAT="RGGB")
     assert abs(float(np.median(read_file(tmp_path / "dark.fit", frame=True)[0])) - 508) < 0.05
     assert float(np.median(read_file(tmp_path / "dark.fit")[0])) < 0.01                 # a result, an export: as it is
+
+
+def test_an_8_bit_fits_frame_saturates_at_255(tmp_path):
+    """A monochrome or mosaic 8-bit FITS frame whose header gives no DATAMAX had a white level of 1: every pixel counted
+    as saturated. Its white level is its depth's, as for the other integer depths; a header level is still obeyed, and
+    the 16-bit, 32-bit and float files read as before."""
+    a8 = np.full((4, 6), 40, np.uint8)
+    for name, hdr in (("mono8.fit", {}), ("cfa8.fit", {"BAYERPAT": "RGGB"})):
+        _write(tmp_path / name, a8, **hdr)
+        assert read_info(tmp_path / name).white == 255.0, name
+    _write(tmp_path / "max8.fit", a8, DATAMAX=200)
+    assert read_info(tmp_path / "max8.fit").white == 200.0
+    for name, data in (("u16.fit", np.full((4, 6), 400, np.uint16)), ("i32.fit", np.full((4, 6), 400, np.int32)),
+                       ("f32.fit", np.full((4, 6), 0.3, np.float32)), ("f64.fit", np.full((4, 6), 400.0, np.float64))):
+        _write(tmp_path / name, data)
+        assert read_info(tmp_path / name).white == 65535.0, name
+    _write(tmp_path / "f32max.fit", np.full((4, 6), 0.3, np.float32), DATAMAX=1.0)
+    assert read_info(tmp_path / "f32max.fit").white == 65535.0

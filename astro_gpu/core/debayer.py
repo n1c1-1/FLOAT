@@ -5,7 +5,7 @@ Two methods, torch, on the device of the frame (GPU or CPU):
 
 * ``rcd`` (default): **Ratio Corrected Demosaicing**, Luis Sanz Rodríguez, release 2.3 (2017-11-25) [L10], exactly as
   the reference program runs it (the reference program's default since 1.2 [S6][S11]: ``src/algos/demosaicing_rtp.cpp`` calls librtprocess's
-  ``rcd_demosaic``). The reference code is librtprocess ``src/demosaic/rcd.cc`` (RawTherapee's tiled version by Ingo
+  ``rcd_demosaic``). The reference code is librtprocess ``src/demosaic/rcd.cc`` (a raw converter's tiled version by Ingo
   Weyrich, with the author's exact shorter form of the directional statistics) and ``src/demosaic/border.cc``
   (``bayerborder_demosaic``); this module follows it step by step:
 
@@ -36,8 +36,8 @@ Two methods, torch, on the device of the frame (GPU or CPU):
 
   **White balance before demosaicing** (``balance``, on by default in ``debayer``): the colour channels are scaled to
   the same level before RCD and scaled back after, as every raw converter does: dcraw applies its white-balance
-  multipliers (``scale_colors``) before any interpolation [D2], RawTherapee scales the raw data (``scaleColors``)
-  before it calls the librtprocess demosaicers [L11], darktable's default pipeline puts "white balance" before
+  multipliers (``scale_colors``) before any interpolation [D2], a second raw converter scales the raw data (``scaleColors``)
+  before it calls the librtprocess demosaicers [L11], a third one's default pipeline puts "white balance" before
   "demosaic" [D3]. RCD's green estimate (ratios of low-passes over all four samples) and its red / blue colour
   differences assume channels of similar level; on an unbalanced astronomical frame they move green flux into the
   weak channel. Measured on a calibrated frame of heart (Sony A7S, blue sky level 0.4 x green), aperture photometry
@@ -49,7 +49,7 @@ Two methods, torch, on the device of the frame (GPU or CPU):
   levels a CFA equalisation brings to the same value), since astronomical frames (FITS) seldom carry the camera's;
   the bilinear method interpolates each colour from its own samples only and is not changed by them.
 * ``bilinear``: the textbook bilinear demosaicing, each missing colour the mean of the samples of that colour in the
-  3 x 3 neighbourhood (DSS's default [D1]; librtprocess's ``bayerborder_demosaic`` formula everywhere). Not the reference program's
+  3 x 3 neighbourhood (the default of another stacking program [D1]; librtprocess's ``bayerborder_demosaic`` formula everywhere). Not the reference program's
   "bilinear", which is librtprocess's ``bayerfast`` (gradient-weighted green): a simple option, not the reference.
 
 Before demosaicing, the samples the calibration left out (NaN in the calibrated cache: hot, cold and dusty pixels) are
@@ -62,8 +62,8 @@ Sources: [L10] https://github.com/LuisSR/RCD-Demosaicing (rcd_demosaicing.c, rel
 librtprocess https://github.com/CarVac/librtprocess (src/demosaic/rcd.cc, border.cc); the reference program 1.4
 https://gitlab.com/free-astro/siril/-/blob/1.4/src/algos/demosaicing_rtp.cpp and src/filters/cosmetic_correction.c;
 [S11] https://siril.org/2020/09/whats-new-in-siril-0.99.4/ ; [D1] le logiciel d'empilement de référence technical help; [D2] dcraw.c
-(Dave Coffin): main() calls scale_colors() before pre_interpolate() and the interpolations; [L11] RawTherapee
-rtengine/rawimagesource.cc (scaleColors before demosaic); [D3] darktable user manual, processing modules: demosaic
+(Dave Coffin): main() calls scale_colors() before pre_interpolate() and the interpolations; [L11] a raw converter's
+rtengine/rawimagesource.cc (scaleColors before demosaic); [D3] another's user manual, processing modules: demosaic
 and white balance (the default module order).
 """
 from __future__ import annotations

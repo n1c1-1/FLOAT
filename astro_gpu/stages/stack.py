@@ -112,7 +112,7 @@ SWITCHES = {"method": METHODS, "selection": SELECTIONS, "selection_transparency"
 # and this is the only place where they remain)
 CHOICE_ALIASES = {"selection": {"legacy": "thresholds"},
                   "classic_clamping": {"siril": "bilinear_guide", "pixinsight": "lobe_clamp"}}
-#: the modules of the Classic method (RCD debayering, Lanczos-4 registration with clamping, WBPP's rejection by frame
+#: the modules of the Classic method (RCD debayering, Lanczos-4 registration with clamping, the batch script's rejection by frame
 #: count, and core/stack_classic.py which runs them); the function ``stack_classic`` below is its hook
 CLASSIC_MODULES = ("debayer", "resample", "rejection_classic", "stack_classic")
 #: the Classic method's own settings (core/debayer.METHODS, core/resample.METHODS and CLAMPINGS,
@@ -1570,7 +1570,7 @@ def balanced(a: np.ndarray, wb: np.ndarray | None) -> np.ndarray:
 def stack_classic(ctx: Context, p: StackParams, *, wb=None, load, coef, used, weight, norm, transp, meta, sel, ch_of_k,
                   H: int, W: int, satval, dev, t0: float, colour: bool = False, zone=None, mono: bool = False) -> None:
     """The hook of the Classic method (``method = classic``: RCD debayering, Lanczos-4
-    registration with the reference program's clamping, WBPP's rejection by frame count; core/stack_classic.py and the modules it
+    registration with the reference program's clamping, the batch script's rejection by frame count; core/stack_classic.py and the modules it
     uses). ``Stack.run`` calls it once the part both methods share is done: the frames ``used`` with their
     ``weight``, the normalisation (``norm`` {frame: (Q, sky)} of frame_norm and ``transp``), the selection ``sel``
     (``Selection``), ``load(i)`` the calibrated CFA frame. It writes what the drizzle writes (drz_full / drz_A /
@@ -1997,7 +1997,7 @@ def frame_selection(p: StackParams, reg, stats, excl) -> Selection:
     The weight of a frame is (transparency / noise)^2 x sharpness (``quality_weights``). By ``p.selection``:
 
     * ``min_weight`` (default): every aligned frame, but those weighing less than 5 % of the best one (the reference processing suite
-      WBPP 2.5.0's minimum weight [P17]) and those excluded by hand: The reference program and the reference processing suite keep almost every frame by
+      batch script 2.5.0's minimum weight [P17]) and those excluded by hand: The reference program and the reference processing suite keep almost every frame by
       default and let the weights handle the bad ones [S2][P21][L6] (core/frame_weights.py, with the sources);
     * ``sota``: The reference program's k x sigma filters at 2.5 on FWHM, roundness and transparency (the reference program's Seestar script;
       ``selection_transparency = off`` drops the last; register's Moffat FWHM and roundness when it made them), then

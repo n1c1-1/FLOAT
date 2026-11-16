@@ -107,7 +107,8 @@ class AstrometryParams(StageParams):
                     help="When the field centre is unknown (or the guided search fails), identify the field on the "
                          "whole sky from its brightest stars (the shapes of groups of four stars, looked up in an "
                          "index of the sky).",
-                    tip="Works for fields wider than about 1 deg; the first use downloads two bright-star catalogues.")
+                    tip="Works for fields wider than about 1 deg; needs the Bright stars installed in Settings › Catalogs & "
+                        "astrometry (nothing is downloaded during a run).")
     search_offsets: float = P(0.2, label="Search range", level=ADVANCED, ge=0.0, le=1.0, step=0.05,
                               unit="x field", help="How far from the given centre the solver looks for the field.")
     sip_order: int = P(3, label="Distortion order", level=ADVANCED, ge=0, le=5,

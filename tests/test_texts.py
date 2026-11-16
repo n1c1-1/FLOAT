@@ -478,3 +478,14 @@ def test_the_interface_names_no_other_software():
     args = {"n": 40, "low": 5, "high": 3.5}
     assert texts.format_reason(old, args) == "40 frames: linear fit clipping (5 / 3.5 sigma), the usual choice from 16 frames"
     assert texts.format_reason(old, args, "fr").startswith("40 images : rejet par ajustement linéaire (5 / 3,5 σ)")
+
+
+def test_an_older_clamping_value_is_shown_as_the_current_one():
+    """The Classic clamping's values once named the program each came from; a project or a result made before the
+    renaming still carries one (stages/stack.CHOICE_ALIASES). Where a stored value is shown as it is (the report's
+    stacking line, why a block is outdated), it reads as the current value, never as the stored name."""
+    from astro_gpu.stages.stack import CHOICE_ALIASES
+    for old, new in CHOICE_ALIASES["classic_clamping"].items():
+        assert texts.choice_label(old) == texts.choice_label(new) != old
+        assert texts.choice_label(old, "fr") == texts.choice_label(new, "fr") != old
+    assert texts.choice_label("legacy") == "legacy"          # another setting's value of that name is not touched

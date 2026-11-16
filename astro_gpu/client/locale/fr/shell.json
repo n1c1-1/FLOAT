@@ -134,7 +134,7 @@
  "TB": "To",
  "both workflows": "les 2 workflows",
  "H-alpha survey offline": "Relevé H-alpha hors ligne",
- "The survey is read tile by tile and each tile is kept: a field already seen works offline. Download fetches the tiles of the recent projects' solved fields now.": "Le relevé est lu tuile par tuile et chaque tuile est gardée : un champ déjà vu fonctionne hors ligne. Télécharger récupère maintenant les tuiles des champs résolus des projets récents.",
+ "The H-alpha survey of a field is fetched from the Gradient block and kept on this computer, tile by tile; nothing is downloaded during a run. Download fetches the tiles of the recent projects' solved fields now.": "Le relevé H-alpha d'un champ se télécharge depuis le bloc Gradient et reste sur cet ordinateur, tuile par tuile ; rien n'est téléchargé pendant une exécution. Télécharger récupère maintenant les tuiles des champs résolus des projets récents.",
  "Download (offline)": "Télécharger (hors ligne)",
  "Not downloaded: {why}": "Non téléchargé : {why}",
  "{fields} fields, {tiles} tiles in the cache": "{fields} champs, {tiles} tuiles dans le cache",

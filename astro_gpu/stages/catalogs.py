@@ -30,9 +30,10 @@ class CatalogsParams(StageParams):
     xp_gmax: float = P(14.0, label="Faint limit", level=ADVANCED, ge=8, le=17.5, step=0.5, unit="G mag",
                        help="Faintest Gaia stars whose XP spectrum is used for the colour calibration.")
     xp_max: int = P(4000, label="Star count", level=ADVANCED, ge=100, le=20000,
-                    help="Maximum number of XP spectra downloaded (they are cached and reused).")
+                    help="Maximum number of XP spectra read for the colour calibration (from the star catalogue on "
+                         "this computer).")
     cell_deg: float = P(1.0, label="Cell size", level=ADVANCED, ge=0.1, le=5, unit="deg",
-                        help="Size of the cones in which the Gaia archive is queried.")
+                        help="Size of the cones in which the Gaia stars are read.")
 
 
 class Catalogs(Stage):

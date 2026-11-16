@@ -532,8 +532,9 @@ class SettingsDialog(QDialog):
         """Issue #39: the H-alpha survey's tiles of the recent projects' fields fetched ahead, so that their Surveys
         stage (and any new stack of the same fields) works offline. Off the GUI thread; said when done."""
         v.addWidget(label(_("H-alpha survey offline"), "h2"))
-        v.addWidget(label(_("The survey is read tile by tile and each tile is kept: a field already seen works "
-                            "offline. Download fetches the tiles of the recent projects' solved fields now."),
+        v.addWidget(label(_("The H-alpha survey of a field is fetched from the Gradient block and kept on this "
+                            "computer, tile by tile; nothing is downloaded during a run. Download fetches the tiles of "
+                            "the recent projects' solved fields now."),
                           "small", wrap=True))
         r = QHBoxLayout()
         b = QPushButton(_("Download (offline)"))

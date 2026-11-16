@@ -148,8 +148,7 @@ class Denoise(Stage):
             ctx.log(f"monochrome stack of {lights} frames: the network made for monochrome noise")
         if p.method == "adapted":
             steps, lr = ADAPTATIONS[p.adaptation]
-            adapt(ctx, net, A, B, nm, bk, sg, dev, steps, lr, p.seed)
-            ctx.metric("adaptation_steps", steps)
+            ctx.metric("adaptation_steps", adapt(ctx, net, A, B, nm, bk, sg, dev, steps, lr, p.seed))
         else:
             ctx.metric("adaptation_steps", 0)
             if corr < UNDITHERED_CORRELATION:
@@ -332,9 +331,17 @@ def _tile_generator(seed: int) -> torch.Generator:
     return torch.Generator().manual_seed(seed)
 
 
-def adapt(ctx, net, A, B, nm, bk, sg, dev, steps: int, lr: float, seed: int) -> None:
+def adapt(ctx, net, A, B, nm, bk, sg, dev, steps: int, lr: float, seed: int) -> int:
     """Noise2Noise steps on random tiles of the half-stacks (one predicts the other, both ways), all the weights,
-    a one-cycle learning rate: the network learns this image's noise. The loss is weighted by the expected noise."""
+    a one-cycle learning rate: the network learns this image's noise. The loss is weighted by the expected noise.
+    The steps done: 0 for an image under 8 px a side (nothing to learn from: the network stays as it is). The tiles
+    of an image smaller than ``PATCH`` are cut to it (square, a multiple of 8 as the network halves them three
+    times)."""
+    side = min(PATCH, *A.shape[1:]) // 8 * 8
+    if not side:
+        ctx.log(f"the image is too small to adapt the network to it ({A.shape[2]} x {A.shape[1]} px): the pretrained "
+                "network is used as it is", "warning")
+        return 0
     # the half-stacks stay on the host when the card has little free memory (the tiles go to the card one batch at a time)
     free = devices.free_memory(dev)
     home = dev if free is None or (A.nbytes + B.nbytes + nm.nbytes) * 2 < free else torch.device("cpu")
@@ -351,15 +358,15 @@ def adapt(ctx, net, A, B, nm, bk, sg, dev, steps: int, lr: float, seed: int) -> 
     t0 = time.time()
     for it in range(steps):
         ctx.check_stop()                         # every step: on the processor one lasts seconds, Stop acts at once
-        ys = torch.randint(0, Hh - PATCH, (BATCH * 2,), device="cpu", generator=gen)
-        xs = torch.randint(0, Ww - PATCH, (BATCH * 2,), device="cpu", generator=gen)
+        ys = torch.randint(0, max(Hh - side, 1), (BATCH * 2,), device="cpu", generator=gen)
+        xs = torch.randint(0, max(Ww - side, 1), (BATCH * 2,), device="cpu", generator=gen)
         xin, tgt, nmp = [], [], []
         for y, x in zip(ys.tolist(), xs.tolist()):
-            if not bool(valid[y + PATCH // 2, x + PATCH // 2]):
+            if not bool(valid[y + side // 2, x + side // 2]):
                 continue
             src, dst = (tA, tB) if torch.rand(1, generator=gen).item() < 0.5 else (tB, tA)
-            p_in, p_t, p_n = (src[:, y:y + PATCH, x:x + PATCH], dst[:, y:y + PATCH, x:x + PATCH],
-                              tN[:, y:y + PATCH, x:x + PATCH])
+            p_in, p_t, p_n = (src[:, y:y + side, x:x + side], dst[:, y:y + side, x:x + side],
+                              tN[:, y:y + side, x:x + side])
             k = int(torch.randint(0, 4, (1,), generator=gen))
             p_in, p_t, p_n = (torch.rot90(t, k, (1, 2)) for t in (p_in, p_t, p_n))
             xin.append(p_in)
@@ -387,6 +394,7 @@ def adapt(ctx, net, A, B, nm, bk, sg, dev, steps: int, lr: float, seed: int) -> 
         if (it + 1) % 50 == 0:
             ctx.progress(0.9 * (it + 1) / steps, f"adapting to the image: step {it + 1}/{steps}, loss {run:.4f}")
     ctx.log(f"adapted to the image in {steps} steps ({(time.time() - t0) / 60:.1f} min), loss {run:.4f}")
+    return steps
 
 
 @torch.no_grad()

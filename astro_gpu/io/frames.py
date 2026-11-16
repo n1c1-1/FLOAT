@@ -7,10 +7,10 @@ its top-left block: ``"RGGB"`` (2 x 2 Bayer), or 36 letters for a 6 x 6 X-Trans 
 A frame already in colour has no mosaic: the pattern is ``cfa.RGB``, ``read_colour`` gives its three planes, and
 ``read_cfa`` its luminance, so that whatever only needs a frame's level or stars reads it as any other. The method is
 The reference stacking program's for RGB pictures, as its documentation gives it: three planes throughout, the master flat, dark and
-offset included (FAQ, http://deepskystacker.free.fr/english/faq.htm : its raw modes work "with only one monochrome 16
+offset included (its FAQ: its raw modes work "with only one monochrome 16
 bits channel instead of 3 RGB channels [...] flat, dark and offset frames are computed and internally stored with only
-one plane instead of 3"), the stars found on the luminance (technical details,
-http://deepskystacker.free.fr/english/technical.htm : "a Gaussian curve to the luminance"). Its values are taken as
+one plane instead of 3"), the stars found on the luminance (its technical details:
+"a Gaussian curve to the luminance"). Its values are taken as
 the file holds them, with no gamma curve taken off: neither that documentation nor the reference program's preprocessing guide
 describes such a step for JPEG lights, and the curve a camera applied is not known (not the sRGB curve alone: its tone
 curve, contrast and white balance are in it). So the frames stay non-linear, which the session says plainly
@@ -614,9 +614,9 @@ def _fits_info(path: Path) -> FrameInfo:
     bitpix = int(hd.get("BITPIX", 16))
     # the levels in ADU, as fits_adu reads the pixels: a file of floats reaches 65535 (on the 0-1 scale, brought to
     # ADU; already in ADU, the 16 bits of a camera), and its header levels on the 0-1 scale are brought to ADU too
-    # (white 1.0 made a float master's level of 0.13 read as 13 % of saturation, where it is 8400 ADU)
-    white = fits_level(float(hd.get("DATAMAX", hd.get("SATURATE", 2 ** 16 - 1 if bitpix in (16, 32) or bitpix < 0
-                                                                else 1.0))), hd)
+    # (white 1.0 made a float master's level of 0.13 read as 13 % of saturation, where it is 8400 ADU); an 8-bit file
+    # reaches 255 (it was given 1.0: every pixel of it counted as saturated)
+    white = fits_level(float(hd.get("DATAMAX", hd.get("SATURATE", 255 if bitpix == 8 else 2 ** 16 - 1))), hd)
     if _is_rgb_fits(hd):                       # a frame already in colour (issue #57): read_colour's range
         pat, white = cfa_mod.RGB, 255.0 if bitpix == 8 else 65535.0 if bitpix < 0 else float(hd.get("DATAMAX", 65535.0))
     info = FrameInfo(str(path), "fits", w, h, pat, fits_level(float(hd.get("PEDESTAL", hd.get("OFFSET", 0)) or 0), hd),

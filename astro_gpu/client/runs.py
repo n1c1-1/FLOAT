@@ -827,7 +827,8 @@ class RunDialog(QDialog):
             if names:
                 lines.append((_("Ready in Post: {names}").format(names=", ".join(names)), ""))
         elif t.lost:
-            lines.append((_("Run ended unexpectedly · results kept"), WARN))
+            lines.append((_("Run no longer followed: its progress cannot be read") if t.unread else
+                          _("Run ended unexpectedly · results kept"), WARN))
         elif t.status == "interrupted":
             n = t.block_count()[DONE]                      # the count the status line says, the rows ticked above
             lines.append((plural(n, "Stopped · {n} block done, kept", "Stopped · {n} blocks done, kept") if n

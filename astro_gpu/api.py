@@ -2,7 +2,8 @@
 
 Every function takes the project definition (``Project2``) first, and a workflow by its integer id (a ``Workflow``
 object also works wherever the function only reads: that is how what-ifs are asked). Edits change the definition in
-memory; ``save(p)`` writes it (the client autosaves, debounced). Nothing here imports Qt.
+memory; ``save(p)`` writes it (the client calls it on Save and before a run, never by itself). Nothing here imports
+Qt.
 
 Threading. Nothing slow runs on import: torch, the stages and the renderers load on the first call that
 needs them. The calls fall into four groups:
