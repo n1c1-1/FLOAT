@@ -94,6 +94,19 @@ def test_ctrl_z_the_menu_and_a_notice_link_undo_the_same_step(win, how):
     assert said.startswith("Undone: ") and "RBF" in said and "rbf" not in said and "method:" not in said, said
 
 
+def test_the_edit_menu_names_the_step_undo_takes(win):
+    """The laptop's tour: Edit > Undo said only "Undo"; opened, the menu names the step, as the reference editors."""
+    menu = next(m.menu() for m in win.menuBar().actions() if win.a_undo in m.menu().actions())
+    _set_rbf(win)
+    menu.aboutToShow.emit()
+    assert win.a_undo.text().startswith("Undo: ") and "RBF" in win.a_undo.text(), win.a_undo.text()
+    assert win.a_redo.text() == "Redo"
+    win.a_undo.trigger()
+    _settle(win, 3)
+    menu.aboutToShow.emit()
+    assert win.a_redo.text().startswith("Redo: ") and "RBF" in win.a_redo.text(), win.a_redo.text()
+
+
 def test_the_page_shortcut_never_competes_with_the_menu(win):
     from PySide6.QtGui import QKeySequence, QShortcut
     live = [sc for sc in win.graph.findChildren(QShortcut) if sc.isEnabled() and sc.key() == QKeySequence("Ctrl+Z")]

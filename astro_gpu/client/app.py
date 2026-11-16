@@ -428,6 +428,7 @@ class Main(QMainWindow):
         self.a_undo = act(e, _("Undo"), self.undo, "Ctrl+Z", enabled=has, role="undo")
         self.a_redo = act(e, _("Redo"), self.redo, "Ctrl+Y", enabled=has, role="redo")
         self.a_redo.setShortcuts([QKeySequence("Ctrl+Y"), QKeySequence("Ctrl+Shift+Z")])
+        e.aboutToShow.connect(self._history_texts)       # "Undo: Curves of “Filter”", as the reference editors
         e.addSeparator()
         act(e, _("Settings…"), self.open_settings, "Ctrl+,", role="settings")
         v = mb.addMenu(_("View"))
@@ -1927,6 +1928,34 @@ class Main(QMainWindow):
         if how == "redo" and any(c[1] > best[1] for c in self._history_tops("undo")):
             return None                                  # a change was made since: nothing comes back over it
         return best
+
+    def history_words(self, how: str) -> str:
+        """The words of the step the window's next Undo (``how`` "undo") or Redo takes, nothing moved; "" when it is
+        not said (or there is none)."""
+        nxt = self._history_next(how)
+        if nxt is None or self.s is None:
+            return ""
+        where, _seq, _extra = nxt
+        if where in ("graph", "post_model"):
+            return self.s.next_words(how)
+        if where == "post":
+            view = self._post_view()
+            return view.next_words(how) if view is not None else ""
+        if where == "draft":
+            return _("Gradient draft")
+        d = getattr(self.s, "pending_change", None)
+        return _("{block} draft").format(block=getattr(d, "title", "")) if d is not None else ""
+
+    def _history_texts(self):
+        """Edit > Undo / Redo name their step when the menu opens ("Undo: Saturation of “Filter”")."""
+        for a, how, plain, named in ((self.a_undo, "undo", _("Undo"), _("Undo: {what}")),
+                                     (self.a_redo, "redo", _("Redo"), _("Redo: {what}"))):
+            try:
+                what = self.history_words(how) if a.isEnabled() else ""
+            except Exception:  # noqa: BLE001 - a name never stops the menu from opening
+                what = ""
+            what = what if len(what) <= 60 else what[:59] + "…"
+            a.setText(named.format(what=what).replace("&", "&&") if what else plain)
 
     def _survey_held(self, how: str) -> str:
         """Why the next Undo (``how`` "undo") or Redo waits: it is Use survey's, which moves results to the trash or

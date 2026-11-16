@@ -1421,6 +1421,24 @@ def test_masks_with_parts_show_on_the_image_and_in_the_thumbnails(post):
     assert full["mask"] is None and v.b_maskadd.toolTip() == "Add a mask to the selected layer"
 
 
+def test_the_undo_arrows_tip_names_the_step_it_takes(post):
+    """The laptop's tour: the Undo arrow said only "Undo (Ctrl+Z)"; its tip names the step, Redo's too."""
+    from PySide6.QtCore import QEvent, QPoint
+    from PySide6.QtGui import QHelpEvent
+    v = post.view
+    full = named(v, "Full")
+    v.push()
+    full["opacity"] = 40.0
+    tip = lambda b: (QApplication.sendEvent(b, QHelpEvent(QEvent.ToolTip, QPoint(2, 2), b.mapToGlobal(QPoint(2, 2)))),  # noqa: E731
+                     b.toolTip())[1]
+    v._undo_buttons()
+    assert v.next_words("undo") == "Opacity of “Full”"
+    assert tip(v.b_undo) == "Undo: Opacity of “Full” (Ctrl+Z)" and tip(v.b_redo) == "Redo (Ctrl+Y)"
+    v.do_undo()
+    assert named(v, "Full")["opacity"] != 40.0
+    assert tip(v.b_redo) == "Redo: Opacity of “Full” (Ctrl+Y)"
+
+
 def test_the_brush_paints_erases_and_is_one_undo_step(post):
     v = post.view
     full = named(v, "Full")

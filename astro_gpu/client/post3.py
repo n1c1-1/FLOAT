@@ -921,6 +921,8 @@ class PostView(QWidget):
             b.setObjectName("toggle")
         self.b_undo = icon_only(QPushButton(), "undo", _("Undo (Ctrl+Z)"), 16)
         self.b_redo = icon_only(QPushButton(), "redo", _("Redo (Ctrl+Y)"), 16)
+        for b in (self.b_undo, self.b_redo):
+            b.installEventFilter(self)                   # their tip names the step (_undo_tips)
         self.b_export = set_icon(QPushButton(_("Export…")), "export", 16)
         for w in (self.b_fit, self.b_100, self.zoom_lab):
             bar.addWidget(w)
@@ -1117,7 +1119,8 @@ class PostView(QWidget):
     def _fill_more(self):
         """The "…" menu: the tools the bar has no room for, as their buttons (checked, greyed, their tip)."""
         self.more_menu.clear()
-        names = {self.b_undo: _("Undo"), self.b_redo: _("Redo"), self.b_version_del: _("Delete this version"),
+        self._undo_tips()
+        names ={self.b_undo: _("Undo"), self.b_redo: _("Redo"), self.b_version_del: _("Delete this version"),
                  self.b_version_new: _("New version")}                   # (shown by their icons in the bar)
         for b in reversed(self._overflow()):
             if not b.isHidden():
@@ -1135,6 +1138,8 @@ class PostView(QWidget):
         # buttons, the compact look's margins): the fit again (#142)
         if obj is getattr(self, "centre", None) and e.type() in (QEvent.Resize, QEvent.LayoutRequest):
             self._fit_bar()
+        if e.type() == QEvent.ToolTip and obj in (getattr(self, "b_undo", None), getattr(self, "b_redo", None)):
+            self._undo_tips()                            # the step's name, as it is when the tip shows
         if e.type() in (QEvent.ShortcutOverride, QEvent.KeyPress) and e.key() == Qt.Key_Escape                 and hasattr(self, "cb_version") and obj is self.cb_version.lineEdit():
             e.accept()                                   # Escape is the field's, as a layer's name: it gives the typing
             if e.type() == QEvent.KeyPress:              # up (the window's page-leaving shortcut never sees it)
@@ -2126,6 +2131,25 @@ class PostView(QWidget):
         self.b_undo.setEnabled(bool(self.undo))          # Post's own steps only: the graph's are undone in the graph
         self.b_redo.setEnabled(bool(self.redo))
         self.undoChanged.emit()
+
+    def next_words(self, how: str = "undo") -> str:
+        """The words of the step Post's next Undo (``how`` "undo") or Redo takes, nothing moved; "" when not said."""
+        steps = self.undo if how == "undo" else self.redo
+        if not steps:
+            return ""
+        top = steps[-1]
+        if isinstance(top, ModelStep):                   # a step of the workflows made here: the model's words
+            words = getattr(self.s, "next_words", None)
+            return words(how) if words is not None and self._model_mine(top, "_" + how) else ""
+        now = self._step(snapshot(self.layers))
+        return step_words(top, now) if how == "undo" else step_words(now, top)
+
+    def _undo_tips(self):
+        """The arrows' tips name their step ("Undo: Saturation of “Filter” (Ctrl+Z)"), as Edit > Undo does."""
+        for b, how, plain, named in ((self.b_undo, "undo", _("Undo (Ctrl+Z)"), _("Undo: {what} (Ctrl+Z)")),
+                                     (self.b_redo, "redo", _("Redo (Ctrl+Y)"), _("Redo: {what} (Ctrl+Y)"))):
+            what = self.next_words(how) if b.isEnabled() else ""
+            b.setToolTip(named.format(what=what) if what else plain)
 
     def _set_workflow_param(self, p, stage, name, value):
         """A setting of the workflow shown here (its Output's channels): a step of Post's Undo too (2.4), undone by the
