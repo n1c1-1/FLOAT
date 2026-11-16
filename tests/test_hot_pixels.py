@@ -224,3 +224,84 @@ def test_sessions_sharing_darks_build_the_master_once(tmp_path, monkeypatch):
     (tmp_path / "d1.fits").write_bytes(b"y" * 99)
     cal._median_stack(files, ctx, "darks")
     assert len(reads) > n
+
+
+# ------------------------------------------------------------------------- the hot pixels of the master dark
+HD, WD = 384, 512
+SKY_NOISE = 30.0                                     # of a light; the threshold is a share of it (the setting)
+CORNER = np.s_[:64, -64:]                            # where the amplifier glows
+CENTRE = np.s_[160:224, 224:288]
+
+
+def _glow_dark(rng, noise, n_hot=200):
+    """A master dark whose amplifier glows in a corner (+50 ADU there, smooth, some +25 ADU 64 px away) with isolated
+    hot pixels; ``noise``: the master's own (a master of few frames is noisy). Returns (dark, the hot pixels' rows,
+    columns)."""
+    yy, xx = np.mgrid[0:HD, 0:WD]
+    glow = 50.0 * np.exp(-np.hypot(yy, WD - 1 - xx) / 120.0)
+    dark = (800.0 + glow + rng.normal(0, noise, (HD, WD))).astype(np.float32)
+    ys, xs = np.unravel_index(rng.choice(HD * WD, n_hot, replace=False), (HD, WD))
+    dark[ys, xs] += rng.uniform(200, 5000, n_hot).astype(np.float32)
+    return dark, ys, xs
+
+
+def test_a_glow_of_the_dark_is_not_hot_pixels_and_the_hot_pixels_are_found():
+    dark, ys, xs = _glow_dark(np.random.default_rng(11), noise=2.0)
+    assert float(np.median(dark[CORNER]) - np.median(dark)) > 0.6 * SKY_NOISE     # the glow is above the threshold
+    hot = cal.dark_hot_pixels(dark, 0.6 * SKY_NOISE, 2)
+    lone = np.ones((HD, WD), bool)
+    lone[ys, xs] = False
+    assert hot[CORNER][lone[CORNER]].mean() < 0.005                       # the glow itself: not flagged
+    assert hot[ys, xs].mean() > 0.95                                      # the hot pixels: flagged, in the glow too
+    assert hot[lone].mean() < 0.005
+
+
+def test_a_light_calibrated_with_a_glowing_dark_has_no_excess_where_it_glows(monkeypatch):
+    """The master dark of a few frames is noisy: a map that flags the glow keeps, there, only the pixels where the
+    master is lowest, and fills the others from them (a border too bright in the stack)."""
+    rng = np.random.default_rng(12)
+    current, ys, xs = _glow_dark(rng, noise=0.0)                         # the dark current: glow and hot pixels
+    light = (1000.0 + current + rng.normal(0, SKY_NOISE, (HD, WD))).astype(np.float32)
+    master = (current + rng.normal(0, 12.0, (HD, WD))).astype(np.float32)
+    bad = cal.dark_hot_pixels(master, 0.6 * SKY_NOISE, 2)
+    mm = np.zeros((1, HD, WD), np.float32)
+    cal._G.clear()
+    cal._G.update(darks=[master], flat=np.ones((HD, WD), np.float32), bad=bad, mm=mm, sat=65000.0, scale=1.0,
+                  fill=cal._neighbours(bad, "RGGB"), cfa="RGGB", hot="off")
+    monkeypatch.setattr(cal, "read_cfa", lambda p: light.copy())
+    cal._calib_one((0, "x", 0))
+    cal._G.clear()
+    out = mm[0]
+    assert np.isfinite(out[CORNER]).mean() > 0.99                         # no hole where it glows
+    excess = float(np.nanmean(out[CORNER]) - np.nanmean(out[CENTRE]))
+    sem = float(np.hypot(SKY_NOISE, 12.0)) / 64                           # the noise of a 64 x 64 mean (light, master)
+    assert abs(excess) < 4 * sem, excess
+
+
+def test_a_higher_hot_pixel_threshold_flags_fewer_pixels_of_the_dark():
+    dark, ys, xs = _glow_dark(np.random.default_rng(13), noise=12.0)
+    n = [int(cal.dark_hot_pixels(dark, t * SKY_NOISE, 2).sum()) for t in (0.6, 20.0, 60.0, 120.0)]
+    assert n[0] > n[1] > n[2] > n[3] > 0                                  # 18, 600, 1800, 3600 ADU above the neighbours
+    assert cal.dark_hot_pixels(dark, 5.0 * SKY_NOISE, 2)[ys, xs].mean() > 0.95
+
+
+def test_the_noise_of_a_master_dark_of_few_frames_is_not_hot_pixels():
+    """The threshold (18 ADU) is 1.5 sigma of this master's own noise: 7 % of its pixels are above it by chance. A
+    pixel within 3 sigma of the master's noise is noise; the hot pixels, which would inflate a plain standard
+    deviation, do not move the sigma taken from the median deviation."""
+    dark, ys, xs = _glow_dark(np.random.default_rng(15), noise=12.0)
+    hot = cal.dark_hot_pixels(dark, 0.6 * SKY_NOISE, 2)
+    lone = np.ones((HD, WD), bool)
+    lone[ys, xs] = False
+    assert hot[lone].mean() < 0.005                                       # 0.13 % of a normal noise is above 3 sigma
+    assert hot[CORNER][lone[CORNER]].mean() < 0.01                        # where it glows too
+    assert hot[ys, xs].mean() > 0.95                                      # 200 ADU and more: 16 sigma
+    many = _glow_dark(np.random.default_rng(15), noise=12.0, n_hot=20000)  # 10 % of hot pixels: the same sigma
+    assert cal.dark_hot_pixels(many[0], 0.6 * SKY_NOISE, 2)[many[1], many[2]].mean() > 0.95
+    assert cal.SIRIL_HOT_SIGMA == 3.0
+
+
+def test_the_hot_pixels_of_a_dark_in_colour_are_found_plane_by_plane():
+    dark, ys, xs = _glow_dark(np.random.default_rng(14), noise=2.0)
+    hot = cal.dark_hot_pixels(dark, 0.6 * SKY_NOISE, 1)                   # a plane of frames already in colour
+    assert hot[ys, xs].mean() > 0.95 and hot.sum() < 1.1 * len(ys)

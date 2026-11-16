@@ -32,14 +32,18 @@ MIN_USABLE = 0.5        # the share of a frame's samples below which it has no s
 #: session's frames) or "per_frame" (Siril's cosmetic correction without darks, on each light)
 HOT_METHODS = ("persistence", "per_frame")
 #: Siril's cosmetic correction, "Hot Sigma" (src/gui-gtk4/uifiles/cosmetic_dialog.ui, adjSigCosmeHot, value 3) and
-#: "Amount" 1 (adjCosmeAmount): the defaults of the dialog, of the documentation's "use the default settings"
+#: "Amount" 1 (adjCosmeAmount): the defaults of the dialog, of the documentation's "use the default settings". Also
+#: the sigma of its search of the hot pixels of a master dark (find_hot; its documentation of the calibration: "If
+#: sigmas are not provided, only hot pixels detection with a sigma of 3 will be applied"), which ``dark_hot_pixels``
+#: takes as the floor under the Hot pixel threshold
 SIRIL_HOT_SIGMA = 3.0
 
 
 class CalibrateParams(StageParams):
     hot_sigma: float = P(0.6, label="Hot pixel threshold", level=ADVANCED, ge=0.1, le=10, step=0.1, unit="x sky noise",
-                         help="A pixel whose dark current exceeds this fraction of the sky noise of a light frame is "
-                              "excluded from the stack.",
+                         help="A pixel whose dark current exceeds that of its neighbours by this fraction of the sky "
+                              "noise of a light frame, and by 3 times the master dark's own noise, is excluded and "
+                              "filled from its neighbours.",
                          tip="Low values (0.5-1) exclude more pixels; with many frames that costs nothing because "
                              "the drizzle fills the gaps. Raise it if more than ~5 % of the pixels get excluded.")
     flat_defect: float = P(0.3, label="Flat defect threshold", level=ADVANCED, ge=0.05, le=0.9, step=0.05,
@@ -108,7 +112,10 @@ class Calibrate(Stage):
     # of them within 2 to 5 sigmas of a frame
     # 11: the persistence leaves the pixels under a star of the lower quartile to the stack's rejection (the frames
     # hardly moved there: a Sony A7S series flagged cores of its bright stars, 10 to 26 % of their flux)
-    version = "11"
+    # 12: a hot pixel of the master dark is one above its neighbourhood, no longer above the dark's level as a whole
+    # (``dark_hot_pixels``: an amplifier's glow was flagged, and the stack had a bright border), and above 3 sigma of
+    # the master's own noise (7 % of the pixels of a master of 6 darks were above the threshold by chance)
+    version = "12"
     key_label = "11"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
     def auto(self, ctx: Context) -> dict[str, Auto]:
@@ -581,7 +588,7 @@ def calibrate_lights(ctx: Context, p: CalibrateParams, lights: list[dict], dark:
     sky_noise = _sky_noise(lights[int(main[len(main) // 2])]["path"], dark, flat, P)
     bad = np.zeros((H, W), bool)
     if have_darks:
-        bad |= (dark - level) > p.hot_sigma * sky_noise
+        bad |= dark_hot_pixels(dark, p.hot_sigma * sky_noise, P)
     from scipy.ndimage import median_filter
     for k in range(P * P):
         v = _plane(flat, k, P)
@@ -607,6 +614,32 @@ def calibrate_lights(ctx: Context, p: CalibrateParams, lights: list[dict], dark:
     ctx.log(f"master dark level {level:.1f} ADU, flat min {flat.min():.3f}, {100 * bad.mean():.2f} % pixels "
             f"excluded, sky noise {sky_noise:.1f} ADU")
     _calibrated_cache(ctx, p, lights, dark, flat, bad, cfa, white, t0, darks, rank, hot)
+
+
+#: the side of the median window a pixel of the dark is compared with, in pixels of its colour: the 5 x 5 block of
+#: Siril's hot pixel test on a frame (``siril_hot_pixels``) and of the persistence. A group of up to 12 hot pixels
+#: still stands out of it; an amplifier's glow, which spreads over hundreds of pixels, is flat in it
+HOT_WINDOW = 5
+
+
+def dark_hot_pixels(dark: np.ndarray, excess: float, P: int = 1) -> np.ndarray:
+    """The hot pixels of a master dark (H, W): those above the median of their neighbourhood (``HOT_WINDOW``, pixels
+    of the same position of the colour pattern of period ``P``; 1 for a plane of one colour) by more than ``excess``
+    ADU, and by more than ``SIRIL_HOT_SIGMA`` (3) sigma of that difference over the plane: a pixel within the master's
+    own noise is noise, not a hot pixel (a master of 6 darks, its noise 12 ADU, had 7 % of its pixels above 0.6 of the
+    sky noise by chance). The sigma is 1.4826 x the median absolute deviation from the median (``robust_sigma``),
+    which the hot pixels do not inflate as they do a standard deviation (35 ADU on that dark).
+    A hot pixel stands out from its neighbours; measured from the dark's level as a whole (as Siril's find_hot
+    does, src/filters/cosmetic_correction.c ``find_deviant_pixels``: the dark's median plus 3 of its standard
+    deviations), an amplifier's glow of 20 to 50 ADU was 13 % of hot pixels on a cooled camera, 90 % of three corners:
+    the pixels kept there were those where a master of 6 darks is lowest, the others were filled from them, and the
+    stack had a bright border."""
+    hot = np.zeros(dark.shape, bool)
+    for k in range(P * P):
+        v = np.ascontiguousarray(_plane(dark, k, P), np.float32)
+        over = v - cv2.medianBlur(v, HOT_WINDOW)
+        _plane(hot, k, P)[...] = over > max(excess, SIRIL_HOT_SIGMA * robust_sigma(over)[1])
+    return hot
 
 
 def hot_method(p: CalibrateParams, cfa: str, n_lights: int) -> tuple[str, str]:
@@ -1423,13 +1456,13 @@ def calibrate_colour(ctx: Context, p: CalibrateParams, frames: dict) -> None:
                         [f["path"] for f in frames["flat_darks"]], None if "flats" in ms else bias,
                         np.zeros_like(dark) if "flats" in ms else dark, H, W, p.flat_scale_px, ctx)
     ctx.log("hot pixels seen in the lights: not looked for in frames already in colour (demosaicing has spread them)")
-    level = np.median(dark, axis=(1, 2), keepdims=True)
     t0 = time.time()
     sky = read_colour(frames["lights"][len(frames["lights"]) // 2]["path"])
     noise = float(np.median([robust_sigma(((sky - dark) / flat)[c, ::4, ::4])[1] for c in range(3)]))
     bad = np.zeros((H, W), bool)
     if frames["darks"]:
-        bad |= ((dark - level) > p.hot_sigma * noise).any(0)
+        for c in range(3):
+            bad |= dark_hot_pixels(dark[c], p.hot_sigma * noise)
     from scipy.ndimage import median_filter
     for c in range(3):
         loc = median_filter(flat[c], size=9)

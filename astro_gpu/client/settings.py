@@ -56,8 +56,9 @@ CATALOG = {
               "night or the darks were taken at another temperature."),
         ]),
         ("Cosmetic correction", [
-            E("calibrate", "hot_sigma", help="A pixel hotter than this threshold (in noise sigmas) is excluded; "
-                                             "drizzle fills the hole with the other frames."),
+            E("calibrate", "hot_sigma", help="A pixel of the master dark that exceeds its neighbours by this share of "
+                                             "a light's sky noise, and by 3 times the master dark's own noise, is "
+                                             "excluded and filled from its neighbours."),
             E("calibrate", "hot_from_lights", help="Also looks for hot pixels in the lights themselves, not only in "
                                                    "the darks."),
             E("calibrate", "hot_method"),

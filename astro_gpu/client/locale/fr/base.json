@@ -669,7 +669,7 @@
   "as the engine does today": "comme le moteur aujourd'hui",
   "Dark scaling": "Échelle darks",
   "Scales the thermal signal of the master to each frame: useful when the temperature changed during the night or the darks were taken at another temperature.": "Ajuste le signal thermique du master à chaque image : utile quand la température a changé pendant la nuit ou que les darks ont été faits à une autre température.",
-  "A pixel hotter than this threshold (in noise sigmas) is excluded; drizzle fills the hole with the other frames.": "Un pixel plus chaud que ce seuil (en écarts au bruit) est exclu ; le drizzle comble le trou avec les autres images.",
+  "A pixel of the master dark that exceeds its neighbours by this share of a light's sky noise, and by 3 times the master dark's own noise, is excluded and filled from its neighbours.": "Un pixel du master dark qui dépasse ses voisins de cette part du bruit du ciel d'une brute, et de 3 fois le bruit propre du master dark, est exclu et comblé par ses voisins.",
   "Also looks for hot pixels in the lights themselves, not only in the darks.": "Cherche aussi les pixels chauds dans les brutes elles-mêmes, pas seulement dans les darks.",
   "Cold pixels": "Pixels froids",
   "Excludes pixels that are too dark (dead) the same way as hot pixels.": "Exclut les pixels trop sombres (morts) de la même façon que les pixels chauds.",
