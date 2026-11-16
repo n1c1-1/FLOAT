@@ -413,6 +413,8 @@ def test_engine_json_is_clean():
     wanted |= {t for m in texts.METRICS.values() for t in (m.label, m.meaning, m.unit)}
     wanted |= set(texts.VALUE_TEXTS.values()) | {p[1] for p in texts.VALUE_PATTERNS} | set(texts.UI_TEXTS)
     wanted |= set(texts.CHOICE_TEXTS.values())
+    from astro_gpu import api
+    wanted |= set(api.CALIBRATION_NOTES.values())        # the notes of a kind of frame no session has
     for s in texts._stages().values():
         wanted |= {s["title"], s["description"]}
         for d in s["params"].values():
