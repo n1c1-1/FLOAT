@@ -8,9 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 import conftest as cf
+import pytest
 
 
 def _real_file() -> Path:
@@ -41,9 +40,57 @@ def test_a_write_to_the_real_settings_is_refused():
             cf._audit("open", (str(real), "w", 0))
         with pytest.raises(cf.UserFolderWrite):
             cf._audit("os.rename", (str(real.with_name("settings.json.tmp")), str(real)))
-        cf._audit("open", (str(real), "r", 0))                       # reading it stays allowed
+        with pytest.raises(cf.UserFolderWrite):                     # nor read: his settings are not the test's input
+            cf._audit("open", (str(real), "r", 0))
+        with pytest.raises(cf.UserFolderWrite):                     # nor his templates listed
+            cf._audit("os.scandir", (str(real.parent / "templates"),))
+        with pytest.raises(cf.UserFolderWrite):                     # nor a project made in his Documents folder
+            cf._audit("os.mkdir", (str(Path.home() / "Documents" / "FLOAT" / "x"), 0o777, None))
     finally:
         cf._VIOLATIONS[:] = before                                   # these refusals are the test, not a violation
+
+
+def test_every_test_has_the_user_data_of_its_own(tmp_path):
+    """The autouse fixture of tests/conftest.py: the settings file, the templates folder beside it, the recent projects
+    in it and the cache of calibrated frames are the test's; going through them opens nothing outside tmp_path."""
+    import sys
+
+    from astro_gpu.client import prefs, templatefiles
+    opened: list[str] = []
+
+    def spy(event, args):
+        if event in ("open", "os.listdir", "os.scandir", "os.mkdir", "os.rename", "os.replace") and args and \
+                isinstance(args[0], (str, os.PathLike)):
+            opened.append(os.path.abspath(os.fspath(args[0])))
+    on = [True]
+    sys.addaudithook(lambda e, a: spy(e, a) if on[0] else None)   # a hook cannot be taken away: switched off below
+    try:
+        assert prefs.settings_file() == tmp_path / "settings.json" and prefs.FILE == tmp_path / "settings.json"
+        assert prefs.get("recent") == [] and prefs.get("templates") == []
+        prefs.add_recent(str(tmp_path / "p"), "p")
+        prefs.set("language", "fr")
+        assert templatefiles.user_dir() == tmp_path / "templates"
+        templatefiles.tabs()
+        assert Path(prefs.get("cache_dir")).is_relative_to(tmp_path)
+    finally:
+        on[0] = False
+    assert (tmp_path / "settings.json").is_file()
+    real = os.path.normcase(str(_real_file().parent))
+    assert opened and not [p for p in opened if os.path.normcase(p).startswith(real)]
+    shipped = os.path.normcase(str(templatefiles.shipped_dir()))
+    outside = [p for p in opened if not os.path.normcase(p).startswith((os.path.normcase(str(tmp_path)), shipped))]
+    assert not outside, outside
+
+
+def test_what_a_test_set_is_gone_in_the_next_one_a(tmp_path):
+    from astro_gpu.client import prefs
+    prefs.set("language", "fr")
+    prefs.add_recent(str(tmp_path / "a"), "a")
+
+
+def test_what_a_test_set_is_gone_in_the_next_one_b():
+    from astro_gpu.client import prefs
+    assert prefs.get("language") == "en" and prefs.recent() == []
 
 
 def test_a_subprocess_inherits_the_private_appdata():

@@ -11,6 +11,10 @@ from tests.client.pagehelp import qapp  # noqa: F401  (the fixture, by name)
 from tests.client.sweep import Oracle, Sweep, controls, definition, differs, gestures
 
 LANGS = ("en", "fr")
+#: gestures whose failure is a known defect of the application, checked on its own as an expected failure
+#: (test_post_duplicate_undo.py: a Combine layers block left in the graph after the Undo of a duplicate); once the
+#: defect is fixed that test passes, fails as strict, and this list is emptied
+KNOWN = {"Duplicate (Ctrl+J)/click", "Dupliquer (Ctrl+J)/click"}
 
 
 @pytest.fixture(autouse=True)
@@ -71,7 +75,7 @@ def test_sweep_post(qapp, tmp_path_factory, oracle, lang):
                         s.undo()
                         settle(win, 2)
                         k += 1
-                    if definition(s) != before:
+                    if definition(s) != before and f"{name}/{gname}" not in KNOWN:
                         S.fail(f"{name}/{gname}", differs("its Undo", before, s))
                     if not page.isVisible():
                         page.show()

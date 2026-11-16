@@ -144,8 +144,8 @@ def _norm(p) -> str:
 
 _WATCHED = [_norm(h) for h in _REAL_HOMES]
 _CACHE = [w + os.sep + "cache" for w in _WATCHED]
-#: the user's real client settings folder: refused by the audit hook only (his open window writes it, so it is not
-#: compared at the end of the session)
+#: the user's real client settings folder (his settings, his templates, his recent projects): refused by the audit hook,
+#: to read, list or write (his open window writes it, so it is not compared at the end of the session)
 _REAL_SETTINGS = _norm(Path(_REAL_APPDATA) / "astro_gpu") if _REAL_APPDATA else None
 
 
@@ -155,6 +155,18 @@ def _is_real_settings(path) -> bool:
     except (TypeError, ValueError):
         return False
     return _REAL_SETTINGS is not None and (s == _REAL_SETTINGS or s.startswith(_REAL_SETTINGS + os.sep))
+
+
+#: where the window proposes new projects (client/home.py default_location): the user's Documents/FLOAT
+_REAL_DOCUMENTS_FLOAT = _norm(Path.home() / "Documents" / "FLOAT")
+
+
+def _is_documents_float(path) -> bool:
+    try:
+        s = _norm(path)
+    except (TypeError, ValueError):
+        return False
+    return s == _REAL_DOCUMENTS_FLOAT or s.startswith(_REAL_DOCUMENTS_FLOAT + os.sep)
 
 
 def _is_watched(path) -> bool:
@@ -212,20 +224,29 @@ def _audit(event: str, args: tuple) -> None:
             path, mode, flags = args[0], args[1], args[2]
             by_mode = isinstance(mode, str) and any(c in mode for c in "wax+")
             if not (by_mode or (isinstance(flags, int) and flags & _WRITE_FLAGS)):
-                return
-            targets = [path]
+                # a read: refused in the user's settings folder only (his settings, templates, recent projects)
+                if isinstance(path, (str, bytes, os.PathLike)) and _is_real_settings(
+                        os.fsdecode(path) if isinstance(path, bytes) else path):
+                    targets, only = [path], _is_real_settings
+                else:
+                    return
+            else:
+                targets, only = [path], None
         elif event == "os.rename":
-            targets = [args[0], args[1]]
+            targets, only = [args[0], args[1]], None
         elif event in ("os.remove", "os.rmdir", "os.mkdir", "os.truncate"):
-            targets = [args[0]]
+            targets, only = [args[0]], None
+        elif event in ("os.listdir", "os.scandir"):
+            targets, only = [args[0]], _is_real_settings
         else:
             return
+        check = only or (lambda p: _is_watched(p) or _is_real_settings(p) or _is_documents_float(p))
         for t in targets:
-            if isinstance(t, (str, bytes, os.PathLike)) and (
-                    lambda p: _is_watched(p) or _is_real_settings(p))(os.fsdecode(t) if isinstance(t, bytes) else t):
+            if isinstance(t, (str, bytes, os.PathLike)) and check(os.fsdecode(t) if isinstance(t, bytes) else t):
                 what = f"{event} {os.fsdecode(t) if isinstance(t, bytes) else os.fspath(t)}"
                 _VIOLATIONS.append(f"{_CURRENT[0]}: {what}")
-                raise UserFolderWrite(f"a test must never write the user's files ({what}; test {_CURRENT[0]}): "
+                raise UserFolderWrite(f"a test must never write the user's files nor read his settings ({what}; test "
+                                      f"{_CURRENT[0]}): "
                                       f"ASTRO_GPU_HOME is {os.environ.get('ASTRO_GPU_HOME')}")
     except UserFolderWrite:
         raise
@@ -333,6 +354,37 @@ def pytest_collection_modifyitems(config, items) -> None:
     for name in ("level3", "slow", "network"):
         _COUNTS[name] = sum(1 for i in items if i.get_closest_marker(name))
     _COUNTS["all"] = len(items)
+    how = os.environ.get(ORDER_ENV, "")
+    if how:                                                # the -m of the run deselects later, keeping this order
+        items[:] = reorder(items, how)
+
+
+#: ASTRO_TEST_ORDER=reverse runs the tests in the reverse order (the modules last to first, each one's tests last to
+#: first); ASTRO_TEST_ORDER=random[:seed] shuffles the modules and the tests inside each one (a module's tests stay
+#: together: its module-scoped fixtures are made once). A test that passes only after another fails then.
+ORDER_ENV = "ASTRO_TEST_ORDER"
+
+
+def reorder(items: list, how: str) -> list:
+    """``items`` in the order ``how`` asks ("reverse", "random", "random:<seed>"); as they are for anything else."""
+    import random
+    groups: dict[str, list] = {}
+    for it in items:
+        groups.setdefault(it.nodeid.split("::")[0], []).append(it)
+    mods = list(groups)
+    if how == "reverse":
+        return [it for m in reversed(mods) for it in reversed(groups[m])]
+    if how.startswith("random"):
+        seed = how.partition(":")[2] or "0"
+        rng = random.Random(seed)
+        rng.shuffle(mods)
+        out = []
+        for m in mods:
+            g = list(groups[m])
+            rng.shuffle(g)
+            out += g
+        return out
+    return items
 
 
 #: seconds one test may take before the process is killed with the traceback of every thread (0: no limit). A test that
@@ -425,6 +477,10 @@ def _time_budget(terminalreporter, config) -> None:
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
+    times_file = os.environ.get("ASTRO_TEST_TIMES")       # every test's setup, call and teardown, in seconds (JSON)
+    if times_file:
+        import json
+        Path(times_file).write_text(json.dumps(_TIMES, indent=0), encoding="utf-8")
     problems, live = _REPORT or ([], [])
     if problems:
         terminalreporter.section("THE USER'S STATE FOLDER WAS TOUCHED BY THE TESTS", red=True, bold=True)
@@ -508,6 +564,16 @@ def guard():
                            changes=changed_real_files)
 
 
+def pytest_collection_finish(session) -> None:
+    """What the collection imported (torch, Qt, numpy, the application and the test modules: millions of objects that
+    live as long as the process) is set apart from the cyclic collector: the full collection that ends each client test
+    (below) then reads only what the tests made. It took half a second after every client test, a fifth of the fast
+    suite's test time; the garbage of the tests is collected as before."""
+    import gc
+    gc.collect()
+    gc.freeze()
+
+
 @pytest.fixture(autouse=True)
 def _collect_on_the_main_thread(request):
     """Client tests: Python's cyclic collector runs on the main (GUI) thread only, after each test, as the client's
@@ -530,3 +596,92 @@ def _private_project_registry(tmp_path, monkeypatch):
     """Each test has its own list of recent projects (inside the session's private folder, never the user's)."""
     import astro_gpu.core.project as project
     monkeypatch.setattr(project, "REGISTRY", tmp_path / "projects.json")
+
+
+@pytest.fixture(scope="session")
+def qapp():
+    """The QApplication of the process, with the client's style. A module that defines its own ``qapp`` keeps it.
+
+    It lived with the fixtures below in tests/client/graphview/conftest.py: a command naming files of that folder, then
+    a file of tests/client, then another file of that folder, collects the graphview package twice, and pytest gave the
+    second one none of that conftest's fixtures ("fixture 'qapp' not found", and no English set). A conftest.py in
+    tests/client would be imported as a second module named ``conftest`` (the tests' ``import conftest`` would get it),
+    so they are here."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from astro_gpu.client.widgets import QSS
+    app = QApplication.instance() or QApplication([])
+    app.setStyleSheet(QSS)
+    return app
+
+
+@pytest.fixture(autouse=True)
+def _english_on_the_graph_page(request):
+    """The new graph page's tests (tests/client/graphview) start in English, the source language, whatever the test
+    before them left."""
+    if "graphview" not in Path(str(request.fspath)).parts:
+        yield
+        return
+    from astro_gpu.client import i18n
+    i18n.set_language("en")
+    yield
+    i18n.set_language("en")
+
+
+def _release_held_buttons() -> list:
+    """The mouse buttons Qt still holds down (a test that pressed with QTest and ended before its release, or a drag
+    it simulated), released on a window of their own; the buttons that were held."""
+    if "PySide6.QtWidgets" not in sys.modules:
+        return []
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication, QWidget
+    if QApplication.instance() is None or QApplication.mouseButtons() == Qt.NoButton:
+        return []
+    held = [b for b in (Qt.LeftButton, Qt.RightButton, Qt.MiddleButton) if QApplication.mouseButtons() & b]
+    w = QWidget()
+    w.resize(8, 8)
+    w.show()
+    for b in held:
+        QTest.mouseRelease(w, b, Qt.NoModifier, QPoint(2, 2))
+    w.close()
+    w.deleteLater()
+    QApplication.processEvents()
+    return held
+
+
+@pytest.fixture(autouse=True)
+def _no_mouse_button_held(request):
+    """A client test starts with no mouse button down. Qt keeps the buttons a test pressed for the whole process: after
+    test_gv_page2's drags, the graph page waited for the button to be up before asking about a draft, for ever, and
+    test_gv_confirm failed when it ran after it."""
+    if "client" in Path(str(request.fspath)).parts:
+        _release_held_buttons()
+    yield
+
+
+@pytest.fixture()
+def bridge(qapp):
+    """The new graph page's bridge on a graph held in memory (nothing is written anywhere)."""
+    from astro_gpu.client.graphview.bridge import Bridge
+    from astro_gpu.client.graphview.document import MemoryDocument
+    return Bridge(MemoryDocument())
+
+
+@pytest.fixture(autouse=True)
+def _private_user_settings(request, tmp_path, monkeypatch):
+    """Each test has the client's user data of its own, read fresh: the settings file (ASTRO_GPU_SETTINGS) in its
+    tmp_path, so the templates folder and the recent projects beside it are the test's too, the cache of calibrated
+    frames and the temporary folder of a project made in the test go there, and so does the Documents folder new projects
+    are proposed in. Nothing a test before it set is left (a settings test passed or failed with the order of the run)."""
+    from astro_gpu.client import prefs
+    monkeypatch.setenv(prefs.ENV, str(tmp_path / "settings.json"))
+    monkeypatch.setitem(prefs.DEFAULTS, "cache_dir", (tmp_path / "scratch").as_posix())
+    monkeypatch.setitem(prefs.DEFAULTS, "temp_dir", (tmp_path / "temp").as_posix())
+    home = sys.modules.get("astro_gpu.client.home")
+    if home is None and "client" in Path(str(request.fspath)).parts:
+        from astro_gpu.client import home  # the client's tests only: it needs Qt
+    if home is not None:
+        monkeypatch.setattr(home, "default_location", lambda: tmp_path / "Documents" / "FLOAT")
+    prefs.load()
