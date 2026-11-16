@@ -280,9 +280,25 @@ def test_a_light_calibrated_with_a_glowing_dark_has_no_excess_where_it_glows(mon
 
 def test_a_higher_hot_pixel_threshold_flags_fewer_pixels_of_the_dark():
     dark, ys, xs = _glow_dark(np.random.default_rng(13), noise=12.0)
-    n = [int(cal.dark_hot_pixels(dark, t * SKY_NOISE, 2).sum()) for t in (0.3, 0.6, 1.0, 3.0)]
-    assert n[0] > n[1] > n[2] > n[3] >= 0.95 * len(ys)                    # the hot pixels stay, the noise goes
-    assert cal.dark_hot_pixels(dark, 3.0 * SKY_NOISE, 2)[ys, xs].mean() > 0.95
+    n = [int(cal.dark_hot_pixels(dark, t * SKY_NOISE, 2).sum()) for t in (0.6, 20.0, 60.0, 120.0)]
+    assert n[0] > n[1] > n[2] > n[3] > 0                                  # 18, 600, 1800, 3600 ADU above the neighbours
+    assert cal.dark_hot_pixels(dark, 5.0 * SKY_NOISE, 2)[ys, xs].mean() > 0.95
+
+
+def test_the_noise_of_a_master_dark_of_few_frames_is_not_hot_pixels():
+    """The threshold (18 ADU) is 1.5 sigma of this master's own noise: 7 % of its pixels are above it by chance. A
+    pixel within 3 sigma of the master's noise is noise; the hot pixels, which would inflate a plain standard
+    deviation, do not move the sigma taken from the median deviation."""
+    dark, ys, xs = _glow_dark(np.random.default_rng(15), noise=12.0)
+    hot = cal.dark_hot_pixels(dark, 0.6 * SKY_NOISE, 2)
+    lone = np.ones((HD, WD), bool)
+    lone[ys, xs] = False
+    assert hot[lone].mean() < 0.005                                       # 0.13 % of a normal noise is above 3 sigma
+    assert hot[CORNER][lone[CORNER]].mean() < 0.01                        # where it glows too
+    assert hot[ys, xs].mean() > 0.95                                      # 200 ADU and more: 16 sigma
+    many = _glow_dark(np.random.default_rng(15), noise=12.0, n_hot=20000)  # 10 % of hot pixels: the same sigma
+    assert cal.dark_hot_pixels(many[0], 0.6 * SKY_NOISE, 2)[many[1], many[2]].mean() > 0.95
+    assert cal.SIRIL_HOT_SIGMA == 3.0
 
 
 def test_the_hot_pixels_of_a_dark_in_colour_are_found_plane_by_plane():
