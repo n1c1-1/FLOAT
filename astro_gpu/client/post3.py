@@ -182,12 +182,12 @@ def step_words(old: list[dict], new: list[dict]) -> str:
     status line of an Undo / Redo. ``old``: the earlier state."""
     a, b = {x["id"]: x for x in old}, {x["id"]: x for x in new}
     kind = lambda lay: _("Filter") if lay.get("kind") == "filter" else _("Layer")  # noqa: E731
-    for i, lay in b.items():
-        if i not in a:
-            return _("{kind} “{name}” added").format(kind=kind(lay), name=layer_name(lay))
-    for i, lay in a.items():
-        if i not in b:
-            return _("{kind} “{name}” deleted").format(kind=kind(lay), name=layer_name(lay))
+    # a layer added or deleted with its own filters (a duplicate, a delete) is named, not its first filter
+    for these, other, word in ((b, a, "{kind} “{name}” added"), (a, b, "{kind} “{name}” deleted")):
+        moved = [lay for i, lay in these.items() if i not in other]
+        if moved:
+            lay = next((x for x in moved if x.get("kind") != "filter"), moved[0])
+            return _(word).format(kind=kind(lay), name=layer_name(lay))
     if [x["id"] for x in old] != [x["id"] for x in new]:
         return _("Layers reordered")
     for i, lay in b.items():
@@ -2134,7 +2134,8 @@ class PostView(QWidget):
 
     def next_words(self, how: str = "undo") -> str:
         """The words of the step Post's next Undo (``how`` "undo") or Redo takes, nothing moved; "" when not said."""
-        steps = self.undo if how == "undo" else self.redo
+        steps = list(self.undo if how == "undo" else self.redo)
+        self._drop_empty(steps)                          # (on a copy: a name asked never changes the lists)
         if not steps:
             return ""
         top = steps[-1]
@@ -2188,6 +2189,7 @@ class PostView(QWidget):
     def do_undo(self) -> bool:
         """Post's last change undone, said in the status. Only Post's own steps (a "To Post" made in the graph is the
         graph's, undone there); with none, it says so. True when it was a step of the workflows Post made."""
+        self._drop_empty(self.undo)
         if self.undo and not isinstance(self.undo[-1], ModelStep):
             before = self._step(snapshot(self.layers))
             self.redo.append(before)
@@ -2205,7 +2207,23 @@ class PostView(QWidget):
         self.undo.pop()
         return self._model_step(getattr(self.s, "undo", None), "redo", "Undone", "Undone: {what}")
 
+    def _drop_empty(self, steps: list):
+        """The steps on top of an Undo / Redo list that would change nothing go (the laptop's last pass: Ctrl+Z said
+        "Undone" and nothing changed): a step is kept before a gesture that may then change nothing (a slider let go
+        where it was, a drop at its own place)."""
+        now = None
+        while steps and not isinstance(steps[-1], ModelStep):
+            now = snapshot(self.layers) if now is None else now
+            try:
+                same = list(steps[-1]) == now and getattr(steps[-1], "crop", None) == self.crop
+            except (ValueError, TypeError):              # an array in a layer: not compared, kept
+                same = False
+            if not same:
+                return
+            steps.pop()
+
     def do_redo(self) -> bool:
+        self._drop_empty(self.redo)
         if self.redo and not isinstance(self.redo[-1], ModelStep):
             before = self._step(snapshot(self.layers))
             self.undo.append(before)

@@ -1439,6 +1439,44 @@ def test_the_undo_arrows_tip_names_the_step_it_takes(post):
     assert tip(v.b_redo) == "Redo: Opacity of “Full” (Ctrl+Y)"
 
 
+def test_a_duplicated_layer_is_one_undo_step_named_after_the_layer(post):
+    """The laptop's last pass: the Undo of a duplicated layer was named after its copied filter ("Filter “Saturation”
+    added", the step before it in the user's eyes), and Ctrl+Z twice said "Undone" with nothing changing."""
+    from astro_gpu.client.post3 import layer_name
+    v = post.view
+    full = named(v, "Full")
+    v.select(full["id"], "layer")
+    v.add_filter("saturation")
+    assert post.settle()
+    v.select(full["id"], "layer")
+    n = len(v.undo)
+    v.duplicate()
+    assert post.settle()
+    QApplication.processEvents()
+    assert len(v.undo) == n + 1                                                           # one step, no empty one
+    copy = v.layer(v.sel[0])
+    said = "Layer “{}” added".format(layer_name(copy))
+    assert v.next_words("undo") == said
+    v.do_undo()
+    assert post.settle() and v.next_words("redo") == said and len(v.undo) == n
+
+
+def test_an_undo_step_that_changes_nothing_is_passed_over(post):
+    """The laptop's last pass: Ctrl+Z said "Undone" twice with nothing changing. A step kept before a gesture that
+    then changed nothing is passed over: the Undo takes the change before it, and says it."""
+    v = post.view
+    full = named(v, "Full")
+    said = []
+    v.toasted.connect(said.append)
+    v.push()
+    full["opacity"] = 40.0
+    v.push()                                                                              # a gesture that changed nothing
+    v.push()
+    assert v.next_words("undo") == "Opacity of “Full”" and len(v.undo) >= 3              # (a name asked moves nothing)
+    v.do_undo()
+    assert post.settle() and said[-1] == "Undone: Opacity of “Full”" and named(v, "Full")["opacity"] != 40.0
+
+
 def test_the_brush_paints_erases_and_is_one_undo_step(post):
     v = post.view
     full = named(v, "Full")
