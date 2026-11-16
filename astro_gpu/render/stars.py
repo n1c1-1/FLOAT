@@ -113,11 +113,31 @@ class StarsRenderEngine(SimpleRenderEngine):
                 if s.halpha:
                     x = emission(x, self.continuum(), float(s.halpha), f)
                 st = self.prep["stats_full"]
-                a = self.tone(x, st, s, linked, self._room("starless", st, s, linked))
+                if getattr(s, "stretch", "auto") == "arcsinh":
+                    st = self._starless_white(st)
+                a = self.tone(x, st, s, linked)
             if part in ("stars", "combined"):
                 b = self._star_layer(s, f, box, part)
             y = a if b is None else b if a is None else blend(a, b, s.blend)
             return self._finish(y, f, reg, box, region, {"stretch": "auto", "linked": linked, "part": part})
+
+    def _starless_white(self, st: dict) -> dict:
+        """The statistics the Arcsinh stretch of the starless image reads: the whole image's (``st``: the black point
+        and the sky of the automatic stretch), with the white points of the starless image itself: the 99.995th
+        percentile of its luminance and of each channel, the statistic of the automatic stretch's white point, measured
+        on the image the stretch is applied to (every second pixel, as an image layer's statistics are). The whole
+        image's white point is its stars': read by the Arcsinh, a logarithm up to it, stars 50 times the nebula left
+        the nebula's top in the middle of the range. Measured once."""
+        if st.get("stretched") or "starless" not in self._host:
+            return st
+        if getattr(self, "_white", None) is None:
+            a = self._host["starless"][:, ::2, ::2].numpy()
+            v = self.valid_host[::2, ::2].numpy()
+            v = v if v.any() else np.ones_like(v)
+            L = (0.2126 * a[0] + 0.7152 * a[1] + 0.0722 * a[2])[v]
+            self._white = [float(np.percentile(x, 99.995)) for x in (L, *(a[c][v] for c in range(3)))]
+        return {**st, "lum": {**st["lum"], "p99995": self._white[0]},
+                "channels": [{**ch, "p99995": w} for ch, w in zip(st["channels"], self._white[1:])]}
 
     def _star_layer(self, s: StarSettings, f: int, box, part: str) -> torch.Tensor:
         """The stretched stars of the grid at this scale and box (``star_tone``), kept from one render to the next while

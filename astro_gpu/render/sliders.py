@@ -154,40 +154,49 @@ def value_at(name: str, table: tuple[float, ...], base: float, pos: float) -> fl
     return at(i0) + t * (at(i0 + 1) - at(i0)) if t else at(i0)
 
 
-#: the Strength of a layer's Arcsinh stretch: its position among the layer's sliders (0-4, 2 = the starting strength,
-#: render/simple.arcsinh_strength), each step a factor of ten on the stretch factor (the scale of the slider only)
+#: the Strength of a layer's Arcsinh stretch: its position among the layer's sliders (0-4, 2 = the starting strength).
+#: Linear in the level the sky lands at (render/simple.arcsinh_strength): position 2 is the Sky setting's level, 1 half
+#: of it, 4 twice; the slider counts in ``STRENGTH_STEP``: at the default Sky one step is 1.6 levels of 255 of the
+#: luminance's range, less once the picture is scaled to its largest channel
 STRETCH_KEY = "stretch"
-STRETCH_STEP = 10.0
-#: the settings an Arcsinh stretch does not read (it keeps the colours by itself): their sliders are greyed
+STRENGTH_STEP = 0.05
+#: the sliders an Arcsinh stretch does not read, each with the reason it is greyed: it keeps the colours by itself, and
+#: its Strength sets the level of the sky (one knob for the sky: Sky would move the same level)
 WHY_ARCSINH = "Arcsinh keeps the colours by itself"
-ARCSINH_OFF = frozenset({"colours"})
+WHY_ARCSINH_SKY = "Arcsinh: Strength sets the sky"
+ARCSINH_WHY = {"colours": WHY_ARCSINH, "sky": WHY_ARCSINH_SKY}
+ARCSINH_OFF = frozenset(ARCSINH_WHY)
 
 
 def stretch_strength(pos: float | None) -> float:
-    """The Strength setting (render/simple.SimpleSettings.stretch_strength) at a slider position: 1 at 2."""
+    """The Strength setting (render/simple.SimpleSettings.stretch_strength) at a slider position: 1 at 2, in
+    proportion to the position."""
     pos = SUGGESTED if pos is None else min(max(float(pos), LO), HI)
-    return STRETCH_STEP ** (pos - SUGGESTED)
+    return pos / SUGGESTED
 
 
 def settings_at(kind: str, base: Any = None, positions: dict[str, float] | None = None,
                 has_denoise: bool = True, origin: str = "", stretch: str | None = None) -> SimpleSettings:
     """The settings of a workflow layer: its base (``base_settings``) moved by the slider positions. Positions of
     unknown or greyed sliders are ignored. ``stretch``: the layer's base stretch when it is not the automatic one
-    ("arcsinh"; its Strength is the position ``STRETCH_KEY``): for the image the stars are not (the stars alone keep
-    their own stretch)."""
+    ("arcsinh"; its Strength is the position ``STRETCH_KEY``, and the positions of ``ARCSINH_OFF`` are not read): for
+    the image the stars are not (the stars alone keep their own stretch, Sky in it)."""
     b = base_settings(kind, base)
     model = type(b)
     ok = availability(kind, has_denoise, origin)
     vals = b.model_dump()
+    arcsinh = bool(stretch) and stretch != "auto" and kind != "stars"
     for key, pos in (positions or {}).items():
         sl = BY_KEY.get(key)
         if sl is None or ok[key] or abs(float(pos) - SUGGESTED) < 1e-9:
+            continue
+        if arcsinh and key in ARCSINH_OFF:              # greyed under Arcsinh: its position is not read
             continue
         for name, table in sl.table.items():
             lo, hi = _bounds(model, name)
             v = value_at(name, table, float(getattr(b, name)), pos)
             vals[name] = min(max(v, lo), hi)
-    if stretch and stretch != "auto" and kind != "stars":
+    if arcsinh:
         vals["stretch"] = stretch
         vals["stretch_strength"] = stretch_strength((positions or {}).get(STRETCH_KEY))
     return model(**vals)

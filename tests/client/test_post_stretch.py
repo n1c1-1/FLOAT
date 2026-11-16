@@ -276,3 +276,160 @@ def test_the_labels_are_french(preps, qapp):
     finally:
         s.close()
         i18n.set_language("en")
+
+
+# ------------------------------------------------------------------------------------------- the review's second round
+def bright_stars_prep(d: Path) -> Path:
+    """A Stars block's folder: a starless image (a sky of noise, a nebula at 100 with its top at 200 and a narrow peak
+    at 300) and stars alone 50 times brighter than that top, away from the nebula; the statistics of the whole image (stars in), as the block
+    writes them."""
+    rng = np.random.default_rng(11)
+    d.mkdir(parents=True, exist_ok=True)
+    yy, xx = np.mgrid[:H, :W]
+    r2 = (yy - H / 2) ** 2 + (xx - W / 2) ** 2
+    level = np.where(r2 < 25 ** 2, 200.0, np.where(r2 < 60 ** 2, 100.0, 0.0))
+    level = level + 100.0 * np.exp(-r2 / (2 * 3.0 ** 2))
+    starless = (np.stack([0.9 * level, level, 0.95 * level]) + rng.normal(0, 1, (3, H, W))).astype(np.float32)
+    stars = np.zeros((H, W), np.float32)
+    n = 0
+    while n < 40:
+        x, y = rng.uniform(0, W), rng.uniform(0, H)
+        if np.hypot(y - H / 2, x - W / 2) > 100:
+            stars += 10000.0 * np.exp(-((xx - x) ** 2 + (yy - y) ** 2) / (2 * 2.0 ** 2))
+            n += 1
+    stars = np.stack([stars, stars, stars]).astype(np.float32)
+    valid = np.ones((H, W), bool)
+    np.save(d / "starless.npy", starless)
+    np.save(d / "stars.npy", stars)
+    np.save(d / "valid.npy", valid)
+    (d / "prep_stars.json").write_text(json.dumps({"crop": [0, W, 0, H], "M": np.eye(3).tolist(), "drizzle_scale": 1.0,
+                                                   "unit": 1.0, "background": [0, 0, 0],
+                                                   "stats_full": image_stats(starless + stars, valid)}))
+    return d
+
+
+def test_stars_50_times_the_nebula_leave_its_top_in_the_upper_range(tmp_path):
+    """The white point of the Arcsinh is the starless image's own (it is the image the stretch is applied to): read
+    from the whole image, the stars set it and the nebula ended in the middle of the range. Through Post's renderer,
+    a Combine layers layer at its default settings."""
+    st = bright_stars_prep(tmp_path / "stars")
+    fo = {("stars", 1): Folder(st)}
+    r = Renderer(LayerSource(lambda sid: fo.get(sid), LayerService(DEV)))
+    lay = new_workflow_layer(1, "Full", True, "combined")
+    lay["stretch"] = "arcsinh"
+    res = r.run(Request(kind="half", layers=snapshot([lay]), level=1))
+    rgb = res.rgb.astype(np.float32)
+    assert rgb.shape[:2] == (H // 2, W // 2)
+    yy, xx = np.mgrid[:H // 2, :W // 2]
+    rad = np.hypot(yy - H / 4, xx - W / 4)
+    top = (rad > 5) & (rad < 10)                                            # the nebula's top (its inner disc, off the peak)
+    lum = rgb @ np.array([0.2126, 0.7152, 0.0722], np.float32)
+    assert float(lum[top].mean()) > 0.85 * 255, f"the nebula's top is at {lum[top].mean():.0f} of 255"
+    assert float((rgb[top] >= 254).any(-1).mean()) < 0.01               # and not burnt
+    # the stars are not stretched by it: the same as on the automatic layer
+    stars = lambda layer: r.run(Request(kind="half", level=1, layers=snapshot(                    # noqa: E731
+        [dict(layer, shown={"stars": True, "starless": False})]))).rgb
+    assert np.array_equal(stars(lay), stars(new_workflow_layer(1, "Full", True, "combined")))
+
+
+def _sky(svc, folder, sliders) -> float:
+    core = zones()[0]
+    return 255 * float(np.median(svc.render(folder, None, sliders, 1.0, stretch="arcsinh").rgb[:, ~core]))
+
+
+def test_one_step_of_the_strength_moves_the_sky_by_two_levels_at_most(tmp_path):
+    """The Strength is linear in the level the sky lands at (each step of the first law was a factor on the stretch
+    factor: the sky went from 35 to 10 of 255 in one notch on a planetary nebula, and could not be set at 25-30)."""
+    from astro_gpu.render.sliders import STRENGTH_STEP
+    folder = bright_core_prep(tmp_path / "out")
+    svc = LayerService(DEV)
+    sky = [_sky(svc, folder, {STRETCH_KEY: 2.0 + k * STRENGTH_STEP}) for k in range(-2, 3)]
+    steps = np.diff(sky)
+    assert (steps > 0.3).all() and (steps <= 2.0).all(), f"the sky per step of the Strength: {np.round(sky, 1)}"
+    assert steps.max() - steps.min() < 0.3                              # the same amount at each step
+    # over the slider: never more than two levels a step, and half the sky at half the position (above the start the
+    # picture's scale grows too, the sky rises a little less than the position)
+    start = _sky(svc, folder, {})
+    assert _sky(svc, folder, {STRETCH_KEY: 1.0}) == pytest.approx(start / 2, abs=2.0)
+    for pos in (0.5, 1.0, 3.0, 3.9):
+        step = _sky(svc, folder, {STRETCH_KEY: pos + STRENGTH_STEP}) - _sky(svc, folder, {STRETCH_KEY: pos})
+        assert 0.3 < step <= 2.0, (pos, step)
+
+
+def test_sky_does_not_move_the_sky_under_arcsinh(tmp_path):
+    """One knob for the sky: under Arcsinh the Strength sets it, the Sky slider's position is not read (it is greyed
+    in the panel); under Automatic Sky sets it as before."""
+    folder = bright_core_prep(tmp_path / "out")
+    svc = LayerService(DEV)
+    a = svc.render(folder, None, {}, 1.0, stretch="arcsinh").rgb
+    assert np.array_equal(svc.render(folder, None, {"sky": 3.5}, 1.0, stretch="arcsinh").rgb, a)
+    assert not np.array_equal(svc.render(folder, None, {STRETCH_KEY: 2.5}, 1.0, stretch="arcsinh").rgb, a)
+    assert not np.array_equal(svc.render(folder, None, {"sky": 3.5}, 1.0).rgb, svc.render(folder, None, {}, 1.0).rgb)
+    # the stars of a Combine layers layer keep their own stretch: their settings are those of an Automatic layer
+    from astro_gpu.render.sliders import settings_at
+    pos = {"sky": 3.5, "star_strength": 3.0}
+    assert settings_at("stars", None, pos, False, "", "arcsinh") == settings_at("stars", None, pos, False)
+
+
+#: the automatic stretch of ``bright_core_prep`` before the second round: the mean of each channel and five pixels
+#: (row, column), in levels of 255
+AUTO_MEANS = [72.44, 82.98, 85.89]
+AUTO_PIXELS = [[165, 245, 255], [151, 238, 255], [151, 238, 255], [49, 56, 90], [71, 78, 23]]
+AUTO_AT = ((200, 300), (200, 370), (200, 395), (40, 40), (350, 520))
+
+
+def test_the_automatic_picture_is_the_one_it_was(tmp_path):
+    folder = bright_core_prep(tmp_path / "out")
+    a = u8(LayerService(DEV).render(folder, None, {}, 1.0).rgb)
+    assert [round(float(a[c].mean()), 2) for c in range(3)] == pytest.approx(AUTO_MEANS, abs=0.02)
+    got = np.array([a[:, y, x] for y, x in AUTO_AT], np.int16)
+    assert np.abs(got - np.array(AUTO_PIXELS, np.int16)).max() <= 1, got.tolist()      # (a level of rounding apart)
+
+
+def test_the_strength_counts_in_steps_and_sky_is_greyed_with_its_reason(preps, qapp):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    from astro_gpu.client.post3 import ContSlider
+    from astro_gpu.render.sliders import STRENGTH_STEP
+    s = Setup(preps, qapp)
+    try:
+        assert s.settle()
+        v = s.view
+        full = named(v, "Full")
+        v.select(full["id"], "layer")
+        by_name = lambda name: [x for x in widgets_of(v, ContSlider) if x.name.text() == name]    # noqa: E731
+        assert by_name("Sky")[0].s.isEnabled()                              # Automatic: Sky sets the sky
+        v.set_stretch(full, "arcsinh")
+        assert s.settle()
+        sky = by_name("Sky")[0]
+        assert not sky.s.isEnabled() and sky.why.text() == "Arcsinh: Strength sets the sky"
+        strength = v.stretch_strength
+        assert strength.step == STRENGTH_STEP and strength.value() == 2.0
+        assert strength.val.text() == "0"
+        QTest.keyClick(strength.s, Qt.Key_Right)                            # an arrow key: one step
+        assert s.settle()
+        assert named(v, "Full")["sliders"][STRETCH_KEY] == pytest.approx(2.0 + STRENGTH_STEP)
+        assert v.stretch_strength.val.text() == "+0.05"                     # the value says the step
+        assert v.next_words("undo") == "Stretch strength of “Full”"
+        v.do_undo()
+        assert s.settle()
+        assert STRETCH_KEY not in named(v, "Full")["sliders"]
+    finally:
+        s.close()
+
+
+def test_the_second_rounds_labels_are_french():
+    i18n.set_language("fr")
+    try:
+        from astro_gpu.render.simple import SimpleSettings
+        from astro_gpu.render.sliders import ARCSINH_WHY
+        tip = ("The level of the sky under the Arcsinh. In the middle the sky is where the Sky setting puts it within "
+               "the range of the luminance. To the left the sky darkens and the bright areas spread apart; to the right "
+               "the faint areas rise")
+        for text in (*ARCSINH_WHY.values(), SimpleSettings.model_fields["stretch_strength"].json_schema_extra["help"],
+                     tip):
+            assert text and i18n._(text) != text, text
+        assert i18n._(ARCSINH_WHY["sky"]) == "Arcsinh : Intensité règle le ciel"
+    finally:
+        i18n.set_language("en")

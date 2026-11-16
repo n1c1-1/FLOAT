@@ -67,7 +67,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.project2 import active_version
-from ..render.sliders import ARCSINH_OFF, WHY_ARCSINH
+from ..render.sliders import ARCSINH_WHY, STRENGTH_STEP
 from ..render.sliders import STARS as STARS_GROUP
 from ..render.sliders import group_title
 from . import prefs
@@ -289,6 +289,11 @@ def offset_text(x: float) -> str:
     """A rendering slider's value, as the reference photo editor shows it: its offset from the suggested setting (position 2), 0 there,
     with a true minus sign."""
     return "0" if round(x - 2, 1) == 0 else dec(f"{x - 2:+.1f}").replace("-", "−")
+
+
+def strength_text(x: float) -> str:
+    """The Strength of a layer's Arcsinh stretch, as ``offset_text`` to its step (two decimals)."""
+    return "0" if round(x - 2, 2) == 0 else dec(f"{x - 2:+.2f}").replace("-", "−")
 
 
 def with_unit(v: str, unit: str) -> str:
@@ -3515,8 +3520,8 @@ class PostView(QWidget):
         sl = ContSlider(_(sd.name), 0, 4, pos, 2, ends=[_(e) for e in sd.ends] if sd.ends else None,
                         show=offset_text)
         ok, why, _need = self.s.slider_state(p, sd.key, part)   # the model answers in the language of the screen
-        if ok and layer_stretch(lay) == "arcsinh" and sd.key in ARCSINH_OFF:
-            ok, why = False, _(WHY_ARCSINH)              # a setting the Arcsinh stretch does not read
+        if ok and layer_stretch(lay) == "arcsinh" and sd.key in ARCSINH_WHY:
+            ok, why = False, _(ARCSINH_WHY[sd.key])      # a setting the Arcsinh stretch does not read
         sl.set_available(ok, why)
         self._wire(sl, lambda v, k=sd.key: self._slider(lay, k, v))
         self.pbox.addWidget(sl)
@@ -3541,10 +3546,12 @@ class PostView(QWidget):
         self.stretch_strength = None
         if layer_stretch(lay) != "arcsinh":
             return
+        # in steps (an arrow key: one step, a sky level or two), its value to the step
         sl = ContSlider(_("Strength"), 0, 4, lay["sliders"].get(STRETCH_KEY, 2.0), 2,
-                        ends=[_("gentler"), _("stronger")], show=offset_text)
-        tip = _("The stretch factor of the Arcsinh. In the middle the sky is where Automatic puts it. To the left the "
-                "sky darkens and the bright areas spread apart; to the right the faint areas rise") + NL +             _("Double-click: default value")
+                        ends=[_("gentler"), _("stronger")], step=STRENGTH_STEP, show=strength_text)
+        tip = _("The level of the sky under the Arcsinh. In the middle the sky is where the Sky setting puts it within "
+                "the range of the luminance. To the left the sky darkens and the bright areas spread apart; to the right "
+                "the faint areas rise") + NL +            _("Double-click: default value")
         sl.setToolTip(tip)
         sl.name.setToolTip(tip)
         self._wire(sl, lambda v: self._slider(lay, STRETCH_KEY, v))

@@ -2014,7 +2014,7 @@ class Panel(QWidget):
         from ..render.sliders import STARS as STARS_GROUP
         from ..render.sliders import group_title
         from .model import is_fusion_view
-        from .post3 import BLENDS, ContSlider, offset_text
+        from .post3 import BLENDS, ContSlider, offset_text, strength_text
         s = self.s
         p = node.paths[0]
         def lid():                                        # the layer is made at the first change, not by showing the
@@ -2064,13 +2064,14 @@ class Panel(QWidget):
                                {"stretch": c["values"]["stretch"]} if "stretch" in c["values"] else
                                {("slider", c["values"]["slider"][0]): c["values"]["slider"][1]})
 
-        def commit(key, v, name):
-            """A slider moved: a change of the block as any block's (a draft when its image is up to date)."""
+        def commit(key, v, name, text=offset_text):
+            """A slider moved: a change of the block as any block's (a draft when its image is up to date). ``text``:
+            how its value is written."""
             old = sliders.get(key, 2.0)
             with s.batch():                               # its layer made real and the value: one undo step (decision 7)
                 self._propose(dict(kind="layer", lid=lid(), values={"slider": [key, v]}),
-                              _("{label}: {old} → {new}").format(label=name, old=offset_text(old), new=offset_text(v)),
-                              f"{name.lower()} {offset_text(v)}", same=abs(v - old) < 0.02)
+                              _("{label}: {old} → {new}").format(label=name, old=text(old), new=text(v)),
+                              f"{name.lower()} {text(v)}", same=abs(v - old) < 0.02)
 
         def blend(b):
             old = lay.get("blend") or BLENDS[0]
@@ -2078,7 +2079,7 @@ class Panel(QWidget):
                 self._propose(dict(kind="layer", lid=lid(), values={"blend": b}),
                               _("{label}: {old} → {new}").format(label=_("Star blend mode"), old=_(old), new=_(b)),
                               _(b).lower(), same=b == old)
-        from ..render.sliders import ARCSINH_OFF, WHY_ARCSINH
+        from ..render.sliders import ARCSINH_WHY, STRENGTH_STEP
         from .postengine import LAYER_STRETCHES, STRETCH_KEY, STRETCH_NAMES, layer_stretch
         stretch_now = drafted.get("stretch") or layer_stretch(lay)
 
@@ -2097,9 +2098,9 @@ class Panel(QWidget):
             row.addWidget(cb, 1)
             self.bv.addLayout(row)
             sl = ContSlider(_("Strength"), 0, 4, drafted.get(("slider", STRETCH_KEY), sliders.get(STRETCH_KEY, 2.0)),
-                            2, ends=[_("gentler"), _("stronger")], show=offset_text)
+                            2, ends=[_("gentler"), _("stronger")], step=STRENGTH_STEP, show=strength_text)
             sl.setVisible(stretch_now == "arcsinh")
-            sl.done.connect(lambda v: commit(STRETCH_KEY, v, _("Stretch strength")))
+            sl.done.connect(lambda v: commit(STRETCH_KEY, v, _("Stretch strength"), strength_text))
             self.bv.addWidget(sl)
 
             def chosen(i):
@@ -2135,8 +2136,8 @@ class Panel(QWidget):
             sl = ContSlider(_(sd.name), 0, 4, drafted.get(("slider", sd.key), sliders.get(sd.key, 2.0)), 2,
                             ends=[_(e) for e in sd.ends], show=offset_text)
             ok, why, _need = s.slider_state(p, sd.key, "combined")
-            if ok and stretch_now == "arcsinh" and sd.key in ARCSINH_OFF:
-                ok, why = False, _(WHY_ARCSINH)           # a setting the Arcsinh stretch does not read
+            if ok and stretch_now == "arcsinh" and sd.key in ARCSINH_WHY:
+                ok, why = False, _(ARCSINH_WHY[sd.key])   # a setting the Arcsinh stretch does not read
             sl.set_available(ok, why)
             name = _(sd.name)
             sl.done.connect(lambda v, k=sd.key, nm=name: commit(k, v, nm))
