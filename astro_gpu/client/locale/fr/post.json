@@ -19,7 +19,7 @@
   "The small stars taken away: those narrower than this many times the image's typical star (its median width at half height); 0 = all kept (the star reduction of photo editors' tutorials: the stars selected, the small ones removed). A crowded field clears; the larger stars stay exactly as they are.": "Les petites étoiles retirées : celles plus étroites que ce nombre de fois l'étoile typique de l'image (sa largeur médiane à mi-hauteur) ; 0 = toutes gardées (la réduction d'étoiles des tutoriels des éditeurs photo : les étoiles sélectionnées, les petites retirées). Un champ chargé s'éclaircit ; les grandes étoiles restent exactement telles quelles.",
   "Colour saturation of the stars around their luminance, after their stretch.": "Saturation des couleurs des étoiles autour de leur luminance, après leur étirement.",
   "Blend": "Mode de fusion",
-  "How the stars go back on the starless image: Screen (the usual way), Linear dodge (add) or Lighten.": "Comment les étoiles reviennent sur l'image sans étoiles : Écran (l'usage), Densité linéaire (addition) ou Éclaircir.",
+  "How the stars go back on the starless image: Screen (the usual way), Linear dodge (add) or Lighten.": "Comment les étoiles reviennent sur l'image sans étoiles : Écran (l'usage), Densité linéaire − (ajout) ou Éclaircir.",
   "A file of this name exists: it will be replaced.": "Un fichier de ce nom existe : il sera remplacé.",
   "A stage's image, stretched automatically.": "L'image d'une étape, étirée automatiquement.",
   "Adobe RGB (1998)": "Adobe RGB (1998)",
