@@ -371,7 +371,7 @@ def test_the_session_card_quotes_only_what_was_measured():
     got = {t: (v, h) for v, t, h in rep.highlights(d, "en")}
     assert got["Focal length, measured"][0] == "894 mm" and "242 stars, residual 0.37″" in got["Focal length, measured"][1]
     assert got["Field drift"][0] == "48″" and "17.0″ a minute" in got["Field drift"][1]
-    assert got["Color offsets, corrected"][0] == "0.60 px" and got["Sky noise"][0] == "÷ 14.8"
+    assert got["Color offsets, corrected"][0] == "0.60 px" and got["Sky noise"][0] == "÷ 14.81"
     assert got["Gaia DR3 stars in the field"][0] == "3 203" and got["Transparency changes"][0] == "27 %"
     assert not rep.highlights(rep.ReportData(), "en")                      # nothing measured: nothing quoted
 
@@ -585,3 +585,24 @@ def test_the_report_writes_color_as_the_interface_does(qapp, monkeypatch):
     p.s.block_keys = lambda q: ["alignement", "couleur"]
     t = text(p)
     assert "Color offsets, corrected" in t and "colour" not in t.lower()
+
+
+def test_the_noise_reduction_is_one_number_wherever_it_is_given(qapp, monkeypatch):
+    """The first page said ÷ 7.8 and the Denoise section 7.77 ×: one figure, the result's, written by one rule (the
+    measure's own format) in both places and in both languages."""
+    from astro_gpu import texts
+    d = data()
+    d.metrics = {"denoise": {"noise_reduction": 9.77}}
+    for lang, written in (("en", "9.77"), ("fr", "9,77")):
+        i18n.set_language(lang)
+        try:
+            p = page(monkeypatch, d=d)
+            p.s.block_keys = lambda q: ["debruitage"]
+            monkeypatch.setattr(p.steps, "facts", lambda q, key, lang=lang: [
+                (texts.metric_label("noise_reduction", lang), texts.format_metric("noise_reduction", 9.77, lang))],
+                raising=False)
+            t = text(p)
+            assert f"÷ {written}" in t and f"{written} ×" in t
+            assert not [x for x in rep.re.findall(r"9[.,]\d+", t) if x != written]
+        finally:
+            i18n.set_language("en")

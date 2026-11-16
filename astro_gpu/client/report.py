@@ -602,7 +602,10 @@ def highlights(d: ReportData, lang: str) -> list:
                         r=dec(r, 2), b=dec(b, 2), n=int(ch.get("stars") or 0))))
     dn = m.get("denoise") or {}
     if dn.get("noise_reduction"):
-        out.append((f"÷ {dec(dn['noise_reduction'])}", _("Sky noise"),
+        # the result's figure by the measure's own format, as the Denoise section writes it (÷ 7.8 here, 7.77 × there)
+        factor = texts.format_metric("noise_reduction", dn["noise_reduction"], lang)
+        factor = factor.removesuffix(texts.metric_unit("noise_reduction", lang)).strip()
+        out.append((f"÷ {factor}", _("Sky noise"),
                     _("measured on the sky before and after Denoise")))
     gr = m.get("gradient") or {}
     if gr.get("gradient_pct"):
