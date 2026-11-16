@@ -346,5 +346,6 @@
  "measuring the star shape": "mesure de la forme des étoiles",
  "denoising, then the network": "débruitage, puis le réseau",
  "drawing the stars": "tracé des étoiles",
- "the scratch folder keeps {0} GB of calibrated frames for the next run: {1}": "le dossier de travail garde {0} Go d'images calibrées pour le prochain calcul : {1}"
+ "the scratch folder keeps {0} GB of calibrated frames for the next run: {1}": "le dossier de travail garde {0} Go d'images calibrées pour le prochain calcul : {1}",
+ "the result of {0} was computed with an earlier version ({1} -> {2}) and can no longer be read by this version: recompute it": "le résultat de {0} a été calculé avec une version antérieure ({1} -> {2}) et ne peut plus être lu par cette version : recalculez-le"
 }

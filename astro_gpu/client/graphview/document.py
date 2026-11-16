@@ -118,11 +118,11 @@ class MemoryDocument:
 
 def model_badges(m, b, kind, state) -> dict:
     """The badges of block ``b`` from a project model ``m`` (blocks.py Graph's rules, on BlockMap's node)."""
-    from ..graphnode import block_fallback
+    from ..graphnode import block_earlier, block_fallback
     n = m.block_map.node(b)
     if n is None:
         return {}
-    out = {"fallback": [], "broken": "", "missing": "", "warned": False}
+    out = {"fallback": [], "broken": "", "missing": "", "warned": False, "earlier": []}
     paths = list(n.paths)
 
     def first(f, *args):
@@ -143,6 +143,11 @@ def model_badges(m, b, kind, state) -> dict:
     if state == "done" and kind not in ("session", "post", "combine_layers", "calibration") and not n.cut:
         for q in paths:
             out["fallback"] += [w for w in block_fallback(m, q, n.key) if w not in out["fallback"]]
+    if state == "done" and kind not in ("session", "post", "combine_layers") and not n.cut:
+        # its result is of an earlier version of its method: a fact, the block stays up to date
+        for q in paths:
+            own = m.block_map.session_stages(q, n.sid) if n.key == "calibration" and n.sid is not None else None
+            out["earlier"] += [v for v in block_earlier(m, q, n.ref, own) if v not in out["earlier"]]
     return out
 
 
@@ -356,8 +361,9 @@ class Doc:
     def badges(self, b) -> dict:
         """What today's graph page draws on a block beside its state (graph.py BlockItem, blocks.py Graph), from the
         project model through ``BlockMap``: {"fallback": [the engine's reasons], "broken": why it cannot run at all,
-        "missing": the sky data it needs and this computer has not, "warned": its files have a warning}; {} without a
-        model. A document may give its own (``document.badges``)."""
+        "missing": the sky data it needs and this computer has not, "warned": its files have a warning, "earlier":
+        [(from, to)] when its result was computed with an earlier version of its method}; {} without a model. A
+        document may give its own (``document.badges``)."""
         own = getattr(self.document, "badges", None)
         if own is not None:
             return own(b) or {}

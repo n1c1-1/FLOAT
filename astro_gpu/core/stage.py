@@ -27,8 +27,16 @@ class StageError(Exception):
 class Stage:
     """One processing step. Subclasses define ``name``, ``title``, ``Params`` and ``run``.
 
-    ``version`` must be bumped whenever the algorithm changes in a way that alters outputs: stored results of an
-    older version are then considered stale and recomputed.
+    Two things that are not the same:
+
+    - ``version`` is the ALGORITHM VERSION: bumped whenever the algorithm changes in a way that alters outputs. It is
+      no part of a result's key: it is recorded in the result's manifest, and a result computed with another version
+      stays the block's result, said "computed with an earlier version"; the user decides whether to recompute it.
+    - ``key_label`` is the stage's label in the keys of its results (core/store.py, the "v" of ``Keys.key_parts``).
+      NEVER CHANGE IT, on any stage: it would give every result of the stage, and of every stage after it, another
+      key, and make every project recompute. A stage whose label depends on its settings gives it with
+      ``frozen_key_label(values)`` / ``frozen_mono_key_label(values, lights)``, as frozen as the label itself
+      (tests/test_versions.py pins them all). A new stage keeps the default "1" for ever.
     """
 
     name: ClassVar[str]
@@ -36,6 +44,7 @@ class Stage:
     description: ClassVar[str] = ""
     deps: ClassVar[tuple[str, ...]] = ()
     version: ClassVar[str] = "1"
+    key_label: ClassVar[str] = "1"       # never change: it would make every project recompute
     Params: ClassVar[type[StageParams]] = StageParams
     #: rough cost model used for the ETA before the stage reports progress: seconds per megapixel-frame
     cost_hint: ClassVar[float] = 0.0

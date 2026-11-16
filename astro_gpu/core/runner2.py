@@ -4,12 +4,18 @@ A job computes one stage key (core/store.py): a result shared by several workflo
 
     need(wf, s, as_input=False):
         k = key(wf, s)
-        if done(k) and (not as_input or usable_as_input(s, k)) or k in jobs: return
+        if done(k) and not redo(wf, s) and (not as_input or usable_as_input(s, k)) or k in jobs: return
         for d in deps_in_chain(wf, s): need(wf, d, as_input=True)
         jobs[k] = Job(k, s, block, wf=the workflows sharing k, deps={d: key(wf, d)}, est_s, disk_gb)
 
 Jobs come in dependency order; among the jobs ready to run, those of the workflow with the least remaining time go
 first, so cheap workflows finish first.
+
+A done result is used, whatever version of its stage's method computed it (core/store.py: the version is in no key).
+``redo``: a done result recomputed in its place, under the same key: asked for ("Recompute (current version)",
+``plan_recompute``), or made from an upstream result recomputed since (store.Upstream: the stamps the manifests
+record). Its job has ``redo`` set; the worker gives the new result a new stamp, so that what was made from the earlier
+one is to recompute, even when the run stops before it gets there.
 
 A run (``launch``, called by the API without Qt): STOP removed, events.jsonl rotated past 64 MB, the plan frozen in
 ``logs/runs/<run_id>.plan.json`` with a snapshot of the whole definition, then ``python -m astro_gpu.core.runner2
@@ -65,7 +71,7 @@ from .params import params_hash
 from .project2 import Project2, Workflow, is_image
 from .runner import Pipeline, read_manifest
 from .stage import StageError
-from .store import InputScan, KeyRules, Keys, Store, StoreProject, key_rules
+from .store import InputScan, KeyRules, Keys, Store, StoreProject, Upstream, earlier_version, is_done, key_rules
 from .workflow import base, session_of
 
 LOCK = "run.lock"
@@ -93,6 +99,9 @@ GPU_LOST = "the graphics card stopped responding during {stage}; the rest of the
 GPU_LOST_AGAIN = ("the graphics card stopped responding again during {stage}: it is not tried a third time; the rest "
                   "of the run continues in a fresh process")
 GPU_LOST_END = "the graphics card stopped responding during {stage} and the run cannot go on: {why}"
+#: a job that failed on an unexpected error while a result it reads is of an earlier version of its stage's method
+UNREADABLE = ("the result of {title} was computed with an earlier version ({old} -> {new}) and can no longer be read by "
+              "this version: recompute it ({error})")
 
 
 # ---------------------------------------------------------------------------------------------- the plan
@@ -111,6 +120,8 @@ class Job:
     measured: bool = False           # est_s from this machine's history (else ≈)
     disk_gb: float = 0.0
     rerun: bool = False              # a done result that lost its external data, recomputed to feed a later stage
+    redo: bool = False               # a done result recomputed in its place: asked for (current version), or made
+    #                                  from an upstream result recomputed since; never found "already done"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -120,7 +131,7 @@ class Job:
         return cls(key=d["key"], stage=d["stage"], block=d["block"], wf=[int(w) for w in d["wf"]],
                    run_wf=int(d["run_wf"]), deps=dict(d["deps"]), est_s=float(d.get("est_s", 0.0)),
                    measured=bool(d.get("measured")), disk_gb=float(d.get("disk_gb", 0.0)),
-                   rerun=bool(d.get("rerun")))
+                   rerun=bool(d.get("rerun")), redo=bool(d.get("redo")))
 
 
 @dataclass
@@ -181,10 +192,12 @@ class Planner:
     (default: the machine's)."""
 
     def __init__(self, project: Project2, keys: Keys | None = None, store: Store | None = None, gpu: bool = True,
-                 history: dict | None = None):
+                 history: dict | None = None, redo: Any = ()):
         self.project = project
         self.keys = keys or Keys(project)
         self.store = store if store is not None else (Store(project.root) if project.root is not None else None)
+        #: the done results to recompute in their place: the keys asked for (``redo``) and what was made from them
+        self.upstream = Upstream(self.keys, self.store, redo)
         self.gpu = gpu
         self.history = est.load_history() if history is None else history
         self.jobs: dict[str, Job] = {}
@@ -267,7 +280,9 @@ class Planner:
         if k in self.blocked:
             return self.blocked[k]
         done = self.done(stage, k)
-        if done and (not as_input or self.usable(stage, k)):
+        # recomputed in its place: asked for, or made from an upstream result recomputed since
+        redo = done and (k in self.upstream.redo or self.upstream.redone(w, stage))
+        if done and not redo and (not as_input or self.usable(stage, k)):
             return ""
         deps = self.keys.deps(w, stage)
         opt = optional_of(self.chains, stage)
@@ -307,7 +322,7 @@ class Planner:
         self.jobs[k] = Job(k, stage, self.chains.block_of(stage), self._sharing(w, stage, k), w.id,
                            {**{d: self.keys.key(w, d) for d in deps}, **others}, round(e.seconds * part, 3),
                            e.measured,
-                           round(e.disk_gb * part, 3), rerun=done)
+                           round(e.disk_gb * part, 3), rerun=done, redo=redo)
         return ""
 
     def plan(self, targets: list[tuple[int | Workflow, str]]) -> Plan:
@@ -381,6 +396,43 @@ def plan_to_block(project: Project2, wf: int | Workflow, block: str, **kw: Any) 
     """Run to here: the stages of a block in the workflow's chain (Selection: register), and what they need."""
     p = Planner(project, **kw)
     return p.plan([(wf, s) for s in p.chains.run_to(block, p.keys.chain(wf))])
+
+
+def plan_recompute(project: Project2, wf: int | Workflow, block: str, **kw: Any) -> Plan:
+    """Recompute (current version): the done results of a block of the workflow computed again with today's code, in
+    their place (the same keys), and, as for a change of setting, every done result made from them, in every workflow.
+    The block's results of an earlier version are the ones recomputed; all of them when none is."""
+    kw = dict(kw)
+    keys = kw.get("keys") or Keys(project)
+    kw["keys"] = keys
+    store = kw.get("store")
+    if store is None:
+        store = kw["store"] = Store(project.root) if project.root is not None else None
+    if store is None:
+        return Plan()
+    w = project.workflow(wf)
+    mine = []
+    for s in keys.rules.chains.run_to(block, keys.chain(w)):
+        k = keys.key(w, s)
+        m = store.manifest(s, k)
+        if is_done(m, k):
+            mine.append((k, earlier_version(keys, w, s, m) is not None))
+    redo = {k for k, earlier in mine if earlier} or {k for k, _e in mine}
+    p = Planner(project, redo=redo, **kw)
+    targets = []
+    for o in project.workflows:
+        try:
+            chain = keys.chain(o)
+        except ValueError:
+            continue
+        for s in chain:
+            try:
+                k = keys.key(o, s)
+            except ValueError:
+                continue
+            if k in redo and p.done(s, k) or p.upstream.redone(o, s):
+                targets.append((o, s))
+    return p.plan(targets)
 
 
 # ---------------------------------------------------------------------------------------------- launching
@@ -1017,7 +1069,7 @@ class _Worker:
         """Run one job: 'done', 'failed' or 'interrupted'."""
         self.journal.job = job
         self.store.forget()
-        if self.store.done(job.stage, job.key) and self.store.usable_as_input(job.stage, job.key):
+        if not job.redo and self.store.done(job.stage, job.key) and self.store.usable_as_input(job.stage, job.key):
             why = self.store.manifest(job.stage, job.key).get("fallback")      # found done with its fallback: said again
             self.journal.emit("stage_end", stage=job.stage, status="done", reused=True, duration=0.0,
                               **({"fallback": why} if why else {}))
@@ -1064,14 +1116,17 @@ class _Worker:
             st = self.rules.chains.stages[base(job.stage)]
             pipe = Pipeline(sp, [self.rules.chains.stages[s] for s in dict.fromkeys(base(x) for x in sp.chain)],
                             self.journal)
+            pipe.explain = lambda error: self._unreadable(job, error)
             if base(job.stage) == "calibrate" and self.store.done(job.stage, job.key):
                 self._give_masters(pipe, st, job)
-            res = pipe._run_stage(st, run_id=job.key)
+            res = pipe._run_stage(st, run_id=job.key, tag=self._read_stamps(job))
             if res != "done":
                 return res
             self._commit(job, sp, w)
         except (Exception, online.NetworkForbidden) as e:  # noqa: BLE001 - a job that cannot run or be stored fails alone
             msg = str(e) if isinstance(e, (StageError, online.NetworkForbidden)) else f"{type(e).__name__}: {e}"
+            if not isinstance(e, (StageError, online.NetworkForbidden)):
+                msg = self._unreadable(job, msg) or msg
             self._mark_failed(job, msg, traceback.format_exc())
             self.journal.emit("log", stage=job.stage, level="error", msg=msg)
             self.journal.emit("stage_end", stage=job.stage, status="failed", error=msg)
@@ -1091,13 +1146,60 @@ class _Worker:
         except OSError:
             pass
 
+    def _upstream_of(self, job: Job) -> dict[str, dict[str, str]]:
+        """{name: {"key", "stamp"}} of the done results the job reads ("" for a result recorded before the stamps)."""
+        out = {}
+        for name, k in job.deps.items():
+            um = self.store.manifest(name.split("#", 1)[0], k)
+            if is_done(um, k):
+                out[name] = {"key": k, "stamp": str(um.get("stamp") or "")}
+        return out
+
+    def _read_stamps(self, job: Job) -> dict[str, Any]:
+        """What the job's checkpoint tag says of the results it reads: their stamps, so that the checkpoints of a job
+        stopped before one of them was recomputed in its place are not resumed. Nothing while none has a stamp (the
+        tag of the jobs stopped before the stamps existed stays the same)."""
+        stamps = {n: u["stamp"] for n, u in self._upstream_of(job).items() if u["stamp"]}
+        return {"upstream": stamps} if stamps else {}
+
+    def _unreadable(self, job: Job, error: str) -> str:
+        """The words of a job that failed on an unexpected error while one of the results it reads was computed with
+        an earlier version of its stage's method: that result is what to recompute. "" when none was."""
+        w = self.project.workflow(job.run_wf)
+        read = [(job.run_wf, d) for d in self.keys.deps(w, job.stage)]
+        read += [(int(n.split("#", 1)[1]), n.split("#", 1)[0]) for n in job.deps if "#" in n]
+        read += [(job.run_wf, a) for a in self.keys.ancestors(w, job.stage)]
+        for pid, st in dict.fromkeys(read):
+            try:
+                k = self.keys.key(pid, st)
+                m = self.store.manifest(st, k)
+                ev = earlier_version(self.keys, pid, st, m) if is_done(m, k) else None
+            except (KeyError, ValueError):
+                continue
+            if ev:
+                return UNREADABLE.format(title=self.rules.chains.stages[base(st)].title, old=ev[0], new=ev[1],
+                                         error=error)
+        return ""
+
     def _commit(self, job: Job, sp: StoreProject, w: Workflow) -> None:
         """``<key>.tmp`` → ``<key>`` with the key fields in its manifest; a done folder it replaces goes to
-        ``_trash`` only now, and comes back if the rename fails."""
+        ``_trash`` only now, and comes back if the rename fails. The manifest gets the version of the method it was
+        computed with, the stamps of the results it read and its own stamp: a new one, unless it only makes again a
+        result that lost its data outside its folder (the same result: what was made from it stays valid)."""
         tmp, final = sp.stage_dir(job.stage), self.store.dir(job.stage, job.key)
         mf = tmp / "manifest.json"
         m = json.loads(mf.read_text(encoding="utf-8"))
-        m.update(key=job.key, key_parts=self.keys.key_parts(w, job.stage), adopted_from=None, run=self.run_id)
+        m.update(key=job.key, key_parts=self.keys.key_parts(w, job.stage), adopted_from=None, run=self.run_id,
+                 algorithm_version=self.keys.algorithm_version(w, job.stage), upstream=self._upstream_of(job))
+        was = self.store.manifest(job.stage, job.key) if final.exists() else {}
+        if is_done(was, job.key) and not job.redo:
+            stamp, replaced = was.get("stamp"), bool(was.get("replaced"))
+        else:
+            stamp, replaced = uuid.uuid4().hex, is_done(was, job.key)
+        if stamp:
+            m["stamp"] = stamp
+        if replaced:
+            m["replaced"] = True                          # it took an earlier result's place under the same key
         write_json(mf, m)
         gc.collect()                                  # no array of the job keeps a file of its folder open
         old = None
@@ -1129,7 +1231,8 @@ class _Worker:
         tmp = pipe.project.stage_dir(job.stage)
         p, _, _ = pipe.effective_params(st)                     # (creates the job's folder)
         inputs = {d: read_manifest(pipe.project, d).get("run_id") for d in st.deps}
-        tag = {"params_hash": params_hash(p), "inputs": inputs, "version": st.version}   # as _run_stage builds it
+        tag = {"params_hash": params_hash(p), "inputs": inputs, "version": st.version,   # as _run_stage builds it
+               **self._read_stamps(job)}
         ck = tmp / "_ckpt" / "meta.json"
         try:
             if json.loads(ck.read_text()) == tag:

@@ -2802,6 +2802,8 @@ class _ProjectBase(QObject):
         from .i18n import language
         from .settings import fmt
         anything = _("an input changed")
+        if getattr(st, "reason", "") == api.REASON_UPSTREAM_REDONE:      # the same key: its result was made from a
+            return "upstream", _("the block before it was recomputed")   # result recomputed in its place since
         try:
             store, keys = api._store(self.p), api._keys(self.p)
             old = store.manifest(stage, st.previous_key).get("key_parts") if store is not None else None
@@ -3086,6 +3088,22 @@ class _ProjectBase(QObject):
                     return api.Plan()
             self._cache[k] = api.plan_to_block(self.p, p.pid, block, self.device, self._history_est)
         return self._cache[k]
+
+    def plan_recompute(self, paths, key: str):
+        """The plan of "Recompute (current version)" for a block of the views, in the workflows going through it: its
+        results of an earlier version computed again with today's code, in their place, and what was made from them
+        (api.plan_recompute). Not kept: asked when the user chooses the command."""
+        if not self.ready:
+            return api.Plan()
+        plans = []
+        for q in paths:
+            block = engine_name(key)
+            if wfl.base(block) == "fusion":              # a combination: the engine's block is its own stage
+                block = wfl.combine_stage(self.p.workflow(q.pid))
+                if not block:
+                    continue
+            plans.append(api.plan_recompute(self.p, q.pid, block, self.device, self._history_est))
+        return self._one_plan(plans) if plans else api.Plan()
 
     # ------------------------------------------------------------ breakpoints: pause for the user to check
     # A breakpoint is a block of one workflow ("Review pause"): a run stops after it, and goes on only when

@@ -24,6 +24,7 @@ class Reference(Stage):
     deps = ("stack",)
     Params = ReferenceParams
     version = "2"          # 2: the triangle match's random draws are seeded (``seeded_match``): the alignment is the
+    key_label = "2"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
                            # same at every run, and may differ a little from one computed before
 
     def run(self, ctx: Context, p: ReferenceParams) -> None:

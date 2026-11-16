@@ -168,6 +168,7 @@ class AlignOn(Stage):
     deps = ("stack",)
     Params = AlignOnParams
     version = "2"
+    key_label = "2"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
     def run(self, ctx: Context, p: AlignOnParams) -> None:
         ref = p.reference or {}

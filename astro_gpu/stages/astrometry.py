@@ -141,6 +141,7 @@ class Astrometry(Stage):
     deps = ("inventory", "stack")
     Params = AstrometryParams
     version = "5"          # 2: the fine fit starts from Asterion's solution when it is installed: the corners can differ
+    key_label = "5"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
                            # (NGC 7000 2 px, its Tycho-2 stars there 1.0 -> 0.5 px off; 10 frames 30 px, 6.2 -> 0.3)
                            # 3: the triangle match's random draws are seeded (``seeded_match``): a solution is the same at
                            # every run, and may differ a little from one computed before (a star used more or less)

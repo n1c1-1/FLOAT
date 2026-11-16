@@ -56,7 +56,7 @@ from .core import workflow as wfl
 from .core.project import Target, type_warnings
 from .core.project2 import KINDS, Project2, Session, Workflow
 from .core.skyobjects import CatalogueUnavailable, SkyObject  # noqa: F401 - re-exported: sky_objects raises it
-from .core.store import InputScan, KeyRules, Keys, Store, StoreProject
+from .core.store import InputScan, KeyRules, Keys, Store, StoreProject, Upstream, earlier_version
 
 if TYPE_CHECKING:
     import numpy as np
@@ -76,6 +76,8 @@ REASON_SETTINGS = "its settings changed since this result"
 REASON_UPSTREAM = "an upstream result changed since this result"
 REASON_ALGORITHM = "the algorithm was updated since this result"
 REASON_UPSTREAM_FAILED = "upstream failed"
+#: a done result made from an upstream result that was recomputed in its place since (the same key): to recompute
+REASON_UPSTREAM_REDONE = "the block before it was recomputed"
 REASON_INTERRUPTED = "interrupted"
 STATES = ("done", "pending", "stale", "running", "failed", "interrupted", "skipped")
 
@@ -208,14 +210,19 @@ class BlockRef:
 
 @dataclass
 class StageState:
-    """``state`` is one of STATES. ``previous_key``: the result an Outdated stage had, still in the store.
-    ``fallback``: why a done stage took its declared fallback ("" when it did its usual work; core/stage.Context)."""
+    """``state`` is one of STATES. ``previous_key``: the result an Outdated stage had, still in the store (its own key
+    when it is Outdated because the block before it was recomputed in its place: REASON_UPSTREAM_REDONE).
+    ``fallback``: why a done stage took its declared fallback ("" when it did its usual work; core/stage.Context).
+    ``earlier``: (from, to) when its result was computed with an earlier version of the stage's method than today's
+    code. It is a fact of a result, not a state: the stage is done, the stages after it and Post read it as any
+    result, a run does not recompute it; ``plan_recompute`` does when the user asks."""
 
     state: str
     reason: str = ""
     key: str = ""
     previous_key: str | None = None
     fallback: str = ""
+    earlier: tuple[str, str] | None = None
 
 
 @dataclass
@@ -1270,7 +1277,8 @@ def _dir(p: Project2, wf: int | Workflow, stage: str, which: str = "current") ->
     k = keys.key(w, stage)
     if which == "previous":
         k = (p2.read_state(p.root)["last_keys"].get(str(w.id)) or {}).get(stage)
-        if not k or k == keys.key(w, stage):
+        # (its own key: the result of a stage that is Outdated because the block before it was recomputed in its place)
+        if not k or (k == keys.key(w, stage) and not Upstream(keys, store).redone(w, stage)):
             return None
     return store.dir(stage, k) if store.done(stage, k) else None
 
@@ -1809,6 +1817,7 @@ def states(p: Project2, update: bool = True) -> dict[tuple[int, str], StageState
         except (OSError, ValueError):
             pass
     out: dict[tuple[int, str], StageState] = {}
+    up = Upstream(keys, store)                       # (each manifest read once)
     for w in proj.workflows:
         chain_ = keys.chain(w)
         bad: set[str] = set()
@@ -1820,9 +1829,15 @@ def states(p: Project2, update: bool = True) -> dict[tuple[int, str], StageState
                 out[(w.id, s)] = StageState("failed", str(e))
                 bad.add(s)
                 continue
-            m = store.manifest(s, k) if store is not None else {}
+            m = up.manifest(s, k)
             if m.get("status") == "done" and m.get("key", k) == k:          # store.done, its manifest read once
-                out[(w.id, s)] = StageState("done", "", k, fallback=str(m.get("fallback") or ""))
+                # a result exists: it is used, whatever version of the method computed it (said, never recomputed by
+                # itself); unless it was made from an upstream result recomputed in its place since
+                earlier = earlier_version(keys, w, s, m)
+                if up.redone(w, s):
+                    out[(w.id, s)] = StageState("stale", REASON_UPSTREAM_REDONE, k, k, earlier=earlier)
+                else:
+                    out[(w.id, s)] = StageState("done", "", k, fallback=str(m.get("fallback") or ""), earlier=earlier)
                 new_last.setdefault(str(w.id), {})[s] = k
                 continue
             prev = prev_keys.get(s)
@@ -2004,6 +2019,14 @@ def plan_to_block(p: Project2, wf: int | Workflow, block: str, device: str | Non
                   history: dict | None = None) -> Plan:
     """Run to here: the stages of a block in the workflow's chain (Selection: Registration) and what they need."""
     return _stamp(p, _r2().plan_to_block(_keys(p).project, wf, block, **_plan_kw(p, device, history)))
+
+
+def plan_recompute(p: Project2, wf: int | Workflow, block: str, device: str | None = None,
+                   history: dict | None = None) -> Plan:
+    """Recompute (current version): the results of a block of the workflow computed with an earlier version of its
+    method are computed again with today's code, in their place, and, as for a change of setting, every result made
+    from them. The plan says what it costs before anything runs."""
+    return _stamp(p, _r2().plan_recompute(_keys(p).project, wf, block, **_plan_kw(p, device, history)))
 
 
 def cost(p: Project2, workflows: Sequence[int | Workflow] | None = None, device: str | None = None,

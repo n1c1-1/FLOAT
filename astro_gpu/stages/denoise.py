@@ -101,9 +101,20 @@ class Denoise(Stage):
     Params = DenoiseParams
     version = f"4-{MODEL_ID}"     # 4: the network's four passes (PASSES); 3: the sky level of each colour kept (keep_level)
 
-    def mono_key_version(self, values: dict, lights: int) -> str:
-        """The version in the store key of a monochrome workflow of ``lights`` frames: with its own network when it has
-        few, for the Pretrained method (issue #45). No other key moves."""
+    #: the keys' label: FROZEN, never change it (core/stage.Stage.key_label). It was the version with the start of
+    #: the network file's hash; the file's identity is now part of the algorithm version only (``version``)
+    key_label = "4-2ea85a0755"
+
+    def frozen_mono_key_label(self, values: dict, lights: int) -> str:
+        """The label in the store key of a monochrome workflow of ``lights`` frames. FROZEN, never change it, neither
+        its strings nor its conditions (30 was the frame count under which the monochrome network is used): it would
+        make every project recompute."""
+        own = values.get("method", "pretrained") == "pretrained" and 0 < lights < 30
+        return "4-2ea85a0755+mono-65c32fea3d" if own else "4-2ea85a0755"
+
+    def mono_algorithm_version(self, values: dict, lights: int) -> str:
+        """The version of the method a monochrome workflow of ``lights`` frames is denoised with, recorded in its
+        result: with its own network when it has few, for the Pretrained method (issue #45). Free to change."""
         own = uses_mono_network(values.get("method", "pretrained"), lights)
         return f"{self.version}+mono-{MODEL_MONO_ID}" if own else str(self.version)
 

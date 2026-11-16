@@ -62,6 +62,9 @@ def mono_file(tmp_path, monkeypatch):
     return f
 
 
+#: the keys' label of a monochrome stack of few frames: frozen (tests/test_versions.py), whatever the network's file;
+#: the version of the method its result records follows the file
+MONO_LABEL = "4-2ea85a0755+mono-65c32fea3d"
 MONO_V = f"{dn.Denoise.version}+mono-abc1234567"
 
 
@@ -83,30 +86,38 @@ def test_the_monochrome_network_loads_and_differs_from_the_colour_one():
 def test_only_a_monochrome_stack_of_few_frames_with_the_pretrained_method_changes_key(tmp_path, mono_file):
     colour = Keys(project(tmp_path / "c", ""))
     mono = Keys(project(tmp_path / "m", "Ha"))
-    assert colour.key_parts(1, "denoise")["v"] == dn.Denoise.version       # colour: as before the issue
+    assert colour.key_parts(1, "denoise")["v"] == dn.Denoise.key_label     # colour: as before the issue
     assert mono.mono_lights(1) == FEW and colour.mono_lights(1) is None
-    assert mono.key_parts(1, "denoise")["v"] == MONO_V
+    assert mono.key_parts(1, "denoise")["v"] == MONO_LABEL
     assert mono.key(1, "denoise") != colour.key(1, "denoise")
+    assert mono.algorithm_version(1, "denoise") == MONO_V and colour.algorithm_version(1, "denoise") == dn.Denoise.version
 
 
 def test_a_monochrome_stack_of_30_frames_or_more_keeps_its_key(tmp_path, mono_file):
     k = Keys(project(tmp_path / "m", "Ha", lights=dn.MONO_FEW_FRAMES))
-    assert k.mono_lights(1) == dn.MONO_FEW_FRAMES and k.key_parts(1, "denoise")["v"] == dn.Denoise.version
+    assert k.mono_lights(1) == dn.MONO_FEW_FRAMES and k.key_parts(1, "denoise")["v"] == dn.Denoise.key_label
+    assert k.algorithm_version(1, "denoise") == dn.Denoise.version
 
 
 def test_the_frame_limit_counts(tmp_path, mono_file):
     k = Keys(project(tmp_path / "m", "Ha", lights=40, params={"inventory": {"max_lights": 20}}))
-    assert k.mono_lights(1) == 20 and k.key_parts(1, "denoise")["v"] == MONO_V
+    assert k.mono_lights(1) == 20 and k.key_parts(1, "denoise")["v"] == MONO_LABEL
+    assert k.algorithm_version(1, "denoise") == MONO_V
 
 
 def test_the_adapted_method_keeps_its_key_on_a_monochrome_stack(tmp_path, mono_file):
     k = Keys(project(tmp_path / "m", "Ha", "adapted"))
-    assert k.key_parts(1, "denoise")["v"] == dn.Denoise.version
+    assert k.key_parts(1, "denoise")["v"] == dn.Denoise.key_label
+    assert k.algorithm_version(1, "denoise") == dn.Denoise.version
 
 
-def test_without_the_monochrome_file_the_key_is_the_colour_one(tmp_path, monkeypatch):
+def test_without_the_monochrome_file_the_key_stays_and_the_method_is_the_colour_one(tmp_path, monkeypatch):
+    """The key's label is frozen: the network's file, there or not, moves no key. The version of the method the result
+    records says which network denoised it."""
     monkeypatch.setattr(dn, "MODEL_MONO", tmp_path / "absent.pt")
-    assert Keys(project(tmp_path / "m", "Ha")).key_parts(1, "denoise")["v"] == dn.Denoise.version
+    k = Keys(project(tmp_path / "m", "Ha"))
+    assert k.key_parts(1, "denoise")["v"] == MONO_LABEL
+    assert k.algorithm_version(1, "denoise") == dn.Denoise.version
 
 
 def test_a_monochrome_workflows_other_stages_have_the_versions_of_a_colour_one(tmp_path, mono_file):
@@ -115,7 +126,7 @@ def test_a_monochrome_workflows_other_stages_have_the_versions_of_a_colour_one(t
     shared = [s for s in mono.chain(1) if s in colour.chain(1) and s != "denoise"]
     assert "stack" in shared
     # the stack of a mono workflow of fewer than 6 lights also has its own (the weak-sky guard of the percentile
-    # clipping, stages/stack.mono_key_version); every other stage, the colour one's
+    # clipping, stages/stack.frozen_mono_key_label); every other stage, the colour one's
     from astro_gpu.core import rejection_classic as rc
     few = 0 < mono.mono_lights(mono.project.workflow(1)) < rc.WINSORIZED_FROM
     assert all(mono.key_parts(1, s)["v"] == colour.key_parts(1, s)["v"] for s in shared if not (few and s == "stack"))

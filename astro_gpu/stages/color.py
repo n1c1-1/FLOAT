@@ -89,6 +89,7 @@ class Color(Stage):
     # 4: the white point set by the stars' white balance; 5: one factor per colour when no curves are trusted;
     # 6: one factor per colour always: the reconstructed curves and their colour matrix are taken out
     version = "6"
+    key_label = "6"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
     def auto(self, ctx: Context) -> dict[str, Auto]:
         try:

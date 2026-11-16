@@ -1,7 +1,8 @@
 """The context menu of a block or a row: its items, each with whether the core accepts it now and why not.
 
 An item is (text, action, args, enabled, why) or None (a separator). ``action`` is a core operation name (applied as
-is), or a page action: "inspect" {block}, "rename" {row}, "mark_reviewed" {block}, "submenu" (args = its items).
+is), or a page action: "inspect" {block}, "rename" {row}, "mark_reviewed" {block}, "recompute" {block} (a block whose
+result is of an earlier version of its method: the window plans it), "submenu" (args = its items).
 Whether an operation is enabled is asked of the core by a dry run of it (nothing changes)."""
 from __future__ import annotations
 
@@ -36,6 +37,9 @@ def menu(doc, b):
         items.append(_item(doc, _("Remove pause") if blk.pause else _("Review pause"), "set_pause", {"block": b}))
         items.append((_("Mark reviewed"), "mark_reviewed", {"block": b}, doc.review(b) == "paused",
                       "" if doc.review(b) == "paused" else _("after a stop on this block")))
+        if doc.state(b) == "done" and not blk.off and (doc.badges(b) or {}).get("earlier"):
+            from ..graphnode import RECOMPUTE, RECOMPUTE_TIP          # its result is of an earlier version
+            items.append((_(RECOMPUTE), "recompute", {"block": b}, True, _(RECOMPUTE_TIP)))
         if out_ports(blk):
             items.append(_item(doc, _("To Post"), "send_to_post", {"block": b}))
         else:

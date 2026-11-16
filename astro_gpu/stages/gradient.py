@@ -612,6 +612,7 @@ class Gradient(Stage):
     deps = ("stack",)
     Params = GradientParams
     version = "5"          # 2: the automatic method; the level kept is the model's median over the covered field;
+    key_label = "5"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
                            # 3: the RBF, the placed samples and the excluded areas; 4-5: away from the survey's emission
 
     def run(self, ctx: Context, p: GradientParams) -> None:

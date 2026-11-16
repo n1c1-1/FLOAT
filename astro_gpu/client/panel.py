@@ -564,6 +564,7 @@ class Panel(QWidget):
     variantMade = Signal(int, int)      # new workflow, the one it is a variant of
     toast = Signal(str)                 # a word to say (what came with a change, why it was refused)
     cutToggled = Signal()               # the block's switch: cut it, or restore it (issue #43)
+    recompute = Signal()                # Recompute (current version): the block shown, its result of an earlier version
     selectBlock = Signal(str)           # a greyed block's reason: select the block that was cut
     restoreBlock = Signal(str)          # a greyed block's panel: restore the block that was cut
     sectionsChanged = Signal()          # its sections were built (issue #44: the strip of icons follows)
@@ -1117,6 +1118,7 @@ class Panel(QWidget):
         st = self.graph_state(node)
         top.addWidget(self.state_chip(node, st))
         self.hv.addLayout(top)
+        self.earlier_row(node, st)
         if hasattr(s, "set_combination_type"):          # its recipe, changed here (the card placed the one chosen)
             from ..graphcore import combos
             row = QHBoxLayout()
@@ -1472,6 +1474,7 @@ class Panel(QWidget):
         if acts.count():
             acts.addStretch(1)
             self.hv.addLayout(acts)
+        self.earlier_row(node, st)
         self._bar_at = self.hv.count()                  # the draft bar's place: under the header, above Apply to
         if getattr(node, "missing", ""):                 # its data of the sky is not here (core/sky_data.py)
             self.hv.addWidget(label(_("Cannot run: {why}").format(why=node.missing.rstrip(".")),
@@ -2199,6 +2202,30 @@ class Panel(QWidget):
         elif st == "interrupted":
             chip.setToolTip(then)
         return chip
+
+    def earlier_row(self, node, st) -> None:
+        """A block whose result was computed with an earlier version of its method: one line saying so and the command
+        that recomputes it with the current one (nothing is recomputed unless the user asks). Nothing for any other
+        block, nor for one that is not up to date (a run computes it anyway)."""
+        from .graphnode import RECOMPUTE, RECOMPUTE_TIP, block_earlier, earlier_words
+        if st != "done" or getattr(node, "cut", False) or self.tune:
+            return
+        found: list = []
+        try:
+            for q in node.paths:
+                own = self.s.block_map.session_stages(q, node.sid) if node.key == "calibration" and \
+                    node.sid is not None else None
+                found += [v for v in block_earlier(self.s, q, node.ref, own) if v not in found]
+        except (KeyError, ValueError, AttributeError, IndexError, TypeError):
+            return
+        if not found:
+            return
+        self.hv.addWidget(label(earlier_words(found), "small", wrap=True))
+        b = QPushButton(_(RECOMPUTE))
+        b.setObjectName("recompute")
+        b.setToolTip(_(RECOMPUTE_TIP))
+        b.clicked.connect(self.recompute.emit)
+        self.hv.addWidget(b, 0, Qt.AlignLeft)
 
     def _same_node(self, node):
         g = self.s.block_map

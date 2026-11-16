@@ -131,6 +131,7 @@ class RenderSimple(Stage):
     deps = ("stack",)
     Params = RenderSimpleParams
     version = "13"         # 2: the emission anchor of the output preparation (the H-alpha of Classic was violet on
+    key_label = "13"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
                            # heart_a7s);
                            # 3: the Raw stack exit's sky made grey (it had the green of the light pollution);
                            # 4: the colour of the places near saturation from their surroundings (repair_saturated);

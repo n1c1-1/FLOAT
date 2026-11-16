@@ -175,6 +175,7 @@ class ImageSource(Stage):
     # a FITS stored bottom up (ROWORDER) is read top row first, as the raw frames are (it was read upside down): its
     # key says so (core/store.source_part, "rows-up-1"), no other key moves
     version = "1"
+    key_label = "1"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
     def run(self, ctx: Context, p: ImageParams) -> None:
         if not p.path:

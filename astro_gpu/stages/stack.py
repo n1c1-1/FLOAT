@@ -122,7 +122,7 @@ CLASSIC_CHOICES = {"classic_debayer": ("rcd", "bilinear"), "classic_interpolatio
                    "classic_rejection": ("auto", "none", "percentile", "winsorized", "linear_fit", "gesdt"),
                    "classic_cfa_balance": ON_OFF, "classic_combination": rc_mod.COMBINATIONS}
 #: the revision of the Classic part (core/stack_classic.py and its modules), in the store key of the results that use
-#: it (``Stack.key_version``: the Classic method, the drizzle with the integration's rejection) and of no other.
+#: it (``Stack.algorithm_version``: the Classic method, the drizzle with the integration's rejection) and of no other.
 #: 2: the white balance before RCD
 CLASSIC_VERSION = "2"
 #: 1: the automatic percentile clipping of 3 to 5 frames gives way to no rejection where the sky is too weak against
@@ -295,25 +295,40 @@ class Stack(Stage):
     # cross-colour fine detail of version 4's builds (withdrawn: not a published method); 6: the automatic gain of
     # sessions of several exposures from the photon transfer slope within each (it was negative and stopped the
     # stack), and no automatic gain where none can be measured (the default instead): single-exposure sessions keep
-    # theirs. The Classic part has a revision of its own (CLASSIC_VERSION, ``key_version``).
+    # theirs. The Classic part has a revision of its own (CLASSIC_VERSION, ``algorithm_version``).
     # 7: the drizzle's own rejection judged against the measured mean and standard deviation of the samples at each
     # point (sigma clipping, two iterations, thresholds 3), saturated samples included; no noise model (gain and read
     # noise settings gone). 8: the method is chosen by the engine's rule (core/coverage.advise_method) unless the
     # user sets it (it was Bayer drizzle unless set).
     version = "8"
+    key_label = "8"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
-    def key_version(self, values: dict) -> str:
-        """The version in the store key of a stack with these (validated) settings: ``version``, and the Classic part's
-        revision when the stack uses it (the Classic method, or the drizzle with the integration's rejection), so that
-        a change of that part makes those results again and no other."""
+    def frozen_key_label(self, values: dict) -> str:
+        """The label in the store key of a stack with these (validated) settings. FROZEN, never change it, neither its
+        strings nor its conditions: it would make every project recompute. (It was the stage's version with the
+        Classic part's revision; the versions now live in ``algorithm_version`` and move freely.)"""
+        uses = values.get("method") == "classic" or values.get("drizzle_rejection") == "integration"
+        return "8+classic2" if uses else "8"
+
+    def frozen_mono_key_label(self, values: dict, lights: int) -> str:
+        """The label in the store key of a monochrome workflow of ``lights`` frames. FROZEN, never change it, neither
+        its strings nor its conditions (the 6 was the frame count from which the automatic rejection changes): it
+        would make every project recompute."""
+        base = self.frozen_key_label(values)
+        return f"{base}+weaksky1" if 0 < lights < 6 else base
+
+    def algorithm_version(self, values: dict) -> str:
+        """The version of the method a stack with these (validated) settings is computed with, recorded in its
+        result: ``version``, and the Classic part's revision when the stack uses it (the Classic method, or the
+        drizzle with the integration's rejection). Free to change: no key holds it."""
         uses = values.get("method") == "classic" or values.get("drizzle_rejection") == "integration"
         return f"{self.version}+classic{CLASSIC_VERSION}" if uses else str(self.version)
 
-    def mono_key_version(self, values: dict, lights: int) -> str:
-        """The version in the store key of a monochrome workflow of ``lights`` frames: with the weak-sky guard of the
-        percentile clipping (core/rejection_classic.guard_percentile) when it has few enough frames for that
-        rejection to be the automatic one (WEAK_SKY_REVISION). No other key moves."""
-        base = self.key_version(values)
+    def mono_algorithm_version(self, values: dict, lights: int) -> str:
+        """The same for a monochrome workflow of ``lights`` frames: with the weak-sky guard of the percentile clipping
+        (core/rejection_classic.guard_percentile) when it has few enough frames for that rejection to be the
+        automatic one (WEAK_SKY_REVISION)."""
+        base = self.algorithm_version(values)
         few = 0 < lights < rc_mod.WINSORIZED_FROM
         return f"{base}+weaksky{WEAK_SKY_REVISION}" if few else base
 

@@ -32,6 +32,7 @@ class Inventory(Stage):
     # scale had a white level of 1, one in ADU too. 3: each frame says whether it is a master, and of how many frames
     # (``stacked``, io/frames.master_count), which the Calibration reads
     version = "3"
+    key_label = "3"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
     def run(self, ctx: Context, p: InventoryParams) -> None:
         cfg = ctx.project.config.inputs

@@ -68,6 +68,9 @@ class Pipeline:
         self.stages = stages
         self.by_name = {s.name: s for s in stages}
         self.journal = journal or Journal(project.logs)
+        #: more to say of a stage's unexpected error (a v2 job: a result it reads is of an earlier version and may no
+        #: longer be readable); gives the words to keep, or ""
+        self.explain = None
 
     # ------------------------------------------------------------------ parameters
     def effective_params(self, stage: Stage):
@@ -162,9 +165,11 @@ class Pipeline:
             self.journal.emit("run_end", status=status)
         return status
 
-    def _run_stage(self, st: Stage, run_id: str | None = None) -> str:
+    def _run_stage(self, st: Stage, run_id: str | None = None, tag: dict | None = None) -> str:
         """Run one stage in its folder. ``run_id``: the id its manifest gets when done (a fresh random one by
-        default; a v2 job passes its key, so that results reading it stay the same when it is recomputed)."""
+        default; a v2 job passes its key, so that results reading it stay the same when it is recomputed). ``tag``:
+        what else the stage's checkpoints depend on (a v2 job: the stamps of the results it reads)."""
+        more = dict(tag or {})
         p, origin, auto = self.effective_params(st)
         ph = params_hash(p)
         ctx = Context(self.project, st, self.journal, self._device())
@@ -173,7 +178,7 @@ class Pipeline:
         if not st.deps:                      # the first stage reads the project's files: their lists are its input
             inputs["_project_inputs"] = _inputs_fingerprint(self.project)
         ck_meta = ctx.dir / "_ckpt" / "meta.json"
-        tag = {"params_hash": ph, "inputs": inputs, "version": st.version}
+        tag = {"params_hash": ph, "inputs": inputs, "version": st.version, **more}
         try:
             same = json.loads(ck_meta.read_text(encoding="utf-8")) == tag
         except (OSError, ValueError):     # none, or cut short (review 2.5): not this tag, the block starts afresh
@@ -210,6 +215,8 @@ class Pipeline:
         except (Exception, online.NetworkForbidden) as e:  # noqa: BLE001 - report every failure to the user
             tb = traceback.format_exc()
             msg = str(e) if isinstance(e, (StageError, online.NetworkForbidden)) else f"{type(e).__name__}: {e}"
+            if self.explain is not None and not isinstance(e, (StageError, online.NetworkForbidden)):
+                msg = self.explain(msg) or msg
             m.update(status="failed", error=msg, traceback=tb, duration=time.time() - t0)
             _write_manifest(self.project, st.name, m)
             self.journal.emit("log", stage=st.name, level="error", msg=msg)

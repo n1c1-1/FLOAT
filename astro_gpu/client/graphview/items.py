@@ -183,6 +183,11 @@ class BlockItem(QGraphicsItem):
     def cross_rect(self):
         return QRectF(self.w - 20, 4, 16, 16)
 
+    def earlier_rect(self):
+        """Where the mark of a result computed with an earlier version is drawn: a small ring in the lower right
+        corner; an empty rectangle for a block without one."""
+        return QRectF(self.w - 13, self.h - 13, 7, 7) if self.d.get("earlier") else QRectF()
+
     def input_at(self, pos):
         for name, _lab, y, _w, _c in self.d["inputs"]:
             if QRectF(-9, y - 9, self.name_w + 18, 18).contains(pos):
@@ -282,6 +287,10 @@ class BlockItem(QGraphicsItem):
             _paint_own_chip(p, QRectF(w - 8 - cw - (20 if d["removable"] and self.hover else 0), 8, cw, 15))
         if d["removable"] and self.hover:
             draw(p, self.cross_rect(), "remove", "error")
+        if d.get("earlier"):                             # computed with an earlier version: a small ring, no colour
+            p.setPen(QPen(QColor("#8b93a1"), 1.3))
+            p.setBrush(Qt.NoBrush)
+            p.drawEllipse(self.earlier_rect())
         if d["inputs"]:                                  # the named inputs: a hollow dot while empty, the name whole
             f3 = _font(8.5)
             for name, lab, y, wired, colour in d["inputs"]:

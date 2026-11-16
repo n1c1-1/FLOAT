@@ -97,7 +97,8 @@ def _fields(message) -> list:
 
 class GraphCanvas(QGraphicsView):
     inspect = Signal(object)             # Enter / double-click / menu "Inspect" on this id
-    view_action = Signal(str, object)    # a menu action only the window can do: ("mark_reviewed", block)
+    view_action = Signal(str, object)    # a menu action only the window can do: ("mark_reviewed", block),
+    #                                      ("recompute", block): Recompute (current version)
     templates_asked = Signal()           # the blank page's link « From template »
     wire_chosen = Signal(object)         # a wire that can be removed was chosen: its id (the panel shows it)
 
@@ -397,8 +398,11 @@ class GraphCanvas(QGraphicsView):
         summary = (old.get("summary") if prev and kind in MODEL_SUMMARY else doc.summary(b, model=False)) \
             if pending else doc.summary(b)
         line = summary                                   # the line under its name (the tooltip keeps the summary)
-        bd = {k: old.get(k) for k in ("fallback", "broken", "missing", "warned")} if pending else doc.badges(b)
+        bd = {k: old.get(k) for k in ("fallback", "broken", "missing", "warned", "earlier")} if pending \
+            else doc.badges(b)
         fallback = list(bd.get("fallback") or []) if state == "done" and not grey else []
+        # its result is of an earlier version of its method: a small mark and one line, the block stays up to date
+        earlier = [tuple(v) for v in bd.get("earlier") or []] if state == "done" and not grey and not blk.off else []
         broken, missing = bd.get("broken") or "", bd.get("missing") or ""
         word = _(FALLBACK_WORD) if fallback else state_word(state)
         if state == "stale" and not pending:             # Outdated: why, in a few words (the setting, the block)
@@ -438,6 +442,9 @@ class GraphCanvas(QGraphicsView):
         if fallback:                                     # why, in the engine's words translated (graph.py)
             from ..services.run import engine_text
             tip += "".join("\n" + engine_text(w) for w in fallback)
+        if earlier:
+            from ..graphnode import earlier_words
+            tip += "\n" + earlier_words(earlier)
         if broken:
             tip += "\n" + _("Cannot run: {why}. Run is refused until it is fixed.").format(why=broken.rstrip("."))
         if missing:
@@ -460,7 +467,7 @@ class GraphCanvas(QGraphicsView):
                                    ).format(name=lab)
         return dict(id=b, kind=kind, title=title, summary=line, state=state, selected=bridge.selected == b,
                     off=bool(blk.off), grey=grey, badge=badge, review=review, own=doc.differs(b),
-                    fallback=fallback, broken=broken, missing=missing, warned=bool(bd.get("warned")),
+                    fallback=fallback, broken=broken, missing=missing, warned=bool(bd.get("warned")), earlier=earlier,
                     w=box.w, h=box.h, x=box.x, y=box.y, inputs=inputs, outputs=outputs,
                     removable=kind != "post", tip=tip, reading=pending and (touched or prev is None))
 
@@ -1607,6 +1614,8 @@ class GraphCanvas(QGraphicsView):
             self.inspect.emit(ident)
         elif op == "rename":
             self.rename(ident, (args or {}).get("row"))
+        elif op == "recompute":                          # the window plans it and shows what it costs first
+            self.view_action.emit(op, ident)
         elif op == "mark_reviewed":
             f = getattr(self.bridge.document, "mark_reviewed", None)
             if f is not None:

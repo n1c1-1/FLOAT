@@ -98,6 +98,8 @@ class SidesHost:
         pn.removeTool.connect(lambda: self.remove_tool(self.current_node(), None))
         pn.openLayer.connect(self.openLayer.emit)
         pn.cutToggled.connect(self.toggle_cut)
+        # Recompute (current version) of the block shown: the window plans it, as for the block's menu
+        pn.recompute.connect(lambda: self.view_action.emit("recompute", self.bridge.selected))
         pn.drop_files = self.panel_drop
         self._panel_timer = QTimer(self, singleShot=True, interval=0)
         self._panel_timer.timeout.connect(self.refresh_panel)

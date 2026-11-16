@@ -256,6 +256,12 @@ PATTERNS: list[tuple[re.Pattern, str, tuple]] = [
          r"run continues in a fresh process$",
          "the graphics card stopped responding again during {0}: it is not tried a third time; the rest of the run "
          "continues in a fresh process", (0,)),
+        # a block that failed while a result it reads is of an earlier version (core/runner2.UNREADABLE); the program's
+        # own error, at its end, is for the Log only
+        (r"^the result of (.+) was computed with an earlier version \((.+) -> (.+)\) and can no longer be read by this "
+         r"version: recompute it \(.*\)$",
+         "the result of {0} was computed with an earlier version ({1} -> {2}) and can no longer be read by this version: "
+         "recompute it", (0,)),
         (r"^the graphics card stopped responding during (.+) and the run cannot go on: (.+)$",
          "the graphics card stopped responding during {0} and the run cannot go on: {1}", (0, 1)),
         (r"^the graphics card stopped responding again during (.+)$",
@@ -1261,6 +1267,26 @@ class RunController(QObject):
                 raise PlanRefused(_("{block} is no longer in the graph").format(block=name))
             return m.plan_run_to(q, run_key(key))
         return self._plan_and_open(planner, lambda: _('Run "{name}" to {block}').format(name=p.name, block=name))
+
+    def recompute(self, paths, key: str):
+        """Recompute (current version) on a block of the views (its menu, its panel): the window of the plan, which
+        says what is computed again and how long before anything runs, as Run to here does. The block's results of an
+        earlier version of its method are computed again in their place, then what was made from them."""
+        m = self.model
+        if self.running:
+            return self.show_dialog()
+        paths = list(paths or [])
+        if not paths or not key or not self.before_run():
+            return None
+        pids, name = [q.pid for q in paths], self.block_name(paths[0], key)
+        self.scope = set(pids)
+
+        def planner():
+            views = [q for q in (m.view(pid) for pid in pids) if q is not None]
+            if not views:
+                raise PlanRefused(_("{block} is no longer in the graph").format(block=name))
+            return m.plan_recompute(views, run_key(key)), None
+        return self._plan_and_open(planner, lambda: _("Recompute “{block}” (current version)").format(block=name))
 
     def block_name(self, p, key: str) -> str:
         """A block as the graph and the run window name it ("Gradient 2", "Calibration · Session 2", 4.1 and 6.1)."""

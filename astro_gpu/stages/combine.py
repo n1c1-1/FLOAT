@@ -870,6 +870,7 @@ class CombineSHO(NarrowbandCombination):
     # the linear match, the lightness weighted by the noise and the colour's strength of 1.9 (module docstring, 5)
     # 9: the stars alone come out neutral (the setting Stars), no longer through the hues
     version = "9"
+    key_label = "9"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
 
 class HOParams(NarrowbandParams):
@@ -890,6 +891,7 @@ class CombineHO(NarrowbandCombination):
     Params = HOParams
     # 8, 9: as the S-H-O block's
     version = "9"
+    key_label = "9"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
 
 class CombineRGB(Combination):
@@ -904,6 +906,7 @@ class CombineRGB(Combination):
     saturation_ports = ("R", "G", "B")
     # 3: Siril's linear match to the red instead of a percentile; the stacks' saturation map handed on
     version = "3"
+    key_label = "3"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
 
 class CombineLRGB(Combination):
@@ -919,6 +922,7 @@ class CombineLRGB(Combination):
     # 3: R, G and B linearly matched to L (Siril) instead of percentiles; L's lightness at every pixel, the colour grey
     # under its noise floor (before: the colour's own lightness there); the stacks' saturation map handed on
     version = "3"
+    key_label = "3"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
 
 class CombineRecipe(Combination):
@@ -933,6 +937,7 @@ class CombineRecipe(Combination):
     Params = RecipeParams
     # 2: a narrow-band recipe's stars alone come out neutral (the setting Stars), no longer through its hues
     version = "2"
+    key_label = "2"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
     def spec(self, p) -> dict:
         if p is None or not p.recipe:

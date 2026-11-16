@@ -672,6 +672,8 @@ class _Import:
         keys = self.keyset[w.id]
         m["inputs"] = {d: keys[d] for d in (m.get("inputs") or {}) if d in keys}
         m.update(run_id=k, key=k, key_parts=self.keys.key_parts(w, s), run=None,
+                 # (adopted only when it is of today's version of its stage: ``_decide``)
+                 algorithm_version=self.keys.algorithm_version(w, s),
                  adopted_from={"project": str(self.old), "folder": str(src), "run_id": m.get("run_id"),
                                "finished": m.get("finished"), "imported": datetime.now().isoformat(timespec="seconds")})
         for f in tmp.rglob("frames.json"):

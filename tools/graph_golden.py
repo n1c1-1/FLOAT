@@ -30,11 +30,12 @@ definition). A project is PROVEN when every session's frame list is non-empty on
 frames reads a non-empty frame list on both sides (a session with no lights in its definition reads none); a project
 of images only: when its image files are there; a project with no session and no workflow is EMPTY (no key to
 compare); else its definition is only shown equal.
-``check`` patches the stage versions to a constant: it cannot see that a newer code makes a project's results stale.
+``check`` patches the stages' key labels to a constant: it cannot see that a newer code makes a project's results stale.
 ``stale`` does: for every recorded project as it is on the disk, the blocks today's code calls Outdated, each with why
-(its stage version from -> to, or the key part that moved: settings, input files, upstream), read from the key parts the
-manifests of its results keep; a short table, and the whole in ``<dir>/_stale.json`` (or ``--out``). Nothing is
-computed, nothing written in a project (the same guard and snapshots).
+(the key part that moved: settings, input files, upstream), read from the key parts the manifests of its results keep;
+and, apart, the results computed with an earlier version of their stage's method ("earlier version", from -> to):
+those are valid results, never Outdated (the version of a method is in no key). A short table, and the whole in
+``<dir>/_stale.json`` (or ``--out``). Nothing is computed, nothing written in a project (the same guard and snapshots).
 """
 from __future__ import annotations
 
@@ -242,9 +243,9 @@ def jsonable(x):
 # ---------------------------------------------------------------------------------------------- recording one project
 def _keys_tables(project, scan, rules, patched: bool) -> dict:
     from astro_gpu.core.store import KeyRules, Keys
-    orig = KeyRules.version
+    orig = KeyRules.key_label
     if patched:
-        KeyRules.version = lambda self, stage, values=None, mono_lights=None: "V"      # noqa: E731
+        KeyRules.key_label = lambda self, stage, values=None, mono_lights=None: "V"      # noqa: E731
     try:
         keys = Keys(project, rules, scan)
         out: dict = {}
@@ -273,7 +274,7 @@ def _keys_tables(project, scan, rules, patched: bool) -> dict:
             out[str(w.id)] = row
         return out
     finally:
-        KeyRules.version = orig
+        KeyRules.key_label = orig
 
 
 def _states(project) -> dict:
@@ -783,13 +784,12 @@ def cmd_check(args) -> int:
 # ---------------------------------------------------------------------------------------------- stale
 def stale_why(old, cur) -> tuple[str, str]:
     """(kind, words) of why a stage's last result is not of its key today, as the client reads it (model.outdated_why:
-    the key parts its manifest keeps against today's): "version" (its method was updated: from → to), "settings" (the
-    settings that differ), "files" (its input files), "upstream" (the stages before it whose key moved), "unknown" (no
-    key parts in its manifest), "hash" (the same parts, another key: the key's making changed)."""
+    the key parts its manifest keeps against today's): "settings" (the settings that differ), "files" (its input
+    files), "upstream" (the stages before it whose key moved), "unknown" (no key parts in its manifest), "hash" (the
+    same parts, another key: the key's making changed). A difference of version alone is "earlier version" (from →
+    to): it is not a reason to be Outdated (the version of a stage's method is in no key), only a fact of a result."""
     if not isinstance(old, dict):
         return "unknown", "its manifest keeps no key parts"
-    if old.get("v") != cur.get("v"):
-        return "version", f"version {old.get('v')} -> {cur.get('v')}"
     op, cp = old.get("p") or {}, cur.get("p") or {}
     names = [n for n in list(cp) + [n for n in op if n not in cp] if op.get(n) != cp.get(n)]
     if names:
@@ -803,18 +803,22 @@ def stale_why(old, cur) -> tuple[str, str]:
         return "upstream", "upstream " + ", ".join(ups)
     if old.get("s") != cur.get("s"):
         return "stage", f"stage {old.get('s')} -> {cur.get('s')}"
+    if old.get("v") != cur.get("v"):
+        return "earlier version", f"version {old.get('v')} -> {cur.get('v')}"
     return "hash", "the same key parts, another key"
 
 
 def stale_project(folder: Path) -> dict:
     """The stages of a project that today's code calls Outdated (``api.states(update=False)``: a done result of an
-    earlier key, none of its key today), each with its block and why; nothing computed, nothing written."""
+    earlier key, none of its key today), each with its block and why; and, apart (``earlier``), the done stages whose
+    result was computed with an earlier version of their method: valid results, never Outdated. Nothing computed,
+    nothing written."""
     from astro_gpu import api
     from astro_gpu.core import project2
     p = project2.load(folder)
     keys, store = api._keys(p), api._store(p)
     states = api.states(p, update=False)
-    rows, counts = [], {}
+    rows, counts, earlier = [], {}, []
     for w in p.workflows:
         try:
             chain = list(keys.chain(w))
@@ -823,6 +827,10 @@ def stale_project(folder: Path) -> dict:
             continue
         for s in chain:
             st = states.get((w.id, s))
+            if st is not None and st.earlier:
+                earlier.append({"workflow": w.id, "name": w.name, "block": block_of.get(s, ""), "stage": s,
+                                "kind": "earlier version", "why": f"version {st.earlier[0]} -> {st.earlier[1]}",
+                                "state": st.state, "key": st.key})
             if st is None or st.state != "stale":
                 continue
             old = store.manifest(s, st.previous_key).get("key_parts") if store is not None else None
@@ -836,7 +844,7 @@ def stale_project(folder: Path) -> dict:
             rows.append({"workflow": w.id, "name": w.name, "block": block_of.get(s, ""), "stage": s, "kind": kind,
                          "why": why, "previous_key": st.previous_key, "key": st.key})
     done = sum(1 for st in states.values() if st.state == "done")
-    return {"stale": rows, "counts": counts, "done": done, "stages": len(states)}
+    return {"stale": rows, "earlier": earlier, "counts": counts, "done": done, "stages": len(states)}
 
 
 def cmd_stale(args) -> int:
@@ -895,11 +903,12 @@ def cmd_stale(args) -> int:
     # the table: one line per project with Outdated blocks, one per block under it (its stages' reasons, once each)
     lines = []
     for src, r in report["projects"].items():
-        if not r["stale"]:
+        if not r["stale"] and not r.get("earlier"):
             continue
-        lines.append(f"{Path(src).name[:60]}  ({len(r['stale'])} stale of {r['stages']} stages, {r['done']} done)")
+        lines.append(f"{Path(src).name[:60]}  ({len(r['stale'])} stale of {r['stages']} stages, {r['done']} done, "
+                     f"{len(r.get('earlier') or [])} of an earlier version)")
         seen: dict = {}
-        for x in r["stale"]:
+        for x in r["stale"] + [{**e, "why": "earlier version, valid: " + e["why"]} for e in r.get("earlier") or []]:
             where = f"{x['block']}/{x['stage']}" if x["block"] else x["stage"]
             seen.setdefault((where, x["why"]), []).append(f"{x['workflow']}")
         for (where, why), wids in seen.items():

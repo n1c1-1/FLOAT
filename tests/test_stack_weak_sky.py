@@ -68,7 +68,9 @@ def test_only_monochrome_workflows_of_few_frames_change_key():
     from astro_gpu.stages.stack import Stack
     s = Stack()
     v = {"method": "classic"}
-    assert s.mono_key_version(v, 4) == f"{s.key_version(v)}+weaksky1"
-    assert s.mono_key_version(v, 3) != s.key_version(v)
-    assert s.mono_key_version(v, 12) == s.key_version(v)
-    assert s.key_version(v) == s.key_version({"method": "classic"})      # colour workflows: untouched
+    # the keys' label (frozen: tests/test_versions.py) and the version of the method the result records
+    for mono, plain in ((s.frozen_mono_key_label, s.frozen_key_label), (s.mono_algorithm_version, s.algorithm_version)):
+        assert mono(v, 4) == f"{plain(v)}+weaksky1"
+        assert mono(v, 3) != plain(v)
+        assert mono(v, 12) == plain(v)
+        assert plain(v) == plain({"method": "classic"})                  # colour workflows: untouched

@@ -69,6 +69,7 @@ class Deconv(Stage):
     deps = ("stack",)
     Params = DeconvParams
     version = "6"     # 6: the noise's sample drawn by a seeded generator (``deconv_lib._robust_sigma``): the same result
+    key_label = "6"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
     #                   at every run, a little different from one computed before on an image over 2 Mpx; 5: the network
     #                   of the second training, each plane denoised first; 4: damping, stop, local deringing, protection
     #                   (#92), the network's tiles blended

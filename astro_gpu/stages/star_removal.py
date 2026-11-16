@@ -90,6 +90,10 @@ class StarRemoval(Stage):
     deps = ("render_simple", "stack")
     Params = StarRemovalParams
 
+    #: the keys' label: FROZEN, never change it (core/stage.Stage.key_label). It was the version with the start of
+    #: the network file's hash; the file's identity is now part of the algorithm version only (``version``)
+    key_label = "4-9b974a78cb"
+
     @property
     def version(self) -> str:            # 2: the network's grid notched (core/periodic.py, issue #28); 3: big tiles (#45);
         #                                  4: a starless fusion's stretch (gone with the fusion's star layer, 2026-11-12)

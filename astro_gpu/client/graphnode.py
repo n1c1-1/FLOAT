@@ -377,6 +377,33 @@ def block_fallback(s, p, key: str) -> list[str]:
     return out
 
 
+def block_earlier(s, p, key: str, stages=None) -> list[tuple[str, str]]:
+    """The (from, to) of the stages of a block whose done result, in one workflow, was computed with an earlier version
+    of their method than today's code (api.StageState.earlier), each once; [] when its results are today's. A fact of
+    the results: the block stays "Up to date" and the blocks after it read them. ``stages``: the block's stages when
+    they are not its key's (a session's Calibration)."""
+    info = getattr(s, "state_info", None)
+    out: list[tuple[str, str]] = []
+    for x in (run_stages(s, p, key) if stages is None else stages) if info is not None else ():
+        st = info(p, x)
+        ev = getattr(st, "earlier", None) if st is not None and st.state == "done" else None
+        if ev and tuple(ev) not in out:
+            out.append(tuple(ev))
+    return out
+
+
+def earlier_words(earlier) -> str:
+    """"Computed with an earlier version (5 -> 6)": the one line a block says of it (its tooltip, its panel)."""
+    pairs = list(dict.fromkeys(f"{a} -> {b}" for a, b in earlier or ()))
+    return _("Computed with an earlier version ({versions})").format(versions=", ".join(pairs)) if pairs else ""
+
+
+#: the command of a block whose result is of an earlier version (its menu, its panel)
+RECOMPUTE = "Recompute (current version)"
+RECOMPUTE_TIP = ("Computes this block again with the current version of its method, then the blocks after it. Its "
+                 "result of the earlier version stays valid until then: nothing is recomputed unless you ask.")
+
+
 def block_seconds(s, p, key: str) -> float:
     return sum(s.seconds(x, p) for x in stages_of(s, p, key))
 

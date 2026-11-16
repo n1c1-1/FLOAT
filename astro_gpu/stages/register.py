@@ -73,6 +73,7 @@ class Register(Stage):
     # 5: a frame matched on fewer than 10 star pairs is left out, as Siril does (it was 6)
     # 6: that minimum is a setting ("Min pairs", 10), and holds for every frame's fit
     version = "6"
+    key_label = "6"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
     def auto(self, ctx: Context) -> dict[str, Auto]:
         n = max(1, min(12, (os.cpu_count() or 4) - 2))

@@ -86,6 +86,7 @@ class Sessions(Stage):
                    "frames for the registration and the stack.")
     Params = SessionsParams
     version = "1"
+    key_label = "1"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
     def run(self, ctx: Context, p: SessionsParams) -> None:
         inv_names, cal_names = instances(ctx, "inventory"), instances(ctx, "calibrate")

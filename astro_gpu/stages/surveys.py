@@ -48,6 +48,7 @@ class Surveys(Stage):
     deps = ("astrometry", "stack")
     Params = SurveysParams
     version = "2"          # 2: never stops the run: no survey, or no network, gives 'none' and the reason
+    key_label = "2"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
     network = True
 
     def run(self, ctx: Context, p: SurveysParams) -> None:

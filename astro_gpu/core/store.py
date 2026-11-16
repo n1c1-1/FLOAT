@@ -3,7 +3,7 @@
 A done stage result lives in ``store/<stage>/<key>/``. Its key hashes everything that decides
 the result, and nothing else::
 
-    key(wf, s) = sha1(canonical_json({"s": s, "v": version, "p": key_params(wf, s),
+    key(wf, s) = sha1(canonical_json({"s": s, "v": key_label, "p": key_params(wf, s),
                                       "u": {d: key(wf, d) for d in deps_in_chain(wf, s)},
                                       "x": project_part(s)}))[:16]
 
@@ -20,8 +20,17 @@ setting). The rule on defaults:
   ignored where a definition still stores it; one whose last value must stay in the keys (``KEY_CONSTANTS``) is
   added with that value, so the results computed with it keep their keys.
 
-``version`` is the stage's, or what its ``key_version(values)`` makes of the definition's settings when it has one: a
-part of a stage revised on its own changes the keys of the definitions that use it only (the stack's Classic part).
+``key_label`` is the stage's label in its keys (core/stage.Stage.key_label, or what its ``frozen_key_label(values)``
+makes of the definition's settings when it has one). It is FROZEN: it never changes, on any stage, for it would make
+every project recompute. It is not the version of the stage's method: that one (``Stage.version``,
+``KeyRules.algorithm_version``) is no part of any key. A result records the version it was computed with
+(``algorithm_version`` in its manifest); a result of another version than the code's stays the block's result, said
+"computed with an earlier version" (``earlier_version``), and the user decides whether to recompute it.
+
+A result recomputed that way takes the earlier one's place under the same key. So each result has a ``stamp`` (made
+once, when it is computed) and records the stamps of the results it read (``upstream`` in its manifest): a result made
+from an upstream result recomputed since is to recompute (``Upstream``). Manifests written before the stamps count as
+matching.
 
 Hence a setting added to a stage later, whose static default keeps the previous behaviour and which has no automatic
 rule at that default, never enters the key of a definition that leaves it at its default, stored or not: every key
@@ -153,16 +162,29 @@ class KeyRules:
     def params(self, stage: str) -> type[StageParams]:
         return self.chains.stages[wfl.base(stage)].Params     # a graph's later node ("denoise~2"): its stage's
 
-    def version(self, stage: str, values: Mapping[str, Any] | None = None, mono_lights: int | None = None) -> str:
-        """The stage's version in a key: its ``version``; with the definition's validated ``values``, the stage's
-        ``key_version(values)`` when it has one (a part of the stage revised on its own, keyed only where the settings
-        use it: the stack's Classic part); for a monochrome workflow of ``mono_lights`` light frames, its
-        ``mono_key_version(values, mono_lights)`` when it has one (the Denoise network of few frames, issue #45)."""
+    def key_label(self, stage: str, values: Mapping[str, Any] | None = None, mono_lights: int | None = None) -> str:
+        """The stage's label in a key, FROZEN (core/stage.Stage.key_label: never change one, it would make every
+        project recompute): its ``key_label``; with the definition's validated ``values``, the stage's
+        ``frozen_key_label(values)`` when it has one (the stack's Classic part); for a monochrome workflow of
+        ``mono_lights`` light frames, its ``frozen_mono_key_label(values, mono_lights)`` when it has one (the Denoise
+        network of few frames, issue #45). The version of the stage's method is no part of it."""
         st = self.chains.stages[wfl.base(stage)]
-        mv = getattr(st, "mono_key_version", None)
+        mv = getattr(st, "frozen_mono_key_label", None)
         if mono_lights is not None and callable(mv) and values is not None:
             return str(mv(dict(values), mono_lights))
-        kv = getattr(st, "key_version", None)
+        kv = getattr(st, "frozen_key_label", None)
+        return str(kv(dict(values)) if callable(kv) and values is not None else getattr(st, "key_label", "1"))
+
+    def algorithm_version(self, stage: str, values: Mapping[str, Any] | None = None,
+                          mono_lights: int | None = None) -> str:
+        """The version of the method the stage computes with today, for these settings: its ``version``, or its
+        ``algorithm_version(values)`` / ``mono_algorithm_version(values, mono_lights)`` when it has one (a part of the
+        stage revised on its own). Recorded in the results; in no key."""
+        st = self.chains.stages[wfl.base(stage)]
+        mv = getattr(st, "mono_algorithm_version", None)
+        if mono_lights is not None and callable(mv) and values is not None:
+            return str(mv(dict(values), mono_lights))
+        kv = getattr(st, "algorithm_version", None)
         return str(kv(dict(values)) if callable(kv) and values is not None else st.version)
 
     def auto_fields(self, stage: str) -> frozenset[str]:
@@ -696,8 +718,25 @@ class Keys:
         # a block placed twice ("gradient~2") is keyed by its stage, not by its number: the same computation has the
         # same key whatever the graph numbered it (GUI exploration 2). Only "~" names change: no other key moves.
         u = {(k.split("~", 1)[0] if "~" in k and k.split("~", 1)[0] not in u else k): x for k, x in u.items()}
-        lights = self.mono_lights(w) if hasattr(self.rules.chains.stages[b], "mono_key_version") else None
-        return {"s": b, "v": self.rules.version(b, m, lights), "p": p, "u": u, "x": x}
+        lights = self.mono_lights(w) if hasattr(self.rules.chains.stages[b], "frozen_mono_key_label") else None
+        return {"s": b, "v": self.rules.key_label(b, m, lights), "p": p, "u": u, "x": x}
+
+    def algorithm_version(self, wf: int | Workflow, stage: str) -> str:
+        """The version of the method this stage of the workflow is computed with today (``KeyRules.algorithm_version``
+        for its settings): what a result records, and what an earlier result is compared with."""
+        w = self._wf(wf)
+        b = base(stage)
+        _p, m = self._key_values(w, stage)
+        lights = self.mono_lights(w) if hasattr(self.rules.chains.stages[b], "mono_algorithm_version") else None
+        return self.rules.algorithm_version(b, m, lights)
+
+    def inputs(self, wf: int | Workflow, stage: str) -> dict[str, tuple[int, str]]:
+        """{name: (workflow id, stage)} of the results a job of this stage reads: its own chain's (named by their
+        stage) and the other workflows' (a combination's inputs, an Align on's reference: "stage#workflow id")."""
+        w = self._wf(wf)
+        out = {d: (w.id, d) for d in self.deps(w, stage)}
+        out.update({f"{st}#{pid}": (pid, st) for pid, st in self.cross_inputs(w, stage)})
+        return out
 
     def mono_lights(self, wf: int | Workflow) -> int | None:
         """The light frames a monochrome workflow stacks, its frame limit applied; None for any other workflow. What a
@@ -841,6 +880,101 @@ class Store:
 
     def forget(self) -> None:
         self._usable.clear()
+
+
+def is_done(manifest: Mapping[str, Any], key: str) -> bool:
+    """Whether a manifest is that of a done result of this key (``Store.done``, the manifest already read)."""
+    return manifest.get("status") == "done" and manifest.get("key", key) == key
+
+
+def recorded_version(manifest: Mapping[str, Any]) -> str | None:
+    """The version of the method a result was computed with: what its manifest records (``algorithm_version``); for a
+    result recorded before that, the label its key parts kept (it was the version then), else its stage's ``version``.
+    None when the manifest says nothing of it."""
+    v = manifest.get("algorithm_version")
+    if v is None:
+        parts = manifest.get("key_parts")
+        v = parts.get("v") if isinstance(parts, dict) else None
+    if v is None:
+        v = manifest.get("version")
+    return None if v is None else str(v)
+
+
+def earlier_version(keys: Keys, wf: int | Workflow, stage: str, manifest: Mapping[str, Any]) -> tuple[str, str] | None:
+    """(from, to) when a done result was computed with another version of its stage's method than today's code; None
+    when it is today's, or when nothing says which it was."""
+    old = recorded_version(manifest)
+    if old is None:
+        return None
+    try:
+        now = keys.algorithm_version(wf, stage)
+    except (KeyError, ValueError):
+        return None
+    return None if old == now else (old, now)
+
+
+class Upstream:
+    """Whether the done results of a project still stand on the upstream results they were made from.
+
+    A result recomputed in its place ("Recompute (current version)") keeps its key, so the results made from the
+    earlier one would still look valid. Each manifest has a ``stamp`` (made once, when the result is computed) and
+    ``upstream``: {name: {"key", "stamp"}} of the done results it read. ``redone(wf, stage)`` is true when one of them
+    has another stamp now, when one is itself in that case, or when one is among ``redo`` (the keys a plan recomputes
+    in their place). A manifest without ``upstream`` (written before the stamps) matches, unless the upstream result
+    says it replaced an earlier one (``replaced``): it was then made after everything that has no record of it.
+    Reads each manifest once."""
+
+    def __init__(self, keys: Keys, store: Store | None, redo: Iterable[str] = ()):
+        self.keys, self.store, self.redo = keys, store, set(redo)
+        self._manifests: dict[tuple[str, str], dict] = {}
+        self._redone: dict[str, bool] = {}
+
+    def manifest(self, stage: str, key: str) -> dict:
+        k = (base(stage), key)
+        if k not in self._manifests:
+            self._manifests[k] = self.store.manifest(stage, key) if self.store is not None else {}
+        return self._manifests[k]
+
+    def redone(self, wf: int | Workflow, stage: str) -> bool:
+        """Whether the done result of this stage was made from an upstream result recomputed since (false for a stage
+        that has no done result)."""
+        try:
+            key = self.keys.key(wf, stage)
+        except (KeyError, ValueError):
+            return False
+        if key not in self._redone:
+            self._redone[key] = False                    # (a graph has no loop; this only guards a broken one)
+            self._redone[key] = self._check(wf, stage, key)
+        return self._redone[key]
+
+    def _check(self, wf: int | Workflow, stage: str, key: str) -> bool:
+        m = self.manifest(stage, key)
+        if not is_done(m, key):
+            return False
+        rec = m.get("upstream")
+        try:
+            inputs = self.keys.inputs(wf, stage)
+        except (KeyError, ValueError):
+            return False
+        for name, (pid, st) in inputs.items():
+            try:
+                k = self.keys.key(pid, st)
+            except (KeyError, ValueError):
+                continue
+            if k in self.redo:
+                return True
+            um = self.manifest(st, k)
+            if not is_done(um, k):
+                continue                                 # no result there now: nothing says it changed
+            if isinstance(rec, dict):
+                r = rec.get(name)
+                if isinstance(r, dict) and (r.get("stamp") or "") != (um.get("stamp") or ""):
+                    return True
+            elif um.get("replaced"):
+                return True
+            if self.redone(pid, st):
+                return True
+        return False
 
 
 def _external_data_ok(stage: str, d: Path) -> bool:

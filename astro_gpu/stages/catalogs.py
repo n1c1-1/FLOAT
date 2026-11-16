@@ -44,6 +44,7 @@ class Catalogs(Stage):
     deps = ("inventory", "astrometry", "stack")
     Params = CatalogsParams
     version = "5"          # 2: the bright stars missing from Gaia are added from Hipparcos; 3: the bright stars only
+    key_label = "5"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
                            # (offline), the deep catalogue for the earlier Stars block left out; 4: the colour stars
                            # spread over the magnitudes (issue #12); 5: the spectra may come from the compact extract
                            # (core/sirilcat.py): rebuilt on a basis, their XYZ the sampled ones' to 1e-7, not bit-equal

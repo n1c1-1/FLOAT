@@ -1151,6 +1151,7 @@ class Main(QMainWindow):
         page.variantMade.connect(self._variant_made)
         page.changed.connect(self.request_refresh)
         page.sideChosen.connect(self._side_chosen)
+        page.view_action.connect(self._page_action)
         page.sidesShown.connect(self._show_sides)
         # one Undo for the window: the page's keys, its notices' Undo links and Edit > Undo all go to the window's (the
         # page's own Ctrl+Z beside the menu's was an ambiguous key: with the focus in the page, neither ran)
@@ -1373,6 +1374,20 @@ class Main(QMainWindow):
         self._last_step = "post"
         self.select(index=self.s.index_of(pid), step="post")
         self.set_mode(1)
+
+    def _page_action(self, op: str, ident):
+        """What a block's menu or panel asks of the window: "recompute", Recompute (current version) of a block whose
+        result is of an earlier version of its method. The run's window opens on the plan: what is computed again and
+        how long, before anything runs."""
+        if op != "recompute" or self.s is None or self.run is None:
+            return
+        try:
+            node = self.s.block_map.node(ident)
+        except Exception:  # noqa: BLE001 - a graph that cannot be read now: nothing to plan
+            node = None
+        if node is None or not node.paths:
+            return
+        self.run.recompute(node.paths, node.ref)
 
     def _variant_made(self, pid: int, orig: int):
         """A variant opens in Inspect compared with its original."""

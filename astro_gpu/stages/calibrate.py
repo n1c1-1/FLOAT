@@ -109,6 +109,7 @@ class Calibrate(Stage):
     # 11: the persistence leaves the pixels under a star of the lower quartile to the stack's rejection (the frames
     # hardly moved there: a Sony A7S series flagged cores of its bright stars, 10 to 26 % of their flux)
     version = "11"
+    key_label = "11"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
     def auto(self, ctx: Context) -> dict[str, Auto]:
         n = max(1, min(12, (os.cpu_count() or 4) - 2))

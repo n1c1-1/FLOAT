@@ -61,6 +61,7 @@ class SynthStars(Stage):
     # 2: the sub-pixel centring had its sign inverted (review 13.4): the measured shape was the median of stamps
     # twice their offset from the centre (spread), every star drawn twice its offset away from its place
     version = "2"
+    key_label = "2"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
     def run(self, ctx: Context, p: SynthStarsParams) -> None:
         # after a combination of stars there is no Stars/background: the stars alone are the combination's Output

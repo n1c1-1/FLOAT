@@ -629,7 +629,9 @@ def test_a_star_network_put_in_place_while_the_application_runs_is_in_the_next_p
     """The tutorials' film: on a copy of the code without the star network's file, the file was put in place while the
     application ran; every Run then failed with "the inputs of star_removal changed since the run was planned" until
     the application was started again. The application kept the key it had read without the file, the run's worker (a
-    new process) read the file. The next plan now has the key the worker reads; without the file, the key is as before."""
+    new process) read the file. The network's file is no part of the key now (its label is frozen): the plan and the
+    worker have the same key whatever the file; the version of the method, which a result records, follows the file as
+    it is now."""
     import hashlib
 
     from astro_gpu.stages import star_removal as sr
@@ -637,19 +639,18 @@ def test_a_star_network_put_in_place_while_the_application_runs_is_in_the_next_p
     monkeypatch.setattr(sr, "MODEL", net)                                  # this copy of the code has no network file
 
     def version():
-        return api._keys(p).key_parts(3, "star_removal")["v"]
+        return api._keys(p).algorithm_version(3, "star_removal")
 
     def planned():
         return [j.key for j in api.plan_workflows(p, [3]).jobs if j.stage == "star_removal"]
     assert version() == "4-missing"
     without = api.stage_key(p, 3, "star_removal")
-    assert planned() == [without]
+    assert planned() == [without] and api._keys(p).key_parts(3, "star_removal")["v"] == sr.StarRemoval.key_label
     net.parent.mkdir()
     net.write_bytes(b"a network")                                          # put in place, the application still running
     assert version() == "4-" + hashlib.sha256(b"a network").hexdigest()[:10]       # what a new process reads
-    with_it = api.stage_key(p, 3, "star_removal")
-    assert with_it != without and planned() == [with_it]
-    assert api.stage_key(p, 3, "render_simple") == api.stage_key(p, 2, "render_simple")     # no other key moves
+    assert api.stage_key(p, 3, "star_removal") == without and planned() == [without]        # the key does not move
+    assert api.stage_key(p, 3, "render_simple") == api.stage_key(p, 2, "render_simple")
     net.write_bytes(b"another network, longer")                            # replaced: read again
     assert version() == "4-" + hashlib.sha256(b"another network, longer").hexdigest()[:10]
     what_if = api.with_change(p, 3, {"kind": "param", "stage": "stack", "name": "kappa", "value": 8})
