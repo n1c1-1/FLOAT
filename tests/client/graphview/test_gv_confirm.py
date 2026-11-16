@@ -337,11 +337,12 @@ def test_a_drop_on_a_lit_place_always_places_the_block(world, model, page):
             if not pl.lit:
                 continue
             n = sum(1 for b in page.bridge.graph.blocks.values() if b.kind == kind)
-            g.drag_palette(kind, i)
+            page.canvas.toast.plain = ""      # what the toast said, kept once it is hidden: a loaded machine settles
+            g.drag_palette(kind, i)              # longer than a toast stays shown
             settle(world["w"], page, 4)
             m = sum(1 for b in page.bridge.graph.blocks.values() if b.kind == kind)
             assert m > n, (kind, i, page.bridge.say(pl.tip), _toast(page))       # (a branch copies the blocks after)
-            assert _toast(page)
+            assert page.canvas.toast.plain
             page.bridge.undo()
             settle(world["w"], page, 4)
 

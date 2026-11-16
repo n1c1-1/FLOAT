@@ -115,4 +115,6 @@ level3 = [
     "tests/test_stacking.py::test_selection_by_thresholds_with_reasons",                             # heavy, 9-24 s
     # heavy: every panel control of every block, a slow worker, the event loop watched, 41 s
     "tests/client/graphview/test_gv_loop_guard.py::test_every_panel_control_of_every_block_leaves_the_event_loop_free_with_a_slow_worker",
+    # heavy: a real calibration run on the processor; 54 s in a parallel run, killed by the 120 s limit twice tonight
+    "tests/test_parallel_calibration.py::test_a_real_run_gives_each_series_its_master",
 ]
