@@ -1224,7 +1224,9 @@ def test_every_text_has_its_french():
     cat: dict[str, str] = {}
     for f in sorted((ROOT / "astro_gpu/client/locale/fr").glob("*.json")):
         cat.update(json.loads(f.read_text(encoding="utf-8")))
-    texts = _texts_of(ROOT / "astro_gpu/client/imageview.py") + [n for n, _s in iv.FORMATS.values()]
+    files = sorted((ROOT / "astro_gpu/client").glob("imageview*.py"))     # the viewer's module and those split from it
+    assert ROOT / "astro_gpu/client/imageview.py" in files
+    texts = [t for f in files for t in _texts_of(f)] + [n for n, _s in iv.FORMATS.values()]
     missing = sorted({t for t in texts if t not in cat})
     assert not missing, missing
 
