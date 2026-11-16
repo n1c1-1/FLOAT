@@ -399,3 +399,9 @@ def test_the_first_naming_of_a_project_from_a_template_writes_its_graph_at_once(
     d = json.loads((target / project2.FILE).read_text(encoding="utf-8"))
     assert d.get("format") == project2.GRAPH_FORMAT
     assert gm.to_dict(gm.from_dict(d["graph"])) == before
+
+
+def test_a_card_says_what_it_does_without_another_card():
+    """The first card of the Color tab began "The same, then…": the same as a card placed after it."""
+    for t in templatefiles.shipped_cards():
+        assert not t["text"].startswith("The same"), t["name"]

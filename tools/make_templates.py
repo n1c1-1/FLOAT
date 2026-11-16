@@ -35,8 +35,9 @@ def construction() -> list[dict]:
              text="Calibration, registration, selection and stacking, then astrometry, the sky gradient and the colours. "
                   "The quickest complete workflow, without a neural network."),
         dict(key="colour_full", tab="Color", name="Colour full", opts=FULL, recommended=True,
-             text="The same, then denoise on the two half-stacks and the stars taken off: the starless image and the stars "
-                  "come to Post as two layers."),
+             text="Calibration, registration, selection and stacking, astrometry, the sky gradient and the colours, then "
+                  "denoise on the two half-stacks and the stars taken off: the starless image and the stars come to Post "
+                  "as two layers."),
         dict(key="image", tab="Color", name="Image", opts=CLASSIC, source="image", plain=True, blocks=[],
              text="One image to Post as a layer, a FITS, TIFF, PNG or JPEG file: blocks are added from the palette."),
         dict(key="images", tab="Color", name="Several images", opts=CLASSIC, source="image", plain=True, blocks=[],
