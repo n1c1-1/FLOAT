@@ -275,6 +275,7 @@
   "unknown place": "place inconnue",
   "the place is gone": "place disparue",
   "variant “{_name}” under “{_base}”": "variante « {_name} » sous « {_base} »",
+  "variant “{_name}” of “{_base}”": "variante « {_name} » de « {_base} »",
   "the composition takes a Combination or Combine layers": "la composition reçoit une Combinaison ou Combiner calques",
   "this Stars/background already feeds a block": "cet Étoiles/fond alimente déjà un bloc",
   "{_name} added": "{_name} ajouté",

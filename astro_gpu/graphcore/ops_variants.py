@@ -1,14 +1,27 @@
 """The graph's gestures: variants (a branch or a copy of a row, Try, Keep, Discard)."""
 import copy
 from dataclasses import replace
-from .model import Index, JOIN_KINDS, Row, new_id
+
 from . import rules
+from .model import JOIN_KINDS, Index, Row, new_id
 from .msg import M, name_of
+from .ops_base import (
+    Out,
+    Refusal,
+    _after_subtree,
+    _blk,
+    _clone_block,
+    _copy_block,
+    _copy_calibration,
+    _copy_flow,
+    _night,
+    _row,
+    delete_rows,
+    free_name,
+)
+from .ops_blocks import op_set_setting, op_switch_off
+from .ops_settings import op_set_method, op_set_param
 from .rules import LABEL
-from .ops_base import (Refusal, Out, _blk, _row, free_name, _night, _copy_calibration, _copy_block, _after_subtree,
-                       delete_rows, _clone_block, _copy_flow)
-from .ops_settings import op_set_param, op_set_method
-from .ops_blocks import op_switch_off, op_set_setting
 
 
 def _branch(q, b, rid, y):
@@ -96,6 +109,10 @@ def op_try_variant(q, block, change, name=None):
     drawing the same nights."""
     b = _blk(q, block)
     ix = Index(q)
+    if b.kind == "combine" and block in ix.row_of and ix.row[ix.row_of[block]].blocks[:1] == [block]:
+        return _combination_variant(q, ix, block, change, name)
+    # a Session, Post and an Image start nothing a variant could fork from; a Combine layers is a layer of Post, not
+    # a workflow (its row stands for that layer): none of them has a variant
     if b.kind in ("session", "post", "image") + JOIN_KINDS:
         raise Refusal(M("{lab}: no variant from here", lab=LABEL.get(b.kind, b.kind)))
     if b.kind == "calibration":
@@ -152,6 +169,37 @@ def op_try_variant(q, block, change, name=None):
     _apply_change(q, target, change)
     out.toast = M("variant “{_name}” under “{_base}”", _name=v.name, _base=r.name)    # a row like another: no header
     out.focus = target
+    return out
+
+
+def _combination_variant(q, ix, block, change, name=None):
+    """Try variant from a combination (the editor's draft: client/combineedit.py): a variant forks after a block of
+    its row, and a combination is its row's first block, with nothing before it in that row but the wires of its
+    inputs, which a fork does not copy (the reason the general way refuses it). So the variant is a second combination
+    of the same filters: its row's blocks copied (the recipe, its settings and weights with them), each input wired to
+    the same image of the same workflow (port, channel, image read), the change made on the copy, its own workflow and
+    its own layer in Post. The original is untouched; the variant is a workflow of its own (no Keep or Discard: there
+    is nothing of the original to replace), and one Undo takes it away."""
+    from .ops_base import _to_post
+    from .ops_wires import fusion_legacy
+    r = ix.row[ix.row_of[block]]
+    copies = [_clone_block(q, t) for t in r.blocks]
+    base = name if (name or "").strip() else name_of("{_row} · variant", _row=r.name)
+    v = Row(new_id(q, "r"), "", copies, legacy=copy.deepcopy(r.legacy) or fusion_legacy())
+    _copy_flow(v, r)
+    v.name = free_name(q, base)
+    q.rows.insert(q.rows.index(r) + 1, v)
+    for w in [w for w in q.wires if w.dst[0] == block]:              # the same inputs, read the same way
+        q.wires.append(replace(w, id=new_id(q, "w"), dst=[copies[0], w.dst[1]]))
+    for nb, ob in zip(copies[1:], r.blocks[1:]):                     # the blocks after it: as in the original's row
+        for w in [w for w in q.wires if w.src[0] == ob and w.dst[0] in r.blocks]:
+            q.wires.append(replace(w, id=new_id(q, "w"), src=[nb, w.src[1]],
+                                   dst=[copies[r.blocks.index(w.dst[0])], w.dst[1]]))
+    if Index(q).post is not None:                                    # its own layer of Post
+        _to_post(q, copies[-1])
+    _apply_change(q, copies[0], change)
+    out = Out(M("variant “{_name}” of “{_base}”", _name=v.name, _base=r.name), copies[0], new=copies[0])
+    out.focus = copies[0]
     return out
 
 

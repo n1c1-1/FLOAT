@@ -88,6 +88,25 @@ def titles() -> set[str]:
     return {short(r["name"]) for r in _folder().values()} | set(rc.LEGACY_NAMES.values())
 
 
+def title_stem(name: str) -> str:
+    """The recipe's title a combination's workflow name starts with ("S-H-O" of "S-H-O 2" or "S-H-O · Stars"), ""
+    when it starts with none (a name the user gave)."""
+    base = (name or "").strip()
+    head = base.partition(" · ")[0]
+    h, _sp, n = head.rpartition(" ")
+    stem = h if n.isdigit() and h in titles() else head
+    return stem if stem in titles() else ""
+
+
+def retitled(name: str, own: str) -> str:
+    """A combination's workflow name as its block shows it: a leading recipe's title that is not its own recipe's
+    replaced by its own ("S-H-O · Stars" of a block whose recipe became H-O: "H-O · Stars"); a name the user gave
+    stays as it is."""
+    base = (name or "").strip()
+    stem = title_stem(base)
+    return own + base[len(stem):] if stem and stem != own else base
+
+
 # ---------------------------------------------------------------------------------------------- a block
 def kind(b) -> str:
     """A Combination block's type (the recipe's id)."""
