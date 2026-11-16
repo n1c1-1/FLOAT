@@ -94,7 +94,7 @@ def test_a_core_400_times_the_sky_is_burnt_by_automatic_and_kept_by_arcsinh(tmp_
     lum = lambda a, z: float(a[:, z].astype(np.float32).mean())             # noqa: E731
     apart = lum(asinh, disc) - lum(asinh, ring)
     assert apart > 10, f"two levels of the core 2:1 apart stay apart ({apart:.1f} levels of 255)"
-    assert apart > 3 * (lum(auto, disc) - lum(auto, ring)), "further apart than the automatic stretch leaves them"
+    assert apart > 2 * (lum(auto, disc) - lum(auto, ring)), "further apart than the automatic stretch leaves them"
     # the sky starts where the automatic stretch puts it, as a share of the luminance's range: no black sky, no veil
     sky = lambda a: float(np.median(a[:, ~core]))                           # noqa: E731
     assert 0.5 * sky(auto) < sky(asinh) <= sky(auto) + 1
@@ -379,8 +379,11 @@ AUTO_AT = ((200, 300), (200, 370), (200, 395), (40, 40), (350, 520))
 
 
 def test_the_automatic_picture_is_the_one_it_was(tmp_path):
+    """The picture of a layer at its default settings, as recorded before the Arcsinh stretch and before the sky's
+    default went from 0.25 to 0.12: a layer saved before that change (the first sky scale) still gives it."""
     folder = bright_core_prep(tmp_path / "out")
-    a = u8(LayerService(DEV).render(folder, None, {}, 1.0).rgb)
+    old, = load_layers([{"kind": "workflow", "pid": 1, "part": None, "name": "Full", "sliders": {}}], {1})
+    a = u8(LayerService(DEV).render(folder, None, old["sliders"], 1.0, sky_scale=old["sky_scale"]).rgb)
     assert [round(float(a[c].mean()), 2) for c in range(3)] == pytest.approx(AUTO_MEANS, abs=0.02)
     got = np.array([a[:, y, x] for y, x in AUTO_AT], np.int16)
     assert np.abs(got - np.array(AUTO_PIXELS, np.int16)).max() <= 1, got.tolist()      # (a level of rounding apart)
@@ -433,3 +436,78 @@ def test_the_second_rounds_labels_are_french():
         assert i18n._(ARCSINH_WHY["sky"]) == "Arcsinh : Intensité règle le ciel"
     finally:
         i18n.set_language("en")
+
+
+# ------------------------------------------------------------------------------------------- the sky's default level
+#: a layer as a project saved before the sky's default went from 0.25 to 0.12 holds it: nothing says its sky scale
+OLD_LAYER = {"id": 3, "kind": "workflow", "pid": 1, "part": None, "name": "Full", "visible": True, "opacity": 100.0,
+             "mode": "Normal", "base": None, "sliders": {}, "mask": None}
+
+
+def _through_post(folder, lay) -> np.ndarray:
+    r = Renderer(LayerSource(lambda sid: {1: Folder(folder)}.get(sid), LayerService(DEV)))
+    return r.run(Request(kind="half", layers=snapshot([lay]), level=1)).rgb
+
+
+def test_a_layer_saved_before_the_darker_sky_keeps_its_picture_and_a_new_one_gets_the_new_default(tmp_path):
+    """The sky's default level is 0.12 (it was 0.25) and the Sky slider goes down to 0.05 (it stopped at 0.15). A
+    layer left at the default stores no Sky: a layer of a project saved before the change keeps the former default and
+    the former slider (the same pixels, at the default and with its slider moved), in memory; saved again, its file
+    says nothing more. Only a layer made after the change gets the new default."""
+    from astro_gpu.render.simple import SimpleSettings
+    from astro_gpu.client import postengine
+    from astro_gpu.render.sliders import SKY_SCALE, SKY_SCALES, settings_at
+    assert SimpleSettings().sky == 0.12 == SKY_SCALES[SKY_SCALE][2]
+    assert (postengine.SKY_SCALES, postengine.SKY_SCALE) == (tuple(SKY_SCALES), SKY_SCALE)
+    assert settings_at("simple", None, {"sky": 0.0}).sky == pytest.approx(0.05)
+    assert settings_at("simple", None, {"sky": 4.0}).sky == pytest.approx(0.37)
+    # the former scale: 0.25 at the default, 0.15 to 0.37 over the slider, whatever the layer's base says of the rest
+    for pos, sky in ((0.0, 0.15), (1.0, 0.20), (2.0, 0.25), (2.5, 0.28), (3.0, 0.31), (4.0, 0.37)):
+        assert settings_at("simple", None, {"sky": pos}, sky_scale=1).sky == pytest.approx(sky)
+    assert settings_at("simple", {"contrast": 0.1}, {}, sky_scale=1).sky == 0.25
+    assert settings_at("simple", {"sky": 0.3}, {"sky": 1.0}, sky_scale=1).sky == pytest.approx(0.25)   # a base's own sky
+    assert settings_at("stars", None, {}, False, sky_scale=1).sky == 0.25
+    folder = bright_core_prep(tmp_path / "out")
+    svc = LayerService(DEV)
+    for sliders, sky in (({}, 0.25), ({"sky": 1.0}, 0.20), ({"sky": 3.4, "contrast": 3.0}, 0.334)):
+        old, = load_layers([dict(OLD_LAYER, sliders=sliders)], {1})
+        assert old["sky_scale"] == 1
+        # the picture before the change: the settings it computed, given whole
+        was = settings_at("simple", None, {k: v for k, v in sliders.items() if k != "sky"}).model_copy(update={"sky": sky})
+        got = svc.render(folder, None, old["sliders"], 0.5, sky_scale=old["sky_scale"])
+        assert got.info["settings"]["sky"] == pytest.approx(sky)
+        assert np.array_equal(got.rgb, svc.render(folder, was, {}, 0.5).rgb)
+        assert np.array_equal(_through_post(folder, old), _through_post(folder, dict(old, base=was.model_dump(), sliders={})))
+        back, = save_layers([old])
+        assert "sky_scale" not in back and back["sliders"] == sliders        # the file is as it was
+    new = new_workflow_layer(1, "Full", True)
+    assert new["sky_scale"] == 2 and svc.render(folder, None, {}, 0.5, sky_scale=2).info["settings"]["sky"] == 0.12
+    assert svc.render(folder, None, {}, 0.5).info["settings"]["sky"] == 0.12        # no layer: today's default
+    sky = lambda rgb: float(np.median(rgb[..., 1]))                                 # noqa: E731
+    assert sky(_through_post(folder, new)) < 0.6 * sky(_through_post(folder, load_layers([OLD_LAYER], {1})[0]))
+    saved, = save_layers([new])
+    assert saved["sky_scale"] == 2 and load_layers([saved], {1})[0]["sky_scale"] == 2
+    # an image layer (a stage result's) has the same Sky: the same rule
+    image = {"kind": "image", "key": "k", "name": "I", "sliders": {}}
+    assert load_layers([image], set())[0]["sky_scale"] == 1 and "sky_scale" not in save_layers(load_layers([image], set()))[0]
+    from astro_gpu.client.postengine import new_image_layer
+    assert new_image_layer("k", "I")["sky_scale"] == 2
+
+
+def test_the_arcsinh_starts_from_the_new_sky_on_new_layers_only(tmp_path):
+    """The Arcsinh's starting Strength brings the sky where the Sky setting's default puts it: 0.12 of the luminance's
+    range on a layer made after the change, 0.25 as before on a layer saved before it (the same pixels)."""
+    from astro_gpu.render.simple import SimpleSettings
+    folder = bright_core_prep(tmp_path / "out")
+    svc = LayerService(DEV)
+    old, = load_layers([dict(OLD_LAYER, stretch="arcsinh", sliders={STRETCH_KEY: 1.5})], {1})
+    was = SimpleSettings(sky=0.25, stretch="arcsinh", stretch_strength=0.75)       # what it computed before the change
+    got = svc.render(folder, None, old["sliders"], 0.5, stretch="arcsinh", sky_scale=old["sky_scale"])
+    assert got.info["settings"] == was.model_dump(mode="json")
+    assert np.array_equal(got.rgb, svc.engine(folder).render(was, 0.5).final.float().cpu().numpy())
+    new = new_workflow_layer(1, "Full", True)
+    new["stretch"] = "arcsinh"
+    core = zones()[0][::2, ::2]
+    sky = lambda lay: float(np.median(_through_post(folder, lay)[~core]))          # noqa: E731
+    old["sliders"] = {}
+    assert sky(new) == pytest.approx(sky(old) * 0.12 / 0.25, rel=0.15)

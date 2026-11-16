@@ -271,12 +271,18 @@ def differences_to(recorded: dict, p) -> list[str]:
 
 
 def _without_frozen_recipes(d: dict) -> dict:
-    """The definition without the recipe copies that are one of the four types' frozen content (the module's text)."""
+    """The definition without what it says that the recordings could not: the recipe copies that are one of the four
+    types' frozen content (the module's text), and the layers' sky scale."""
     from astro_gpu.stages import recipes
     for w in d.get("workflows") or []:
         f = (w.get("source") or {}).get("fusion") if isinstance(w.get("source"), dict) else None
         if isinstance(f, dict) and isinstance(f.get("recipe"), dict) and recipes.is_legacy(f["recipe"]):
             f.pop("recipe")
+    # a layer made today says the scale of its Sky slider (client/postengine.sky_scale); the recordings are older
+    for v in (d.get("post") or {}).get("versions") or []:
+        for lay in v.get("layers") or []:
+            if lay.get("sky_scale") == 2:
+                lay.pop("sky_scale")
     return d
 
 

@@ -1398,6 +1398,7 @@
        "starless": true,
        "stars": true
       },
+      "sky_scale": 2,
       "sliders": {},
       "starless": "output",
       "stars_pid": 4,
