@@ -31,3 +31,20 @@ def test_the_stacking_line_says_the_classic_median_its_result_used(qapp):
     lines = _lines(b, ("setting", b.stacks()[0]["id"], "stk"))
     assert lines[0] == "classic · median" and "rejection" not in " ".join(lines)
     b.close()
+
+
+def test_the_stack_card_and_the_description_follow_the_method_its_result_used(qapp):
+    """The Folded view's card read « 1 session · 10 lights · drizzle auto » and the tooltip described the drizzle after
+    a Classic stack by median."""
+    b = Bench(1920)
+    stk = next(x for x, blk in b.doc.graph.blocks.items() if blk.kind == "stacking")
+    rid = b.stacks()[0]["id"]
+    assert b.bridge.act("set_param", quiet=True, block=stk, stage="stack", name="classic_combination",
+                        value="median").ok
+    assert "drizzle" in b.doc.summary(rid)
+    b.bridge.document.model = Model(stk)
+    card = b.doc.summary(rid)
+    assert card.endswith("classic · median") and "drizzle" not in card
+    what = b.doc.stacking_what(stk)
+    assert "drizzle" not in what and "median" in what and "rejects" not in what
+    b.close()

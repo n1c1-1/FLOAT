@@ -385,3 +385,37 @@ def test_the_undo_text_of_a_variant_tried_names_its_setting_in_the_users_words(m
     text = model._undo_what[-1]
     assert "Keep or Discard" not in text and "hot_sigma" not in text
     assert text == "Try variant · Hot pixel threshold: 0.7"
+
+
+@pytest.fixture()
+def writable(qapp, tmp_path):
+    """M on a "Colour minimal" project of one session, saved as it is edited."""
+    root = tmp_path / "W"
+    w = h1.old_way(root, next(t for t in h1.GALLERY if t["key"] == "colour_min"), h1.FAKE[:1])
+    project2.save(w.p)
+    w.close()
+    worker = ApiWorker()
+    m = M(project2.load(root), worker, readonly=False)
+    assert worker.wait(120) and m.ready
+    yield m
+    m.close(save=False)
+    worker.stop()
+
+
+def test_an_undo_back_to_the_saved_project_is_not_an_edit(writable):
+    """The window's « * » stayed after an Undo that gave the project back exactly as it is saved."""
+    m = writable
+    assert m.flush() and not m.dirty
+    assert m.apply([("add_block", {"kind": "deconv", "row": row(m).id})]).ok and m.dirty
+    assert m.undo() and not m.dirty                       # the saved project again
+    assert m.redo() and m.dirty
+    assert m.flush() and not m.dirty
+    assert m.undo() and m.dirty                           # back before what is saved: an edit
+    assert m.redo() and not m.dirty                       # the saved project again
+
+
+def test_an_undo_back_to_the_project_as_opened_is_not_an_edit(writable):
+    m = writable
+    assert not m.dirty
+    assert m.apply([("add_block", {"kind": "deconv", "row": row(m).id})]).ok and m.dirty
+    assert m.undo() and not m.dirty

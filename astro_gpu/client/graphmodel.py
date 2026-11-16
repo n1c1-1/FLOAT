@@ -119,6 +119,28 @@ def _param_words(stage, name, v) -> str:
     return _("{setting}: {value}").format(setting=label, value=value)
 
 
+def _came_from(old, g, b):
+    """The block a variant's block ``b`` (of graph ``old``, gone from ``g``) was copied from, when it is in ``g``: a
+    variant of a whole stack copies its stack's blocks in order, and the night Calibrations of its nights; else None."""
+    try:
+        ix = gm.Index(old)
+        r = ix.row.get(ix.row_of.get(b))
+        if r is None or r.trial is None:
+            return None
+        o = next((x for x in g.rows if x.wid == r.trial), None)
+        if o is None:
+            return None
+        if b in r.blocks:
+            i = r.blocks.index(b)
+            cand = o.blocks[i] if i < len(o.blocks) else None
+        else:
+            i = next((k for k, (_s, c) in enumerate(r.nights) if c == b), None)
+            cand = o.nights[i][1] if i is not None and i < len(o.nights) else None
+    except (KeyError, IndexError, AttributeError):
+        return None
+    return cand if cand in g.blocks and g.blocks[cand].kind == old.blocks[b].kind else None
+
+
 class GraphRefused(ValueError):
     """A gesture the graph core refused: its reason, translated."""
 
@@ -388,6 +410,9 @@ class GraphEditing:
             self.p.graph_dropped = ""
             self._keep_format_2()
         ok = super().flush(force)
+        if ok and not self.readonly:                      # what is saved, as an Undo / Redo snapshot says it
+            self.__dict__["_saved_snap"] = tuple(self._snapshot())
+            self.__dict__["_clean_len"] = len(self._undo)
         if graph and ok and self.p.graph_dropped:
             self.log("Saved in the previous format, without its graph: {why}", why=self.p.graph_dropped)
             self.save_note = _("Saved in the previous format: the graph and what the engine runs differ. The details "
@@ -1258,6 +1283,14 @@ class GraphEditing:
             self.revision += 1
         return True
 
+    def edited(self):
+        """An edit: when it is the first since the project was saved or opened and made one step of Undo, that step's
+        snapshot is the project as it is saved (an Undo back to it is no edit left)."""
+        was = self._dirty
+        super().edited()
+        if not was and self._dirty and len(self._undo) == self.__dict__.get("_clean_len", 0) + 1:
+            self.__dict__["_saved_snap"] = tuple(self._undo[-1])
+
     def _set_post_layers(self, layers, source, scope):
         """Post's layers written (by Post itself too): the graph's wires and Combine layers follow them at once."""
         super()._set_post_layers(layers, source, scope)
@@ -1311,6 +1344,7 @@ class GraphEditing:
             except (KeyError, IndexError):
                 pred = None
         files_before = [(s.id, *(tuple(getattr(s, k)) for k in gm.FILE_KINDS)) for s in self.p.sessions]
+        saved = tuple(src[-1]) == self.__dict__.get("_saved_snap")      # the project back as it is saved
         gjson, current, _mode, _none, post, target, description, name, acquisition = src.pop()
         if named is not None:
             name = named
@@ -1350,6 +1384,9 @@ class GraphEditing:
             self.reload_sources()
         self.pending_change = None
         self.edited()
+        if saved and self._dirty:                         # an Undo / Redo back to what is saved: no edit left
+            self._dirty = False
+            self.dirtyChanged.emit(False)
         self._sync(later=True)
         was = json.dumps(self.p.post, sort_keys=True)
         self._prune_post()                                # a layer of a block that is not there any more goes
@@ -1360,7 +1397,7 @@ class GraphEditing:
         if came:
             self.graph_view["selected"] = came[0]
         elif sel not in (None, "project") and sel not in g.blocks and not any(r.id == sel for r in g.rows):
-            self.graph_view["selected"] = pred if pred in g.blocks else None
+            self.graph_view["selected"] = pred if pred in g.blocks else _came_from(old_g, g, sel)
         if self.paths:
             self.current = next((i for i, v in enumerate(self.paths) if v.pid == self.p.current), 0)
             back = [(i, k) for i, v in sorted(enumerate(self.paths), key=lambda iv: iv[0] != self.current)

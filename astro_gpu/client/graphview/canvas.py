@@ -412,6 +412,8 @@ class GraphCanvas(QGraphicsView):
             then = doc.run_detail(b)
             word = f"{word}\n{then}" if then else word
         what = kind_what(kind)
+        if kind == "stacking" and not pending:           # the method it runs, its result's when known
+            what = doc.stacking_what(b) or what
         if bd.get("nights"):                             # a Session of several nights says so (graph.py block_what)
             what = _("{nights}: their light frames and the dark, flat and bias frames chosen for them, and the "
                      "filter.").format(nights=bd["nights"])

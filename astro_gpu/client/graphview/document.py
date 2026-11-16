@@ -414,11 +414,47 @@ class Doc:
             return info.value
         return None
 
+    #: what a Stacking does, by the method it runs (its result's when known) and its Classic combination
+    STACKING_WHAT = {
+        "classic": "Stacks the frames debayered and aligned (the Classic method) and rejects trails and outlier pixels.",
+        "median": "Stacks the frames debayered and aligned (the Classic method): the median of the values at each "
+                  "pixel, no rejection.",
+        "maximum": "Stacks the frames debayered and aligned (the Classic method): the brightest value at each pixel, "
+                   "no rejection.",
+        "minimum": "Stacks the frames debayered and aligned (the Classic method): the darkest value at each pixel, no "
+                   "rejection.",
+        "sum": "Stacks the frames debayered and aligned (the Classic method): the values at each pixel added up, no "
+               "rejection."}
+
+    def stacking_what(self, b) -> str:
+        """What the Stacking ``b`` does, translated, by the method its last result used when it is known, else the one
+        its settings choose; "" for the drizzle (the block table's own words say it)."""
+        blk = self.graph.blocks.get(b)
+        if blk is None:
+            return ""
+        sp = (blk.params or {}).get("stack") or {}
+        method = self.stack_used(b)
+        if method is None:
+            method = sp["method"] if sp.get("method") in ("drizzle", "classic") else \
+                ("drizzle" if self.effective(b).get("Method") == "Drizzle" else "classic")
+        if method == "drizzle":
+            return ""
+        how = sp.get("classic_combination")
+        return _(self.STACKING_WHAT[how if how in self.STACKING_WHAT else "classic"])
+
     def summary(self, b, model=True) -> str:
         """The line under a block's name; ``model`` False: the graph's own (never what the project model reads)."""
         m = self.model if model else None
         bm = getattr(m, "block_map", None) if m is not None else None
         blk = self.graph.blocks.get(b)
+        if m is not None and blk is None:                # a stack's card: its Stacking's method as its result used it
+            row = next((r for r in self.graph.rows if r.id == b), None)
+            stk = next((x for x in (row.blocks if row is not None else []) if self.graph.blocks[x].kind == "stacking"),
+                       None)
+            used = self.stack_used(stk) if stk is not None else None
+            if used is not None:
+                from ...graphcore import rules
+                return rules.card_summary(self.graph, b, self.tr, used=used)
         if m is not None and blk is not None and blk.kind == "stacking" and not blk.off:
             used = self.stack_used(b)                # the method its result used: Classic when drizzle fell back
             if used is not None:

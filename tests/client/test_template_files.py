@@ -367,3 +367,35 @@ def test_a_saved_template_never_replaces_one_of_another_name(win, monkeypatch):
     monkeypatch.setattr(Path, "write_text", full)
     win.save_template()
     assert win.banner.isVisible() and win.banner.text.text().startswith("The template cannot be saved")
+
+
+def test_the_first_naming_of_a_project_from_a_template_writes_its_graph_at_once(win, settings, monkeypatch, caplog):
+    """An Untitled project from a template, frames dropped on its session, then named (at its first Run): the file was
+    written in the previous format without its graph ("its sessions differ"), beside a .v2.bak, until the next save."""
+    import logging
+    from astro_gpu.graphcore import model as gm
+    card = next(c for c in templatefiles.shipped_cards() if c["key"] == "colour_min")
+    win.graph.show_templates()
+    win.graph.templates.chosen.emit(card)
+    _settle(win, 30)
+    frames = settings / "night"
+    paths = {}
+    for kind, n in (("lights", 3), ("darks", 2), ("flats", 2)):
+        (frames / kind).mkdir(parents=True)
+        for i in range(n):
+            (frames / kind / f"{kind}_{i}.fit").write_bytes(b"\0" * 64)
+        paths[kind] = [(frames / kind).as_posix()]
+    bridge = win.graph.bridge
+    sid = next(b for b, x in bridge.graph.blocks.items() if x.kind == "session")
+    assert bridge.drops.drop_groups(sid, paths) is not None              # the page's drop path
+    _settle(win, 10)
+    before = gm.to_dict(win.s.stored)
+    target = settings / "ws" / "Named"
+    monkeypatch.setattr(appmod, "ask_project_name", lambda *a, **k: (target, "Named"))
+    caplog.set_level(logging.WARNING)
+    assert win.name_project()
+    assert not [r for r in caplog.records if "graph dropped" in r.getMessage()]
+    assert not (target / (project2.FILE + ".v2.bak")).exists()
+    d = json.loads((target / project2.FILE).read_text(encoding="utf-8"))
+    assert d.get("format") == project2.GRAPH_FORMAT
+    assert gm.to_dict(gm.from_dict(d["graph"])) == before

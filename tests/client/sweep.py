@@ -242,13 +242,15 @@ def gestures(w: QWidget) -> list[tuple[str, object]]:
 
 def definition(m) -> str:
     """The project's definition as the model holds it (the graph), as text; the light frames excluded by hand apart:
-    by design Undo never takes them back (Include does: graphmodel's undo keeps them)."""
+    by design Undo never takes them back (Include does: graphmodel's undo keeps them). The next free id apart too: a
+    block Post's own Undo takes out of the graph (it follows Post back) leaves its id used, never given again."""
     from astro_gpu.graphcore import model as gm
     g = getattr(m, "_g", None)
     if g is None:
         return ""
     d = gm.to_dict(g)
     d.pop("excluded", None)
+    d.pop("next_id", None)
     return json.dumps(d, sort_keys=True, default=str)
 
 
