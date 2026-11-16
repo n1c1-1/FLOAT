@@ -65,6 +65,7 @@
  "Run stopped: {n} stages done": "Exécution arrêtée : {n} étapes terminées",
  "Run failed: {failed} failed, {skipped} not run": "Exécution en échec : {failed} en échec, {skipped} non exécutées",
  "Run ended unexpectedly": "Exécution interrompue",
+ "Run no longer followed: its progress cannot be read": "Exécution plus suivie : sa progression ne peut pas être lue",
  "Run not started: {why}": "Exécution non démarrée : {why}",
  "its process ended": "son processus s'est terminé",
  "(shifted centres)": "(centres décalés)",
