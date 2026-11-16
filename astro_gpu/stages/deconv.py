@@ -35,7 +35,7 @@ BETA_TILE, BETA_PAD = 512, 48
 def _ramp(n: int, before: bool, after: bool) -> np.ndarray:
     """The weights of a tile along one axis: 1 inside, a cosine down to 0 over the overlap on the sides with a neighbour."""
     w = np.ones(n, np.float32)
-    k = 2 * BETA_PAD
+    k = min(2 * BETA_PAD, n)        # a last tile narrower than the overlap fades over its whole width
     fade = 0.5 - 0.5 * np.cos(np.pi * (np.arange(k, dtype=np.float32) + 0.5) / k)
     if before:
         w[:k] = fade

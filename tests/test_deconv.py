@@ -264,3 +264,12 @@ def test_a_card_out_of_memory_does_not_stop_the_deconvolution():
     assert on == ["cuda:0", "cpu"] and len(said) == 1 and said[0][0] == "warning" and "processor" in said[0][1]
     with pytest.raises(RuntimeError):                            # already on the processor: nothing else to try
         deconv.processor_on_memory(lambda *a, **k: None, lambda d: classic(on.clear() or d), "cpu")
+
+
+@pytest.mark.parametrize("n", [1, 6, 47, 54, 96, 512])
+def test_a_tile_narrower_than_the_overlap_still_gets_its_weights(n):
+    """A plane 1030 px wide leaves a last tile of 54 px: the fade of 96 px did not fit in it and the stage crashed."""
+    from astro_gpu.stages.deconv import _ramp
+    for before, after in ((True, False), (False, True), (True, True), (False, False)):
+        w = _ramp(n, before, after)
+        assert w.shape == (n,) and np.all(w > 0) and np.all(w <= 1)
