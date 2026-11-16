@@ -229,8 +229,10 @@ class Banner(QFrame):
         h.addWidget(self.close_b)
         self.hide()
 
-    def say(self, text: str):
+    def say(self, text: str, tip: str = ""):
+        """``tip``: what is read on hover only (the whole path of a folder the strip names)."""
         self.ask(text)
+        self.text.setToolTip(tip)
 
     def ask(self, text: str, *actions):
         """``actions``: (words, what they do); each closes the strip first."""
@@ -241,6 +243,7 @@ class Banner(QFrame):
             self.actions_box.addWidget(b)
         self.close_b.setVisible(not actions)
         self.text.setText(text)
+        self.text.setToolTip("")
         self.show()
 
 
@@ -814,7 +817,9 @@ class Main(QMainWindow):
             self._graph_unreadable(root, e)
             return False
         except FileNotFoundError:
-            self.banner.say(_("No project in this folder: {folder}").format(folder=root.as_posix()))
+            # the folder's name, its path on hover: the strip is read on a screen shown to others (a tutorial's)
+            self.banner.say(_("No project in this folder: {folder}").format(folder=root.name or root.as_posix()),
+                            root.as_posix())
             return False                                  # still in the recents: its disk may only be unplugged
         except (OSError, ValueError, KeyError, TypeError):   # said plainly, never the raw error (7.5)
             self.banner.say(_("This project cannot be opened: its file is damaged, or it is not a project file of this "

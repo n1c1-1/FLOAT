@@ -46,6 +46,7 @@ from PySide6.QtWidgets import (
 from . import icons as ic
 from . import prefs
 from .frames import (
+    check_text,
     clock_text,
     colour_note_text,
     fexp,
@@ -340,6 +341,10 @@ class SourcesView(QWidget):
         left.setWidget(inner)
         self.lv = QVBoxLayout(inner)
         self.lv.setContentsMargins(10, 12, 10, 10)
+        self.session_cb = QComboBox(inner)                 # the session shown, chosen among the project's (two or more)
+        self.session_cb.setToolTip(_("The session whose files are shown"))
+        self.session_cb.currentIndexChanged.connect(self._session_picked)
+        self.session_cb.hide()
         root.addWidget(left)
         # ---- centre: browser
         mid = QWidget()
@@ -539,6 +544,11 @@ class SourcesView(QWidget):
             self.s.select(None, f"session@{sid}")
             self._step = self.s.sel_step
         self.select_group(kind)
+
+    def _session_picked(self, _i: int = 0):
+        sid = self.session_cb.currentData()
+        if sid is not None:
+            self.show_session(sid, self.group)
 
     def add_session(self):
         """A new session, without frames: shown here, where they are added."""
@@ -1004,18 +1014,27 @@ class SourcesView(QWidget):
     def build_left(self):
         old = self.file_list
         was = (set(old.chosen()), old.verticalScrollBar().value()) if old is not None else (set(), 0)
+        cb = self.session_cb
+        self.lv.removeWidget(cb)                           # kept: the column is built again around it
         clear(self.lv)
         self.file_list = None
+        sessions = self.s.p.sessions if self.sid is not None else []
+        cb.setVisible(len(sessions) > 1)
         if self.sid is None:
             return
-        sessions = self.s.p.sessions
         if len(sessions) > 1:
-            cb = QComboBox()
-            for x in sessions:
-                cb.addItem(x.name, x.id)
-            cb.setCurrentIndex(max(0, cb.findData(self.sid)))
-            cb.currentIndexChanged.connect(lambda _i, c=cb: self.show_session(c.currentData(), self.group))
-            cb.setToolTip(_("The session whose files are shown"))
+            # the same list each time, touched only by what changed: made again at each reading of the worker that
+            # arrived, a list open at that moment closed under the mouse, the click on a session was lost, and the
+            # files dropped next went to the session still shown
+            cb.blockSignals(True)
+            if [(cb.itemText(i), cb.itemData(i)) for i in range(cb.count())] != [(x.name, x.id) for x in sessions]:
+                cb.clear()
+                for x in sessions:
+                    cb.addItem(x.name, x.id)
+            at = max(0, cb.findData(self.sid))
+            if cb.currentIndex() != at:
+                cb.setCurrentIndex(at)
+            cb.blockSignals(False)
             self.lv.addWidget(cb)
         else:
             self.lv.addWidget(label(self._session().name, "h2"))
@@ -1024,6 +1043,7 @@ class SourcesView(QWidget):
             self.lv.addWidget(ic.IconText("info", colour_note_text(note), "dim", "colour_note"))
         section = None
         row0 = self._row()
+        shared_lines = []
         for key, title, sec in GROUPS:
             if sec != section:
                 section = sec
@@ -1039,11 +1059,15 @@ class SourcesView(QWidget):
             shared = self.s.shared_with(self.sid, key) if key != "lights" else []
             if shared:
                 names = ", ".join(self.s.session(o).name for o in shared)
-                self.lv.addWidget(ic.IconText("link", _("shared with {names}: one master").format(names=names), "dim", "small"))
+                shared_lines.append(_(title) + " · " + _("shared with {names}: one master").format(names=names))
             for text in self.anomalies(key):               # beside its kind, as long as it holds
                 self.lv.addWidget(ic.IconText("warning", text, "warning", "warn"))
             self._beside_rows(key)
             self._not_found_rows(key)
+        # a kind shared with other sessions: said under all the rows too, named by its kind (the line under its row
+        # pushed the rows below down when it appeared: a drop at the Flats' former place fell beside the row)
+        for text in shared_lines:
+            self.lv.addWidget(ic.IconText("link", text, "dim", "small"))
         # the files of the kind shown, under all the kinds' rows: listed between two rows, they pushed the rows below
         # (and their +) down at each addition, and the next click landed on another row
         if self.group and self.count_of(self.group):
@@ -1074,6 +1098,19 @@ class SourcesView(QWidget):
             row.addWidget(t, 1)
             self.lv.addLayout(row)
         self.lv.addStretch(1)
+        self._place_left()
+
+    def _place_left(self):
+        """The column just built is shown and laid out at once. Left to the next round of events, its rows stayed
+        hidden and at the top meanwhile, and files dropped at that moment (the column is built again each time a
+        reading of the worker arrives) fell on the page: "Drop on a row"."""
+        inner = self._left_w.widget()
+        if not inner.isVisible():
+            return
+        for w in inner.findChildren(QWidget, options=Qt.FindDirectChildrenOnly):
+            if not w.testAttribute(Qt.WA_WState_ExplicitShowHide):
+                w.show()
+        self.lv.activate()
 
     def checks(self):
         """(ok, text) of the calibration matching: True a good sign, False a thing to look at, None a note."""
@@ -1096,6 +1133,9 @@ class SourcesView(QWidget):
             out.append((None, mixed_exposures_text(bad["mixed_exposures"])))
         if bad.get("long_bias"):                     # bias frames not near zero: information, nothing reclassified
             out.append((None, long_bias_text(bad["long_bias"])))
+        for chk in d.checks if ref is not None else []:     # no darks, no flats: said (the lines stayed empty under
+            if chk.key == "session_no_calib" and (chk.args or {}).get("session") == ref.name:      # their title)
+                out.append((None, check_text(chk, d)))
         dk = c.get("darks")
         by = bad.get("darks_by_exposure")
         if dk and not (by and by[0]["several"]):
@@ -1171,6 +1211,8 @@ class SourcesView(QWidget):
             t = (_("{n} frame excluded by hand: stacking to recompute.") if n_ex == 1 else
                  _("{n} frames excluded by hand: stacking to recompute."))
             out.append((False, t.format(n=n_ex)))
+        if not out and ref is not None and not ref.lights:
+            out.append((None, _("No light frames yet")))
         return out
 
     def select_group(self, key):
