@@ -561,7 +561,15 @@ def param_texts(stage: str, name: str, lang: str = "en") -> dict[str, str]:
 
 
 def choice_label(value: str, lang: str = "en") -> str:
-    """A choice of a parameter in words ("nsns" -> "NSNS", "none" -> "None" / "Aucun")."""
+    """A choice of a parameter in words ("nsns" -> "NSNS", "none" -> "None" / "Aucun"). An older value of the Classic
+    clamping, which named the program it came from (a project or a result made before the renaming still carries it),
+    is said as the current one: never shown as stored."""
+    if value not in CHOICE_TEXTS:
+        try:
+            from .stages.stack import CHOICE_ALIASES
+            value = CHOICE_ALIASES["classic_clamping"].get(value, value)
+        except ImportError:                      # no engine here (the texts alone): the value as it is
+            pass
     return translate(CHOICE_TEXTS.get(value, value), lang)
 
 

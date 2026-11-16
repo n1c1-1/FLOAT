@@ -1,13 +1,13 @@
-"""Pixel rejection of the Classic stacking method, chosen by the number of frames as the reference processing suite's WBPP does.
+"""Pixel rejection of the Classic stacking method, chosen by the number of frames as the reference processing suite's batch script does.
 
-The rule (WBPP 3.x, BPP-Global.js: the automatic rejection by the size of the group [P15]; the same ranges in the
+The rule (the batch script 3.x, its global settings file: the automatic rejection by the size of the group [P15]; the same ranges in the
 documentation of the reference processing suite [P1] and of the reference program [S1]):
 
     frames      method                        low / high        formulas from
     < 3         none (too few to tell an outlier from the others; said in the reason)
     3 to 5      percentile clipping           0.2 / 0.1         the reference program = the reference processing suite [S6][P20]
     6 to 15     winsorized sigma clipping     3 / 3             the reference program's code (its default thresholds) [S2][S6]
-    16 and up   linear fit clipping           5 / 3.5           the reference processing suite's code (WBPP's thresholds) [P15][P20]
+    16 and up   linear fit clipping           5 / 3.5           the reference processing suite's code (the batch script's thresholds) [P15][P20]
     option > 50 generalized ESD test (GESDT)  0.3 / 0.05        the reference program's code (its defaults) [S1][S6]
 
 Each method is the published formula of the tool whose thresholds it uses (the thresholds mean nothing with another
@@ -44,7 +44,7 @@ All functions work on a stack ``v`` (N frames, P pixels) on any device, by chunk
 
 Sources: [S1] https://siril.readthedocs.io/en/latest/preprocessing/stacking.html ; [S2] the reference program's ``stack`` command;
 [S6] the reference program 1.4 src/stacking/rejection_float.c, median_and_mean.c, siril_fit_linear.c; [P1] ImageIntegration
-documentation (2013); [P15] WBPP (BatchPreprocessing scripts); [P20] the reference processing suite ImageIntegration code (2016:
+documentation (2013); [P15] the reference processing suite's batch preprocessing scripts; [P20] the reference processing suite ImageIntegration code (2016:
 ImageIntegrationInstance.cpp), PCL include/pcl/LinearFit.h; Numerical Recipes in C, 2nd ed., section 15.7 (medfit,
 rofunc); [L8] NIST/SEMATECH e-Handbook, generalized ESD test (Rosner 1983).
 """
@@ -59,7 +59,7 @@ import torch
 METHODS = ("none", "percentile", "winsorized", "linear_fit", "gesdt")
 #: the published thresholds (low, high) of each method (see the module's docstring)
 DEFAULTS = {"percentile": (0.2, 0.1), "winsorized": (3.0, 3.0), "linear_fit": (5.0, 3.5), "gesdt": (0.3, 0.05)}
-#: WBPP's ranges: percentile below this many frames, winsorized below LINEAR_FROM, linear fit from it on
+#: the batch script's ranges: percentile below this many frames, winsorized below LINEAR_FROM, linear fit from it on
 WINSORIZED_FROM = 6
 LINEAR_FROM = 16
 #: the GESDT option takes over above this many frames (the reference program: "excellent above 50")
@@ -111,7 +111,7 @@ class Choice:
 
 def choose(n_frames: int, method: str = "auto", low: float | None = None, high: float | None = None,
            gesd_above_50: bool = False) -> Choice:
-    """The method for a stack of ``n_frames`` frames: WBPP's rule with ``method="auto"`` (GESDT above 50 frames with
+    """The method for a stack of ``n_frames`` frames: the batch script's rule with ``method="auto"`` (GESDT above 50 frames with
     ``gesd_above_50``), else the method named; ``low`` / ``high`` replace its published thresholds."""
     n = int(n_frames)
     if method == "auto":

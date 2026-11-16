@@ -13,7 +13,7 @@ The state of the art, and where each value comes from
 * **Keep almost every frame and let the weights do the work (the default).** the reference program keeps every frame unless a filter
   is asked for [S2]; the reference processing suite's SubframeSelector approval expressions are empty by default [P21]; Zackay & Ofek
   [L6]: once the weights are right, "the rejection of images becomes a damaging operation".
-* **Minimum weight 0.05 (the reference processing suite WBPP 2.5.0, its "Minimum weight" default [P17])**: the weights of the frames
+* **Minimum weight 0.05 (the reference processing suite's batch script 2.5.0, its "Minimum weight" default [P17])**: the weights of the frames
   still in are normalised (the best = 1) and those below the minimum are left out. It is the only frame the default
   leaves out besides the frames registration could not align and those excluded by hand.
 * **Selection filters, an option off by default: The reference program's ``-filter-fwhm / -filter-round / -filter-bkg`` [S2]**, with
@@ -33,7 +33,7 @@ The state of the art, and where each value comes from
 
 Sources:
 [S2] the reference program 1.4, the ``stack`` command: https://gitlab.com/free-astro/siril-doc/-/raw/1.4/doc/commands/stack.rst
-[P17] WBPP 2.5.0 release notes (minimum weight, colour drizzle), in the reference processing suite's forum (no link)
+[P17] the batch script's 2.5.0 release notes (minimum weight, colour drizzle), in the reference processing suite's forum (no link)
 [P21] the reference processing suite SubframeSelector documentation (no link)
 [L6] Zackay & Ofek 2017, ApJ 836, 187 (optimal weighting, rejection of frames): https://arxiv.org/abs/1512.06872
 """
@@ -56,7 +56,7 @@ HIGH_IS_BAD = {"fwhm": True, "roundness": False, "transparency": False, "backgro
 #: SubframeSelector filter nothing by default
 K_SIGMA_FILTERS = {"fwhm": "2.5k", "roundness": "2.5k", "transparency": "2.5k", "background": ""}
 NO_FILTERS = {c: "" for c in CRITERIA}
-#: The reference processing suite WBPP 2.5.0's default minimum weight (relative to the best frame)
+#: The reference processing suite's batch script 2.5.0's default minimum weight (relative to the best frame)
 MIN_WEIGHT = 0.05
 
 # ------------------------------------------------------------------------------------------------- reason templates
@@ -306,7 +306,7 @@ def select(weight, fwhm=None, roundness=None, transparency=None, background=None
     none, the default); ``min_weight`` relative to the best frame still in (0: none).
 
     Order: not aligned, by hand, the filters (statistics on all aligned frames), no measure of the weight, the
-    minimum weight (WBPP: relative to the best of the frames still in)."""
+    minimum weight (the batch script's: relative to the best of the frames still in)."""
     w = np.asarray(weight, float)
     n = len(w)
     aligned = np.ones(n, bool) if aligned is None else np.asarray(aligned, bool)
@@ -343,7 +343,7 @@ def select(weight, fwhm=None, roundness=None, transparency=None, background=None
         failed |= f
         exclusions += rs
 
-    # ---- the minimum weight (WBPP): relative to the best frame still in
+    # ---- the minimum weight (the batch script's): relative to the best frame still in
     measured = np.isfinite(w) & (w > 0)
     for i in np.where(judge & ~failed & ~measured)[0]:
         exclusions.append(Reason(int(i), "no_measure", NO_MEASURE))

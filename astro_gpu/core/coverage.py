@@ -16,7 +16,7 @@ weight map, and for red and blue (a quarter of the samples each) it must stay un
   drizzle restores detail only then, Fruchter & Hook 2002 [L1], the reference program's drizzle page [S5]) AND the rule holds at that
   scale; of the scales that hold, the smallest that samples the stars at 2 px or more, else the largest;
 * the drop size is then the smallest value of 0.05 steps from 1 / scale up that keeps the rule;
-* at scale 1, a drop of 1 (the reference program, WBPP and APP for colour sensors [S5][P15][A8]);
+* at scale 1, a drop of 1 (the reference program, the reference processing suite's batch script and another processing program for colour sensors [S5][P15][A8]);
 * the method advice (``advise_method``), on the frames the selection keeps:
 
   ===========================================================  ===========================  ========================
@@ -70,7 +70,7 @@ Sources:
 [S5] the reference program, drizzle: https://siril.readthedocs.io/en/latest/preprocessing/drizzle.html
 [P12] the reference processing suite's Debayer documentation (no link)
 [P15] the reference processing suite's batch preprocessing script source (no link)
-[A8] the reference processing program forum, Bayer drizzle: https://www.astropixelprocessor.com/community/tutorials-workflows/bayer-drizzle/
+[A8] another processing program's forum, its Bayer drizzle tutorial (no link)
 """
 from __future__ import annotations
 

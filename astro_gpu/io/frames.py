@@ -7,10 +7,10 @@ its top-left block: ``"RGGB"`` (2 x 2 Bayer), or 36 letters for a 6 x 6 X-Trans 
 A frame already in colour has no mosaic: the pattern is ``cfa.RGB``, ``read_colour`` gives its three planes, and
 ``read_cfa`` its luminance, so that whatever only needs a frame's level or stars reads it as any other. The method is
 The reference stacking program's for RGB pictures, as its documentation gives it: three planes throughout, the master flat, dark and
-offset included (FAQ, http://deepskystacker.free.fr/english/faq.htm : its raw modes work "with only one monochrome 16
+offset included (its FAQ: its raw modes work "with only one monochrome 16
 bits channel instead of 3 RGB channels [...] flat, dark and offset frames are computed and internally stored with only
-one plane instead of 3"), the stars found on the luminance (technical details,
-http://deepskystacker.free.fr/english/technical.htm : "a Gaussian curve to the luminance"). Its values are taken as
+one plane instead of 3"), the stars found on the luminance (its technical details:
+"a Gaussian curve to the luminance"). Its values are taken as
 the file holds them, with no gamma curve taken off: neither that documentation nor the reference program's preprocessing guide
 describes such a step for JPEG lights, and the curve a camera applied is not known (not the sRGB curve alone: its tone
 curve, contrast and white balance are in it). So the frames stay non-linear, which the session says plainly

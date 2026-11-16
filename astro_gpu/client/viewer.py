@@ -16,7 +16,7 @@ from .layout import pinch_factor, wheel_gesture
 
 
 #: The smallest crop, in image pixels, on each side: below it a box is no crop (an accidental sliver such as 4256 x 13 or
-#: 4 x 3 px). The drag stops there, as Lightroom's and Photoshop's crop does; a bare click makes no box.
+#: 4 x 3 px). The drag stops there, as the reference photo editors' crop does; a bare click makes no box.
 MIN_CROP = 16
 
 class StaticSource:

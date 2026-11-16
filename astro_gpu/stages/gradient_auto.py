@@ -123,7 +123,7 @@ def _median(x: np.ndarray) -> float:
 
 
 def _histogram_median(x: np.ndarray) -> float:
-    """The median as the reference program's MAD takes it (RawTherapee's percentile search, rt_algo.cc): a histogram of up to 65536
+    """The median as the reference program's MAD takes it (a raw converter's percentile search, rt_algo.cc): a histogram of up to 65536
     bins between the minimum and the maximum, the bin where half of the values are reached, interpolated."""
     x = x.astype(np.float32, copy=False)
     lo, hi = float(x.min()), float(x.max())

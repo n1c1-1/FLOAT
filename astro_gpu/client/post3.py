@@ -3688,7 +3688,7 @@ class PostView(QWidget):
 
     def _crop_ratio(self, q):
         """A fixed proportion: the largest box of it inside the image, centred on the present box's centre (as far as the
-        image allows), as Lightroom does."""
+        image allows), as the reference photo editors do."""
         v = self.viewer
         v.crop_ratio = q
         if q and v.crop_box:
