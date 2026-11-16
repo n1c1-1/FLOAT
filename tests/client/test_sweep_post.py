@@ -12,9 +12,7 @@ from tests.client.sweep import Oracle, Sweep, controls, definition, differs, ges
 
 LANGS = ("en", "fr")
 #: gestures whose failure is a known defect of the application, checked on its own as an expected failure
-#: (test_post_duplicate_undo.py: a Combine layers block left in the graph after the Undo of a duplicate); once the
-#: defect is fixed that test passes, fails as strict, and this list is emptied
-KNOWN = {"Duplicate (Ctrl+J)/click", "Dupliquer (Ctrl+J)/click"}
+KNOWN: set = set()
 
 
 @pytest.fixture(autouse=True)
@@ -68,10 +66,14 @@ def test_sweep_post(qapp, tmp_path_factory, oracle, lang):
                     do = dict(gestures(w)).get(gname) if w is not None else None
                     if do is None:
                         break
-                    n, before = len(s._undo), definition(s)
+                    n, m, before = len(s._undo), len(page.undo), definition(s)
                     S.drive(f"{name}/{gname}", do)
                     k = 0
-                    while len(s._undo) > n and k < 20:
+                    while len(page.undo) > m and k < 20:     # Post's own steps, as the window undoes them on Post
+                        page.do_undo()
+                        settle(win, 2)
+                        k += 1
+                    while len(s._undo) > n and k < 40:
                         s.undo()
                         settle(win, 2)
                         k += 1
