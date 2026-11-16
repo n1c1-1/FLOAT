@@ -121,7 +121,8 @@ def _param_words(stage, name, v) -> str:
 
 def _came_from(old, g, b):
     """The block a variant's block ``b`` (of graph ``old``, gone from ``g``) was copied from, when it is in ``g``: a
-    variant of a whole stack copies its stack's blocks in order, and the night Calibrations of its nights; else None."""
+    variant of a whole stack copies its stack's blocks in order, and the night Calibrations of its nights; a variant
+    forked from its original's row copies the blocks after the fork; else None."""
     try:
         ix = gm.Index(old)
         r = ix.row.get(ix.row_of.get(b))
@@ -132,6 +133,8 @@ def _came_from(old, g, b):
             return None
         if b in r.blocks:
             i = r.blocks.index(b)
+            if r.fork and r.fork[0] == o.id:
+                i += o.blocks.index(r.fork[1]) + 1
             cand = o.blocks[i] if i < len(o.blocks) else None
         else:
             i = next((k for k, (_s, c) in enumerate(r.nights) if c == b), None)
@@ -1392,12 +1395,13 @@ class GraphEditing:
         self._prune_post()                                # a layer of a block that is not there any more goes
         post_back = post_back or json.dumps(self.p.post, sort_keys=True) != was
         self._unpatch_rows()
-        # the selection on block ids: a block that came back is selected; one gone leaves its predecessor selected
+        # the selection on block ids: a block that came back is selected; a variant's block gone leaves the block it
+        # was tried from selected (the one chosen before Try variant); another one gone leaves its predecessor selected
         came = [b for b in g.blocks if b not in old_g.blocks and g.blocks[b].kind != "post"]
         if came:
             self.graph_view["selected"] = came[0]
         elif sel not in (None, "project") and sel not in g.blocks and not any(r.id == sel for r in g.rows):
-            self.graph_view["selected"] = pred if pred in g.blocks else _came_from(old_g, g, sel)
+            self.graph_view["selected"] = _came_from(old_g, g, sel) or (pred if pred in g.blocks else None)
         if self.paths:
             self.current = next((i for i, v in enumerate(self.paths) if v.pid == self.p.current), 0)
             back = [(i, k) for i, v in sorted(enumerate(self.paths), key=lambda iv: iv[0] != self.current)
