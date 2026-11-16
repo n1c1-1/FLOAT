@@ -924,8 +924,8 @@ def test_the_wheel_zooms_at_the_pointer_and_the_zoom_is_the_users(env):
 
 
 def _shows_all_or_the_readable_floor(gv):
-    """Show all: the whole graph in view, unless that is below the readable size of the default view (75 %, on
-    purpose since the overlap fixes): then 75 % from the left end of the graph, as the old page's default view."""
+    """Show all: the whole graph in view, unless that is below the floor of the automatic view (50 %): then the
+    floor from the left end of the graph."""
     hb, vb = gv.horizontalScrollBar(), gv.verticalScrollBar()
     if hb.maximum() == 0 and vb.maximum() == 0:
         assert gv.zoom >= MIN_AUTO - 1e-6

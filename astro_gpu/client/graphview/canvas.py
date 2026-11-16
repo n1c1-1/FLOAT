@@ -57,7 +57,7 @@ from .items import (
 from .menu import menu as block_menu
 from .style import ACCENT, CLIENT_KEY, FALLBACK_WORD, IMAGE_COL, STATE_COL, kind_what, state_word
 
-MIN_ZOOM, MAX_ZOOM, MIN_AUTO, MAX_AUTO = 0.1, 8.0, 0.75, 1.2      # the zoom the user can choose, as today
+MIN_ZOOM, MAX_ZOOM, MIN_AUTO, MAX_AUTO = 0.1, 8.0, 0.5, 1.2       # the zoom the user can choose; the fit's bounds
 MARGIN = 48                 # scene margin around the drawing (also keeps blocks off the zoom buttons)
 MIME_KIND = "application/x-float-graph-kind"
 #: the blocks without an image out port
@@ -950,8 +950,8 @@ class GraphCanvas(QGraphicsView):
             r = self._content()
             vp = self.viewport()
             k = min(vp.width() / r.width(), vp.height() / r.height())
-            # readable first (0.75); a little smaller rather than a scroll bar for the last few percent
-            self._k = min(MAX_AUTO, k) if k >= 0.68 else MIN_AUTO
+            # the whole graph in what the palette and the settings panel leave, down to the floor (0.5), never below
+            self._k = max(MIN_AUTO, min(MAX_AUTO, k))
             self._set_scale(self._k, r.topLeft(), left_top=not keep)
         else:
             self._set_scale(self._k, None)
@@ -1031,8 +1031,8 @@ class GraphCanvas(QGraphicsView):
         self.auto = False
         self._keep_in_view = ()
         fit = min(vp.width() / r.width(), vp.height() / r.height())
-        # never smaller than the readable size of the default view (0.75: below it the titles cannot be read, 1366 x 768
-        # gave 40 %): the old page's default view kept this floor and went to the left end, Post a click away
+        # never smaller than the floor of the automatic view (0.5: 1366 x 768 gave 40 %, titles nobody could read):
+        # below it, the floor from the left end, Post a click away
         self._k = max(MIN_AUTO, min(MAX_AUTO, fit))
         self.setTransform(QTransform.fromScale(self._k, self._k))
         if fit >= MIN_AUTO:
