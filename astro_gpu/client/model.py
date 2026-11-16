@@ -927,7 +927,7 @@ class _ProjectBase(QObject):
                 self.paramsChanged.emit(int(pid), stage)
 
     def reload_sources(self):
-        """The sessions or the frames changed (files added, a new session): the definition is saved, the frames are
+        """The sessions or the frames changed (files added, a new session): the edit waits for Save, the frames are
         scanned again, then the keys rebuilt. Until the worker is done the model answers from what it knew (no disk
         access in the GUI thread)."""
         self.edited()

@@ -10,7 +10,8 @@ are built again). Spec mode shows, disabled and marked ◇, what the engine does
 The shell opens, creates and lists v2 projects (core/project2) and never writes into a project unless the user edits
 it or saves it elsewhere; a project of an older version (v1) is imported first (previous.py), its folder untouched.
 Once a project is open the window holds, for it:
-* ``s``: the ProjectModel (model.py) every view reads and edits; it saves the definition 300 ms after an edit;
+* ``s``: the ProjectModel (model.py) every view reads and edits; its edits wait for Save (the project is written by
+  Save, and before a run; meanwhile a recovery copy is kept, drafts.py);
 * ``run``: the RunController (services/run.py): the plan dialog, the detached run, its progress and the Log console;
 * ``render``: the RenderWorker of Post (services/render.py), made when Post is first shown and kept while the project
   is open, so that a rebuilt screen (a change of language) does not load the engines again.
@@ -1284,8 +1285,8 @@ class Main(QMainWindow):
         return self.post_holder.ensure() if self.post_holder is not None else None
 
     def _flush_post(self):
-        """Post's last edit into the project's definition (it is saved just after an edit, when the event loop comes
-        back: a close or a rebuild may come first)."""
+        """Post's last edit into the project's definition in memory (it goes there just after an edit, when the event
+        loop comes back: a close or a rebuild may come first). Nothing is written: Save does."""
         page = self._post_holder.page if self._post_holder is not None else None
         view = getattr(page, "view", None)
         if view is not None and hasattr(view, "flush"):
