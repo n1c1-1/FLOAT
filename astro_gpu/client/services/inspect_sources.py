@@ -583,7 +583,6 @@ def resolve_key(p, key: str):
     return None
 
 
-# ---------------------------------------------------------------------------------------------- the blocks' data
 # The engine's diagnostics (``diag``) take ``which``: an Outdated block shows the result it had. Each answer is read
 # whole in the worker; what an older result did not keep comes back as None (the view says "recompute ... to get it").
 
