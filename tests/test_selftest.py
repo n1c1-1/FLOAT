@@ -137,6 +137,69 @@ def test_a_card_that_is_slower_is_said_slower_and_keeps_its_blocks():
     assert not any("slower" in t for t in selftest.REASONS.values())            # no such line in a run's log
 
 
+N_VALUES = 2_272_704                                    # the values of the Classic operation's result
+
+
+def differing(change):
+    """An operation whose result on the card is the processor's (zeros) changed by ``change(array)``."""
+    def op(dev):
+        a = np.zeros(N_VALUES, np.float32)
+        if dev != "cpu":
+            change(a)
+        else:
+            time.sleep(0.05)                            # (the card is not slower)
+        return {"full": a}
+    return op
+
+
+def _flips(a):
+    a[::N_VALUES // 16][:16] = 0.01
+
+
+def _on_the_card(a):
+    """What the card gave for the Classic operation: 16 values of 2,272,704 off (4 over the tolerance, the largest
+    0.010356), in 6 or 7 isolated spots; the rest equal to rounding (99.99th percentile 2.38e-07)."""
+    a[:] = 2.0e-7
+    spots = np.arange(16) * 90_001 + 676 * 1064
+    a[spots[:4]] = (0.010356, 0.0093, 0.0071, 0.0052)
+    a[spots[4:12]] = 0.002
+    a[spots[12:]] = 0.0002
+
+
+@pytest.mark.parametrize("name", ["classic", "sampling"])
+def test_a_few_values_off_where_a_rejection_decides_are_not_a_wrong_result(name):
+    """The card's Classic stack was found wrong for 16 values of 2.3 million: values at the rejection's threshold,
+    kept on one machine and rejected on the other, everything else equal to rounding."""
+    for change, largest in ((_flips, 0.01), (_on_the_card, 0.010356)):
+        r = selftest.check(name, "cuda:0", differing(change))
+        assert r["verdict"] == selftest.OK
+        assert r["diff"] == pytest.approx(largest, rel=1e-4)             # the largest is kept, for information
+        assert r["judged"] < 1e-6 < r["tolerance"]
+
+
+def test_a_result_off_in_many_values_or_everywhere_is_wrong():
+    def one_percent(a):
+        a[::100] = 0.01
+
+    def everywhere(a):
+        a[:] = 0.006
+    for change in (one_percent, everywhere):
+        r = selftest.check("classic", "cuda:0", differing(change))
+        assert r["verdict"] == selftest.WRONG and r["judged"] > r["tolerance"]
+
+    def one_nan(a):
+        a[5] = np.nan
+    assert selftest.check("classic", "cuda:0", differing(one_nan))["verdict"] == selftest.WRONG   # never a rounding
+
+
+@pytest.mark.parametrize("name", ["drizzle", "denoise", "stars", "post"])
+def test_an_operation_with_no_such_decision_is_wrong_for_a_single_value(name):
+    def one(a):
+        a[7] = 10 * selftest.TOLERANCE[name]
+    r = selftest.check(name, "cuda:0", differing(one))
+    assert r["verdict"] == selftest.WRONG and r["judged"] == r["diff"]
+
+
 def test_any_exception_or_out_of_memory_means_cpu():
     r = selftest.check("post", "cuda:0", fake_op(error=RuntimeError("the driver said no")))
     assert r["verdict"] == selftest.ERROR and "driver said no" in r["error"]

@@ -36,8 +36,8 @@ from . import devices
 #: the version of the test, saved with its result: raised whenever what is measured or how it is judged changes, so
 #: that a result saved by an older test is not used and the card is tested again. 1: no number saved (the first test).
 #: 2: the stacks timed on what a real stack repeats, each way of stacking judged on its own operations. 3: a card
-#: timed slower keeps its blocks.
-TEST_VERSION = 3
+#: timed slower keeps its blocks. 4: a few values off where a rejection decides are not a wrong result.
+TEST_VERSION = 4
 #: the operations tested, in order, and the stage each one decides (Stack has three)
 OPERATIONS = {"drizzle": "stack", "sampling": "stack", "classic": "stack", "denoise": "denoise", "stars": "star_removal",
               "post": "post"}
@@ -46,6 +46,17 @@ STAGES = ("stack", "denoise", "star_removal", "post")
 #: image's own scale for the sums and the render (rounding of float32 and of the order of the additions), the noise of
 #: the image for the networks (autocast on the card: bfloat16); set from what a sound card gives (see tests/test_selftest)
 TOLERANCE = {"drizzle": 5e-3, "sampling": 5e-3, "classic": 5e-3, "denoise": 0.3, "stars": 0.05, "post": 8e-3}
+#: the operations whose result holds yes/no decisions taken at a threshold: the Classic stack rejects a value or keeps
+#: it (and clamps an interpolated one or not), the sampling gives a coverage or none where half of a sample's weight
+#: is covered. A rounding difference can flip such a decision for a few samples on any two machines, and the value
+#: decided then differs by far more than rounding (a value of 8 rejected moves their mean by a third of the noise),
+#: while a device that computes wrong differs everywhere. So these are wrong when more than a very small share of
+#: their values differ beyond the tolerance, not when one does: the tolerance is held against the DECISION_PERCENTILE
+#: of the absolute differences (at most 1 value in 10 000 beyond it). Measured on a sound card: 16 values of
+#: 2 272 704 off in the Classic stack, the largest by 0.0104, in isolated spots; the 99.99th percentile 2.4e-07.
+#: The other operations (the deposit, the networks, the render) are continuous: their largest difference is judged.
+DECISIONS = ("sampling", "classic")
+DECISION_PERCENTILE = 99.99
 #: seconds one operation may take before the card counts as gone (its child process is then ended)
 OP_TIMEOUT = 300.0
 #: the free share of the card's memory below which it is busy with something else: a test launched by itself waits
@@ -267,26 +278,46 @@ def _timed(fn: Callable[[str], dict], dev: str) -> tuple[dict, float]:
     return out, best
 
 
-def compare(a: dict[str, np.ndarray], b: dict[str, np.ndarray]) -> float:
-    """The largest absolute difference between two results (inf where only one of them is not a finite number)."""
-    worst = 0.0
+def _differences(a: dict[str, np.ndarray], b: dict[str, np.ndarray]) -> list[np.ndarray] | None:
+    """The absolute differences of two results, array by array (inf where only one of them is a finite number);
+    None when their shapes differ."""
+    out = []
     for k in a:
         x, y = np.asarray(a[k], np.float64), np.asarray(b[k], np.float64)
         if x.shape != y.shape:
-            return float("inf")
+            return None
         d = np.abs(x - y)
         d[~np.isfinite(d)] = float("inf")
-        if d.size:
-            worst = max(worst, float(d.max()))
-    return worst
+        out.append(d.ravel())
+    return out
+
+
+def compare(a: dict[str, np.ndarray], b: dict[str, np.ndarray]) -> float:
+    """The largest absolute difference between two results (inf where only one of them is not a finite number)."""
+    d = _differences(a, b)
+    return float("inf") if d is None else max((float(x.max()) for x in d if x.size), default=0.0)
+
+
+def compare_but_a_few(a: dict[str, np.ndarray], b: dict[str, np.ndarray], percentile: float = DECISION_PERCENTILE
+                      ) -> float:
+    """The difference between two results that all but a few of their values stay under: the ``percentile`` of the
+    absolute differences, all values together. A value that is a number on one side only is never one of the few:
+    inf, as ``compare``."""
+    d = _differences(a, b)
+    worst = compare(a, b)
+    if d is None or not np.isfinite(worst) or not sum(x.size for x in d):
+        return worst
+    return float(np.percentile(np.concatenate(d), percentile))
 
 
 def check(name: str, card: str, op: Callable[[str], dict] | None = None, tolerance: float | None = None) -> dict:
-    """One operation on ``card`` and on the CPU: {op, stage, verdict, card_s, cpu_s, diff, tolerance, error}."""
+    """One operation on ``card`` and on the CPU: {op, stage, verdict, card_s, cpu_s, diff, judged, tolerance, error}.
+    ``diff``: the largest difference between the two results, kept for information; ``judged``: the difference held
+    against the tolerance, the largest too, except for the operations of DECISIONS (``compare_but_a_few``)."""
     fn = op or OPS[name]
     tol = TOLERANCE.get(name, 5e-3) if tolerance is None else tolerance
     out: dict[str, Any] = {"op": name, "stage": OPERATIONS.get(name, name), "verdict": ERROR, "card_s": None,
-                           "cpu_s": None, "diff": None, "tolerance": tol, "error": ""}
+                           "cpu_s": None, "diff": None, "judged": None, "tolerance": tol, "error": ""}
     try:
         ref, out["cpu_s"] = _timed(fn, "cpu")
     except FileNotFoundError as e:                     # a model this installation does not have
@@ -300,7 +331,8 @@ def check(name: str, card: str, op: Callable[[str], dict] | None = None, toleran
     finally:
         devices.empty_cache(card)
     out["diff"] = compare(ref, got)
-    if out["diff"] > tol:
+    out["judged"] = compare_but_a_few(ref, got) if name in DECISIONS else out["diff"]
+    if out["judged"] > tol:
         out["verdict"] = WRONG
     elif out["card_s"] >= out["cpu_s"]:
         out["verdict"] = SLOWER
