@@ -397,21 +397,27 @@ class ExportDialog(QDialog):
         self._remember()
         self.running = True
         self.error, self.files = "", []
-        self.status.setText("")
-        self.bar.setValue(0)
+        # the whole image is composed before any fraction is known (minutes on a processor alone): the bar says it is
+        # busy, and the line what it does (the tutorials' film: a bar at 0 and nothing said for 2 to 4 minutes)
+        self.status.setStyleSheet("")
+        self.status.setText(_("Composing the image…"))
+        self.bar.setRange(0, 0)
         self.bar.show()
         self.go.setEnabled(False)
         self.dest.setEnabled(False)
         self.worker.export(self.job())
 
     def _progress(self, f, _msg):
-        if self.running:
+        if self.running and f > 0:
+            self.bar.setRange(0, 100)
             self.bar.setValue(int(100 * f))
 
     def _done(self, files, error):
         if not self.running:
             return
         self.running = False
+        self.bar.setRange(0, 100)
+        self.cancel.setEnabled(True)
         self.dest.setEnabled(True)
         self.go.setEnabled(True)
         if error:
@@ -436,7 +442,10 @@ class ExportDialog(QDialog):
 
     def reject(self):
         if self.running:
+            # the engine stops at the end of the step it is in (a minute on a processor alone): said at once
             self.worker.cancel_export()
+            self.status.setText(_("Stopping…"))
+            self.cancel.setEnabled(False)
             return
         self._disconnect()
         super().reject()

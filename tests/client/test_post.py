@@ -2694,6 +2694,39 @@ def test_an_export_that_cannot_be_written_says_why_and_a_running_one_can_be_stop
         s.close()
 
 
+def test_a_long_export_says_it_works_and_a_cancel_is_seen_at_once(preps, qapp, tmp_path):
+    """The tutorials' film: a full-resolution export on a processor alone held the dialog 2 to 4 minutes, its bar at 0
+    and nothing said, and Escape seemed to do nothing (the engine stops at the end of the step it is in)."""
+    from PySide6.QtTest import QTest
+    svc = SlowService(1.5)
+    root = tmp_path / "p"
+    root.mkdir()
+    s = Setup(preps, qapp, root=root)
+    s.worker.stop()
+    s.worker = RenderWorker(None, resolver=lambda pid: s.folders.get(pid), device="cpu", service=svc)
+    s.view.worker = s.worker
+    try:
+        d = ExportDialog(s.view)
+        d.dest.setText((tmp_path / "out" / "pic_16bit.tif").as_posix())
+        d.start()
+        for _i in range(20):
+            qapp.processEvents()
+            time.sleep(0.01)
+        assert d.running and d.bar.maximum() == 0                   # no fraction yet: the bar shows it is busy
+        assert d.status.text() == "Composing the image…"
+        QTest.keyClick(d, Qt.Key_Escape)                            # Escape, as Cancel
+        assert d.status.text() == "Stopping…" and not d.cancel.isEnabled()
+        end = time.monotonic() + 60
+        while d.running and time.monotonic() < end:
+            qapp.processEvents()
+            time.sleep(0.01)
+        assert d.error == "stopped" and d.status.text() == "Export stopped." and d.cancel.isEnabled()
+        assert d.bar.maximum() == 100
+        d.deleteLater()
+    finally:
+        s.close()
+
+
 # ---------------------------------------------------------------------------------------------- the French
 def _catalogue() -> dict[str, str]:
     cat: dict[str, str] = {}
