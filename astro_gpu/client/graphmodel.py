@@ -119,6 +119,28 @@ def _param_words(stage, name, v) -> str:
     return _("{setting}: {value}").format(setting=label, value=value)
 
 
+def _came_from(old, g, b):
+    """The block a variant's block ``b`` (of graph ``old``, gone from ``g``) was copied from, when it is in ``g``: a
+    variant of a whole stack copies its stack's blocks in order, and the night Calibrations of its nights; else None."""
+    try:
+        ix = gm.Index(old)
+        r = ix.row.get(ix.row_of.get(b))
+        if r is None or r.trial is None:
+            return None
+        o = next((x for x in g.rows if x.wid == r.trial), None)
+        if o is None:
+            return None
+        if b in r.blocks:
+            i = r.blocks.index(b)
+            cand = o.blocks[i] if i < len(o.blocks) else None
+        else:
+            i = next((k for k, (_s, c) in enumerate(r.nights) if c == b), None)
+            cand = o.nights[i][1] if i is not None and i < len(o.nights) else None
+    except (KeyError, IndexError, AttributeError):
+        return None
+    return cand if cand in g.blocks and g.blocks[cand].kind == old.blocks[b].kind else None
+
+
 class GraphRefused(ValueError):
     """A gesture the graph core refused: its reason, translated."""
 
@@ -1360,7 +1382,7 @@ class GraphEditing:
         if came:
             self.graph_view["selected"] = came[0]
         elif sel not in (None, "project") and sel not in g.blocks and not any(r.id == sel for r in g.rows):
-            self.graph_view["selected"] = pred if pred in g.blocks else None
+            self.graph_view["selected"] = pred if pred in g.blocks else _came_from(old_g, g, sel)
         if self.paths:
             self.current = next((i for i, v in enumerate(self.paths) if v.pid == self.p.current), 0)
             back = [(i, k) for i, v in sorted(enumerate(self.paths), key=lambda iv: iv[0] != self.current)
