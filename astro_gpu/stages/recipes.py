@@ -13,7 +13,8 @@ same stage code (stages/combine.py), from a fixed vocabulary of operations it im
   operation's value written ``"$name"`` is the parameter's value.
 - ``steps``, in order, on the channels: ``neutralise_sky`` (first, always: each channel's sky to 0, Rector et al.
   2007), ``linear_match`` (Siril's linear match of channels to a reference input, between two bounds, then the sky
-  to 0 again), ``continuum_subtract`` (a narrow-band line image minus its continuum measured by a broadband one, the
+  to 0 again), ``equalise`` (channels brought to a reference input's median and median absolute deviation, then the
+  sky to 0 again), ``continuum_subtract`` (a narrow-band line image minus its continuum measured by a broadband one, the
   scale measured on the field's stars: Waller 1990). The user's channel weights come after the steps.
 - ``output``: the channels mixed into red, green and blue, by ``hues`` (each channel given a hue, balanced so that
   equal channels give a grey: stages/combine.hue_palette) or by an explicit ``matrix`` (rows R, G, B); optionally
@@ -22,10 +23,10 @@ same stage code (stages/combine.py), from a fixed vocabulary of operations it im
   gamut (``strength``); ``saturation``: the inputs whose stacks' saturation maps the result hands on.
 
 The four types the application had before recipes (S-H-O, H-O, RGB, LRGB) are four shipped recipes, ``sho``,
-``ho``, ``rgb`` and ``lrgb``. Their content at version 1 is frozen here (``LEGACY``): a combination whose recipe is
-that content runs on the type's own stage (``combine_sho``...) with the settings it always had, so its key and its
-image are those it had before recipes (tests/test_recipes.py). Any other recipe, or one of those four changed, runs on
-the stage ``combine_recipe``, whose key holds the recipe's content.
+``ho``, ``rgb`` and ``lrgb``. Their content is frozen here (``LEGACY``): a combination whose recipe is that content
+runs on the type's own stage (``combine_sho``...) with the block's own settings, its key that stage's
+(tests/test_recipes.py); when that content changes, the stage's version is raised with it. Any other recipe, or
+one of those four changed, runs on the stage ``combine_recipe``, whose key holds the recipe's content.
 
 When a combination is placed in a project, the recipe is copied into the workflow's source (``{"fusion": {"type":
 the recipe's id, "recipe": the copy, "inputs": [...]}}``): the project computes the same whatever happens to the
@@ -50,7 +51,7 @@ RECIPE_STAGE = "combine_recipe"
 #: what a channel of an input can be read as (stages/combine.channel_of)
 CHANNELS = ("L", "R", "G", "B", "GB")
 TYPES = ("mono", "colour", "any")
-OPS = ("neutralise_sky", "linear_match", "continuum_subtract")
+OPS = ("neutralise_sky", "linear_match", "equalise", "continuum_subtract")
 #: the fields that say nothing to the computation (left out of the key and of the frozen content)
 DOC_FIELDS = ("name", "version", "description")
 PARAM_DOC = ("label", "help", "unit", "step")
@@ -70,27 +71,25 @@ class RecipeError(ValueError):
 
 # ---------------------------------------------------------------------------------------------- the frozen four
 
-_NARROW_PARAMS = {"lightness": {"default": "noise", "choices": ["noise", "equal"]},
-                  "smoothing": {"default": "auto", "choices": ["auto", "radius"]},
-                  "radius": {"default": 0.0, "min": 0.0, "max": 50.0}}
 _HUE = {"min": 0.0, "max": 360.0}
-_MATCH_HA = [{"op": "neutralise_sky"}, {"op": "linear_match", "reference": "Ha", "channels": [], "low": 1e-7,
-                                         "high": 0.875}]
+_EQUALISE_HA = [{"op": "neutralise_sky"}, {"op": "equalise", "reference": "Ha", "channels": []}]
 
 
 def _narrow(rid: str, roles: list[str], hues: list[float]) -> dict:
+    """A narrow-band type: every filter equalised to the H-alpha while linear, then each given its hue and the
+    layers added as they are (stages/combine.py, the narrow-band composition)."""
     return {"id": rid, "narrowband": True,
             "inputs": [{"role": r, "type": "any", "channel": "L"} for r in roles],
-            "parameters": {**{f"hue_{r.lower()}": {"default": h, **_HUE} for r, h in zip(roles, hues)},
-                           **copy.deepcopy(_NARROW_PARAMS)},
-            "steps": copy.deepcopy(_MATCH_HA),
+            "parameters": {f"hue_{r.lower()}": {"default": h, **_HUE} for r, h in zip(roles, hues)},
+            "steps": copy.deepcopy(_EQUALISE_HA),
             "output": {"channels": list(roles), "hues": [f"$hue_{r.lower()}" for r in roles], "matrix": None,
-                       "lightness": "channels", "weighting": "$lightness", "smoothing": "$smoothing",
-                       "radius": "$radius", "strength": 1.9, "saturation": []}}
+                       "lightness": None, "weighting": None, "smoothing": None, "radius": None, "strength": 1.0,
+                       "saturation": []}}
 
 
 _EYE = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
-#: the content (``computational``) of the four types' recipes at version 1: what the four blocks did before recipes
+#: the content (``computational``) of the four types' recipes, as their own blocks run it (RGB and LRGB: what the
+#: blocks did before recipes; S-H-O and H-O: the equalisation and the plain composition, their recipes' version 2)
 LEGACY: dict[str, dict] = {
     "sho": _narrow("sho", ["SII", "Ha", "OIII"], [15.5, 31.4, 202.2]),
     "ho": _narrow("ho", ["Ha", "OIII"], [0.0, 180.0]),
@@ -111,6 +110,8 @@ LEGACY: dict[str, dict] = {
 }
 #: the four types' names (their blocks' titles)
 LEGACY_NAMES = {"sho": "S-H-O", "ho": "H-O", "rgb": "RGB", "lrgb": "LRGB"}
+#: the version of that content (the folder's files': a project saved before recipes stands for it)
+LEGACY_VERSIONS = {"sho": 2, "ho": 2, "rgb": 1, "lrgb": 1}
 
 
 def computational(spec: dict) -> dict:
@@ -124,8 +125,8 @@ def computational(spec: dict) -> dict:
 
 
 def legacy_spec(kind: str) -> dict:
-    """The recipe a project saved before recipes stands for: the type's frozen content, its name, version 1."""
-    return {"id": kind, "name": LEGACY_NAMES[kind], "version": 1, "description": "",
+    """The recipe a project saved before recipes stands for: the type's frozen content, its name, its version."""
+    return {"id": kind, "name": LEGACY_NAMES[kind], "version": LEGACY_VERSIONS[kind], "description": "",
             **copy.deepcopy({k: v for k, v in LEGACY[kind].items() if k != "id"})}
 
 
@@ -367,6 +368,13 @@ def parse(text: str, source: str = "recipe") -> dict:
             if not low < high:
                 c.fail(path + ("high",), "must be above low")
             steps.append({"op": op, "reference": ref, "channels": list(chs), "low": low, "high": high})
+        elif op == "equalise":
+            c.known(s, path, ("op", "reference", "channels"))
+            ref = role_of(s, path, "reference")
+            chs = s.get("channels", [])
+            if not isinstance(chs, list) or any(x not in names or x == ref for x in chs):
+                c.fail(path + ("channels",), "must list inputs other than the reference ([] : all of them)")
+            steps.append({"op": op, "reference": ref, "channels": list(chs)})
         else:
             c.known(s, path, ("op", "line", "continuum", "scale"))
             line, cont = role_of(s, path, "line"), role_of(s, path, "continuum")

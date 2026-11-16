@@ -82,6 +82,15 @@ help = "The colour's smoothing radius; 0: none."
 #                        low, high: fractions of the reference's full scale (default 1e-7 and 0.875, the RGB
 #                        compositing tool's own)
 #
+#   equalise             Each channel brought to the reference's level and spread while linear, before the
+#                        composition: channel * mad(ref) / mad(channel) - mad(ref) / mad(channel) * median(channel)
+#                        + median(ref), the median and the median absolute deviation taken on the covered pixels
+#                        (the formula of Siril's H-alpha and O III extraction script and of its RGB composition
+#                        tutorial, siril.org/tutorials/rgb_composition), then the skies taken to 0 again. A faint
+#                        filter comes out as strong as the reference: the narrow-band palettes' equalisation.
+#                        reference: an input (Ha for narrow-band filters)
+#                        channels:  the inputs equalised (default [] : all the others)
+#
 #   continuum_subtract   A narrow-band line image minus its continuum, recorded by a broadband input: the stellar
 #                        method (W. H. Waller 1990, PASP 102, 1217): the scale is the median ratio of the two images'
 #                        fluxes on the field's isolated, unsaturated stars, which have no line emission. The line

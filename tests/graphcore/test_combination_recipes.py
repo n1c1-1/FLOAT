@@ -176,8 +176,9 @@ def folder(tmp_path, monkeypatch):
 def _newer(folder: Path, rid: str, old: str, new: str):
     f = folder / f"{rid}.toml"
     t = f.read_text(encoding="utf-8")
-    assert t.count("version = 1") == 1 and t.count(old) == 1
-    f.write_text(t.replace("version = 1", "version = 2").replace(old, new), encoding="utf-8")
+    v = recipes.load(f)["version"]                       # the file's version, raised by one
+    assert t.count(f"version = {v}") == 1 and t.count(old) == 1
+    f.write_text(t.replace(f"version = {v}", f"version = {v + 1}").replace(old, new), encoding="utf-8")
     combos.refresh()
 
 
@@ -209,17 +210,17 @@ def test_a_frozen_type_changed_runs_on_the_recipe_stage_and_its_parameters_are_t
     jb = _only_combination(doc)
     j, name = jb.id, _row_of(doc, jb).name
     ok(doc, "set_param", block=j, stage="combine_ho", name="hue_oiii", value=170.0)
-    _newer(folder, "ho", "max = 50", "max = 40")
+    _newer(folder, "ho", 'max = 360\nlabel = "O III hue"', 'max = 300\nlabel = "O III hue"')
     ok(doc, "update_recipe", block=j)
     b = doc.project.blocks[j]
     assert combos.stage(b) == recipes.RECIPE_STAGE
     assert b.params == {recipes.RECIPE_STAGE: {"values": {"hue_oiii": 170.0}}}   # the setting kept, by its name
-    ok(doc, "set_recipe_value", block=j, name="radius", value=12.0)
-    assert doc.project.blocks[j].params[recipes.RECIPE_STAGE]["values"] == {"hue_oiii": 170.0, "radius": 12.0}
-    assert refused_inert(doc, "set_recipe_value", block=j, name="radius", value=45.0)      # above its max
+    ok(doc, "set_recipe_value", block=j, name="hue_ha", value=12.0)
+    assert doc.project.blocks[j].params[recipes.RECIPE_STAGE]["values"] == {"hue_oiii": 170.0, "hue_ha": 12.0}
+    assert refused_inert(doc, "set_recipe_value", block=j, name="hue_oiii", value=345.0)   # above its max
     ok(doc, "set_recipe_value", block=j, name="hue_oiii", value=None)
-    assert doc.project.blocks[j].params[recipes.RECIPE_STAGE]["values"] == {"radius": 12.0}
+    assert doc.project.blocks[j].params[recipes.RECIPE_STAGE]["values"] == {"hue_ha": 12.0}
     p, _c = compiled(doc)
     w = _wf(p, name)
-    assert w.params[recipes.RECIPE_STAGE]["values"] == {"radius": 12.0}
+    assert w.params[recipes.RECIPE_STAGE]["values"] == {"hue_ha": 12.0}
     engine_ok(doc)

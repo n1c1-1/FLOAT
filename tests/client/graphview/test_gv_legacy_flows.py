@@ -312,7 +312,7 @@ def test_a_combination_panel_shows_its_named_inputs_and_its_settings(world):
     W.choose(W.block("fusion", ho))
     shown = {re.sub("<[^>]+>", "", x.text()) for x in W.page.panel.findChildren(QLabel)}
     shown |= {x.currentText() for x in W.page.panel.findChildren(QComboBox) if x.objectName() == "recipe"}
-    assert {"Hα", "O III", "H-O"} <= shown and {"Hα hue", "O III hue", "Colour smoothing"} <= shown
+    assert {"Hα", "O III", "H-O"} <= shown and {"Hα hue", "O III hue"} <= shown
     assert W.m.set_fusion_weight(W.m.view(ho.pid), "OIII", 0.5) is True
     assert W.m.p.workflow(ho.pid).params["combine_ho"]["weights"] == {"OIII": 0.5}
     W.page.refresh()

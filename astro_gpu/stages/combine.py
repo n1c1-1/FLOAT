@@ -3,8 +3,8 @@ the channels of one colour workflow shot through a dual-band filter) combined in
 
 What a combination does is a recipe (stages/recipes.py): a TOML file of the application's folder
 ``astro_gpu/resources/combinations`` that names its inputs, the operations on them from a fixed vocabulary (the
-background neutralisation, Siril's linear match, the continuum subtraction) and how they make red, green and blue (a
-hue per filter or a matrix; composed as lightness and colour or mixed as they are; the colour smoothed and its
+background neutralisation, the equalisation, Siril's linear match, the continuum subtraction) and how they make
+red, green and blue (a hue per filter or a matrix; composed as lightness and colour or mixed as they are; the colour smoothed and its
 strength). ``Combination.run`` carries the recipe out with the functions of this module; the folder's
 ``_example.toml`` documents every setting. The recipe is copied into the project when the combination is placed: a
 project computes the same whatever happens to the file.
@@ -29,9 +29,10 @@ a Stars/background block after it, and the Combine layers block in Post, do (one
    ``GB`` (the mean of green and blue: the O III of a dual-band filter on a colour sensor, whose green and blue pixels
    both see the 501 nm line).
 3. Each channel's sky is taken to 0 (``neutralise_sky``: the background neutralisation, below), then the channel is
-   brought to the same scale by Siril's linear match (``linear_match``, below), each channel fitted linearly to the
-   type's reference (``match_reference``): the H-alpha for the narrow-band types, so that a faint O III weighs as
-   much as a strong H-alpha; the top layer of Siril's RGB compositing tool for the broadband ones (its documentation:
+   brought to the scale of the type's reference (``match_reference``). The narrow-band types equalise each filter to
+   the H-alpha (``equalise``, below: its median and its spread), so that a faint O III weighs as much as a strong
+   H-alpha. The broadband ones use Siril's linear match (``linear_match``, below), each channel fitted linearly to
+   the top layer of Siril's RGB compositing tool (its documentation:
    "The top layer loaded (usually Luminance or Red) is taken as the reference channel, and all other channels are
    automatically linearly matched to it", siril.readthedocs.io, "RGB compositing"): the red for RGB, the luminance
    for LRGB. The user's weight of a channel scales it after.
@@ -42,10 +43,25 @@ a Stars/background block after it, and the Combine layers block in Post, do (one
    layers added is a matrix whose columns are the hues' colours (``hue_palette``); the colour balance is each
    column's weight, solved so that equal channels give a grey: a single filter's signal has exactly its own hue, a
    neutral input stays neutral. Hues 0, 120 and 240 are the plain mapping (S II red, H-alpha green, O III blue).
-5. A narrow-band combination is composed as lightness and colour (``compose``): the lightness is the channels' mean
-   weighted by their noise (or equal), the hues give only the colour, smoothed where the noisiest channel's grain would
-   show: the noise of a weak filter, raised by the balance (M27's S II 15 times noisier than its H-alpha), no longer
-   makes coloured blotches over the sky.
+5. The narrow-band types mix the equalised filters as they are, through that matrix (H-O, hues 0 and 180: red is
+   the H-alpha, green and blue are the O III): Siril's RGB composition, which copies the layers and normalises
+   nothing itself. A recipe may instead compose its channels as lightness and colour (``compose``: the lightness
+   the channels' mean, the hues giving only the colour, smoothed, its strength raised); the two types did until
+   their version 8, and no longer do: on a monochrome camera's H-alpha and O III the strength of 1.9 took the green
+   to 0 over three quarters of the nebula's interior (2 % at strength 1) and the result was a flat saturated red; on
+   a small nebula the S-H-O's sky came out in orange blotches.
+
+Equalisation (step 3 of the narrow-band types): each filter is brought to the reference while linear, before the
+composition, ``filter * mad(ref) / mad(filter) - mad(ref) / mad(filter) * median(filter) + median(ref)``: the formula
+of Siril's H-alpha and O III extraction script (OSC_Extract_HaOIII) and of its RGB composition tutorial
+(siril.org/tutorials/rgb_composition), the median and the median absolute deviation taken on the covered pixels. The
+reference is the H-alpha, the strongest signal (siril.org/faq: "pick the Ha stack as reference"). Both statistics
+are those of the bulk of the pixels: the stars, a few percent of the field, do not move them, so the filters come out
+on one scale with or without their stars. The linear match was the narrow-band types' until their version 8; it is
+a least squares fit, which the brightest pixels drive: on images with their stars the stars' ratio set the scale and
+the O III of a supernova remnant was lowered (0.77) where its nebula asked for 3.8; on starless images of a small
+nebula a weak S II was multiplied by 14 and its sky's residue covered the field. The equalisation's offset moves the
+sky, which is taken back to 0 after it.
 
 The S-H-O default hues are measured, not chosen (issue #163): five public SHO composites of the Hubble teams
 (ESA/Hubble heic1501a, opo9544a, heic1007a, heic1520a, heic0707a: the Pillars of Creation 2014 and 1995, Mystic
@@ -68,8 +84,8 @@ nebulosity included, so it differs from one filter to the other by what the nebu
 a factor ten to twenty times larger for a weak S II than for an H-alpha: a few tenths of a percent of offset in the S II
 became a red or cyan cast of the whole sky (set 56: 8 times the sky's own noise).
 
-Linear match (step 3 of the narrow-band types): Siril's, the ``linear_match reference low high`` command and the
-Linear match button of its RGB compositing tool (src/filters/linear_match.c and find_linear_coeff in
+Linear match (step 3 of the broadband types, and of the recipes that ask for it): Siril's, the
+``linear_match reference low high`` command and the Linear match button of its RGB compositing tool (src/filters/linear_match.c and find_linear_coeff in
 src/algos/fitting.c of its source; siril.readthedocs.io, "Commands" and "RGB compositing"). For each channel, the
 pixels where the reference's value lies in [low, high] (and is not 0, nor the channel's) are kept and the channel is
 fitted to the reference by least squares, ``reference = a * channel + b``; the channel becomes ``a * channel + b``.
@@ -154,21 +170,11 @@ SKY_SHARE = 0.2
 #: the side of the blocks whose medians find the sky (px): wide enough that a star or the noise does not move a block's
 #: median, narrow enough that a faint nebula leaves its own blocks
 SKY_BLOCK = 16
-#: the colour strength of a narrow-band combination (``chroma_gain``): the factor on the colour's departure from grey, so
-#: that the nebula's Oklch chroma in Post's default display matches the Hubble teams' own: the same five SHO composites
-#: as the hues (module docstring), the same nebula pixels (sky and stars masked: Oklch lightness 0.25 to 0.85), warm
-#: areas (hue 0-120) pooled median chroma 0.058, blue areas (180-300) 0.050, their mean 0.054. The nebula pixels of our
-#: combinations, rendered with Post's defaults, have a median chroma of 0.026 at gain 1; the gain is the factor
-#: that brings it to 0.054, with gamut_gain keeping the bright core from flattening (measured on the Helix's stored
-#: S-H-O channels at a quarter of the size, nebula = smoothed luminance 3 sigma over the sky: chroma 0.026 at gain 1,
-#: 0.048 at 1.7, 0.054 at 1.9, 0.060 at 2.1; the core disk's colour and texture are those of gain 1).
-HUBBLE_CHROMA = 0.054
-CHROMA_GAIN = 1.9
 #: the top of the display a colour may reach (``gamut_gain``): the brightest channel's shown value
 DISPLAY_CAP = 0.9
 #: the bounds of the linear match (module docstring): Siril's RGB compositing tool's own
 MATCH_LOW, MATCH_HIGH = 1e-7, 0.875
-#: the narrow-band types' reference of the linear match: the H-alpha
+#: the narrow-band types' reference of the equalisation: the H-alpha
 MATCH_REFERENCE = "Ha"
 
 
@@ -241,6 +247,22 @@ def linear_match(ch: np.ndarray, ref: np.ndarray, valid: np.ndarray, low: float 
         raise StageError("the channels cannot be matched: a channel is flat where the reference has data")
     a = float(np.sum((x - mx) * (y - my)) / var)
     return a, float(my - a * mx), n
+
+
+def equalise(ch: np.ndarray, ref: np.ndarray, valid: np.ndarray) -> tuple[float, float]:
+    """(a, b): the equalisation of a channel to a reference (module docstring): ``a * ch + b`` has the reference's
+    median and its median absolute deviation, both measured on the covered pixels: a = mad(ref) / mad(ch),
+    b = median(ref) - a * median(ch)."""
+    m = valid & np.isfinite(ref) & np.isfinite(ch)
+    if int(m.sum()) < 2:
+        raise StageError("the channels cannot be equalised: fewer than 2 pixels where both have data")
+    x, y = ch[m].astype(np.float64), ref[m].astype(np.float64)
+    mx, my = float(np.median(x)), float(np.median(y))
+    sx, sy = float(np.median(np.abs(x - mx))), float(np.median(np.abs(y - my)))
+    if sx <= 0 or sy <= 0:
+        raise StageError("the channels cannot be equalised: a channel is flat (its values have no spread)")
+    a = sy / sx
+    return a, my - a * mx
 
 
 def block_medians(a: np.ndarray, b: int) -> np.ndarray:
@@ -567,17 +589,6 @@ class RecipeParams(CombinationParams):
                      help="The recipe's parameters the user set, by name; the others at the recipe's defaults.")
 
 
-class NarrowbandParams(CombinationParams):
-    lightness: str = P("noise", label="Lightness", choices=["noise", "equal"],
-                       help="How the filters make the lightness: weighted by their noise (the least noisy image), or "
-                            "equally.")
-    smoothing: str = P("auto", label="Colour smoothing", choices=["auto", "radius"],
-                       help="The colour is smoothed, the lightness keeps its detail: Auto takes the radius from the "
-                            "filters' noise (shown in the results); Radius takes the one set below.")
-    radius: float = P(0.0, label="Smoothing radius", ge=0, le=50, step=0.5, unit="px",
-                      help="The colour's smoothing radius when Colour smoothing is Radius; 0: none.")
-
-
 class Combination(Stage):
     """What every combination shares: the recipe's named inputs read, checked to overlap, on the first one's grid; the
     recipe's steps (the skies neutralised, the linear match, the continuum subtraction); the weights; the recipe's
@@ -741,6 +752,17 @@ class Combination(Stage):
                     ctx.log(f"{role} matched to {ref_role} on its pixels between {low:.3g} and "
                             f"{high:.5g}: {a:.4g} x + {b:.3g} ({used} pixels)")
                 skies = neutralise_sky(chans, valid)               # the fits' offsets taken off: the sky at 0 again
+            elif op == "equalise":
+                # each channel brought to the reference's median and spread; the result keeps the reference's scale
+                ref_role = step["reference"]
+                for role in list(chans):
+                    if role == ref_role or (step["channels"] and role not in step["channels"]):
+                        continue
+                    a, b = equalise(chans[role], chans[ref_role], valid)
+                    chans[role] = (chans[role] * np.float32(a) + np.float32(b)).astype(np.float32)
+                    tops[role] = 1.0 / a
+                    ctx.log(f"{role} equalised to {ref_role} (its median and its spread): {a:.4g} x + {b:.3g}")
+                skies = neutralise_sky(chans, valid)               # the offsets taken off: the sky at 0 again
             elif op == "continuum_subtract":
                 line, cont = step["line"], step["continuum"]
                 full = {i["role"]: float(i.get("full_scale") or 1.0) for i in inputs}
@@ -765,8 +787,8 @@ class Combination(Stage):
 
 
 class NarrowbandCombination(Combination):
-    """The narrow-band types (S-H-O, H-O): each filter given a hue, composed as lightness and colour (module
-    docstring, 4-5), their hue parameters ``hue_<port>``."""
+    """The narrow-band types (S-H-O, H-O): each filter equalised to the H-alpha, given a hue, the layers mixed as they
+    are (module docstring, 3-5), their hue parameters ``hue_<port>``."""
 
     narrowband = True
 
@@ -774,7 +796,7 @@ class NarrowbandCombination(Combination):
         return tuple(float(getattr(p, f"hue_{r.lower()}")) for r in self.ports)
 
 
-class SHOParams(NarrowbandParams):
+class SHOParams(CombinationParams):
     hue_sii: float = P(HUBBLE_HUES[0], label="S II hue", ge=0, le=360, step=1, unit="°",
                        help="The colour of the S II filter (on the colour wheel: 0 red, 120 green, 240 blue). The "
                             "default is measured on the Hubble teams' images (red-orange).")
@@ -791,13 +813,15 @@ class CombineSHO(NarrowbandCombination):
     title = "S-H-O"
     kind = "sho"
     ports = ("SII", "Ha", "OIII")
-    description = ("Combines the S II, H-alpha and O III filters into one colour image: each filter a hue, the lightness "
-                   "from the filters weighted by their noise, aligned through their plate solutions.")
+    description = ("Combines the S II, H-alpha and O III filters into one colour image: the S II and the O III "
+                   "equalised to the H-alpha, then each filter a hue.")
     Params = SHOParams
-    version = "7"
+    # 8: each filter equalised to the H-alpha (its median and its spread) and the hues mixed as they are, instead of
+    # the linear match, the lightness weighted by the noise and the colour's strength of 1.9 (module docstring, 5)
+    version = "8"
 
 
-class HOParams(NarrowbandParams):
+class HOParams(CombinationParams):
     hue_ha: float = P(0.0, label="Hα hue", ge=0, le=360, step=1, unit="°",
                       help="The colour of the H-alpha filter (0 red, 120 green, 240 blue).")
     hue_oiii: float = P(180.0, label="O III hue", ge=0, le=360, step=1, unit="°",
@@ -810,9 +834,11 @@ class CombineHO(NarrowbandCombination):
     kind = "ho"
     ports = ("Ha", "OIII")
     description = ("Combines the H-alpha and O III filters (two filters, or a dual-band image's channels) into one "
-                   "colour image: each filter a hue, the lightness from the filters weighted by their noise.")
+                   "colour image: the O III equalised to the H-alpha, then each filter a hue (H-alpha red, O III "
+                   "green and blue).")
     Params = HOParams
-    version = "7"
+    # 8: as the S-H-O block's
+    version = "8"
 
 
 class CombineRGB(Combination):
@@ -901,9 +927,8 @@ def upgraded_workflow(w: dict) -> dict:
     """A workflow of a saved project as it is now (its JSON, changed in place and returned): a Combine channels of the
     former single block becomes the block of its palette's type, its settings carried over (core/project2.from_dict).
     The source keeps its inputs that are ports of the type (in their order: the first stays the reference grid); the
-    palette becomes the hues; the weights and the stored settings go to the block's parameters; a fusion without its
-    stars taken off had no colour smoothing (smoothing Radius, 0), one with them had it from the noise (Auto, the
-    default). Its option A (the channels' starless images, a star layer from the channels or another workflow) is
+    palette becomes the hues; the weights and the stored settings the block still has go to its parameters. Its
+    option A (the channels' starless images, a star layer from the channels or another workflow) is
     made into inputs reading the starless images and a Combine layers layer with its stars side
     (core/project2._stars_of_former_fusions, which runs before this); a Stars/background block already after the
     combination stays."""
@@ -918,8 +943,6 @@ def upgraded_workflow(w: dict) -> dict:
     mine.update(values)
     if f.get("weights"):
         mine["weights"] = {r: v for r, v in f["weights"].items() if r in cls.ports}
-    if cls.narrowband and not f.get("stars"):
-        mine.update(smoothing="radius", radius=0.0)
     if mine:
         params[cls.name] = mine
     w["params"] = params
