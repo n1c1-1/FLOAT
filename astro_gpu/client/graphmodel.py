@@ -410,6 +410,9 @@ class GraphEditing:
             self.p.graph_dropped = ""
             self._keep_format_2()
         ok = super().flush(force)
+        if ok and not self.readonly:                      # what is saved, as an Undo / Redo snapshot says it
+            self.__dict__["_saved_snap"] = tuple(self._snapshot())
+            self.__dict__["_clean_len"] = len(self._undo)
         if graph and ok and self.p.graph_dropped:
             self.log("Saved in the previous format, without its graph: {why}", why=self.p.graph_dropped)
             self.save_note = _("Saved in the previous format: the graph and what the engine runs differ. The details "
@@ -1280,6 +1283,14 @@ class GraphEditing:
             self.revision += 1
         return True
 
+    def edited(self):
+        """An edit: when it is the first since the project was saved or opened and made one step of Undo, that step's
+        snapshot is the project as it is saved (an Undo back to it is no edit left)."""
+        was = self._dirty
+        super().edited()
+        if not was and self._dirty and len(self._undo) == self.__dict__.get("_clean_len", 0) + 1:
+            self.__dict__["_saved_snap"] = tuple(self._undo[-1])
+
     def _set_post_layers(self, layers, source, scope):
         """Post's layers written (by Post itself too): the graph's wires and Combine layers follow them at once."""
         super()._set_post_layers(layers, source, scope)
@@ -1333,6 +1344,7 @@ class GraphEditing:
             except (KeyError, IndexError):
                 pred = None
         files_before = [(s.id, *(tuple(getattr(s, k)) for k in gm.FILE_KINDS)) for s in self.p.sessions]
+        saved = tuple(src[-1]) == self.__dict__.get("_saved_snap")      # the project back as it is saved
         gjson, current, _mode, _none, post, target, description, name, acquisition = src.pop()
         if named is not None:
             name = named
@@ -1372,6 +1384,9 @@ class GraphEditing:
             self.reload_sources()
         self.pending_change = None
         self.edited()
+        if saved and self._dirty:                         # an Undo / Redo back to what is saved: no edit left
+            self._dirty = False
+            self.dirtyChanged.emit(False)
         self._sync(later=True)
         was = json.dumps(self.p.post, sort_keys=True)
         self._prune_post()                                # a layer of a block that is not there any more goes
