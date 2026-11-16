@@ -187,3 +187,82 @@ def test_a_converted_project_draws_its_combine_layers_as_a_fresh_one(qapp, tmp_p
     finally:
         m.close(save=False)
         w.stop()
+
+
+def _layer_rows(W):
+    """{block: (its row's name in the graph, its title on the canvas, its panel's title, its layer's name in Post)} of
+    each Combine layers."""
+    from astro_gpu.client.graphnode import node_title
+    g = W.graph
+    out = {}
+    for r in g.rows:
+        if r.blocks and g.blocks[r.blocks[0]].kind == "combine_layers":
+            b = r.blocks[0]
+            n = W.bm.node(b)
+            lay = W.m.post_layer(n.lid) if n is not None and n.lid is not None else None
+            out[b] = (r.name, W.page.canvas.blocks[b].d["title"], node_title(W.m, n), (lay or {}).get("name"))
+    return out
+
+
+def _reopened_names(W):
+    """The Combine layers rows' names and Post's Combine layers layers' names of the project saved and opened again."""
+    from astro_gpu.client.model import ProjectModel
+    from astro_gpu.core import project2
+    assert W.m.flush()
+    m2 = ProjectModel(project2.load(W.tmp / "P"), W.w)
+    try:
+        assert W.w.wait(120) and m2.ready, m2.error
+        g = m2.stored
+        return ([r.name for r in g.rows if r.blocks and g.blocks[r.blocks[0]].kind == "combine_layers"],
+                sorted(x["name"] for x in m2.post_version()["layers"] if x.get("part") == "combined"))
+    finally:
+        m2.close(save=False)
+
+
+def test_a_second_combine_layers_takes_the_second_name_in_the_graph_too(world):
+    """The hand pass on "SHO + RGB stars": a second Combine layers double-clicked in the palette renamed the template's
+    row "Combine layers 2" and took "Combine layers" for its own row, while its block was titled "Combine layers 2"
+    (the gesture is made on the graph without the rows drawn for Post's layers: the new row took the free name, the
+    one drawn back the next). The one already there keeps its name and the new one is the second, as its block's
+    title says, in the notice too; saved and opened again, the same."""
+    W = world(workflows=(), filters=("SII", "Ha", "OIII", "R", "G", "B"), nights=0)
+    W.template("sho_rgb")
+    W.page.refresh()
+    W.settle()
+    (first, was), = _layer_rows(W).items()
+    assert was[:2] == ("Combine layers", "Combine layers")
+    W.said.clear()
+    W.page.palette.double_click("combine_layers")
+    W.settle()
+    W.page.refresh()
+    W.settle()
+    got = _layer_rows(W)
+    new = next(b for b in got if b != first)
+    assert got[first] == was, got
+    assert got[new][:2] == ("Combine layers 2", "Combine layers 2"), got
+    assert W.said and "“Combine layers 2”" in W.said[-1], W.said
+    assert _reopened_names(W)[0] == ["Combine layers", "Combine layers 2"]
+    W.b.undo()
+    W.settle()
+    assert _layer_rows(W) == {first: was}
+
+
+def test_two_combine_layers_of_a_workflow_have_one_numbering_in_the_graph_the_panel_and_post(world):
+    """Two Combine layers over one workflow's Stars/background: the second is "Combine layers 2" as its row's name in
+    the graph, its block's title, its panel's title and its layer in Post; the first keeps its row's name and its
+    layer's; saved and opened again, the same."""
+    W = world(workflows=("Full",))
+    W.page.refresh()
+    W.settle()
+    (first, was), = _layer_rows(W).items()
+    assert was[:2] == ("Combine layers", "Combine layers")      # (its layer is Post's default one: none stored yet)
+    W.page.palette.double_click("combine_layers")
+    W.settle()
+    W.page.refresh()
+    W.settle()
+    got = _layer_rows(W)
+    new = next(b for b in got if b != first)
+    assert (got[first][0], got[first][1], got[first][3]) == ("Combine layers", "Combine layers", "Full · Combine layers")
+    assert got[new] == ("Combine layers 2", "Combine layers 2", "Combine layers 2", "Full · Combine layers 2"), got
+    assert _reopened_names(W) == (["Combine layers", "Combine layers 2"],
+                                  ["Full · Combine layers", "Full · Combine layers 2"])

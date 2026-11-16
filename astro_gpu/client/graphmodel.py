@@ -768,8 +768,15 @@ class GraphEditing:
             q.blocks[ob] = copy.deepcopy(old_blk)
             q.rows.remove(r)
             back = copy.deepcopy(old_row)
-            if any(x.name == back.name for x in q.rows):  # its name taken meanwhile (a Combine layers the gesture
-                back.name = r.name                        # made): the free one the projection gave it
+            took_name = next((x for x in q.rows if x.name == back.name), None)
+            if took_name is not None and len(took_name.blocks) == 1 and \
+                    getattr(q.blocks.get(took_name.blocks[0]), "kind", "") == "combine_layers":
+                # its name taken meanwhile by a Combine layers the gesture made (made on the graph without this one):
+                # the one already there keeps its name, the new one takes the next ("Combine layers 2"), as its block's
+                # title numbers it
+                took_name.name = r.name
+            elif took_name is not None:                   # by another row: the free one the projection gave it
+                back.name = r.name
             q.rows.insert(min(i, len(q.rows)), back)
             wids = {w.id for w in q.wires}
             by_ends = {(tuple(w.src), tuple(w.dst)): w.id for w in old_wires}
