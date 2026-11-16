@@ -4213,7 +4213,7 @@ class PostPage3(QWidget):
         if asked is None and self._asked is not None and hasattr(self.s, "post_layer"):
             asked = self.s.post_layer(self._asked)
         for name, _pid in coming:
-            lb = label(_("{name}  ·  not computed yet").format(name=tr_name(name)), "dim")
+            lb = label(_("{name}  ·  not computed yet").format(name=names.shown(tr_name(name))), "dim")
             if asked is not None and asked.get("name") == name:     # Open in Post of this layer's block
                 lb.setStyleSheet(f"color: {ACCENT}; font-weight: 600;")
             self.empty_list.addWidget(lb, 0, Qt.AlignHCenter)
