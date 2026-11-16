@@ -403,6 +403,18 @@ def _count(n, kind):
     return M(one if n == 1 else many, n=n)
 
 
+#: one file of each kind, as a sentence about files names it (``files_msg``)
+FILE_ONE = {"lights": "light", "darks": "dark", "flats": "flat", "bias": "bias frame", "flat_darks": "flat dark"}
+
+
+def files_msg(n, kind, one, many, **fields):
+    """A sentence about ``n`` files of a kind, in the singular for one file ("1 flat added", never "1 flats added"):
+    ``one`` names the file by its field {one}, ``many`` the files by {kind}; both take {n} and the other fields."""
+    if n == 1:
+        return M(one, n=n, one=FILE_ONE[kind], **fields)
+    return M(many, n=n, kind=FILE_LABEL[kind].lower(), **fields)
+
+
 def files_of(p, s, kind):
     f = p.blocks[s].files
     if kind in f:

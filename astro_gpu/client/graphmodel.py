@@ -3027,6 +3027,11 @@ class GraphEditing:
         mm.ProjectModel._note_left_out(probe, kind, new, False)
         with self._edit():
             self._night_edit(sid, files={kind: cur + new}, left_out=probe.left_out)
+        # its Undo says what it takes back (Edit > Undo said only "a change of the workflows (Graph)")
+        from ..graphcore.rules import files_msg
+        from .i18n import _ as tr                        # (``_`` is a local name of this function, set further up)
+        self.name_step(say(files_msg(len(new), kind, "{n} {one} added to “{t}”", "{n} {kind} added to “{t}”",
+                                     t=s.name), tr))
         self.reload_sources()
         return len(new)
 
