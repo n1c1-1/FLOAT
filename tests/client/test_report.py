@@ -77,7 +77,7 @@ def text(p) -> str:
 
 def test_the_sizes_are_in_arcseconds_from_the_moffat_fit_and_the_kept_frames(qapp):
     rows = dict(rep.card_rows(data(figures=False), list(range(6))))
-    assert rows["Frames kept"] == "5 / 6"
+    assert rows["Frames kept"] == "5 of 6"
     assert rows["Total exposure"] and rows["Best FWHM"] == '4.2"'           # 2.0 x the 2.09 px of frame 1, the first kept
 
 
@@ -371,7 +371,7 @@ def test_the_session_card_quotes_only_what_was_measured():
     got = {t: (v, h) for v, t, h in rep.highlights(d, "en")}
     assert got["Focal length, measured"][0] == "894 mm" and "242 stars, residual 0.37″" in got["Focal length, measured"][1]
     assert got["Field drift"][0] == "48″" and "17.0″ a minute" in got["Field drift"][1]
-    assert got["Colors offset, corrected"][0] == "0.60 px" and got["Sky noise"][0] == "÷ 14.8"
+    assert got["Color offsets, corrected"][0] == "0.60 px" and got["Sky noise"][0] == "÷ 14.8"
     assert got["Gaia DR3 stars in the field"][0] == "3 203" and got["Transparency changes"][0] == "27 %"
     assert not rep.highlights(rep.ReportData(), "en")                      # nothing measured: nothing quoted
 
@@ -523,3 +523,65 @@ def test_every_value_of_the_french_report_is_in_french(qapp, monkeypatch, tmp_pa
 def test_a_typed_text_is_never_taken_for_a_choice(qapp):
     """A free text that reads like a stored choice (a target named "auto") stays what was typed."""
     assert rep.ReportPage._value("auto") == "auto" and rep.ReportPage._value(rep.Choice("auto")) == "Automatic"
+
+
+LOW = "weight {pct:.1f} % of the best frame's, under the minimum of {min:.0f} %"
+
+
+def _frames(*out):
+    """A stack's frames.json: 12 frames, those of ``out`` left out for [(code, template, args)]."""
+    rows = [{"weight": 1.0, "excluded": ""} for _i in range(12)]
+    for i, (code, template, args) in out:
+        rows[i] = {"weight": 0.0, "excluded": template, "exclusions": [{"code": code, "template": template, "args": args}]}
+    return rows
+
+
+def test_the_frames_left_out_of_the_stack_come_with_the_stacks_own_reasons():
+    one = _frames((3, ("weight", LOW, {"pct": 3.2, "min": 5.0})))
+    assert rep.left_out(one, {}) == [(1, LOW, {"pct": 3.2, "min": 5.0})]
+    # several frames for one cause, each with its own numbers: the stack's summary of that cause, which counts them
+    hit = "{n} frame(s) weigh less than {min:.0f} % of the best one: excluded"
+    two = _frames((3, ("weight", LOW, {"pct": 3.2, "min": 5.0})), (4, ("weight", LOW, {"pct": 1.0, "min": 5.0})),
+                  (7, ("not_aligned", "not aligned", None)), (8, ("not_aligned", "not aligned", None)))
+    auto = {"min_weight": {"value": 0.05, "template": hit, "args": {"n": 2, "min": 5.0}}}
+    assert rep.left_out(two, auto) == [(None, hit, {"n": 2, "min": 5.0}), (2, "not aligned", None)]
+    assert rep.left_out(two, {}) == [(2, "", None), (2, "not aligned", None)]          # no summary kept: the count alone
+    old = [{"weight": 0.0, "excluded": "low transparency"}, {"weight": 2.0, "excluded": ""}]   # a stack made before
+    assert rep.left_out(old, {}) == [(1, "low transparency", None)]
+    assert rep.left_out(_frames(), {}) == []
+
+
+def test_a_count_that_drops_says_why_and_the_frames_kept_are_written_one_way(qapp, monkeypatch):
+    """Lights aligned 436, stacked 435, with no word on the one that went: the Stacking section gives the frames
+    stacked out of the frames there are, and why the others were left out; the frames kept read the same on the first
+    page, in the night's table and in the text to paste."""
+    d = data()
+    d.stacked, d.left_out = (11, 12), rep.left_out(_frames((0, ("weight", LOW, {"pct": 3.2, "min": 5.0}))), {})
+    p = page(monkeypatch, d=d)
+    monkeypatch.setattr(p.steps, "facts", lambda q, key: [(i18n._("Frames stacked") if key == "empilement" else "Value", "11")],
+                        raising=False)
+    t = text(p)
+    stacking = t.split("2. Stacking")[1].split("3. Recipe")[0]
+    assert "11 of 12" in stacking and "Frames left out" in stacking
+    assert "1 (weight 3.2 % of the best frame's, under the minimum of 5 %)" in stacking
+    assert "11/12" not in t and "/ 12" not in t and t.count("11 of 12") >= 2          # Table 1 too
+    assert "Frames kept: 11 of 12" in p.details()
+    i18n.set_language("fr")
+    try:
+        t = text(p)
+        assert "1 (poids de 3,2 % de celui de la meilleure image, sous le minimum de 5 %)" in t and "11 sur 12" in t
+        assert "Poses gardées" not in t and "Images écartées" in t
+        p.lang.setCurrentIndex(p.lang.findData("fr"))
+        assert "Images gardées : 11 sur 12" in p.details()
+    finally:
+        i18n.set_language("en")
+
+
+def test_the_report_writes_color_as_the_interface_does(qapp, monkeypatch):
+    d = data()
+    d.metrics = {"stack": {"channel_offsets": {"applied": True, "stars": 253,
+                                               "centre_px": {"R": [-0.471, 0.289], "B": [0.513, -0.304]}}}}
+    p = page(monkeypatch, d=d)
+    p.s.block_keys = lambda q: ["alignement", "couleur"]
+    t = text(p)
+    assert "Color offsets, corrected" in t and "colour" not in t.lower()
