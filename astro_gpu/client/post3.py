@@ -125,7 +125,7 @@ from .postengine import (
 )
 from .services.render import CPU_DRAFT_LEVEL, DRAFT_LEVEL, HALF_LEVEL, RenderWorker, Request, default_device_pref
 from .viewer import Viewer, to_qimage
-from .widgets import ACCENT, WARN, ElidedLabel, clear, label, single_choice
+from .widgets import ACCENT, WARN, ElidedLabel, clear, label, single_choice, wheel_scrolls
 
 NL = "\n"                                                   # a line break in a tooltip
 
@@ -3210,6 +3210,7 @@ class PostView(QWidget):
         keep = sb.value() if sb is not None and key == getattr(self, "_props_key", None) else 0
         self._props_key = key
         self._build_props()
+        wheel_scrolls(self.psc.widget(), self.psc)       # the wheel scrolls the panel, not the slider under the cursor
         if keep:
             self.psc.widget().adjustSize()
             sb.setValue(keep)
