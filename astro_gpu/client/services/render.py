@@ -7,7 +7,7 @@
   image layers: a stage result's linear image (an array, a file, or a function giving one, registered under its key;
   else found from the key by ``image_resolver``), stretched by the simple rendering (render/simple.py).
 * ``Renderer`` runs a request (a draft while a slider moves, the screen at 1/2 - first the 1/4 when ``refine`` -, a
-  region at full resolution, the before image, the thumbnails) and an export. ``RenderWorker`` is the QThread that owns
+  region at full resolution, the before image, the thumbnails) and an export. ``RenderWorker`` is the thread that owns
   one: requests are coalesced by lane, the newest of a lane wins, and a request being computed is abandoned at its next
   checkpoint (between two layers, or two stages of the engine) when a newer one arrives.
 * The device: a GPU that no run is using, else the CPU; a GPU out-of-memory error renders again on the CPU, with a note.
@@ -29,7 +29,7 @@ from typing import Any
 
 import cv2
 import numpy as np
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QObject, Signal
 
 from ..i18n import _
 from ..postengine import (
@@ -1038,10 +1038,15 @@ def run_export(renderer: Renderer, job: ExportJob, progress, stop=None,
 
 
 # ---------------------------------------------------------------------------------------------- the thread
-class RenderWorker(QThread):
+class RenderWorker(QObject):
     """The thread that renders for Post. Requests are kept by lane (main: draft and half, region, before, thumbs): a
     newer request replaces the one waiting in its lane, and abandons the one being computed in it; a request of a lane
-    that comes first in ``PRIORITY`` abandons the others. Results come back as signals, in the GUI thread."""
+    that comes first in ``PRIORITY`` abandons the others. Results come back as signals, in the GUI thread.
+
+    Its thread is a Python thread, not a QThread: when the program quits, the Qt bindings destroy every Qt object
+    Python holds, and Qt aborts the program when a QThread is destroyed while it runs (an engine still opening when the
+    wait at stopping ended). This object only carries the signals (queued to the GUI thread); destroyed at exit, it
+    refuses them and the thread ends."""
 
     rendered = Signal(object)                    # Result
     failed = Signal(int, str, str)               # seq, kind, text
@@ -1073,7 +1078,18 @@ class RenderWorker(QThread):
         self._images: dict[str, Any] = {}                     # image sources to hand to the source (GUI -> worker)
         self._resolver_img: Callable[[str], Any] | None = None
         self.stats: list[tuple[str, float, float]] = []     # (kind, total ms, engine ms), the last ones
+        self._t = threading.Thread(target=self.run, name="post-render", daemon=True)
         self.start()
+
+    def start(self):
+        self._t.start()
+
+    def isRunning(self) -> bool:                          # noqa: N802 - as QThread's, which callers know
+        return self._t.is_alive()
+
+    def wait(self, timeout_ms: int = 8000) -> bool:
+        self._t.join(timeout_ms / 1000)
+        return not self._t.is_alive()
 
     # ------------------------------------------------------------ GUI thread
     def request(self, req: Request) -> int:
@@ -1148,8 +1164,8 @@ class RenderWorker(QThread):
             self._stopping = True
             self._slots.clear()
             self._cond.notify()
-        if self.isRunning() and QThread.currentThread() is not self:
-            if not super().wait(timeout_ms):
+        if self.isRunning() and threading.current_thread() is not self._t:
+            if not self.wait(timeout_ms):
                 _RETIRED.append(self)
         _RETIRED[:] = [w for w in _RETIRED if w.isRunning()]
 
@@ -1265,12 +1281,15 @@ class RenderWorker(QThread):
 
     def run(self):
         try:
-            self._make()
-        except Exception as e:  # noqa: BLE001
-            self.failed.emit(0, "start", f"{type(e).__name__}: {e}")
-            self.renderer = None
-        try:
+            try:
+                self._make()
+            except Exception as e:  # noqa: BLE001
+                self.failed.emit(0, "start", f"{type(e).__name__}: {e}")
+                self.renderer = None
             self._loop()
+        except RuntimeError as e:                       # the program is quitting: the signals' object is gone
+            if "already deleted" not in str(e):
+                raise
         finally:
             if self.renderer is not None:                       # the engines (gigabytes) go with the page
                 self.renderer.source.service.evict("all")
