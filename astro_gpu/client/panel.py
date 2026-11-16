@@ -1211,7 +1211,10 @@ class Panel(QWidget):
         wired = f.get("inputs") or []
         on_stars = bool((spec or {}).get("narrowband")) and bool(wired) and \
             all(i.get("image") == "stars" for i in wired)
-        hidden = {"values"} | (set() if on_stars else {"stars"})
+        # Balance (how an equalisation brings the filters to their reference): on the combinations it acts on, those
+        # whose recipe equalises, but the one of the stars alone
+        balanced = not on_stars and any(s.get("op") == "equalise" for s in (spec or {}).get("steps") or [])
+        hidden = {"values"} | (set() if on_stars else {"stars"}) | (set() if balanced else {"balance"})
         self.settings(p, "fusion", groups=[(g, [r for r in rs if r.get("name") not in hidden])
                                            for g, rs in self._groups(p, "fusion")])
         self.bv.addSpacing(6)

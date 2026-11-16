@@ -498,6 +498,8 @@ CHOICE_TEXTS: dict[str, str] = {
     "noise": "By noise", "equal": "Equal", "radius": "Radius",
     # the narrow-band combinations' stars alone (stages/combine.STARS)
     "neutral": "Neutral", "palette": "Palette",
+    # the narrow-band combinations' balance of the filters (stages/combine.BALANCES)
+    "sky": "On sky", "signal": "On signal",
     # the Denoise block's methods and adaptation lengths (stages/denoise.py)
     "measured": "Image shape", "instrument": "Instrument PSF", "newton": "Newtonian", "refractor": "Refractor",
     "sct": "Schmidt-Cassegrain", "lens": "Photo lens",

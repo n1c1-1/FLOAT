@@ -80,7 +80,7 @@ def test_four_blocks_on_one_base_class_each_with_its_named_inputs_parameters_and
         spec = c().spec(None)
         assert [s["op"] for s in spec["steps"]] == ["neutralise_sky", "equalise"] and spec["steps"][1]["reference"] == "Ha"
         assert spec["output"]["lightness"] is None and spec["output"]["strength"] == 1.0
-    assert (C.CombineSHO.version, C.CombineHO.version) == ("9", "9")
+    assert (C.CombineSHO.version, C.CombineHO.version) == ("10", "10")
     ho = C.CombineHO.Params()
     assert (ho.hue_ha, ho.hue_oiii) == (0.0, 180.0) and not hasattr(ho, "hue_sii")
     assert not {"hue_r", "lightness", "smoothing"} & set(C.CombineRGB.Params.model_fields)
@@ -262,7 +262,7 @@ def test_the_sho_block_equalises_its_filters_to_the_halpha_and_mixes_its_hues(tm
         _output(tmp_path / r, np.repeat(ch[r][None], 3, 0))
         ins.append({"role": r, "channel": "L", "dir": str(tmp_path / r), "pid": 1})      # one grid: no alignment
     said = []
-    out = _run(tmp_path, C.CombineSHO, C.CombineSHO.Params(inputs=ins), "auto", said)
+    out = _run(tmp_path, C.CombineSHO, C.CombineSHO.Params(inputs=ins, balance="sky"), "auto", said)
     rgb = np.load(out / "drz_full.npy")
     assert abs(float(np.median(rgb[:, :, :40]))) < 0.05 * float(rgb.max())     # the side, away from the nebula
     assert sum("equalised to Ha" in str(x) for x in said) == 2 and "chroma_sigma" not in said[-1]
@@ -275,7 +275,8 @@ def test_the_sho_block_equalises_its_filters_to_the_halpha_and_mixes_its_hues(tm
         want[r] = (want[r] * np.float32(a) + np.float32(b)).astype(np.float32)
     C.neutralise_sky(want, valid)
     assert np.allclose(rgb, C.mix(want, SHO, C.hue_palette(C.HUBBLE_HUES)), atol=1e-6)
-    plain = _run(tmp_path, C.CombineSHO, C.CombineSHO.Params(inputs=ins, hue_sii=0.0, hue_ha=120.0, hue_oiii=240.0), "plain")
+    plain = _run(tmp_path, C.CombineSHO, C.CombineSHO.Params(inputs=ins, balance="sky", hue_sii=0.0, hue_ha=120.0,
+                                                         hue_oiii=240.0), "plain")
     got = np.load(plain / "drz_full.npy")                 # the plain hues: each filter in its own colour
     assert all(np.allclose(got[c], want[r], atol=1e-6) for c, r in enumerate(SHO))
     _split(tmp_path / "SII_split", np.repeat(ch["SII"][None], 3, 0), np.zeros((3,) + ch["SII"].shape))
@@ -695,7 +696,7 @@ def test_a_filter_is_equalised_to_the_reference_s_median_and_spread():
 
 
 def test_the_h_o_block_gives_the_equalised_h_alpha_in_red_and_the_equalised_o_iii_in_green_and_blue(tmp_path):
-    """The H-O default on two starless channels: each sky at 0, the O III equalised to the H-alpha, then the plain
+    """The H-O block, Balance: On sky, on two starless channels: each sky at 0, the O III equalised to the H-alpha, then the plain
     composition: red is the H-alpha, green and blue are the O III. No lightness, no colour strength: the faint
     filter's nebula keeps its green and blue."""
     rng = np.random.default_rng(5)
@@ -710,7 +711,7 @@ def test_the_h_o_block_gives_the_equalised_h_alpha_in_red_and_the_equalised_o_ii
         _output(tmp_path / r, np.repeat(a[None], 3, 0))
         ins.append({"role": r, "channel": "L", "dir": str(tmp_path / r), "pid": 1, "image": "output"})
     said = []
-    out = _run(tmp_path, C.CombineHO, C.CombineHO.Params(inputs=ins), "ho", said)
+    out = _run(tmp_path, C.CombineHO, C.CombineHO.Params(inputs=ins, balance="sky"), "ho", said)
     rgb = np.load(out / "drz_full.npy")
     valid = np.ones((H, W), bool)
     ch = {"Ha": ha.copy(), "OIII": oiii.copy()}
@@ -734,6 +735,113 @@ def test_a_project_s_stored_lightness_and_smoothing_of_a_narrow_band_block_are_i
     for stage in ("combine_sho", "combine_ho"):
         assert {"lightness", "smoothing", "radius"} <= v2.RETIRED[stage]
         assert not {"lightness", "smoothing", "radius"} & set(C.BY_KIND[stage[8:]].Params.model_fields)
+
+
+# ---------------------------------------------------------------------------------------------- the balance on signal
+
+def _nebula_pair(tmp_path, ha_noise, o_noise, o_scale, signal=0.3, uniform=False, H=160, W=192):
+    """Two starless channels of one nebula (a disc, brighter to the right): the H-alpha, and an O III whose nebula is
+    ``o_scale`` times the H-alpha's, each on a sky of its own noise. Returns (the inputs, {port: (H, W)})."""
+    rng = np.random.default_rng(11)
+    yy, xx = np.mgrid[:H, :W].astype(np.float32)
+    neb = signal * ((np.hypot(yy - 80, xx - 96) < 30) * (0.5 + 0.5 * xx / W)).astype(np.float32)
+
+    def noise(sig):
+        if uniform:                                  # a bounded noise: no pixel 3 sigma above the sky
+            return rng.uniform(-sig, sig, (H, W))
+        return rng.normal(0, sig, (H, W))
+    ch = {"Ha": (0.002 + neb + noise(ha_noise)).astype(np.float32),
+          "OIII": (-0.001 + o_scale * neb + noise(o_noise)).astype(np.float32)}
+    ins = []
+    for r, a in ch.items():
+        _split(tmp_path / r, np.repeat(a[None], 3, 0), np.zeros((3, H, W), np.float32))
+        ins.append({"role": r, "channel": "L", "dir": str(tmp_path / r), "pid": 1, "image": "starless"})
+    return ins, ch
+
+
+def _balanced(tmp_path, ins, name, **settings):
+    said = []
+    rgb = np.load(_run(tmp_path, C.CombineHO, C.CombineHO.Params(inputs=ins, **settings), name, said) / "drz_full.npy")
+    return rgb, said
+
+
+def _inside():
+    yy, xx = np.mgrid[:160, :192]
+    return np.hypot(yy - 80, xx - 96) < 25
+
+
+def test_the_balance_on_signal_keeps_a_filter_of_the_same_signal_at_its_level_whatever_its_sky(tmp_path):
+    """Balance, On signal by default: a filter with the H-alpha's signal and a sky four times quieter keeps its
+    level (the gain that fits its signal onto the H-alpha's, 1, is under the one that would bring its sky noise to
+    the H-alpha's, 4). On sky, the equalisation of the medians and spreads, raises it by its quiet sky."""
+    assert C.CombineHO.Params().balance == C.CombineSHO.Params().balance == "signal"
+    assert C.CombineHO.Params.model_fields["balance"].json_schema_extra["choices"] == ["sky", "signal"]
+    ins, ch = _nebula_pair(tmp_path, 0.004, 0.001, 1.0)
+    rgb, said = _balanced(tmp_path, ins, "signal")
+    inside = _inside()
+    assert float(rgb[1][inside].mean()) == pytest.approx(float(rgb[0][inside].mean()), rel=0.06)
+    assert any("OIII balanced on the signal of Ha" in str(s) for s in said)
+    assert not any("equalised" in str(s) for s in said)
+    assert abs(float(np.median(rgb[1][:, :40]))) < 2e-4                   # the sky at 0, as before
+    sky, _ = _balanced(tmp_path, ins, "sky", balance="sky")
+    assert float(sky[1][inside].mean()) > 2 * float(sky[0][inside].mean())
+
+
+def test_the_balance_on_signal_does_not_raise_a_weak_filter_beyond_its_sky_noise(tmp_path):
+    """A filter 14 times weaker than the H-alpha with the same sky noise: the signal asks for 14, which would raise
+    its noise 14 times over the H-alpha's; the gain is the one that makes the two sky noises equal (about 1)."""
+    ins, ch = _nebula_pair(tmp_path, 0.002, 0.002, 1 / 14)
+    rgb, said = _balanced(tmp_path, ins, "weak")
+    want = {r: v.copy() for r, v in ch.items()}
+    skies = C.neutralise_sky(want, np.ones(rgb.shape[1:], bool))
+    gain = skies["Ha"][1] / skies["OIII"][1]                              # the sky noise measured on the sky
+    assert 0.9 < gain < 1.1
+    assert np.allclose(rgb[1], want["OIII"] * np.float32(gain), atol=2e-4)
+    inside = _inside()
+    assert float(rgb[1][inside].mean()) < 0.1 * float(rgb[0][inside].mean())
+    assert float(rgb[1][:, :40].std()) == pytest.approx(float(rgb[0][:, :40].std()), rel=0.1)
+
+
+def test_the_balance_on_signal_falls_back_to_the_sky_noise_and_may_lower_a_filter(tmp_path):
+    """No H-alpha pixel 3 sigma above its sky: nothing to fit, the gain is the sky noises' (here under 1: a filter
+    noisier than the H-alpha is lowered). The same when the fit is not positive (a filter the reverse of the
+    H-alpha)."""
+    ins, ch = _nebula_pair(tmp_path, 0.001, 0.004, 1.0, signal=0.0, uniform=True)
+    rgb, said = _balanced(tmp_path, ins, "empty")
+    want = {r: v.copy() for r, v in ch.items()}
+    skies = C.neutralise_sky(want, np.ones(rgb.shape[1:], bool))
+    gain = skies["Ha"][1] / skies["OIII"][1]
+    assert 0.2 < gain < 0.3
+    assert np.allclose(rgb[1], want["OIII"] * np.float32(gain), atol=1e-5)
+    assert any("no signal to fit" in str(s) for s in said)
+    valid = np.ones((160, 192), bool)
+    _ins, ch = _nebula_pair(tmp_path / "rev", 0.002, 0.002, -1.0)
+    assert C.signal_gain(ch["OIII"] + 0.001, ch["Ha"] - 0.002, valid, 0.002, 1.0) is None
+    assert C.signal_gain((ch["Ha"] - 0.002) / 3, ch["Ha"] - 0.002, valid, 0.002, 1.0) == pytest.approx(3, rel=1e-3)
+
+
+def test_the_balance_reads_in_french_and_leaves_the_keys_of_a_project_that_stored_nothing(tmp_path, nights):  # noqa: F811
+    assert texts.param_label("combine_sho", "balance", "fr") == "Équilibre"
+    assert texts.param_label("combine_ho", "balance", "en") == "Balance"
+    assert texts.choice_label("sky", "en") == "On sky" and texts.choice_label("signal", "en") == "On signal"
+    assert texts.choice_label("sky", "fr") == "Sur le ciel" and texts.choice_label("signal", "fr") == "Sur le signal"
+    h = texts.param_help("combine_recipe", "balance", "fr")
+    assert h and h != texts.param_help("combine_recipe", "balance")
+    # a project saved before the setting stores nothing for it: its combination's key is the one it had (the default
+    # is no part of a key), so its result stays, said of an earlier version; On sky is another key
+    p, o = _channels(tmp_path, nights, FULL)
+    add_align_on(p, o, 1, "stars")
+    f = p.add_workflow("H-O", CLASSIC)
+    f.source = {"fusion": {"type": "ho", "inputs": [{"pid": 1, "role": "Ha", "channel": "L"},
+                                                    {"pid": o.id, "role": "OIII", "channel": "L"}]}}
+    assert "balance" not in Keys(p).key_params(f.id, "combine_ho")
+    before = Keys(p).key(f.id, "combine_ho")
+    f.params["combine_ho"] = {"balance": "signal"}
+    assert Keys(p).key(f.id, "combine_ho") == before
+    f.params["combine_ho"] = {"balance": "sky"}
+    assert Keys(p).key(f.id, "combine_ho") != before
+    assert (C.CombineHO.version, C.CombineSHO.version, C.CombineRecipe.version) == ("10", "10", "3")
+    assert (C.CombineHO.key_label, C.CombineSHO.key_label, C.CombineRecipe.key_label) == ("9", "9", "2")
 
 
 # ---------------------------------------------------------------------------------------------- the stars alone

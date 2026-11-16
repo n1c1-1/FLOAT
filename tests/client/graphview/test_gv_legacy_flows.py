@@ -348,8 +348,10 @@ def test_the_stars_setting_is_shown_on_the_combination_of_the_stars_alone(world)
         return labels, lists
     labels, lists = panel(W.view("H-O · Stars"))
     assert "Stars" in labels and ["Neutral", "Palette"] in lists and "Hα hue" in labels
+    assert "Balance" not in labels                        # the stars alone are always balanced on the sky
     labels, lists = panel(W.view("H-O"))
     assert "Stars" not in labels and ["Neutral", "Palette"] not in lists and "Hα hue" in labels
+    assert "Balance" in labels and ["On sky", "On signal"] in lists      # the nebula's: how its filters are balanced
 
 
 def test_filters_make_one_workflow_each_and_their_combinations(world):

@@ -60,7 +60,9 @@ are those of the bulk of the pixels: the stars, a few percent of the field, do n
 on one scale with or without their stars. The linear match was the narrow-band types' until their version 8; it is
 a least squares fit, which the brightest pixels drive: on images with their stars the stars' ratio set the scale and
 the O III of a supernova remnant was lowered (0.77) where its nebula asked for 3.8; on starless images of a small
-nebula a weak S II was multiplied by 14 and its sky's residue covered the field. The equalisation's offset moves the
+nebula a weak S II was multiplied by 14 and its sky's residue covered the field (the setting Balance, On signal,
+the default since the blocks' version 10, fits the signal with that gain capped by the sky noises' ratio:
+``signal_gain`` and ``Combination.steps``; On sky is the equalisation described here). The equalisation's offset moves the
 sky, which is taken back to 0 after it.
 
 The S-H-O default hues are measured, not chosen (issue #163): five public SHO composites of the Hubble teams
@@ -190,6 +192,12 @@ MATCH_LOW, MATCH_HIGH = 1e-7, 0.875
 MATCH_REFERENCE = "Ha"
 #: what a narrow-band combination makes of the stars alone (module docstring): neutral, or through the palette's hues
 STARS = ("neutral", "palette")
+#: how a combination's ``equalise`` step brings a filter to its reference (module docstring, Balance): on the sky
+#: (the medians and the median absolute deviations), or on the signal (the default)
+BALANCES = ("sky", "signal")
+#: the balance on the signal: the reference's pixels fitted are those above its sky by SIGNAL_SIGMA times its sky
+#: noise, up to SIGNAL_HIGH of its full scale
+SIGNAL_SIGMA, SIGNAL_HIGH = 3.0, 0.92
 
 
 # ---------------------------------------------------------------------------------------------- the shared steps
@@ -277,6 +285,18 @@ def equalise(ch: np.ndarray, ref: np.ndarray, valid: np.ndarray) -> tuple[float,
         raise StageError("the channels cannot be equalised: a channel is flat (its values have no spread)")
     a = sy / sx
     return a, my - a * mx
+
+
+def signal_gain(ch: np.ndarray, ref: np.ndarray, valid: np.ndarray, noise_ref: float, full: float = 1.0) -> float | None:
+    """The gain that fits a channel's signal onto the reference's (both with their sky at 0): the slope of the least
+    squares fit ``ref = a * ch + b`` (``linear_match``) on the pixels where the reference is above its sky by
+    SIGNAL_SIGMA times its sky noise (and under SIGNAL_HIGH of its full scale). None when no such pixels can be
+    fitted or the fit is not positive: the channel does not show the reference's signal."""
+    try:
+        a, _b, _n = linear_match(ch, ref, valid, SIGNAL_SIGMA * noise_ref, SIGNAL_HIGH * full)
+    except StageError:
+        return None
+    return a if np.isfinite(a) and a > 0 else None
 
 
 def block_medians(a: np.ndarray, b: int) -> np.ndarray:
@@ -614,6 +634,21 @@ def _stars_setting():
 
 class NarrowbandParams(CombinationParams):
     stars: str = _stars_setting()
+    #: its default is no part of a key (core/store): a project saved before the setting keeps its results, said of an
+    #: earlier version
+    balance: str = P(BALANCES[1], label="Balance", choices=list(BALANCES),
+                     help="How each filter is brought to the H-alpha before the hues. On signal: the gain that fits "
+                          "the filter's nebula onto the H-alpha's, where the H-alpha is 3 sigma above its sky, but "
+                          "never more than the gain that makes the filter's sky noise equal to the H-alpha's: a weak "
+                          "filter is not raised into its noise. On sky: the filter's median and spread brought to the "
+                          "H-alpha's, whatever its signal. The stars alone are always balanced on the sky.")
+
+    @field_validator("balance")
+    @classmethod
+    def _known_balance(cls, v: str) -> str:
+        if v not in BALANCES:
+            raise ValueError(f"balance {v!r} is not one of {BALANCES}")
+        return v
 
     @field_validator("stars")
     @classmethod
@@ -663,6 +698,15 @@ class Combination(Stage):
         """True when the combination gives neutral stars (module docstring): a narrow-band recipe, every input
         reading its stars alone, and the setting Stars left at Neutral."""
         return bool(spec["narrowband"]) and getattr(p, "stars", STARS[1]) == STARS[0] and             bool(inputs) and all(i.get("image") == "stars" for i in inputs)
+
+    @staticmethod
+    def balance_of(p, inputs: list[dict]) -> str:
+        """How the recipe's ``equalise`` steps balance the channels: the block's setting Balance (the types without
+        it: on the sky); a combination of the stars alone is always balanced on the sky (the stars have no nebula to
+        fit, and theirs is untouched by the setting)."""
+        if inputs and all(i.get("image") == "stars" for i in inputs):
+            return BALANCES[0]
+        return getattr(p, "balance", BALANCES[0])
 
     def saturation_of(self, inputs: list[dict], shape: tuple[int, int],
                       ports: tuple[str, ...] | None = None) -> np.ndarray | None:
@@ -729,7 +773,7 @@ class Combination(Stage):
         if not valid_all.any():
             raise StageError("the channels do not overlap: no pixel where every one has data")
         tops = {r: 1.0 for r in chans}
-        skies = self.steps(ctx, spec, inputs, chans, valid_all, tops)
+        skies = self.steps(ctx, spec, inputs, chans, valid_all, tops, self.balance_of(p, inputs))
         level = 1.0
         for role in list(chans):
             wgt = float(p.weights.get(role, 1.0))
@@ -772,9 +816,10 @@ class Combination(Stage):
         ctx.preview("fusion", np.clip((v - lo) / max(hi - lo, 1e-6), 0, 1) ** 0.5)
 
     def steps(self, ctx: Context, spec: dict, inputs: list[dict], chans: dict[str, np.ndarray], valid: np.ndarray,
-              tops: dict[str, float]) -> dict[str, tuple[float, float]]:
+              tops: dict[str, float], balance: str = BALANCES[0]) -> dict[str, tuple[float, float]]:
         """The recipe's steps on the channels, in place (``tops``: each channel's scale, 1 over the factor it was
-        multiplied by). Returns the last neutralisation's {role: (level, noise)}."""
+        multiplied by). ``balance``: what an ``equalise`` step does (``BALANCES``). Returns the last neutralisation's
+        {role: (level, noise)}."""
         skies: dict[str, tuple[float, float]] = {}
         first = True
         for step in spec["steps"]:
@@ -805,6 +850,30 @@ class Combination(Stage):
             elif op == "equalise":
                 # each channel brought to the reference's median and spread; the result keeps the reference's scale
                 ref_role = step["reference"]
+                if balance == BALANCES[1]:
+                    # on the signal: the smaller of the gain that fits the channel's signal onto the reference's and
+                    # of the one that makes their sky noises equal (the sky's noise, measured on the common sky by
+                    # the neutralisation: ``sky_level``); no offset, the skies are at 0
+                    skies = skies or neutralise_sky(chans, valid)
+                    noise_ref = skies[ref_role][1]
+                    full = float(next(i for i in inputs if i["role"] == ref_role).get("full_scale") or 1.0)
+                    for role in list(chans):
+                        if role == ref_role or (step["channels"] and role not in step["channels"]):
+                            continue
+                        by_noise = noise_ref / skies[role][1] if skies[role][1] > 0 and noise_ref > 0 else None
+                        by_signal = signal_gain(chans[role], chans[ref_role], valid, noise_ref, full)
+                        if by_noise is None and by_signal is None:
+                            raise StageError(f"the {role} channel cannot be balanced on the {ref_role} one: no signal "
+                                             "to fit and no sky noise to measure")
+                        a = min(g for g in (by_signal, by_noise) if g is not None)
+                        chans[role] = (chans[role] * np.float32(a)).astype(np.float32)
+                        tops[role] = 1.0 / a
+                        ctx.log(f"{role} balanced on the signal of {ref_role}: x {a:.4g} ("
+                                + (f"its signal asks for {by_signal:.4g}" if by_signal is not None else
+                                   "no signal to fit")
+                                + (f", its sky noise allows {by_noise:.4g})" if by_noise is not None else ")"))
+                    skies = neutralise_sky(chans, valid)
+                    continue
                 for role in list(chans):
                     if role == ref_role or (step["channels"] and role not in step["channels"]):
                         continue
@@ -869,7 +938,8 @@ class CombineSHO(NarrowbandCombination):
     # 8: each filter equalised to the H-alpha (its median and its spread) and the hues mixed as they are, instead of
     # the linear match, the lightness weighted by the noise and the colour's strength of 1.9 (module docstring, 5)
     # 9: the stars alone come out neutral (the setting Stars), no longer through the hues
-    version = "9"
+    # 10: the filters balanced on the signal by default (the setting Balance; On sky: the equalisation as before)
+    version = "10"
     key_label = "9"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
 
@@ -889,8 +959,8 @@ class CombineHO(NarrowbandCombination):
                    "colour image: the O III equalised to the H-alpha, then each filter a hue (H-alpha red, O III "
                    "green and blue).")
     Params = HOParams
-    # 8, 9: as the S-H-O block's
-    version = "9"
+    # 8, 9, 10: as the S-H-O block's
+    version = "10"
     key_label = "9"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
 
@@ -936,7 +1006,8 @@ class CombineRecipe(Combination):
     description = "Combines the inputs as the combination's recipe says (resources/combinations)."
     Params = RecipeParams
     # 2: a narrow-band recipe's stars alone come out neutral (the setting Stars), no longer through its hues
-    version = "2"
+    # 3: a recipe's equalisation balances on the signal by default (the setting Balance)
+    version = "3"
     key_label = "2"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
     def spec(self, p) -> dict:
