@@ -258,7 +258,7 @@ _METRIC_ROWS: list[tuple] = [
     # catalogs
     ("stars_deep", "Field stars (Gaia)", "", "d", "Bright Gaia stars of the field (G < 16)."),
     ("stars_faint", "Stars to model", "", "d", "Fainter Gaia stars, drawn from their magnitude."),
-    ("xp_spectra", "XP spectra", "", "d", "Gaia spectra downloaded for the colour calibration."),
+    ("xp_spectra", "XP spectra", "", "d", "Gaia spectra read for the colour calibration."),
     ("bright_stars_added", "Bright stars added", "", "d", "Hipparcos numbers of bright stars added to the Gaia list.", ", "),
     # surveys
     ("survey", "Survey", "", "", "The H-alpha survey used as a reference."),
