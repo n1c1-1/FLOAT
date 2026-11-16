@@ -436,6 +436,8 @@ class Main(QMainWindow):
         act(v, _("Inspect"), lambda: self.set_mode(1), "Ctrl+2", enabled=has, role="inspect")
         act(v, _("Post"), lambda: self.set_mode(2), "Ctrl+3", enabled=has, role="layers")
         act(v, _("Report"), lambda: self.set_mode(3), "Ctrl+4", enabled=has)
+        self.a_frames = act(v, _("Open frames"), self.open_frames, enabled=has, role="inspect")   # the session panel's
+        v.aboutToShow.connect(self._frames_action)       # greyed when no session is chosen, with why
         v.addSeparator()
         self.a_hide = act(v, _("Hide panels") + "\tTab", lambda: self.toggle_panels("hidden"), None, True, enabled=has)
         self.a_hide_r = act(v, _("Hide right") + "\t" + QKeySequence("Shift+Tab").toString(QKeySequence.NativeText),
@@ -497,6 +499,29 @@ class Main(QMainWindow):
             self.a_here.setToolTip(_(why) if why else _("Run what the selected block needs, up to it"))
         except RuntimeError:                         # the menus are being rebuilt
             pass
+
+    def _frames_refusal(self) -> str:
+        """Why View > Open frames cannot open anything now, '' when a session is chosen."""
+        step = getattr(self.s, "sel_step", "") or ""
+        chosen = self.project is not None and (step == "sources" or step.startswith("session"))
+        return "" if chosen else _("Choose a session first")
+
+    def _frames_action(self):
+        try:
+            why = self._frames_refusal()
+            self.a_frames.setEnabled(not why)
+            self.a_frames.setToolTip(why or _("Opens its files in Inspect: add them there, kind by kind, and review "
+                                              "its frames"))
+        except RuntimeError:                         # the menus are being rebuilt
+            pass
+
+    def open_frames(self):
+        """View > Open frames: the chosen session's files in Inspect, as its panel's button."""
+        why = self._frames_refusal()
+        if why:
+            self.flash(why)
+        else:
+            self.set_mode(1)
 
     # ------------------------------------------------------------ small screens (issue #44)
     def resizeEvent(self, e):                                        # noqa: N802 - Qt's name
