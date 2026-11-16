@@ -639,5 +639,7 @@
  "median of the values at each pixel, no rejection": "médiane des valeurs en chaque pixel, sans rejet",
  "pixel maximum: the brightest value at each pixel, no rejection": "maximum par pixel : la valeur la plus brillante en chaque pixel, sans rejet",
  "pixel minimum: the darkest value at each pixel, no rejection": "minimum par pixel : la valeur la plus sombre en chaque pixel, sans rejet",
- "sum of the values at each pixel, no rejection": "somme des valeurs en chaque pixel, sans rejet"
+ "sum of the values at each pixel, no rejection": "somme des valeurs en chaque pixel, sans rejet",
+ "No darks: the master bias (or the camera's black level) stands for the master dark; the hot pixels are found by the bad pixel map instead.": "Pas de darks : le master offset (ou le niveau de noir de l'appareil) tient lieu de master dark ; les pixels chauds sont trouvés par la carte des pixels défectueux.",
+ "No flats: vignetting and dust are not corrected.": "Pas de flats : le vignettage et les poussières ne sont pas corrigés."
 }

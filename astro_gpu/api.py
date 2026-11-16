@@ -2479,6 +2479,15 @@ def _num(v: Any) -> float | None:
     return x if x == x else None
 
 
+#: the notes of ``calibration_frames`` for a kind of frame none of the sessions has (English; the interface shows them
+#: in its language, client/locale): no darks, the hot pixels are still found (the log counts them), by the bad pixel map
+CALIBRATION_NOTES = {
+    "darks": "No darks: the master bias (or the camera's black level) stands for the master dark; the hot pixels are "
+             "found by the bad pixel map instead.",
+    "flats": "No flats: vignetting and dust are not corrected.",
+}
+
+
 def calibration_frames(p: Project2, session_id: int, wf: int | Workflow | None = None, which: str = "current", *,
                        require_done: bool = True,
                        progress: Callable[[float, str], None] | None = None) -> CalibrationReport:
@@ -2610,9 +2619,7 @@ def calibration_frames(p: Project2, session_id: int, wf: int | Workflow | None =
         rep.notes.append(f"The masters are made from the frames of all {len(proj.sessions)} sessions together (one "
                          "master dark, one master flat).")
     src = inv_frames or {k: getattr(proj.inputs(), k) for k in KINDS}
-    for kind, text in (("darks", "No darks: the master bias (or the camera's black level) stands for the master "
-                                 "dark; hot pixels are left to the bad pixel map."),
-                       ("flats", "No flats: vignetting and dust are not corrected.")):
+    for kind, text in CALIBRATION_NOTES.items():
         if d is not None and not src.get(kind):
             rep.notes.append(text)
         elif src.get(kind) and not files[kind] and d is not None:
