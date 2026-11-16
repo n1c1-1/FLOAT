@@ -606,3 +606,18 @@ def test_the_noise_reduction_is_one_number_wherever_it_is_given(qapp, monkeypatc
             assert not [x for x in rep.re.findall(r"9[.,]\d+", t) if x != written]
         finally:
             i18n.set_language("en")
+
+
+def test_a_line_with_nothing_to_say_is_not_printed(qapp, monkeypatch):
+    """The appendix printed Target name with nothing beside it; the shooting details nobody entered (instrument, mount,
+    filter, location, date) have no line either, on the first page as in the text to paste, and no date is made up
+    from the camera's clock."""
+    d = data()
+    d.settings = [("Astrometry", "Target name", "", False), ("Astrometry", "Focal length", 272.0, True),
+                  ("Astrometry", "Note", "", True)]
+    d.metrics = {"inventory": {"first_time": "2013-01-01T00:10:00", "last_time": "2013-01-01T02:10:00"}}
+    p = page(monkeypatch, d=d)
+    t = text(p)
+    assert "Target name" not in t and "Note" not in t and "Focal length" in t
+    for word in ("Instrument", "Mount", "Filter", "Location", "Date", "2013"):
+        assert word not in t and word not in p.details()

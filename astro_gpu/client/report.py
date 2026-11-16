@@ -1133,7 +1133,7 @@ class ReportPage(QWidget):
         names = dict(BLOCKS)
         chain = " &rarr; ".join(html.escape(_(names[k])) for k in keys if k in names)
         rows = [(f"{html.escape(_(block))} · {html.escape(_(name))}", self._value(value))
-                for block, name, value, changed in d.settings if changed]
+                for block, name, value, changed in d.settings if changed and value != ""]
         return (f"<h2>{n}. {_('Recipe')}</h2><p>{chain}</p>" +
                 (_table(rows) if rows else f"<p>{_('All the settings are the defaults.')}</p>"))
 
@@ -1143,7 +1143,7 @@ class ReportPage(QWidget):
         other = "(drizzle)" if classic else "(Classic)"
         by: dict = {}
         for block, name, value, _changed in d.settings:
-            if other not in name:
+            if other not in name and value != "":        # a setting left empty has no line
                 by.setdefault(block, []).append((html.escape(_(name)), self._value(value)))
         out = []
         for i, (block, rows) in enumerate(by.items()):
