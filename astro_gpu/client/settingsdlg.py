@@ -487,18 +487,33 @@ class SettingsDialog(QDialog):
             if profile is None:
                 continue
             ops = [r for r in (profile.get("ops") or {}).values() if r.get("stage") == stage]
+            lost = st.lost_operations(profile, stage)       # a wrong result or a failure: what leaves the card
             if (profile.get("stages") or {}).get(stage) == "cpu":
-                short = {"wrong": _("wrong result"), "slower": _("slower"), "error": _("card error")}
-                bad = next((r for r in ops if r["verdict"] not in ("ok", "absent")), {})
+                short = {"wrong": _("wrong result"), "error": _("card error")}
+                bad = lost[0] if lost else {}
                 lab.setText(_("CPU · {why}").format(why=short.get(bad.get("verdict"), _("card error"))))
                 lab.setToolTip(_(st.stage_reason(profile, stage)) + (f" ({bad.get('error')})" if bad.get("error") else ""))
                 continue
+            if lost:                                        # the Stack block: only the stacks that use these operations
+                names = {"drizzle": _("Bayer drizzle"), "sampling": _("Drizzle rejection"), "classic": _("Classic")}
+                lab.setText(_("GPU · {what} on CPU").format(what=", ".join(names.get(r["op"], r["op"]) for r in lost)))
+                lab.setToolTip("\n".join(
+                    [_("{what}: {why}").format(what=names.get(r["op"], r["op"]), why=_(st.REASONS[r["verdict"]]))
+                     + (f" ({r.get('error')})" if r.get("error") else "") for r in lost]
+                    + [_("The stacks that use it run on the processor")]))
+                continue
+            # the times are information: the block runs on the card, faster or slower in this short test
             timed = [r for r in ops if r.get("card_s") and r.get("cpu_s")]
             if timed:
                 ratio = min(r["cpu_s"] / r["card_s"] for r in timed)
-                lab.setText(_("GPU · {n} x faster").format(n=number(ratio, 1)))
-                lab.setToolTip(_("Card {card} s · processor {cpu} s").format(
-                    card=number(sum(r["card_s"] for r in timed), 2), cpu=number(sum(r["cpu_s"] for r in timed), 2)))
+                times = _("Card {card} s · processor {cpu} s").format(
+                    card=number(sum(r["card_s"] for r in timed), 2), cpu=number(sum(r["cpu_s"] for r in timed), 2))
+                if ratio >= 1:
+                    lab.setText(_("GPU · {n} x faster").format(n=number(ratio, 1)))
+                    lab.setToolTip(times)
+                else:
+                    lab.setText(_("GPU · {n} x slower").format(n=number(1 / ratio, 1)))
+                    lab.setToolTip(times + "\n" + _("A short test: this block still runs on the card"))
             else:
                 lab.setText(_("GPU · not tested"))
 

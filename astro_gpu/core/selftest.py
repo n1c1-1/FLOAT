@@ -2,9 +2,11 @@
 
 For each heavy operation of the engine (the drizzle deposit and the sampling of the prediction of the stack, the Denoise
 network on one tile, the Stars network on one tile, the Post render), on a small synthetic input: the operation is run
-on the card and on the CPU, the results are compared within a tolerance and both are timed. A stage keeps the card only
-if every operation of it gives the right result and is faster there. Any exception, out-of-memory included, sends the
-stage to the CPU. A stage that keeps the card runs exactly as it does without the self-test: nothing changes for it.
+on the card and on the CPU, the results are compared within a tolerance and both are timed. A chosen card computes:
+a stage leaves it only when an operation it uses gives a wrong result there, or fails there (any exception,
+out-of-memory included). The times are information, shown in Settings: a card timed slower keeps its stages, since a
+test of seconds does not tell the speed of a real run (a 436-frame drizzle stack timed slower on the card ran there in
+13.6 min, 25.7 min on the CPU). A stage that keeps the card runs exactly as it does without the self-test.
 
 The operations run in a child process of their own (``python -m astro_gpu.core.selftest <device>``, one JSON line per
 operation): a card that crashes or hangs takes the child with it, never the program, and the operations it did not
@@ -33,8 +35,9 @@ from . import devices
 
 #: the version of the test, saved with its result: raised whenever what is measured or how it is judged changes, so
 #: that a result saved by an older test is not used and the card is tested again. 1: no number saved (the first test).
-#: 2: the stacks timed on what a real stack repeats, each way of stacking judged on its own operations.
-TEST_VERSION = 2
+#: 2: the stacks timed on what a real stack repeats, each way of stacking judged on its own operations. 3: a card
+#: timed slower keeps its blocks.
+TEST_VERSION = 3
 #: the operations tested, in order, and the stage each one decides (Stack has three)
 OPERATIONS = {"drizzle": "stack", "sampling": "stack", "classic": "stack", "denoise": "denoise", "stars": "star_removal",
               "post": "post"}
@@ -48,12 +51,12 @@ OP_TIMEOUT = 300.0
 #: the free share of the card's memory below which it is busy with something else: a test launched by itself waits
 BUSY_FREE_SHARE = 0.7
 
-#: the verdicts: the card is kept for 'ok' and for 'absent' (a model this installation does not have: the stage
-#: cannot run anywhere, and that says nothing about the card)
+#: the verdicts: the card is kept for 'ok', for 'absent' (a model this installation does not have: the stage
+#: cannot run anywhere, and that says nothing about the card) and for 'slower' (the times are information, shown in
+#: Settings: a test of seconds does not tell the speed of a real run); it is lost for 'wrong' and 'error'
 OK, WRONG, SLOWER, ERROR, ABSENT = "ok", "wrong", "slower", "error", "absent"
-#: the reason, in English (translated in Settings and in the run window, client/locale)
-REASONS = {WRONG: "the result was wrong on the card", SLOWER: "the card was slower than the processor",
-           ERROR: "the card failed"}
+#: why a block leaves the card, in English (translated in Settings and in the run window, client/locale)
+REASONS = {WRONG: "the result was wrong on the card", ERROR: "the card failed"}
 STAGE_ON_CPU = "the card test sends this block to the processor: {why}"
 
 
@@ -322,12 +325,14 @@ STACK_WAYS = (("drizzle", "own"), ("drizzle", "by_count"), ("drizzle", "integrat
 
 
 def _lost(r: dict) -> bool:
-    return r.get("verdict") not in (OK, ABSENT)
+    """Whether an operation's result takes the card away from what uses it: a wrong result, or a failure. Not a card
+    timed slower (see the module's docstring)."""
+    return r.get("verdict") in (WRONG, ERROR)
 
 
 def judge(results: list[dict]) -> dict[str, str]:
-    """{stage: 'card' | 'cpu'}: the card is kept for a stage when every operation of it says so (a stage not tested
-    keeps it, as it would without the self-test). The Stack block has several ways of stacking, each with its own
+    """{stage: 'card' | 'cpu'}: the card is kept for a stage unless an operation of it gave a wrong result or failed
+    there (a stage not tested keeps it, as it would without the self-test; so does one timed slower). The Stack block has several ways of stacking, each with its own
     operations (``stack_operations``): an operation that lost sends to the CPU the stacks that use it and no other
     (``cpu_jobs``, ``stack_why``); the block is 'cpu' here only when no way of stacking keeps the card."""
     out = {s: "card" for s in STAGES}
@@ -364,10 +369,13 @@ def stage_reason(profile: dict, stage: str) -> str:
     """Why a stage went to the CPU (English, one of REASONS), '' when it kept the card."""
     if (profile.get("stages") or {}).get(stage) != "cpu":
         return ""
-    for r in (profile.get("ops") or {}).values():
-        if r.get("stage") == stage and r.get("verdict") not in (OK, ABSENT):
-            return REASONS.get(r.get("verdict"), REASONS[ERROR])
-    return REASONS[ERROR]
+    return next((REASONS[r["verdict"]] for r in lost_operations(profile, stage)), REASONS[ERROR])
+
+
+def lost_operations(profile: dict | None, stage: str) -> list[dict]:
+    """The results of the operations of ``stage`` that gave a wrong result or failed on the card, in the test's order."""
+    ops = (profile or {}).get("ops") or {}
+    return [ops[n] for n, s in OPERATIONS.items() if s == stage and n in ops and _lost(ops[n])]
 
 
 def stage_on_cpu(profiles: dict | None, device: str | None, stage: str) -> bool:
@@ -384,8 +392,7 @@ def cpu_jobs(profile: dict | None, plan: Any) -> dict[str, Any]:
         return {}
     from .workflow import base
     out: dict[str, Any] = {}
-    lost = {n: STAGE_ON_CPU.format(why=REASONS.get(r.get("verdict"), REASONS[ERROR]))
-            for n, r in (profile.get("ops") or {}).items() if r.get("stage") == "stack" and _lost(r)}
+    lost = {r["op"]: STAGE_ON_CPU.format(why=REASONS[r["verdict"]]) for r in lost_operations(profile, "stack")}
     for j in plan.jobs:
         if base(j.stage) == "stack":
             if lost:
