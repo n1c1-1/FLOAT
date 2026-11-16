@@ -206,16 +206,25 @@ def hue_palette(hues: tuple[float, ...]) -> list[list[float]]:
     """The matrix of filters given hues (Rector et al. 2007): each channel tinted with its hue (degrees on the HSV
     colour wheel, its colour fully saturated, its brightest component 1), the layers added; each column then weighted
     so that equal channels give a grey (1, 1, 1): the colour balance, which keeps each hue as it is. Three hues solve
-    it exactly; two (H-O) by least squares, exact when the hues face each other. Hues whose balance needs a weight of
-    0 or less (no grey between them) are refused."""
+    it exactly; two (H-O) by least squares, exact when the hues face each other. Hues with no grey between them (a
+    weight of 0 or less) are not balanced: the colourised layers are added as they are, in Rector et al.'s order
+    (the colour balance of the whole is then the user's, in Post), scaled so that equal channels reach 1 in their
+    strongest colour (``hues_neutral`` says which case it is)."""
     cols = np.array([colorsys.hsv_to_rgb((h % 360) / 360, 1.0, 1.0) for h in hues]).T
     try:
         w = np.linalg.solve(cols, np.ones(3)) if len(hues) == 3 else np.linalg.lstsq(cols, np.ones(3), rcond=None)[0]
     except np.linalg.LinAlgError:                      # e.g. three hues without blue
         w = np.zeros(len(hues))
     if not (w > 0).all():
-        raise ValueError(f"the hues {hues} do not balance to a grey")
+        w = np.full(len(hues), 1.0 / float(cols.sum(axis=1).max()))
     return (cols * w[None]).round(6).tolist()
+
+
+def hues_neutral(hues: tuple[float, ...]) -> bool:
+    """True when equal channels give a grey through these hues (``hue_palette`` balances them), False when the hues
+    have no grey between them and the layers are only added."""
+    m = np.array(hue_palette(hues))
+    return bool(np.allclose(m.sum(axis=1), 1.0, atol=1e-4))
 
 
 #: the ports' names as the interface writes them

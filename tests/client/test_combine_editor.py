@@ -232,9 +232,10 @@ def test_the_preview_is_the_stage_result_through_the_output_s_default_render(ed)
     wait(ed)
     assert float(np.abs(ed.result - expected(ed, ch)).max()) < 1e-5
     shown = ed.result
-    ed.set_hue("OIII", 230.0)                          # hues the stage refuses: said over the image, the last kept
+    ed.set_hue("OIII", 230.0)                          # hues with no grey between them: mixed all the same
     wait(ed)
-    assert ed.result is shown and "do not balance to a grey" in ed.error and ed._ui["cover"].isVisibleTo(ed.page)
+    assert ed.result is not shown and not ed.error
+    assert float(np.abs(ed.result - expected(ed, ch)).max()) < 1e-5
 
 
 # ---------------------------------------------------------------------------------------------- the draft
