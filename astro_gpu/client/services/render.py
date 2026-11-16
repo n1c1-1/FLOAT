@@ -877,12 +877,14 @@ def _slug(name: str) -> str:
 
 
 def history_of(job: ExportJob, renderer: Renderer, canvas: Canvas | None) -> dict:
-    """The sidecar of an export: the composition and what rendered it."""
+    """The sidecar of an export: the composition and what rendered it. ``canvas``: the picture written (the crop's,
+    when there is one; the box in the whole composition is ``crop``)."""
     from datetime import datetime
     src = renderer.source
     return {"project": job.project_name, "created": datetime.now().isoformat(timespec="seconds"),
             "layers": job.layers, "format": job.format, "size": job.size, "device": renderer.device,
             "canvas": None if canvas is None else {"width": canvas.W, "height": canvas.H, "origin": list(canvas.origin)},
+            "crop": [int(v) for v in job.crop] if job.crop else None,
             "workflows": {str(lay["pid"]) + (f" {lay['part']}" if lay.get("part") else ""):
                           {"folder": str(src.folder(source_id(lay)).path), "outdated": src.previous(source_id(lay))}
                           for lay in job.layers if lay["kind"] == "workflow" and src.available(source_id(lay))},
@@ -992,7 +994,7 @@ def run_export(renderer: Renderer, job: ExportJob, progress, stop=None,
     sol = renderer.wcs_of(ref_pid) if ref_pid is not None and getattr(renderer, "wcs_of", None) else None
     wcs = export_header(sol) if job.wcs else None
     meta = {"wcs": wcs, "facts": job.facts, "origin": shown.origin, "wf": ref_pid if job.wcs else None,
-            "history": history_of(job, renderer, canvas) if job.history else None}
+            "history": history_of(job, renderer, shown) if job.history else None}
     rgb = np.ascontiguousarray(cut(np.moveaxis(comp.rgb, -1, 0)))
     show = dict(job.annotations or {})
     pictures = [f for f in formats if f != "fits32f"]

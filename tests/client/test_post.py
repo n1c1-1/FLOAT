@@ -3306,6 +3306,20 @@ def test_the_export_writes_the_crop_with_its_origin(exporting):
     assert got == [((3, 60, 100), (canvas.origin[0] + 10, canvas.origin[1] + 20))]
 
 
+def test_the_history_beside_a_cropped_export_says_the_picture_written_and_its_crop(exporting):
+    """The tutorials' film: the history.json beside an export recorded the canvas before the crop."""
+    from astro_gpu.client.services.render import ExportJob, run_export
+    s = exporting
+    assert s.settle()
+    got = []
+    canvas = s.worker.renderer.composer.canvas_of(snapshot(s.view.layers))
+    run_export(s.worker.renderer, ExportJob(layers=snapshot(s.view.layers), folder=str(s.out), name="c",
+                                            crop=(10, 20, 110, 80), history=True),
+               lambda f, m: None, writer=lambda rgb, out, opts, meta: got.append(meta["history"]) or [])
+    assert got[0]["canvas"] == {"width": 100, "height": 60, "origin": [canvas.origin[0] + 10, canvas.origin[1] + 20]}
+    assert got[0]["crop"] == [10, 20, 110, 80]
+
+
 def test_show_mask_is_greyed_without_a_mask(post):
     v = post.view
     lay = v.layer(v.sel[0])
