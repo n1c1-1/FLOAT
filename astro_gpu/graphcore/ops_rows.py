@@ -384,7 +384,7 @@ def op_rename_row(q, row, name):
     if name != r.name and name in {x.name for x in q.rows}:
         raise Refusal(M("“{_name}” already exists", _name=name))
     r.name = name
-    return Out(M("renamed “{_name}”", _name=name), row)
+    return Out(M("renamed “{_name}”", _name=name))       # no focus: what was chosen (a block of the row) stays chosen
 
 
 def op_rename_night(q, night, name):

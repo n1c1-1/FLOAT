@@ -52,6 +52,31 @@ def test_enter_in_the_name_typed_on_a_block_only_confirms_the_name(world):
     assert [q.name for q in W.m.paths] == ["Wide field"] and opened == []
 
 
+@pytest.mark.parametrize("key", ["empilement", "fond", "sources"])
+def test_renaming_the_workflow_keeps_the_block_chosen(world, key):
+    """F2 on a chosen block renamed its workflow and chose the workflow's row: the block lost its outline and the
+    panel went to another block; Undo and Redo of the rename left it there."""
+    W = world()
+    cv = W.page.canvas
+    st = W.block(key) if key != "sources" else W.kinds("session")[0]
+    W.g.click(st)
+    W.settle(2)
+    shown = W.page.panel.node.key
+    old = W.m.paths[0].name
+    W.g.key("F2", target=cv)
+    cv.name_edit.setText("Wide field")
+    W.g.key("Return", target=cv.name_edit)
+    W.settle()
+    assert [q.name for q in W.m.paths] == ["Wide field"]
+    assert W.b.selected == st and W.page.panel.node.key == shown
+    W.b.undo()
+    W.settle()
+    assert [q.name for q in W.m.paths] == [old] and W.b.selected == st and W.page.panel.node.key == shown
+    W.b.redo()
+    W.settle()
+    assert [q.name for q in W.m.paths] == ["Wide field"] and W.b.selected == st and W.page.panel.node.key == shown
+
+
 def test_the_bridge_takes_an_operations_own_name(world):
     W = world()
     r = W.b.act("rename_row", row=W.graph.rows[0].id, name="Deep")
