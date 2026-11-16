@@ -680,6 +680,23 @@ def test_compare_shows_two_workflows_side_by_side_in_sync(win):
     v.set_compare_mode("split")
 
 
+def _inspect_modules() -> tuple[str, ...]:
+    """The modules of Inspect, relative to astro_gpu/client without .py: the views, and the service's module with every
+    module split from it (services/inspect*.py, read from the folder so that a later split stays covered)."""
+    services = ROOT / "astro_gpu" / "client" / "services"
+    split = tuple(f"services/{f.stem}" for f in sorted(services.glob("inspect*.py")))
+    assert "services/inspect" in split
+    return ("steps", "tune", "charts", "frames", "sources") + split
+
+
+def _watched_files() -> set[str]:
+    """The file names whose GUI-thread disk access the guard below reports: the modules of Inspect and the viewer's
+    (client/imageview*.py, every module split from it included)."""
+    viewer = {f.name for f in (ROOT / "astro_gpu" / "client").glob("imageview*.py")}
+    assert "imageview.py" in viewer
+    return {Path(m).name + ".py" for m in _inspect_modules()} | viewer
+
+
 def test_no_disk_access_in_the_gui_thread(win):
     """A debug hook counts what the GUI thread opens, lists or writes under the project and its raws: the views ask the
     worker (and the viewer's threads) for every image, table, thumbnail and scan."""
@@ -722,9 +739,8 @@ def test_no_disk_access_in_the_gui_thread(win):
         win.frames.show_page(0)
         settle(win)
         where = list(w.where)
-    mine = [(path, fr[-3:]) for path, fr in where
-            if fr and fr[-1].split(":")[0] in ("tune.py", "frames.py", "sources.py", "steps.py", "charts.py", "inspect.py",
-                                                "imageview.py")]
+    watched = _watched_files()
+    mine = [(path, fr[-3:]) for path, fr in where if fr and fr[-1].split(":")[0] in watched]
     assert mine == [], mine[:5]
     assert sv.requests > req0                                            # the worker did the reading
 
@@ -1611,7 +1627,7 @@ def test_the_modules_of_inspect_import_only_the_client_libraries():
     allowed = {"__future__", "os", "sys", "threading", "collections", "dataclasses", "pathlib", "typing", "weakref",
                "numpy", "PySide6", "PIL", "astropy", "datetime", "json", "html", "warnings", "traceback", "re", "time",
                "functools"}
-    for name in ("steps", "tune", "charts", "frames", "sources", "services/inspect"):
+    for name in _inspect_modules():
         src = (root / f"{name}.py").read_text(encoding="utf-8")
         for bad in ("alt2", "alt3", "data.json", "datatext", "Demo", "import project", "from project", "from steps",
                     "from model import", "DATA ", "mockup"):
@@ -1628,7 +1644,7 @@ def _shown_texts() -> dict[str, list[str]]:
     fixed tables."""
     root = ROOT / "astro_gpu" / "client"
     found: dict[str, list[str]] = {}
-    for name in ("steps", "tune", "charts", "frames", "sources", "services/inspect"):
+    for name in _inspect_modules():
         tree = ast.parse((root / f"{name}.py").read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_" and node.args:
