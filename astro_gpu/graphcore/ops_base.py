@@ -70,7 +70,13 @@ def free_name(q, base, first_plain=True):
 
 
 def session_name(q):
-    names, n = _names(q), 1
+    """A new session's default name: "Session n", n the number the session gets in the project (its id: the
+    sessions it has, those no stack draws too, and one more), or the next number no name has (the second session of
+    a workflow whose first one had a name of its own was "Session 1")."""
+    blocks = [b for b in q.blocks.values() if b.kind == "session"]
+    n = max([x["sid"] for x in q.nights] + [b.sid for b in blocks if b.sid is not None] + [0]) + \
+        sum(1 for b in blocks if b.sid is None) + 1          # those not numbered yet take the next ids (the compile)
+    names = _names(q) | {x.get("name") for x in q.nights}
     while name_of("Session {n}", n=n) in names:
         n += 1
     return name_of("Session {n}", n=n)
