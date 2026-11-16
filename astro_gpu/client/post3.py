@@ -39,6 +39,7 @@ import copy
 import json
 import math
 import re
+from decimal import Decimal
 
 import numpy as np
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, QTimer, Signal
@@ -60,6 +61,7 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QStyle,
     QStyleOptionFrame,
+    QStyleOptionSlider,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -304,10 +306,15 @@ def pix(a: np.ndarray, w=TW, h=TH) -> QPixmap:
     return QPixmap.fromImage(to_qimage(a))
 
 
+def decimals(step) -> int:
+    """How many decimals a slider's step has (0.005: 3; 1 or none: 0)."""
+    return max(0, -Decimal(str(step)).as_tuple().exponent) if step else 0
+
+
 def fmt(v, step):
     if step is not None and step >= 1:
         return f"{v:.0f}"
-    return dec(f"{v:.2f}".rstrip("0").rstrip("."))
+    return dec(f"{v:.{max(2, decimals(step))}f}".rstrip("0").rstrip("."))       # (a step of 0.005 shows 0.205)
 
 
 # ======================================================================== a continuous slider
@@ -333,9 +340,14 @@ class Step(list):
 
 class ContSlider(QWidget):
     """A slider that glides: `moved` while dragging (draft render), `done` when let go (full render). Double-click
-    on the slider or on its name: back to the default (the reference photo editor's, issue #16)."""
+    on the slider or on its name: back to the default (the reference photo editor's, issue #16).
+
+    With a ``step`` it counts in steps: every value it takes is ``lo`` plus a whole number of steps, an arrow key moves
+    it by one step (so a range with more values than the rail has pixels is still set exactly), and the value it is let
+    go on is the one of its last move. Without one it counts in thousandths of its range."""
     moved = Signal(float)
     done = Signal(float)
+    GLIDE = 1000                                          # the positions of a slider without a step
 
     def __init__(self, name, lo, hi, value, default, ends=None, unit="", step=None, show=None, parent=None):
         super().__init__(parent)
@@ -355,7 +367,9 @@ class ContSlider(QWidget):
         row = QHBoxLayout()
         row.setSpacing(6)
         self.s = QSlider(Qt.Horizontal)
-        self.s.setRange(0, 1000)
+        # (a step that does not divide the range: the last whole step under ``hi`` is the end)
+        self._n = max(1, math.floor((hi - lo) / step + 1e-6)) if step else self.GLIDE
+        self.s.setRange(0, self._n)
         if ends:
             a, b = label(ends[0], "small"), label(ends[1], "small")
             row.addWidget(a)
@@ -391,23 +405,31 @@ class ContSlider(QWidget):
         return super().eventFilter(obj, e)
 
     def _to_click(self, x: float):
-        """A click on the rail: the slider goes where it is clicked (issue #72); on the handle, nothing."""
-        length = self.s.style().pixelMetric(QStyle.PM_SliderLength, None, self.s)
-        span = max(1, self.s.width() - length)
-        at = QStyle.sliderPositionFromValue(0, 1000, self.s.value(), span)
-        if abs(x - (at + length / 2)) > length / 2:
-            self.s.setSliderDown(True)                       # one drag: `done` when let go
-            self.s.setValue(QStyle.sliderValueFromPosition(0, 1000, int(round(x - length / 2)), span))
+        """A click on the rail: the slider goes where it is clicked (issue #72); on the handle, nothing. The rail and
+        the handle are measured as the slider's own drag measures them (its style's): the handle comes under the
+        pointer, and the drag that follows starts from the value of the click (measured otherwise, the first pixel of
+        that drag moved the value by a notch)."""
+        opt = QStyleOptionSlider()
+        self.s.initStyleOption(opt)
+        style = self.s.style()
+        handle = style.subControlRect(QStyle.CC_Slider, opt, QStyle.SC_SliderHandle, self.s)
+        if handle.left() <= x <= handle.right():
+            return
+        rail = style.subControlRect(QStyle.CC_Slider, opt, QStyle.SC_SliderGroove, self.s)
+        span = max(1, rail.right() - handle.width() + 1 - rail.x())
+        at = int(round(x - handle.width() / 2 - rail.x()))
+        self.s.setSliderDown(True)                           # one drag: `done` when let go
+        self.s.setValue(QStyle.sliderValueFromPosition(0, self._n, min(max(at, 0), span), span, opt.upsideDown))
 
     def value(self) -> float:
-        x = self.lo + (self.hi - self.lo) * self.s.value() / 1000
         if self.step:
-            x = round(x / self.step) * self.step
-        return x
+            return round(self.lo + self.s.value() * self.step, decimals(self.step) + decimals(self.lo))
+        return self.lo + (self.hi - self.lo) * self.s.value() / self._n
 
     def set_value(self, x):
         self.s.blockSignals(True)
-        self.s.setValue(int(round(1000 * (x - self.lo) / ((self.hi - self.lo) or 1))))
+        self.s.setValue(int(round((x - self.lo) / self.step if self.step else
+                                  self._n * (x - self.lo) / ((self.hi - self.lo) or 1))))
         self.s.blockSignals(False)
         self._label()
 

@@ -12,7 +12,7 @@ from test_one_undo import _set_rbf, _settle, qapp, win  # noqa: F401
 
 from astro_gpu.client.post3 import ContSlider
 
-PLACES = (100, 450, 700)                 # of the slider, in thousandths of its length
+PLACES = (0.1, 0.45, 0.7)                # of the slider, as shares of its length
 
 
 def _post(win):
@@ -30,7 +30,7 @@ def _post(win):
     values = []
     for at in PLACES:
         sl = next(c for c in view.psc.widget().findChildren(ContSlider) if c.name.text() == "Amount")
-        sl.s.setValue(at)                                             # a click on its rail: moved and let go
+        sl.s.setValue(round(at * sl.s.maximum()))                     # a click on its rail: moved and let go
         _settle(win, 2)
         values.append(_amount(view))
     assert len({first, *values}) == 4 and len(view.undo) >= 3
