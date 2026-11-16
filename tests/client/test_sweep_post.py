@@ -66,11 +66,11 @@ def test_sweep_post(qapp, tmp_path_factory, oracle, lang):
                     do = dict(gestures(w)).get(gname) if w is not None else None
                     if do is None:
                         break
-                    n, m, before = len(s._undo), len(page.undo), definition(s)
+                    n, m, before = len(s._undo), len(page.view.undo), definition(s)
                     S.drive(f"{name}/{gname}", do)
                     k = 0
-                    while len(page.undo) > m and k < 20:     # Post's own steps, as the window undoes them on Post
-                        page.do_undo()
+                    while len(page.view.undo) > m and k < 20:     # Post's own steps, as the window undoes them on Post
+                        page.view.do_undo()
                         settle(win, 2)
                         k += 1
                     while len(s._undo) > n and k < 40:
