@@ -102,8 +102,9 @@ def test_the_parameters_of_a_recipe_run_on_its_own_stage_are_set_in_the_panel(wi
     d = tmp_path / "combinations"
     shutil.copytree(recipes.FOLDER, d)
     f = d / "ho.toml"
-    f.write_text(f.read_text(encoding="utf-8").replace("version = 1", "version = 2").replace("max = 50", "max = 40"),
-                 encoding="utf-8")
+    text = f.read_text(encoding="utf-8")
+    assert text.count("version = 2") == 1 and text.count('max = 360\nlabel = "O III hue"') == 1
+    f.write_text(text.replace("version = 2", "version = 3").replace('max = 360\nlabel = "O III hue"', 'max = 300\nlabel = "O III hue"'), encoding="utf-8")
     monkeypatch.setattr(combos, "FOLDER", d)
     combos.refresh()
     try:
@@ -113,13 +114,13 @@ def test_the_parameters_of_a_recipe_run_on_its_own_stage_are_set_in_the_panel(wi
         next(x for x in win.graph.panel.findChildren(QPushButton) if x.text() == "Update recipe").click()
         settle(win, 3)
         assert combos.stage(win.s.stored.blocks[b]) == recipes.RECIPE_STAGE
-        assert "Recipe" in _panel_texts(win) and "Smoothing radius" in _panel_texts(win)
-        spins = [x for x in win.graph.panel.findChildren(QDoubleSpinBox) if x.maximum() == 40.0]
+        assert "Recipe" in _panel_texts(win) and "O III hue" in _panel_texts(win)
+        spins = [x for x in win.graph.panel.findChildren(QDoubleSpinBox) if x.maximum() == 300.0]
         assert len(spins) == 1
-        spins[0].setValue(12.0)
+        spins[0].setValue(190.0)
         spins[0].editingFinished.emit()
         settle(win, 3)
-        assert win.s.stored.blocks[b].params[recipes.RECIPE_STAGE]["values"]["radius"] == 12.0
+        assert win.s.stored.blocks[b].params[recipes.RECIPE_STAGE]["values"]["hue_oiii"] == 190.0
     finally:
         monkeypatch.setattr(combos, "FOLDER", None)
         combos.refresh()

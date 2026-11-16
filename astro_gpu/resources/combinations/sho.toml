@@ -1,11 +1,15 @@
 # S-H-O: the S II, H-alpha and O III filters of a monochrome camera combined into one colour image.
 # Every setting is explained in _example.toml; the methods and their sources in stages/combine.py.
-# This recipe is the S-H-O block as it was before recipes: projects that use it keep their results.
+#
+# Version 2: the composition of the narrow-band filters as it is established. The S II and the O III are equalised to
+# the H-alpha while linear, then each filter is given its hue and the layers are added as they are. Version 1 fitted
+# them to the H-alpha by a linear match (a weak S II multiplied by 14 on a small nebula: its sky's residue painted the
+# field orange), took the lightness from the filters weighted by their noise and raised the colour's strength to 1.9.
 
 id = "sho"
 name = "S-H-O"
-version = 1
-description = "Combines the S II, H-alpha and O III filters into one colour image: each filter a hue, the lightness from the filters weighted by their noise."
+version = 2
+description = "Combines the S II, H-alpha and O III filters into one colour image: the S II and the O III equalised to the H-alpha, then each filter a hue."
 # a palette of narrow-band filters: each line is its own channel (Post's H-alpha slider is off)
 narrowband = true
 
@@ -51,47 +55,19 @@ max = 360
 label = "O III hue"
 help = "The colour of the O III filter (0 red, 120 green, 240 blue)."
 
-[parameters.lightness]
-default = "noise"
-choices = ["noise", "equal"]
-label = "Lightness"
-help = "How the filters make the lightness: weighted by their noise, or equally."
-
-[parameters.smoothing]
-default = "auto"
-choices = ["auto", "radius"]
-label = "Colour smoothing"
-help = "Auto takes the colour's smoothing radius from the filters' noise; Radius takes the one set."
-
-[parameters.radius]
-default = 0.0
-min = 0
-max = 50
-label = "Smoothing radius"
-help = "The colour's smoothing radius when Colour smoothing is Radius; 0: none."
-
 # Rector, Levay, Frattare, English & Pu'uohau-Pummill 2007 (AJ 133, 598): each filter's background set to 0 first.
 [[steps]]
 op = "neutralise_sky"
 
-# Siril's linear match (src/filters/linear_match.c), every filter to the H-alpha, the strongest signal (siril.org/faq:
-# "pick the Ha stack as reference"); bounds of Siril's RGB compositing tool, fractions of the full scale.
+# Every filter brought to the H-alpha's median and median absolute deviation (the formula of Siril's H-alpha and
+# O III extraction script and of its RGB composition tutorial); the H-alpha, the strongest signal, is the reference
+# (siril.org/faq: "pick the Ha stack as reference").
 [[steps]]
-op = "linear_match"
+op = "equalise"
 reference = "Ha"
-low = 1e-7
-high = 0.875
 
 [output]
 channels = ["SII", "Ha", "OIII"]
-# Rector et al. 2007: each filter given a hue, the layers added, balanced so that equal filters give a grey
+# Rector et al. 2007: each filter given a hue, the layers added, balanced so that equal filters give a grey; mixed
+# as they are (no lightness of our own, no colour strength)
 hues = ["$hue_sii", "$hue_ha", "$hue_oiii"]
-# composed as lightness and colour (the LRGB composition, R. Gendler, "Lessons from the Masters", 2013)
-lightness = "channels"
-weighting = "$lightness"
-# the colour smoothed where the noisiest filter's grain would show (K. T. Mullen 1985, J. Physiol. 359, 381)
-smoothing = "$smoothing"
-radius = "$radius"
-# the nebula's chroma brought to the Hubble composites' median (0.054 in Oklch), under the display's gamut
-# (Morovic & Luo 2001, chroma clipping at constant lightness)
-strength = 1.9

@@ -37,10 +37,11 @@ RETIRED: dict[str, frozenset[str]] = {
     "denoise": frozenset({"iterations", "patch", "batch", "learning_rate", "reuse_model", "mono_adapt"}),
     # the deep catalogue and the faint stars of the star model (the Stars block before its network)
     "catalogs": frozenset({"deep_stars", "g_deep", "g_faint", "max_faint"}),
-    # the combinations' balance is Siril's linear match (stages/combine.py), not a percentile: to the H-alpha for the
-    # narrow-band ones, to the red (RGB) or the luminance (LRGB) for the broadband ones
-    "combine_sho": frozenset({"percentile"}),
-    "combine_ho": frozenset({"percentile"}),
+    # the combinations' balance is not a percentile (stages/combine.py): the narrow-band ones equalise their filters
+    # to the H-alpha, the broadband ones use Siril's linear match to the red (RGB) or the luminance (LRGB); the
+    # narrow-band ones mix their hues as they are: no lightness of the filters, no colour smoothing
+    "combine_sho": frozenset({"percentile", "lightness", "smoothing", "radius"}),
+    "combine_ho": frozenset({"percentile", "lightness", "smoothing", "radius"}),
     "combine_rgb": frozenset({"percentile"}),
     "combine_lrgb": frozenset({"percentile"}),
 }

@@ -703,10 +703,7 @@
      "combine_sho": {
       "hue_ha": 31.4,
       "hue_oiii": 202.2,
-      "hue_sii": 15.5,
-      "lightness": "noise",
-      "radius": 0.0,
-      "smoothing": "auto"
+      "hue_sii": 15.5
      }
     },
     "pause": false,
@@ -714,7 +711,7 @@
     "sid": null,
     "source": {
      "recipe": {
-      "description": "Combines the S II, H-alpha and O III filters into one colour image: each filter a hue, the lightness from the filters weighted by their noise.",
+      "description": "Combines the S II, H-alpha and O III filters into one colour image: the S II and the O III equalised to the H-alpha, then each filter a hue.",
       "id": "sho",
       "inputs": [
        {
@@ -749,13 +746,13 @@
         "$hue_ha",
         "$hue_oiii"
        ],
-       "lightness": "channels",
+       "lightness": null,
        "matrix": null,
-       "radius": "$radius",
+       "radius": null,
        "saturation": [],
-       "smoothing": "$smoothing",
-       "strength": 1.9,
-       "weighting": "$lightness"
+       "smoothing": null,
+       "strength": 1.0,
+       "weighting": null
       },
       "parameters": {
        "hue_ha": {
@@ -778,31 +775,6 @@
         "label": "S II hue",
         "max": 360.0,
         "min": 0.0
-       },
-       "lightness": {
-        "choices": [
-         "noise",
-         "equal"
-        ],
-        "default": "noise",
-        "help": "How the filters make the lightness: weighted by their noise, or equally.",
-        "label": "Lightness"
-       },
-       "radius": {
-        "default": 0.0,
-        "help": "The colour's smoothing radius when Colour smoothing is Radius; 0: none.",
-        "label": "Smoothing radius",
-        "max": 50.0,
-        "min": 0.0
-       },
-       "smoothing": {
-        "choices": [
-         "auto",
-         "radius"
-        ],
-        "default": "auto",
-        "help": "Auto takes the colour's smoothing radius from the filters' noise; Radius takes the one set.",
-        "label": "Colour smoothing"
        }
       },
       "steps": [
@@ -811,13 +783,11 @@
        },
        {
         "channels": [],
-        "high": 0.875,
-        "low": 1e-07,
-        "op": "linear_match",
+        "op": "equalise",
         "reference": "Ha"
        }
       ],
-      "version": 1
+      "version": 2
      }
     }
    },

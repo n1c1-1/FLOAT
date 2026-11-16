@@ -37,6 +37,12 @@ def _run(tmp_path, cls, params, name="out", said=None):
     return out
 
 
+def _grain(img: np.ndarray, sigma: float = 0.002, seed: int = 1) -> np.ndarray:
+    """A (3, H, W) image with a sky noise, the same in its three channels (a monochrome image stays grey): a real
+    image has one, and the equalisation of the narrow-band types measures the channels' spread."""
+    return img + np.random.default_rng(seed).normal(0, sigma, img.shape[-2:]).astype(np.float32)[None]
+
+
 def _hue(rgb) -> float:
     return 360 * colorsys.rgb_to_hsv(*(float(v) for v in rgb))[0]
 
@@ -63,13 +69,18 @@ def test_four_blocks_on_one_base_class_each_with_its_named_inputs_parameters_and
         assert issubclass(c, C.Combination) and c.name == f"combine_{c.kind}" and c.version
         assert "run" not in vars(c)                                     # only its combine: the rest is shared
         assert {"inputs", "weights"} <= set(c.Params.model_fields)
-        assert "percentile" not in c.Params.model_fields             # every type is balanced by Siril's linear match
+        assert "percentile" not in c.Params.model_fields             # no type is balanced by a percentile
         assert c.match_reference in c.ports
     assert [c.match_reference for c in C.COMBINATIONS] == ["Ha", "Ha", "R", "L"]   # Hα; Siril's top layer
     assert [c.saturation_ports for c in C.COMBINATIONS] == [(), (), ("R", "G", "B"), ("R", "G", "B")]
     sho = C.CombineSHO.Params()
     assert (sho.hue_sii, sho.hue_ha, sho.hue_oiii) == C.HUBBLE_HUES        # the measured hues, by default
-    assert sho.lightness == "noise" and sho.smoothing == "auto" and sho.radius == 0
+    for c in (C.CombineSHO, C.CombineHO):               # the narrow-band types: their hues, nothing of a lightness
+        assert not {"lightness", "smoothing", "radius", "strength"} & set(c.Params.model_fields)
+        spec = c().spec(None)
+        assert [s["op"] for s in spec["steps"]] == ["neutralise_sky", "equalise"] and spec["steps"][1]["reference"] == "Ha"
+        assert spec["output"]["lightness"] is None and spec["output"]["strength"] == 1.0
+    assert (C.CombineSHO.version, C.CombineHO.version) == ("8", "8")
     ho = C.CombineHO.Params()
     assert (ho.hue_ha, ho.hue_oiii) == (0.0, 180.0) and not hasattr(ho, "hue_sii")
     assert not {"hue_r", "lightness", "smoothing"} & set(C.CombineRGB.Params.model_fields)
@@ -97,15 +108,15 @@ def test_the_hues_give_each_filter_its_colour_and_keep_grey_grey():
 
 def test_a_combination_aligns_nothing_itself_and_needs_its_ports_and_one_grid(tmp_path):
     H, W = 60, 80
-    ha = np.repeat((10 * _star(H, W, 40, 30))[None], 3, 0) + 0.01
-    oiii = np.repeat((5 * _star(H, W, 40, 30))[None], 3, 0) + 0.01     # the same star, on the same grid
+    ha = _grain(np.repeat((10 * _star(H, W, 40, 30))[None], 3, 0) + 0.01)
+    oiii = _grain(np.repeat((5 * _star(H, W, 40, 30))[None], 3, 0) + 0.01, seed=2)   # the same star, on the same grid
     _output(tmp_path / "ha", ha, _wcs([41.0, 31.0]))
     _output(tmp_path / "oiii", oiii, _wcs([44.0, 29.0]))
     ins = [{"role": "Ha", "channel": "L", "pid": 1, "dir": str(tmp_path / "ha"), "wcs": str(tmp_path / "ha" / "wcs.fits"),
             "grid": ["g", 1]},
            {"role": "OIII", "channel": "L", "pid": 2, "dir": str(tmp_path / "oiii"),
             "wcs": str(tmp_path / "oiii" / "wcs.fits"), "grid": ["g", 1]}]
-    out = _run(tmp_path, C.CombineHO, C.CombineHO.Params(inputs=ins, smoothing="radius"))
+    out = _run(tmp_path, C.CombineHO, C.CombineHO.Params(inputs=ins))
     rgb = np.load(out / "drz_full.npy")
     assert rgb.shape == (3, H, W)
     for c in range(3):                                    # every channel peaks on the star
@@ -239,9 +250,10 @@ def test_the_neutralised_sky_keeps_a_neutral_nebula_and_lrgb_stays_grey():
     assert float(np.abs(rgb[:, far]).max()) < 0.25 * float(rgb.max())         # no speckle where the sky is noise
 
 
-def test_the_sho_block_composes_its_parameters_and_shows_the_smoothing_it_used(tmp_path):
-    """The stage removes the skies (Output preparation told); Auto smoothing is in its results (chroma_sigma), a
-    radius set by hand is that radius, equal lightness changes the image; a port can read a starless image."""
+def test_the_sho_block_equalises_its_filters_to_the_halpha_and_mixes_its_hues(tmp_path):
+    """The stage removes the skies, equalises the S II and the O III to the H-alpha (told in its log) and mixes the
+    hues as they are: no lightness, no smoothing in its results; another hue is another image; a port can read a
+    starless image."""
     off = {"SII": -0.7, "Ha": 2.5, "OIII": -0.3}
     ch, _ = _sky_field(off, {"SII": 0.9, "Ha": 0.4, "OIII": 0.2})
     ch = {r: v / 1000 for r, v in ch.items()}            # the units of an image: 0 to 1
@@ -249,18 +261,23 @@ def test_the_sho_block_composes_its_parameters_and_shows_the_smoothing_it_used(t
     for r in off:
         _output(tmp_path / r, np.repeat(ch[r][None], 3, 0))
         ins.append({"role": r, "channel": "L", "dir": str(tmp_path / r), "pid": 1})      # one grid: no alignment
-    auto, fix, eq = [], [], []
-    out = _run(tmp_path, C.CombineSHO, C.CombineSHO.Params(inputs=ins), "auto", auto)
+    said = []
+    out = _run(tmp_path, C.CombineSHO, C.CombineSHO.Params(inputs=ins), "auto", said)
     rgb = np.load(out / "drz_full.npy")
     assert abs(float(np.median(rgb[:, :, :40]))) < 0.05 * float(rgb.max())     # the side, away from the nebula
-    assert auto[-1]["chroma_sigma"] > 0.5                                     # the radius Auto took, in its results
-    fixed = _run(tmp_path, C.CombineSHO, C.CombineSHO.Params(inputs=ins, smoothing="radius", radius=3.0), "fixed", fix)
-    none = _run(tmp_path, C.CombineSHO, C.CombineSHO.Params(inputs=ins, smoothing="radius"), "none")
-    equal = _run(tmp_path, C.CombineSHO, C.CombineSHO.Params(inputs=ins, smoothing="radius", lightness="equal"), "eq", eq)
-    assert fix[-1]["chroma_sigma"] == 3.0 and any("smoothed over 3.0 px" in str(x) for x in fix)
-    assert any("equally" in str(x) for x in eq)
-    imgs = [np.load(d / "drz_full.npy") for d in (out, fixed, none, equal)]
-    assert all(not np.array_equal(imgs[i], imgs[j]) for i in range(4) for j in range(i + 1, 4))
+    assert sum("equalised to Ha" in str(x) for x in said) == 2 and "chroma_sigma" not in said[-1]
+    assert not any("matched to" in str(x) or "lightness" in str(x) for x in said)
+    valid = np.ones(ch["Ha"].shape, bool)
+    want = {r: v.copy() for r, v in ch.items()}
+    C.neutralise_sky(want, valid)
+    for r in ("SII", "OIII"):
+        a, b = C.equalise(want[r], want["Ha"], valid)
+        want[r] = (want[r] * np.float32(a) + np.float32(b)).astype(np.float32)
+    C.neutralise_sky(want, valid)
+    assert np.allclose(rgb, C.mix(want, SHO, C.hue_palette(C.HUBBLE_HUES)), atol=1e-6)
+    plain = _run(tmp_path, C.CombineSHO, C.CombineSHO.Params(inputs=ins, hue_sii=0.0, hue_ha=120.0, hue_oiii=240.0), "plain")
+    got = np.load(plain / "drz_full.npy")                 # the plain hues: each filter in its own colour
+    assert all(np.allclose(got[c], want[r], atol=1e-6) for c, r in enumerate(SHO))
     _split(tmp_path / "SII_split", np.repeat(ch["SII"][None], 3, 0), np.zeros((3,) + ch["SII"].shape))
     starless = [dict(i, image="starless", dir=str(tmp_path / "SII_split")) if i["role"] == "SII" else i for i in ins]
     _run(tmp_path, C.CombineSHO, C.CombineSHO.Params(inputs=starless), "starless")
@@ -438,8 +455,8 @@ def test_a_combinations_output_frame_is_the_whole_frame(tmp_path):
     from astro_gpu.stages.render_simple import RenderSimple, RenderSimpleParams
     H, W = 90, 120
     star = 10 * _star(H, W, 60, 45)
-    ha = np.repeat(star[None], 3, 0) + 0.01
-    oiii = np.repeat(0.5 * star[None], 3, 0) + 0.02
+    ha = _grain(np.repeat(star[None], 3, 0) + 0.01)
+    oiii = _grain(np.repeat(0.5 * star[None], 3, 0) + 0.02, seed=2)
     _output(tmp_path / "ha", ha, _wcs([61.0, 46.0]))
     _output(tmp_path / "oiii", oiii, _wcs([61.0, 46.0]))
     va = np.ones((H, W), bool)
@@ -464,23 +481,24 @@ def test_a_combinations_output_frame_is_the_whole_frame(tmp_path):
 
 
 def test_the_bounds_of_the_match_are_fractions_of_the_inputs_full_scale(tmp_path):
-    """Siril's images are 0 to 1, ours are in ADU: the bounds 1e-7 and 0.875 are taken of the Hα input's full scale."""
-    ch, _ = _sky_field({"Ha": 0.0, "OIII": 0.0}, {"Ha": 0.4, "OIII": 0.2})        # amplitudes in the hundreds
+    """Siril's images are 0 to 1, ours are in ADU: the bounds 1e-7 and 0.875 are taken of the reference input's full
+    scale (the RGB block's linear match to the red)."""
+    ch, _ = _sky_field({"R": 0.0, "G": 0.0, "B": 0.0}, {"R": 0.4, "G": 0.2, "B": 0.2})    # amplitudes in the tens
     ins = []
     for r in ch:
         _output(tmp_path / r, np.repeat(ch[r][None], 3, 0))
         ins.append({"role": r, "channel": "L", "dir": str(tmp_path / r), "pid": 1, "full_scale": 1000.0})
     said = []
-    _run(tmp_path, C.CombineHO, C.CombineHO.Params(inputs=ins), "scaled", said)
-    line = next(x for x in said if "matched to Ha" in str(x))
+    _run(tmp_path, C.CombineRGB, C.CombineRGB.Params(inputs=ins), "scaled", said)
+    line = next(x for x in said if "G matched to R" in str(x))
     assert "between 0.0001 and 875:" in line and "x +" in line               # 1e-7 x 1000 and 0.875 x 1000
     a = float(line.split(": ")[1].split(" x")[0])
-    assert 0.5 < a < 3.5                                                   # the nebulae are 300 and 150 high, the stars none
+    assert 0.5 < a < 1.0                                                   # the nebulae are 60 and 80 high, the stars none
 
 
-def test_each_filter_is_matched_linearly_to_the_halpha_on_the_pixels_between_the_bounds():
-    """Siril's linear match: the fit ``Ha = a * filter + b`` on the pixels where the H-alpha lies in [low, high]; a
-    pixel of the reference above the high bound (a bright star) is ignored."""
+def test_a_channel_is_matched_linearly_to_the_reference_on_the_pixels_between_the_bounds():
+    """Siril's linear match: the fit ``reference = a * channel + b`` on the pixels where the reference lies in
+    [low, high]; a pixel of the reference above the high bound (a bright star) is ignored."""
     rng = np.random.default_rng(4)
     n = 256
     yy, xx = np.mgrid[:n, :n].astype(np.float32)
@@ -508,7 +526,7 @@ def test_a_combination_reads_the_plate_solutions_without_an_astropy_note(tmp_pat
     from astropy.wcs import FITSFixedWarning
     H, W = 60, 80
     for name in ("ha", "oiii"):
-        _output(tmp_path / name, np.repeat((5 * _star(H, W, 40, 30))[None], 3, 0) + 0.01, _wcs([41.0, 31.0]))
+        _output(tmp_path / name, _grain(np.repeat((5 * _star(H, W, 40, 30))[None], 3, 0) + 0.01), _wcs([41.0, 31.0]))
     ins = [{"role": r, "channel": "L", "pid": i, "dir": str(tmp_path / r.lower()), "wcs": str(tmp_path / r.lower() / "wcs.fits"),
             "grid": ["g", 1]} for i, r in ((1, "Ha"), (2, "OIII"))]
     with warnings.catch_warnings():
@@ -530,7 +548,7 @@ def test_a_combination_outputs_the_plate_solution_of_its_reference_row(tmp_path)
     H, W = 60, 80
     ref = _wcs([41.0, 31.0])
     for name in ("ha", "oiii"):
-        _output(tmp_path / name, np.repeat((5 * _star(H, W, 40, 30))[None], 3, 0) + 0.01, ref)
+        _output(tmp_path / name, _grain(np.repeat((5 * _star(H, W, 40, 30))[None], 3, 0) + 0.01), ref)
     sol = _solution_dir(tmp_path / "ast", [41.0, 31.0])
     # the Ha row is the reference; the O III row, aligned on it, has no Astrometry: its input carries no file
     ins = [{"role": "Ha", "channel": "L", "pid": 1, "dir": str(tmp_path / "ha"), "wcs": str(sol / "wcs.fits"), "grid": ["g", 1]},
@@ -601,7 +619,7 @@ def test_a_colour_block_runs_on_a_combination_with_the_solution_it_handed_on(tmp
     from astro_gpu.stages.color import Color
     H, W = 60, 80
     for name in ("ha", "oiii"):
-        _output(tmp_path / name, np.repeat((5 * _star(H, W, 40, 30))[None], 3, 0) + 0.01, _wcs([41.0, 31.0]))
+        _output(tmp_path / name, _grain(np.repeat((5 * _star(H, W, 40, 30))[None], 3, 0) + 0.01), _wcs([41.0, 31.0]))
     sol = _solution_dir(tmp_path / "ast", [41.0, 31.0])
     np.savez(sol / "gaia_xp.npz", x=np.zeros(0), y=np.zeros(0), xyz=np.zeros((0, 3)))      # no star with a spectrum
     (sol / "manifest.json").write_text(json.dumps({"metrics": {"solved": True}}), encoding="utf-8")
@@ -627,3 +645,77 @@ def test_the_colour_strength_leaves_a_bright_core_its_colour_and_gives_the_faint
     out = gamut_gain(ratio, L, 2.0)
     assert out[2, 0] > ratio[2, 0] and out[0, 0] < ratio[0, 0]            # faint pixels: the colour is stronger
     assert out[2, 41000] < out[2, 0]                                        # the brightest ones are held back
+
+
+# ---------------------------------------------------------------------------------------------- the equalisation
+
+def _mad(v):
+    return float(np.median(np.abs(v - np.median(v))))
+
+
+def test_a_filter_is_equalised_to_the_reference_s_median_and_spread():
+    """The equalisation before the composition: ``filter * mad(ref) / mad(filter) - mad(ref) / mad(filter) *
+    median(filter) + median(ref)``: after it the filter's median and median absolute deviation are the reference's,
+    on the covered pixels; a filter ten times fainter than the reference comes out at the reference's level."""
+    rng = np.random.default_rng(2)
+    n = 200
+    yy, xx = np.mgrid[:n, :n].astype(np.float32)
+    neb = np.exp(-((yy - 100) ** 2 + (xx - 90) ** 2) / (2 * 40.0 ** 2)).astype(np.float32)
+    ha = (0.02 + 0.3 * neb + rng.normal(0, 0.004, (n, n))).astype(np.float32)
+    oiii = (0.005 + 0.02 * neb ** 2 + rng.normal(0, 0.001, (n, n))).astype(np.float32)
+    valid = np.ones((n, n), bool)
+    valid[:20] = False
+    oiii[:20] = 7.0                                      # outside the covered field: not in the statistics
+    a, b = C.equalise(oiii, ha, valid)
+    out = a * oiii + b
+    assert abs(float(np.median(out[valid])) - float(np.median(ha[valid]))) < 1e-5
+    assert abs(_mad(out[valid]) - _mad(ha[valid])) < 1e-5 * _mad(ha[valid]) + 1e-7
+    assert a == pytest.approx(_mad(ha[valid]) / _mad(oiii[valid]), rel=1e-5)
+    faint = (ha / 10).astype(np.float32)                 # the same image, ten times fainter
+    a, b = C.equalise(faint, ha, valid)
+    assert a == pytest.approx(10, rel=1e-4) and abs(b) < 1e-6
+    assert np.allclose(a * faint + b, ha, atol=1e-5)
+    with pytest.raises(StageError, match="flat"):        # no spread to bring to the reference's
+        C.equalise(np.full((n, n), 0.3, np.float32), ha, valid)
+
+
+def test_the_h_o_block_gives_the_equalised_h_alpha_in_red_and_the_equalised_o_iii_in_green_and_blue(tmp_path):
+    """The H-O default on two starless channels: each sky at 0, the O III equalised to the H-alpha, then the plain
+    composition: red is the H-alpha, green and blue are the O III. No lightness, no colour strength: the faint
+    filter's nebula keeps its green and blue."""
+    rng = np.random.default_rng(5)
+    H, W = 160, 192
+    yy, xx = np.mgrid[:H, :W].astype(np.float32)
+    shell = np.exp(-((np.hypot(yy - 80, xx - 96) - 40) ** 2) / (2 * 6.0 ** 2)).astype(np.float32)
+    disc = (np.hypot(yy - 80, xx - 96) < 40).astype(np.float32)
+    ha = (2.5 + 300 * disc + 100 * shell + rng.normal(0, 0.4, (H, W))).astype(np.float32) / 1000
+    oiii = (-0.3 + 3 * disc + 20 * shell + rng.normal(0, 0.2, (H, W))).astype(np.float32) / 1000
+    ins = []
+    for r, a in (("Ha", ha), ("OIII", oiii)):
+        _output(tmp_path / r, np.repeat(a[None], 3, 0))
+        ins.append({"role": r, "channel": "L", "dir": str(tmp_path / r), "pid": 1, "image": "output"})
+    said = []
+    out = _run(tmp_path, C.CombineHO, C.CombineHO.Params(inputs=ins), "ho", said)
+    rgb = np.load(out / "drz_full.npy")
+    valid = np.ones((H, W), bool)
+    ch = {"Ha": ha.copy(), "OIII": oiii.copy()}
+    C.neutralise_sky(ch, valid)
+    a, b = C.equalise(ch["OIII"], ch["Ha"], valid)
+    ch["OIII"] = (ch["OIII"] * np.float32(a) + np.float32(b)).astype(np.float32)
+    C.neutralise_sky(ch, valid)
+    assert np.allclose(rgb[0], ch["Ha"], atol=1e-6)                       # red: the H-alpha, as it is
+    assert np.array_equal(rgb[1], rgb[2]) and np.allclose(rgb[1], ch["OIII"], atol=1e-6)
+    assert _mad(rgb[1]) == pytest.approx(_mad(rgb[0]), rel=1e-3)          # one spread: the equalisation
+    inside = np.hypot(yy - 80, xx - 96) < 30
+    assert float((rgb[1][inside] <= 0).mean()) < 0.01                     # the O III of the interior is not clipped
+    assert any("OIII equalised to Ha" in str(s) for s in said)
+    assert not any("lightness" in str(s) for s in said)
+
+
+def test_a_project_s_stored_lightness_and_smoothing_of_a_narrow_band_block_are_ignored():
+    """The settings the S-H-O and H-O blocks had until their version 8 (the lightness, the colour smoothing and its
+    radius) are retired: a project that stored one opens and computes, the setting ignored."""
+    from astro_gpu.stages import v2
+    for stage in ("combine_sho", "combine_ho"):
+        assert {"lightness", "smoothing", "radius"} <= v2.RETIRED[stage]
+        assert not {"lightness", "smoothing", "radius"} & set(C.BY_KIND[stage[8:]].Params.model_fields)

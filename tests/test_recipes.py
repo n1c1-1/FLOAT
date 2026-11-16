@@ -1,5 +1,7 @@
 """Combination recipes (stages/recipes.py): the TOML files of resources/combinations, read and checked; the four
-types before recipes as four shipped recipes that give the same images and keys; the recipe copied into the project;
+types before recipes as four shipped recipes that run on their own blocks, with their keys (RGB and LRGB: the images
+they gave before recipes; S-H-O and H-O: the equalisation and the plain composition); the recipe copied into the
+project;
 the folder's newer version told, applied only on demand; the two recipes added (HOO, HaRGB); the API."""
 from __future__ import annotations
 
@@ -61,6 +63,27 @@ def test_a_malformed_recipe_is_refused_naming_the_file_the_line_and_the_field(te
     assert str(e.value).startswith("bad.toml, ") and where in str(e.value), str(e.value)
 
 
+def test_a_recipe_may_equalise_its_channels_to_a_reference():
+    """The ``equalise`` operation: a reference input, the channels equalised ([] : all the others); the shipped
+    narrow-band recipes use it, the reference the H-alpha."""
+    head = ('id = "x"\nname = "X"\nversion = 1\n[[inputs]]\nrole = "Ha"\ntype = "mono"\n[[inputs]]\nrole = "OIII"\n'
+            'type = "mono"\n[[steps]]\nop = "neutralise_sky"\n[[steps]]\nop = "equalise"\n')
+    tail = '[output]\nchannels = ["Ha", "OIII"]\nhues = [0, 180]\n'
+    r = R.parse(head + 'reference = "Ha"\n' + tail)
+    assert r["steps"][1] == {"op": "equalise", "reference": "Ha", "channels": []}
+    assert R.parse(head + 'reference = "Ha"\nchannels = ["OIII"]\n' + tail)["steps"][1]["channels"] == ["OIII"]
+    for bad, where in ((tail, "reference is missing"), ('reference = "SII"\n' + tail, "SII is not one of the inputs"),
+                       ('reference = "Ha"\nlow = 0.1\n' + tail, "steps[2].low: unknown setting"),
+                       ('reference = "Ha"\nchannels = ["Ha"]\n' + tail, "inputs other than the reference")):
+        with pytest.raises(R.RecipeError, match=where.replace("[", r"\[").replace("]", r"\]")):
+            R.parse(head + bad, "bad.toml")
+    found = R.available()[0]
+    for rid in ("sho", "ho"):
+        assert found[rid]["version"] == 2 and found[rid]["steps"][1] == {"op": "equalise", "reference": "Ha",
+                                                                         "channels": []}
+        assert found[rid]["output"]["lightness"] is None and found[rid]["output"]["strength"] == 1.0
+
+
 def test_a_bad_file_never_hides_the_others(tmp_path):
     shutil.copy(R.FOLDER / "hoo.toml", tmp_path / "a_good.toml")
     (tmp_path / "b_broken.toml").write_text("id = [\n", encoding="utf-8")
@@ -79,7 +102,8 @@ def test_a_bad_file_never_hides_the_others(tmp_path):
 
 def _cases(tmp_path):
     """The four blocks' settings on fixed synthetic channels: {case: (block, settings, the hash of drz_full.npy and of
-    drz_meta.json they gave before recipes, float-main 72f8bcdc)}."""
+    drz_meta.json they gave before recipes, float-main 72f8bcdc; None for the narrow-band types, whose recipes are
+    at version 2: the filters equalised to the H-alpha and mixed as they are)}."""
     off = {"SII": -0.7, "Ha": 2.5, "OIII": -0.3, "L": 5.0, "R": 3.0, "G": -2.0, "B": 7.0}
     sig = {"SII": 0.9, "Ha": 0.4, "OIII": 0.2, "L": 0.02, "R": 0.03, "G": 0.03, "B": 0.03}
     ch, _ = _sky_field(off, sig)
@@ -97,12 +121,10 @@ def _cases(tmp_path):
            {"role": "OIII", "channel": "GB", "pid": 9, "dir": str(tmp_path / "dual")}]
     sho = [ins[r] for r in ("SII", "Ha", "OIII")]
     return {
-        "sho": (C.CombineSHO, dict(inputs=sho), "653a3101938ca040", "957361abb994b92e"),
-        "sho_set": (C.CombineSHO, dict(inputs=sho, hue_sii=0.0, hue_ha=120.0, hue_oiii=240.0, weights={"SII": 0.6},
-                                       smoothing="radius", radius=2.5, lightness="equal"),
-                    "08537e062dad9f6f", "b82fec57b9b82775"),
-        "ho_dual": (C.CombineHO, dict(inputs=duo, smoothing="radius", radius=0.0), "942145f3291e338d",
-                    "534dc5e545447544"),
+        "sho": (C.CombineSHO, dict(inputs=sho), None, None),
+        "sho_set": (C.CombineSHO, dict(inputs=sho, hue_sii=0.0, hue_ha=120.0, hue_oiii=240.0, weights={"SII": 0.6}),
+                    None, None),
+        "ho_dual": (C.CombineHO, dict(inputs=duo), None, None),
         "rgb": (C.CombineRGB, dict(inputs=[ins[r] for r in "RGB"], weights={"B": 1.3}), "3acb27703b91c40a",
                 "c8276dcb9e39b2c2"),
         "lrgb": (C.CombineLRGB, dict(inputs=[ins[r] for r in "LRGB"]), "09b7231464b86dc6", "e34e6daaba3ad69a"),
@@ -110,25 +132,28 @@ def _cases(tmp_path):
 
 
 @pytest.mark.parametrize("case", ["sho", "sho_set", "ho_dual", "rgb", "lrgb"])
-def test_the_four_types_give_the_images_they_gave_before_recipes(tmp_path, case):
-    """The images of the four blocks, byte for byte those they gave before recipes; with the shipped recipe copied in
-    (``recipe``), the same."""
+def test_the_four_types_give_their_images_with_or_without_the_recipe_copied_in(tmp_path, case):
+    """The images of the RGB and LRGB blocks, byte for byte those they gave before recipes; every block's image with
+    the shipped recipe copied in (``recipe``), the same as without."""
     cls, kw, full, meta = _cases(tmp_path)[case]
     out = _run(tmp_path, cls, cls.Params(**kw), case)
-    assert (_sha(out / "drz_full.npy"), _sha(out / "drz_meta.json")) == (full, meta)
+    got = (_sha(out / "drz_full.npy"), _sha(out / "drz_meta.json"))
+    if full is not None:
+        assert got == (full, meta)
     if cls.saturation_ports:
         assert _sha(out / "saturation.npy") == "59d9a35795cb2bc0"
     copied = _run(tmp_path, cls, cls.Params(**kw, recipe=R.available()[0][cls.kind]), case + "_copy")
-    assert (_sha(copied / "drz_full.npy"), _sha(copied / "drz_meta.json")) == (full, meta)
+    assert (_sha(copied / "drz_full.npy"), _sha(copied / "drz_meta.json")) == got
 
 
 def test_the_stage_of_the_other_recipes_runs_a_shipped_recipe_the_same_way(tmp_path):
     """The other recipes' stage, its settings in ``values``, on a copy of the S-H-O recipe: the S-H-O block's image."""
-    cls, kw, full, _meta = _cases(tmp_path)["sho_set"]
-    vals = {k: kw[k] for k in ("hue_sii", "hue_ha", "hue_oiii", "smoothing", "radius", "lightness")}
+    cls, kw, _full, _meta = _cases(tmp_path)["sho_set"]
+    block = _run(tmp_path, cls, cls.Params(**kw), "block")
+    vals = {k: kw[k] for k in ("hue_sii", "hue_ha", "hue_oiii")}
     out = _run(tmp_path, C.CombineRecipe, C.RecipeParams(inputs=kw["inputs"], weights=kw["weights"], values=vals,
                                                          recipe=R.available()[0]["sho"]), "generic")
-    assert _sha(out / "drz_full.npy") == full
+    assert _sha(out / "drz_full.npy") == _sha(block / "drz_full.npy")
 
 
 def _ho_project(tmp_path, nights):  # noqa: F811 (the fixture's value)
@@ -165,13 +190,13 @@ def test_a_newer_file_is_told_and_changes_nothing_until_applied(tmp_path, nights
     p.workflow(f.id).params["combine_ho"] = {"hue_oiii": 200.0, "weights": {"OIII": 0.5}}
     before = Keys(p).key(f.id, "combine_ho")
     st = api.combination_recipe_status(p, f.id, folder)
-    assert (st["project"], st["folder"], st["newer"], st["changed"]) == (1, 1, False, False)
+    assert (st["project"], st["folder"], st["newer"], st["changed"]) == (2, 2, False, False)
     text = (folder / "ho.toml").read_text(encoding="utf-8")
-    (folder / "ho.toml").write_text(text.replace("version = 1", "version = 2").replace("strength = 1.9",
-                                                                                         "strength = 1.5"),
-                                    encoding="utf-8")
+    assert text.count("version = 2") == 1 and text.count('reference = "Ha"') == 1
+    (folder / "ho.toml").write_text(text.replace("version = 2", "version = 3").replace(
+        'reference = "Ha"', 'reference = "Ha"\nchannels = ["OIII"]'), encoding="utf-8")
     st = api.combination_recipe_status(p, f.id, folder)
-    assert (st["project"], st["folder"], st["newer"], st["changed"]) == (1, 2, True, True)
+    assert (st["project"], st["folder"], st["newer"], st["changed"]) == (2, 3, True, True)
     assert Keys(p).key(f.id, "combine_ho") == before                # the file alone changes no result
     (folder / "ho.toml").rename(folder / "ho.off")
     assert api.combination_recipe_status(p, f.id, folder)["folder"] is None
@@ -181,11 +206,11 @@ def test_a_newer_file_is_told_and_changes_nothing_until_applied(tmp_path, nights
     (folder / "ho.off").rename(folder / "ho.toml")
     api.apply_combination_recipe(p, f.id, folder)                   # the user's choice
     w = p.workflow(f.id)
-    assert w.source["fusion"]["recipe"]["version"] == 2 and "combine_ho" not in w.params
+    assert w.source["fusion"]["recipe"]["version"] == 3 and "combine_ho" not in w.params
     assert w.params["combine_recipe"] == {"values": {"hue_oiii": 200.0}, "weights": {"OIII": 0.5}}
     k = Keys(p)
     assert k.chain(f.id)[0] == "combine_recipe" and k.key(f.id, "combine_recipe") != before
-    assert k.key_parts(f.id, "combine_recipe")["x"]["recipe"]["output"]["strength"] == 1.5
+    assert k.key_parts(f.id, "combine_recipe")["x"]["recipe"]["steps"][1]["channels"] == ["OIII"]
     assert k.key_parts(f.id, "combine_recipe")["p"] == {"values": {"hue_oiii": 200.0}, "weights": {"OIII": 0.5}}
     api.set_recipe_value(p, f.id, "hue_oiii", 180.0)               # back at the recipe's default: not stored
     assert p.workflow(f.id).params["combine_recipe"] == {"weights": {"OIII": 0.5}}
@@ -326,7 +351,7 @@ def test_the_api_lists_the_recipes_for_the_graph():
 def test_a_project_saved_before_recipes_tells_its_type_s_recipe(tmp_path, nights):  # noqa: F811
     p, o, f, ins = _ho_project(tmp_path, nights)
     st = api.combination_recipe_status(p, f.id)
-    assert (st["id"], st["name"], st["project"], st["folder"], st["newer"], st["changed"]) == ("ho", "H-O", 1, 1,
+    assert (st["id"], st["name"], st["project"], st["folder"], st["newer"], st["changed"]) == ("ho", "H-O", 2, 2,
                                                                                                 False, False)
     assert R.computational(st["copy"]) == R.LEGACY["ho"]
     api.set_recipe_value(p, f.id, "hue_oiii", 190.0)                       # the H-O block's own setting

@@ -1,12 +1,17 @@
 # H-O: the H-alpha and O III filters (two filters of a monochrome camera, or a dual-band image's channels read by the
 # wires: H-alpha from its red, O III from its green and blue) combined into one colour image.
 # Every setting is explained in _example.toml; the methods and their sources in stages/combine.py.
-# This recipe is the H-O block as it was before recipes: projects that use it keep their results.
+#
+# Version 2: the composition of the narrow-band filters as it is established. The O III is equalised to the H-alpha
+# while linear, then the filters are composed as they are: H-alpha in red, O III in green and blue. Version 1 fitted
+# the O III to the H-alpha by a linear match, took the lightness from the filters weighted by their noise and raised
+# the colour's strength to 1.9: on a monochrome camera's filters the nebula came out a flat saturated red, its O III
+# gone (the green at 0 over most of its interior).
 
 id = "ho"
 name = "H-O"
-version = 1
-description = "Combines the H-alpha and O III filters (two filters, or a dual-band image's channels) into one colour image: each filter a hue, the lightness from the filters weighted by their noise."
+version = 2
+description = "Combines the H-alpha and O III filters (two filters, or a dual-band image's channels) into one colour image: the O III equalised to the H-alpha, then each filter a hue (H-alpha red, O III green and blue)."
 narrowband = true
 
 [[inputs]]
@@ -36,39 +41,19 @@ max = 360
 label = "O III hue"
 help = "The colour of the O III filter (180: green and blue)."
 
-[parameters.lightness]
-default = "noise"
-choices = ["noise", "equal"]
-label = "Lightness"
-help = "How the filters make the lightness: weighted by their noise, or equally."
-
-[parameters.smoothing]
-default = "auto"
-choices = ["auto", "radius"]
-label = "Colour smoothing"
-help = "Auto takes the colour's smoothing radius from the filters' noise; Radius takes the one set."
-
-[parameters.radius]
-default = 0.0
-min = 0
-max = 50
-label = "Smoothing radius"
-help = "The colour's smoothing radius when Colour smoothing is Radius; 0: none."
-
+# Rector, Levay, Frattare, English & Pu'uohau-Pummill 2007 (AJ 133, 598): each filter's background set to 0 first.
 [[steps]]
 op = "neutralise_sky"
 
+# The O III brought to the H-alpha's median and median absolute deviation (the formula of Siril's H-alpha and O III
+# extraction script and of its RGB composition tutorial): the strongest signal is the reference (siril.org/faq:
+# "pick the Ha stack as reference").
 [[steps]]
-op = "linear_match"
+op = "equalise"
 reference = "Ha"
-low = 1e-7
-high = 0.875
 
+# The plain composition: red = H-alpha, green = blue = O III (the hues 0 and 180 are that matrix), no normalisation
+# by the composition itself; the sky is at 0 in the three colours.
 [output]
 channels = ["Ha", "OIII"]
 hues = ["$hue_ha", "$hue_oiii"]
-lightness = "channels"
-weighting = "$lightness"
-smoothing = "$smoothing"
-radius = "$radius"
-strength = 1.9

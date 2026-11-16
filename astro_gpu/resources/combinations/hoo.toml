@@ -8,8 +8,8 @@
 # - Siril's FAQ (siril.org/faq): the dual-band image's H-alpha and O III stacks are combined by the RGB composition,
 #   the H-alpha stack the reference of the linear match ("pick the Ha stack as reference").
 # - The HOO mapping, H-alpha red and O III green and blue: the dual-band filter's usual palette (the H-O recipe's
-#   default hues 0 and 180 give the same matrix, there composed as lightness and colour; here the channels as they are,
-#   as Siril's RGB composition does, the colour balance left to the Color block after it).
+#   default hues 0 and 180 give the same matrix; the channels as they are, as Siril's RGB composition does, the
+#   colour balance left to the Color block after it).
 # Every setting is explained in _example.toml.
 
 id = "hoo"
