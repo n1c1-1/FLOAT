@@ -1404,9 +1404,12 @@ class _ProjectBase(QObject):
     def set_post_layer(self, lid: int, source=None, **values):
         """Settings of a Post layer changed (``sliders``, ``blend``, ``visible``...)."""
         def change(layers):
+            from .postengine import set_layer_stretch
             for x in layers:
                 if x["id"] == lid:
-                    x.update(values)
+                    x.update({k: v for k, v in values.items() if k != "stretch"})
+                    if "stretch" in values:               # the base stretch: Automatic is no field of the layer
+                        set_layer_stretch(x, values["stretch"])
         self._post_edit(change, source, scope="active")
 
     def post_layer(self, lid: int) -> dict | None:

@@ -516,7 +516,8 @@ class LayerSource(Provider):
         else:
             fi, region, size = put[1:]
         base = self.bases(lay.get("base"))
-        kw = {"part": "stars" if lay.get("part") == "synth" else lay.get("part"), "blend": lay.get("blend")}
+        kw = {"part": "stars" if lay.get("part") == "synth" else lay.get("part"), "blend": lay.get("blend"),
+              "stretch": lay.get("stretch")}              # its base stretch (absent: the automatic one)
         if lay.get("stars_over") is not None:           # the Output of a combination of stars, on a starless combination
             over = self.folder(lay["stars_over"])
             if over is None:

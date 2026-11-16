@@ -10,7 +10,9 @@ Layers (a list, top first, as in the reference image editor; saved as it is in `
   suggestion) moved by its simplified ``sliders`` (positions 0-4, 2 = the base). ``part`` None: the Output block's
   image; else one of the Stars block's (``PARTS``): its starless image, its stars alone, or the two recombined (the
   Stars and background block: ``blend`` says how its stars go back, render/stars.BLENDS; ``shown`` which of its two
-  images are put together: issue #3, its two images are sub-layers of their own, each with its filters);
+  images are put together: issue #3, its two images are sub-layers of their own, each with its filters). ``stretch``
+  (held only when it is not the automatic one: "arcsinh") is the base stretch of its linear image, for the image the
+  stars are not (``LAYER_STRETCHES``);
 * an image layer ``{id, kind: "image", key, name, visible, opacity, mode, sliders, linked, mask}``: the linear image of
   a stage result (a stack, a gradient-removed or a denoised image) sent from Inspect, stretched automatically and moved
   by the Sky, Contrast and Saturation sliders; ``key`` names the stage result (the pixels are never saved);
@@ -659,6 +661,52 @@ def new_image_layer(key: str, name: str, visible: bool = True) -> dict:
 
 
 PIXEL = ("workflow", "image")
+#: the base stretch of a workflow layer (render/simple.STRETCHES), applied to its linear image: the automatic screen
+#: transfer, or the colour-preserving arcsinh stretch (Lupton et al. 2004). A layer holds ``stretch`` only when it is
+#: not the automatic one (a composition saved before the choice, or left at Automatic, is unchanged); the Arcsinh's
+#: Strength is the layer's slider ``STRETCH_KEY`` (0-4, 2 = its starting strength)
+LAYER_STRETCHES = ("auto", "arcsinh")
+STRETCH_NAMES = {"auto": "Automatic", "arcsinh": "Arcsinh"}
+STRETCH_KEY = "stretch"
+
+
+def layer_stretch(lay: dict) -> str:
+    """The base stretch of a workflow layer: "auto" unless it holds another one."""
+    v = lay.get("stretch")
+    return v if v in LAYER_STRETCHES[1:] else "auto"
+
+
+def output_stretch(layers: list[dict], pid: int) -> dict:
+    """The base stretch of the layer that shows a workflow's Output image in these layers (the first one: its own
+    layer, or the Combine layers layer whose starless image is that Output), as the fields a layer holds for it:
+    ``{"stretch": ..., "sliders": {STRETCH_KEY: ...}}``; {} for Automatic, or when no layer shows it. The Output
+    block's picture takes it, so that it stays Post's layer at its default settings whichever stretch is chosen."""
+    for lay in layers or []:
+        if lay.get("kind") != "workflow" or lay.get("pid") != pid:
+            continue
+        if lay.get("part") is None or (lay.get("part") == "combined" and lay.get("starless") == "output"):
+            if layer_stretch(lay) == "auto":
+                return {}
+            pos = (lay.get("sliders") or {}).get(STRETCH_KEY)
+            return {"stretch": lay["stretch"], "sliders": {} if pos is None else {STRETCH_KEY: float(pos)}}
+    return {}
+
+
+def stretch_tag(st: dict) -> str:
+    """A short text for a base stretch that is not the automatic one ("" for it), for the keys of what is kept by
+    stretch (``output_stretch``'s answer)."""
+    if not st:
+        return ""
+    return f"+{st['stretch']}:{st['sliders'].get(STRETCH_KEY, 2.0):.3f}"
+
+
+def set_layer_stretch(lay: dict, kind: str) -> None:
+    """The base stretch chosen for a workflow layer: Automatic leaves no trace in it (nor its Strength)."""
+    if kind in LAYER_STRETCHES[1:]:
+        lay["stretch"] = kind
+    else:
+        lay.pop("stretch", None)
+        (lay.get("sliders") or {}).pop(STRETCH_KEY, None)
 #: the sliders of an image layer (its automatic stretch; the simple rendering's Sky, Contrast and Saturation, 0-4)
 IMAGE_SLIDERS = (("sky", "Sky", ("darker", "brighter")), ("contrast", "Contrast", ("softer", "stronger")),
                  ("saturation", "Saturation", ("paler", "more vivid")))
@@ -969,6 +1017,8 @@ def load_layers(raw, alive: set[int]) -> list[dict]:
                 if sides:                                        # written only when there is one (older files)
                     lay["side_masks"] = sides
             lay["sliders"] = {k: _num(v, 2.0, 0, 4) for k, v in (d.get("sliders") or {}).items()}
+            if d.get("stretch") in LAYER_STRETCHES[1:]:          # written only when it is not the automatic one
+                lay["stretch"] = d["stretch"]
         elif d.get("kind") == "image" and isinstance(d.get("key"), str) and d["key"]:
             lay = new_image_layer(d["key"], str(d.get("name") or "?"), bool(d.get("visible", True)))
             lay["sliders"] = {k: _num(v, 2.0, 0, 4) for k, v in (d.get("sliders") or {}).items()}
@@ -1429,7 +1479,8 @@ class Composer:
                 json.dumps(part_sliders(lay.get("sliders"), "stars" if over is not None and part is None else part),
                            sort_keys=True),
                 json.dumps(lay.get("base"), sort_keys=True, default=str), lay.get("linked"), self.provider.version(sid),
-                level, None if level > 0 else abox, (canvas.W, canvas.H, canvas.origin))             + (("draft",) if draft else ()) + (("over", over, self.provider.version(over)) if over is not None else ())
+                level, None if level > 0 else abox, (canvas.W, canvas.H, canvas.origin))             + (("draft",) if draft else ()) + (("over", over, self.provider.version(over)) if over is not None else ())             + (("stretch", lay["stretch"]) if layer_stretch(lay) != "auto" and over is None and part not in ("stars", "synth")
+               else ())                # the base stretch, when it is not the automatic one (the keys before it stay)
 
     def cached(self, lay: dict, level: int, canvas: Canvas) -> np.ndarray | None:
         """The image of a pixel layer over the whole canvas at a level if it is in the cache (level > 0); a Stars and

@@ -20,8 +20,6 @@ The reference program's "Rescale" clipping mode (equal to the reference program'
 """
 from __future__ import annotations
 
-import math
-
 import numpy as np
 import torch
 
@@ -83,12 +81,7 @@ def ghs(x: np.ndarray, p: dict) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------------------------- asinh
-def asinh_factor(L: torch.Tensor, beta: float) -> torch.Tensor:
-    """asinh(L beta) / (L asinh(beta)), its limit beta / asinh(beta) at L = 0, 1 at beta = 0."""
-    if beta <= 1e-9:
-        return torch.ones_like(L)
-    a = math.asinh(beta)
-    return torch.where(L > 1e-7, torch.asinh(L * beta) / (L.clamp(min=1e-7) * a), torch.full_like(L, beta / a))
+from ...render.asinh import asinh_factor  # noqa: E402,F401  (the engine's, shared with the layer's Arcsinh stretch)
 
 
 def asinh(x: np.ndarray, p: dict) -> np.ndarray:
