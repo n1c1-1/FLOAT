@@ -283,6 +283,74 @@ def test_operations_run_and_give_finite_numbers(op):
     assert all(np.isfinite(v).all() for v in out.values())
 
 
+def test_the_drizzle_timing_keeps_its_sums_on_the_device_over_the_frames_and_downloads_once(monkeypatch):
+    """The timing deposited one small frame and brought 117 MB of sums back each time: the card looked slower than the
+    processor on a stack that it does in half the time. A real stack uploads a frame, deposits it into sums that
+    stay on the device, frame after frame, and brings them back once."""
+    from astro_gpu.stages import stack
+    monkeypatch.setattr(selftest, "DRIZZLE_SIZE", (120, 180))          # the shape of the work, not its size
+    seen, events = [], []
+    deposit, up, down = stack.drizzle_deposit, selftest._upload, selftest._download
+
+    def spy(num, den, *a, **kw):
+        seen.append((id(num), id(den), num.device.type))
+        events.append("deposit")
+        return deposit(num, den, *a, **kw)
+    monkeypatch.setattr(stack, "drizzle_deposit", spy)
+    monkeypatch.setattr(selftest, "_upload", lambda a, d: events.append("upload") or up(a, d))
+    monkeypatch.setattr(selftest, "_download", lambda t: events.append("download") or down(t))
+    out = selftest.op_drizzle("cpu")
+    n = selftest.DRIZZLE_FRAMES
+    assert n >= 8 and len(seen) == n and len(set(seen)) == 1          # every frame into the same sums, on the device
+    assert events == ["upload", "deposit"] * n + ["download"] * len(out)        # a frame up, its deposit; one way back
+    assert set(out) == {"num", "den"} and float(out["den"].max()) > 1.5         # several frames added up at a point
+
+
+def test_the_timed_stacks_have_frames_of_a_real_size(monkeypatch):
+    """Eight frames of 300 x 400 timed the start of the Classic stack, not what it repeats frame after frame."""
+    from astro_gpu.core import stack_classic as sc
+    seen = {}
+    real = sc.stack_classic
+
+    def spy(load, coef, **kw):
+        seen.update(kw, shape=np.asarray(load(kw["used"][0])).shape)
+        return real(load, coef, **{**kw, "used": kw["used"][:2]})    # (two frames here: what is asked, not its time)
+    monkeypatch.setattr(sc, "stack_classic", spy)
+    out = selftest.op_classic("cpu")
+    H, W = selftest.CLASSIC_SIZE
+    assert len(seen["used"]) == selftest.CLASSIC_FRAMES >= 8 and seen["shape"] == (H, W) == (seen["H"], seen["W"])
+    assert H * W >= 700_000 and out["full"].shape == (3, H, W)     # where a pixel costs what it costs on a real frame
+    assert seen["params"].band_pixels == sc.ClassicParams().band_pixels          # the bands of a real stack
+    h, w = selftest.DRIZZLE_SIZE
+    assert h * w >= 1_000_000
+
+
+def test_the_sampling_timing_keeps_its_model_on_the_device_and_samples_it_for_each_frame(monkeypatch):
+    from astro_gpu.stages import stack
+    monkeypatch.setattr(selftest, "DRIZZLE_SIZE", (120, 180))
+    made, sampled, events = [], [], []
+    init, sample, down = stack.Prediction.__init__, stack.Prediction.sample, selftest._download
+    monkeypatch.setattr(stack.Prediction, "__init__", lambda self, *a, **kw: made.append(1) or init(self, *a, **kw))
+    monkeypatch.setattr(stack.Prediction, "sample",
+                        lambda self, *a: sampled.append(id(self)) or events.append("sample") or sample(self, *a))
+    monkeypatch.setattr(selftest, "_download", lambda t: events.append("download") or down(t))
+    out = selftest.op_sampling("cpu")
+    selftest.op_sampling("cpu")
+    n = selftest.DRIZZLE_FRAMES
+    assert len(made) == 1 and len(sampled) == 2 * n and len(set(sampled)) == 1   # one model, as in a pass of a stack
+    assert events[:n + len(out)] == ["sample"] * n + ["download"] * len(out)
+
+
+def test_what_is_built_once_in_a_stack_is_not_timed_at_each_call(monkeypatch):
+    """The frames of the test are made once (the random numbers took longer than the deposit they were timed with)."""
+    monkeypatch.setattr(selftest, "DRIZZLE_SIZE", (120, 180))
+    selftest.op_drizzle("cpu")
+    made = []
+    monkeypatch.setattr(np.random, "default_rng", lambda *a: made.append(a) or pytest.fail("made again"))
+    selftest.op_drizzle("cpu")
+    assert made == []
+
+
 def test_the_denoise_operation_runs_on_the_cpu():
     if not dn.MODEL.exists():
         pytest.skip("no denoising model here")
