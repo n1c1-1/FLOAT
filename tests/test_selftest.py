@@ -225,6 +225,22 @@ def test_the_profile_keeps_the_card_and_driver_and_says_why():
     assert selftest.stage_on_cpu(profiles, "auto", "stack") and not selftest.stage_on_cpu(profiles, "auto", "post")
 
 
+def test_a_result_saved_by_an_older_test_is_not_used_and_the_card_is_tested_again():
+    """A result three days old, saved by a test that judged otherwise, still sent the stacks to the processor."""
+    res = [timed("drizzle", 0.1345, 0.1205), timed("sampling", 0.38, 0.63), timed("classic", 5.10, 2.40)]
+    prof = selftest.make_profile("cuda:0", "RTX 4060 Ti", "610.88", res)
+    assert prof["version"] == selftest.TEST_VERSION and selftest.still_valid(prof, "RTX 4060 Ti", "610.88")
+    older = {**prof, "version": selftest.TEST_VERSION - 1}
+    first = {k: v for k, v in prof.items() if k != "version"}                  # as the first test saved it
+    for old in (older, first):
+        assert not selftest.still_valid(old, "RTX 4060 Ti", "610.88")          # tested again
+        profiles = {"cuda:0": old, "auto": old}
+        assert selftest.profile_of(profiles, "cuda:0") is None and selftest.profile_of(profiles, "auto") is None
+        assert selftest.cpu_jobs(selftest.profile_of(profiles, "cuda:0"), StackPlan) == {}     # a run: the card
+        assert not selftest.stage_on_cpu(profiles, "auto", "stack")
+    assert selftest.profile_of({"cuda:0": prof}, "cuda:0") is prof
+
+
 def test_cpu_jobs_of_a_plan():
     res = [ok("drizzle"), {**ok("sampling"), "verdict": selftest.ERROR}, ok("denoise"),
            {**ok("stars"), "verdict": selftest.ERROR}, ok("post")]

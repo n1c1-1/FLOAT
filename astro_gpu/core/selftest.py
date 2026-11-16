@@ -31,7 +31,11 @@ import numpy as np
 
 from . import devices
 
-#: the operations tested, in order, and the stage each one decides (Stack has two)
+#: the version of the test, saved with its result: raised whenever what is measured or how it is judged changes, so
+#: that a result saved by an older test is not used and the card is tested again. 1: no number saved (the first test).
+#: 2: the stacks timed on what a real stack repeats, each way of stacking judged on its own operations.
+TEST_VERSION = 2
+#: the operations tested, in order, and the stage each one decides (Stack has three)
 OPERATIONS = {"drizzle": "stack", "sampling": "stack", "classic": "stack", "denoise": "denoise", "stars": "star_removal",
               "post": "post"}
 STAGES = ("stack", "denoise", "star_removal", "post")
@@ -338,18 +342,22 @@ def judge(results: list[dict]) -> dict[str, str]:
 
 def make_profile(device: str, card: str, driver: str, results: list[dict], auto: bool = False) -> dict:
     """The profile saved in the settings: the card, its driver, what the test found per operation and per stage."""
-    return {"device": device, "card": card, "driver": driver, "auto": auto,
+    return {"device": device, "card": card, "driver": driver, "auto": auto, "version": TEST_VERSION,
             "when": time.strftime("%Y-%m-%d %H:%M"), "ops": {r["op"]: r for r in results}, "stages": judge(results)}
 
 
 def profile_of(profiles: dict | None, device: str | None) -> dict | None:
-    """The saved profile of ``device`` ('auto': the one made under Automatic), or None."""
-    return (profiles or {}).get(device or "auto")
+    """The saved profile of ``device`` ('auto': the one made under Automatic), or None. A profile saved by another
+    version of the test is not one: nothing reads it (a run, Post, Settings), and the card is tested again."""
+    p = (profiles or {}).get(device or "auto")
+    return p if p and p.get("version") == TEST_VERSION else None
 
 
 def still_valid(profile: dict | None, card: str, driver: str) -> bool:
-    """Whether a saved profile is for this card and this driver (else the card is tested again)."""
-    return bool(profile) and profile.get("card") == card and profile.get("driver") == driver and bool(card)
+    """Whether a saved profile is for this card and this driver, by this version of the test (else the card is tested
+    again)."""
+    return (bool(profile) and profile.get("version") == TEST_VERSION and profile.get("card") == card
+            and profile.get("driver") == driver and bool(card))
 
 
 def stage_reason(profile: dict, stage: str) -> str:

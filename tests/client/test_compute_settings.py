@@ -139,6 +139,26 @@ def test_a_valid_profile_is_not_tested_again(env, qapp, monkeypatch):
     assert calls == ["cuda:0"]
 
 
+def test_a_profile_saved_by_an_older_test_is_tested_again_and_replaced(env, qapp, monkeypatch):
+    calls = []
+    monkeypatch.setattr(jobmod.st, "card_identity", lambda dev: ("RTX 4060 Ti", "610.88"))
+    monkeypatch.setattr(jobmod.st, "card_busy", lambda dev: False)
+    jobmod.job().runner = lambda device, on_proc=None: calls.append(device) or [_result(n, st.OK) for n in st.OPERATIONS]
+    old = {k: v for k, v in _profile(drizzle=st.SLOWER, classic=st.SLOWER).items() if k != "version"}
+    prefs.set("compute_profiles", {"cuda:0": old, "auto": old})
+    d, page = _dialog(qapp)
+    assert "Not tested yet" in _texts(page)                               # the old result is not shown as the card's
+    d.close()
+    jobmod.job().start("cuda:0", "cuda:0")
+    t0 = time.time()
+    while jobmod.job().running() and time.time() - t0 < 5:
+        qapp.processEvents()
+        time.sleep(0.01)
+    qapp.processEvents()
+    saved = prefs.get("compute_profiles")["cuda:0"]
+    assert calls == ["cuda:0"] and saved["version"] == st.TEST_VERSION and saved["stages"]["stack"] == "card"
+
+
 def test_a_busy_card_is_not_tested_by_itself(env, qapp, monkeypatch):
     calls = []
     monkeypatch.setattr(jobmod.st, "card_identity", lambda dev: ("RTX 4060 Ti", "610.88"))
