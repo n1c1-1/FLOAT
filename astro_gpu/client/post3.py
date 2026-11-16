@@ -951,6 +951,7 @@ class PostView(QWidget):
         self._version_click = QTimer(self, singleShot=True)
         self._version_click.timeout.connect(self.cb_version.showPopup)
         self.cb_version.lineEdit().installEventFilter(self)
+        self.cb_version.installEventFilter(self)         # its focus, given by a click (eventFilter)
         self.cb_version.activated.connect(self._version_picked)
         self.cb_version.lineEdit().editingFinished.connect(self._version_renamed)
         self.b_version_new.clicked.connect(self._version_new)
@@ -1146,15 +1147,25 @@ class PostView(QWidget):
                 self._fill_versions()                    # the name as it was
                 self.viewer.setFocus(Qt.OtherFocusReason)
             return True
-        if hasattr(self, "cb_version") and obj is self.cb_version.lineEdit() and not obj.hasFocus():
+        if hasattr(self, "cb_version") and obj is self.cb_version and e.type() == QEvent.FocusIn:
+            # a real click gives the field the keyboard before this filter sees the press (the tutorials' film: B5
+            # again, a text cursor): that is no name being typed; the double-click's own focus is another reason. (The
+            # list has the focus for its field, which hands it on without a FocusIn of its own.)
+            self._focus_by_click = e.reason() == Qt.MouseFocusReason
+        if hasattr(self, "cb_version") and obj is self.cb_version.lineEdit() and (
+                not obj.hasFocus() or getattr(self, "_focus_by_click", False)):
             # the name not being typed in: a click opens the list (the laptop's B5: it put a text cursor), a double-click
             # types in it to rename, as a layer's name; the click waits a double-click's time to know which
             if e.type() == QEvent.MouseButtonPress and e.button() == Qt.LeftButton:
+                self._focus_by_click = False
+                if obj.hasFocus():
+                    self.viewer.setFocus(Qt.OtherFocusReason)   # the keyboard back to the page: no cursor in the name
                 self._version_click.start(QApplication.doubleClickInterval())
                 return True
             if e.type() == QEvent.MouseButtonDblClick and e.button() == Qt.LeftButton:
                 self._version_click.stop()
-                obj.setFocus(Qt.MouseFocusReason)
+                self._focus_by_click = False
+                obj.setFocus(Qt.OtherFocusReason)
                 obj.selectAll()
                 return True
             if e.type() == QEvent.MouseButtonRelease:
