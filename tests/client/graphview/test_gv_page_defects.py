@@ -37,6 +37,21 @@ def test_f2_renames_the_workflow_of_the_chosen_block(world):
     assert W.graph.rows[0].name == "Wide field"
 
 
+def test_enter_in_the_name_typed_on_a_block_only_confirms_the_name(world):
+    """Enter confirmed the name, then reached the graph, where Enter opens the chosen block in Inspect."""
+    W = world()
+    cv = W.page.canvas
+    opened = []
+    cv.inspect.connect(opened.append)
+    W.g.click(W.block("empilement"))
+    W.settle(2)
+    W.g.key("F2", target=cv)
+    cv.name_edit.setText("Wide field")
+    W.g.key("Return", target=cv.name_edit)
+    W.settle()
+    assert [q.name for q in W.m.paths] == ["Wide field"] and opened == []
+
+
 def test_the_bridge_takes_an_operations_own_name(world):
     W = world()
     r = W.b.act("rename_row", row=W.graph.rows[0].id, name="Deep")

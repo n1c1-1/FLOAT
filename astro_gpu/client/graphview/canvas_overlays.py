@@ -178,6 +178,10 @@ class NameEdit(QLineEdit):
             self.finish(cancel=True)
             e.accept()
             return
+        if e.key() in (Qt.Key_Return, Qt.Key_Enter):   # confirmed here: the field leaves Enter to its parent, the
+            self.finish()                              # graph, where it opens the chosen block in Inspect
+            e.accept()
+            return
         super().keyPressEvent(e)
 
     def finish(self, cancel=False):
