@@ -748,7 +748,8 @@ def test_frames_shows_the_sessions_the_health_checks_and_the_counts(win):
     assert re.fullmatch(r"\d\.\d px", row["FWHM"]) and row["Kept frames"] == f"{N_LIGHTS} / {N_LIGHTS}"
     assert row["Temp."] == "–"
     lines = check_lines(f.data)
-    assert ("ok", "Nothing to worry about") in lines
+    # an information is said under it (no bias): never "Nothing to worry about" above it (frames.check_lines)
+    assert ("ok", "Nothing to worry about") not in lines
     assert any(lv == "info" and tx.startswith("No bias: flats are calibrated with the darks' level (")
                for lv, tx in lines)
     assert any(lv == "ok" and tx.startswith("Disk: about ") and "GB free on the cache drive" in tx for lv, tx in lines)

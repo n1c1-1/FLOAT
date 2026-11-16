@@ -113,7 +113,9 @@ def fake_op(card_value=1.0, card_sleep=0.0, cpu_sleep=0.02, error=None):
 
 
 def test_the_card_is_kept_when_it_is_right_and_faster():
-    r = selftest.check("drizzle", "cuda:0", fake_op())
+    # the processor 0.3 s per call: a margin that a loaded machine (the parallel workers of a run) cannot eat up; 20 ms
+    # gave "slower" in a level 3 run
+    r = selftest.check("drizzle", "cuda:0", fake_op(cpu_sleep=0.3))
     assert r["verdict"] == selftest.OK and r["card_s"] < r["cpu_s"]
 
 
