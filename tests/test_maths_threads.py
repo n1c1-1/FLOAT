@@ -26,7 +26,7 @@ from astro_gpu.core.store import Keys, Store
 
 H, W, N = 360, 480, 6
 #: what a manifest holds that tells which run, when and how long, not what was computed
-TIMES = {"run", "started", "finished", "duration"}
+TIMES = {"run", "started", "finished", "duration", "stamp", "upstream"}     # and what names one run's results
 #: the folder astro_gpu is imported from, for the runner's worker processes the tests start
 SOURCE = Path(astro_gpu.__file__).resolve().parent.parent
 

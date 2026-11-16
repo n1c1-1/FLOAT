@@ -329,7 +329,8 @@ def test_a_subprocess_computes_the_same_keys(proj, tmp_path):
             f"print(json.dumps(test_store.toy_keys({str(proj.root)!r})))")
     for seed in ("0", "4242"):
         out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300,
-                             env={**os.environ, "PYTHONHASHSEED": seed}, cwd=tmp_path)
+                             env={**os.environ, "PYTHONHASHSEED": seed,           # the code under test, not another
+                                  "PYTHONPATH": str(Path(__file__).parent.parent)}, cwd=tmp_path)   # checkout
         assert out.returncode == 0, out.stderr
         assert json.loads(out.stdout.strip().splitlines()[-1]) == here
     assert canonical_json({"b": [1, 2.0], "a": None}) == '{"a":null,"b":[1,2.0]}'
