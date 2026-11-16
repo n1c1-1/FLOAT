@@ -1461,6 +1461,24 @@ def test_a_duplicated_layer_is_one_undo_step_named_after_the_layer(post):
     assert post.settle() and v.next_words("redo") == said and len(v.undo) == n
 
 
+def test_duplicates_tip_names_what_it_copies(post):
+    """The tutorials' film: Duplicate with a filter chosen copied the filter, the layer was expected. The filter is
+    copied, as the reference image editors copy the chosen adjustment layer; the button's tip names what it copies."""
+    from astro_gpu.client.post3 import layer_name
+    v = post.view
+    full = named(v, "Full")
+    v.select(full["id"], "layer")
+    v.add_filter("saturation")
+    assert post.settle()
+    f = v.layer(v.sel[0])
+    assert f.get("kind") == "filter"
+    v.rebuild()
+    assert v.b_dup.toolTip() == "Duplicate “{}” (Ctrl+J)".format(layer_name(f))
+    v.select(full["id"], "layer")
+    v.rebuild()
+    assert v.b_dup.toolTip() == "Duplicate “{}” (Ctrl+J)".format(layer_name(full))
+
+
 def test_an_undo_step_that_changes_nothing_is_passed_over(post):
     """The laptop's last pass: Ctrl+Z said "Undone" twice with nothing changing. A step kept before a gesture that
     then changed nothing is passed over: the Undo takes the change before it, and says it."""

@@ -2428,7 +2428,8 @@ class PostView(QWidget):
         lay = self.layer(self.sel[0]) if self.sel else None
         image = self._image_of_group()                    # one of a group's images: it goes with its layer (B2, B3)
         self.b_dup.setEnabled(lay is not None and not is_synth(lay) and not image)  # one Synthetic stars layer per group
-        self.b_dup.setToolTip(_("Duplicate (Ctrl+J)") if self.b_dup.isEnabled() else
+        # it names what it copies: the chosen filter is copied, not its layer (the tutorials' film expected the layer)
+        self.b_dup.setToolTip(_("Duplicate “{name}” (Ctrl+J)").format(name=layer_name(lay)) if self.b_dup.isEnabled() else
                               _("Choose a layer first") if lay is None else image or
                               _("One Synthetic stars layer per Stars group: it cannot be duplicated"))
         self.b_del.setEnabled(lay is not None and not image and (not is_pixel(lay) or sum(map(is_pixel, self.layers)) > 1))
