@@ -1647,6 +1647,8 @@ class Main(QMainWindow):
             self.s.named(name)                           # no Undo gives the saved project back its "Untitled"
         self.title.setText(self.project_name())
         self._title()
+        if self.graph is not None:
+            self.graph.rebuild()                         # the Project block reads the name: it kept "Untitled" on the graph
         self._said_saved()
         return True
 
