@@ -180,8 +180,7 @@ STEPS = [
     # the combinations of filters (stages/combine.py): one block per type, its title and its settings its stage's
     dict(key="fusion", phase=6, title="Combination", kind="slot", stages=list(COMBINE),
          what="Combines the images of several workflows (one per filter, or a dual-band image's channels) into one "
-              "colour image, aligned through their plate solutions: S-H-O, H-O, RGB or LRGB, by what was "
-              "photographed."),
+              "colour image, on one grid: S-H-O, H-O, HOO, RGB, LRGB or HaRGB, by what was photographed."),
     dict(key="composition", phase=6, title="Combine layers", kind="slot", stages=[],
          what="Combines the Stars/background block's two images: the starless image and the stars, each stretched, the stars "
               "put back on top (Screen, Linear dodge or Lighten). Its settings are those of its layer in Post."),

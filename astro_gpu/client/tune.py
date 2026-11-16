@@ -695,6 +695,8 @@ class TuneView(QWidget):
         from .gradientedit import GradientEditor
         self.grad_editor = GradientEditor(self)            # the Gradient block's samples and areas, on the image
         self.panel.grad_editor = self.grad_editor
+        from .combineedit import CombineEditor
+        self.comb_editor = CombineEditor(self)             # a combination's palette, filters and balance, as a draft
         self.pages.addWidget(body)
         self.sources = sources_view
         self.pages.addWidget(sources_view)
@@ -760,7 +762,8 @@ class TuneView(QWidget):
         if same:
             return True
         from .blockdraft import settle
-        return settle(getattr(self, "grad_editor", None), self) and settle(self.panel, self)
+        return settle(getattr(self, "grad_editor", None), self) and \
+            settle(getattr(self, "comb_editor", None), self) and settle(self.panel, self)
 
     def select(self, index=None, step=None) -> bool:
         """False when the block shown holds a draft and the user stays."""
@@ -883,6 +886,10 @@ class TuneView(QWidget):
         clear(self.head)
         self.grad_editor.detach()
         if self.grad_editor.center(self, node, p):        # the Gradient block's result: its own page (gradientedit.py)
+            self.comb_editor.center(self, None, None)
+            return
+        self.comb_editor.detach()
+        if self.comb_editor.center(self, node, p):        # a combination: its editor's page (combineedit.py)
             return
         # the same picture as shown (a setting changed, the block Outdated with its previous result): the viewer stays,
         # only the header and the panel are built again (issue #24: rebuilt, the image flickered)
@@ -987,6 +994,7 @@ class TuneView(QWidget):
         self.panel.refresh(None)
         clear(self.head)
         self.grad_editor.detach()
+        self.comb_editor.center(self, None, None)
         self.head.addWidget(label(_("Project") + "  ·  " + self.s.name, "h1"))
         self.head.addStretch(1)
         self._cur = None
