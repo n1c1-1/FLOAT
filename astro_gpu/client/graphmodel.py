@@ -1204,6 +1204,7 @@ class GraphEditing:
         try:
             with self._edit():
                 self._commit(g)
+                self._layers_follow_names(before, g)      # a workflow renamed (the graph's name field, the panel)
                 ix = gm.Index(before)
                 post = ix.post
                 # the user's own wire to Post, or To Post on a workflow's last block (its image given back after its
@@ -2232,18 +2233,36 @@ class GraphEditing:
             raise GraphRefused(_("not in workflow"))
         step = ("rename_row", {"row": f.id, "name": name}) if isinstance(f, gm.Row) else \
             ("rename_tap", {"tap": f.id, "name": name})
-        with self._edit():                                # its Post layers' names in the same step
-            self._do([step])
-            self._rename_layers(pid, name, old)
+        with self._edit():                                # (the step is named by who asked: Post's page, the panel)
+            self._do([step])                              # its Post layers' names in the same step (``_change``)
+
+    def _layers_follow_names(self, before, g):
+        """A step that renamed workflows (whatever asked for it: the name typed on a block from F2 or the menu, the
+        panel): their layers of Post follow, in the same step."""
+        was = {f.wid: f.name for f in list(before.rows) + list(before.taps) if f.wid is not None}
+        for f in list(g.rows) + list(g.taps):
+            if f.wid in was and was[f.wid] != f.name:
+                self._rename_layers(f.wid, f.name, was[f.wid])
 
     def _rename_layers(self, pid, name, old=None):
-        """Post's layers named after a workflow follow its new name (GUI exploration 3.4)."""
-        if old is None:
+        """Post's layers named after a workflow follow its new name (GUI exploration 3.4): those whose name is the
+        default one built from the workflow's ("Full", "Full · Combine layers", "Full · Combine layers 2", "Full ·
+        Starless image"...); a name the user typed is never replaced, even one that begins with the workflow's."""
+        if old is None or old == name:
             return
+        import re
+        parts = "|".join(re.escape(x) for x in _mm().POST_PART_NAMES.values())
+        default = re.compile(re.escape(old) + r"(( · (?:" + parts + r"))?( \d+)?)")
+        done = False
         for v in self.p.post["versions"]:
-            v["layers"] = [{**x, "name": name + x["name"][len(old):]}
-                           if x.get("kind") == "workflow" and x.get("pid") == pid and str(x.get("name", "")).startswith(old)
-                           else x for x in v.get("layers") or []]
+            out = []
+            for x in v.get("layers") or []:
+                m = default.fullmatch(str(x.get("name", ""))) if x.get("kind") == "workflow" and x.get("pid") == pid                     else None
+                out.append({**x, "name": name + m.group(1)} if m else x)
+                done = done or bool(m)
+            v["layers"] = out
+        if done:
+            self.postChanged.emit(None)                   # Post's page, when open, reads its layers again
 
     def duplicate(self, src, name: str):
         """A copy of a workflow: the same blocks drawn once, a workflow of its own ending where src ends (a tap)."""

@@ -77,6 +77,44 @@ def test_renaming_the_workflow_keeps_the_block_chosen(world, key):
     assert [q.name for q in W.m.paths] == ["Wide field"] and W.b.selected == st and W.page.panel.node.key == shown
 
 
+def test_the_menus_rename_keeps_the_page_and_posts_default_layer_names_follow(world):
+    """The tutorials' film: right-click on a workflow's first block > Workflow > Rename, a name, Enter: Inspect opened
+    on Stacking and Post's layers of the workflow kept the old name. The menu's path confirms as F2 does, and a layer
+    whose name was the default one built from the workflow's name follows it; a name the user typed stays."""
+    from astro_gpu.client.graphview.menu import menu
+    W = world()
+    m, cv = W.m, W.page.canvas
+    pid = m.paths[0].pid
+    one = m.add_post_layer(pid, "combined", None, keep_default=False)
+    two = m.add_post_layer(pid, "combined")
+    plain = m.add_post_layer(pid, None)
+    mine = m.add_post_layer(pid, "starless")
+    m.set_post_layer(mine, name="Full of colours")
+    W.settle()
+    before = {x["id"]: x["name"] for x in m.post_version()["layers"]}
+    assert before == {one: "Full · Combine layers", two: "Full · Combine layers 2", plain: "Full",
+                      mine: "Full of colours"}, before
+    opened = []
+    cv.inspect.connect(opened.append)
+    first = W.graph.rows[0].blocks[0]
+    sub = next(e[2] for e in menu(W.b.doc, first) if e and e[1] == "submenu" and any(
+        x and x[1] == "rename" for x in e[2]))
+    _text, op, args, _on, _why = next(x for x in sub if x and x[1] == "rename")
+    W.said.clear()
+    cv.run_menu(first, op, args)
+    cv.name_edit.setText("Wide field")
+    W.g.key("Return", target=cv.name_edit)
+    W.settle()
+    assert [q.name for q in m.paths] == ["Wide field"] and opened == []
+    assert {x["id"]: x["name"] for x in m.post_version()["layers"]} == {
+        one: "Wide field · Combine layers", two: "Wide field · Combine layers 2", plain: "Wide field",
+        mine: "Full of colours"}
+    assert W.said and "Wide field" in W.said[-1], W.said
+    W.b.undo()
+    W.settle()
+    assert {x["id"]: x["name"] for x in m.post_version()["layers"]} == before
+
+
 def test_the_bridge_takes_an_operations_own_name(world):
     W = world()
     r = W.b.act("rename_row", row=W.graph.rows[0].id, name="Deep")
