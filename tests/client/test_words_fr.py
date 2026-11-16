@@ -138,3 +138,24 @@ def test_a_step_without_words_is_undone_plainly(world):
     QApplication.processEvents()                                          # its gesture ended without words
     m.log("Run finished in {t}", t="1 min")                               # a later line never names it
     assert m.undo() and m.restored == ""
+
+
+def test_a_renamed_workflow_is_masculine_and_one_file_is_singular(world, tmp_path):
+    """The laptop's pass in French: "renommée « Amas »" said of a workflow, and "1 flats ajoutés"."""
+    m, page = world["m"], world["page"]
+    toasts = watch_toasts(page)
+    i18n.set_language("fr")
+    g = page.bridge.graph
+    res = page.bridge.act("rename_row", row=g.rows[0].id, name="Amas")
+    assert res.ok and toasts[-1] == "renommé « Amas » · Ctrl+Z"
+    QApplication.processEvents()
+    night = next(b for b, o in g.blocks.items() if o.kind == "session")
+    res = page.bridge.act("rename_night", night=night, name="Lune")
+    assert res.ok and toasts[-1] == "session renommée « Lune » · Ctrl+Z"
+    QApplication.processEvents()
+    flat = tmp_path / "flat.fits"
+    flat.write_bytes(b"\0" * 100)
+    res = page.bridge.act("add_files", session=night, kind="flats", paths=[str(flat)])
+    assert res.ok and toasts[-1] == "1 flat ajouté à « Amas » · Ctrl+Z"   # (its stack's only session: the stack's name)
+    assert m.next_words("undo") == "1 flat ajouté à « Amas »"            # Edit > Undo's words
+    assert m.undo() and m.restored == "1 flat ajouté à « Amas »"

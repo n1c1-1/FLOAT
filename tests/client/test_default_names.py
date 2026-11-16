@@ -116,3 +116,36 @@ def test_french_agrees_with_the_kind_of_frames():
         assert _("{kind} copied to {dest}").format(kind=_("Lights"), dest="x") == "Brutes copiées vers x"
     finally:
         i18n.set_language("en")
+
+
+def test_one_file_added_copied_or_left_out_is_said_in_the_singular():
+    """The laptop's pass: « 1 flats ajoutés ». The graph's words of a file gesture take the singular for one file, in
+    English and in French, the participle agreeing with the kind."""
+    from astro_gpu.client.i18n import _
+    from astro_gpu.graphcore.msg import say
+    from astro_gpu.graphcore.rules import files_msg
+    en = lambda n, kind, one, many, **f: say(files_msg(n, kind, one, many, **f))            # noqa: E731
+    fr = lambda n, kind, one, many, **f: say(files_msg(n, kind, one, many, **f), _)         # noqa: E731
+    add = ("{n} {one} added to “{t}”", "{n} {kind} added to “{t}”")
+    assert en(1, "flats", *add, t="Session 1") == "1 flat added to “Session 1”"
+    assert en(1, "bias", *add, t="Session 1") == "1 bias frame added to “Session 1”"
+    assert en(3, "flats", *add, t="Session 1") == "3 flats added to “Session 1”"
+    i18n.set_language("fr")
+    try:
+        assert fr(1, "flats", *add, t="Session 1") == "1 flat ajouté à « Session 1 »"
+        assert fr(1, "lights", *add, t="Session 1") == "1 brute ajoutée à « Session 1 »"
+        assert fr(1, "bias", *add, t="Session 1") == "1 offset ajouté à « Session 1 »"
+        assert fr(1, "flat_darks", *add, t="Session 1") == "1 dark de flat ajouté à « Session 1 »"
+        assert fr(2, "flats", *add, t="Session 1") == "2 flats ajoutés à « Session 1 »"
+        assert fr(1, "darks", "{n} {one} replaces those of “{t}”", "{n} {kind} replace those of “{t}”", t="S") == \
+            "1 dark remplace les précédents de « S »"
+        assert fr(1, "darks", "{n} {one} copied to {where}", "{n} {kind} copied to {where}", where="common") == \
+            "1 dark copié vers commun"
+        assert fr(1, "lights", "{n} {one} moved to {where}", "{n} {kind} moved to {where}", where="common") == \
+            "1 brute déplacée vers commun"
+        assert fr(1, "flats", "{n} {one} left out of “{_name}”", "{n} {kind} left out of “{_name}”", _name="S") == \
+            "1 flat écarté de « S »"
+        assert fr(1, "flats", "{n} {one} taken back in “{_name}”", "{n} {kind} taken back in “{_name}”", _name="S") == \
+            "1 flat repris dans « S »"
+    finally:
+        i18n.set_language("en")

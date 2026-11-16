@@ -52,3 +52,25 @@ def test_try_variant_of_a_method_shows_the_variants_gradient(world, model, page)
     assert page.panel.node is not None and page.panel.node.key == "fond"
     model.undo()
     settle(world["w"], page)
+
+
+def test_undo_of_try_variant_chooses_the_block_chosen_before(world, model, page):
+    """A variant tried from the Gradient, then Undo: the panel and the outline went to the block before (Astrometry),
+    the variant's block being gone. The block chosen before the gesture is chosen again."""
+    from PySide6.QtWidgets import QLabel
+
+    from tests.client.graphview.test_gv_legacy_model import button, method_cards
+    select_node(page, node(page, "fond", 1))
+    settle(world["w"], page)
+    was = page.bridge.selected
+    assert page.bridge.graph.blocks[was].kind == "gradient"
+    other = next(c for c in method_cards(page) if "Automatic" in c.findChildren(QLabel)[0].text())
+    other.clicked.emit()
+    settle(world["w"], page)
+    button(page.panel, "Try variant").click()
+    settle(world["w"], page, 4)
+    assert page.bridge.selected != was
+    model.undo()
+    settle(world["w"], page)
+    assert page.bridge.selected == was
+    assert page.panel.node is not None and page.panel.node.key == "fond"

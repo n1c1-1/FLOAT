@@ -1126,6 +1126,9 @@ class SourcesView(QWidget):
         c = ref.calib if ref is not None else {}
         bad = calib_checks(ref, d.camera) if ref is not None else {}
         where = {"bias": _("the bias"), "black level": _("the black level"), "dark level": _("the darks' level")}
+        no_lights = ref is not None and not ref.lights
+        if no_lights:                                # said first; its darks are compared with no lights (they were
+            out.append((None, _("No light frames yet")))        # said "same as the lights" of a session without any)
         far = getattr(ref, "target_far", None)
         if far:                                      # the typed target against where the frames point: information
             out.append((None, target_far_text(far)))
@@ -1138,7 +1141,7 @@ class SourcesView(QWidget):
                 out.append((None, check_text(chk, d)))
         dk = c.get("darks")
         by = bad.get("darks_by_exposure")
-        if dk and not (by and by[0]["several"]):
+        if dk and not no_lights and not (by and by[0]["several"]):
             # a value one side does not record is no mismatch (a master dark without GAIN was read as gain 0 and said
             # different from lights of gain 90); the exposures are compared as numbers, to the microsecond
             de, le, dg, lg = dk.get("exposure"), ref.exposure, dk.get("iso"), ref.iso
@@ -1154,7 +1157,7 @@ class SourcesView(QWidget):
         # the dark the lights of each exposure get, by the Calibration's own rule (a dark of another exposure scaled
         # only above a bias or a black level; without, no dark rather than a wrong one: the two masters of 300 and 60 s
         # of M101 averaged into one of 180 s and scaled with the offset put its sky under 0)
-        for g in by or []:
+        for g in (by or []) if not no_lights else []:
             e = fexp(g["lights"]) if g["lights"] else _("an exposure not recorded")
             if g["how"] == "same":
                 out.append((True, _("Lights of {exp}: the darks of {dark}.").format(
@@ -1211,8 +1214,6 @@ class SourcesView(QWidget):
             t = (_("{n} frame excluded by hand: stacking to recompute.") if n_ex == 1 else
                  _("{n} frames excluded by hand: stacking to recompute."))
             out.append((False, t.format(n=n_ex)))
-        if not out and ref is not None and not ref.lights:
-            out.append((None, _("No light frames yet")))
         return out
 
     def select_group(self, key):

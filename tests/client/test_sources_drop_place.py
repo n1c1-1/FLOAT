@@ -88,3 +88,31 @@ def test_a_session_chosen_in_its_list_while_the_frames_are_read_is_the_one_a_dro
     finally:
         view.close()
         close(w, m, page)
+
+
+def test_the_undo_of_files_added_to_a_session_names_them(qapp, tmp_path, monkeypatch):
+    """The laptop's pass: flats dropped on a session's row, then Edit > Undo said only "a change of the workflows
+    (Graph)". The step is named by what was added, as the notice said it, and with the right number of its noun."""
+    from astro_gpu.client import i18n
+    w, m, page, view = shown(tmp_path, monkeypatch)
+    try:
+        view.show_session(1, "lights")
+        said = []
+        view.toast.connect(said.append)
+        one = [str(fits_file(tmp_path / "f" / "F_0.fits"))]
+        assert view.add_files("flats", one) == 1
+        assert said[-1] == "1 file added to “night 1” · Ctrl+Z"
+        assert m.next_words("undo") == "1 flat added to “night 1”"
+        QApplication.processEvents()
+        assert m.next_words("undo") == "1 flat added to “night 1”"
+        i18n.set_language("fr")
+        darks = [str(fits_file(tmp_path / "d" / f"D_{k}.fits")) for k in range(3)]
+        assert view.add_files("darks", darks) == 3
+        assert m.next_words("undo") == "3 darks ajoutés à « night 1 »"
+        assert m.undo(graph=True) and m.restored == "3 darks ajoutés à « night 1 »"
+        assert m.undo(graph=True) and m.restored == "1 flat added to “night 1”"      # said as it was shown
+        assert view.add_files("flats", one) == 1 and m.next_words("undo") == "1 flat ajouté à « night 1 »"
+    finally:
+        i18n.set_language("en")
+        view.close()
+        close(w, m, page)

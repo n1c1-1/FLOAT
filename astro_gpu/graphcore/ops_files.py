@@ -29,10 +29,9 @@ def op_add_files(q, session, kind, paths, mode="add"):
         base = _eff_list(q, session, kind)
         seen = set(base)
         s.files[kind] = base + [x for x in _dedup(paths) if x not in seen]
-    n = len(paths)
-    kd = rules.FILE_LABEL[kind].lower()
-    return Out(M("{n} {kind} replace those of “{t}”" if mode == "replace" else "{n} {kind} added to “{t}”",
-                 n=n, kind=kd, t=title_msg(q, session)), session)
+    pair = (("{n} {one} replaces those of “{t}”", "{n} {kind} replace those of “{t}”") if mode == "replace" else
+            ("{n} {one} added to “{t}”", "{n} {kind} added to “{t}”"))
+    return Out(rules.files_msg(len(paths), kind, *pair, t=title_msg(q, session)), session)
 
 
 def op_remove_files(q, session, kind, paths):
@@ -129,8 +128,9 @@ def op_move_files(q, src_session, src_kind, dst_session, dst_kind, paths=None, c
     dst = _list_of(q, dst_session, dst_kind)
     _set_list(q, dst_session, dst_kind, dst + [x for x in paths if x not in dst])
     where = "common" if dst_session == COMMON else M("“{t}”", t=title_msg(q, dst_session))
-    return Out(M("{n} {kind} copied to {where}" if copy else "{n} {kind} moved to {where}",
-                 n=len(paths), kind=rules.FILE_LABEL[dst_kind].lower(), where=where),
+    pair = (("{n} {one} copied to {where}", "{n} {kind} copied to {where}") if copy else
+            ("{n} {one} moved to {where}", "{n} {kind} moved to {where}"))
+    return Out(rules.files_msg(len(paths), dst_kind, *pair, where=where),
                None if dst_session == COMMON else dst_session)
 
 
@@ -371,8 +371,9 @@ def op_exclude_files(q, session, kind, paths, excluded=True):
     cur = [x for x in lo.get(kind, []) if x not in paths]
     lo[kind] = cur + paths if excluded else cur
     e["left_out"] = lo
-    return Out(M("{n} {kind} left out of “{_name}”" if excluded else "{n} {kind} taken back in “{_name}”",
-                 n=len(paths), kind=rules.FILE_LABEL[kind].lower(), _name=e.get("name", "")), session)
+    pair = (("{n} {one} left out of “{_name}”", "{n} {kind} left out of “{_name}”") if excluded else
+            ("{n} {one} taken back in “{_name}”", "{n} {kind} taken back in “{_name}”"))
+    return Out(rules.files_msg(len(paths), kind, *pair, _name=e.get("name", "")), session)
 
 
 def excluded_files(q, session, kind):
