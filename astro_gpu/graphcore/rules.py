@@ -691,7 +691,8 @@ def stack_light_count(p, r) -> tuple[int, int]:
     return len(seen), sum(1 for v in seen.values() if v > 1)
 
 
-def card_summary_msg(p, rid):
+def card_summary_msg(p, rid, used=None):
+    """A stack's card line; ``used``: the method its Stacking's last result used, when it is known (stacking_msg)."""
     ix = Index(p)
     r = ix.row[rid]
     if not r.nights:
@@ -703,7 +704,7 @@ def card_summary_msg(p, rid):
     if twice:
         parts.append(M("{n} listed twice", n=twice))
     if stk:
-        parts.append(_first_part(summary_msg(p, stk, ix=ix)))
+        parts.append(_first_part(summary_msg(p, stk, ix=ix) if used is None else stacking_msg(p, stk, used, ix)))
     return join(parts)
 
 
@@ -714,8 +715,8 @@ def _first_part(m):
     return m
 
 
-def card_summary(p, rid, tr=None):
-    return say(card_summary_msg(p, rid), tr)
+def card_summary(p, rid, tr=None, used=None):
+    return say(card_summary_msg(p, rid, used), tr)
 
 
 def project_state_msg(p):
