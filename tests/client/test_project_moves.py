@@ -138,9 +138,6 @@ def test_save_as_moves_the_results_and_the_copy_is_up_to_date(win, env, monkeypa
     assert sorted(x.name for x in root.iterdir()) == [project2.FILE]       # the results moved, never copied
 
 
-@pytest.mark.xfail(strict=True, reason="Save as moves store, logs, state.json and the thumbnail, not the calibrated "
-                   "frames of a project whose scratch folder is its own (no scratch_dir: <project>/scratch): they stay "
-                   "behind in the folder left, while the copy is given a new scratch folder in the cache")
 def test_save_as_leaves_nothing_but_the_project_file_when_the_scratch_is_inside(win, env, monkeypatch):  # noqa: F811
     root = computed(env["tmp"] / "P")
     assert (root / "scratch").is_dir()

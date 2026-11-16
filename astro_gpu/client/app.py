@@ -1742,6 +1742,12 @@ class Main(QMainWindow):
         todo = [(old / n, root / n) for n in ("store", "logs", "state.json") if (old / n).exists()]
         if (old / "cache" / "thumb.jpg").exists():
             todo.append((old / "cache" / "thumb.jpg", root / "cache" / "thumb.jpg"))
+        # the calibrated frames of a project that keeps them in its own folder go too, to where the copy keeps its
+        # own (the cache folder of the settings, else its own folder): nothing of several gigabytes stays behind
+        cache = prefs.get("cache_dir")
+        scratch = Path(cache) / root.name if cache else root / "scratch"
+        if (old / "scratch").is_dir() and not scratch.exists():
+            todo.append((old / "scratch", scratch))
         if not todo:
             return True
         out = {}
