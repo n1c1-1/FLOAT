@@ -174,6 +174,7 @@ class Dock(QObject):
         self.page, self.panel, self.put, self.take, self.sections = page, panel, put, take, sections or (lambda: [])
         self.title, self.role, self.side = title, role, side
         self.state = "docked"
+        self.stays = ()                                # the page's widgets a click on which leaves the opened panel open
         self._open = False
         self._unfold_t = QTimer(self, singleShot=True, interval=UNFOLD_MS)
         self._unfold_t.timeout.connect(self._hover_open)
@@ -379,7 +380,8 @@ class Dock(QObject):
             elif t == QEvent.KeyPress and e.key() == Qt.Key_Escape and self._in_window(o):
                 self.close_overlay()
                 return True
-            elif t == QEvent.MouseButtonPress and self._in_window(o) and self._outside(e.globalPosition().toPoint()):
+            elif t == QEvent.MouseButtonPress and self._in_window(o) and o not in self.stays \
+                    and self._outside(e.globalPosition().toPoint()):
                 self.close_overlay()                           # the click goes on to what is under it, as a flyout's
         return False
 

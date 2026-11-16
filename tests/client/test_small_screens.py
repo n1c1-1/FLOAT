@@ -287,6 +287,29 @@ def test_the_fold_button_closes_the_panel_opened_over_the_graph(env):
         assert page.dock.state == "icons" and page.dock.strip.isVisible()
 
 
+def test_the_view_tabs_keep_the_panel_opened_over_the_graph(env):
+    """Blocks, Folded, Table: the panel opened over the graph was closed by the click on a view's tab."""
+    w = _open(env, (1250, 685))
+    page = w.graph
+    _click_in_window(w, _icon(page))
+    assert page.dock.is_open() and page.panel.isVisible()
+    for tab in ("folded", "table", "blocks"):
+        _click_in_window(w, page.positions[tab])
+        assert page.position() == tab
+        assert page.dock.is_open() and page.panel.isVisible() and page.dock.state == "icons", tab
+    QTest.mouseClick(_vp(w), Qt.LeftButton, Qt.NoModifier, _empty_point(w))    # a click elsewhere still closes it
+    _settle(w)
+    assert not page.dock.is_open() and not page.panel.isVisible()
+    # folded, it stays folded; docked, it stays docked
+    for tab in ("table", "blocks"):
+        _click_in_window(w, page.positions[tab])
+        assert page.dock.state == "icons" and not page.panel.isVisible() and page.dock.strip.isVisible(), tab
+    _click_in_window(w, page.dock.pin)
+    for tab in ("folded", "table", "blocks"):
+        _click_in_window(w, page.positions[tab])
+        assert page.dock.state == "docked" and page.panel.isVisible() and not page.dock.strip.isVisible(), tab
+
+
 def _mouse_on_palette(page, inside: bool):
     bar = page.palette
     QApplication.sendEvent(bar, QEnterEvent(QPointF(5, 5), QPointF(5, 5), QPointF(bar.mapToGlobal(QPoint(5, 5))))
