@@ -30,8 +30,9 @@ class Inventory(Stage):
     Params = InventoryParams
     # 2: the levels of FITS frames in floats in ADU, as their pixels are read (io/frames.fits_adu): a frame on the 0-1
     # scale had a white level of 1, one in ADU too. 3: each frame says whether it is a master, and of how many frames
-    # (``stacked``, io/frames.master_count), which the Calibration reads
-    version = "3"
+    # (``stacked``, io/frames.master_count), which the Calibration reads. 4: an 8-bit FITS frame whose header gives no
+    # level saturates at 255 (it had a white level of 1: all its pixels counted as saturated)
+    version = "4"
     key_label = "3"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
     def run(self, ctx: Context, p: InventoryParams) -> None:
