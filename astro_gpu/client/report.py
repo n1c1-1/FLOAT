@@ -123,6 +123,11 @@ class ReportData:
     outdated: bool = False                               # read from the results an Outdated block had (not the current ones)
 
 
+class Choice(str):
+    """A setting's value that is one of its choices: shown by the word the panels show for it (``texts.choice_label``),
+    in the language of the screen; a text the user typed is shown as typed."""
+
+
 def shareable(v) -> bool:
     """Whether a setting's value can go in a report: a plain value that names no place on a disk."""
     return isinstance(v, (bool, int, float, str)) and not PATHS.search(str(v))
@@ -151,6 +156,8 @@ def _settings(project, wf, stages, which: str = "current") -> list:
             extra = info.json_schema_extra or {}
             changed = value != info.default
             if changed or extra.get("level") != ADVANCED:   # the rest changes nothing a reader needs
+                if isinstance(value, str) and extra.get("choices"):
+                    value = Choice(value)
                 rows.append((st.title, extra.get("label", key), value, changed))
     return rows
 
@@ -1036,7 +1043,8 @@ class ReportPage(QWidget):
     @staticmethod
     def _value(value) -> str:
         text = _("Yes") if value is True else _("No") if value is False else \
-            number(value, 3).rstrip("0").rstrip(",.") if isinstance(value, float) else str(value)
+            number(value, 3).rstrip("0").rstrip(",.") if isinstance(value, float) else \
+            texts.choice_label(str(value), language()) if isinstance(value, Choice) else str(value)
         return html.escape(text)
 
     def _recipe(self, n: int, keys, d: ReportData) -> str:

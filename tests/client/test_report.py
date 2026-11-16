@@ -482,3 +482,44 @@ def test_a_failed_reading_says_so(qapp, monkeypatch):
     p.load()
     p._ready("report", p._token, data())                         # read again: the report, the reason gone
     assert "the disk is gone" not in text(p)
+
+
+def test_every_value_of_the_french_report_is_in_french(qapp, monkeypatch, tmp_path):
+    """The French report gave the settings' values as they are stored (pretrained, short, fallback, polynomial): every
+    value it shows goes through the words the panels show for it. Walks the settings and the measures of the test
+    project's results; a value the engine's catalogue knows must come out as the catalogue's French."""
+    from conftest import HAVE_TEST_PROJECT, NO_TEST_PROJECT, scratch_project
+
+    from astro_gpu import api, texts
+    if not HAVE_TEST_PROJECT:
+        pytest.skip(NO_TEST_PROJECT)
+    p = api.open_project(scratch_project(tmp_path / "heart"))
+    full = next(w for w in p.workflows if w.options.get("denoise") and w.options.get("stars"))
+    d = rep.report_data(p, full.id, tuple(texts.stage_names()), "x")
+    choices = [v for _b, _n, v, _c in d.settings if isinstance(v, rep.Choice)]
+    assert {"pretrained", "short", "fallback", "polynomial"} <= set(choices)      # the test project's own
+    i18n.set_language("fr")
+    try:
+        stored = []
+        for v in choices:                                # a setting with choices: the panel's word for it
+            en = texts.CHOICE_TEXTS.get(v, v)
+            assert texts.has_translation(en, "fr"), f"no French for the choice {v!r} ({en})"
+            assert rep.ReportPage._value(v) == rep.html.escape(texts.translate(en, "fr"))
+            stored += [v] if texts.translate(en, "fr") == v and v in texts.CHOICE_TEXTS else []
+        for stage, metrics in d.metrics.items():         # a measure that is a fixed word
+            for key, v in metrics.items():
+                if isinstance(v, str) and v in texts.VALUE_TEXTS:
+                    assert texts.has_translation(texts.VALUE_TEXTS[v], "fr"), f"no French for {v!r} ({stage})"
+                    assert texts.format_metric(key, v, "fr") == texts.translate(texts.VALUE_TEXTS[v], "fr")
+        assert not stored, f"shown as stored: {stored}"
+        t = text(page(monkeypatch, d=d))
+        for word in ("pretrained", "short", "fallback", "polynomial", "continue"):
+            assert not rep.re.search(rf"(?m)^{word}$", t), f"{word} is shown as it is stored"
+        assert "Réseau pré-entraîné" in t and "Balance de repli" in t and "Polynôme" in t
+    finally:
+        i18n.set_language("en")
+
+
+def test_a_typed_text_is_never_taken_for_a_choice(qapp):
+    """A free text that reads like a stored choice (a target named "auto") stays what was typed."""
+    assert rep.ReportPage._value("auto") == "auto" and rep.ReportPage._value(rep.Choice("auto")) == "Automatic"
