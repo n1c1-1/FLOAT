@@ -869,11 +869,48 @@ class GraphEditing:
                 if what == "add":
                     self.add_post_layer(wid, part, None)
                     continue
+                if part is None and self._plain_layers_combined(before, after, wid):
+                    continue
                 for v in list(self.p.post["versions"]):
                     self.set_post_version(v["id"])
                     self.remove_post_part(wid, part, None)
         finally:                                     # the version shown is given back, a removal that raised too
             self.set_post_version(active)
+
+    def _plain_layers_combined(self, before, after, wid) -> bool:
+        """A workflow given its first Stars/background while Post holds layers of its plain image: Post shows it by a
+        Combine layers layer from then on, and each of those layers becomes one, in every version, instead of being
+        taken out (its settings were lost: the new layer started from nothing). The layer keeps its id, so its filters
+        stay above it and its mask is its own; its tone settings and base stretch are the starless image's (the same
+        settings: Sky, Contrast, Faint tones, Saturation, Colours, H-alpha, Noise smoothing), the stars' own settings
+        start at their defaults; its name follows when it was the workflow's. False when the gesture is not that one,
+        or Post holds no layer of the image (it then shows the Combine layers by default)."""
+        from ..graphcore.post import _flows, stars_side
+        from .postengine import new_workflow_layer
+        if stars_side(before, wid, _flows(before)) is not None or stars_side(after, wid, _flows(after)) is None:
+            return False
+        try:
+            name = self.p.workflow(wid).name
+        except KeyError:
+            return False
+        import re
+        default = re.compile(re.escape(name) + r"( \d+)?")
+        done = False
+        for v in self.p.post["versions"]:
+            out = []
+            for x in v.get("layers") or []:
+                if x.get("kind") == "workflow" and x.get("pid") == wid and x.get("part") is None:
+                    m = default.fullmatch(str(x.get("name", "")))
+                    new = new_workflow_layer(wid, x.get("name", ""), part="combined")
+                    x = {**new, **x, "part": "combined"}
+                    if m:
+                        x["name"] = name + " · " + _mm().POST_PART_NAMES["combined"] + (m.group(1) or "")
+                    done = True
+                out.append(x)
+            v["layers"] = out
+        if done:
+            self.postChanged.emit(None)                   # Post's page, when open, reads its layers again
+        return done
 
     def _layers_follow(self, before, after, moved=()):
         """The Combine layers blocks a gesture added or removed, said to Post (``_post_follow``): a block added on a
