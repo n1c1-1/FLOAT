@@ -81,7 +81,11 @@ def env(tmp_path, monkeypatch, qapp):
     monkeypatch.setenv("ASTRO_GPU_SETTINGS", str(tmp_path / "settings.json"))
     prefs.load()
     set_language("en")
-    home_before = sorted(p.name for p in USER_HOME.iterdir()) if USER_HOME.is_dir() else None
+    def listed():
+        # another FLOAT program of the user may be computing meanwhile: its lock files come and go, they are not ours
+        return sorted(p.name for p in USER_HOME.iterdir() if not p.name.endswith(".lock"))
+
+    home_before = listed() if USER_HOME.is_dir() else None
     yield {"tmp": tmp_path}
     while OPEN:
         w = OPEN.pop()
@@ -92,7 +96,7 @@ def env(tmp_path, monkeypatch, qapp):
     assert _fingerprint(USER_SETTINGS) == USER_BEFORE, "the user's settings file was touched"
     assert not (tmp_path / "settings.json").exists(), "the viewer wrote settings"
     if home_before is not None:
-        assert sorted(p.name for p in USER_HOME.iterdir()) == home_before, "~/.astro_gpu changed"
+        assert listed() == home_before, "~/.astro_gpu changed"
 
 
 @pytest.fixture()

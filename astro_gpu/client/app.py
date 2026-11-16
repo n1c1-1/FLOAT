@@ -252,6 +252,25 @@ class _FieldUndo(QObject):
     def __init__(self, window):
         super().__init__(window)
         self.window = window
+        self._on = None                                  # the field of the window that has the keyboard now
+        # only the field that has the keyboard is watched, never the whole application: a filter on every event of
+        # the application crashed now and then (access violation) while windows were made and destroyed
+        QApplication.instance().focusChanged.connect(self._focus)
+
+    def _focus(self, _old, new):
+        if self._on is not None:
+            try:
+                self._on.removeEventFilter(self)
+            except RuntimeError:                         # the field is gone with its page
+                pass
+            self._on = None
+        try:
+            mine = isinstance(new, (QLineEdit, QPlainTextEdit, QAbstractSpinBox)) and new.window() is self.window
+        except RuntimeError:
+            mine = False
+        if mine:
+            new.installEventFilter(self)
+            self._on = new
 
     def eventFilter(self, obj, e):                                    # noqa: N802 - Qt's name
         if e.type() != QEvent.ShortcutOverride or not isinstance(obj, (QLineEdit, QPlainTextEdit, QAbstractSpinBox)):
@@ -276,7 +295,7 @@ class _FieldUndo(QObject):
 class Main(QMainWindow):
     def __init__(self, worker: ApiWorker | None = None):
         super().__init__()
-        QApplication.instance().installEventFilter(_FieldUndo(self))
+        self._field_undo = _FieldUndo(self)             # Ctrl+Z in a field with nothing left to undo: the window's
         self.worker = worker or ApiWorker(self)
         self.worker.done.connect(self._worker_done)
         from .services.selftest import job as card_test_job
