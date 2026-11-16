@@ -1204,7 +1204,13 @@ class Panel(QWidget):
             self.bv.addLayout(row)
         self.bv.addSpacing(6)
         self.recipe_settings(p)
-        self.settings(p, "fusion", groups=[(g, [r for r in rs if r.get("name") != "values"])
+        # Stars (what a narrow-band combination makes of the stars alone): shown on the combination it acts on, the
+        # one whose inputs all read their stars
+        wired = f.get("inputs") or []
+        on_stars = bool((spec or {}).get("narrowband")) and bool(wired) and \
+            all(i.get("image") == "stars" for i in wired)
+        hidden = {"values"} | (set() if on_stars else {"stars"})
+        self.settings(p, "fusion", groups=[(g, [r for r in rs if r.get("name") not in hidden])
                                            for g, rs in self._groups(p, "fusion")])
         self.bv.addSpacing(6)
         self.bv.addWidget(label(_("Each input is any workflow's image, wired on the graph or in the Table view. They "

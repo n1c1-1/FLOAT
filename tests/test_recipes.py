@@ -36,7 +36,8 @@ def test_the_folder_ships_six_recipes_and_the_four_types_are_their_frozen_conten
         assert R.roles(r) == cls.ports and R.stage_for({"type": kind, "recipe": r}) == cls.name
         for name, q in r["parameters"].items():                      # the defaults are the blocks' own
             assert cls.Params.model_fields[name].default == q["default"], (kind, name)
-        assert set(r["parameters"]) == set(cls.Params.model_fields) - set(C.CombinationParams.model_fields)
+        # (the blocks' own setting besides the recipe's: Stars, what a narrow-band type makes of the stars alone)
+        assert set(r["parameters"]) == set(cls.Params.model_fields) - set(C.CombinationParams.model_fields) - {"stars"}
     assert not R.is_legacy(found["hoo"]) and R.stage_for({"type": "hoo", "recipe": found["hoo"]}) == "combine_recipe"
     ex = R.load(R.FOLDER / "_example.toml")                           # the documentation is a valid recipe, not listed
     assert ex["id"] == "example" and "example" not in found

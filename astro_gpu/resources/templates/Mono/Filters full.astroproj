@@ -447,7 +447,8 @@
      "combine_sho": {
       "hue_ha": 31.4,
       "hue_oiii": 202.2,
-      "hue_sii": 15.5
+      "hue_sii": 15.5,
+      "stars": "neutral"
      }
     },
     "pause": false,
@@ -572,7 +573,8 @@
      "combine_sho": {
       "hue_ha": 31.4,
       "hue_oiii": 202.2,
-      "hue_sii": 15.5
+      "hue_sii": 15.5,
+      "stars": "neutral"
      }
     },
     "pause": false,

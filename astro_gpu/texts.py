@@ -496,6 +496,8 @@ CHOICE_TEXTS: dict[str, str] = {
     "polynomial": "Polynomial", "rbf": "RBF", "automatic": "Automatic",
     # the combinations' lightness and colour smoothing (stages/combine.py)
     "noise": "By noise", "equal": "Equal", "radius": "Radius",
+    # the narrow-band combinations' stars alone (stages/combine.STARS)
+    "neutral": "Neutral", "palette": "Palette",
     # the Denoise block's methods and adaptation lengths (stages/denoise.py)
     "measured": "Image shape", "instrument": "Instrument PSF", "newton": "Newtonian", "refractor": "Refractor",
     "sct": "Schmidt-Cassegrain", "lens": "Photo lens",

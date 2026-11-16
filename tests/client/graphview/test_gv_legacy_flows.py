@@ -324,6 +324,34 @@ def test_a_combination_panel_shows_its_named_inputs_and_its_settings(world):
     assert next(i for i in W.m.p.workflow(ho.pid).source["fusion"]["inputs"] if i["role"] == "Ha")["image"] == "stars"
 
 
+def test_the_stars_setting_is_shown_on_the_combination_of_the_stars_alone(world):
+    """The Filters template's second combination reads the filters' stars: its panel has the setting Stars (Neutral by
+    default: white stars, not the palette's colours), with Palette to choose; the nebula's combination, which it does
+    not act on, does not show it."""
+    import re
+
+    from PySide6.QtWidgets import QComboBox, QLabel
+    W = world(workflows=(), filters=("Ha", "OIII"))
+    W.page.show_templates()
+    card = W.page.templates.card("filters_full")
+    card.set_palette("H-O")
+    card.mousePressEvent(None)
+    W.settle()
+    ho_stars, ho = W.m.paths[-2:]
+    assert [i["image"] for i in ho_stars.source["fusion"]["inputs"]] == ["stars"] * 2
+    assert (W.m.p.workflow(ho_stars.pid).params.get("combine_ho") or {}).get("stars", "neutral") == "neutral"
+
+    def panel(view):
+        W.choose(W.block("fusion", view))
+        labels = {re.sub("<[^>]+>", "", x.text()) for x in W.page.panel.findChildren(QLabel)}
+        lists = [[c.itemText(i) for i in range(c.count())] for c in W.page.panel.findChildren(QComboBox)]
+        return labels, lists
+    labels, lists = panel(W.view("H-O · Stars"))
+    assert "Stars" in labels and ["Neutral", "Palette"] in lists and "Hα hue" in labels
+    labels, lists = panel(W.view("H-O"))
+    assert "Stars" not in labels and ["Neutral", "Palette"] not in lists and "Hα hue" in labels
+
+
 def test_filters_make_one_workflow_each_and_their_combinations(world):
     """Filters on the sessions, the Filters template (H-O): one stack each, the others aligned on the first, the stars'
     combination and the nebula's, each row its own Stars/background, Post's layer puts the stars on."""
