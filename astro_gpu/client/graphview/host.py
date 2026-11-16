@@ -80,6 +80,7 @@ class SidesHost:
         self.panel = pn
         self.dock = Dock(body, pn, lambda: h.addWidget(pn), lambda: h.removeWidget(pn), pn.folds.items,
                          _("Block settings"))
+        self.dock.stays = tuple(self.positions.values())   # Blocks, Folded, Table: the panel keeps its state
         h.insertWidget(h.indexOf(pn), self.dock.strip)
         self.dock.chosen.connect(lambda st: self.sideChosen.emit("right", st))
         self.dock.arrow.clicked.connect(self.sidesShown.emit)
