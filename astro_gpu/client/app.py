@@ -801,6 +801,8 @@ class Main(QMainWindow):
         the last save of a project whose graph cannot be read (``open_working_copy``); ``discard``: the open project's
         edits not saved were already answered "Don't save" (``open_other``)."""
         root = Path(root)
+        if root.suffix.lower() == Path(project2.FILE).suffix and root.is_file():
+            root = root.parent                           # the project's file itself given: its folder is the project
         if self.project is not None and root.as_posix().lower() == self.project.root.as_posix().lower():
             self.show_project()
             self.flash(_("“{name}” is already open").format(name=self.project.name))
@@ -830,6 +832,10 @@ class Main(QMainWindow):
             return False
         if self.close_project(go_home=False, discard=discard) is False:      # unsaved edits kept: Cancel
             return False
+        try:
+            self.banner.hide()                           # an earlier attempt's warning ("No project in this folder")
+        except RuntimeError:
+            pass
         self.project = OpenProject(root, d)
         forget_state(root)                               # Home reads its state again once it is closed
         self.project.log("Project created" if created else "Project opened")
@@ -960,7 +966,7 @@ class Main(QMainWindow):
             return True
         from .blockdraft import settle
         self._commit_typing()                            # what is typed goes to the draft first
-        if not settle(self._grad_editor(), self):
+        if not settle(self._grad_editor(), self) or not settle(self._comb_editor(), self):
             return False
         if gradient_only:
             return True
@@ -1236,6 +1242,8 @@ class Main(QMainWindow):
         tune.toasted.connect(self.flash)
         if getattr(tune, "grad_editor", None) is not None:   # the draft's own steps: Edit › Undo / Redo follow them
             tune.grad_editor.historyChanged.connect(self._update_actions)
+        if getattr(tune, "comb_editor", None) is not None:   # the combination editor's draft: the same
+            tune.comb_editor.historyChanged.connect(self._update_actions)
         tune.sideChosen.connect(lambda st: self._side_chosen("right", st))
         tune.sidesShown.connect(self._show_sides)
         tune.can_post = self.browser.can_post = lambda: True    # Post takes Inspect's images as layers
@@ -1518,6 +1526,12 @@ class Main(QMainWindow):
                 line += "  ·  " + self.run_refusal(cost)  # (round 2; report shots: the reason only in a tooltip)
             elif todo:
                 line += "  ·  " + _("to run: {t}").format(t=duration_text(cost.seconds, cost.measured))
+                if self.waiting_text():
+                    line += "  ·  " + self.waiting_text()
+            elif cost is not None and self.waiting_text():
+                # a block waits for an input (a combination with a port to wire): never "all up to date" (the
+                # reviewer's test: the block said "Waiting: S II to wire", the status line "all up to date")
+                line += "  ·  " + self.waiting_text()
             elif cost is not None:
                 # "all up to date" only over results computed: never with nothing computed (a combination waiting for
                 # its inputs, sessions without blocks: a beta tester), and the workflows with frames and no block said
@@ -1551,8 +1565,18 @@ class Main(QMainWindow):
             from .runs import refusal_text
             return refusal_text(problems)
         if cost is not None and not cost.jobs:
-            return _("All up to date")
+            return self.waiting_text() or _("All up to date")
         return ""
+
+    def waiting_text(self) -> str:
+        """"1 block waits for an input" when blocks wait (a combination with an input to wire: the graph's
+        ``waits``), "" when none does."""
+        s = self.s
+        try:
+            n = sum(1 for nd in s.block_map.nodes if getattr(nd, "waits", ""))
+        except Exception:  # noqa: BLE001 - no map of the blocks now: nothing said
+            return ""
+        return plural(n, "{n} block waits for an input", "{n} blocks wait for an input") if n else ""
 
     def _run_updated(self):
         if self.run is not None and self.run.running and self.proj_screen is not None:
@@ -1965,6 +1989,10 @@ class Main(QMainWindow):
         top = ed.history_top(how) if ed is not None else None
         if top is not None:
             out.append(("draft", top[0], top[1]))
+        ed = self._comb_editor()
+        top = ed.history_top(how) if ed is not None else None
+        if top is not None:
+            out.append(("comb_draft", top[0], top[1]))
         d = getattr(s, "pending_change", None)          # a block's draft in the panel: its edits are steps too
         top = d.top(how) if d is not None else None
         if top is not None:
@@ -1973,6 +2001,9 @@ class Main(QMainWindow):
 
     def _grad_editor(self):
         return getattr(self._tune, "grad_editor", None) if self._tune is not None else None
+
+    def _comb_editor(self):
+        return getattr(self._tune, "comb_editor", None) if self._tune is not None else None
 
     def _history_next(self, how: str):
         """The step the window's Undo (``how`` "undo") or Redo takes next: (where, stamp, extra) with ``where`` "graph"
@@ -2009,6 +2040,9 @@ class Main(QMainWindow):
             return view.next_words(how) if view is not None else ""
         if where == "draft":
             return _("Gradient draft")
+        if where == "comb_draft":
+            ed = self._comb_editor()
+            return _("{block} draft").format(block=ed.title()) if ed is not None and ed.p is not None else ""
         d = getattr(self.s, "pending_change", None)
         return _("{block} draft").format(block=getattr(d, "title", "")) if d is not None else ""
 
@@ -2043,6 +2077,9 @@ class Main(QMainWindow):
         if where == "draft":
             ed = self._grad_editor()
             return self.mode == 1 and ed is not None and ed.view is not None and ed.p is not None and ed.p.pid == extra
+        if where == "comb_draft":
+            ed = self._comb_editor()
+            return self.mode == 1 and ed is not None and ed.page_shown() and ed.p is not None and ed.p.pid == extra
         if where == "block_draft":
             return self.mode in (0, 1)
         return not self._post_shown()
@@ -2051,11 +2088,13 @@ class Main(QMainWindow):
     _ELSEWHERE = {"undo": {"graph": "The last change was made in the Graph", "post": "The last change was made in Post",
                            "post_model": "The last change was made in Post",
                            "draft": "The last change was made in the Gradient draft",
+                           "comb_draft": "The last change was made in a block's draft",
                            "block_draft": "The last change was made in a block's draft"},
                   "redo": {"graph": "The last change undone was made in the Graph",
                            "post": "The last change undone was made in Post",
                            "post_model": "The last change undone was made in Post",
                            "draft": "The last change undone was made in the Gradient draft",
+                           "comb_draft": "The last change undone was made in a block's draft",
                            "block_draft": "The last change undone was made in a block's draft"}}
 
     def _history(self, how: str, there: bool = False):
@@ -2144,6 +2183,12 @@ class Main(QMainWindow):
             if ed is not None and (ed.undo if undo else ed.redo)(extra):
                 self.flash((_("Undone: {what}") if undo else _("Redone: {what}")).format(what=_("Gradient draft")))
             return
+        if where == "comb_draft":
+            ed = self._comb_editor()
+            if ed is not None and (ed.undo if undo else ed.redo)(extra):
+                self.flash((_("Undone: {what}") if undo else _("Redone: {what}")).format(
+                    what=_("{block} draft").format(block=ed.title(s.view(extra)))))
+            return
         if where == "block_draft":
             d = s.pending_change
             if d is not None and d.move(how) is not None:
@@ -2164,6 +2209,10 @@ class Main(QMainWindow):
         elif where == "draft":
             if self.s is not None and self.s.view(extra) is not None:
                 self.select(index=self.s.index_of(extra), step="fond")
+            self.set_mode(1)
+        elif where == "comb_draft":
+            if self.s is not None and self.s.view(extra) is not None:
+                self.select(index=self.s.index_of(extra), step="fusion")
             self.set_mode(1)
         elif self._post_shown():
             self.set_mode(0)

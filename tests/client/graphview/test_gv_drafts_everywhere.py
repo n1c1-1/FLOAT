@@ -54,9 +54,9 @@ def test_a_recipe_parameter_is_a_draft_then_applied(world, monkeypatch):
     up_to_date(W, monkeypatch)
     b = next(x for x in W.kinds("combine") if W.graph.blocks[x].params.get("combine_ho") is not None
              or "ho" in str(W.graph.blocks[x].source))
-    monkeypatch.setattr(W.m, "recipe_parameters", lambda p: {"hue_ha": {
-        "label": "Hα hue", "min": -180, "max": 180, "step": 1, "default": 0,
-        "value": (W.graph.blocks[b].params.get("combine_ho") or {}).get("hue_ha", 0)}})
+    monkeypatch.setattr(W.m, "recipe_parameters", lambda p: {"smoothing": {
+        "label": "Colour smoothing", "min": 0, "max": 180, "step": 1, "default": 0,
+        "value": (W.graph.blocks[b].params.get("combine_ho") or {}).get("smoothing", 0)}})
     W.choose(b)
     sp = next(x for x in W.page.panel.findChildren(QDoubleSpinBox) if x.maximum() == 180)
     sp.setValue(12)
@@ -64,11 +64,21 @@ def test_a_recipe_parameter_is_a_draft_then_applied(world, monkeypatch):
     W.settle(2)
     d = W.m.pending_change
     assert d and [e["ch"]["kind"] for e in d.vals.values()] == ["recipe"]
-    assert (W.graph.blocks[b].params.get("combine_ho") or {}).get("hue_ha") in (None, 0)    # nothing made at the click
-    assert bar(W) is not None and not bar(W).b_variant.isEnabled()          # a combination: no variant, its reason said
+    assert bar(W) is not None
+    W.page.panel.draft_reset()
+    W.settle(2)
+    # its intensity, as every setting of the combination: a draft, then applied in one step
+    it = next(x for x in W.page.panel.findChildren(QDoubleSpinBox) if x.objectName() == "intensity")
+    it.setValue(0.5)
+    it.editingFinished.emit()
+    W.settle(2)
+    d = W.m.pending_change
+    assert d and [e["ch"]["kind"] for e in d.vals.values()] == ["combine"]
+    assert not (W.graph.blocks[b].params.get("combine_ho") or {}).get("weights")      # nothing made at the click
+    assert bar(W).b_variant.isEnabled(), bar(W).b_variant.toolTip()     # a variant: a second combination
     assert W.page.panel.draft_apply()
     W.settle(2)
-    assert W.graph.blocks[b].params["combine_ho"]["hue_ha"] == 12 and not W.m.pending_change
+    assert W.graph.blocks[b].params["combine_ho"]["weights"] and not W.m.pending_change
 
 
 def test_synthetic_stars_method_and_combine_layers_values_are_drafts(world, monkeypatch):
