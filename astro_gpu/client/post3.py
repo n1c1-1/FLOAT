@@ -4212,6 +4212,7 @@ class PostPage3(QWidget):
         asked = self.view.layer(self._asked) if self._asked is not None else None
         if asked is None and self._asked is not None and hasattr(self.s, "post_layer"):
             asked = self.s.post_layer(self._asked)
+        from . import names                               # default names follow the interface's language
         for name, _pid in coming:
             lb = label(_("{name}  ·  not computed yet").format(name=names.shown(tr_name(name))), "dim")
             if asked is not None and asked.get("name") == name:     # Open in Post of this layer's block
