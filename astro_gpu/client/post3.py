@@ -60,6 +60,7 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QStyle,
     QStyleOptionFrame,
+    QStyleOptionSlider,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -125,7 +126,7 @@ from .postengine import (
 )
 from .services.render import CPU_DRAFT_LEVEL, DRAFT_LEVEL, HALF_LEVEL, RenderWorker, Request, default_device_pref
 from .viewer import Viewer, to_qimage
-from .widgets import ACCENT, WARN, ElidedLabel, clear, label, single_choice
+from .widgets import ACCENT, WARN, ElidedLabel, clear, label, single_choice, wheel_scrolls
 
 NL = "\n"                                                   # a line break in a tooltip
 
@@ -304,10 +305,15 @@ def pix(a: np.ndarray, w=TW, h=TH) -> QPixmap:
     return QPixmap.fromImage(to_qimage(a))
 
 
+def decimals(step) -> int:
+    """How many decimals a slider's step has (0.005: 3; 1 or none: 0)."""
+    return next((d for d in range(9) if abs(step * 10 ** d - round(step * 10 ** d)) < 1e-9), 9) if step else 0
+
+
 def fmt(v, step):
     if step is not None and step >= 1:
         return f"{v:.0f}"
-    return dec(f"{v:.2f}".rstrip("0").rstrip("."))
+    return dec(f"{v:.{max(2, decimals(step))}f}".rstrip("0").rstrip("."))   # (a step of 0.005 shows 0.205)
 
 
 # ======================================================================== a continuous slider
@@ -327,15 +333,22 @@ class _NoContext:
 
 
 class Step(list):
-    """A step of Post's Undo: the layers, and the crop of that moment."""
+    """A step of Post's Undo: the layers, and the crop of that moment. ``words``: what the step did, when the two
+    states compared do not say it (a mask pasted is a mask added, or its parts changed)."""
     crop = None
+    words = ""
 
 
 class ContSlider(QWidget):
     """A slider that glides: `moved` while dragging (draft render), `done` when let go (full render). Double-click
-    on the slider or on its name: back to the default (the reference photo editor's, issue #16)."""
+    on the slider or on its name: back to the default (the reference photo editor's, issue #16).
+
+    With a ``step`` it counts in steps: every value it takes is ``lo`` plus a whole number of steps, an arrow key moves
+    it by one step (so a range with more values than the rail has pixels is still set exactly), and the value it is let
+    go on is the one of its last move. Without one it counts in thousandths of its range."""
     moved = Signal(float)
     done = Signal(float)
+    GLIDE = 1000                                          # the positions of a slider without a step
 
     def __init__(self, name, lo, hi, value, default, ends=None, unit="", step=None, show=None, parent=None):
         super().__init__(parent)
@@ -355,7 +368,9 @@ class ContSlider(QWidget):
         row = QHBoxLayout()
         row.setSpacing(6)
         self.s = QSlider(Qt.Horizontal)
-        self.s.setRange(0, 1000)
+        # (a step that does not divide the range: the last whole step under ``hi`` is the end)
+        self._n = max(1, math.floor((hi - lo) / step + 1e-6)) if step else self.GLIDE
+        self.s.setRange(0, self._n)
         if ends:
             a, b = label(ends[0], "small"), label(ends[1], "small")
             row.addWidget(a)
@@ -391,23 +406,31 @@ class ContSlider(QWidget):
         return super().eventFilter(obj, e)
 
     def _to_click(self, x: float):
-        """A click on the rail: the slider goes where it is clicked (issue #72); on the handle, nothing."""
-        length = self.s.style().pixelMetric(QStyle.PM_SliderLength, None, self.s)
-        span = max(1, self.s.width() - length)
-        at = QStyle.sliderPositionFromValue(0, 1000, self.s.value(), span)
-        if abs(x - (at + length / 2)) > length / 2:
-            self.s.setSliderDown(True)                       # one drag: `done` when let go
-            self.s.setValue(QStyle.sliderValueFromPosition(0, 1000, int(round(x - length / 2)), span))
+        """A click on the rail: the slider goes where it is clicked (issue #72); on the handle, nothing. The rail and
+        the handle are measured as the slider's own drag measures them (its style's): the handle comes under the
+        pointer, and the drag that follows starts from the value of the click (measured otherwise, the first pixel of
+        that drag moved the value by a notch)."""
+        opt = QStyleOptionSlider()
+        self.s.initStyleOption(opt)
+        style = self.s.style()
+        handle = style.subControlRect(QStyle.CC_Slider, opt, QStyle.SC_SliderHandle, self.s)
+        if handle.left() <= x <= handle.right():
+            return
+        rail = style.subControlRect(QStyle.CC_Slider, opt, QStyle.SC_SliderGroove, self.s)
+        span = max(1, rail.right() - handle.width() + 1 - rail.x())
+        at = int(round(x - handle.width() / 2 - rail.x()))
+        self.s.setSliderDown(True)                           # one drag: `done` when let go
+        self.s.setValue(QStyle.sliderValueFromPosition(0, self._n, min(max(at, 0), span), span, opt.upsideDown))
 
     def value(self) -> float:
-        x = self.lo + (self.hi - self.lo) * self.s.value() / 1000
         if self.step:
-            x = round(x / self.step) * self.step
-        return x
+            return round(self.lo + self.s.value() * self.step, decimals(self.step) + decimals(self.lo))
+        return self.lo + (self.hi - self.lo) * self.s.value() / self._n
 
     def set_value(self, x):
         self.s.blockSignals(True)
-        self.s.setValue(int(round(1000 * (x - self.lo) / ((self.hi - self.lo) or 1))))
+        self.s.setValue(int(round((x - self.lo) / self.step if self.step else
+                                  self._n * (x - self.lo) / ((self.hi - self.lo) or 1))))
         self.s.blockSignals(False)
         self._label()
 
@@ -576,7 +599,8 @@ class LayerRow(QFrame):
             self.m.setPixmap(small(mthumb))
             self.m.setFixedSize(SMALL_W + 2, SMALL_H + 2)
             self.m.setStyleSheet(f"border: 1px solid {ACCENT if sel_mask else '#3a4150'};")
-            self.m.setToolTip(_("Layer mask: white shows the layer, black hides it"))
+            self.m.setToolTip(_("Layer mask: white shows the layer, black hides it") + NL +
+                              _("Drag it onto another layer to copy it there"))
             h.addWidget(self.m)
         v = QVBoxLayout()
         v.setSpacing(0)
@@ -694,6 +718,12 @@ class LayerRow(QFrame):
         e.accept()
 
     def mouseMoveEvent(self, e):
+        if self._press is not None and self.m is not None and self.m.geometry().contains(self._press):
+            # its mask's thumbnail dragged: the mask goes on the row it is let go on, the rows stay in place
+            if self._dragging or (e.position().toPoint() - self._press).manhattanLength() > 8:
+                self._dragging = True
+                self.panel.mask_drag_move(self, e.globalPosition().toPoint())
+            return
         if self.lay["kind"] == "sub" or is_synth(self.lay):     # a sub-layer, the synthetic stars stay in their group
             return
         if self._press is not None and (e.position().toPoint() - self._press).manhattanLength() > 8:
@@ -706,7 +736,10 @@ class LayerRow(QFrame):
         if self._press is None:
             return
         press, self._press = self._press, None
-        if self._dragging:
+        if self._dragging and self.m is not None and self.m.geometry().contains(press):
+            self._dragging = False
+            self.panel.mask_drag_end(self, e.globalPosition().toPoint())
+        elif self._dragging:
             self._dragging = False
             self.panel.drag_end(self, e.globalPosition().toPoint())
         else:                                            # a click: select (after the event, the rows are rebuilt)
@@ -829,6 +862,7 @@ class PostView(QWidget):
         self.layers: list[dict] = []
         self.sel = None                                 # (layer id, "layer" | "mask")
         self.part_sel = None                            # the mask part being edited (its id)
+        self._mask_clip = None                          # the mask copied (Copy mask), for Paste mask
         self.heal_size = 80.0                           # Spot healing: the next spot's diameter (px)
         self._heal_stroke = None                        # the stroke being painted: (its points, the layers before)
         self._heal_hand: dict = {}                      # a version's source set by hand, while another is shown
@@ -2198,10 +2232,12 @@ class PostView(QWidget):
         p.drawImage(QRectF(v.img_to_w(0, 0), v.img_to_w(W, H)), self._overlay_img)
 
     # ------------------------------------------------------------ undo
-    def push(self, before=None):
+    def push(self, before=None, words: str = ""):
         """One undo step: the composition before a change. The change itself follows in the same call (or came just
-        before it, for a slider let go), so the composition is saved when the event loop comes back, with the change."""
+        before it, for a slider let go), so the composition is saved when the event loop comes back, with the change.
+        ``words``: the step's name, when the change itself does not say it (``Step``)."""
         self.undo.append(self._step(before if before is not None else snapshot(self.layers)))
+        self.undo[-1].words = words
         self.redo.clear()
         self._undo_buttons()
         self._save_t.start(0)
@@ -2221,6 +2257,8 @@ class PostView(QWidget):
         if isinstance(top, ModelStep):                   # a step of the workflows made here: the model's words
             words = getattr(self.s, "next_words", None)
             return words(how) if words is not None and self._model_mine(top, "_" + how) else ""
+        if getattr(top, "words", ""):
+            return top.words
         now = self._step(snapshot(self.layers))
         return step_words(top, now) if how == "undo" else step_words(now, top)
 
@@ -2271,10 +2309,11 @@ class PostView(QWidget):
         self._drop_empty(self.undo)
         if self.undo and not isinstance(self.undo[-1], ModelStep):
             before = self._step(snapshot(self.layers))
+            before.words = getattr(self.undo[-1], "words", "")       # the step keeps its name in the Redo list
             self.redo.append(before)
             self.layers = self.undo.pop()
             self._restored()
-            self._say_step("Undone", "Undone: {what}", step_words(self.layers, before))
+            self._say_step("Undone", "Undone: {what}", before.words or step_words(self.layers, before))
             return False
         if not self.undo or not self._model_mine(self.undo[-1], "_undo"):
             can = getattr(self.s, "can_undo", None)
@@ -2305,10 +2344,11 @@ class PostView(QWidget):
         self._drop_empty(self.redo)
         if self.redo and not isinstance(self.redo[-1], ModelStep):
             before = self._step(snapshot(self.layers))
+            before.words = getattr(self.redo[-1], "words", "")
             self.undo.append(before)
             self.layers = self.redo.pop()
             self._restored()
-            self._say_step("Redone", "Redone: {what}", step_words(before, self.layers))
+            self._say_step("Redone", "Redone: {what}", before.words or step_words(before, self.layers))
             return False
         if not self.redo or not self._model_mine(self.redo[-1], "_redo"):
             self.toasted.emit(_("Nothing to redo here: the Graph's changes are redone in the Graph"))
@@ -2773,6 +2813,7 @@ class PostView(QWidget):
                 m.addAction(_("Add mask")).triggered.connect(lambda: self.add_mask(lay))
             else:
                 m.addAction(_("Delete mask")).triggered.connect(lambda: self.remove_mask(lay))
+            self._mask_clip_actions(m, lay)
             m.addSeparator()
             a = m.addAction(_("Delete"))
             a.setToolTip(_("Takes them out, their block in the graph too · Ctrl+Z"))
@@ -2784,6 +2825,8 @@ class PostView(QWidget):
             if lay["sub"] == "stars":                    # its synthetic stars too (#93)
                 m.addSeparator()
                 self._synth_action(m, self.layer(lay["id"]))
+            m.addSeparator()
+            self._mask_clip_actions(m, lay)
             m.addSeparator()                             # what it cannot do, greyed with why (B2, B3)
             why = _("One of the images of “{name}”: it stays in its layer. Duplicate, rename, move or delete the "
                     "layer itself").format(name=layer_name(self.layer(lay["id"]) or lay))
@@ -2802,6 +2845,7 @@ class PostView(QWidget):
             m.addAction(_("Add mask")).triggered.connect(lambda: self.add_mask(lay))
         else:
             m.addAction(_("Delete mask")).triggered.connect(lambda: self.remove_mask(lay))
+        self._mask_clip_actions(m, lay)
         if lay["kind"] == "filter":
             m.addSeparator()
             for _txt, val in self.scope_choices(lay):
@@ -3201,6 +3245,80 @@ class PostView(QWidget):
         self.rebuild()
         self.request(final_only=True)
 
+    # ---- a mask put on another layer (the reference image editors' Copy mask / Paste mask, and its thumbnail dragged)
+    def _mask_clip_actions(self, menu: QMenu, lay):
+        """A row's "Copy mask" (when it has one) and "Paste mask" (greyed, the reason on hover, when no mask was
+        copied or the row has no mask of its own)."""
+        if lay.get("mask") is not None:
+            menu.addAction(_("Copy mask")).triggered.connect(lambda _c=False: self.copy_mask(lay))
+        a = menu.addAction(_("Paste mask"))
+        if self._mask_place(lay) is None:
+            why = _("The Real stars row has no mask of its own: choose the layer or one of its two images")
+        else:
+            why = "" if self._mask_clip is not None else _("No mask copied: use Copy mask on a layer that has one")
+        a.setEnabled(not why)
+        a.setToolTip(why or (_("Replaces the mask of this layer with the one copied · Ctrl+Z")
+                             if lay.get("mask") is not None else _("Puts the mask copied on this layer · Ctrl+Z")))
+        menu.setToolTipsVisible(True)
+        a.triggered.connect(lambda _c=False: self.paste_mask(lay))
+
+    def _mask_place(self, lay):
+        """Where a row's mask is written: its layer, a side of a Combine layers layer (``SideLayer``) for one of its two
+        images; None for a row without a mask of its own (the real stars)."""
+        if lay.get("kind") != "sub":
+            return self.layer(lay["id"])
+        own = self.layer(lay["id"])
+        return SideLayer(own, lay["sub"]) if own is not None and lay["sub"] in SUBS else None
+
+    def copy_mask(self, lay):
+        """Copy mask: the mask of a row kept for Paste mask, as it is now (its layer's later changes are not in it)."""
+        if lay.get("mask") is None:
+            return
+        self._mask_clip = copy.deepcopy(lay["mask"])
+        self.toasted.emit(_("Mask of “{name}” copied").format(name=layer_name(lay)))
+
+    def paste_mask(self, lay, mask=None) -> bool:
+        """Paste mask: the mask copied (or ``mask``, a thumbnail dragged onto the row) put on a row, in place of the one
+        it had: a copy of its own (its parts renumbered), one step of Undo named after it. Every kind of mask: its
+        parts (brush, luminance or color range, gradient, H-alpha) and its feather, density and inversion; on a layer, a
+        filter, the synthetic stars or one of a Combine layers layer's two images."""
+        mask = self._mask_clip if mask is None else mask
+        own = self._mask_place(lay)
+        if mask is None or own is None:
+            return False
+        new = copy.deepcopy(mask)
+        for part in new["parts"]:
+            part["id"] = new_id()
+        name = layer_name(lay)
+        self.push(words=_("Mask pasted on “{name}”").format(name=name))
+        own["mask"] = new
+        self._mthumbs.pop(lay.get("mkey", lay["id"]), None)
+        if self.sel and self.sel[0] == lay["id"] and mask_selection(self.sel[1]):
+            self.part_sel = None                         # the mask shown is another one: none of its parts is chosen
+        self.rebuild()
+        self.request(final_only=True)
+        self.toasted.emit(_("Mask pasted on “{name}” · Ctrl+Z").format(name=name))
+        return True
+
+    def _mask_drop_row(self, row, gpos):
+        """The row a mask thumbnail dragged from ``row`` would be copied on: another row, with a mask of its own."""
+        pt = self.lbox.parentWidget().mapFromGlobal(gpos)
+        return next((r for r in self.rows if r is not row and r.geometry().contains(pt)
+                     and self._mask_place(r.lay) is not None), None)
+
+    def mask_drag_move(self, row, gpos):
+        over = self._mask_drop_row(row, gpos)
+        for r in self.rows:
+            r.set_drop(r is over, _("Copy mask here") if r is over else "")
+        self.lsc.viewport().setCursor(Qt.DragCopyCursor if over is not None else Qt.ForbiddenCursor)
+
+    def mask_drag_end(self, row, gpos):
+        """A mask's thumbnail let go on another row: copied there (the row dragged keeps its own)."""
+        over = self._mask_drop_row(row, gpos)
+        self.drag_cancel()
+        if over is not None and row.lay.get("mask") is not None:
+            self.paste_mask(over.lay, row.lay["mask"])
+
     # ------------------------------------------------------------ properties of the selection
     def build_props(self):
         """The properties panel made again. Of the same selection (a mask edited, an Undo), it stays where it was
@@ -3210,6 +3328,7 @@ class PostView(QWidget):
         keep = sb.value() if sb is not None and key == getattr(self, "_props_key", None) else 0
         self._props_key = key
         self._build_props()
+        wheel_scrolls(self.psc.widget(), self.psc)       # the wheel scrolls the panel, not the slider under the cursor
         if keep:
             self.psc.widget().adjustSize()
             sb.setValue(keep)
