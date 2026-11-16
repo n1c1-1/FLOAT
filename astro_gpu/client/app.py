@@ -1570,9 +1570,15 @@ class Main(QMainWindow):
         p, old = self.project.definition, self.project.root
         if self.s.path is not None:
             p.current = self.s.path.pid
+        # the graph as it is now, its entries as the named folder finds them, written with the definition: the
+        # definition alone made absolute was written without the graph it carried (that of the opening)
+        q = self.s.copy_for(root)
+        mine = {s.id: s for s in q.sessions}
         for ses in p.sessions:
             for kind in project2.KINDS:
-                setattr(ses, kind, [p.abspath(x) for x in getattr(ses, kind)])
+                setattr(ses, kind, list(getattr(mine[ses.id], kind)) if ses.id in mine else
+                        [p.abspath(x) for x in getattr(ses, kind)])
+        p.graph = q.graph
         p.name = name
         cache = prefs.get("cache_dir")
         p.scratch_dir = (Path(cache) / root.name).as_posix() if cache else ""
