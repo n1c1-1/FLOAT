@@ -151,7 +151,8 @@ def with_layer_rows(g, want: dict, sides: dict | None = None):
     """The graph whose Combine layers are Post's (INTEGRATION 4.7, drawn from the shown version): ``want`` {block: the
     count of Combine layers layers it is the background of}; a block holding fewer gets new ones, one holding more loses
     its last ones; the others are left as they are. A Stars block's new one reads its two images; another block's
-    (a combination's Output) reads its image and, on its Stars side, ``sides[block]`` ([block, port] or None)."""
+    (a combination's Output) reads its image and, on its Stars side, one of ``sides[block]`` (a [block, port] or None
+    for each layer over the block, in Post's order)."""
     sides = sides or {}
     from .model import new_block
     from .msg import name_of
@@ -214,11 +215,25 @@ def _with_sides(g, sides):
         return g
     have = layer_rows(g)
     add, drop = [], set()
-    for s, src in sides.items():
-        if src is None or src[0] not in g.blocks:
-            continue
-        for rid in have.get(s, []):
-            j = next(r for r in g.rows if r.id == rid).blocks[0]
+    for s, srcs in sides.items():
+        # one side per layer over the block, in Post's order: a Combine layers that already reads the stars one of
+        # them names is that layer's (two over one combination, each its own stars: one side for the block made
+        # both read the first layer's); the others take what is left, in the graph's order
+        heads = [next(r for r in g.rows if r.id == rid).blocks[0] for rid in have.get(s, [])]
+        left = [list(x) if x is not None else None for x in srcs]
+        mine = {}
+        for j in heads:
+            cur = next((w.src for w in g.wires if w.dst == [j, "Stars"] and w.active), None)
+            if cur is not None and cur in left:
+                left.remove(cur)
+                mine[j] = cur
+        for j in heads:
+            if j not in mine and left:
+                mine[j] = left.pop(0)
+        for j in heads:
+            src = mine.get(j)
+            if src is None or src[0] not in g.blocks:
+                continue
             into = [w for w in g.wires if w.dst == [j, "Stars"]]
             if any(w.src == list(src) and w.active for w in into):
                 drop |= {w.id for w in into if w.active and w.src != list(src)}     # never two stars into one side

@@ -738,10 +738,24 @@ class GraphEditing:
             return q
         q = gm.clone(q)
         olds = {src: list(v) for src, v in pool.items()}
+
+        def stars(wires, b):
+            return next((list(w.src) for w in wires if w.dst == [b, "Stars"] and w.active), None)
+        # several over one block (two Combine layers of a combination, each its own stars): each drawn again takes the
+        # ids of the one that read the same stars (taken in order, a block the user wired showed the other's stars
+        # after the next gesture); the others in the graph's order
+        took = {}
         for rid, src in fresh.items():
-            if not olds.get(src):
+            r = next(x for x in q.rows if x.id == rid)
+            cur = stars(q.wires, r.blocks[0]) if len(r.blocks) == 1 else None
+            k = next((k for k, o in enumerate(olds.get(src) or []) if cur is not None and stars(o[3], o[2].id) == cur),
+                     None)
+            if k is not None:
+                took[rid] = olds[src].pop(k)
+        for rid, src in fresh.items():
+            if rid not in took and not olds.get(src):
                 continue
-            i, old_row, old_blk, old_wires = olds[src].pop(0)
+            i, old_row, old_blk, old_wires = took[rid] if rid in took else olds[src].pop(0)
             r = next(x for x in q.rows if x.id == rid)
             used = set(q.blocks) | {x.id for x in q.rows}
             if len(r.blocks) != 1 or old_row.id in used or old_blk.id in used:
@@ -807,7 +821,7 @@ class GraphEditing:
                     continue
                 part = None if x.get("stars_image") == "output" else "stars"
                 st = place_of(g, int(sp), part, flows)
-                sides.setdefault(at, list(st) if st is not None else None)
+                sides.setdefault(at, []).append(list(st) if st is not None else None)
                 continue
             at = place_of(g, int(x["pid"]), None, flows)
             if at is None:
@@ -815,16 +829,16 @@ class GraphEditing:
             want[at[0]] = want.get(at[0], 0) + 1
             part = None if x.get("stars_image") == "output" else "stars"   # the twin's Output, else its stars alone
             st = place_of(g, int(x["stars_pid"]), part, flows) if x.get("stars_pid") is not None else None
-            sides.setdefault(at[0], list(st) if st is not None else None)
+            sides.setdefault(at[0], []).append(list(st) if st is not None else None)
         return want, sides
 
-    def _post_follow(self, before, after, wired=False):
+    def _post_follow(self, before, after, wired=False, moved=()):
         """A wire to Post removed in the graph takes its image out of every version; one added for an image Post does
         not show yet puts it in every version. An image whose block went is Post's own pruning's. A Combine layers
         block added in the graph adds its layer to Post; one removed takes its layer out (the last one of a workflow:
         its Combine layers out of every version)."""
         from ..graphcore.post import place_of, wired_images
-        self._layers_follow(before, after)
+        self._layers_follow(before, after, moved)
         a, b = wired_images(before), wired_images(after)
         alive = {q.pid for q in self.paths}
         shared = self.shared_post_images()
@@ -851,13 +865,15 @@ class GraphEditing:
         finally:                                     # the version shown is given back, a removal that raised too
             self.set_post_version(active)
 
-    def _layers_follow(self, before, after):
+    def _layers_follow(self, before, after, moved=()):
         """The Combine layers blocks a gesture added or removed, said to Post (``_post_follow``): a block added on a
         Stars block is a new Combine layers layer of its workflow (in every version); one removed takes out the layer
         it showed (the graph's order is Post's), the last one of a workflow its Combine layers from every version. A
-        Stars block gone takes its layers by Post's own pruning."""
+        Stars block gone takes its layers by Post's own pruning. ``moved``: the rows whose Background the gesture wired
+        from another image: their layer is kept and reads it (``_layer_star_sides``), none added, none taken out."""
         from ..graphcore.post import _flows, layer_rows, stars_side
-        rb, ra = layer_rows(before), layer_rows(after)
+        rb, ra = ({s: [r for r in rids if r not in moved] for s, rids in layer_rows(x).items()} for x in (before, after))
+        rb, ra = ({s: rids for s, rids in x.items() if rids} for x in (rb, ra))
         if rb == ra:
             return
         fb, fa = _flows(before), _flows(after)
@@ -947,17 +963,21 @@ class GraphEditing:
         return q
 
     @staticmethod
-    def _tidy_layer_rows(before, g):
+    def _tidy_layer_rows(before, g, steps=()):
         """The Combine layers drawn for Post's layers after a gesture: one whose Stars block went goes with it (its
         layers go by Post's pruning), and a copy of a block (a variant, a duplicate) never wires a second image into a
-        Combine layers' side (the copy's own Combine layers are drawn for its own layers)."""
+        Combine layers' side (the copy's own Combine layers are drawn for its own layers). A wire the gesture itself
+        pulls into a side (``steps``) is no copy's: it stays."""
         from ..graphcore.post import layer_rows
         heads = {r.blocks[0] for r in g.rows if r.blocks and g.blocks[r.blocks[0]].kind == "combine_layers"}
         if not heads:
             return g
         old = {w.id for w in before.wires}
         had = {tuple(w.dst) for w in before.wires if w.dst[0] in heads}
-        extra = [w.id for w in g.wires if w.dst[0] in heads and w.id not in old and tuple(w.dst) in had]
+        pulled = {(a.get("src"), a.get("src_port"), a.get("dst"), a.get("dst_port"))
+                  for name, a in ((s[0], s[1]) for s in steps if len(s) > 1) if name == "wire" and isinstance(a, dict)}
+        extra = [w.id for w in g.wires if w.dst[0] in heads and w.id not in old and tuple(w.dst) in had
+                 and (*w.src, *w.dst) not in pulled]
         orphans = {rid for s, rids in layer_rows(before).items() if s not in g.blocks for rid in rids}
         orphans = {r.id for r in g.rows if r.id in orphans}
         if not extra and not orphans:
@@ -1088,19 +1108,34 @@ class GraphEditing:
                     continue
                 (src, sport), (dst, port) = w.src, w.dst
             blk = g.blocks.get(dst)
-            if blk is None or blk.kind != "combine_layers" or port != "Stars":
+            if blk is None or blk.kind != "combine_layers" or port not in ("Stars", "Background"):
                 continue
             n = bm.node(dst)
             lay = self.post_layer(n.lid) if n is not None and n.lid is not None else None
             if lay is None:                                   # a Combine layers of the graph only (no Background yet)
                 continue
             flows = flows if flows is not None else _flows(g)
+            if port == "Background":
+                # its Background wired from another image (the tutorials' film: a combination's Output, over the
+                # Stars/background it was added on): the same layer of Post reads it, as the panel's choice writes it;
+                # not said to Post, the block was drawn again without that wire and its layer went
+                image = "starless" if sport == "Starless" else "output" if sport == "image" else ""
+                pid = next((wid for wid in sorted(flows) if st[0] == "wire" and image
+                            and place_of(g, wid, "starless" if image == "starless" else None, flows) == (src, sport)),
+                           None)
+                if pid is None:                               # unwired (its layer goes), or an image the core refuses
+                    continue
+                why = self.layer_side_problem("starless", pid, image)
+                if why:
+                    return [], why
+                out.append((n.lid, pid, image, "starless", dst))
+                continue
             over_starless = (lay.get("starless") or "starless") != "output"
             if st[0] == "unwire":
                 # over a Stars/background's starless image: back to that block's own stars (drawn again), else none
                 own = lay.get("pid") if over_starless else None
                 if not over_starless or lay.get("stars_pid", own) != own:
-                    out.append((n.lid, own, "stars"))
+                    out.append((n.lid, own, "stars", "stars", dst))
                 continue
             image = "stars" if sport == "Stars only" else "output" if sport == "image" else ""
             part = "stars" if image == "stars" else None
@@ -1110,7 +1145,7 @@ class GraphEditing:
             why = self.layer_side_problem("stars", pid, image)
             if why:
                 return [], why
-            out.append((n.lid, pid, image))
+            out.append((n.lid, pid, image, "stars", dst))
         return out, ""
 
     def _change(self, steps=(), raw=None, view=None, name=None) -> Result:
@@ -1137,7 +1172,7 @@ class GraphEditing:
             before = base
         if res.ok and g is not before:
             from ..graphcore.post import _with_stars_group     # a Synthetic stars put between Stars/background and its
-            g = self._tidy_layer_rows(before, _with_stars_group(g))    # Combine layers: the side reads both stars
+            g = self._tidy_layer_rows(before, _with_stars_group(g), steps)    # Combine layers: the side reads both stars
         if raw is not None:
             q = gm.clone(g)
             out = raw(q)
@@ -1159,14 +1194,16 @@ class GraphEditing:
         try:
             with self._edit():
                 self._commit(g)
-                post = gm.Index(before).post
+                ix = gm.Index(before)
+                post = ix.post
                 # the user's own wire to Post, or To Post on a workflow's last block (its image given back after its
                 # wire was taken away): the image reaches every version
                 self._post_follow(before, g, wired=any((s[0] == "wire" and isinstance(s[1], dict)
                                                         and s[1].get("dst") == post)
-                                                       or s[0] == "send_to_post" for s in steps))
-                for lid, pid, image in sides:                 # the Stars side wired by hand: Post's layer says it
-                    self.set_layer_side(lid, "stars", pid, image)
+                                                       or s[0] == "send_to_post" for s in steps),
+                                  moved={ix.row_of.get(x[4]) for x in sides if x[3] == "starless"})
+                for lid, pid, image, side, _dst in sides:     # a side wired by hand: Post's layer says it
+                    self.set_layer_side(lid, side, pid, image)
                 self._follow_post()
         finally:
             self._layer_pool = None
