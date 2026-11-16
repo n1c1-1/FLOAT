@@ -28,7 +28,7 @@ def test_the_eleven_sliders_of_post():
         assert (sl.group == S.STARS) == (sl.needs == "stars")
         for name, t in sl.table.items():
             assert len(t) == 5 and abs(t[2] - getattr(s, name)) < 1e-9, (sl.key, name)
-    assert S.BY_KEY["sky"].table["sky"] == (0.15, 0.20, 0.25, 0.31, 0.37)
+    assert S.BY_KEY["sky"].table["sky"] == S.SKY_SCALES[2] == (0.05, 0.085, 0.12, 0.245, 0.37)
     assert S.BY_KEY["noise"].table["noise_mix"][:3] == (0.4, 0.7, 1.0)
 
 
@@ -69,10 +69,10 @@ def test_each_slider_is_monotonic(kind, bases):
 
 def test_steps_and_ratios():
     b = S.settings_at("simple", {"sky": 0.3, "saturation": 1.0}, {"sky": 4, "saturation": 0})
-    assert b.sky == pytest.approx(0.42)                                 # a step: +0.12
+    assert b.sky == pytest.approx(0.55)                                 # a step: +0.25
     assert b.saturation == pytest.approx(1.0 * 0.6 / 1.2)               # a ratio
     half = S.settings_at("simple", None, {"sky": 1.5, "contrast": 3.5})
-    assert half.sky == pytest.approx(0.225) and half.contrast == pytest.approx(0.375)
+    assert half.sky == pytest.approx(0.1025) and half.contrast == pytest.approx(0.375)
     assert S.settings_at("simple", {"sky": 0.55}, {"sky": 4}).sky == 0.6   # inside the setting's bounds (0.02-0.6)
     assert S.settings_at("simple", None, {"sky": 9}).sky == pytest.approx(0.37)   # positions beyond 0-4 are clamped
     assert S.settings_at("simple", None, {"unknown": 3}) == SimpleSettings()
@@ -105,7 +105,7 @@ def test_greyed_sliders_give_their_reasons():
     assert S.settings_at("simple", None, {"noise": 0}, has_denoise=False) == SimpleSettings()
     assert S.settings_at("simple", None, {"noise": 0}, has_denoise=True).noise_mix == pytest.approx(0.4)
     got = S.settings_at("stacking", None, {"star_size": 4, "sky": 3})
-    assert got.sky == pytest.approx(0.31) and got.model_copy(update={"sky": 0.31}) == SimpleSettings(sky=0.31)
+    assert got.sky == pytest.approx(0.245) and got.model_copy(update={"sky": 0.245}) == SimpleSettings(sky=0.245)
     assert S.settings_at("stars", None, {"sky": 0, "star_size": 4}) == StarSettings(star_size=1.0)
 
 

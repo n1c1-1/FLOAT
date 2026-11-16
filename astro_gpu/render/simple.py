@@ -57,10 +57,11 @@ class Layers:
 class SimpleSettings(StageParams):
     """The settings of a simple rendering. The defaults are the suggested rendering (Post's sliders at 2)."""
 
-    sky: float = P(0.25, label="Sky brightness", ge=0.02, le=0.6, step=0.01,
-                   help="Display level of the median sky after the stretch (0 = black, 1 = white). 0.25 by default: "
-                        "the target of the published screen transfer function (the median brought to 0.25).",
-                   tip="0.15-0.25 looks natural on screen.")
+    #: 0.25 until 2026-11-16: a layer saved before keeps it (render/sliders.SKY_SCALES)
+    sky: float = P(0.12, label="Sky brightness", ge=0.02, le=0.6, step=0.01,
+                   help="Display level of the median sky after the stretch (0 = black, 1 = white). 0.12 by default: "
+                        "a dark sky; the published screen transfer function brings the median to 0.25.",
+                   tip="0.10-0.25 looks natural on screen.")
     contrast: float = P(0.0, label="Contrast", ge=-1.0, le=1.0, step=0.01,
                         help="S-curve after the stretch: above 0 the mid-tones are spread, below they are flattened.")
     saturation: float = P(1.2, label="Saturation", ge=0.0, le=3.0, step=0.05,
