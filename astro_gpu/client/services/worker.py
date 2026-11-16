@@ -69,6 +69,10 @@ class _Thread:
                 return
 
 
+#: the workers asked to stop while a request was still running: kept until their thread ends
+_RETIRED: list = []
+
+
 class ApiWorker(QObject):
     done = Signal(str, int, object)                  # channel, request number, result
     failed = Signal(str, int, str)                   # channel, request number, error text
@@ -92,9 +96,11 @@ class ApiWorker(QObject):
     # ------------------------------------------------------------ GUI thread
     def submit(self, channel: str, fn, *args, **kwargs) -> int:
         """Run ``fn(*args, **kwargs)`` in the worker; returns the request number. A request still waiting on the
-        same channel is dropped."""
+        same channel is dropped. After ``stop`` nothing is run any more: the request is not kept."""
         n = next(self._seq)
         with self._cond:
+            if self._stopping:
+                return n
             self._latest[channel] = n
             if channel in self._waiting:
                 self._inflight -= 1
@@ -127,13 +133,18 @@ class ApiWorker(QObject):
         return not self.busy()
 
     def stop(self, timeout_ms: int = 5000):
-        """End the thread after the request it is running."""
+        """End the thread after the request it is running (a read of a slow disk cannot be interrupted: a worker still
+        at it when the wait ends is kept until its thread ends). The requests still waiting are dropped: ``busy()``
+        only counts the one running, until it ends."""
         with self._cond:
             self._stopping = True
+            self._inflight -= len(self._waiting)
             self._waiting.clear()
             self._order.clear()
             self._cond.notify()
-        self._thread.wait(timeout_ms)
+        if not self._thread.wait(timeout_ms) and self not in _RETIRED:
+            _RETIRED.append(self)
+        _RETIRED[:] = [w for w in _RETIRED if w._thread.isRunning()]
 
     @Slot(str, int, bool, object)
     def _deliver(self, channel, n, ok, value):
