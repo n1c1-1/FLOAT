@@ -54,6 +54,7 @@ from .layout import Sections
 from .model import NotInEngine, method_of, method_value, methods_of
 from .settings import (DoubleSpinBox, RangeBar, SettingRow, decimals_shown, fmt, needed_stages, on_edited, selection_rule_text,
                        step_settings)
+from .settings import CATALOG, catalog_key, resolve
 from .settings import loading as settings_loading
 from .widgets import ACCENT, BAD, NEW, OK, WARN, clear, hline, label, put_back, typed, wheel_scrolls
 
@@ -1785,6 +1786,19 @@ class Panel(QWidget):
         return default
 
     # ------------------------------------------------------------ the method of a block
+    def _draft_method(self, k) -> str | None:
+        """The method (the views' key) the draft of block ``k`` holds, None when it holds none."""
+        from .model import METHOD_OPT
+        base = k.partition("~")[0]
+        if base not in METHOD_OPT:
+            return None
+        if "~" in k or base == "synth":                 # a block of the graph only: its node's method
+            want = next((c["method"] for c in self._draft_entries() if c["kind"] == "method" and c["key"] == k), None)
+            return next((m["key"] for m in methods_of(base) if want is not None and m["engine_key"] == want), None)
+        want = self.draft_opt(METHOD_OPT[base], None)
+        return next((m["key"] for m in methods_of(base)
+                     if want is not None and method_value(base, m["key"]) == want), None)
+
     def methods(self, p, k):
         """The ways of computing this block, as cards: what it does, where it runs, how long on this machine."""
         s = self.s
@@ -1795,14 +1809,7 @@ class Panel(QWidget):
         self.bv.addWidget(self.group_title(_("Method")))
         opt = METHOD_OPT[k]
         applied = cur
-        if not again:                                   # the block's draft: its method checked at once
-            want = self.draft_opt(opt, None)
-            cur = next((m["key"] for m in methods_of(k)
-                        if want is not None and method_value(k, m["key"]) == want), cur)
-        else:                                           # a block of the graph only: its node's method, drafted too
-            want = next((c["method"] for c in self._draft_entries() if c["kind"] == "method"
-                         and c["key"] == node_key), None)
-            cur = next((m["key"] for m in methods_of(k) if want is not None and m["engine_key"] == want), cur)
+        cur = self._draft_method(node_key) or cur       # the block's draft: its method checked at once
         spec = prefs.spec()
         for m in methods_of(k):
             if m["new"] and not spec:
@@ -2292,6 +2299,12 @@ class Panel(QWidget):
     def _groups(self, p, k) -> list:
         """[(group title, [resolved settings])] of the block, with the half-stacks where they belong."""
         s = self.s
+        drafted = f"{k.partition('~')[0]}:{self._draft_method(k)}"
+        if drafted in CATALOG and drafted != catalog_key(p, k):      # a method chosen as a draft: its own settings
+            groups = [(_(title), rs) for title, items in CATALOG[drafted]
+                      if (rs := [r for r in (resolve(s, p, k, it) for it in items
+                                             if it["kind"] == "engine" or prefs.spec()) if r is not None])]
+            return groups
         groups = list(step_settings(s, p, k))
         if k == "empilement" and p.opts["debruitage"]:
             groups += [(_("Half-stacks") if g == _("Half-stacks") else _("Half-stacks") + f" · {g}", rs)
