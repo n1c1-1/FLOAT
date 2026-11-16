@@ -405,3 +405,37 @@ def test_a_card_says_what_it_does_without_another_card():
     """The first card of the Color tab began "The same, then…": the same as a card placed after it."""
     for t in templatefiles.shipped_cards():
         assert not t["text"].startswith("The same"), t["name"]
+
+
+def _combinations(tab, name):
+    """A shipped template opened as a project: (its file's content, [(workflow, its combination source)])."""
+    f = ROOT / "astro_gpu" / "resources" / "templates" / tab / (name + templatefiles.SUFFIX)
+    d = json.loads(f.read_text(encoding="utf-8"))
+    p = project2.Project2.from_dict({**d, "name": "Untitled"}, f.parent)
+    return d, [(w, w.source["fusion"]) for w in p.workflows if isinstance(w.source, dict) and "fusion" in w.source]
+
+
+def test_the_filters_templates_stars_are_neutral_and_sho_rgb_keeps_the_colour_rows_stars():
+    """Filters full: the combination of the filters' stars gives them neutral (a star does not take the palette's
+    colours), the nebula's goes through the hues. SHO + RGB stars is as it was: one combination, of the starless
+    images, and the stars of its colour row."""
+    from astro_gpu.stages import combine as C
+    from astro_gpu.stages import recipes
+    _d, combos = _combinations("Mono", "Filters full")
+    by_image = {f["inputs"][0]["image"]: (w, f) for w, f in combos}
+    assert sorted(by_image) == ["starless", "stars"]
+    for image, (w, f) in by_image.items():
+        assert [i["image"] for i in f["inputs"]] == [image] * 3 and recipes.stage_for(f) == "combine_sho"
+        p = C.CombineSHO.Params(**w.params["combine_sho"])
+        assert p.stars == "neutral"                                                  # the default, Palette to choose
+        assert C.Combination.stars_neutral(p, recipes.recipe_of(f), f["inputs"]) is (image == "stars")
+    d, combos = _combinations("Color", "SHO + RGB stars")
+    assert len(combos) == 1
+    w, f = combos[0]
+    assert [i["image"] for i in f["inputs"]] == ["starless"] * 3
+    assert not C.Combination.stars_neutral(C.CombineSHO.Params(**w.params["combine_sho"]), recipes.recipe_of(f),
+                                           f["inputs"])
+    lay, = d["post"]["versions"][0]["layers"]
+    rgb = next(x for x in project2.Project2.from_dict({**d, "name": "Untitled"}, ROOT).workflows if x.name == "RGB")
+    assert (lay["pid"], lay["part"], lay["starless"], lay["stars_pid"]) == (w.id, "combined", "output", rgb.id)
+    assert "stars_image" not in lay                             # the colour row's own stars, not a combination's

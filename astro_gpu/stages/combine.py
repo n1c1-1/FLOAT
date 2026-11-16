@@ -136,6 +136,16 @@ minus the broadband image times that scale is the line alone (``continuum_scale`
 isolated, unsaturated stars, each with its local sky in an annulus, the median of their ratios). The line is then
 divided by the scale: on the broadband image's scale, a star equal in both.
 
+The stars alone (a second combination reading each filter's stars, the first one their starless images: the
+template Filters full, and "<name> · Stars"): through the hues the stars take the palette's colours, magenta with the
+H-alpha at a crimson hue, teal with the O III at 180 degrees. A narrow-band filter records a star's continuum in a few
+nanometres: the ratio between filters says little of its colour, and the palette's hues say nothing of it. The
+established practice gives a narrow-band image white stars, or the stars of red, green and blue filters when the
+project has them (the template SHO + RGB stars). So a narrow-band combination whose inputs all read their stars alone
+gives them neutral (``neutral_stars``; the setting Stars, Neutral by default): the filters equalised as for the
+nebula, then their plain mean in red, green and blue, no weight fitted. Stars: Palette sends them through the hues, as
+before the blocks' version 9. The broadband types keep the stars' colours as recorded: they are the true ones.
+
 The result's valid area is where every input has data. Its scale: the first input's (its level kept). Any workflow may
 feed any port; a port with no workflow is the empty state, and the block waits for it.
 """
@@ -147,6 +157,8 @@ from pathlib import Path
 from typing import ClassVar
 
 import numpy as np
+
+from pydantic import field_validator
 
 from ..core.params import P, StageParams
 from ..core.stage import Context, Stage, StageError
@@ -176,6 +188,8 @@ DISPLAY_CAP = 0.9
 MATCH_LOW, MATCH_HIGH = 1e-7, 0.875
 #: the narrow-band types' reference of the equalisation: the H-alpha
 MATCH_REFERENCE = "Ha"
+#: what a narrow-band combination makes of the stars alone (module docstring): neutral, or through the palette's hues
+STARS = ("neutral", "palette")
 
 
 # ---------------------------------------------------------------------------------------------- the shared steps
@@ -326,6 +340,13 @@ def neutralise_sky(chans: dict[str, np.ndarray], valid: np.ndarray) -> dict[str,
 def mix(chans: dict[str, np.ndarray], roles: tuple[str, ...], mat) -> np.ndarray:
     """(3, H, W): the balanced channels of ``roles``, in that order, through a matrix (rows R, G, B)."""
     return np.tensordot(np.asarray(mat, np.float32), np.stack([chans[r] for r in roles]), 1).astype(np.float32)
+
+
+def neutral_stars(chans: dict[str, np.ndarray], roles: tuple[str, ...]) -> np.ndarray:
+    """(3, H, W): the stars alone of narrow-band filters made neutral (module docstring): the plain mean of the
+    balanced channels of ``roles``, the same in red, green and blue."""
+    grey = (sum(chans[r] for r in roles) / np.float32(len(roles))).astype(np.float32)
+    return np.repeat(grey[None], 3, axis=0)
 
 
 def lightness(chans: dict[str, np.ndarray], noise: dict[str, float], equal: bool = False) -> tuple[np.ndarray, float]:
@@ -584,7 +605,25 @@ class CombinationParams(StageParams):
                      help="The recipe of the combination, as copied into the project.")
 
 
-class RecipeParams(CombinationParams):
+def _stars_setting():
+    return P(STARS[0], label="Stars", choices=list(STARS),
+             help="What a combination of narrow-band filters makes of the stars alone (when every input reads its "
+                  "stars): Neutral, the filters' plain mean, white stars; Palette, the stars through the filters' "
+                  "hues, coloured like the nebula.")
+
+
+class NarrowbandParams(CombinationParams):
+    stars: str = _stars_setting()
+
+    @field_validator("stars")
+    @classmethod
+    def _known_stars(cls, v: str) -> str:
+        if v not in STARS:
+            raise ValueError(f"stars {v!r} is not one of {STARS}")
+        return v
+
+
+class RecipeParams(NarrowbandParams):
     values: dict = P({}, label="Recipe settings",
                      help="The recipe's parameters the user set, by name; the others at the recipe's defaults.")
 
@@ -618,6 +657,12 @@ class Combination(Stage):
         """(3, H, W): the balanced channels by port (each sky at 0) made into red, green and blue by the recipe's
         output (before the first channel's level is given back). ``noise``: each balanced channel's sky noise."""
         return recipe_output(ctx, p, self.spec(p), chans, noise, valid)
+
+    @staticmethod
+    def stars_neutral(p, spec: dict, inputs: list[dict]) -> bool:
+        """True when the combination gives neutral stars (module docstring): a narrow-band recipe, every input
+        reading its stars alone, and the setting Stars left at Neutral."""
+        return bool(spec["narrowband"]) and getattr(p, "stars", STARS[1]) == STARS[0] and             bool(inputs) and all(i.get("image") == "stars" for i in inputs)
 
     def saturation_of(self, inputs: list[dict], shape: tuple[int, int],
                       ports: tuple[str, ...] | None = None) -> np.ndarray | None:
@@ -695,7 +740,12 @@ class Combination(Stage):
                 ctx.log(f"{role}: weight {wgt:g}")
         # each balanced channel's sky noise: the sky's, scaled as the channel was (the weight included)
         noise = {r: skies[r][1] for r in chans}
-        rgb = self.combine(ctx, p, chans, noise, valid_all) * np.float32(level or 1.0)
+        if self.stars_neutral(p, spec, inputs):
+            mixed = tuple(spec["output"]["channels"])
+            rgb = neutral_stars(chans, mixed)
+            ctx.log(f"the stars alone: neutral, the plain mean of {', '.join(mixed)} (no hue)")
+        else:
+            rgb = self.combine(ctx, p, chans, noise, valid_all) * np.float32(level or 1.0)
         rgb[:, ~valid_all] = 0
         H, W = ref["shape"]
         ctx.save("drz_full.npy", rgb.astype(np.float32))
@@ -796,7 +846,7 @@ class NarrowbandCombination(Combination):
         return tuple(float(getattr(p, f"hue_{r.lower()}")) for r in self.ports)
 
 
-class SHOParams(CombinationParams):
+class SHOParams(NarrowbandParams):
     hue_sii: float = P(HUBBLE_HUES[0], label="S II hue", ge=0, le=360, step=1, unit="°",
                        help="The colour of the S II filter (on the colour wheel: 0 red, 120 green, 240 blue). The "
                             "default is measured on the Hubble teams' images (red-orange).")
@@ -818,10 +868,11 @@ class CombineSHO(NarrowbandCombination):
     Params = SHOParams
     # 8: each filter equalised to the H-alpha (its median and its spread) and the hues mixed as they are, instead of
     # the linear match, the lightness weighted by the noise and the colour's strength of 1.9 (module docstring, 5)
-    version = "8"
+    # 9: the stars alone come out neutral (the setting Stars), no longer through the hues
+    version = "9"
 
 
-class HOParams(CombinationParams):
+class HOParams(NarrowbandParams):
     hue_ha: float = P(0.0, label="Hα hue", ge=0, le=360, step=1, unit="°",
                       help="The colour of the H-alpha filter (0 red, 120 green, 240 blue).")
     hue_oiii: float = P(180.0, label="O III hue", ge=0, le=360, step=1, unit="°",
@@ -837,8 +888,8 @@ class CombineHO(NarrowbandCombination):
                    "colour image: the O III equalised to the H-alpha, then each filter a hue (H-alpha red, O III "
                    "green and blue).")
     Params = HOParams
-    # 8: as the S-H-O block's
-    version = "8"
+    # 8, 9: as the S-H-O block's
+    version = "9"
 
 
 class CombineRGB(Combination):
@@ -880,7 +931,8 @@ class CombineRecipe(Combination):
     ports = ()
     description = "Combines the inputs as the combination's recipe says (resources/combinations)."
     Params = RecipeParams
-    version = "1"
+    # 2: a narrow-band recipe's stars alone come out neutral (the setting Stars), no longer through its hues
+    version = "2"
 
     def spec(self, p) -> dict:
         if p is None or not p.recipe:

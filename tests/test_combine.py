@@ -80,7 +80,7 @@ def test_four_blocks_on_one_base_class_each_with_its_named_inputs_parameters_and
         spec = c().spec(None)
         assert [s["op"] for s in spec["steps"]] == ["neutralise_sky", "equalise"] and spec["steps"][1]["reference"] == "Ha"
         assert spec["output"]["lightness"] is None and spec["output"]["strength"] == 1.0
-    assert (C.CombineSHO.version, C.CombineHO.version) == ("8", "8")
+    assert (C.CombineSHO.version, C.CombineHO.version) == ("9", "9")
     ho = C.CombineHO.Params()
     assert (ho.hue_ha, ho.hue_oiii) == (0.0, 180.0) and not hasattr(ho, "hue_sii")
     assert not {"hue_r", "lightness", "smoothing"} & set(C.CombineRGB.Params.model_fields)
@@ -719,3 +719,75 @@ def test_a_project_s_stored_lightness_and_smoothing_of_a_narrow_band_block_are_i
     for stage in ("combine_sho", "combine_ho"):
         assert {"lightness", "smoothing", "radius"} <= v2.RETIRED[stage]
         assert not {"lightness", "smoothing", "radius"} & set(C.BY_KIND[stage[8:]].Params.model_fields)
+
+
+# ---------------------------------------------------------------------------------------------- the stars alone
+
+def _star_images(tmp_path, amps: dict[str, float], H: int = 160, W: int = 192):
+    """The Stars/background results of filters: a nebula in the starless image, the same stars alone, each filter at
+    its own strength, on the grain a real stars image keeps. Returns the inputs reading the stars."""
+    rng = np.random.default_rng(11)
+    yy, xx = np.mgrid[0:H, 0:W]
+    stars = sum(_star(H, W, x, y) for x, y in ((30, 40), (96, 80), (150, 120), (60, 130))).astype(np.float32)
+    neb = np.exp(-((xx - W / 2) ** 2 + (yy - H / 2) ** 2) / (2 * 22.0 ** 2)).astype(np.float32)
+    ins = []
+    for n, (r, a) in enumerate(amps.items()):
+        st = a * stars + rng.normal(0, 0.002 * (n + 1), (H, W)).astype(np.float32)
+        sl = 0.3 * a * neb + rng.normal(0, 0.002, (H, W)).astype(np.float32)
+        _split(tmp_path / r, np.repeat(sl[None], 3, 0), np.repeat(st[None], 3, 0))
+        ins.append({"role": r, "channel": "L", "dir": str(tmp_path / r), "pid": n + 1, "image": "stars"})
+    return ins
+
+
+@pytest.mark.parametrize("cls, amps", [(C.CombineHO, {"Ha": 0.5, "OIII": 0.1}),
+                                       (C.CombineSHO, {"SII": 0.05, "Ha": 0.5, "OIII": 0.2})])
+def test_the_stars_of_narrow_band_filters_come_out_neutral_and_the_nebula_keeps_its_palette(tmp_path, cls, amps):
+    """A combination whose inputs all read their stars alone gives neutral stars by default: the filters equalised as
+    for the nebula, then their plain mean in red, green and blue (no hue: a star must not take the palette's colour).
+    Stars: Palette gives the hues back. The setting changes nothing of a combination that reads starless images."""
+    ins = _star_images(tmp_path, amps)
+    assert cls.Params().stars == "neutral" and cls.Params.model_fields["stars"].json_schema_extra["choices"] == [
+        "neutral", "palette"]
+    said = []
+    rgb = np.load(_run(tmp_path, cls, cls.Params(inputs=ins), "neutral", said) / "drz_full.npy")
+    assert np.array_equal(rgb[0], rgb[1]) and np.array_equal(rgb[1], rgb[2])           # R = G = B, everywhere
+    assert any("neutral" in str(s) for s in said)
+    valid = np.ones(rgb.shape[1:], bool)
+    want = {r: np.load(tmp_path / r / "stars.npy")[1].copy() for r in amps}
+    C.neutralise_sky(want, valid)
+    for r in amps:
+        if r != "Ha":
+            a, b = C.equalise(want[r], want["Ha"], valid)
+            want[r] = (want[r] * np.float32(a) + np.float32(b)).astype(np.float32)
+    C.neutralise_sky(want, valid)
+    assert np.allclose(rgb[0], sum(want.values()) / len(want), atol=1e-6)               # the plain mean, no weights
+    assert float(rgb[0, 80, 96]) > 0.05                                                # the stars are there
+    pal = np.load(_run(tmp_path, cls, cls.Params(inputs=ins, stars="palette"), "palette") / "drz_full.npy")
+    hues = [getattr(cls.Params(), f"hue_{r.lower()}") for r in cls.ports]
+    assert np.allclose(pal, C.mix(want, cls.ports, C.hue_palette(tuple(hues))), atol=1e-6)
+    assert not np.allclose(pal[0], pal[2], atol=1e-3)                                  # coloured, as before
+    # the nebula: the starless images through the hues, whatever the setting says
+    starless = [dict(i, image="starless") for i in ins]
+    a = np.load(_run(tmp_path, cls, cls.Params(inputs=starless), "nebula") / "drz_full.npy")
+    b = np.load(_run(tmp_path, cls, cls.Params(inputs=starless, stars="palette"), "nebula_p") / "drz_full.npy")
+    assert np.array_equal(a, b) and not np.allclose(a[0], a[2], atol=1e-3)
+    # one input still reading its starless image: not the stars alone, the hues
+    mixed = [dict(ins[0], image="starless")] + ins[1:]
+    m = np.load(_run(tmp_path, cls, cls.Params(inputs=mixed), "mixed") / "drz_full.npy")
+    assert not np.array_equal(m[0], m[2])
+
+
+def test_the_stars_of_red_green_and_blue_filters_keep_their_colours(tmp_path):
+    """The broadband types have no such setting: the stars of R, G and B filters are the true colours."""
+    assert "stars" not in C.CombineRGB.Params.model_fields and "stars" not in C.CombineLRGB.Params.model_fields
+    ins = _star_images(tmp_path, {"R": 0.5, "G": 0.3, "B": 0.1})
+    rgb = np.load(_run(tmp_path, C.CombineRGB, C.CombineRGB.Params(inputs=ins), "rgb") / "drz_full.npy")
+    assert not np.allclose(rgb[0], rgb[2], atol=1e-3)
+
+
+def test_the_stars_setting_reads_in_french():
+    assert texts.param_label("combine_sho", "stars", "fr") == "Étoiles"
+    assert texts.param_label("combine_ho", "stars", "en") == "Stars"
+    assert texts.choice_label("neutral", "fr") == "Neutres" and texts.choice_label("palette", "fr") == "Palette"
+    h = texts.param_help("combine_ho", "stars", "fr")
+    assert h and h != texts.param_help("combine_ho", "stars")
