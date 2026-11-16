@@ -35,7 +35,29 @@ from ..core.params import StageParams
 from ..core.stage import Context, Stage
 
 MODEL = Path(__file__).resolve().parents[1] / "resources" / "stars" / "starless_nafnet.pt"
-MODEL_ID = hashlib.sha256(MODEL.read_bytes()).hexdigest()[:10] if MODEL.exists() else "missing"
+_MODEL_READ: dict[tuple, str] = {}
+
+
+def model_id() -> str:
+    """What the stage's version says of the network's file: the start of its hash, "missing" without the file. Read
+    from the file as it is now (hashed once for a path, a size and a date), not once when the application starts: a
+    file put in place while the application runs is in the next plan, as the run's worker, a new process, reads it
+    (the application kept "missing", and every run failed on a key that was not the planned one until it was started
+    again)."""
+    try:
+        st = MODEL.stat()
+    except OSError:
+        return "missing"
+    k = (str(MODEL), st.st_size, st.st_mtime_ns)
+    got = _MODEL_READ.get(k)
+    if got is None:
+        try:
+            got = hashlib.sha256(MODEL.read_bytes()).hexdigest()[:10]
+        except OSError:                  # gone since, or still being written: as without it, read again when asked
+            return "missing"
+        _MODEL_READ.clear()
+        _MODEL_READ[k] = got
+    return got
 #: the network's stretch: it sees asinh(v / STRETCH) / SCALE, v in noise units
 STRETCH, SCALE = 3.0, 10.0
 #: the size the network was trained on, and its tiles on an image that is smaller than a big tile
@@ -67,8 +89,11 @@ class StarRemoval(Stage):
                    "they are.")
     deps = ("render_simple", "stack")
     Params = StarRemovalParams
-    version = f"4-{MODEL_ID}"            # 2: the network's grid notched (core/periodic.py, issue #28); 3: big tiles (#45);
-    #                                      4: a starless fusion's stretch (gone with the fusion's star layer, 2026-11-12)
+
+    @property
+    def version(self) -> str:            # 2: the network's grid notched (core/periodic.py, issue #28); 3: big tiles (#45);
+        #                                  4: a starless fusion's stretch (gone with the fusion's star layer, 2026-11-12)
+        return f"4-{model_id()}"         # with the network's file as it is now (model_id)
 
     def run(self, ctx: Context, p: StarRemovalParams) -> None:
         from .denoise import norm_params

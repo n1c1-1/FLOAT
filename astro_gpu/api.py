@@ -589,7 +589,10 @@ def _keys(p: Project2) -> Keys:
     c = _ctx(p)
     d = p.to_dict()
     seen = {k: v for k, v in d.items() if k not in ("current_block", "show_all")}   # view state keys nothing
-    fp = hashlib.sha1(json.dumps([str(p.root), seen], sort_keys=True, default=str).encode()).hexdigest()
+    # the stages' versions too: one follows a file that can be put in place while the application runs (the star
+    # network); the keys kept here were then those of before, and every run failed on a key that was not the planned one
+    versions = [str(st.version) for st in c.rules().chains.stages.values()]
+    fp = hashlib.sha1(json.dumps([str(p.root), seen, versions], sort_keys=True, default=str).encode()).hexdigest()
     with _held(c, "keys") as got:
         if not got:                                  # a worker holds the lock: the last snapshot, or one for this call only
             return c.keys if c.keys is not None else Keys(Project2.from_dict(d, p.root), c.rules(), c.scan)
