@@ -104,6 +104,7 @@ from .postengine import (
     SUBS,
     THUMB,
     children,
+    crop_within,
     has_synth,
     is_group,
     is_pixel,
@@ -1947,6 +1948,8 @@ class PostView(QWidget):
             if self.src.canvas != size:
                 self.src.canvas = size
                 self.viewer.set_source(self.src)
+                if self.crop and not self.b_crop.isChecked():       # the crop kept, inside the image as it is now
+                    self.viewer.crop_box = self._crop_shown()
             if self.ann_show["grid"] or self.ann_show["objects"]:
                 self._want_annotations()
         if res.kind == "thumbs":
@@ -3589,7 +3592,7 @@ class PostView(QWidget):
         if not on:
             v.crop_ratio = None
             v.end_crop_drag()                            # (Escape while the box is dragged: its release changes nothing)
-            v.crop_box = tuple(self.crop) if self.crop else None
+            v.crop_box = self._crop_shown()
             v.mode = "pan"
         v.fit()
         self.build_props()
@@ -3632,8 +3635,15 @@ class PostView(QWidget):
             return
         if self.b_crop.isChecked():
             self.b_crop.setChecked(False)
-        self.viewer.crop_box = tuple(self.crop) if self.crop else None
+        self.viewer.crop_box = self._crop_shown()
         self.viewer.fit()
+
+    def _crop_shown(self):
+        """The crop as it is shown, said and exported: its part inside Post's image (``crop_within``: a box kept from a
+        larger image goes past its edge). The box kept (``self.crop``) is not rewritten: the image may grow back."""
+        if not self.crop or self.src.canvas is None:
+            return tuple(self.crop) if self.crop else None
+        return crop_within(self.crop, *self.src.canvas)
 
     def _crop_drawn(self):
         """The box as drawn becomes the crop (one undo step); the whole picture is no crop."""
@@ -3649,7 +3659,7 @@ class PostView(QWidget):
     def _crop_info(self):
         if getattr(self, "crop_size", None) is not None:
             W, H = self.src.size()
-            x0, y0, x1, y1 = self.crop or (0, 0, W, H)
+            x0, y0, x1, y1 = self._crop_shown() or (0, 0, W, H)          # the size the export will have
             self.crop_size.setText(f"{x1 - x0} × {y1 - y0} px")
             self.crop_off.setEnabled(self.crop is not None)
 

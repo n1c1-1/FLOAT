@@ -40,6 +40,7 @@ from ..postengine import (
     Provider,
     Superseded,
     Unreadable,
+    crop_within,
     side_layers,
     has_synth,
     is_group,
@@ -955,7 +956,12 @@ def run_export(renderer: Renderer, job: ExportJob, progress, stop=None,
     lost = renderer.unreadable(layers)
     if lost:
         raise refuse(lost)
-    crop = tuple(int(v) for v in job.crop) if job.crop else None
+    # the crop inside the image (a box kept from a larger image goes past its edge): the picture written, and what its
+    # history says of it, are that part (the history said the whole box, 5 px more than the picture)
+    crop = crop_within(job.crop, canvas.W, canvas.H)
+    if job.crop and crop != tuple(int(v) for v in job.crop):
+        from dataclasses import replace
+        job = replace(job, crop=crop)
     cut = (lambda a: a[..., crop[1]:crop[3], crop[0]:crop[2]]) if crop else (lambda a: a)
     shown = Canvas(crop[2] - crop[0], crop[3] - crop[1], (canvas.origin[0] + crop[0], canvas.origin[1] + crop[1])) \
         if crop else canvas

@@ -1111,6 +1111,18 @@ class Canvas:
         return -(-self.W // f), -(-self.H // f)
 
 
+def crop_within(crop, W: int, H: int) -> tuple[int, int, int, int] | None:
+    """The part of a crop (x0, y0, x1, y1) that is inside an image of W x H pixels: the picture that is written and
+    the size that is said. A crop is kept in the pixels of Post's image, which is the area every layer covers: when
+    that area gets smaller afterwards (a layer added, a workflow computed again), the box kept goes past its edge.
+    None: no crop, or nothing of it inside (the whole image then)."""
+    if not crop:
+        return None
+    x0, y0, x1, y1 = (int(v) for v in crop)
+    x0, y0, x1, y1 = max(x0, 0), max(y0, 0), min(x1, int(W)), min(y1, int(H))
+    return (x0, y0, x1, y1) if x1 > x0 and y1 > y0 else None
+
+
 class Unreadable(Exception):
     """A source (``source_id``) whose result is there but one of its files is not: the layers reading it are left out,
     and said not computed."""
