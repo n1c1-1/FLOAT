@@ -268,6 +268,25 @@ def test_the_icons_open_the_panel_over_the_graph_and_esc_or_a_click_elsewhere_cl
     assert page.dock.state == "icons" and layout.choices("small")["right"] == "icons"
 
 
+def _click_in_window(w, widget):
+    """A click of the mouse at the widget's place in the window: what is on top there takes it."""
+    QTest.mouseClick(w.windowHandle(), Qt.LeftButton, Qt.NoModifier, widget.mapTo(w, widget.rect().center()))
+    _settle(w)
+
+
+def test_the_fold_button_closes_the_panel_opened_over_the_graph(env):
+    """The panel kept folded, opened over the graph by an icon of its strip: its fold button did nothing."""
+    w = _open(env, (1250, 685))
+    page = w.graph
+    assert page.dock.state == "icons" and not page.panel.isVisible()
+    for _round in range(2):
+        _click_in_window(w, _icon(page))
+        assert page.dock.is_open() and page.panel.isVisible()
+        _click_in_window(w, page.panel.corner)
+        assert not page.dock.is_open() and not page.panel.isVisible()
+        assert page.dock.state == "icons" and page.dock.strip.isVisible()
+
+
 def _mouse_on_palette(page, inside: bool):
     bar = page.palette
     QApplication.sendEvent(bar, QEnterEvent(QPointF(5, 5), QPointF(5, 5), QPointF(bar.mapToGlobal(QPoint(5, 5))))

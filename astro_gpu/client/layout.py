@@ -237,8 +237,11 @@ class Dock(QObject):
         self.chosen.emit(st)
 
     def fold(self):
-        """The panel's fold button."""
-        self._choose("icons")
+        """The panel's fold button: a panel kept folded and opened over the main area is closed (it stays folded)."""
+        if self.state == "icons":
+            self.close_overlay()
+        else:
+            self._choose("icons")
 
     def menu(self, button: QWidget):
         """The panel's three ways of showing (``SHOWN``), as the blocks' palette's menu."""
