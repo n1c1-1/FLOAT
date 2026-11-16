@@ -134,16 +134,18 @@ FAMILY_COL = {"Stretch": "#c9a35e", "Contrast": "#d98a4e", "Color": "#c46fa8", "
               "Noise": "#62c2b1", "Combine": "#e06c6c"}
 TW, TH = THUMB                                           # thumbnail size
 ROW_H, SMALL_W, SMALL_H = 24, 30, 20                     # a row of the list and its thumbnails (#88)
-BRUSH_MIN, BRUSH_MAX = 4.0, 1200.0                       # the mask brush, px across
+#: the mask brush, px across: its largest is the image's long side, this at least (``PostView.brush_max``)
+BRUSH_MIN, BRUSH_MAX = 4.0, 1200.0
 
 
-def brush_pos(px: float) -> float:
-    """The slider's position of a brush size: even by ratio, so that the small sizes stay easy to set."""
-    return float(np.log(np.clip(px, BRUSH_MIN, BRUSH_MAX) / BRUSH_MIN) / np.log(BRUSH_MAX / BRUSH_MIN))
+def brush_pos(px: float, top: float = BRUSH_MAX) -> float:
+    """The slider's position of a brush size, ``top`` its largest: even by ratio (the same share of the rail doubles
+    the size, wherever it is), so that the small sizes stay easy to set however large the image is."""
+    return float(np.log(np.clip(px, BRUSH_MIN, top) / BRUSH_MIN) / np.log(top / BRUSH_MIN))
 
 
-def brush_px(t: float) -> int:
-    return int(round(BRUSH_MIN * (BRUSH_MAX / BRUSH_MIN) ** t))
+def brush_px(t: float, top: float = BRUSH_MAX) -> int:
+    return int(round(BRUSH_MIN * (top / BRUSH_MIN) ** t))
 COPY = " (copy)"                                         # a piece of the layer names, translated where shown
 #: what the Stars block's images are, under their name in the properties
 PART_NOTES = {"starless": "The Stars/background block's starless image, stretched like the whole image.",
@@ -3959,11 +3961,12 @@ class PostView(QWidget):
             cl.clicked.connect(lambda: self._part_set(part, "strokes", []))
             r.addWidget(cl)
             v.addLayout(r)
-            sz = ContSlider(_("Size"), 0.0, 1.0, brush_pos(part["size"]), brush_pos(60.0),
-                            show=lambda t: with_unit(str(brush_px(t)), "px"))
+            top = self.brush_max()                       # as large as the image: one stroke covers its field
+            sz = ContSlider(_("Size"), 0.0, 1.0, brush_pos(part["size"], top), brush_pos(60.0, top),
+                            show=lambda t: with_unit(str(brush_px(t, top)), "px"))
             for sig in (sz.moved, sz.done):
-                sig.connect(lambda t: (part.__setitem__("size", float(brush_px(t))),
-                                       setattr(self.viewer, "brush_r", brush_px(t) / 2)))
+                sig.connect(lambda t: (part.__setitem__("size", float(brush_px(t, top))),
+                                       setattr(self.viewer, "brush_r", brush_px(t, top) / 2)))
             v.addWidget(sz)
             hd = ContSlider(_("Hardness"), 0, 100, part["hardness"], 50, unit="%", step=1)
             hd.done.connect(lambda val: part.__setitem__("hardness", val))
@@ -3992,6 +3995,11 @@ class PostView(QWidget):
         if part:
             self._brush_mode(part, not part["paint"])
 
+    def brush_max(self) -> float:
+        """The mask brush's largest size: the long side of Post's image, BRUSH_MAX at least (a small image, or none
+        yet)."""
+        return float(max(BRUSH_MAX, *(self.src.canvas or ())))
+
     def brush_size(self, k):
         if self.viewer.mode == "heal":
             self.heal_size = float(np.clip(self.heal_size * k, 6, 1200))
@@ -4002,7 +4010,7 @@ class PostView(QWidget):
         part = next((p for p in (lay["mask"]["parts"] if lay and lay["mask"] else [])
                      if p["id"] == self.part_sel and p["src"] == "brush"), None)
         if part:
-            part["size"] = float(np.clip(part["size"] * k, BRUSH_MIN, BRUSH_MAX))
+            part["size"] = float(np.clip(part["size"] * k, BRUSH_MIN, self.brush_max()))
             self.viewer.brush_r = part["size"] / 2
             self.build_props()
 
