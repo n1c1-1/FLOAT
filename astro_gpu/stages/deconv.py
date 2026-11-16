@@ -44,6 +44,53 @@ def _ramp(n: int, before: bool, after: bool) -> np.ndarray:
     return w
 
 
+@torch.no_grad()
+def _network_plane(net, x: np.ndarray, dev, check, tile: int) -> np.ndarray:
+    """The Neural method's network over one plane in noise units, in tiles of ``tile`` with a margin of ``BETA_PAD``."""
+    from .star_removal import fwd, inv
+    H, W = x.shape
+    out, total = np.zeros_like(x), np.zeros_like(x)
+    for y in range(0, H, tile):
+        check()                                      # each row of tiles: minutes on the processor
+        for x0 in range(0, W, tile):
+            y1, x1 = max(0, y - BETA_PAD), max(0, x0 - BETA_PAD)
+            y2, x2 = min(H, y + tile + BETA_PAD), min(W, x0 + tile + BETA_PAD)
+            t = torch.from_numpy(np.ascontiguousarray(x[y1:y2, x1:x2]))[None, None].to(dev)
+            with torch.autocast(dev.type, dtype=torch.bfloat16, enabled=dev.type == "cuda"):
+                o = inv(net(fwd(t)).float())[0, 0].cpu().numpy()
+            # a tile fades out over the overlap with the next one: its edges leave no seam
+            wy = _ramp(y2 - y1, y1 > 0, y2 < H)
+            wx = _ramp(x2 - x1, x1 > 0, x2 < W)
+            w = (wy[:, None] * wx[None, :]).astype(np.float32)
+            out[y1:y2, x1:x2] += o * w
+            total[y1:y2, x1:x2] += w
+    return out / np.maximum(total, 1e-6)
+
+
+def network_plane(net, x: np.ndarray, dev, check, fitted: list) -> np.ndarray:
+    """``_network_plane`` with the tile the card holds: when it runs out of memory the plane is done again with a tile
+    half the size, as Denoise and Stars do (``devices.shrink_on_memory``; the tile changes the result a little, only
+    then). ``fitted``: the tile that fitted, kept for the planes after (it gets the tile; empty: ``BETA_TILE``)."""
+    def at(tile: int) -> np.ndarray:
+        y = _network_plane(net, x, dev, check, tile)
+        fitted[:] = [tile]
+        return y
+    return devices.shrink_on_memory(at, fitted[0] if fitted else BETA_TILE, dev)
+
+
+def processor_on_memory(log, fn, device):
+    """``fn(device)``; when the card runs out of memory, again on the processor. Richardson-Lucy holds the whole image
+    on the card at once: it has no tile to make smaller."""
+    try:
+        return fn(device)
+    except Exception as e:  # noqa: BLE001 - a memory error, in each backend's own words; any other is raised
+        if torch.device(device).type == "cpu" or not devices.is_out_of_memory(e):
+            raise
+    devices.empty_cache(device)
+    log("the graphics card is out of memory: the deconvolution is done on the processor (slower)", "warning")
+    return fn("cpu")
+
+
 class DeconvParams(StageParams):
     method: str = P("rl", label="Method", choices=list(METHODS),
                     help="Richardson-Lucy: iterations with the star shape measured across the field. Neural "
@@ -97,7 +144,7 @@ class Deconv(Stage):
         st = lib.StackDeconvSettings(iterations=p.iterations, regularization=p.regularization, tiles_long=p.tiles,
                                      log=ctx.log, tick=tick)
         ctx.progress(0.02, "measuring the star shape")
-        of, oa, ob, info = lib.run(full, A, B, sat, valid, st, device)
+        of, oa, ob, info = processor_on_memory(ctx.log, lambda d: lib.run(full, A, B, sat, valid, st, d), device)
         if info["applied"]:
             before, after = float(np.median(info["fwhm"])), info["fwhm_after"]
             ctx.metric("star_width_before", round(before, 2))
@@ -114,7 +161,7 @@ class Deconv(Stage):
         """The network of the Neural method (beta), colour by colour, the stack and its half-stacks, each plane through
         the pretrained Denoise first (what the network was trained on); clipped cores kept."""
         from . import denoise as dn
-        from .star_removal import NAFNet, fwd, inv
+        from .star_removal import NAFNet
         if not BETA_WEIGHTS.is_file():
             raise StageError(f"the neural deconvolution's network is missing: resources/deconv/{BETA_WEIGHTS.name}")
         net = NAFNet(recompute=False)
@@ -133,25 +180,10 @@ class Deconv(Stage):
                              check=ctx.check_stop).mean(0)
             return d - float(np.median(d - x))
 
-        @torch.no_grad()
+        fitted: list = []                            # the tile the card holds, found by the first plane short of memory
+
         def plane(x: np.ndarray) -> np.ndarray:
-            H, W = x.shape
-            out, total = np.zeros_like(x), np.zeros_like(x)
-            for y in range(0, H, BETA_TILE):
-                ctx.check_stop()                     # each row of tiles: minutes on the processor
-                for x0 in range(0, W, BETA_TILE):
-                    y1, x1 = max(0, y - BETA_PAD), max(0, x0 - BETA_PAD)
-                    y2, x2 = min(H, y + BETA_TILE + BETA_PAD), min(W, x0 + BETA_TILE + BETA_PAD)
-                    t = torch.from_numpy(np.ascontiguousarray(x[y1:y2, x1:x2]))[None, None].to(dev)
-                    with torch.autocast(dev.type, dtype=torch.bfloat16, enabled=dev.type == "cuda"):
-                        o = inv(net(fwd(t)).float())[0, 0].cpu().numpy()
-                    # a tile fades out over the overlap with the next one: its edges leave no seam
-                    wy = _ramp(y2 - y1, y1 > 0, y2 < H)
-                    wx = _ramp(x2 - x1, x1 > 0, x2 < W)
-                    w = (wy[:, None] * wx[None, :]).astype(np.float32)
-                    out[y1:y2, x1:x2] += o * w
-                    total[y1:y2, x1:x2] += w
-            return out / np.maximum(total, 1e-6)
+            return network_plane(net, x, dev, ctx.check_stop, fitted)
 
         keep = None
         if sat is not None and sat.any():

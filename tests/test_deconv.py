@@ -222,3 +222,45 @@ def test_the_neural_network_is_read_from_the_shipped_path_and_its_absence_greys_
     assert neural().new and "missing" in neural().what
     (tmp_path / "neural.pt").write_bytes(b"x")
     assert not neural().new
+
+
+def test_a_card_out_of_memory_does_not_stop_the_deconvolution():
+    """Denoise and Stars cut their tiles smaller and go on when the card runs out of memory; Deconvolution stopped. Its
+    Neural method now does as they do (the same helper, core/devices.shrink_on_memory); Richardson-Lucy holds the whole
+    image at once and has no tile to make smaller: it is done again on the processor, and the log says so."""
+    from astro_gpu.stages import deconv
+    rng = np.random.default_rng(0)
+    x = rng.normal(0, 1, (700, 600)).astype(np.float32)
+    seen = []
+
+    def net(t):                                                  # the first tile does not fit the card
+        seen.append(tuple(t.shape[-2:]))
+        if len(seen) == 1:
+            raise torch.OutOfMemoryError("CUDA out of memory.")
+        return t
+    tiles = []
+    y = deconv.network_plane(net, x, torch.device("cpu"), lambda: None, tiles)
+    assert seen[0] == (560, 560) and max(max(s) for s in seen[1:]) <= 256 + 2 * deconv.BETA_PAD
+    assert np.allclose(y, x, atol=1e-3)                          # whole, no seam, with the smaller tiles
+    assert tiles == [256]
+    seen.clear()
+    seen.append(None)                                            # the next plane starts at the tile that fitted
+    deconv.network_plane(net, x, torch.device("cpu"), lambda: None, tiles)
+    assert max(max(s) for s in seen[1:]) <= 256 + 2 * deconv.BETA_PAD
+
+    def other(t):
+        raise ValueError("not a memory error")
+    with pytest.raises(ValueError):
+        deconv.network_plane(other, x, torch.device("cpu"), lambda: None, [])
+
+    said, on = [], []
+
+    def classic(device):
+        on.append(str(device))
+        if len(on) == 1:
+            raise RuntimeError("CUDA error: out of memory")
+        return "done"
+    assert deconv.processor_on_memory(lambda m, level="info": said.append((level, m)), classic, "cuda:0") == "done"
+    assert on == ["cuda:0", "cpu"] and len(said) == 1 and said[0][0] == "warning" and "processor" in said[0][1]
+    with pytest.raises(RuntimeError):                            # already on the processor: nothing else to try
+        deconv.processor_on_memory(lambda *a, **k: None, lambda d: classic(on.clear() or d), "cpu")
