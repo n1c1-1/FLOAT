@@ -564,6 +564,16 @@ def guard():
                            changes=changed_real_files)
 
 
+def pytest_collection_finish(session) -> None:
+    """What the collection imported (torch, Qt, numpy, the application and the test modules: millions of objects that
+    live as long as the process) is set apart from the cyclic collector: the full collection that ends each client test
+    (below) then reads only what the tests made. It took half a second after every client test, a fifth of the fast
+    suite's test time; the garbage of the tests is collected as before."""
+    import gc
+    gc.collect()
+    gc.freeze()
+
+
 @pytest.fixture(autouse=True)
 def _collect_on_the_main_thread(request):
     """Client tests: Python's cyclic collector runs on the main (GUI) thread only, after each test, as the client's
