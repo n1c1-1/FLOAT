@@ -333,6 +333,12 @@ class Steps(QObject):
                       display="model")]
         if k == "post":
             return [dataclasses.replace(self.picture(p, "output"), compare=("result", "color"))]
+        if k == "fusion":
+            # a combination's own image, as its stage saves it on the grid of its inputs (it had no picture: computed,
+            # the page said "No image for this block")
+            from ..stages.combine import STAGES
+            stage = next((x for x in self.s.all_stages(p) if x in STAGES), None)
+            return [V("combined", "Combined image", "array", stage, "drz_full", True, True, camera=False)] if stage else []
         return []
 
     def render_stage(self, p) -> str:

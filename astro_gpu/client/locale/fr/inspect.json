@@ -209,6 +209,7 @@
   "A session has no darks any more: Calibration uses the master bias, or the camera's black level, instead. Add a darks folder in the Darks tab.": "Une session n'a plus de darks : la calibration utilise à la place le master d'offset, ou le niveau de noir de l'appareil. Ajoutez un dossier de darks dans l'onglet Darks.",
   "A session has no flats any more: the vignetting stays. Add a flats folder in the Flats tab.": "Une session n'a plus de flats : le vignetage reste. Ajoutez un dossier de flats dans l'onglet Flats.",
   "A session has no frames of this kind any more.": "Une session n'a plus d'images de ce type.",
+  "Combined image": "Image combinée",
   "No darks": "Pas de darks",
   "No flats": "Pas de flats",
   "No bias": "Pas d'offsets",
