@@ -1025,6 +1025,7 @@ class SourcesView(QWidget):
             self.lv.addWidget(ic.IconText("info", colour_note_text(note), "dim", "colour_note"))
         section = None
         row0 = self._row()
+        shared_lines = []
         for key, title, sec in GROUPS:
             if sec != section:
                 section = sec
@@ -1040,11 +1041,15 @@ class SourcesView(QWidget):
             shared = self.s.shared_with(self.sid, key) if key != "lights" else []
             if shared:
                 names = ", ".join(self.s.session(o).name for o in shared)
-                self.lv.addWidget(ic.IconText("link", _("shared with {names}: one master").format(names=names), "dim", "small"))
+                shared_lines.append(_(title) + " · " + _("shared with {names}: one master").format(names=names))
             for text in self.anomalies(key):               # beside its kind, as long as it holds
                 self.lv.addWidget(ic.IconText("warning", text, "warning", "warn"))
             self._beside_rows(key)
             self._not_found_rows(key)
+        # a kind shared with other sessions: said under all the rows too, named by its kind (the line under its row
+        # pushed the rows below down when it appeared: a drop at the Flats' former place fell beside the row)
+        for text in shared_lines:
+            self.lv.addWidget(ic.IconText("link", text, "dim", "small"))
         # the files of the kind shown, under all the kinds' rows: listed between two rows, they pushed the rows below
         # (and their +) down at each addition, and the next click landed on another row
         if self.group and self.count_of(self.group):
@@ -1075,6 +1080,19 @@ class SourcesView(QWidget):
             row.addWidget(t, 1)
             self.lv.addLayout(row)
         self.lv.addStretch(1)
+        self._place_left()
+
+    def _place_left(self):
+        """The column just built is shown and laid out at once. Left to the next round of events, its rows stayed
+        hidden and at the top meanwhile, and files dropped at that moment (the column is built again each time a
+        reading of the worker arrives) fell on the page: "Drop on a row"."""
+        inner = self._left_w.widget()
+        if not inner.isVisible():
+            return
+        for w in inner.findChildren(QWidget, options=Qt.FindDirectChildrenOnly):
+            if not w.testAttribute(Qt.WA_WState_ExplicitShowHide):
+                w.show()
+        self.lv.activate()
 
     def checks(self):
         """(ok, text) of the calibration matching: True a good sign, False a thing to look at, None a note."""
