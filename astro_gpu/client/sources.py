@@ -46,6 +46,7 @@ from PySide6.QtWidgets import (
 from . import icons as ic
 from . import prefs
 from .frames import (
+    check_text,
     clock_text,
     colour_note_text,
     fexp,
@@ -1096,6 +1097,9 @@ class SourcesView(QWidget):
             out.append((None, mixed_exposures_text(bad["mixed_exposures"])))
         if bad.get("long_bias"):                     # bias frames not near zero: information, nothing reclassified
             out.append((None, long_bias_text(bad["long_bias"])))
+        for chk in d.checks if ref is not None else []:     # no darks, no flats: said (the lines stayed empty under
+            if chk.key == "session_no_calib" and (chk.args or {}).get("session") == ref.name:      # their title)
+                out.append((None, check_text(chk, d)))
         dk = c.get("darks")
         by = bad.get("darks_by_exposure")
         if dk and not (by and by[0]["several"]):
@@ -1171,6 +1175,8 @@ class SourcesView(QWidget):
             t = (_("{n} frame excluded by hand: stacking to recompute.") if n_ex == 1 else
                  _("{n} frames excluded by hand: stacking to recompute."))
             out.append((False, t.format(n=n_ex)))
+        if not out and ref is not None and not ref.lights:
+            out.append((None, _("No light frames yet")))
         return out
 
     def select_group(self, key):

@@ -159,3 +159,24 @@ def test_bias_frames_lasting_seconds_say_so_as_information(tmp_path):
     ok = _project(tmp_path / "o", 1, 508.0, np.full((H, W), 8400 / 65535, np.float32), {"STACKCNT": 30})
     assert not any("Bias:" in t and "frames last" in t for _ok, t in _lines(ok, 1))
     assert not any(x.key == "long_bias" for x in api.health_checks(ok))
+
+
+def test_a_session_without_darks_or_flats_says_so(tmp_path):
+    """The lines were empty under their title for a session of lights only (a tutorial's session before its darks)."""
+    from astro_gpu.client import i18n
+    p = _project(tmp_path, 2, 508.0, np.full((H, W), 8400 / 65535, np.float32), {"STACKCNT": 30})
+    p.sessions[0].darks, p.sessions[0].flats, p.sessions[0].bias = [], [], []
+    p.sessions[1].flats = []
+    lines = _lines(p, 1)
+    # the engine's own check of the session, in its words: the darks of night 2 serve it (sessions stacked together)
+    assert (None, "night 1: no darks: it is calibrated with the other sessions' master.") in lines, lines
+    assert (None, "night 1: no flats: its lights are not calibrated for vignetting and dust.") in lines
+    assert [t for _ok, t in _lines(p, 2) if "no darks" in t or "no flats" in t] == \
+        ["night 2: no flats: its lights are not calibrated for vignetting and dust."]
+    try:
+        i18n.set_language("fr")
+        assert (None, "night 1 : pas de darks : elle est calibrée avec le master des autres sessions.") in _lines(p, 1)
+    finally:
+        i18n.set_language("en")
+    p.sessions[0].lights = []                                # nothing to match yet: said too
+    assert _lines(p, 1) == [(None, "No light frames yet")]
