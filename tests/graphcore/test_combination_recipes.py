@@ -221,6 +221,6 @@ def test_a_frozen_type_changed_runs_on_the_recipe_stage_and_its_parameters_are_t
     ok(doc, "set_recipe_value", block=j, name="hue_oiii", value=None)
     assert doc.project.blocks[j].params[recipes.RECIPE_STAGE]["values"] == {"hue_ha": 12.0}
     p, _c = compiled(doc)
-    w = _wf(p, name)
+    w = _wf(p, combos.retitled(name, combos.title(b)))    # its workflow named by its recipe ("S-H-O" made H-O: "H-O")
     assert w.params[recipes.RECIPE_STAGE]["values"] == {"hue_ha": 12.0}
     engine_ok(doc)

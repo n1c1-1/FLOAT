@@ -1851,7 +1851,14 @@ class GraphEditing:
                 if ch["kind"] == "param":
                     self._patch_rows([q.pid], ch["stage"], ch["name"], ch.get("value"))
             return notes
-        if ch["kind"] in ("recipe", "method"):
+        if ch["kind"] == "combine_type":                  # another recipe (the workflow's name following it)
+            with self.batch():
+                for q in paths:
+                    said = self.set_combination_type(q, ch["type"])
+                    if said:
+                        notes.append(said)
+            return notes
+        if ch["kind"] in ("recipe", "method", "combine"):
             steps = self._block_steps(paths, ch)
             if steps:
                 self._do(steps)
@@ -1888,6 +1895,13 @@ class GraphEditing:
         the engine's method), each block once."""
         steps, seen = [], set()
         for q in paths:
+            if ch["kind"] in ("combine", "combine_type"):     # the combination's draft: several settings, one step
+                bid = self._combine_block(q)
+                if bid is not None and bid not in seen:
+                    seen.add(bid)
+                    steps += self._combine_steps(bid, ch["values"]) if ch["kind"] == "combine" else \
+                        [("set_combination_type", {"block": bid, "type": ch["type"]})]
+                continue
             if ch["kind"] == "recipe":
                 bid = self._combine_block(q)
                 op = ("set_recipe_value", {"block": bid, "name": ch["name"], "value": ch["value"]})
@@ -1900,6 +1914,24 @@ class GraphEditing:
                 seen.add(bid)
                 steps.append(op)
         return steps
+
+    def _combine_steps(self, bid, values: dict) -> list:
+        """The graph core's steps of the combination editor's draft on block ``bid`` (client/combineedit.py): a setting
+        of its stage (a hue of the four types, Balance, Stars) by ``set_param``, a parameter of another recipe by
+        ``set_recipe_value``, the inputs' weights ({role: weight}) by ``set_input``."""
+        from ..stages import recipes
+        blk = self._g.blocks[bid]
+        stage = combos.stage(blk)
+        out = []
+        for name, v in values.items():
+            if name == "weights":
+                for role, w in sorted(v.items()):
+                    out.append(("set_input", {"block": bid, "port": self._port(bid, role), "weight": float(w)}))
+            elif stage == recipes.RECIPE_STAGE and name not in ("balance", "stars"):
+                out.append(("set_recipe_value", {"block": bid, "name": name, "value": v}))
+            else:
+                out.append(("set_param", {"block": bid, "stage": stage, "name": name, "value": v}))
+        return out
 
     def _method_change(self, q, ch):
         """A change of an option that is a block's method: [(block, method)]; ◇ raises NotInEngine; an option that
@@ -1965,6 +1997,14 @@ class GraphEditing:
         mm = _mm()
         if ch["kind"] == "layer":                         # a layer of Post: no workflow to copy
             raise GraphRefused(_("{lab}: no variant from here").format(lab=_("Combine layers")))
+        if ch["kind"] in ("combine", "combine_type"):     # the draft made on the variant's copy of the block
+            bid = self._combine_block(p)
+            if bid is None:
+                raise ValueError(_("not in workflow"))
+            steps = [("try_variant", {"block": bid, "change": {"off": False}, "name": self.unique_name(title)})]
+            for op, kw in self._block_steps([p], ch):
+                steps.append((op, lambda res, kw=kw: dict(kw, block=res[0].focus)))
+            return steps
         if ch["kind"] in ("recipe", "method"):            # the change made on the copy of its block
             op, kw = (self._block_steps([p], ch) or [(None, None)])[0]
             if op is None:
@@ -2084,7 +2124,7 @@ class GraphEditing:
     def _panel_cost(self, ch, paths) -> ChangeCost:
         from .. import api
         subs = ch["changes"] if ch["kind"] == "many" else [ch]
-        if all(c["kind"] in ("recipe", "method") for c in subs):     # made on the graph's block: costed as that gesture
+        if all(c["kind"] in ("recipe", "method", "combine", "combine_type") for c in subs):   # made on the graph's block: that gesture's cost
             steps = [s for c in subs for s in self._block_steps(paths, c)]
             return self._steps_cost(steps) if steps else ChangeCost()
         if all(c["kind"] == "layer" for c in subs):
@@ -2538,15 +2578,16 @@ class GraphEditing:
         self._do([("set_recipe_value", {"block": self._combine_block(p), "name": name, "value": value})])
         return True
 
-    def set_combination_type(self, p, t: str) -> bool:
+    def set_combination_type(self, p, t: str) -> str:
         """Another recipe for a combination (its panel's list): the application's recipe of that type copied in, the
         wires of the inputs it also has kept, one Undo step; the workflow's name follows when it is the recipe's own
-        (« S-H-O 2 » becomes « RGB », never an RGB named S-H-O)."""
+        (« S-H-O 2 » becomes « RGB », never an RGB named S-H-O). Returns what the change did, translated (the new
+        recipe's inputs and each wire that went: the panel's toast), "" when nothing changed."""
         import re
         j = self._combine_block(p)
         blk = self._g.blocks[j]
         if combos.kind(blk) == t:
-            return False
+            return ""
         steps = [("set_combination_type", {"block": j, "type": t})]
         r = self._row(p)
         old = combos.title(blk)
@@ -2557,8 +2598,12 @@ class GraphEditing:
             while name in names:
                 name, k = f"{base} {k}", k + 1
             steps.append(("rename_row", {"row": r.id, "name": name}))
-        self._do(steps)
-        return True
+        elif combos.title_stem(r.name or "") and \
+                combos.retitled(r.name, combos.type_title(t)) != (r.name or "").strip():
+            # "S-H-O · Stars" becomes "H-O · Stars": the recipe's title in the name follows it
+            steps.append(("rename_row", {"row": r.id, "name": combos.retitled(r.name, combos.type_title(t))}))
+        res = self._do(steps)
+        return res.toast_text(_) or _("Recipe changed")
 
     def update_recipe(self, p) -> bool:
         """The application's newer version of a combination's recipe copied into it: the user's click, one Undo

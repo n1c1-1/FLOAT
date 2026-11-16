@@ -327,7 +327,12 @@ def compile_into(g, p) -> Compiled:
             params.setdefault("stack", {})["selection"] = "all"
         for sid in mixed:
             params.setdefault(f"calibrate@{sid}", {})["apply_masters"] = False
-        w.name, w.options, w.params, w.end = rec.name, options, params, end
+        name = rec.name
+        if kind == "fusion" and f.chain and g.blocks[f.chain[0]].kind == "combine":
+            # a combination's workflow: the recipe's title in its name its own recipe's ("S-H-O · Stars" of a block
+            # made H-O is shown "H-O · Stars" everywhere: Inspect, the run, Post); a name the user typed stays
+            name = combos.retitled(name, combos.title(g.blocks[f.chain[0]]))
+        w.name, w.options, w.params, w.end = name, options, params, end
         w.variant_of, w.breakpoints, w.source, w.sessions = rec.trial, bps, source, sess
         w.blocks, w.calibration = blocks, own or None
         made[f.wid] = w

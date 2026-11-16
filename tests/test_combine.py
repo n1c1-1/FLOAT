@@ -91,7 +91,8 @@ def test_four_blocks_on_one_base_class_each_with_its_named_inputs_parameters_and
 def test_the_hues_give_each_filter_its_colour_and_keep_grey_grey():
     """S-H-O's default hues (Rector et al. 2007; measured: tests/test_combine_hubble.py): equal channels give a grey,
     each filter alone its own hue. Hues 0/120/240 are the plain mapping; H-alpha red and S II green, the former HSO;
-    the H-O defaults are H-alpha red, O III green and blue. Hues without a grey between them are refused."""
+    the H-O defaults are H-alpha red, O III green and blue. Hues without a grey between them are added unbalanced,
+    each filter still its own hue (no longer refused: most of the hue rail of the editor was)."""
     mat = C.hue_palette(C.HUBBLE_HUES)
     one, nil = np.ones((1, 1), np.float32), np.zeros((1, 1), np.float32)
     assert np.allclose(C.mix({r: one for r in SHO}, SHO, mat)[:, 0, 0], 1.0)
@@ -101,9 +102,12 @@ def test_the_hues_give_each_filter_its_colour_and_keep_grey_grey():
     assert C.hue_palette((0, 120, 240)) == np.eye(3).tolist()
     assert C.hue_palette((120, 0, 240)) == [[0, 1, 0], [1, 0, 0], [0, 0, 1]]
     assert C.hue_palette((0, 180)) == [[1, 0], [0, 1], [0, 1]]
-    for hues in ((0.0, 30.0, 60.0), (15.0, 45.0, 180.0), (0.0, 30.0)):
-        with pytest.raises(ValueError, match="grey"):
-            C.hue_palette(hues)
+    assert C.hues_neutral(C.HUBBLE_HUES) and C.hues_neutral((0, 180))
+    for hues in ((0.0, 30.0, 60.0), (15.0, 45.0, 180.0), (0.0, 30.0)):   # no grey between them: added as they are
+        m = np.array(C.hue_palette(hues))
+        assert not C.hues_neutral(hues) and (m >= 0).all() and np.isclose(m.sum(axis=1).max(), 1.0)
+        alone = [C.mix({r: (one if r == q else nil) for r in map(str, range(len(hues)))}, list(map(str, range(len(hues)))), m.tolist())[:, 0, 0] for q in map(str, range(len(hues)))]
+        assert [round(_hue(a)) % 360 for a in alone] == [round(h) % 360 for h in hues]     # each filter keeps its hue
 
 
 def test_a_combination_aligns_nothing_itself_and_needs_its_ports_and_one_grid(tmp_path):

@@ -312,7 +312,11 @@ def test_a_combination_panel_shows_its_named_inputs_and_its_settings(world):
     W.choose(W.block("fusion", ho))
     shown = {re.sub("<[^>]+>", "", x.text()) for x in W.page.panel.findChildren(QLabel)}
     shown |= {x.currentText() for x in W.page.panel.findChildren(QComboBox) if x.objectName() == "recipe"}
-    assert {"Hα", "O III", "H-O"} <= shown and {"Hα hue", "O III hue"} <= shown
+    assert {"Hα", "O III", "H-O", "Intensity", "H-O-O"} <= shown
+    # the hues, the balance and the stars are set in the combination's editor (Adjust): the panel sums them up
+    tips = {x.toolTip() for x in W.page.panel.findChildren(QLabel) if x.objectName() == "swatch"}
+    assert tips == {"Hα hue 0°", "O III hue 180°"} and "Balance: On signal" in shown
+    assert not {"Hα hue", "O III hue"} & shown
     assert W.m.set_fusion_weight(W.m.view(ho.pid), "OIII", 0.5) is True
     assert W.m.p.workflow(ho.pid).params["combine_ho"]["weights"] == {"OIII": 0.5}
     W.page.refresh()
@@ -325,12 +329,12 @@ def test_a_combination_panel_shows_its_named_inputs_and_its_settings(world):
 
 
 def test_the_stars_setting_is_shown_on_the_combination_of_the_stars_alone(world):
-    """The Filters template's second combination reads the filters' stars: its panel has the setting Stars (Neutral by
-    default: white stars, not the palette's colours), with Palette to choose; the nebula's combination, which it does
-    not act on, does not show it."""
+    """The Filters template's second combination reads the filters' stars: its panel says its setting Stars (Neutral by
+    default: white stars, not the palette's colours; set in its editor, Adjust); the nebula's combination, which it
+    does not act on, does not say it, and says its balance."""
     import re
 
-    from PySide6.QtWidgets import QComboBox, QLabel
+    from PySide6.QtWidgets import QComboBox, QLabel, QPushButton
     W = world(workflows=(), filters=("Ha", "OIII"))
     W.page.show_templates()
     card = W.page.templates.card("filters_full")
@@ -347,11 +351,10 @@ def test_the_stars_setting_is_shown_on_the_combination_of_the_stars_alone(world)
         lists = [[c.itemText(i) for i in range(c.count())] for c in W.page.panel.findChildren(QComboBox)]
         return labels, lists
     labels, lists = panel(W.view("H-O · Stars"))
-    assert "Stars" in labels and ["Neutral", "Palette"] in lists and "Hα hue" in labels
-    assert "Balance" not in labels                        # the stars alone are always balanced on the sky
+    assert "Stars: Neutral" in labels and "Adjust" in {b.text() for b in W.page.panel.findChildren(QPushButton)}
+    assert not any(x.startswith("Balance") for x in labels)   # the stars alone are always balanced on the sky
     labels, lists = panel(W.view("H-O"))
-    assert "Stars" not in labels and ["Neutral", "Palette"] not in lists and "Hα hue" in labels
-    assert "Balance" in labels and ["On sky", "On signal"] in lists      # the nebula's: how its filters are balanced
+    assert not any(x.startswith("Stars") for x in labels) and "Balance: On signal" in labels
 
 
 def test_filters_make_one_workflow_each_and_their_combinations(world):

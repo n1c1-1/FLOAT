@@ -374,7 +374,9 @@ def title_msg(p, b, ix=None):
             return base in names or (tail.isdigit() and head in names)
         r = ix.row.get(ix.row_of.get(b))
         if r is not None and r.blocks and r.blocks[0] == b and (r.name or "").strip() and not default_named(r):
-            return typed(r.name)            # a combination is a workflow: titled by its name ("S-H-O · Stars")
+            # a combination is a workflow: titled by its name ("S-H-O · Stars"), the recipe's title in it its own
+            # recipe's (a block whose recipe became H-O is never titled "S-H-O · Stars")
+            return typed(combos.retitled(r.name, combos.title(blk)))
         same = [r.blocks[0] for r in p.rows if r.blocks and p.blocks[r.blocks[0]].kind == "combine"
                 and combo_type(p.blocks[r.blocks[0]]) == t and default_named(r)]
         n = same.index(b) + 1 if b in same else 1

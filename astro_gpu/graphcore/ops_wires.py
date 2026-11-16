@@ -18,15 +18,33 @@ def op_set_combination_type(q, block, type):
     if type not in combos.offered():
         raise Refusal("unknown type")
     old = combos.stage(j)
+    kept = copy.deepcopy(j.settings.get("kept") or {})
     j.settings, j.source = combos.placed(type)
     ports = combos.ports(j)
     new = combos.stage(j)
-    if new != old and old in j.params:
-        mine = j.params.pop(old)
+    if new != old:
+        # the settings both recipes have go with the change (the weights of the inputs kept, the balance, the stars);
+        # the recipe's own (its hues) are kept with the block, and come back with the recipe: a round trip H-O → S-H-O
+        # → H-O gives the H-O its hues back (a hue of one recipe is no hue of the other: the defaults differ, and three
+        # hues must balance to a grey)
+        mine = j.params.pop(old, None) or {}
+        if mine:
+            kept[old] = copy.deepcopy(mine)
+        back = dict(kept.pop(new, None) or {})
         roles = {combos.role_of(j, p) for p in ports}
         weights = {r: v for r, v in (mine.get("weights") or {}).items() if r in roles}
+        back.pop("weights", None)
         if weights:
-            j.params[new] = {"weights": weights}
+            back["weights"] = weights
+        from ..stages.combine import ALL
+        fields = next((c.Params.model_fields for c in ALL if c.name == new), {})
+        for k in ("balance", "stars"):
+            if k in mine and k in fields:
+                back[k] = mine[k]
+        if back:
+            j.params[new] = back
+    if kept:
+        j.settings["kept"] = kept
     gone = [w for w in q.wires if w.dst[0] == block and w.dst[1] not in ports]
     q.wires = [w for w in q.wires if w not in gone]
     toast = M("{t}: {ports}", t=title_msg(q, block), ports=join(ports, ", "))

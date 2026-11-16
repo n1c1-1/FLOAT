@@ -1130,11 +1130,11 @@ class Panel(QWidget):
                 cb.setItemData(cb.count() - 1, recipe_tip(combos.recipe(t)), Qt.ToolTipRole)
             if cb.findData(kind) < 0:                    # a recipe the application no longer offers: shown as it is
                 cb.addItem(combine_title(kind, p), kind)
-            cb.setCurrentIndex(max(0, cb.findData(kind)))
+            shown = self.draft_combine("type", kind)      # the block's draft, as every setting of it
+            cb.setCurrentIndex(max(0, cb.findData(shown)))
             cb.setToolTip(recipe_tip(spec) + "\n" + _("Another recipe keeps the wires of the inputs it also has; "
                                                       "the others go (Ctrl+Z brings them back)"))
-            cb.activated.connect(lambda k, b=cb, old=kind: b.itemData(k) != old and self._recipe_change(
-                lambda: s.set_combination_type(p, b.itemData(k))))
+            cb.activated.connect(lambda k, b=cb, old=kind: self.propose_recipe_type(p, b.itemData(k), old))
             row.addWidget(cb, 1)
             self.hv.addLayout(row)
         else:
@@ -1161,15 +1161,24 @@ class Panel(QWidget):
             self.hv.addWidget(why)
         if node.waits:                                   # an input to wire, or inputs not on one grid: the block waits
             self.hv.addWidget(label(_("Waiting: {why}").format(why=node.waits.rstrip(".")), "warn", wrap=True))
+        stage = combine_stage(s.p.workflow(p.pid))
+        stored = (s.p.workflow(p.pid).params.get(stage) or {}) if stage else {}
+        weights = stored.get("weights") or {}
+        if stage and spec is not None:
+            self.combination_summary(p, stage, spec, stored)
         self.bv.addWidget(self.group_title(_("Inputs")))
         words = {"L": _("grey"), "R": _("red"), "G": _("green"), "B": _("blue"),
                  "GB": _("green + blue")}
-        stage = combine_stage(s.p.workflow(p.pid))
-        weights = (s.p.workflow(p.pid).params.get(stage) or {}).get("weights") or {} if stage else {}
         by_role = {i["role"]: i for i in f.get("inputs") or []}
         types = {"mono": _("A monochrome image (a filter's stack)"), "colour": _("A colour image"),
                  "any": _("A monochrome or colour image")}
         ins = s.recipe_inputs(p) if hasattr(s, "recipe_inputs") else (spec or {}).get("inputs", [])
+        head = QHBoxLayout()                             # the column's name over the weights
+        head.addStretch(1)
+        ih = label(_("Intensity"), "dim")
+        ih.setToolTip(_("Each filter's weight after the balance (1: as balanced)"))
+        head.addWidget(ih)
+        self.bv.addLayout(head)
         for spec_in in ins:                              # the recipe's inputs (role, label, type), in its order
             role = spec_in["role"]
             i = by_role.get(role, {"pid": None, "role": role, "channel": spec_in.get("channel", "L")})
@@ -1182,12 +1191,20 @@ class Panel(QWidget):
             row.addWidget(name, 0)
             row.addWidget(self.wired_text(
                 i["pid"] if q is not None else None,
-                _("The workflow this input reads: its Output, or its starless image or its stars alone"),
+                _("The workflow this input reads: its Output, or its starless image or its stars alone."),
                 i.get("image", "output")), 1)
-            if q is not None:                              # the channel of its image this input reads: a setting
+            colour = q is not None and (not s.is_mono(q) if hasattr(s, "is_mono") else True)
+            if q is not None and (colour or i.get("channel", "L") != "L"):
+                # the channel of a colour image this input reads (a dual-band image's red, its green + blue): a
+                # setting; a monochrome stack has one, said by nothing
                 ch = QComboBox()
+                tips = {"L": _("The image's luminance: a filter's stack, or a colour image read as grey"),
+                        "R": _("Its red: the H-alpha of a dual-band filter on a colour camera"),
+                        "G": _("Its green"), "B": _("Its blue"),
+                        "GB": _("The mean of its green and blue: the O III of a dual-band filter on a colour camera")}
                 for c, word in words.items():
                     ch.addItem(word, c)
+                    ch.setItemData(ch.count() - 1, tips[c], Qt.ToolTipRole)
                 ch.setCurrentIndex(max(0, ch.findData(i.get("channel", "L"))))
                 ch.setToolTip(_("The channel of the image this input reads: grey for a stack of a filter, red or "
                                 "green + blue for a dual-band colour image"))
@@ -1197,24 +1214,23 @@ class Panel(QWidget):
             sp.setRange(0.0, 5.0)
             sp.setSingleStep(0.05)
             sp.setDecimals(2)
-            sp.setValue(float(weights.get(role, 1.0)))
-            sp.setToolTip(_("The channel's weight, after the balance (1: as balanced). Lower a channel too faint, "
-                            "whose noise the balance raised."))
+            applied_w = float(weights.get(role, 1.0))
+            sp.setValue(float(self.draft_combine(("weight", role), applied_w)))
+            sp.setObjectName("intensity")
+            sp.setAccessibleName(_("Intensity"))
+            sp.setToolTip(_("Intensity: the filter's weight after the balance (1: as balanced). Lower a filter too "
+                            "faint, whose noise the balance raised."))
             sp.setEnabled(q is not None)
-            sp.editingFinished.connect(lambda r=role, b=sp: s.set_fusion_weight(p, r, b.value()))
+            sp.editingFinished.connect(lambda r=role, b=sp, a=applied_w: self.propose_weight(p, r, b.value(), a))
             row.addWidget(sp)
             self.bv.addLayout(row)
         self.bv.addSpacing(6)
-        self.recipe_settings(p)
-        # Stars (what a narrow-band combination makes of the stars alone): shown on the combination it acts on, the
-        # one whose inputs all read their stars
-        wired = f.get("inputs") or []
-        on_stars = bool((spec or {}).get("narrowband")) and bool(wired) and \
-            all(i.get("image") == "stars" for i in wired)
-        # Balance (how an equalisation brings the filters to their reference): on the combinations it acts on, those
-        # whose recipe equalises, but the one of the stars alone
-        balanced = not on_stars and any(s.get("op") == "equalise" for s in (spec or {}).get("steps") or [])
-        hidden = {"values"} | (set() if on_stars else {"stars"}) | (set() if balanced else {"balance"})
+        # the hues, the balance and the stars are set in the combination's editor (combineedit.py: the summary above
+        # says them); the recipe's other parameters stay here
+        from .combineedit import hue_params
+        hues = set(hue_params(spec or {}).values())
+        self.recipe_settings(p, skip=hues)
+        hidden = {"values", "stars", "balance"} | hues
         self.settings(p, "fusion", groups=[(g, [r for r in rs if r.get("name") not in hidden])
                                            for g, rs in self._groups(p, "fusion")])
         self.bv.addSpacing(6)
@@ -1225,19 +1241,69 @@ class Panel(QWidget):
 
     def _recipe_change(self, do):
         """A change of a combination's recipe (a parameter, its newer version): made at once, one Undo step; refused,
-        the reason in the toast."""
+        the reason in the toast; what it did (another recipe: its inputs, each wire that went) in the toast too."""
         try:
-            do()
+            said = do()
         except ValueError as e:
             self.toast.emit(_(str(e)))
+        else:
+            if isinstance(said, str) and said:
+                self.toast.emit(said + " · Ctrl+Z")
         self.changed.emit()
 
-    def recipe_settings(self, p):
+    def combination_summary(self, p, stage, spec, stored):
+        """What the combination's editor sets, in one look: the palette (or each filter's hue as a swatch), the
+        balance, and Adjust, which opens the editor in Inspect (as the Gradient block's panel opens its samples)."""
+        from .combineedit import (
+            BALANCE_NAME, STARS_NAME, applied_values, fitting_palettes, has_balance, hue_colour, hue_params, palette_of,
+            stage_class, stars_only)
+        from .graphnode import port_name
+        wired = ((p.source or {}).get("fusion") or {}).get("inputs") or []
+        vals = applied_values(stage_class(stage), spec, stored)
+        self.bv.addWidget(self.group_title(_("Colours")))
+        hues = hue_params(spec)
+        if spec.get("narrowband") and stars_only(wired) and "stars" in vals:
+            self.bv.addWidget(label(_("Stars: {how}").format(how=_(STARS_NAME.get(vals["stars"], vals["stars"]))),
+                                    None))
+        elif hues:
+            pal = palette_of(spec, vals)
+            row = QHBoxLayout()
+            row.setSpacing(4)
+            if pal:
+                row.addWidget(label(_(dict(fitting_palettes(spec))[pal]), None))
+                row.addSpacing(6)
+            for role, name in hues.items():
+                sw = QLabel()
+                sw.setObjectName("swatch")
+                sw.setFixedSize(12, 12)
+                sw.setStyleSheet(f"background: {hue_colour(vals[name]).name()}; border: 1px solid #202020; "
+                                 "border-radius: 2px;")
+                sw.setToolTip(_("{filter} hue {deg}°").format(filter=port_name(role), deg=f"{vals[name]:.0f}"))
+                row.addWidget(sw)
+                row.addWidget(label(port_name(role), "small"))
+                row.addSpacing(4)
+            row.addStretch(1)
+            self.bv.addLayout(row)
+        if has_balance(spec, wired) and "balance" in vals:
+            self.bv.addWidget(label(_("Balance: {how}").format(how=_(BALANCE_NAME.get(vals["balance"],
+                                                                                     vals["balance"]))), "small"))
+        if not self.tune:
+            b = QPushButton(_("Adjust"))
+            b.setObjectName("adjust")
+            b.setToolTip(_("Opens the combination in Inspect: the palette, each filter's hue and intensity, the "
+                           "balance, tried as a draft on the image"))
+            b.clicked.connect(self.openTune.emit)
+            self.bv.addWidget(b, 0, Qt.AlignLeft)
+        self.bv.addSpacing(6)
+
+    def recipe_settings(self, p, skip=()):
         """The parameters of a recipe other than the four types' frozen ones (theirs are their stage's settings, shown
         as any block's): one row each, its name, its value, its help in the tooltip. A change goes the way of every
-        block's (``propose_recipe``): a draft on a block with results up to date."""
+        block's (``propose_recipe``): a draft on a block with results up to date. ``skip``: the ones the combination's
+        editor sets (its hues)."""
         s = self.s
         params = s.recipe_parameters(p) if hasattr(s, "recipe_parameters") else {}
+        params = {n: q for n, q in params.items() if n not in skip}
         if not params:
             return
         self.bv.addWidget(self.group_title(_("Recipe")))
@@ -1273,6 +1339,43 @@ class Panel(QWidget):
         self._propose(dict(kind="recipe", name=name, value=value),
                       _("{label}: {old} → {new}").format(label=text, old=old, new=new), f"{text.lower()} {new}",
                       same=value == applied)
+
+    def propose_recipe_type(self, p, t, applied):
+        """Another recipe for the combination: a change of the block's draft as every setting of it (the reviewer's
+        test: the recipe applied at once while the hues waited for Apply), its words saying which wires it takes."""
+        from ..graphcore import combos
+        from .graphnode import combine_title, port_name
+        if t is None:
+            return
+        new_roles = {i["role"] for i in (combos.recipe(t) or {}).get("inputs") or []}
+        wired = [i["role"] for i in ((p.source or {}).get("fusion") or {}).get("inputs") or []]
+        gone = [port_name(r) for r in wired if r not in new_roles]
+        what = _("Recipe: {old} → {new}").format(old=combine_title(applied), new=combine_title(t))
+        if gone:
+            what += " · " + _("unwires {names}").format(names=", ".join(gone))
+        self._propose(dict(kind="combine_type", type=t), what, combine_title(t), same=t == applied, always=True)
+
+    def propose_weight(self, p, role, value, applied):
+        """A filter's intensity: a change of the block's draft as every setting of it."""
+        from .graphnode import port_name
+        value = round(float(value), 3)
+        if value == round(float(self.draft_combine(("weight", role), applied)), 3):
+            return
+        what = _("{filter} intensity {old} → {new}").format(filter=port_name(role), old=f"{applied:.2f}",
+                                                             new=f"{value:.2f}")
+        self._propose(dict(kind="combine", values={"weights": {role: value}}), what,
+                      _("{filter} intensity {new}").format(filter=port_name(role), new=f"{value:.2f}"),
+                      same=abs(value - applied) < 1e-6, always=True)
+
+    def draft_combine(self, what, default):
+        """The combination's recipe (``what`` "type") or a filter's weight (("weight", role)) as the block's draft has
+        it."""
+        for c in self._draft_entries():
+            if what == "type" and c["kind"] == "combine_type":
+                return c["type"]
+            if isinstance(what, tuple) and c["kind"] == "combine" and what[1] in (c["values"].get("weights") or {}):
+                return c["values"]["weights"][what[1]]
+        return default
 
     def draft_recipe(self, name, default):
         """A parameter of the recipe as the block's draft has it."""
@@ -1711,6 +1814,11 @@ class Panel(QWidget):
             return "param", c["stage"], c["name"]
         if c["kind"] == "recipe":
             return "recipe", c["name"]
+        if c["kind"] == "combine_type":
+            return ("combine_type",)
+        if c["kind"] == "combine":
+            return ("combine",) + tuple(sorted((k, tuple(sorted(v)) if isinstance(v, dict) else None)
+                                               for k, v in c["values"].items()))
         if c["kind"] == "method":
             return "method", c["key"]
         if c["kind"] == "layer":                         # one slider, or the blend mode, of a Combine layers
@@ -1732,7 +1840,9 @@ class Panel(QWidget):
             return paths
         return [q for q in paths if q in node.paths] or list(node.paths)
 
-    def _propose(self, ch, what, short, same=False):
+    def _propose(self, ch, what, short, same=False, always=False):
+        """``always``: a draft whatever the block's results (the combination's settings, all of them the same way as
+        its editor's, combineedit.py); else only on a block with results computed and up to date."""
         from .blockdraft import Draft
         from .graphnode import node_title
         s = self.s
@@ -1743,10 +1853,12 @@ class Panel(QWidget):
                 self.changed.emit()
                 self.draftChanged.emit()
             return
+        if same and always:
+            return
         paths = self._change_paths()
         try:
             cost = s.change_cost(ch, paths) if confirm_on() and hasattr(s, "change_cost") else None
-            if cost is not None and cost.lost:           # results computed and up to date: a draft, nothing outdated
+            if (always and confirm_on()) or (cost is not None and cost.lost):   # a draft, nothing outdated
                 d = Draft(self.node.key, [q.pid for q in paths])
                 d.title = node_title(s, self.node) if self.node.paths else block_title(paths[0], self.node.key)
                 d.put(entry)

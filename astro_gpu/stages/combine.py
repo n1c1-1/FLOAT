@@ -206,16 +206,25 @@ def hue_palette(hues: tuple[float, ...]) -> list[list[float]]:
     """The matrix of filters given hues (Rector et al. 2007): each channel tinted with its hue (degrees on the HSV
     colour wheel, its colour fully saturated, its brightest component 1), the layers added; each column then weighted
     so that equal channels give a grey (1, 1, 1): the colour balance, which keeps each hue as it is. Three hues solve
-    it exactly; two (H-O) by least squares, exact when the hues face each other. Hues whose balance needs a weight of
-    0 or less (no grey between them) are refused."""
+    it exactly; two (H-O) by least squares, exact when the hues face each other. Hues with no grey between them (a
+    weight of 0 or less) are not balanced: the colourised layers are added as they are, in Rector et al.'s order
+    (the colour balance of the whole is then the user's, in Post), scaled so that equal channels reach 1 in their
+    strongest colour (``hues_neutral`` says which case it is)."""
     cols = np.array([colorsys.hsv_to_rgb((h % 360) / 360, 1.0, 1.0) for h in hues]).T
     try:
         w = np.linalg.solve(cols, np.ones(3)) if len(hues) == 3 else np.linalg.lstsq(cols, np.ones(3), rcond=None)[0]
     except np.linalg.LinAlgError:                      # e.g. three hues without blue
         w = np.zeros(len(hues))
     if not (w > 0).all():
-        raise ValueError(f"the hues {hues} do not balance to a grey")
+        w = np.full(len(hues), 1.0 / float(cols.sum(axis=1).max()))
     return (cols * w[None]).round(6).tolist()
+
+
+def hues_neutral(hues: tuple[float, ...]) -> bool:
+    """True when equal channels give a grey through these hues (``hue_palette`` balances them), False when the hues
+    have no grey between them and the layers are only added."""
+    m = np.array(hue_palette(hues))
+    return bool(np.allclose(m.sum(axis=1), 1.0, atol=1e-4))
 
 
 #: the ports' names as the interface writes them
@@ -774,23 +783,7 @@ class Combination(Stage):
             raise StageError("the channels do not overlap: no pixel where every one has data")
         tops = {r: 1.0 for r in chans}
         skies = self.steps(ctx, spec, inputs, chans, valid_all, tops, self.balance_of(p, inputs))
-        level = 1.0
-        for role in list(chans):
-            wgt = float(p.weights.get(role, 1.0))
-            if wgt != 1.0:                           # the user's weight: the balance's divisor scaled with it
-                chans[role] *= np.float32(wgt)
-                tops[role] /= wgt
-                skies[role] = (skies[role][0], skies[role][1] * wgt)
-                ctx.log(f"{role}: weight {wgt:g}")
-        # each balanced channel's sky noise: the sky's, scaled as the channel was (the weight included)
-        noise = {r: skies[r][1] for r in chans}
-        if self.stars_neutral(p, spec, inputs):
-            mixed = tuple(spec["output"]["channels"])
-            rgb = neutral_stars(chans, mixed)
-            ctx.log(f"the stars alone: neutral, the plain mean of {', '.join(mixed)} (no hue)")
-        else:
-            rgb = self.combine(ctx, p, chans, noise, valid_all) * np.float32(level or 1.0)
-        rgb[:, ~valid_all] = 0
+        rgb = self.mix_balanced(ctx, p, spec, inputs, chans, skies, tops, valid_all)
         H, W = ref["shape"]
         ctx.save("drz_full.npy", rgb.astype(np.float32))
         ctx.save("drz_weight.npy", np.repeat(valid_all[None].astype(np.float32), 3, axis=0))
@@ -815,11 +808,39 @@ class Combination(Stage):
         lo, hi = np.percentile(v[valid_all], 1), np.percentile(v[valid_all], 99.7)
         ctx.preview("fusion", np.clip((v - lo) / max(hi - lo, 1e-6), 0, 1) ** 0.5)
 
+    def mix_balanced(self, ctx: Context, p, spec: dict, inputs: list[dict], chans: dict[str, np.ndarray],
+                     skies: dict[str, tuple[float, float]], tops: dict[str, float], valid: np.ndarray) -> np.ndarray:
+        """(3, H, W): the channels the recipe's steps balanced (``steps``), each scaled by the user's weight, made into
+        red, green and blue (the recipe's output, or the neutral stars), the pixels outside ``valid`` at 0. ``chans``,
+        ``skies`` and ``tops`` are scaled in place by the weights. The run's own end, and the editor's preview
+        (client/combineedit.py) on its reduced copy."""
+        level = 1.0
+        for role in list(chans):
+            wgt = float(p.weights.get(role, 1.0))
+            if wgt != 1.0:                           # the user's weight: the balance's divisor scaled with it
+                chans[role] *= np.float32(wgt)
+                tops[role] /= wgt
+                skies[role] = (skies[role][0], skies[role][1] * wgt)
+                ctx.log(f"{role}: weight {wgt:g}")
+        # each balanced channel's sky noise: the sky's, scaled as the channel was (the weight included)
+        noise = {r: skies[r][1] for r in chans}
+        if self.stars_neutral(p, spec, inputs):
+            mixed = tuple(spec["output"]["channels"])
+            rgb = neutral_stars(chans, mixed)
+            ctx.log(f"the stars alone: neutral, the plain mean of {', '.join(mixed)} (no hue)")
+        else:
+            rgb = self.combine(ctx, p, chans, noise, valid) * np.float32(level or 1.0)
+        rgb[:, ~valid] = 0
+        return rgb
+
     def steps(self, ctx: Context, spec: dict, inputs: list[dict], chans: dict[str, np.ndarray], valid: np.ndarray,
-              tops: dict[str, float], balance: str = BALANCES[0]) -> dict[str, tuple[float, float]]:
+              tops: dict[str, float], balance: str = BALANCES[0],
+              notes: dict | None = None) -> dict[str, tuple[float, float]]:
         """The recipe's steps on the channels, in place (``tops``: each channel's scale, 1 over the factor it was
-        multiplied by). ``balance``: what an ``equalise`` step does (``BALANCES``). Returns the last neutralisation's
-        {role: (level, noise)}."""
+        multiplied by). ``balance``: what an ``equalise`` step does (``BALANCES``). ``notes``, when given, receives
+        each channel's gain and why ({role: (gain, "signal" | "noise" | "sky" | "match")}: the editor's line under a
+        filter). Returns the last neutralisation's {role: (level, noise)}."""
+        notes = {} if notes is None else notes
         skies: dict[str, tuple[float, float]] = {}
         first = True
         for step in spec["steps"]:
@@ -844,6 +865,7 @@ class Combination(Stage):
                                          "check that they show the same field")
                     chans[role] = (chans[role] * np.float32(a) + np.float32(b)).astype(np.float32)
                     tops[role] = 1.0 / a
+                    notes[role] = (a, "match")
                     ctx.log(f"{role} matched to {ref_role} on its pixels between {low:.3g} and "
                             f"{high:.5g}: {a:.4g} x + {b:.3g} ({used} pixels)")
                 skies = neutralise_sky(chans, valid)               # the fits' offsets taken off: the sky at 0 again
@@ -868,6 +890,7 @@ class Combination(Stage):
                         a = min(g for g in (by_signal, by_noise) if g is not None)
                         chans[role] = (chans[role] * np.float32(a)).astype(np.float32)
                         tops[role] = 1.0 / a
+                        notes[role] = (a, "signal" if by_signal is not None and a == by_signal else "noise")
                         ctx.log(f"{role} balanced on the signal of {ref_role}: x {a:.4g} ("
                                 + (f"its signal asks for {by_signal:.4g}" if by_signal is not None else
                                    "no signal to fit")
@@ -880,6 +903,7 @@ class Combination(Stage):
                     a, b = equalise(chans[role], chans[ref_role], valid)
                     chans[role] = (chans[role] * np.float32(a) + np.float32(b)).astype(np.float32)
                     tops[role] = 1.0 / a
+                    notes[role] = (a, "sky")
                     ctx.log(f"{role} equalised to {ref_role} (its median and its spread): {a:.4g} x + {b:.3g}")
                 skies = neutralise_sky(chans, valid)               # the offsets taken off: the sky at 0 again
             elif op == "continuum_subtract":
