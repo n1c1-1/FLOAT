@@ -497,8 +497,8 @@ FILTERS = {
                          B("lightness", "Preserve lightness", True)]),
     "balance": dict(name="Color balance", family="Color", fn=f_balance,
                     source="Gains on red and blue (temperature) and on green (tint)",
-                    params=[P("temperature", "Temperature", -1, 1, 0, step=0.01),
-                            P("tint", "Green / magenta", -1, 1, 0, step=0.01)]),
+                    params=[P("temperature", "Temperature", -3, 3, 0, step=0.01),
+                            P("tint", "Green / magenta", -3, 3, 0, step=0.01)]),
     # ---- detail
     "sharpen": dict(name="Sharpen", family="Detail", fn=f_sharpen,
                     source="Unsharp mask",
