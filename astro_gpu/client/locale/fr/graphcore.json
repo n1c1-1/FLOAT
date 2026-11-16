@@ -333,6 +333,8 @@
   "{n} {kind} added to “{t}”": "{n} {kind} ajouté{kind:e}s à « {t} »",
   "{n} {one} replaces those of “{t}”": "{n} {one} remplace les précédents de « {t} »",
   "{n} {one} added to “{t}”": "{n} {one} ajouté{one:e} à « {t} »",
+  "{n} {kind} removed from “{t}”": "{n} {kind} retiré{kind:e}s de « {t} »",
+  "{n} {one} removed from “{t}”": "{n} {one} retiré{one:e} de « {t} »",
   "light": "brute",
   "dark": "dark",
   "flat": "flat",

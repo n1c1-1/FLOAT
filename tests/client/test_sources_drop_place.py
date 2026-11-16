@@ -116,3 +116,40 @@ def test_the_undo_of_files_added_to_a_session_names_them(qapp, tmp_path, monkeyp
         i18n.set_language("en")
         view.close()
         close(w, m, page)
+
+
+def test_the_undo_of_files_taken_out_of_a_session_names_them_and_stays_on_its_page(qapp, tmp_path, monkeypatch):
+    """The hand pass in the window: darks taken out on the session's files page, then Edit > Undo said only "a change
+    of the workflows (Graph)" and Inspect left the session for the workflow's last block. The step is named by what
+    was taken out, as the adding is, and Undo and Redo leave the session's block open."""
+    from astro_gpu.client import i18n
+    w, m, page, view = shown(tmp_path, monkeypatch)
+    try:
+        view.show_session(2, "lights")
+        assert m.sel_step == "session@2"
+        darks = [str(fits_file(tmp_path / "d" / f"D_{k}.fits")) for k in range(3)]
+        flat = [str(fits_file(tmp_path / "f" / "F_0.fits"))]
+        assert view.add_files("darks", darks) == 3 and view.add_files("flats", flat) == 1
+        QApplication.processEvents()
+        view.files_out("flats", flat)
+        assert m.next_words("undo") == "1 flat removed from “night 2”"
+        QApplication.processEvents()
+        i18n.set_language("fr")
+        view.files_out("darks", darks)
+        assert m.next_words("undo") == "3 darks retirés de « night 2 »"
+        QApplication.processEvents()
+        assert m.undo(graph=True) and m.restored == "3 darks retirés de « night 2 »"
+        view.refresh()
+        assert m.sel_step == "session@2" and view.sid == 2 and len(m.p.session(2).darks) == 3
+        assert m.undo(graph=True) and m.restored == "1 flat removed from “night 2”"      # said as it was shown
+        assert m.sel_step == "session@2" and len(m.p.session(2).flats) == 1
+        assert m.redo(graph=True) and m.redo(graph=True)
+        view.refresh()
+        assert m.sel_step == "session@2" and view.sid == 2 and not m.p.session(2).darks
+        lights = [m.p.abspath(e) for e in m.session_files(2, "lights")][:1]
+        view.files_out("lights", lights)
+        assert m.next_words("undo") == "1 brute retirée de « night 2 »"
+    finally:
+        i18n.set_language("en")
+        view.close()
+        close(w, m, page)

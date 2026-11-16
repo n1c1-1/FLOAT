@@ -768,8 +768,15 @@ class GraphEditing:
             q.blocks[ob] = copy.deepcopy(old_blk)
             q.rows.remove(r)
             back = copy.deepcopy(old_row)
-            if any(x.name == back.name for x in q.rows):  # its name taken meanwhile (a Combine layers the gesture
-                back.name = r.name                        # made): the free one the projection gave it
+            took_name = next((x for x in q.rows if x.name == back.name), None)
+            if took_name is not None and len(took_name.blocks) == 1 and \
+                    getattr(q.blocks.get(took_name.blocks[0]), "kind", "") == "combine_layers":
+                # its name taken meanwhile by a Combine layers the gesture made (made on the graph without this one):
+                # the one already there keeps its name, the new one takes the next ("Combine layers 2"), as its block's
+                # title numbers it
+                took_name.name = r.name
+            elif took_name is not None:                   # by another row: the free one the projection gave it
+                back.name = r.name
             q.rows.insert(min(i, len(q.rows)), back)
             wids = {w.id for w in q.wires}
             by_ends = {(tuple(w.src), tuple(w.dst)): w.id for w in old_wires}
@@ -1448,7 +1455,8 @@ class GraphEditing:
                 pass
             elif back:
                 self.current, self.sel_step = back[0]
-            elif self.sel_step and self.sel_step not in ("sources", "final") and self.sel_step not in keys:
+            elif self.sel_step and self.sel_step not in ("sources", "final") and self.sel_step not in keys                     and self.sel_step not in {f"{k}@{i}" for i in self.p.separate_sessions()
+                                              for k in ("session", "calibration")}:   # a session's block, still there
                 j = old_keys.index(self.sel_step) if self.sel_step in old_keys else len(old_keys)
                 self.sel_step = next((k for k in reversed(old_keys[:j]) if k in keys), keys[-1] if keys else "sources")
         self.pathsChanged.emit()
@@ -3095,7 +3103,10 @@ class GraphEditing:
         keep = list(once.values())
         if keep == list(getattr(s, kind)):
             return False
-        self._night_edit(sid, files={kind: keep})
+        # its Undo says what it brings back, as the adding's says what it takes back
+        from ..graphcore.rules import files_msg
+        self._night_edit(sid, files={kind: keep}, toast=say(files_msg(
+            len(files), kind, "{n} {one} removed from “{t}”", "{n} {kind} removed from “{t}”", t=s.name), _))
         self.reload_sources()
         return True
 

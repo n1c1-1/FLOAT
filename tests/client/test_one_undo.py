@@ -304,3 +304,42 @@ def test_a_blocks_draft_step_is_undone_before_an_older_step_and_redone(win):
     _settle(win, 3)
     assert d and _method(win) == "rbf"
     win.s.pending_change = None
+
+
+def test_undo_of_files_taken_out_of_a_session_stays_on_its_files_page(win, tmp_path):
+    """The hand pass: files taken out on the session's files page, Ctrl+Z: the status said "a change of the workflows
+    (Graph)" and Inspect showed the workflow's last block. The step is named and the session's files stay shown."""
+    import numpy as np
+    from astropy.io import fits
+    darks = []
+    for k in range(3):
+        f = tmp_path / "d" / f"D_{k}.fits"
+        f.parent.mkdir(exist_ok=True)
+        fits.PrimaryHDU(np.zeros((4, 4), np.float32)).writeto(f)
+        darks.append(str(f))
+    win.add_session()
+    _settle(win, 3)
+    win.add_session()
+    _settle(win, 3)
+    sid = win.browser.sid
+    name = win.s.p.session(sid).name
+    assert win.browser.add_files("darks", darks) == 3
+    _settle(win, 3)
+    win.browser.files_out("darks", darks)
+    _settle(win, 3)
+
+    def shown():
+        return (win.mode, win.frames.pages.currentIndex(), win.frames.isVisible(), win.browser.sid, win.s.sel_step)
+    here = shown()
+    assert here == (1, 1, True, sid, f"session@{sid}")
+    menu = next(m.menu() for m in win.menuBar().actions() if win.a_undo in m.menu().actions())
+    menu.aboutToShow.emit()
+    assert win.a_undo.text() == f"Undo: 3 darks removed from “{name}”"
+    win.a_undo.trigger()
+    _settle(win, 3)
+    assert win.status.text() == f"Undone: 3 darks removed from “{name}”"
+    assert shown() == here and len(win.s.p.session(sid).darks) == 3
+    win.a_redo.trigger()
+    _settle(win, 3)
+    assert win.status.text() == f"Redone: 3 darks removed from “{name}”"
+    assert shown() == here and not win.s.p.session(sid).darks
