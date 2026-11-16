@@ -98,23 +98,12 @@ def _calib_of(files: list, hdr: dict) -> dict | None:
 
 
 def _keys_of(files: list, hdr: dict, limit: int = 400) -> list[dict]:
-    """{"exposure", "iso"} of each of a session's calibration frames of a kind (headers only, remembered in ``hdr`` by
-    path; at most ``limit``, evenly spread)."""
-    from ...io.frames import read_info
-    if len(files) > limit:
-        files = [files[i] for i in sorted({int(i) for i in np.linspace(0, len(files) - 1, limit)})]
-    out = []
-    for f in files:
-        k = ("key", str(f))
-        if k not in hdr:
-            try:
-                info = read_info(f)
-                hdr[k] = {"exposure": info.exposure, "iso": info.iso, "filter": info.filter}
-            except Exception:  # noqa: BLE001 - an unreadable frame is said by the import, not here
-                hdr[k] = None
-        if hdr[k] is not None:
-            out.append(hdr[k])
-    return out
+    """{"exposure", "iso"} of each of a session's calibration frames of a kind (headers only; at most ``limit``,
+    evenly spread). Read as the lights' are (io/frames.light_facts): a raw frame after the first of its camera is not
+    decoded for its header (each dark, flat and bias was: minutes of "Reading the frames…" on a processor alone), and
+    the health checks, which ask the same of the flats and the bias, find them read."""
+    from ...io.frames import light_facts
+    return list(light_facts(files, limit).get("keys") or [])
 
 
 def dark_lines(row: SessionRow, camera: dict) -> list[dict]:
