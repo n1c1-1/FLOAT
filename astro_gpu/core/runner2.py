@@ -819,7 +819,8 @@ class _Worker:
         same_gpu = os.environ.get("CUDA_VISIBLE_DEVICES") == d.get("visible")
         self.device = d.get("inside") if same_gpu else d.get("device")   # in-process: the device as named
         self.device = self.device or "cuda:0"
-        self.cpu_jobs: dict[str, str] = d.get("cpu_jobs") or {}  # {key: why}: these jobs run on the CPU
+        self.cpu_jobs: dict[str, Any] = d.get("cpu_jobs") or {}  # {key: why}: these jobs run on the CPU (``cpu_why``)
+        self._cpu_why: dict[str, str] = {}                       # the Stack jobs judged on their settings, once each
         self._gpu: bool | None = None
         self.resume: dict[str, Any] = d.get("resume") or {}      # set in the plan of a worker taking over a run
         self.part = int(self.resume.get("part") or 1)
@@ -838,7 +839,27 @@ class _Worker:
 
     def device_of(self, job: Job) -> str:
         """Where a job runs: the device of the run, unless ``cpu_jobs`` sends it to the CPU."""
-        return "cpu" if job.key in self.cpu_jobs else self.device
+        return "cpu" if self.cpu_why(job) else self.device
+
+    def cpu_why(self, job: Job) -> str:
+        """Why a job runs on the CPU, '' when it runs on the device of the run. A Stack job of the card test has the
+        reason of each operation that lost on the card ({operation: why}, core/selftest.cpu_jobs): it goes to the CPU
+        only for those its settings use, read here since the automatic ones (the method) need the job's inputs."""
+        why = self.cpu_jobs.get(job.key)
+        if not isinstance(why, dict):
+            return why or ""
+        if job.key not in self._cpu_why:
+            from . import selftest
+            try:
+                w = self.project.workflow(job.run_wf)
+                sp = StoreProject(self.keys, w, job.stage, devices={"main": "cpu"})
+                st = self.rules.chains.stages[base(job.stage)]
+                p, _, _ = Pipeline(sp, [st], self.journal).effective_params(st)
+                self._cpu_why[job.key] = selftest.stack_why(why, getattr(p, "method", "drizzle"),
+                                                            getattr(p, "drizzle_rejection", "own"))
+            except Exception:  # noqa: BLE001 - settings that cannot be read: the job says so itself when it runs
+                self._cpu_why[job.key] = ""
+        return self._cpu_why[job.key]
 
     def stop_requested(self) -> bool:
         return (self.root / "logs" / STOP).exists()
@@ -1033,8 +1054,8 @@ class _Worker:
 
     def _run_job_here(self, job: Job) -> str:
         try:
-            if job.key in self.cpu_jobs and self.device != "cpu":
-                self.journal.emit("log", stage=job.stage, level="warning", msg=self.cpu_jobs[job.key])
+            if self.cpu_why(job) and self.device != "cpu":
+                self.journal.emit("log", stage=job.stage, level="warning", msg=self.cpu_why(job))
             w = self.project.workflow(job.run_wf)
             sp = StoreProject(self.keys, w, job.stage, devices={"main": self.device_of(job)})
             if sp.key != job.key:
@@ -1095,7 +1116,7 @@ class _Worker:
             f = est.facts(self.keys, w, self.store)
             if session_of(job.stage) is None:          # a session's share is not the project's time
                 est.record(job.stage, float(m.get("duration") or 0.0), est.units(job.stage, f),
-                           self.gpu and job.key not in self.cpu_jobs)
+                           self.gpu and not self.cpu_why(job))
         except Exception:  # noqa: BLE001 - the history is a hint
             pass
 

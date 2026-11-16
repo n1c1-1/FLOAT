@@ -62,13 +62,51 @@ def _texts(page):
 
 
 def test_the_page_says_each_block_and_the_card(env, qapp):
-    prefs.set("compute_profiles", {"auto": _profile(sampling=st.WRONG, post=st.SLOWER)})
+    # the Stack block is on the processor as a whole only when no way of stacking keeps the card
+    prefs.set("compute_profiles", {"auto": _profile(drizzle=st.WRONG, classic=st.WRONG, post=st.ERROR)})
     d, page = _dialog(qapp)
     texts = _texts(page)
     assert any("RTX 4060 Ti" in t and "610.88" in t for t in texts)
     assert "CPU · wrong result" in texts                                  # the Stack block
-    assert "CPU · slower" in texts                                        # Post
+    assert "CPU · card error" in texts                                    # Post
     assert any(t.startswith("GPU · ") and "faster" in t for t in texts)   # Denoise, Stars
+    d.close()
+
+
+def _slower_profile(**verdicts):
+    """Post timed twice slower on the card (the card computes it all the same), the rest ten times faster."""
+    res = [_result(n, verdicts.get(n, st.OK)) for n in st.OPERATIONS if n != "post"]
+    return st.make_profile("cuda:0", "RTX 4060 Ti", "610.88", [*res, _result("post", st.SLOWER, card=0.2, cpu=0.1)],
+                           auto=True)
+
+
+@pytest.mark.parametrize("lang, line, still", [("en", "GPU · 2.0 x slower", "still runs on the card"),
+                                               ("fr", "Carte graphique · 2,0 x plus lente", "quand même sur la carte")])
+def test_a_card_timed_slower_is_shown_as_information_the_block_stays_on_the_card(env, qapp, lang, line, still):
+    i18n.set_language(lang)
+    i18n._missing.clear()
+    prefs.set("compute_profiles", {"auto": _slower_profile()})
+    d, page = _dialog(qapp)
+    lab = d.ct["rows"]["post"]
+    assert lab.text() == line and still in lab.toolTip()
+    assert ("0.20" if lang == "en" else "0,20") in lab.toolTip()          # the two times, as for a faster card
+    assert not any(t.startswith(("CPU", "Processeur")) for t in _texts(page))     # nothing is said to run on the processor
+    assert not i18n._missing
+    d.close()
+
+
+@pytest.mark.parametrize("lang, line, why", [
+    ("en", "GPU · Classic on CPU", "Classic: the result was wrong on the card"),
+    ("fr", "Carte graphique · Classique sur processeur", "Classique : le résultat était faux sur la carte")])
+def test_the_stack_line_says_which_stacks_leave_the_card(env, qapp, lang, line, why):
+    """A wrong result of the Classic method's operation: its stacks go to the processor, the drizzle keeps the card."""
+    i18n.set_language(lang)
+    i18n._missing.clear()
+    prefs.set("compute_profiles", {"auto": _slower_profile(classic=st.WRONG)})
+    d, page = _dialog(qapp)
+    lab = d.ct["rows"]["stack"]
+    assert lab.text() == line and why in lab.toolTip()
+    assert not i18n._missing
     d.close()
 
 
@@ -136,6 +174,26 @@ def test_a_valid_profile_is_not_tested_again(env, qapp, monkeypatch):
         qapp.processEvents()
         time.sleep(0.01)
     assert calls == ["cuda:0"]
+
+
+def test_a_profile_saved_by_an_older_test_is_tested_again_and_replaced(env, qapp, monkeypatch):
+    calls = []
+    monkeypatch.setattr(jobmod.st, "card_identity", lambda dev: ("RTX 4060 Ti", "610.88"))
+    monkeypatch.setattr(jobmod.st, "card_busy", lambda dev: False)
+    jobmod.job().runner = lambda device, on_proc=None: calls.append(device) or [_result(n, st.OK) for n in st.OPERATIONS]
+    old = {k: v for k, v in _profile(drizzle=st.WRONG, classic=st.WRONG).items() if k != "version"}
+    prefs.set("compute_profiles", {"cuda:0": old, "auto": old})
+    d, page = _dialog(qapp)
+    assert "Not tested yet" in _texts(page)                               # the old result is not shown as the card's
+    d.close()
+    jobmod.job().start("cuda:0", "cuda:0")
+    t0 = time.time()
+    while jobmod.job().running() and time.time() - t0 < 5:
+        qapp.processEvents()
+        time.sleep(0.01)
+    qapp.processEvents()
+    saved = prefs.get("compute_profiles")["cuda:0"]
+    assert calls == ["cuda:0"] and saved["version"] == st.TEST_VERSION and saved["stages"]["stack"] == "card"
 
 
 def test_a_busy_card_is_not_tested_by_itself(env, qapp, monkeypatch):

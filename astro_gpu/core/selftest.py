@@ -2,9 +2,11 @@
 
 For each heavy operation of the engine (the drizzle deposit and the sampling of the prediction of the stack, the Denoise
 network on one tile, the Stars network on one tile, the Post render), on a small synthetic input: the operation is run
-on the card and on the CPU, the results are compared within a tolerance and both are timed. A stage keeps the card only
-if every operation of it gives the right result and is faster there. Any exception, out-of-memory included, sends the
-stage to the CPU. A stage that keeps the card runs exactly as it does without the self-test: nothing changes for it.
+on the card and on the CPU, the results are compared within a tolerance and both are timed. A chosen card computes:
+a stage leaves it only when an operation it uses gives a wrong result there, or fails there (any exception,
+out-of-memory included). The times are information, shown in Settings: a card timed slower keeps its stages, since a
+test of seconds does not tell the speed of a real run (a 436-frame drizzle stack timed slower on the card ran there in
+13.6 min, 25.7 min on the CPU). A stage that keeps the card runs exactly as it does without the self-test.
 
 The operations run in a child process of their own (``python -m astro_gpu.core.selftest <device>``, one JSON line per
 operation): a card that crashes or hangs takes the child with it, never the program, and the operations it did not
@@ -31,7 +33,12 @@ import numpy as np
 
 from . import devices
 
-#: the operations tested, in order, and the stage each one decides (Stack has two)
+#: the version of the test, saved with its result: raised whenever what is measured or how it is judged changes, so
+#: that a result saved by an older test is not used and the card is tested again. 1: no number saved (the first test).
+#: 2: the stacks timed on what a real stack repeats, each way of stacking judged on its own operations. 3: a card
+#: timed slower keeps its blocks.
+TEST_VERSION = 3
+#: the operations tested, in order, and the stage each one decides (Stack has three)
 OPERATIONS = {"drizzle": "stack", "sampling": "stack", "classic": "stack", "denoise": "denoise", "stars": "star_removal",
               "post": "post"}
 STAGES = ("stack", "denoise", "star_removal", "post")
@@ -44,12 +51,12 @@ OP_TIMEOUT = 300.0
 #: the free share of the card's memory below which it is busy with something else: a test launched by itself waits
 BUSY_FREE_SHARE = 0.7
 
-#: the verdicts: the card is kept for 'ok' and for 'absent' (a model this installation does not have: the stage
-#: cannot run anywhere, and that says nothing about the card)
+#: the verdicts: the card is kept for 'ok', for 'absent' (a model this installation does not have: the stage
+#: cannot run anywhere, and that says nothing about the card) and for 'slower' (the times are information, shown in
+#: Settings: a test of seconds does not tell the speed of a real run); it is lost for 'wrong' and 'error'
 OK, WRONG, SLOWER, ERROR, ABSENT = "ok", "wrong", "slower", "error", "absent"
-#: the reason, in English (translated in Settings and in the run window, client/locale)
-REASONS = {WRONG: "the result was wrong on the card", SLOWER: "the card was slower than the processor",
-           ERROR: "the card failed"}
+#: why a block leaves the card, in English (translated in Settings and in the run window, client/locale)
+REASONS = {WRONG: "the result was wrong on the card", ERROR: "the card failed"}
 STAGE_ON_CPU = "the card test sends this block to the processor: {why}"
 
 
@@ -57,64 +64,127 @@ STAGE_ON_CPU = "the card test sends this block to the processor: {why}"
 # Each returns {name: array} in a unit where the tolerance means something (TOLERANCE), computed on ``dev``. The input is
 # the same on every device (a fixed seed, built on the host).
 
-def _drizzle_input():
-    H, W, S, pix = 1200, 1800, 1.5, 0.8
-    rng = np.random.default_rng(1)
-    val = rng.normal(1.0, 0.05, (H, W)).astype(np.float32)
-    keep = np.ones((H, W), bool)
-    keep[::97, ::89] = False
-    return H, W, S, pix, val, keep
+#
+# The operations of the Stack block are timed on what a real stack repeats, frame after frame, at a real frame's
+# scale: a stack of hundreds of frames pays its start (the grids, the model, the kernels) and the way back of its sums
+# once, so a timing where they weigh as much as the frames says nothing of it. Sizes, so that the three take seconds
+# on a processor: 8 frames each (the start and the way back are then a small share). The drizzle: half the side of a
+# 12 Mpx frame (3 Mpx; millions of samples a frame, sums far larger than a processor's caches, as the real ones).
+# The Classic method costs ten times more a pixel: a quarter of that side (0.76 Mpx), where a pixel takes the time it
+# takes on a larger frame (measured on a processor: 0.23 us at 0.76 Mpx, 0.21 us at 3 Mpx, 0.86 us on the 300 x 400
+# frames of the first test, whose time was not the pixels').
+
+#: the frames of the drizzle timings (deposit, sampling): their size (rows, columns), their number, the scale and
+#: the drop of the output
+DRIZZLE_SIZE, DRIZZLE_FRAMES, DRIZZLE_SCALE, DRIZZLE_DROP = (1424, 2128), 8, 1.5, 0.8
+#: the frames of the Classic timing
+CLASSIC_SIZE, CLASSIC_FRAMES = (712, 1064), 8
+
+#: what a stack makes once, kept from a call to the next (never timed with the frames): the test's frames and sums
+#: on the host, the grids and the model of a device
+_ONCE: dict[tuple, Any] = {}
+
+
+def _once(key: tuple, make: Callable[[], Any]) -> Any:
+    if key not in _ONCE:
+        _ONCE[key] = make()
+    return _ONCE[key]
+
+
+def _mosaics(seed: int, n: int, H: int, W: int, level: float, noise: float) -> np.ndarray:
+    """``n`` calibrated mosaic frames (n, H, W) on the host, a few bad pixels in each (NaN, as the calibration marks
+    them)."""
+    def make():
+        rng = np.random.default_rng(seed)
+        a = rng.normal(level, noise, (n, H, W)).astype(np.float32)
+        a[:, ::97, ::89] = np.nan
+        return a
+    return _once(("frames", seed, n, H, W), make)
+
+
+def _grids(d, H: int, W: int):
+    """The pixel grid of a frame on the device ``d`` (x, y) and the colour of each pixel (an RGGB pattern)."""
+    import torch
+    yy, xx = torch.meshgrid(torch.arange(H, device=d, dtype=torch.float32),
+                            torch.arange(W, device=d, dtype=torch.float32), indexing="ij")
+    return xx, yy, torch.tensor([[0, 1], [1, 2]], device=d)[yy.long() % 2, xx.long() % 2]
+
+
+def _upload(a: np.ndarray, d):
+    """A frame from the host to the device (a stack does it once per frame)."""
+    import torch
+    return torch.from_numpy(a).to(d)
+
+
+def _download(t) -> np.ndarray:
+    """A result from the device to the host (a stack does it once, at its end)."""
+    return t.cpu().numpy()
 
 
 def op_drizzle(dev: str) -> dict[str, np.ndarray]:
-    """The drizzle deposit of one frame (stages/stack.py) on a small output grid."""
+    """What a drizzle stack repeats (stages/stack.py, a pass of ``Stack.run``): each frame goes to the device and is
+    dropped (``drizzle_deposit``) into sums that stay there; they come back once, after the last frame."""
     import torch
 
-    from ..stages.stack import drizzle_deposit
-    H, W, S, pix, val, keep = _drizzle_input()
+    from ..stages import stack
+    (H, W), n, S = DRIZZLE_SIZE, DRIZZLE_FRAMES, DRIZZLE_SCALE
+    frames = _mosaics(1, n, H, W, 1.0, 0.05)
     d = torch.device(dev)
-    yy, xx = torch.meshgrid(torch.arange(H, device=d, dtype=torch.float32),
-                            torch.arange(W, device=d, dtype=torch.float32), indexing="ij")
-    Xo, Yo = (xx + 0.8) * S - 0.5, (yy + 0.3) * S - 0.5
-    ch = torch.tensor([[0, 1], [1, 2]], device=d)[yy.long() % 2, xx.long() % 2]         # an RGGB pattern
+    xx, yy, ch = _once(("grids", dev, H, W), lambda: _grids(d, H, W))
     Ho, Wo = int(H * S), int(W * S)
     num, den = torch.zeros(3 * Ho * Wo, device=d), torch.zeros(3 * Ho * Wo, device=d)
-    drizzle_deposit(num, den, torch.from_numpy(val).to(d), Xo, Yo, 1.0, torch.from_numpy(keep).to(d), ch, pix * S / 2, S,
-                    Ho, Wo)
-    return {"num": num.cpu().numpy(), "den": den.cpu().numpy()}
+    for i in range(n):
+        val = _upload(frames[i], d)
+        dx, dy = 0.8 + 1.37 * i, 0.3 + 0.61 * i                        # where the frame is on the reference (dithered)
+        stack.drizzle_deposit(num, den, val, (xx + dx) * S - 0.5, (yy + dy) * S - 0.5, 1.0, ~torch.isnan(val), ch,
+                              DRIZZLE_DROP * S / 2, S, Ho, Wo)
+    devices.synchronize(dev)
+    return {"num": _download(num), "den": _download(den)}
 
 
 def op_sampling(dev: str) -> dict[str, np.ndarray]:
-    """The model of the stack sampled where a frame's samples land (stages/stack.py ``Prediction``)."""
+    """What the drizzle's own rejection repeats (stages/stack.py, passes 2 and 3 of ``Stack.run``): the model of the
+    stack (``Prediction``, made once in a pass and kept on the device) sampled where each frame's samples land; the
+    last frame's values come back, once."""
     import torch
 
     from ..stages.stack import Prediction
-    Ho, Wo = 1300, 1900
+    (H, W), n, S = DRIZZLE_SIZE, DRIZZLE_FRAMES, DRIZZLE_SCALE
+    Ho, Wo = int(H * S), int(W * S)
     d = torch.device(dev)
-    rng = np.random.default_rng(2)
-    den = torch.from_numpy(rng.uniform(0.8, 1.2, (3, Ho, Wo)).astype(np.float32)).to(d).reshape(-1)
-    num = den * torch.from_numpy(rng.normal(1.0, 0.1, (3, Ho, Wo)).astype(np.float32)).to(d).reshape(-1)
-    sq = den * torch.from_numpy(rng.normal(1.1, 0.1, (3, Ho, Wo)).astype(np.float32)).to(d).reshape(-1)
-    model = Prediction(num, den, sq, 20, Ho, Wo, d, torch.zeros(3, device=d))
-    H, W = 1200, 1800
-    yy, xx = torch.meshgrid(torch.arange(H, device=d, dtype=torch.float32),
-                            torch.arange(W, device=d, dtype=torch.float32), indexing="ij")
-    ch = torch.tensor([[0, 1], [1, 2]], device=d)[yy.long() % 2, xx.long() % 2]
-    pr = model.sample((xx + 0.8) * 1.05, (yy + 0.3) * 1.05, ch)
-    return {k: (v / 20.0 if k == "cover" else v).cpu().numpy() for k, v in pr.items()}
+
+    def sums():
+        rng = np.random.default_rng(2)
+        den = rng.uniform(0.8, 1.2, (3, Ho, Wo)).astype(np.float32)
+        return den, den * rng.normal(1.0, 0.1, (3, Ho, Wo)).astype(np.float32), \
+            den * rng.normal(1.1, 0.1, (3, Ho, Wo)).astype(np.float32)
+
+    def model():
+        den, num, sq = (_upload(a, d).reshape(-1) for a in _once(("sums", Ho, Wo), sums))
+        return Prediction(num, den, sq, 20, Ho, Wo, d, torch.zeros(3, device=d))
+    pred = _once(("model", dev, Ho, Wo), model)
+    xx, yy, ch = _once(("grids", dev, H, W), lambda: _grids(d, H, W))
+    for i in range(n):
+        dx, dy = 0.8 + 1.37 * i, 0.3 + 0.61 * i
+        pr = pred.sample((xx + dx) * S - 0.5, (yy + dy) * S - 0.5, ch)
+    devices.synchronize(dev)
+    return {k: _download(v / 20.0 if k == "cover" else v) for k, v in pr.items()}
 
 
 def op_classic(dev: str) -> dict[str, np.ndarray]:
-    """The Classic method of the Stacking block (core/stack_classic.py): frames debayered, interpolated and combined
-    with rejection, on a few small frames."""
-    from .stack_classic import ClassicParams, stack_classic
-    H, W, n = 300, 400, 8
-    rng = np.random.default_rng(3)
-    frames = rng.normal(1000.0, 30.0, (n, H, W)).astype(np.float32)
+    """What a Classic stack repeats (core/stack_classic.py, called as stages/stack.py calls it, with the block's
+    default settings): each frame goes to the device, is debayered and interpolated there and comes back to the host,
+    then the frames are rejected and combined by bands of a real stack's size."""
+    from ..stages.stack import StackParams, classic_params
+    from . import stack_classic as sc
+    (H, W), n = CLASSIC_SIZE, CLASSIC_FRAMES
+    frames = _mosaics(3, n, H, W, 1000.0, 30.0)
     coef = np.zeros((n, 2, 10))
     coef[:, 0, 0], coef[:, 0, 1], coef[:, 1, 0], coef[:, 1, 2] = W / 2 + 0.4, W / 2, H / 2 - 0.3, H / 2
-    res = stack_classic(lambda i: frames[i], coef, params=ClassicParams(band_pixels=1 << 16), device=dev,
-                        used=list(range(n)), ch_of_k=[0, 1, 1, 2], H=H, W=W)
+    coef[:, 0, 0] += 1.37 * np.arange(n)                               # where each frame is on the reference (dithered)
+    coef[:, 1, 0] += 0.61 * np.arange(n)
+    res = sc.stack_classic(lambda i: frames[i], coef, params=classic_params(StackParams()), device=dev,
+                           used=list(range(n)), ch_of_k=[0, 1, 1, 2], H=H, W=W)
     return {"full": np.asarray(res.full) / 1000.0}
 
 
@@ -240,40 +310,72 @@ def check(name: str, card: str, op: Callable[[str], dict] | None = None, toleran
 
 
 # ---------------------------------------------------------------------------------------------- the profile
+def stack_operations(method: str, rejection: str = "own") -> tuple[str, ...]:
+    """The operations tested that a stack of these settings repeats (stages/stack.py: ``method``,
+    ``drizzle_rejection``): the Classic method its own; the drizzle its deposit, with the sampling of the prediction
+    when it rejects on the raw pixels ('own'), or the Classic method's integration when the rejection comes from it
+    ('integration'); by frame count ('by_count') the deposit alone."""
+    if method == "classic":
+        return ("classic",)
+    return ("drizzle",) + {"own": ("sampling",), "integration": ("classic",)}.get(rejection, ())
+
+
+#: every way of stacking (method, drizzle rejection): the Stack block is on the CPU as a whole only when none keeps the card
+STACK_WAYS = (("drizzle", "own"), ("drizzle", "by_count"), ("drizzle", "integration"), ("classic", "own"))
+
+
+def _lost(r: dict) -> bool:
+    """Whether an operation's result takes the card away from what uses it: a wrong result, or a failure. Not a card
+    timed slower (see the module's docstring)."""
+    return r.get("verdict") in (WRONG, ERROR)
+
+
 def judge(results: list[dict]) -> dict[str, str]:
-    """{stage: 'card' | 'cpu'}: the card is kept for a stage when every operation of it says so (a stage not tested
-    keeps it, as it would without the self-test)."""
+    """{stage: 'card' | 'cpu'}: the card is kept for a stage unless an operation of it gave a wrong result or failed
+    there (a stage not tested keeps it, as it would without the self-test; so does one timed slower). The Stack block has several ways of stacking, each with its own
+    operations (``stack_operations``): an operation that lost sends to the CPU the stacks that use it and no other
+    (``cpu_jobs``, ``stack_why``); the block is 'cpu' here only when no way of stacking keeps the card."""
     out = {s: "card" for s in STAGES}
+    lost = {r["op"] for r in results if _lost(r)}
     for r in results:
-        if r["verdict"] not in (OK, ABSENT):
+        if _lost(r) and r["stage"] != "stack":
             out[r["stage"]] = "cpu"
+    if all(lost.intersection(stack_operations(m, rej)) for m, rej in STACK_WAYS):
+        out["stack"] = "cpu"
     return out
 
 
 def make_profile(device: str, card: str, driver: str, results: list[dict], auto: bool = False) -> dict:
     """The profile saved in the settings: the card, its driver, what the test found per operation and per stage."""
-    return {"device": device, "card": card, "driver": driver, "auto": auto,
+    return {"device": device, "card": card, "driver": driver, "auto": auto, "version": TEST_VERSION,
             "when": time.strftime("%Y-%m-%d %H:%M"), "ops": {r["op"]: r for r in results}, "stages": judge(results)}
 
 
 def profile_of(profiles: dict | None, device: str | None) -> dict | None:
-    """The saved profile of ``device`` ('auto': the one made under Automatic), or None."""
-    return (profiles or {}).get(device or "auto")
+    """The saved profile of ``device`` ('auto': the one made under Automatic), or None. A profile saved by another
+    version of the test is not one: nothing reads it (a run, Post, Settings), and the card is tested again."""
+    p = (profiles or {}).get(device or "auto")
+    return p if p and p.get("version") == TEST_VERSION else None
 
 
 def still_valid(profile: dict | None, card: str, driver: str) -> bool:
-    """Whether a saved profile is for this card and this driver (else the card is tested again)."""
-    return bool(profile) and profile.get("card") == card and profile.get("driver") == driver and bool(card)
+    """Whether a saved profile is for this card and this driver, by this version of the test (else the card is tested
+    again)."""
+    return (bool(profile) and profile.get("version") == TEST_VERSION and profile.get("card") == card
+            and profile.get("driver") == driver and bool(card))
 
 
 def stage_reason(profile: dict, stage: str) -> str:
     """Why a stage went to the CPU (English, one of REASONS), '' when it kept the card."""
     if (profile.get("stages") or {}).get(stage) != "cpu":
         return ""
-    for r in (profile.get("ops") or {}).values():
-        if r.get("stage") == stage and r.get("verdict") not in (OK, ABSENT):
-            return REASONS.get(r.get("verdict"), REASONS[ERROR])
-    return REASONS[ERROR]
+    return next((REASONS[r["verdict"]] for r in lost_operations(profile, stage)), REASONS[ERROR])
+
+
+def lost_operations(profile: dict | None, stage: str) -> list[dict]:
+    """The results of the operations of ``stage`` that gave a wrong result or failed on the card, in the test's order."""
+    ops = (profile or {}).get("ops") or {}
+    return [ops[n] for n, s in OPERATIONS.items() if s == stage and n in ops and _lost(ops[n])]
 
 
 def stage_on_cpu(profiles: dict | None, device: str | None, stage: str) -> bool:
@@ -282,17 +384,30 @@ def stage_on_cpu(profiles: dict | None, device: str | None, stage: str) -> bool:
     return bool(p) and (p.get("stages") or {}).get(stage) == "cpu"
 
 
-def cpu_jobs(profile: dict | None, plan: Any) -> dict[str, str]:
-    """{key: why} of the jobs of a plan that the profile sends to the CPU (their stage has 'cpu' in it)."""
+def cpu_jobs(profile: dict | None, plan: Any) -> dict[str, Any]:
+    """{key: why} of the jobs of a plan that the profile sends to the CPU (their stage has 'cpu' in it). A job of the
+    Stack block: {operation: why} of its operations that lost, since which of them the job uses depends on its
+    settings, the automatic ones known only in the run (``stack_why``, core/runner2.py)."""
     if not profile:
         return {}
     from .workflow import base
-    out: dict[str, str] = {}
+    out: dict[str, Any] = {}
+    lost = {r["op"]: STAGE_ON_CPU.format(why=REASONS[r["verdict"]]) for r in lost_operations(profile, "stack")}
     for j in plan.jobs:
+        if base(j.stage) == "stack":
+            if lost:
+                out[j.key] = dict(lost)
+            continue
         why = stage_reason(profile, base(j.stage))
         if why:
             out[j.key] = STAGE_ON_CPU.format(why=why)
     return out
+
+
+def stack_why(lost: dict[str, str], method: str, rejection: str = "own") -> str:
+    """Why a stack of these settings goes to the CPU, '' when it keeps the card: the reason of the first operation it
+    uses among those that lost (``lost``: a Stack job's entry of ``cpu_jobs``)."""
+    return next((lost[n] for n in stack_operations(method, rejection) if n in lost), "")
 
 
 # ---------------------------------------------------------------------------------------------- the card
@@ -407,10 +522,19 @@ def run_test(device: str, *, on_step: Callable[[str, dict], None] | None = None,
 
 # ---------------------------------------------------------------------------------------------- the child process
 def main(argv: list[str] | None = None) -> int:
+    """The operations on ``device``, one JSON line each on the standard output (what ``run_test`` reads); for someone
+    running it by hand, the same in plain words on the error output: the device, then each operation's times and
+    verdict."""
     device = (argv or sys.argv[1:] or ["cpu"])[0]
     print(json.dumps({"ready": True}), flush=True)
-    for name in OPERATIONS:
-        print(json.dumps(check(name, device)), flush=True)
+    name = next((d.name for d in devices.list_devices() if d.device == device), "the processor in its place")
+    print(f"card test on {device}: {name}", file=sys.stderr, flush=True)
+    for op in OPERATIONS:
+        r = check(op, device)
+        print(json.dumps(r), flush=True)
+        card, cpu = (f"{r[k]:8.3f} s" if r[k] is not None else "       -  " for k in ("card_s", "cpu_s"))
+        print(f"{op:9s} card {card}   processor {cpu}   {r['verdict']}{'  ' + r['error'] if r['error'] else ''}",
+              file=sys.stderr, flush=True)
     return 0
 
 

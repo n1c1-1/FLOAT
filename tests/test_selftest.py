@@ -124,9 +124,17 @@ def test_a_wrong_result_or_a_nan_sends_the_stage_to_the_cpu():
     assert selftest.check("denoise", "cuda:0", fake_op(card_value=float("nan")))["verdict"] == selftest.WRONG
 
 
-def test_a_card_that_is_slower_goes_to_the_cpu():
+def test_a_card_that_is_slower_is_said_slower_and_keeps_its_blocks():
+    """A short test does not tell the speed of a real run (a drizzle stack measured slower on the card runs there in
+    half the processor's time): the times are kept as information, a chosen card computes."""
     r = selftest.check("post", "cuda:0", fake_op(card_sleep=0.05, cpu_sleep=0.0))
-    assert r["verdict"] == selftest.SLOWER
+    assert r["verdict"] == selftest.SLOWER and r["card_s"] > r["cpu_s"]
+    res = [{**ok(n), "verdict": selftest.SLOWER, "card_s": 2.0, "cpu_s": 1.0} for n in selftest.OPERATIONS]
+    prof = selftest.make_profile("cuda:0", "x", "1", res)
+    assert set(prof["stages"].values()) == {"card"} and prof["ops"]["post"]["verdict"] == selftest.SLOWER
+    assert selftest.cpu_jobs(prof, StackPlan) == {}
+    assert all(selftest.stage_reason(prof, s) == "" for s in selftest.STAGES)
+    assert not any("slower" in t for t in selftest.REASONS.values())            # no such line in a run's log
 
 
 def test_any_exception_or_out_of_memory_means_cpu():
@@ -151,13 +159,76 @@ def ok(name):
 
 
 def test_judge_needs_every_operation_of_a_stage():
-    res = [ok("drizzle"), {**ok("sampling"), "verdict": selftest.WRONG}, ok("denoise"), ok("stars"), ok("post")]
+    res = [ok("drizzle"), ok("sampling"), {**ok("denoise"), "verdict": selftest.WRONG}, ok("stars"), ok("post")]
     stages = selftest.judge(res)
-    assert stages["stack"] == "cpu" and stages["denoise"] == "card" and stages["post"] == "card"
+    assert stages["stack"] == "card" and stages["denoise"] == "cpu" and stages["post"] == "card"
+
+
+def timed(name, card_s, cpu_s):
+    """An operation's result with these times and the verdict the plain comparison gives them."""
+    return {**ok(name), "card_s": card_s, "cpu_s": cpu_s, "verdict": selftest.SLOWER if card_s >= cpu_s else selftest.OK}
+
+
+def test_a_drizzle_stack_stays_on_the_card_whatever_the_test_timed():
+    """A 436-frame drizzle stack went to the processor (25.7 min, 13.6 min on the card): the test had timed the card
+    slower. The figures of the card itself, with the test as it is now: still slower on the drizzle."""
+    res = [timed("drizzle", 0.451, 0.40), timed("sampling", 0.056, 0.33), timed("classic", 5.10, 2.40), ok("denoise"),
+           ok("stars"), ok("post")]
+    prof = selftest.make_profile("cuda:0", "x", "1", res)
+    assert prof["ops"]["drizzle"]["verdict"] == selftest.SLOWER and prof["stages"]["stack"] == "card"
+    assert selftest.cpu_jobs(prof, StackPlan) == {}
+
+
+def test_a_wrong_classic_operation_moves_the_stacks_that_use_it_and_no_other():
+    res = [timed("drizzle", 0.451, 0.40), ok("sampling"), {**ok("classic"), "verdict": selftest.WRONG}, ok("denoise"),
+           ok("stars"), ok("post")]
+    prof = selftest.make_profile("cuda:0", "x", "1", res)
+    assert prof["stages"]["stack"] == "card"                    # a way of stacking keeps the card: not the whole block
+    assert set(selftest.cpu_jobs(prof, StackPlan)) == {"s"}
+    bad = selftest.cpu_jobs(prof, StackPlan)["s"]
+    assert selftest.stack_why(bad, "drizzle", "own") == ""
+    assert selftest.stack_why(bad, "drizzle", "by_count") == ""
+    assert "wrong" in selftest.stack_why(bad, "classic", "own")
+    assert "wrong" in selftest.stack_why(bad, "drizzle", "integration")      # that rejection is the Classic method's
+
+
+def test_each_way_of_stacking_is_judged_on_the_operations_it_uses():
+    assert selftest.stack_operations("classic", "own") == ("classic",)
+    assert selftest.stack_operations("drizzle", "own") == ("drizzle", "sampling")
+    assert selftest.stack_operations("drizzle", "by_count") == ("drizzle",)
+    assert selftest.stack_operations("drizzle", "integration") == ("drizzle", "classic")
+    res = [ok("drizzle"), {**ok("sampling"), "verdict": selftest.ERROR}, ok("classic"), ok("denoise"), ok("stars"),
+           ok("post")]
+    bad = selftest.cpu_jobs(selftest.make_profile("cuda:0", "x", "1", res), StackPlan)["s"]
+    assert "failed" in selftest.stack_why(bad, "drizzle", "own")
+    assert selftest.stack_why(bad, "drizzle", "by_count") == "" and selftest.stack_why(bad, "classic", "own") == ""
+    res = [{**ok("drizzle"), "verdict": selftest.WRONG}, ok("sampling"), ok("classic")]
+    bad = selftest.cpu_jobs(selftest.make_profile("cuda:0", "x", "1", res), StackPlan)["s"]
+    assert "wrong" in selftest.stack_why(bad, "drizzle", "by_count") and selftest.stack_why(bad, "classic", "own") == ""
+
+
+def test_the_stack_block_is_on_the_processor_only_when_no_way_of_stacking_keeps_the_card():
+    wrong = {"verdict": selftest.WRONG}
+    res = [{**ok("drizzle"), **wrong}, ok("sampling"), {**ok("classic"), **wrong}]
+    prof = selftest.make_profile("cuda:0", "x", "1", res)
+    assert prof["stages"]["stack"] == "cpu"
+    assert selftest.stage_reason(prof, "stack") == selftest.REASONS[selftest.WRONG]
+    res = [{**ok("drizzle"), **wrong}, ok("sampling"), ok("classic")]
+    assert selftest.judge(res)["stack"] == "card"
+
+
+class J:
+    def __init__(self, key, stage):
+        self.key, self.stage = key, stage
+
+
+class StackPlan:
+    jobs = [J("s", "stack"), J("d", "denoise")]
 
 
 def test_the_profile_keeps_the_card_and_driver_and_says_why():
-    res = [ok("drizzle"), {**ok("sampling"), "verdict": selftest.SLOWER}, ok("denoise"), ok("stars"), ok("post")]
+    res = [{**ok("drizzle"), "verdict": selftest.ERROR}, ok("sampling"), {**ok("classic"), "verdict": selftest.ERROR},
+           ok("denoise"), ok("stars"), ok("post")]
     prof = selftest.make_profile("cuda:0", "RTX 4060 Ti", "610.88", res, auto=True)
     assert json.loads(json.dumps(prof))["card"] == "RTX 4060 Ti"                # goes into the settings' JSON
     assert selftest.still_valid(prof, "RTX 4060 Ti", "610.88")
@@ -167,24 +238,39 @@ def test_the_profile_keeps_the_card_and_driver_and_says_why():
     profiles = {"cuda:0": prof, "auto": prof}
     assert selftest.profile_of(profiles, "auto") is prof and selftest.profile_of(profiles, "cuda:0") is prof
     assert selftest.profile_of(profiles, "cuda:1") is None
-    assert selftest.stage_reason(prof, "stack") == selftest.REASONS[selftest.SLOWER]
+    assert selftest.stage_reason(prof, "stack") == selftest.REASONS[selftest.ERROR]
     assert selftest.stage_reason(prof, "denoise") == ""
     assert selftest.stage_on_cpu(profiles, "auto", "stack") and not selftest.stage_on_cpu(profiles, "auto", "post")
 
 
+def test_a_result_saved_by_an_older_test_is_not_used_and_the_card_is_tested_again():
+    """A result three days old, saved by a test that judged otherwise, still sent the stacks to the processor."""
+    res = [timed("drizzle", 0.1345, 0.1205), timed("sampling", 0.38, 0.63), timed("classic", 5.10, 2.40)]
+    prof = selftest.make_profile("cuda:0", "RTX 4060 Ti", "610.88", res)
+    assert prof["version"] == selftest.TEST_VERSION and selftest.still_valid(prof, "RTX 4060 Ti", "610.88")
+    older = {**prof, "version": selftest.TEST_VERSION - 1}
+    first = {k: v for k, v in prof.items() if k != "version"}                  # as the first test saved it
+    for old in (older, first):
+        assert not selftest.still_valid(old, "RTX 4060 Ti", "610.88")          # tested again
+        profiles = {"cuda:0": old, "auto": old}
+        assert selftest.profile_of(profiles, "cuda:0") is None and selftest.profile_of(profiles, "auto") is None
+        assert selftest.cpu_jobs(selftest.profile_of(profiles, "cuda:0"), StackPlan) == {}     # a run: the card
+        assert not selftest.stage_on_cpu(profiles, "auto", "stack")
+    assert selftest.profile_of({"cuda:0": prof}, "cuda:0") is prof
+
+
 def test_cpu_jobs_of_a_plan():
-    res = [ok("drizzle"), {**ok("sampling"), "verdict": selftest.ERROR}, ok("denoise"), ok("stars"), ok("post")]
+    res = [ok("drizzle"), {**ok("sampling"), "verdict": selftest.ERROR}, ok("denoise"),
+           {**ok("stars"), "verdict": selftest.ERROR}, ok("post")]
     prof = selftest.make_profile("cuda:0", "x", "1", res)
 
-    class J:
-        def __init__(self, key, stage):
-            self.key, self.stage = key, stage
-
     class P:
-        jobs = [J("a", "stack"), J("b", "stack@2"), J("c", "denoise")]
+        jobs = [J("a", "stack"), J("b", "stack@2"), J("c", "denoise"), J("d", "star_removal")]
 
     jobs = selftest.cpu_jobs(prof, P)
-    assert set(jobs) == {"a", "b"} and "the card failed" in jobs["a"]
+    # a whole block: its reason; the Stack block: the reason of each of its operations that lost, the run chooses
+    assert set(jobs) == {"a", "b", "d"} and "the card failed" in jobs["d"]
+    assert set(jobs["a"]) == {"sampling"} and "the card failed" in jobs["b"]["sampling"]
     assert selftest.cpu_jobs(None, P) == {}
 
 
@@ -231,6 +317,74 @@ def test_operations_run_and_give_finite_numbers(op):
     assert all(np.isfinite(v).all() for v in out.values())
 
 
+def test_the_drizzle_timing_keeps_its_sums_on_the_device_over_the_frames_and_downloads_once(monkeypatch):
+    """The timing deposited one small frame and brought 117 MB of sums back each time: the card looked slower than the
+    processor on a stack that it does in half the time. A real stack uploads a frame, deposits it into sums that
+    stay on the device, frame after frame, and brings them back once."""
+    from astro_gpu.stages import stack
+    monkeypatch.setattr(selftest, "DRIZZLE_SIZE", (120, 180))          # the shape of the work, not its size
+    seen, events = [], []
+    deposit, up, down = stack.drizzle_deposit, selftest._upload, selftest._download
+
+    def spy(num, den, *a, **kw):
+        seen.append((id(num), id(den), num.device.type))
+        events.append("deposit")
+        return deposit(num, den, *a, **kw)
+    monkeypatch.setattr(stack, "drizzle_deposit", spy)
+    monkeypatch.setattr(selftest, "_upload", lambda a, d: events.append("upload") or up(a, d))
+    monkeypatch.setattr(selftest, "_download", lambda t: events.append("download") or down(t))
+    out = selftest.op_drizzle("cpu")
+    n = selftest.DRIZZLE_FRAMES
+    assert n >= 8 and len(seen) == n and len(set(seen)) == 1          # every frame into the same sums, on the device
+    assert events == ["upload", "deposit"] * n + ["download"] * len(out)        # a frame up, its deposit; one way back
+    assert set(out) == {"num", "den"} and float(out["den"].max()) > 1.5         # several frames added up at a point
+
+
+def test_the_timed_stacks_have_frames_of_a_real_size(monkeypatch):
+    """Eight frames of 300 x 400 timed the start of the Classic stack, not what it repeats frame after frame."""
+    from astro_gpu.core import stack_classic as sc
+    seen = {}
+    real = sc.stack_classic
+
+    def spy(load, coef, **kw):
+        seen.update(kw, shape=np.asarray(load(kw["used"][0])).shape)
+        return real(load, coef, **{**kw, "used": kw["used"][:2]})    # (two frames here: what is asked, not its time)
+    monkeypatch.setattr(sc, "stack_classic", spy)
+    out = selftest.op_classic("cpu")
+    H, W = selftest.CLASSIC_SIZE
+    assert len(seen["used"]) == selftest.CLASSIC_FRAMES >= 8 and seen["shape"] == (H, W) == (seen["H"], seen["W"])
+    assert H * W >= 700_000 and out["full"].shape == (3, H, W)     # where a pixel costs what it costs on a real frame
+    assert seen["params"].band_pixels == sc.ClassicParams().band_pixels          # the bands of a real stack
+    h, w = selftest.DRIZZLE_SIZE
+    assert h * w >= 1_000_000
+
+
+def test_the_sampling_timing_keeps_its_model_on_the_device_and_samples_it_for_each_frame(monkeypatch):
+    from astro_gpu.stages import stack
+    monkeypatch.setattr(selftest, "DRIZZLE_SIZE", (120, 180))
+    made, sampled, events = [], [], []
+    init, sample, down = stack.Prediction.__init__, stack.Prediction.sample, selftest._download
+    monkeypatch.setattr(stack.Prediction, "__init__", lambda self, *a, **kw: made.append(1) or init(self, *a, **kw))
+    monkeypatch.setattr(stack.Prediction, "sample",
+                        lambda self, *a: sampled.append(id(self)) or events.append("sample") or sample(self, *a))
+    monkeypatch.setattr(selftest, "_download", lambda t: events.append("download") or down(t))
+    out = selftest.op_sampling("cpu")
+    selftest.op_sampling("cpu")
+    n = selftest.DRIZZLE_FRAMES
+    assert len(made) == 1 and len(sampled) == 2 * n and len(set(sampled)) == 1   # one model, as in a pass of a stack
+    assert events[:n + len(out)] == ["sample"] * n + ["download"] * len(out)
+
+
+def test_what_is_built_once_in_a_stack_is_not_timed_at_each_call(monkeypatch):
+    """The frames of the test are made once (the random numbers took longer than the deposit they were timed with)."""
+    monkeypatch.setattr(selftest, "DRIZZLE_SIZE", (120, 180))
+    selftest.op_drizzle("cpu")
+    made = []
+    monkeypatch.setattr(np.random, "default_rng", lambda *a: made.append(a) or pytest.fail("made again"))
+    selftest.op_drizzle("cpu")
+    assert made == []
+
+
 def test_the_denoise_operation_runs_on_the_cpu():
     if not dn.MODEL.exists():
         pytest.skip("no denoising model here")
@@ -249,6 +403,45 @@ def test_a_job_the_profile_sends_to_the_cpu_runs_there(tmp_path, monkeypatch, pr
     w = runner2._Worker(Path(proj.root), body, tr.RULES, False)
     assert w.device_of(job) == "cpu"
     assert w.device_of(plan.jobs[-1]) == w.device
+
+
+@pytest.mark.parametrize("method, rejection, where", [("drizzle", "own", "card"), ("drizzle", "by_count", "card"),
+                                                      ("classic", "own", "cpu"), ("drizzle", "integration", "cpu")])
+def test_a_stack_job_goes_to_the_processor_only_for_the_operations_its_settings_use(proj, monkeypatch, method,  # noqa: F811
+                                                                                    rejection, where):
+    """The method of a stack is known in the run (Automatic: once the registration is there): the run judges there."""
+    from types import SimpleNamespace
+    plan = tr.plan_all(proj)
+    job = next(j for j in plan.jobs if j.stage == "stack")
+    why = selftest.STAGE_ON_CPU.format(why=selftest.REASONS[selftest.WRONG])
+    info = runner2.prepare_run(proj, plan, "cuda:0", {job.key: {"classic": why}})
+    body = json.loads(open(info.plan_file, encoding="utf-8").read())
+    monkeypatch.setattr(runner2.Pipeline, "effective_params",
+                        lambda self, st: (SimpleNamespace(method=method, drizzle_rejection=rejection), {}, {}))
+    w = runner2._Worker(Path(proj.root), body, tr.RULES, False)
+    assert w.device_of(job) == ("cpu" if where == "cpu" else w.device)
+    assert w.cpu_why(job) == (why if where == "cpu" else "")
+
+
+@pytest.mark.parametrize("op, moved", [("drizzle", True), ("classic", False)])
+def test_the_log_of_a_run_says_why_a_stack_went_to_the_processor_and_nothing_for_a_slower_card(proj, op, moved):  # noqa: F811
+    """A drizzle stack (the toy one: the default method): the card test found the result of ``op`` wrong on the card,
+    every other operation slower there. It moves, and the log says why, only for an operation it uses."""
+    plan = tr.plan_all(proj)
+    job = next(j for j in plan.jobs if j.stage == "stack")
+    res = [{**ok(n), "verdict": selftest.WRONG if n == op else selftest.SLOWER, "card_s": 2.0} for n in selftest.OPERATIONS]
+    cpu = selftest.cpu_jobs(selftest.make_profile("cuda:0", "x", "1", res), plan)
+    assert set(cpu) == {job.key}
+    info = runner2.prepare_run(proj, plan, "cuda:0", cpu)
+    body = json.loads(open(info.plan_file, encoding="utf-8").read())
+    w = runner2._Worker(Path(proj.root), body, tr.RULES, False)
+    w.device = "cuda:0"                                 # (the card is hidden from the tests: the worker would say cpu)
+    for j in plan.jobs[:plan.jobs.index(job) + 1]:
+        assert w._run_job_here(j) == "done"
+    said = [e["msg"] for e in tr.events(proj, info) if e.get("type") == "log" and e.get("level") == "warning"]
+    assert not any("slower" in m for m in said)
+    assert w.device_of(job) == ("cpu" if moved else "cuda:0")
+    assert said == ([selftest.STAGE_ON_CPU.format(why=selftest.REASONS[selftest.WRONG])] if moved else [])
 
 
 # ---------------------------------------------------------------------------------------------- the memory of the Stack stage
