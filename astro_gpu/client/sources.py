@@ -341,6 +341,10 @@ class SourcesView(QWidget):
         left.setWidget(inner)
         self.lv = QVBoxLayout(inner)
         self.lv.setContentsMargins(10, 12, 10, 10)
+        self.session_cb = QComboBox(inner)                 # the session shown, chosen among the project's (two or more)
+        self.session_cb.setToolTip(_("The session whose files are shown"))
+        self.session_cb.currentIndexChanged.connect(self._session_picked)
+        self.session_cb.hide()
         root.addWidget(left)
         # ---- centre: browser
         mid = QWidget()
@@ -540,6 +544,11 @@ class SourcesView(QWidget):
             self.s.select(None, f"session@{sid}")
             self._step = self.s.sel_step
         self.select_group(kind)
+
+    def _session_picked(self, _i: int = 0):
+        sid = self.session_cb.currentData()
+        if sid is not None:
+            self.show_session(sid, self.group)
 
     def add_session(self):
         """A new session, without frames: shown here, where they are added."""
@@ -1005,18 +1014,27 @@ class SourcesView(QWidget):
     def build_left(self):
         old = self.file_list
         was = (set(old.chosen()), old.verticalScrollBar().value()) if old is not None else (set(), 0)
+        cb = self.session_cb
+        self.lv.removeWidget(cb)                           # kept: the column is built again around it
         clear(self.lv)
         self.file_list = None
+        sessions = self.s.p.sessions if self.sid is not None else []
+        cb.setVisible(len(sessions) > 1)
         if self.sid is None:
             return
-        sessions = self.s.p.sessions
         if len(sessions) > 1:
-            cb = QComboBox()
-            for x in sessions:
-                cb.addItem(x.name, x.id)
-            cb.setCurrentIndex(max(0, cb.findData(self.sid)))
-            cb.currentIndexChanged.connect(lambda _i, c=cb: self.show_session(c.currentData(), self.group))
-            cb.setToolTip(_("The session whose files are shown"))
+            # the same list each time, touched only by what changed: made again at each reading of the worker that
+            # arrived, a list open at that moment closed under the mouse, the click on a session was lost, and the
+            # files dropped next went to the session still shown
+            cb.blockSignals(True)
+            if [(cb.itemText(i), cb.itemData(i)) for i in range(cb.count())] != [(x.name, x.id) for x in sessions]:
+                cb.clear()
+                for x in sessions:
+                    cb.addItem(x.name, x.id)
+            at = max(0, cb.findData(self.sid))
+            if cb.currentIndex() != at:
+                cb.setCurrentIndex(at)
+            cb.blockSignals(False)
             self.lv.addWidget(cb)
         else:
             self.lv.addWidget(label(self._session().name, "h2"))

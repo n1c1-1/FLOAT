@@ -53,3 +53,38 @@ def test_the_rows_keep_their_place_when_a_kind_becomes_shared(qapp, tmp_path, mo
     finally:
         view.close()
         close(w, m, page)
+
+
+def test_a_session_chosen_in_its_list_while_the_frames_are_read_is_the_one_a_drop_goes_to(qapp, tmp_path, monkeypatch):
+    """The list of the sessions was made again each time a reading arrived: open at that moment, it closed under the
+    mouse, the click on a session was lost, and the flats dropped next went to the session still shown."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    from astro_gpu.client.sources import GroupRow
+    w, m, page, view = shown(tmp_path, monkeypatch)
+    try:
+        view.show_session(1, "lights")
+        view.refresh()
+        settle(w, page)
+        QApplication.processEvents()
+        cb = view._left_w.findChild(QComboBox)
+        assert cb is not None and cb.currentText() == "night 1"
+        cb.showPopup()
+        QApplication.processEvents()
+        assert cb.view().isVisible()
+        view._frames_ready(view.data)                        # a reading of the worker arrives meanwhile
+        view.refresh()                                       # and the page is asked to show itself again
+        QApplication.processEvents()
+        assert view._left_w.findChild(QComboBox) is cb and cb.view().isVisible()      # still open under the mouse
+        at = cb.view().visualRect(cb.model().index(1, 0)).center()
+        QTest.mouseClick(cb.view().viewport(), Qt.LeftButton, Qt.NoModifier, at)
+        QApplication.processEvents()
+        assert view.sid == 2 and view._left_w.findChild(QComboBox).currentText() == "night 2"
+        flats = [str(fits_file(tmp_path / "f" / f"F_{k}.fits")) for k in range(2)]
+        next(r for r in view.findChildren(GroupRow) if r.key == "flats").dropped.emit("flats", flats)
+        settle(w, page)
+        assert len(m.p.session(2).flats) == 2 and not m.p.session(1).flats
+    finally:
+        view.close()
+        close(w, m, page)
