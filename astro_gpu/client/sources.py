@@ -651,9 +651,7 @@ class SourcesView(QWidget):
     def files_out(self, kind: str, files: list):
         """Files taken out of the session (the files themselves are never touched): one undo step, said."""
         s, name = self.s, self._session().name
-        with s.batch():
-            done = s.remove_session_files(self.sid, kind, files)
-        if done:
+        if s.remove_session_files(self.sid, kind, files):  # one step by itself, which it names for Undo
             self.toast.emit(plural(len(files), "{n} file out of “{session}” · file kept · Ctrl+Z",
                                    "{n} files out of “{session}” · files kept · Ctrl+Z", session=name))
 
