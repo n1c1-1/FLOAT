@@ -653,6 +653,31 @@ def test_the_session_panel_says_add_lights_while_it_has_none(env, has, word):
     assert any(b.text() == word for b in panel.findChildren(QPushButton) if b.isVisibleTo(panel))
 
 
+def test_a_reopened_project_shows_post_with_the_layer_chosen_at_save(env):
+    """The tutorials' film: reopening a project chose the bottom layer, not the one chosen when it was saved. The
+    choice is kept with the version, and choosing a layer alone is no edit to save."""
+    from tests.client.test_small_screens import _post_view
+    w = project_with_a_chain(env)
+    root = w.project.root
+    view = _post_view(w)
+    base = view.layers[-1]
+    view.select(base["id"], "layer")
+    view.add_filter("saturation")
+    settle(w, 4)
+    chosen = view.sel[0]
+    assert chosen != base["id"] and view.layer(chosen)["kind"] == "filter"
+    w.save()
+    view.select(base["id"], "layer")
+    assert not w.s.dirty                                           # a choice is not an edit
+    view.select(chosen, "layer")
+    w.save()
+    assert w.close_project() is not False
+    w.open_project(root)
+    w.worker.wait()
+    settle(w, 12)
+    assert _post_view(w).sel == (chosen, "layer")
+
+
 def test_post_edits_are_written_by_save_only_not_by_closing_or_reopening(env):
     """No autosave: a Post edit (a new version of the composition) is the project's unsaved state, closing with nobody
     to answer drops it, Save writes it."""

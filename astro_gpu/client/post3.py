@@ -869,7 +869,7 @@ class PostView(QWidget):
         self._fit_split()
         self._connect(own_worker=worker is None)
         if self.layers:
-            self.sel = (self.layers[-1]["id"], "layer")
+            self.sel = self._choice_of(self._version_shown()) or (self.layers[-1]["id"], "layer")
         self.build_filter_menu()
         self.rebuild()
         self._send_final()
@@ -1347,7 +1347,8 @@ class PostView(QWidget):
         self.worker.stop()
 
     def flush(self):
-        """The last edit into the project now (before the project is saved and closed)."""
+        """The last edit into the project now (before the project is saved and closed), and the layer chosen."""
+        self._keep_choice()
         if self._save_t.isActive():
             self._save_t.stop()
             self._save()
@@ -1445,7 +1446,9 @@ class PostView(QWidget):
             cb.blockSignals(False)
 
     def _switch_version(self, version: dict):
-        """Another version in the panel: its layers, its crop and its own Undo."""
+        """Another version in the panel: its layers, its crop and its own Undo, and the layer chosen in it when it was
+        left."""
+        self._keep_choice()
         self._stacks[self._version] = (self.undo, self.redo)
         self._heal_hand[self._version] = (self._heal_src, self._heal_off)    # the source set by hand is the version's own
         self._heal_src, self._heal_off = self._heal_hand.get(version.get("id"), (None, None))
@@ -1456,7 +1459,7 @@ class PostView(QWidget):
         self._show_crop(version.get("crop"))
         self._fill_versions()
         if self.sel and not self.layer(self.sel[0]):
-            self.sel = (self.layers[0]["id"], "layer") if self.layers else None
+            self.sel = self._choice_of(version) or ((self.layers[0]["id"], "layer") if self.layers else None)
         self.sync_paths()
         self.rebuild()
         self._undo_buttons()
@@ -1627,6 +1630,25 @@ class PostView(QWidget):
         edited = getattr(self.s, "edited", None)
         if edited is not None:
             edited()
+
+    def _keep_choice(self):
+        """The chosen layer is kept with the version when the project is saved (``flush``), and chosen again when it is
+        opened (the tutorials' film: the bottom one was chosen). Choosing is no edit: the project is not marked, and
+        a project opened and left is unchanged."""
+        p = getattr(self.s, "p", None)
+        if not self.persist or p is None or not isinstance(getattr(p, "post", None), dict) or not self.sel:
+            return
+        version = next((v for v in p.post.get("versions") or [] if v.get("id") == self._version), None)
+        lid = self.sel[0]
+        if version is None or self.layer(lid) is None or version.get("selected") == lid:
+            return
+        if "selected" in version or lid != self.layers[-1]["id"]:     # the bottom one, chosen by opening: nothing to keep
+            version["selected"] = lid
+
+    def _choice_of(self, version: dict | None):
+        """The layer chosen when this version was left (``_keep_choice``), if it is still there; else None."""
+        lid = (version or {}).get("selected")
+        return (lid, "layer") if lid is not None and self.layer(lid) is not None else None
 
     # ------------------------------------------------------------ rendering (in the worker)
     def refresh(self):
