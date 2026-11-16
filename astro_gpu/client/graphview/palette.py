@@ -264,7 +264,10 @@ class Palette(QScrollArea):
         self.display_button.customContextMenuRequested.connect(lambda _p: self.menu())
         self.head_row.addWidget(self.display_button, 0, Qt.AlignTop | Qt.AlignRight)
         v.addLayout(self.head_row)
-        self.for_row = style.label("", "small", wrap=True)
+        # its line is there from the start, empty until a block is chosen, and always one line: appearing with the
+        # first block added, or wrapping on a long name, it pushed every entry down under the mouse
+        self.for_row = style.label("", "small")
+        self.for_row.setFixedHeight(self.for_row.fontMetrics().height() + 2)
         v.addWidget(self.for_row)
         self.headers: list[QLabel] = []
         for title, kinds in GROUPS:
@@ -319,7 +322,7 @@ class Palette(QScrollArea):
                 sp.setRetainSizeWhenHidden(auto)
                 w.setSizePolicy(sp)
         self.head.setVisible(wide)
-        self.for_row.setVisible(wide and bool(self._for_text))
+        self.for_row.setVisible(wide)
         for h in self.headers:           # folded: only the blocks' icons (graph.py: the headers hidden)
             h.setVisible(wide)
         for c in self.cards.values():
@@ -396,16 +399,10 @@ class Palette(QScrollArea):
         return bridge.row(sel) or bridge.row_of(sel)
 
     def _show_for(self):
-        """For “name”: wrapped when always open; one line elided when automatic, the blocks under it never move."""
+        """For “name”: one line, cut when too long (whole in its tooltip): the blocks under it never move."""
         text = self._for_text
-        if self.state == "auto" and text:
-            self.for_row.setWordWrap(False)
-            self.for_row.setToolTip(text)
-            self.for_row.setText(self.for_row.fontMetrics().elidedText(text, Qt.ElideRight, PALETTE_W - 44))
-        else:
-            self.for_row.setWordWrap(True)
-            self.for_row.setToolTip("")
-            self.for_row.setText(text)
+        self.for_row.setToolTip(text)
+        self.for_row.setText(self.for_row.fontMetrics().elidedText(text, Qt.ElideRight, PALETTE_W - 44))
 
     def refresh(self):
         """The cards' greyed states: the core needs a few tens of ms a card, so they are brought up to date one card
@@ -424,7 +421,7 @@ class Palette(QScrollArea):
         r = self.current_row()
         self._for_text = _("for “{name}”").format(name=shown(r.name)) if r is not None else ""
         self._show_for()
-        self.for_row.setVisible(r is not None and self.wide())
+        self.for_row.setVisible(self.wide())
 
     def showEvent(self, e):                                           # noqa: N802
         super().showEvent(e)
