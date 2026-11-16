@@ -29,6 +29,19 @@ MOFFAT_STARS = 150
 #: one of 50 others by chance once in 10 000 tries on a 6 Mpx frame, so three never do; ten, the minimum of star pairs
 #: Siril asks: a frame under it is dropped)
 SPARSE_MIN_MATCHES = 10
+#: fewest matched stars for the cubic polynomial, three per term of its ten (what it always asked). A frame matched on
+#: fewer is fitted by the affine map alone (six unknowns): Siril's global registration never fits more than a linear
+#: map (match.c new_star_match: "for image registration, we will always use linear"; opencv.cpp cvCalculH: shift,
+#: similarity, affine or homography, 2 to 8 unknowns) and takes a frame from 3 stars (4 for the homography:
+#: global.c get_min_requires_stars), accepted on its pairs (star_match_and_checks: at least the minimum of star pairs,
+#: 10, no limit on the residual)
+CUBIC_MATCHES = 30
+#: least share of the stars a frame and the reference could have in common that such a frame must match: the share
+#: asked of a turned frame (``fit_half_turn``), Siril's own figure for the pairs its model must keep (global.c
+#: MIN_RATIO_INLIERS, 30 %). The pairs chance makes in a dense field of another part of the sky stay far under it
+MATCH_SHARE = 0.3
+#: fewest stars for the affine map (global.c get_min_requires_stars)
+MIN_STARS = 3
 
 
 #: the star catalogues done are saved at least this often (seconds), besides every 50 frames: a stop or a crash keeps them
@@ -72,7 +85,10 @@ class Register(Stage):
     # brightest stars lay off the reference's field)
     # 5: a frame matched on fewer than 10 star pairs is left out, as Siril does (it was 6)
     # 6: that minimum is a setting ("Min pairs", 10), and holds for every frame's fit
-    version = "6"
+    # 7: a frame matched on fewer than 30 star pairs is aligned by a linear map (it was left out: an untracked
+    # telescope's frames of 30 trailed stars, 3 of 15 aligned); the few-stars path accepts on the stars brought within
+    # its tolerance, without a limit on the residual; the stars' centres from a window scaled to the frame's stars
+    version = "7"
     key_label = "6"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
     def auto(self, ctx: Context) -> dict[str, Auto]:
@@ -140,7 +156,7 @@ class Register(Stage):
             coef = np.zeros((n, 2, 10))
             nmatch, rms, transp = np.zeros(n, int), np.full(n, np.inf), np.zeros(n)
             failed = []
-            recovered, from_few = [], 0
+            recovered, from_few = [], 0                  # from_few: aligned by a linear map (under CUBIC_MATCHES pairs)
             turn = None                                  # the turn (half or any) of the last frame found so
             turned = []                                  # the frames aligned after a turn of the camera
             for i in range(n):
@@ -157,23 +173,23 @@ class Register(Stage):
                             r, turn = h, at
                 if r is not None and turn is not None:
                     turned.append(i)
-                if r is None and cats[i] is not None and len(cats[i]) >= 30:
+                if r is None and cats[i] is not None and len(cats[i]) >= p.min_pairs:
                     # no clear vote of the stars (a dense field: the brightest detections change from frame to frame):
                     # the shift from the images themselves (phase correlation), then the same fit (issue #37)
                     sh = phase_shift(mm, i, ref, H, W, info["cfa"])
                     if sh is not None:
-                        r = _fit_from(cats[i], refcat, tree, W, H, cats[i][:, :2] - sh, 8.0)
+                        r = _fit_from(cats[i], refcat, tree, W, H, cats[i][:, :2] - sh, 8.0, few=True)
                         if r is not None:
                             recovered.append(i)
                 if r is None and sparse:
                     r = fit_sparse(cats[i], refcat, tree, W, H, p.min_pairs)
-                    from_few += r is not None
                 if r is not None and r[1] < p.min_pairs:     # matched on too few star pairs: left out
                     r = None
                 if r is None:
                     failed.append(meta[i]["path"])
                 else:
                     coef[i], nmatch[i], rms[i], transp[i] = r
+                    from_few += not r[0][:, 3:].any()
                 ctx.progress(0.9 + 0.1 * (i + 1) / n, f"aligning frame {i + 1}/{n}")
             return ref, refcat, tree, coef, nmatch, rms, transp, failed, recovered, from_few, turned
 
@@ -201,7 +217,8 @@ class Register(Stage):
             ctx.log(f"reference frame: {os.path.basename(meta[order[0]]['path'])} aligned too few of the frames (another "
                     f"field?), {os.path.basename(meta[ref]['path'])} is used")
         if from_few:
-            ctx.log(f"sparse field: {from_few} frame(s) aligned from a few stars (rotation, shift and scale only)")
+            ctx.log(f"sparse field: {from_few} frame(s) aligned from under {CUBIC_MATCHES} star pairs (a linear map, no "
+                    "cubic terms)")
         fin = np.isfinite(rms)
         if fin.sum() >= 3:
             # a wrong match (6.5 px on the Stellina), not a softer frame (M33: 35 stacked frames at 1.0-1.9 px)
@@ -223,12 +240,12 @@ class Register(Stage):
                     f"{len(turns)} frame(s) aligned after turns of the camera of {turns[0]:.1f} to {turns[-1]:.1f} "
                     "degrees")
         if failed:
-            ctx.log(f"{len(failed)} frame(s) could not be aligned and will be ignored (no trustworthy match: "
-                    f"under {p.min_pairs} star pairs, or a residual too large)", "warning")
+            ctx.log(f"{len(failed)} frame(s) could not be aligned and will be ignored (too few star pairs with the "
+                    "reference: each one below)", "warning")
             gone = set(failed)
             for i in [i for i in range(n) if meta[i]["path"] in gone][:30]:
-                ctx.log(left_out_reason(os.path.basename(meta[i]["path"]), cats[i], refcat, tree, W, H, p.min_pairs),
-                        "warning")
+                ctx.log(left_out_reason(os.path.basename(meta[i]["path"]), cats[i], refcat, tree, W, H, p.min_pairs,
+                                        sparse), "warning")
         # the transparency from the stars' flux in a fixed aperture (holding their light in every frame), not from
         # their flux above the detection threshold, which follows the seeing: on Iris a frame of 5.3 px stars read
         # 0.78 for 0.91 (its signal was scaled up 16 % too much, and its weight cut)
@@ -458,36 +475,51 @@ def fit_frame(cat, ref, tree, W, H):
     """Registration polynomial of a frame on the reference: from a translation (the usual case), or, when that matches
     few stars, from a rotation and a translation (alt-azimuth mounts: the field turns). The turned fit is kept when it
     matches more stars with a small residual: in a dense field a loose start can lock on chance pairs (Stellina, 1 800
-    stars a frame: 330 chance pairs at 6.5 px beat 138 true ones at 0.3 px)."""
-    if cat is None or len(cat) < 30:
+    stars a frame: 330 chance pairs at 6.5 px beat 138 true ones at 0.3 px). A frame of few stars is fitted too
+    (``_fit_from``'s ``few``): by the affine map alone under CUBIC_MATCHES matched stars."""
+    if cat is None or len(cat) < MIN_STARS:
         return None
-    r = _fit_from(cat, ref, tree, W, H, np.c_[cat[:, 0], cat[:, 1]] - initial_shift(ref, cat, W, H), 4.0)
+    r = _fit_from(cat, ref, tree, W, H, np.c_[cat[:, 0], cat[:, 1]] - initial_shift(ref, cat, W, H), VOTE_TOL, few=True)
     if r is not None and r[1] >= 0.3 * min(len(cat), len(ref)):
         return r
     ang, s = initial_rotation(ref, cat, W, H)
     if ang is None:
         return r
-    r2 = _fit_from(cat, ref, tree, W, H, _rotate(cat[:, :2], ang, W, H) - s, 8.0)
+    r2 = _fit_from(cat, ref, tree, W, H, _rotate(cat[:, :2], ang, W, H) - s, 8.0, few=True)
     if r2 is not None and r2[2] < max(1.0, 2 * (r[2] if r is not None else 0.5)) and (r is None or r2[1] > r[1]):
         return r2
     return r
 
 
-def left_out_reason(name: str, cat, ref, tree, W, H, min_pairs: int = SPARSE_MIN_MATCHES) -> str:
-    """The log line of a frame left out of the alignment: its name, its stars and the star pairs it makes with the
-    reference (after the shift of the stars' vote), and the condition that failed."""
+#: the distance (px) within which a star pairs with the reference after the shift of the stars' vote (``fit_frame``)
+VOTE_TOL = 4.0
+
+
+def pairs_needed(nst: int, nref: int, min_pairs: int = SPARSE_MIN_MATCHES) -> int:
+    """The star pairs a frame of ``nst`` stars must make with a reference of ``nref`` to be aligned: the "Min pairs"
+    setting, and what the fit asks (CUBIC_MATCHES, or under it MATCH_SHARE of the stars both could share)."""
+    return max(int(min_pairs), min(CUBIC_MATCHES, int(np.ceil(MATCH_SHARE * min(nst, nref)))))
+
+
+def left_out_reason(name: str, cat, ref, tree, W, H, min_pairs: int = SPARSE_MIN_MATCHES, sparse: bool = False) -> str:
+    """The log line of a frame left out of the alignment: its name, its stars, and what was tried with its value and
+    its limit: the star pairs it makes with the reference within VOTE_TOL after the shift of the stars' vote, those
+    the fit kept when it lost some, the pairs needed (``pairs_needed``); and, in a sparse field (``sparse``), the
+    stars the triangles of ``fit_sparse`` brought within STAR_TOL."""
     nst = 0 if cat is None else len(cat)
     if nst < 5:
         return f"{name} left out: no stars detected (a dark or a covered frame?)"
-    pairs = 0
-    if nst >= 30:
-        d, _j = tree.query(cat[:, :2] - initial_shift(ref, cat, W, H), distance_upper_bound=4.0)
-        pairs = int(np.count_nonzero(np.isfinite(d)))
-    if nst < 30:
-        return f"{name} left out: only {nst} stars detected, too few to match"
-    if pairs < min_pairs:
-        return f"{name} left out: {nst} stars detected, {pairs} star pairs with the reference (under {min_pairs})"
-    return f"{name} left out: {nst} stars detected, {pairs} star pairs with the reference but a residual too large"
+    need = pairs_needed(nst, len(ref), min_pairs)
+    counts: list[int] = []
+    _fit_from(cat, ref, tree, W, H, cat[:, :2] - initial_shift(ref, cat, W, H), VOTE_TOL, few=True, counts=counts)
+    pairs, kept = counts[0], counts[-1]
+    said = (f"{name} left out: {nst} stars detected, {pairs} star pairs with the reference within {VOTE_TOL:g} px after "
+            "the shift of the stars' vote")
+    said += f" ({need} needed)" if pairs < need or kept >= pairs else f", {kept} kept by the fit ({need} needed)"
+    if sparse:
+        said += (f"; the triangles of stars: {_sparse(cat, ref, tree, W, H, min_pairs)[1]} stars brought within "
+                 f"{STAR_TOL:g} px ({min_pairs} needed)")
+    return said
 
 
 def fit_half_turn(cat, ref, tree, W, H, near=None):
@@ -566,20 +598,28 @@ def turn_of(coef) -> float:
     return float(np.degrees(np.arctan2(coef[1, 1], coef[0, 1])))
 
 
-def _fit_from(cat, ref, tree, W, H, pred, tol):
+def _fit_from(cat, ref, tree, W, H, pred, tol, few=False, counts=None):
     """Cubic polynomial from a first guess of the frame's stars on the reference (pred). An affine map first, at the
     starting tolerance: it extends the matches from where the guess is right to the whole field (a guess from a shift
     alone is right only near the centre of a turn: a cubic fitted there locked on a third of the stars, 6 px off at
     the edges, for a turn of 0.7 degree with a 0.2 % change of scale); then the cubic, the matching tolerance
-    shrinking with the residuals."""
+    shrinking with the residuals. None under CUBIC_MATCHES matched stars.
+
+    ``few``: a frame matched on fewer than CUBIC_MATCHES stars is fitted too, by the affine map alone (the cubic's
+    terms at zero), as Siril's global registration fits a linear map from 3 stars and accepts it on its pairs (see
+    CUBIC_MATCHES); it stands when it matches MATCH_SHARE of the stars the frame and the reference could share, so
+    that only a frame or a reference of under 100 stars is ever fitted so. The caller holds it to the "Min pairs"
+    setting. ``counts`` (a list) receives the matched stars of each pass."""
     T = poly_terms(cat[:, 0], cat[:, 1], W, H)
     cx = cy = None
     for it in range(7):
-        k = 3 if it < 3 else T.shape[1]
         d, j = tree.query(pred, distance_upper_bound=tol)
         m = np.isfinite(d)
-        if m.sum() < 30:
+        if counts is not None:
+            counts.append(int(m.sum()))
+        if m.sum() < (MIN_STARS if few else CUBIC_MATCHES):
             return None
+        k = 3 if it < 3 or m.sum() < CUBIC_MATCHES else T.shape[1]
         A = T[m, :k]
         tgt = ref[j[m], :2]
         cx = np.zeros(T.shape[1])
@@ -588,24 +628,28 @@ def _fit_from(cat, ref, tree, W, H, pred, tol):
         cy[:k] = np.linalg.lstsq(A, tgt[:, 1], rcond=None)[0]
         pred = np.c_[T @ cx, T @ cy]
         res = np.hypot(*(pred[m] - tgt).T)
-        if k == T.shape[1]:
+        if it >= 3:
             tol = max(0.8, min(tol, 4 * np.median(res) * 1.4826))
     d, j = tree.query(pred, distance_upper_bound=tol)
     m = np.isfinite(d)
+    if counts is not None:
+        counts.append(int(m.sum()))
+    if few and m.sum() < CUBIC_MATCHES and m.sum() < max(MIN_STARS, MATCH_SHARE * min(len(cat), len(ref))):
+        return None
     rms = float(np.sqrt(np.mean(d[m] ** 2)))
     ratio = np.median(cat[m, 2] / ref[j[m], 2])
     return np.stack([cx, cy]), int(m.sum()), rms, float(ratio)
 
 
 #: a field is sparse under this median of stars per frame (a frame of 100 stars or more reaches the 30 matches of the
-#: polynomial; the vote and the polynomial are never replaced above it)
+#: cubic; the vote and the polynomial are never replaced above it)
 SPARSE_STARS = 100
 #: the triangle matching's stars (the brightest), its neighbours per star, its match radius in the space of the
 #: triangles' two shape ratios, and the distance (px) at which a star counts as matched: the values of Beroiz et al.
 TRIANGLE_STARS, TRIANGLE_NEIGHBOURS, TRIANGLE_RADIUS, STAR_TOL = 50, 5, 0.1, 2.0
-#: largest residual (px) of a transform from few stars, as ``fit_frame`` asks of a turned fit; the largest change of
-#: scale between two frames of one instrument (a triangle fitted to a far smaller one maps every star onto one point)
-SPARSE_RMS, SPARSE_SCALE = 1.0, 0.05
+#: the largest change of scale between two frames of one instrument (a triangle fitted to a far smaller one maps every
+#: star onto one point)
+SPARSE_SCALE = 0.05
 #: the brightest stars of each list whose triangles ``fit_any_turn`` matches, in turn while no fit stands: Beroiz et
 #: al.'s 50, then three and six times as many (0.2 s a frame at 300 stars)
 TURN_STARS = (TRIANGLE_STARS, 3 * TRIANGLE_STARS, 6 * TRIANGLE_STARS)
@@ -672,17 +716,25 @@ def triangle_similarities(a, b, nearest=True, max_scale=SPARSE_SCALE):
 
 
 def fit_sparse(cat, ref, tree, W, H, min_matches=SPARSE_MIN_MATCHES):
-    """Registration of a frame of a sparse field, where the vote on the shifts has too few stars and the polynomial
-    cannot find its 30 matches: the triangle matching of V. Valdes et al. (PASP 107, 1119, 1995) and E. Groth (AJ 91,
-    1244, 1986), with the triangles from each star's nearest neighbours of M. Beroiz, J. Cabral, B. Sanchez, "Astroalign"
-    (Astronomy and Computing 32, 100384, 2020). Each triangle of the frame similar to one of the reference proposes a
-    similarity; all are tried and the one that brings the most stars is kept, so that the result does not depend on
-    any random draw. It is then refined on every star it matches, and stands only with ``min_matches`` stars (the
-    Registration's "Min pairs") and a residual under SPARSE_RMS. A similarity has four unknowns: with so few stars, a polynomial would follow their
-    noise. Returns what ``fit_frame`` returns, the polynomial's terms above order 1 at zero; None when no transform
-    stands."""
+    """Registration of a frame of a sparse field, where the vote on the shifts has too few stars: the triangle matching
+    of V. Valdes et al. (PASP 107, 1119, 1995) and E. Groth (AJ 91, 1244, 1986), with the triangles from each star's
+    nearest neighbours of M. Beroiz, J. Cabral, B. Sanchez, "Astroalign" (Astronomy and Computing 32, 100384, 2020).
+    Each triangle of the frame similar to one of the reference proposes a similarity; all are tried and the one that
+    brings the most stars is kept, so that the result does not depend on any random draw. It is then refined on every
+    star it matches, and stands on the count of the stars it brings within STAR_TOL of a reference star: at least
+    ``min_matches`` (the Registration's "Min pairs"). The count alone decides, as in the method (Astroalign's
+    ``_ransac``: a transform stands when it brings enough matches within its PIXEL_TOL, 2 px) and in Siril (global.c
+    star_match_and_checks: the pairs kept, against the minimum of star pairs): neither sets a limit on the residual,
+    which follows the stars' shape (trailed stars: 1.0 to 1.3 px for a right match) and which STAR_TOL bounds already.
+    A similarity has four unknowns: with so few stars, a polynomial would follow their noise. Returns what
+    ``fit_frame`` returns, the polynomial's terms above order 1 at zero; None when no transform stands."""
+    return _sparse(cat, ref, tree, W, H, min_matches)[0]
+
+
+def _sparse(cat, ref, tree, W, H, min_matches):
+    """``fit_sparse``'s (result or None, stars brought within STAR_TOL by the best similarity found)."""
     if cat is None or min(len(cat), len(ref)) < min_matches:
-        return None
+        return None, 0
     a, b = cat[:, :2], ref[:, :2]
     s, t, _ = triangle_similarities(a[:TRIANGLE_STARS], b[:TRIANGLE_STARS])
     za, zb = a[:, 0] + 1j * a[:, 1], b[:, 0] + 1j * b[:, 1]
@@ -694,26 +746,24 @@ def fit_sparse(cat, ref, tree, W, H, min_matches=SPARSE_MIN_MATCHES):
         if score > top:
             best, top = (s1, t1), score
     if best is None:
-        return None
+        return None, 0
     s1, t1 = best
     for _ in range(3):
         z = s1 * za + t1
         i, j, d = _matched(np.c_[z.real, z.imag], tree)
         if len(i) < min_matches:
-            return None
+            return None, len(i)
         s1, t1 = _similarity(za[i], zb[j])
     z = s1 * za + t1
     i, j, d = _matched(np.c_[z.real, z.imag], tree)
     if len(i) < min_matches or abs(abs(s1) - 1) >= SPARSE_SCALE:
-        return None
+        return None, len(i)
     rms = float(np.sqrt(np.mean(d ** 2)))
-    if rms > SPARSE_RMS:
-        return None
     # the similarity on the polynomial's coordinates (poly_terms: u = x / (W / 2) - 1, v = y / (H / 2) - 1)
     cx, cy = np.zeros(10), np.zeros(10)
     cx[:3] = s1.real * W / 2 - s1.imag * H / 2 + t1.real, s1.real * W / 2, -s1.imag * H / 2
     cy[:3] = s1.imag * W / 2 + s1.real * H / 2 + t1.imag, s1.imag * W / 2, s1.real * H / 2
-    return np.stack([cx, cy]), len(i), rms, float(np.median(cat[i, 2] / ref[j, 2]))
+    return (np.stack([cx, cy]), len(i), rms, float(np.median(cat[i, 2] / ref[j, 2]))), len(i)
 
 
 #: radii (super-pixels) of the apertures the stars' flux is measured in; the catalogue's columns 4 onwards
@@ -809,7 +859,16 @@ def _catalog(idx):
     noise = float(1.4826 * np.median(np.abs(dd - np.median(dd))) / np.sqrt(2)) if dd.size else float("nan")
     if len(o) == 0:
         return idx, np.zeros((0, 4 + len(APERTURES))), 0.0, float(rms), float("nan"), noise
-    xw, yw, _ = sep.winpos(x, o["x"], o["y"], np.full(len(o), 0.9))
+    # the windowed centres, the window scaled to the frame's stars: the rule given with the windowed centre (Source
+    # Extractor's XWIN / YWIN, sep.winpos: sigma = 2 / 2.35 x the half-light radius, measured within 6 times the major
+    # axis). The radius is the median of the frame's 300 brightest stars (those the FWHM is measured on): its stars
+    # share one shape, and each faint star's own radius is too noisy (a tracked field of 2 500 stars 1.6 px wide: pairs
+    # 0.45 px apart with the frame's radius, as with the fixed window, 0.72 px with each star's). A fixed window of 0.9
+    # (stars about 4 px wide) went to the brightest knot of a trailed star, which moves from frame to frame (stars
+    # trailed over 15 px: pairs 1.5 px apart, 0.7 px so)
+    r50, _ = sep.flux_radius(x, o["x"][:300], o["y"][:300], 6.0 * o["a"][:300], 0.5, subpix=5)
+    r50 = r50[np.isfinite(r50) & (r50 > 0)]
+    xw, yw, _ = sep.winpos(x, o["x"], o["y"], np.full(len(o), 2.0 / 2.35 * np.median(r50) if len(r50) else 0.9))
     hfr, _ = sep.flux_radius(x, xw, yw, np.full(len(o), 5.0), 0.5, subpix=5)
     aps = []
     good = (~mask).astype(np.float32)

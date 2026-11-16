@@ -360,8 +360,9 @@ def test_a_frame_with_a_useful_area_is_sized_and_said_as_the_engine_reads_it(tmp
     try:
         assert engine_text("useful area from the frames' header: 3054x2042 of 3136x2112 pixels, the overscan left out") \
             == "zone utile lue dans l'en-tête des images : 3054x2042 sur 3136x2112 pixels, l'overscan laissé de côté"
-        assert engine_text("sparse field: 12 frame(s) aligned from a few stars (rotation, shift and scale only)") == \
-            "champ peu étoilé : 12 image(s) alignée(s) sur quelques étoiles (rotation, décalage et échelle seulement)"
+        assert engine_text("sparse field: 12 frame(s) aligned from under 30 star pairs (a linear map, no cubic terms)") \
+            == "champ peu étoilé : 12 image(s) alignée(s) sur moins de 30 paires d'étoiles (une transformation " \
+               "linéaire, sans termes cubiques)"
         assert engine_text("the 37 stars of this sparse field do not identify it on the sky beyond doubt, so no solution "
                            "is given rather than a wrong one: take Astrometry out of this workflow") == \
             "les 37 étoiles de ce champ peu étoilé ne le reconnaissent pas sur le ciel avec certitude : pas de solution " \

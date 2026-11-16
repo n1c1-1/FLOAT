@@ -277,22 +277,30 @@ PATTERNS: list[tuple[re.Pattern, str, tuple]] = [
         # io/frames.py)
         (r"^useful area from the frames' header: (\d+)x(\d+) of (\d+)x(\d+) pixels, the overscan left out$",
          "useful area from the frames' header: {0}x{1} of {2}x{3} pixels, the overscan left out", ()),
-        (r"^(\d+) frame\(s\) could not be aligned and will be ignored \(no trustworthy match: under (\d+) star pairs, or a "
-         r"residual too large\)$",
-         "{0} frame(s) could not be aligned and will be ignored (no trustworthy match: under {1} star pairs, or a "
-         "residual too large)", ()),
+        (r"^(\d+) frame\(s\) could not be aligned and will be ignored \(too few star pairs with the reference: each one "
+         r"below\)$",
+         "{0} frame(s) could not be aligned and will be ignored (too few star pairs with the reference: each one below)",
+         ()),
         (r"^(\d+) frame\(s\) have no star in common with the reference and will be ignored$",
          "{0} frame(s) have no star in common with the reference and will be ignored", ()),
         (r"^(.+) left out: no stars detected \(a dark or a covered frame\?\)$",
          "{0} left out: no stars detected (a dark or a covered frame?)", ()),
-        (r"^(.+) left out: only (\d+) stars detected, too few to match$",
-         "{0} left out: only {1} stars detected, too few to match", ()),
-        (r"^(.+) left out: (\d+) stars detected, (\d+) star pairs with the reference \(under (\d+)\)$",
-         "{0} left out: {1} stars detected, {2} star pairs with the reference (under {3})", ()),
-        (r"^(.+) left out: (\d+) stars detected, (\d+) star pairs with the reference but a residual too large$",
-         "{0} left out: {1} stars detected, {2} star pairs with the reference but a residual too large", ()),
-        (r"^sparse field: (\d+) frame\(s\) aligned from a few stars \(rotation, shift and scale only\)$",
-         "sparse field: {0} frame(s) aligned from a few stars (rotation, shift and scale only)", ()),
+        # a frame left out: the pairs of the stars' vote, those the fit kept when it lost some, the pairs needed; and, in
+        # a sparse field, the stars the triangles brought within their tolerance
+        *[(r"^(.+) left out: (\d+) stars detected, (\d+) star pairs with the reference within ([\d.]+) px after the "
+           r"shift of the stars' vote" + rx + r"$",
+           "{0} left out: {1} stars detected, {2} star pairs with the reference within {3} px after the shift of the "
+           "stars' vote" + en, ())
+          for rx, en in [
+              (r" \((\d+) needed\)", " ({4} needed)"),
+              (r" \((\d+) needed\); the triangles of stars: (\d+) stars brought within ([\d.]+) px \((\d+) needed\)",
+               " ({4} needed); the triangles of stars: {5} stars brought within {6} px ({7} needed)"),
+              (r", (\d+) kept by the fit \((\d+) needed\)", ", {4} kept by the fit ({5} needed)"),
+              (r", (\d+) kept by the fit \((\d+) needed\); the triangles of stars: (\d+) stars brought within ([\d.]+) px "
+               r"\((\d+) needed\)",
+               ", {4} kept by the fit ({5} needed); the triangles of stars: {6} stars brought within {7} px ({8} needed)")]],
+        (r"^sparse field: (\d+) frame\(s\) aligned from under (\d+) star pairs \(a linear map, no cubic terms\)$",
+         "sparse field: {0} frame(s) aligned from under {1} star pairs (a linear map, no cubic terms)", ()),
         # issue #63: frames of a camera turned between two nights (half a turn, or any angle)
         (r"^(\d+) frame\(s\) aligned after a turn of the camera of ([\d.]+) degrees$",
          "{0} frame(s) aligned after a turn of the camera of {1} degrees", ()),
