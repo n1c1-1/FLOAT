@@ -901,3 +901,55 @@ def test_a_click_opens_the_versions_list_a_double_click_renames_and_a_pick_gives
         assert said[-1] == f"“{old}” deleted · Ctrl+Z"
     finally:
         _close(page)
+
+
+def test_post_changes_all_undone_leave_no_edit_to_save(model, monkeypatch):
+    """The laptop's pass: every change of Post undone ("Nothing to undo"), the window's title kept its "*". Post's
+    changes undone back to what is saved leave no edit (as the Graph's Undo does); redone, or with another edit made
+    meanwhile, the project waits for Save again."""
+    from astro_gpu.client.post3 import PostPage3
+    from astro_gpu.client.services.render import RenderWorker
+    model.add_post_layer(by_name(model, "Full").pid, "stars")
+    monkeypatch.setattr(model, "readonly", False)
+    monkeypatch.setattr(model, "_dirty", False)                    # the project as it is saved
+    flags = []
+    model.dirtyChanged.connect(flags.append)
+    page = PostPage3(model, worker=RenderWorker(None, resolver=lambda pid: None, device="cpu"))
+    v = page.view
+    try:
+        def change(value):
+            v.push()
+            v.layers[0]["opacity"] = value
+            v._save()
+        change(50.0)
+        change(20.0)
+        assert model.dirty
+        v.do_undo()
+        assert model.dirty                                         # one change left
+        v.do_undo()
+        assert not model.dirty and flags[-1] is False              # back as saved: no "*"
+        v.do_redo()
+        assert model.dirty                                         # redone: an edit again
+        v.do_undo()
+        assert not model.dirty
+        change(50.0)
+        model.edited()                                             # another edit meanwhile (a frame excluded…)
+        v.do_undo()
+        assert model.dirty                                         # Post is back, the other edit is not
+        # a change in another version left as it is: the first one undone does not make the project saved
+        monkeypatch.setattr(model, "_dirty", False)
+        change(60.0)
+        first = v._version
+        v._version_new()
+        change(30.0)
+        model.set_post_version(first)
+        v.do_undo()
+        assert v._version == first and model.dirty
+    finally:
+        page.shutdown()
+        page.deleteLater()
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        try:
+            model.dirtyChanged.disconnect(flags.append)
+        except (RuntimeError, TypeError):
+            pass

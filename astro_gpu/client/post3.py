@@ -177,6 +177,20 @@ def layer_name(lay: dict) -> str:
     return names.shown(tr_name(lay["name"], lay.get("kind") == "image"))
 
 
+def setting_name(lay: dict, field: str, key: str) -> str:
+    """A setting of a layer as its panel names it, in the language of the screen: a filter's setting by its label, a
+    slider of a workflow's layer or of an image layer by its slider's name (the Undo / Redo words named it by its key:
+    "Star strength" for the slider the panel calls Strength, in English whatever the language)."""
+    if field == "params" and lay.get("kind") == "filter":
+        label = next((q["label"] for q in FILTERS.get(lay.get("filter"), {}).get("params", ()) if q["key"] == key), None)
+    elif lay.get("kind") == "image":
+        label = next((name for k, name, _ends in IMAGE_SLIDERS if k == key), None)
+    else:
+        from ..render.sliders import BY_KEY
+        label = BY_KEY[key].name if key in BY_KEY else None
+    return _(label if label is not None else str(key).replace("_", " ").capitalize())
+
+
 def step_words(old: list[dict], new: list[dict]) -> str:
     """What changed between two states of the layers, in a few words ("Saturation of "Filter" changed"), for the
     status line of an Undo / Redo. ``old``: the earlier state."""
@@ -214,9 +228,9 @@ def step_words(old: list[dict], new: list[dict]) -> str:
                 return mask_words(sa.get(sub), sb.get(sub), _(SUB_NAMES.get(sub, sub)))
         for field in ("sliders", "params"):
             ka, kb = was.get(field) or {}, lay.get(field) or {}
-            for k in kb:
-                if ka.get(k) != kb[k]:
-                    return _("{what} of “{name}”").format(what=_(str(k).replace("_", " ").capitalize()), name=name)
+            for k in list(kb) + [k for k in ka if k not in kb]:        # (a slider back at its middle has no key)
+                if ka.get(k) != kb.get(k):
+                    return _("{what} of “{name}”").format(what=setting_name(lay, field, k), name=name)
         return _("“{name}” changed").format(name=name)
     return _("Crop changed") if getattr(old, "crop", None) != getattr(new, "crop", None) else ""
 
@@ -827,6 +841,7 @@ class PostView(QWidget):
         self._device = ""
         self._last_seq = {"draft": 0, "half": 0, "region": 0, "before": 0, "refine": 0}
         self._saved = ""
+        self._clean = None                               # (version, layers, crop, the model's edits) as saved: ``_save``
         self.draft_ms: list[float] = []
         self.draft_level = CPU_DRAFT_LEVEL if cpu else DRAFT_LEVEL
         self._collapsed: set[int] = set()                # the pixel layers whose children are hidden in the panel
@@ -1625,6 +1640,27 @@ class PostView(QWidget):
         if not self.persist or p is None or not hasattr(p, "post"):
             return
         version = active_version(p.post)
+        # what is saved, kept when this is the first edit since the project was saved or opened: an Undo back to it
+        # with no other edit made meanwhile leaves no edit (``_back_to_saved``)
+        clean = getattr(self.s, "dirty", True) is False
+        was = (self._version, self._saved, copy.deepcopy(version.get("crop")))
+        edits = getattr(self.s, "edits", None)
+        self._write(version)
+        if clean:
+            self._clean = (*was, self.s.edits) if self.s.dirty and edits is not None else None
+        elif self._clean is not None:                    # another edit since, or another version's: not Post's to say
+            own = self._clean[3] == edits and self._clean[0] == self._version
+            self._clean = (*self._clean[:3], self.s.edits) if own else None
+
+    def _back_to_saved(self):
+        """After an Undo / Redo of Post's own: the composition is as the project is saved and nothing else was edited
+        since: the project has no edit left (the laptop's pass: every change undone, the title kept its "*")."""
+        c = self._clean
+        if c is not None and getattr(self.s, "dirty", False) and c == (self._version, self._saved, self.crop, self.s.edits):
+            self._clean = None
+            self.s.back_to_saved()
+
+    def _write(self, version):
         if version.get("crop") != self.crop:
             version["crop"] = self.crop
             if hasattr(self.s, "edited"):
@@ -2185,12 +2221,12 @@ class PostView(QWidget):
             what = self.next_words(how) if b.isEnabled() else ""
             b.setToolTip(named.format(what=what) if what else plain)
 
-    def _set_workflow_param(self, p, stage, name, value):
+    def _set_workflow_param(self, p, stage, name, value, shown=None):
         """A setting of the workflow shown here (its Output's channels): a step of Post's Undo too (2.4), undone by the
         workflows' Undo."""
         with self._from_post():
             self.s.set_param(p, stage, name, value)
-            self._name_step(_("Setting “{name}” changed").format(name=name))
+            self._name_step(_("Setting “{name}” changed").format(name=_(shown or name)))
         self.undo.append(self._model_mark("_undo"))
         self.redo.clear()
         self._undo_buttons()
@@ -2317,6 +2353,7 @@ class PostView(QWidget):
         self.rebuild()
         self.request(final_only=True)
         self._save()
+        self._back_to_saved()
 
     # ------------------------------------------------------------ the layers panel
     def thumb(self, lay) -> QPixmap:
@@ -3291,7 +3328,8 @@ class PostView(QWidget):
             except Exception:  # noqa: BLE001 - a value the worker has not read yet
                 linked = True
             c.setChecked(linked in (None, True))
-            c.toggled.connect(lambda on, q=p: (self._set_workflow_param(q, "render_simple", "linked", bool(on)),
+            c.toggled.connect(lambda on, q=p: (self._set_workflow_param(q, "render_simple", "linked", bool(on),
+                                                                        "Linked channels"),
                                                self._update_stale(),
                                                self.toasted.emit(_("Linked channels is a setting of the output: "
                                                                    "run to see it"))))

@@ -1049,11 +1049,22 @@ class _ProjectBase(QObject):
         it waits for Save, the window says so."""
         if self.readonly:
             return
+        self.edits += 1
         self.editMade.emit()
         if self._dirty:
             return
         self._dirty = True
         self.dirtyChanged.emit(True)
+
+    #: how many edits were made (``edited``): who undoes its own changes knows whether another edit came meanwhile
+    edits = 0
+
+    def back_to_saved(self):
+        """An Undo / Redo put the definition back as it is saved, with no other edit made meanwhile (Post's own steps:
+        Post says so; the workflows' steps: ``_restore``): no edit left, the window's title loses its mark."""
+        if self._dirty:
+            self._dirty = False
+            self.dirtyChanged.emit(False)
 
     # ------------------------------------------------------------ the Post composition
     # Post's layers are the project's, in the active one of its versions (``project.post["versions"]``, issue #82). A

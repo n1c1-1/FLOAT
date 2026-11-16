@@ -3873,3 +3873,46 @@ def test_the_bar_lets_fit_go_last_and_a_single_choice_list_reads_as_its_text(exp
         assert d.prof.count() == 1 and d.prof.property("single") is True
     finally:
         d.close()
+
+
+def test_undo_names_every_setting_as_its_panel_does_in_french():
+    """The laptop's pass in French: "Annulé : Star strength de …". The Undo / Redo words named a setting by its key
+    (Star strength, Knee, Local) where the panel shows its name (Intensité, Début, Intensité locale): every setting of
+    every filter, every slider of a workflow's layer and of an image layer is named as its slider is in the panel."""
+    from astro_gpu.client import i18n
+    from astro_gpu.client.post3 import setting_name, step_words
+    from astro_gpu.client.postengine import IMAGE_SLIDERS, new_filter_layer, new_image_layer, new_workflow_layer
+    try:
+        i18n.set_language("fr")
+        cat = _catalogue()
+        bad = []
+
+        def check(lay, field, key, shown, value):
+            assert shown in cat, shown                    # the panel's own name has its French
+            new = dict(lay, **{field: dict(lay[field], **{key: value})})
+            for old, now in ((lay, new), (new, lay)):     # set, and set back to nothing (a slider back at its middle)
+                said = step_words([old], [now])
+                if not said.startswith(i18n._(shown) + " "):
+                    bad.append((lay.get("filter") or lay["kind"], key, said))
+            assert setting_name(lay, field, key) == i18n._(shown)
+
+        for fk, f in FILTERS.items():
+            lay = dict(new_filter_layer(fk), name="F")
+            for q in f["params"]:
+                v = lay["params"][q["key"]]
+                other = (not v if q["type"] == "bool" else next(c for c in q["choices"] if c != v)
+                         if q["type"] == "choice" else {"RGB/K": {"pts": [[0, 0], [1, 1]]}} if q["type"] == "curve"
+                         else [[1.0, 2.0, 3.0, 4.0, 5.0]] if q["type"] == "spots" else q["lo"] if v != q["lo"] else q["hi"])
+                check(lay, "params", q["key"], q["label"], other)
+        for part in (None, "combined", "stars", "starless"):
+            lay = new_workflow_layer(1, "W", True, part)
+            for s in SLIDERS:
+                check(lay, "sliders", s.key, s.name, 3.0)
+        lay = new_image_layer("k", "I")
+        for key, name, _ends in IMAGE_SLIDERS:
+            check(lay, "sliders", key, name, 3.0)
+        assert not bad, bad
+        w = new_workflow_layer(1, "W", True, "combined")
+        assert step_words([w], [dict(w, sliders={"star_strength": 3.0})]) == "Intensité de « W »"
+    finally:
+        i18n.set_language("en")
