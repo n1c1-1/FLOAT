@@ -127,6 +127,51 @@ def test_the_name_is_asked_before_a_run_and_a_refusal_runs_nothing(env):
     assert w.run.before_run() is True
 
 
+@pytest.mark.parametrize("lang, none", [("en", "Untitled"), ("fr", "Sans titre")])
+@pytest.mark.parametrize("how", ["run", "save"])
+def test_the_project_block_shows_the_name_as_soon_as_it_is_given(env, lang, none, how):
+    """The tutorials' film: a project from the Color minimal template named "Rosette" at its first Run, and the Project
+    block on the graph still read "Untitled" until something else drew the graph again."""
+    from astro_gpu.client import templatefiles
+    appmod.apply_language(lang)
+    try:
+        w = untitled(env)
+        card = next(c for c in templatefiles.shipped_cards() if c["key"] == "colour_min")
+        w.graph.show_templates()
+        w.graph.templates.chosen.emit(card)
+        settle(w, 30)
+        assert item(w).title == none == w.project.name
+        env["mp"].setattr(appmod, "ask_project_name", named(env, "Rosette"))
+        if how == "run":
+            assert w.run.before_run() is True
+        else:
+            w.save()
+        assert item(w).title == "Rosette"                         # at once: no turn of the event loop, no other gesture
+        settle(w)
+        assert item(w).title == "Rosette" and w.windowTitle() == "FLOAT · Rosette"
+        assert "Rosette" in w.title.text() and none not in w.title.text()
+        assert prefs.recent()[0]["name"] == "Rosette"
+    finally:
+        appmod.apply_language("en")
+
+
+def test_the_project_block_shows_the_name_of_the_copy_after_save_as(env):
+    w = untitled(env)
+    w.graph.palette.double_click("session")
+    w.worker.wait()
+    settle(w)
+    env["mp"].setattr(appmod, "ask_project_name", named(env, "Rosette"))
+    w.save()
+    target = env["tmp"] / "ws" / "Rosette two"
+    target.mkdir(parents=True)
+    env["mp"].setattr(appmod.QFileDialog, "getExistingDirectory", lambda *a, **k: target.as_posix())
+    w.save_as()
+    w.worker.wait()
+    settle(w, 12)
+    assert w.project.root == target and item(w).title == "Rosette two" and w.windowTitle() == "FLOAT · Rosette two"
+    assert prefs.recent()[0]["name"] == "Rosette two"
+
+
 def test_the_name_proposed_is_the_name_typed_else_the_target_never_a_folder_name(env):
     """Nothing is deduced from a file or a folder name: lights in a folder named like a target propose no name."""
     w = untitled(env)
