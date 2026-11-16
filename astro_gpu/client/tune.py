@@ -1046,6 +1046,7 @@ class TuneView(QWidget):
         if shown.kind == "render":                        # the final image: the render it shows (#24, case 3)
             which = self.steps.which_for(p, shown.stage)
             key = self.steps.key_of(p, shown.stage, which)
+            key = self.service.render_key(p.pid, key)    # (with the base stretch chosen in Post, when not Automatic)
             return None if not key else (p.pid, k, spec.key, ("render", shown.stage, key, shown.name, which),
                                          self.cmp_pid, self.bg_of.get(k))
         try:
@@ -1597,6 +1598,7 @@ class TuneView(QWidget):
         """The final image ``spec``, in the tab ``tab`` (default: its own; Astrometry draws its solution over it)."""
         which = self.steps.which_for(p, spec.stage)
         key = self.steps.key_of(p, spec.stage, which)
+        key = self.service.render_key(p.pid, key)
         hit = self.service.cache.get((spec.stage, key, spec.name, which)) if key else None
         tab = tab or spec
         self._render_spec = spec

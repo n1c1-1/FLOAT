@@ -66,6 +66,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.project2 import active_version
+from ..render.sliders import ARCSINH_OFF, WHY_ARCSINH
 from ..render.sliders import STARS as STARS_GROUP
 from ..render.sliders import group_title
 from . import prefs
@@ -78,6 +79,11 @@ from .layout import Dock, Sections
 from .model import POST_PART_NAMES
 from .postengine import (
     visible_signature,
+    LAYER_STRETCHES,
+    STRETCH_KEY,
+    STRETCH_NAMES,
+    layer_stretch,
+    set_layer_stretch,
     BLENDS,
     DIRECTIONS,
     FAMILIES,
@@ -185,6 +191,8 @@ def setting_name(lay: dict, field: str, key: str) -> str:
         label = next((q["label"] for q in FILTERS.get(lay.get("filter"), {}).get("params", ()) if q["key"] == key), None)
     elif lay.get("kind") == "image":
         label = next((name for k, name, _ends in IMAGE_SLIDERS if k == key), None)
+    elif field == "sliders" and key == STRETCH_KEY:      # the Strength of the layer's Arcsinh stretch
+        label = "Stretch strength"
     else:
         from ..render.sliders import BY_KEY
         label = BY_KEY[key].name if key in BY_KEY else None
@@ -217,6 +225,8 @@ def step_words(old: list[dict], new: list[dict]) -> str:
             if (was.get("shown") or {}).get(sub) != v:
                 side = _(SUB_NAMES.get(sub, sub))
                 return (_("“{name}” shown") if v else _("“{name}” hidden")).format(name=side)
+        if layer_stretch(was) != layer_stretch(lay):               # Automatic / Arcsinh: named with its choice
+            return _("Stretch of “{name}”: {choice}").format(name=name, choice=_(STRETCH_NAMES[layer_stretch(lay)]))
         for key, word in (("opacity", _("opacity")), ("mode", _("blend mode")), ("blend", _("blend mode"))):
             if was.get(key) != lay.get(key):
                 return _("{what} of “{name}”").format(what=word.capitalize(), name=name)
@@ -3357,6 +3367,8 @@ class PostView(QWidget):
             if sd.group != group:
                 group = sd.group
                 self._group(_(group_title(group, part)))
+                if group != STARS_GROUP and part != "stars":
+                    self._stretch_props(lay)             # the base stretch: first of the tone settings
                 if group == STARS_GROUP and part == "combined":
                     r = QHBoxLayout()
                     r.addWidget(label(_("Star blend mode"), "dim"))
@@ -3376,9 +3388,52 @@ class PostView(QWidget):
         sl = ContSlider(_(sd.name), 0, 4, pos, 2, ends=[_(e) for e in sd.ends] if sd.ends else None,
                         show=offset_text)
         ok, why, _need = self.s.slider_state(p, sd.key, part)   # the model answers in the language of the screen
+        if ok and layer_stretch(lay) == "arcsinh" and sd.key in ARCSINH_OFF:
+            ok, why = False, _(WHY_ARCSINH)              # a setting the Arcsinh stretch does not read
         sl.set_available(ok, why)
         self._wire(sl, lambda v, k=sd.key: self._slider(lay, k, v))
         self.pbox.addWidget(sl)
+
+    def _stretch_props(self, lay):
+        """The base stretch of a workflow layer, on its linear image: Automatic (the screen transfer) or Arcsinh (the
+        colour-preserving arcsinh stretch, Lupton et al. 2004), and the Arcsinh's Strength right under it."""
+        r = QHBoxLayout()
+        r.addWidget(label(_("Stretch"), "dim"))
+        c = QComboBox()
+        for k in LAYER_STRETCHES:
+            c.addItem(_(STRETCH_NAMES[k]), k)
+        c.setToolTip(_("How the linear image is brought to the screen. Automatic: fine for most images. Arcsinh: for "
+                       "an object far brighter than the sky (a planetary nebula, a galaxy core), which Automatic "
+                       "flattens near white; its structure and its colours are kept"))
+        c.setCurrentIndex(LAYER_STRETCHES.index(layer_stretch(lay)))
+        # (the panel is built again by the choice: once the list has closed)
+        c.activated.connect(lambda i, c=c: QTimer.singleShot(0, lambda k=c.itemData(i): self.set_stretch(lay, k)))
+        r.addWidget(c, 1)
+        self.pbox.addLayout(r)
+        self.stretch_box = c
+        self.stretch_strength = None
+        if layer_stretch(lay) != "arcsinh":
+            return
+        sl = ContSlider(_("Strength"), 0, 4, lay["sliders"].get(STRETCH_KEY, 2.0), 2,
+                        ends=[_("gentler"), _("stronger")], show=offset_text)
+        tip = _("The stretch factor of the Arcsinh. In the middle the sky is where Automatic puts it. To the left the "
+                "sky darkens and the bright areas spread apart; to the right the faint areas rise") + NL +             _("Double-click: default value")
+        sl.setToolTip(tip)
+        sl.name.setToolTip(tip)
+        self._wire(sl, lambda v: self._slider(lay, STRETCH_KEY, v))
+        self.pbox.addWidget(sl)
+        self.stretch_strength = sl
+
+    def set_stretch(self, lay, kind: str):
+        """The base stretch of a workflow layer chosen: one undo step, the panel built again (the Strength shows only
+        for Arcsinh)."""
+        if not any(x is lay for x in self.layers) or layer_stretch(lay) == kind:
+            return
+        self.push()
+        set_layer_stretch(lay, kind)
+        self._refresh_rows()
+        self.request(final_only=True)
+        self.build_props()
 
     def _part_props(self, lay, sub):
         """The sliders of one of a Stars and background layer's two images: those of the layer, the same settings
@@ -3387,6 +3442,8 @@ class PostView(QWidget):
         if p is None:
             return
         part = lay.get("part")
+        if sub == "starless":
+            self._stretch_props(lay)                     # the base stretch is the starless image's
         for sd in self.s.slider_infos(p, part):
             if sd.available and (sd.group == STARS_GROUP) == (sub == "stars"):
                 self._add_slider(lay, p, sd, part)

@@ -154,10 +154,27 @@ def value_at(name: str, table: tuple[float, ...], base: float, pos: float) -> fl
     return at(i0) + t * (at(i0 + 1) - at(i0)) if t else at(i0)
 
 
+#: the Strength of a layer's Arcsinh stretch: its position among the layer's sliders (0-4, 2 = the starting strength,
+#: render/simple.arcsinh_strength), each step a factor of ten on the stretch factor (the scale of the slider only)
+STRETCH_KEY = "stretch"
+STRETCH_STEP = 10.0
+#: the settings an Arcsinh stretch does not read (it keeps the colours by itself): their sliders are greyed
+WHY_ARCSINH = "Arcsinh keeps the colours by itself"
+ARCSINH_OFF = frozenset({"colours"})
+
+
+def stretch_strength(pos: float | None) -> float:
+    """The Strength setting (render/simple.SimpleSettings.stretch_strength) at a slider position: 1 at 2."""
+    pos = SUGGESTED if pos is None else min(max(float(pos), LO), HI)
+    return STRETCH_STEP ** (pos - SUGGESTED)
+
+
 def settings_at(kind: str, base: Any = None, positions: dict[str, float] | None = None,
-                has_denoise: bool = True, origin: str = "") -> SimpleSettings:
+                has_denoise: bool = True, origin: str = "", stretch: str | None = None) -> SimpleSettings:
     """The settings of a workflow layer: its base (``base_settings``) moved by the slider positions. Positions of
-    unknown or greyed sliders are ignored."""
+    unknown or greyed sliders are ignored. ``stretch``: the layer's base stretch when it is not the automatic one
+    ("arcsinh"; its Strength is the position ``STRETCH_KEY``): for the image the stars are not (the stars alone keep
+    their own stretch)."""
     b = base_settings(kind, base)
     model = type(b)
     ok = availability(kind, has_denoise, origin)
@@ -170,6 +187,9 @@ def settings_at(kind: str, base: Any = None, positions: dict[str, float] | None 
             lo, hi = _bounds(model, name)
             v = value_at(name, table, float(getattr(b, name)), pos)
             vals[name] = min(max(v, lo), hi)
+    if stretch and stretch != "auto" and kind != "stars":
+        vals["stretch"] = stretch
+        vals["stretch_strength"] = stretch_strength((positions or {}).get(STRETCH_KEY))
     return model(**vals)
 
 

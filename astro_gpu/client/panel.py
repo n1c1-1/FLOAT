@@ -1703,6 +1703,8 @@ class Panel(QWidget):
             return "method", c["key"]
         if c["kind"] == "layer":                         # one slider, or the blend mode, of a Combine layers
             v = c["values"]
+            if "stretch" in v:                           # its base stretch (Automatic, Arcsinh)
+                return "layer", c["lid"], "stretch"
             return ("layer", c["lid"], "slider", v["slider"][0]) if "slider" in v else ("layer", c["lid"], "blend")
         if c["kind"] == "params":
             return ("params",) + tuple((st, nm) for st, nm, _v in c["items"])
@@ -2050,6 +2052,7 @@ class Panel(QWidget):
         for c in self._draft_entries():
             if c["kind"] == "layer" and c["lid"] == node.lid:
                 drafted.update({"blend": c["values"]["blend"]} if "blend" in c["values"] else
+                               {"stretch": c["values"]["stretch"]} if "stretch" in c["values"] else
                                {("slider", c["values"]["slider"][0]): c["values"]["slider"][1]})
 
         def commit(key, v, name):
@@ -2066,6 +2069,40 @@ class Panel(QWidget):
                 self._propose(dict(kind="layer", lid=lid(), values={"blend": b}),
                               _("{label}: {old} → {new}").format(label=_("Star blend mode"), old=_(old), new=_(b)),
                               _(b).lower(), same=b == old)
+        from ..render.sliders import ARCSINH_OFF, WHY_ARCSINH
+        from .postengine import LAYER_STRETCHES, STRETCH_KEY, STRETCH_NAMES, layer_stretch
+        stretch_now = drafted.get("stretch") or layer_stretch(lay)
+
+        def stretch_row():
+            """The base stretch of the starless image, as in Post: Automatic or Arcsinh, the Arcsinh's Strength under
+            it (shown only for Arcsinh)."""
+            row = QHBoxLayout()
+            row.addWidget(label(_("Stretch"), "dim"))
+            cb = QComboBox()
+            for k in LAYER_STRETCHES:
+                cb.addItem(_(STRETCH_NAMES[k]), k)
+            cb.setToolTip(_("How the linear image is brought to the screen. Automatic: fine for most images. Arcsinh: "
+                            "for an object far brighter than the sky (a planetary nebula, a galaxy core), which "
+                            "Automatic flattens near white; its structure and its colours are kept"))
+            cb.setCurrentIndex(LAYER_STRETCHES.index(stretch_now))
+            row.addWidget(cb, 1)
+            self.bv.addLayout(row)
+            sl = ContSlider(_("Strength"), 0, 4, drafted.get(("slider", STRETCH_KEY), sliders.get(STRETCH_KEY, 2.0)),
+                            2, ends=[_("gentler"), _("stronger")], show=offset_text)
+            sl.setVisible(stretch_now == "arcsinh")
+            sl.done.connect(lambda v: commit(STRETCH_KEY, v, _("Stretch strength")))
+            self.bv.addWidget(sl)
+
+            def chosen(i):
+                kind, old = cb.itemData(i), stretch_now
+                sl.setVisible(kind == "arcsinh")
+                with s.batch():
+                    self._propose(dict(kind="layer", lid=lid(), values={"stretch": kind}),
+                                  _("{label}: {old} → {new}").format(label=_("Stretch"), old=_(STRETCH_NAMES[old]),
+                                                                     new=_(STRETCH_NAMES[kind])),
+                                  _(STRETCH_NAMES[kind]).lower(), same=kind == old)
+            cb.activated.connect(chosen)
+            self.stretch_box, self.stretch_strength = cb, sl
         group = None
         infos = [x for x in s.slider_infos(p, "combined") if x.available]     # the stars first: what the block is for
         for sd in sorted(infos, key=lambda x: x.group != STARS_GROUP):
@@ -2084,9 +2121,13 @@ class Panel(QWidget):
                     cb.activated.connect(lambda i, cb=cb: blend(cb.itemData(i)))
                     row.addWidget(cb, 1)
                     self.bv.addLayout(row)
+                else:
+                    stretch_row()                         # first of the starless image's tone settings
             sl = ContSlider(_(sd.name), 0, 4, drafted.get(("slider", sd.key), sliders.get(sd.key, 2.0)), 2,
                             ends=[_(e) for e in sd.ends], show=offset_text)
             ok, why, _need = s.slider_state(p, sd.key, "combined")
+            if ok and stretch_now == "arcsinh" and sd.key in ARCSINH_OFF:
+                ok, why = False, _(WHY_ARCSINH)           # a setting the Arcsinh stretch does not read
             sl.set_available(ok, why)
             name = _(sd.name)
             sl.done.connect(lambda v, k=sd.key, nm=name: commit(k, v, nm))

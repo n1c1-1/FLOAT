@@ -14,6 +14,11 @@ the denoised stack when there is one), the same from the raw stack (lin_raw.npy,
   extensions, rise most, the sky stays where Sky puts it, the bright ones rise least;
 * an S-curve for the contrast, then the saturation around the luminance.
 
+In place of the midtones transfer function, a layer may take the colour-preserving arcsinh stretch (``stretch``
+"arcsinh": Lupton et al. 2004, ``SimpleRenderEngine._arcsinh``), on the same linear data and with the same black
+point: a logarithm for the bright tones, where the transfer function flattens an object hundreds of times brighter
+than the sky near white. The faint tones, the contrast and the saturation follow it as they follow the automatic one.
+
 Every statistic comes from prep_simple.json, measured once on the whole image at full resolution: a reduced preview,
 the full image and a region of it share one curve, so a region is the crop of the full rendering.
 """
@@ -28,12 +33,17 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from pydantic import field_validator
+
 from ..core import devices
-from ..core.params import ADVANCED, P, StageParams
+from ..core.params import ADVANCED, P, StageParams, check_choice
 from . import ops
+from .asinh import asinh_factor, asinh_level, strength_for
 
 #: margin rendered around a region, in units of the smoothing radius (plus a few pixels)
 REGION_PAD_SIGMAS = 4
+#: the base stretches of a layer: the automatic screen transfer, the colour-preserving arcsinh
+STRETCHES = ("auto", "arcsinh")
 
 
 @dataclass
@@ -78,6 +88,21 @@ class SimpleSettings(StageParams):
     halpha: float = P(0.0, label="H-alpha", ge=-1.0, le=3.0, step=0.05,
                       help="The H-alpha emission, measured as the red above the continuum of the stars, added to the "
                            "red before the stretch (above 0) or taken out of it (below 0). 0 = the image as it is.")
+    stretch: str = P("auto", label="Stretch", choices=list(STRETCHES),
+                     help="The curve that brings the linear image to the screen. 'auto': the automatic screen "
+                          "transfer (black just under the sky, the sky at Sky, white at the brightest pixels): fine "
+                          "for most images, but an object hundreds of times brighter than the sky ends flat near "
+                          "white. 'arcsinh': the colour-preserving arcsinh stretch (Lupton et al. 2004), a logarithm "
+                          "for the bright tones: a bright core keeps its structure and its colours.")
+    stretch_strength: float = P(1.0, label="Strength", ge=1e-3, le=1e3, step=0.01,
+                                help="Arcsinh: its stretch factor, as a multiple of the one that puts the sky at Sky "
+                                     "(1). Below 1 the sky darkens and the bright areas spread apart; above, the faint "
+                                     "areas rise and the bright ones flatten.")
+
+    @field_validator("stretch")
+    @classmethod
+    def _stretch_known(cls, v: str) -> str:
+        return check_choice("stretch", v, STRETCHES)
 
 
 #: the smoothing of the H-alpha emission map (px at full resolution): its noise, not its structures
@@ -149,6 +174,73 @@ def mtf(x, m: float):
 def mtf_midtone(xm: float, target: float) -> float:
     """The midtone parameter that brings xm to target."""
     return xm * (1 - target) / (xm - 2 * target * xm + target)
+
+
+def _anchors(st: dict) -> tuple[float, float, float]:
+    """The anchors of a stretch from the statistics of the luminance or of a channel: the black point (median - 2.8
+    MAD), the white point (the 99.995th percentile) and where the median sky sits between them (0..1)."""
+    c0 = st["median"] - 2.8 * st["mad"]
+    hi = max(st["p99995"], c0 + 1e-6)
+    return c0, hi, min(max((st["median"] - c0) / (hi - c0), 1e-6), 1 - 1e-6)
+
+
+def arcsinh_strength(st: dict, s) -> float:
+    """The stretch factor beta of a layer's Arcsinh stretch: the one that brings the median sky to the Sky setting,
+    as a share of the range from black to the white luminance (where the automatic stretch puts it: the two stretches
+    start from the same sky), times the Strength setting. The rule is the statistics' alone: nothing is fitted on an
+    image."""
+    return strength_for(_anchors(st["lum"])[2], float(s.sky)) * float(getattr(s, "stretch_strength", 1.0))
+
+
+def arcsinh_curve(x: torch.Tensor, st: dict, s, linked: bool) -> tuple[torch.Tensor, float]:
+    """The colour-preserving arcsinh stretch of a linear image (3, h, w) (Lupton et al. 2004, PASP 116, 133; the
+    reference program's asinh transformation, render/asinh.py), before its scale, and the level its sky lands at. With
+    the anchors of the automatic stretch: the black point at median - 2.8 MAD (linked: the luminance's; else each
+    channel's own) and the data divided so that the luminance's 99.995th percentile is 1; then pixel * asinh(L beta) /
+    (L asinh(beta)), L the luminance: the same factor on the three channels. beta is ``arcsinh_strength``."""
+    c0, hi, xm = _anchors(st["lum"])
+    if linked:
+        xl = (x - c0).clamp(min=0)
+    else:
+        xl = torch.stack([(x[c] - _anchors(st["channels"][c])[0]).clamp(min=0) for c in range(3)])
+    beta = arcsinh_strength(st, s)
+    w = hi - c0
+    return xl * (asinh_factor(ops.luminance(xl) / w, beta) / w)[None], asinh_level(xm, beta)
+
+
+#: the Arcsinh stretch's scale is measured on every ROOM_STEP-th pixel of the image, along both axes
+ROOM_STEP = 4
+
+
+def arcsinh_room(x: torch.Tensor, st: dict, s, linked: bool, valid: torch.Tensor | None = None) -> float:
+    """By how much the Arcsinh stretch's picture is scaled down, as a whole, so that its brightest channel fits. The
+    colours being kept, a channel stands above the luminance by its ratio to it in the stretched image too: with the
+    luminance's white point at 1 a blue or red core passes 1 and is clipped. The white point of this stretch is
+    therefore taken on the stretched image's largest channel, after the Saturation setting (a channel c becomes
+    L + saturation (c - L)): its 99.995th percentile, the percentile of the automatic stretch's white point, is brought
+    to 1 (never under 1: a grey image keeps the luminance's white point). ``x``: the linear image (3, h, w), or a
+    sampling of it; ``valid``: its covered pixels."""
+    y, _sky = arcsinh_curve(x, st, s, linked)
+    L = ops.luminance(y)
+    v = L + max(float(s.saturation), 0.0) * (y.amax(0) - L)
+    v = v[valid] if valid is not None and bool(valid.any()) else v.flatten()
+    if v.numel() == 0:
+        return 1.0
+    k = min(max(int(math.ceil(0.99995 * v.numel())), 1), v.numel())
+    return max(float(v.kthvalue(k).values), 1.0)
+
+
+def arcsinh_headroom(st: dict, saturation: float, linked: bool = True) -> float:
+    """``arcsinh_room`` estimated from the statistics alone (no image at hand): the ratio of the largest channel's
+    white (99.995th percentile above the black point) to the luminance's, carried through the Saturation setting;
+    never under 1."""
+    c0, hi, _xm = _anchors(st["lum"])
+    tops = []
+    for ch in st.get("channels") or []:
+        b0 = c0 if linked else _anchors(ch)[0]
+        tops.append(ch["p99995"] - b0)
+    ratio = max(max(tops, default=0.0) / (hi - c0), 1.0)
+    return max(1.0 + max(float(saturation), 0.0) * (ratio - 1.0), 1.0)
 
 
 def _smoothstep(x: torch.Tensor, a: float, b: float) -> torch.Tensor:
@@ -300,17 +392,40 @@ class SimpleRenderEngine:
             info["region"] = [x0, x1, y0, y1]
         return Layers(y, 1.0 / f, info)
 
+    def _room(self, name: str, st: dict, s: SimpleSettings, linked: bool) -> float | None:
+        """For the Arcsinh stretch of the host image ``name``: by how much its picture is scaled down so that its
+        brightest channel fits (``arcsinh_room``), measured once per setting on every ``ROOM_STEP``-th pixel of the
+        whole image at full resolution: a reduced view, the full image and a region share it, as they share the
+        statistics. None for the automatic stretch."""
+        if getattr(s, "stretch", "auto") != "arcsinh" or st.get("stretched"):
+            return None
+        lum = st["lum"]
+        key = (name, linked, float(s.sky), float(s.stretch_strength), float(s.saturation), lum["median"], lum["mad"],
+               lum["p99995"])
+        kept = self.__dict__.setdefault("_rooms", {})
+        if key not in kept:
+            if len(kept) > 64:
+                kept.clear()
+            x = self._host[name][:, ::ROOM_STEP, ::ROOM_STEP].float()
+            kept[key] = arcsinh_room(x, st, s, linked, self.valid_host[::ROOM_STEP, ::ROOM_STEP])
+        return kept[key]
+
     @staticmethod
-    def tone(x: torch.Tensor, st: dict, s: SimpleSettings, linked: bool) -> torch.Tensor:
-        """The automatic stretch of a linear image (linked: on the luminance's statistics; else each channel on its
-        own), then the contrast and the saturation."""
+    def tone(x: torch.Tensor, st: dict, s: SimpleSettings, linked: bool, room: float | None = None) -> torch.Tensor:
+        """The base stretch of a linear image, the automatic one (linked: on the luminance's statistics; else each
+        channel on its own) or the Arcsinh (``room``: its scale, ``_room``; None: estimated from the statistics), then
+        the faint tones, the contrast and the saturation."""
+        sky = s.sky                                # where the sky sits once stretched (Faint tones turns around it)
+        arcsinh = getattr(s, "stretch", "auto") == "arcsinh" and not st.get("stretched")
         if st.get("stretched"):                    # an image already stretched (issue #43): as it is
             y = x.clamp(0, 1)
+        elif arcsinh:
+            y, sky = SimpleRenderEngine._arcsinh(x, st, s, linked, room)
         elif linked:
             y = SimpleRenderEngine._stretch(x, st["lum"], s.sky)
         else:
             y = torch.stack([SimpleRenderEngine._stretch(x[c], st["channels"][c], s.sky) for c in range(3)])
-        k = 0.0 if st.get("stretched") else float(getattr(s, "keep_colours", 0.0))
+        k = 0.0 if st.get("stretched") or arcsinh else float(getattr(s, "keep_colours", 0.0))
         if k > 0:
             # the luminance stretched and the channels scaled by its gain (Lupton et al. 2004, PASP 116, 133): the
             # ratios of the linear image kept; the black point first, as the stretch has it
@@ -323,7 +438,7 @@ class SimpleRenderEngine:
             m = yk.amax(0, keepdim=True).clamp(min=1.0)              # a channel over 1: the colour kept, scaled down
             y = (1 - k) * y + k * (yk / m)
         if getattr(s, "faint", 0.0) and not st.get("stretched"):    # an image already stretched keeps its tones
-            y = faint_tones(y, s.sky, float(s.faint))
+            y = faint_tones(y, sky, float(s.faint))
         if s.contrast != 0:
             y = (y + s.contrast * (3 * y * y - 2 * y ** 3 - y)).clamp(0, 1)
         Ly = ops.luminance(y)[None]
@@ -348,15 +463,27 @@ class SimpleRenderEngine:
                  "stretched": bool(st.get("stretched"))}
         if s.halpha:
             x = emission(x, self.continuum(), float(s.halpha), f)
-        y = self.tone(x, mixed, s, linked)
-        return self._finish(y, f, reg, box, region, {"stretch": "auto", "linked": linked, "noise_mix": mix})
+        y = self.tone(x, mixed, s, linked, self._room("lin", mixed, s, linked))
+        return self._finish(y, f, reg, box, region, {"stretch": getattr(s, "stretch", "auto"), "linked": linked,
+                                                     "noise_mix": mix})
+
+    @staticmethod
+    def _arcsinh(x: torch.Tensor, st: dict, s: SimpleSettings, linked: bool,
+                 room: float | None = None) -> tuple[torch.Tensor, float]:
+        """The colour-preserving arcsinh stretch of a linear image (``arcsinh_curve``), scaled as a whole so that its
+        brightest channel fits (``room``: measured on the whole image, ``arcsinh_room``; None: estimated from the
+        statistics, ``arcsinh_headroom``), and the level its sky lands at. A pixel still over 1 is divided by its
+        largest channel, its colour kept (Lupton et al. 2004)."""
+        if room is None:
+            room = arcsinh_headroom(st, float(s.saturation), linked)
+        y, sky = arcsinh_curve(x, st, s, linked)
+        y = y / room
+        return (y / y.amax(0, keepdim=True).clamp(min=1.0)).clamp(0, 1), sky / room
 
     @staticmethod
     def _stretch(x: torch.Tensor, st: dict, target: float) -> torch.Tensor:
         """Linked or one channel: black at median - 2.8 MAD, white at the 99.995th percentile, the median at target."""
-        c0 = st["median"] - 2.8 * st["mad"]
-        hi = max(st["p99995"], c0 + 1e-6)
-        xm = min(max((st["median"] - c0) / (hi - c0), 1e-6), 1 - 1e-6)
+        c0, hi, xm = _anchors(st)
         m = mtf_midtone(xm, target)
         return mtf(((x - c0) / (hi - c0)).clamp(0, 1), m).clamp(0, 1)
 

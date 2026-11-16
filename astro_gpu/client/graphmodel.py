@@ -1819,6 +1819,8 @@ class GraphEditing:
                     else:
                         sliders[key] = v
                     self.set_post_layer(ch["lid"], None, sliders=sliders)
+                elif "stretch" in vals:                   # its base stretch (Automatic leaves no trace in the layer)
+                    self.set_post_layer(ch["lid"], None, stretch=vals["stretch"])
                 else:
                     self.set_post_layer(ch["lid"], None, blend=vals["blend"])
             return notes

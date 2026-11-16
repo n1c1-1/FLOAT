@@ -112,7 +112,8 @@ class StarsRenderEngine(SimpleRenderEngine):
                 x = self._layer("starless", f, box)
                 if s.halpha:
                     x = emission(x, self.continuum(), float(s.halpha), f)
-                a = self.tone(x, self.prep["stats_full"], s, linked)
+                st = self.prep["stats_full"]
+                a = self.tone(x, st, s, linked, self._room("starless", st, s, linked))
             if part in ("stars", "combined"):
                 b = self._star_layer(s, f, box, part)
             y = a if b is None else b if a is None else blend(a, b, s.blend)

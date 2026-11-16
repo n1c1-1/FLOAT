@@ -322,7 +322,6 @@ class InspectService(QObject):
         """The final image of a workflow at its default render settings (the suggestion, every slider in the middle):
         what Post shows for that layer, rendered by the render worker at the half resolution. One at a time (the worker
         has one lane for Inspect); the newest request of a slot replaces the one waiting."""
-        from ..postengine import new_workflow_layer
         token = self._token(f"inspect.image:{slot}")
         self.requests += 1
         self._rq.pop(slot, None)                       # the one still waiting in this slot is not wanted any more
@@ -332,10 +331,33 @@ class InspectService(QObject):
         if not key:
             QTimer.singleShot(0, lambda: self.imageFailed.emit(slot, token, "the result is not computed"))
             return token
-        self._rq[slot] = (token, wid, spec, which, (spec.stage, key, spec.name, which),
-                          new_workflow_layer(wid, v.name, True))
+        self._rq[slot] = (token, wid, spec, which, (spec.stage, self.render_key(wid, key), spec.name, which),
+                          self.final_layer(wid, v.name))
         self._pump()
         return token
+
+    def _stretch_of(self, wid: int) -> dict:
+        """The base stretch Post's layer of this workflow's Output holds (postengine.output_stretch); {}: Automatic."""
+        from ..postengine import output_stretch
+        layers = getattr(self.model, "post_layers", None)
+        return output_stretch(layers() if layers is not None else [], wid)
+
+    def final_layer(self, wid: int, name: str) -> dict:
+        """The layer the final image of a workflow is rendered from: Post's layer of its Output at its default
+        settings, with the base stretch chosen for it in Post (Automatic unless Arcsinh was chosen, then its Strength
+        too): the Output block shows the picture Post's layer starts from."""
+        from ..postengine import new_workflow_layer
+        lay = new_workflow_layer(wid, name, True)
+        st = self._stretch_of(wid)
+        if st:
+            lay["stretch"], lay["sliders"] = st["stretch"], dict(st["sliders"])
+        return lay
+
+    def render_key(self, wid: int, key):
+        """The key the final image of a workflow is kept by: its result's key, and its base stretch when it is not the
+        automatic one (the key of a picture rendered with Automatic is its result's alone, as before the choice)."""
+        from ..postengine import stretch_tag
+        return key if not key else key + stretch_tag(self._stretch_of(wid))
 
     def _pump(self):
         if self._rin is not None or not self._rq:
