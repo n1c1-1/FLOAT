@@ -401,11 +401,10 @@ def _layer_without_sides(d):
                  "active": 1}
 
 
-@pytest.mark.parametrize("old", [_former_fusion, _aligned_image, _layer_without_sides])
+@pytest.mark.parametrize("old", [_former_fusion, _aligned_image])
 def test_a_project_of_an_earlier_format_does_not_open_changed(tmp_path, nights, old):  # noqa: F811 (the fixture)
-    """No conversion inside the program (issue #165): a former Combine channels, an image aligned by its source, a
-    Combine layers layer without its stars side fail with a message that says to convert the project first; the file is
-    left as it was."""
+    """No conversion inside the program (issue #165): a former Combine channels, an image aligned by its source
+    fail with a message that says to convert the project first; the file is left as it was."""
     p, _ = _channels(tmp_path, nights)
     project2.save(p)
     d = json.loads((p.root / "project.astroproj").read_text(encoding="utf-8"))
@@ -418,6 +417,22 @@ def test_a_project_of_an_earlier_format_does_not_open_changed(tmp_path, nights, 
     assert f.read_bytes() == before
     from astro_gpu import texts
     assert texts.has_translation(project2.EarlierVersionProject.MESSAGE, "fr")      # the catalogue the window reads
+
+
+def test_a_combine_layers_layer_saved_before_its_stars_side_was_named_opens(tmp_path, nights):  # noqa: F811
+    """A project of 9-11 November: its Combine layers layers do not name their stars side. It opens, each such layer
+    reading its own workflow's stars (what the render took for a layer without the field); the file is not touched."""
+    p, _ = _channels(tmp_path, nights)
+    project2.save(p)
+    f = p.root / "project.astroproj"
+    d = json.loads(f.read_text(encoding="utf-8"))
+    _layer_without_sides(d)
+    f.write_text(json.dumps(d), encoding="utf-8")
+    before = f.read_bytes()
+    q = project2.load(p.root)
+    lay = q.post["versions"][0]["layers"][0]
+    assert lay["part"] == "combined" and lay["stars_pid"] == lay["pid"] == 1
+    assert f.read_bytes() == before
 
 
 def test_a_saved_project_opens_again_as_it_was(tmp_path, nights):  # noqa: F811 (the fixture)

@@ -158,12 +158,22 @@ def upgraded_post(post: dict[str, Any] | None) -> dict[str, Any]:
     the layers leave the old place, so that any code still reading it finds nothing there."""
     post = copy.deepcopy(post or {})
     if "versions" in post:
-        return post
+        return _with_stars_sides(post)
     first: dict[str, Any] = {"id": 1, "name": "Version 1", "layers": post.pop("layers", None) or []}
     crop = post.pop("crop", None)
     if crop:
         first["crop"] = crop
-    return {**post, "versions": [first], "active": 1}
+    return _with_stars_sides({**post, "versions": [first], "active": 1})
+
+
+def _with_stars_sides(post: dict[str, Any]) -> dict[str, Any]:
+    """A Combine layers layer saved before its stars side was named reads its own workflow's stars: what the
+    render already took for a layer without the field. Said here once, so that such a project opens as it was."""
+    for v in post.get("versions") or []:
+        for lay in v.get("layers") or []:
+            if lay.get("kind") == "workflow" and lay.get("part") == "combined" and "stars_pid" not in lay:
+                lay["stars_pid"] = lay.get("pid")
+    return post
 
 
 def active_version(post: dict[str, Any]) -> dict[str, Any]:
