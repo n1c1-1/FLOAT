@@ -145,6 +145,38 @@ def test_a_block_the_workflow_does_not_have_is_not_in_its_report(qapp, monkeypat
     assert "Value of fond" not in text(page(monkeypatch))
 
 
+def _with_stars(monkeypatch, metrics):
+    d = data()
+    d.metrics = metrics
+    p = page(monkeypatch, d=d)
+    p.s.block_keys = lambda q: ["alignement", "etoiles"]
+    monkeypatch.setattr(p.steps, "facts", lambda q, key: [] if key == "etoiles" else [("Value of " + key, "1")],
+                        raising=False)
+    return p
+
+
+def test_the_stars_section_says_what_the_block_did(qapp, monkeypatch):
+    """The Stars/background section was a title and nothing under it: it gives the method, the two images the block
+    makes and the measure its result records."""
+    t = text(_with_stars(monkeypatch, {"star_removal": {"grid_peaks": 2}}))
+    section = t.split("2. Stars/background")[1].split("3. Recipe")[0]
+    assert "Neural network" in section and "Starless image · Stars alone" in section
+    assert "Network grid" in section and "taken off the starless image" in section
+    i18n.set_language("fr")
+    try:
+        t = text(_with_stars(monkeypatch, {"star_removal": {"grid_peaks": 2}}))
+        assert "Images produites" in t and "Image sans étoiles · Étoiles seules" in t and "Grille du réseau" in t
+    finally:
+        i18n.set_language("en")
+
+
+def test_a_block_with_nothing_to_say_has_no_empty_numbered_section(qapp, monkeypatch):
+    p = _with_stars(monkeypatch, {})
+    t = text(p)
+    assert "Stars/background" not in t.replace("Registration → Stars/background", "") and "2. Recipe" in t
+    assert "Stars/background" not in [p.part.itemText(i).partition(". ")[2] for i in range(p.part.count())]
+
+
 def test_nothing_computed_says_so(qapp, monkeypatch):
     p = page(monkeypatch, d=rep.ReportData())
     assert "Nothing computed yet" in text(p) and not p.card_ready()

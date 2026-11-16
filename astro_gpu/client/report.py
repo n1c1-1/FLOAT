@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 
 from . import APP_NAME
 from .graphnode import STATE_WORD, block_state
+from .steps import metric_row
 from .charts import LINES, RegistrationData, registration_data
 from .. import texts
 from ..core.params import ADVANCED
@@ -467,8 +468,8 @@ def shot_rows(d: ReportData, info: dict, entered: dict, lang: str) -> list:
     return rows
 
 
-#: the stages whose figures the head of the report quotes
-HEAD_STAGES = ("inventory", "register", "stack", "catalogs", "gradient", "denoise", "color")
+#: the stages whose figures the head of the report quotes, and the Stars block's (its section is written from them)
+HEAD_STAGES = ("inventory", "register", "stack", "catalogs", "gradient", "denoise", "color", "star_removal")
 
 
 def sky_position(ra: float, dec: float) -> str:
@@ -919,9 +920,10 @@ class ReportPage(QWidget):
         out = [(_("Session card"), head)] + self._observation(d)
         n, keys = 0, self.s.block_keys(p)                 # the observation is the head's Table 1: blocks from 1
         for key, title in BLOCKS:
-            if key in keys:
+            body = self._block(n + 1, p, key, title, d) if key in keys else ""
+            if body:                                     # a block with nothing to say has no empty numbered section
                 n += 1
-                out.append((f"{n}. {_(title)}", self._block(n, p, key, title, d)))
+                out.append((f"{n}. {_(title)}", body))
         out.append((f"{n + 1}. {_('Recipe')}", self._recipe(n + 1, keys, d)))
         return out + self._appendix(n + 2, d)
 
@@ -1006,13 +1008,30 @@ class ReportPage(QWidget):
         if state != "done":
             out.append(f"<p class='state'>{_(STATE_WORD.get(state, state))}</p>")
         hidden = [html.escape(_(h)) for h in HIDDEN]
-        out.append(_explained([r for r in self.steps.facts(p, key) if r[0] not in hidden]))
+        rows = [r for r in self.steps.facts(p, key) if r[0] not in hidden]
+        if key == "etoiles":
+            rows += self._stars_rows(d)
+        if state == "done" and not rows:
+            return ""
+        out.append(_explained(rows))
         if key == "alignement" and d.drift is not None:
             out.append(self._figure(d.drift, _("Offset of each frame from the reference frame, and alignment residual.")))
         if key == "couleur" and d.response is not None:
             out.append(self._figure(d.response, _("Approximate spectral response of the sensor, rebuilt from {n} stars of "
                                                   "the field.").format(n=d.spectral.stars)))
         return "".join(out)
+
+    @staticmethod
+    def _stars_rows(d: ReportData) -> list:
+        """What the Stars block did, from its done result: its method (it has one, the network), the two images it
+        gives and the measure it records. [] when it is not computed."""
+        m = d.metrics.get("star_removal")
+        if m is None:
+            return []
+        esc = lambda t: html.escape(t)                    # noqa: E731
+        rows = [(esc(_("Method")), esc(texts.choice_label("neural", language()))),
+                (esc(_("Images produced")), esc(_("Starless image") + " · " + _("Stars alone")))]
+        return rows + [metric_row("star_removal", k, m[k]) for k in ("grid_peaks",) if k in m]
 
     @staticmethod
     def _value(value) -> str:
