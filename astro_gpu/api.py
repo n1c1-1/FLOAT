@@ -1112,9 +1112,10 @@ def health_checks(p: Project2, dates: dict[int, list[tuple[str, str]]] | None = 
                              f"{bad['names']}: the camera's clock was probably never set. The star positions are "
                              "computed for the camera's date", {**bad, "session": s.name}))
     try:                                             # lights pointing far from the target: once per kind of case
-        grouped: dict[tuple, dict] = {}
-        for x in target_far(p, {s.id: light_facts([f for f, _size in keys.scan.session_frames(keys.project, s)["lights"]],
-                                                  limit=8) for s in keys.project.sessions}):
+        grouped: dict[tuple, dict] = {}              # (the sample the exposure times below and the sessions' page
+        #                                              read, kept by io.frames: a sample of 8 apart was read again)
+        for x in target_far(p, {s.id: light_facts([f for f, _size in keys.scan.session_frames(keys.project, s)["lights"]])
+                                for s in keys.project.sessions}):
             g = grouped.setdefault((round(x["sep"]), x["object"]), {**x, "sep": float(round(x["sep"])), "sessions": []})
             g["sessions"].append(x["session"])
         for (sep, obj), g in grouped.items():
