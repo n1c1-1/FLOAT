@@ -3550,7 +3550,9 @@ def test_every_tool_has_a_named_control(post):
     """#120 to #124: the versions, the crop's confirmation, Spot healing and the filters were found only through a
     "+", a key or the filters' menu; each has a named control now."""
     v = post.view
-    assert v.b_filter.text() == "Filter" and v.b_version_new.text() == "New version" and v.b_heal.text() == "Spot healing"
+    assert v.b_filter.text() == "Filter" and v.b_heal.text() == "Spot healing"
+    # New version: by its name while the bar has room for every tool, else by its icon, its name on hover
+    assert v.b_version_new.text() == "New version" or (v.b_more.isVisible() and v.b_version_new.toolTip().startswith("New version"))
     # the crop: Apply and Cancel while it is drawn; Cancel gives back the crop it had
     v.b_crop.setChecked(True)
     assert v.b_crop_ok.isVisibleTo(v) and v.b_crop_cancel.isVisibleTo(v)
