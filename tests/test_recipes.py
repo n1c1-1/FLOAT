@@ -145,7 +145,7 @@ def test_the_four_types_give_their_images_with_or_without_the_recipe_copied_in(t
     if full is not None:
         # the metadata as it was, with the balance's linear maps added since (stages/combine.Combination.steps)
         before = json.loads((out / "drz_meta.json").read_text(encoding="utf-8"))
-        assert set(before.pop("balance")) == {"how", "maps", "gains"}
+        assert set(before.pop("balance")) == {"how", "maps", "gains", "noise"}
         (tmp_path / "plain.json").write_text(json.dumps(before, indent=1), encoding="utf-8")    # as the run writes
         assert (got[0], _sha(tmp_path / "plain.json")) == (full, meta)
     if cls.saturation_ports:

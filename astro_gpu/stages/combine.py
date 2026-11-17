@@ -796,6 +796,7 @@ class Combination(Stage):
         tops = {r: 1.0 for r in chans}
         how, notes, maps = self.balance_of(p, inputs), {}, {}
         skies = self.steps(ctx, spec, inputs, chans, valid_all, tops, how, notes, maps)
+        noise = {r: float(n) for r, (_lv, n) in skies.items()}         # each balanced filter's sky noise, unweighted
         rgb = self.mix_balanced(ctx, p, spec, inputs, chans, skies, tops, valid_all)
         H, W = ref["shape"]
         ctx.save("drz_full.npy", rgb.astype(np.float32))
@@ -813,7 +814,8 @@ class Combination(Stage):
                                         # before the weights: Post's combination layer mixes them again from it
                                         "balance": {"how": how,
                                                     "maps": {r: {"coef": c, "offset": o} for r, (c, o) in maps.items()},
-                                                    "gains": {r: [float(g), why] for r, (g, why) in notes.items()}}})
+                                                    "gains": {r: [float(g), why] for r, (g, why) in notes.items()},
+                                                    "noise": noise}})
         # the reference row's plate solution: the combination is on its grid and crops nothing, so it is the same
         # solution; the files of its Astrometry stages are handed on as Align on does, the blocks after read them
         from .align_on import AlignOn
