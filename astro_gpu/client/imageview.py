@@ -470,7 +470,7 @@ class ImageView(QWidget):
                 s.setContext(Qt.WidgetWithChildrenShortcut)
                 s.activated.connect(fn)
         sc(("F", "Ctrl+0"), self.fit)
-        sc(("1", "Ctrl+1"), lambda: self.set_zoom_percent(100))
+        sc(("1",), lambda: self.set_zoom_percent(100))     # Ctrl+1 is the window's Graph page
         sc(("2",), lambda: self.set_zoom_percent(200))
         sc(("+", "=", "Ctrl++"), lambda: self.canvas.zoom_by(ZOOM_STEP))
         sc(("-", "Ctrl+-"), lambda: self.canvas.zoom_by(1 / ZOOM_STEP))

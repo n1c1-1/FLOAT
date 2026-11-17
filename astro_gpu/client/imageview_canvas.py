@@ -427,9 +427,7 @@ class ImageCanvas(QWidget):
                 and self.tool.wants(e)):
             e.accept()
             return True
-        if e.type() == QEvent.ShortcutOverride and e.key() == Qt.Key_1 and e.modifiers() == Qt.ControlModifier:
-            e.accept()                                 # issue #44: here Ctrl+1 is 100 %, not the window's "Graph"
-            return True                                # (a shortcut of both made it do neither)
+        # Ctrl+1 is the window's Graph page (its page keys win); 100 % is the key 1, in the View menu with its key
         f = pinch_factor(e)
         if f is not None and self.display is not None:   # a native pinch (macOS, Wayland)
             self.zoom_by(f, e.position())
@@ -437,9 +435,6 @@ class ImageCanvas(QWidget):
         return super().event(e)
 
     def keyPressEvent(self, e):  # noqa: N802
-        if e.key() == Qt.Key_1 and e.modifiers() == Qt.ControlModifier:
-            self.set_zoom_percent(100.0)
-            return
         if self.tool is not None and e.key() != Qt.Key_Space and self.tool.key(e):
             return
         if e.key() == Qt.Key_Space and self.tool is not None and not e.isAutoRepeat():

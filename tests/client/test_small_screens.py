@@ -21,7 +21,7 @@ if Path("C:/Windows/Fonts").is_dir():
 
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt  # noqa: E402
-from PySide6.QtGui import QEnterEvent, QMouseEvent, QNativeGestureEvent, QPointingDevice, QWheelEvent  # noqa: E402
+from PySide6.QtGui import QEnterEvent, QKeyEvent, QMouseEvent, QNativeGestureEvent, QPointingDevice, QWheelEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QAbstractButton,
@@ -462,6 +462,19 @@ def test_ctrl_1_is_100_percent_in_the_graph_and_the_mode_switch_elsewhere(env):
     QTest.keyClick(w.mode_btns[0], Qt.Key_1, Qt.ControlModifier)
     _settle(w)
     assert w.mode == 0                                                  # on a page without a view: the mode switch
+    # an image view leaves Ctrl+1 to the window (the hand pass: after a click on Post's image it zoomed to 100 %);
+    # 100 % is the key 1, in the View menu with its key
+    from astro_gpu.client.imageview_canvas import ImageCanvas
+    ev = QKeyEvent(QEvent.ShortcutOverride, Qt.Key_1, Qt.ControlModifier)
+    ev.ignore()
+    QApplication.sendEvent(ImageCanvas(), ev)
+    assert not ev.isAccepted()
+    view = next(m for m in w.menuBar().actions() if m.text() == "View").menu()
+    zoom = next(a for a in view.actions() if a.text().startswith("Zoom 100 %"))
+    assert zoom.text().endswith("\t1") and zoom.shortcut().isEmpty()     # shown, not bound: a 1 typed stays a 1
+    gv.zoom_to(0.7)
+    zoom.trigger()
+    assert abs(gv.zoom - 1.0) < 1e-6
 
 
 def test_sections_fold_and_alt_click_opens_only_one(env):
@@ -1198,8 +1211,13 @@ def test_the_post_viewer_has_the_graphs_gestures(qapp):
                                                       QPointF(v.mapToGlobal(QPoint(100, 100))), 0.5, QPointF()))
         qapp.processEvents()
         assert v.scale == pytest.approx(k2 * 1.5, abs=1e-3)              # a pinch (macOS, Wayland)
-        # Ctrl+1 is 100 %; Space + drag pans over a tool; the minimap appears and moves the view
-        QTest.keyClick(v, Qt.Key_1, Qt.ControlModifier)
+        # Ctrl+1 is the window's Graph page, not the viewer's (the hand pass); Space + drag pans over a tool; the
+        # minimap appears and moves the view
+        ev = QKeyEvent(QEvent.ShortcutOverride, Qt.Key_1, Qt.ControlModifier)
+        ev.ignore()                                                      # as the shortcut map sends it
+        QApplication.sendEvent(v, ev)
+        assert not ev.isAccepted()                                       # the window's shortcut gets it
+        v.zoom_to(1.0)
         qapp.processEvents()
         assert v.scale == 1.0 and not v.whole_visible()
         v.mode = "brush"

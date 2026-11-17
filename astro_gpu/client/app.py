@@ -445,6 +445,9 @@ class Main(QMainWindow):
         self.a_frames = act(v, _("Open frames"), self.open_frames, enabled=has, role="inspect")   # the session panel's
         v.aboutToShow.connect(self._frames_action)       # greyed when no session is chosen, with why
         v.addSeparator()
+        # 100 %: the key 1 of the image views and the graph (Ctrl+1 is the Graph page above); shown, not bound here,
+        # so that a 1 typed in a field stays a 1
+        act(v, _("Zoom 100 %") + "\t1", self.zoom_100, enabled=has)
         self.a_hide = act(v, _("Hide panels") + "\tTab", lambda: self.toggle_panels("hidden"), None, True, enabled=has)
         self.a_hide_r = act(v, _("Hide right") + "\t" + QKeySequence("Shift+Tab").toString(QKeySequence.NativeText),
                             lambda: self.toggle_panels("right_hidden"), None, True, enabled=has)   # "Maj+Tab" in French
@@ -634,6 +637,27 @@ class Main(QMainWindow):
             except RuntimeError:                         # a page being closed
                 continue
         return ""
+
+    def zoom_100(self):
+        """View > Zoom 100 %: the view with the keyboard, else the first view of the page shown (the image of Inspect or
+        Post, the graph), at 100 %."""
+        def zoom(x) -> bool:                         # the image views (imageview, viewer) and the graph's canvas
+            if hasattr(x, "set_zoom_percent"):
+                x.set_zoom_percent(100.0)
+                return True
+            if hasattr(x, "zoom_to"):
+                x.zoom_to(1.0)
+                return True
+            return False
+        w = QApplication.focusWidget()
+        while w is not None and w is not self:
+            if zoom(w):
+                return
+            w = w.parentWidget()
+        page = self.centralWidget()
+        for x in page.findChildren(QWidget) if page is not None else ():
+            if x.isVisible() and zoom(x):
+                return
 
     def toggle_panels(self, key: str):
         """Tab (hidden), Shift+Tab (right_hidden), Ctrl+Space (max): a toggle, remembered for this size range."""

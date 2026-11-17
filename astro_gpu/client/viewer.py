@@ -7,7 +7,7 @@ It only asks its source for the pixels of the visible region, at full or half re
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
@@ -408,9 +408,8 @@ class Viewer(QWidget):
         e.accept()
 
     def event(self, e):
-        if e.type() == QEvent.ShortcutOverride and e.key() == Qt.Key_1 and e.modifiers() == Qt.ControlModifier:
-            e.accept()                                     # 100 % here, not the window's "Graph"
-            return True
+        # Ctrl+1 is the window's Graph page, as Ctrl+2 and Ctrl+3 are its pages (the hand pass: after a click on the
+        # image it zoomed to 100 %); 100 % is the key 1, in the View menu with its key
         f = pinch_factor(e)
         if f is not None:                                  # a native pinch (macOS, Wayland)
             self.zoom_by(f, e.position())
@@ -418,9 +417,6 @@ class Viewer(QWidget):
         return super().event(e)
 
     def keyPressEvent(self, e):
-        if e.key() == Qt.Key_1 and e.modifiers() == Qt.ControlModifier:
-            self.zoom_to(1.0)
-            return
         if e.key() == Qt.Key_Space and not e.isAutoRepeat():
             self._space = True
             self.setCursor(Qt.OpenHandCursor)
