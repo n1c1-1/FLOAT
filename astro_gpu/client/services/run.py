@@ -258,10 +258,10 @@ PATTERNS: list[tuple[re.Pattern, str, tuple]] = [
          "continues in a fresh process", (0,)),
         # a block that failed while a result it reads is of an earlier version (core/runner2.UNREADABLE); the program's
         # own error, at its end, is for the Log only
-        (r"^the result of (.+) was computed with an earlier version \((.+) -> (.+)\) and can no longer be read by this "
-         r"version: recompute it \(.*\)$",
-         "the result of {0} was computed with an earlier version ({1} -> {2}) and can no longer be read by this version: "
-         "recompute it", (0,)),
+        (r"^the result of the (.+) block was computed with an earlier version \((.+) -> (.+)\), which this version may "
+         r"no longer read: recompute it with “Recompute \(current version\)” on that block \(.*\)$",
+         "the result of the {0} block was computed with an earlier version ({1} -> {2}), which this version may no "
+         "longer read: recompute it with “Recompute (current version)” on that block", (0,)),
         (r"^the graphics card stopped responding during (.+) and the run cannot go on: (.+)$",
          "the graphics card stopped responding during {0} and the run cannot go on: {1}", (0, 1)),
         (r"^the graphics card stopped responding again during (.+)$",

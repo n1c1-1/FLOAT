@@ -669,11 +669,25 @@ def test_a_crowded_object_that_sep_cannot_deblend_is_extracted_with_a_higher_thr
     assert calls[-1] == (1.6, 1)
 
     def broken(data, thresh, **kw):
-        raise Exception("internal pixel buffer full")
+        raise Exception("illegal aperture parameters")
 
     monkeypatch.setattr(sep, "extract", broken)
-    with pytest.raises(Exception, match="pixel buffer"):
+    with pytest.raises(Exception, match="aperture"):
         sep_extract(np.zeros((4, 4), np.float32), 10.0)
+
+
+def test_an_image_with_more_pixels_over_the_threshold_than_sep_holds_is_extracted():
+    """sep's "internal pixel buffer full" (an owner's HaRGB of a stars image whose bright stars' wings cover more than
+    sep's 300000 pixels over the threshold): its limit is raised, as sep's message advises, and
+    the image is extracted."""
+    import sep
+
+    from astro_gpu.core.imgutil import sep_extract
+    sep.set_extract_pixstack(300_000)                      # sep's own default, whatever another test set
+    y, x = np.mgrid[:900, :900].astype(np.float32)
+    img = 100.0 * np.exp(-((x - 450) ** 2 + (y - 450) ** 2) / (2 * 300.0 ** 2))       # one wide object of ~600000 px
+    img += np.random.default_rng(1).normal(0, 0.01, img.shape).astype(np.float32)
+    assert len(sep_extract(img.astype(np.float32), 8.0, err=0.01, minarea=4)) >= 1
 
 
 def test_the_master_frames_are_read_in_their_place_whichever_is_read_first(monkeypatch):

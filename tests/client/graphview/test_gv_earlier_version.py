@@ -100,10 +100,14 @@ def test_the_words_are_french(qapp):
         from astro_gpu.client.i18n import is_raw_error
         from astro_gpu.client.services.run import engine_text
         from astro_gpu.core.runner2 import UNREADABLE
-        msg = UNREADABLE.format(title="Gradient", old="5", new="6", error="KeyError: 'model'")
+        msg = UNREADABLE.format(title="Stars/background", old="5", new="6", error="KeyError: 'model'")
         assert not is_raw_error(msg) and engine_text(msg) == (
-            "le résultat de Gradient a été calculé avec une version antérieure (5 -> 6) et ne peut plus être lu par "
-            "cette version : recalculez-le")
+            "le résultat du bloc Étoiles/fond a été calculé avec une version antérieure (5 -> 6), que cette version "
+            "ne sait peut-être plus lire : recalculez-le avec « Recalculer (version actuelle) » sur ce bloc")
+        appmod.apply_language("en")
+        assert engine_text(msg) == (
+            "the result of the Stars/background block was computed with an earlier version (5 -> 6), which this "
+            "version may no longer read: recompute it with “Recompute (current version)” on that block")
         p.close()
     finally:
         appmod.apply_language("en")

@@ -239,8 +239,18 @@ def test_an_earlier_result_today_s_code_cannot_read_asks_to_be_recomputed(monkey
     status, _ = run_inproc(p, api.plan_all(p))
     assert status == "failed"
     c = api.states(p)[(2, "c")]
-    assert c.state == "failed" and "can no longer be read by this version: recompute" in c.reason
-    assert "B" in c.reason and "1 -> 2" in c.reason
+    assert c.state == "failed" and "which this version may no longer read" in c.reason
+    assert "the Denoise block" in c.reason and "1 -> 2" in c.reason and "“Recompute (current version)”" in c.reason
+
+
+def test_the_words_of_an_unreadable_result_name_its_block_and_the_command():
+    """The owner's HaRGB on the stars of an earlier Stars/background: the words name the block as the graph shows it
+    (not its stage, "Star removal") and the command that recomputes it."""
+    from astro_gpu.core.runner2 import unreadable_words
+    msg = unreadable_words(key_rules().chains, "star_removal", "3-9b974a78cb", "6-9b974a78cb", "Exception: boom")
+    assert msg.startswith("the result of the Stars/background block was computed with an earlier version "
+                          "(3-9b974a78cb -> 6-9b974a78cb)")
+    assert "“Recompute (current version)” on that block" in msg and msg.endswith("(Exception: boom)")
 
 
 # ---------------------------------------------------------------------------------------------- the golden tool
