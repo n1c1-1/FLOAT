@@ -15,7 +15,9 @@ way out.
 
 Outputs, in the units of the Output block's lin.npy (so that starless + stars is that image, to the pixel):
 
-* starless.npy, the image without its stars; stars.npy, the stars alone (the image minus the starless one);
+* starless.npy, the image without its stars; stars.npy, the stars alone (the image minus the starless one); the
+  faint halo the network leaves around the bright stars is moved from the first to the second (Star halos: Remove,
+  take_off_halos);
 * valid.npy, the covered pixels (the Output block's), and prep_stars.json: the useful frame and the statistics of
   the whole image's stretch (render/stars.py stretches both images with it in Post).
 """
@@ -31,7 +33,9 @@ from torch import nn
 
 from ..core import devices
 from ..core.imgutil import asinh_preview
-from ..core.params import StageParams
+from pydantic import field_validator
+
+from ..core.params import P, StageParams, check_choice
 from ..core.stage import Context, Stage
 
 MODEL = Path(__file__).resolve().parents[1] / "resources" / "stars" / "starless_nafnet.pt"
@@ -77,8 +81,26 @@ WINDOW = NET_TILE
 BATCH, TILE_GB = 16, 0.09
 
 
+#: the star halos' choices (take_off_halos)
+HALOS = ("remove", "keep")
+
+
 class StarRemovalParams(StageParams):
-    """No setting: the network is applied as it was trained (its outputs are adjusted in Post)."""
+    """The network is applied as it was trained (its outputs are adjusted in Post); the halos it leaves are taken off
+    or kept."""
+
+    halos: str = P(HALOS[0], label="Star halos", choices=list(HALOS), key_neutral=HALOS[0],
+                   help="The network takes the core of each star off but leaves the outer part of the wide halo of the "
+                        "bright stars in the starless image: a faint disc around them. Remove: what the network leaves "
+                        "around the image's own isolated bright stars is measured by brightness, and each bright star's "
+                        "share, never more than its own extended profile, is moved to the stars image. Keep: the "
+                        "network's result as it is.",
+                   tip="Remove by default. Keep when a halo is part of what you want to show.")
+
+    @field_validator("halos")
+    @classmethod
+    def _known(cls, v: str) -> str:
+        return check_choice("halos", v, HALOS)
 
 
 class StarRemoval(Stage):
@@ -97,7 +119,8 @@ class StarRemoval(Stage):
     @property
     def version(self) -> str:            # 2: the network's grid notched (core/periodic.py, issue #28); 3: big tiles (#45);
         #                                  4: a starless fusion's stretch (gone with the fusion's star layer, 2026-11-12)
-        return f"4-{model_id()}"         # with the network's file as it is now (model_id)
+        #                                  5: the halos the network leaves taken off (take_off_halos)
+        return f"5-{model_id()}"         # with the network's file as it is now (model_id)
 
     def run(self, ctx: Context, p: StarRemovalParams) -> None:
         from .denoise import norm_params
@@ -134,6 +157,10 @@ class StarRemoval(Stage):
         if taken:
             ctx.log(f"the network's grid: {len(taken)} peaks notched (strongest {max(t[3] for t in taken):.0f} x the "
                     "spectrum around)")
+        ctx.progress(0.86, "star halos")
+        starless, halos = halos_step(lin, starless, valid, p.halos, ctx.log)
+        if halos is not None:
+            ctx.metric("halo_stars", len(halos["stars"]))
         stars = lin - starless
         ctx.progress(0.9, "statistics")
         ctx.save("starless.npy", starless)
@@ -260,6 +287,308 @@ def sky_unit(lin: np.ndarray, shown: np.ndarray) -> float:
     ``lin`` (its colour matrix is applied already), averaged over the three colours; 1 for an image without noise."""
     from .render_simple import sky_spread
     return float(np.mean([sky_spread(lin[c][shown][::7]) for c in range(3)])) or 1.0
+
+
+# ----------------------------------------------------------------------------------------------------- the star halos
+# The network works in noise units of the stack before Denoise: the outer wing of a bright star, a few hundredths of
+# that unit per pixel, is taken for sky and stays in the starless image, a faint disc of 50 to 100 px around each bright
+# star once denoised (m27_v10, 17 November 2026: 98 % of the star gone within 12 px, a disc of 2 to 4 sky sigmas left
+# out to 50 px, fading by 100 px).
+# The established remedy of deep imaging (Slater, Harding & Mihos 2009, PASP 121:1267; Infante-Sainz et al. 2020,
+# MNRAS 491:5317): the extended profile of the stars is built from the image's own bright stars (their radial profiles
+# normalised on their core and combined robustly, out to where they meet the sky) and scaled to each bright star.
+# What the network leaves of it is measured the same way, on the same isolated stars, by classes of core level (it does
+# not grow in proportion to the star: the network's stretch); each bright star gets the part its class leaves, never
+# more than its own scaled profile, moved from the starless image to the stars image (starless + stars is still the
+# image). Measured star by star instead (the model minus what the stars image holds at each radius), the model's own
+# error within the core, a few per cent of a star thousands of sigmas bright, dwarfed the few sigmas left: dark rings
+# and holes on the bench.
+
+#: the widest halo measured, px, and the sky ring beyond it against which the profile stars are measured
+HALO_R, HALO_RING = 200, 32
+#: the extended profile is the clipped mean of at most HALO_STARS stars, and needs at least HALO_FEWEST
+HALO_STARS, HALO_FEWEST = 40, 5
+#: the candidates: their core HALO_DETECT sky sigmas above the stars image's pedestal; a candidate is treated when what
+#: is left around it reaches HALO_LEVEL sky sigma (fainter: nothing measurable)
+HALO_DETECT, HALO_LEVEL = 100.0, 0.5
+#: what the network leaves is measured by classes of HALO_CLASS profile stars of neighbouring core levels
+HALO_CLASS = 8
+
+
+def halos_step(lin: np.ndarray, starless: np.ndarray, valid: np.ndarray, how: str, log=None):
+    """The starless image with the halos the network left taken off ("remove"), or as it is ("keep": the very array).
+    Returns (starless, what take_off_halos says, None with "keep")."""
+    if how != "remove":
+        return starless, None
+    t0 = time.time()
+    out, info = take_off_halos(lin, starless, valid)
+    if log is not None:
+        if info.get("why"):
+            log(f"star halos: none taken off ({info['why']})")
+        else:
+            log(f"star halos: the profile of {info['psf_stars']} stars (FWHM {info['fwhm']:.1f} px, out to "
+                f"{info['r_max']} px), what the network leaves in {info['classes']} classes of "
+                f"{info['profile_stars']} stars, taken off {len(info['stars'])} stars in {time.time() - t0:.1f} s")
+    return out, info
+
+
+def _sky_noise(img: np.ndarray, valid: np.ndarray) -> float:
+    """The sky noise per pixel: the spread of the image minus its median over 60 px, at one pixel in 4 (1.4826 MAD)."""
+    a, v = img[::4, ::4], valid[::4, ::4]
+    from scipy import ndimage as ndi
+    d = (a - ndi.median_filter(a, 15))[v]
+    if d.size < 100:
+        return 0.0
+    return 1.4826 * float(np.median(np.abs(d - np.median(d))))
+
+
+def _ring_medians(v: np.ndarray, r: np.ndarray, nb: int) -> np.ndarray:
+    """The median of the values ``v`` in each ring of 1 px (``r``: the ring of each value), nb rings; nan when empty."""
+    keep = r < nb
+    v, r = v[keep], r[keep]
+    vs = v[np.lexsort((v, r))]
+    cnt = np.bincount(r, minlength=nb)[:nb]
+    start = np.cumsum(cnt) - cnt
+    out = np.full(nb, np.nan)
+    ok = cnt > 0
+    out[ok] = vs[start[ok] + cnt[ok] // 2]
+    return out
+
+
+def _box(y: int, x: int, R: int, H: int, W: int):
+    """The box of radius R around (y, x) clipped to the image, and the distance of each of its pixels to the centre."""
+    y0, y1, x0, x1 = max(0, y - R), min(H, y + R + 1), max(0, x - R), min(W, x + R + 1)
+    yy, xx = np.ogrid[y0 - y:y1 - y, x0 - x:x1 - x]
+    return (slice(y0, y1), slice(x0, x1)), np.sqrt(yy * yy + xx * xx)
+
+
+def take_off_halos(lin: np.ndarray, starless: np.ndarray, valid: np.ndarray) -> tuple[np.ndarray, dict]:
+    """The starless image (3, H, W) with the halos the network left taken off, and what was done
+    ({"psf_stars", "classes", "profile_stars", "fwhm", "r_max", "stars": [(y, x)], "profile", "left", "levels"}, or
+    {"why": ...} when nothing was).
+
+    Rules, all read on the image itself (the sky sigma: the starless image's noise per pixel):
+
+    * the stars image ``lin - starless`` sits on a pedestal (the faint stars of the field the network takes off too):
+      the median over 240 px at one pixel in 16;
+    * the candidates: the maxima of the stars image HALO_DETECT sky sigmas above it; their FWHM, the median of their
+      half-maximum widths; their core, the rings from 2 to 4 FWHM (where the network takes nearly everything off),
+      its level the mean of the stars image there;
+    * the profile stars: the candidates whose box (HALO_R + the sky ring) lies in the covered image, with no brighter
+      star in it, on a flat sky (in the starless image, the rings from HALO_R / 2 out within one sky sigma of the sky
+      ring: a nebula under the star would bend its profiles, a linear gradient does not, the rings' medians cancel
+      it). Ring medians throughout: the fainter stars in a ring do not count;
+    * the extended profile: the input image's rings minus its sky ring, normalised on the core, on the HALO_STARS
+      brightest profile stars, 3-sigma clipped mean ring by ring; beyond the core made non-increasing and cut where it
+      first meets the sky (falls to 0);
+    * what the network leaves: the starless image's rings minus its sky ring, on every profile star, the median of
+      each class of HALO_CLASS stars of neighbouring core levels; inside the core, its value at the core's edge; cut
+      where it meets the sky beyond its peak;
+    * each candidate whose core lies in the covered image, with no brighter star within 8 FWHM (crowded) and whose core
+      follows the extended profile (their ratio varies by less than 2 over the core: a saturation wider than the
+      core does not): what its class leaves (between classes on the log of the core level; never extrapolated above
+      the brightest class, in proportion below the faintest), never more than its own extended profile (scaled on its
+      core), when that reaches HALO_LEVEL sky sigma; taken off the starless image ring by ring.
+    """
+    from scipy import ndimage as ndi
+    C, H, W = lin.shape
+    grey = all(np.array_equal(a[c, ::97, ::97], a[0, ::97, ::97]) for a in (lin, starless) for c in range(C))
+    chans = [0] if grey else list(range(C))
+    S = [lin[c] - starless[c] for c in chans]
+    sig = [_sky_noise(starless[c], valid) for c in chans]
+    if min(sig) <= 0:
+        return starless, {"why": "no sky noise"}
+    ped = [ndi.median_filter(s[::16, ::16], 15) for s in S]
+
+    def ped_at(i, y, x):
+        return float(ped[i][min(y // 16, ped[i].shape[0] - 1), min(x // 16, ped[i].shape[1] - 1)])
+    lum = S[0] if grey else np.mean(S, 0)
+    sl = float(np.mean(sig))
+    sm = ndi.gaussian_filter(lum, 1.0)
+    base = float(np.median(np.mean([p for p in ped], 0)))
+    lab, n = ndi.label((sm > base + HALO_DETECT * sl) & valid)
+    if n == 0:
+        return starless, {"why": "no bright star"}
+    pos = np.array(ndi.maximum_position(sm, lab, range(1, n + 1)), int)
+    peak = sm[pos[:, 0], pos[:, 1]] - np.array([np.mean([ped_at(i, y, x) for i in range(len(chans))])
+                                                  for y, x in pos])
+    order = np.argsort(-peak)
+    pos, peak = pos[order], peak[order]
+    # the FWHM: the median half-maximum width of the candidates
+    widths = []
+    _bx, r15 = _box(15, 15, 15, 31, 31)
+    i15 = r15.astype(int).ravel()
+    rc = np.bincount(i15, r15.ravel()) / np.bincount(i15)              # the mean radius of each ring
+    for y, x in pos[:300]:
+        bx, rr = _box(y, x, 15, H, W)
+        if rr.shape != r15.shape:
+            continue
+        pl = np.mean([ped_at(i, y, x) for i in range(len(chans))])
+        prof = _ring_medians((lum[bx] - pl).ravel(), i15, 16)
+        below = np.nonzero(prof < prof[0] / 2)[0]
+        if below.size and below[0] > 0:
+            k = below[0]
+            widths.append(2 * np.interp(prof[0] / 2, [prof[k], prof[k - 1]], [rc[k], rc[k - 1]]))
+    if not widths:
+        return starless, {"why": "no star width"}
+    fwhm = float(np.median(widths))
+    r_lo, r_hi = int(round(2 * fwhm)), max(int(round(4 * fwhm)), int(round(2 * fwhm)) + 2)
+    core = slice(r_lo, r_hi + 1)
+    RB = HALO_R + HALO_RING
+    gy, gx = np.mgrid[-RB:RB + 1, -RB:RB + 1]
+    gr = np.hypot(gy, gx)
+    ring_y, ring_x = gy[gr >= HALO_R], gx[gr >= HALO_R]                # the sky ring of a star
+
+    def sky_ring(y, x):
+        """The pixels of the sky ring around (y, x) that lie in the covered image (None: less than half of it)."""
+        ay, ax = ring_y + y, ring_x + x
+        k = (ay >= 0) & (ay < H) & (ax >= 0) & (ax < W)
+        ay, ax = ay[k], ax[k]
+        k = valid[ay, ax]
+        return (ay[k], ax[k]) if k.sum() >= 0.5 * ring_y.size else None
+
+    def core_of(y, x, ring=False):
+        """A star's core in each channel of the stars image, above its pedestal (``ring``: on its sky ring, else the
+        pedestal's map) (None: not measurable: near the edge, outside the covered image)."""
+        if not (r_hi < y < H - r_hi - 1 and r_hi < x < W - r_hi - 1):
+            return None
+        bx, rr = _box(y, x, r_hi + 1, H, W)
+        if not valid[bx].all():
+            return None
+        if ring:
+            at = sky_ring(y, x)
+            if at is None:
+                return None
+            under = [float(np.median(s[at])) for s in S]
+        else:
+            under = [ped_at(i, y, x) for i in range(len(S))]
+        ri = rr.astype(int).ravel()
+        return [_ring_medians((s[bx] - u).ravel(), ri, r_hi + 1) for s, u in zip(S, under)]
+
+    # the profile stars: the extended profile on the input image, and what the network left on the starless image
+    L = lin[0] if grey else lin.mean(0)
+    Ls = starless[0] if grey else starless.mean(0)
+    from scipy.spatial import cKDTree
+    tree = cKDTree(pos)
+    profs, lefts, levels = [], [], []
+    for (y, x), pk in zip(pos, peak):
+        if not (RB <= y < H - RB and RB <= x < W - RB):
+            continue
+        if np.any(peak[tree.query_ball_point((y, x), RB)] > pk):
+            continue
+        bx, rr = _box(y, x, RB, H, W)
+        if not valid[bx].all():
+            continue
+        ring = rr >= HALO_R
+        z = Ls[bx]
+        sky = np.median(z[ring])
+        outer = [np.median(z[(rr >= a) & (rr < a + HALO_R // 8)]) for a in range(HALO_R // 2, HALO_R, HALO_R // 8)]
+        if max(abs(v - sky) for v in outer) > sl:
+            continue
+        cores = core_of(y, x, ring=True)
+        if cores is None:
+            continue
+        ri = rr.astype(int).ravel()
+        c = L[bx]
+        prof = _ring_medians((c - np.median(c[ring])).ravel(), ri, HALO_R)
+        norm = float(np.mean(prof[core]))
+        if norm <= 0:
+            continue
+        if len(profs) < HALO_STARS:
+            profs.append(prof / norm)
+        z = [starless[c][bx] for c in chans]
+        lefts.append([_ring_medians((a - np.median(a[ring])).ravel(), ri, HALO_R) for a in z])
+        levels.append(float(np.mean([np.mean(p[core]) for p in cores])))
+    if len(profs) < HALO_FEWEST:
+        return starless, {"why": f"{len(profs)} isolated bright stars on a flat sky, {HALO_FEWEST} needed"}
+    # the extended profile: their 3-sigma clipped mean, ring by ring, non-increasing beyond the core, to where it meets
+    # the sky
+    profs = np.array(profs)
+    med = np.median(profs, 0)
+    spread = 1.4826 * np.median(np.abs(profs - med), 0)
+    kept = np.abs(profs - med) <= 3 * spread
+    P = np.where(kept, profs, 0).sum(0) / np.maximum(kept.sum(0), 1)
+    P[r_hi:] = np.minimum.accumulate(ndi.median_filter(P, 9, mode="nearest")[r_hi:])
+    out_r = np.nonzero((P <= 0) & (np.arange(HALO_R) > r_hi))[0]
+    r_max = int(out_r[0]) if out_r.size else HALO_R
+    P[r_max:] = 0.0
+    # what the network leaves, by class of core level: HALO_CLASS stars per class, the median of their rings, from the
+    # brightest; within the core, the value at its outer edge; to where it meets the sky
+    order = np.argsort(levels)[::-1]
+    groups = [order[k:k + HALO_CLASS] for k in range(0, len(order), HALO_CLASS)]
+    if len(groups) > 1 and len(groups[-1]) < HALO_CLASS:
+        groups[-2] = np.concatenate(groups[-2:])
+        groups.pop()
+    centre, templates = [], []
+    for g in groups:
+        centre.append(float(np.median(np.log([levels[k] for k in g]))))
+        t = []
+        for i in range(len(chans)):
+            m = np.nan_to_num(np.median([lefts[k][i] for k in g], 0))
+            m = ndi.median_filter(m, 9, mode="nearest")
+            m[:r_lo] = m[r_lo]
+            top = int(np.argmax(m))
+            zero = np.nonzero(m[top:] <= 0)[0]                         # where it meets the sky, beyond its peak
+            if zero.size:
+                m[top + zero[0]:] = 0.0
+            t.append(np.maximum(m, 0.0))
+        templates.append(t)
+    centre = np.array(centre[::-1])                                     # faintest class first
+    templates = np.array(templates[::-1])                               # (class, channel, radius)
+
+    def template(level):
+        """What the network leaves around a star of this core level, per channel: between the classes on the log of
+        the level; above the brightest, the brightest's (never extrapolated); below the faintest, the faintest's in
+        proportion to the level."""
+        lv = np.log(max(level, 1e-12))
+        if lv <= centre[0]:
+            return templates[0] * np.exp(lv - centre[0])
+        if lv >= centre[-1]:
+            return templates[-1]
+        k = int(np.searchsorted(centre, lv)) - 1
+        w = (lv - centre[k]) / (centre[k + 1] - centre[k])
+        return (1 - w) * templates[k] + w * templates[k + 1]
+
+    # each bright star
+    take = [np.zeros((H, W), np.float32) for _ in chans]
+    done = []
+    centres = np.arange(HALO_R) + 0.5
+    faint = 0
+    for (y, x), pk in zip(pos, peak):
+        if faint >= 50:
+            break                                                       # 50 in a row with nothing left: the rest are fainter
+        if np.any(peak[tree.query_ball_point((y, x), 2 * r_hi)] > pk):
+            continue                                                    # crowded: a brighter star over its core
+        cores = core_of(y, x)
+        if cores is None:
+            continue
+        q = [p[core] / P[core] for p in cores]
+        if not all(a.min() > 0 and a.max() < 2 * a.min() for a in q):
+            continue                                                    # its core does not follow the profile
+        scale = [float(np.median(a)) for a in q]
+        t = template(float(np.mean([np.mean(p[core]) for p in cores])))
+        if max(float(a.max()) / s for a, s in zip(t, sig)) < HALO_LEVEL:
+            faint += 1
+            continue                                                    # nothing measurable left
+        faint = 0
+        rem = [np.minimum(t[i], scale[i] * P) for i in range(len(chans))]   # never more than its own wing
+        if max(float(r.max()) / s for r, s in zip(rem, sig)) < HALO_LEVEL:
+            continue
+        ext = max(int(np.nonzero(r > 0)[0][-1]) + 1 if r.any() else 0 for r in rem)
+        bx, rr = _box(y, x, ext, H, W)
+        inside = (rr < ext) & valid[bx]
+        for i, r in enumerate(rem):
+            take[i][bx] += np.where(inside, np.interp(rr, centres[:ext], r[:ext], left=r[0], right=0.0),
+                                    0).astype(np.float32)
+        done.append((int(y), int(x)))
+    out = starless.copy()
+    for i, c in enumerate(chans):
+        out[c] -= take[i]
+    if grey:
+        out[1:] = out[0]
+    return out, {"psf_stars": len(profs), "classes": len(groups), "profile_stars": len(levels), "fwhm": fwhm,
+                 "r_max": r_max, "stars": done, "profile": P.tolist(), "left": templates.tolist(),
+                 "levels": np.exp(centre).tolist()}
 
 
 def fwd(v):

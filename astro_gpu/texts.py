@@ -221,6 +221,8 @@ _METRIC_ROWS: list[tuple] = [
      "Peaks of the colour mosaic's periodic pattern taken off the output image."),
     ("grid_peaks", "Network grid", "", "d",
      "Peaks of the star-removal network's own grid taken off the starless image."),
+    ("halo_stars", "Star halos", "", "d",
+     "Bright stars whose wide halo, left by the network, was moved from the starless image to the stars image."),
     ("camera_white_balance", "Camera white balance", "", ".3f",
      "Multipliers of red, green and blue from the camera's daylight white balance, applied to the stack."),
     ("drizzle_excluded_pct", "Drops left out", "%", ".3f",
@@ -503,6 +505,8 @@ CHOICE_TEXTS: dict[str, str] = {
     # the Denoise block's methods and adaptation lengths (stages/denoise.py)
     "measured": "Image shape", "instrument": "Instrument PSF", "newton": "Newtonian", "refractor": "Refractor",
     "sct": "Schmidt-Cassegrain", "lens": "Photo lens",
+    # the Stars block's halos (stages/star_removal.HALOS)
+    "remove": "Remove", "keep": "Keep",
     "rl": "Richardson-Lucy", "neural": "Neural network", "pretrained": "Pretrained network", "adapted": "Pretrained + adapted", "short": "Short", "long": "Long",
 }
 
