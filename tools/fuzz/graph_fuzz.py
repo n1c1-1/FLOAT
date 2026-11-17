@@ -44,8 +44,8 @@ CORE_ONLY = {
     core_rules.FRAME_BAND: "the frame band is drawn in fixed columns before the image band: a frame block (switched "
                            "off: absent for the engine) after an image block, or outside a stack, has no column",
     core_rules.FRAME_ORDER: "the same: two frame blocks of one kind, or out of order, would share a column",
-    "the Background port needs a starless image": "Combine layers is a layer of Post, no workflow: its ports are "
-                                                  "the core's (the engine never sees them)",
+    "the Starless image input reads a starless image": "Combine layers is a layer of Post, no workflow: its ports are "
+                                                       "the core's (the engine never sees them)",
     "the Stars port needs the stars only": "the same",
     "the Stars port takes the real stars: the synthetic ones have their own port": "the same",
     "the Synthetic stars port takes the output of a Synthetic stars block": "the same",
