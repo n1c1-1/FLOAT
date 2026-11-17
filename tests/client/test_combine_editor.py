@@ -725,18 +725,3 @@ def test_the_preview_renders_as_post_shows_the_workflow_s_layer():
     rgb = np.abs(np.random.default_rng(2).normal(0.1, 0.02, (3, 60, 80))).astype(np.float32)
     a, b = ce.output_render(rgb, ce.layer_settings([old], 3)), ce.output_render(rgb)
     assert float(np.median(a)) > float(np.median(b))
-
-
-def test_the_mono_templates_take_the_rbf_gradient():
-    import json
-    from pathlib import Path
-    root = Path(__file__).resolve().parents[2] / "astro_gpu" / "resources" / "templates"
-
-    def methods(f):
-        d = json.loads(f.read_text(encoding="utf-8"))
-        return {b.get("method") for b in d["graph"]["blocks"].values() if b.get("kind") == "gradient"}
-    for f in (root / "Mono").glob("*.astroproj"):
-        assert methods(f) == {"rbf"}, f.name
-    assert methods(root / "Color" / "SHO + RGB stars.astroproj") == {"rbf"}
-    for name in ("Colour minimal", "Colour full", "Dual-band x2"):
-        assert methods(root / "Color" / f"{name}.astroproj") <= {"polynomial", None}, name

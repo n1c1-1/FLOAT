@@ -155,7 +155,7 @@
     "fork": null,
     "id": "b19",
     "kind": "gradient",
-    "method": "rbf",
+    "method": "polynomial",
     "name": null,
     "off": false,
     "own": null,
@@ -366,7 +366,7 @@
     "fork": null,
     "id": "b30",
     "kind": "gradient",
-    "method": "rbf",
+    "method": "polynomial",
     "name": null,
     "off": false,
     "own": null,
@@ -764,7 +764,7 @@
     "fork": null,
     "id": "b8",
     "kind": "gradient",
-    "method": "rbf",
+    "method": "polynomial",
     "name": null,
     "off": false,
     "own": null,
@@ -1344,7 +1344,7 @@
    "opts": {
     "debruitage": true,
     "etoiles": "retirer",
-    "fond": "rbf"
+    "fond": "simple"
    },
    "palette": "S-H-O",
    "text": "Each filter's workflow with denoise and its stars taken off, the others aligned on the first one; the combination of the filters chosen here makes the colour nebula from their starless images, a second one of the same type makes the colour stars from their stars, and a Combine layers block puts them back."

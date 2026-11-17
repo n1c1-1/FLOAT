@@ -139,7 +139,7 @@
     "fork": null,
     "id": "b17",
     "kind": "gradient",
-    "method": "rbf",
+    "method": "polynomial",
     "name": null,
     "off": false,
     "own": null,
@@ -308,7 +308,7 @@
     "fork": null,
     "id": "b8",
     "kind": "gradient",
-    "method": "rbf",
+    "method": "polynomial",
     "name": null,
     "off": false,
     "own": null,
@@ -546,7 +546,7 @@
    "opts": {
     "debruitage": false,
     "etoiles": "garder",
-    "fond": "rbf"
+    "fond": "simple"
    },
    "palette": "H-O",
    "text": "A monochrome camera: each filter gets its own workflow, the others aligned on the first one, and each result is a layer of Post."
