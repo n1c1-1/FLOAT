@@ -1355,6 +1355,28 @@ def test_mask_brushes_are_named_by_their_effect_and_the_red_marks_what_is_hidden
     assert part not in full["mask"]["parts"] and said == ["Brush removed from the mask · Ctrl+Z"]
 
 
+def test_the_stars_part_s_sliders_say_what_they_do(post):
+    """Grow and Feather of the Stars part each have a tip of their own (not only the double-click), the default kept."""
+    from astro_gpu.client.post3 import ContSlider
+    v = post.view
+    full = named(v, "Full")
+    v.select(full["id"], "layer")
+    v.mask_button()
+    v.add_part(full, "stars")
+    part = full["mask"]["parts"][-1]
+    assert part["grow"] == 1.0 and part["feather"] == 0.0
+    v.part_sel = part["id"]
+    v.build_props()
+    sliders = [(x.name.text(), x.toolTip()) for x in widgets_of(v, ContSlider)]
+    grow = [t for n, t in sliders if n == "Grow"]
+    feather = [t for n, t in sliders if n == "Feather"]                # the part's, then the whole mask's
+    assert len(grow) == 1 and grow[0].startswith("Each star's disc, in multiples of its radius: the brightest stars' "
+                                                 "wings reach further and may need a larger Grow.")
+    assert len(feather) == 2 and feather[0].startswith("Softens the edge of the stars' discs; the whole mask's feather "
+                                                       "adds to it.")
+    assert grow[0].endswith("Double-click: default value") and feather[0].endswith("Double-click: default value")
+
+
 def test_the_red_of_a_mask_stays_inside_the_cropped_picture(post):
     """A cropped picture is shown alone (what is outside the crop is painted over): the red of the mask being edited
     stays inside it too (the tester's Rosette: the Stars part's discs of the stars at the edge, red past the frame)."""

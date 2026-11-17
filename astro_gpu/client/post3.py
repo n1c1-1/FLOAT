@@ -384,6 +384,14 @@ class _NoContext:
         return False
 
 
+#: the tips of a mask part's sliders whose short name leaves something out: (source, setting) → its one line
+PART_TIPS = {
+    ("stars", "grow"): "Each star's disc, in multiples of its radius: the brightest stars' wings reach further and may "
+                       "need a larger Grow.",
+    ("stars", "feather"): "Softens the edge of the stars' discs; the whole mask's feather adds to it.",
+}
+
+
 class Step(list):
     """A step of Post's Undo: the layers, and the crop of that moment. ``words``: what the step did, when the two
     states compared do not say it (a mask pasted is a mask added, or its parts changed)."""
@@ -4302,6 +4310,11 @@ class PostView(QWidget):
 
         def sl(key, name, lo, hi, unit=""):
             s = ContSlider(_(name), lo, hi, part[key], default[key], unit=unit, step=0.1 if key == "grow" else 1)
+            say = PART_TIPS.get((src, key))
+            if say:                                      # what the short name leaves out
+                tip = _(say) + NL + _("Double-click: default value")
+                s.setToolTip(tip)
+                s.name.setToolTip(tip)
             self._wire(s, lambda val: part.__setitem__(key, val))
             v.addWidget(s)
 
