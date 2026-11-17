@@ -1726,6 +1726,9 @@ class Panel(QWidget):
                     if hasattr(self.s, "change_cost") else None
             except Exception:  # noqa: BLE001 - the cost is a hint: Apply works without it
                 d.cost = None
+        if self._layer_only(d):                          # Post's layers alone: said as the editors' bars say it
+            from .blockdraft import POST_ONLY
+            return _(POST_ONLY)
         c = d.cost
         if c is None:
             return ""

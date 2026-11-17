@@ -211,7 +211,8 @@ class LayersEditor(DraftEditor):
         d = self._draft(pid)
         if not d:
             return ""
-        return _(STARS_RUN) if "stars" in d.vals else _("Post's layer only: nothing is computed again")
+        from .blockdraft import POST_ONLY
+        return _(STARS_RUN) if "stars" in d.vals else _(POST_ONLY)
 
     def _needs_run(self, q, ch) -> bool:
         return "stars" in ch["values"]

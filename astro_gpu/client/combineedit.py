@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from .blockdraft import POST_ONLY
 from .blockeditor import COMPARE, PANEL_W, DoubleClickDefault, DraftEditor  # noqa: F401 - (the family's, kept importable here)
 from .blockeditor import Clickable as _Clickable  # noqa: F401
 from .blockeditor import PressToRelease as _PressToRelease  # noqa: F401
@@ -636,14 +637,15 @@ class CombineEditor(DraftEditor):
         ch = self.draft_change(q.pid) if q is not None else None
         if ch is None:
             return ""
-        key = (q.pid, repr(sorted((self.drafts[q.pid].vals or {}).items(), key=str)))
+        from .i18n import language
+        key = (q.pid, repr(sorted((self.drafts[q.pid].vals or {}).items(), key=str)), language())   # (said in it)
         if self._cost is not None and self._cost[0] == key:
             return self._cost[1]
         vals = dict(ch["values"])
         if self.master(q):
             from .postfusion import split_change
             _layer, vals = split_change(self._spec(q) or {}, vals)
-        text = _("Post's layer only: nothing is computed again")
+        text = _(POST_ONLY)
         if vals:
             try:
                 if hasattr(self.s, "change_cost"):

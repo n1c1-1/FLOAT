@@ -35,6 +35,10 @@ def word(key: str) -> str:
                                 "stay": "Stay"}[key])
 
 
+#: what a draft of Post's layers alone costs, and where Try variant puts it (the family's bars say it alike)
+POST_ONLY = "Post's layer only: nothing is computed again · Try variant: in a new version of Post"
+
+
 def owned(what: str, owner: str, change: str = "") -> str:
     """A step of a setting, as every block of the combination family names it in Undo, Redo and the notices (Post's
     own way: 'Strength of "S-H-O · Combine layers"'): the setting, then its owner, then what it became when said:

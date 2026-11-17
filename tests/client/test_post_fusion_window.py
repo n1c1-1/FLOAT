@@ -282,7 +282,14 @@ def test_inspect_s_apply_of_a_hue_writes_the_layer_one_step_of_the_window_and_po
     blk, key = _block(w, q.pid, st), s.stage_key(q, st)
     assert ed._render_settings()["keep_colours"] == 1.0              # the preview stretched as the master layer is
     ed.set_hue("OIII", 190.0)
-    assert ed.cost_text() == "Post's layer only: nothing is computed again"
+    assert ed.cost_text() == "Post's layer only: nothing is computed again · Try variant: in a new version of Post"
+    from astro_gpu.client import i18n
+    i18n.set_language("fr")                                          # (said in the language shown, never kept from before)
+    try:
+        assert ed.cost_text() == ("Calque de Post seulement : rien n'est recalculé · Essayer variante : dans une "
+                                  "nouvelle version de Post")
+    finally:
+        i18n.set_language("en")
     n = len(s._undo)
     ed.apply()
     _settle(w)
