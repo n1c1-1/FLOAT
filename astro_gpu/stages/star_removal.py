@@ -160,7 +160,7 @@ class StarRemoval(Stage):
         ctx.progress(0.86, "star halos")
         starless, halos = halos_step(lin, starless, valid, p.halos, ctx.log)
         if halos is not None:
-            ctx.metric("halo_stars", len(halos["stars"]))
+            ctx.metric("halo_stars", len(halos.get("stars") or []))     # none taken off: no list, said why in the log
         stars = lin - starless
         ctx.progress(0.9, "statistics")
         ctx.save("starless.npy", starless)

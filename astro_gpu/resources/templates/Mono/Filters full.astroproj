@@ -37,7 +37,11 @@
     "name": null,
     "off": false,
     "own": null,
-    "params": {},
+    "params": {
+     "star_removal": {
+      "halos": "remove"
+     }
+    },
     "pause": false,
     "settings": {},
     "sid": null,
@@ -232,7 +236,11 @@
     "name": null,
     "off": false,
     "own": null,
-    "params": {},
+    "params": {
+     "star_removal": {
+      "halos": "remove"
+     }
+    },
     "pause": false,
     "settings": {},
     "sid": null,
@@ -427,7 +435,11 @@
     "name": null,
     "off": false,
     "own": null,
-    "params": {},
+    "params": {
+     "star_removal": {
+      "halos": "remove"
+     }
+    },
     "pause": false,
     "settings": {},
     "sid": null,
