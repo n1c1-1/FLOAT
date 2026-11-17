@@ -92,7 +92,8 @@ def status(kind: str) -> Status:
         paths = [cf.path for cf in found["xp"].values()]
     # the installation's own ``sky`` folder is ours too (the setup fetched it): not "another program's data folder"
     roots = [folder()] + ([sirilcat.install_dir()] if sirilcat.install_dir() else [])
-    mine = [p for p in paths if any(_inside(p, r) for r in roots)]
+    # and so is any installed FLOAT's (a run from the sources reads it by name)
+    mine = [p for p in paths if any(_inside(p, r) for r in roots) or any(sirilcat.is_float_sky(a) for a in p.parents)]
     outside = next((p.parent for p in paths if p not in mine), None)
     part = 0
     d = target_dir(kind)

@@ -264,6 +264,13 @@ def install_dir(here: Path | None = None) -> Path | None:
     return app.parent / "sky" if app.name == "app" else None
 
 
+def is_float_sky(p: Path) -> bool:
+    """Whether ``p`` is the ``sky`` folder of an installed FLOAT, this one or another (a run from the sources names the
+    installed one in ASTRO_GPU_GAIA_EXTRACTS): ``sky`` beside an ``app`` folder holding the code (``install_dir``)."""
+    p = Path(p)
+    return p.name == "sky" and (p.parent / "app" / "astro_gpu").is_dir()
+
+
 def _candidates() -> list[Path]:
     from .skycache import legacy_dirs
     env = [Path(p) for name in ("ASTRO_GPU_GAIA_EXTRACTS", "ASTRO_GPU_SIRIL_CATALOGUES")

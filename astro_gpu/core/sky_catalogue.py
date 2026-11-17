@@ -92,7 +92,9 @@ def status() -> Status:
     folders = sirilcat.installed_folders()
     where = folders[0] if folders else None
     mine = [folder()] + ([sirilcat.install_dir()] if sirilcat.install_dir() else [])
-    outside = where if where is not None and not any(_inside(where, r) for r in mine) else None
+    # an installed FLOAT's sky folder is ours too, whichever installation (a run from the sources reads it by name)
+    ours = where is not None and (any(_inside(where, r) for r in mine) or sirilcat.is_float_sky(where))
+    outside = where if where is not None and not ours else None
     return Status(state, files, len(pins()), part, where, outside)
 
 

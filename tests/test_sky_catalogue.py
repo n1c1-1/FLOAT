@@ -209,6 +209,28 @@ def test_a_catalogue_found_elsewhere_is_installed_and_told_so(tmp_path, server):
         os.environ["ASTRO_GPU_GAIA_EXTRACTS"] = ""
 
 
+def test_an_installed_float_s_sky_folder_is_never_another_program_s(tmp_path, server):
+    """The hand pass: Settings > Catalogs said "Found in another program's data folder" of FLOAT's own sky folder (a
+    run from the sources names the installed FLOAT's folder in ASTRO_GPU_GAIA_EXTRACTS: it is not that run's
+    installation folder, but it is FLOAT's)."""
+    sky = tmp_path / "FLOAT" / "sky"
+    (tmp_path / "FLOAT" / "app" / "astro_gpu").mkdir(parents=True)              # the installer's layout
+    for name, (sub, b) in _bodies().items():
+        (sky / sub).mkdir(parents=True, exist_ok=True)
+        (sky / sub / name).write_bytes(b)
+    import os
+    os.environ["ASTRO_GPU_GAIA_EXTRACTS"] = str(sky)
+    try:
+        sirilcat.reset()
+        st = sky_catalogue.status()
+        assert st.state == "installed" and st.where == sky and st.outside is None
+        from astro_gpu.core import gaia_extracts as ge
+        assert ge.status(ge.ASTRO).outside is None
+    finally:
+        os.environ["ASTRO_GPU_GAIA_EXTRACTS"] = ""
+        sirilcat.reset()
+
+
 # ------------------------------------------------------------------ the download
 
 def test_a_download_lands_where_the_reader_finds_it_and_a_second_one_fetches_nothing(server):
