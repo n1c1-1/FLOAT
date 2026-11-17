@@ -303,7 +303,8 @@ _METRIC_ROWS: list[tuple] = [
     # render_simple
     ("crop", "Crop", "px", "d", "Left, right, top and bottom limits of the area kept.", ", "),
     ("sky_source", "Sky removed with", "", "", "How the sky was removed."),
-    ("colour_calibrated", "Color calibrated", "", "", "Whether the colors come from the colour calibration."),
+    ("colour_calibrated", "Color calibrated", "", "",
+     "Whether the colors come from the stars' calibration (not when Color took its fallback balance)."),
     ("denoised", "Denoised", "", "", "Whether the denoised stack was used."),
 ]
 

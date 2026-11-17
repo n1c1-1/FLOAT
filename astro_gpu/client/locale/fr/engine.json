@@ -292,7 +292,7 @@
  "Sky removed with": "Ciel retiré avec",
  "How the sky was removed.": "Comment le ciel a été retiré.",
  "Color calibrated": "Couleurs calibrées",
- "Whether the colors come from the colour calibration.": "Si les couleurs viennent de la calibration des couleurs.",
+ "Whether the colors come from the stars' calibration (not when Color took its fallback balance).": "Si les couleurs viennent de la calibration par les étoiles (non quand Couleur a pris sa balance de repli).",
  "Denoised": "Débruité",
  "Whether the denoised stack was used.": "Si l'empilement débruité a été utilisé.",
  "fitted on this field": "ajustées sur ce champ",

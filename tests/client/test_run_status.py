@@ -818,6 +818,15 @@ def test_a_block_done_with_its_fallback_is_orange_with_its_reason_and_never_a_fa
                                             "used"]).toolTip()
         assert "Fait avec repli" in tip and "Champ non identifié : poursuite sans solution astrométrique" in tip
         assert "Calibration par les étoiles impossible (42 étoiles, 50 nécessaires) : balance de repli utilisée" in tip
+        # today's reason of the Color block (stages/color.py): the colours not calibrated, and why, in plain words
+        from astro_gpu.stages import color as cm
+        why = cm.FALLBACK_STARS.format(why=cm.too_few_stars(1761, 12, 50, 1746))
+        assert why == ("Colors not calibrated, fallback balance: only 12 of the 1761 stars with spectra in this field "
+                       "could be measured (minimum 50), 1746 saturated")
+        tip = item(ast, "done", [why, cm.FALLBACK_FIELD]).toolTip()
+        assert ("Couleurs non calibrées, balance de repli : seules 12 des 1761 étoiles avec spectre de ce champ ont pu "
+                "être mesurées (minimum 50), 1746 saturées") in tip, tip
+        assert "Couleurs non calibrées, balance de repli : le champ n'a pas été identifié" in tip
     finally:
         i18n.set_language("en")
         canvas.close()
@@ -855,6 +864,13 @@ def test_the_run_log_and_recap_list_the_blocks_done_with_fallback(world):
     shown = {lb.text(): lb.styleSheet() for lb in d.recap_area.widget().findChildren(QLabel)}
     assert f"Gradient 2: {why}" in shown and WARN in shown[f"Gradient 2: {why}"], shown
     assert not any(x.startswith("Gradient 1:") for x in shown)
+    # its row in the run window: orange with the warning mark, "Done with fallback" and why on hover (it said "Done"
+    # with a green tick); the other rows done
+    from astro_gpu.client import runs
+    row = next(x for x in d.rows if k["gradient~2"] in x.row.keys)
+    assert row.mark.state == runs.FALLBACK and row._color == WARN
+    assert row.toolTip() == f"Done with fallback\n{why}"
+    assert any(x.mark.state == DONE for x in d.rows if x is not row)
     d.close()
 
 

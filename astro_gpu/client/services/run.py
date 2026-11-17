@@ -466,7 +466,12 @@ PATTERNS: list[tuple[re.Pattern, str, tuple]] = [
         (r"^Asterion cannot run \((.+)\): FLOAT's own search finds the field$",
          "Asterion cannot run ({0}): FLOAT's own search finds the field", ()),
         (r"^(\d+) Gaia stars G < ([\d.]+) in the field$", "{0} Gaia stars G < {1} in the field", ()),
-        # the Color block's fallback and why the stars cannot calibrate the colours (stages/color.py)
+        # the Color block's fallback and why the stars cannot calibrate the colours (stages/color.py; the first and
+        # the "Field…" and "No star catalogue…" sentences: a result of version 6 or before)
+        (r"^Colors not calibrated, fallback balance: (.+)$", "Colors not calibrated, fallback balance: {0}", (0,)),
+        (r"^only (\d+) of the (\d+) stars with spectra in this field could be measured \(minimum (\d+)\), (\d+) "
+         r"saturated$",
+         "only {0} of the {1} stars with spectra in this field could be measured (minimum {2}), {3} saturated", ()),
         (r"^Star calibration impossible \((\d+) stars, (\d+) needed\): fallback balance used$",
          "Star calibration impossible ({0} stars, {1} needed): fallback balance used", ()),
         (r"^only (\d+) of the (\d+) stars with spectra in this field could be measured \(minimum (\d+)\)$",

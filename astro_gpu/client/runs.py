@@ -55,13 +55,16 @@ from .services.run import (
 from .widgets import ACCENT, BAD, OK, WARN, Box, ElidedLabel, cap_dialog, clear, label
 
 GREY = "#5d6470"
+#: a row done with its declared fallback (core/stage.Context.fallback): orange, as its block in the graph
+FALLBACK = "fallback"
 #: waiting: to compute, an orange circle (issue #27)
 STATE_COLOR = {WAITING: WARN, RUNNING: ACCENT, DONE: OK, FAILED: BAD, INTERRUPTED: WARN, SKIPPED: GREY,
-               NOT_STARTED: GREY}
+               NOT_STARTED: GREY, FALLBACK: WARN}
 STATE_ICON = {WAITING: ("waiting", "warning"), RUNNING: ("running", "selected"), DONE: ("ok", "ok"), FAILED: ("failed", "error"),
-              INTERRUPTED: ("stop", "warning"), SKIPPED: ("skipped", "dim"), NOT_STARTED: ("skipped", "dim")}
+              INTERRUPTED: ("stop", "warning"), SKIPPED: ("skipped", "dim"), NOT_STARTED: ("skipped", "dim"),
+              FALLBACK: ("warning", "warning")}
 STATE_TIP = {WAITING: "Waiting", RUNNING: "Running", DONE: "Done", FAILED: "Failed", INTERRUPTED: "Stopped",
-             SKIPPED: "Not run", NOT_STARTED: "Not run"}
+             SKIPPED: "Not run", NOT_STARTED: "Not run", FALLBACK: "Done with fallback"}
 ROW_H = 28
 WARN_NOTE = "⚠ "                  # a note of the plan that opens with it: drawn with the warning icon
 INFO_NOTE = "ⓘ "                  # one that opens with this: information, drawn with the information icon
@@ -540,6 +543,8 @@ class RunDialog(QDialog):
             if state == DONE:
                 real = sum(j.duration or 0.0 for j in jobs)
                 text = hm(real) if any(not j.reused for j in jobs) else "—"
+                if any(j.fallback for j in jobs):            # done with its fallback: orange and why, as in the graph
+                    state = FALLBACK
             elif state in (SKIPPED, NOT_STARTED):
                 text = "—"
             elif state in (WAITING, RUNNING):
@@ -562,6 +567,8 @@ class RunDialog(QDialog):
         for j in jobs:
             if j.state == FAILED and j.error:
                 lines.append(engine_text(j.error.strip().splitlines()[0][:300]))
+        if state == FALLBACK:
+            lines += [engine_text(w) for w in dict.fromkeys(j.fallback for j in jobs if j.fallback)]
         return "\n".join(lines)
 
     def refused(self) -> list[tuple[str, str]]:

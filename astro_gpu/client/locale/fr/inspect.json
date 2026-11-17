@@ -180,7 +180,7 @@
   "within 50 px of the edge of the stack": "à moins de 50 px du bord de l'empilement",
   "no measure (empty pixels in its aperture)": "pas de mesure (pixels vides dans son ouverture)",
   "no positive flux in every channel (faint or on a dark background)": "pas de flux positif dans chaque canal (faible, ou sur un fond sombre)",
-  "saturated or near saturation in at least one frame": "saturée ou presque dans au moins une image",
+  "saturated: near saturation in a frame, or at the top of the image's range": "saturée : presque saturée dans une image, ou au sommet de la plage de l'image",
   "Drag to share the height between the two": "Faites glisser pour partager la hauteur entre les deux",
   "Neutral sky (display)": "Ciel neutre (affichage)",
   "Neutral sky on before (display)": "Ciel neutre sur avant (affichage)",

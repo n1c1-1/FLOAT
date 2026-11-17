@@ -447,9 +447,10 @@ def test_the_colour_star_table_is_what_colour_stars_keeps():
     yy, xx = np.mgrid[0:H, 0:W]
     gx, gy = np.meshgrid([80, 130, 180, 230], [80, 140, 200, 240])
     xy = np.r_[np.c_[gx.ravel(), gy.ravel()], [[20, 150], [330, 220]]]     # 16 stars, one at the edge, one bright
-    amp = np.r_[rng.uniform(200, 900, 16), 500, 20000]
+    amp = np.r_[rng.uniform(200, 900, 16), 500, 90000]
     for (x, y), a in zip(xy, amp):
         img += a * np.exp(-0.5 * ((xx - x) ** 2 + (yy - y) ** 2) / 1.5 ** 2)[None]
+    img = np.minimum(img, 65535.0)                                  # the bright one clipped, on the 16-bit scale
     img[2, 100:110, 300:310] = -500                                 # a star on a hole in blue
     xy = np.r_[xy, [[305, 105]]].astype(float)
     idx, flux = colour_stars(img, xy[:, 0], xy[:, 1], 4.0)

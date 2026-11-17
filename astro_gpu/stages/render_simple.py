@@ -44,6 +44,14 @@ def stack_source(ctx: Context):
     return r, (f"{den[-1]}/n2n_full" if den else "stack/drz_full")
 
 
+def colour_calibrated(ctx: Context, ops: list[str]) -> bool:
+    """Whether the colours were calibrated by the stars: a Color block among the image blocks read (``ops``), none of
+    them done with its fallback balance (its manifest's ``fallback``: the colours are then not calibrated)."""
+    from ..core.workflow import base
+    colours = [e for e in ops if base(e) == "color"]
+    return bool(colours) and not any(ctx.manifest(e).get("fallback") for e in colours)
+
+
 def raw_exit_sky(ctx: Context, cam: np.ndarray, valid: np.ndarray) -> tuple[np.ndarray, str]:
     """The sky of the Raw stack exit, per camera channel: the Gradient block's polynomial with its default settings
     (in camera colours; the exit has no Gradient block). The exit does not remove it: the stage subtracts it per
@@ -249,7 +257,7 @@ class RenderSimple(Stage):
         ctx.save_json("prep_simple.json", prep)
         ctx.metric("crop", [int(x0), int(x1), int(y0), int(y1)])
         ctx.metric("sky_source", prep["sky"])
-        ctx.metric("colour_calibrated", color)
+        ctx.metric("colour_calibrated", colour_calibrated(ctx, r.ops))
         ctx.metric("denoised", denoised)
         ctx.log(f"simple output {W} x {H} from {name}, useful frame x {x0}-{x1}, y {y0}-{y1}; sky: {prep['sky']}")
         ctx.progress(0.85, "preview")

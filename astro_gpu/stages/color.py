@@ -42,10 +42,28 @@ ON_FAILURE = ("fallback", "stop")
 #: as least squares on a normal scatter, Sen 1968): with the 5-7 % scatter of the stars' measured ratios, 50 stars
 #: give each factor 0.7-1 %, under the 2 % at which a cast of the sky background begins to show
 MIN_STARS = 50
-#: the fallback's reasons (the block's tooltip, the run's log and recap)
-FALLBACK_STARS = "Star calibration impossible ({n} stars, {m} needed): fallback balance used"
-FALLBACK_FIELD = "Field not identified: fallback balance used"
-FALLBACK_CATALOGS = "No star catalogue of the field: fallback balance used"
+#: the fallback's reasons (the block's tooltip, the run's log and recap), in plain words: the colours are not
+#: calibrated, and why
+FALLBACK_STARS = "Colors not calibrated, fallback balance: {why}"
+FALLBACK_FIELD = "Colors not calibrated, fallback balance: the field was not identified"
+FALLBACK_CATALOGS = "Colors not calibrated, fallback balance: no star catalogue of the field"
+#: what the progress says while the fallback balance is made
+FALLBACK_PROGRESS = "colors not calibrated: fallback balance"
+
+#: a star is saturated as Siril's photometry judges it: a pixel within its aperture at or above the photometry's
+#: "maximum pixel value" makes its measure invalid (src/algos/photometry.c, getPhotometryData: a pixel of aperture
+#: weight above 0 not inside (minval, maxval) sets valid = FALSE), and the photometric and spectrophotometric colour
+#: calibrations leave out the stars whose measure is not valid (src/algos/photometric_cc.c,
+#: get_pcc_white_balance_coeffs and get_spcc_white_balance_coeffs: "!photometry->phot_is_valid"). The default maximum
+#: is 60000 on the 16-bit scale (initialize_photometric_param: phot_set.maxval = 60000), the same fraction of 1 for a
+#: float image (phot_set_adjusted_for_image divides it by USHRT_MAX); Siril (GPL-3.0-or-later), gitlab.com/free-astro/siril
+SIRIL_MAXVAL = 60000.0 / 65535.0
+#: Siril's aperture weight is above 0 for the pixels whose centre is closer to the star than the radius + 0.5 px
+#: (getPhotometryData: f = appRadius - sqrt(r) + 0.5)
+SIRIL_APERTURE_MARGIN = 0.5
+#: the full range of a linear image read by the Image block: a file's values put on the 16-bit scale
+#: (stages/image.py), Siril's unsigned 16-bit range; an image already stretched holds 0-1
+FULL_RANGE = 65535.0
 
 
 class ColorParams(StageParams):
@@ -87,8 +105,10 @@ class Color(Stage):
     Params = ColorParams
     # 2: physical check, camera profiles, synthetic spectra in the matrix fit; 3: saturation from the stack's map;
     # 4: the white point set by the stars' white balance; 5: one factor per colour when no curves are trusted;
-    # 6: one factor per colour always: the reconstructed curves and their colour matrix are taken out
-    version = "6"
+    # 6: one factor per colour always: the reconstructed curves and their colour matrix are taken out; 7: without the
+    # stack's saturation map, a star is saturated as Siril judges it (a pixel of its aperture at 60000/65535 of the full
+    # range), no longer above 45 % of the image's brightest pixels
+    version = "7"
     key_label = "6"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
     def auto(self, ctx: Context) -> dict[str, Auto]:
@@ -114,13 +134,14 @@ class Color(Stage):
             return
         xp = np.load(ctx.input("catalogs", "gaia_xp.npz"))
         n_xp = len(xp["x"])
-        table, star_why = (colour_star_table(img, xp["x"], xp["y"], p.aperture, saturation_map(ctx)) if n_xp
+        sat, clip = star_saturation(ctx)
+        table, star_why = (colour_star_table(img, xp["x"], xp["y"], p.aperture, sat, clip) if n_xp
                            else (np.zeros((0, 3)), np.zeros(0, str)))
         idx = np.where(star_why == "")[0]
         cam = table[idx]
         if len(idx) < p.min_stars:
-            self.fall_back(ctx, p, img, FALLBACK_STARS.format(n=len(idx), m=p.min_stars),
-                           too_few_stars(n_xp, len(idx), p.min_stars))
+            why = too_few_stars(n_xp, len(idx), p.min_stars, int(np.sum(star_why == "saturated")))
+            self.fall_back(ctx, p, img, FALLBACK_STARS.format(why=why), why, (sat, clip))
             return
         ctx.progress(0.5, f"white balance on {len(idx)} stars")
         W_ref = white_xyz(p.white_temp)
@@ -144,15 +165,18 @@ class Color(Stage):
                 f"(green 1); colour residual {np.median(rs):.4f}")
 
     @staticmethod
-    def fall_back(ctx: Context, p: ColorParams, img: np.ndarray, reason: str, failure: str) -> None:
+    def fall_back(ctx: Context, p: ColorParams, img: np.ndarray, reason: str, failure: str,
+                  saturation: tuple | None = None) -> None:
         """The stars cannot calibrate the colours (``failure`` says why): with ``on_failure`` "stop" the block fails
         with it, as it always did; else the fallback balance (``fallback_balance``) gives the factors and the block ends
-        done with its fallback (``reason``)."""
+        done with its fallback (``reason``: the colours not calibrated, and why). ``saturation``: ``star_saturation``'s
+        answer when already read."""
         if p.on_failure == "stop":
             raise StageError(failure)
         ctx.log(failure)
-        ctx.progress(0.5, "fallback balance")
-        bal = fallback_balance(img, p.aperture, saturation_map(ctx))
+        ctx.progress(0.5, FALLBACK_PROGRESS)
+        sat, clip = saturation if saturation is not None else star_saturation(ctx)
+        bal = fallback_balance(img, p.aperture, sat, clip=clip)
         k = bal["k"]
         M = np.diag(k) / float(np.mean(1.0 / k))                # a grey of the camera keeps its brightness
         ctx.save("M.npy", M)
@@ -175,13 +199,14 @@ NO_FIELD = ("the field was not identified (Astrometry continued without plate so
             "calibrate the colours on")
 
 
-def too_few_stars(n_xp: int, n: int, m: int) -> str:
+def too_few_stars(n_xp: int, n: int, m: int, saturated: int = 0) -> str:
     """Why ``n`` measured stars of the ``n_xp`` with a spectrum cannot calibrate the colours (``m`` needed): too few
     spectra on this computer while the star spectra are not installed, too few stars with one in this field (a narrow
-    field) while they are, or too few of them measurable (saturated, at the edge)."""
+    field) while they are, or too few of them measurable (``saturated`` of them saturated, others at the edge)."""
     from ..core import sirilcat
     if n_xp >= m:
-        return f"only {n} of the {n_xp} stars with spectra in this field could be measured (minimum {m})"
+        return (f"only {n} of the {n_xp} stars with spectra in this field could be measured (minimum {m})"
+                + (f", {saturated} saturated" if saturated else ""))
     if not sirilcat.locate()["xp"]:
         return (f"only {n_xp} star spectra of this field are on this computer (minimum {m}): install the star "
                 "spectra: Settings › Catalogs & astrometry")
@@ -195,7 +220,7 @@ FALLBACK_STARS_MAX = 2000
 
 
 def fallback_balance(img: np.ndarray, aperture: float = 5.0, sat: np.ndarray | None = None,
-                     max_stars: int = FALLBACK_STARS_MAX) -> dict:
+                     max_stars: int = FALLBACK_STARS_MAX, clip: np.ndarray | None = None) -> dict:
     """The classic colour balance without photometry, on a linear image (3, H, W): the sky background made neutral,
     then the field's stars white on average, the white balance of the grey world (Buchsbaum 1980, "A spatial processor
     model for object colour perception", J. Franklin Inst. 310) taken on the stars, as the colour calibrations without
@@ -204,13 +229,16 @@ def fallback_balance(img: np.ndarray, aperture: float = 5.0, sat: np.ndarray | N
     1. Background: the sky level of each channel, the median of its pixels after 3-sigma clipping of what stands above
        the sky (stars, nebulae); taken off, the background is neutral (``background``).
     2. Stars: detected on the mean of the channels, measured in an aperture over their own local background (the
-       background neutral under each one), unsaturated and positive in every channel (``colour_star_table``), the
+       background neutral under each one), unsaturated and positive in every channel (``colour_star_table``: with the
+       stack's map ``sat``, else the pixels at Siril's maximum ``clip``, else those of ``img`` itself), the
        ``max_stars`` brightest.
     3. White: red and blue scaled so that the stars' median colour ratio to green is 1 (``k``, green 1); with fewer
        than FALLBACK_MIN_STARS stars, no factor (1, 1, 1).
 
     The balanced image is ``k * (img - background)``. Returns {"k": (3,), "background": (3,), "stars": stars used}."""
     a = np.nan_to_num(np.asarray(img, np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+    if sat is None and clip is None:
+        clip = clip_map(a)                                           # on the image's own values, before the sky goes
     step = max(1, int(np.sqrt(a.shape[1] * a.shape[2] / 4e6)))       # some 4 Mpx are enough for a level
     bg = np.array([_sky_level(a[c, ::step, ::step]) for c in range(3)])
     k = np.ones(3)
@@ -218,7 +246,7 @@ def fallback_balance(img: np.ndarray, aperture: float = 5.0, sat: np.ndarray | N
     xy = _field_stars(a, 4 * max_stars)
     if not len(xy):
         return {"k": k, "background": bg, "stars": 0}
-    flux, why = colour_star_table(a, xy[:, 0], xy[:, 1], aperture, sat)
+    flux, why = colour_star_table(a, xy[:, 0], xy[:, 1], aperture, sat, clip)
     f = flux[why == ""][:max_stars]
     if len(f) >= FALLBACK_MIN_STARS:
         for c in (0, 2):
@@ -302,11 +330,62 @@ def saturation_map(ctx: Context, clipped: bool = False) -> np.ndarray | None:
     return np.load(f)[1 if clipped else 0] if f.is_file() else None
 
 
-def colour_stars(img, x, y, aperture, sat=None):
+def full_range(ctx: Context) -> float:
+    """The full range of the stack's values: 1 for an image already stretched (stages/image.save_stretched), else
+    FULL_RANGE (the Image block's files on the 16-bit scale)."""
+    try:
+        meta = ctx.load_json("stack", "drz_meta.json")
+    except (StageError, OSError, ValueError):
+        return FULL_RANGE
+    return 1.0 if meta.get("stretched") else FULL_RANGE
+
+
+def clip_map(a: np.ndarray, full: float = FULL_RANGE) -> np.ndarray:
+    """The pixels of an image (3, H, W) with a value at or above Siril's photometric maximum (SIRIL_MAXVAL of the
+    full range ``full``) in any colour: (H, W) bool."""
+    t = np.float32(SIRIL_MAXVAL * full)
+    out = np.zeros(a.shape[1:], bool)
+    for c in range(a.shape[0]):
+        out |= np.asarray(a[c]) >= t
+    return out
+
+
+def star_saturation(ctx: Context) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """How the colour stars are judged saturated: (the stack's saturation map, None) when it keeps one; else (None,
+    the stack's pixels at Siril's maximum, ``clip_map``), judged on the stack's own values (before the blocks before
+    Color move them); (None, None) when the stack cannot be read (the stars then judged on the image Color reads)."""
+    sat = saturation_map(ctx)
+    if sat is not None:
+        return sat, None
+    try:
+        a = ctx.load("stack", "drz_full.npy", mmap=True)
+    except (StageError, OSError):
+        return None, None
+    return None, clip_map(a, full_range(ctx))
+
+
+def clipped_in_aperture(clip: np.ndarray, x, y, aperture: float) -> np.ndarray:
+    """For each star at (x, y), whether a pixel of ``clip`` (H, W) lies in its aperture as Siril's photometry weighs
+    it: the pixel's centre closer to the star than the radius + SIRIL_APERTURE_MARGIN."""
+    H, W = clip.shape
+    x, y = np.asarray(x, float), np.asarray(y, float)
+    R = float(aperture) + SIRIL_APERTURE_MARGIN
+    n = int(np.ceil(R)) + 1
+    cx, cy = np.round(x).astype(int), np.round(y).astype(int)
+    hit = np.zeros(len(x), bool)
+    for dy in range(-n, n + 1):
+        for dx in range(-n, n + 1):
+            px, py = cx + dx, cy + dy
+            m = (px >= 0) & (px < W) & (py >= 0) & (py < H) & ((px - x) ** 2 + (py - y) ** 2 < R * R)
+            hit[m] |= clip[py[m], px[m]]
+    return hit
+
+
+def colour_stars(img, x, y, aperture, sat=None, clip=None):
     """The colour stars of a stack: the catalogue stars at (x, y) away from the edges, measured in the aperture,
     positive in every channel and unsaturated (``colour_star_table``). Returns (their indices in x, their camera
     fluxes (N, 3))."""
-    flux, why = colour_star_table(img, x, y, aperture, sat)
+    flux, why = colour_star_table(img, x, y, aperture, sat, clip)
     ok = why == ""
     return np.where(ok)[0], flux[ok]
 
@@ -315,18 +394,20 @@ def colour_stars(img, x, y, aperture, sat=None):
 STAR_REASONS = {"edge": "within 50 px of the edge of the stack",
                 "not_finite": "no measure (empty pixels in its aperture)",
                 "not_positive": "no positive flux in every channel (faint or on a dark background)",
-                "saturated": "saturated or near saturation in at least one frame"}
+                "saturated": "saturated: near saturation in a frame, or at the top of the image's range"}
 
 
-def colour_star_table(img, x, y, aperture, sat=None):
+def colour_star_table(img, x, y, aperture, sat=None, clip=None):
     """Every catalogue star at (x, y) as ``colour_stars`` judges it: (camera fluxes (N, 3), NaN for the stars too close
     to the edge to be measured; why each one is left out, '' for a colour star, else a key of STAR_REASONS).
 
     Saturated: with the stack's map ``sat`` (``saturation_map``), a sample near saturation within the aperture (one
-    pixel more); without it (a stack made before it kept one), a peak above 45 % of the brightest pixels."""
+    pixel more); without it (an image file, a stack made before it kept one), as Siril judges it: a pixel of the
+    aperture at or above its photometric maximum (``clip``: ``clip_map`` of the stack; by default that of ``img``)."""
     Hh, Ww = img.shape[1:]
+    x, y = np.asarray(x, float), np.asarray(y, float)
     m = (x > 50) & (x < Ww - 50) & (y > 50) & (y < Hh - 50)
-    flux, peak = star_photometry(img, np.c_[x[m], y[m]], aperture)
+    flux, _peak = star_photometry(img, np.c_[x[m], y[m]], aperture)
     if sat is not None and sat.shape == (Hh, Ww):
         from scipy.ndimage import maximum_filter
         r = int(np.ceil(aperture)) + 1
@@ -334,8 +415,9 @@ def colour_star_table(img, x, y, aperture, sat=None):
         near = maximum_filter(np.asarray(sat) > 0, footprint=xx ** 2 + yy ** 2 <= r * r)
         unsat = ~near[np.round(y[m]).astype(int), np.round(x[m]).astype(int)]
     else:
-        chmax = np.array([np.nanpercentile(img[c], 99.999) for c in range(3)])
-        unsat = (peak < 0.45 * chmax).all(1)
+        if clip is None or clip.shape != (Hh, Ww):
+            clip = clip_map(img)
+        unsat = ~clipped_in_aperture(clip, x[m], y[m], aperture)
     ok = (flux > 0).all(1) & unsat & np.isfinite(flux).all(1)
     why_m = np.where(~np.isfinite(flux).all(1), "not_finite",
                      np.where(~(flux > 0).all(1), "not_positive", np.where(~ok, "saturated", "")))
