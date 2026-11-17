@@ -82,5 +82,9 @@
   "Its settings show once the Stars/background block's images are read.": "Ses réglages s'affichent une fois lues les images du bloc Étoiles/fond.",
   "Waiting: the Stars/background block's images to read": "En attente : les images du bloc Étoiles/fond à lire",
   "The layer is not in Post yet": "Le calque n'est pas encore dans Post",
-  "The Stars/background block's images are not computed": "Les images du bloc Étoiles/fond ne sont pas calculées"
+  "The Stars/background block's images are not computed": "Les images du bloc Étoiles/fond ne sont pas calculées",
+  "{what} · in a new version of Post, “{name}”": "{what} · dans une nouvelle version de Post, « {name} »",
+  "The draft in a new version of Post: the version shown stays as it is": "Le brouillon dans une nouvelle version de Post : la version affichée reste telle quelle",
+  "Try variant takes the layer's settings alone (a new version of Post) or the stars' setting alone": "Essayer variante prend les réglages du calque seuls (une nouvelle version de Post) ou le réglage des étoiles seul",
+  "The draft tried apart (a variant of the workflow, or a new version of Post for Post's layers alone); what is there stays as it is": "Le brouillon essayé à part (une variante du workflow, ou une nouvelle version de Post pour les seuls calques de Post) ; ce qui existe reste tel quel"
 }

@@ -33,7 +33,7 @@ from .widgets import label
 #: the draft's keys of a layer's sliders: "slider.<key>" (render/sliders.py), the Arcsinh's Strength among them
 SLIDER = "slider."
 #: the one-line reason Try variant is greyed
-NO_VARIANT = "Combine layers is a layer of Post: its settings have no variant of the workflow"
+NO_VARIANT = "Try variant takes the layer's settings alone (a new version of Post) or the stars' setting alone"
 #: the stars' combination's setting changed: what it asks
 STARS_RUN = "Needs a run: the stars' combination is computed again by Run"
 
@@ -188,7 +188,24 @@ class LayersEditor(DraftEditor):
         return layer_name(lay)
 
     def variant_why(self) -> str:
-        return _(NO_VARIANT)
+        """Try variant takes Post's layer alone (a new version of Post) or the stars' combination's setting alone (a
+        variant of that workflow): not both at once."""
+        d = self._draft()
+        return _(NO_VARIANT) if d and "stars" in d.vals and len(d.vals) > 1 else ""
+
+    def layer_only(self, q, ch) -> bool:
+        return ch is not None and "stars" not in ch["values"]
+
+    def _apply_in(self, q, ch, twin):
+        if self.lid is not None:
+            self.lid = twin(self.lid)
+            self.s.sel_layer = self.lid
+        self._apply_change(q, ch)
+
+    def _variant_target(self, q, ch):
+        got = self.stars_combination()
+        what, short = ch["what"], ch["short"]
+        return got[0], {"kind": "combine", "values": {"stars": ch["values"]["stars"]}, "what": what, "short": short}
 
     def cost_text(self, pid: int | None = None) -> str:
         d = self._draft(pid)

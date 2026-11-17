@@ -548,17 +548,19 @@ def test_on_m27_the_editor_applies_in_one_step_and_tries_a_variant(qapp, tmp_pat
         s.undo()
         settle(w)
         assert s.stage_key(q, st) == key and "tune" not in s.master_layer(q.pid)
-        # Try variant: a second S-H-O of the same filters, its own workflow, the original untouched
+        # Try variant of a setting the engine computes (the balance): a second S-H-O of the same filters, its own
+        # workflow, the original untouched (a master layer's hue or intensity goes to a new version of Post instead)
         q, ed = _open_combination(w)
         ins = [(i["pid"], i["role"], i.get("image")) for i in q.source["fusion"]["inputs"]]
         before = {x.pid for x in s.paths}
-        ed.set_intensity("SII", 1.8)
+        other = "sky" if ed.value("balance") == "signal" else "signal"
+        ed.set_draft({"balance": other})
         ed.try_variant()
         settle(w)
         assert len(s.paths) == len(before) + 1 and len(s._undo) == n + 1
         v = next(x for x in s.paths if x.pid not in before)
         assert [(i["pid"], i["role"], i.get("image")) for i in v.source["fusion"]["inputs"]] == ins
-        assert (s.p.workflow(v.pid).params.get(st) or {}).get("weights") == {"SII": 1.8}
+        assert (s.p.workflow(v.pid).params.get(st) or {}).get("balance") == other
         assert s.stage_key(q, st) == key                               # the original untouched
         s.undo()
         settle(w)

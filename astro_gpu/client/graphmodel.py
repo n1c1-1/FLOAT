@@ -2076,6 +2076,37 @@ class GraphEditing:
             return str(e) or _("No variant from here")
         return "" if res.ok else (say(res.reason, _) or _("No variant from here"))
 
+    def layer_only(self, ch, paths) -> bool:
+        """Whether a change of a block of the combination family changes only Post's layers (a Combine layers' value,
+        a master layer's hues and intensities: client/postfusion.py), no setting the engine computes: Try variant
+        then puts it into a new version of Post, the version shown untouched (one rule for the family)."""
+        if ch["kind"] == "many":
+            return all(self.layer_only(c, paths) for c in ch["changes"])
+        if ch["kind"] == "layer":
+            return True
+        if ch["kind"] == "combine":
+            from . import postfusion
+            for q in paths:
+                c = self._combination(q.pid)
+                if c is None or self.master_layer(q.pid) is None:
+                    return False
+                if postfusion.split_change(c[1], ch["values"])[1]:
+                    return False
+            return True
+        return False
+
+    def try_in_post_version(self, apply) -> str:
+        """Try variant of a change of Post's layers alone: a new version of Post (a copy of the one shown, made
+        active) and the change made in it (``apply(twin)``, ``twin(lid)`` the copy's layer of a layer of the version
+        shown), one step of Undo; the version shown before stays as it was. Returns the new version's name."""
+        before = [x.get("id") for x in self.post_layers()]
+        with self.batch():
+            self.new_post_version()
+            after = [x.get("id") for x in self.post_layers()]
+            twins = dict(zip(before, after))
+            apply(lambda lid: twins.get(lid, lid))
+        return self.post_version()["name"]
+
     def keep_variant(self, q):
         self._do([("keep_variant", {"row": self._row(q).id})])
         self.current = self.index_of(q.pid)

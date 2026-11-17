@@ -205,31 +205,34 @@ class DraftBar(QFrame):
             self._elide()
 
 
-def ask_leave(parent, block: str, lines=(), cost: str = "") -> str:
+def ask_leave(parent, block: str, lines=(), cost: str = "", variant: bool = True) -> str:
     """The block left while it holds a draft: "apply", "variant", "discard" or "stay", as the user answers, in the form
-    of the unsaved-changes question (``Main.ask_save``). Only an unattended run (the test suite) gives its answer
-    beforehand, in ``DRAFT_ANSWER_ENV``."""
+    of the unsaved-changes question (``Main.ask_save``). ``variant``: Try variant offered, exactly when the draft's bar
+    offers it. Only an unattended run (the test suite) gives its answer beforehand, in ``DRAFT_ANSWER_ENV``."""
     preset = os.environ.get(DRAFT_ANSWER_ENV, "")
     if preset in ANSWERS:
-        return preset
+        return "stay" if preset == "variant" and not variant else preset
     box = QMessageBox(QMessageBox.Warning, _("Settings not applied"),
                       _("{block} · settings not applied").format(block=block), parent=parent)
     info = [t for t in lines if t] + ([cost] if cost else [])
     if info:
         box.setInformativeText("\n".join(info))
     b_apply = box.addButton(word("apply"), QMessageBox.AcceptRole)
-    b_var = box.addButton(word("variant"), QMessageBox.AcceptRole)     # (beside Apply: the same order as the bar)
+    b_var = box.addButton(word("variant"), QMessageBox.AcceptRole) if variant else None   # (as the bar: beside Apply)
     b_drop = box.addButton(word("discard"), QMessageBox.DestructiveRole)
     b_stay = box.addButton(word("stay"), QMessageBox.RejectRole)
     b_apply.setToolTip(_("The draft becomes the block's settings"))
-    b_var.setToolTip(_("The draft on a variant of the workflow; what is computed stays as it is"))
+    if b_var is not None:
+        b_var.setToolTip(_("The draft tried apart (a variant of the workflow, or a new version of Post for Post's "
+                           "layers alone); what is there stays as it is"))
     b_drop.setToolTip(_("The draft goes: the block keeps its applied settings"))
     b_stay.setToolTip(_("Back to the block, its draft as it is"))
     box.setDefaultButton(b_apply)
     box.setEscapeButton(b_stay)
     box.exec()
     c = box.clickedButton()
-    return "apply" if c is b_apply else "variant" if c is b_var else "discard" if c is b_drop else "stay"
+    return "apply" if c is b_apply else "variant" if b_var is not None and c is b_var else "discard" if c is b_drop \
+        else "stay"
 
 
 def settle(holder, parent) -> bool:
@@ -245,7 +248,11 @@ def settle(holder, parent) -> bool:
     if not pending:
         return True
     block, lines, cost = pending
-    answer = ask_leave(parent, block, lines, cost)
+    try:
+        variant = not holder.variant_why()               # the question offers what the draft's bar offers
+    except (AttributeError, RuntimeError):
+        variant = True
+    answer = ask_leave(parent, block, lines, cost, variant)
     if answer == "stay":
         dock = getattr(parent, "dock", None)             # a small window's drawer, closed by the click that left:
         if dock is not None and getattr(dock, "state", "") in ("icons", "auto"):

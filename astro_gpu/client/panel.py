@@ -1769,7 +1769,9 @@ class Panel(QWidget):
         ch = self.draft_change(d)
         bar.show_draft(ch.get("whats") or [ch["what"]], self._draft_cost(d))
         q = p if p.pid in d.pids else (self._draft_paths(d) or [p])[0]
-        why = self.s.variant_refusal(q, ch) if hasattr(self.s, "variant_refusal") else ""
+        why = self.variant_why()
+        if not why and self._layer_only(d):              # Post's layers alone: a new version of Post (the family's rule)
+            bar.b_variant.setToolTip(_("The draft in a new version of Post: the version shown stays as it is"))
         if why:                                          # never an error: greyed, its reason on hover
             bar.b_variant.setEnabled(False)
             bar.b_variant.setToolTip(_("No variant: {why}").format(why=why))
@@ -1819,8 +1821,25 @@ class Panel(QWidget):
         self.draftChanged.emit()
         return True
 
+    def _layer_only(self, d) -> bool:
+        try:
+            return bool(self.s.layer_only(self.draft_change(d), self._draft_paths(d)))
+        except (AttributeError, KeyError, ValueError):
+            return False
+
+    def variant_why(self) -> str:
+        """Why the draft has no Try variant ("" when it has one): the bar greys it, the leave question leaves it out."""
+        d = getattr(self.s, "pending_change", None)
+        if not d or self._layer_only(d):
+            return ""
+        paths = self._draft_paths(d)
+        if not paths or not hasattr(self.s, "variant_refusal"):
+            return ""
+        return self.s.variant_refusal(paths[0], self.draft_change(d))
+
     def draft_variant(self, p=None) -> bool:
-        """Try variant: the draft on a variant of the workflow; what is computed stays as it is."""
+        """Try variant: Post's layers alone into a new version of Post, the version shown untouched; else the draft on
+        a variant of the workflow, what is computed stays as it is (one rule for the combination family)."""
         d = self.s.pending_change
         if not d:
             return True
@@ -1830,6 +1849,23 @@ class Panel(QWidget):
         ch = self.draft_change(d)
         if p is None:
             return False
+        if self._layer_only(d):
+            self.s.pending_change = None
+            n = self.s.steps_count() if hasattr(self.s, "steps_count") else None
+
+            def apply(twin):
+                def moved(c):
+                    return dict(c, lid=twin(c["lid"])) if c.get("lid") is not None else c
+                c2 = dict(ch, changes=[moved(c) for c in ch["changes"]]) if ch["kind"] == "many" else moved(ch)
+                self.s.apply_change(paths, c2)
+            name = self.s.try_in_post_version(apply)
+            words = _("{what} · in a new version of Post, “{name}”").format(what=ch["what"], name=name)
+            if n is not None:
+                self.s.name_steps_since(n, words)
+            self.toast.emit(words + " · Ctrl+Z")
+            self.changed.emit()
+            self.draftChanged.emit()
+            return True
         self.s.pending_change = None
         try:
             q = self.s.add_variant(p, ch, f"{p.name} · {ch['short']}")

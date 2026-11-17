@@ -362,7 +362,7 @@ def _open_editor(w, kind):
 def _stored_setting(w, kind, q, ed):
     if kind == "combine":
         return dict(w.s.combine_stored(q.pid).get("weights") or {})
-    return dict(w.s.post_layer(ed.lid).get("sliders") or {})
+    return dict((w.s.master_layer(q.pid) or {}).get("sliders") or {})          # (the layer of the version shown)
 
 
 def _draft_change(ed, kind):
@@ -426,5 +426,35 @@ def test_real_choosing_another_workflow_in_inspect_makes_nothing(qapp, tmp_path,
         assert s.path.pid == oiii.pid and not ed.page_shown()
         assert sorted(w.graph.bridge.graph.blocks) == blocks and [x.get("id") for x in s.post_layers()] == layers
         assert len(s._undo) == n and s._dirty == dirty
+    finally:
+        w.close()
+
+
+@pytest.mark.parametrize("kind", FAMILY)
+def test_real_try_variant_of_post_s_layers_alone_is_a_new_version_of_post(qapp, tmp_path, kind, monkeypatch):
+    """Try variant was active for the combination and greyed for Combine layers for the same kind of change, and
+    Combine layers' leave question offered Try variant, which applied the change. One rule: a draft of Post's layers
+    alone goes into a new version of Post, the version shown untouched, one step of Undo; the leave question offers
+    exactly what the bar offers."""
+    from astro_gpu.client.blockdraft import DRAFT_ANSWER_ENV, settle
+    w = _whole(tmp_path, M27)
+    try:
+        s = w.s
+        q, ed = _open_editor(w, kind)
+        versions = len(s.p.post["versions"])
+        shown = s.post_version()["id"]
+        before = _stored_setting(w, kind, q, ed)
+        assert _draft_change(ed, kind)
+        ed._sync()
+        assert ed._ui["variant"].isEnabled() and "new version of Post" in ed._ui["variant"].toolTip()
+        n = len(s._undo)
+        monkeypatch.setenv(DRAFT_ANSWER_ENV, "variant")              # the leave question's Try variant: the bar's
+        assert settle(ed, None)
+        pump(0.5)
+        assert len(s.p.post["versions"]) == versions + 1 and s.post_version()["id"] != shown and len(s._undo) == n + 1
+        assert _stored_setting(w, kind, q, ed) != before and not ed.has_draft()
+        s.set_post_version(shown)
+        pump(0.3)
+        assert _stored_setting(w, kind, q, ed) == before                # the version shown before: untouched
     finally:
         w.close()
