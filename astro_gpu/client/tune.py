@@ -895,6 +895,14 @@ class TuneView(QWidget):
             from .layersedit import on_graph
             if not on_graph(s, node):                      # no Combine layers in this workflow (another one chosen in
                 node = None                                # the list): nothing made for it, as for a combination
+        if node is None and p is not None and str(s.sel_step) in ("fusion", "composition"):
+            # a block of the combination family the workflow chosen in the list does not have: that workflow's own
+            # view, its last block (never an empty page, never a block made for it)
+            keys = [k for k in chain(p) if k != "post"]
+            if keys:
+                s.sel_step = keys[-1]
+                node = g.node_of(p, s.sel_step)
+                self.strip.build(s, g)
         self.panel.refresh(node)
         self._remember()
         if not getattr(self, "_head_sized", False) and self.isVisible():   # measured once in the window's style

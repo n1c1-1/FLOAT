@@ -434,6 +434,10 @@ def test_real_choosing_another_workflow_in_inspect_makes_nothing(qapp, tmp_path,
         w.tune._strip_workflow(s.index_of(oiii.pid))
         pump(1.0)
         assert s.path.pid == oiii.pid and not ed.page_shown()
+        # that workflow's own view, its last block: never an empty page (the owner's test: "Color full" chosen from
+        # the combination's editor showed nothing under the path bar)
+        assert s.sel_step not in ("fusion", "composition") and w.tune.center.count() > 0
+        assert w.tune.view is not None or w.tune.center.itemAt(0).widget() is not None
         assert sorted(w.graph.bridge.graph.blocks) == blocks and [x.get("id") for x in s.post_layers()] == layers
         assert len(s._undo) == n and s._dirty == dirty
     finally:
