@@ -499,7 +499,10 @@ class CombineEditor(DraftEditor):
             self.historyChanged.emit()
         if self.p is not None and self.p.pid == pid and self._page_ok():
             self.applied_cache = None
-            self._changed()
+            if self.page_shown():
+                self._changed()
+            else:                              # the page hidden (Post shown): its preview is made when it shows again,
+                self.result = None             # never in the background, beside Post's own render (the same processor)
 
     def set_hue(self, role: str, deg: float, undo: bool = True) -> bool:
         name = hue_params(self._spec()).get(role)

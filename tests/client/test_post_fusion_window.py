@@ -704,3 +704,26 @@ def test_the_master_layer_s_saturation_goes_on_to_plus_four(m27):
     assert sl.val.text() == "+4.0"
     other = next(x for x in pv.findChildren(ContSlider) if x.name.text() == "Contrast" and x.isVisibleTo(pv.right))
     assert other.hi == 4
+
+
+def test_a_change_in_post_computes_nothing_in_a_hidden_inspect_editor(m27, monkeypatch):
+    """A release in Post was followed by a second render beside Post's: the combination's editor, its page built but
+    not shown, made its preview again on every change of the master layer (the same processor). Hidden, it makes it
+    when it shows again; a grey filter's picture is made by the faster merge, the same values."""
+    import numpy as np
+
+    from astro_gpu.client.postengine import grey3
+    w, pv, _before = m27
+    q, ed = _editor(w, monkeypatch)
+    ed.center(w.tune, None, None)                                     # another block: the page is not shown
+    assert ed._page_ok() and not ed.page_shown()
+    n = ed.computed
+    lay = _master(pv)
+    pv.set_fusion(lay, {"hue_oiii": 170.0}, "O III hue")
+    pump_until = time.monotonic() + 2
+    while time.monotonic() < pump_until:
+        QApplication.processEvents()
+    assert ed.computed == n and ed.result is None
+    pv.do_undo()
+    x = np.random.default_rng(0).random((7, 9)).astype(np.float32)
+    assert np.array_equal(grey3(x), np.repeat(x[..., None], 3, -1)) and grey3(x).flags["C_CONTIGUOUS"]
