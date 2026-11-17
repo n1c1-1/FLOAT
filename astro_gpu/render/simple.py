@@ -125,6 +125,13 @@ def faint_tones(y: torch.Tensor, sky: float, k: float) -> torch.Tensor:
     on the luminance with the colour ratios kept; the tones at or below the sky unchanged."""
     if k == 0:
         return y
+    out = y * faint_ratio(y, sky, k)[None]
+    return (out / out.amax(0, keepdim=True).clamp(min=1.0)).clamp(0, 1)
+
+
+def faint_ratio(y: torch.Tensor, sky: float, k: float) -> torch.Tensor:
+    """(h, w): the factor ``faint_tones`` scales each pixel's three channels by (the luminance raised or lowered
+    over its own), before a pixel over 1 is brought back under it."""
     from .ghs import ghs_unit
     span = max(1.0 - sky, 1e-6)
     spz = 0.0
@@ -138,8 +145,7 @@ def faint_tones(y: torch.Tensor, sky: float, k: float) -> torch.Tensor:
         ys = ghs_unit(xs.clone(), D, FAINT_B, spz, 0.0, 1.0)
         z2 = _interp(z.double(), ys.to(z.device), xs.to(z.device)).to(z.dtype)
     L2 = torch.where(L > sky, sky + span * z2, L)
-    out = y * (L2 / L.clamp(min=1e-6))[None]
-    return (out / out.amax(0, keepdim=True).clamp(min=1.0)).clamp(0, 1)
+    return L2 / L.clamp(min=1e-6)
 
 
 def continuum_ratio(stars: np.ndarray) -> float:
@@ -414,10 +420,45 @@ class SimpleRenderEngine:
             y = (1 - k) * y + k * (yk / m)
         if getattr(s, "faint", 0.0) and not st.get("stretched"):    # an image already stretched keeps its tones
             y = faint_tones(y, sky, float(s.faint))
+        return SimpleRenderEngine.finish(y, s)
+
+    @staticmethod
+    def finish(y: torch.Tensor, s: SimpleSettings) -> torch.Tensor:
+        """The end of ``tone`` on a stretched image (3, h, w): the contrast's S-curve, then the saturation around the
+        luminance."""
         if s.contrast != 0:
             y = (y + s.contrast * (3 * y * y - 2 * y ** 3 - y)).clamp(0, 1)
         Ly = ops.luminance(y)[None]
         return (Ly + s.saturation * (y - Ly)).clamp(0, 1)
+
+    @staticmethod
+    def colour_factor(x: torch.Tensor, st: dict, s: SimpleSettings) -> tuple[torch.Tensor, float]:
+        """(the factor (h, w), the black point): ``tone``'s stretch of a linear colour image (3, h, w) as one factor
+        per pixel, the same on its three channels: the colour-preserving stretch (Lupton et al. 2004, PASP 116, 133),
+        the luminance (the luminance's statistics ``st``) brought to the screen and the channels scaled with it, by
+        the automatic curve (``tone`` with Colours at 1) or the Arcsinh, a pixel over 1 brought under it, then the
+        Faint tones, also a factor on the luminance. ``x``'s stretch is ``factor * (x - black point)`` (clipped at 0),
+        which ``finish`` ends: a factor is linear, so the channels of a mix of images can be stretched before the mix
+        as well as after it (Post's combination layer, client/postfusion.py)."""
+        lum = st["lum"]
+        c0, hi, xm = _anchors(lum)
+        xl = (x - c0).clamp(min=0)
+        L = ops.luminance(xl)
+        if getattr(s, "stretch", "auto") == "arcsinh":
+            room = arcsinh_headroom(st, float(s.saturation), True)
+            beta = arcsinh_strength(st, s)
+            w = hi - c0
+            g = asinh_factor(L / w, beta) / w / room
+            sky = asinh_level(xm, beta) / room
+        else:
+            g = SimpleRenderEngine._stretch(L + c0, lum, s.sky) / L.clamp(min=1e-6)
+            sky = s.sky
+        g = g / (xl * g[None]).amax(0).clamp(min=1.0)
+        if getattr(s, "faint", 0.0):
+            y = xl * g[None]
+            r = faint_ratio(y, sky, float(s.faint))
+            g = g * r / (y * r[None]).amax(0).clamp(min=1.0)
+        return g, float(c0)
 
     def _render(self, s: SimpleSettings, scale: float, region) -> Layers:
         f, reg, box = self._geometry(scale, region)
