@@ -287,6 +287,38 @@ def test_a_drag_follows_the_slider_and_is_one_step(ed):
     assert not ed.has_draft()
 
 
+def test_a_press_on_the_rail_then_a_drag_is_one_step(ed):
+    """The hand pass: one drag of a hue slider made two Undo steps (205, then 267): the press on the rail moved the
+    handle as a step of its own, the drag that followed another. The gesture, press to release, is one step, as in
+    Post."""
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QStyleFactory
+    if "windows11" not in QStyleFactory.keys():
+        pytest.skip("the Windows 11 style is not on this machine")
+    app = QApplication.instance()
+    was = app.style().name()
+    app.setStyle("windows11")                     # Windows' own: a press on the rail takes the handle there
+    try:
+        sl = ed._ui["hue_OIII"]
+        ed.page.resize(900, 700)
+        ed.page.show()
+        QApplication.processEvents()
+        y = sl.height() // 2
+        a, b = QPoint(int(sl.width() * 0.2), y), QPoint(int(sl.width() * 0.4), y)  # O III at 202°: the rail, away
+        v0 = sl.value()
+        QTest.mousePress(sl, Qt.LeftButton, Qt.NoModifier, a)
+        v1 = sl.value()
+        QTest.mouseMove(sl, b)
+        QTest.mouseRelease(sl, Qt.LeftButton, Qt.NoModifier, b)
+        wait(ed)
+        assert v0 != v1 != sl.value() and ed.has_draft() and len(ed._draft().undo) == 1
+    finally:
+        app.setStyle(was)
+    ed.undo()
+    assert not ed.has_draft()
+
+
 def test_apply_is_one_change_of_the_block(ed):
     m = ed.s
     got = []

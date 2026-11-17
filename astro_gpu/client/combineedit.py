@@ -34,7 +34,7 @@ import time
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QObject, QRunnable, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QRunnable, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QImage, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
@@ -331,6 +331,24 @@ class _Job(QRunnable):
 
     def run(self):
         self.fn()
+
+
+class _PressToRelease(QObject):
+    """A slider's press-to-release gesture is one drag, wherever it is pressed: the slider is down from the press on,
+    before Qt moves its handle there (the Windows style takes a press on the rail to that place: the hand pass's two
+    Undo steps, 205 then 267, for one drag), and up again at the release, as Post's sliders (post3.ContSlider)."""
+
+    def __init__(self, slider):
+        super().__init__(slider)
+        self.sl = slider
+
+    def eventFilter(self, obj, e):  # noqa: N802 - Qt's name
+        if obj is self.sl and e.type() == QEvent.MouseButtonPress and e.button() == Qt.LeftButton:
+            self.sl.setSliderDown(True)                  # (sliderPressed: the drag starts)
+        elif obj is self.sl and e.type() == QEvent.MouseButtonRelease and e.button() == Qt.LeftButton:
+            # after Qt's own release, which lets go of a handle but not of a press on the rail's page step
+            QTimer.singleShot(0, self, lambda: self.sl.setSliderDown(False) if self.sl.isSliderDown() else None)
+        return False
 
 
 class _Clickable(QFrame):
@@ -1065,6 +1083,7 @@ class CombineEditor(QObject):
         sl.sliderReleased.connect(self.end_drag)
         sl.valueChanged.connect(lambda i, s=sl: None if self._syncing else self._mark() or set_value(
             i, undo=not s.isSliderDown()))
+        sl.installEventFilter(_PressToRelease(sl))
 
     def _mark(self):
         self._t_edit = time.perf_counter()
