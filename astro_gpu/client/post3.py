@@ -4203,6 +4203,9 @@ class PostView(QWidget):
             if src == "halpha" and owner is not None and "Ha" not in fusion_roles(owner):
                 a.setEnabled(False)                      # greyed, with why
                 a.setToolTip(_("This combination has no H-alpha filter"))
+            if src == "stars" and not self._has_stars(lay):
+                a.setEnabled(False)
+                a.setToolTip(_("This layer has no stars image: its workflow has no Stars/background block"))
         am.setToolTipsVisible(True)
         add.setMenu(am)
         self.pbox.addWidget(add, 0, Qt.AlignLeft)
@@ -4287,8 +4290,14 @@ class PostView(QWidget):
             r.addWidget(c, 1)
             v.addLayout(r)
 
+        if src == "stars":                               # what it is made of, its source
+            v.addWidget(label(_("The stars of the layer's stars image (its Stars/background; a combination's: its "
+                                "Stars side), each as the screen shows it, grown by Grow times its own radius: a "
+                                "brighter star grows more. Subtract it from another part to leave the stars and "
+                                "their wings out."), "small", wrap=True))
+
         def sl(key, name, lo, hi, unit=""):
-            s = ContSlider(_(name), lo, hi, part[key], default[key], unit=unit, step=1)
+            s = ContSlider(_(name), lo, hi, part[key], default[key], unit=unit, step=0.1 if key == "grow" else 1)
             self._wire(s, lambda val: part.__setitem__(key, val))
             v.addWidget(s)
 
@@ -4341,6 +4350,22 @@ class PostView(QWidget):
                 v.addWidget(go, 0, Qt.AlignLeft)
         f.mousePressEvent = lambda e: self._edit_part(part) if part["src"] == "brush" else None
         return f
+
+    def _has_stars(self, lay) -> bool:
+        """Whether the layer a mask is on has a stars image for the Stars part (``postengine.Composer._stars_of``):
+        a Combine layers layer with its Stars side (and its filters), a workflow's Output whose workflow has the Stars
+        block; a filter's, that of the layer it is nested in."""
+        own = lay.lay if isinstance(lay, SideLayer) else lay
+        if own is not None and own.get("kind") == "filter":
+            own = self.layer(own.get("target")) if own.get("target") else None
+        if own is None:
+            return False
+        if is_group(own):
+            return own.get("stars_pid", own.get("pid")) is not None
+        if own.get("kind") == "workflow" and own.get("part") is None:
+            chains = getattr(self.s, "_chains", {}) or {}
+            return "star_removal" in (chains.get(own["pid"]) or [])
+        return False
 
     def _fusion_owner(self, lay):
         """The master layer a mask belongs to (its own, or one of its filters'), None for any other layer."""

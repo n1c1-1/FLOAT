@@ -589,14 +589,21 @@ OLD_NAMES = {"Stretch (GHS)": "Arcsinh stretch (symmetry point)",
 # ======================================================================== masks
 MASK_SOURCES = {
     "halpha": "H-alpha", "luminance": "Luminance range", "color": "Color range", "gradient": "Linear gradient",
-    "brush": "Brush",
+    "brush": "Brush", "stars": "Stars",
 }
+#: the Stars part (``stars_cover``) finds the stars of the layer's stars image as the combination finds those of its
+#: continuum (stages/combine.continuum_scale): SExtractor's detection (sep), the background in 64 px meshes, the stars
+#: above STAR_SIGMA times its noise (here 1.4826 median absolute deviations, one display step at the least), four
+#: pixels at least, its deblending; a star's size is its area above that threshold
+#: the least step of an 8-bit display: the noise taken for a stars image without any (a drawing)
+DISPLAY_STEP = 1.0 / 255
 DIRECTIONS = ["Top → bottom", "Bottom → top", "Left → right", "Right → left"]
 #: the settings of a mask part: key → (label, lo, hi, unit); the defaults are those of ``new_part``
 PART_SETTINGS = {
     "luminance": [("lo", "From", 0, 100, "%"), ("hi", "To", 0, 100, "%")],
     "color": [("hue", "Hue", 0, 359, "°"), ("width", "Width", 10, 120, "°")],
     "gradient": [("position", "Position", 0, 100, "%"), ("softness", "Softness", 1, 100, "%")],
+    "stars": [("grow", "Grow", 1, 10, "×"), ("feather", "Feather", 0, 60, "px")],
 }
 
 
@@ -610,9 +617,46 @@ def new_part(src: str) -> dict:
         p.update(direction=DIRECTIONS[0], position=50.0, softness=40.0)
     elif src == "brush":
         p.update(strokes=[], size=60.0, hardness=50.0, paint=True)
+    elif src == "stars":
+        p.update(grow=1.0, feather=0.0)                 # each star as the screen shows it, a hard edge: neutral
     elif src != "halpha":
         raise ValueError(f"unknown mask source {src!r}")
     return p
+
+
+def stars_cover(L: np.ndarray, grow: float, feather: float) -> np.ndarray:
+    """The Stars mask part: 1 over each star of a stars image (``L``: its luminance, as shown), grown by a radius that
+    follows the star. The stars are found as the combination finds those of its continuum (the comment above:
+    SExtractor's detection, eight sky sigmas); a star's size is its equivalent radius at that threshold, r =
+    sqrt(area / pi), which a brighter star has larger (its profile stays above the threshold farther out), and the
+    star is a disc of radius ``grow`` r around its centre: at 1 its own extent, at 2 twice its radius. No source was
+    found for a published law of a star mask's growth by the star's own size: this one is structural (a radius
+    proportional to the star's measured size at the detection's threshold), nothing in it is fitted on an image.
+    ``feather``: the edge smoothed by a Gaussian of that radius (px at the level), as the mask's own Feather."""
+    import sep
+
+    from ..core.imgutil import sep_extract
+    from ..stages.combine import STAR_SIGMA
+    out = np.zeros(L.shape, np.float32)
+    data = np.ascontiguousarray(L, np.float32)
+    if data.size == 0 or not np.isfinite(data).all() or float(data.max()) <= float(data.min()):
+        return out
+    try:
+        bkg = sep.Background(data, bw=64, bh=64)
+        sub = data - bkg.back()
+        v = sub[::4, ::4] if sub.size > 1_000_000 else sub
+        # the background's noise (1.4826 median absolute deviations), one display step at the least (a drawing)
+        rms = max(1.4826 * float(np.median(np.abs(v - np.median(v)))), DISPLAY_STEP)
+        objs = sep_extract(sub, STAR_SIGMA, err=rms, minarea=4, deblend_cont=0.005)
+    except Exception:  # noqa: BLE001 - sep refuses the image (too small a box): no star
+        return out
+    for o in objs:
+        r = max(float(grow), 1.0) * float(np.sqrt(o["npix"] / np.pi))
+        cv2.circle(out, (int(round(float(o["x"]))), int(round(float(o["y"])))), max(1, int(round(r))), 1.0, -1,
+                   lineType=cv2.LINE_8)
+    if feather > 0:
+        out = gauss(out, feather)
+    return np.clip(out, 0, 1).astype(np.float32)
 
 
 def new_mask() -> dict:
@@ -1451,6 +1495,7 @@ class Ctx:
         self.hists: dict = {}
         self.synth = None                                     # the Synthetic stars of the layer being composed
         self.fusion_halpha = None                             # (a combination's master layer: its H-alpha map)
+        self.stars_fn = None                                  # the stars image of the layer being composed (Stars part)
         self._memo: dict[str, np.ndarray] = {}
         self.canvas_wh: tuple[int, int] | None = None         # the whole canvas at this level
         self.stats_key: str | None = None                     # the input of the filter being applied, any region
@@ -1503,6 +1548,15 @@ class Ctx:
             self._memo[name] = (np.zeros((y1 - y0, x1 - x0), np.float32) if m is None
                                 else np.ascontiguousarray(m, np.float32))
         return self._memo[name]
+
+    def stars(self) -> np.ndarray | None:
+        """The luminance of the stars image of the layer being composed (its Stars block's stars alone; a Combine
+        layers layer's, and its filters', its Stars side), None when it has none."""
+        if self.stars_fn is None:
+            return None
+        if "stars" not in self._memo:
+            self._memo["stars"] = self.stars_fn()
+        return self._memo["stars"]
 
     def halpha(self) -> np.ndarray:
         if self.fusion_halpha is not None:              # a combination's master layer: its H-alpha filter
@@ -1839,6 +1893,23 @@ class Composer:
         y.mul_(torch.from_numpy(np.asarray(valid >= 0.5, np.float32))[None])
         return y.permute(1, 2, 0).contiguous().numpy()
 
+    def _stars_of(self, lay, level, abox, canvas, cache, draft, check):
+        """The function giving a pixel layer's stars image (its luminance over the box) for the Stars mask part: a
+        Combine layers layer's Stars side (a combination's master layer: its shared stars), a workflow's Output
+        layer: its Stars block's stars alone; None for a layer without (an image layer, a workflow without the
+        block)."""
+        if is_group(lay):
+            side = sub_layer(lay, "stars")
+            if lay.get("stars_pid", lay.get("pid")) is None or not self.provider.readable(side):
+                return None
+        elif lay.get("kind") == "workflow" and lay.get("part") is None:
+            side = dict(lay, part="stars")
+            if not self.provider.available(source_id(side)):
+                return None
+        else:
+            return None
+        return lambda: lum(self.layer_rgb(side, level, abox, canvas, cache, draft, check))
+
     def _fusion_halpha_of(self, lay, level, abox, canvas, cache):
         """The H-alpha map of a combination's master layer that has an H-alpha filter (a function, computed when a
         mask asks for it), None for any other layer: the filter's balanced image through the rule of the emission map
@@ -1966,6 +2037,18 @@ class Composer:
         the box and, for a part that reads the image (Luminance, Color range), the image's content: adding a part to
         a mask computes that part only. The plane is shared: never modified by the caller. ``seen``: the digest of
         ``below`` when the caller already made it."""
+        if part["src"] == "stars":                      # kept by its settings and the stars image it reads
+            L = ctx.stars()
+            if L is None:
+                return self._part_plane(part, level, abox, below, canvas, ctx)
+            key = (tuple(sorted((k, v) for k, v in part.items() if k not in ("id", "op"))), level, abox, canvas.W,
+                   canvas.H, hashlib.blake2b(np.ascontiguousarray(L).data, digest_size=16).digest())
+            r = self.parts.get(key)
+            if r is None:
+                r = self._part_plane(part, level, abox, below, canvas, ctx)
+                self.part_draws += 1
+                self.parts.put(key, r)
+            return r
         if part["src"] not in ("luminance", "color", "gradient"):
             return self._part_plane(part, level, abox, below, canvas, ctx)
         reads = part["src"] != "gradient"
@@ -2005,6 +2088,12 @@ class Composer:
             return np.clip((t - (pos - soft / 2)) / soft, 0, 1).astype(np.float32)
         if src == "brush":
             return self.brush_raster(part, level, abox, canvas)
+        if src == "stars":
+            hw = (abox[3] - abox[1], abox[2] - abox[0])
+            L = ctx.stars()
+            if L is None:                                  # a layer without stars: nothing (the part is greyed)
+                return np.zeros(hw, np.float32)
+            return stars_cover(L, float(part["grow"]), float(part["feather"]) / 2 ** level)
         raise ValueError(src)
 
     def brush_raster(self, part, level, abox, canvas: Canvas) -> np.ndarray:
@@ -2319,6 +2408,8 @@ class Composer:
             checkpoint()
             made = {}
             ctx.fusion_halpha = None                                      # (set again for a master layer's row)
+            ctx.stars_fn = None                                           # (and its stars, for a pixel layer)
+            ctx._memo.pop("stars", None)
             if it.kind == "hidden":
                 if lay["id"] in want or (thumbs and lay["mask"] is not None):
                     keep_mask(lay, self.mask(lay, level, abox, comp, canvas, ctx))
@@ -2327,6 +2418,7 @@ class Composer:
                 edited = i == edited_at                                   # its steps are kept, not only its image
                 tops = [fl for fl in own if not fl.get("sub") and fl["visible"]]
                 ctx.fusion_halpha = self._fusion_halpha_of(lay, level, abox, canvas, cache)
+                ctx.stars_fn = self._stars_of(lay, level, abox, canvas, cache, draft, check)
                 ctx._memo.pop("fusion halpha", None)
                 got = self._filtered(it, where, thumbs)
                 if got is not None:                                       # its image after its filters, kept

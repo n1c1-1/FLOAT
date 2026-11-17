@@ -392,5 +392,8 @@
   "Shift while dragging: ten times finer · arrow keys: one degree": "Maj pendant le glissé : dix fois plus fin · flèches : un degré",
   "Needs a run: {cost}": "À calculer : {cost}",
   "Changing it needs a run: the combination is computed again by Run": "Le changer demande un calcul : la combinaison est recalculée par Exécuter",
-  "Needs a run: the balance is not the one computed": "À calculer : l'équilibre n'est pas celui calculé"
+  "Needs a run: the balance is not the one computed": "À calculer : l'équilibre n'est pas celui calculé",
+  "Grow": "Agrandir",
+  "The stars of the layer's stars image (its Stars/background; a combination's: its Stars side), each as the screen shows it, grown by Grow times its own radius: a brighter star grows more. Subtract it from another part to leave the stars and their wings out.": "Les étoiles de l'image d'étoiles du calque (son Étoiles/fond ; celle d'une combinaison : son côté Étoiles), chacune telle que l'écran la montre, agrandie de Agrandir fois son propre rayon : une étoile plus brillante grandit plus. À soustraire d'une autre partie pour laisser de côté les étoiles et leurs ailes.",
+  "This layer has no stars image: its workflow has no Stars/background block": "Ce calque n'a pas d'image d'étoiles : son workflow n'a pas de bloc Étoiles/fond"
 }

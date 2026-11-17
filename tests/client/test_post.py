@@ -558,7 +558,7 @@ def test_masks_parts_combine_and_are_processed():
     lay["mask"]["parts"] = [s]
     assert np.allclose(m(), pr.blobs, atol=1e-5)
     with pytest.raises(ValueError):
-        new_part("stars")                                              # the catalogue's star mask is gone
+        new_part("catalog")                                            # a source the mask does not know
     # add: max; subtract: result * (1 - part); intersect: result * part; the first part decides the start
     a, b = new_part("halpha"), new_part("gradient")
     b.update(direction="Left → right", position=50.0, softness=20.0)
@@ -1291,7 +1291,8 @@ def test_a_filter_added_in_the_page_does_not_move_the_image_until_a_slider_does(
 
 def test_every_filter_and_every_mask_source_is_offered_without_the_stars_block(preps, qapp):
     """No filter and no mask part needs the Stars block any more (its stars are a layer of their own): on a page
-    without it, the + Filter menu has no Stars family and the mask offers its five sources, all enabled."""
+    without it, the + Filter menu has no Stars family and the mask offers its sources, all enabled but Stars: the
+    layer has no stars image, the part is greyed and says why."""
     s = Setup(preps, qapp, which=(2,))
     try:
         assert s.settle()
@@ -1302,7 +1303,9 @@ def test_every_filter_and_every_mask_source_is_offered_without_the_stars_block(p
         add = next(b for b in widgets_of(v, QPushButton) if b.text() == "Add to mask")
         acts = {a.text(): a.isEnabled() for a in add.menu().actions()}
         assert acts == {"H-alpha": True, "Luminance range": True, "Color range": True, "Linear gradient": True,
-                        "Brush": True}
+                        "Brush": True, "Stars": False}
+        st = next(a for a in add.menu().actions() if a.text() == "Stars")
+        assert "no stars image" in st.toolTip()
     finally:
         s.close()
 

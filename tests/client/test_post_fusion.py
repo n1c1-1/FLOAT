@@ -292,3 +292,88 @@ def test_a_filter_s_mask_reading_the_picture_reads_it_without_its_stars():
     assert got.rgb[40, 10].min() > 0.9                       # the star is in the picture, put back on the mix
     assert m[40, 10] == 0.0                                  # and not in the mask: the picture read is the starless mix
     assert m[22, 30] > 0.5                                   # the nebula's bright core is
+
+
+# ---------------------------------------------------------------------------------------------- the Stars mask part
+class StarField(Filters):
+    """The fake engine with a stars side of two stars on black: a bright one (wide where the display shows it) and a
+    faint one; the filters without them. Also an ordinary workflow (1) whose Stars block has the same stars."""
+    STARS = ((10, 40, 1.0, 3.0), (50, 12, 0.08, 1.2))       # x, y, peak, Gaussian width (px)
+
+    def available(self, sid):
+        return super().available(sid) or sid in (("stars", 4), ("stars", 1), 1)
+
+    def stars_image(self, level, box):
+        f = 2 ** level
+        yy, xx = (np.mgrid[0:H // f, 0:W // f] * f).astype(np.float32)
+        s = np.zeros(yy.shape, np.float32)
+        for x, y, a, w in self.STARS:
+            s += a * np.exp(-((xx - x) ** 2 + (yy - y) ** 2) / (2 * w ** 2))
+        x0, y0, x1, y1 = box
+        return np.repeat(np.clip(s, 0, 1)[y0:y1, x0:x1, None], 3, -1).astype(np.float32)
+
+    def layer(self, lay, level, box, draft=False, stop=None):
+        if lay.get("part") == "stars" or lay.get("pid") == 4:
+            return self.stars_image(level, box)
+        x0, y0, x1, y1 = box
+        return np.full((y1 - y0, x1 - x0, 3), 0.3, np.float32)
+
+
+def _stars_mask(grow=1.0, feather=0.0, op="add"):
+    m = pe.new_mask()
+    part = pe.new_part("stars")
+    part.update(grow=grow, feather=feather, op=op)
+    m["parts"] = [part]
+    return m
+
+
+def _radius(m, x, y):
+    """How far from (x, y) the mask holds 1, along the row."""
+    row = m[y]
+    r = 0
+    while x + r + 1 < len(row) and row[x + r + 1] >= 0.5:
+        r += 1
+    return r
+
+
+def test_the_stars_part_covers_each_star_to_its_extent_and_grows_with_it():
+    lay = master(stars_pid=4, mask=_stars_mask())
+    m = compose([lay], StarField(), want=[lay["id"]]).masks[lay["id"]]
+    big, small = _radius(m, 10, 40), _radius(m, 50, 12)
+    assert big > small >= 0 and m[40, 10] == 1.0 and m[30, 30] == 0.0
+    # Grow: each star's radius times the setting: the brighter star grows more, in pixels
+    l2 = master(stars_pid=4, mask=_stars_mask(grow=2.0))
+    m2 = compose([l2], StarField(), want=[l2["id"]]).masks[l2["id"]]
+    assert abs(_radius(m2, 10, 40) - 2 * big) <= 2 and _radius(m2, 10, 40) - big > _radius(m2, 50, 12) - small
+    # Feather: no hard edge
+    l3 = master(stars_pid=4, mask=_stars_mask(grow=2.0, feather=6.0))
+    m3 = compose([l3], StarField(), want=[l3["id"]]).masks[l3["id"]]
+    edge = m3[40, 10 + _radius(m2, 10, 40)]
+    assert 0.05 < edge < 0.95
+
+
+def test_a_filter_s_mask_minus_the_stars_leaves_the_stars_out_and_reads_the_shared_stars_side():
+    m = _lum_part()
+    m["parts"] = m["parts"] + _stars_mask(grow=2.0, op="sub")["parts"]
+    m["parts"][0].update(lo=0.0)                        # (the whole picture, the stars taken out)
+    lay = master(stars_pid=4, side_masks={"f:SII": m})
+    got = compose([lay], StarField(), want=[(lay["id"], "f:SII")]).masks[(lay["id"], "f:SII")]
+    assert got[40, 10] == 0.0 and got[40, 10 + 3] == 0.0 and got[22, 30] == 1.0
+
+
+def test_the_stars_part_protects_the_stars_of_an_ordinary_layer_from_a_filter():
+    lay = pe.new_workflow_layer(1, "Full", True)
+    f = pe.new_filter_layer("levels", lay["id"])
+    f["params"].update(black=0.25)
+    f["mask"] = dict(_stars_mask(grow=2.0), invert=True)        # the filter everywhere but on the stars
+    got = compose([f, lay], StarField(), want=[f["id"]])
+    m = got.masks[f["id"]]
+    assert m[40, 10] == 0.0 and m[30, 30] == 1.0
+    plain = compose([lay], StarField()).rgb
+    assert np.allclose(got.rgb[40, 10], plain[40, 10]) and not np.allclose(got.rgb[30, 30], plain[30, 30])
+
+
+def test_the_stars_part_says_nothing_where_the_layer_has_no_stars():
+    lay = master(mask=_stars_mask())                     # no stars side
+    m = compose([lay], StarField(), want=[lay["id"]]).masks[lay["id"]]
+    assert m.max() == 0.0
