@@ -78,7 +78,7 @@ def text(p) -> str:
 def test_the_sizes_are_in_arcseconds_from_the_moffat_fit_and_the_kept_frames(qapp):
     rows = dict(rep.card_rows(data(figures=False), list(range(6))))
     assert rows["Frames kept"] == "5 of 6"
-    assert rows["Total exposure"] and rows["Best FWHM"] == '4.2"'           # 2.0 x the 2.09 px of frame 1, the first kept
+    assert rows["Total exposure"] and rows["Best FWHM"] == '4.2″'           # 2.0 x the 2.09 px of frame 1, the first kept
 
 
 def test_the_card_counts_time_from_the_first_frame_never_the_clock(qapp):
@@ -107,7 +107,7 @@ def test_each_figure_has_its_number_and_caption(qapp, monkeypatch):
 
 def test_a_duration_is_exact_and_a_star_size_has_its_pixels():
     assert rep.exact_time(450.0) == "7 min 30 s" and rep.exact_time(3900.0) == "1 h 05" and rep.exact_time(480.0) == "8 min"
-    assert rep.size_text(1.68, 6.37, '"', lambda x: f"{x:.1f}") == '10.7" (1.7 px)'
+    assert rep.size_text(1.68, 6.37, rep.ARCSEC, lambda x: f"{x:.1f}") == '10.7″ (1.7 px)'
 
 
 def test_the_english_text_has_no_space_before_its_colons(qapp, monkeypatch):
@@ -135,6 +135,43 @@ def test_of_the_two_stacking_methods_only_the_one_that_ran_is_listed(qapp, monke
                   ("Stacking", "Rejection (drizzle)", "own", False)]
     t = text(page(monkeypatch, d=d))
     assert "Rejection (drizzle)" in t and "Rejection (Classic)" not in t
+
+
+def test_a_classic_stack_is_named_by_its_method_and_its_settings_have_their_units(qapp, monkeypatch):
+    """The hand pass: the Recipe and the appendix said "Empilement (drizzle)" for a Classic stack, the drizzle's own
+    settings in the Recipe, and values without their unit (8,4 for a pixel of 8.4 µm)."""
+    from astro_gpu import api
+    params = {"stack": {"method": "classic", "scale": 2.0, "classic_rejection": "auto"},
+              "astrometry": {"pixel_um": 8.4, "dec": 61.11}, "color": {"white_temp": 6500.0, "aperture": 4.0}}
+    monkeypatch.setattr(api, "stage_outputs", lambda _p, _w, stage, _which: SimpleNamespace(params=params[stage]))
+    d = data()
+    d.settings = rep._settings(None, 1, ("stack", "astrometry", "color"), "current", d.units)
+    assert {b for b, *_r in d.settings} == {"Stacking (Classic)", "Astrometry", "Colour calibration"}
+    i18n.set_language("fr")
+    try:
+        t = text(page(monkeypatch, d=d))
+    finally:
+        i18n.set_language("en")
+    assert "Empilement (Classique)" in t and "(drizzle)" not in t
+    assert "8,4 µm" in t and "6500 K" in t and "4 px" in t and "61,11°" in t and "Déc centre" in t
+
+
+def test_the_figures_are_numbered_in_order_after_the_final_image(qapp, monkeypatch):
+    d = data()
+    d.thumb = rep._png(rep._figure(1, 1.0)[0])
+    t = text(page(monkeypatch, d=d))
+    assert t.count("Figure 1.") == 1 and "Figure 2." in t and "Figure 4." in t
+
+
+def test_a_frame_kept_without_a_star_width_is_said_with_the_reason_recorded():
+    """The hand pass: "FWHM on 9 frames" with 10 stacked, the tenth never named."""
+    d = data(figures=False)
+    d.fwhm[5] = np.nan                                   # fewer than MIN_STARS stars fitted on it (register)
+    got = {t: (v, h) for v, t, h in rep.highlights(d, "en")}
+    assert "of 10 frames" in got["Star FWHM, measured"][1]
+    assert got["Star FWHM, measured"][1].endswith("; 1 frame not measured: fewer than 10 stars could be fitted on it")
+    assert got["Star FWHM, measured"][0].endswith("″")
+    assert all('"' not in v for _k, _w, v in rep.shot_rows(d, {}, {}, "en"))      # one sign for the arcsecond
 
 
 def test_the_report_uses_none_of_the_interactive_charts(qapp, monkeypatch):
@@ -268,7 +305,7 @@ def test_the_text_to_paste_says_what_is_known_in_the_language_of_the_forum(qapp,
     p.lang.setCurrentIndex(p.lang.findData("fr"))
     t = p.details()
     assert t.startswith("M 45") and "Appareil : A7S · ISO 5000" in t and "Poses : 11 × 15 s" in t and "Darks : 48" in t
-    assert "Champ : 7,3° × 5,0°" in t and "Échantillonnage : 2,0\"/px" in t and "Traitement : FLOAT" in t
+    assert "Champ : 7,3° × 5,0°" in t and "Échantillonnage : 2,0″/px" in t and "Traitement : FLOAT" in t
     assert "Monture" not in t and "Date" not in t                                      # nobody said
     p.lang.setCurrentIndex(p.lang.findData("en"))
     assert "Field: 7.3° × 5.0°" in p.details() and "Processing: FLOAT" in p.details()

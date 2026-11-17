@@ -326,7 +326,7 @@ def test_metric_entries_are_complete_and_in_french():
 
 def test_format_metric():
     f = texts.format_metric
-    assert f("scale_arcsec", 1.3493, "en") == "1.349 arcsec/px" and f("scale_arcsec", 1.3493, "fr") == "1,349 arcsec/px"
+    assert f("scale_arcsec", 1.3493, "en") == "1.349 arcsec/px" and f("scale_arcsec", 1.3493, "fr") == "1,349″/px"
     assert f("field_deg", [3.47, 2.319], "en") == "3.47 × 2.32 deg"
     assert f("field_deg", [3.47, 2.319], "fr") == "3,47 × 2,32°"
     assert f("n_lights", 15, "fr") == "15" and f("stars_used", 4742, "en") == "4742"

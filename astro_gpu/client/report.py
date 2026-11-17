@@ -113,6 +113,7 @@ class ReportData:
     exposure: np.ndarray | None = None                   # s
     spectral: object = None
     settings: list = field(default_factory=list)
+    units: dict = field(default_factory=dict)            # {(block title, setting): its own unit} (``_settings``)
     nights: list = field(default_factory=list)           # [NightFigure]
     drift: bytes | None = None
     response: bytes | None = None
@@ -194,11 +195,18 @@ def shareable(v) -> bool:
 
 
 # ------------------------------------------------------------ reading (worker thread)
-def _settings(project, wf, stages, which: str = "current") -> list:
+#: the Stacking block's title when its result was stacked by the Classic method (the stage's title names the drizzle)
+CLASSIC_TITLE = "Stacking (Classic)"
+
+
+def _settings(project, wf, stages, which: str = "current", units: dict | None = None) -> list:
+    """[(block title, setting, value, changed)] of the done stages; ``units``: filled with {(block title, setting): the
+    setting's own unit}. The Stacking block is titled by the method its result records."""
     from .. import api
     from ..stages.v2 import V2_STAGES
     known = {st.name: st for st in V2_STAGES()}
     rows = []
+    units = {} if units is None else units
     for stage in stages:
         st = known.get(stage.split("~")[0].split("@")[0])
         if st is not None and st.name == "inventory":    # what was read, not a choice
@@ -209,6 +217,7 @@ def _settings(project, wf, stages, which: str = "current") -> list:
             out = None
         if out is None:
             continue
+        title = CLASSIC_TITLE if st.name == "stack" and out.params.get("method") == "classic" else st.title
         for key, value in out.params.items():
             info = st.Params.model_fields.get(key)
             if info is None or not shareable(value) or key == "workers":
@@ -218,7 +227,9 @@ def _settings(project, wf, stages, which: str = "current") -> list:
             if changed or extra.get("level") != ADVANCED:   # the rest changes nothing a reader needs
                 if isinstance(value, str) and extra.get("choices"):
                     value = Choice(value)
-                rows.append((st.title, extra.get("label", key), value, changed))
+                rows.append((title, extra.get("label", key), value, changed))
+                if extra.get("unit"):
+                    units[(title, extra.get("label", key))] = extra["unit"]
     return rows
 
 
@@ -278,7 +289,8 @@ def _gain_unit(project, wf, which: str) -> bool:
 
 def _report_data(project, wf, stages, title: str, which: str) -> ReportData:
     from .. import api
-    d = ReportData(settings=_settings(project, wf, stages, which))
+    d = ReportData()
+    d.settings = _settings(project, wf, stages, which, d.units)
     try:
         d.reg = registration_data(project, wf, which)
         table = api.frame_table(project, wf, which)
@@ -357,8 +369,12 @@ def elapsed(reg: RegistrationData, idx: list) -> tuple[np.ndarray, bool]:
 def size_of(d: ReportData) -> tuple[np.ndarray, float, str]:
     """The star size of each frame (the Moffat fit's when there is one), what turns it into the unit shown, the unit."""
     if d.fwhm is not None and d.reg.scale is not None:
-        return d.fwhm, float(d.reg.scale), '"'
+        return d.fwhm, float(d.reg.scale), ARCSEC
     return (d.fwhm if d.fwhm is not None else d.reg.fwhm), 1.0, " px"
+
+
+#: the arcsecond, one sign wherever the report writes it (the hand pass: 7,6″ on page 1, 7,6" on page 2)
+ARCSEC = "″"
 
 
 def exact_time(seconds: float) -> str:
@@ -372,7 +388,7 @@ def exact_time(seconds: float) -> str:
 
 def size_text(v: float, k: float, unit: str, digits_of) -> str:
     """A star size, in arcseconds with its pixels beside it: 10.7" alone looks like a terrible sky at 6.4"/px."""
-    return f"{digits_of(v * k)}{unit} ({digits_of(v)} px)" if unit == '"' else f"{digits_of(v)}{unit}"
+    return f"{digits_of(v * k)}{unit} ({digits_of(v)} px)" if unit == ARCSEC else f"{digits_of(v)}{unit}"
 
 
 def card_rows(d: ReportData, idx: list) -> list:
@@ -524,7 +540,7 @@ def shot_rows(d: ReportData, info: dict, entered: dict, lang: str) -> list:
     if fld:
         rows.append(("field", w["field"], f"{_dec(float(fld[0]), 1, lang)}° × {_dec(float(fld[1]), 1, lang)}°"))
     if d.reg is not None and d.reg.scale is not None:
-        rows.append(("sampling", w["sampling"], f'{_dec(float(d.reg.scale), 1, lang)}"/px'))
+        rows.append(("sampling", w["sampling"], f'{_dec(float(d.reg.scale), 1, lang)}{ARCSEC}/px'))
     if d.reg is not None and d.kept is not None:
         size, k, unit = size_of(d)
         s = size[d.kept]
@@ -555,6 +571,18 @@ def scale_text(arcsec: float, lang: str) -> str:
     return f"{_dec(arcsec, 2, lang)}″/px"
 
 
+def unmeasured(d: ReportData, missing: int) -> str:
+    """What the star width says of the frames kept that have none (the hand pass: "of 9 frames" with 10 stacked, the
+    tenth never named): the reason the Registration recorded, fewer stars fitted than the Moffat fit needs."""
+    if not missing:
+        return ""
+    if d.fwhm is None:                                   # the registration's own width: no recorded reason
+        return "; " + plural(missing, "{n} frame not measured", "{n} frames not measured")
+    from ..core.psf_moffat import MIN_STARS              # the Moffat fit's NaN (stages/register.moffat_arrays)
+    return "; " + plural(missing, "{n} frame not measured: fewer than {min} stars could be fitted on it",
+                         "{n} frames not measured: fewer than {min} stars could be fitted on them", min=MIN_STARS)
+
+
 def highlights(d: ReportData, lang: str) -> list:
     """The figures of the head (the night test pass: a picture to post that says what others do not): [(value, what,
     how it was measured)], each measured on this session's frames; none when it was not."""
@@ -569,17 +597,18 @@ def highlights(d: ReportData, lang: str) -> list:
     if d.reg is not None and d.kept is not None:
         size, k, unit = size_of(d)
         sz = size[d.kept]
+        missing = int((~np.isfinite(sz)).sum())
         sz = sz[np.isfinite(sz)]
-        if len(sz) and unit == '"':
+        if len(sz) and unit == ARCSEC:
             out.append((f"{dec(float(np.median(sz)) * k)}″", _("Star FWHM, measured"),
                         _("median star width (Moffat fit) of {n} frames, best {best}″").format(
-                            n=len(sz), best=dec(float(sz.min()) * k))))
+                            n=len(sz), best=dec(float(sz.min()) * k)) + unmeasured(d, missing)))
         elif len(sz):                                    # no scale on the sky (#135): measured all the same, in pixels
             how = _("median star width (Moffat fit) of {n} frames, best {best} px; in pixels: the scale on the sky is "
                     "not known") if d.fwhm is not None else \
                 _("median star width of {n} frames, best {best} px; in pixels: the scale on the sky is not known")
             out.append((f"{dec(float(np.median(sz)))} px", _("Star FWHM, measured"),
-                        how.format(n=len(sz), best=dec(float(sz.min())))))
+                        how.format(n=len(sz), best=dec(float(sz.min()))) + unmeasured(d, missing)))
     reg = m.get("register") or {}
     inv = m.get("inventory") or {}
     if reg.get("drift_px") and scale:
@@ -1030,6 +1059,7 @@ class ReportPage(QWidget):
                + (f"<p align='center' style='{small}'>{html.escape(' · '.join(where))}</p>" if where else ""))
         if d is not None and d.thumb:
             self._images["thumb"] = QImage.fromData(d.thumb)
+            self._n_fig += 1                             # the first figure: the others are numbered after it
             out += ("<p align='center'><img src='thumb' width='560'/></p>"
                     f"<p align='center' style='{small}'>{_('Figure 1. The final image, as Post last showed it.')}</p>")
         if d is not None and d.outdated:
@@ -1122,29 +1152,41 @@ class ReportPage(QWidget):
         return rows + [metric_row("star_removal", k, m[k]) for k in ("grid_peaks", "halo_stars") if k in m]
 
     @staticmethod
-    def _value(value) -> str:
+    def _value(value, unit: str = "") -> str:
         text = _("Yes") if value is True else _("No") if value is False else \
             number(value, 3).rstrip("0").rstrip(",.") if isinstance(value, float) else \
             texts.choice_label(str(value), language()) if isinstance(value, Choice) else str(value)
+        if unit and isinstance(value, (int, float)) and not isinstance(value, bool):
+            from .settings import UNITS                  # the unit as the panels write it (µm, °, ″/px)
+            u = _(UNITS.get(unit, unit))
+            text += u if u in ("°", "″/px") else f" {u}"
         return html.escape(text)
+
+    @staticmethod
+    def _other_method(d: ReportData) -> str:
+        """The mark of the stacking method's settings that did not run: the Classic one's, or the drizzle's."""
+        classic = any(b == CLASSIC_TITLE for b, _n, _v, _c in d.settings) or \
+            any(str(v) == "classic" for _b, name, v, _c in d.settings if name == "Stacking method")
+        return "(drizzle)" if classic else "(Classic)"
 
     def _recipe(self, n: int, keys, d: ReportData) -> str:
         """The chain, and what was chosen in it: the settings that differ from the defaults."""
         names = dict(BLOCKS)
         chain = " &rarr; ".join(html.escape(_(names[k])) for k in keys if k in names)
-        rows = [(f"{html.escape(_(block))} · {html.escape(_(name))}", self._value(value))
-                for block, name, value, changed in d.settings if changed and value != ""]
+        other = self._other_method(d)
+        rows = [(f"{html.escape(_(block))} · {html.escape(_(name))}", self._value(value, d.units.get((block, name), "")))
+                for block, name, value, changed in d.settings if changed and value != "" and other not in name]
         return (f"<h2>{n}. {_('Recipe')}</h2><p>{chain}</p>" +
                 (_table(rows) if rows else f"<p>{_('All the settings are the defaults.')}</p>"))
 
     def _appendix(self, n: int, d: ReportData) -> list:
         """The settings of each block, a piece each. Of the two stacking methods, only the one that ran."""
-        classic = any(str(v) == "classic" for _b, name, v, _c in d.settings if name == "Stacking method")
-        other = "(drizzle)" if classic else "(Classic)"
+        other = self._other_method(d)
         by: dict = {}
         for block, name, value, _changed in d.settings:
             if other not in name and value != "":        # a setting left empty has no line
-                by.setdefault(block, []).append((html.escape(_(name)), self._value(value)))
+                by.setdefault(block, []).append((html.escape(_(name)),
+                                                 self._value(value, d.units.get((block, name), ""))))
         out = []
         for i, (block, rows) in enumerate(by.items()):
             head = f"<h2>{n}. {_('Appendix: settings')}</h2>" if i == 0 else ""

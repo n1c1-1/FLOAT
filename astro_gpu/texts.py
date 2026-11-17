@@ -465,7 +465,7 @@ def format_metric(key: str, value: Any, lang: str = "en") -> str:
     if m is not None and DISPLAY.get(m.key) == "hours":
         unit = ""                                     # the duration carries its own unit (min or h)
     if unit and value is not None and not isinstance(value, (bool, str, dict)):
-        out += unit if unit.startswith("°") else " " + unit
+        out += unit if unit.startswith(("°", "″")) else " " + unit
     return out
 
 
