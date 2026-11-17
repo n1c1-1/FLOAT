@@ -697,6 +697,8 @@ class TuneView(QWidget):
         self.panel.grad_editor = self.grad_editor
         from .combineedit import CombineEditor
         self.comb_editor = CombineEditor(self)             # a combination's palette, filters and balance, as a draft
+        from .layersedit import LayersEditor
+        self.layers_editor = LayersEditor(self)            # Combine layers: its layer of Post's settings, as a draft
         self.pages.addWidget(body)
         self.sources = sources_view
         self.pages.addWidget(sources_view)
@@ -763,7 +765,13 @@ class TuneView(QWidget):
             return True
         from .blockdraft import settle
         return settle(getattr(self, "grad_editor", None), self) and \
-            settle(getattr(self, "comb_editor", None), self) and settle(self.panel, self)
+            all(settle(ed, self) for ed in self.family_editors()) and settle(self.panel, self)
+
+    def family_editors(self) -> list:
+        """The editors of the combination family's blocks (blockeditor.DraftEditor): a combination's, Combine
+        layers'."""
+        return [ed for ed in (getattr(self, "comb_editor", None), getattr(self, "layers_editor", None))
+                if ed is not None]
 
     def select(self, index=None, step=None) -> bool:
         """False when the block shown holds a draft and the user stays."""
@@ -886,10 +894,18 @@ class TuneView(QWidget):
         clear(self.head)
         self.grad_editor.detach()
         if self.grad_editor.center(self, node, p):        # the Gradient block's result: its own page (gradientedit.py)
-            self.comb_editor.center(self, None, None)
+            for ed in self.family_editors():
+                ed.center(self, None, None)
             return
-        self.comb_editor.detach()
-        if self.comb_editor.center(self, node, p):        # a combination: its editor's page (combineedit.py)
+        for ed in self.family_editors():
+            ed.detach()
+        shown = False
+        for ed in self.family_editors():                  # a combination, Combine layers: its editor's page
+            if not shown and ed.center(self, node, p):
+                shown = True
+            elif shown:
+                ed.center(self, None, None)
+        if shown:
             return
         # the same picture as shown (a setting changed, the block Outdated with its previous result): the viewer stays,
         # only the header and the panel are built again (issue #24: rebuilt, the image flickered)
@@ -994,7 +1010,8 @@ class TuneView(QWidget):
         self.panel.refresh(None)
         clear(self.head)
         self.grad_editor.detach()
-        self.comb_editor.center(self, None, None)
+        for ed in self.family_editors():
+            ed.center(self, None, None)
         self.head.addWidget(label(_("Project") + "  ·  " + self.s.name, "h1"))
         self.head.addStretch(1)
         self._cur = None

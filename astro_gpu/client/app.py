@@ -990,7 +990,7 @@ class Main(QMainWindow):
             return True
         from .blockdraft import settle
         self._commit_typing()                            # what is typed goes to the draft first
-        if not settle(self._grad_editor(), self) or not settle(self._comb_editor(), self):
+        if not settle(self._grad_editor(), self) or not all(settle(ed, self) for ed in self._family_editors()):
             return False
         if gradient_only:
             return True
@@ -1280,8 +1280,8 @@ class Main(QMainWindow):
         tune.toasted.connect(self.flash)
         if getattr(tune, "grad_editor", None) is not None:   # the draft's own steps: Edit › Undo / Redo follow them
             tune.grad_editor.historyChanged.connect(self._update_actions)
-        if getattr(tune, "comb_editor", None) is not None:   # the combination editor's draft: the same
-            tune.comb_editor.historyChanged.connect(self._update_actions)
+        for ed in (tune.family_editors() if hasattr(tune, "family_editors") else []):   # the family's drafts: the same
+            ed.historyChanged.connect(self._update_actions)
         tune.sideChosen.connect(lambda st: self._side_chosen("right", st))
         tune.sidesShown.connect(self._show_sides)
         tune.can_post = self.browser.can_post = lambda: True    # Post takes Inspect's images as layers
@@ -1388,10 +1388,6 @@ class Main(QMainWindow):
             self.mode_btns[self.mode].setChecked(True)
         if i != self.mode and not self.settle_drafts(gradient_only=i in (0, 1)):
             return                                       # a block's draft: Stay
-        if s is not None and i == 1 and s.sel_step == "composition":
-            # a Stars and background block is a layer of Post: Inspect shows it there
-            self.open_layer(s.sel_layer) if s.sel_layer is not None else self.set_mode(2)
-            return
         if s is not None:
             if i == 2:
                 if s.sel_step not in ("final", "composition"):
@@ -2035,10 +2031,10 @@ class Main(QMainWindow):
         top = ed.history_top(how) if ed is not None else None
         if top is not None:
             out.append(("draft", top[0], top[1]))
-        ed = self._comb_editor()
-        top = ed.history_top(how) if ed is not None else None
-        if top is not None:
-            out.append(("comb_draft", top[0], top[1]))
+        for ed in self._family_editors():                # a combination's, Combine layers' draft: (its editor, workflow)
+            top = ed.history_top(how)
+            if top is not None:
+                out.append(("comb_draft", top[0], (ed, top[1])))
         d = getattr(s, "pending_change", None)          # a block's draft in the panel: its edits are steps too
         top = d.top(how) if d is not None else None
         if top is not None:
@@ -2050,6 +2046,11 @@ class Main(QMainWindow):
 
     def _comb_editor(self):
         return getattr(self._tune, "comb_editor", None) if self._tune is not None else None
+
+    def _family_editors(self) -> list:
+        """The editors of the combination family's blocks in Inspect (tune.TuneView.family_editors)."""
+        tv = self._tune
+        return tv.family_editors() if tv is not None and hasattr(tv, "family_editors") else []
 
     def _history_next(self, how: str):
         """The step the window's Undo (``how`` "undo") or Redo takes next: (where, stamp, extra) with ``where`` "graph"
@@ -2078,7 +2079,7 @@ class Main(QMainWindow):
         nxt = self._history_next(how)
         if nxt is None or self.s is None:
             return ""
-        where, _seq, _extra = nxt
+        where, _seq, extra = nxt
         if where in ("graph", "post_model"):
             return self.s.next_words(how)
         if where == "post":
@@ -2087,8 +2088,9 @@ class Main(QMainWindow):
         if where == "draft":
             return _("Gradient draft")
         if where == "comb_draft":
-            ed = self._comb_editor()
-            return _("{block} draft").format(block=ed.title()) if ed is not None and ed.p is not None else ""
+            ed, pid = extra
+            q = self.s.view(pid)
+            return _("{block} draft").format(block=ed.title(q)) if q is not None else ""
         d = getattr(self.s, "pending_change", None)
         return _("{block} draft").format(block=getattr(d, "title", "")) if d is not None else ""
 
@@ -2124,8 +2126,8 @@ class Main(QMainWindow):
             ed = self._grad_editor()
             return self.mode == 1 and ed is not None and ed.view is not None and ed.p is not None and ed.p.pid == extra
         if where == "comb_draft":
-            ed = self._comb_editor()
-            return self.mode == 1 and ed is not None and ed.page_shown() and ed.p is not None and ed.p.pid == extra
+            ed, pid = extra
+            return self.mode == 1 and ed.page_shown() and ed.p is not None and ed.p.pid == pid
         if where == "block_draft":
             return self.mode in (0, 1)
         return not self._post_shown()
@@ -2230,10 +2232,10 @@ class Main(QMainWindow):
                 self.flash((_("Undone: {what}") if undo else _("Redone: {what}")).format(what=_("Gradient draft")))
             return
         if where == "comb_draft":
-            ed = self._comb_editor()
-            if ed is not None and (ed.undo if undo else ed.redo)(extra):
+            ed, pid = extra
+            if (ed.undo if undo else ed.redo)(pid):
                 self.flash((_("Undone: {what}") if undo else _("Redone: {what}")).format(
-                    what=_("{block} draft").format(block=ed.title(s.view(extra)))))
+                    what=_("{block} draft").format(block=ed.title(s.view(pid)))))
             return
         if where == "block_draft":
             d = s.pending_change
@@ -2257,8 +2259,9 @@ class Main(QMainWindow):
                 self.select(index=self.s.index_of(extra), step="fond")
             self.set_mode(1)
         elif where == "comb_draft":
-            if self.s is not None and self.s.view(extra) is not None:
-                self.select(index=self.s.index_of(extra), step="fusion")
+            ed, pid = extra                               # the family's editor and the workflow of its draft
+            if self.s is not None and self.s.view(pid) is not None:
+                self.select(index=self.s.index_of(pid), step=ed.KEY)
             self.set_mode(1)
         elif self._post_shown():
             self.set_mode(0)

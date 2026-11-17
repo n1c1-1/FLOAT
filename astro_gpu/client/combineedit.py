@@ -1,5 +1,7 @@
 """The combination block (S-H-O, H-O and the other recipes of stages/combine.py) tuned in Inspect as a draft
-(``CombineEditor``), built as the Gradient block's editor (gradientedit.py) is.
+(``CombineEditor``), built as the Gradient block's editor (gradientedit.py) is, on the base every block of the
+combination family's editor shares (blockeditor.DraftEditor: the draft, the page, the preview's thread; Combine layers'
+editor, layersedit.py, is the other).
 
 Every adjustment (a palette, a filter's hue or intensity, the balance, the stars) changes a DRAFT of the block's
 settings, kept per workflow while the project is open (blockdraft.Draft): the project does not change, the graph stays
@@ -29,12 +31,11 @@ from __future__ import annotations
 import colorsys
 import copy
 import math
-import threading
 import time
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QEvent, QObject, QRunnable, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, QRunnable, QSize, Qt
 from PySide6.QtGui import QColor, QImage, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
@@ -42,22 +43,20 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QScrollArea,
-    QSizePolicy,
     QSlider,
     QVBoxLayout,
-    QWidget,
 )
 
-from . import journal
-from .blockdraft import Draft, DraftBar, owned
+from .blockeditor import COMPARE, PANEL_W, DraftEditor  # noqa: F401 - (the family's, kept importable here)
+from .blockeditor import Clickable as _Clickable  # noqa: F401
+from .blockeditor import PressToRelease as _PressToRelease  # noqa: F401
+from .blockeditor import choice_card as _choice_card
+from .blockeditor import lit as _lit
 from .gradientedit import PREVIEW_PIXELS
 from .i18n import _, number
 from .icons import set_icon
-from .widgets import WARN, label
+from .widgets import label
 
-#: the column of the editor at the left of the image: its width
-PANEL_W = 380
 #: a filter's thumbnail: its width (px)
 THUMB_W = 84
 #: Intensity: its range and its step (1 = as balanced)
@@ -88,9 +87,6 @@ REASON_TIPS = {"signal": "Signal: the gain that fits this filter's nebula onto t
                "sky": "On sky: the gain that brings this filter's sky median and spread to the H-alpha's.",
                "match": "Linear match: the least squares fit of this filter onto the reference.",
                "reference": "Reference: the other filters are brought to this one's scale."}
-#: the image area's comparisons
-COMPARE = (("draft", "Draft", "The draft's preview"), ("applied", "Applied", "The block's applied result"),
-           ("split", "Split", "The draft on the right of the divider, the applied result on the left"))
 HUE_RAIL = ("qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ff0000, stop:0.1667 #ffff00, stop:0.3333 #00ff00, "
             "stop:0.5 #00ffff, stop:0.6667 #0000ff, stop:0.8333 #ff00ff, stop:1 #ff0000)")
 
@@ -358,24 +354,6 @@ class _Job(QRunnable):
         self.fn()
 
 
-class _PressToRelease(QObject):
-    """A slider's press-to-release gesture is one drag, wherever it is pressed: the slider is down from the press on,
-    before Qt moves its handle there (the Windows style takes a press on the rail to that place: the hand pass's two
-    Undo steps, 205 then 267, for one drag), and up again at the release, as Post's sliders (post3.ContSlider)."""
-
-    def __init__(self, slider):
-        super().__init__(slider)
-        self.sl = slider
-
-    def eventFilter(self, obj, e):  # noqa: N802 - Qt's name
-        if obj is self.sl and e.type() == QEvent.MouseButtonPress and e.button() == Qt.LeftButton:
-            self.sl.setSliderDown(True)                  # (sliderPressed: the drag starts)
-        elif obj is self.sl and e.type() == QEvent.MouseButtonRelease and e.button() == Qt.LeftButton:
-            # after Qt's own release, which lets go of a handle but not of a press on the rail's page step
-            QTimer.singleShot(0, self, lambda: self.sl.setSliderDown(False) if self.sl.isSliderDown() else None)
-        return False
-
-
 class FineDrag(QObject):
     """Shift held while a slider is dragged: its handle follows the pointer ``FACTOR`` times slower (the fine step of
     the reference editors' sliders), from where it was when Shift was pressed; the arrow keys move it by one step (one
@@ -416,88 +394,30 @@ class FineDrag(QObject):
         return False
 
 
-class _Clickable(QFrame):
-    """A frame that is a choice: a click on it (a Balance card, a thumbnail)."""
 
-    clicked = Signal()
+class CombineEditor(DraftEditor):
+    """The combination block of the workflow shown, tuned as a draft in Inspect's centre (blockeditor.DraftEditor, the
+    family's editor: the draft, the page, the preview's thread). ``set_hue``, ``set_intensity``, ``set_palette``,
+    ``set_eye``, ``set_solo``; the balance and the stars by ``set_draft``."""
 
-    def mousePressEvent(self, e):                                     # noqa: N802 - Qt's name
-        if e.button() == Qt.LeftButton and self.isEnabled():
-            self.clicked.emit()
-        super().mousePressEvent(e)
-
-
-def _choice_card(name: str, line: str, tip: str = "") -> _Clickable:
-    """A method card as Gradient's: its name, one plain sentence under it; lit when chosen (``set_on``)."""
-    c = _Clickable()
-    c.setObjectName("combchoice")
-    v = QVBoxLayout(c)
-    v.setContentsMargins(10, 6, 10, 6)
-    v.setSpacing(2)
-    n = label(f"<b>{name}</b>")
-    n.setTextFormat(Qt.RichText)
-    v.addWidget(n)
-    ln = label(line, "small", wrap=True)
-    ln.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-    v.addWidget(ln)
-    c.setToolTip(tip or line)
-    c.setCursor(Qt.PointingHandCursor)
-    return c
-
-
-def _lit(card: QFrame, on: bool):
-    card.setProperty("on", bool(on))
-    card.setStyleSheet("QFrame#combchoice { border: 1px solid %s; border-radius: 6px; background: %s; }"
-                       % (("#5ea1ff", "#2b3446") if on else ("#3a4150", "transparent")))
-
-
-class CombineEditor(QObject):
-    """The combination block of the workflow shown, tuned as a draft in Inspect's centre. ``center(tv, node, p)`` from
-    TuneView.refresh; ``set_draft``, ``apply()``, ``try_variant()``, ``reset()``; ``draft_pending`` / ``draft_apply``
-    / ``draft_variant`` / ``draft_reset`` for the leave question (blockdraft.settle); ``history_top``, ``undo``, ``redo``
-    for the window's one order of Undo."""
-
-    _done = Signal(int, object)
-    historyChanged = Signal()
+    KEY = "fusion"
+    SIDE_PREF = "combine_settings_side"
 
     def __init__(self, tune):
         super().__init__(tune)
-        self.tv, self.s = tune, tune.s
-        self.p = None
-        self.node = None
-        self.drafts: dict[int, Draft] = {}
-        self.page = self.gv = None
-        self._ui: dict = {}
-        self.cmp = "draft"
         self.off: set = set()                  # the filters taken out of the preview (the eyes): the view only
         self.solo = None                       # the filter shown alone (its thumbnail clicked)
         self.small = None                      # the reduced inputs {"pid", "sig", "chans", "valid", "k", ...}
         self.bal: dict = {}                    # (pid, sig, balance) -> the balanced channels (``balance``)
-        self.result = None                     # the draft's preview (3, h, w) in 0-1
-        self.result_key = None
-        self.result_ms = None
         self.notes: dict = {}                  # the gains of the balance shown, {filter: (gain, why)}
-        self.error = ""
-        self.busy = False
-        self._want = None                      # the request waiting for the one running
-        self.gen = 0
-        self.computed = self.painted = 0       # previews started, previews shown (the tests count them)
-        self._drag = None                      # the draft's settings when a slider was pressed
-        self._stashed: dict[int, tuple] = {}   # variant -> (original, the draft it took)
-        self._syncing = False
-        self.timings: list[float] = []         # seconds from an edit to its image shown (the measure of the brief)
-        self._t_edit = None
-        self._lang = None                      # the language the page was built in (built again in another)
-        self._shape = None                     # what the page was built for (its filters, the stars' setting alone)
-        self._cost = None                      # ((workflow, the draft), what Apply computes again)
-        self.dock = self.drawer = None         # the settings panel at the right of the image (as the Gradient's)
-        self._win = None
-        self._done.connect(self._arrived)
         tuned = getattr(self.s, "postTuned", None)
         if tuned is not None:                  # a setting changed in Post's master layer: the block's draft goes
             tuned.connect(self._post_tuned)
 
     # ------------------------------------------------------------ the block shown
+    def wants(self, node, p) -> bool:
+        return str(self.tv.s.sel_step) == "fusion" and self._stage(p) is not None and self._spec(p) is not None
+
     def _stage(self, p=None) -> str | None:
         from ..core.workflow import combine_stage
         p = p or self.p
@@ -554,53 +474,22 @@ class CombineEditor(QObject):
         spec = self._spec(p)
         return bool(spec and spec.get("narrowband")) and stars_only(self._wired(p))
 
+    def shape(self, p) -> tuple:
+        return (self.stars_mode(p), tuple(self.roles(p)), self._stage(p))
+
+    def state_of(self, p=None) -> str:
+        p = p or self.p
+        st = self._stage(p) if p is not None else None
+        return self.s.state(p, st) if st else ""
+
+    def norm(self, key: str, value):
+        if key == "weights":
+            return norm_weights(value)
+        return value if key in ("balance", "stars") else round(float(value), 2)
+
     # ------------------------------------------------------------ the draft
-    def _draft(self, pid: int | None = None) -> Draft | None:
-        if pid is None:
-            if self.p is None:
-                return None
-            pid = self.p.pid
-        return self.drafts.get(pid)
-
-    def has_draft(self, pid: int | None = None) -> bool:
-        return bool(self._draft(pid))
-
-    def value(self, name: str):
-        d = self._draft()
-        if d is not None and name in d.vals:
-            return copy.deepcopy(d.vals[name])
-        return copy.deepcopy(self.applied().get(name))
-
-    def values(self) -> dict:
-        """The settings as the draft has them (the applied ones where it changes nothing)."""
-        out = self.applied()
-        d = self._draft()
-        if d is not None:
-            out.update(copy.deepcopy(d.vals))
-        return out
-
     def weight(self, role: str) -> float:
         return float((self.value("weights") or {}).get(role, 1.0))
-
-    def set_draft(self, updates: dict, undo: bool = True) -> bool:
-        """Settings of the draft: one step of its Undo (``undo``); a setting back to its applied value leaves it."""
-        if self.p is None:
-            return False
-        d = self.drafts.setdefault(self.p.pid, Draft("fusion", [self.p.pid]))
-        ap = self.applied()
-        norm = {k: (norm_weights(v) if k == "weights" else round(float(v), 2) if k not in ("balance", "stars") else v)
-                for k, v in updates.items()}
-        if not d.put(norm, same=lambda k, v: v == ap.get(k), step=undo):
-            return False
-        if undo and not self.has_result():
-            # a block without a result (never computed, or waiting for an input): nothing to keep up to date, the
-            # change is made at once, as every control of it and every block's (the reviewer's round 2, point 5)
-            self.apply(quiet=True)
-            return True
-        self._changed()
-        if undo:
-            self.historyChanged.emit()
-        return True
 
     def _post_tuned(self, pid: int):
         """The combination's settings changed in Post (its master layer: one source with this editor): a draft of the
@@ -611,12 +500,6 @@ class CombineEditor(QObject):
         if self.p is not None and self.p.pid == pid and self._page_ok():
             self.applied_cache = None
             self._changed()
-
-    def has_result(self, p=None) -> bool:
-        """The block has a result to show, computed or Outdated: its settings are a draft (Apply); else at once."""
-        p = p or self.p
-        st = self._stage(p)
-        return bool(st) and self.s.state(p, st) in ("done", "stale")
 
     def set_hue(self, role: str, deg: float, undo: bool = True) -> bool:
         name = hue_params(self._spec()).get(role)
@@ -646,58 +529,6 @@ class CombineEditor(QObject):
         """The palette the hues are (its key), "" when they are the user's own."""
         return palette_of(self._spec() or {}, self.values())
 
-    # the slider dragged: the draft follows, one step of Undo when it is let go
-    def begin_drag(self):
-        d = self._draft()
-        self._drag = copy.deepcopy(d.vals) if d is not None else {}
-
-    def end_drag(self):
-        before, self._drag = self._drag, None
-        d = self._draft()
-        if before is None or d is None or d.vals == before:
-            return
-        d.undo.append(before)
-        d.redo.clear()
-        d.useq.append(journal.tick())
-        d.rseq = []
-        if not self.has_result():                   # made at once, the slider let go (``set_draft``)
-            self.apply(quiet=True)
-            return
-        self.historyChanged.emit()
-        self._sync()                                # (the panel's Undo, now that the drag is a step)
-
-    def _changed(self):
-        self._sync()
-        self.preview()
-
-    def undo(self, pid: int | None = None) -> bool:
-        return self._move(pid, "undo")
-
-    def redo(self, pid: int | None = None) -> bool:
-        return self._move(pid, "redo")
-
-    def _move(self, pid, how: str) -> bool:
-        d = self._draft(pid)
-        if d is None or d.move(how) is None:
-            return False
-        if pid is None or (self.p is not None and pid == self.p.pid):
-            self._changed()
-        self.historyChanged.emit()
-        return True
-
-    def history_top(self, how: str = "undo") -> tuple[int, int] | None:
-        best = None
-        for pid, d in self.drafts.items():
-            seq = d.top(how)
-            if seq is not None and (best is None or seq > best[0]):
-                best = (seq, pid)
-        return best
-
-    def _view_of(self, pid):
-        if pid is None or (self.p is not None and pid == self.p.pid):
-            return self.p
-        return self.s.view(pid)
-
     def parts(self, pid: int | None = None) -> list[tuple[str, str, str]]:
         """What the draft changes, one (name, the setting, its change "old → new") per setting (a filter's hue, its
         intensity, the balance, the stars)."""
@@ -724,13 +555,9 @@ class CombineEditor(QObject):
                 out.append((k, _("Stars"), f"{_(STARS_NAME.get(ap.get(k), ''))} → {_(STARS_NAME.get(v, v))}"))
         return out
 
-    def changes(self, pid: int | None = None) -> list[tuple[str, str]]:
-        """What the draft changes, one (name, words) per setting, as the draft bar lists them ("Hα hue 31° → 50°")."""
-        return [(k, f"{what} {change}") for k, what, change in self.parts(pid)]
-
     def draft_change(self, pid: int | None = None) -> dict | None:
         """The draft as one change of the model (kind "combine": graphmodel.GraphEditing._combine_steps), with its
-        words; None without a draft."""
+        words (named as every step of the family: blockdraft.owned); None without a draft."""
         q = self._view_of(pid)
         d = self.drafts.get(q.pid) if q is not None else None
         if not d:
@@ -741,12 +568,7 @@ class CombineEditor(QObject):
             w, aw = d.vals["weights"], ap.get("weights") or {}
             vals["weights"] = {r: float(w.get(r, 1.0)) for r in sorted(set(w) | set(aw))
                                if abs(float(w.get(r, 1.0)) - float(aw.get(r, 1.0))) > 1e-6}
-        parts = self.parts(q.pid)
-        words = [f"{what} {change}" for _k, what, change in parts]
-        short = ", ".join(words) if len(words) <= 2 else _("{n} changes").format(n=len(words))
-        # named as every step of the family (blockdraft.owned): the setting, its owner, its change
-        what = owned(parts[0][1], self.title(q), parts[0][2]) if len(parts) == 1 else \
-            owned(_("{n} settings").format(n=len(parts)), self.title(q), ", ".join(words))
+        what, short = self.step_words(q)
         return {"kind": "combine", "values": vals, "short": short, "what": what}
 
     def title(self, q=None) -> str:
@@ -776,44 +598,6 @@ class CombineEditor(QObject):
             return title
         return name if combos.title_stem(name) else f"{title}  ·  {name}"
 
-    def _paths(self, q):
-        return [q]
-
-    def apply(self, pid: int | None = None, quiet: bool = False):
-        """The draft becomes the block's settings: one step of the window's Undo. ``quiet``: a change made at once on
-        a block without a result (no draft was shown: nothing said; refused, the change goes)."""
-        q = self._view_of(pid)
-        ch = self.draft_change(q.pid) if q is not None else None
-        if ch is None:
-            return
-        from ..core import workflow as wfl
-        from .model import NotInEngine
-        n = self.s.steps_count() if hasattr(self.s, "steps_count") else None
-        try:
-            if hasattr(self.s, "apply_as"):
-                self.s.apply_as(ch, "replace", self._paths(q))
-            else:
-                self.s.apply_change(self._paths(q), ch)
-        except (ValueError, NotInEngine, wfl.OptionRefused) as e:
-            self.tv.toasted.emit(_(str(e)))
-            if quiet:
-                self.drafts.pop(q.pid, None)
-                self._changed()
-            return
-        if hasattr(self.s, "log"):
-            self.s.log("{what}", what=ch["what"])
-        if n is not None:                               # the step's words, whatever the graph's own said first
-            self.s.name_steps_since(n, ch["what"])
-        run = self._needs_run(q, ch)
-        self.drafts.pop(q.pid, None)
-        if quiet:
-            self._changed()
-        else:                                   # what was done, named as every step of the family; Run when it needs one
-            self.tv.toasted.emit(" · ".join([ch["what"]] + ([_("Run to here computes it")] if run else []) +
-                                            ["Ctrl+Z"]))
-        self.historyChanged.emit()
-        self.tv.request_refresh()
-
     def _needs_run(self, q, ch) -> bool:
         """Whether an applied change asks for a run: the block's settings do; a master layer's hues and intensities
         are the layer's (client/postfusion.py), nothing to compute."""
@@ -821,50 +605,6 @@ class CombineEditor(QObject):
             return True
         from .postfusion import split_change
         return bool(split_change(self._spec(q) or {}, dict(ch["values"]))[1])
-
-    def try_variant(self, pid: int | None = None):
-        """The draft on a variant of the workflow (what is computed stays as it is); the variant is shown."""
-        q = self._view_of(pid)
-        ch = self.draft_change(q.pid) if q is not None else None
-        if ch is None:
-            return
-        from ..core import workflow as wfl
-        from .model import NotInEngine
-        title = f"{q.name} · {ch['short']}"
-        try:
-            v = (self.s.apply_as(ch, "variant", [q], title) if hasattr(self.s, "apply_as")
-                 else self.s.add_variant(q, ch, title))
-        except (ValueError, NotInEngine, wfl.OptionRefused) as e:
-            self.tv.toasted.emit(_(str(e)))
-            return
-        d = self.drafts.pop(q.pid, None)
-        self._stashed[v.pid] = (q.pid, copy.deepcopy(d))       # an Undo of the variant gives the draft back
-        self.historyChanged.emit()
-        self.tv._variant_made(v.pid, q.pid)
-
-    def reset(self, pid: int | None = None):
-        q = self._view_of(pid)
-        if q is None or q.pid not in self.drafts:
-            return
-        self.drafts.pop(q.pid, None)
-        self.historyChanged.emit()
-        if self.p is not None and q.pid == self.p.pid:
-            self._changed()
-
-    # the question every block asks before it is left (blockdraft.settle)
-    def _pending_pid(self):
-        if self.p is not None and self.has_draft(self.p.pid):
-            return self.p.pid
-        return next((pid for pid, d in self.drafts.items() if d and self.s.view(pid) is not None), None)
-
-    def draft_pending(self):
-        pid = self._pending_pid()
-        if pid is None:
-            return None
-        ch = self.draft_change(pid)
-        q = self.s.view(pid)
-        return (self.heading(q) if q is not None else self.title(), [ch["what"]] if ch else [],
-                self.cost_text(pid))
 
     def cost_text(self, pid: int | None = None) -> str:
         """What Apply computes again, as the model says it ("Computes again … about N min"); for a master layer's hues
@@ -893,191 +633,16 @@ class CombineEditor(QObject):
         self._cost = (key, text)
         return text
 
-    def draft_apply(self) -> bool:
-        pid = self._pending_pid()
-        if pid is not None:
-            self.apply(pid)
-        return pid is None or not self.has_draft(pid)
+    # ------------------------------------------------------------ the page
+    def _new_block(self):
+        self.off, self.solo = set(), None
+        self.result = None
+        self.notes = {}
 
-    def draft_variant(self) -> bool:
-        pid = self._pending_pid()
-        if pid is not None:
-            self.try_variant(pid)
-        return pid is None or not self.has_draft(pid)
-
-    def draft_reset(self) -> bool:
-        pid = self._pending_pid()
-        if pid is not None:
-            self.reset(pid)
-        return True
-
-    # ------------------------------------------------------------ the page: Inspect's centre for the block
-    def _page_ok(self) -> bool:
-        if self.page is None:
-            return False
-        from shiboken6 import isValid
-        if not isValid(self.page) or not isValid(self.gv):
-            self.page = self.gv = None
-            self._ui = {}
-            return False
-        return True
-
-    def detach(self):
-        if self._page_ok() and self.tv.center.indexOf(self.page) >= 0:
-            self._side(True)
-
-    def center(self, tv, node, p) -> bool:
-        """From TuneView.refresh: the centre is this page when the block shown is a combination (True)."""
-        want = (node is not None and p is not None and str(tv.s.sel_step) == "fusion" and not node.cut
-                and self._stage(p) is not None and self._spec(p) is not None)
-        if not want:
-            self._leave_page()
-            return False
-        self.node = node
-        self._enter_page(p)
-        return True
-
-    def _side(self, show: bool):
-        """TuneView's panel and header: away while the page shows (it has its own), back after."""
-        tv = self.tv
-        d = getattr(tv, "dock", None)
-        try:
-            hb = getattr(tv, "head_box", None)
-            if hb is not None:
-                hb.setVisible(show)
-            if show:
-                tv.panel.setVisible(d is None or d.state == "docked")
-                if d is not None:
-                    d.strip.setVisible(d.state in ("icons", "auto"))
-                    d.arrow.setVisible(d.state == "hidden")
-            else:
-                tv.panel.hide()
-                if d is not None:
-                    d.strip.hide()
-                    d.arrow.hide()
-        except (RuntimeError, AttributeError):
-            pass
-
-    def _load(self, p):
-        for vpid, (opid, d) in list(self._stashed.items()):
-            if self.s.view(vpid) is None:      # the variant undone: the draft it took is the original's again
-                self._stashed.pop(vpid)
-                if d and not self.has_draft(opid):
-                    self.drafts[opid] = d
-        if self.p is None or p.pid != self.p.pid:
-            self.off, self.solo = set(), None
-            self.result = None
-            self.notes = {}
-        self.p = p
-        d = self._draft()
-        if d is not None:                      # what the block now holds leaves the draft
-            ap = self.applied()
-            d.drop_pending({k for k, v in d.vals.items() if v != ap.get(k)})
-
-    def _enter_page(self, p):
-        tv = self.tv
-        from .i18n import language
-        new = self.p is None or self.p.pid != p.pid or not self._page_ok() or self._lang != language() or \
-            self._shape != (self.stars_mode(p), tuple(self.roles(p)), self._stage(p))
-        self._lang = language()
-        self._shape = (self.stars_mode(p), tuple(self.roles(p)), self._stage(p))
-        self._load(p)
-        if not self._page_ok() or new:
-            self._build_page()
-        if tv.center.indexOf(self.page) < 0:
-            tv._clear_center()
-            tv.center.addWidget(self.page, 1)
-            self.page.show()
-        self._side(False)
-        for x in self._sides():                         # TuneView's panel stays away while the page shows
-            x.installEventFilter(self)
-        win = tv.window()
-        if win is not self._win:
-            self._win = win
-            win.installEventFilter(self)
-        if self.dock is not None:
-            self.dock.set_state(self._side_state())
-        tv.view, tv.views = self.gv, []
-        tv._center_sig = ("combination", p.pid)
-        self._sync()
-        self._present()
-        self.preview()
-
-    # ------------------------------------------------------------ the settings panel at the right (the Gradient's)
-    def _sides(self) -> list:
-        tv = self.tv
-        d = getattr(tv, "dock", None)
-        out = [getattr(tv, "panel", None)] + ([d.strip, d.arrow] if d is not None else [])
-        return [x for x in out if x is not None]
-
-    def _side_state(self) -> str:
-        """The settings panel's state: the user's choice when he made one, else by the window's width (kept open on a
-        large window, automatic on a small one), as the Gradient's."""
-        from .gradientedit import SMALL_W
-        try:
-            from . import prefs
-            st = prefs.get("combine_settings_side")
-        except Exception:  # noqa: BLE001 - no preference readable: by the width
-            st = None
-        if st in ("docked", "icons", "auto"):
-            return st
-        try:
-            return "docked" if self.tv.window().width() >= SMALL_W else "auto"
-        except RuntimeError:
-            return "docked"
-
-    def _side_chosen(self, st: str):
-        try:
-            from . import prefs
-            prefs.set("combine_settings_side", st)
-        except Exception:  # noqa: BLE001 - not kept: the next time by the width again
-            pass
-
-    def eventFilter(self, obj, e):                                   # noqa: N802 - Qt's name
-        t = e.type()
-        if t == QEvent.Show and obj in self._sides() and self.page_shown():
-            QTimer.singleShot(0, lambda: self._side(False) if self.page_shown() else None)
-        elif t == QEvent.Resize and obj is self._win and self.page_shown():
-            if self.dock is not None:
-                want = self._side_state()          # no choice of the user yet: the window's width chooses
-                if want != self.dock.state:
-                    self.dock.set_state(want)
-            QTimer.singleShot(0, lambda: self._side(False) if self.page_shown() else None)
-        return False
-
-    def _fill_drawer(self):
-        """The panel's groups: the draft's Undo and Redo; the measurements (each filter's gain and why, its balanced
-        sky noise, where the gains come from); the display (the stretch column, fixed under them)."""
-        if self.drawer is None or self.p is None:
-            return
-        from .icons import icon_only
-        from .widgets import clear
+    def _measurements(self, dv):
+        """Each filter's gain and why, its balanced sky noise, where the gains come from."""
         b = self._bal_now() or {}
-        d = self._draft()
-        sig = (self.p.pid, repr(sorted((b.get("notes") or {}).items())), repr(sorted((b.get("noise") or {}).items())),
-               b.get("from"), bool(d and d.undo), bool(d and d.redo), self._balance_used())
-        if sig == getattr(self, "_drawer_sig", None):
-            return
-        self._drawer_sig = sig
-        dv = self.drawer.rows
-        clear(dv)
-
-        def title(text):
-            t = label(_(text), "h2")
-            t.setContentsMargins(0, 8, 0, 2)
-            dv.addWidget(t)
-        title("Draft")
-        row = QHBoxLayout()
-        for key, tip, fn, on in (("undo", "Undo the draft's last step (Ctrl+Z)", self.undo, bool(d and d.undo)),
-                                 ("redo", "Redo the draft's step (Ctrl+Y)", self.redo, bool(d and d.redo))):
-            bt = icon_only(QPushButton(), key, _(tip), 16)
-            bt.setEnabled(on)
-            bt.clicked.connect(lambda _c=False, f=fn: f())
-            row.addWidget(bt)
-            self._ui[key] = bt
-        row.addStretch(1)
-        dv.addLayout(row)
-        title("Measurements")
+        self.title_of_group(dv, "Measurements")
         dv.addWidget(label(_("Balance: {how}").format(how=_(BALANCE_NAME.get(self._balance_used(), ""))), "small"))
         notes, noise = b.get("notes") or {}, b.get("noise") or {}
         for role in self.roles():
@@ -1093,63 +658,14 @@ class CombineEditor(QObject):
         if src:
             dv.addWidget(label(_(src), "small", wrap=True))
 
-    def _leave_page(self):
-        if not self._page_ok() or self.tv.center.indexOf(self.page) < 0:
-            return
-        self.tv.center.removeWidget(self.page)
-        self.page.hide()
-        self.page.setParent(None)
-        self._side(True)
-        if self.tv.view is self.gv:
-            self.tv.view = None
+    def _drawer_sig(self) -> tuple:
+        b = self._bal_now() or {}
+        return (repr(sorted((b.get("notes") or {}).items())), repr(sorted((b.get("noise") or {}).items())),
+                b.get("from"), self._balance_used())
 
-    def page_shown(self) -> bool:
-        try:
-            return self._page_ok() and self.page.isVisibleTo(self.tv)
-        except RuntimeError:
-            return False
-
-    def _build_page(self):
-        """Built for the block shown: at the left the editor's column (the draft bar, Palette, the filters' cards,
-        Balance; the stars' combination: Stars only), the image at the right, its comparison in the title row."""
-        from .imageview import ImageView
-        if self._page_ok():
-            try:
-                self.page.setParent(None)
-                self.page.deleteLater()
-            except RuntimeError:
-                pass
-        u = self._ui = {}
-        page = QWidget()
-        page.setObjectName("combpage")
-        page.setStyleSheet(
-            "QPushButton#ivseg { padding: 3px 12px; border-radius: 0; }"
-            "QPushButton#ivseg:checked { background: #2b3446; border-color: #5ea1ff; color: #ffffff; }"
-            "QFrame#combcard { border: 1px solid #333a46; border-radius: 6px; }"
-            "QLabel#thumb { border: 1px solid #333a46; }")
-        v = QVBoxLayout(page)
-        v.setContentsMargins(0, 0, 0, 0)
-        v.setSpacing(6)
-        v.addWidget(self._title_row())
-        body = QHBoxLayout()
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(10)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setFixedWidth(PANEL_W)
-        col = QWidget()
-        cv = QVBoxLayout(col)
-        cv.setContentsMargins(0, 0, 8, 0)
-        cv.setSpacing(8)
-        bar = DraftBar(narrow=True)
-        bar.what.setMinimumHeight(2 * bar.what.fontMetrics().height() + 4)
-        bar.apply.connect(lambda: self.apply())
-        bar.variant.connect(lambda: self.try_variant())
-        bar.reset.connect(lambda: self.reset())
-        u["bar"], u["state"] = bar, bar.what
-        u["apply"], u["variant"], u["reset"] = bar.b_apply, bar.b_variant, bar.b_reset
+    def _fill_column(self, cv):
+        """Palette, the filters' cards, Balance; the stars' combination: Stars only."""
+        u = self._ui
         if self.stars_mode():
             cv.addWidget(label(_("Stars"), "h2"))
             for key in STARS:
@@ -1157,106 +673,28 @@ class CombineEditor(QObject):
                 c.clicked.connect(lambda k=key: self.set_draft({"stars": k}))
                 cv.addWidget(c)
                 u["stars_" + key] = c
-        else:
-            if hue_params(self._spec()):
-                cv.addWidget(label(_("Palette"), "h2"))
-                pal = QComboBox()
-                pal.setObjectName("palette")
-                for k, n in self.palettes():
-                    pal.addItem(_(n), k)
-                pal.addItem(_("Custom"), "")
-                pal.setToolTip(_("Starting hues for the filters in one click; then adjust each filter below"))
-                pal.activated.connect(lambda i, b=pal: b.itemData(i) and self.set_palette(b.itemData(i)))
-                cv.addWidget(pal)
-                u["palette"] = pal
-            cv.addWidget(label(_("Filters"), "h2"))
-            for role in self.roles():
-                cv.addWidget(self._card(role))
-            if has_balance(self._spec(), self._wired()) and "balance" in self.applied():
-                cv.addWidget(label(_("Balance"), "h2"))
-                for key in BALANCES:
-                    c = _choice_card(_(BALANCE_NAME[key]), _(BALANCE_LINE[key]))
-                    c.clicked.connect(lambda k=key: self.set_draft({"balance": k}))
-                    cv.addWidget(c)
-                    u["balance_" + key] = c
-        cv.addStretch(1)
-        scroll.setWidget(col)
-        left = QWidget()                               # the settings, then the draft bar at the column's bottom
-        lv = QVBoxLayout(left)
-        lv.setContentsMargins(0, 0, 0, 0)
-        lv.setSpacing(8)
-        lv.addWidget(scroll, 1)
-        bar.setFixedWidth(PANEL_W - 8)
-        lv.addWidget(bar)
-        body.addWidget(left)
-        box = QWidget()
-        bl = QVBoxLayout(box)
-        bl.setContentsMargins(0, 0, 0, 0)
-        gv = ImageView(post=False, compare=True)
-        gv.default_dir = lambda: str(getattr(self.s, "root", None) or "")
-        gv.toasted.connect(self.tv.toasted.emit)
-        gv.layout().itemAt(0).widget().hide()          # its own toolbar: the page's comparison in its title row
-        gv.imageShown.connect(self._shown)
-        gv.add_overlay(self._paint_tag)
-        bl.addWidget(gv, 1)
-        cover = QFrame()                               # under the image while there is nothing to show: why, and Run
-        cl = QVBoxLayout(cover)
-        cl.setContentsMargins(0, 6, 0, 6)
-        head = label("", "dim")
-        head.setAlignment(Qt.AlignCenter)
-        cl.addWidget(head)
-        text = label("", "dim", wrap=True)
-        text.setAlignment(Qt.AlignCenter)
-        cl.addWidget(text)
-        runs = QHBoxLayout()
-        cl.addLayout(runs)
-        cover.hide()
-        bl.addWidget(cover)
-        u["cover"], u["cover_head"], u["cover_text"], u["cover_runs"] = cover, head, text, runs
-        body.addWidget(box, 1)
-        bw = QWidget()
-        bw.setLayout(body)
-        v.addWidget(bw, 1)
-        self.page, self.gv = page, gv
-        from .gradientedit import SettingsPanel
-        from .layout import Dock
-        self.drawer = SettingsPanel(self)
-        self.dock = Dock(bw, self.drawer, lambda: body.addWidget(self.drawer), lambda: body.removeWidget(self.drawer),
-                         title=_("Settings"), role="adjust")
-        body.insertWidget(body.indexOf(box) + 1, self.dock.strip)
-        body.addWidget(self.drawer)
-        self.dock.set_state(self._side_state())
-        self.dock.chosen.connect(self._side_chosen)
-        gv.panel_box.setParent(None)                   # the stretch column: in the panel, never beside the image
-        self.drawer.fixed.addWidget(label(_("Display"), "h2"))
-        self.drawer.fixed.addWidget(gv.panel_box)
-        gv.show_histogram(True)
-
-    def _title_row(self) -> QWidget:
-        u = self._ui
-        w = QWidget()
-        top = QHBoxLayout(w)
-        top.setContentsMargins(0, 0, 0, 0)
-        top.setSpacing(10)
-        u["title"] = label("", "h1")
-        top.addWidget(u["title"])
-        u["tag"] = label("", "small")
-        u["tag"].setStyleSheet(f"color: {WARN};")
-        top.addWidget(u["tag"])
-        top.addStretch(1)
-        seg = QHBoxLayout()
-        seg.setSpacing(0)
-        for mode, text, tip in COMPARE:
-            b = QPushButton(_(text))
-            b.setObjectName("ivseg")
-            b.setCheckable(True)
-            b.setToolTip(_(tip))
-            b.clicked.connect(lambda _c=False, m=mode: self.set_compare(m))
-            seg.addWidget(b)
-            u["cmp_" + mode] = b
-        top.addLayout(seg)
-        w.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        return w
+            return
+        if hue_params(self._spec()):
+            cv.addWidget(label(_("Palette"), "h2"))
+            pal = QComboBox()
+            pal.setObjectName("palette")
+            for k, n in self.palettes():
+                pal.addItem(_(n), k)
+            pal.addItem(_("Custom"), "")
+            pal.setToolTip(_("Starting hues for the filters in one click; then adjust each filter below"))
+            pal.activated.connect(lambda i, b=pal: b.itemData(i) and self.set_palette(b.itemData(i)))
+            cv.addWidget(pal)
+            u["palette"] = pal
+        cv.addWidget(label(_("Filters"), "h2"))
+        for role in self.roles():
+            cv.addWidget(self._card(role))
+        if has_balance(self._spec(), self._wired()) and "balance" in self.applied():
+            cv.addWidget(label(_("Balance"), "h2"))
+            for key in BALANCES:
+                c = _choice_card(_(BALANCE_NAME[key]), _(BALANCE_LINE[key]))
+                c.clicked.connect(lambda k=key: self.set_draft({"balance": k}))
+                cv.addWidget(c)
+                u["balance_" + key] = c
 
     def _card(self, role: str) -> QFrame:
         """A filter's card: its thumbnail, its name and eye, Hue (the rail of the colours, a swatch, the degrees),
@@ -1355,18 +793,6 @@ class CombineEditor(QObject):
         u[f"int_{role}"], u[f"intv_{role}"], u[f"gain_{role}"] = it, iv, gain
         return card
 
-    def _wire_slider(self, sl: QSlider, set_value):
-        """A slider's moves go to the draft as it is dragged (the preview follows), one step of Undo when it is let
-        go; a key or the wheel, one step each."""
-        sl.sliderPressed.connect(self.begin_drag)
-        sl.sliderReleased.connect(self.end_drag)
-        sl.valueChanged.connect(lambda i, s=sl: None if self._syncing else self._mark() or set_value(
-            i, undo=not s.isSliderDown()))
-        sl.installEventFilter(_PressToRelease(sl))
-
-    def _mark(self):
-        self._t_edit = time.perf_counter()
-
     def set_eye(self, role: str, on: bool):
         if on:
             self.off.discard(role)
@@ -1380,21 +806,13 @@ class CombineEditor(QObject):
         self._mark()
         self._changed()
 
-    def set_compare(self, mode: str):
-        self.cmp = mode
-        self._present()
-        self._sync()
+    def _view_only(self) -> bool:
+        return bool(self.off) or self.solo is not None
+
+    def applied_label(self) -> str:
+        return _("Applied settings · reduced copy") if self.master() else super().applied_label()
 
     # ------------------------------------------------------------ the controls as the draft is
-    def _status(self) -> str:
-        n = len(self.changes())
-        if n:
-            return _("Draft · 1 change") if n == 1 else _("Draft · {n} changes").format(n=n)
-        st = self.s.state(self.p, self._stage()) if self._stage() else ""
-        if st == "stale":
-            return _("Applied · not computed yet")
-        return _("Applied settings")
-
     def gain_text(self, role: str) -> tuple[str, str]:
         """(the line under a filter, its tooltip): the gain its balance measured and why."""
         notes = self.notes
@@ -1415,104 +833,44 @@ class CombineEditor(QObject):
         tip = about + "\n" + _("An estimate on the preview's reduced copy: the run measures it on the whole image")
         return _("≈ ×{gain}, from the preview · {why}").format(gain=number(a, 2), why=reason), tip
 
-    @property
-    def applied_img(self):
-        a = self.applied_cache
-        return a if a is not None and self.p is not None and a.get("pid") == self.p.pid else None
-
-    applied_cache = None
-
-    def _sync(self):
-        """The page's controls as the draft is."""
-        if self.p is None or not self._ui:
-            return
-        self._syncing = True
-        try:
-            u = self._ui
-            draft = self.has_draft()
-            ch = self.draft_change() if draft else None
-            u["bar"].show_draft([self._status()] + ([t for _k, t in self.changes()] if ch else []),
-                                self.cost_text() if draft else "")
-            u["state"].setStyleSheet(f"color: {WARN};" if draft else "color: #8b95a5;")
-            why = _("No draft: change a setting first")
-            for k in ("reset", "variant", "apply"):
-                u[k].setEnabled(draft)
-            u["apply"].setToolTip((_("The draft becomes the combination's settings (Ctrl+Z takes it back)") +
-                                   ("\n" + self.cost_text() if self.cost_text() else "")) if draft else why)
-            u["variant"].setToolTip(_("The draft on a variant of the workflow: what is computed stays as it is, the "
-                                      "variant is computed by Run") if draft else why)
-            u["reset"].setToolTip(_("Back to the applied settings: the draft goes") if draft else why)
-            u["title"].setText(self.heading())
-            self._fill_drawer()
-            stale = self._stage() and self.s.state(self.p, self._stage()) == "stale" and not draft
-            u["tag"].setText(_("Previous settings") if stale else "")
-            for mode, _t, _tip in COMPARE:
-                b = u.get("cmp_" + mode)
-                if b is not None:
-                    b.setChecked(self.cmp == mode)
-            if "palette" in u:
-                pal = u["palette"]
-                pal.setCurrentIndex(max(0, pal.findData(self.palette_now())))
-            names = hue_params(self._spec() or {})
-            for role in self.roles():
-                if f"hue_{role}" in u:
-                    h = float(self.value(names[role]))
-                    u[f"hue_{role}"].setValue(int(round(h)))
-                    c = hue_colour(h)
-                    u[f"swatch_{role}"].setStyleSheet(f"background: {c.name()}; border: 1px solid #202020; "
-                                                      "border-radius: 3px;")
-                    u[f"deg_{role}"].setText(f"{h:.0f}°")
-                if f"int_{role}" in u:
-                    w = self.weight(role)
-                    u[f"int_{role}"].setValue(int(round(w / INTENSITY_STEP)))
-                    u[f"intv_{role}"].setText(number(w, 2))
-                    e = u[f"eye_{role}"]
-                    e.setChecked(role not in self.off)
-                    set_icon(e, "eye" if role not in self.off else "eye_off", 16)
-                    t, tip = self.gain_text(role)
-                    u[f"gain_{role}"].setText(t)
-                    u[f"gain_{role}"].setToolTip(tip)
-                    thumb = (self._bal_now() or {}).get("thumbs", {}).get(role)
-                    if thumb is not None:
-                        pm = QPixmap.fromImage(_qimage(thumb)).scaled(THUMB_W, THUMB_W * 2 // 3, Qt.KeepAspectRatio,
-                                                                      Qt.SmoothTransformation)
-                        u[f"thumb_{role}"].setPixmap(pm)
-                    u[f"thumb_{role}"].setStyleSheet("border: 2px solid #5ea1ff;" if self.solo == role else "")
-            bal = self.value("balance")
-            for key in BALANCES:
-                if "balance_" + key in u:
-                    _lit(u["balance_" + key], bal == key)
-            st = self.value("stars")
-            for key in STARS:
-                if "stars_" + key in u:
-                    _lit(u["stars_" + key], st == key)
-            self._update_cover()
-        except RuntimeError:
-            pass
-        finally:
-            self._syncing = False
-
-    def _update_cover(self):
-        """Under the image: why there is nothing to show (an input not computed, an input to wire, hues the stage
-        refuses); a block never computed says "Not computed yet" with its Run to here, as every block's page."""
+    def _sync_controls(self):
         u = self._ui
-        if "cover" not in u:
-            return
-        st = self.s.state(self.p, self._stage()) if self._stage() else ""
-        never = st not in ("done", "stale")
-        u["cover_head"].setText(_("Not computed yet") if never else "")
-        u["cover_head"].setVisible(never)
-        u["cover_text"].setText(self.error)
-        u["cover_text"].setVisible(bool(self.error))
-        box = u["cover_runs"]
-        if never and box.count() == 0 and hasattr(self.tv, "_run_button"):
-            try:
-                box.addStretch(1)
-                box.addWidget(self.tv._run_button(self.p, "fusion"))
-                box.addStretch(1)
-            except Exception:  # noqa: BLE001 - no Run button here (a stand-in window): the words alone
-                pass
-        u["cover"].setVisible(never or bool(self.error))
+        if "palette" in u:
+            pal = u["palette"]
+            pal.setCurrentIndex(max(0, pal.findData(self.palette_now())))
+        names = hue_params(self._spec() or {})
+        for role in self.roles():
+            if f"hue_{role}" in u:
+                h = float(self.value(names[role]))
+                u[f"hue_{role}"].setValue(int(round(h)))
+                c = hue_colour(h)
+                u[f"swatch_{role}"].setStyleSheet(f"background: {c.name()}; border: 1px solid #202020; "
+                                                  "border-radius: 3px;")
+                u[f"deg_{role}"].setText(f"{h:.0f}°")
+            if f"int_{role}" in u:
+                w = self.weight(role)
+                u[f"int_{role}"].setValue(int(round(w / INTENSITY_STEP)))
+                u[f"intv_{role}"].setText(number(w, 2))
+                e = u[f"eye_{role}"]
+                e.setChecked(role not in self.off)
+                set_icon(e, "eye" if role not in self.off else "eye_off", 16)
+                t, tip = self.gain_text(role)
+                u[f"gain_{role}"].setText(t)
+                u[f"gain_{role}"].setToolTip(tip)
+                thumb = (self._bal_now() or {}).get("thumbs", {}).get(role)
+                if thumb is not None:
+                    pm = QPixmap.fromImage(_qimage(thumb)).scaled(THUMB_W, THUMB_W * 2 // 3, Qt.KeepAspectRatio,
+                                                                  Qt.SmoothTransformation)
+                    u[f"thumb_{role}"].setPixmap(pm)
+                u[f"thumb_{role}"].setStyleSheet("border: 2px solid #5ea1ff;" if self.solo == role else "")
+        bal = self.value("balance")
+        for key in BALANCES:
+            if "balance_" + key in u:
+                _lit(u["balance_" + key], bal == key)
+        st = self.value("stars")
+        for key in STARS:
+            if "stars_" + key in u:
+                _lit(u["stars_" + key], st == key)
 
     # ------------------------------------------------------------ the preview
     def _sig(self):
@@ -1545,22 +903,9 @@ class CombineEditor(QObject):
         have = {i["role"] for i in self._wired()}
         return [r for r in self.roles() if r not in have]
 
-    def preview(self):
-        """The draft's preview (or the applied settings', with the eyes): one computation at a time, the last edit
-        only; the previous image stays until the next is ready."""
-        if self.p is None:
-            return
+    def missing_text(self) -> str:
         miss = self.missing()
-        if miss:
-            self.error = _("Waiting: {names} to wire").format(names=", ".join(_port(r) for r in miss))
-            self._sync()
-            return
-        self.gen += 1
-        req = self._request()
-        if self.busy:
-            self._want = req
-            return
-        self._start(req)
+        return _("Waiting: {names} to wire").format(names=", ".join(_port(r) for r in miss)) if miss else ""
 
     def _request(self) -> dict:
         st, spec = self._stage(), self._spec()
@@ -1572,7 +917,9 @@ class CombineEditor(QObject):
                 "applied": ap, "applied_balance": Combination.balance_of(
                     type("P", (), {"balance": ap.get("balance", "sky")})(), self._wired()),
                 "master": self.master(), "off": set(self.off), "solo": self.solo, "sig": self._sig(),
-                "project": self.s.p, "render": self._render_settings(), "result": self._result_key()}
+                "project": self.s.p, "render": self._render_settings(), "result": self._result_key(),
+                "small": self.small if self.small is not None and self.small.get("sig") == self._sig() else None,
+                "want_applied": None}
 
     def _render_settings(self) -> dict | None:
         """The settings of the workflow's layer of Post (``layer_settings``): the preview as Post shows that layer. A
@@ -1605,149 +952,67 @@ class CombineEditor(QObject):
                 tuple(sorted(self.off)), self.solo if self.master() else None)
 
     def _start(self, req: dict):
-        self.busy = True
-        self.computed += 1
-        small = self.small if self.small is not None and self.small.get("sig") == req["sig"] else None
-        bal = self.bal.get((req["pid"], req["sig"], req["balance"])) if small is not None else None
-        want_applied = self.applied_cache is None or self.applied_cache.get("key") != req["result"]
-        result_dir = _result_dir_for(req["project"], req["pid"], req["stage"])
+        req["bal"] = self.bal.get((req["pid"], req["sig"], req["balance"])) if req.get("small") is not None else None
+        req["want_applied"] = self.applied_cache is None or self.applied_cache.get("key") != req["result"]
+        req["result_dir"] = _result_dir_for(req["project"], req["pid"], req["stage"])
+        super()._start(req)
 
-        def work():
-            out = {"req": req}
-            sm = small
+    def _work(self, req: dict) -> dict:
+        """The preview, in the editor's thread: the reduced inputs (read once per set of inputs), their balance (once
+        per balance), the stage's own mix, the Output's render; the applied picture when it changed."""
+        out = {"req": req}
+        sm = req.get("small")
+        result_dir = req["result_dir"]
+        cls = stage_class(req["stage"])
+        b = None
+        try:
+            t0 = time.perf_counter()
+            if sm is None:
+                sm = {**_reduced_for(req["project"], req["pid"], req["stage"], req["spec"]),
+                      "pid": req["pid"], "sig": req["sig"]}
+                out["small"] = sm
+            b = req.get("bal")
+            if b is None:
+                b = run_balance(sm, req["stage"], req["spec"], req["balance"], result_dir)
+                out["bal"] = b
+            p = params_of(cls, req["spec"], req["stored"], req["values"])
+            rgb = mixed(sm, b, req["stage"], req["spec"], p, req["off"], req["solo"])
+            out["result"] = output_render(rgb, req["render"])
+            out["ms"] = 1000 * (time.perf_counter() - t0)
+        except Exception as e:  # noqa: BLE001 - said over the image, the editor goes on
+            out["error"] = str(e)
+        if req["want_applied"] and req.get("master") and sm is not None and "result" in out:
+            # a master layer: its applied picture is the layer's, made as the draft's (the run's balance, the
+            # layer's hues and intensities): the same picture at the same settings
             try:
-                t0 = time.perf_counter()
-                if sm is None:
-                    sm = {**_reduced_for(req["project"], req["pid"], req["stage"], req["spec"]),
-                          "pid": req["pid"], "sig": req["sig"]}
-                    out["small"] = sm
-                b = bal
-                if b is None:
-                    b = run_balance(sm, req["stage"], req["spec"], req["balance"], result_dir)
-                    out["bal"] = b
-                cls = stage_class(req["stage"])
-                p = params_of(cls, req["spec"], req["stored"], req["values"])
-                rgb = mixed(sm, b, req["stage"], req["spec"], p, req["off"], req["solo"])
-                out["result"] = output_render(rgb, req["render"])
-                out["ms"] = 1000 * (time.perf_counter() - t0)
-            except Exception as e:  # noqa: BLE001 - said over the image, the editor goes on
-                out["error"] = str(e)
-            if want_applied and req.get("master") and sm is not None and "result" in out:
-                # a master layer: its applied picture is the layer's, made as the draft's (the run's balance, the
-                # layer's hues and intensities): the same picture at the same settings
-                try:
-                    ab = b if req["balance"] == req["applied_balance"] else run_balance(
-                        sm, req["stage"], req["spec"], req["applied_balance"], result_dir)
-                    pa = params_of(cls, req["spec"], req["stored"], req["applied"])
-                    out["applied"] = {"pid": req["pid"], "key": req["result"], "tops": {},
-                                      "img": output_render(mixed(sm, ab, req["stage"], req["spec"], pa, req["off"],
-                                                                 req["solo"]), req["render"])}
-                except Exception:  # noqa: BLE001 - not made: Applied greyed
-                    pass
-            elif want_applied:        # the block's own result: shown even when its inputs cannot be read now
-                try:
-                    out["applied"] = {"pid": req["pid"], "key": req["result"],
-                                      **(_applied_for(req["project"], req["pid"], req["stage"],
-                                                      sm["k"] if sm is not None else None, req["render"]) or
-                                         {"img": None, "tops": {}})}
-                except Exception:  # noqa: BLE001 - no result to read: Applied greyed
-                    pass
-            try:
-                self._done.emit(req["gen"], out)
-            except RuntimeError:                       # the window closed meanwhile: nobody to tell
+                ab = b if req["balance"] == req["applied_balance"] else run_balance(
+                    sm, req["stage"], req["spec"], req["applied_balance"], result_dir)
+                pa = params_of(cls, req["spec"], req["stored"], req["applied"])
+                out["applied"] = {"pid": req["pid"], "key": req["result"], "tops": {},
+                                  "img": output_render(mixed(sm, ab, req["stage"], req["spec"], pa, req["off"],
+                                                             req["solo"]), req["render"])}
+            except Exception:  # noqa: BLE001 - not made: Applied greyed
                 pass
-        # a Python thread, not Qt's pool: PyTorch (the Output's render) never returned in a thread of the pool
-        threading.Thread(target=work, name="combination preview", daemon=True).start()
+        elif req["want_applied"]:        # the block's own result: shown even when its inputs cannot be read now
+            try:
+                out["applied"] = {"pid": req["pid"], "key": req["result"],
+                                  **(_applied_for(req["project"], req["pid"], req["stage"],
+                                                  sm["k"] if sm is not None else None, req["render"]) or
+                                     {"img": None, "tops": {}})}
+            except Exception:  # noqa: BLE001 - no result to read: Applied greyed
+                pass
+        return out
 
-    def _arrived(self, gen: int, out: dict):
-        self.busy = False
-        req = out["req"]
+    def _absorb(self, req: dict, out: dict):
+        """The reduced inputs and the balance a preview read, kept for the next; the gains it shows."""
         if "small" in out:
             self.small = out["small"]
         if "bal" in out:
             self.bal = {k: v for k, v in self.bal.items() if k[0] == req["pid"] and k[1] == req["sig"]}
             self.bal[(req["pid"], req["sig"], req["balance"])] = out["bal"]
-        if "applied" in out:
-            self.applied_cache = out["applied"]
-        mine = self.p is not None and req["pid"] == self.p.pid
-        if "error" in out:
-            if mine:
-                self.error = _(out["error"])
-                if "applied" in out:
-                    self._present()             # the block's own result, though its inputs cannot be read now
-        elif mine:
-            self.error = ""
+        if "error" not in out and self.p is not None and req["pid"] == self.p.pid:
             b = out.get("bal") or self.bal.get((req["pid"], req["sig"], req["balance"]))
             self.notes = dict((b or {}).get("notes") or {})
-            if self._want is None:             # the latest edit: shown (an older one is never painted)
-                self.painted += 1
-                self.result, self.result_ms = out["result"], out["ms"]
-                self.result_key = ("combination-preview", req["pid"], gen)
-                self._present()
-        want, self._want = self._want, None
-        if want is not None and self.p is not None and want["pid"] == self.p.pid:
-            want["gen"] = self.gen
-            self._start(want)
-        self._sync()
-
-    def _present(self):
-        """The image area: the draft's preview, the applied result, or both split (the draft on the right)."""
-        from .imageview import ViewImage
-        if not self._page_ok() or self.p is None:
-            return
-        pid = self.p.pid
-        drafting = self.has_draft() or self.off or self.solo is not None
-        tag = (_("Draft preview · reduced copy") if self.has_draft() else _("Preview · reduced copy")) + \
-            (f" · {self.result_ms:.0f} ms" if self.result_ms is not None else "")
-        self.preview_tag = tag
-        pv = ViewImage(self.result, tag, key=self.result_key,
-                       stretched=True, units="norm", white=1.0, camera=False, neutral=False) \
-            if self.result is not None else None
-        ap = self.applied_img
-        av = ViewImage(ap["img"], _("Applied settings · reduced copy") if self.master() else
-                       _("Applied result") if self.s.state(self.p, self._stage()) == "done"
-                       else _("Previous settings"), key=("combination-applied", pid, ap["key"]), stretched=True,
-                       units="norm", white=1.0, camera=False, neutral=False) \
-            if ap is not None and ap.get("img") is not None else None
-        if self.cmp == "applied":
-            main, other = av or pv, None
-        elif self.cmp == "split":
-            main, other = pv or av, av if pv is not None else None
-        else:
-            main, other = (pv if (drafting or av is None) else av) or pv, None
-        if main is None:
-            return
-        self.shown_tag = main.name or ""
-        gv = self.gv
-        try:
-            if gv._want != main.identity():
-                gv.set_image(main, keep_view=gv.canvas.display is not None, keep_stretch=True)
-            if other is None:
-                gv.set_compare_targets([], None)
-            else:
-                gv.set_compare_mode("split")
-                gv.set_compare_targets([other], 0)
-                gv.set_same_stretch(True)
-        except RuntimeError:
-            pass
-
-    def _paint_tag(self, painter, canvas):
-        """The single image's tag, at its top (Split names its two sides itself), as the Gradient's: what it is, the
-        reduced copy, the time it took."""
-        if self.cmp == "split" or not self._page_ok():
-            return
-        from PySide6.QtCore import QPointF
-        from .gradientedit import DRAFT_BG
-        from .imageview import tag
-        text = getattr(self, "shown_tag", "")
-        if text:
-            tag(painter, QPointF(10, 8), text, bg=DRAFT_BG if self.has_draft() else QColor(0, 0, 0, 170))
-
-    def _shown(self, key):
-        """An image of the editor on screen: the time from the edit that asked for it (``timings``)."""
-        if self._t_edit is not None and isinstance(key, tuple) and key and key[0] == "combination-preview":
-            self.timings.append(time.perf_counter() - self._t_edit)
-            self._t_edit = None
 
 
 def _digits(v: float, n: int) -> str:

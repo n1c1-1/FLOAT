@@ -369,3 +369,39 @@ def _draft_change(ed, kind):
     if kind == "combine":
         return ed.set_intensity("SII", ed.weight("SII") + 0.5)
     return ed.set_slider("saturation", 3.0)
+
+
+@pytest.mark.parametrize("kind", FAMILY)
+def test_real_inspect_tunes_every_block_of_the_family_as_a_draft_with_one_source(qapp, tmp_path, kind):
+    """Inspect on Combine layers silently showed the S-H-O's editor: every block of the family has its editor, built
+    on one base (blockeditor.DraftEditor, the Gradient editor's pattern): its page and draft bar, a preview on a reduced
+    copy, Draft / Applied / Split; a change is a draft the project does not see until Apply, one step of the window's
+    Undo named as every step of the family; its settings are those Post shows (one source)."""
+    from astro_gpu.client.blockeditor import DraftEditor
+    from astro_gpu.client.gradientedit import PREVIEW_PIXELS
+    w = _whole(tmp_path, M27)
+    try:
+        s = w.s
+        q, ed = _open_editor(w, kind)
+        others = [x for x in w.tune.family_editors() if x is not ed]
+        assert isinstance(ed, DraftEditor) and ed.page_shown() and not any(x.page_shown() for x in others)
+        assert ed._ui["bar"].isVisible() and {"cmp_draft", "cmp_applied", "cmp_split"} <= set(ed._ui)
+        assert ed.result is not None and ed.result.shape[1] * ed.result.shape[2] <= PREVIEW_PIXELS
+        before = _stored_setting(w, kind, q, ed)
+        n = len(s._undo)
+        assert _draft_change(ed, kind) and ed.has_draft()
+        assert _stored_setting(w, kind, q, ed) == before and len(s._undo) == n      # a draft: the project as it was
+        assert ed.draft_pending() is not None                                        # leaving asks
+        _q, owner = _owner(w, kind)
+        ed.apply()
+        pump(0.5)
+        assert not ed.has_draft() and len(s._undo) == n + 1
+        m = STEP.match(s.next_words("undo"))
+        assert m and m["owner"] == owner, s.next_words("undo")
+        after = _stored_setting(w, kind, q, ed)
+        assert after != before and ed.applied() == ed.values()                      # the editor reads what it wrote
+        s.undo()
+        pump(0.3)
+        assert _stored_setting(w, kind, q, ed) == before
+    finally:
+        w.close()

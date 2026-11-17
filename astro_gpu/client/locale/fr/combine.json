@@ -75,5 +75,12 @@
   "Palette": "Palette",
   "Balance": "Balance",
   "Run to here computes it": "« Jusqu'ici » le calcule",
-  "Shift while dragging: ten times finer · arrow keys: one step": "Maj pendant le glissé : dix fois plus fin · flèches : un cran"
+  "Shift while dragging: ten times finer · arrow keys: one step": "Maj pendant le glissé : dix fois plus fin · flèches : un cran",
+  "Combine layers is a layer of Post: its settings have no variant of the workflow": "Combiner calques est un calque de Post : ses réglages n'ont pas de variante du workflow",
+  "Needs a run: the stars' combination is computed again by Run": "À calculer : la combinaison des étoiles est recalculée par Exécuter",
+  "Reduced copy: {w} × {h} px (1/{f} of the image)": "Copie réduite : {w} × {h} px (1/{f} de l'image)",
+  "Its settings show once the Stars/background block's images are read.": "Ses réglages s'affichent une fois lues les images du bloc Étoiles/fond.",
+  "Waiting: the Stars/background block's images to read": "En attente : les images du bloc Étoiles/fond à lire",
+  "The layer is not in Post yet": "Le calque n'est pas encore dans Post",
+  "The Stars/background block's images are not computed": "Les images du bloc Étoiles/fond ne sont pas calculées"
 }
