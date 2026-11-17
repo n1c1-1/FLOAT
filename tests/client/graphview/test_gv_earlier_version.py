@@ -124,6 +124,16 @@ def test_a_block_s_earlier_versions_are_those_of_its_done_stages():
         "Computed with an earlier version (5 -> 6, 1 -> 3)"
 
 
+def test_the_earlier_version_line_says_version_numbers_not_the_network_file_s_hash():
+    """Stars/background's version is "<n>-<hash of the network file>": the user reads the numbers only, the hash stays
+    in the manifest; a new network file alone (same number) is said in words."""
+    from astro_gpu.client.graphnode import earlier_words
+    assert earlier_words([("4-9b974a78cb", "5-9b974a78cb")]) == "Computed with an earlier version (4 -> 5)"
+    assert earlier_words([("3+classic2", "3+classic3")]) == "Computed with an earlier version (3+classic2 -> 3+classic3)"
+    assert earlier_words([("5-2ea85a0755", "5-9b974a78cb")]) == \
+        "Computed with an earlier version (5, new network file)"
+
+
 def test_a_block_made_from_a_result_recomputed_since_says_why_it_is_outdated():
     from astro_gpu.client.model import ProjectModel
     st = api.StageState("stale", api.REASON_UPSTREAM_REDONE, "k", "k")

@@ -391,9 +391,23 @@ def block_earlier(s, p, key: str, stages=None) -> list[tuple[str, str]]:
     return out
 
 
+def _version_number(v: str) -> str:
+    """A version as the user reads it: "4-9b974a78cb" (the number, then the hash of the network file a stage
+    computes with) is "4"; the hash stays in the result's manifest."""
+    n, _sep, rest = str(v).partition("-")
+    return n if rest and all(c in "0123456789abcdef" for c in rest) else str(v)
+
+
+def _version_pair(a, b) -> str:
+    na, nb = _version_number(a), _version_number(b)
+    if na == nb and str(a) != str(b):                   # the same number, another network file
+        return _("{version}, new network file").format(version=nb)
+    return f"{na} -> {nb}"
+
+
 def earlier_words(earlier) -> str:
     """"Computed with an earlier version (5 -> 6)": the one line a block says of it (its tooltip, its panel)."""
-    pairs = list(dict.fromkeys(f"{a} -> {b}" for a, b in earlier or ()))
+    pairs = list(dict.fromkeys(_version_pair(a, b) for a, b in earlier or ()))
     return _("Computed with an earlier version ({versions})").format(versions=", ".join(pairs)) if pairs else ""
 
 
