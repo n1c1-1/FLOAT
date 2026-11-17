@@ -249,7 +249,7 @@ def test_the_choice_is_in_the_layers_panel_one_undo_step_and_saved(preps, qapp):
         full = named(v, "Full")
         v.push()
         v._slider(full, STRETCH_KEY, 1.0)
-        assert v.next_words("undo") == "Stretch strength of “Full”"
+        assert v.next_words("undo").startswith("Stretch strength of “Full”: ")       # (and what it became)
     finally:
         s.close()
 
@@ -269,7 +269,8 @@ def test_the_labels_are_french(preps, qapp):
         assert [box.itemText(i) for i in range(2)] == ["Automatique", "Arcsinh"]
         from PySide6.QtWidgets import QLabel
         assert any(x.text() == "Étirement" for x in widgets_of(v, QLabel))
-        assert [x.name.text() for x in widgets_of(v, ContSlider)].count("Intensité") == 2
+        names = [x.name.text() for x in widgets_of(v, ContSlider)]
+        assert names.count("Intensité") == 1 and names.count("Force") == 1    # the Arcsinh's, the stars' own word
         assert "Étirement de «" in v.next_words("undo") and v.next_words("undo").endswith(": Arcsinh")
         for text in ("gentler", "Stretch strength", "Arcsinh keeps the colours by itself"):
             assert i18n._(text) != text, text
@@ -411,7 +412,7 @@ def test_the_strength_counts_in_steps_and_sky_is_greyed_with_its_reason(preps, q
         assert s.settle()
         assert named(v, "Full")["sliders"][STRETCH_KEY] == pytest.approx(2.0 + STRENGTH_STEP)
         assert v.stretch_strength.val.text() == "+0.05"                     # the value says the step
-        assert v.next_words("undo") == "Stretch strength of “Full”"
+        assert v.next_words("undo").startswith("Stretch strength of “Full”: ")       # (and what it became)
         v.do_undo()
         assert s.settle()
         assert STRETCH_KEY not in named(v, "Full")["sliders"]
