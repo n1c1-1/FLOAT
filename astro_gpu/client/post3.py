@@ -3763,6 +3763,7 @@ class PostView(QWidget):
                 _("Palette: {name}").format(name=c.currentText())))
             r.addWidget(c, 1)
             self.pbox.addLayout(r)
+            self.palette_box = (lay["id"], c)            # (said again in place when a hue is let go)
         for role in f["roles"]:
             if role in f["hue_params"]:
                 self.pbox.addWidget(self._fusion_slider(lay, role, "hue"))
@@ -3784,14 +3785,35 @@ class PostView(QWidget):
             # the one setting of the combination its run measures (the gains): changing it needs a run, said in its
             # tip; once it is not the balance the result was computed with, said under it
             c.setToolTip(c.toolTip() + NL + _("Changing it needs a run: the combination is computed again by Run"))
+            # said under it only when the engine itself has the block to compute (Outdated or not computed: the
+            # state Run reads) and its result was computed with another balance; a result the engine accepts (an
+            # earlier version of the method, computed under the former default) is up to date: nothing said
             ran = getattr(self.s, "combine_result_balance", lambda pid: None)(lay["pid"])
-            if ran is not None and ran != f.get("balance"):
+            try:
+                state = self.s.state(q, f["stage"]) if q is not None and hasattr(self.s, "state") else ""
+            except Exception:  # noqa: BLE001 - no state now: nothing said
+                state = ""
+            if state in ("stale", "pending") and ran is not None and ran != f.get("balance"):
                 self.pbox.addWidget(label(_("Needs a run: the balance is not the one computed"), "small", wrap=True))
         b = QPushButton(_("Open in Inspect  →"))
         b.setObjectName("link")
         b.setToolTip(_("The combination's editor: a draft to compare, Apply, Try variant"))
         b.clicked.connect(lambda: self.goProcessing.emit(lay["pid"], "fusion"))
         self.pbox.addWidget(b)
+
+    def _palette_said(self, lay):
+        """The palette field of the master panel shown, said again in place (the hues it names, or Custom), the panel
+        not built again."""
+        box = getattr(self, "palette_box", None)
+        if not box or box[0] != lay["id"]:
+            return
+        try:
+            c = box[1]
+            c.blockSignals(True)
+            c.setCurrentIndex(max(0, c.findData((lay.get("fusion") or {}).get("palette", ""))))
+            c.blockSignals(False)
+        except RuntimeError:                              # (a panel built again meanwhile)
+            self.palette_box = None
 
     def fusion_child_props(self, lay, role):
         """One filter of a combination's master layer: its gain, its hue and intensity (the combination's settings),
@@ -3842,6 +3864,8 @@ class PostView(QWidget):
             self.request(final_only=True)
             if rebuild:            # (a slider let go: the panel stays as it is, the slider under the pointer)
                 QTimer.singleShot(0, self.build_props)
+            else:
+                self._palette_said(lay)
         if not rest:
             return
         values = rest

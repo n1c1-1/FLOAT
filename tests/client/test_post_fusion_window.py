@@ -497,15 +497,23 @@ def test_the_balance_says_it_needs_a_run_in_post_and_in_the_editor(m27, monkeypa
     lay = _master(pv)
     from PySide6.QtWidgets import QLabel
 
-    def said(ran):
+    real_state = w.s.state
+
+    def said(ran, state):
         monkeypatch.setattr(w.s, "combine_result_balance", lambda pid: ran)
+        monkeypatch.setattr(w.s, "state", lambda q, st, *a, **k: state if st == lay["fusion"]["stage"] else
+                            real_state(q, st, *a, **k))
         pv.sel = None
         pv.select(lay["id"], "layer")
         return [x.text() for x in pv.right.findChildren(QLabel) if x.isVisibleTo(pv.right)]
-    # the balance computed: nothing said (all up to date); another one than the computed: it needs a run
-    assert not any(t.startswith("Needs a run") for t in said(lay["fusion"]["balance"]))
     other = "sky" if lay["fusion"]["balance"] == "signal" else "signal"
-    assert any(t.startswith("Needs a run") for t in said(other))
+    # the balance computed: nothing said; the engine counting the block up to date (a result of an earlier version
+    # computed under the former default, IC 443's): nothing said either; the block Outdated with another balance than
+    # its result's: it needs a run
+    assert not any(t.startswith("Needs a run") for t in said(lay["fusion"]["balance"], "stale"))
+    assert not any(t.startswith("Needs a run") for t in said(other, "done"))
+    assert any(t.startswith("Needs a run") for t in said(other, "stale"))
+    monkeypatch.setattr(w.s, "state", real_state)
     q, ed = _editor(w, monkeypatch)
     ed.set_draft({"balance": "sky" if ed.applied().get("balance") == "signal" else "signal"})
     c = ed.cost_text()
@@ -597,3 +605,20 @@ def test_judges_details_names_undo_tag_digits_intensity_tabs_gains_and_the_panel
     monkeypatch.setattr(mmod.api, "stage_outputs", lambda *a, **k: Out)
     panel = w.s.fusion_gains(lay["pid"])
     assert {r: round(g, 6) for r, (g, _w, _f) in panel.items()} == {r: round(g, 6) for r, (g, _w) in got.items()}
+
+
+def test_the_palette_field_follows_a_hue_let_go_in_place(m27):
+    w, pv, _before = m27
+    lay = _master(pv)
+    pv.sel = None
+    pv.select(lay["id"], "layer")
+    from astro_gpu.client.post3 import ContSlider
+    box = pv.palette_box[1]
+    assert box.currentData() == lay["fusion"]["palette"]
+    hue = next(x for x in pv.findChildren(ContSlider) if x.name.text() == "O III hue" and x.isVisibleTo(pv.right))
+    hue.moved.emit(120.0)
+    hue.done.emit(120.0)
+    for _i in range(5):
+        QApplication.processEvents()
+    assert pv.palette_box[1] is box and box.currentData() == "" and box.currentText() == "Custom"
+    pv.do_undo()
