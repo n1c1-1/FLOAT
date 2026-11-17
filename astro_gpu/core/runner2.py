@@ -112,9 +112,18 @@ GPU_LOST = "the graphics card stopped responding during {stage}; the rest of the
 GPU_LOST_AGAIN = ("the graphics card stopped responding again during {stage}: it is not tried a third time; the rest "
                   "of the run continues in a fresh process")
 GPU_LOST_END = "the graphics card stopped responding during {stage} and the run cannot go on: {why}"
-#: a job that failed on an unexpected error while a result it reads is of an earlier version of its stage's method
-UNREADABLE = ("the result of {title} was computed with an earlier version ({old} -> {new}) and can no longer be read by "
-              "this version: recompute it ({error})")
+#: a job that failed on an unexpected error while a result it reads is of an earlier version of its stage's method;
+#: ``title``: the block as the graph shows it ("Stars/background"), the command the one of its menu and panel
+UNREADABLE = ("the result of the {title} block was computed with an earlier version ({old} -> {new}), which this "
+              "version may no longer read: recompute it with “Recompute (current version)” on that block ({error})")
+
+
+def unreadable_words(chains: Any, stage: str, old: str, new: str, error: str) -> str:
+    """UNREADABLE for a result of this stage: named by its block's title (the stage's own title for a stage no block
+    lists)."""
+    block = chains.block_of(stage)
+    title = chains.block_title(block) if base(block) != base(stage) else chains.stages[base(stage)].title
+    return UNREADABLE.format(title=title, old=old, new=new, error=error)
 
 
 # ---------------------------------------------------------------------------------------------- the plan
@@ -1194,8 +1203,7 @@ class _Worker:
             except (KeyError, ValueError):
                 continue
             if ev:
-                return UNREADABLE.format(title=self.rules.chains.stages[base(st)].title, old=ev[0], new=ev[1],
-                                         error=error)
+                return unreadable_words(self.rules.chains, st, ev[0], ev[1], error)
         return ""
 
     def _commit(self, job: Job, sp: StoreProject, w: Workflow) -> None:
