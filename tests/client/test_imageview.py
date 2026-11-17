@@ -1204,6 +1204,40 @@ def test_info_band_compact_flag_and_exclude_modes(qapp, loader):
     assert got == [(0, True)] and v.band.toggle.isEnabled()
 
 
+def test_the_frame_s_values_fit_the_selection_page_at_1250_px_in_french(qapp):
+    """The hand pass (French, 1250 x 685, Selection): the selected frame's values were cut through their last cell,
+    a scroll bar under them; the row had 591 px there. The values of a frame of a camera fit them whole."""
+    from astro_gpu.client import app as appmod
+    from astro_gpu.client.imageview_strip import InfoBand
+    appmod.apply_language("fr")
+    qapp.setStyleSheet(QSS + appmod.EXTRA_QSS)                # the window's look
+    try:
+        band = InfoBand()
+        band.set_frame(iv.ViewImage(None, "DSC02293.ARW", info=dict(time="2023-08-21T00:25:13", exposure=15.0,
+                                                                     iso=5000, fwhm=3.98, roundness=0.85,
+                                                                     transparency=0.84, weight=0.6)), 0, 30)
+        for w in (band.state, band.toggle):            # beside the scrolled row in the viewer (imageview._sequence)
+            band.layout().removeWidget(w)
+            w.setParent(None)
+        assert band.minimumSizeHint().width() <= 591
+        # and the row takes the height of what it holds when that changes: never cut in half
+        from astro_gpu.client.imageview_strip import SideScroll
+        band2 = InfoBand()
+        sa = SideScroll(band2, min_width=110)
+        sa.resize(300, 10)
+        sa.show()
+        QApplication.processEvents()
+        band2.set_frame(iv.ViewImage(None, "A_LONGER_NAME.ARW", info=dict(exposure=15.0, fwhm=3.98)), 0, 2)
+        for _i in range(3):
+            QApplication.processEvents()
+        bar = sa.horizontalScrollBar().sizeHint().height() if sa.horizontalScrollBar().isVisible() else 0
+        assert sa.height() == band2.sizeHint().height() + bar
+        sa.close()
+    finally:
+        appmod.apply_language("en")
+        qapp.setStyleSheet(QSS)
+
+
 def test_send_to_post_can_be_withheld_with_its_reason(qapp, loader):
     v = make_view(qapp, loader, post=True)
     v.set_post_enabled(False, "Post does not take images yet.")

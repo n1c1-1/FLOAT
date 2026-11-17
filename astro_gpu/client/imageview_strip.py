@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import QRectF, Qt, Signal
+from PySide6.QtCore import QEvent, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QScrollBar, QSizePolicy,
                                QVBoxLayout, QWidget)
@@ -52,7 +52,15 @@ class SideScroll(QScrollArea):
         self.setStyleSheet("QScrollArea { background: transparent; border: none; }")
         self.viewport().setAutoFillBackground(False)
         inner.setAutoFillBackground(False)
+        inner.installEventFilter(self)                   # its content changes its height: the row follows
         self._fit()
+
+    def eventFilter(self, obj, e):  # noqa: N802 - Qt's name
+        # a new frame's values, or the look applied once shown (22 px labels where 17 were reckoned): the height
+        # is taken again (the hand pass: the frame's values were cut in half, the row kept an older, smaller height)
+        if obj is self.widget() and e.type() in (QEvent.LayoutRequest, QEvent.Show, QEvent.Polish):
+            QTimer.singleShot(0, self, self._fit)        # (none once the row is gone)
+        return False
 
     def _fit(self):
         inner = self.widget()
@@ -81,7 +89,9 @@ class InfoBand(QFrame):
         super().__init__(parent)
         h = QHBoxLayout(self)
         h.setContentsMargins(0, 0, 0, 0)
-        h.setSpacing(18)
+        # 10 px between the cells: a camera frame's values fit whole beside the sequence's controls in a 1250 px
+        # window (the hand pass: at 18 the last cell was cut by the side scroll)
+        h.setSpacing(10)
         col = QVBoxLayout()
         col.setSpacing(0)
         self.pos_l = label("", "ivcap")
@@ -104,7 +114,7 @@ class InfoBand(QFrame):
             h.addLayout(c)
             self.cells[k] = (cap, val)
         self.extra = QHBoxLayout()
-        self.extra.setSpacing(18)
+        self.extra.setSpacing(10)
         h.addLayout(self.extra)
         h.addStretch(1)
         self.state = QLabel("")
