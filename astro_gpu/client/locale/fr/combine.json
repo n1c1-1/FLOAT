@@ -57,5 +57,6 @@
   "Limited by noise: its signal asked for more, the gain stops where this filter's sky noise equals the H-alpha's, so a weak filter is not raised into its noise.": "Limité par le bruit : son signal demandait plus, le gain s'arrête là où le bruit du ciel de ce filtre égale celui du H-alpha, pour ne pas monter un filtre faible dans son bruit.",
   "On sky: the gain that brings this filter's sky median and spread to the H-alpha's.": "Sur le ciel : le gain qui amène la médiane et la dispersion du ciel de ce filtre à celles du H-alpha.",
   "Linear match: the least squares fit of this filter onto the reference.": "Ajustement linéaire : l'ajustement par moindres carrés de ce filtre sur la référence.",
-  "Reference: the other filters are brought to this one's scale.": "Référence : les autres filtres sont ramenés à l'échelle de celui-ci."
+  "Reference: the other filters are brought to this one's scale.": "Référence : les autres filtres sont ramenés à l'échelle de celui-ci.",
+  "Draft dropped: changed in Post": "Brouillon abandonné : modifié dans Post"
 }

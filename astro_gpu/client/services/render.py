@@ -34,7 +34,7 @@ from PySide6.QtCore import QObject, Signal
 from ..i18n import _
 from ..postengine import (
     ALIGN,
-    SUBS,
+    FUSION,
     Canvas,
     Composer,
     Provider,
@@ -50,6 +50,8 @@ from ..postengine import (
     source_id,
     source_ids,
     sub_layer,
+    sub_role,
+    subs_of,
     thumb_of,
 )
 
@@ -176,11 +178,27 @@ def read_grid(folder: Path) -> Grid:
 
 
 def api_resolver(project) -> Callable[[Any], Folder | None]:
-    """A workflow's id -> the folder of its Output block; ("stars", id) -> the folder of its Stars block: the current
+    """A workflow's id -> the folder of its Output block; ("stars", id) -> the folder of its Stars block; ("fusion", id)
+    -> the folder of the combination it starts from (a master layer's filters, client/postfusion.py): the current
     result, else the one an Outdated stage had."""
     from ... import api
 
     def resolve(sid) -> Folder | None:
+        if isinstance(sid, tuple) and sid[0] == FUSION:
+            from ...core.workflow import combine_stage
+            try:
+                stage = combine_stage(project.workflow(sid[1]))
+                so = (api.stage_outputs(project, sid[1], stage) or api.stage_outputs(project, sid[1], stage, "previous")
+                      ) if stage else None
+            except (OSError, ValueError, KeyError):
+                return None
+            if so is None or not (Path(so.dir) / "drz_meta.json").is_file():
+                return None
+            try:
+                mt = (Path(so.dir) / "manifest.json").stat().st_mtime
+            except OSError:
+                mt = 0.0
+            return Folder(Path(so.dir), so.which == "previous", mt)
         pid, stage = (sid[1], SYNTH_STAGE if sid[0] == "synth" else STARS_STAGE) if isinstance(sid, tuple) else (sid, OUTPUT_STAGE)
         try:
             chain = api.chain(project, pid)
@@ -286,6 +304,7 @@ class LayerSource(Provider):
         self.image_resolver: Callable[[str], Any] | None = None
         self._img: dict[str, Any] = {}                       # key -> (SimpleRenderEngine, Grid), or None: not there
         self._img_epoch: dict[str, int] = {}
+        self._fus: dict = {}                                  # a combination's balanced filters (``fusion_planes``)
 
     # ------------------------------------------------------------ the results on disk
     def folder(self, sid) -> Folder | None:
@@ -314,6 +333,7 @@ class LayerSource(Provider):
             del self._img[key]                        # (found, it changes the layers composed: a new canvas)
         if changed:
             self._masks.clear()
+            self._fus.clear()
             self._cv = None
         return changed
 
@@ -323,6 +343,7 @@ class LayerSource(Provider):
         self._img.clear()
         self._masks.clear()
         self._grids.clear()
+        self._fus.clear()
         self._cv = None
 
     # ------------------------------------------------------------ the image layers
@@ -374,6 +395,8 @@ class LayerSource(Provider):
     def available(self, pid) -> bool:
         if self._is_image(pid):
             return self.image(pid[1]) is not None
+        if isinstance(pid, tuple) and pid[0] == FUSION:       # the combination's result and its Output (the grid)
+            return pid not in self._gone and self.folder(pid) is not None and self.available(pid[1])
         return pid not in self._gone and self.folder(pid) is not None
 
     def readable(self, lay: dict) -> bool:
@@ -392,6 +415,8 @@ class LayerSource(Provider):
         return bool(f and f.previous)
 
     def grid(self, pid) -> Grid:
+        if isinstance(pid, tuple) and pid[0] == FUSION:       # on its Output's grid (the combination crops nothing)
+            return self.grid(pid[1])
         if self._is_image(pid):
             ent = self.image(pid[1])
             if ent is None:
@@ -542,6 +567,58 @@ class LayerSource(Provider):
         self.engine_ms += float(li.info.get("render_ms") or 0.0)
         out = np.ascontiguousarray(np.moveaxis(arr, 0, -1), np.float32)
         return out if put is None else self._paste(put, box, out)
+
+    # ------------------------------------------------------------ a combination's master layer
+    def _fusion_full(self, sid, balance: str):
+        """(balanced filters, covered pixels, gains) of a combination's result at full resolution, kept for the last
+        result and balance asked (client/postfusion.balanced_planes)."""
+        from ..postfusion import balanced_planes
+        f = self.folder(sid)
+        if f is None:
+            raise Unreadable(sid)
+        key = (str(f.path), f.mtime, balance)
+        if key not in self._fus:
+            try:
+                planes, valid, gains = balanced_planes(f.path, balance)
+            except (KeyError, OSError, ValueError) as e:
+                self.mark_gone(sid)
+                raise Unreadable(sid) from e
+            self._fus = {key: {"planes": planes, "valid": valid, "gains": gains, "reduced": {}}}
+        return self._fus[key]
+
+    def fusion_gains(self, lay: dict) -> dict:
+        """{role: (gain, why)} of a master layer's filters, as balanced now."""
+        return dict(self._fusion_full((FUSION, lay["pid"]), (lay.get("fusion") or {}).get("balance", "sky"))["gains"])
+
+    def fusion_planes(self, lay: dict, level: int, box):
+        sid = (FUSION, lay["pid"])
+        full = self._fusion_full(sid, (lay.get("fusion") or {}).get("balance", "sky"))
+        fi, region, size = self._window(sid, level, box)
+        whole = self._cv.size(level)
+        if level == 0 and tuple(box) != (0, 0, *whole):          # a region at full resolution: its pixels only
+            x0, x1, y0, y1 = (int(round(v)) for v in region)
+            cut = {r: a[y0:y1, x0:x1] for r, a in full["planes"].items()}
+            v = full["valid"][y0:y1, x0:x1]
+            out = {r: self._cut(a, 1, region, size, False) for r, a in cut.items()}
+            return out, self._cut(v.astype(np.float32), 1, region, size, False) > 0.99
+        red = full["reduced"].get(fi)
+        if red is None:                                          # the whole grid at 1/fi, by block means
+            def down(a):
+                if fi == 1:
+                    return np.asarray(a, np.float32)
+                h, w = a.shape[0] // fi, a.shape[1] // fi
+                return a[:h * fi, :w * fi].reshape(h, fi, w, fi).mean(axis=(1, 3), dtype=np.float32)
+            red = full["reduced"][fi] = ({r: down(a) for r, a in full["planes"].items()},
+                                         down(full["valid"].astype(np.float32)))
+        out = {r: self._cut(a, fi, region, size, True) for r, a in red[0].items()}
+        return out, self._cut(red[1], fi, region, size, True) > 0.99
+
+    def fusion_settings(self, lay: dict):
+        f = self.folder(lay["pid"])
+        if f is None:
+            return super().fusion_settings(lay)
+        return self.service.settings(f.path, self.bases(lay.get("base")), lay.get("sliders"), None, None,
+                                     lay.get("stretch"), sky_scale(lay))
 
     def _partial(self, sid, put, box, region, whole) -> bool:
         """Whether a rendering at full resolution covers only a part of the layer's grid (a region of it)."""
@@ -810,7 +887,7 @@ class Renderer:
             if not gone:
                 continue
             if is_group(lay):
-                what = [(_("starless image") if x == "starless" else _("stars")) for x in gone]
+                what = [(_("starless image") if x == "starless" else _("stars")) for x in gone if sub_role(x) is None]
                 names = list(gone)
             else:
                 what, names = [_("image")], []
@@ -824,7 +901,7 @@ class Renderer:
         if not is_group(lay):
             return ()
         synth = has_synth(layers, lay["id"]) and self.source.available(source_id(sub_layer(lay, "synth")))
-        subs = tuple(x for x in SUBS if not (x == "stars" and lay.get("stars_pid", lay["pid"]) is None)
+        subs = tuple(x for x in subs_of(lay) if not (x == "stars" and lay.get("stars_pid", lay["pid"]) is None)
                      and self.source.readable(sub_layer(lay, x)))
         return subs + (("synth",) if synth else ())
 

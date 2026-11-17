@@ -51,7 +51,7 @@ def test_a_continuum_subtraction_is_a_map_of_two_channels():
     raw, _neb = _sky_field({r: 100.0 + i for i, r in enumerate(ports) if r != "Ha"} | {"Ha": 90.0},
                            {r: 1.5 for r in ports})
     yy, xx = np.mgrid[0:raw["Ha"].shape[0], 0:raw["Ha"].shape[1]]
-    for k, (y, x) in enumerate([(20, 30), (40, 150), (120, 40), (130, 160), (80, 20), (25, 100), (140, 100)]):
+    for y, x in [(20, 30), (40, 150), (120, 40), (130, 160), (80, 20), (25, 100), (140, 100)]:
         star = 4000.0 * np.exp(-((xx - x) ** 2 + (yy - y) ** 2) / (2 * 1.6 ** 2))
         for r in ports:
             raw[r] = (raw[r] + star * (0.6 if r == "Ha" else 1.0)).astype(np.float32)

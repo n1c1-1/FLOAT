@@ -71,8 +71,9 @@ from ..render.sliders import ARCSINH_WHY, STRENGTH_STEP
 from ..render.sliders import STARS as STARS_GROUP
 from ..render.sliders import group_title
 from . import prefs
+from .combineedit import HUE_RAIL, INTENSITY_MAX, INTENSITY_STEP
 from .curveseditor import CurvesEditor, FunctionGraph, caption
-from .i18n import _, language, log_detail, maybe, plain_error, plural
+from .i18n import _, language, log_detail, maybe, number, plain_error, plural
 from .icons import draw as draw_icon
 from .icons import icon_only, pixmap, set_icon
 from .imageview import ZOOM_PRESETS, ZOOM_STEP
@@ -99,8 +100,14 @@ from .postengine import (
     SUB_NAMES,
     SUB_ROWS,
     SideLayer,
+    fusion_roles,
+    is_fusion,
+    is_side,
     mask_selection,
     selection_side,
+    sub_name,
+    sub_role,
+    subs_of,
     SUBS,
     THUMB,
     children,
@@ -153,6 +160,10 @@ PART_NOTES = {"starless": "The Stars/background block's starless image, stretche
               "stars": "The Stars/background block's stars alone, on black: in Screen mode above the background.",
               "combined": "The starless image and the stars, recombined. The same settings as its block in the "
                           "graph."}
+#: a combination's Hue slider: the rail of the colours of Inspect's editor, its handle
+HUE_QSS = (f"QSlider::groove:horizontal {{ height: 8px; border-radius: 4px; background: {HUE_RAIL}; }}"
+           "QSlider::handle:horizontal { background: #f2f2f2; border: 1px solid #202020; width: 10px; margin: -4px 0; "
+           "border-radius: 5px; } QSlider::sub-page:horizontal, QSlider::add-page:horizontal { background: transparent; }")
 REGION_MAX = 12_000_000                                  # pixels of the region rendered at full resolution
 REGION_WAIT_MS = 150                                     # after the view stops moving
 INDENT = 24                                              # a child row's indent (px)
@@ -179,6 +190,12 @@ def tr_name(n: str, image: bool = False) -> str:
             return _(m.group(1)) + " " + m.group(2)
         return _(b) if b in known else b
     return " · ".join(piece(b) for b in n.split(" · ")) + _(COPY) * k
+
+
+def _sub_selected(what) -> bool:
+    """A selection kind that is one of a Combine layers layer's images (its stars, its starless image, the real
+    stars, a combination's filter)."""
+    return what in SUB_ROWS or sub_role(what) is not None
 
 
 def layer_name(lay: dict) -> str:
@@ -628,6 +645,9 @@ class LayerRow(QFrame):
         if lay["kind"] == "sub" and lay["sub"] == "real":
             self.setToolTip(_("The stars of the Stars/background block, under the synthetic stars: they show where the "
                               "synthetic stars' mask is black"))
+        elif lay["kind"] == "sub" and sub_role(lay["sub"]) is not None:
+            self.setToolTip(_("One filter of the combination: its own filters, mask and spot healing act on it "
+                              "before the filters are mixed"))
         elif lay["kind"] == "sub":
             self.setToolTip(_("The filters nested here apply to this image only, before the stars are put back on "
                               "the starless image"))
@@ -635,7 +655,9 @@ class LayerRow(QFrame):
             self.setToolTip(_("The stars of the Synthetic stars block: where the mask is white they replace the real "
                               "stars, where it is painted black the real stars show"))
         elif lay.get("sub"):
-            self.setToolTip(_('Applies to "{name}" only').format(name=_(SUB_NAMES[lay["sub"]])))
+            grp = panel.layer(lay.get("target"))
+            self.setToolTip(_('Applies to "{name}" only').format(
+                name=_(sub_name(grp, lay["sub"]) if grp is not None else SUB_NAMES.get(lay["sub"], lay["sub"]))))
         elif depth:
             tgt = panel.layer(lay.get("target"))
             self.setToolTip(_('Applies to "{name}" only').format(name=layer_name(tgt)) if tgt else "")
@@ -906,6 +928,8 @@ class PostView(QWidget):
         self._curve_channel: dict[int, str] = {}         # filter id -> the channel its Curves panel showed last
         self.function_graph: FunctionGraph | None = None
         self.first_image = False
+        self._live: dict[int, dict] = {}                 # a combination's settings being moved here, not yet its block's
+        self._plain_why: dict[int, str] = {}             # a combination's layer that stays plain: why (its tooltip)
         self.sync_paths(initial=True)
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -1802,7 +1826,28 @@ class PostView(QWidget):
             return ()
         return (lay["id"],)
 
+    def _attach_fusion(self, layers=None):
+        """The combinations' master layers get their description from the model (client/postfusion.py: the block's
+        settings, those being moved here on top), the others none; never saved."""
+        fusion_of = getattr(self.s, "fusion_of", None)
+        for lay in self.layers if layers is None else layers:
+            if not (is_group(lay) and lay.get("starless") == "output") or fusion_of is None:
+                lay.pop("fusion", None)
+                continue
+            try:
+                f, why = fusion_of(lay["pid"], self._live.get(lay["pid"]))
+            except Exception:  # noqa: BLE001 - a combination that cannot be read now: its plain layer
+                f, why = None, ""
+            if f is None:
+                lay.pop("fusion", None)
+                if why in ("lightness", "after"):
+                    self._plain_why[lay["pid"]] = why
+            else:
+                lay["fusion"] = f
+                self._plain_why.pop(lay["pid"], None)
+
     def _send_draft(self):
+        self._attach_fusion()
         self._draft_dirty = True
         want, overlay = self._selected_wants()
         self._final_kind = "draft"
@@ -1833,6 +1878,7 @@ class PostView(QWidget):
         return cpu and self.src.canvas is not None and self.viewer.scale <= QUARTER_SCALE
 
     def _send_final(self):
+        self._attach_fusion()
         self._draft_t.stop()
         self._draft_dirty = False
         self._rendered_sig = self._visible_sig()
@@ -1865,12 +1911,13 @@ class PostView(QWidget):
             self.worker.request(Request(kind="before", layers=snapshot(self.layers), level=HALF_LEVEL))
             return
         layers = load_layers(copy.deepcopy(other.get("layers")), {p.pid for p in self.s.paths})
+        self._attach_fusion(layers)
         self.worker.request(Request(kind="before", layers=snapshot(layers), level=HALF_LEVEL, plain=True))
 
     def _stale_thumbs(self):
         for lay in self.layers:
             if is_pixel(lay) and (self._lthumbs.get(lay["id"], (None,))[0] != self._thumb_sig(lay) or
-                                  (is_group(lay) and any((lay["id"], s) not in self._lthumbs for s in SUBS))):
+                                  (is_group(lay) and any((lay["id"], s) not in self._lthumbs for s in subs_of(lay)))):
                 yield lay["id"]
 
     @staticmethod
@@ -2509,6 +2556,7 @@ class PostView(QWidget):
     def rebuild(self, props: bool = True):
         """The layers' rows built again; ``props``: the properties panel too (not for a visibility toggle, issue #24:
         its scroll and an open curves editor were lost)."""
+        self._attach_fusion()
         self._update_stale()
         self._mask_button()
         self._ann_buttons()
@@ -2527,15 +2575,17 @@ class PostView(QWidget):
             self._collapsed -= {lay["target"], (lay["target"], lay.get("sub"))}     # the selected filter is shown
         for lay, depth in rows(self.layers, self._collapsed):
             sl = self.sel is not None and self.sel[0] == lay["id"]
-            if lay["kind"] == "sub" or (sl and self.sel[1] in SUB_ROWS):  # a sub-layer is selected as (its layer, it)
+            if lay["kind"] == "sub" or (sl and _sub_selected(self.sel[1])):   # a sub-layer: (its layer, it)
                 sl = sl and self.sel[1] == lay.get("sub", "layer")
                 if lay["kind"] == "sub":
-                    n = sum(1 for f in children(self.layers, lay["id"]) if f.get("sub") == lay["sub"])
+                    n = sum(1 for f in children(self.layers, lay["id"]) if f.get("sub") == lay["sub"]) + \
+                        (len(fusion_roles(self.layer(lay["id"]) or {})) if lay["sub"] == "starless" else 0)
                     row = LayerRow(self, lay, self.thumb(lay), self.mask_thumb(lay), sl and self.sel[1] == lay["sub"],
                                    self.sel == (lay["id"], "mask_" + lay["sub"]), depth, n,
                                    (lay["id"], lay["sub"]) in self._collapsed)
                 else:
                     row = LayerRow(self, lay, self.thumb(lay), None, sl, False, depth)
+                    self._plain_tip(row, lay)
                 self.lbox.addWidget(row)
                 self.rows.append(row)
                 continue
@@ -2543,6 +2593,7 @@ class PostView(QWidget):
                            sl and self.sel[1] == "mask", depth,
                            len(children(self.layers, lay["id"])) + 2 * is_group(lay) if is_pixel(lay) else 0,
                            lay["id"] in self._collapsed)
+            self._plain_tip(row, lay)
             self.lbox.addWidget(row)
             self.rows.append(row)
         waiting = [p for p in self.s.paths if not p.rendered]
@@ -2586,6 +2637,14 @@ class PostView(QWidget):
         self.build_filter_menu()
         if props:
             self.build_props()
+
+    def _plain_tip(self, row, lay):
+        """A combination's Combine layers layer Post cannot make again from its filters: why, in its row's tooltip."""
+        why = self._plain_why.get(lay.get("pid")) if is_group(lay) and lay.get("starless") == "output" else None
+        if why:
+            row.setToolTip(_("A combination composed as lightness and colour: Post shows its Output as it is")
+                           if why == "lightness" else
+                           _("Blocks follow the combination in its workflow: Post shows its Output as it is"))
 
     def select(self, lid, what):
         if self.b_crop.isChecked():
@@ -2667,7 +2726,8 @@ class PostView(QWidget):
                     real = r.lay["sub"] == "real"
                     index = len([c for c in children(self.layers, r.lay["target"]) if c["id"] not in mine]) if real else 0
                     return {"parent": r.lay["target"], "index": index, "row": i, "sub": "stars" if real else r.lay["sub"],
-                            "text": _('Applies to "{name}" only').format(name=_(SUB_NAMES[r.lay["sub"]]))}
+                            "text": _('Applies to "{name}" only').format(
+                                name=_(sub_name(self.layer(r.lay["id"]) or r.lay, r.lay["sub"])))}
                 gap = i if rel < 0.5 else i + 1
                 break
         above = rs[gap - 1] if gap > 0 else None
@@ -2694,11 +2754,12 @@ class PostView(QWidget):
             text = _('Applies to "{name}" only').format(name=layer_name(self.layer(parent)))
             depth = 1
             if is_group(self.layer(parent)):              # between the filters of one of its two images: in it
-                near = below if below is not None and below.depth == 2 else \
-                    above if above is not None and (above.depth == 2 or above.lay["kind"] == "sub") else None
+                near = below if below is not None and below.depth in (2, 3) else \
+                    above if above is not None and (above.depth in (2, 3) or above.lay["kind"] == "sub") else None
                 sub = near.lay.get("sub") if near is not None else None
                 if sub:
-                    text, depth = _('Applies to "{name}" only').format(name=_(SUB_NAMES[sub])), 2
+                    text = _('Applies to "{name}" only').format(name=_(sub_name(self.layer(parent), sub)))
+                    depth = 3 if sub_role(sub) is not None else 2
                     sub = "stars" if sub == "real" else sub        # in the Stars group, above the real stars
                 return {"parent": parent, "index": index, "sub": sub, "text": text,
                         "y": below.geometry().top() - 2 if below is not None else rs[-1].geometry().bottom() + 1,
@@ -2807,7 +2868,7 @@ class PostView(QWidget):
             tgt = next((x for x, _kids in t[i + 1:] if is_pixel(x)), None)
         out = [(_('"{name}" only').format(name=layer_name(tgt)), tgt["id"])] if tgt else []
         if tgt is not None and is_group(tgt):           # or one of its two images (issue #3)
-            out += [(_('"{name}" only').format(name=_(SUB_NAMES[sub])), (tgt["id"], sub)) for sub in SUBS]
+            out += [(_('"{name}" only').format(name=_(sub_name(tgt, sub))), (tgt["id"], sub)) for sub in subs_of(tgt)]
         return out + [(_("All below"), None)]
 
     @staticmethod
@@ -3176,7 +3237,7 @@ class PostView(QWidget):
         """When the selection is one of a Combine layers layer's images (or its mask): why it cannot be duplicated,
         renamed, moved or deleted apart (the laptop's B2, B3: Duplicate with Stars chosen copied the whole layer, and
         nothing said the images stay in place); else ""."""
-        if not self.sel or self.sel[1] not in SUB_ROWS and selection_side(self.sel[1]) is None:
+        if not self.sel or not _sub_selected(self.sel[1]) and selection_side(self.sel[1]) is None:
             return ""
         lay = self.layer(self.sel[0])
         return _("One of the images of “{name}”: it stays in its layer. Duplicate, rename, move or delete the layer "
@@ -3281,7 +3342,7 @@ class PostView(QWidget):
         if lay.get("kind") != "sub":
             return self.layer(lay["id"])
         own = self.layer(lay["id"])
-        return SideLayer(own, lay["sub"]) if own is not None and lay["sub"] in SUBS else None
+        return SideLayer(own, lay["sub"]) if own is not None and is_side(lay["sub"]) else None
 
     def copy_mask(self, lay):
         """Copy mask: the mask of a row kept for Paste mask, as it is now (its layer's later changes are not in it)."""
@@ -3363,6 +3424,8 @@ class PostView(QWidget):
             return
         if mask_selection(self.sel[1]) and (own := self.mask_owner()) is not None and own["mask"] is not None:
             self.mask_props(own)
+        elif sub_role(self.sel[1]) is not None and is_fusion(lay):
+            self.fusion_child_props(lay, sub_role(self.sel[1]))
         elif self.sel[1] in SUB_ROWS:
             self.pbox.addWidget(label(_(SUB_NAMES[self.sel[1]]), "h2"))
             if self.sel[1] == "real":                    # the bottom of the Stars group (#93)
@@ -3459,7 +3522,9 @@ class PostView(QWidget):
         part = lay.get("part")
         if part:
             self.pbox.addWidget(label(_(PART_NOTES[part]), "small", wrap=True))
-        if p is not None and hasattr(self.s, "param_value") and hasattr(self.s, "set_param"):
+        if is_fusion(lay):
+            self.fusion_props(lay)
+        elif p is not None and hasattr(self.s, "param_value") and hasattr(self.s, "set_param"):
             # issue #49: the Output block's setting, here (the block is in the wire): its channels stretched linked
             # the same control, the same name as in the Output's panel of the graph (one name, one kind of control)
             c = QCheckBox(_("Linked channels"))
@@ -3522,6 +3587,9 @@ class PostView(QWidget):
         ok, why, _need = self.s.slider_state(p, sd.key, part)   # the model answers in the language of the screen
         if ok and layer_stretch(lay) == "arcsinh" and sd.key in ARCSINH_WHY:
             ok, why = False, _(ARCSINH_WHY[sd.key])      # a setting the Arcsinh stretch does not read
+        elif ok and is_fusion(lay) and sd.key == "colours":
+            # its stretch is one factor per pixel on every filter: the colours of the mix are kept by it
+            ok, why = False, _("The combination keeps its colours: one stretch factor for every filter")
         sl.set_available(ok, why)
         self._wire(sl, lambda v, k=sd.key: self._slider(lay, k, v))
         self.pbox.addWidget(sl)
@@ -3568,6 +3636,145 @@ class PostView(QWidget):
         self._refresh_rows()
         self.request(final_only=True)
         self.build_props()
+
+    # ------------------------------------------------------------ a combination's master layer
+    def _fusion_title(self, lay) -> str:
+        from .graphnode import combine_kind, combine_title
+        q = self.path(lay["pid"])
+        return combine_title(combine_kind(q), q) if q is not None else _("Combination")
+
+    def _fusion_slider(self, lay, role, what: str):
+        """A filter's Hue (``what`` "hue") or Intensity slider: the combination block's setting, moved here (the picture
+        follows), one step of the workflows' Undo when it is let go."""
+        f = lay["fusion"]
+        name = f["names"].get(role, role)
+
+        def make(x):
+            if what == "hue":
+                return {f["hue_params"][role]: round(float(x), 2)}
+            return {"weights": {role: round(float(x), 3)}}
+        if what == "hue":
+            sl = ContSlider(_("{filter} hue").format(filter=name), 0, 360, float(f["hues"][role]),
+                            float(f["hue_defaults"].get(role, f["hues"][role])), unit="°", step=1)
+            sl.s.setStyleSheet(HUE_QSS)
+            sl.setToolTip(_("The colour of {filter} on the colour wheel: the combination's setting, the same in "
+                            "Inspect").format(filter=name))
+            words = _("{filter} hue").format(filter=name)
+        else:
+            sl = ContSlider(_("{filter} intensity").format(filter=name), 0, INTENSITY_MAX, f["weights"].get(role, 1.0),
+                            1.0, step=INTENSITY_STEP)
+            sl.setToolTip(_("{filter}'s weight on top of the gain the balance measured (1: as balanced): the "
+                            "combination's setting, the same in Inspect").format(filter=name))
+            words = _("{filter} intensity").format(filter=name)
+        pid = lay["pid"]
+
+        def moved(x):
+            self._live[pid] = {**self._live.get(pid, {}), **make(x)}
+            self._attach_fusion()
+            self.request()
+
+        def done(x):
+            self._live.pop(pid, None)
+            self.set_fusion(lay, make(x), words)
+        sl.moved.connect(moved)
+        sl.done.connect(done)
+        return sl
+
+    def fusion_props(self, lay):
+        """A combination's master layer: the combination's settings (the block's own, the same as Inspect's editor):
+        its palette, each filter's hue and intensity, its balance; the link to the editor."""
+        from .combineedit import BALANCE_NAME, BALANCES, fitting_palettes, has_balance, palette_hues
+        from .graphnode import combine_spec
+        f = lay["fusion"]
+        q = self.path(lay["pid"])
+        spec = combine_spec(q) if q is not None else None
+        self._group(_("Combination ({type})").format(type=self._fusion_title(lay)))
+        pals = fitting_palettes(spec or {}) if f["hue_params"] else []
+        if pals:
+            r = QHBoxLayout()
+            r.addWidget(label(_("Palette"), "dim"))
+            c = QComboBox()
+            for k, n in pals:
+                c.addItem(_(n), k)
+            c.addItem(_("Custom"), "")
+            c.setCurrentIndex(max(0, c.findData(f.get("palette", ""))))
+            c.setToolTip(_("Starting hues for the filters in one click; then adjust each filter below"))
+            c.activated.connect(lambda i, c=c: c.itemData(i) and self.set_fusion(
+                lay, {f["hue_params"][r_]: h for r_, h in palette_hues(c.itemData(i)).items()},
+                _("Palette: {name}").format(name=c.currentText())))
+            r.addWidget(c, 1)
+            self.pbox.addLayout(r)
+        for role in f["roles"]:
+            if role in f["hue_params"]:
+                self.pbox.addWidget(self._fusion_slider(lay, role, "hue"))
+            self.pbox.addWidget(self._fusion_slider(lay, role, "intensity"))
+        inputs = list(((getattr(q, "source", None) or {}).get("fusion") or {}).get("inputs") or []) if q else []
+        if spec is not None and has_balance(spec, inputs):
+            r = QHBoxLayout()
+            r.addWidget(label(_("Balance"), "dim"))
+            c = QComboBox()
+            for k in BALANCES:
+                c.addItem(_(BALANCE_NAME[k]), k)
+            c.setCurrentIndex(max(0, c.findData(f.get("balance"))))
+            c.setToolTip(_("How each filter is brought to the H-alpha before the hues: On sky, its sky's median and "
+                           "spread; On signal, its nebula fitted onto the H-alpha's"))
+            c.activated.connect(lambda i, c=c: self.set_fusion(lay, {"balance": c.itemData(i)},
+                                                               _("Balance: {name}").format(name=c.currentText())))
+            r.addWidget(c, 1)
+            self.pbox.addLayout(r)
+        b = QPushButton(_("Open in Inspect  →"))
+        b.setObjectName("link")
+        b.setToolTip(_("The combination's editor: a draft to compare, Apply, Try variant"))
+        b.clicked.connect(lambda: self.goProcessing.emit(lay["pid"], "fusion"))
+        self.pbox.addWidget(b)
+
+    def fusion_child_props(self, lay, role):
+        """One filter of a combination's master layer: its gain, its hue and intensity (the combination's settings),
+        what acts on it."""
+        from .combineedit import REASONS
+        f = lay["fusion"]
+        name = f["names"].get(role, role)
+        self.pbox.addWidget(label(_("{filter} · in {combination}").format(filter=name,
+                                                                         combination=self._fusion_title(lay)), "h2"))
+        gains = getattr(self.s, "fusion_gains", lambda pid: {})(lay["pid"])
+        if role in gains:
+            g, why = gains[role]
+            text = _("Balanced: gain × {gain}").format(gain=number(g, 2)) + \
+                (f" ({_(REASONS[why])})" if why in REASONS else "")
+        elif gains:
+            text = _("The reference: the other filters are brought to its scale")
+        else:
+            text = _("Its gain is measured by the combination's run")
+        self.pbox.addWidget(label(text, "small", wrap=True))
+        if role in f["hue_params"]:
+            self.pbox.addWidget(self._fusion_slider(lay, role, "hue"))
+        self.pbox.addWidget(self._fusion_slider(lay, role, "intensity"))
+        self.pbox.addWidget(label(_("No stretch of its own: the layer's one stretch for every filter. No stars of its "
+                                    "own: the layer's Stars. Its filters, mask and spot healing act on {filter} before "
+                                    "the mix.").format(filter=name), "small", wrap=True))
+
+    def set_fusion(self, lay, values: dict, words: str):
+        """A combination's settings changed here: the block's own (one source with Inspect's editor and the run), one
+        step of the workflows' Undo listed in Post's; a draft of the block in Inspect is dropped (``postTuned``)."""
+        q = self.s.view(lay["pid"]) if hasattr(self.s, "view") else None
+        if q is None or not hasattr(self.s, "apply_as"):
+            return
+        try:
+            with self._from_post():
+                self.s.apply_as({"kind": "combine", "values": values, "what": words, "short": words}, "replace", [q])
+                self._name_step(words)
+        except ValueError as e:
+            self.toasted.emit(_(str(e)))
+            return
+        self.undo.append(self._model_mark("_undo"))
+        self.redo.clear()
+        self._undo_buttons()
+        tuned = getattr(self.s, "postTuned", None)
+        if tuned is not None:
+            tuned.emit(lay["pid"])
+        self._attach_fusion()
+        self.request(final_only=True)
+        QTimer.singleShot(0, self.build_props)
 
     def _part_props(self, lay, sub):
         """The sliders of one of a Stars and background layer's two images: those of the layer, the same settings

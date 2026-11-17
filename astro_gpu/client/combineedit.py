@@ -425,6 +425,9 @@ class CombineEditor(QObject):
         self._lang = None                      # the language the page was built in (built again in another)
         self._shape = None                     # what the page was built for (its filters, the stars' setting alone)
         self._done.connect(self._arrived)
+        tuned = getattr(self.s, "postTuned", None)
+        if tuned is not None:                  # a setting changed in Post's master layer: the block's draft goes
+            tuned.connect(self._post_tuned)
 
     # ------------------------------------------------------------ the block shown
     def _stage(self, p=None) -> str | None:
@@ -514,6 +517,16 @@ class CombineEditor(QObject):
         if undo:
             self.historyChanged.emit()
         return True
+
+    def _post_tuned(self, pid: int):
+        """The combination's settings changed in Post (its master layer: one source with this editor): a draft of the
+        block goes, said in the status line, and the page shows the block's settings."""
+        if self.drafts.pop(pid, None) is None:
+            return
+        self.tv.toasted.emit(_("Draft dropped: changed in Post"))
+        self.historyChanged.emit()
+        if self.p is not None and self.p.pid == pid and self._page_ok():
+            self._changed()
 
     def has_result(self, p=None) -> bool:
         """The block has a result to show, computed or Outdated: its settings are a draft (Apply); else at once."""
@@ -1302,11 +1315,26 @@ class CombineEditor(QObject):
                 "render": self._render_settings(), "result": self._result_key()}
 
     def _render_settings(self) -> dict | None:
-        """The settings of the workflow's layer of Post (``layer_settings``): the preview as Post shows that layer."""
+        """The settings of the workflow's layer of Post (``layer_settings``): the preview as Post shows that layer. A
+        combination Post shows by its master layer (client/postfusion.py) is stretched there by one factor per pixel,
+        the colour-preserving stretch (render/simple.SimpleRenderEngine.colour_factor): the same here, Colours at 1,
+        the stretch that factor is."""
         try:
-            return layer_settings(self.s.post_layers(), self.p.pid) if hasattr(self.s, "post_layers") else None
+            layers = self.s.post_layers() if hasattr(self.s, "post_layers") else []
+            got = layer_settings(layers, self.p.pid) if hasattr(self.s, "post_layers") else None
         except Exception:  # noqa: BLE001 - Post's layers not readable now: the default render
-            return None
+            layers, got = [], None
+        fusion_of = getattr(self.s, "fusion_of", None)
+        try:
+            master = fusion_of is not None and any(
+                x.get("part") == "combined" and x.get("starless") == "output" and x.get("pid") == self.p.pid
+                for x in layers or []) and fusion_of(self.p.pid)[0] is not None
+        except Exception:  # noqa: BLE001 - the combination not readable now: as its Output
+            master = False
+        if master:
+            from ..render.simple import SimpleSettings
+            got = dict(got or SimpleSettings().model_dump(), keep_colours=1.0)
+        return got
 
     def _result_key(self):
         st = self._stage()

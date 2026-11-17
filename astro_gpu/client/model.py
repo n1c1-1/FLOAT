@@ -676,6 +676,7 @@ class _ProjectBase(QObject):
     dirtyChanged = Signal(bool)            # there are edits not saved yet (True), or they were saved (False)
     editMade = Signal()                    # any edit of the definition: the recovery copy is written some time after
     draftChanged = Signal()                # a block's draft (blockdraft.Draft) had a step undone or redone
+    postTuned = Signal(int)                # a combination's settings changed in Post (its workflow): Inspect's draft goes
 
     def __init__(self, project, worker: ApiWorker | None = None, *, readonly: bool = False,
                  history: list | None = None, gpu: bool = True, device: str | None = None):
@@ -3877,6 +3878,53 @@ class _ProjectBase(QObject):
         return max(1e-4, (zx1 - zx0) * (zy1 - zy0))
 
     # ------------------------------------------------------------ what a workflow gives in Post
+    def fusion_of(self, pid: int, over: dict | None = None) -> tuple[dict | None, str]:
+        """(the combination's description for its master layer in Post, client/postfusion.describe; None when its
+        Combine layers layer stays a plain one), and why it does (postfusion.plain_reason: "lightness", "after",
+        "stars"; "" for a master layer or a workflow that is no combination). ``over``: settings being moved in Post,
+        not yet the block's."""
+        from ..core.workflow import combine_stage
+        from ..stages import recipes
+        from . import postfusion
+        from .graphnode import combine_spec, port_name
+        v = self.view(pid)
+        try:
+            w = self.p.workflow(pid)
+        except (KeyError, AttributeError):
+            return None, ""
+        stage = combine_stage(w)
+        if not stage or v is None:
+            return None, ""
+        spec = combine_spec(v)
+        inputs = list(((getattr(v, "source", None) or {}).get("fusion") or {}).get("inputs") or [])
+        why = postfusion.plain_reason(stage, spec, inputs, self._chains.get(pid) or [])
+        if why:
+            return None, why
+        names = {r: port_name(r) for r in recipes.roles(spec)}
+        return postfusion.describe(stage, spec, dict(w.params.get(stage) or {}), names, over), ""
+
+    def fusion_gains(self, pid: int) -> dict:
+        """{filter: (gain, why)} the combination's last run measured (its drz_meta.json), {} without a result."""
+        from ..core.workflow import combine_stage
+        try:
+            stage = combine_stage(self.p.workflow(pid))
+            out = api.stage_outputs(self.p, pid, stage) or api.stage_outputs(self.p, pid, stage, "previous")
+        except (KeyError, OSError, ValueError, AttributeError):
+            return {}
+        if out is None:
+            return {}
+        try:
+            meta = json.loads((Path(out.dir) / "drz_meta.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        gains = (meta.get("balance") or {}).get("gains")
+        if gains is not None:
+            return {r: (float(g), str(why)) for r, (g, why) in gains.items()}
+        # a result made before the gains were written: its scales (1 over gain times weight), the weights it ran with
+        ws = (out.params or {}).get("weights") or {}
+        return {r: (1.0 / (float(t) * float(ws.get(r, 1.0))), "") for r, t in (meta.get("channels") or {}).items()
+                if float(t) > 0}
+
     def slider_infos(self, p: WorkflowView, part: str | None = None) -> list:
         """The Post sliders of a workflow's layer (api.SliderInfo list: key, name, group, ends, available, reason).
         ``part``: None for its Output block's image, else one of its Stars block's ('starless', 'stars', 'combined')."""
