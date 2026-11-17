@@ -826,6 +826,14 @@ def new_filter_layer(key: str, target=None, sub=None) -> dict:
             "target": target, "sub": sub}
 
 
+#: the mask parts that read the image they are on (``Composer.mask``'s ``sources``)
+READS_IMAGE = ("luminance", "color")
+#: what such a part of a combination's filter's mask reads (``from``): the combination's picture (its filters mixed,
+#: as a luminosity mask is taken from the composite picture in the reference photo editors; the default), the filter
+#: itself, or another filter of the combination ("f:<role>")
+READS = ("picture", "self")
+
+
 #: the rows of a Combine layers layer's images in the panel: its stars (a group, in Screen over the starless image,
 #: issue #93), the real stars in that group when it holds Synthetic stars, its starless image
 SUB_NAMES = {"starless": "Starless image", "stars": "Stars", "real": "Real stars"}
@@ -1096,6 +1104,8 @@ def _clean_mask(m) -> dict | None:
                 q[k] = p[k] if p[k] in DIRECTIONS else v
             else:
                 q[k] = _num(p[k], v)
+        if src in READS_IMAGE and isinstance(p.get("from"), str) and (p["from"] in READS or sub_role(p["from"])):
+            q["from"] = p["from"]                       # (a combination's filter's mask: what the part reads)
         out["parts"].append(q)
     return out
 
@@ -1440,6 +1450,7 @@ class Ctx:
         self.hist_ids: set = set()                            # the filters whose input's histograms are wanted
         self.hists: dict = {}
         self.synth = None                                     # the Synthetic stars of the layer being composed
+        self.fusion_halpha = None                             # (a combination's master layer: its H-alpha map)
         self._memo: dict[str, np.ndarray] = {}
         self.canvas_wh: tuple[int, int] | None = None         # the whole canvas at this level
         self.stats_key: str | None = None                     # the input of the filter being applied, any region
@@ -1494,6 +1505,10 @@ class Ctx:
         return self._memo[name]
 
     def halpha(self) -> np.ndarray:
+        if self.fusion_halpha is not None:              # a combination's master layer: its H-alpha filter
+            if "fusion halpha" not in self._memo:
+                self._memo["fusion halpha"] = self.fusion_halpha()
+            return self._memo["fusion halpha"]
         return self._data("halpha")
 
 
@@ -1824,6 +1839,36 @@ class Composer:
         y.mul_(torch.from_numpy(np.asarray(valid >= 0.5, np.float32))[None])
         return y.permute(1, 2, 0).contiguous().numpy()
 
+    def _fusion_halpha_of(self, lay, level, abox, canvas, cache):
+        """The H-alpha map of a combination's master layer that has an H-alpha filter (a function, computed when a
+        mask asks for it), None for any other layer: the filter's balanced image through the rule of the emission map
+        of Post's other layers (render/layers.LayerService._halpha: 0 at its median, 1 at its 97th percentile, both
+        measured on the whole field, smoothly between)."""
+        if not is_fusion(lay) or "Ha" not in fusion_roles(lay):
+            return None
+        part = sub_layer(lay, "starless")
+
+        def fn():
+            import torch
+
+            from ..render.simple import _smoothstep              # the map's curve (render/layers)
+            at = stats_level(canvas.W, canvas.H)
+            W, H = canvas.size(at)
+            i = fusion_roles(lay).index("Ha")
+            w = lay["fusion"]["weights"].get("Ha", 1.0) or 1.0          # (the filter before its intensity)
+            lin_at, valid_at = self._fusion_lin(part, at, (0, 0, W, H), canvas, cache)
+            v = lin_at[i][valid_at] / np.float32(w)
+            q0, q1 = (float(x) for x in np.percentile(v, [50, 97])) if v.size else (0.0, 1.0)
+            Wl, Hl = canvas.size(level)
+            whole = (0, 0, Wl, Hl)
+            lin, _valid = self._fusion_lin(part, level, whole if level > 0 else abox, canvas, cache)
+            e = lin[i]
+            if level > 0 and abox != whole:
+                x0, y0, x1, y1 = abox
+                e = e[y0:y1, x0:x1]
+            return _smoothstep(torch.from_numpy(np.ascontiguousarray(e / np.float32(w))), q0, q1).numpy()
+        return fn
+
     @staticmethod
     def _fusion_plain(lay, own) -> bool:
         """A master layer whose filters are mixed as they are: every one shown, none with a filter or a mask."""
@@ -1863,16 +1908,38 @@ class Composer:
             x0, y0, x1, y1 = abox
             parts = parts[:, y0:y1, x0:x1]
         kids = {}
-        for r in fusion_roles(lay):
+        roles = fusion_roles(lay)
+        picture = None
+
+        def sources(r, x):
+            """What the parts of a filter's mask that read an image read: the picture (the filters mixed as they
+            are), the filter itself, another filter (stretched)."""
+            nonlocal picture
+            if picture is None:
+                if level > 0:
+                    picture = self.layer_rgb(sub_layer(lay, "starless"), level, abox, canvas, cache, draft, check)
+                else:
+                    picture = self._fusion_mix(lay, parts[:len(roles)], parts[-2], parts[-1], canvas)
+            out = {"picture": picture, "self": x}
+            for i, o in enumerate(roles):
+                if o != r:
+                    out[role_sub(o)] = np.repeat(parts[i][..., None], 3, -1)
+            return out
+        for r in roles:
             rs = role_sub(r)
             side = (lay.get("side_masks") or {}).get(rs)
             if not (lay.get("shown") or {}).get(rs, True):
                 kids[r] = np.zeros(hw, np.float32)
                 if side is not None and ((lay["id"], rs) in want or thumbs):     # a hidden filter's mask is shown
-                    keep_mask(lay, self.mask({"mask": side}, level, abox, np.zeros((*hw, 3), np.float32), canvas,
-                                             ctx), (lay["id"], rs))
+                    z = np.zeros((*hw, 3), np.float32)
+                    keep_mask(lay, self.mask({"mask": side}, level, abox, z, canvas, ctx, sources(r, z)),
+                              (lay["id"], rs))
                 continue
-            x = self.layer_rgb(sub_layer(lay, rs), level, abox, canvas, cache, draft, check)
+            # (at full resolution from the planes made above: nothing of them is kept there, ``_fusion_parts``)
+            if level > 0:
+                x = self.layer_rgb(sub_layer(lay, rs), level, abox, canvas, cache, draft, check)
+            else:
+                x = np.repeat(parts[roles.index(r)][..., None], 3, -1)
             sig = _sig(self._key(sub_layer(lay, rs), level, abox, canvas))
             for fl in own:
                 if fl.get("sub") != rs:
@@ -1887,7 +1954,7 @@ class Composer:
                 x, fm, sig = self._step(fl, x, sig, where, want, thumbs, level, abox, canvas, ctx)
                 keep_mask(fl, fm)
             if side is not None:
-                m = self.mask({"mask": side}, level, abox, x, canvas, ctx)
+                m = self.mask({"mask": side}, level, abox, x, canvas, ctx, sources(r, x))
                 keep_mask(lay, m, (lay["id"], rs))
                 x = x * m[..., None]
             kids[r] = lum(x)                     # a filter is one grey image: a colour a filter gave it, its luminance
@@ -1986,15 +2053,23 @@ class Composer:
         else:
             r[ya:yb, xa:xb] *= 1 - v
 
-    def mask(self, lay, level, abox, below, canvas: Canvas, ctx: Ctx) -> np.ndarray | None:
+    def mask(self, lay, level, abox, below, canvas: Canvas, ctx: Ctx, sources: dict | None = None
+             ) -> np.ndarray | None:
+        """``sources``: the images a part that reads one (Luminance range, Color range) may read instead of
+        ``below``, by its ``from`` (a combination's filter's mask: the picture, the filter, another filter; ``READS``);
+        a part without it reads the first of them."""
         m = lay["mask"]
         if m is None:
             return None
         if not m["parts"]:                                 # a new mask shows the whole layer, as in the reference image editor
             return self._finish(np.ones(below.shape[:2], np.float32), m, level)
-        out, seen = None, {}
+        out, seens = None, {}
         for part in m["parts"]:
-            r = self.part_raster(part, level, abox, below, canvas, ctx, seen)
+            img, key = below, None
+            if sources and part["src"] in READS_IMAGE:
+                key = part.get("from") if part.get("from") in sources else next(iter(sources))
+                img = sources[key]
+            r = self.part_raster(part, level, abox, img, canvas, ctx, seens.setdefault(key, {}))
             if out is None:
                 out = np.zeros_like(r) if part["op"] == "add" else np.ones_like(r)
             if part["op"] == "add":
@@ -2243,6 +2318,7 @@ class Composer:
             lay = it.lay
             checkpoint()
             made = {}
+            ctx.fusion_halpha = None                                      # (set again for a master layer's row)
             if it.kind == "hidden":
                 if lay["id"] in want or (thumbs and lay["mask"] is not None):
                     keep_mask(lay, self.mask(lay, level, abox, comp, canvas, ctx))
@@ -2250,6 +2326,8 @@ class Composer:
                 own = it.own
                 edited = i == edited_at                                   # its steps are kept, not only its image
                 tops = [fl for fl in own if not fl.get("sub") and fl["visible"]]
+                ctx.fusion_halpha = self._fusion_halpha_of(lay, level, abox, canvas, cache)
+                ctx._memo.pop("fusion halpha", None)
                 got = self._filtered(it, where, thumbs)
                 if got is not None:                                       # its image after its filters, kept
                     src, sig = got.copy(), it.src

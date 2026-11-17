@@ -381,5 +381,14 @@
   "The reference: the other filters are brought to its scale": "La référence : les autres filtres sont amenés à son échelle",
   "Its gain is measured by the combination's run": "Son gain est mesuré au calcul de la combinaison",
   "No stretch of its own: the layer's one stretch for every filter. No stars of its own: the layer's Stars. Its filters, mask and spot healing act on {filter} before the mix.": "Pas d'étirement propre : l'étirement unique du calque pour tous les filtres. Pas d'étoiles propres : les Étoiles du calque. Ses filtres, son masque et son Tampon correcteur agissent sur {filter} avant le mélange.",
-  "The combination's Output as its run mixed it: its Combine layers layer shows each filter and mixes them here": "La Sortie de la combinaison telle que son calcul l'a mélangée : son calque Combiner calques montre chaque filtre et les mélange ici"
+  "The combination's Output as its run mixed it: its Combine layers layer shows each filter and mixes them here": "La Sortie de la combinaison telle que son calcul l'a mélangée : son calque Combiner calques montre chaque filtre et les mélange ici",
+  "This combination has no H-alpha filter": "Cette combinaison n'a pas de filtre H-alpha",
+  "The combination's H-alpha filter: nothing at its middle value, all at its brightest 3 %. Feather, Density and Invert act on it.": "Le filtre H-alpha de la combinaison : rien à sa valeur médiane, tout à ses 3 % les plus lumineux. Progressif, Densité et Inverser s'y appliquent.",
+  "Reads": "Lit",
+  "Picture": "Image",
+  "The combination's picture: its filters mixed": "L'image de la combinaison : ses filtres mélangés",
+  "This filter": "Ce filtre",
+  "The image this part reads its brightness or its colour from": "L'image dont cette partie lit la luminosité ou la couleur",
+  "Shift while dragging: ten times finer · arrow keys: one degree": "Maj pendant le glissé : dix fois plus fin · flèches : un degré",
+  "Needs a run: {cost}": "À calculer : {cost}"
 }

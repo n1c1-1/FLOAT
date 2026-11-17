@@ -1379,6 +1379,10 @@ class Main(QMainWindow):
             self.screens.setCurrentWidget(self.proj_screen)
         was_post = self.mode == 2 and s is not None and s.sel_step == "final"
         was = self.mode
+        if i != self.mode and 0 <= self.mode < len(self.mode_btns):
+            # the tab clicked is lit by its group at once: the page shown keeps its tab while a block's draft asks
+            # (the tester: Post underlined, Inspect on screen with its question), the other one only once it is left
+            self.mode_btns[self.mode].setChecked(True)
         if i != self.mode and not self.settle_drafts(gradient_only=i in (0, 1)):
             return                                       # a block's draft: Stay
         if s is not None and i == 1 and s.sel_step == "composition":

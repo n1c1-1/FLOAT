@@ -68,6 +68,8 @@ INTENSITY_MAX, INTENSITY_STEP = 3.0, 0.05
 PALETTES = (("hubble", "Hubble (S-H-O)", ("SII", "Ha", "OIII"), None),
             ("hoo", "H-O-O", ("Ha", "OIII"), {"Ha": 0.0, "OIII": 180.0}))
 BALANCES = ("sky", "signal")
+#: the balance is the combination's one setting its run measures: what its change asks
+BALANCE_RUN = "Needs a run: the combination is computed again by Run"
 BALANCE_NAME = {"sky": "On sky", "signal": "On signal"}
 BALANCE_LINE = {"signal": "Each filter's nebula fitted onto the H-alpha's, never raised into its own noise.",
                 "sky": "Each filter's sky brought to the H-alpha's (its median and its spread), whatever its signal."}
@@ -370,6 +372,46 @@ class _PressToRelease(QObject):
         elif obj is self.sl and e.type() == QEvent.MouseButtonRelease and e.button() == Qt.LeftButton:
             # after Qt's own release, which lets go of a handle but not of a press on the rail's page step
             QTimer.singleShot(0, self, lambda: self.sl.setSliderDown(False) if self.sl.isSliderDown() else None)
+        return False
+
+
+class FineDrag(QObject):
+    """Shift held while a slider is dragged: its handle follows the pointer ``FACTOR`` times slower (the fine step of
+    the reference editors' sliders), from where it was when Shift was pressed; the arrow keys move it by one step (one
+    degree on a hue rail). Without Shift the drag is the slider's own."""
+
+    FACTOR = 10
+
+    def __init__(self, slider):
+        super().__init__(slider)
+        self.sl = slider
+        self._from = None                                # (pointer x, value) where the fine drag started
+        slider.installEventFilter(self)
+
+    def _per_px(self) -> float:
+        from PySide6.QtWidgets import QStyle, QStyleOptionSlider
+        opt = QStyleOptionSlider()
+        self.sl.initStyleOption(opt)
+        st = self.sl.style()
+        rail = st.subControlRect(QStyle.CC_Slider, opt, QStyle.SC_SliderGroove, self.sl)
+        handle = st.subControlRect(QStyle.CC_Slider, opt, QStyle.SC_SliderHandle, self.sl)
+        span = max(1, rail.width() - handle.width())
+        return (self.sl.maximum() - self.sl.minimum()) / span
+
+    def eventFilter(self, obj, e):  # noqa: N802 - Qt's name
+        t = e.type()
+        if obj is self.sl and t == QEvent.MouseMove and e.buttons() & Qt.LeftButton and self.sl.isSliderDown():
+            if not e.modifiers() & Qt.ShiftModifier:
+                self._from = None
+                return False
+            x = e.position().x()
+            if self._from is None:
+                self._from = (x, self.sl.value())
+            x0, v0 = self._from
+            self.sl.setValue(int(round(v0 + (x - x0) * self._per_px() / self.FACTOR)))
+            return True
+        if obj is self.sl and t == QEvent.MouseButtonRelease:
+            self._from = None
         return False
 
 
@@ -818,9 +860,9 @@ class CombineEditor(QObject):
             try:
                 if hasattr(self.s, "change_cost"):
                     c = self.s.change_cost(dict(ch, values=vals), [q])
-                    text = c.text() if c.lost else _("Nothing up to date is computed again")
+                    text = c.text() if (c.lost or c.blocks) else _(BALANCE_RUN)
                 else:
-                    text = ""
+                    text = _(BALANCE_RUN)
             except Exception:  # noqa: BLE001 - the cost is a hint: Apply works without it
                 text = ""
         self._cost = (key, text)
@@ -1251,6 +1293,8 @@ class CombineEditor(QObject):
                              "QSlider::sub-page:horizontal, QSlider::add-page:horizontal { background: transparent; }")
             sl.setToolTip(_(q.get("help") or "") or _("The colour of the filter on the colour wheel"))
             self._wire_slider(sl, lambda i, r=role, **k: self.set_hue(r, float(i), **k))
+            FineDrag(sl)
+            sl.setToolTip(sl.toolTip() + "\n" + _("Shift while dragging: ten times finer · arrow keys: one degree"))
             row.addWidget(sl, 1)
             sw = QLabel()
             sw.setFixedSize(14, 14)

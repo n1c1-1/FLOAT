@@ -71,7 +71,7 @@ from ..render.sliders import ARCSINH_WHY, STRENGTH_STEP
 from ..render.sliders import STARS as STARS_GROUP
 from ..render.sliders import group_title
 from . import prefs
-from .combineedit import HUE_RAIL, INTENSITY_MAX, INTENSITY_STEP
+from .combineedit import HUE_RAIL, INTENSITY_MAX, INTENSITY_STEP, FineDrag
 from .curveseditor import CurvesEditor, FunctionGraph, caption
 from .i18n import _, language, log_detail, maybe, number, plain_error, plural
 from .icons import draw as draw_icon
@@ -101,8 +101,10 @@ from .postengine import (
     SUB_NAMES,
     SUB_ROWS,
     SideLayer,
+    READS_IMAGE,
     fusion_roles,
     is_fusion,
+    role_sub,
     is_side,
     mask_selection,
     selection_side,
@@ -3705,8 +3707,10 @@ class PostView(QWidget):
             sl = ContSlider(_("{filter} hue").format(filter=name), 0, 360, float(f["hues"][role]),
                             float(f["hue_defaults"].get(role, f["hues"][role])), unit="°", step=1)
             sl.s.setStyleSheet(HUE_QSS)
+            FineDrag(sl.s)
             sl.setToolTip(_("The colour of {filter} on the colour wheel: the combination's setting, the same in "
-                            "Inspect").format(filter=name))
+                            "Inspect").format(filter=name) + NL +
+                          _("Shift while dragging: ten times finer · arrow keys: one degree"))
             words = _("{filter} hue").format(filter=name)
         else:
             sl = ContSlider(_("{filter} intensity").format(filter=name), 0, INTENSITY_MAX, f["weights"].get(role, 1.0),
@@ -3777,6 +3781,20 @@ class PostView(QWidget):
                                                                _("Balance: {name}").format(name=c.currentText())))
             r.addWidget(c, 1)
             self.pbox.addLayout(r)
+            # the one setting of the combination its run measures (the gains): said so, with what a change computes
+            from .combineedit import BALANCE_RUN
+            other = next((k for k in BALANCES if k != f.get("balance")), None)
+            words = _(BALANCE_RUN)
+            try:
+                cost = None
+                if other is not None and q is not None and hasattr(self.s, "change_cost"):
+                    cost = self.s.change_cost({"kind": "combine", "values": {"balance": other}}, [q])
+                if cost is not None and (cost.lost or cost.blocks):
+                    words = _("Needs a run: {cost}").format(cost=cost.text())
+            except Exception:  # noqa: BLE001 - the cost is a hint: the words above say the run
+                pass
+            self.pbox.addWidget(label(words, "small", wrap=True))
+            c.setToolTip(c.toolTip() + NL + words)
         b = QPushButton(_("Open in Inspect  →"))
         b.setObjectName("link")
         b.setToolTip(_("The combination's editor: a draft to compare, Apply, Try variant"))
@@ -4156,9 +4174,14 @@ class PostView(QWidget):
             self.pbox.addWidget(self.part_box(lay, part, j))
         add = set_icon(QPushButton(_("Add to mask")), "add", 16)
         am = QMenu(add)
+        owner = self._fusion_owner(lay)
         for src, name in MASK_SOURCES.items():
             a = am.addAction(_(name))
             a.triggered.connect(lambda _c=False, s=src: self.add_part(lay, s))
+            if src == "halpha" and owner is not None and "Ha" not in fusion_roles(owner):
+                a.setEnabled(False)                      # greyed, with why
+                a.setToolTip(_("This combination has no H-alpha filter"))
+        am.setToolTipsVisible(True)
         add.setMenu(am)
         self.pbox.addWidget(add, 0, Qt.AlignLeft)
         self._group(_("Whole mask"))
@@ -4215,10 +4238,31 @@ class PostView(QWidget):
         v.addLayout(top)
         src = part["src"]
         default = new_part(src)
-        if src == "halpha":                              # no setting of its own: what it is made of (the laptop's B9)
+        owner = self._fusion_owner(lay)
+        if src == "halpha" and owner is not None:        # a combination's: its H-alpha filter
+            v.addWidget(label(_("The combination's H-alpha filter: nothing at its middle value, all at its brightest "
+                                "3 %. Feather, Density and Invert act on it."), "small", wrap=True))
+        elif src == "halpha":                            # no setting of its own: what it is made of (the laptop's B9)
             v.addWidget(label(_("Where the image is redder than green, the hydrogen glow of the workflow at the bottom "
                                 "(its starless image when it has one): nothing at its middle value, all at its "
                                 "brightest 3 %. Feather, Density and Invert act on it."), "small", wrap=True))
+        if src in READS_IMAGE and isinstance(lay, SideLayer) and sub_role(lay.side) is not None and owner is not None:
+            # a filter's mask reads the combination's picture by default, as luminosity masks are taken from the
+            # composite picture in the reference photo editors; or the filter itself, or another filter
+            r = QHBoxLayout()
+            r.addWidget(label(_("Reads"), "dim"))
+            c = QComboBox()
+            c.addItem(_("Picture"), "picture")
+            c.setItemData(0, _("The combination's picture: its filters mixed"), Qt.ToolTipRole)
+            c.addItem(_("This filter"), "self")
+            for o in fusion_roles(owner):
+                if role_sub(o) != lay.side:
+                    c.addItem(_side_name(owner, role_sub(o)), role_sub(o))
+            c.setCurrentIndex(max(0, c.findData(part.get("from", "picture"))))
+            c.setToolTip(_("The image this part reads its brightness or its colour from"))
+            c.activated.connect(lambda i, c=c: self._part_set(part, "from", c.itemData(i)))
+            r.addWidget(c, 1)
+            v.addLayout(r)
 
         def sl(key, name, lo, hi, unit=""):
             s = ContSlider(_(name), lo, hi, part[key], default[key], unit=unit, step=1)
@@ -4274,6 +4318,11 @@ class PostView(QWidget):
                 v.addWidget(go, 0, Qt.AlignLeft)
         f.mousePressEvent = lambda e: self._edit_part(part) if part["src"] == "brush" else None
         return f
+
+    def _fusion_owner(self, lay):
+        """The master layer a mask belongs to (its own, or one of its filters'), None for any other layer."""
+        own = lay.lay if isinstance(lay, SideLayer) else lay
+        return own if own is not None and is_fusion(own) else None
 
     def _edit_part(self, part):
         self.part_sel = part["id"]

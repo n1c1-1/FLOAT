@@ -465,3 +465,65 @@ def test_french_texts(m27, monkeypatch):
     finally:
         i18n.set_language("en")
         pv.rebuild()
+
+
+def test_the_h_alpha_part_on_a_filter_s_mask_reads_the_combination_s_h_alpha(m27):
+    w, pv, _before = m27
+    lay = _master(pv)
+    m = pe.new_mask()
+    m["parts"] = [pe.new_part("halpha")]
+    lay.setdefault("side_masks", {})["f:SII"] = m
+    try:
+        res = _render(pv)
+        assert res.rgb is not None and not res.missing             # (it said: a file or folder is not found)
+    finally:
+        lay["side_masks"].pop("f:SII")
+        if not lay["side_masks"]:
+            lay.pop("side_masks")
+
+
+def test_the_tab_stays_on_the_page_shown_while_a_draft_asks(m27, monkeypatch):
+    w, pv, _before = m27
+    w.set_mode(1)
+    lit = []
+    monkeypatch.setattr(w, "settle_drafts", lambda **k: lit.append([b.isChecked() for b in w.mode_btns]) or False)
+    w.mode_btns[2].click()                                  # Post clicked, the draft's question answered Stay
+    assert lit and lit[0][1] and not lit[0][2]             # while it asked: Inspect's tab lit, not Post's
+    assert w.mode == 1 and w.mode_btns[1].isChecked() and not w.mode_btns[2].isChecked()
+
+
+def test_the_balance_says_it_needs_a_run_in_post_and_in_the_editor(m27, monkeypatch):
+    w, pv, _before = m27
+    lay = _master(pv)
+    pv.sel = None
+    pv.select(lay["id"], "layer")
+    from PySide6.QtWidgets import QLabel
+    texts = [x.text() for x in pv.right.findChildren(QLabel) if x.isVisibleTo(pv.right)]
+    assert any(t.startswith("Needs a run") for t in texts), texts
+    q, ed = _editor(w, monkeypatch)
+    ed.set_draft({"balance": "sky" if ed.applied().get("balance") == "signal" else "signal"})
+    c = ed.cost_text()
+    assert c.startswith(("Needs a run", "Computes again", "To compute")) and "nothing is computed" not in c
+    ed.reset()
+
+
+def test_shift_drags_the_hue_rail_ten_times_finer(qapp):
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtWidgets import QSlider
+    sl = QSlider(Qt.Horizontal)
+    sl.setRange(0, 360)
+    sl.resize(380, 24)
+    sl.setValue(100)
+    fd = ce.FineDrag(sl)
+    sl.setSliderDown(True)
+
+    def move(x, mods):
+        e = QMouseEvent(QEvent.MouseMove, QPointF(x, 10), QPointF(x, 10), Qt.NoButton, Qt.LeftButton, mods)
+        return fd.eventFilter(sl, e)
+    assert move(100.0, Qt.ShiftModifier) and sl.value() == 100
+    per = fd._per_px()
+    move(100.0 + 50, Qt.ShiftModifier)
+    assert sl.value() == int(round(100 + 50 * per / 10))
+    assert not move(200.0, Qt.NoModifier)                  # without Shift: the slider's own drag
+    sl.setSliderDown(False)

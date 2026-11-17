@@ -229,3 +229,43 @@ def test_a_filter_of_a_role_the_recipe_no_longer_has_acts_on_the_mix():
 def test_the_levels_agree(level):
     got = compose([master()], level=level).rgb
     assert got.shape[:2] == Canvas(W, H).size(level)[::-1]
+
+
+def _lum_part(**kw):
+    part = pe.new_part("luminance")
+    part.update(lo=40.0, hi=100.0, **kw)
+    m = pe.new_mask()
+    m["parts"] = [part]
+    return m
+
+
+def test_a_filter_s_luminance_mask_reads_the_picture_by_default_or_the_filter_or_another_filter():
+    """As a luminosity mask of the reference photo editors is taken from the composite picture: on a filter of the
+    combination a Luminance range reads the picture (the filters mixed); it may read the filter itself or another."""
+    comp = Composer(Filters())
+    g = pe.normalize([master()])[0]
+    cv = comp.canvas_of([g])
+    whole = (0, 0, W, H)
+    picture = comp.layer_rgb(g, 0, whole, cv)
+    sii = comp.layer_rgb(pe.sub_layer(g, "f:SII"), 0, whole, cv)
+    ha = comp.layer_rgb(pe.sub_layer(g, "f:Ha"), 0, whole, cv)
+    ctx = pe.Ctx(comp, 0, whole)
+    for reads, img in ((None, picture), ("picture", picture), ("self", sii), ("f:Ha", ha)):
+        kw = {} if reads is None else {"from": reads}
+        lay = master(side_masks={"f:SII": _lum_part(**kw)})
+        got = compose([lay], want=[(lay["id"], "f:SII")]).masks[(lay["id"], "f:SII")]
+        want = comp._finish(comp._part_plane(_lum_part()["parts"][0], 0, whole, img, cv, ctx), _lum_part(), 0)
+        assert np.abs(got - want).max() < 1e-6, reads
+    saved = pe.save_layers([master(side_masks={"f:SII": _lum_part(**{"from": "f:Ha"})})])
+    assert pe.load_layers(saved, {5})[0]["side_masks"]["f:SII"]["parts"][0]["from"] == "f:Ha"
+
+
+def test_the_h_alpha_part_of_a_master_layer_s_mask_is_its_h_alpha_filter():
+    p = planes()
+    m = pe.new_mask()
+    m["parts"] = [pe.new_part("halpha")]
+    lay = master(side_masks={"f:SII": m})
+    got = compose([lay], want=[(lay["id"], "f:SII")]).masks[(lay["id"], "f:SII")]
+    q0, q1 = np.percentile(p["Ha"], [50, 97])
+    t = np.clip((p["Ha"] - q0) / (q1 - q0), 0, 1)
+    assert np.abs(got - t * t * (3 - 2 * t)).max() < 1e-5
