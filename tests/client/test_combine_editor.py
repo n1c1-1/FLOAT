@@ -458,7 +458,7 @@ REAL = {"m27": "F:/astro_essais/tutoriels_ref/MONO/m27", "ic443": "F:/astro_essa
 
 
 def _real_window(tmp_path, name, unstore: tuple[str, str] | None = None):
-    """A scratch copy of the owner's project (its store read through a junction), opened read only. ``unstore``:
+    """A scratch copy of the owner's project (its store read in place, no link), opened read only. ``unstore``:
     (a stored setting, its value) taken out of the copy's definition first, as if the project had stored nothing."""
     from pathlib import Path
 
@@ -575,7 +575,10 @@ def test_on_ic443_the_h_o_block_is_titled_h_o(qapp, tmp_path):
     try:
         s = w.s
         q, ed = _open_combination(w)
-        assert ed._ui["title"].text() == "H-O"
+        # the editor's title is the block's name as the path bar and the graph show it (one name everywhere): H-O,
+        # numbered among the project's H-O blocks
+        from astro_gpu.client.graphnode import node_title
+        assert ed._ui["title"].text() == node_title(s, ed.node) and ed._ui["title"].text().startswith("H-O")
         g = s._g
         titles = {rules.title(g, r.blocks[0]) for r in g.rows if r.blocks and g.blocks[r.blocks[0]].kind == "combine"}
         assert titles == {"H-O", "H-O · Stars"}, titles

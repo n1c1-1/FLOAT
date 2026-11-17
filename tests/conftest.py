@@ -514,22 +514,110 @@ needs_test_data = pytest.mark.skipif(not (TEST_DATA / "lights").is_dir(),
                                      reason=f"the raw test frames {TEST_DATA.as_posix()} are not here")
 
 
+#: the scratch copies that read another project's results in place: {the copy's folder: the project it reads}
+READ_IN_PLACE: dict[str, Path] = {}
+
+
+def _norm(p) -> str:
+    return os.path.normcase(os.path.abspath(os.fspath(p)))
+
+
+def _read_from(root) -> Path | None:
+    """The project a scratch copy reads its results from, None for any other folder."""
+    if root is None:
+        return None
+    try:
+        return READ_IN_PLACE.get(_norm(root))
+    except (TypeError, ValueError):
+        return None
+
+
+def _guarded(p) -> bool:
+    """A path inside a project a scratch copy reads (its originals: never written by a test)."""
+    try:
+        s = _norm(p)
+    except (TypeError, ValueError):
+        return False
+    return any(s == g or s.startswith(g + os.sep) for g in (_norm(v) for v in READ_IN_PLACE.values()))
+
+
+def _refuse(what: str, *paths):
+    hit = [str(p) for p in paths if isinstance(p, (str, bytes, os.PathLike)) and _guarded(p)]
+    if hit:
+        raise PermissionError(f"tests: {what} inside a project read in place, refused: {hit}")
+
+
+_READ_IN_PLACE_ON = False
+
+
+def _install_read_in_place():
+    """Once per process: the project's store and inputs folders of a scratch copy are those of the project it reads
+    (``READ_IN_PLACE``), read where they are, no link made; and nothing may be written inside the project read (open
+    for writing, a file or folder made, moved, removed: PermissionError)."""
+    global _READ_IN_PLACE_ON
+    if _READ_IN_PLACE_ON:
+        return
+    _READ_IN_PLACE_ON = True
+    import builtins
+    import io
+
+    from astro_gpu.client.services import render as rmod
+    from astro_gpu.core import project2
+    from astro_gpu.core import store as smod
+    init = smod.Store.__init__
+
+    def store_init(self, root):
+        init(self, root)
+        src = _read_from(root)
+        if src is not None:
+            self.path = Path(os.path.abspath(src)) / smod.STORE
+    smod.Store.__init__ = store_init
+    for name in ("store", "inputs_dir"):
+        prop = getattr(project2.Project2, name)
+
+        def get(self, _f=prop.fget, _n=name):
+            src = _read_from(self.root)
+            return _f(self) if src is None else Path(src) / ("store" if _n == "store" else "inputs")
+        setattr(project2.Project2, name, property(get))
+    resolver = rmod.store_image_resolver
+    rmod.store_image_resolver = lambda root: resolver(_read_from(root) or root)
+    # the write guard on the projects read
+    o_open = builtins.open
+
+    def g_open(file, mode="r", *a, **k):
+        if isinstance(file, (str, bytes, os.PathLike)) and any(c in mode for c in "wax+"):
+            _refuse("open for writing", file)
+        return o_open(file, mode, *a, **k)
+    builtins.open = g_open
+    io.open = g_open
+
+    def wrap(mod, name, paths_of):
+        fn = getattr(mod, name)
+
+        def inner(*a, **k):
+            _refuse(f"{mod.__name__}.{name}", *paths_of(a, k))
+            return fn(*a, **k)
+        setattr(mod, name, inner)
+    for n in ("remove", "unlink", "rmdir", "mkdir", "utime", "truncate", "makedirs", "removedirs"):
+        if hasattr(os, n):
+            wrap(os, n, lambda a, k: a[:1])
+    for n in ("replace", "rename"):
+        wrap(os, n, lambda a, k: a[:2])
+    for n in ("copy", "copy2", "copyfile", "move", "copytree"):
+        wrap(shutil, n, lambda a, k: a[1:2])
+    wrap(shutil, "rmtree", lambda a, k: a[:1])
+
+
 def scratch_project(folder: Path, source: Path = TEST_PROJECT) -> Path:
-    """A copy of the test project's definition in ``folder`` whose ``store`` and ``inputs`` are directory junctions onto
-    the real ones: the results are read (done states, previews), and what a test writes (state.json, the definition)
-    lands in ``folder``. Skips where junctions cannot be made."""
-    import subprocess
+    """A copy of the test project's definition in ``folder`` that reads its results (``store``) and its imported
+    frames (``inputs``) in place, in ``source``: the results are read (done states, previews), and what a test writes
+    (state.json, the definition, the scratch) lands in ``folder``. No link is made (a link onto the originals in a
+    temporary folder could take them with the folder's cleanup); nothing may be written inside ``source`` (the write
+    guard of ``_install_read_in_place``)."""
     folder.mkdir(parents=True, exist_ok=True)
     shutil.copy(source / "project.astroproj", folder / "project.astroproj")
-    for name in ("store", "inputs"):
-        if (source / name).is_dir() and not (folder / name).exists():
-            try:
-                r = subprocess.run(["cmd", "/c", "mklink", "/J", str(folder / name), str(source / name)],
-                                   capture_output=True, text=True)
-            except OSError as e:
-                pytest.skip(f"no directory junction here: {e}")
-            if r.returncode:
-                pytest.skip(f"no directory junction here: {r.stderr.strip()}")
+    READ_IN_PLACE[_norm(folder)] = Path(source)
+    _install_read_in_place()
     return folder
 
 

@@ -4,7 +4,7 @@ project model, its blocks chosen through the page's bridge, the model's nodes fr
 
 The test project (tests/conftest.py, TEST_PROJECT) is taken down to its Full workflow, computed (conftest.full_only);
 the tests add Classic stack (not computed from Gradient on), Classic + denoise and Full twin in memory. The model is
-read-only on the test project (its scratch copy reads the store through junctions; a test that saves works on a copy
+read-only on the test project (its scratch copy reads the store in place, no link; a test that saves works on a copy
 of the definition in a temporary folder). ASTRO_GPU_SETTINGS points to a temporary file in every test; the user's
 settings file is checked untouched."""
 from __future__ import annotations
