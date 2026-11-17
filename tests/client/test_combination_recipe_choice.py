@@ -1,5 +1,6 @@
 """The Combination card shows the recipe it places and its list on the card (a beta tester double-clicked it twice and
-got S-H-O both times, never seeing RGB); the block's panel changes its recipe afterwards, its default name following;
+got S-H-O both times, never seeing RGB); the block's panel changes its recipe afterwards, its default name shown with
+the new recipe's title (never renamed in the project);
 an input's list greys a workflow of a Session alone with the reason, never « no workflow » once picked."""
 from __future__ import annotations
 
@@ -30,7 +31,10 @@ def test_the_card_shows_its_recipe_and_the_panel_changes_it(win, env):
     blk = win.s.stored.blocks[j]
     assert blk.settings.get("type") == "rgb"
     row = next(r for r in win.s.stored.rows if r.blocks and r.blocks[0] == j)
-    assert row.name.startswith("RGB") and row.name != name0
+    # nothing stored is renamed by a recipe change (the reviewer's round 2): its default name is shown with the new
+    # recipe's title where the block is titled
+    from astro_gpu.graphcore import rules
+    assert row.name == name0 and rules.title(win.s.stored, j).startswith("RGB")
     win.s.undo()
     settle(win, 3)
     assert win.s.stored.blocks[j].settings.get("type", "sho") == "sho"

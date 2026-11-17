@@ -52,7 +52,7 @@ from PySide6.QtWidgets import (
 from . import journal
 from .blockdraft import Draft, DraftBar
 from .gradientedit import PREVIEW_PIXELS
-from .i18n import _
+from .i18n import _, number
 from .icons import set_icon
 from .widgets import WARN, label
 
@@ -78,6 +78,13 @@ STARS_LINE = {"neutral": "White stars: the filters' plain mean, no hue.",
 #: why a filter has its gain (the balance's notes, stages/combine.Combination.steps)
 REASONS = {"signal": "signal", "noise": "limited by noise", "sky": "on sky", "match": "linear match",
            "reference": "reference"}
+#: what each reason means (the gain line's tooltip)
+REASON_TIPS = {"signal": "Signal: the gain that fits this filter's nebula onto the H-alpha's.",
+               "noise": "Limited by noise: its signal asked for more, the gain stops where this filter's sky noise "
+                        "equals the H-alpha's, so a weak filter is not raised into its noise.",
+               "sky": "On sky: the gain that brings this filter's sky median and spread to the H-alpha's.",
+               "match": "Linear match: the least squares fit of this filter onto the reference.",
+               "reference": "Reference: the other filters are brought to this one's scale."}
 #: the image area's comparisons
 COMPARE = (("draft", "Draft", "The draft's preview"), ("applied", "Applied", "The block's applied result"),
            ("split", "Split", "The draft on the right of the divider, the applied result on the left"))
@@ -242,13 +249,33 @@ def mixed(small: dict, bal: dict, stage: str, spec: dict, p, off=(), solo=None) 
                               small["valid"])
 
 
-def output_render(rgb: np.ndarray) -> np.ndarray:
-    """(3, h, w) in 0-1: a combination's image as its Output shows it by default: render_simple keeps a combination's
-    sky at 0 (``sky_neutral``), measures its stretch's statistics on the covered pixels (``image_stats``) and Post
-    renders it with SimpleRenderEngine's default settings (stages/render_simple.py, its preview)."""
+def output_render(rgb: np.ndarray, settings: dict | None = None) -> np.ndarray:
+    """(3, h, w) in 0-1: a combination's image as its Output shows it: render_simple keeps a combination's sky at 0
+    (``sky_neutral``), measures its stretch's statistics on the covered pixels (``image_stats``) and Post renders it
+    with SimpleRenderEngine: with the settings of the workflow's layer of Post (``settings``, ``layer_settings``: its
+    sliders, and the scale of its Sky slider: a layer saved before 2026-11-16 keeps its sky at 0.25), else the
+    default ones (render_simple's preview)."""
     from ..render.simple import SimpleRenderEngine, SimpleSettings
     eng = SimpleRenderEngine.from_array(rgb, device="cpu", linked=True, sample=1)
-    return np.asarray(eng.render(SimpleSettings(), 1.0).final.numpy(), np.float32)
+    s = SimpleSettings(**settings) if settings else SimpleSettings()
+    return np.asarray(eng.render(s, 1.0).final.numpy(), np.float32)
+
+
+def layer_settings(layers: list[dict], pid: int) -> dict | None:
+    """The rendering settings Post gives the workflow's own layer (its Output image, else its image recombined with
+    its stars), as Post's render worker computes them (render/sliders.settings_at); None without a layer."""
+    from ..render.sliders import settings_at
+    from .postengine import sky_scale
+    mine = [x for x in layers or [] if x.get("kind") == "workflow" and x.get("pid") == pid
+            and x.get("part") in (None, "combined", "starless")]
+    if not mine:
+        return None
+    lay = min(mine, key=lambda x: (None, "combined", "starless").index(x.get("part")))
+    try:
+        return settings_at("simple", lay.get("base"), lay.get("sliders"), has_denoise=False, origin="palette",
+                           stretch=lay.get("stretch"), sky_scale=sky_scale(lay)).model_dump()
+    except Exception:  # noqa: BLE001 - a layer of an earlier format: the default render
+        return None
 
 
 def thumbnail(ch: np.ndarray, valid: np.ndarray, width: int = THUMB_W) -> np.ndarray:
@@ -267,7 +294,7 @@ def thumbnail(ch: np.ndarray, valid: np.ndarray, width: int = THUMB_W) -> np.nda
             ).astype(np.uint8)
 
 
-def applied_small(result_dir: str, k: int) -> dict | None:
+def applied_small(result_dir: str, k: int, settings: dict | None = None) -> dict | None:
     """The block's own result (drz_full) reduced as the inputs were, rendered as its Output shows it, and the gains its
     run measured ({filter: gain}, drz_meta.json's scales); None without a result."""
     import json
@@ -279,7 +306,7 @@ def applied_small(result_dir: str, k: int) -> dict | None:
         k = max(1, int(math.ceil(math.sqrt(arr.shape[-2] * arr.shape[-1] / PREVIEW_PIXELS))))
     rgb = np.stack([reduce_mean(arr[c], k) for c in range(3)])
     meta = json.loads((d / "drz_meta.json").read_text(encoding="utf-8")) if (d / "drz_meta.json").is_file() else {}
-    return {"img": output_render(rgb), "tops": meta.get("channels") or {}}
+    return {"img": output_render(rgb, settings), "tops": meta.get("channels") or {}}
 
 
 def _port(role: str) -> str:
@@ -460,10 +487,21 @@ class CombineEditor(QObject):
                 for k, v in updates.items()}
         if not d.put(norm, same=lambda k, v: v == ap.get(k), step=undo):
             return False
+        if undo and not self.has_result():
+            # a block without a result (never computed, or waiting for an input): nothing to keep up to date, the
+            # change is made at once, as every control of it and every block's (the reviewer's round 2, point 5)
+            self.apply(quiet=True)
+            return True
         self._changed()
         if undo:
             self.historyChanged.emit()
         return True
+
+    def has_result(self, p=None) -> bool:
+        """The block has a result to show, computed or Outdated: its settings are a draft (Apply); else at once."""
+        p = p or self.p
+        st = self._stage(p)
+        return bool(st) and self.s.state(p, st) in ("done", "stale")
 
     def set_hue(self, role: str, deg: float, undo: bool = True) -> bool:
         name = hue_params(self._spec()).get(role)
@@ -507,6 +545,9 @@ class CombineEditor(QObject):
         d.redo.clear()
         d.useq.append(journal.tick())
         d.rseq = []
+        if not self.has_result():                   # made at once, the slider let go (``set_draft``)
+            self.apply(quiet=True)
+            return
         self.historyChanged.emit()
 
     def _changed(self):
@@ -559,7 +600,7 @@ class CombineEditor(QObject):
                     a, b = float((ap.get("weights") or {}).get(r, 1.0)), float(v.get(r, 1.0))
                     if abs(a - b) > 1e-6:
                         out.append((f"weights.{r}", _("{filter} intensity {old} → {new}").format(
-                            filter=_port(r), old=f"{a:.2f}", new=f"{b:.2f}")))
+                            filter=_port(r), old=number(a, 2), new=number(b, 2))))
             elif k == "balance":
                 out.append((k, _("Balance: {old} → {new}").format(old=_(BALANCE_NAME.get(ap.get(k), "")),
                                                                   new=_(BALANCE_NAME.get(v, v)))))
@@ -605,8 +646,9 @@ class CombineEditor(QObject):
     def _paths(self, q):
         return [q]
 
-    def apply(self, pid: int | None = None):
-        """The draft becomes the block's settings: one step of the window's Undo."""
+    def apply(self, pid: int | None = None, quiet: bool = False):
+        """The draft becomes the block's settings: one step of the window's Undo. ``quiet``: a change made at once on
+        a block without a result (no draft was shown: nothing said; refused, the change goes)."""
         q = self._view_of(pid)
         ch = self.draft_change(q.pid) if q is not None else None
         if ch is None:
@@ -620,11 +662,18 @@ class CombineEditor(QObject):
                 self.s.apply_change(self._paths(q), ch)
         except (ValueError, NotInEngine, wfl.OptionRefused) as e:
             self.tv.toasted.emit(_(str(e)))
+            if quiet:
+                self.drafts.pop(q.pid, None)
+                self._changed()
             return
         if hasattr(self.s, "log"):
             self.s.log("{what} · {names}", what=ch["what"], names=q.name)
         self.drafts.pop(q.pid, None)
-        self.tv.toasted.emit(_("{block}: draft applied · Run to here computes it · Ctrl+Z").format(block=self.title(q)))
+        if quiet:
+            self._changed()
+        else:
+            self.tv.toasted.emit(_("{block}: draft applied · Run to here computes it · Ctrl+Z").format(
+                block=self.title(q)))
         self.historyChanged.emit()
         self.tv.request_refresh()
 
@@ -970,7 +1019,10 @@ class CombineEditor(QObject):
             sl.setRange(int(q.get("min", 0)), int(q.get("max", 360)))
             sl.setStyleSheet(f"QSlider::groove:horizontal {{ height: 8px; border-radius: 4px; background: {HUE_RAIL}; }}"
                              "QSlider::handle:horizontal { background: #f2f2f2; border: 1px solid #202020; width: 10px;"
-                             " margin: -4px 0; border-radius: 5px; }")
+                             " margin: -4px 0; border-radius: 5px; }"
+                             # the whole rail of colours whatever the handle's place (the window's style filled the
+                             # part left of the handle: O III's 0-202° showed one blue)
+                             "QSlider::sub-page:horizontal, QSlider::add-page:horizontal { background: transparent; }")
             sl.setToolTip(_(q.get("help") or "") or _("The colour of the filter on the colour wheel"))
             self._wire_slider(sl, lambda i, r=role, **k: self.set_hue(r, float(i), **k))
             row.addWidget(sl, 1)
@@ -1054,16 +1106,20 @@ class CombineEditor(QObject):
                 return _("reference"), _("The other filters are brought to this one's scale")
             return "", ""
         a, why = notes[role]
-        tip = ""
+        reason = _(REASONS.get(why, why))
+        about = _(REASON_TIPS.get(why, ""))
         run = self._run_gain(role)
-        if "balance" not in (self._draft().vals if self._draft() else {}) and run is not None:
+        st = self.s.state(self.p, self._stage()) if self._stage() else ""
+        # the run's value only for the settings it was computed with (the block up to date, the balance not in the
+        # draft); else the reduced copy's, an estimate, said so (the reviewer read ×7.40 before the run, ×7.35 after)
+        if st == "done" and "balance" not in (self._draft().vals if self._draft() else {}) and run is not None:
+            tip = about
             if abs(run - a) > GAIN_APART * max(run, 1e-12):
-                tip = _("The run measured ×{run} on the whole image; the preview ×{copy} on its reduced copy").format(
-                    run=f"{run:.2f}", copy=f"{a:.2f}")
-            a = run
-        elif "balance" in (self._draft().vals if self._draft() else {}):
-            tip = _("Measured on the preview's reduced copy: the run measures it on the whole image")
-        return f"×{a:.2f} · {_(REASONS.get(why, why))}", tip
+                tip += "\n" + _("The run measured ×{run} on the whole image; the preview ×{copy} on its reduced "
+                                "copy").format(run=number(run, 2), copy=number(a, 2))
+            return f"×{number(run, 2)} · {reason}", tip
+        tip = about + "\n" + _("An estimate on the preview's reduced copy: the run measures it on the whole image")
+        return _("≈ ×{gain}, from the preview · {why}").format(gain=number(a, 2), why=reason), tip
 
     def _run_gain(self, role: str) -> float | None:
         """The gain the applied run gave a filter (its scale in drz_meta.json, the weight taken out)."""
@@ -1121,7 +1177,7 @@ class CombineEditor(QObject):
                 if f"int_{role}" in u:
                     w = self.weight(role)
                     u[f"int_{role}"].setValue(int(round(w / INTENSITY_STEP)))
-                    u[f"intv_{role}"].setText(f"{w:.2f}")
+                    u[f"intv_{role}"].setText(number(w, 2))
                     e = u[f"eye_{role}"]
                     e.setChecked(role not in self.off)
                     set_icon(e, "eye" if role not in self.off else "eye_off", 16)
@@ -1224,13 +1280,20 @@ class CombineEditor(QObject):
         return {"gen": self.gen, "pid": self.p.pid, "stage": st, "spec": copy.deepcopy(spec),
                 "stored": self._stored(), "values": vals, "balance": self._balance_used(),
                 "off": set(self.off), "solo": self.solo, "sig": self._sig(), "project": self.s.p,
-                "result": self._result_key()}
+                "render": self._render_settings(), "result": self._result_key()}
+
+    def _render_settings(self) -> dict | None:
+        """The settings of the workflow's layer of Post (``layer_settings``): the preview as Post shows that layer."""
+        try:
+            return layer_settings(self.s.post_layers(), self.p.pid) if hasattr(self.s, "post_layers") else None
+        except Exception:  # noqa: BLE001 - Post's layers not readable now: the default render
+            return None
 
     def _result_key(self):
         st = self._stage()
         info = self.s.state_info(self.p, st) if hasattr(self.s, "state_info") and st else None
         return (self.p.pid, getattr(info, "key", None), getattr(info, "previous_key", None),
-                self.s.state(self.p, st) if st else "")
+                self.s.state(self.p, st) if st else "", repr(self._render_settings()))
 
     def _start(self, req: dict):
         self.busy = True
@@ -1255,7 +1318,7 @@ class CombineEditor(QObject):
                 cls = stage_class(req["stage"])
                 p = params_of(cls, req["spec"], req["stored"], req["values"])
                 rgb = mixed(sm, b, req["stage"], req["spec"], p, req["off"], req["solo"])
-                out["result"] = output_render(rgb)
+                out["result"] = output_render(rgb, req["render"])
                 out["ms"] = 1000 * (time.perf_counter() - t0)
             except Exception as e:  # noqa: BLE001 - said over the image, the editor goes on
                 out["error"] = str(e)
@@ -1263,7 +1326,7 @@ class CombineEditor(QObject):
                 try:
                     out["applied"] = {"pid": req["pid"], "key": req["result"],
                                       **(_applied_for(req["project"], req["pid"], req["stage"],
-                                                      sm["k"] if sm is not None else None) or
+                                                      sm["k"] if sm is not None else None, req["render"]) or
                                          {"img": None, "tops": {}})}
                 except Exception:  # noqa: BLE001 - no result to read: Applied greyed
                     pass
@@ -1377,7 +1440,7 @@ def _reduced_for(project, pid: int, stage: str, spec: dict) -> dict:
     raise ValueError(str(err) if err else _("The inputs are not computed: run the workflows the combination reads"))
 
 
-def _applied_for(project, pid: int, stage: str, k: int) -> dict | None:
+def _applied_for(project, pid: int, stage: str, k: int, settings: dict | None = None) -> dict | None:
     from .. import api
     for which in ("current", "previous"):
         try:
@@ -1385,5 +1448,5 @@ def _applied_for(project, pid: int, stage: str, k: int) -> dict | None:
         except Exception:  # noqa: BLE001 - no result to read
             out = None
         if out is not None:
-            return applied_small(out.dir, k)
+            return applied_small(out.dir, k, settings)
     return None

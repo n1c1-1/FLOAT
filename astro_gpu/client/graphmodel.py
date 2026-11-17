@@ -2580,29 +2580,16 @@ class GraphEditing:
 
     def set_combination_type(self, p, t: str) -> str:
         """Another recipe for a combination (its panel's list): the application's recipe of that type copied in, the
-        wires of the inputs it also has kept, one Undo step; the workflow's name follows when it is the recipe's own
-        (« S-H-O 2 » becomes « RGB », never an RGB named S-H-O). Returns what the change did, translated (the new
-        recipe's inputs and each wire that went: the panel's toast), "" when nothing changed."""
-        import re
+        wires of the inputs it also has kept, one Undo step. Nothing is renamed: a name made from the recipe's title
+        ("S-H-O", "S-H-O · Stars") is shown with the recipe's title where the block is titled (graphcore
+        combos.retitled), never written over (the reviewer's round 2: toasts of renames the user did not make, Post's
+        layer renamed). Returns what the change did, translated (the new recipe's inputs and each wire that went: the
+        panel's toast), "" when nothing changed."""
         j = self._combine_block(p)
         blk = self._g.blocks[j]
         if combos.kind(blk) == t:
             return ""
-        steps = [("set_combination_type", {"block": j, "type": t})]
-        r = self._row(p)
-        old = combos.title(blk)
-        if re.fullmatch(re.escape(old) + r"( \d+)?", r.name or "") or re.fullmatch(re.escape(_(old)) + r"( \d+)?",
-                                                                                   r.name or ""):
-            base, names = combos.type_title(t), {x.name for x in self._g.rows if x.id != r.id}
-            name, k = base, 2
-            while name in names:
-                name, k = f"{base} {k}", k + 1
-            steps.append(("rename_row", {"row": r.id, "name": name}))
-        elif combos.title_stem(r.name or "") and \
-                combos.retitled(r.name, combos.type_title(t)) != (r.name or "").strip():
-            # "S-H-O · Stars" becomes "H-O · Stars": the recipe's title in the name follows it
-            steps.append(("rename_row", {"row": r.id, "name": combos.retitled(r.name, combos.type_title(t))}))
-        res = self._do(steps)
+        res = self._do([("set_combination_type", {"block": j, "type": t})])
         return res.toast_text(_) or _("Recipe changed")
 
     def update_recipe(self, p) -> bool:

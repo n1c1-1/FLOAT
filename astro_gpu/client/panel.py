@@ -61,6 +61,8 @@ from .widgets import ACCENT, BAD, NEW, OK, WARN, clear, hline, label, put_back, 
 STATE_COLOR = {"done": "#5fbf7f", "pending": "#8b93a1", "stale": WARN, "running": ACCENT, "failed": BAD,
                "interrupted": WARN, "skipped": "#8b93a1"}
 OPTIONAL_BLOCKS = ("debruitage", "etoiles", "deconv")
+#: a value typed in a combination's Intensity goes to the draft once the typing pauses this long (no Enter needed)
+TYPED_PAUSE_MS = 700
 EDITOR_W = 104                      # every editor of a row has this width...
 BACK_W = 22                         # ...then the unit column, then the ↺ button (its room kept when hidden)
 UNIT_MAX = 76                       # a longer unit wraps on two lines
@@ -1173,6 +1175,11 @@ class Panel(QWidget):
         types = {"mono": _("A monochrome image (a filter's stack)"), "colour": _("A colour image"),
                  "any": _("A monochrome or colour image")}
         ins = s.recipe_inputs(p) if hasattr(s, "recipe_inputs") else (spec or {}).get("inputs", [])
+        drafted = self.draft_combine("type", kind)
+        if drafted != kind:                              # another recipe in the draft: its inputs shown (S II of an
+            from ..graphcore import combos as _combos    # H-O made S-H-O), each wired one as it is
+            ins = [{"role": i["role"], "label": i.get("label") or i["role"], "type": i.get("type", "any"),
+                    "channel": i.get("channel", "L")} for i in (_combos.recipe(drafted) or {}).get("inputs") or []]
         head = QHBoxLayout()                             # the column's name over the weights
         head.addStretch(1)
         ih = label(_("Intensity"), "dim")
@@ -1222,6 +1229,13 @@ class Panel(QWidget):
                             "faint, whose noise the balance raised."))
             sp.setEnabled(q is not None)
             sp.editingFinished.connect(lambda r=role, b=sp, a=applied_w: self.propose_weight(p, r, b.value(), a))
+            # a value typed goes to the draft once the typing pauses, without Enter (the reviewer typed 1.50: the
+            # header said Up to date and no draft bar came until the block was clicked again)
+            pause = QTimer(sp)
+            pause.setSingleShot(True)
+            pause.setInterval(TYPED_PAUSE_MS)
+            pause.timeout.connect(lambda r=role, b=sp, a=applied_w: self.propose_weight(p, r, b.value(), a))
+            sp.valueChanged.connect(lambda _v, b=sp, t=pause: t.start() if b.hasFocus() else None)
             row.addWidget(sp)
             self.bv.addLayout(row)
         self.bv.addSpacing(6)
@@ -1361,10 +1375,11 @@ class Panel(QWidget):
         value = round(float(value), 3)
         if value == round(float(self.draft_combine(("weight", role), applied)), 3):
             return
-        what = _("{filter} intensity {old} → {new}").format(filter=port_name(role), old=f"{applied:.2f}",
-                                                             new=f"{value:.2f}")
+        self._typing = False                             # taken: the panel shows what it made (its draft's bar)
+        what = _("{filter} intensity {old} → {new}").format(filter=port_name(role), old=number(applied, 2),
+                                                             new=number(value, 2))
         self._propose(dict(kind="combine", values={"weights": {role: value}}), what,
-                      _("{filter} intensity {new}").format(filter=port_name(role), new=f"{value:.2f}"),
+                      _("{filter} intensity {new}").format(filter=port_name(role), new=number(value, 2)),
                       same=abs(value - applied) < 1e-6, always=True)
 
     def draft_combine(self, what, default):

@@ -18,7 +18,7 @@ import html
 import os
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QMessageBox, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QMessageBox, QPushButton, QSizePolicy, QVBoxLayout
 
 from . import journal
 from .i18n import _, in_context
@@ -143,7 +143,18 @@ class DraftBar(QFrame):
         self.b_apply.clicked.connect(self.apply.emit)
         self.b_variant.clicked.connect(self.variant.emit)
         self.b_reset.clicked.connect(self.reset.emit)
+        #: a narrow bar (an editor's column: Gradient's, a combination's) keeps one height whatever the draft holds: the
+        #: state, the changes and the cost on one line each, cut, the whole text on hover; growing, it pushed the
+        #: controls under it down between a press and a click (a reviewer's click on "On sky" landed on "On signal")
+        self.fixed = narrow
+        self._lines: list[str] = []
+        self._cost = ""
         if narrow:                                      # a narrow column (the Gradient view's): Apply under the two
+            for lb, n in ((self.what, 2), (self.cost, 1)):
+                lb.setWordWrap(False)
+                lb.setTextFormat(Qt.PlainText)
+                lb.setFixedHeight(n * lb.fontMetrics().height() + 2)
+                lb.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
             row.addWidget(self.b_reset)
             row.addWidget(self.b_variant)
             v.addLayout(row)
@@ -155,11 +166,34 @@ class DraftBar(QFrame):
         v.addLayout(row)
 
     def show_draft(self, lines, cost: str = "") -> None:
-        """The draft's changes, one line each (bold), and what Apply computes again."""
-        self.what.setText("<br>".join(f"<b>{html.escape(t)}</b>" for t in lines if t))
+        """The draft's changes, one line each (bold), and what Apply computes again. A narrow bar (``fixed``): the
+        state on its first line, the changes on the second, the cost on the third, each cut to the bar's width, the
+        whole on hover; its height never changes."""
+        lines = [t for t in lines if t]
+        if self.fixed:
+            self._lines, self._cost = lines, cost
+            self._elide()
+            tip = "\n".join(lines + ([cost] if cost else []))
+            self.what.setToolTip(tip)
+            self.cost.setToolTip(tip)
+            return
+        self.what.setText("<br>".join(f"<b>{html.escape(t)}</b>" for t in lines))
         self.what.setVisible(any(lines))
         self.cost.setText(html.escape(cost))
         self.cost.setVisible(bool(cost))
+
+    def _elide(self):
+        w = max(40, self.what.width() if self.what.width() > 50 else self.width() - 20)
+        fm = self.what.fontMetrics()
+        first = self._lines[0] if self._lines else ""
+        rest = " · ".join(self._lines[1:])
+        self.what.setText("\n".join(fm.elidedText(t, Qt.ElideRight, w) for t in (first, rest)))
+        self.cost.setText(self.cost.fontMetrics().elidedText(self._cost, Qt.ElideRight, w))
+
+    def resizeEvent(self, e):                                         # noqa: N802 - Qt's name
+        super().resizeEvent(e)
+        if self.fixed:
+            self._elide()
 
 
 def ask_leave(parent, block: str, lines=(), cost: str = "") -> str:

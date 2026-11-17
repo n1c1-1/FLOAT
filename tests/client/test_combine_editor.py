@@ -162,7 +162,7 @@ class Node:
 def make(monkeypatch, qapp, **kw):
     ch = filters()
     monkeypatch.setattr(ce, "_reduced_for", lambda project, pid, stage, spec: small_of(ch))
-    monkeypatch.setattr(ce, "_applied_for", lambda project, pid, stage, k: None)
+    monkeypatch.setattr(ce, "_applied_for", lambda project, pid, stage, k, settings=None: None)
     m = Model(**kw)
     t = Tune(m)
     t.resize(1400, 900)
@@ -249,7 +249,10 @@ def test_the_block_shows_the_draft_bar_its_palette_cards_and_balance(ed):
     for r in SHO:
         assert f"hue_{r}" in u and f"int_{r}" in u and f"eye_{r}" in u and f"thumb_{r}" in u
         assert u[f"thumb_{r}"].pixmap() is not None and not u[f"thumb_{r}"].pixmap().isNull()
-    assert u["gain_SII"].text().startswith("×") and u["gain_Ha"].text() == "reference"
+    # no run's value yet: the reduced copy's estimate, said so; what the reason means on hover
+    assert u["gain_SII"].text().startswith("≈ ×") and "from the preview" in u["gain_SII"].text()
+    assert u["gain_Ha"].text() == "reference" and "estimate" in u["gain_SII"].toolTip()
+    assert any(w in u["gain_SII"].toolTip() for w in ("Signal:", "Limited by noise:"))
     assert "signal" in u["gain_OIII"].text() or "noise" in u["gain_OIII"].text()
     assert "balance_signal" in u and "balance_sky" in u and "stars_neutral" not in u
     assert u["bar"].what.text().find("Applied settings") >= 0
@@ -513,7 +516,7 @@ def test_on_m27_the_editor_applies_in_one_step_and_tries_a_variant(qapp, tmp_pat
 
 def test_on_ic443_the_h_o_block_is_titled_h_o(qapp, tmp_path):
     """IC 443's combinations were placed as S-H-O and made H-O: their names still say S-H-O. The block's title, the
-    graph's and the editor's, follow the recipe; changing the recipe renames "S-H-O · Stars" too."""
+    graph's and the editor's, follow the recipe; a recipe change renames nothing stored."""
     from astro_gpu.graphcore import rules
     w = _real_window(tmp_path, "ic443")
     try:
@@ -530,7 +533,10 @@ def test_on_ic443_the_h_o_block_is_titled_h_o(qapp, tmp_path):
         n = len(s._undo)
         said = s.set_combination_type(stars, "rgb")          # its inputs are S II-less: Hα and O III go
         assert len(s._undo) == n + 1 and "removed" in said and "Hα" in said and "O III" in said
-        assert s.view(stars.pid).name == "RGB · Stars"        # the recipe's title in its name follows it
+        assert "renamed" not in said                          # no rename the user did not make
+        assert s.view(stars.pid).name == "S-H-O · Stars"      # stored as it was, shown with the recipe's title
+        jb = next(r.blocks[0] for r in s._g.rows if r.blocks and r.name == "S-H-O · Stars")
+        assert rules.title(s._g, jb) == "RGB · Stars"
         s.undo()
         assert s.view(stars.pid).name == "S-H-O · Stars"
     finally:
@@ -554,10 +560,26 @@ def test_the_graph_panel_s_settings_of_a_combination_are_one_draft(qapp, tmp_pat
         node = s.block_map.node_of(q, "fusion")
         pn.refresh(node)
         assert pn.findChild(QWidget, "adjust") is not None    # Adjust: the editor in Inspect
-        pn.propose_weight(q, "OIII", 0.5, 1.0)
+        # a value typed, no Enter: the draft once the typing pauses (the reviewer's round 2, point 3)
+        from PySide6.QtWidgets import QDoubleSpinBox
+        pn.show()
+        pn.activateWindow()
+        sp = [x for x in pn.findChildren(QDoubleSpinBox) if x.objectName() == "intensity"][1]
+        sp.setFocus()
+        QApplication.processEvents()
+        assert sp.hasFocus()
+        sp.setValue(0.5)
+        end = time.monotonic() + 3
+        while not s.pending_change and time.monotonic() < end:
+            QApplication.processEvents()
+            time.sleep(0.02)
+        assert s.pending_change and s.stage_key(q, st) == key
         pn.propose_recipe_type(q, "sho", "ho")
         d = s.pending_change
         assert d and len(d) == 2 and s.stage_key(q, st) == key  # a draft: nothing changed yet
+        pn.refresh(node)                                      # the draft's recipe: its inputs shown, S II too
+        from PySide6.QtWidgets import QLabel
+        assert "S II" in {x.text().replace("<b>", "").replace("</b>", "") for x in pn.findChildren(QLabel)}
         what = " ".join(pn.draft_change(d).get("whats") or [])
         assert "O III intensity 1.00 → 0.50" in what and "Recipe: H-O → S-H-O" in what
         n = len(s._undo)
@@ -594,3 +616,95 @@ def test_file_open_given_the_project_file_opens_its_folder(qapp, tmp_path):
         assert w.project is not None and w.project.root == folder and not w.banner.isVisible()
     finally:
         w.close()
+
+
+# ---------------------------------------------------------------------------------------------- round 2
+def test_the_draft_bar_keeps_its_height_whatever_the_draft_holds(ed):
+    """A narrow draft bar (this editor's, Gradient's) never grows: it pushed the cards down between a press and a click
+    (a click on On sky landed on On signal)."""
+    from astro_gpu.client.blockdraft import DraftBar
+    bar = ed._ui["bar"]
+    QApplication.processEvents()
+    h0, y0 = bar.sizeHint().height(), ed._ui["balance_sky"].mapTo(ed.page, ed._ui["balance_sky"].rect().topLeft())
+    ed.set_hue("SII", 10.0)
+    ed.set_hue("OIII", 205.0)
+    ed.set_intensity("Ha", 1.7)
+    ed.set_draft({"balance": "sky"})
+    QApplication.processEvents()
+    assert bar.sizeHint().height() == h0
+    assert ed._ui["balance_sky"].mapTo(ed.page, ed._ui["balance_sky"].rect().topLeft()) == y0
+    assert "Draft · 4 changes" in bar.what.text() and "S II hue" in bar.what.toolTip()
+    g = DraftBar(narrow=True)
+    g.resize(300, 120)
+    g.show_draft(["Draft · 1 change"])
+    h1 = g.sizeHint().height()
+    g.show_draft(["Draft · 3 changes", "Gradient draft: RBF, 40 samples, exclusions", "another line", "and one more"],
+                 "Computes again · about 2 min")
+    assert g.sizeHint().height() == h1                      # Gradient's bar: the same
+
+
+def test_on_a_block_without_result_every_change_is_made_at_once(qapp, monkeypatch):
+    """The rule of every control: a block with a result (computed or Outdated) takes a draft; without one (never
+    computed, waiting for an input), the change is made at once, one step."""
+    e, t, _ch = make(monkeypatch, qapp)
+    t.s.state = lambda p, stage: "pending"
+    assert e.center(t, Node(), t.s.path)
+    wait(e)
+    e.set_hue("OIII", 205.0)
+    assert not e.has_draft() and [c["kind"] for c in t.s.changes] == ["combine"]
+    assert t.s.path._wf.params[t.s.stage]["hue_oiii"] == 205.0
+    sl = e._ui["int_SII"]                                   # a drag: once, when it is let go
+    sl.setSliderDown(True)
+    e.begin_drag()
+    for v in (22, 26):
+        sl.setValue(v)
+    sl.setSliderDown(False)
+    e.end_drag()
+    assert len(t.s.changes) == 2 and not e.has_draft()
+
+
+def test_french_numbers_and_the_whole_hue_rail(qapp, monkeypatch):
+    from astro_gpu.client import i18n
+    i18n.set_language("fr")
+    try:
+        e, t, _ch = make(monkeypatch, qapp)
+        assert e.center(t, Node(), t.s.path)
+        wait(e)
+        u = e._ui
+        assert u["intv_SII"].text() == "1,00" and "," in u["gain_SII"].text()
+        e.set_intensity("SII", 2.2)
+        assert "1,00 → 2,20" in e.draft_change()["what"]
+    finally:
+        i18n.set_language("en")
+    assert "sub-page:horizontal, QSlider::add-page:horizontal { background: transparent; }" in \
+        u["hue_SII"].styleSheet()
+
+
+def test_the_preview_renders_as_post_shows_the_workflow_s_layer():
+    """Post's layer of the combination sets the render (its sliders, the scale of its Sky slider: a layer saved before
+    2026-11-16 keeps its sky at 0.25, a dark green sky in the editor against Post's lighter one); none: the default."""
+    from astro_gpu.render.simple import SimpleSettings
+    assert ce.layer_settings([], 3) is None
+    old = {"kind": "workflow", "pid": 3, "part": None, "sliders": {}, "base": None}            # saved before
+    new = dict(old, sky_scale=2)
+    assert ce.layer_settings([old], 3)["sky"] == pytest.approx(0.25)
+    assert ce.layer_settings([new], 3)["sky"] == pytest.approx(SimpleSettings().sky)
+    assert ce.layer_settings([dict(new, sliders={"sky": 4})], 3)["sky"] > SimpleSettings().sky
+    rgb = np.abs(np.random.default_rng(2).normal(0.1, 0.02, (3, 60, 80))).astype(np.float32)
+    a, b = ce.output_render(rgb, ce.layer_settings([old], 3)), ce.output_render(rgb)
+    assert float(np.median(a)) > float(np.median(b))
+
+
+def test_the_mono_templates_take_the_rbf_gradient():
+    import json
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2] / "astro_gpu" / "resources" / "templates"
+
+    def methods(f):
+        d = json.loads(f.read_text(encoding="utf-8"))
+        return {b.get("method") for b in d["graph"]["blocks"].values() if b.get("kind") == "gradient"}
+    for f in (root / "Mono").glob("*.astroproj"):
+        assert methods(f) == {"rbf"}, f.name
+    assert methods(root / "Color" / "SHO + RGB stars.astroproj") == {"rbf"}
+    for name in ("Colour minimal", "Colour full", "Dual-band x2"):
+        assert methods(root / "Color" / f"{name}.astroproj") <= {"polynomial", None}, name
