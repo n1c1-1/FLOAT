@@ -622,7 +622,7 @@ def new_part(src: str) -> dict:
     elif src == "brush":
         p.update(strokes=[], size=60.0, hardness=50.0, paint=True)
     elif src == "stars":
-        p.update(grow=1.0, feather=0.0)                 # each star as the screen shows it, a hard edge: neutral
+        p.update(grow=1.0, feather=0.0)                 # each star to its own extent, a hard edge: neutral
     elif src != "halpha":
         raise ValueError(f"unknown mask source {src!r}")
     return p

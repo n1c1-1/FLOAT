@@ -4457,10 +4457,11 @@ class PostView(QWidget):
             v.addLayout(r)
 
         if src == "stars":                               # what it is made of, its source
-            v.addWidget(label(_("The stars of the layer's stars image (its Stars/background; a combination's: its "
-                                "Stars side), each as the screen shows it, grown by Grow times its own radius: a "
-                                "brighter star grows more. Subtract it from another part to leave the stars and "
-                                "their wings out."), "small", wrap=True))
+            v.addWidget(label(_("The stars of the layer's stars (its Stars/background; a combination's: its Stars "
+                                "side), found once in the stars as their block computed them, whatever the star "
+                                "settings; each grown by Grow times its own radius: a brighter star grows more. "
+                                "Subtract it from another part to leave the stars and their wings out."),
+                              "small", wrap=True))
 
         def sl(key, name, lo, hi, unit=""):
             s = ContSlider(_(name), lo, hi, part[key], default[key], unit=unit, step=0.1 if key == "grow" else 1)
