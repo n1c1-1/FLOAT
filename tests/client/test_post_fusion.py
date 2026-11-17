@@ -352,6 +352,39 @@ def test_the_stars_part_covers_each_star_to_its_extent_and_grows_with_it():
     assert 0.05 < edge < 0.95
 
 
+def test_the_part_s_feather_softens_its_stars_and_the_whole_mask_s_feather_comes_on_top():
+    """The part's Feather softens the edge of its discs; the whole mask's Feather blurs the mask the parts made, after
+    them (the reference editor's mask Feather over a feathered selection): two Gaussians one after the other, whose
+    widths add in quadrature, so a part's Feather much under the whole mask's changes little (the tester's M27: 29 px
+    over the whole mask)."""
+    def mask(part_f, whole_f):
+        m = _stars_mask(grow=2.0, feather=part_f)
+        m["feather"] = whole_f
+        lay = master(stars_pid=4, mask=m)
+        return compose([lay], StarField(), want=[lay["id"]]).masks[lay["id"]]
+    hard, soft = mask(0.0, 0.0), mask(4.0, 0.0)
+    assert np.abs(soft - hard).max() > 0.3                     # the part's Feather alone: its edge soft
+    both = mask(4.0, 6.0)
+    assert np.allclose(both, pe.gauss(soft, 6.0), atol=1e-5)    # the whole mask's on top of it
+    assert np.allclose(mask(0.0, 6.0), pe.gauss(hard, 6.0), atol=1e-5)
+    # a Gaussian of 4 then of 6 is one of sqrt(4² + 6²) = 7.2: the part's 4 px moves the result by that much only
+    assert np.abs(both - pe.gauss(hard, np.hypot(4.0, 6.0))).max() < 0.05
+
+
+def test_the_grow_reaches_ten_times_a_star_s_radius_and_a_stored_part_is_kept_in_its_ranges():
+    """Grow goes to 10 (a star's wing may be wider than three times its radius at the detection's threshold, the
+    tester's M27 at Grow 3); a part read from a project is brought into its settings' ranges."""
+    assert dict((k, (lo, hi)) for k, _n, lo, hi, _u in pe.PART_SETTINGS["stars"])["grow"] == (1, 10)
+    l5 = master(stars_pid=4, mask=_stars_mask(grow=5.0))
+    l1 = master(stars_pid=4, mask=_stars_mask())
+    m5 = compose([l5], StarField(), want=[l5["id"]]).masks[l5["id"]]
+    m1 = compose([l1], StarField(), want=[l1["id"]]).masks[l1["id"]]
+    assert abs(_radius(m5, 10, 40) - 5 * _radius(m1, 10, 40)) <= 5     # (the test's canvas is 64 px wide)
+    assert pe._clean_mask(_stars_mask(grow=10.0))["parts"][0]["grow"] == 10.0
+    got = pe._clean_mask(_stars_mask(grow=40.0, feather=-3.0))["parts"][0]
+    assert got["grow"] == 10.0 and got["feather"] == 0.0
+
+
 def test_a_filter_s_mask_minus_the_stars_leaves_the_stars_out_and_reads_the_shared_stars_side():
     m = _lum_part()
     m["parts"] = m["parts"] + _stars_mask(grow=2.0, op="sub")["parts"]

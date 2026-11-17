@@ -1133,6 +1133,7 @@ def _clean_mask(m) -> dict | None:
         src = p.get("src") if isinstance(p, dict) else None
         if src not in MASK_SOURCES:
             continue
+        ranges = {k: (lo, hi) for k, _n, lo, hi, _u in PART_SETTINGS.get(src, [])}
         q = new_part(src)
         q["id"] = int(p.get("id") or q["id"])
         q["op"] = p.get("op") if p.get("op") in OPS else "add"
@@ -1147,7 +1148,7 @@ def _clean_mask(m) -> dict | None:
             elif k == "direction":
                 q[k] = p[k] if p[k] in DIRECTIONS else v
             else:
-                q[k] = _num(p[k], v)
+                q[k] = _num(p[k], v, *ranges.get(k, (None, None)))        # within its slider's range
         if src in READS_IMAGE and isinstance(p.get("from"), str) and (p["from"] in READS or sub_role(p["from"])):
             q["from"] = p["from"]                       # (a combination's filter's mask: what the part reads)
         out["parts"].append(q)

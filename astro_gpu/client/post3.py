@@ -2326,7 +2326,11 @@ class PostView(QWidget):
                 self.b_cmp.isChecked() or self.src.canvas is None:
             return
         W, H = self.src.size()
+        x0, y0, x1, y1 = v.extent()                      # a cropped picture: the red inside the crop, as the picture
+        p.save()
+        p.setClipRect(QRectF(v.img_to_w(x0, y0), v.img_to_w(x1, y1)))
         p.drawImage(QRectF(v.img_to_w(0, 0), v.img_to_w(W, H)), self._overlay_img)
+        p.restore()
 
     # ------------------------------------------------------------ undo
     def push(self, before=None, words: str = ""):

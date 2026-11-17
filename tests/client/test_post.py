@@ -1355,6 +1355,33 @@ def test_mask_brushes_are_named_by_their_effect_and_the_red_marks_what_is_hidden
     assert part not in full["mask"]["parts"] and said == ["Brush removed from the mask · Ctrl+Z"]
 
 
+def test_the_red_of_a_mask_stays_inside_the_cropped_picture(post):
+    """A cropped picture is shown alone (what is outside the crop is painted over): the red of the mask being edited
+    stays inside it too (the tester's Rosette: the Stars part's discs of the stars at the edge, red past the frame)."""
+    from PySide6.QtGui import QImage, QPainter
+    v = post.view
+    full = named(v, "Full")
+    v.select(full["id"], "layer")
+    v.mask_button()
+    full["mask"]["invert"] = True                                     # hidden everywhere: red over the whole picture
+    v.request(final_only=True)
+    assert post.settle() and v._overlay_img is not None
+    W, H = v.src.size()
+    v.viewer.crop_box = (W / 4, H / 4, 3 * W / 4, 3 * H / 4)
+    img = QImage(v.viewer.size(), QImage.Format_ARGB32)
+    img.fill(0)
+    p = QPainter(img)
+    v._overlay(p, v.viewer)
+    p.end()
+
+    def alpha(x, y):
+        pt = v.viewer.img_to_w(x, y)
+        assert img.rect().contains(int(pt.x()), int(pt.y()))           # a point the widget shows
+        return img.pixelColor(int(pt.x()), int(pt.y())).alpha()
+    assert alpha(W / 2, H / 2) > 0                                    # inside the crop: red
+    assert alpha(W / 8, H / 2) == 0 and alpha(W / 2, H / 8) == 0      # outside: nothing
+
+
 def test_the_full_resolution_brush_stamps_only_the_new_strokes():
     """The exact view composes the whole canvas at level 0: its brush plane is kept as the reduced ones are (each
     stroke made the next picture longer when it was stamped again from the first one)."""
