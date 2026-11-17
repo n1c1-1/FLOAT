@@ -405,3 +405,26 @@ def test_real_inspect_tunes_every_block_of_the_family_as_a_draft_with_one_source
         assert _stored_setting(w, kind, q, ed) == before
     finally:
         w.close()
+
+
+@pytest.mark.parametrize("kind", FAMILY)
+def test_real_choosing_another_workflow_in_inspect_makes_nothing(qapp, tmp_path, kind):
+    """With Combine layers' editor open, choosing OIII in Inspect's list of workflows added a Combine layers block
+    wired to Post, its layer over the colour image, without Undo, "*" or question. A choice of workflow never makes a
+    block: a workflow without the block shows its own view, for every block of the family."""
+    w = _whole(tmp_path, M27)
+    try:
+        s = w.s
+        q, ed = _open_editor(w, kind)
+        assert ed.page_shown()
+        blocks = sorted(w.graph.bridge.graph.blocks)
+        layers = [x.get("id") for x in s.post_layers()]
+        n, dirty = len(s._undo), s._dirty
+        oiii = next(x for x in s.paths if x.name == "OIII")
+        w.tune._strip_workflow(s.index_of(oiii.pid))
+        pump(1.0)
+        assert s.path.pid == oiii.pid and not ed.page_shown()
+        assert sorted(w.graph.bridge.graph.blocks) == blocks and [x.get("id") for x in s.post_layers()] == layers
+        assert len(s._undo) == n and s._dirty == dirty
+    finally:
+        w.close()

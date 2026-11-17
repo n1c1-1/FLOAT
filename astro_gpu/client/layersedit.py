@@ -44,6 +44,14 @@ def _texts():
     return lambda k: strength_text if k == STRETCH_KEY else offset_text
 
 
+def on_graph(s, node) -> bool:
+    """Whether a Combine layers node is a block of the graph (the map's), not one made up for a workflow without."""
+    try:
+        return s.block_map.block_of(node) is not None
+    except AttributeError:                             # a stand-in model without a map: as it is given
+        return True
+
+
 class LayersEditor(DraftEditor):
     """The Combine layers block of the workflow shown, tuned as a draft in Inspect's centre (module docstring)."""
 
@@ -61,8 +69,10 @@ class LayersEditor(DraftEditor):
 
     # ------------------------------------------------------------ the block shown
     def wants(self, node, p) -> bool:
+        """A Combine layers block of the graph over the workflow shown: never one a choice of workflow would make (a
+        workflow without the block shows its own view, as a combination's editor does on a workflow without one)."""
         return str(self.tv.s.sel_step) == "composition" and getattr(node, "key", "") == "composition" and \
-            bool(getattr(node, "paths", None))
+            bool(getattr(node, "paths", None)) and on_graph(self.s, node)
 
     def _enter_page(self, p):
         lid = None

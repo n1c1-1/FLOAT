@@ -886,6 +886,10 @@ class TuneView(QWidget):
         self.pages.setCurrentIndex(0)
         p = s.path
         node = g.node_of(p, s.sel_step)
+        if node is not None and node.key == "composition":
+            from .layersedit import on_graph
+            if not on_graph(s, node):                      # no Combine layers in this workflow (another one chosen in
+                node = None                                # the list): nothing made for it, as for a combination
         self.panel.refresh(node)
         self._remember()
         if not getattr(self, "_head_sized", False) and self.isVisible():   # measured once in the window's style
