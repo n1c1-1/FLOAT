@@ -418,6 +418,8 @@ def test_the_stars_part_is_found_once_in_the_stars_result_whatever_the_star_sett
     stars again (on M27, 10 s of a 16 s release): the part now finds them once in the stars as their block computed
     them (Provider.linear_stars, none of Post's star settings), at full resolution, whatever the level shown; a star
     setting changes nothing in the mask and costs no detection, and every level draws the same discs."""
+    from collections import OrderedDict
+    monkeypatch.setattr(pe, "_STARS", OrderedDict())             # (the session's cache: none of another test's)
     found = []
     real = pe.find_stars
     monkeypatch.setattr(pe, "find_stars", lambda L: found.append(L.shape) or real(L))
@@ -438,6 +440,10 @@ def test_a_search_of_stars_never_holds_the_window_the_mask_waits_without_them(mo
     """The first search of a result's stars froze the window a minute (Combine layers' Adjust, the preview empty,
     nothing said): it runs in a process of its own, waited for in a thread; meanwhile the mask is drawn without the
     stars and the picture says what is being done; when they are found the views are told and the mask has them."""
+    from collections import OrderedDict
+    monkeypatch.setattr(pe, "_STARS", OrderedDict())             # (the session's caches: none of another test's)
+    monkeypatch.setattr(pe, "_SEARCHING", {})
+    monkeypatch.setattr(pe, "_FAILED", set())
     import threading
 
     from astro_gpu.client import starsearch
@@ -473,6 +479,10 @@ def test_the_search_s_own_process_finds_what_the_function_finds(tmp_path):
 def test_a_failed_search_of_stars_is_never_kept_as_no_stars_and_is_said(monkeypatch, tmp_path):
     """A failed search was saved as "no stars" (an empty file in cache/stars) and never searched again: a failure is
     never kept on disk; the picture says it, the mask has no stars, the session does not search again."""
+    from collections import OrderedDict
+    monkeypatch.setattr(pe, "_STARS", OrderedDict())             # (the session's caches: none of another test's)
+    monkeypatch.setattr(pe, "_SEARCHING", {})
+    monkeypatch.setattr(pe, "_FAILED", set())
     import threading
 
     from astro_gpu.client import starsearch

@@ -2030,7 +2030,10 @@ class Composer:
         sid = source_id(side)
         over = side.get("stars_over")
         rid = self.provider.stars_id(side)
-        key = ("stars", rid if rid is not None else (id(self.provider), sid, self.provider.version(sid), over,
+        # a provider that cannot name the result (the tests'): its own token, never its id (an id is used again once
+        # its object is gone: another provider's stars came back from the shared cache)
+        token = self.provider.__dict__.setdefault("_stars_token", __import__("uuid").uuid4().hex)
+        key = ("stars", rid if rid is not None else (token, sid, self.provider.version(sid), over,
                                                        self.provider.version(over) if over is not None else None),
                canvas.W, canvas.H, canvas.origin)
         with _STARS_LOCK:
