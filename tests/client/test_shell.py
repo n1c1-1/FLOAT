@@ -281,6 +281,28 @@ def _fmt(info):
     return state_text(info.state, info.state_args)
 
 
+def test_the_project_name_shows_its_folder_on_hover(env):
+    """The owner did not know where his project was saved: hovering the project's name says its folder, as the
+    reference apps show a document's path on its name (the window title stays the name); a project never saved
+    says so; in French too."""
+    from astro_gpu.client import drafts
+    w = _main(env)
+    try:
+        assert w.open_project(env["ws"] / "Heart")
+        w.title.setText(w.project_name())
+        assert w.title.toolTip() == "Folder: " + os.path.normpath(str(env["ws"] / "Heart"))
+        assert w.windowTitle() == "FLOAT · " + w.project.name
+        appmod.apply_language("fr")
+        w.title.setText(w.project_name())
+        assert w.title.toolTip() == "Dossier : " + os.path.normpath(str(env["ws"] / "Heart"))
+        appmod.apply_language("en")
+        assert w.create_project(drafts.new_root().as_posix(), "Untitled")
+        w.title.setText(w.project_name())
+        assert w.title.toolTip() == "Not saved yet"
+    finally:
+        appmod.apply_language("en")
+
+
 def test_post_leaves_the_thumbnail_home_shows(env, tmp_path):
     from astro_gpu.client.home import THUMB, _thumb
     rgb = np.zeros((300, 480, 3), np.uint8)

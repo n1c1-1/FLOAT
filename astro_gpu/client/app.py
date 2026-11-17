@@ -1455,8 +1455,10 @@ class Main(QMainWindow):
             self.setWindowTitle(f"{APP_NAME} · {self.project.name}{star}")
 
     def project_name(self) -> str:
-        """The project's name (bold) and its target in the title's place, cut with "…" to fit it (the whole text goes
-        to the tooltip): the tabs after the title never move with the length of a name."""
+        """The project's name (bold) and its target in the title's place, cut with "…" to fit it: the tabs after the
+        title never move with the length of a name. Its tooltip: the whole text when it is cut, and the project's
+        folder (the owner did not know where his project was saved), as the reference apps show a document's path on
+        its name."""
         pr = self.project
         self.title.ensurePolished()                  # its style sheet's size
         font = self.title.font()
@@ -1470,7 +1472,10 @@ class Main(QMainWindow):
         if pr.target and left > 40:
             out += sep + html.escape(QFontMetrics(font).elidedText(pr.target, Qt.ElideRight, left))
         whole = pr.name + (sep + pr.target if pr.target else "")
-        self.title.setToolTip(whole if QFontMetrics(bold).horizontalAdvance(whole) > room else "")
+        where = (_("Not saved yet") if drafts.is_untitled(pr.root)
+                 else _("Folder: {path}").format(path=os.path.normpath(str(pr.root))))
+        self.title.setToolTip("\n".join(t for t in (whole if QFontMetrics(bold).horizontalAdvance(whole) > room
+                                                    else "", where) if t))
         return out
 
     def request_refresh(self, *_a):
