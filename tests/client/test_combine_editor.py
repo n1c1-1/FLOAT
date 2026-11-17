@@ -275,7 +275,7 @@ def test_a_drag_follows_the_slider_and_is_one_step(ed):
     sl = ed._ui["int_OIII"]
     sl.setSliderDown(True)
     ed.begin_drag()
-    for v in (round(x / ce.INTENSITY_STEP) for x in (1.1, 1.2, 1.3, 1.4)):     # (positions of its step)
+    for v in (round(ce.intensity_u(x) * ce.INTENSITY_POSITIONS) for x in (1.1, 1.2, 1.3, 1.4)):   # (its rail's places)
         sl.setValue(v)
         QApplication.processEvents()
     sl.setSliderDown(False)

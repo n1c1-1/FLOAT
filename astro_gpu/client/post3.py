@@ -72,7 +72,7 @@ from ..render.sliders import STARS as STARS_GROUP
 from ..render.sliders import group_title
 from ..render.sliders import top as slider_top
 from . import prefs
-from .combineedit import HUE_RAIL, INTENSITY_MAX, INTENSITY_STEP, FineDrag
+from .combineedit import HUE_RAIL, INTENSITY_MAX, INTENSITY_STEP, FineDrag, intensity_at, intensity_u
 from .curveseditor import CurvesEditor, FunctionGraph, caption
 from .i18n import _, language, log_detail, maybe, number, plain_error, plural
 from .icons import draw as draw_icon
@@ -522,9 +522,10 @@ class ContSlider(QWidget):
     done = Signal(float)
     GLIDE = 1000                                          # the positions of a slider without a step
 
-    def __init__(self, name, lo, hi, value, default, ends=None, unit="", step=None, show=None, parent=None):
+    def __init__(self, name, lo, hi, value, default, ends=None, unit="", step=None, show=None, parent=None, law=None):
         super().__init__(parent)
         self.lo, self.hi, self.default, self.unit, self.step, self.show = lo, hi, default, unit, step, show
+        self.law = law                                    # (value at a place 0-1 of the rail, its inverse): not linear
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 2, 0, 4)
         v.setSpacing(0)
@@ -543,7 +544,7 @@ class ContSlider(QWidget):
         # (a step that does not divide the range: the last whole step under ``hi`` is the end)
         # (without a step: a thousandth of a 0-4 range, the same fineness on a longer one, so that its middle, the
         # suggestion, is one of its positions: Saturation's 0-6 drew its default as a moved value)
-        self._n = max(1, math.floor((hi - lo) / step + 1e-6)) if step else \
+        self._n = self.GLIDE if law is not None else max(1, math.floor((hi - lo) / step + 1e-6)) if step else \
             max(self.GLIDE, int(round(self.GLIDE * (hi - lo) / 4)))
         self.s.setRange(0, self._n)
         if ends:
@@ -598,13 +599,16 @@ class ContSlider(QWidget):
         self.s.setValue(QStyle.sliderValueFromPosition(0, self._n, min(max(at, 0), span), span, opt.upsideDown))
 
     def value(self) -> float:
+        if self.law is not None:
+            return self.law[0](self.s.value() / self._n)
         if self.step:
             return round(self.lo + self.s.value() * self.step, decimals(self.step) + decimals(self.lo))
         return self.lo + (self.hi - self.lo) * self.s.value() / self._n
 
     def set_value(self, x):
         self.s.blockSignals(True)
-        self.s.setValue(int(round((x - self.lo) / self.step if self.step else
+        self.s.setValue(int(round(self._n * self.law[1](x) if self.law is not None else
+                                  (x - self.lo) / self.step if self.step else
                                   self._n * (x - self.lo) / ((self.hi - self.lo) or 1))))
         self.s.blockSignals(False)
         self._label()
@@ -3853,7 +3857,7 @@ class PostView(QWidget):
             words = _("{filter} hue").format(filter=name)
         else:
             sl = ContSlider(_("{filter} intensity").format(filter=name), 0, INTENSITY_MAX, f["weights"].get(role, 1.0),
-                            1.0, step=INTENSITY_STEP)
+                            1.0, law=(intensity_at, intensity_u), show=lambda x: number(x, 2))
             FineDrag(sl.s)
             sl.setToolTip(_("{filter}'s weight on top of the gain the balance measured (1: as balanced): the "
                             "combination's setting, the same in Inspect").format(filter=name) + NL +

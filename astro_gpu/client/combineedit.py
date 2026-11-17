@@ -62,6 +62,28 @@ THUMB_W = 84
 #: Intensity: its range and its step (1 = as balanced)
 INTENSITY_MAX, INTENSITY_STEP = 10.0, 0.01             # (the tester's recipe: S II 14 times fainter than H-alpha;
 #                                                        a hundredth: the fine setting near 1 the testers asked for)
+#: Intensity's rail: even by ratio (the brush size's kind of law), 0.1 to INTENSITY_MAX, 1 at its middle, 0 (the
+#: filter off) at its left end; INTENSITY_POSITIONS positions: about half a percent of the value a position near 1 (a
+#: linear 0-10 rail took a 28 px drag from 1.00 to 2.95)
+INTENSITY_LOW, INTENSITY_POSITIONS = 0.1, 1000
+
+
+def intensity_at(u: float) -> float:
+    """An intensity at a place of its rail (``u`` 0 to 1): 0 at the left end, else INTENSITY_LOW times the ratio to
+    INTENSITY_MAX to the power u, rounded to the hundredth."""
+    if u <= 0:
+        return 0.0
+    return round(INTENSITY_LOW * (INTENSITY_MAX / INTENSITY_LOW) ** min(float(u), 1.0), 2)
+
+
+def intensity_u(w: float) -> float:
+    """The place of an intensity on its rail (``intensity_at``'s inverse; 0 for 0)."""
+    w = float(w)
+    if w <= 0:
+        return 0.0
+    return min(1.0, max(0.0, math.log(max(w, INTENSITY_LOW) / INTENSITY_LOW) / math.log(INTENSITY_MAX / INTENSITY_LOW)))
+
+
 #: the starting palettes: (key, name, the filters they colour, {filter: hue}); a palette is offered when the recipe's
 #: hued filters are exactly its own. Hubble: the S-H-O hues measured on the Hubble teams' images (stages/combine.py,
 #: HUBBLE_HUES, the S-H-O recipe's defaults); H-O-O: H-alpha red, O III cyan.
@@ -777,10 +799,10 @@ class CombineEditor(DraftEditor):
         row.addWidget(il)
         it = QSlider(Qt.Horizontal)
         it.setObjectName("intensity")
-        it.setRange(0, int(round(INTENSITY_MAX / INTENSITY_STEP)))
+        it.setRange(0, INTENSITY_POSITIONS)             # (even by ratio: intensity_at)
         it.setToolTip(_("The filter's weight after the balance (1: as balanced). Lower a faint filter whose noise the "
                         "balance raised.") + "\n" + _("Shift while dragging: ten times finer · arrow keys: one step"))
-        self._wire_slider(it, lambda i, r=role, **k: self.set_intensity(r, i * INTENSITY_STEP, **k))
+        self._wire_slider(it, lambda i, r=role, **k: self.set_intensity(r, intensity_at(i / INTENSITY_POSITIONS), **k))
         FineDrag(it)
         DoubleClickDefault(it, lambda r=role: self.set_intensity(r, 1.0))      # (1: as balanced)
         row.addWidget(it, 1)
@@ -852,7 +874,7 @@ class CombineEditor(DraftEditor):
                 u[f"deg_{role}"].setText(f"{h:.0f}°")
             if f"int_{role}" in u:
                 w = self.weight(role)
-                u[f"int_{role}"].setValue(int(round(w / INTENSITY_STEP)))
+                u[f"int_{role}"].setValue(int(round(intensity_u(w) * INTENSITY_POSITIONS)))
                 u[f"intv_{role}"].setText(number(w, 2))
                 e = u[f"eye_{role}"]
                 e.setChecked(role not in self.off)

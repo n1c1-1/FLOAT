@@ -596,7 +596,7 @@ def test_judges_details_names_undo_tag_digits_intensity_tabs_gains_and_the_panel
     finally:
         i18n.set_language("en")
     # Intensity up to 10, in Post and Inspect, the same step
-    assert ce.INTENSITY_MAX == 10.0 and ed._ui["int_SII"].maximum() == round(10.0 / ce.INTENSITY_STEP)
+    assert ce.INTENSITY_MAX == 10.0 and ed._ui["int_SII"].maximum() == ce.INTENSITY_POSITIONS
     pv.sel = None
     pv.select(lay["id"], "layer")
     sl = next(x for x in pv.findChildren(ContSlider) if x.name.text() == "S II intensity" and x.isVisibleTo(pv.right))
@@ -685,10 +685,15 @@ def test_the_intensities_are_set_to_the_hundredth_and_shift_drags_ten_times_fine
         sl = next(x for x in pv.findChildren(ContSlider) if x.name.text() == name and x.isVisibleTo(pv.right))
         assert sl.s.findChildren(FineDrag), name
     sl = next(x for x in pv.findChildren(ContSlider) if x.name.text() == "S II intensity" and x.isVisibleTo(pv.right))
-    assert sl.step == 0.01 and sl.s.maximum() == 1000
+    assert sl.law is not None and sl.s.maximum() == ce.INTENSITY_POSITIONS
+    # the rail even by ratio (the brush size's law): 1 at its middle, 0 at its left end, 10 at its right; a tenth of
+    # the rail moves the value by the same ratio anywhere, about 1.6 (a linear rail took 28 px from 1.00 to 2.95)
+    assert ce.intensity_at(0.0) == 0.0 and ce.intensity_at(0.5) == 1.0 and ce.intensity_at(1.0) == 10.0
+    assert ce.intensity_at(0.6) == pytest.approx(1.58, abs=0.01) and ce.intensity_at(0.4) == pytest.approx(0.63, abs=0.01)
+    assert all(ce.intensity_at(ce.intensity_u(w)) == w for w in (0.0, 0.25, 1.0, 1.37, 4.2, 10.0))
     _q, ed = _editor(w, monkeypatch)
     it = ed._ui["int_SII"]
-    assert it.maximum() == 1000 and it.findChildren(FineDrag)
+    assert it.maximum() == ce.INTENSITY_POSITIONS and it.findChildren(FineDrag)
 
 
 def test_the_master_layer_s_saturation_goes_on_to_plus_four(m27):
