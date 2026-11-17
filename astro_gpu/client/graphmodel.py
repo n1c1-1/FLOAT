@@ -155,6 +155,23 @@ def confirm_on() -> bool:
     return bool(prefs.get("confirm_changes"))
 
 
+class CostText(str):
+    """A change's cost as said (``ChangeCost.text``), which a narrow place shortens: ``shortened(fits)`` names fewer
+    blocks and counts the others until the text fits; the time always stays. The whole text is its hover."""
+
+    def __new__(cls, text: str, cost=None):
+        o = super().__new__(cls, text)
+        o.cost = cost
+        return o
+
+    def shortened(self, fits) -> str:
+        if self.cost is None or fits(self):
+            return str(self)
+        n = len(self.cost.blocks)
+        return next((t for t in (self.cost.text(keep=k) for k in range(n - 1, 0, -1)) if fits(t)),
+                    self.cost.text(keep=1))
+
+
 class ChangeCost:
     """What a change computes: ``blocks`` (the names of the blocks the user sees, in the order of the chain),
     ``stages`` [(workflow id, stage)], ``seconds`` (what it adds to the run) and ``measured`` (False: an estimate).
@@ -170,13 +187,20 @@ class ChangeCost:
     def lost(self) -> bool:
         return self.again and bool(self.stages)
 
-    def text(self) -> str:
-        """"Computes again: Gradient, Denoise, Color · about 12 min", or "To compute: Gradient · ≤ 1 min"."""
+    def text(self, keep: int | None = None) -> str:
+        """"Computes again: Gradient, Denoise, Color · about 12 min", or "To compute: Gradient · ≤ 1 min". ``keep``:
+        the first blocks named, the others counted ("Gradient, Denoise + 1 other · about 12 min"). The whole text
+        is a ``CostText``: a narrow place shortens its list of blocks, never its time."""
         from .i18n import hm
         t = hm(self.seconds)
         when = t if t.startswith("≤") else _("about {t}").format(t=t)
         words = _("Computes again: {blocks} · {time}") if self.again else _("To compute: {blocks} · {time}")
-        return words.format(blocks=", ".join(self.blocks), time=when)
+        if keep is not None and 0 < keep < len(self.blocks):
+            n = len(self.blocks) - keep
+            named = ", ".join(self.blocks[:keep])
+            blocks = (_("{blocks} + 1 other") if n == 1 else _("{blocks} + {n} others")).format(blocks=named, n=n)
+            return words.format(blocks=blocks, time=when)
+        return CostText(words.format(blocks=", ".join(self.blocks), time=when), self)
 
     def __repr__(self):
         return f"ChangeCost({'again' if self.again else 'to compute'} {self.blocks}, {self.seconds:.0f} s)"

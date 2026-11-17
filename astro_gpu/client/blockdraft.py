@@ -201,7 +201,12 @@ class DraftBar(QFrame):
         first = self._lines[0] if self._lines else ""
         rest = " · ".join(self._lines[1:])
         self.what.setText("\n".join(fm.elidedText(t, Qt.ElideRight, w) for t in (first, rest)))
-        self.cost.setText(two_lines(self._cost, self.cost.fontMetrics(), w))
+        fm = self.cost.fontMetrics()
+        cost = self._cost
+        shorter = getattr(cost, "shortened", None)       # a change's cost: its list of blocks shortened, never its time
+        if shorter is not None:
+            cost = shorter(lambda t: not two_lines(t, fm, w, cut=True))
+        self.cost.setText(two_lines(cost, fm, w))
 
     def resizeEvent(self, e):                                         # noqa: N802 - Qt's name
         super().resizeEvent(e)
@@ -209,19 +214,38 @@ class DraftBar(QFrame):
             self._elide()
 
 
-def two_lines(text: str, fm, w: int) -> str:
-    """``text`` in a width ``w`` on at most two lines: whole when it fits, else broken after its last " · " part that
-    fits the first line (else between words), the second line cut at the width when it is longer still."""
+def _find_all(text: str, sep: str) -> list[int]:
+    out, i = [], text.find(sep)
+    while i >= 0:
+        out.append(i)
+        i = text.find(sep, i + 1)
+    return out
+
+
+def two_lines(text: str, fm, w: int, cut: bool = False):
+    """``text`` in a width ``w`` on at most two lines: whole when it fits, else broken after its last ", " that fits
+    the first line (a list's item: a block's name, which may hold a " · ", stays whole), else at its last " · ", else
+    between words; the second line cut at the width when it is longer still, its last " · " part (a cost's time) kept
+    whole. ``cut``: only whether something is cut."""
     if not text or fm.horizontalAdvance(text) <= w:
-        return text
-    parts = text.split(" · ")
-    k = max((i for i in range(1, len(parts)) if fm.horizontalAdvance(" · ".join(parts[:i])) <= w), default=0)
-    if k:
-        first, rest = " · ".join(parts[:k]), " · ".join(parts[k:])
+        return False if cut else text
+    end = None
+    for ends in ([(m + 1, m + 2) for m in _find_all(text, ", ")], [(m, m + 3) for m in _find_all(text, " · ")]):
+        end = max(((a, b) for a, b in ends if fm.horizontalAdvance(text[:a]) <= w), default=None)
+        if end is not None:
+            break
+    if end is not None:
+        first, rest = text[:end[0]], text[end[1]:]
     else:
         words = text.split(" ")
         k = max((i for i in range(1, len(words)) if fm.horizontalAdvance(" ".join(words[:i])) <= w), default=1)
         first, rest = " ".join(words[:k]), " ".join(words[k:])
+    if cut:
+        return fm.horizontalAdvance(first) > w or fm.horizontalAdvance(rest) > w
+    head, _s, tail = rest.rpartition(" · ")
+    if fm.horizontalAdvance(rest) > w and head and fm.horizontalAdvance(" · " + tail) <= w * 2 // 3:
+        tail = " · " + tail                                         # the time is never what is cut
+        return first + "\n" + fm.elidedText(head, Qt.ElideRight, max(0, w - fm.horizontalAdvance(tail))) + tail
     return first + "\n" + fm.elidedText(rest, Qt.ElideRight, w)
 
 

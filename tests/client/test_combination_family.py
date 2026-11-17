@@ -560,3 +560,37 @@ def test_the_narrow_bar_says_post_s_layer_only_whole_at_the_judge_s_width(qapp, 
         bar.close()
     finally:
         i18n.set_language("en")
+
+
+@pytest.mark.parametrize("language", ["en", "fr"])
+def test_a_narrow_bar_shortens_the_list_of_blocks_never_the_time(qapp, language):
+    """The Gradient editor's narrow column (the judge: "Étoiles/fond, S-H-O · Étoiles, S-H-…", the last block and
+    "environ 7 min" lost): what Apply computes again names fewer blocks and counts the others ("+ 2 others"), the time
+    always whole; the whole list on hover."""
+    from astro_gpu.client import i18n
+    from astro_gpu.client.blockdraft import DraftBar, two_lines
+    from astro_gpu.client.graphmodel import ChangeCost
+    i18n.set_language(language)
+    try:
+        c = ChangeCost(["Stars/background", "S-H-O · Stars", "S-H-O · Combine layers", "S-H-O · Output"], [(1, "x")],
+                       420.0)
+        full = c.text()
+        when = i18n._("about {t}").format(t=i18n.hm(420.0))
+        bar = DraftBar(narrow=True)
+        fm = bar.cost.fontMetrics()
+        w = fm.horizontalAdvance(c.text(keep=1).split(" · ")[0]) + 40         # (a narrow column, in the test's font)
+        assert two_lines(full, fm, w, cut=True)                               # (whole, it would be cut)
+        bar.resize(w + 22, 140)
+        bar.show()
+        qapp.processEvents()
+        bar.show_draft(["Draft · 1 change", "Method: RBF"], full)
+        shown = bar.cost.text()
+        assert shown.endswith(when) and "…" not in shown, shown
+        assert "+ " in shown and i18n._("{blocks} + {n} others").split("+")[1].split("{")[0].strip() in shown
+        assert full in bar.cost.toolTip()                                     # the whole list on hover
+        bar.resize(fm.horizontalAdvance(full) + 40, 140)                      # wide: the whole list
+        qapp.processEvents()
+        assert bar.cost.text() == full
+        bar.close()
+    finally:
+        i18n.set_language("en")
