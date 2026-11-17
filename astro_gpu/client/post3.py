@@ -3734,7 +3734,7 @@ class PostView(QWidget):
                 self._attach_fusion()
                 self.request(final_only=True)
                 return
-            self.set_fusion(lay, make(x), words)
+            self.set_fusion(lay, make(x), words, rebuild=False)
         sl.moved.connect(moved)
         sl.done.connect(done)
         return sl
@@ -3781,20 +3781,12 @@ class PostView(QWidget):
                                                                _("Balance: {name}").format(name=c.currentText())))
             r.addWidget(c, 1)
             self.pbox.addLayout(r)
-            # the one setting of the combination its run measures (the gains): said so, with what a change computes
-            from .combineedit import BALANCE_RUN
-            other = next((k for k in BALANCES if k != f.get("balance")), None)
-            words = _(BALANCE_RUN)
-            try:
-                cost = None
-                if other is not None and q is not None and hasattr(self.s, "change_cost"):
-                    cost = self.s.change_cost({"kind": "combine", "values": {"balance": other}}, [q])
-                if cost is not None and (cost.lost or cost.blocks):
-                    words = _("Needs a run: {cost}").format(cost=cost.text())
-            except Exception:  # noqa: BLE001 - the cost is a hint: the words above say the run
-                pass
-            self.pbox.addWidget(label(words, "small", wrap=True))
-            c.setToolTip(c.toolTip() + NL + words)
+            # the one setting of the combination its run measures (the gains): changing it needs a run, said in its
+            # tip; once it is not the balance the result was computed with, said under it
+            c.setToolTip(c.toolTip() + NL + _("Changing it needs a run: the combination is computed again by Run"))
+            ran = getattr(self.s, "combine_result_balance", lambda pid: None)(lay["pid"])
+            if ran is not None and ran != f.get("balance"):
+                self.pbox.addWidget(label(_("Needs a run: the balance is not the one computed"), "small", wrap=True))
         b = QPushButton(_("Open in Inspect  →"))
         b.setObjectName("link")
         b.setToolTip(_("The combination's editor: a draft to compare, Apply, Try variant"))
@@ -3810,15 +3802,20 @@ class PostView(QWidget):
         self.pbox.addWidget(label(_("{filter} · in {combination}").format(filter=name,
                                                                          combination=self._fusion_title(lay)), "h2"))
         gains = getattr(self.s, "fusion_gains", lambda pid: {})(lay["pid"])
+        tip = ""
         if role in gains:
-            g, why = gains[role]
+            g, why, src = gains[role]
             text = _("Balanced: gain × {gain}").format(gain=number(g, 2)) + \
                 (f" ({_(REASONS[why])})" if why in REASONS else "")
+            if src == "measured":
+                tip = _("Measured on the whole image as the run measures it (the run's own result does not hold it)")
         elif gains:
             text = _("The reference: the other filters are brought to its scale")
         else:
             text = _("Its gain is measured by the combination's run")
-        self.pbox.addWidget(label(text, "small", wrap=True))
+        gl = label(text, "small", wrap=True)
+        gl.setToolTip(tip)
+        self.pbox.addWidget(gl)
         if role in f["hue_params"]:
             self.pbox.addWidget(self._fusion_slider(lay, role, "hue"))
         self.pbox.addWidget(self._fusion_slider(lay, role, "intensity"))
@@ -3826,7 +3823,7 @@ class PostView(QWidget):
                                     "own: the layer's Stars. Its filters, mask and spot healing act on {filter} before "
                                     "the mix.").format(filter=name), "small", wrap=True))
 
-    def set_fusion(self, lay, values: dict, words: str):
+    def set_fusion(self, lay, values: dict, words: str, rebuild: bool = True):
         """A combination's settings changed here. Its hues and intensities are the master layer's own (client/
         postfusion.py): one step of Post's Undo, nothing to compute. The balance is the block's (the gains the run
         measures): one step of the workflows' Undo listed in Post's, the block to run. Either way a draft of the
@@ -3843,7 +3840,8 @@ class PostView(QWidget):
                 tuned.emit(lay["pid"])
             self._refresh_rows()
             self.request(final_only=True)
-            QTimer.singleShot(0, self.build_props)
+            if rebuild:            # (a slider let go: the panel stays as it is, the slider under the pointer)
+                QTimer.singleShot(0, self.build_props)
         if not rest:
             return
         values = rest

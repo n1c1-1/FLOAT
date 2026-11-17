@@ -1134,6 +1134,9 @@ class Main(QMainWindow):
             b = QPushButton(name)
             b.setObjectName("seg")
             b.setCheckable(True)
+            # no keyboard focus: an exclusive group's buttons take the arrow keys and click their neighbour (the
+            # tester: a Right arrow on a slider whose panel was built again went to the Report tab); Ctrl+1 to 4
+            b.setFocusPolicy(Qt.NoFocus)
             b.clicked.connect(lambda _x=False, k=i: self.set_mode(k))
             g.addButton(b)
             h.addWidget(b)

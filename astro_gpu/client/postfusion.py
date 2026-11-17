@@ -188,11 +188,12 @@ MAPS_KEPT = 8
 
 
 def balance_maps(stage: str, spec: dict, inputs: list[dict], balance: str, result_dir=None,
-                 raw: tuple | None = None) -> dict:
+                 raw: tuple | None = None, measure: bool = True) -> dict | None:
     """The balance of a combination's inputs as its run makes it: {"maps": {role: ({channel: coefficient},
     offset)}, "gains": {role: (gain, why)}, "noise": {role: its balanced sky noise}, "from": "run" | "measured"}. The
     run's own (``result_dir``'s drz_meta.json) when it read these inputs with this balance; else the stage's ``steps``
-    on the whole inputs (``raw``: (channels, covered) already read), measured once and kept for the session."""
+    on the whole inputs (``raw``: (channels, covered) already read), measured once and kept for the session.
+    ``measure`` False: None rather than measuring (what is known now, for the interface's thread)."""
     stamp = _stamp(inputs)
     if result_dir is not None:
         d = Path(result_dir)
@@ -214,6 +215,8 @@ def balance_maps(stage: str, spec: dict, inputs: list[dict], balance: str, resul
         if hit is not None:
             _MAPS.move_to_end(key)
             return hit
+    if not measure:
+        return None
     chans, valid = raw if raw is not None else read_inputs(inputs, spec)
     chans = {r: np.array(c, np.float32, copy=True) for r, c in chans.items()}
     notes: dict = {}

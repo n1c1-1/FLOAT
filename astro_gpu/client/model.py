@@ -3936,7 +3936,9 @@ class _ProjectBase(QObject):
         return postfusion.describe(stage, spec, postfusion.tuned_stored(stage, spec, stored, tune), names, over), ""
 
     def fusion_gains(self, pid: int) -> dict:
-        """{filter: (gain, why)} the combination's last run measured (its drz_meta.json), {} without a result."""
+        """{filter: (gain, why, where from)} of the combination as Post and the editor balance it (postfusion.
+        balance_maps, what is known now: the run's, or measured once on the whole image, "run" or "measured"); else
+        the gains its last run wrote (drz_meta.json, "result"); {} without a result."""
         from ..core.workflow import combine_stage
         try:
             stage = combine_stage(self.p.workflow(pid))
@@ -3945,17 +3947,38 @@ class _ProjectBase(QObject):
             return {}
         if out is None:
             return {}
+        from . import postfusion
+        try:
+            st, spec, ins = postfusion.result_inputs(out.dir)
+            f, _why = self.fusion_of(pid)
+            got = postfusion.balance_maps(st, spec, ins, (f or {}).get("balance", "sky"), out.dir, measure=False)
+        except (KeyError, OSError, ValueError):
+            got = None
+        if got is not None:
+            return {r: (float(g), str(w), got["from"]) for r, (g, w) in got["gains"].items()}
         try:
             meta = json.loads((Path(out.dir) / "drz_meta.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return {}
         gains = (meta.get("balance") or {}).get("gains")
         if gains is not None:
-            return {r: (float(g), str(why)) for r, (g, why) in gains.items()}
+            return {r: (float(g), str(why), "result") for r, (g, why) in gains.items()}
         # a result made before the gains were written: its scales (1 over gain times weight), the weights it ran with
         ws = (out.params or {}).get("weights") or {}
-        return {r: (1.0 / (float(t) * float(ws.get(r, 1.0))), "") for r, t in (meta.get("channels") or {}).items()
-                if float(t) > 0}
+        return {r: (1.0 / (float(t) * float(ws.get(r, 1.0))), "", "result") for r, t in
+                (meta.get("channels") or {}).items() if float(t) > 0}
+
+    def combine_result_balance(self, pid: int) -> str | None:
+        """The balance the combination's result was computed with (its manifest), None without a result."""
+        from ..core.workflow import combine_stage
+        try:
+            stage = combine_stage(self.p.workflow(pid))
+            out = api.stage_outputs(self.p, pid, stage) or api.stage_outputs(self.p, pid, stage, "previous")
+        except (KeyError, OSError, ValueError, AttributeError):
+            return None
+        if out is None:
+            return None
+        return (out.params or {}).get("balance", "sky")
 
     def slider_infos(self, p: WorkflowView, part: str | None = None) -> list:
         """The Post sliders of a workflow's layer (api.SliderInfo list: key, name, group, ends, available, reason).

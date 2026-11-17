@@ -495,11 +495,17 @@ def test_the_tab_stays_on_the_page_shown_while_a_draft_asks(m27, monkeypatch):
 def test_the_balance_says_it_needs_a_run_in_post_and_in_the_editor(m27, monkeypatch):
     w, pv, _before = m27
     lay = _master(pv)
-    pv.sel = None
-    pv.select(lay["id"], "layer")
     from PySide6.QtWidgets import QLabel
-    texts = [x.text() for x in pv.right.findChildren(QLabel) if x.isVisibleTo(pv.right)]
-    assert any(t.startswith("Needs a run") for t in texts), texts
+
+    def said(ran):
+        monkeypatch.setattr(w.s, "combine_result_balance", lambda pid: ran)
+        pv.sel = None
+        pv.select(lay["id"], "layer")
+        return [x.text() for x in pv.right.findChildren(QLabel) if x.isVisibleTo(pv.right)]
+    # the balance computed: nothing said (all up to date); another one than the computed: it needs a run
+    assert not any(t.startswith("Needs a run") for t in said(lay["fusion"]["balance"]))
+    other = "sky" if lay["fusion"]["balance"] == "signal" else "signal"
+    assert any(t.startswith("Needs a run") for t in said(other))
     q, ed = _editor(w, monkeypatch)
     ed.set_draft({"balance": "sky" if ed.applied().get("balance") == "signal" else "signal"})
     c = ed.cost_text()
@@ -527,3 +533,67 @@ def test_shift_drags_the_hue_rail_ten_times_finer(qapp):
     assert sl.value() == int(round(100 + 50 * per / 10))
     assert not move(200.0, Qt.NoModifier)                  # without Shift: the slider's own drag
     sl.setSliderDown(False)
+
+
+def test_judges_details_names_undo_tag_digits_intensity_tabs_gains_and_the_panel_kept(m27, monkeypatch):
+    from test_combine_editor import wait
+
+    from astro_gpu.client import i18n
+    from astro_gpu.client.post3 import ContSlider
+    from astro_gpu.graphcore import rules
+    w, pv, _before = m27
+    s = w.s
+    q, ed = _editor(w, monkeypatch)
+    # one name: the graph's block name in the editor's title, its draft's words, the path bar and Post's panel
+    name = rules.title(s._g, s._combine_block(q), tr=i18n._)
+    assert ed._ui["title"].text() == name and ed.title(q) == name
+    from astro_gpu.client.graphnode import node_title
+    assert node_title(s, ed.node) == name
+    lay = _master(pv)
+    assert pv._fusion_title(lay) == name
+    # a hue dragged then let go: the draft's Undo in the panel at once
+    ed.begin_drag()
+    ed.set_hue("OIII", 150.0, undo=False)
+    ed.end_drag()
+    assert ed._ui["undo"].isEnabled()
+    wait(ed, 120)
+    # the single image's tag, as the Gradient's
+    ed.set_compare("draft")
+    ed._present()
+    assert ed.shown_tag.startswith("Draft preview · reduced copy")
+    ed.reset()
+    # numbers the interface's way
+    i18n.set_language("fr")
+    try:
+        assert ce._digits(0.0468, 3) == "0,0468"
+    finally:
+        i18n.set_language("en")
+    # Intensity up to 10, in Post and Inspect, the same step
+    assert ce.INTENSITY_MAX == 10.0 and ed._ui["int_SII"].maximum() == round(10.0 / ce.INTENSITY_STEP)
+    pv.sel = None
+    pv.select(lay["id"], "layer")
+    sl = next(x for x in pv.findChildren(ContSlider) if x.name.text() == "S II intensity" and x.isVisibleTo(pv.right))
+    assert sl.hi == 10.0
+    # the page tabs never take the arrow keys
+    from PySide6.QtCore import Qt
+    assert all(b.focusPolicy() == Qt.NoFocus for b in w.mode_btns)
+    # a hue let go: the panel stays (the same slider under the pointer, not built again)
+    hue = next(x for x in pv.findChildren(ContSlider) if x.name.text() == "O III hue" and x.isVisibleTo(pv.right))
+    hue.moved.emit(120.0)
+    hue.done.emit(120.0)
+    for _i in range(5):
+        QApplication.processEvents()
+    assert hue.isVisibleTo(pv.right)
+    pv.do_undo()
+    # one gain figure: Post's filter panel and the editor's, the one the picture uses
+    _render(pv)
+    got = pv.worker.renderer.source.fusion_gains(_master(pv))
+    assert {r: round(g, 6) for r, (g, _w) in ed.notes.items()} == {r: round(g, 6) for r, (g, _w) in got.items()}
+    from astro_gpu.client import model as mmod
+
+    class Out:                                       # (this copy has no store: its result, by hand)
+        dir = str(COMBINATION)
+        params = json.loads((COMBINATION / "manifest.json").read_text(encoding="utf-8"))["params"]
+    monkeypatch.setattr(mmod.api, "stage_outputs", lambda *a, **k: Out)
+    panel = w.s.fusion_gains(lay["pid"])
+    assert {r: round(g, 6) for r, (g, _w, _f) in panel.items()} == {r: round(g, 6) for r, (g, _w) in got.items()}

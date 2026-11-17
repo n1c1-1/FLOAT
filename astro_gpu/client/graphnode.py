@@ -294,6 +294,13 @@ def node_title(s, n) -> str:
         return f"{block_title(None, n.key)} {n.num}"
     if n.key == "image" and n.paths and n.paths[0].name:   # its workflow's name, which carries the number (#155: one
         return n.paths[0].name                              # source; numbered by place, a deletion shifted them)
+    if n.key == "fusion" and n.paths and getattr(s, "_g", None) is not None:
+        # a combination: its block's name as the graph shows it (graphcore rules.title), the same everywhere
+        try:
+            from ..graphcore import rules
+            return rules.title(s._g, s._combine_block(n.paths[0]), tr=_)
+        except Exception:  # noqa: BLE001 - not on the graph now: the name below
+            pass
     if n.key == "fusion" and n.paths:                 # a combination: its type's name (S-H-O...); several of a type:
         kind = combine_kind(n.paths[0])               # numbered in the project's order (exploration 2, control round);
         bk = getattr(s, "block_key", None)            # a branch shares its source's block: counted once (round 4)

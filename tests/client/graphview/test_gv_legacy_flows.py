@@ -321,7 +321,7 @@ def test_a_combination_panel_shows_its_named_inputs_and_its_settings(world):
     assert W.m.p.workflow(ho.pid).params["combine_ho"]["weights"] == {"OIII": 0.5}
     W.page.refresh()
     W.settle()
-    assert len([s for s in W.page.panel.findChildren(QDoubleSpinBox) if s.maximum() == 5.0]) >= 2
+    assert len([s for s in W.page.panel.findChildren(QDoubleSpinBox) if s.maximum() == 10.0]) >= 2   # Intensity: 0-10
     # which image of a workflow an input reads is the wire's port: shown, never a list in the panel
     assert not any(c.findData("starless") >= 0 for c in W.page.panel.findChildren(QComboBox))
     W.m.set_fusion_image(W.m.view(ho.pid), "Ha", "stars")                          # a row's stars alone are an image

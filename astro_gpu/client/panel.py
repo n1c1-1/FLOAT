@@ -1102,6 +1102,7 @@ class Panel(QWidget):
         """A combination block (issue #43; stages/combine.py): its workflow's name, its type, its named inputs (the
         workflow each reads, its Output or its starless image, its weight), then its settings as any block's; its
         output is a layer of Post."""
+        from .combineedit import INTENSITY_MAX
         from .graphnode import combine_kind, combine_spec, combine_title
         from .graphview.palette import recipe_tip
         from ..core.workflow import combine_stage
@@ -1111,11 +1112,17 @@ class Panel(QWidget):
         kind = combine_kind(p)
         spec = combine_spec(p)
         top = QHBoxLayout()
-        ed = QLineEdit(p.name)
+        shown = p.name                                   # the block's name as the graph shows it (one name everywhere)
+        try:
+            from ..graphcore import rules
+            shown = rules.title(s._g, s._combine_block(p), tr=_)
+        except Exception:  # noqa: BLE001 - no graph here: the workflow's name
+            pass
+        ed = QLineEdit(shown)
         ed.setStyleSheet("QLineEdit { font-size: 13pt; font-weight: 600; background: transparent; border: none; "
                          "border-bottom: 1px dashed #3a4150; border-radius: 0; } "
                          f"QLineEdit:focus {{ border-bottom: 1px solid {ACCENT}; }}")
-        ed.editingFinished.connect(lambda: self.name_edited(ed, p.name, pid=p.pid))
+        ed.editingFinished.connect(lambda: self.name_edited(ed, shown, pid=p.pid))
         top.addWidget(ed, 1)
         st = self.graph_state(node)
         top.addWidget(self.state_chip(node, st))
@@ -1220,7 +1227,7 @@ class Panel(QWidget):
                 ch.activated.connect(lambda k, r=role, b=ch: s.set_fusion_channel(p, r, b.itemData(k)))
                 row.addWidget(ch)
             sp = DoubleSpinBox()
-            sp.setRange(0.0, 5.0)
+            sp.setRange(0.0, INTENSITY_MAX)
             sp.setSingleStep(0.05)
             sp.setDecimals(2)
             applied_w = float(weights.get(role, 1.0))

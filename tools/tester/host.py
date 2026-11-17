@@ -680,6 +680,9 @@ def quit_session(sock=None, why="quit"):
         if callable(unsaved) and getattr(MAIN, "project", None) is not None and unsaved():
             NOTES.append("Quit: the changes not saved were not saved.")
         os.environ["FLOAT_SAVE_ANSWER"] = "discard"
+        # and the question of a block's draft not applied (blockdraft.settle), which Close asks first: unanswered it
+        # held Close and the session never ended (the judges' quit after the combination's editor, a draft kept)
+        os.environ["FLOAT_DRAFT_ANSWER"] = "discard"
         MAIN.close()
     except Exception:  # noqa: BLE001
         traceback.print_exc()

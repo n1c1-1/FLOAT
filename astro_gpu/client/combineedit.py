@@ -61,7 +61,7 @@ PANEL_W = 380
 #: a filter's thumbnail: its width (px)
 THUMB_W = 84
 #: Intensity: its range and its step (1 = as balanced)
-INTENSITY_MAX, INTENSITY_STEP = 3.0, 0.05
+INTENSITY_MAX, INTENSITY_STEP = 10.0, 0.05             # (the tester's recipe: S II 14 times fainter than H-alpha)
 #: the starting palettes: (key, name, the filters they colour, {filter: hue}); a palette is offered when the recipe's
 #: hued filters are exactly its own. Hubble: the S-H-O hues measured on the Hubble teams' images (stages/combine.py,
 #: HUBBLE_HUES, the S-H-O recipe's defaults); H-O-O: H-alpha red, O III cyan.
@@ -663,6 +663,7 @@ class CombineEditor(QObject):
             self.apply(quiet=True)
             return
         self.historyChanged.emit()
+        self._sync()                                # (the panel's Undo, now that the drag is a step)
 
     def _changed(self):
         self._sync()
@@ -742,21 +743,26 @@ class CombineEditor(QObject):
                 "what": _("{block} draft: {what}").format(block=self.title(q), what=", ".join(words))}
 
     def title(self, q=None) -> str:
+        """The block's name as the graph shows it (graphcore rules.title: its recipe's title, numbered among the
+        blocks of its type, or the name the user gave), the same in the path bar, the page's title, the draft's words,
+        the leave question and Post's panel."""
         from .graphnode import combine_kind, combine_title
         q = q or self.p
-        return combine_title(combine_kind(q), q) if q is not None else _("Combination")
+        if q is None:
+            return _("Combination")
+        try:
+            from ..graphcore import rules
+            return rules.title(self.s._g, self.s._combine_block(q), tr=_)
+        except Exception:  # noqa: BLE001 - no graph here (a stand-in model): its type's name
+            return combine_title(combine_kind(q), q)
 
     def heading(self, q=None) -> str:
-        """The page's title: the workflow's name, its recipe's title in it the block's own (graphcore combos.retitled:
-        a block whose recipe became H-O is never titled S-H-O), the recipe's title before a name the user gave."""
+        """The page's title: the block's name (``title``); without a graph, the workflow's name, its recipe's title in
+        it the block's own (graphcore combos.retitled: a block whose recipe became H-O is never titled S-H-O)."""
         from ..graphcore import combos
-        from .graphnode import node_title
         q = q or self.p
-        if q is not None and self.p is not None and q.pid == self.p.pid and self.node is not None:
-            try:                                       # the block's name as the path bar and the graph say it
-                return node_title(self.s, self.node)
-            except Exception:  # noqa: BLE001 - the block's map not readable now: the name below
-                pass
+        if q is not None and getattr(self.s, "_g", None) is not None:
+            return self.title(q)
         title = self.title(q)
         name = combos.retitled(getattr(q, "name", "") or "", combos.short((self._spec(q) or {}).get("name") or title))
         if not name:
@@ -1060,7 +1066,7 @@ class CombineEditor(QObject):
             text = f"{_port(role)}  ·  " + (f"×{number(g[0], 2)} · {_(REASONS.get(g[1], g[1]))}" if g else
                                              _(REASONS["reference"]))
             if role in noise:
-                text += "  ·  " + _("sky noise {v}").format(v=f"{noise[role]:.3g}")
+                text += "  ·  " + _("sky noise {v}").format(v=_digits(noise[role], 3))
             dv.addWidget(label(text, "small"))
         src = {"run": "The gains of the run (its result)",
                "measured": "The gains measured on the whole image as the run measures them",
@@ -1172,6 +1178,7 @@ class CombineEditor(QObject):
         gv.toasted.connect(self.tv.toasted.emit)
         gv.layout().itemAt(0).widget().hide()          # its own toolbar: the page's comparison in its title row
         gv.imageShown.connect(self._shown)
+        gv.add_overlay(self._paint_tag)
         bl.addWidget(gv, 1)
         cover = QFrame()                               # under the image while there is nothing to show: why, and Run
         cl = QVBoxLayout(cover)
@@ -1690,6 +1697,7 @@ class CombineEditor(QObject):
             main, other = (pv if (drafting or av is None) else av) or pv, None
         if main is None:
             return
+        self.shown_tag = main.name or ""
         gv = self.gv
         try:
             if gv._want != main.identity():
@@ -1703,11 +1711,32 @@ class CombineEditor(QObject):
         except RuntimeError:
             pass
 
+    def _paint_tag(self, painter, canvas):
+        """The single image's tag, at its top (Split names its two sides itself), as the Gradient's: what it is, the
+        reduced copy, the time it took."""
+        if self.cmp == "split" or not self._page_ok():
+            return
+        from PySide6.QtCore import QPointF
+        from .gradientedit import DRAFT_BG
+        from .imageview import tag
+        text = getattr(self, "shown_tag", "")
+        if text:
+            tag(painter, QPointF(10, 8), text, bg=DRAFT_BG if self.has_draft() else QColor(0, 0, 0, 170))
+
     def _shown(self, key):
         """An image of the editor on screen: the time from the edit that asked for it (``timings``)."""
         if self._t_edit is not None and isinstance(key, tuple) and key and key[0] == "combination-preview":
             self.timings.append(time.perf_counter() - self._t_edit)
             self._t_edit = None
+
+
+def _digits(v: float, n: int) -> str:
+    """A number with ``n`` significant digits, written the interface's way (i18n.number: a decimal comma in
+    French)."""
+    import math as _m
+    if not v or not _m.isfinite(v):
+        return number(float(v or 0.0), 0)
+    return number(float(v), max(0, n - 1 - int(_m.floor(_m.log10(abs(v))))))
 
 
 def _result_dir_for(project, pid: int, stage: str):

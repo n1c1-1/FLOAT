@@ -390,5 +390,7 @@
   "This filter": "Ce filtre",
   "The image this part reads its brightness or its colour from": "L'image dont cette partie lit la luminosité ou la couleur",
   "Shift while dragging: ten times finer · arrow keys: one degree": "Maj pendant le glissé : dix fois plus fin · flèches : un degré",
-  "Needs a run: {cost}": "À calculer : {cost}"
+  "Needs a run: {cost}": "À calculer : {cost}",
+  "Changing it needs a run: the combination is computed again by Run": "Le changer demande un calcul : la combinaison est recalculée par Exécuter",
+  "Needs a run: the balance is not the one computed": "À calculer : l'équilibre n'est pas celui calculé"
 }
