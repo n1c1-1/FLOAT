@@ -1609,8 +1609,8 @@ class Panel(QWidget):
             self.hv.addWidget(inst, 0, Qt.AlignLeft)
         if kbase(k) == "align_on":                        # issue #165: its reference, then its settings
             self.reference_row(node)
-        # which workflows a change goes to (the Stars block has no setting: nothing to apply)
-        if node.shared and k != "etoiles":
+        # which workflows a change goes to
+        if node.shared:
             self.hv.addWidget(label(_("Apply to:"), "dim"))
             box = QVBoxLayout()
             box.setSpacing(2)
@@ -1680,12 +1680,10 @@ class Panel(QWidget):
             self.stack_methods(p)
         if k == "post" and p.end:
             self.bv.addWidget(kv([(_("Output of"), block_title(p, p.end))]))
-        if k == "etoiles":
-            self.bv.addWidget(label(_("No setting here: the network is applied as it was trained. Its two images are "
-                                      "adjusted in a Combine layers block, or each as a layer of Post."),
-                                    "small", wrap=True))
-        else:
-            self.settings(p, sk, groups, extra)
+        if k == "etoiles":                  # its one setting, Star halos, below (settings.CATALOG["etoiles"])
+            self.bv.addWidget(label(_("The network is applied as it was trained. Its two images are adjusted in a "
+                                      "Combine layers block, or each as a layer of Post."), "small", wrap=True))
+        self.settings(p, sk, groups, extra)
         self.bv.addStretch(1)
 
     # ------------------------------------------------------------ the block's draft (blockdraft.py)

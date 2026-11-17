@@ -258,6 +258,11 @@ CATALOG = {
             E("synth_stars", "seeing_px"),
         ]),
     ],
+    "etoiles": [
+        ("Star halos", [
+            E("star_removal", "halos"),
+        ]),
+    ],
     "deconv:neural": [],
     "deconv:psf": [
         ("Deconvolution", [
