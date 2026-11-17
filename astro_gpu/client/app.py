@@ -1018,10 +1018,21 @@ class Main(QMainWindow):
         preset = os.environ.get(SAVE_ANSWER_ENV, "")
         if preset in ("save", "discard", "cancel"):
             return preset
-        box = QMessageBox(QMessageBox.Warning, _("Unsaved changes"),
-                          _('Save the changes made to "{name}"?').format(name=self.project.name), parent=self)
-        box.setInformativeText(_("Without saving, the changes since the last save are lost (the computed results "
-                                 "stay)."))
+        # the words of its case (the hand pass: an "Untitled" project never saved, nothing computed, was told of "the
+        # last save" and of "computed results"): a project never saved leaves nothing behind (drafts.discard)
+        name = self.project.name
+        if drafts.is_untitled(self.project.root):
+            computed = any(self.s.state(q, st) in ("done", "stale") for q in self.s.paths for st in self.s.all_stages(q))
+            box = QMessageBox(QMessageBox.Warning, _("Project not saved"), _('Save "{name}"?').format(name=name)
+                              if computed else _('Close "{name}" without saving?').format(name=name), parent=self)
+            box.setInformativeText(_("This project was never saved: without saving, its workflows and its computed "
+                                     "results are not kept.") if computed else
+                                   _("This project was never saved: without saving, its workflows are not kept."))
+        else:
+            box = QMessageBox(QMessageBox.Warning, _("Unsaved changes"),
+                              _('Save the changes made to "{name}"?').format(name=name), parent=self)
+            box.setInformativeText(_("Without saving, the changes since the last save are lost (the computed results "
+                                     "stay)."))
         b_save = box.addButton(_("Save"), QMessageBox.AcceptRole)
         b_drop = box.addButton(_("Don't save"), QMessageBox.DestructiveRole)
         box.addButton(_("Cancel"), QMessageBox.RejectRole)

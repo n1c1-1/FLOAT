@@ -220,10 +220,34 @@ def test_the_question_is_asked_without_a_screen_unless_the_run_answers_it(win, m
     monkeypatch.setattr(QMessageBox, "exec", lambda self: shown.append(self.text()) or 0)    # closed: no button
     monkeypatch.delenv(appmod.SAVE_ANSWER_ENV, raising=False)
     assert QApplication.platformName() == "offscreen"
-    assert ORIGINAL_ASK(win) == "cancel" and shown and "Save the changes" in shown[0]
+    assert ORIGINAL_ASK(win) == "cancel" and shown and "without saving" in shown[0]     # (a project never named)
     monkeypatch.setenv(appmod.SAVE_ANSWER_ENV, "discard")
     shown.clear()
     assert ORIGINAL_ASK(win) == "discard" and not shown
+
+
+def test_a_project_never_saved_is_asked_in_the_words_of_its_case(win, monkeypatch):
+    """The hand pass: closing an "Untitled" project never saved, nothing computed, spoke of "the last save" and of
+    "computed results". Each case has its words: never saved and nothing computed, never saved with results, saved."""
+    from PySide6.QtWidgets import QMessageBox
+    monkeypatch.delenv(appmod.SAVE_ANSWER_ENV, raising=False)
+    shown = []
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: shown.append((self.text(), self.informativeText())) or 0)
+    from astro_gpu.client import drafts
+    from astro_gpu.client.gallery import GALLERY
+    win.new_project()
+    _ready(win)
+    win.graph.show_templates()
+    win.graph.templates.chosen.emit(dict(next(t for t in GALLERY if t["key"] == "colour_full"), file=""))
+    QApplication.processEvents()
+    assert drafts.is_untitled(win.project.root) and win.s.paths and win.unsaved()
+    assert ORIGINAL_ASK(win) == "cancel"
+    text, info = shown[-1]
+    assert text.startswith("Close") and "without saving" in text
+    assert "last save" not in info and "computed" not in info and "never saved" in info
+    monkeypatch.setattr(type(win.s), "state", lambda self, p, stage: "done")
+    ORIGINAL_ASK(win)                                                  # with a result: it is said to be lost too
+    assert "computed results" in shown[-1][1] and "never saved" in shown[-1][1] and "last save" not in shown[-1][1]
 
 
 def test_the_projects_picture_is_post_as_shown_its_crop_applied(win, tmp_path):
