@@ -889,21 +889,12 @@ def test_the_release_render_is_the_engines_bit_for_bit(preps):
         got = src.layer(lay, level, (0, 0, w, h))
         ref = np.moveaxis(want[:, oy // f: oy // f + h, ox // f: ox // f + w], 0, -1)
         assert np.array_equal(got, ref), level
-    # a slider away from 2 moves the settings the table says, nothing else: on a layer of the first scale of the Sky
-    # slider (a new one, or one that says no scale), 0.24 + (0.31 - 0.25); on a layer made with the second scale (16
-    # and 17 November 2026), its own scale: 0.24 + (0.245 - 0.12)
-    from astro_gpu.render.sliders import SKY_SCALES
+    # a slider away from 2 moves the settings the table says, nothing else: 0.24 + (0.31 - 0.25)
     lay["sliders"] = {"sky": 3}
-    assert lay["sky_scale"] == 1
-    for scale, sky in ((1, 0.30), (None, 0.30), (2, 0.24 + SKY_SCALES[2][3] - SKY_SCALES[2][2])):
-        if scale is None:
-            lay.pop("sky_scale", None)
-        else:
-            lay["sky_scale"] = scale
-        moved = src.layer(lay, 1, (0, 0, *cv.size(1)))
-        ref = out.render(SimpleSettings(sky=sky), 0.5).final.numpy()
-        ref = ref[:, oy // 2: oy // 2 + cv.size(1)[1], ox // 2: ox // 2 + cv.size(1)[0]]
-        assert np.array_equal(moved, np.moveaxis(ref, 0, -1)), scale
+    moved = src.layer(lay, 1, (0, 0, *cv.size(1)))
+    ref = out.render(SimpleSettings(sky=0.30), 0.5).final.numpy()
+    ref = ref[:, oy // 2: oy // 2 + cv.size(1)[1], ox // 2: ox // 2 + cv.size(1)[0]]
+    assert np.array_equal(moved, np.moveaxis(ref, 0, -1))
     # the Stars block's images: from its folder, each part its own rendering
     w, h = cv.size(1)
     for part in ("starless", "stars", "combined"):

@@ -736,15 +736,13 @@ def test_french_numbers_and_the_whole_hue_rail(qapp, monkeypatch):
 
 
 def test_the_preview_renders_as_post_shows_the_workflow_s_layer():
-    """Post's layer of the combination sets the render (its sliders, the scale of its Sky slider: a layer made on 16 or
-    17 November 2026 keeps its sky at 0.12, where the editor showed the default's lighter one); none: the default."""
+    """Post's layer of the combination sets the render (its sliders); none: the default."""
     from astro_gpu.render.simple import SimpleSettings
     assert ce.layer_settings([], 3) is None
-    first = {"kind": "workflow", "pid": 3, "part": None, "sliders": {}, "base": None}          # no scale: the first
-    second = dict(first, sky_scale=2)
+    first = {"kind": "workflow", "pid": 3, "part": None, "sliders": {}, "base": None}
+    darker = dict(first, sliders={"sky": 0})
     assert ce.layer_settings([first], 3)["sky"] == pytest.approx(0.25) == SimpleSettings().sky
-    assert ce.layer_settings([second], 3)["sky"] == pytest.approx(0.12)
-    assert ce.layer_settings([dict(second, sliders={"sky": 4})], 3)["sky"] > 0.12
+    assert ce.layer_settings([darker], 3)["sky"] == pytest.approx(0.15)
     rgb = np.abs(np.random.default_rng(2).normal(0.1, 0.02, (3, 60, 80))).astype(np.float32)
-    a, b = ce.output_render(rgb, ce.layer_settings([second], 3)), ce.output_render(rgb)
+    a, b = ce.output_render(rgb, ce.layer_settings([darker], 3)), ce.output_render(rgb)
     assert float(np.median(a)) < float(np.median(b))

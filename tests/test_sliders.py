@@ -29,7 +29,7 @@ def test_the_eleven_sliders_of_post():
         for name, t in sl.table.items():
             assert len(t) == sl.hi + 1 and abs(t[2] - getattr(s, name)) < 1e-9, (sl.key, name)
         assert sl.hi == (6 if sl.key == "saturation" else 4) == S.top(sl.key)
-    assert S.BY_KEY["sky"].table["sky"] == S.SKY_SCALES[1] == (0.15, 0.20, 0.25, 0.31, 0.37)
+    assert S.BY_KEY["sky"].table["sky"] == S.SKY_TABLE == (0.15, 0.20, 0.25, 0.31, 0.37)
     assert S.BY_KEY["noise"].table["noise_mix"][:3] == (0.4, 0.7, 1.0)
 
 

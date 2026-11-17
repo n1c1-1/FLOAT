@@ -274,8 +274,7 @@ def output_render(rgb: np.ndarray, settings: dict | None = None) -> np.ndarray:
     """(3, h, w) in 0-1: a combination's image as its Output shows it: render_simple keeps a combination's sky at 0
     (``sky_neutral``), measures its stretch's statistics on the covered pixels (``image_stats``) and Post renders it
     with SimpleRenderEngine: with the settings of the workflow's layer of Post (``settings``, ``layer_settings``: its
-    sliders, and the scale of its Sky slider: a layer made on 16 or 17 November 2026 keeps its sky at 0.12), else the
-    default ones (render_simple's preview)."""
+    sliders), else the default ones (render_simple's preview)."""
     from ..render.simple import SimpleRenderEngine, SimpleSettings
     eng = SimpleRenderEngine.from_array(rgb, device="cpu", linked=True, sample=1)
     s = SimpleSettings(**settings) if settings else SimpleSettings()
@@ -286,7 +285,6 @@ def layer_settings(layers: list[dict], pid: int) -> dict | None:
     """The rendering settings Post gives the workflow's own layer (its Output image, else its image recombined with
     its stars), as Post's render worker computes them (render/sliders.settings_at); None without a layer."""
     from ..render.sliders import settings_at
-    from .postengine import sky_scale
     mine = [x for x in layers or [] if x.get("kind") == "workflow" and x.get("pid") == pid
             and x.get("part") in (None, "combined", "starless")]
     if not mine:
@@ -294,7 +292,7 @@ def layer_settings(layers: list[dict], pid: int) -> dict | None:
     lay = min(mine, key=lambda x: (None, "combined", "starless").index(x.get("part")))
     try:
         return settings_at("simple", lay.get("base"), lay.get("sliders"), has_denoise=False, origin="palette",
-                           stretch=lay.get("stretch"), sky_scale=sky_scale(lay)).model_dump()
+                           stretch=lay.get("stretch")).model_dump()
     except Exception:  # noqa: BLE001 - a layer of an earlier format: the default render
         return None
 

@@ -807,27 +807,14 @@ def has_synth(layers: list[dict], gid: int) -> bool:
     return any(is_synth(x) and x.get("target") == gid for x in layers)
 
 
-#: the scales of a layer's Sky slider and today's (render/sliders.SKY_SCALES and SKY_SCALE, said again here: that
-#: module loads the rendering)
-SKY_SCALES, SKY_SCALE = (1, 2), 1
-
-
-def sky_scale(lay: dict) -> int:
-    """The scale of a layer's Sky slider (render/sliders.SKY_SCALES): the one it was made with, so that it renders as
-    it did. A layer that says nothing is on the first (the sky at 0.25)."""
-    v = lay.get("sky_scale")
-    return v if v in SKY_SCALES else 1
-
-
 def new_workflow_layer(pid: int, name: str, visible=False, part=None, base=None) -> dict:
     """A workflow's layer: its Output block's image (``part`` None) or one of its Stars block's images (``PARTS``). The
-    stars alone go in Screen mode (they are black around the stars); the recombined image puts them back in Screen.
-    A new layer is on today's scale of the Sky slider (``sky_scale``)."""
+    stars alone go in Screen mode (they are black around the stars); the recombined image puts them back in Screen."""
     if part is not None and part not in PARTS:
         raise ValueError(f"unknown layer part {part!r} (allowed: {PARTS})")
     return {"id": new_id(), "kind": "workflow", "pid": pid, "part": part, "name": name, "visible": visible,
             "opacity": 100.0, "mode": "Screen" if part == "stars" else "Normal", "base": base, "sliders": {},
-            "sky_scale": SKY_SCALE, "mask": None,
+            "mask": None,
             **({"blend": BLENDS[0], "shown": {k: True for k in SUBS}, "starless": "starless",
                               "stars_pid": pid} if part == "combined" else {})}
 
@@ -835,7 +822,7 @@ def new_workflow_layer(pid: int, name: str, visible=False, part=None, base=None)
 def new_image_layer(key: str, name: str, visible: bool = True) -> dict:
     """A layer of a stage result's image (``key`` names it; the pixels come from the render worker's sources)."""
     return {"id": new_id(), "kind": "image", "key": str(key), "name": name, "visible": visible, "opacity": 100.0,
-            "mode": "Normal", "sliders": {}, "sky_scale": SKY_SCALE, "linked": True, "mask": None}
+            "mode": "Normal", "sliders": {}, "linked": True, "mask": None}
 
 
 PIXEL = ("workflow", "image")
@@ -1285,13 +1272,11 @@ def load_layers(raw, alive: set[int]) -> list[dict]:
                 if sides:                                        # written only when there is one (older files)
                     lay["side_masks"] = sides
             lay["sliders"] = {k: _num(v, 2.0, 0, slider_top(k)) for k, v in (d.get("sliders") or {}).items()}
-            lay["sky_scale"] = sky_scale(d)                      # says nothing: the first, as it was
             if d.get("stretch") in LAYER_STRETCHES[1:]:          # written only when it is not the automatic one
                 lay["stretch"] = d["stretch"]
         elif d.get("kind") == "image" and isinstance(d.get("key"), str) and d["key"]:
             lay = new_image_layer(d["key"], str(d.get("name") or "?"), bool(d.get("visible", True)))
             lay["sliders"] = {k: _num(v, 2.0, 0, 4) for k, v in (d.get("sliders") or {}).items()}
-            lay["sky_scale"] = sky_scale(d)
             lay["linked"] = bool(d.get("linked", True))
         elif d.get("kind") == "filter" and d.get("filter") in FILTERS:
             lay = new_filter_layer(d["filter"], d.get("target"), d.get("sub") if is_side(d.get("sub")) else None)
@@ -1348,8 +1333,6 @@ def save_layers(layers: list[dict]) -> list[dict]:
         d.pop("retitle", None)                          # the name the graph shows its workflow by (post3.RETITLE)
         if d.get("kind") == "filter" and d.get("sub") is None:
             d.pop("sub", None)
-        if d.get("sky_scale") == 1:                     # the first scale is what a layer that says nothing has: the
-            d.pop("sky_scale")                          # layer is written as before the second one
     return [d for d in out if not _untouched_synth(d)]
 
 
@@ -1467,7 +1450,7 @@ class Provider:
         its sliders."""
         from ..render.sliders import settings_at
         return settings_at("simple", None, part_sliders(lay.get("sliders"), "starless"), has_denoise=False,
-                           origin="palette", stretch=lay.get("stretch"), sky_scale=sky_scale(lay))
+                           origin="palette", stretch=lay.get("stretch"))
 
     def has(self, name: str) -> bool:
         """Whether a data mask exists ('halpha')."""

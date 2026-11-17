@@ -27,13 +27,9 @@ ADDITIVE = frozenset({"sky", "contrast", "noise_mix", "smooth_px", "star_size", 
                       "faint", "star_small"})
 SUGGESTED = 2.0
 LO, HI = 0.0, 4.0
-#: the scales of the Sky slider (the sky's level at positions 0 to 4; position 2 is the default of a layer without a
-#: base of its own): 1, the sky at 0.25, down to 0.15, the scale of every new layer; 2 (0.12, down to 0.05), the scale
-#: of the layers made on 16 and 17 November 2026 only (a default tuned on two test images, withdrawn). A layer keeps
-#: the scale it was made with, so that it renders as it did (client/postengine: its ``sky_scale``; a layer that says
-#: nothing is on the first)
-SKY_SCALES: dict[int, tuple[float, ...]] = {1: (0.15, 0.20, 0.25, 0.31, 0.37), 2: (0.05, 0.085, 0.12, 0.245, 0.37)}
-SKY_SCALE = 1
+#: the Sky slider's table: the sky's level at positions 0 to 4 (position 2, 0.25, the default of a layer without a base
+#: of its own)
+SKY_TABLE = (0.15, 0.20, 0.25, 0.31, 0.37)
 
 # the reasons of the greyed sliders (translated by the client's catalogues)
 WHY_STARS = "the star sliders work on the stars of the Stars/background block"
@@ -75,7 +71,7 @@ def top(key: str) -> float:
 
 NEBULA, STARS = "Nebula and background", "Stars"
 SLIDERS: tuple[Slider, ...] = (
-    Slider("sky", "Sky", NEBULA, ("darker", "brighter"), {"sky": SKY_SCALES[SKY_SCALE]}),
+    Slider("sky", "Sky", NEBULA, ("darker", "brighter"), {"sky": SKY_TABLE}),
     Slider("contrast", "Contrast", NEBULA, ("softer", "stronger"), {"contrast": (-0.35, -0.18, 0.0, 0.25, 0.5)}),
     # the faint tones above the sky (render/simple.faint_tones): a step from the base, 0 by default
     Slider("faint", "Faint tones", NEBULA, ("darker", "brighter"), {"faint": (-0.8, -0.4, 0.0, 0.8, 1.6)}),
@@ -199,19 +195,12 @@ def stretch_strength(pos: float | None) -> float:
 
 
 def settings_at(kind: str, base: Any = None, positions: dict[str, float] | None = None,
-                has_denoise: bool = True, origin: str = "", stretch: str | None = None,
-                sky_scale: int | None = None) -> SimpleSettings:
+                has_denoise: bool = True, origin: str = "", stretch: str | None = None) -> SimpleSettings:
     """The settings of a workflow layer: its base (``base_settings``) moved by the slider positions. Positions of
     unknown or greyed sliders are ignored. ``stretch``: the layer's base stretch when it is not the automatic one
     ("arcsinh"; its Strength is the position ``STRETCH_KEY``, and the positions of ``ARCSINH_OFF`` are not read): for
-    the image the stars are not (the stars alone keep their own stretch, Sky in it). ``sky_scale``: the layer's scale
-    of the Sky slider (``SKY_SCALES``; None: today's): on an earlier one the sky starts from that scale's default
-    (unless the base gives its own) and the slider moves it by that scale's steps."""
+    the image the stars are not (the stars alone keep their own stretch, Sky in it)."""
     b = base_settings(kind, base)
-    sky_table = SKY_SCALES.get(sky_scale or SKY_SCALE, SKY_SCALES[SKY_SCALE])
-    own_sky = isinstance(base, SimpleSettings) or (isinstance(base, dict) and "sky" in base)
-    if sky_table is not SKY_SCALES[SKY_SCALE] and not own_sky:
-        b = b.model_copy(update={"sky": sky_table[2]})
     model = type(b)
     ok = availability(kind, has_denoise, origin)
     vals = b.model_dump()
@@ -223,8 +212,6 @@ def settings_at(kind: str, base: Any = None, positions: dict[str, float] | None 
         if arcsinh and key in ARCSINH_OFF:              # greyed under Arcsinh: its position is not read
             continue
         for name, table in sl.table.items():
-            if name == "sky":
-                table = sky_table
             lo, hi = _bounds(model, name)
             v = value_at(name, table, float(getattr(b, name)), pos)
             vals[name] = min(max(v, lo), hi)

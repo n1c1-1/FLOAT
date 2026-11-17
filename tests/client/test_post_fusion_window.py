@@ -203,6 +203,7 @@ def test_m27_opens_with_its_combination_as_the_master_layer_and_its_definition_u
     assert names[i + 1:i + 4] == [("S II", 2), ("Hα", 2), ("O III", 2)]
     assert w.s.p.post == before                                 # converted in memory only
     stored = next(x for x in before["versions"][0]["layers"] if x.get("part") == "combined")
+    stored = {k: v for k, v in stored.items() if k != "sky_scale"}    # (a key of before, withdrawn: read past)
     assert next(x for x in pe.save_layers(pv.layers) if x["id"] == lay["id"]) == stored
     st = lay["fusion"]["stage"]                                 # its first hues and intensities: the block's
     blk = _block(w, lay["pid"], st)

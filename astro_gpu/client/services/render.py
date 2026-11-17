@@ -42,7 +42,6 @@ from ..postengine import (
     Unreadable,
     crop_within,
     side_layers,
-    sky_scale,
     has_synth,
     is_group,
     is_pixel,
@@ -544,13 +543,12 @@ class LayerSource(Provider):
             fi, region, size = put[1:]
         base = self.bases(lay.get("base"))
         kw = {"part": "stars" if lay.get("part") == "synth" else lay.get("part"), "blend": lay.get("blend"),
-              "stretch": lay.get("stretch"),              # its base stretch (absent: the automatic one)
-              "sky_scale": sky_scale(lay)}
+              "stretch": lay.get("stretch")}              # its base stretch (absent: the automatic one)
         if lay.get("stars_over") is not None:           # the Output of a combination of stars, on a starless combination
             over = self.folder(lay["stars_over"])
             if over is None:
                 raise FileNotFoundError("the starless combination this one's stars go onto is not computed")
-            kw = {"stats_from": over.path, "blend": lay.get("blend"), "sky_scale": sky_scale(lay)}
+            kw = {"stats_from": over.path, "blend": lay.get("blend")}
         try:
             if level == 0 and self._partial(sid, put, box, region, whole):
                 li = self.service.render(f.path, base, lay.get("sliders"), 1.0,
@@ -652,7 +650,7 @@ class LayerSource(Provider):
         if f is None:
             return super().fusion_settings(lay)
         return self.service.settings(f.path, self.bases(lay.get("base")), lay.get("sliders"), None, None,
-                                     lay.get("stretch"), sky_scale(lay))
+                                     lay.get("stretch"))
 
     def _partial(self, sid, put, box, region, whole) -> bool:
         """Whether a rendering at full resolution covers only a part of the layer's grid (a region of it)."""
@@ -668,7 +666,7 @@ class LayerSource(Provider):
         sid = source_id(lay)
         eng = self.image(lay["key"])[0]
         eng.prep["linked"] = bool(lay.get("linked", True))
-        s = settings_at("simple", None, lay.get("sliders"), has_denoise=False, sky_scale=sky_scale(lay))
+        s = settings_at("simple", None, lay.get("sliders"), has_denoise=False)
         put = self._placed(sid, level, box)
         if put is False:
             return np.zeros((box[3] - box[1], box[2] - box[0], 3), np.float32)

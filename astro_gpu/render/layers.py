@@ -189,32 +189,29 @@ class LayerService:
         return self.engine(k).render(s, scale, region, **kw), NOTE_CPU
 
     def settings(self, folder, base: Any = None, sliders: dict[str, float] | None = None, part: str | None = None,
-                 blend: str | None = None, stretch: str | None = None, sky_scale: int | None = None):
+                 blend: str | None = None, stretch: str | None = None):
         """The render settings of a layer: its base moved by its slider positions (and, recombined, the stars'
-        blend); ``stretch``: its base stretch when it is not the automatic one; ``sky_scale``: its scale of the Sky
-        slider, None for today's (render/sliders.settings_at)."""
-        s = settings_at(layer_kind(folder, part), base, sliders, has_denoise(folder), origin_of(folder), stretch,
-                        sky_scale)
+        blend); ``stretch``: its base stretch when it is not the automatic one (render/sliders.settings_at)."""
+        s = settings_at(layer_kind(folder, part), base, sliders, has_denoise(folder), origin_of(folder), stretch)
         if blend and "blend" in type(s).model_fields:
             s = s.model_copy(update={"blend": type(s)(blend=blend).blend})
         return s
 
     def render(self, folder, base: Any = None, sliders: dict[str, float] | None = None, scale: float = 0.25,
                region=None, part: str | None = None, blend: str | None = None, stats_from=None,
-               stretch: str | None = None, sky_scale: int | None = None, **_kw) -> LayerImage:
+               stretch: str | None = None, **_kw) -> LayerImage:
         """A workflow layer at a scale (1, 1/2, 1/4...), or a region (x0, x1, y0, y1) of the full-resolution grid.
         ``part``: None (the Output block's image), or one of the Stars block's (from its folder): 'starless', 'stars',
         'combined'; ``blend``: how a combined layer puts its stars back (render/stars.BLENDS). ``stats_from``: the folder
         of a starless combination's Output, when ``folder`` is the Output of the combination of the stars (its stars
         alone, stretched with that image's statistics). ``stretch``: the layer's base stretch when it is not the
-        automatic one ("arcsinh"), for the image that is not the stars alone. ``sky_scale``: the layer's scale of
-        the Sky slider (render/sliders.SKY_SCALES; None: today's)."""
+        automatic one ("arcsinh"), for the image that is not the stars alone."""
         if stats_from is not None:
-            return self._render_combined_stars(folder, stats_from, base, sliders, scale, region, blend, sky_scale)
+            return self._render_combined_stars(folder, stats_from, base, sliders, scale, region, blend)
         kind = layer_kind(folder, part)
         if (part is None) == is_stars_folder(folder):
             raise ValueError("the Stars block's images come from its folder, the others from the Output block's")
-        s = self.settings(folder, base, sliders, part, blend, stretch, sky_scale)
+        s = self.settings(folder, base, sliders, part, blend, stretch)
         t0 = time.perf_counter()
         kw = {"part": part} if part is not None else {}
         lay, note = self._render(folder, s, scale, region, **kw)
@@ -234,9 +231,8 @@ class LayerService:
         return LayerImage(lay.final.float().cpu().numpy(), tuple(int(v) for v in eng.crop),
                           {"part": "linear", "scale": lay.scale, "region": lay.info.get("region")})
 
-    def _render_combined_stars(self, folder, stats_from, base, sliders, scale, region, blend,
-                               sky_scale: int | None = None) -> LayerImage:
-        s = settings_at("stars", base, sliders, False, origin_of(folder), sky_scale=sky_scale)
+    def _render_combined_stars(self, folder, stats_from, base, sliders, scale, region, blend) -> LayerImage:
+        s = settings_at("stars", base, sliders, False, origin_of(folder))
         if blend:
             s = s.model_copy(update={"blend": type(s)(blend=blend).blend})
         t0 = time.perf_counter()
