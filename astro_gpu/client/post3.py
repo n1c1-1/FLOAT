@@ -4275,7 +4275,8 @@ class PostView(QWidget):
             r.addWidget(label(_("Reads"), "dim"))
             c = QComboBox()
             c.addItem(_("Picture"), "picture")
-            c.setItemData(0, _("The combination's picture: its filters mixed"), Qt.ToolTipRole)
+            c.setItemData(0, _("The combined picture without its stars: the filters (starless images) mixed, before the stars are put "
+                "back"), Qt.ToolTipRole)
             c.addItem(_("This filter"), "self")
             for o in fusion_roles(owner):
                 if role_sub(o) != lay.side:

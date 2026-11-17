@@ -269,3 +269,26 @@ def test_the_h_alpha_part_of_a_master_layer_s_mask_is_its_h_alpha_filter():
     q0, q1 = np.percentile(p["Ha"], [50, 97])
     t = np.clip((p["Ha"] - q0) / (q1 - q0), 0, 1)
     assert np.abs(got - t * t * (3 - 2 * t)).max() < 1e-5
+
+
+class FiltersAndStars(Filters):
+    """The fake engine with a stars side: one bright star (and its halo) on a dark sky, the filters without it."""
+
+    def available(self, sid):
+        return super().available(sid) or sid == ("stars", 4)
+
+    def layer(self, lay, level, box, draft=False, stop=None):
+        x0, y0, x1, y1 = box
+        f = 2 ** level
+        yy, xx = np.mgrid[0:H // f, 0:W // f] * f
+        star = np.exp(-((xx - 10) ** 2 + (yy - 40) ** 2) / (2 * 3.0 ** 2)).astype(np.float32)
+        return np.repeat(star[y0:y1, x0:x1, None], 3, -1)
+
+
+def test_a_filter_s_mask_reading_the_picture_reads_it_without_its_stars():
+    lay = master(stars_pid=4, side_masks={"f:SII": _lum_part()})
+    got = compose([lay], FiltersAndStars(), want=[(lay["id"], "f:SII")])
+    m = got.masks[(lay["id"], "f:SII")]
+    assert got.rgb[40, 10].min() > 0.9                       # the star is in the picture, put back on the mix
+    assert m[40, 10] == 0.0                                  # and not in the mask: the picture read is the starless mix
+    assert m[22, 30] > 0.5                                   # the nebula's bright core is

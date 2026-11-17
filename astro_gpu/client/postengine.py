@@ -828,9 +828,9 @@ def new_filter_layer(key: str, target=None, sub=None) -> dict:
 
 #: the mask parts that read the image they are on (``Composer.mask``'s ``sources``)
 READS_IMAGE = ("luminance", "color")
-#: what such a part of a combination's filter's mask reads (``from``): the combination's picture (its filters mixed,
-#: as a luminosity mask is taken from the composite picture in the reference photo editors; the default), the filter
-#: itself, or another filter of the combination ("f:<role>")
+#: what such a part of a combination's filter's mask reads (``from``): the combination's picture without its stars (its
+#: filters, starless images, mixed, before the stars are put back: as a luminosity mask is taken from the composite
+#: picture in the reference photo editors; the default), the filter itself, or another filter ("f:<role>")
 READS = ("picture", "self")
 
 
