@@ -103,20 +103,21 @@ def _layers(W):
 def test_a_second_combine_layers_is_numbered_and_the_first_keeps_its_name(world):
     """Stars/background draws its Combine layers; a second one placed from the palette is the new one, numbered
     ("Combine layers 2", Post's "Full · Combine layers 2"), the wired first one keeps its block and its name; one Undo
-    takes the second away."""
+    takes the second away. The card shows the block's one name, its layer of Post's ("Full · Combine layers 2"): the
+    Composition column holds the Combine layers of every workflow, where two workflows can be confused."""
     W = world(workflows=("Full",))
     W.page.refresh()
     W.settle()
     (first, title), = _layers(W)
-    assert title == "Combine layers"
+    assert title == "Full · Combine layers"
     W.page.palette.double_click("combine_layers")
     W.settle()
     W.page.refresh()
     W.settle()
     got = dict(_layers(W))
-    assert got.get(first) == "Combine layers" and len(got) == 2, got
+    assert got.get(first) == "Full · Combine layers" and len(got) == 2, got
     new = next(b for b in got if b != first)
-    assert got[new] == "Combine layers 2"
+    assert got[new] == "Full · Combine layers 2"
     assert sorted(x.get("name") for x in W.m.post_version()["layers"]) == ["Full · Combine layers",
                                                                            "Full · Combine layers 2"]
     W.b.undo()
@@ -224,13 +225,15 @@ def test_a_second_combine_layers_takes_the_second_name_in_the_graph_too(world):
     row "Combine layers 2" and took "Combine layers" for its own row, while its block was titled "Combine layers 2"
     (the gesture is made on the graph without the rows drawn for Post's layers: the new row took the free name, the
     one drawn back the next). The one already there keeps its name and the new one is the second, as its block's
-    title says, in the notice too; saved and opened again, the same."""
+    title says, in the notice too; saved and opened again, the same. The card, the panel and the notice show the
+    block's one name, its layer of Post's (the new one reads RGB's stars: "RGB · Combine layers", told apart from
+    "S-H-O · Combine layers" by its workflow); the graph's rows keep their numbered names."""
     W = world(workflows=(), filters=("SII", "Ha", "OIII", "R", "G", "B"), nights=0)
     W.template("sho_rgb")
     W.page.refresh()
     W.settle()
     (first, was), = _layer_rows(W).items()
-    assert was[:2] == ("Combine layers", "Combine layers")
+    assert was[0] == "Combine layers" and was[1] == was[2] == "S-H-O · Combine layers", was
     W.said.clear()
     W.page.palette.double_click("combine_layers")
     W.settle()
@@ -239,8 +242,9 @@ def test_a_second_combine_layers_takes_the_second_name_in_the_graph_too(world):
     got = _layer_rows(W)
     new = next(b for b in got if b != first)
     assert got[first] == was, got
-    assert got[new][:2] == ("Combine layers 2", "Combine layers 2"), got
-    assert W.said and "“Combine layers 2”" in W.said[-1], W.said
+    assert got[new][0] == "Combine layers 2", got                        # the graph's row: the second
+    assert got[new][1] == got[new][2] == got[new][3] == "RGB · Combine layers", got     # one name, told apart
+    assert W.said and W.said[-1].startswith("RGB · Combine layers added"), W.said
     assert _reopened_names(W)[0] == ["Combine layers", "Combine layers 2"]
     W.b.undo()
     W.settle()
@@ -249,20 +253,21 @@ def test_a_second_combine_layers_takes_the_second_name_in_the_graph_too(world):
 
 def test_two_combine_layers_of_a_workflow_have_one_numbering_in_the_graph_the_panel_and_post(world):
     """Two Combine layers over one workflow's Stars/background: the second is "Combine layers 2" as its row's name in
-    the graph, its block's title, its panel's title and its layer in Post; the first keeps its row's name and its
+    the graph, and its layer in Post "Full · Combine layers 2", which its block's title and its panel's title show
+    (one name, the workflow's prefix where two workflows can be confused); the first keeps its row's name and its
     layer's; saved and opened again, the same."""
     W = world(workflows=("Full",))
     W.page.refresh()
     W.settle()
     (first, was), = _layer_rows(W).items()
-    assert was[:2] == ("Combine layers", "Combine layers")      # (its layer is Post's default one: none stored yet)
+    assert was[:3] == ("Combine layers", "Full · Combine layers", "Full · Combine layers")   # (no layer stored yet)
     W.page.palette.double_click("combine_layers")
     W.settle()
     W.page.refresh()
     W.settle()
     got = _layer_rows(W)
     new = next(b for b in got if b != first)
-    assert (got[first][0], got[first][1], got[first][3]) == ("Combine layers", "Combine layers", "Full · Combine layers")
-    assert got[new] == ("Combine layers 2", "Combine layers 2", "Combine layers 2", "Full · Combine layers 2"), got
+    assert got[first] == ("Combine layers",) + ("Full · Combine layers",) * 3, got
+    assert got[new] == ("Combine layers 2",) + ("Full · Combine layers 2",) * 3, got
     assert _reopened_names(W) == (["Combine layers", "Combine layers 2"],
                                   ["Full · Combine layers", "Full · Combine layers 2"])

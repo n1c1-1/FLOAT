@@ -266,10 +266,15 @@ def test_a_block_has_one_progress_in_its_row_the_window_and_the_graph_and_the_st
 def test_the_time_of_a_run_moves_every_second_while_a_stage_says_nothing(world, monkeypatch):
     """#150: during a search step of 2 min 27 s without an event the window kept "Running · 2 min · ≈ 4 min left", the
     status bar its percentage, then everything jumped: they were redrawn on the events alone. The client's clock now
-    says the time every second; the running job's time left counts down from what its last event said."""
+    says the time every second; the running job's time left counts down from what its last event said. The clock's
+    period is the second; its ticks are waited for (up to 10 s: a busy worker of the full parallel suite delivers a
+    timer late, a fixed wait of 1.3 s missed it), never taken as said without one."""
     import time
 
+    from PySide6.QtCore import QElapsedTimer, QTimer
     from PySide6.QtTest import QTest
+
+    from astro_gpu.client.services import run as runmod
     w = world()
     clock = [time.time()]
     plan, t, k = _calibrating(w, clock[0])
@@ -284,10 +289,29 @@ def test_the_time_of_a_run_moves_every_second_while_a_stage_says_nothing(world, 
         row = next(r for r in d.rows if r.row.title == "Calibration")
         before = (d.summary.text(), row.dur.text(), w.ctl.status_text())
         assert before[1] == "≈ 10 min" and before[2].endswith("≈ 20 min left")
+        assert runmod.CLOCK_MS == 1000 and w.ctl._clock.interval() == 1000 and w.ctl._clock.isActive()   # each second
         clock[0] += 60.0                                 # a minute later, and no event came
         said.clear()
-        QTest.qWait(1300)
-        assert said and said[-1].endswith("≈ 19 min left"), said
+        spun = [0]                                       # (the event loop turning meanwhile: said if it fails)
+        spin = QTimer()
+        spin.timeout.connect(lambda: spun.__setitem__(0, spun[0] + 1))
+        spin.start(50)
+        el = QElapsedTimer()
+        el.start()
+
+        def wait_for(ok, ms=10000):
+            end = el.elapsed() + ms
+            while not ok() and el.elapsed() < end:
+                QTest.qWait(20)
+        wait_for(lambda: bool(said))
+        first = el.elapsed()
+        why = (said, f"{first} ms", "clock active" if w.ctl._clock.isActive() else "clock stopped",
+               f"loop turned {spun[0]} times")
+        assert said and said[-1].endswith("≈ 19 min left"), why
+        n = len(said)
+        wait_for(lambda: len(said) > n)                  # and again: the clock goes on
+        spin.stop()
+        assert len(said) > n and said[-1].endswith("≈ 19 min left"), (said, el.elapsed() - first)
         assert row.dur.text() == "≈ 9 min" and d.summary.text() != before[0], d.summary.text()
         assert t.remaining(clock[0]) == pytest.approx(t.remaining(clock[0] - 60.0) - 60.0)
     finally:

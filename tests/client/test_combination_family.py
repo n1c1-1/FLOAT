@@ -543,11 +543,12 @@ def test_the_narrow_bar_says_post_s_layer_only_whole_at_the_judge_s_width(qapp, 
     i18n.set_language(language)
     try:
         bar = DraftBar(narrow=True)
+        bar.show()
+        qapp.processEvents()                          # (its font once shown: a style sheet of the process may change it)
         fm = bar.cost.fontMetrics()
         widest = max(fm.horizontalAdvance(x) for x in i18n._(POST_ONLY).split(" · "))
         assert fm.horizontalAdvance(i18n._(POST_ONLY)) > widest + 30                 # (one line would be cut)
         bar.resize(widest + 30 + 22, 140)                                           # (its margins: 10 + 10, 2)
-        bar.show()
         qapp.processEvents()
         h = bar.cost.height()
         bar.show_draft(["Draft · 1 change", "S II hue 16° → 140°"], i18n._(POST_ONLY))
@@ -577,11 +578,12 @@ def test_a_narrow_bar_shortens_the_list_of_blocks_never_the_time(qapp, language)
         full = c.text()
         when = i18n._("about {t}").format(t=i18n.hm(420.0))
         bar = DraftBar(narrow=True)
+        bar.show()
+        qapp.processEvents()                          # (its font once shown: a style sheet of the process may change it)
         fm = bar.cost.fontMetrics()
         w = fm.horizontalAdvance(c.text(keep=1).split(" · ")[0]) + 40         # (a narrow column, in the test's font)
         assert two_lines(full, fm, w, cut=True)                               # (whole, it would be cut)
         bar.resize(w + 22, 140)
-        bar.show()
         qapp.processEvents()
         bar.show_draft(["Draft · 1 change", "Method: RBF"], full)
         shown = bar.cost.text()
@@ -590,7 +592,9 @@ def test_a_narrow_bar_shortens_the_list_of_blocks_never_the_time(qapp, language)
         assert full in bar.cost.toolTip()                                     # the whole list on hover
         bar.resize(fm.horizontalAdvance(full) + 40, 140)                      # wide: the whole list
         qapp.processEvents()
-        assert bar.cost.text() == full
+        shown = bar.cost.text()                       # (on one line or two: where it breaks is the font's, the load's)
+        assert shown.endswith(when) and "…" not in shown and "+ " not in shown, shown
+        assert all(name in shown.replace("\n", " ") for name in c.blocks), shown
         bar.close()
     finally:
         i18n.set_language("en")
