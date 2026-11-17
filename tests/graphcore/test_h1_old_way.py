@@ -258,16 +258,37 @@ def differences_to(recorded: dict, p) -> list[str]:
     one read in ``p``'s folder."""
     from astro_gpu.client.graphdefaults import strip_defaults, strip_override_defaults
     recorded = under_the_all_rule(recorded)
-    d = _first_diff(_whole(recorded), _whole(_without_frozen_recipes(strip_defaults(p.to_dict(), recorded))),
-                    "definition")
+    d = _first_diff(_whole(recorded), _whole(_without_frozen_recipes(_mono_rbf(recorded, strip_defaults(
+        p.to_dict(), recorded)))), "definition")
     if d:
         return [d]
     q = project2.Project2.from_dict(json.loads(json.dumps(recorded)), p.root)
-    mine = project2.Project2.from_dict(_without_frozen_recipes(p.to_dict()), p.root)    # (the stage is handed the
+    mine = project2.Project2.from_dict(_without_frozen_recipes(_mono_rbf(recorded, p.to_dict())), p.root)  # (the stage is handed the
     rules = _key_rules()                                                   # copy: the frozen content, the same keys)
     d = _first_diff(_rooted(strip_override_defaults(keys_table(q, rules, _NoDisk()), rules)),
                     _rooted(strip_override_defaults(keys_table(mine, rules, _NoDisk()), rules)), "keys")
     return [d] if d else []
+
+
+def _mono_rbf(recorded: dict, d: dict) -> dict:
+    """The definition with the one change the recordings are older than: the monochrome filters' templates place
+    their Gradient on the RBF since 2026-11-17 (tools/make_templates.py, MONO); a Gradient the recording has on the
+    polynomial where the definition has it on the RBF is read as the recording's, nothing else."""
+    rec = {w.get("id"): w for w in recorded.get("workflows") or []}
+    for w in d.get("workflows") or []:
+        opts, old_opts = w.get("options") or {}, (rec.get(w.get("id")) or {}).get("options") or {}
+        if opts.get("gradient") == "rbf" and old_opts.get("gradient") == "polynomial":
+            opts["gradient"] = "polynomial"
+        old = (rec.get(w.get("id")) or {}).get("blocks") or []
+        for i, n in enumerate(w.get("blocks") or []):
+            if isinstance(n, dict) and n.get("block") == "gradient" and n.get("method") == "rbf" and i < len(old) \
+                    and isinstance(old[i], dict) and old[i].get("block") == "gradient" \
+                    and old[i].get("method") in ("polynomial", None):
+                if old[i].get("method") is None:
+                    n.pop("method")
+                else:
+                    n["method"] = old[i]["method"]
+    return d
 
 
 def _without_frozen_recipes(d: dict) -> dict:

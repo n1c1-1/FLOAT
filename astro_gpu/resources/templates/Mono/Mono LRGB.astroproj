@@ -139,7 +139,7 @@
     "fork": null,
     "id": "b18",
     "kind": "gradient",
-    "method": "polynomial",
+    "method": "rbf",
     "name": null,
     "off": false,
     "own": null,
@@ -318,7 +318,7 @@
     "fork": null,
     "id": "b28",
     "kind": "gradient",
-    "method": "polynomial",
+    "method": "rbf",
     "name": null,
     "off": false,
     "own": null,
@@ -497,7 +497,7 @@
     "fork": null,
     "id": "b38",
     "kind": "gradient",
-    "method": "polynomial",
+    "method": "rbf",
     "name": null,
     "off": false,
     "own": null,
@@ -783,7 +783,7 @@
     "fork": null,
     "id": "b8",
     "kind": "gradient",
-    "method": "polynomial",
+    "method": "rbf",
     "name": null,
     "off": false,
     "own": null,
@@ -1273,7 +1273,7 @@
    "opts": {
     "debruitage": true,
     "etoiles": "garder",
-    "fond": "simple"
+    "fond": "rbf"
    },
    "palette": "LRGB",
    "text": "A monochrome camera with a luminance filter and red, green and blue ones: each filter stacked on its own, the colour from R, G and B and the detail from L, calibrated once, stars kept."

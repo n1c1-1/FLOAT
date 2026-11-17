@@ -22,6 +22,10 @@ sys.path.insert(0, str(ROOT))
 FULL = dict(debruitage=True, etoiles="retirer", fond="simple")
 CLASSIC_DN = dict(debruitage=True, etoiles="garder", fond="simple")
 CLASSIC = dict(debruitage=False, etoiles="garder", fond="simple")
+#: the monochrome filters' templates: their Gradient on the RBF, its own samples (a filter's stack keeps its faint gas
+#: and has its corners flattened by it, the reviewer's experiment of 2026-11-17; the reference program advises it on
+#: stacks); the colour templates keep the polynomial
+MONO = {"fond": "rbf"}
 SHIPPED = ROOT / "astro_gpu" / "resources" / "templates"
 SUFFIX = ".astroproj"
 
@@ -46,25 +50,25 @@ def construction() -> list[dict]:
         dict(key="dual_x2", tab="Color", name="Dual-band x2", opts=FULL, kind="fusion", palette=SHO_DEFAULT,
              filters=["O III / H-alpha", "O III / S II"], dual_x2=True,
              text="A colour camera with two dual-band filters (O III/H-alpha and O III/S II) and a session for the stars."),
-        dict(key="sho_rgb", tab="Color", name="SHO + RGB stars", opts=FULL, kind="fusion", palette=SHO_DEFAULT,
+        dict(key="sho_rgb", tab="Color", name="SHO + RGB stars", opts={**FULL, **MONO}, kind="fusion", palette=SHO_DEFAULT,
              filters=PALETTES[SHO_DEFAULT], rgb_stars=True,
              text="The nebula from the narrow bands, the stars from a colour camera: each filter's workflow and a colour "
                   "workflow take their stars off, the others aligned on the first filter; the combination reads the "
                   "starless images, and a Combine layers block puts the colour stars back on its image."),
-        dict(key="filters_min", tab="Mono", name="Filters minimal", opts=CLASSIC, kind="filters", palette="H-O",
+        dict(key="filters_min", tab="Mono", name="Filters minimal", opts={**CLASSIC, **MONO}, kind="filters", palette="H-O",
              filters=PALETTES["H-O"],
              text="A monochrome camera: each filter gets its own workflow, the others aligned on the first one, and each "
                   "result is a layer of Post."),
-        dict(key="filters_full", tab="Mono", name="Filters full", opts=FULL, kind="fusion", palette=SHO_DEFAULT,
+        dict(key="filters_full", tab="Mono", name="Filters full", opts={**FULL, **MONO}, kind="fusion", palette=SHO_DEFAULT,
              filters=PALETTES[SHO_DEFAULT],
              text="Each filter's workflow with denoise and its stars taken off, the others aligned on the first one; the "
                   "combination of the filters chosen here makes the colour nebula from their starless images, a second one "
                   "of the same type makes the colour stars from their stars, and a Combine layers block puts them back."),
-        dict(key="mono_rgb", tab="Mono", name="Mono RGB", opts=CLASSIC_DN, kind="fusion", palette="RGB",
+        dict(key="mono_rgb", tab="Mono", name="Mono RGB", opts={**CLASSIC_DN, **MONO}, kind="fusion", palette="RGB",
              filters=list(PALETTES["RGB"]), mono_rgb=True,
              text="A monochrome camera with red, green and blue filters: each filter stacked on its own, the three combined "
                   "into the colour image, which is calibrated once, stars kept."),
-        dict(key="mono_lrgb", tab="Mono", name="Mono LRGB", opts=CLASSIC_DN, kind="fusion", palette="LRGB",
+        dict(key="mono_lrgb", tab="Mono", name="Mono LRGB", opts={**CLASSIC_DN, **MONO}, kind="fusion", palette="LRGB",
              filters=list(PALETTES["LRGB"]), mono_rgb=True,
              text="A monochrome camera with a luminance filter and red, green and blue ones: each filter stacked on its "
                   "own, the colour from R, G and B and the detail from L, calibrated once, stars kept."),
