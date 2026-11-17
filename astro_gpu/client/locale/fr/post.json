@@ -388,7 +388,6 @@
   "Reads": "Lit",
   "Picture": "Image",
   "The combined picture without its stars: the filters (starless images) mixed, before the stars are put back": "L'image combinée sans ses étoiles : les filtres (images sans étoiles) mélangés, avant que les étoiles soient remises",
-  "This filter": "Ce filtre",
   "The image this part reads its brightness or its colour from": "L'image dont cette partie lit la luminosité ou la couleur",
   "Shift while dragging: ten times finer · arrow keys: one degree": "Maj pendant le glissé : dix fois plus fin · flèches : un degré",
   "Needs a run: {cost}": "À calculer : {cost}",
@@ -404,8 +403,8 @@
   "The stars of the Stars mask could not be found: the mask shows none (searched again next time)": "Les étoiles du masque Étoiles n'ont pas pu être trouvées : le masque n'en montre aucune (cherchées de nouveau la prochaine fois)",
   "stars|Strength": "Force",
   "{block} added": "{block} ajouté{block:e}",
-  "This image": "Cette image",
   "Combine layers' editor: a draft to compare, Apply, Try variant": "L'éditeur de Combiner calques : un brouillon à comparer, Appliquer, Essayer une variante",
   "“{name}” moved from {old} to {new}": "« {name} » déplacé de {old} à {new}",
-  "the layers below": "les calques du dessous"
+  "the layers below": "les calques du dessous",
+  "This layer": "Ce calque"
 }

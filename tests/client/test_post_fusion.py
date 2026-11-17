@@ -240,9 +240,9 @@ def _lum_part(**kw):
     return m
 
 
-def test_a_filter_s_luminance_mask_reads_the_picture_by_default_or_the_filter_or_another_filter():
-    """As a luminosity mask of the reference photo editors is taken from the composite picture: on a filter of the
-    combination a Luminance range reads the picture (the filters mixed); it may read the filter itself or another."""
+def test_a_filter_s_luminance_mask_reads_its_own_layer_by_default_or_the_picture_or_another_filter():
+    """A Luminance range on a filter of the combination reads, as every child's (the Stars and Starless images' too),
+    its own layer by default ("This layer"); it may read the picture (the filters mixed) or another filter."""
     comp = Composer(Filters())
     g = pe.normalize([master()])[0]
     cv = comp.canvas_of([g])
@@ -251,7 +251,7 @@ def test_a_filter_s_luminance_mask_reads_the_picture_by_default_or_the_filter_or
     sii = comp.layer_rgb(pe.sub_layer(g, "f:SII"), 0, whole, cv)
     ha = comp.layer_rgb(pe.sub_layer(g, "f:Ha"), 0, whole, cv)
     ctx = pe.Ctx(comp, 0, whole)
-    for reads, img in ((None, picture), ("picture", picture), ("self", sii), ("f:Ha", ha)):
+    for reads, img in ((None, sii), ("picture", picture), ("self", sii), ("f:Ha", ha)):
         kw = {} if reads is None else {"from": reads}
         lay = master(side_masks={"f:SII": _lum_part(**kw)})
         got = compose([lay], want=[(lay["id"], "f:SII")]).masks[(lay["id"], "f:SII")]
@@ -287,7 +287,7 @@ class FiltersAndStars(Filters):
 
 
 def test_a_filter_s_mask_reading_the_picture_reads_it_without_its_stars():
-    lay = master(stars_pid=4, side_masks={"f:SII": _lum_part()})
+    lay = master(stars_pid=4, side_masks={"f:SII": _lum_part(**{"from": "picture"})})
     got = compose([lay], FiltersAndStars(), want=[(lay["id"], "f:SII")])
     m = got.masks[(lay["id"], "f:SII")]
     assert got.rgb[40, 10].min() > 0.9                       # the star is in the picture, put back on the mix

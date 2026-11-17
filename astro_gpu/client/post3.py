@@ -4512,21 +4512,19 @@ class PostView(QWidget):
                                 "brightest 3 %. Feather, Density and Invert act on it."), "small", wrap=True))
         if src in READS_IMAGE and isinstance(lay, SideLayer) and owner is not None and \
                 (sub_role(lay.side) is not None or lay.side in ("stars", "starless")):
-            # every child of a master layer has the same choice (one rule for the children): a filter's mask reads the
-            # combination's picture by default, as luminosity masks are taken from the composite picture in the
-            # reference photo editors; the Stars or Starless image's, the image itself (as it did); or another filter
-            filt = sub_role(lay.side) is not None
+            # every child of a master layer has the same choice and the same default (one rule for the children): the
+            # child's own image ("This layer"), the filters mixed ("Picture"), another filter
             r = QHBoxLayout()
             r.addWidget(label(_("Reads"), "dim"))
             c = QComboBox()
             c.addItem(_("Picture"), "picture")
             c.setItemData(0, _("The combined picture without its stars: the filters (starless images) mixed, before the stars are put "
                 "back"), Qt.ToolTipRole)
-            c.addItem(_("This filter") if filt else _("This image"), "self")
+            c.addItem(_("This layer"), "self")
             for o in fusion_roles(owner):
                 if role_sub(o) != lay.side:
                     c.addItem(_side_name(owner, role_sub(o)), role_sub(o))
-            c.setCurrentIndex(max(0, c.findData(part.get("from", "picture" if filt else "self"))))
+            c.setCurrentIndex(max(0, c.findData(part.get("from", "self"))))
             c.setToolTip(_("The image this part reads its brightness or its colour from"))
             c.activated.connect(lambda i, c=c: self._part_set(part, "from", c.itemData(i)))
             r.addWidget(c, 1)

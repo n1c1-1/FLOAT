@@ -2137,7 +2137,7 @@ class Composer:
                     picture = self.layer_rgb(sub_layer(lay, "starless"), level, abox, canvas, cache, draft, check)
                 else:
                     picture = self._fusion_mix(lay, parts[:len(roles)], parts[-2], parts[-1], canvas)
-            out = {"picture": picture, "self": x}
+            out = {"self": x, "picture": picture}         # (its own image first: the default, as every child's)
             for i, o in enumerate(roles):
                 if o != r:
                     out[role_sub(o)] = grey3(parts[i])

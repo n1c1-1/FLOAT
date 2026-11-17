@@ -1826,6 +1826,10 @@ class GraphCanvas(QGraphicsView):
         from .style import kind_title
         places = self.bridge.places(kind=kind)
         block = combos.type_title(self.bridge.combo_type) if kind == "combine" else kind_title(kind)
+        from ...graphcore.model import JOIN_KINDS
+        if kind in JOIN_KINDS and any(pl.lit for pl in places):   # why, then where (the family's one sentence)
+            return _("{block} not placed: a combination block goes just before Post, which adjusts its layers; drop it "
+                     "on one of the places lit for it").format(block=block)
         if any(pl.lit for pl in places):                  # why, then where
             return _("{block} not placed: it goes only on a lit place, not here; drop it on one of them").format(
                 block=block)

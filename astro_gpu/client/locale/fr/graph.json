@@ -613,5 +613,6 @@
   "{block} not placed: drop it on one of the places lit for it": "{block} : rien de placé, à déposer sur une des places qui s'allument pour ce bloc",
   "{block} not placed: {why}": "{block} : rien de placé, {why}",
   "{block} not placed: no place takes it in this graph": "{block} : rien de placé, aucune place ne le prend dans ce graphe",
-  "{block} not placed: it goes only on a lit place, not here; drop it on one of them": "{block} : rien de placé, ce bloc ne va que sur une place allumée, pas ici ; déposez-le sur l'une d'elles"
+  "{block} not placed: it goes only on a lit place, not here; drop it on one of them": "{block} : rien de placé, ce bloc ne va que sur une place allumée, pas ici ; déposez-le sur l'une d'elles",
+  "{block} not placed: a combination block goes just before Post, which adjusts its layers; drop it on one of the places lit for it": "{block} : rien de placé, un bloc de combinaison va juste avant Post, qui ajuste ses calques ; déposez-le sur l'une des places allumées pour lui"
 }

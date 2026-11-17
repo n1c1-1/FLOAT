@@ -818,11 +818,15 @@ class TuneView(QWidget):
         if self.select(step=k):
             self.pick.emit(k)
         else:
+            self.strip._sig = None                       # (built again: its buttons as they were)
             self.request_refresh()                       # Stay: the strip shows the block kept
 
     def _strip_workflow(self, i: int):
         if self.select(index=i):
             self.workflow.emit(i)
+        else:                                            # Stay: the list shows the workflow being edited again
+            self.strip._sig = None
+            self.request_refresh()
 
     def _add_session(self):
         self.sources.add_session()

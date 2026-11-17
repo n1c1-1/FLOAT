@@ -506,3 +506,28 @@ def test_real_one_path_bar_one_link_and_one_name_for_every_block_of_the_family(q
         assert w.mode == 1 and s.sel_step == "composition" and w.tune.layers_editor.page_shown()
     finally:
         w.close()
+
+
+@pytest.mark.parametrize("kind", FAMILY)
+def test_real_stay_keeps_the_editor_and_the_list_shows_the_workflow_edited(qapp, tmp_path, kind, monkeypatch):
+    """With a draft, another workflow chosen in Inspect's list and the question answered Stay: the editor stays with
+    its draft, and the list shows the workflow being edited again (it kept the one just chosen)."""
+    from PySide6.QtWidgets import QComboBox
+
+    from astro_gpu.client.blockdraft import DRAFT_ANSWER_ENV
+    w = _whole(tmp_path, M27)
+    try:
+        s = w.s
+        q, ed = _open_editor(w, kind)
+        assert _draft_change(ed, kind)
+        monkeypatch.setenv(DRAFT_ANSWER_ENV, "stay")
+        oiii = next(x for x in s.paths if x.name == "OIII")
+        box = next(c for c in w.tune.strip.findChildren(QComboBox) if c.findData(oiii.pid) >= 0)
+        box.setCurrentIndex(box.findData(oiii.pid))                  # the user's choice in the list
+        pump(0.8)
+        assert s.path.pid == q.pid and ed.page_shown() and ed.has_draft()
+        box = next(c for c in w.tune.strip.findChildren(QComboBox) if c.findData(oiii.pid) >= 0)
+        assert box.currentData() == q.pid
+        ed.reset()
+    finally:
+        w.close()

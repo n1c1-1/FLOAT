@@ -295,7 +295,8 @@ def test_s02d_a_combination_card_dropped_away_from_its_places_says_where_it_goes
     assert B.js() == before
     from astro_gpu.graphcore import combos                            # (a combination by the recipe its card places)
     name = combos.type_title(B.b.combo_type) if kind == "combine" else kind_title(kind)
-    assert said == [f"{name} not placed: it goes only on a lit place, not here; drop it on one of them"], said
+    assert said == [f"{name} not placed: a combination block goes just before Post, which adjusts its layers; drop it "
+                    "on one of the places lit for it"], said                    # why, then where
 
 
 def test_s03_drag_session_onto_plus_session(B):
