@@ -163,6 +163,14 @@ PART_NOTES = {"starless": "The Stars/background block's starless image, stretche
               "stars": "The Stars/background block's stars alone, on black: in Screen mode above the background.",
               "combined": "The starless image and the stars, recombined. The same settings as its block in the "
                           "graph."}
+#: why a combination's layer stays plain (postfusion.plain_reason, each of its reasons), and the Output layer of a
+#: combination that has a master layer ("output"): its row's tooltip
+PLAIN_TIPS = {"lightness": "A combination composed as lightness and colour: Post shows its Output as it is",
+              "after": "Blocks follow the combination in its workflow: Post shows its Output as it is",
+              "stars": "The combination of the stars alone: Post shows its Output as it is, as the stars of the "
+                       "combination's Combine layers layer",
+              "output": "The combination's Output as its run mixed it: its Combine layers layer shows each filter and "
+                        "mixes them here"}
 #: a combination's Hue slider: the rail of the colours of Inspect's editor, its handle
 HUE_QSS = (f"QSlider::groove:horizontal {{ height: 8px; border-radius: 4px; background: {HUE_RAIL}; }}"
            "QSlider::handle:horizontal { background: #f2f2f2; border: 1px solid #202020; width: 10px; margin: -4px 0; "
@@ -1871,7 +1879,7 @@ class PostView(QWidget):
                     f, why = fusion_of(lay["pid"])
                 except Exception:  # noqa: BLE001 - not readable now: nothing said
                     f, why = None, ""
-                if f is not None or why in ("lightness", "after"):
+                if f is not None or why in PLAIN_TIPS:
                     self._plain_why[lay["pid"]] = why or "output"
                 else:
                     self._plain_why.pop(lay["pid"], None)
@@ -1884,7 +1892,7 @@ class PostView(QWidget):
                 f, why = None, ""
             if f is None:
                 lay.pop("fusion", None)
-                if why in ("lightness", "after"):
+                if why in PLAIN_TIPS:
                     self._plain_why[lay["pid"]] = why
             else:
                 lay["fusion"] = f
@@ -2692,12 +2700,8 @@ class PostView(QWidget):
         plain = (is_group(lay) and lay.get("starless") == "output" and not is_fusion(lay)) or \
             (lay.get("kind") == "workflow" and lay.get("part") is None)
         why = self._plain_why.get(lay.get("pid")) if plain else None
-        if why:
-            row.setToolTip({
-                "lightness": _("A combination composed as lightness and colour: Post shows its Output as it is"),
-                "after": _("Blocks follow the combination in its workflow: Post shows its Output as it is"),
-                "output": _("The combination's Output as its run mixed it: its Combine layers layer shows each filter "
-                            "and mixes them here")}[why])
+        if why in PLAIN_TIPS:
+            row.setToolTip(_(PLAIN_TIPS[why]))
 
     def select(self, lid, what):
         if self.b_crop.isChecked():

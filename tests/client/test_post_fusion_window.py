@@ -63,6 +63,21 @@ def test_a_lightness_recipe_the_stars_and_a_block_after_the_combination_stay_pla
     assert postfusion.plain_reason("combine_rgb", recipes.legacy_spec("rgb"), [], ["combine_rgb", "render_simple"]) == ""
 
 
+def test_every_reason_a_layer_stays_plain_has_its_tooltip_in_both_languages():
+    import inspect
+    import re
+
+    from astro_gpu.client import i18n
+    from astro_gpu.client.post3 import PLAIN_TIPS
+    said = set(re.findall(r'return "(\w+)"', inspect.getsource(postfusion.plain_reason)))
+    assert said == {"stars", "lightness", "after"} and said <= set(PLAIN_TIPS)
+    try:
+        i18n.set_language("fr")
+        assert all(i18n._(t) != t for t in PLAIN_TIPS.values())
+    finally:
+        i18n.set_language("en")
+
+
 def test_the_layer_s_hues_and_intensities_stand_in_for_the_block_s_and_a_change_splits_between_them():
     sho = recipes.legacy_spec("sho")
     stored = {"hue_oiii": 180.0, "weights": {"SII": 2.0}, "balance": "signal"}
@@ -386,16 +401,19 @@ def test_the_master_panel_shows_the_combination_s_settings_and_colours_greyed(m2
 
 
 def test_a_combination_post_cannot_make_stays_a_plain_layer_said_in_its_tooltip(m27, monkeypatch):
+    from astro_gpu.client.post3 import PLAIN_TIPS
     w, pv, _before = m27
     real = w.s.fusion_of
-    monkeypatch.setattr(w.s, "fusion_of", lambda pid, over=None, tune=False: (None, "after") if pid == 5 else
-                        real(pid, over, tune))
-    pv.sel = None
-    pv.rebuild()
-    lay = next(x for x in pv.layers if pe.is_group(x) and x.get("starless") == "output")
-    assert not pe.is_fusion(lay)
-    row = next(r for r in pv.rows if r.lay["id"] == lay["id"] and r.lay["kind"] == "workflow")
-    assert row.toolTip() == "Blocks follow the combination in its workflow: Post shows its Output as it is"
+    for why in ("after", "lightness", "stars"):                   # each reason of postfusion.plain_reason
+        monkeypatch.setattr(w.s, "fusion_of", lambda pid, over=None, tune=False, y=why: (None, y) if pid == 5 else
+                            real(pid, over, tune))
+        pv.sel = None
+        pv.rebuild()
+        lay = next(x for x in pv.layers if pe.is_group(x) and x.get("starless") == "output")
+        assert not pe.is_fusion(lay)
+        row = next(r for r in pv.rows if r.lay["id"] == lay["id"] and r.lay["kind"] == "workflow")
+        assert row.toolTip() == PLAIN_TIPS[why], why
+    assert PLAIN_TIPS["after"] == "Blocks follow the combination in its workflow: Post shows its Output as it is"
     monkeypatch.undo()
     pv.rebuild()
     # a combination's Output shown as a plain layer (another S-H-O of the filters, as it comes): why, on its row
