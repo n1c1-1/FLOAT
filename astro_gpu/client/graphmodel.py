@@ -1858,8 +1858,26 @@ class GraphEditing:
                     if said:
                         notes.append(said)
             return notes
-        if ch["kind"] in ("recipe", "method", "combine"):
-            steps = self._block_steps(paths, ch)
+        if ch["kind"] == "combine" and any(self.master_layer(q.pid) is not None for q in paths):
+            # a combination Post shows by its master layer: its hues and intensities are the layer's (never a run),
+            # the rest (the balance) the block's; one step (client/postfusion.py)
+            from . import postfusion
+            with self.batch():
+                for q in paths:
+                    lay = self.master_layer(q.pid)
+                    c = self._combination(q.pid)
+                    if lay is None or c is None:
+                        self.apply_change([q], ch)
+                        continue
+                    part, rest = postfusion.split_change(c[1], ch["values"])
+                    if part:
+                        tune = postfusion.new_tune(c[0], c[1], c[2], lay.get(postfusion.TUNE), part)
+                        self.set_post_layer(lay["id"], None, **{postfusion.TUNE: tune})
+                    if rest:
+                        self.apply_change([q], dict(ch, values=rest, kind="combine_block"))
+            return notes
+        if ch["kind"] in ("recipe", "method", "combine", "combine_block"):
+            steps = self._block_steps(paths, dict(ch, kind="combine") if ch["kind"] == "combine_block" else ch)
             if steps:
                 self._do(steps)
             return notes

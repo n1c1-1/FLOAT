@@ -1165,6 +1165,8 @@ class Panel(QWidget):
             self.hv.addWidget(label(_("Waiting: {why}").format(why=node.waits.rstrip(".")), "warn", wrap=True))
         stage = combine_stage(s.p.workflow(p.pid))
         stored = (s.p.workflow(p.pid).params.get(stage) or {}) if stage else {}
+        if stage and hasattr(s, "combine_stored"):       # a master layer's hues and intensities: the layer's own
+            stored = s.combine_stored(p.pid)
         weights = stored.get("weights") or {}
         if stage and spec is not None:
             self.combination_summary(p, stage, spec, stored)

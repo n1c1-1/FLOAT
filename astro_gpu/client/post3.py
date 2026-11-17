@@ -97,6 +97,7 @@ from .postengine import (
     OLD_NAMES,
     OPS,
     PART_SETTINGS,
+    ROLE_SUB,
     SUB_NAMES,
     SUB_ROWS,
     SideLayer,
@@ -244,8 +245,10 @@ def step_words(old: list[dict], new: list[dict]) -> str:
             return (_("“{name}” shown") if lay.get("visible") else _("“{name}” hidden")).format(name=name)
         for sub, v in (lay.get("shown") or {}).items():             # the eye of one of a group's images
             if (was.get("shown") or {}).get(sub) != v:
-                side = _(SUB_NAMES.get(sub, sub))
+                side = _(_side_name(lay, sub))
                 return (_("“{name}” shown") if v else _("“{name}” hidden")).format(name=side)
+        if was.get("tune") != lay.get("tune"):                    # a combination's own hues and intensities
+            return _tune_words(was, lay)
         if layer_stretch(was) != layer_stretch(lay):               # Automatic / Arcsinh: named with its choice
             return _("Stretch of “{name}”: {choice}").format(name=name, choice=_(STRETCH_NAMES[layer_stretch(lay)]))
         for key, word in (("opacity", _("opacity")), ("mode", _("blend mode")), ("blend", _("blend mode"))):
@@ -256,7 +259,7 @@ def step_words(old: list[dict], new: list[dict]) -> str:
         sa, sb = was.get("side_masks") or {}, lay.get("side_masks") or {}
         for sub in sorted(set(sa) | set(sb)):
             if sa.get(sub) != sb.get(sub):
-                return mask_words(sa.get(sub), sb.get(sub), _(SUB_NAMES.get(sub, sub)))
+                return mask_words(sa.get(sub), sb.get(sub), _(_side_name(lay, sub)))
         for field in ("sliders", "params"):
             ka, kb = was.get(field) or {}, lay.get(field) or {}
             for k in list(kb) + [k for k in ka if k not in kb]:        # (a slider back at its middle has no key)
@@ -264,6 +267,28 @@ def step_words(old: list[dict], new: list[dict]) -> str:
                     return _("{what} of “{name}”").format(what=setting_name(lay, field, k), name=name)
         return _("“{name}” changed").format(name=name)
     return _("Crop changed") if getattr(old, "crop", None) != getattr(new, "crop", None) else ""
+
+
+def _side_name(lay: dict, sub: str) -> str:
+    """The name of one of a Combine layers layer's images as its row says it ("Stars", "O III"), never its key."""
+    role = sub_role(sub)
+    if role is None:
+        return SUB_NAMES.get(sub, sub)
+    names = (lay.get("fusion") or {}).get("names") or {}
+    if role in names:
+        return names[role]
+    from .graphnode import port_name
+    return port_name(role)
+
+
+def _tune_words(was: dict, lay: dict) -> str:
+    """A combination's hue or intensity changed in its master layer: "O III hue", "Hα intensity"."""
+    a, b = was.get("tune") or {}, lay.get("tune") or {}
+    for key, word in (("hues", "{filter} hue"), ("weights", "{filter} intensity")):
+        for role in sorted(set(a.get(key) or {}) | set(b.get(key) or {})):
+            if (a.get(key) or {}).get(role) != (b.get(key) or {}).get(role):
+                return _(word).format(filter=_side_name(lay, ROLE_SUB + role))
+    return _("“{name}” changed").format(name=layer_name(lay))
 
 
 def mask_words(old: dict | None, new: dict | None, name: str) -> str:
@@ -1831,11 +1856,20 @@ class PostView(QWidget):
         settings, those being moved here on top), the others none; never saved."""
         fusion_of = getattr(self.s, "fusion_of", None)
         for lay in self.layers if layers is None else layers:
+            if lay.get("kind") == "workflow" and lay.get("part") is None and fusion_of is not None:
+                try:                                       # a combination's Output as it is: why, on its row
+                    f, why = fusion_of(lay["pid"])
+                except Exception:  # noqa: BLE001 - not readable now: nothing said
+                    f, why = None, ""
+                if f is not None or why in ("lightness", "after"):
+                    self._plain_why[lay["pid"]] = why or "output"
+                else:
+                    self._plain_why.pop(lay["pid"], None)
             if not (is_group(lay) and lay.get("starless") == "output") or fusion_of is None:
                 lay.pop("fusion", None)
                 continue
             try:
-                f, why = fusion_of(lay["pid"], self._live.get(lay["pid"]))
+                f, why = fusion_of(lay["pid"], self._live.get(lay["pid"]), tune=lay.get("tune"))
             except Exception:  # noqa: BLE001 - a combination that cannot be read now: its plain layer
                 f, why = None, ""
             if f is None:
@@ -1923,7 +1957,8 @@ class PostView(QWidget):
     @staticmethod
     def _thumb_sig(lay):
         return (lay.get("pid"), lay.get("key"), lay.get("part"), json.dumps(lay["sliders"], sort_keys=True),
-                json.dumps(lay.get("base"), sort_keys=True, default=str), lay.get("linked"))
+                json.dumps(lay.get("base"), sort_keys=True, default=str), lay.get("linked"), lay.get("stretch"),
+                json.dumps(lay.get("fusion"), sort_keys=True, default=str))
 
     def _view_changed(self):
         self.zoom_lab.setText(_("Zoom {p}").format(p=with_unit(f"{self.viewer.scale * 100:.0f}", "%")))
@@ -2640,11 +2675,15 @@ class PostView(QWidget):
 
     def _plain_tip(self, row, lay):
         """A combination's Combine layers layer Post cannot make again from its filters: why, in its row's tooltip."""
-        why = self._plain_why.get(lay.get("pid")) if is_group(lay) and lay.get("starless") == "output" else None
+        plain = (is_group(lay) and lay.get("starless") == "output" and not is_fusion(lay)) or \
+            (lay.get("kind") == "workflow" and lay.get("part") is None)
+        why = self._plain_why.get(lay.get("pid")) if plain else None
         if why:
-            row.setToolTip(_("A combination composed as lightness and colour: Post shows its Output as it is")
-                           if why == "lightness" else
-                           _("Blocks follow the combination in its workflow: Post shows its Output as it is"))
+            row.setToolTip({
+                "lightness": _("A combination composed as lightness and colour: Post shows its Output as it is"),
+                "after": _("Blocks follow the combination in its workflow: Post shows its Output as it is"),
+                "output": _("The combination's Output as its run mixed it: its Combine layers layer shows each filter "
+                            "and mixes them here")}[why])
 
     def select(self, lid, what):
         if self.b_crop.isChecked():
@@ -3639,9 +3678,18 @@ class PostView(QWidget):
 
     # ------------------------------------------------------------ a combination's master layer
     def _fusion_title(self, lay) -> str:
-        from .graphnode import combine_kind, combine_title
+        """The combination's name as its block shows it everywhere (the graph, Inspect's path and title)."""
+        from .graphnode import combine_kind, combine_title, node_title
         q = self.path(lay["pid"])
-        return combine_title(combine_kind(q), q) if q is not None else _("Combination")
+        if q is None:
+            return _("Combination")
+        try:
+            node = self.s.block_map.node_of(q, "fusion")
+            if node is not None:
+                return node_title(self.s, node)
+        except Exception:  # noqa: BLE001 - no map of the blocks now: its type's name
+            pass
+        return combine_title(combine_kind(q), q)
 
     def _fusion_slider(self, lay, role, what: str):
         """A filter's Hue (``what`` "hue") or Intensity slider: the combination block's setting, moved here (the picture
@@ -3761,8 +3809,26 @@ class PostView(QWidget):
                                     "the mix.").format(filter=name), "small", wrap=True))
 
     def set_fusion(self, lay, values: dict, words: str):
-        """A combination's settings changed here: the block's own (one source with Inspect's editor and the run), one
-        step of the workflows' Undo listed in Post's; a draft of the block in Inspect is dropped (``postTuned``)."""
+        """A combination's settings changed here. Its hues and intensities are the master layer's own (client/
+        postfusion.py): one step of Post's Undo, nothing to compute. The balance is the block's (the gains the run
+        measures): one step of the workflows' Undo listed in Post's, the block to run. Either way a draft of the
+        block in Inspect is dropped (``postTuned``)."""
+        from . import postfusion
+        c = getattr(self.s, "_combination", lambda pid: None)(lay["pid"])
+        part, rest = postfusion.split_change(c[1], values) if c is not None and is_fusion(lay) else ({}, values)
+        if part and c is not None:
+            self.push(words=words)
+            lay["tune"] = postfusion.new_tune(c[0], c[1], c[2], lay.get("tune"), part)
+            self._attach_fusion()
+            tuned = getattr(self.s, "postTuned", None)
+            if tuned is not None:
+                tuned.emit(lay["pid"])
+            self._refresh_rows()
+            self.request(final_only=True)
+            QTimer.singleShot(0, self.build_props)
+        if not rest:
+            return
+        values = rest
         q = self.s.view(lay["pid"]) if hasattr(self.s, "view") else None
         if q is None or not hasattr(self.s, "apply_as"):
             return

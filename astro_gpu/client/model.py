@@ -3878,30 +3878,62 @@ class _ProjectBase(QObject):
         return max(1e-4, (zx1 - zx0) * (zy1 - zy0))
 
     # ------------------------------------------------------------ what a workflow gives in Post
-    def fusion_of(self, pid: int, over: dict | None = None) -> tuple[dict | None, str]:
-        """(the combination's description for its master layer in Post, client/postfusion.describe; None when its
-        Combine layers layer stays a plain one), and why it does (postfusion.plain_reason: "lightness", "after",
-        "stars"; "" for a master layer or a workflow that is no combination). ``over``: settings being moved in Post,
-        not yet the block's."""
+    def _combination(self, pid: int):
+        """(stage, recipe, stored settings, inputs wired, why its layer is plain: postfusion.plain_reason) of a
+        combination's workflow; None for another workflow."""
         from ..core.workflow import combine_stage
-        from ..stages import recipes
         from . import postfusion
-        from .graphnode import combine_spec, port_name
+        from .graphnode import combine_spec
         v = self.view(pid)
         try:
             w = self.p.workflow(pid)
         except (KeyError, AttributeError):
-            return None, ""
+            return None
         stage = combine_stage(w)
         if not stage or v is None:
-            return None, ""
+            return None
         spec = combine_spec(v)
         inputs = list(((getattr(v, "source", None) or {}).get("fusion") or {}).get("inputs") or [])
         why = postfusion.plain_reason(stage, spec, inputs, self._chains.get(pid) or [])
+        return stage, spec, dict(w.params.get(stage) or {}), inputs, why
+
+    def master_layer(self, pid: int) -> dict | None:
+        """The combination's master layer in Post's version shown (client/postfusion.py: its Combine layers layer over
+        its Output, when Post can mix its filters), None when it has none."""
+        c = self._combination(pid)
+        if c is None or c[4]:
+            return None
+        return next((x for x in self.post_layers() if x.get("kind") == "workflow" and x.get("part") == "combined"
+                     and x.get("starless") == "output" and x.get("pid") == pid), None)
+
+    def combine_stored(self, pid: int) -> dict:
+        """The combination's settings as its editors show them: the block's stored ones, its master layer's hues and
+        intensities in place of the block's (postfusion.tuned_stored)."""
+        from . import postfusion
+        c = self._combination(pid)
+        if c is None:
+            return {}
+        lay = self.master_layer(pid)
+        return postfusion.tuned_stored(c[0], c[1], c[2], (lay or {}).get(postfusion.TUNE))
+
+    def fusion_of(self, pid: int, over: dict | None = None, tune=False) -> tuple[dict | None, str]:
+        """(the combination's description for its master layer in Post, client/postfusion.describe; None when its
+        Combine layers layer stays a plain one), and why it does (postfusion.plain_reason: "lightness", "after",
+        "stars"; "" for a master layer or a workflow that is no combination). ``over``: settings being moved in Post,
+        not yet kept; ``tune``: the layer's own hues and intensities (False: those of its layer in the version shown)."""
+        from ..stages import recipes
+        from . import postfusion
+        from .graphnode import port_name
+        c = self._combination(pid)
+        if c is None:
+            return None, ""
+        stage, spec, stored, _inputs, why = c
         if why:
             return None, why
+        if tune is False:
+            tune = (self.master_layer(pid) or {}).get(postfusion.TUNE)
         names = {r: port_name(r) for r in recipes.roles(spec)}
-        return postfusion.describe(stage, spec, dict(w.params.get(stage) or {}), names, over), ""
+        return postfusion.describe(stage, spec, postfusion.tuned_stored(stage, spec, stored, tune), names, over), ""
 
     def fusion_gains(self, pid: int) -> dict:
         """{filter: (gain, why)} the combination's last run measured (its drz_meta.json), {} without a result."""

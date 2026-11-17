@@ -362,7 +362,7 @@
   "Stretch strength": "Intensité étirement",
   "Stretch of “{name}”: {choice}": "Étirement de « {name} » : {choice}",
   "Arcsinh keeps the colours by itself": "L'Arcsinh conserve les couleurs de lui-même",
-  "One filter of the combination: its own filters, mask and spot healing act on it before the filters are mixed": "Un filtre de la combinaison : ses propres filtres, son masque et sa correction de défauts agissent sur lui avant le mélange des filtres",
+  "One filter of the combination: its own filters, mask and spot healing act on it before the filters are mixed": "Un filtre de la combinaison : ses propres filtres, son masque et son Tampon correcteur agissent sur lui avant le mélange des filtres",
   "A combination composed as lightness and colour: Post shows its Output as it is": "Une combinaison composée en luminance et couleur : Post montre sa Sortie telle quelle",
   "Blocks follow the combination in its workflow: Post shows its Output as it is": "Des blocs suivent la combinaison dans son workflow : Post montre sa Sortie telle quelle",
   "The combination keeps its colours: one stretch factor for every filter": "La combinaison garde ses couleurs : un seul facteur d'étirement pour tous les filtres",
@@ -380,5 +380,6 @@
   "Balanced: gain × {gain}": "Équilibré : gain × {gain}",
   "The reference: the other filters are brought to its scale": "La référence : les autres filtres sont amenés à son échelle",
   "Its gain is measured by the combination's run": "Son gain est mesuré au calcul de la combinaison",
-  "No stretch of its own: the layer's one stretch for every filter. No stars of its own: the layer's Stars. Its filters, mask and spot healing act on {filter} before the mix.": "Pas d'étirement propre : l'étirement unique du calque pour tous les filtres. Pas d'étoiles propres : les Étoiles du calque. Ses filtres, son masque et sa correction de défauts agissent sur {filter} avant le mélange."
+  "No stretch of its own: the layer's one stretch for every filter. No stars of its own: the layer's Stars. Its filters, mask and spot healing act on {filter} before the mix.": "Pas d'étirement propre : l'étirement unique du calque pour tous les filtres. Pas d'étoiles propres : les Étoiles du calque. Ses filtres, son masque et son Tampon correcteur agissent sur {filter} avant le mélange.",
+  "The combination's Output as its run mixed it: its Combine layers layer shows each filter and mixes them here": "La Sortie de la combinaison telle que son calcul l'a mélangée : son calque Combiner calques montre chaque filtre et les mélange ici"
 }

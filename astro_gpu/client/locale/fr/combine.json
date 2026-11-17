@@ -22,7 +22,7 @@
   "Measured on the preview's reduced copy: the run measures it on the whole image": "Mesuré sur la copie réduite de l'aperçu : le calcul le mesure sur toute l'image",
   "No draft: change a setting first": "Pas de brouillon : changez d'abord un réglage",
   "No input to combine": "Aucune entrée à combiner",
-  "Opens the combination in Inspect: the palette, each filter's hue and intensity, the balance, tried as a draft on the image": "Ouvre la combinaison dans Inspecter : la palette, la teinte et l'intensité de chaque filtre, l'équilibre, essayés en brouillon sur l'image",
+  "Opens the combination in Inspect: the palette, each filter's hue and intensity, the balance, tried as a draft on the image": "Ouvre la combinaison dans Inspection : la palette, la teinte et l'intensité de chaque filtre, l'équilibre, essayés en brouillon sur l'image",
   "Recipe changed": "Recette changée",
   "Stars: {how}": "Étoiles : {how}",
   "Stars: {old} → {new}": "Étoiles : {old} → {new}",
@@ -58,5 +58,15 @@
   "On sky: the gain that brings this filter's sky median and spread to the H-alpha's.": "Sur le ciel : le gain qui amène la médiane et la dispersion du ciel de ce filtre à celles du H-alpha.",
   "Linear match: the least squares fit of this filter onto the reference.": "Ajustement linéaire : l'ajustement par moindres carrés de ce filtre sur la référence.",
   "Reference: the other filters are brought to this one's scale.": "Référence : les autres filtres sont ramenés à l'échelle de celui-ci.",
-  "Draft dropped: changed in Post": "Brouillon abandonné : modifié dans Post"
+  "Draft dropped: changed in Post": "Brouillon abandonné : modifié dans Post",
+  "Measured on the whole image as the run measures it (the run's own result does not hold it)": "Mesuré sur l'image entière comme le calcul le mesure (le résultat du calcul ne le contient pas)",
+  "Post's layer only: nothing is computed again": "Calque de Post seulement : rien n'est recalculé",
+  "The draft becomes the combination's settings (Ctrl+Z takes it back)": "Le brouillon devient les réglages de la combinaison (Ctrl+Z le reprend)",
+  "Preview · reduced copy": "Aperçu · copie réduite",
+  "Applied settings · reduced copy": "Réglages appliqués · copie réduite",
+  "sky noise {v}": "bruit du ciel {v}",
+  "The gains of the run (its result)": "Les gains du calcul (son résultat)",
+  "The gains measured on the whole image as the run measures them": "Les gains mesurés sur l'image entière comme le calcul les mesure",
+  "An estimate on the preview's reduced copy": "Une estimation sur la copie réduite de l'aperçu",
+  "HOO": "HOO"
 }

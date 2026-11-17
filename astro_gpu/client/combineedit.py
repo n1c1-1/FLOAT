@@ -88,8 +88,6 @@ REASON_TIPS = {"signal": "Signal: the gain that fits this filter's nebula onto t
 #: the image area's comparisons
 COMPARE = (("draft", "Draft", "The draft's preview"), ("applied", "Applied", "The block's applied result"),
            ("split", "Split", "The draft on the right of the divider, the applied result on the left"))
-#: the gains of the copy and of the run differ when they are this far apart (relative)
-GAIN_APART = 0.03
 HUE_RAIL = ("qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ff0000, stop:0.1667 #ffff00, stop:0.3333 #00ff00, "
             "stop:0.5 #00ffff, stop:0.6667 #0000ff, stop:0.8333 #ff00ff, stop:1 #ff0000)")
 
@@ -227,16 +225,40 @@ def reduced_inputs(inputs: list[dict], spec: dict, pixels: int = PREVIEW_PIXELS)
     return {"chans": chans, "valid": valid, "k": k, "H": shape[0], "W": shape[1], "inputs": inputs}
 
 
-def balance(small: dict, stage: str, spec: dict, how: str) -> dict:
-    """The recipe's steps on the reduced inputs (the stage's ``steps``): the balanced channels, their skies, scales and
-    each filter's gain and why; the thumbnails of the balanced filters."""
+def balance(small: dict, stage: str, spec: dict, how: str, maps: dict | None = None) -> dict:
+    """The balanced channels of the reduced inputs, their skies, scales and each filter's gain and why, the thumbnails
+    of the balanced filters. ``maps``: the balance as the run makes it (client/postfusion.balance_maps: the run's own,
+    or measured once on the whole inputs), applied to the reduced copy (a map is linear: the block means of the
+    balanced filters are the map of the block means): the run's gains, the same as Post's. Without it (the whole
+    inputs cannot be read), the stage's ``steps`` on the reduced copy, an estimate."""
+    if maps is not None:
+        from .postfusion import apply_maps
+        chans = apply_maps(maps["maps"], small["chans"])
+        for c in chans.values():
+            c[~small["valid"]] = 0
+        notes = dict(maps["gains"])
+        skies = {r: (0.0, float((maps.get("noise") or {}).get(r, 0.0))) for r in chans}
+        tops = {r: 1.0 / notes[r][0] if r in notes and notes[r][0] > 0 else 1.0 for r in chans}
+        return {"chans": chans, "skies": skies, "tops": tops, "notes": notes, "noise": dict(maps.get("noise") or {}),
+                "from": maps.get("from", "run"), "thumbs": {r: thumbnail(c, small["valid"]) for r, c in chans.items()}}
     cls = stage_class(stage)
     chans = {r: c.copy() for r, c in small["chans"].items()}
     tops = {r: 1.0 for r in chans}
     notes: dict = {}
     skies = cls().steps(_Quiet(), spec, small["inputs"], chans, small["valid"], tops, how, notes)
-    return {"chans": chans, "skies": skies, "tops": tops, "notes": notes,
+    return {"chans": chans, "skies": skies, "tops": tops, "notes": notes, "from": "copy",
+            "noise": {r: float(n) for r, (_lv, n) in skies.items()},
             "thumbs": {r: thumbnail(c, small["valid"]) for r, c in chans.items()}}
+
+
+def run_balance(small: dict, stage: str, spec: dict, how: str, result_dir=None) -> dict:
+    """``balance`` with the run's maps (client/postfusion.balance_maps) when the whole inputs can be read."""
+    from .postfusion import balance_maps
+    try:
+        maps = balance_maps(stage, spec, small["inputs"], how, result_dir)
+    except (KeyError, OSError, ValueError):            # the whole inputs not readable: the reduced copy's estimate
+        maps = None
+    return balance(small, stage, spec, how, maps)
 
 
 def mixed(small: dict, bal: dict, stage: str, spec: dict, p, off=(), solo=None) -> np.ndarray:
@@ -424,6 +446,9 @@ class CombineEditor(QObject):
         self._t_edit = None
         self._lang = None                      # the language the page was built in (built again in another)
         self._shape = None                     # what the page was built for (its filters, the stars' setting alone)
+        self._cost = None                      # ((workflow, the draft), what Apply computes again)
+        self.dock = self.drawer = None         # the settings panel at the right of the image (as the Gradient's)
+        self._win = None
         self._done.connect(self._arrived)
         tuned = getattr(self.s, "postTuned", None)
         if tuned is not None:                  # a setting changed in Post's master layer: the block's draft goes
@@ -443,12 +468,28 @@ class CombineEditor(QObject):
         return combine_spec(p or self.p)
 
     def _stored(self, p=None) -> dict:
+        """The combination's settings: the block's, its master layer's hues and intensities in their place when Post
+        shows it by one (client/postfusion.py: one source, the layer)."""
         p = p or self.p
         st = self._stage(p)
+        if st and hasattr(self.s, "combine_stored"):
+            try:
+                return dict(self.s.combine_stored(p.pid))
+            except Exception:  # noqa: BLE001 - the model cannot say now: the block's own
+                pass
         try:
             return dict(self.s.p.workflow(p.pid).params.get(st) or {}) if st else {}
         except (KeyError, AttributeError):
             return {}
+
+    def master(self, p=None) -> bool:
+        """Post shows this combination by its master layer: its hues and intensities are that layer's (they never
+        ask for a run), its balance the block's."""
+        p = p or self.p
+        try:
+            return p is not None and hasattr(self.s, "master_layer") and self.s.master_layer(p.pid) is not None
+        except Exception:  # noqa: BLE001 - the model cannot say now: the block's settings
+            return False
 
     def _wired(self, p=None) -> list[dict]:
         p = p or self.p
@@ -520,12 +561,12 @@ class CombineEditor(QObject):
 
     def _post_tuned(self, pid: int):
         """The combination's settings changed in Post (its master layer: one source with this editor): a draft of the
-        block goes, said in the status line, and the page shows the block's settings."""
-        if self.drafts.pop(pid, None) is None:
-            return
-        self.tv.toasted.emit(_("Draft dropped: changed in Post"))
-        self.historyChanged.emit()
+        block goes, said in the status line, and the page shows the settings as they are now."""
+        if self.drafts.pop(pid, None) is not None:
+            self.tv.toasted.emit(_("Draft dropped: changed in Post"))
+            self.historyChanged.emit()
         if self.p is not None and self.p.pid == pid and self._page_ok():
+            self.applied_cache = None
             self._changed()
 
     def has_result(self, p=None) -> bool:
@@ -667,7 +708,13 @@ class CombineEditor(QObject):
         """The page's title: the workflow's name, its recipe's title in it the block's own (graphcore combos.retitled:
         a block whose recipe became H-O is never titled S-H-O), the recipe's title before a name the user gave."""
         from ..graphcore import combos
+        from .graphnode import node_title
         q = q or self.p
+        if q is not None and self.p is not None and q.pid == self.p.pid and self.node is not None:
+            try:                                       # the block's name as the path bar and the graph say it
+                return node_title(self.s, self.node)
+            except Exception:  # noqa: BLE001 - the block's map not readable now: the name below
+                pass
         title = self.title(q)
         name = combos.retitled(getattr(q, "name", "") or "", combos.short((self._spec(q) or {}).get("name") or title))
         if not name:
@@ -749,7 +796,35 @@ class CombineEditor(QObject):
             return None
         ch = self.draft_change(pid)
         q = self.s.view(pid)
-        return (self.heading(q) if q is not None else self.title(), [ch["what"]] if ch else [], "")
+        return (self.heading(q) if q is not None else self.title(), [ch["what"]] if ch else [],
+                self.cost_text(pid))
+
+    def cost_text(self, pid: int | None = None) -> str:
+        """What Apply computes again, as the model says it ("Computes again … about N min"); for a master layer's hues
+        and intensities alone, nothing (they are the layer's)."""
+        q = self._view_of(pid)
+        ch = self.draft_change(q.pid) if q is not None else None
+        if ch is None:
+            return ""
+        key = (q.pid, repr(sorted((self.drafts[q.pid].vals or {}).items(), key=str)))
+        if self._cost is not None and self._cost[0] == key:
+            return self._cost[1]
+        vals = dict(ch["values"])
+        if self.master(q):
+            from .postfusion import split_change
+            _layer, vals = split_change(self._spec(q) or {}, vals)
+        text = _("Post's layer only: nothing is computed again")
+        if vals:
+            try:
+                if hasattr(self.s, "change_cost"):
+                    c = self.s.change_cost(dict(ch, values=vals), [q])
+                    text = c.text() if c.lost else _("Nothing up to date is computed again")
+                else:
+                    text = ""
+            except Exception:  # noqa: BLE001 - the cost is a hint: Apply works without it
+                text = ""
+        self._cost = (key, text)
+        return text
 
     def draft_apply(self) -> bool:
         pid = self._pending_pid()
@@ -847,11 +922,109 @@ class CombineEditor(QObject):
             tv.center.addWidget(self.page, 1)
             self.page.show()
         self._side(False)
+        for x in self._sides():                         # TuneView's panel stays away while the page shows
+            x.installEventFilter(self)
+        win = tv.window()
+        if win is not self._win:
+            self._win = win
+            win.installEventFilter(self)
+        if self.dock is not None:
+            self.dock.set_state(self._side_state())
         tv.view, tv.views = self.gv, []
         tv._center_sig = ("combination", p.pid)
         self._sync()
         self._present()
         self.preview()
+
+    # ------------------------------------------------------------ the settings panel at the right (the Gradient's)
+    def _sides(self) -> list:
+        tv = self.tv
+        d = getattr(tv, "dock", None)
+        out = [getattr(tv, "panel", None)] + ([d.strip, d.arrow] if d is not None else [])
+        return [x for x in out if x is not None]
+
+    def _side_state(self) -> str:
+        """The settings panel's state: the user's choice when he made one, else by the window's width (kept open on a
+        large window, automatic on a small one), as the Gradient's."""
+        from .gradientedit import SMALL_W
+        try:
+            from . import prefs
+            st = prefs.get("combine_settings_side")
+        except Exception:  # noqa: BLE001 - no preference readable: by the width
+            st = None
+        if st in ("docked", "icons", "auto"):
+            return st
+        try:
+            return "docked" if self.tv.window().width() >= SMALL_W else "auto"
+        except RuntimeError:
+            return "docked"
+
+    def _side_chosen(self, st: str):
+        try:
+            from . import prefs
+            prefs.set("combine_settings_side", st)
+        except Exception:  # noqa: BLE001 - not kept: the next time by the width again
+            pass
+
+    def eventFilter(self, obj, e):                                   # noqa: N802 - Qt's name
+        t = e.type()
+        if t == QEvent.Show and obj in self._sides() and self.page_shown():
+            QTimer.singleShot(0, lambda: self._side(False) if self.page_shown() else None)
+        elif t == QEvent.Resize and obj is self._win and self.page_shown():
+            if self.dock is not None:
+                want = self._side_state()          # no choice of the user yet: the window's width chooses
+                if want != self.dock.state:
+                    self.dock.set_state(want)
+            QTimer.singleShot(0, lambda: self._side(False) if self.page_shown() else None)
+        return False
+
+    def _fill_drawer(self):
+        """The panel's groups: the draft's Undo and Redo; the measurements (each filter's gain and why, its balanced
+        sky noise, where the gains come from); the display (the stretch column, fixed under them)."""
+        if self.drawer is None or self.p is None:
+            return
+        from .icons import icon_only
+        from .widgets import clear
+        b = self._bal_now() or {}
+        d = self._draft()
+        sig = (self.p.pid, repr(sorted((b.get("notes") or {}).items())), repr(sorted((b.get("noise") or {}).items())),
+               b.get("from"), bool(d and d.undo), bool(d and d.redo), self._balance_used())
+        if sig == getattr(self, "_drawer_sig", None):
+            return
+        self._drawer_sig = sig
+        dv = self.drawer.rows
+        clear(dv)
+
+        def title(text):
+            t = label(_(text), "h2")
+            t.setContentsMargins(0, 8, 0, 2)
+            dv.addWidget(t)
+        title("Draft")
+        row = QHBoxLayout()
+        for key, tip, fn, on in (("undo", "Undo the draft's last step (Ctrl+Z)", self.undo, bool(d and d.undo)),
+                                 ("redo", "Redo the draft's step (Ctrl+Y)", self.redo, bool(d and d.redo))):
+            bt = icon_only(QPushButton(), key, _(tip), 16)
+            bt.setEnabled(on)
+            bt.clicked.connect(lambda _c=False, f=fn: f())
+            row.addWidget(bt)
+            self._ui[key] = bt
+        row.addStretch(1)
+        dv.addLayout(row)
+        title("Measurements")
+        dv.addWidget(label(_("Balance: {how}").format(how=_(BALANCE_NAME.get(self._balance_used(), ""))), "small"))
+        notes, noise = b.get("notes") or {}, b.get("noise") or {}
+        for role in self.roles():
+            g = notes.get(role)
+            text = f"{_port(role)}  ·  " + (f"×{number(g[0], 2)} · {_(REASONS.get(g[1], g[1]))}" if g else
+                                             _(REASONS["reference"]))
+            if role in noise:
+                text += "  ·  " + _("sky noise {v}").format(v=f"{noise[role]:.3g}")
+            dv.addWidget(label(text, "small"))
+        src = {"run": "The gains of the run (its result)",
+               "measured": "The gains measured on the whole image as the run measures them",
+               "copy": "An estimate on the preview's reduced copy"}.get(b.get("from"))
+        if src:
+            dv.addWidget(label(_(src), "small", wrap=True))
 
     def _leave_page(self):
         if not self._page_ok() or self.tv.center.indexOf(self.page) < 0:
@@ -904,12 +1077,12 @@ class CombineEditor(QObject):
         cv.setContentsMargins(0, 0, 8, 0)
         cv.setSpacing(8)
         bar = DraftBar(narrow=True)
+        bar.what.setMinimumHeight(2 * bar.what.fontMetrics().height() + 4)
         bar.apply.connect(lambda: self.apply())
         bar.variant.connect(lambda: self.try_variant())
         bar.reset.connect(lambda: self.reset())
         u["bar"], u["state"] = bar, bar.what
         u["apply"], u["variant"], u["reset"] = bar.b_apply, bar.b_variant, bar.b_reset
-        cv.addWidget(bar)
         if self.stars_mode():
             cv.addWidget(label(_("Stars"), "h2"))
             for key in STARS:
@@ -941,11 +1114,18 @@ class CombineEditor(QObject):
                     u["balance_" + key] = c
         cv.addStretch(1)
         scroll.setWidget(col)
-        body.addWidget(scroll)
+        left = QWidget()                               # the settings, then the draft bar at the column's bottom
+        lv = QVBoxLayout(left)
+        lv.setContentsMargins(0, 0, 0, 0)
+        lv.setSpacing(8)
+        lv.addWidget(scroll, 1)
+        bar.setFixedWidth(PANEL_W - 8)
+        lv.addWidget(bar)
+        body.addWidget(left)
         box = QWidget()
         bl = QVBoxLayout(box)
         bl.setContentsMargins(0, 0, 0, 0)
-        gv = ImageView(post=False, compare=True, histogram=False)
+        gv = ImageView(post=False, compare=True)
         gv.default_dir = lambda: str(getattr(self.s, "root", None) or "")
         gv.toasted.connect(self.tv.toasted.emit)
         gv.layout().itemAt(0).widget().hide()          # its own toolbar: the page's comparison in its title row
@@ -966,8 +1146,23 @@ class CombineEditor(QObject):
         bl.addWidget(cover)
         u["cover"], u["cover_head"], u["cover_text"], u["cover_runs"] = cover, head, text, runs
         body.addWidget(box, 1)
-        v.addLayout(body, 1)
+        bw = QWidget()
+        bw.setLayout(body)
+        v.addWidget(bw, 1)
         self.page, self.gv = page, gv
+        from .gradientedit import SettingsPanel
+        from .layout import Dock
+        self.drawer = SettingsPanel(self)
+        self.dock = Dock(bw, self.drawer, lambda: body.addWidget(self.drawer), lambda: body.removeWidget(self.drawer),
+                         title=_("Settings"), role="adjust")
+        body.insertWidget(body.indexOf(box) + 1, self.dock.strip)
+        body.addWidget(self.drawer)
+        self.dock.set_state(self._side_state())
+        self.dock.chosen.connect(self._side_chosen)
+        gv.panel_box.setParent(None)                   # the stretch column: in the panel, never beside the image
+        self.drawer.fixed.addWidget(label(_("Display"), "h2"))
+        self.drawer.fixed.addWidget(gv.panel_box)
+        gv.show_histogram(True)
 
     def _title_row(self) -> QWidget:
         u = self._ui
@@ -1140,27 +1335,14 @@ class CombineEditor(QObject):
         a, why = notes[role]
         reason = _(REASONS.get(why, why))
         about = _(REASON_TIPS.get(why, ""))
-        run = self._run_gain(role)
-        st = self.s.state(self.p, self._stage()) if self._stage() else ""
-        # the run's value only for the settings it was computed with (the block up to date, the balance not in the
-        # draft); else the reduced copy's, an estimate, said so (the reviewer read ×7.40 before the run, ×7.35 after)
-        if st == "done" and "balance" not in (self._draft().vals if self._draft() else {}) and run is not None:
-            tip = about
-            if abs(run - a) > GAIN_APART * max(run, 1e-12):
-                tip += "\n" + _("The run measured ×{run} on the whole image; the preview ×{copy} on its reduced "
-                                "copy").format(run=number(run, 2), copy=number(a, 2))
-            return f"×{number(run, 2)} · {reason}", tip
+        got = (self._bal_now() or {}).get("from")
+        if got == "run":                                 # the run's own gains: Post and the run show the same
+            return f"×{number(a, 2)} · {reason}", about
+        if got == "measured":                            # measured on the whole inputs as the run does, once
+            return f"×{number(a, 2)} · {reason}", about + "\n" + _(
+                "Measured on the whole image as the run measures it (the run's own result does not hold it)")
         tip = about + "\n" + _("An estimate on the preview's reduced copy: the run measures it on the whole image")
         return _("≈ ×{gain}, from the preview · {why}").format(gain=number(a, 2), why=reason), tip
-
-    def _run_gain(self, role: str) -> float | None:
-        """The gain the applied run gave a filter (its scale in drz_meta.json, the weight taken out)."""
-        ap = self.applied_img if isinstance(self.applied_img, dict) else None
-        if ap is None or role not in (ap.get("tops") or {}):
-            return None
-        t = float(ap["tops"][role])
-        w = float((self.applied().get("weights") or {}).get(role, 1.0))
-        return 1.0 / (t * w) if t > 0 and w > 0 else None
 
     @property
     def applied_img(self):
@@ -1178,16 +1360,19 @@ class CombineEditor(QObject):
             u = self._ui
             draft = self.has_draft()
             ch = self.draft_change() if draft else None
-            u["bar"].show_draft([self._status()] + ([t for _k, t in self.changes()] if ch else []))
+            u["bar"].show_draft([self._status()] + ([t for _k, t in self.changes()] if ch else []),
+                                self.cost_text() if draft else "")
             u["state"].setStyleSheet(f"color: {WARN};" if draft else "color: #8b95a5;")
             why = _("No draft: change a setting first")
             for k in ("reset", "variant", "apply"):
                 u[k].setEnabled(draft)
-            u["apply"].setToolTip(_("The draft becomes the block's settings (Ctrl+Z takes it back)") if draft else why)
+            u["apply"].setToolTip((_("The draft becomes the combination's settings (Ctrl+Z takes it back)") +
+                                   ("\n" + self.cost_text() if self.cost_text() else "")) if draft else why)
             u["variant"].setToolTip(_("The draft on a variant of the workflow: what is computed stays as it is, the "
                                       "variant is computed by Run") if draft else why)
             u["reset"].setToolTip(_("Back to the applied settings: the draft goes") if draft else why)
             u["title"].setText(self.heading())
+            self._fill_drawer()
             stale = self._stage() and self.s.state(self.p, self._stage()) == "stale" and not draft
             u["tag"].setText(_("Previous settings") if stale else "")
             for mode, _t, _tip in COMPARE:
@@ -1309,10 +1494,14 @@ class CombineEditor(QObject):
     def _request(self) -> dict:
         st, spec = self._stage(), self._spec()
         vals = self.values()
+        ap = self.applied()
+        from ..stages.combine import Combination
         return {"gen": self.gen, "pid": self.p.pid, "stage": st, "spec": copy.deepcopy(spec),
                 "stored": self._stored(), "values": vals, "balance": self._balance_used(),
-                "off": set(self.off), "solo": self.solo, "sig": self._sig(), "project": self.s.p,
-                "render": self._render_settings(), "result": self._result_key()}
+                "applied": ap, "applied_balance": Combination.balance_of(
+                    type("P", (), {"balance": ap.get("balance", "sky")})(), self._wired()),
+                "master": self.master(), "off": set(self.off), "solo": self.solo, "sig": self._sig(),
+                "project": self.s.p, "render": self._render_settings(), "result": self._result_key()}
 
     def _render_settings(self) -> dict | None:
         """The settings of the workflow's layer of Post (``layer_settings``): the preview as Post shows that layer. A
@@ -1340,7 +1529,9 @@ class CombineEditor(QObject):
         st = self._stage()
         info = self.s.state_info(self.p, st) if hasattr(self.s, "state_info") and st else None
         return (self.p.pid, getattr(info, "key", None), getattr(info, "previous_key", None),
-                self.s.state(self.p, st) if st else "", repr(self._render_settings()))
+                self.s.state(self.p, st) if st else "", repr(self._render_settings()),
+                repr(sorted(self.applied().items(), key=str)) if self.master() else "",
+                tuple(sorted(self.off)), self.solo if self.master() else None)
 
     def _start(self, req: dict):
         self.busy = True
@@ -1348,6 +1539,7 @@ class CombineEditor(QObject):
         small = self.small if self.small is not None and self.small.get("sig") == req["sig"] else None
         bal = self.bal.get((req["pid"], req["sig"], req["balance"])) if small is not None else None
         want_applied = self.applied_cache is None or self.applied_cache.get("key") != req["result"]
+        result_dir = _result_dir_for(req["project"], req["pid"], req["stage"])
 
         def work():
             out = {"req": req}
@@ -1360,7 +1552,7 @@ class CombineEditor(QObject):
                     out["small"] = sm
                 b = bal
                 if b is None:
-                    b = balance(sm, req["stage"], req["spec"], req["balance"])
+                    b = run_balance(sm, req["stage"], req["spec"], req["balance"], result_dir)
                     out["bal"] = b
                 cls = stage_class(req["stage"])
                 p = params_of(cls, req["spec"], req["stored"], req["values"])
@@ -1369,7 +1561,19 @@ class CombineEditor(QObject):
                 out["ms"] = 1000 * (time.perf_counter() - t0)
             except Exception as e:  # noqa: BLE001 - said over the image, the editor goes on
                 out["error"] = str(e)
-            if want_applied:          # the block's own result: shown even when its inputs cannot be read now
+            if want_applied and req.get("master") and sm is not None and "result" in out:
+                # a master layer: its applied picture is the layer's, made as the draft's (the run's balance, the
+                # layer's hues and intensities): the same picture at the same settings
+                try:
+                    ab = b if req["balance"] == req["applied_balance"] else run_balance(
+                        sm, req["stage"], req["spec"], req["applied_balance"], result_dir)
+                    pa = params_of(cls, req["spec"], req["stored"], req["applied"])
+                    out["applied"] = {"pid": req["pid"], "key": req["result"], "tops": {},
+                                      "img": output_render(mixed(sm, ab, req["stage"], req["spec"], pa, req["off"],
+                                                                 req["solo"]), req["render"])}
+                except Exception:  # noqa: BLE001 - not made: Applied greyed
+                    pass
+            elif want_applied:        # the block's own result: shown even when its inputs cannot be read now
                 try:
                     out["applied"] = {"pid": req["pid"], "key": req["result"],
                                       **(_applied_for(req["project"], req["pid"], req["stage"],
@@ -1422,11 +1626,15 @@ class CombineEditor(QObject):
             return
         pid = self.p.pid
         drafting = self.has_draft() or self.off or self.solo is not None
-        pv = ViewImage(self.result, _("Draft preview") if self.has_draft() else _("Preview"), key=self.result_key,
+        tag = (_("Draft preview · reduced copy") if self.has_draft() else _("Preview · reduced copy")) + \
+            (f" · {self.result_ms:.0f} ms" if self.result_ms is not None else "")
+        self.preview_tag = tag
+        pv = ViewImage(self.result, tag, key=self.result_key,
                        stretched=True, units="norm", white=1.0, camera=False, neutral=False) \
             if self.result is not None else None
         ap = self.applied_img
-        av = ViewImage(ap["img"], _("Applied result") if self.s.state(self.p, self._stage()) == "done"
+        av = ViewImage(ap["img"], _("Applied settings · reduced copy") if self.master() else
+                       _("Applied result") if self.s.state(self.p, self._stage()) == "done"
                        else _("Previous settings"), key=("combination-applied", pid, ap["key"]), stretched=True,
                        units="norm", white=1.0, camera=False, neutral=False) \
             if ap is not None and ap.get("img") is not None else None
@@ -1456,6 +1664,19 @@ class CombineEditor(QObject):
         if self._t_edit is not None and isinstance(key, tuple) and key and key[0] == "combination-preview":
             self.timings.append(time.perf_counter() - self._t_edit)
             self._t_edit = None
+
+
+def _result_dir_for(project, pid: int, stage: str):
+    """The folder of the combination's result (the current one, else the one an Outdated block had), None without."""
+    from .. import api
+    for which in ("current", "previous"):
+        try:
+            out = api.stage_outputs(project, pid, stage, which=which)
+        except Exception:  # noqa: BLE001 - no result to read
+            out = None
+        if out is not None:
+            return out.dir
+    return None
 
 
 def _reduced_for(project, pid: int, stage: str, spec: dict) -> dict:

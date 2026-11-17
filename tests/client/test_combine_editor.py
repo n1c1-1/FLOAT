@@ -540,11 +540,14 @@ def test_on_m27_the_editor_applies_in_one_step_and_tries_a_variant(qapp, tmp_pat
         ed.apply()
         settle(w)
         assert len(s._undo) == n + 1 and not ed.has_draft()
-        assert s.stage_key(q, st) != key and s.state(q, st) in ("stale", "pending")
-        assert (s.p.workflow(q.pid).params.get(st) or {}).get("weights") == {"SII": 1.5}
+        # Post shows this S-H-O by its master layer: an intensity is the layer's (client/postfusion.py), the block's
+        # key and state as they were, nothing to run
+        assert s.stage_key(q, st) == key and s.state(q, st) == state
+        assert s.master_layer(q.pid)["tune"]["weights"]["SII"] == 1.5
+        assert (s.p.workflow(q.pid).params.get(st) or {}).get("weights") is None
         s.undo()
         settle(w)
-        assert s.stage_key(q, st) == key
+        assert s.stage_key(q, st) == key and "tune" not in s.master_layer(q.pid)
         # Try variant: a second S-H-O of the same filters, its own workflow, the original untouched
         q, ed = _open_combination(w)
         ins = [(i["pid"], i["role"], i.get("image")) for i in q.source["fusion"]["inputs"]]
@@ -640,7 +643,10 @@ def test_the_graph_panel_s_settings_of_a_combination_are_one_draft(qapp, tmp_pat
         assert len(s._undo) == n + 1
         f = s.p.workflow(q.pid)
         assert f.source["fusion"]["type"] == "sho"
-        assert (f.params.get("combine_sho") or {}).get("weights") == {"OIII": 0.5}
+        # an intensity of a combination Post shows by its master layer is the layer's (client/postfusion.py)
+        lay = s.master_layer(q.pid)
+        assert (lay["tune"]["weights"]["OIII"] if lay is not None else
+                (f.params.get("combine_sho") or {}).get("weights", {}).get("OIII")) == 0.5
         w._update_actions() if hasattr(w, "_update_actions") else None
         assert w.waiting_text() == "1 block waits for an input"      # S II to wire: said, never "all up to date"
         assert w.run_refusal(type("C", (), {"jobs": 0})()) == "1 block waits for an input"
