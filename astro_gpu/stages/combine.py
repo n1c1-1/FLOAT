@@ -572,10 +572,9 @@ def recipe_value(p, spec: dict, name: str):
     return float(v)
 
 
-def recipe_output(ctx, p, spec: dict, chans: dict[str, np.ndarray], noise: dict[str, float],
-                  valid: np.ndarray) -> np.ndarray:
-    """(3, H, W): a recipe's ``output`` (stages/recipes.py) on the balanced channels: a hue per channel
-    (``hue_palette``) or a matrix; mixed as they are, or composed as lightness and colour (``compose``)."""
+def output_matrix(p, spec: dict) -> tuple[tuple[str, ...], list[list[float]]]:
+    """(the channels, the matrix, rows R, G, B) of a recipe's ``output``: the hues' palette (``hue_palette``) or its
+    matrix, with the block's settings (``recipe_value``)."""
     o = spec["output"]
 
     def get(v):
@@ -584,11 +583,24 @@ def recipe_output(ctx, p, spec: dict, chans: dict[str, np.ndarray], noise: dict[
     if o["hues"] is not None:
         hues = tuple(float(get(h)) for h in o["hues"])
         try:
-            mat = hue_palette(hues)
+            return roles, hue_palette(hues)
         except ValueError as e:
             raise StageError(f"{e}: choose hues around the colour wheel") from None
-    else:
-        mat = [[float(get(x)) for x in row] for row in o["matrix"]]
+    return roles, [[float(get(x)) for x in row] for row in o["matrix"]]
+
+
+def recipe_output(ctx, p, spec: dict, chans: dict[str, np.ndarray], noise: dict[str, float],
+                  valid: np.ndarray) -> np.ndarray:
+    """(3, H, W): a recipe's ``output`` (stages/recipes.py) on the balanced channels: a hue per channel
+    (``hue_palette``) or a matrix (``output_matrix``); mixed as they are, or composed as lightness and colour
+    (``compose``)."""
+    o = spec["output"]
+
+    def get(v):
+        return recipe_value(p, spec, v[1:]) if isinstance(v, str) and v.startswith("$") else v
+    roles, mat = output_matrix(p, spec)
+    if o["hues"] is not None:
+        hues = tuple(float(get(h)) for h in o["hues"])
     if o["lightness"] is None:
         return mix(chans, roles, mat)
     smoothing, gain = get(o["smoothing"]), float(get(o["strength"]))
@@ -782,7 +794,8 @@ class Combination(Stage):
         if not valid_all.any():
             raise StageError("the channels do not overlap: no pixel where every one has data")
         tops = {r: 1.0 for r in chans}
-        skies = self.steps(ctx, spec, inputs, chans, valid_all, tops, self.balance_of(p, inputs))
+        how, notes, maps = self.balance_of(p, inputs), {}, {}
+        skies = self.steps(ctx, spec, inputs, chans, valid_all, tops, how, notes, maps)
         rgb = self.mix_balanced(ctx, p, spec, inputs, chans, skies, tops, valid_all)
         H, W = ref["shape"]
         ctx.save("drz_full.npy", rgb.astype(np.float32))
@@ -795,7 +808,12 @@ class Combination(Stage):
             if (ref["dir"] / "prep_simple.json").is_file() else {}
         ctx.save_json("drz_meta.json", {"scale": float(meta.get("drizzle_scale", 1.0)), "source": "fusion",
                                         "kind": spec["id"], "narrowband": spec["narrowband"], "width": W, "height": H,
-                                        "sky_neutral": True, "channels": {r: round(t, 4) for r, t in tops.items()}})
+                                        "sky_neutral": True, "channels": {r: round(t, 4) for r, t in tops.items()},
+                                        # each balanced channel as the linear map of the channels read (``steps``),
+                                        # before the weights: Post's combination layer mixes them again from it
+                                        "balance": {"how": how,
+                                                    "maps": {r: {"coef": c, "offset": o} for r, (c, o) in maps.items()},
+                                                    "gains": {r: [float(g), why] for r, (g, why) in notes.items()}}})
         # the reference row's plate solution: the combination is on its grid and crops nothing, so it is the same
         # solution; the files of its Astrometry stages are handed on as Align on does, the blocks after read them
         from .align_on import AlignOn
@@ -835,18 +853,33 @@ class Combination(Stage):
 
     def steps(self, ctx: Context, spec: dict, inputs: list[dict], chans: dict[str, np.ndarray], valid: np.ndarray,
               tops: dict[str, float], balance: str = BALANCES[0],
-              notes: dict | None = None) -> dict[str, tuple[float, float]]:
+              notes: dict | None = None, maps: dict | None = None) -> dict[str, tuple[float, float]]:
         """The recipe's steps on the channels, in place (``tops``: each channel's scale, 1 over the factor it was
         multiplied by). ``balance``: what an ``equalise`` step does (``BALANCES``). ``notes``, when given, receives
         each channel's gain and why ({role: (gain, "signal" | "noise" | "sky" | "match")}: the editor's line under a
-        filter). Returns the last neutralisation's {role: (level, noise)}."""
+        filter). ``maps``, when given, receives each balanced channel as a linear map of the channels read
+        ({role: ({channel: coefficient}, offset)}): every step is linear in the channels (a level taken off, a gain
+        and an offset, a channel minus a scaled other), so the balanced channels are these maps of the inputs (Post's
+        combination layer mixes them again, client/postfusion.py). Returns the last neutralisation's {role: (level,
+        noise)}."""
         notes = {} if notes is None else notes
+        maps = {} if maps is None else maps
+        maps.update({r: ({r: 1.0}, 0.0) for r in chans})
+
+        def affine(role, a, b=0.0):                   # chans[role] became a * chans[role] + b
+            c, o = maps[role]
+            maps[role] = ({k: a * v for k, v in c.items()}, a * o + b)
+
+        def off(levels):                              # each channel lost its level (``neutralise_sky``)
+            for r, (lv, _n) in levels.items():
+                affine(r, 1.0, -float(np.float32(lv)))
+            return levels
         skies: dict[str, tuple[float, float]] = {}
         first = True
         for step in spec["steps"]:
             op = step["op"]
             if op == "neutralise_sky":
-                skies = neutralise_sky(chans, valid)
+                skies = off(neutralise_sky(chans, valid))
                 if first:
                     ctx.log("sky removed (level, noise): " + ", ".join(f"{r} {a:.4g}, {b:.3g}" for r, (a, b) in skies.items()))
                 first = False
@@ -864,11 +897,12 @@ class Combination(Stage):
                         raise StageError(f"the {role} channel does not follow the {ref_role} one (a negative fit): "
                                          "check that they show the same field")
                     chans[role] = (chans[role] * np.float32(a) + np.float32(b)).astype(np.float32)
+                    affine(role, float(np.float32(a)), float(np.float32(b)))
                     tops[role] = 1.0 / a
                     notes[role] = (a, "match")
                     ctx.log(f"{role} matched to {ref_role} on its pixels between {low:.3g} and "
                             f"{high:.5g}: {a:.4g} x + {b:.3g} ({used} pixels)")
-                skies = neutralise_sky(chans, valid)               # the fits' offsets taken off: the sky at 0 again
+                skies = off(neutralise_sky(chans, valid))          # the fits' offsets taken off: the sky at 0 again
             elif op == "equalise":
                 # each channel brought to the reference's median and spread; the result keeps the reference's scale
                 ref_role = step["reference"]
@@ -876,7 +910,7 @@ class Combination(Stage):
                     # on the signal: the smaller of the gain that fits the channel's signal onto the reference's and
                     # of the one that makes their sky noises equal (the sky's noise, measured on the common sky by
                     # the neutralisation: ``sky_level``); no offset, the skies are at 0
-                    skies = skies or neutralise_sky(chans, valid)
+                    skies = skies or off(neutralise_sky(chans, valid))
                     noise_ref = skies[ref_role][1]
                     full = float(next(i for i in inputs if i["role"] == ref_role).get("full_scale") or 1.0)
                     for role in list(chans):
@@ -889,23 +923,25 @@ class Combination(Stage):
                                              "to fit and no sky noise to measure")
                         a = min(g for g in (by_signal, by_noise) if g is not None)
                         chans[role] = (chans[role] * np.float32(a)).astype(np.float32)
+                        affine(role, float(np.float32(a)))
                         tops[role] = 1.0 / a
                         notes[role] = (a, "signal" if by_signal is not None and a == by_signal else "noise")
                         ctx.log(f"{role} balanced on the signal of {ref_role}: x {a:.4g} ("
                                 + (f"its signal asks for {by_signal:.4g}" if by_signal is not None else
                                    "no signal to fit")
                                 + (f", its sky noise allows {by_noise:.4g})" if by_noise is not None else ")"))
-                    skies = neutralise_sky(chans, valid)
+                    skies = off(neutralise_sky(chans, valid))
                     continue
                 for role in list(chans):
                     if role == ref_role or (step["channels"] and role not in step["channels"]):
                         continue
                     a, b = equalise(chans[role], chans[ref_role], valid)
                     chans[role] = (chans[role] * np.float32(a) + np.float32(b)).astype(np.float32)
+                    affine(role, float(np.float32(a)), float(np.float32(b)))
                     tops[role] = 1.0 / a
                     notes[role] = (a, "sky")
                     ctx.log(f"{role} equalised to {ref_role} (its median and its spread): {a:.4g} x + {b:.3g}")
-                skies = neutralise_sky(chans, valid)               # the offsets taken off: the sky at 0 again
+                skies = off(neutralise_sky(chans, valid))          # the offsets taken off: the sky at 0 again
             elif op == "continuum_subtract":
                 line, cont = step["line"], step["continuum"]
                 full = {i["role"]: float(i.get("full_scale") or 1.0) for i in inputs}
@@ -921,9 +957,13 @@ class Combination(Stage):
                     raise StageError(f"the {line} channel's continuum scale is not above 0: check that {line} and "
                                      f"{cont} show the same field")
                 chans[line] = (chans[line] / np.float32(mu) - chans[cont]).astype(np.float32)
+                cl, ol = maps[line]
+                cc, oc = maps[cont]
+                k = 1.0 / float(np.float32(mu))
+                maps[line] = ({r: k * cl.get(r, 0.0) - cc.get(r, 0.0) for r in set(cl) | set(cc)}, k * ol - oc)
                 tops[line] *= mu
                 ctx.metric("continuum_scale", round(mu, 6))
-                skies = neutralise_sky(chans, valid)
+                skies = off(neutralise_sky(chans, valid))
             else:                                   # recipes.parse admits no other
                 raise StageError(f"unknown operation {op!r}")
         return skies

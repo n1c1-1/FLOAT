@@ -6,6 +6,7 @@ the folder's newer version told, applied only on demand; the two recipes added (
 from __future__ import annotations
 
 import hashlib
+import json
 import shutil
 
 import numpy as np
@@ -142,7 +143,11 @@ def test_the_four_types_give_their_images_with_or_without_the_recipe_copied_in(t
     out = _run(tmp_path, cls, cls.Params(**kw), case)
     got = (_sha(out / "drz_full.npy"), _sha(out / "drz_meta.json"))
     if full is not None:
-        assert got == (full, meta)
+        # the metadata as it was, with the balance's linear maps added since (stages/combine.Combination.steps)
+        before = json.loads((out / "drz_meta.json").read_text(encoding="utf-8"))
+        assert set(before.pop("balance")) == {"how", "maps", "gains"}
+        (tmp_path / "plain.json").write_text(json.dumps(before, indent=1), encoding="utf-8")    # as the run writes
+        assert (got[0], _sha(tmp_path / "plain.json")) == (full, meta)
     if cls.saturation_ports:
         assert _sha(out / "saturation.npy") == "59d9a35795cb2bc0"
     copied = _run(tmp_path, cls, cls.Params(**kw, recipe=R.available()[0][cls.kind]), case + "_copy")
