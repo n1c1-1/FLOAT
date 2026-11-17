@@ -556,6 +556,10 @@ class KindDrop(QObject):
         return False
 
 
+#: a block of the combination family with nothing wired into it: why its Adjust is greyed
+ADJUST_UNWIRED = "Wire its inputs first: Adjust shows them combined"
+
+
 class Panel(QWidget):
     changed = Signal()                  # a setting changed (the window rebuilds the graph)
     openTune = Signal()                 # "Browse frames" and the like
@@ -754,6 +758,11 @@ class Panel(QWidget):
             return False
         if node.key == "session":
             return True
+        if node.key == "composition" and not node.paths:  # a Combine layers placed on its own: alive while on the graph
+            try:
+                return self.s.block_map.block_of(node) is not None
+            except AttributeError:
+                return False
         alive = {q.pid for q in self.s.paths}
         return bool(node.paths) and all(q.pid in alive for q in node.paths)
 
@@ -1323,6 +1332,9 @@ class Panel(QWidget):
             b.setObjectName("adjust")
             b.setToolTip(_("Opens the combination in Inspect: the palette, each filter's hue and intensity, the "
                            "balance, tried as a draft on the image"))
+            if not wired:                                 # nothing wired into it yet: greyed, the reason on hover
+                b.setEnabled(False)
+                b.setToolTip(_(ADJUST_UNWIRED))
             b.clicked.connect(self.openTune.emit)
             self.bv.addWidget(b, 0, Qt.AlignLeft)
         self.bv.addSpacing(6)
@@ -2184,6 +2196,33 @@ class Panel(QWidget):
         with self.s.batch():
             change()
 
+    def layers_summary(self, p, lay: dict):
+        """What the Combine layers' editor sets, in one look (as a combination's ``combination_summary``): how the
+        stars go back, the stretch, the settings moved from their default; and Adjust, which opens the block in
+        Inspect (greyed until its inputs are wired, the reason on hover)."""
+        from ..render.sliders import BY_KEY as SLIDERS
+        from .post3 import BLENDS, offset_text
+        from .postengine import STRETCH_NAMES, layer_stretch
+        self.bv.addWidget(self.group_title(_("Settings")))
+        self.bv.addWidget(label(_("Star blend mode: {how}").format(how=_(lay.get("blend") or BLENDS[0])), "small"))
+        self.bv.addWidget(label(_("Stretch: {how}").format(how=_(STRETCH_NAMES[layer_stretch(lay)])), "small"))
+        moved = [f"{_(SLIDERS[k].name)} {offset_text(v)}" for k, v in (lay.get("sliders") or {}).items()
+                 if k in SLIDERS and abs(float(v) - 2.0) >= 0.02]
+        self.bv.addWidget(label(_("Moved: {what}").format(what=", ".join(moved)) if moved else
+                                _("Every setting at its default"), "small", wrap=True))
+        if not self.tune:
+            b = QPushButton(_("Adjust"))
+            b.setObjectName("adjust")
+            if p is None:                                 # nothing wired into it yet: greyed, as a combination's
+                b.setEnabled(False)
+                b.setToolTip(_(ADJUST_UNWIRED))
+            else:
+                b.setToolTip(_("Opens Combine layers in Inspect: how the stars go back, the stretch and each setting, "
+                               "tried as a draft on the image"))
+            b.clicked.connect(self.openTune.emit)
+            self.bv.addWidget(b, 0, Qt.AlignLeft)
+        self.bv.addSpacing(6)
+
     def composition(self, node):
         """A Stars and background block: its layer of Post, recombining the Stars block's two images. How the stars go
         back and the sliders, the same as in Post; Open in Post. A workflow whose Post was never opened gets its layer
@@ -2212,9 +2251,21 @@ class Panel(QWidget):
         x.clicked.connect(self.removeTool.emit)
         top.addWidget(x)
         self.hv.addLayout(top)
-        self.hv.addWidget(label(self.shown_name(p), "small"))
+        if p is not None:
+            self.hv.addWidget(label(self.shown_name(p), "small"))
         from .graphnode import BY_KEY
         self.bv.addWidget(label(_(BY_KEY["composition"]["what"]), "small", wrap=True))
+        if p is None:                                     # as a combination placed on its own: what it waits for, its
+            if node.waits:                                # inputs not wired, its settings and Adjust (greyed, why)
+                self.bv.addWidget(label(_("Waiting: {why}").format(why=node.waits.rstrip(".")), "warn", wrap=True))
+            self.bv.addWidget(self.group_title(_("Inputs")))
+            self.bv.addLayout(self.wired_row(_("Starless image"), None, _("The workflow whose starless image (or whose "
+                                                                          "Output, for a combination) this block "
+                                                                          "combines")))
+            self.bv.addLayout(self.wired_row(_("Stars"), None, _("The workflow whose stars this block puts back")))
+            self.layers_summary(None, {})
+            self.bv.addStretch(1)
+            return
         if st != "done":
             self.bv.addWidget(label(_("To compute: Stars/background"),
                                     "warn", wrap=True))
@@ -2233,6 +2284,7 @@ class Panel(QWidget):
             _("The workflow whose stars this block puts back (its Stars/background block's stars alone, or the Output "
               "of a combination of stars)"),
             None if stars_pid is None or is_fusion_view(s.view(stars_pid)) else "stars"))
+        self.layers_summary(p, lay)
         sliders = dict(lay.get("sliders") or {})
         drafted = {}                                      # the block's draft: its values shown at once
         for c in self._draft_entries():

@@ -102,7 +102,9 @@ def _filters(doc, rgb):
     _ok(doc, "wire", src=j, src_port="image", dst=cc, dst_port="Background")
     _ok(doc, "wire", src=stars[0], src_port=stars[1], dst=cc, dst_port="Stars")
     _unpost(doc, rows)
-    _ok(doc, "send_to_post", block=cc)
+    post = next(k for k, x in doc.project.blocks.items() if x.kind == "post")
+    if not any(w.src[0] == cc and w.dst[0] == post for w in doc.project.wires):   # (placed on its own: in Post already)
+        _ok(doc, "send_to_post", block=cc)
 
 
 def filters_complete(doc):

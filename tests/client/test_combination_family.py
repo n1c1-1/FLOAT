@@ -258,3 +258,39 @@ def test_real_each_setting_of_a_layer_is_available_by_one_rule_in_post_and_in_it
 
 
 # ---------------------------------------------------------------------------------------------- one source in Post
+
+
+@pytest.mark.parametrize("kind", FAMILY)
+def test_real_a_block_placed_on_its_own_is_wired_to_post_and_its_panel_says_what_it_waits_for(qapp, tmp_path, kind):
+    """A Combine layers placed from the palette on its own came with no wire to Post and an empty panel, where a
+    combination came wired to Post with its inputs to wire: both now as the combination, its panel saying what it waits
+    for, its inputs not wired, its settings in one look and Adjust greyed with its reason."""
+    from PySide6.QtWidgets import QLabel, QPushButton
+
+    from astro_gpu.client.graphview.gestures import Gestures
+    from astro_gpu.client.panel import ADJUST_UNWIRED
+    w = _whole(tmp_path, M27)
+    try:
+        w.set_mode(0)
+        pump(0.5)
+        page = w.graph
+        b = page.bridge
+        before = set(b.graph.blocks)
+        pl = next(x for x in b.places(kind=kind) if x.lit and x.op[1].get("at", {}).get("after") is None)
+        Gestures(page).drag_palette(kind, pl)
+        pump(0.8)
+        new = [k for k in b.graph.blocks if k not in before and b.graph.blocks[k].kind == kind]
+        assert len(new) == 1
+        post = next(k for k, x in b.graph.blocks.items() if x.kind == "post")
+        assert any(x.src[0] == new[0] and x.dst[0] == post for x in b.graph.wires)        # a layer of Post
+        pn = page.panel
+        texts = [x.text() for x in pn.findChildren(QLabel) if x.isVisibleTo(pn)]
+        assert any(t.startswith("Waiting:") and "to wire" in t for t in texts), texts
+        assert texts.count("not wired") >= 2, texts
+        adj = next(x for x in pn.findChildren(QPushButton) if x.objectName() == "adjust")
+        assert not adj.isEnabled() and adj.toolTip() == ADJUST_UNWIRED
+    finally:
+        w.close()
+
+
+# ---------------------------------------------------------------------------------------------- one rule, every place

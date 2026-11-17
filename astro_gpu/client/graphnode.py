@@ -700,7 +700,7 @@ class BlockMap:
                 taken.add(id(lay))
             pid = lay.get("pid") if lay is not None else next(iter(sorted(bw)), None)
             q = self._paths.get(pid)
-            missing = [w for w, a in (("Starless", back), ("Stars", star)) if a is None]
+            missing = [w for w, a in (("Starless image", back), ("Stars", star)) if a is None]   # the rows' words
             n = Node("composition", [q] if q is not None else [], lid=lay.get("id") if lay is not None else None,
                      waits=_("{names} to wire").format(names=", ".join(_(x) for x in missing)) if missing else "")
             self._nodes[bid] = n

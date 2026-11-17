@@ -59,6 +59,11 @@ def _add_join(q, kind, after, type=None):  # noqa: A002
         j = new_block(q, kind)
     name = free_name(q, name_of(combos.title(j) if kind == "combine" else LABEL[kind]))
     q.rows.append(Row(new_id(q, "r"), name, [j.id], legacy=fusion_legacy() if kind == "combine" else None))
+    post = Index(q).post
+    if after is None and kind == "combine_layers" and post is not None:
+        # placed on its own, its inputs to wire: its image is a layer of Post from the start, as a combination's is
+        # (one family, one way: the block is wired to Post, the layer comes with its inputs)
+        q.wires.append(Wire(new_id(q, "w"), [j.id, "image"], [post, POST_PORT]))
     if after is not None:
         a = _blk(q, after, ("stars", "synth"))
         syn = None

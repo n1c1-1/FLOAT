@@ -174,15 +174,15 @@ class SidesHost:
 
     def layer_node(self, block):
         """The node of a Combine layers block: ``composition`` over the workflow whose images it combines, with its
-        layer of Post (``lid``) when the BlockMap gives one (SWAP_NOTES: the graph does not tell it yet). None when no
-        workflow feeds it yet."""
+        layer of Post (``lid``) when the BlockMap gives one (SWAP_NOTES: the graph does not tell it yet). No workflow
+        feeds it yet: its node without one (placed on its own: the panel says what it waits for, as a combination's)."""
         bm = self._block_map()
         n = bm.node(block) if bm is not None else None
         if n is not None and n.paths:
             return n
         p = self._layer_source(block)
         if p is None:
-            return None
+            return n
         from ..graphnode import Node
         return Node("composition", [p], lid=getattr(n, "lid", None))
 

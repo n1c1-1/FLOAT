@@ -336,5 +336,12 @@
   "Drop on a row": "Déposez sur une ligne",
   "Drop your files on their zone, or use Add files.": "Déposez vos fichiers sur leur zone, ou utilisez Ajouter fichiers.",
   "Drop the files of this kind here, or click to choose them": "Déposez ici les fichiers de ce type, ou cliquez pour les choisir",
-  "Drop files here": "Déposez les fichiers ici"
+  "Drop files here": "Déposez les fichiers ici",
+  "Star blend mode: {how}": "Mode de fusion des étoiles : {how}",
+  "Stretch: {how}": "Étirement : {how}",
+  "Moved: {what}": "Modifiés : {what}",
+  "Every setting at its default": "Tous les réglages à leur valeur par défaut",
+  "Wire its inputs first: Adjust shows them combined": "Reliez d'abord ses entrées : Ajuster les montre combinées",
+  "Opens Combine layers in Inspect: how the stars go back, the stretch and each setting, tried as a draft on the image": "Ouvre Combiner calques dans Inspection : comment les étoiles reviennent, l'étirement et chaque réglage, essayés en brouillon sur l'image",
+  "The workflow whose stars this block puts back": "Le workflow dont ce bloc remet les étoiles"
 }
