@@ -760,10 +760,12 @@ def test_the_layer_rules_normalize_and_the_composition_is_saved():
     assert nxt > max(x["id"] for x in back)                                    # new ids do not clash with the loaded ones
     # a damaged composition is made safe: unknown filters and vanished workflows go, numbers come back in range
     junk = [{"kind": "filter", "filter": "nope"}, {"kind": "workflow", "pid": 77}, {"kind": "workflow", "pid": 1,
-            "name": "X", "opacity": 900, "mode": "Weird", "sliders": {"sky": 99}, "mask": {"parts": [{"src": "zzz"}]}},
-            "text", None]
+            "name": "X", "opacity": 900, "mode": "Weird", "sliders": {"sky": 99, "saturation": 5.5, "contrast": 5.5},
+            "mask": {"parts": [{"src": "zzz"}]}}, "text", None]
     got = postengine.load_layers(junk, {1})
     assert len(got) == 1 and got[0]["opacity"] == 100 and got[0]["mode"] == "Normal" and got[0]["sliders"]["sky"] == 4
+    # each slider in its own range: Saturation goes on to 6 (render/sliders.top), the others stop at 4
+    assert got[0]["sliders"]["saturation"] == 5.5 and got[0]["sliders"]["contrast"] == 4
     assert got[0]["mask"]["parts"] == []
 
 

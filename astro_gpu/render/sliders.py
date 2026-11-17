@@ -61,6 +61,17 @@ class Slider:
     #: what the layer needs for this slider: "" | "stars" | "denoise"
     needs: str = ""
 
+    @property
+    def hi(self) -> float:
+        """The slider's last position: 4, or further for a table that goes on (Saturation, to 6)."""
+        return float(len(next(iter(self.table.values()))) - 1)
+
+
+def top(key: str) -> float:
+    """The last position of a layer's slider (``Slider.hi``; 4 for a key of no table: the Arcsinh's Strength)."""
+    sl = BY_KEY.get(key)
+    return sl.hi if sl is not None else HI
+
 
 NEBULA, STARS = "Nebula and background", "Stars"
 SLIDERS: tuple[Slider, ...] = (
@@ -68,7 +79,10 @@ SLIDERS: tuple[Slider, ...] = (
     Slider("contrast", "Contrast", NEBULA, ("softer", "stronger"), {"contrast": (-0.35, -0.18, 0.0, 0.25, 0.5)}),
     # the faint tones above the sky (render/simple.faint_tones): a step from the base, 0 by default
     Slider("faint", "Faint tones", NEBULA, ("darker", "brighter"), {"faint": (-0.8, -0.4, 0.0, 0.8, 1.6)}),
-    Slider("saturation", "Saturation", NEBULA, ("paler", "more vivid"), {"saturation": (0.6, 0.9, 1.2, 1.5, 1.85)}),
+    # its top goes on to +4 (positions 5 and 6, the last step's 0.35 again: the testers' look needed a Saturation filter
+    # on top of +2); positions 0 to 4 as they were
+    Slider("saturation", "Saturation", NEBULA, ("paler", "more vivid"),
+           {"saturation": (0.6, 0.9, 1.2, 1.5, 1.85, 2.2, 2.55)}),
     # how much of the stretch keeps the colours (render/simple.SimpleRenderEngine.tone)
     Slider("colours", "Colours", NEBULA, ("faded", "true"), {"keep_colours": (0.0, 0.25, 0.5, 0.75, 1.0)}),
     # the measured H-alpha emission (render/simple.emission): taken out below 2, added above
@@ -147,8 +161,10 @@ def _bounds(model, name: str) -> tuple[float, float]:
 
 def value_at(name: str, table: tuple[float, ...], base: float, pos: float) -> float:
     """A setting at a slider position: the base at 2, the table's step added or its ratio applied elsewhere, linear
-    between integer positions. A ratio on a base of 0 would freeze the slider: the step is added instead."""
-    pos = min(max(float(pos), LO), HI)
+    between integer positions. A ratio on a base of 0 would freeze the slider: the step is added instead. The last
+    position is the table's (4, or further: ``Slider.hi``)."""
+    last = len(table) - 1
+    pos = min(max(float(pos), LO), float(last))
 
     def at(i: int) -> float:
         if i == 2:
@@ -156,7 +172,7 @@ def value_at(name: str, table: tuple[float, ...], base: float, pos: float) -> fl
         if name in ADDITIVE or base == 0 or table[2] == 0:
             return base + table[i] - table[2]
         return base * table[i] / table[2]
-    i0 = min(int(pos), 3)
+    i0 = min(int(pos), last - 1)
     t = pos - i0
     return at(i0) + t * (at(i0 + 1) - at(i0)) if t else at(i0)
 

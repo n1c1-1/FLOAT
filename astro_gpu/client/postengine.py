@@ -69,6 +69,7 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
+from ..render.sliders import top as slider_top
 from .postfilters import colour as pf_colour
 from .postfilters import curves as pf_curves
 from .postfilters import dehaze as pf_dehaze
@@ -1194,7 +1195,7 @@ def load_layers(raw, alive: set[int]) -> list[dict]:
                          if (m := _clean_mask(sides.get(k))) is not None}
                 if sides:                                        # written only when there is one (older files)
                     lay["side_masks"] = sides
-            lay["sliders"] = {k: _num(v, 2.0, 0, 4) for k, v in (d.get("sliders") or {}).items()}
+            lay["sliders"] = {k: _num(v, 2.0, 0, slider_top(k)) for k, v in (d.get("sliders") or {}).items()}
             lay["sky_scale"] = sky_scale(d)                      # says nothing: the first, as it was
             if d.get("stretch") in LAYER_STRETCHES[1:]:          # written only when it is not the automatic one
                 lay["stretch"] = d["stretch"]

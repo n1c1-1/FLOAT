@@ -27,7 +27,8 @@ def test_the_eleven_sliders_of_post():
         assert len(sl.ends) == 2 and sl.group in (S.NEBULA, S.STARS)
         assert (sl.group == S.STARS) == (sl.needs == "stars")
         for name, t in sl.table.items():
-            assert len(t) == 5 and abs(t[2] - getattr(s, name)) < 1e-9, (sl.key, name)
+            assert len(t) == sl.hi + 1 and abs(t[2] - getattr(s, name)) < 1e-9, (sl.key, name)
+        assert sl.hi == (6 if sl.key == "saturation" else 4) == S.top(sl.key)
     assert S.BY_KEY["sky"].table["sky"] == S.SKY_SCALES[1] == (0.15, 0.20, 0.25, 0.31, 0.37)
     assert S.BY_KEY["noise"].table["noise_mix"][:3] == (0.4, 0.7, 1.0)
 
@@ -42,8 +43,10 @@ def test_position_2_is_the_base(kind, bases):
 
 
 def test_default_rendering_follows_the_tables():
-    for pos in range(5):
+    for pos in range(7):
         for sl in S.SLIDERS:
+            if pos > sl.hi:
+                continue
             kind = "simple" if sl.key == "noise" else "combined"
             got = S.settings_at(kind, None, {sl.key: pos})
             for name, t in sl.table.items():
@@ -75,6 +78,12 @@ def test_steps_and_ratios():
     assert half.sky == pytest.approx(0.225) and half.contrast == pytest.approx(0.375)
     assert S.settings_at("simple", {"sky": 0.55}, {"sky": 4}).sky == 0.6   # inside the setting's bounds (0.02-0.6)
     assert S.settings_at("simple", None, {"sky": 9}).sky == pytest.approx(0.37)   # positions beyond 0-4 are clamped
+    # Saturation goes on to +4 (positions 5, 6: the last step again), its law to +2 as it was, a range of its own
+    assert S.BY_KEY["saturation"].table["saturation"][:5] == (0.6, 0.9, 1.2, 1.5, 1.85)
+    assert S.settings_at("simple", None, {"saturation": 6}).saturation == pytest.approx(2.55)
+    assert S.settings_at("simple", None, {"saturation": 5}).saturation == pytest.approx(2.2)
+    assert S.settings_at("simple", None, {"saturation": 9}).saturation == pytest.approx(2.55)
+    assert S.settings_at("simple", {"saturation": 1.5}, {"saturation": 6}).saturation == pytest.approx(3.0)  # bound
     assert S.settings_at("simple", None, {"unknown": 3}) == SimpleSettings()
     with pytest.raises(ValueError):
         S.settings_at("simple", "No such preset", {})

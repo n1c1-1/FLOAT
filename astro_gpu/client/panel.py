@@ -2230,6 +2230,7 @@ class Panel(QWidget):
                               _("{label}: {old} → {new}").format(label=_("Star blend mode"), old=_(old), new=_(b)),
                               _(b).lower(), same=b == old)
         from ..render.sliders import ARCSINH_WHY, STRENGTH_STEP
+        from ..render.sliders import top as slider_top
         from .postengine import LAYER_STRETCHES, STRETCH_KEY, STRETCH_NAMES, layer_stretch
         stretch_now = drafted.get("stretch") or layer_stretch(lay)
 
@@ -2283,7 +2284,8 @@ class Panel(QWidget):
                     self.bv.addLayout(row)
                 else:
                     stretch_row()                         # first of the starless image's tone settings
-            sl = ContSlider(_(sd.name), 0, 4, drafted.get(("slider", sd.key), sliders.get(sd.key, 2.0)), 2,
+            sl = ContSlider(_(sd.name), 0, slider_top(sd.key),
+                            drafted.get(("slider", sd.key), sliders.get(sd.key, 2.0)), 2,
                             ends=[_(e) for e in sd.ends], show=offset_text)
             ok, why, _need = s.slider_state(p, sd.key, "combined")
             if ok and stretch_now == "arcsinh" and sd.key in ARCSINH_WHY:

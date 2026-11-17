@@ -70,6 +70,7 @@ from ..core.project2 import active_version
 from ..render.sliders import ARCSINH_WHY, STRENGTH_STEP
 from ..render.sliders import STARS as STARS_GROUP
 from ..render.sliders import group_title
+from ..render.sliders import top as slider_top
 from . import prefs
 from .combineedit import HUE_RAIL, INTENSITY_MAX, INTENSITY_STEP, FineDrag
 from .curveseditor import CurvesEditor, FunctionGraph, caption
@@ -3661,7 +3662,7 @@ class PostView(QWidget):
 
     def _add_slider(self, lay, p, sd, part):
         pos = lay["sliders"].get(sd.key, 2.0)
-        sl = ContSlider(_(sd.name), 0, 4, pos, 2, ends=[_(e) for e in sd.ends] if sd.ends else None,
+        sl = ContSlider(_(sd.name), 0, slider_top(sd.key), pos, 2, ends=[_(e) for e in sd.ends] if sd.ends else None,
                         show=offset_text)
         ok, why, _need = self.s.slider_state(p, sd.key, part)   # the model answers in the language of the screen
         if ok and layer_stretch(lay) == "arcsinh" and sd.key in ARCSINH_WHY:

@@ -688,3 +688,19 @@ def test_the_intensities_are_set_to_the_hundredth_and_shift_drags_ten_times_fine
     _q, ed = _editor(w, monkeypatch)
     it = ed._ui["int_SII"]
     assert it.maximum() == 1000 and it.findChildren(FineDrag)
+
+
+def test_the_master_layer_s_saturation_goes_on_to_plus_four(m27):
+    """The testers' look needed a Saturation filter on top of the layer's +2: its slider goes on to +4 (render/sliders:
+    Saturation's own range), the same law to +2."""
+    from astro_gpu.client.post3 import ContSlider
+    w, pv, _before = m27
+    lay = _master(pv)
+    pv.sel = None
+    pv.select(lay["id"], "layer")
+    sl = next(x for x in pv.findChildren(ContSlider) if x.name.text() == "Saturation" and x.isVisibleTo(pv.right))
+    assert sl.hi == 6
+    sl.set_value(6)
+    assert sl.val.text() == "+4.0"
+    other = next(x for x in pv.findChildren(ContSlider) if x.name.text() == "Contrast" and x.isVisibleTo(pv.right))
+    assert other.hi == 4
