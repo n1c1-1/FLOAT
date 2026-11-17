@@ -226,6 +226,14 @@ class LayerService:
                 "settings": s.model_dump(mode="json")}
         return LayerImage(rgb, tuple(int(v) for v in eng.crop), info)
 
+    def linear_stars(self, folder, scale: float = 1.0, region=None, stats_from=None) -> LayerImage:
+        """The stars alone of a Stars block's folder (or of a combination of stars' Output, ``stats_from`` its starless
+        combination's), linear, as the block computed them (render/stars.StarsRenderEngine.linear_stars)."""
+        eng = self.combined_stars_engine(folder, stats_from) if stats_from is not None else self.engine(folder)
+        lay = eng.linear_stars(scale, region)
+        return LayerImage(lay.final.float().cpu().numpy(), tuple(int(v) for v in eng.crop),
+                          {"part": "linear", "scale": lay.scale, "region": lay.info.get("region")})
+
     def _render_combined_stars(self, folder, stats_from, base, sliders, scale, region, blend,
                                sky_scale: int | None = None) -> LayerImage:
         s = settings_at("stars", base, sliders, False, origin_of(folder), sky_scale=sky_scale)

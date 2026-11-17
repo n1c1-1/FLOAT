@@ -568,6 +568,38 @@ class LayerSource(Provider):
         out = np.ascontiguousarray(np.moveaxis(arr, 0, -1), np.float32)
         return out if put is None else self._paste(put, box, out)
 
+    def stars_id(self, lay: dict) -> str | None:
+        """A stars side's result: its folder and its time, and those of the starless combination its stars go onto."""
+        out = []
+        for sid in (source_id(lay), lay.get("stars_over")):
+            if sid is None:
+                continue
+            f = self.folder(sid)
+            if f is None:
+                return None
+            out.append(f"{Path(f.path).as_posix()}@{f.mtime:.3f}")
+        return "|".join(out) or None
+
+    def linear_stars(self, lay: dict, level: int, box) -> np.ndarray:
+        """(h, w, 3): a stars side's stars alone as its block computed them (linear, none of Post's star settings),
+        placed on the canvas as ``layer`` places the layer's image: what the Stars mask part finds its stars in."""
+        sid = source_id(lay)
+        f = self.folder(sid)
+        put = self._placed(sid, level, box)
+        if put is False:
+            return np.zeros((box[3] - box[1], box[2] - box[0], 3), np.float32)
+        fi, region, size = self._window(sid, level, box) if put is None else put[1:]
+        over = self.folder(lay["stars_over"]) if lay.get("stars_over") is not None else None
+        stats = over.path if over is not None else None
+        try:
+            li = self.service.linear_stars(f.path, 1.0 / fi, None, stats)
+            arr = self._cut(li.rgb, fi, region, size, True)
+        except (KeyError, OSError) as e:                        # a file of the result is not there (the folder is)
+            self.mark_gone(sid)
+            raise Unreadable(sid) from e
+        out = np.ascontiguousarray(np.moveaxis(arr, 0, -1), np.float32)
+        return out if put is None else self._paste(put, box, out)
+
     # ------------------------------------------------------------ a combination's master layer
     def _fusion_full(self, sid, balance: str):
         """(balanced filters, covered pixels, gains) of a combination's result at full resolution, kept for the last
@@ -1268,6 +1300,7 @@ class RenderWorker(QObject):
         self.renderer = Renderer(LayerSource(resolver, service, bases), device=dev)
         root = getattr(self.project, "root", None)
         self.renderer.source.image_resolver = store_image_resolver(root) if root else None
+        self.renderer.source.stars_dir = Path(root) / "cache" / "stars" if root else None   # (the Stars mask part's)
         if self.project is not None:
             self.renderer.wcs_of = self._wcs_of
             self.renderer.writer = self._write

@@ -121,6 +121,14 @@ class StarsRenderEngine(SimpleRenderEngine):
             y = a if b is None else b if a is None else blend(a, b, s.blend)
             return self._finish(y, f, reg, box, region, {"stretch": "auto", "linked": linked, "part": part})
 
+    @torch.no_grad()
+    def linear_stars(self, scale: float = 1.0, region=None) -> Layers:
+        """The stars alone as the block computed them: its linear image, no stretch, none of Post's star settings, on
+        the grid as ``render`` cuts it (the Stars mask part finds its stars there: client/postengine.find_stars)."""
+        f, reg, box = self._geometry(scale, region)
+        y = self._layer("stars", f, box).clone()
+        return self._finish(y, f, reg, box, region, {"part": "linear"})
+
     def _starless_white(self, st: dict) -> dict:
         """The statistics the Arcsinh stretch of the starless image reads: the whole image's (``st``: the black point
         and the sky of the automatic stretch), with the white points of the starless image itself: the 99.995th

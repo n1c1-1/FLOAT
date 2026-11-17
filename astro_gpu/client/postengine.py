@@ -65,6 +65,7 @@ import json
 import math
 from collections import OrderedDict
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -592,10 +593,12 @@ MASK_SOURCES = {
     "halpha": "H-alpha", "luminance": "Luminance range", "color": "Color range", "gradient": "Linear gradient",
     "brush": "Brush", "stars": "Stars",
 }
-#: the Stars part (``stars_cover``) finds the stars of the layer's stars image as the combination finds those of its
+#: the Stars part (``find_stars``) finds the stars of the layer's stars side as the combination finds those of its
 #: continuum (stages/combine.continuum_scale): SExtractor's detection (sep), the background in 64 px meshes, the stars
-#: above STAR_SIGMA times its noise (here 1.4826 median absolute deviations, one display step at the least), four
-#: pixels at least, its deblending; a star's size is its area above that threshold
+#: above STAR_SIGMA times its noise (here 1.4826 median absolute deviations), four pixels at least, its deblending; a
+#: star's size is its area above that threshold. It reads the stars as their block computed them (linear, at full
+#: resolution, once per result: ``Composer.star_discs``), never as Post's star settings show them: Strength, Star size
+#: or Star color change nothing in the mask and cost no detection, and the screen and the export draw the same discs
 #: the least step of an 8-bit display: the noise taken for a stars image without any (a drawing)
 DISPLAY_STEP = 1.0 / 255
 DIRECTIONS = ["Top → bottom", "Bottom → top", "Left → right", "Right → left"]
@@ -633,39 +636,63 @@ def grey3(x: np.ndarray) -> np.ndarray:
     return cv2.merge([x, x, x])
 
 
-def stars_cover(L: np.ndarray, grow: float, feather: float) -> np.ndarray:
-    """The Stars mask part: 1 over each star of a stars image (``L``: its luminance, as shown), grown by a radius that
-    follows the star. The stars are found as the combination finds those of its continuum (the comment above:
-    SExtractor's detection, eight sky sigmas); a star's size is its equivalent radius at that threshold, r =
-    sqrt(area / pi), which a brighter star has larger (its profile stays above the threshold farther out), and the
-    star is a disc of radius ``grow`` r around its centre: at 1 its own extent, at 2 twice its radius. No source was
-    found for a published law of a star mask's growth by the star's own size: this one is structural (a radius
-    proportional to the star's measured size at the detection's threshold), nothing in it is fitted on an image.
-    ``feather``: the edge smoothed by a Gaussian of that radius (px at the level), as the mask's own Feather."""
+def find_stars(L: np.ndarray) -> np.ndarray:
+    """(n, 3) float32: the stars of a stars image (``L``: its luminance at full resolution), each (x, y, r): found as
+    the combination finds those of its continuum (the comment above: SExtractor's detection, eight sky sigmas), r its
+    equivalent radius at that threshold, sqrt(area / pi), which a brighter star has larger (its profile stays above
+    the threshold farther out). An image with no noise (a drawing): one display step of its brightest pixel taken for
+    it."""
     import sep
 
     from ..core.imgutil import sep_extract
     from ..stages.combine import STAR_SIGMA
-    out = np.zeros(L.shape, np.float32)
+    none = np.zeros((0, 3), np.float32)
     data = np.ascontiguousarray(L, np.float32)
     if data.size == 0 or not np.isfinite(data).all() or float(data.max()) <= float(data.min()):
-        return out
+        return none
     try:
         bkg = sep.Background(data, bw=64, bh=64)
         sub = data - bkg.back()
         v = sub[::4, ::4] if sub.size > 1_000_000 else sub
-        # the background's noise (1.4826 median absolute deviations), one display step at the least (a drawing)
-        rms = max(1.4826 * float(np.median(np.abs(v - np.median(v)))), DISPLAY_STEP)
+        rms = 1.4826 * float(np.median(np.abs(v - np.median(v))))     # the background's noise
+        if rms <= 0:
+            rms = DISPLAY_STEP * max(float(np.abs(sub).max()), 1e-12)
         objs = sep_extract(sub, STAR_SIGMA, err=rms, minarea=4, deblend_cont=0.005)
     except Exception:  # noqa: BLE001 - sep refuses the image (too small a box): no star
-        return out
-    for o in objs:
-        r = max(float(grow), 1.0) * float(np.sqrt(o["npix"] / np.pi))
-        cv2.circle(out, (int(round(float(o["x"]))), int(round(float(o["y"])))), max(1, int(round(r))), 1.0, -1,
-                   lineType=cv2.LINE_8)
+        return none
+    if len(objs) == 0:
+        return none
+    return np.stack([np.asarray(objs["x"], np.float32), np.asarray(objs["y"], np.float32),
+                     np.sqrt(np.asarray(objs["npix"], np.float32) / np.pi)], axis=1)
+
+
+#: the stars found in a stars side's result (``Composer.star_discs``), shared by every composer of the session (Post's,
+#: Inspect's editor's): {key: (n, 3)}
+_STARS: OrderedDict = OrderedDict()
+_STARS_LOCK = __import__("threading").Lock()
+
+
+def draw_stars(stars: np.ndarray, level: int, abox, grow: float, feather: float) -> np.ndarray:
+    """The Stars mask part over the box at the level: 1 over each star (``find_stars``, full-resolution pixels of the
+    canvas), a disc of radius ``grow`` r around its centre: at 1 its own extent, at 2 twice its radius. No source was
+    found for a published law of a star mask's growth by the star's own size: this one is structural (a radius
+    proportional to the star's measured size at the detection's threshold), nothing in it is fitted on an image.
+    ``feather``: the edge smoothed by a Gaussian of that radius (px at the level), as the mask's own Feather."""
+    x0, y0, x1, y1 = abox
+    f = 2 ** level
+    out = np.zeros((y1 - y0, x1 - x0), np.float32)
+    g = max(float(grow), 1.0)
+    for x, y, r in stars:
+        cv2.circle(out, (int(round(float(x) / f - x0)), int(round(float(y) / f - y0))),
+                   max(1, int(round(g * float(r) / f))), 1.0, -1, lineType=cv2.LINE_8)
     if feather > 0:
         out = gauss(out, feather)
     return np.clip(out, 0, 1).astype(np.float32)
+
+
+def stars_cover(L: np.ndarray, grow: float, feather: float) -> np.ndarray:
+    """The Stars part drawn over a whole stars image, found in it (``find_stars`` then ``draw_stars``)."""
+    return draw_stars(find_stars(L), 0, (0, 0, L.shape[1], L.shape[0]), grow, feather)
 
 
 def new_mask() -> dict:
@@ -1350,6 +1377,20 @@ class Provider:
         slider moves); ``stop()``: True abandons the rendering (raise ``Superseded``)."""
         raise NotImplementedError
 
+    def linear_stars(self, lay: dict, level: int, box) -> np.ndarray:
+        """(h, w, 3): a stars side's stars as its block computed them, none of Post's star settings: where the Stars
+        mask part finds its stars (``find_stars``). A provider without the block's linear image gives the side at its
+        suggestion (its own image, every star setting at the middle)."""
+        return self.layer(dict(lay, sliders={}), level, box)
+
+    def stars_id(self, lay: dict) -> str | None:
+        """What a stars side's result is, for a detection kept on disk (``stars_dir``): its folder and its time; None
+        when the provider cannot say (the detection is then kept for the session only)."""
+        return None
+
+    #: the folder where the stars found in a result are kept (the project's cache), None: not kept on disk
+    stars_dir = None
+
     def cover(self, lay: dict, level: int, box) -> np.ndarray | None:
         """What the layer covers of the box, (h, w) in [0, 1] (an image of another shape is fitted inside the canvas,
         its aspect kept: transparent around it); None when it covers all of it."""
@@ -1560,9 +1601,9 @@ class Ctx:
                                 else np.ascontiguousarray(m, np.float32))
         return self._memo[name]
 
-    def stars(self) -> np.ndarray | None:
-        """The luminance of the stars image of the layer being composed (its Stars block's stars alone; a Combine
-        layers layer's, and its filters', its Stars side), None when it has none."""
+    def stars(self):
+        """(their key, the stars) found in the stars of the layer being composed (its Stars block's stars alone; a
+        Combine layers layer's, and its filters', its Stars side: ``Composer.star_discs``), None when it has none."""
         if self.stars_fn is None:
             return None
         if "stars" not in self._memo:
@@ -1919,7 +1960,43 @@ class Composer:
                 return None
         else:
             return None
-        return lambda: lum(self.layer_rgb(side, level, abox, canvas, cache, draft, check))
+        return lambda: self.star_discs(side, canvas)
+
+    def star_discs(self, side: dict, canvas: Canvas):
+        """(key, stars) of a stars side (``find_stars``): found once per result in its stars as the block computed
+        them, at full resolution over the whole canvas (``Provider.linear_stars``), kept for the session; Post's star
+        settings are not in it, nor the level or the region shown."""
+        sid = source_id(side)
+        over = side.get("stars_over")
+        rid = self.provider.stars_id(side)
+        key = ("stars", rid if rid is not None else (id(self.provider), sid, self.provider.version(sid), over,
+                                                       self.provider.version(over) if over is not None else None),
+               canvas.W, canvas.H, canvas.origin)
+        with _STARS_LOCK:
+            hit = _STARS.get(key)
+            if hit is not None:
+                _STARS.move_to_end(key)
+                return key, hit
+        name = hashlib.blake2b(repr(key).encode(), digest_size=12).hexdigest() + ".npy"
+        folder = getattr(self.provider, "stars_dir", None)
+        if rid is not None and folder is not None:
+            try:
+                hit = np.load(Path(folder) / name)
+            except (OSError, ValueError):
+                hit = None
+        if hit is None:
+            hit = find_stars(lum(self.provider.linear_stars(side, 0, (0, 0, canvas.W, canvas.H))))
+            if rid is not None and folder is not None:
+                try:
+                    Path(folder).mkdir(parents=True, exist_ok=True)
+                    np.save(Path(folder) / name, hit)
+                except OSError:                           # not kept on disk: found again in the next session
+                    pass
+        with _STARS_LOCK:
+            _STARS[key] = hit
+            while len(_STARS) > 16:
+                _STARS.popitem(last=False)
+        return key, hit
 
     def _fusion_halpha_of(self, lay, level, abox, canvas, cache):
         """The H-alpha map of a combination's master layer that has an H-alpha filter (a function, computed when a
@@ -2048,12 +2125,12 @@ class Composer:
         the box and, for a part that reads the image (Luminance, Color range), the image's content: adding a part to
         a mask computes that part only. The plane is shared: never modified by the caller. ``seen``: the digest of
         ``below`` when the caller already made it."""
-        if part["src"] == "stars":                      # kept by its settings and the stars image it reads
-            L = ctx.stars()
-            if L is None:
+        if part["src"] == "stars":                      # kept by its settings and the stars it draws
+            got = ctx.stars()
+            if got is None:
                 return self._part_plane(part, level, abox, below, canvas, ctx)
             key = (tuple(sorted((k, v) for k, v in part.items() if k not in ("id", "op"))), level, abox, canvas.W,
-                   canvas.H, hashlib.blake2b(np.ascontiguousarray(L).data, digest_size=16).digest())
+                   canvas.H, got[0])
             r = self.parts.get(key)
             if r is None:
                 r = self._part_plane(part, level, abox, below, canvas, ctx)
@@ -2101,10 +2178,10 @@ class Composer:
             return self.brush_raster(part, level, abox, canvas)
         if src == "stars":
             hw = (abox[3] - abox[1], abox[2] - abox[0])
-            L = ctx.stars()
-            if L is None:                                  # a layer without stars: nothing (the part is greyed)
+            got = ctx.stars()
+            if got is None:                                # a layer without stars: nothing (the part is greyed)
                 return np.zeros(hw, np.float32)
-            return stars_cover(L, float(part["grow"]), float(part["feather"]) / 2 ** level)
+            return draw_stars(got[1], level, abox, float(part["grow"]), float(part["feather"]) / 2 ** level)
         raise ValueError(src)
 
     def brush_raster(self, part, level, abox, canvas: Canvas) -> np.ndarray:

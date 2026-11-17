@@ -410,3 +410,24 @@ def test_the_stars_part_says_nothing_where_the_layer_has_no_stars():
     lay = master(mask=_stars_mask())                     # no stars side
     m = compose([lay], StarField(), want=[lay["id"]]).masks[lay["id"]]
     assert m.max() == 0.0
+
+
+def test_the_stars_part_is_found_once_in_the_stars_result_whatever_the_star_settings(monkeypatch):
+    """A star setting (Strength, Star size, Star color) moved the stars the Stars part read, and each change found the
+    stars again (on M27, 10 s of a 16 s release): the part now finds them once in the stars as their block computed
+    them (Provider.linear_stars, none of Post's star settings), at full resolution, whatever the level shown; a star
+    setting changes nothing in the mask and costs no detection, and every level draws the same discs."""
+    found = []
+    real = pe.find_stars
+    monkeypatch.setattr(pe, "find_stars", lambda L: found.append(L.shape) or real(L))
+    prov = StarField()
+    cp = Composer(prov)
+    lay = master(stars_pid=4, mask=_stars_mask(grow=2.0))
+    m = cp.compose(pe.normalize(copy.deepcopy([lay])), 0, want=[lay["id"]]).masks[lay["id"]]
+    for sliders in ({"star_strength": 3.6}, {"star_size": 0.5, "star_color": 3.0}):
+        moved = dict(copy.deepcopy(lay), sliders=sliders)
+        got = cp.compose(pe.normalize([moved]), 0, want=[moved["id"]]).masks[moved["id"]]
+        assert np.array_equal(got, m)
+    half = cp.compose(pe.normalize(copy.deepcopy([lay])), 1, want=[lay["id"]]).masks[lay["id"]]
+    assert found == [(H, W)]                                     # once, at full resolution
+    assert np.abs(half - m[::2, ::2]).mean() < 0.05              # the same discs, drawn at the level shown

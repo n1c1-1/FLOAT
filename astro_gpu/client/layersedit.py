@@ -21,6 +21,7 @@ from __future__ import annotations
 import copy
 import math
 import time
+from pathlib import Path
 
 import numpy as np
 from PySide6.QtWidgets import QComboBox, QHBoxLayout
@@ -442,6 +443,8 @@ class LayersEditor(DraftEditor):
             dev = choose_device("auto")
             self._renderer = Renderer(LayerSource(api_resolver(project), LayerService(dev), bases_of(project)),
                                       device=dev)
+            root = getattr(project, "root", None)            # the stars the Stars mask part finds: kept as Post's
+            self._renderer.source.stars_dir = Path(root) / "cache" / "stars" if root else None
             self._renderer_of = project
         r = self._renderer
         canvas = r.composer.canvas_of(layers)
