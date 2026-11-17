@@ -8,17 +8,25 @@ import numpy as np
 def sep_extract(data: np.ndarray, thresh: float, **kw) -> np.ndarray:
     """sep.extract that does not fail on a crowded object: a bright star in nebulosity can make one object of more
     pieces than sep can deblend ("deblending overflow"); its limit is raised, then the threshold doubled (sep's own
-    advice) up to three times, and at last the object is not deblended. A frame that sep extracts at once gives the
-    same result as before."""
+    advice) up to three times, and at last the object is not deblended. An image with more pixels over the threshold
+    than sep holds ("internal pixel buffer full": the wide wings of bright stars) is extracted again with that limit
+    raised, as sep's message advises: four times larger each time, up to twice the image's pixels (every pixel over
+    the threshold, and sep's own margin). A frame that sep extracts at once gives the same result as before."""
     import sep
     sep.set_sub_object_limit(8192)
-    for _ in range(4):
+    tries = 0
+    while tries < 4:
         try:
             return sep.extract(data, thresh, **kw)
         except Exception as e:  # noqa: BLE001 - sep raises a bare Exception
+            limit = sep.get_extract_pixstack()
+            if "pixel buffer full" in str(e) and limit < 2 * data.size:
+                sep.set_extract_pixstack(int(min(4 * limit, 2 * data.size)))
+                continue
             if "deblending overflow" not in str(e):
                 raise
             thresh *= 2.0
+            tries += 1
     return sep.extract(data, thresh, **{**kw, "deblend_nthresh": 1})
 
 
