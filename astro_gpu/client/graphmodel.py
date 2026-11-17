@@ -902,7 +902,7 @@ class GraphEditing:
                 if x.get("kind") == "workflow" and x.get("pid") == wid and x.get("part") is None:
                     m = default.fullmatch(str(x.get("name", "")))
                     new = new_workflow_layer(wid, x.get("name", ""), part="combined")
-                    if "sky_scale" not in x:             # saved before the Sky slider's second scale: it stays so
+                    if "sky_scale" not in x:             # no scale said: the first, it stays so
                         new.pop("sky_scale", None)
                     x = {**new, **x, "part": "combined"}
                     if m:

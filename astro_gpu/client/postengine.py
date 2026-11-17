@@ -667,12 +667,12 @@ def has_synth(layers: list[dict], gid: int) -> bool:
 
 #: the scales of a layer's Sky slider and today's (render/sliders.SKY_SCALES and SKY_SCALE, said again here: that
 #: module loads the rendering)
-SKY_SCALES, SKY_SCALE = (1, 2), 2
+SKY_SCALES, SKY_SCALE = (1, 2), 1
 
 
 def sky_scale(lay: dict) -> int:
     """The scale of a layer's Sky slider (render/sliders.SKY_SCALES): the one it was made with, so that it renders as
-    it did. A layer that says nothing was saved before the second scale: the first (the sky at 0.25)."""
+    it did. A layer that says nothing is on the first (the sky at 0.25)."""
     v = lay.get("sky_scale")
     return v if v in SKY_SCALES else 1
 
@@ -1053,7 +1053,7 @@ def load_layers(raw, alive: set[int]) -> list[dict]:
                 if sides:                                        # written only when there is one (older files)
                     lay["side_masks"] = sides
             lay["sliders"] = {k: _num(v, 2.0, 0, 4) for k, v in (d.get("sliders") or {}).items()}
-            lay["sky_scale"] = sky_scale(d)                      # saved before the second scale: the first, as it was
+            lay["sky_scale"] = sky_scale(d)                      # says nothing: the first, as it was
             if d.get("stretch") in LAYER_STRETCHES[1:]:          # written only when it is not the automatic one
                 lay["stretch"] = d["stretch"]
         elif d.get("kind") == "image" and isinstance(d.get("key"), str) and d["key"]:
@@ -1114,8 +1114,8 @@ def save_layers(layers: list[dict]) -> list[dict]:
     for d in out:
         if d.get("kind") == "filter" and d.get("sub") is None:
             d.pop("sub", None)
-        if d.get("sky_scale") == 1:                     # the first scale is what a layer that says nothing has: a
-            d.pop("sky_scale")                          # project saved before the second one is written as it was
+        if d.get("sky_scale") == 1:                     # the first scale is what a layer that says nothing has: the
+            d.pop("sky_scale")                          # layer is written as before the second one
     return [d for d in out if not _untouched_synth(d)]
 
 

@@ -887,11 +887,13 @@ def test_the_release_render_is_the_engines_bit_for_bit(preps):
         got = src.layer(lay, level, (0, 0, w, h))
         ref = np.moveaxis(want[:, oy // f: oy // f + h, ox // f: ox // f + w], 0, -1)
         assert np.array_equal(got, ref), level
-    # a slider away from 2 moves the settings the table says, nothing else: on a layer saved before the Sky slider's
-    # second scale (it says no scale), 0.24 + (0.31 - 0.25); on a new layer, its own scale: 0.24 + (0.245 - 0.12)
+    # a slider away from 2 moves the settings the table says, nothing else: on a layer of the first scale of the Sky
+    # slider (a new one, or one that says no scale), 0.24 + (0.31 - 0.25); on a layer made with the second scale (16
+    # and 17 November 2026), its own scale: 0.24 + (0.245 - 0.12)
     from astro_gpu.render.sliders import SKY_SCALES
     lay["sliders"] = {"sky": 3}
-    for scale, sky in ((None, 0.30), (2, 0.24 + SKY_SCALES[2][3] - SKY_SCALES[2][2])):
+    assert lay["sky_scale"] == 1
+    for scale, sky in ((1, 0.30), (None, 0.30), (2, 0.24 + SKY_SCALES[2][3] - SKY_SCALES[2][2])):
         if scale is None:
             lay.pop("sky_scale", None)
         else:

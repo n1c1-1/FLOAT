@@ -253,7 +253,7 @@ def output_render(rgb: np.ndarray, settings: dict | None = None) -> np.ndarray:
     """(3, h, w) in 0-1: a combination's image as its Output shows it: render_simple keeps a combination's sky at 0
     (``sky_neutral``), measures its stretch's statistics on the covered pixels (``image_stats``) and Post renders it
     with SimpleRenderEngine: with the settings of the workflow's layer of Post (``settings``, ``layer_settings``: its
-    sliders, and the scale of its Sky slider: a layer saved before 2026-11-16 keeps its sky at 0.25), else the
+    sliders, and the scale of its Sky slider: a layer made on 16 or 17 November 2026 keeps its sky at 0.12), else the
     default ones (render_simple's preview)."""
     from ..render.simple import SimpleRenderEngine, SimpleSettings
     eng = SimpleRenderEngine.from_array(rgb, device="cpu", linked=True, sample=1)

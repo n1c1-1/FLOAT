@@ -28,11 +28,12 @@ ADDITIVE = frozenset({"sky", "contrast", "noise_mix", "smooth_px", "star_size", 
 SUGGESTED = 2.0
 LO, HI = 0.0, 4.0
 #: the scales of the Sky slider (the sky's level at positions 0 to 4; position 2 is the default of a layer without a
-#: base of its own): 1, until 2026-11-16 (the sky at 0.25, down to 0.15); 2, since (0.12, down to 0.05). A layer keeps
-#: the scale it was made with, so that it renders as it did (client/postengine: its ``sky_scale``; a layer saved
-#: before the second scale says nothing: the first)
+#: base of its own): 1, the sky at 0.25, down to 0.15, the scale of every new layer; 2 (0.12, down to 0.05), the scale
+#: of the layers made on 16 and 17 November 2026 only (a default tuned on two test images, withdrawn). A layer keeps
+#: the scale it was made with, so that it renders as it did (client/postengine: its ``sky_scale``; a layer that says
+#: nothing is on the first)
 SKY_SCALES: dict[int, tuple[float, ...]] = {1: (0.15, 0.20, 0.25, 0.31, 0.37), 2: (0.05, 0.085, 0.12, 0.245, 0.37)}
-SKY_SCALE = 2
+SKY_SCALE = 1
 
 # the reasons of the greyed sliders (translated by the client's catalogues)
 WHY_STARS = "the star sliders work on the stars of the Stars/background block"
@@ -162,8 +163,8 @@ def value_at(name: str, table: tuple[float, ...], base: float, pos: float) -> fl
 
 #: the Strength of a layer's Arcsinh stretch: its position among the layer's sliders (0-4, 2 = the starting strength).
 #: Linear in the level the sky lands at (render/simple.arcsinh_strength): position 2 is the Sky setting's level, 1 half
-#: of it, 4 twice; the slider counts in ``STRENGTH_STEP``: at the default Sky one step is 0.8 level of 255 of the
-#: luminance's range (1.6 on a layer of the first sky scale), less once the picture is scaled to its largest channel
+#: of it, 4 twice; the slider counts in ``STRENGTH_STEP``: at the default Sky one step is 1.6 levels of 255 of the
+#: luminance's range, less once the picture is scaled to its largest channel
 STRETCH_KEY = "stretch"
 STRENGTH_STEP = 0.05
 #: the sliders an Arcsinh stretch does not read, each with the reason it is greyed: it keeps the colours by itself, and
