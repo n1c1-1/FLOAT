@@ -1798,6 +1798,8 @@ class GraphCanvas(QGraphicsView):
             e.acceptProposedAction()
             if hot is not None:
                 self.bridge.drop(hot.place)
+            else:                                        # dropped where it does not go: said, as a refused wire is
+                self.bridge.toast.emit(self.missed_drop(st["block"]))
         elif st["kind"] == "files":
             self.gesture = st
             self._files_over(e.position().toPoint())
@@ -1816,6 +1818,18 @@ class GraphCanvas(QGraphicsView):
                 # the place is the kind: a Session block itself is the place of lights, a target beside it its own
                 # kind's; nothing is read from the files' headers or names
                 self.bridge.drops.drop(session, target or "lights", paths)       # the table's own path (files.py)
+
+    def missed_drop(self, kind: str) -> str:
+        """Why a palette card dropped away from its places made nothing: where it goes (its lit places), or why it
+        goes nowhere now (the reason of its places, all refused)."""
+        from .style import kind_title
+        places = self.bridge.places(kind=kind)
+        block = kind_title(kind)
+        if any(pl.lit for pl in places):
+            return _("{block} not placed: drop it on one of the places lit for it").format(block=block)
+        why = next((pl.reason_text(self.doc.tr) for pl in places if pl.reason_text(self.doc.tr)), "")
+        return _("{block} not placed: {why}").format(block=block, why=why.rstrip(".")) if why else \
+            _("{block} not placed: no place takes it in this graph").format(block=block)
 
     def _session_under(self, vp: QPoint):
         """The Session block (id) a file drag is over: a Session block, or its night's Calibration."""

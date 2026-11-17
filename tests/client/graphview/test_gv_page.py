@@ -275,6 +275,26 @@ def test_s02c_files_dropped_where_nothing_takes_them_are_said(B, tmp_path):
     assert B.canvas.toast.isVisible() and "No Session block yet" in B.canvas.toast.plain, B.canvas.toast.plain
 
 
+@pytest.mark.parametrize("kind", __import__("astro_gpu.graphcore.model", fromlist=["JOIN_KINDS"]).JOIN_KINDS)
+def test_s02d_a_combination_card_dropped_away_from_its_places_says_where_it_goes(B, kind):
+    """The combination blocks' family (a combination, Combine layers, any later one): a card dropped where it does not
+    go made nothing and said nothing; it says where it goes, as a refused wire or files dropped nowhere do."""
+    from PySide6.QtCore import QMimeData, QPoint
+
+    from astro_gpu.client.graphview.canvas import MIME_KIND
+    from astro_gpu.client.graphview.style import kind_title
+    B.tpl("sho_rgb")
+    assert any(pl.lit for pl in B.b.places(kind=kind))
+    said = []
+    B.b.toast.connect(said.append)
+    before = B.js()
+    mime = QMimeData()
+    mime.setData(MIME_KIND, kind.encode())
+    B.g._drag_in(mime, QPoint(B.g.vp.width() // 2, 4), QPoint(30, 30))
+    assert B.js() == before
+    assert said == [f"{kind_title(kind)} not placed: drop it on one of the places lit for it"], said
+
+
 def test_s03_drag_session_onto_plus_session(B):
     B.install().setup(*STACK)
     lit = {pl["kind"] for pl in B.g.visible_places("session") if pl["lit"]}

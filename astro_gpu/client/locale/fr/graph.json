@@ -609,5 +609,8 @@
   "Recompute (current version)": "Recalculer (version actuelle)",
   "Computes this block again with the current version of its method, then the blocks after it. Its result of the earlier version stays valid until then: nothing is recomputed unless you ask.": "Calcule de nouveau ce bloc avec la version actuelle de sa méthode, puis les blocs qui le suivent. Son résultat de la version antérieure reste valable d'ici là : rien n'est recalculé sans votre demande.",
   "the block before it was recomputed": "le bloc qui le précède a été recalculé",
-  "Recompute “{block}” (current version)": "Recalculer « {block} » (version actuelle)"
+  "Recompute “{block}” (current version)": "Recalculer « {block} » (version actuelle)",
+  "{block} not placed: drop it on one of the places lit for it": "{block} : rien de placé, à déposer sur une des places qui s'allument pour ce bloc",
+  "{block} not placed: {why}": "{block} : rien de placé, {why}",
+  "{block} not placed: no place takes it in this graph": "{block} : rien de placé, aucune place ne le prend dans ce graphe"
 }
