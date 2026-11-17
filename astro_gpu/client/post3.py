@@ -3763,13 +3763,18 @@ class PostView(QWidget):
             self._attach_fusion()
             self.request()
 
-        now = float(f["hues"][role]) if what == "hue" else float(f["weights"].get(role, 1.0))
         half = (1.0 if what == "hue" else INTENSITY_STEP) / 2
+
+        def now() -> float:
+            """The setting as the combination holds it now (not when the panel was built: a change let go here keeps
+            the panel, the slider under the pointer)."""
+            g = lay.get("fusion") or f
+            return float(g["hues"][role]) if what == "hue" else float(g["weights"].get(role, 1.0))
 
         def done(x):
             self._live.pop(pid, None)
-            if abs(float(x) - now) <= half + 1e-9:       # let go where it was (its rail's step): no change of the block
-                self._attach_fusion()
+            self._attach_fusion()                        # (the layer's description without the value being moved)
+            if abs(float(x) - now()) <= half + 1e-9:     # let go where it is (its rail's step): no change of the block
                 self.request(final_only=True)
                 return
             self.set_fusion(lay, make(x), words, rebuild=False)

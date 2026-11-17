@@ -640,3 +640,31 @@ def test_the_palette_field_follows_a_hue_let_go_in_place(m27):
         QApplication.processEvents()
     assert pv.palette_box[1] is box and box.currentData() == "" and box.currentText() == "Custom"
     pv.do_undo()
+
+
+def test_an_intensity_let_go_where_it_was_when_the_panel_was_built_still_changes_the_block(m27):
+    """The tester: S II intensity moved 1.0 -> 1.5 by the arrows, then a double-click back to its default: the slider
+    showed 1, the combination kept 1.5, the picture did not change. A setting let go here leaves the panel as it is: the
+    value it is compared with is the combination's now, not the one when the panel was built."""
+    from astro_gpu.client.post3 import ContSlider
+    w, pv, _before = m27
+    lay = _master(pv)
+    pv.sel = None
+    pv.select(lay["id"], "layer")
+    sl = next(x for x in pv.findChildren(ContSlider) if x.name.text() == "S II intensity" and x.isVisibleTo(pv.right))
+    was = float(lay["fusion"]["weights"]["SII"])
+    n = len(pv.undo)
+    sl.set_value(was + 0.5)
+    sl.moved.emit(was + 0.5)
+    sl.done.emit(was + 0.5)
+    lay = _master(pv)
+    assert lay["fusion"]["weights"]["SII"] == pytest.approx(was + 0.5) and len(pv.undo) == n + 1
+    assert any(x is sl for x in pv.findChildren(ContSlider))           # the panel kept (the slider under the pointer)
+    sl.set_value(was)                                                  # back where it was when the panel was built
+    sl.moved.emit(was)
+    sl.done.emit(was)
+    lay = _master(pv)
+    assert lay["fusion"]["weights"]["SII"] == pytest.approx(was) and len(pv.undo) == n + 2
+    pv.do_undo()
+    pv.do_undo()
+    assert "tune" not in _master(pv)
