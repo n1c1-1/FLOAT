@@ -1732,12 +1732,16 @@ class Main(QMainWindow):
         if why:
             self.banner.say(why)
             return
+        joins = self.project is not None and not new
         if new or self.project is None:
             if self.project is not None and not self.close_project(go_home=False):
                 return
             self.new_project()
         if self.project is not None and self.graph.place_images(files) is not None:
             self.set_mode(2)
+            if joins:                                    # added to the project open: said, as its Undo says it
+                from .graphview.page import images_added
+                self.flash(images_added(files))
 
     def _named_for_run(self) -> bool:
         """Before a run: a project never saved is named and saved (asked, as Save asks); a saved one with edits is saved

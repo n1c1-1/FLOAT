@@ -37,6 +37,15 @@ def _is_model(x) -> bool:
     """A project model with GraphEditing (it holds the graph's view and gives the page its document)."""
     return x is not None and hasattr(x, "graph_view") and hasattr(x, "block_map")
 
+
+def images_added(files: list) -> str:
+    """What Open images… did to a project, in the words of its notice and of its Undo (the hand pass: no notice, and
+    an Undo said "a change of the workflows (Graph)"): "Image workflow added: M42.tif"."""
+    names = ", ".join(Path(f).name for f in files)
+    if len(files) == 1:
+        return _("Image workflow added: {file}").format(file=names)
+    return _("{n} Image workflows added: {files}").format(n=len(files), files=names)
+
 #: the three positions of the display control: key, word, icon, tooltip
 POSITIONS = (("blocks", "Blocks", "graph", "The blocks unfolded: every stack with all its blocks"),
              ("folded", "Folded", "layers", "Every stack as one card: the preprocessing fits in one column"),
@@ -580,6 +589,8 @@ class GraphPage(SidesHost, QWidget):
             log.exception("graph page: the images could not be placed")
             self.toast(_("The gesture failed: nothing changed"))
             return None
+        if hasattr(s, "name_step"):                      # its Undo says what it takes back, as the notice says it
+            s.name_step(images_added(files))
         self.request_refresh()
         return made[0] if made else None
 

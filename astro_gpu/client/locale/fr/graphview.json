@@ -379,6 +379,8 @@
   "From template": "Depuis modèle",
   "Start the project from one of the gallery's templates": "Commencer le projet par un modèle de la galerie",
   "The gesture failed: nothing changed": "Le geste a échoué : rien n'a changé",
+  "Image workflow added: {file}": "Workflow Image ajouté : {file}",
+  "{n} Image workflows added: {files}": "{n} workflows Image ajoutés : {files}",
   "To Common": "Vers commun",
   "Follows Common again: its own files or settings are dropped": "Suit de nouveau le commun : ses propres fichiers ou réglages sont retirés",
   "As reference": "En référence",

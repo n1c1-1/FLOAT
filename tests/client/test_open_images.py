@@ -107,6 +107,20 @@ def test_a_project_already_open_takes_them_beside_what_it_has(env):
     settle(w, 12)
     assert [q.name for q in w.s.paths] == ["a", "a 2", "b"] or len(w.s.paths) == 3
     assert w.mode == 2
+    # the hand pass: added with no notice, and its Undo was "a change of the workflows (Graph)"
+    said = "2 Image workflows added: a.png, b.fits"
+    assert w._flash == said and w.s.next_words("undo") == said
+
+
+def test_one_image_added_is_named_by_its_file(env):
+    w = main(env)
+    w.new_project()
+    w.worker.wait()
+    settle(w, 12)
+    env["mp"].setattr(gallery.QFileDialog, "getOpenFileNames", lambda *a, **k: ([str(env["png"])], ""))
+    w.open_images()
+    settle(w, 12)
+    assert w._flash == "Image workflow added: a.png" and w.s.next_words("undo") == "Image workflow added: a.png"
 
 
 def test_post_has_its_button_and_its_empty_page_asks_for_images(env):
