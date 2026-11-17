@@ -3215,6 +3215,8 @@ def shot_facts(p: Project2, wfs: int | Workflow | list) -> dict:
 
     def own(w: Workflow):
         d = _dir(p, w, "stack")
+        if d is None:                                   # no stack computed (its lights missing, never run): no frame
+            return                                      # known, the picture's facts say only what the others know
         try:
             frames = json.loads((d / "diagnostics.json").read_text(encoding="utf-8")).get("frames") or []
         except (AttributeError, OSError, ValueError):

@@ -108,3 +108,22 @@ def test_a_picture_counts_each_distinct_frame_once_across_its_rows_and_its_stars
     assert h["EXPTIME"] == h["LIVETIME"] == 900.0 and h["STACKCNT"] == 60 and h["DATE-OBS"].startswith("2026-11-01T05:00")
     lines = [str(x) for x in h["HISTORY"] if str(x).startswith("exposure ")]
     assert lines[2] == "exposure O: 40 frames, 600 s, 39 also in an earlier row" and lines[0] == "exposure S: 19 frames, 285 s"
+
+
+def test_a_row_without_its_stack_leaves_its_facts_out(tmp_path, monkeypatch):
+    """A project whose lights are missing (a stack never computed, its folder unknown): the export's facts are those of
+    the rows that have them, never a failure of the export (the inventory's NGC 7000: TypeError on Export)."""
+    import json
+
+    from astro_gpu import api
+    from astro_gpu.core import project2
+    from astro_gpu.core.project import Target
+    p = project2.create(tmp_path / "P", "P", Target(name="X"))
+    a, b = p.add_workflow("A", {}), p.add_workflow("B", {})
+    folder = tmp_path / "stack_a"
+    folder.mkdir()
+    (folder / "diagnostics.json").write_text(json.dumps({"frames": []}))
+    monkeypatch.setattr(api, "_dir", lambda pr, wf, stage, which="current": folder
+                        if getattr(wf, "id", wf) == a.id and stage == "stack" else None)
+    got = api.shot_facts(p, [a, b])
+    assert got["frames"] == 0 and [x["name"] for x in got["parts"]] == ["A"]
