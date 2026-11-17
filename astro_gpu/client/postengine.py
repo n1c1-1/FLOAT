@@ -370,14 +370,36 @@ def f_ml_sharpen(x, p, ctx):
     return pf_detail.sharpen(x, [p[k] for k in ML_KEYS], p["target"], ctx.level)
 
 
+#: the noise reduction's layers: 1 to 8 px on the first layer's noise, 16 to 64 px each on its own
+ML_NR_KEYS = ML_KEYS + ("l6", "l7")
+ML_NR_LABELS = ML_LABELS + ("32 px", "64 px")
+
+
+def _nr_coarse(p) -> bool:
+    return float(p.get("amount", 0.0)) > 0 and any(float(p.get(k, 0)) > 0 for k in ML_NR_KEYS[4:])
+
+
 def f_ml_denoise(x, p, ctx):
-    ks = [p[k] for k in ML_KEYS[:4]]
+    ks = [float(p.get(k, 0)) for k in ML_NR_KEYS]
     sig, at = None, ctx.level
-    if p["amount"] > 0 and any(t > 0 for t in ks):
+    if p["amount"] > 0 and any(t > 0 for t in ks[:4]):
         sig, at = _whole_measure(ctx, f"noise {p['target']}", x, lambda a: pf_detail.noise_of(a, p["target"]))
     if sig is not None and at != ctx.level:          # a white noise halves at each halving of the resolution
         sig = [s * 2 ** (at - ctx.level) for s in sig]
-    return pf_detail.denoise(x, ks, p["amount"], p["target"], ctx.level, sigma=sig)
+    own = None
+    if _nr_coarse(p):                                # a coarse layer's noise is the same at any resolution
+        lv = ctx.level
+        own, _at = _whole_measure(ctx, f"noise layers {p['target']}", x,
+                                  lambda a: pf_detail.layer_noise_of(a, p["target"], lv))
+    return pf_detail.denoise(x, ks, p["amount"], p["target"], ctx.level, sigma=sig, own=own)
+
+
+def _nr_margin(p) -> float:
+    """The reach of the coarsest layer the noise reduction changes (the starlet's support: 2 (2^n - 1) px)."""
+    if not _nr_coarse(p):
+        return 0
+    n = max(i + 1 for i, k in enumerate(ML_NR_KEYS) if float(p.get(k, 0)) > 0)
+    return 2 * (2 ** n - 1)
 
 
 def f_balance(x, p, ctx):
@@ -517,10 +539,10 @@ FILTERS = {
                            "Luminance or Color",
                     params=[P("luminance", "Luminance", 0, 1, 0, step=0.01),
                             P("color", "Color", 0, 1, 0, step=0.01)]),
-    "ml_denoise": dict(name="Multiscale noise reduction", family="Noise", fn=f_ml_denoise,
+    "ml_denoise": dict(name="Multiscale noise reduction", family="Noise", fn=f_ml_denoise, margin=_nr_margin,
                        source="Soft thresholding of the starlet wavelet layers (Starck and Murtagh): the noise "
                               "lowered scale by scale",
-                       params=[P(k, lb, 0, 10, 0, "σ", 0.1) for k, lb in zip(ML_KEYS[:4], ML_LABELS[:4])] +
+                       params=[P(k, lb, 0, 10, 0, "σ", 0.1) for k, lb in zip(ML_NR_KEYS, ML_NR_LABELS)] +
                        [P("amount", "Amount", 0, 1, 1, step=0.01),
                         C("target", "Applies to", pf_detail.NR_TARGETS, pf_detail.NR_TARGETS[0])]),
     "faint_smooth": dict(name="Faint area smoothing", family="Noise", fn=f_faint_smooth,
@@ -1396,8 +1418,13 @@ def _wants_whole(fl) -> list[tuple]:
     p = fl["params"]
     if fl["filter"] == "saturation" and float(p.get("protect", 0.0)) > 0 and float(p.get("strength", 0.0)) != 0:
         return [("background",)]
-    if fl["filter"] == "ml_denoise" and float(p.get("amount", 0.0)) > 0 and any(p.get(k, 0) for k in ML_KEYS[:4]):
-        return [(f"noise {p['target']}", True)]
+    if fl["filter"] == "ml_denoise":
+        out = []
+        if float(p.get("amount", 0.0)) > 0 and any(p.get(k, 0) for k in ML_KEYS[:4]):
+            out.append((f"noise {p['target']}", True))
+        if _nr_coarse(p):
+            out.append((f"noise layers {p['target']}", True))
+        return out
     if fl["filter"] == "dehaze" and float(p.get("amount", 0.0)) > 0:
         return [(f"veil {p['scale']}", True)]
     return []

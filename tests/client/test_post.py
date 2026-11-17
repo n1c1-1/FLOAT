@@ -644,6 +644,7 @@ def test_the_noise_and_the_veil_of_a_region_are_the_whole_images(monkeypatch):
     pr.img[1] = np.clip(a + np.random.default_rng(0).normal(0, 0.02, a.shape), 0, 1).astype(np.float32)
     box = (560, 360, 720, 460)
     for name, upd, most in (("ml_denoise", dict(l1=3, l2=2, l3=1, amount=1.0), 4.0),
+                            ("ml_denoise", dict(l5=3, l6=3, l7=3, amount=1.0, target="RGB"), 4.0),
                             ("dehaze", dict(amount=0.6, scale=128), 2.0)):
         base = new_workflow_layer(1, "A", True)
         fl = new_filter_layer(name, None)

@@ -11,7 +11,12 @@
   soft thresholding): each layer's coefficients shrunk towards zero by k sigma(j), sigma(j) = sigma(1) e(j) / e(1) with
   sigma(1) the MAD of the first layer / 0.6745 and e(j) the noise of each starlet layer for a unit Gaussian noise
   (0.889, 0.200, 0.086, 0.041, 0.020), then mixed with the layer by the amount. On the lightness, the chrominance
-  (CIE a* b*) or each RGB channel.
+  (CIE a* b*) or each RGB channel. The layers of 16, 32 and 64 px are thresholded on their own noise, measured on
+  each of them (1.4826 x the MAD of its coefficients: Starck and Murtagh 2006, 2.3, the noise of a layer when it is
+  not white), and hard (Starck and Murtagh 2006, 2.3 and 2.4, the multiresolution support: a coefficient above k
+  sigma is significant and kept whole): a stack's large-scale noise (the colour blotches of the dark sky, independent
+  in each filter) is not the first layer's scaled, and a soft threshold took k sigma off each large real structure
+  too (a 40 px colour patch lost 10 to 20 % of its colour at 3 sigma); kept whole, it keeps its colour.
 * **CLAHE** (K. Zuiderveld, "Contrast Limited Adaptive Histogram Equalization", Graphics Gems IV, 1994; the reference program's CLAHE,
   the reference processing suite's LocalHistogramEqualization): on the CIE L* lightness, histograms of 256 levels per tile (the reference processing suite's
   default resolution), clipped at the contrast limit times the mean and redistributed as OpenCV's ``createCLAHE`` does,
@@ -40,6 +45,8 @@ import torch.nn.functional as F
 from . import colour
 
 LAYERS = 5                                             # 1, 2, 4, 8 and 16 px
+NR_LAYERS = 7                                          # noise reduction: up to 64 px
+NR_OWN = 4                                             # from this layer (16 px) on, each layer's own noise
 NOISE_E = (0.889, 0.200, 0.086, 0.041, 0.020, 0.010)   # starlet layer noise for a unit Gaussian noise (B3 spline)
 TARGETS = ["Lightness (CIE L*)", "RGB"]
 NR_TARGETS = ["Lightness (CIE L*)", "Chrominance (CIE a* b*)", "RGB"]
@@ -125,6 +132,29 @@ def noise_sigma(w1: torch.Tensor) -> torch.Tensor:
     return mad / 0.6745 / NOISE_E[0]
 
 
+def layer_sigma(w: torch.Tensor) -> torch.Tensor:
+    """The noise of a starlet layer of each channel measured on it: 1.4826 x the MAD of its coefficients."""
+    flat = w.reshape(w.shape[0], -1)
+    if flat.shape[1] > 400_000:
+        flat = flat[:, :: flat.shape[1] // 400_000]
+    return 1.4826 * (flat - flat.median(1, keepdim=True).values).abs().median(1).values
+
+
+def layer_noise_of(x: np.ndarray, target: str, level: int = 0) -> dict[int, list[float] | None]:
+    """The own noise of the full-resolution layers NR_OWN.. of an image at a resolution 2^level, for a target:
+    full-resolution layer -> each channel's ``layer_sigma`` (None for a layer finer than a pixel there). A layer this
+    coarse keeps its coefficients at a reduced resolution (the same structures, fewer pixels), so it serves any level."""
+    got: dict = {}
+
+    def fn(img):
+        layers, _res = starlet(img, max(NR_LAYERS - level, 0))
+        for j in range(NR_OWN, NR_LAYERS):
+            got[j] = [float(s) for s in layer_sigma(layers[j - level])] if j >= level else None
+        return img
+    _on(x, target, fn)
+    return got
+
+
 def noise_of(x: np.ndarray, target: str) -> list[float]:
     """The noise ``denoise`` measures on an image for a target: each channel's sigma of its first starlet layer."""
     got: list = []
@@ -138,26 +168,40 @@ def noise_of(x: np.ndarray, target: str) -> list[float]:
 
 
 def denoise(x: np.ndarray, thresholds: list[float], amount: float, target: str, level: int = 0,
-            sigma: list[float] | None = None) -> np.ndarray:
+            sigma: list[float] | None = None, own: dict | None = None) -> np.ndarray:
     """Multiscale noise reduction: layer j's coefficients soft-thresholded at k_j sigma_j, mixed by the amount.
-    ``sigma``: the noise of each channel at this resolution, measured elsewhere (Post's region at 100 % takes the
-    whole image's); else measured on ``x``."""
+    ``thresholds``: the full-resolution layers 1, 2, 4, 8 px (sigma_j from the first layer's noise, white-noise
+    scaled), then 16, 32, 64 px (sigma_j the layer's own noise, ``layer_sigma``). ``sigma``: the noise of each
+    channel at this resolution, measured elsewhere (Post's region at 100 % takes the whole image's); else measured on
+    ``x``. ``own``: the same for the own-noise layers (``layer_noise_of``: full-resolution layer -> each channel's)."""
+    thresholds = list(thresholds)
+    if not any(t > 0 for t in thresholds[NR_OWN:]):     # without the coarse layers: the four layers, as always
+        thresholds = thresholds[:NR_OWN]
     if amount <= 0 or not any(t > 0 for t in thresholds):
         return x
-    first = _first_layer(level)
+    first = min(level, len(thresholds))
     ks = list(thresholds[first:])
     if not any(t > 0 for t in ks):
         return x
 
     def fn(img):
         layers, res = starlet(img, len(ks))
-        sig = noise_sigma(layers[0]) if sigma is None else torch.tensor(sigma, dtype=torch.float32)
+        sig = None
         out = []
         for j, (w, k) in enumerate(zip(layers, ks)):
             if k <= 0:
                 out.append(w)
                 continue
-            t = (k * sig * NOISE_E[j]).view(-1, 1, 1)
+            full = j + first                                   # the layer at full resolution
+            if full >= NR_OWN:                                 # hard: the significant coefficients kept whole
+                s = (own or {}).get(full)
+                t = (k * (layer_sigma(w) if s is None else torch.tensor(s, dtype=torch.float32))).view(-1, 1, 1)
+                out.append(w - amount * w * (w.abs() <= t))
+                continue
+            else:
+                if sig is None:
+                    sig = noise_sigma(layers[0]) if sigma is None else torch.tensor(sigma, dtype=torch.float32)
+                t = (k * sig * NOISE_E[j]).view(-1, 1, 1)
             out.append(w + amount * (soft(w, t) - w))
         return _back(out, res)
     return _on(x, target, fn)

@@ -86,6 +86,8 @@
   "4 px": "4 px",
   "8 px": "8 px",
   "16 px": "16 px",
+  "32 px": "32 px",
+  "64 px": "64 px",
   "A Gaussian smoothing of the luminance and of the colour. Added at zero it changes nothing: raise Luminance or Color": "Un lissage gaussien de la luminance et de la couleur. Ajouté à zéro, il ne change rien : montez Luminance ou Couleur",
   "A large-radius unsharp mask": "Un masque flou de grand rayon",
   "Additive mask": "Masque additif",

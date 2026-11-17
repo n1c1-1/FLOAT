@@ -381,6 +381,78 @@ def test_the_starlet_transform_and_the_multiscale_tools():
     assert np.abs(ab1 - ab0).mean() < 0.6                                  # the colour left as it was
 
 
+def _blotched_sky(seed=5):
+    """A flat grey sky with colour blotches of about 60 px (each channel's own large-scale noise, as three filters'
+    stacks have it) and a sharp-edged orange patch of 40 px: (image, inside the patch, the sky away from it)."""
+    rng = np.random.default_rng(seed)
+    n = 512
+    blot = np.stack([cv2.GaussianBlur(w, (0, 0), 20) - cv2.GaussianBlur(w, (0, 0), 50)
+                     for w in rng.normal(0, 1, (3, n, n)).astype(np.float32)], -1)
+    img = 0.3 + blot * (0.012 / blot.std()) + rng.normal(0, 0.004, (n, n, 3)).astype(np.float32)
+    img[236:276, 236:276] = (0.5, 0.28, 0.18)
+    inside = np.zeros((n, n), bool)
+    inside[240:272, 240:272] = True
+    away = np.ones((n, n), bool)
+    away[172:340, 172:340] = False
+    return np.clip(img, 0, 1).astype(np.float32), inside, away
+
+
+def _chroma_spread(img, away, block=64):
+    """The spread of the a* and b* block means over the sky (blocks of ``block`` px)."""
+    lab = pcol.to_lab(img)
+    n = img.shape[0]
+    return float(np.mean([np.std([lab[y:y + block, x:x + block, c].mean() for y in range(0, n, block)
+                                  for x in range(0, n, block) if away[y:y + block, x:x + block].all()])
+                          for c in (1, 2)]))
+
+
+def test_the_coarse_layers_take_the_colour_blotches_off_and_keep_a_real_colour():
+    # the reviewer's M27 (mono S-H-O): colour blotches of 50-150 px in the dark sky were left by the 1-8 px layers;
+    # the 16, 32 and 64 px layers, each thresholded on its own noise, take them off and keep a real colour patch
+    img, inside, away = _blotched_sky()
+    T = "Chrominance (CIE a* b*)"
+    out = pd.denoise(img, [0, 0, 0, 0, 0, 3.0, 3.0], 1.0, T)
+    assert _chroma_spread(out, away) < 0.5 * _chroma_spread(img, away)
+    a0, a1 = pcol.to_lab(img), pcol.to_lab(out)
+    c0, c1 = a0[inside, 1:].mean(0), a1[inside, 1:].mean(0)
+    assert np.linalg.norm(c1 - c0) < 0.05 * np.linalg.norm(c0)            # the patch keeps its colour
+    assert np.abs(a1[..., 0] - a0[..., 0]).max() < 0.01                   # the lightness untouched
+    # the new layers at 0: exactly the picture of the four layers
+    for ks in ([3.0, 2.0, 1.0, 0.0], [0.0, 3.0, 0.0, 2.0]):
+        assert np.array_equal(pd.denoise(img, ks + [0.0, 0.0, 0.0], 1.0, T), pd.denoise(img, ks, 1.0, T))
+    # at half resolution the layers keep their size (the 64 px one is the half image's 32 px one): the same effect
+    half = cv2.resize(img, (256, 256), interpolation=cv2.INTER_AREA)
+    oh = pd.denoise(half, [0, 0, 0, 0, 0, 3.0, 3.0], 1.0, T, level=1)
+    ref = cv2.resize(out, (256, 256), interpolation=cv2.INTER_AREA)
+    assert np.abs(pcol.to_lab(oh)[..., 1:] - pcol.to_lab(ref)[..., 1:]).mean() < 0.3
+    # the own noise of a coarse layer is the same measured at full and at half resolution
+    full_n, half_n = pd.layer_noise_of(img, T, 0), pd.layer_noise_of(half, T, 1)
+    for j in (5, 6):
+        assert np.allclose(full_n[j], half_n[j], rtol=0.15), (j, full_n[j], half_n[j])
+
+
+def test_the_noise_reduction_shows_its_coarse_layers_at_zero_in_both_languages():
+    spec = FILTERS["ml_denoise"]
+    names = [p["key"] for p in spec["params"]]
+    assert names[:7] == ["l1", "l2", "l3", "l4", "l5", "l6", "l7"]
+    assert all(p["default"] == 0 for p in spec["params"][:7])
+    assert [p["label"] for p in spec["params"][4:7]] == ["16 px", "32 px", "64 px"]
+    i18n.set_language("fr")
+    try:
+        assert [i18n._(p["label"]) for p in spec["params"][4:7]] == ["16 px", "32 px", "64 px"]
+        assert not {"16 px", "32 px", "64 px"} & i18n.missing()
+    finally:
+        i18n.set_language("en")
+    # a filter saved before (no 16-64 px settings) renders as the new layers at 0
+    img, _inside, _away = _blotched_sky()
+
+    class C:
+        level, f = 0, 1
+    old = dict(l1=3.0, l2=2.0, l3=0.0, l4=0.0, amount=1.0, target="Chrominance (CIE a* b*)")
+    assert np.array_equal(postengine.f_ml_denoise(img, old, C()),
+                          postengine.f_ml_denoise(img, dict(old, l5=0.0, l6=0.0, l7=0.0), C()))
+
+
 def test_clahe_is_zuiderveld_as_opencv_computes_it():
     rng = np.random.default_rng(2)
     base = cv2.GaussianBlur(rng.random((180, 260)).astype(np.float32), (0, 0), 20)
