@@ -353,6 +353,9 @@ def step_words(old: list[dict], new: list[dict]) -> str:
 def _setting_change(lay: dict, field: str, key: str, old, new) -> str:
     """What a layer's setting became, "old → new", as its panel writes the values: a rendering slider by its offset
     from the suggestion, the Arcsinh's Strength to its step, another value as it is."""
+    if field == "params" and key == "spots" and lay.get("filter") == "heal":
+        return _spots_change(old or [], new or [])
+
     def say(v):
         if field == "sliders":
             v = 2.0 if v is None else float(v)
@@ -362,6 +365,17 @@ def _setting_change(lay: dict, field: str, key: str, old, new) -> str:
         return "" if v is None else _(str(v))
     a, b = say(old), say(new)
     return f"{a} → {b}" if a and b else ""
+
+
+def _spots_change(old: list, new: list) -> str:
+    """A healer's spots as Undo / Redo says them: how many were added, removed or moved."""
+    n = len(new) - len(old)
+    if n > 0:
+        return _("1 spot added") if n == 1 else _("{n} spots added").format(n=n)
+    if n < 0:
+        return _("1 spot removed") if n == -1 else _("{n} spots removed").format(n=-n)
+    m = sum(1 for a, b in zip(old, new) if a != b)
+    return _("1 spot moved") if m == 1 else _("{n} spots moved").format(n=m)
 
 
 def _filter_place(fl: dict, layers: dict) -> str:
@@ -3360,11 +3374,8 @@ class PostView(QWidget):
         is: in its layer, or above it on everything below). On the real stars of a Stars group: at the group's bottom,
         under the synthetic stars, so that it acts on the real stars alone (#93)."""
         cur = self.layer(self.sel[0]) if self.sel else None
-        target = sub = None
         real = cur is not None and is_pixel(cur) and self.sel[1] == "real"
-        if cur is not None:
-            target = cur["id"] if is_pixel(cur) else cur.get("target")
-            sub = "stars" if real else selection_side(self.sel[1]) or (None if is_pixel(cur) else cur.get("sub"))
+        target, sub = self._new_filter_place()
         self.push()
         fl = new_filter_layer(key, target, sub)
         same = sum(1 for lay in self.layers if lay["kind"] == "filter" and lay.get("filter") == key)
@@ -3377,6 +3388,17 @@ class PostView(QWidget):
         self.rebuild()
         self.request(final_only=True)
         return fl
+
+    def _new_filter_place(self):
+        """Where a new filter goes, as the selection is: (the pixel layer it is nested in, the image of it: "stars",
+        "f:SII", ... or None); (None, None) for every layer below."""
+        cur = self.layer(self.sel[0]) if self.sel else None
+        if cur is None:
+            return None, None
+        real = is_pixel(cur) and self.sel[1] == "real"
+        target = cur["id"] if is_pixel(cur) else cur.get("target")
+        sub = "stars" if real else selection_side(self.sel[1]) or (None if is_pixel(cur) else cur.get("sub"))
+        return target, sub
 
     def set_target(self, fl, target):
         """Nest a filter in a pixel layer (on top of its children), or in one of a Stars and background layer's two
@@ -4189,9 +4211,13 @@ class PostView(QWidget):
                 if bottom is not None:
                     self.select(bottom["id"], "layer")
             return
-        lay = next((x for x in self.layers if x["kind"] == "filter" and x.get("filter") == "heal"), None)
-        if lay is not None:
-            self.select(lay["id"], "layer")
+        if self._heal_layer() is not None:                 # a healer chosen: that one
+            return
+        target, sub = self._new_filter_place()
+        lay = next((x for x in self.layers if x["kind"] == "filter" and x.get("filter") == "heal"
+                    and x.get("target") == target and x.get("sub") == sub), None)
+        if lay is not None:                                # the chosen layer's own healer (as Filter > Spot healing
+            self.select(lay["id"], "layer")                # would add: in that layer, or that image of it)
         else:
             self._heal_made = self.add_filter("heal")["id"]
 

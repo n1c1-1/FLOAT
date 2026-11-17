@@ -765,3 +765,60 @@ def test_the_tester_s_details_of_the_family_s_sliders(m27, monkeypatch):
     after["sliders"] = {**lay.get("sliders", {}), "saturation": 3.0}
     assert step_words([lay], [after]).endswith(": 0 → +1.0")
     ed.reset()
+
+
+def test_the_bar_s_spot_healing_acts_on_the_selected_layer_of_either_block(m27):
+    """Spot healing from Post's bar acts on the layer chosen, as Filter > Detail > Spot healing: an image of the stars
+    and background block (Stars, Starless) or a filter of the combination gets its own healer, found again when it is
+    chosen once more; another's healer is never used (the judge: with Stars chosen the spot went into S II's healer,
+    with O III chosen the button opened the Stars healer)."""
+    w, pv, _before = m27
+    lay = _master(pv)
+    keep = pe.snapshot(pv.layers)
+    try:
+        sides = ["stars", "starless", "f:SII", "f:OIII"]
+        made = {}
+        for side in sides:                                  # each child: a healer of its own, nested in it
+            pv.b_heal.setChecked(False)
+            pv.select(lay["id"], side)
+            pv.b_heal.setChecked(True)
+            h = pv._heal_layer()
+            assert h is not None and (h.get("target"), h.get("sub")) == (lay["id"], side), side
+            h["params"]["spots"] = [[10.0, 10.0, 5.0, 12.0, 0.0]]      # (not empty: kept when the tool is left)
+            made[side] = h["id"]
+        assert len(set(made.values())) == len(sides)
+        for side in reversed(sides):                        # chosen again: its own healer, no new one
+            pv.b_heal.setChecked(False)
+            pv.select(lay["id"], side)
+            pv.b_heal.setChecked(True)
+            assert pv._heal_layer()["id"] == made[side], side
+        assert sum(1 for x in pv.layers if x.get("filter") == "heal") == len(sides)
+    finally:
+        pv.b_heal.setChecked(False)
+        pv.layers = pe.normalize(keep)
+        pv.sel = None
+        pv.rebuild()
+
+
+def test_a_healer_s_spots_are_counted_in_undo_never_their_coordinates():
+    """Undo / Redo of Spot healing says "1 spot added", "2 spots removed", "1 spot moved", never the coordinates of
+    the spots; in French too."""
+    from astro_gpu.client import i18n
+    from astro_gpu.client.post3 import step_words
+    h = pe.new_filter_layer("heal", None, None)
+    one, two = [491.2, 1359.5, 40.0, 100.0, 0.0], [300.0, 200.0, 40.0, -100.0, 0.0]
+
+    def said(a, b):
+        x, y = copy.deepcopy(h), copy.deepcopy(h)
+        x["params"]["spots"], y["params"]["spots"] = a, b
+        return step_words([x], [y])
+    assert said([], [one]).endswith(": 1 spot added")
+    assert said([one], [one, two, two]).endswith(": 2 spots added")
+    assert said([one, two], []).endswith(": 2 spots removed") and said([one], []).endswith(": 1 spot removed")
+    assert said([one], [two]).endswith(": 1 spot moved")
+    assert "[" not in said([], [one]) and "491" not in said([], [one])
+    try:
+        i18n.set_language("fr")
+        assert said([], [one]).endswith("1 tache ajoutée") and said([one, two], []).endswith("2 taches retirées")
+    finally:
+        i18n.set_language("en")

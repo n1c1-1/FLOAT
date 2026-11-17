@@ -163,7 +163,7 @@ class DraftBar(QFrame):
         self._lines: list[str] = []
         self._cost = ""
         if narrow:                                      # a narrow column (the Gradient view's): Apply under the two
-            for lb, n in ((self.what, 2), (self.cost, 1)):
+            for lb, n in ((self.what, 2), (self.cost, 2)):
                 lb.setWordWrap(False)
                 lb.setTextFormat(Qt.PlainText)
                 lb.setFixedHeight(n * lb.fontMetrics().height() + 2)
@@ -201,12 +201,28 @@ class DraftBar(QFrame):
         first = self._lines[0] if self._lines else ""
         rest = " · ".join(self._lines[1:])
         self.what.setText("\n".join(fm.elidedText(t, Qt.ElideRight, w) for t in (first, rest)))
-        self.cost.setText(self.cost.fontMetrics().elidedText(self._cost, Qt.ElideRight, w))
+        self.cost.setText(two_lines(self._cost, self.cost.fontMetrics(), w))
 
     def resizeEvent(self, e):                                         # noqa: N802 - Qt's name
         super().resizeEvent(e)
         if self.fixed:
             self._elide()
+
+
+def two_lines(text: str, fm, w: int) -> str:
+    """``text`` in a width ``w`` on at most two lines: whole when it fits, else broken after its last " · " part that
+    fits the first line (else between words), the second line cut at the width when it is longer still."""
+    if not text or fm.horizontalAdvance(text) <= w:
+        return text
+    parts = text.split(" · ")
+    k = max((i for i in range(1, len(parts)) if fm.horizontalAdvance(" · ".join(parts[:i])) <= w), default=0)
+    if k:
+        first, rest = " · ".join(parts[:k]), " · ".join(parts[k:])
+    else:
+        words = text.split(" ")
+        k = max((i for i in range(1, len(words)) if fm.horizontalAdvance(" ".join(words[:i])) <= w), default=1)
+        first, rest = " ".join(words[:k]), " ".join(words[k:])
+    return first + "\n" + fm.elidedText(rest, Qt.ElideRight, w)
 
 
 def ask_leave(parent, block: str, lines=(), cost: str = "", variant: bool = True) -> str:

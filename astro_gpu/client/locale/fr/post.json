@@ -406,5 +406,11 @@
   "Combine layers' editor: a draft to compare, Apply, Try variant": "L'éditeur de Combiner calques : un brouillon à comparer, Appliquer, Essayer une variante",
   "“{name}” moved from {old} to {new}": "« {name} » déplacé de {old} à {new}",
   "the layers below": "les calques du dessous",
-  "This layer": "Ce calque"
+  "This layer": "Ce calque",
+  "1 spot added": "1 tache ajoutée",
+  "{n} spots added": "{n} taches ajoutées",
+  "1 spot removed": "1 tache retirée",
+  "{n} spots removed": "{n} taches retirées",
+  "1 spot moved": "1 tache déplacée",
+  "{n} spots moved": "{n} taches déplacées"
 }

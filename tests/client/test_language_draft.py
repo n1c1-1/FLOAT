@@ -13,7 +13,8 @@ def test_a_change_of_language_asks_for_the_draft_first(win, monkeypatch):
     answer = {"now": "stay"}
     monkeypatch.setattr(pn, "draft_pending", lambda: ("Gradient", ["Method: RBF"], None))
     monkeypatch.setattr(pn, "draft_reset", lambda: reset.append(1))
-    monkeypatch.setattr(blockdraft, "ask_leave", lambda parent, block, lines, cost: asked.append(block) or answer["now"])
+    monkeypatch.setattr(blockdraft, "ask_leave", lambda parent, block, lines, cost, variant=True:
+                        asked.append(block) or answer["now"])
     screen = win.proj_screen
     prefs.set("language", "fr")                                     # as the settings' list writes it
     try:

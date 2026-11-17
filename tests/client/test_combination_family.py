@@ -531,3 +531,32 @@ def test_real_stay_keeps_the_editor_and_the_list_shows_the_workflow_edited(qapp,
         ed.reset()
     finally:
         w.close()
+
+
+@pytest.mark.parametrize("language", ["en", "fr"])
+def test_the_narrow_bar_says_post_s_layer_only_whole_at_the_judge_s_width(qapp, language):
+    """The editors' draft bar (both blocks') in a column where "Post's layer only ... · Try variant: in a new version
+    of Post" does not fit one line but each part does (a 1600 px window's column, about 380 px in the app's font; the
+    width is taken from the font the test has): whole, on two lines, nothing cut; its height fixed."""
+    from astro_gpu.client import i18n
+    from astro_gpu.client.blockdraft import POST_ONLY, DraftBar
+    i18n.set_language(language)
+    try:
+        bar = DraftBar(narrow=True)
+        fm = bar.cost.fontMetrics()
+        widest = max(fm.horizontalAdvance(x) for x in i18n._(POST_ONLY).split(" · "))
+        assert fm.horizontalAdvance(i18n._(POST_ONLY)) > widest + 30                 # (one line would be cut)
+        bar.resize(widest + 30 + 22, 140)                                           # (its margins: 10 + 10, 2)
+        bar.show()
+        qapp.processEvents()
+        h = bar.cost.height()
+        bar.show_draft(["Draft · 1 change", "S II hue 16° → 140°"], i18n._(POST_ONLY))
+        text = bar.cost.text()
+        assert "…" not in text and text.replace("\n", " · ") == i18n._(POST_ONLY), text
+        assert len(text.split("\n")) == 2
+        assert bar.cost.height() == h
+        bar.show_draft(["Draft · 1 change"], "Computes again: Denoise")      # short: one line
+        assert bar.cost.text() == "Computes again: Denoise"
+        bar.close()
+    finally:
+        i18n.set_language("en")
