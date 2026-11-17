@@ -61,7 +61,8 @@ PANEL_W = 380
 #: a filter's thumbnail: its width (px)
 THUMB_W = 84
 #: Intensity: its range and its step (1 = as balanced)
-INTENSITY_MAX, INTENSITY_STEP = 10.0, 0.05             # (the tester's recipe: S II 14 times fainter than H-alpha)
+INTENSITY_MAX, INTENSITY_STEP = 10.0, 0.01             # (the tester's recipe: S II 14 times fainter than H-alpha;
+#                                                        a hundredth: the fine setting near 1 the testers asked for)
 #: the starting palettes: (key, name, the filters they colour, {filter: hue}); a palette is offered when the recipe's
 #: hued filters are exactly its own. Hubble: the S-H-O hues measured on the Hubble teams' images (stages/combine.py,
 #: HUBBLE_HUES, the S-H-O recipe's defaults); H-O-O: H-alpha red, O III cyan.
@@ -1320,8 +1321,9 @@ class CombineEditor(QObject):
         it.setObjectName("intensity")
         it.setRange(0, int(round(INTENSITY_MAX / INTENSITY_STEP)))
         it.setToolTip(_("The filter's weight after the balance (1: as balanced). Lower a faint filter whose noise the "
-                        "balance raised."))
+                        "balance raised.") + "\n" + _("Shift while dragging: ten times finer · arrow keys: one step"))
         self._wire_slider(it, lambda i, r=role, **k: self.set_intensity(r, i * INTENSITY_STEP, **k))
+        FineDrag(it)
         row.addWidget(it, 1)
         iv = label("", "small")
         iv.setMinimumWidth(iv.fontMetrics().horizontalAdvance("3.00") + 2)

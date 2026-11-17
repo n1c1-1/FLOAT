@@ -1109,7 +1109,7 @@ class Panel(QWidget):
         """A combination block (issue #43; stages/combine.py): its workflow's name, its type, its named inputs (the
         workflow each reads, its Output or its starless image, its weight), then its settings as any block's; its
         output is a layer of Post."""
-        from .combineedit import INTENSITY_MAX
+        from .combineedit import INTENSITY_MAX, INTENSITY_STEP
         from .graphnode import combine_kind, combine_spec, combine_title
         from .graphview.palette import recipe_tip
         from ..core.workflow import combine_stage
@@ -1235,7 +1235,7 @@ class Panel(QWidget):
                 row.addWidget(ch)
             sp = DoubleSpinBox()
             sp.setRange(0.0, INTENSITY_MAX)
-            sp.setSingleStep(0.05)
+            sp.setSingleStep(INTENSITY_STEP)
             sp.setDecimals(2)
             applied_w = float(weights.get(role, 1.0))
             sp.setValue(float(self.draft_combine(("weight", role), applied_w)))

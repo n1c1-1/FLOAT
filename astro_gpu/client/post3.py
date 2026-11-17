@@ -3753,8 +3753,10 @@ class PostView(QWidget):
         else:
             sl = ContSlider(_("{filter} intensity").format(filter=name), 0, INTENSITY_MAX, f["weights"].get(role, 1.0),
                             1.0, step=INTENSITY_STEP)
+            FineDrag(sl.s)
             sl.setToolTip(_("{filter}'s weight on top of the gain the balance measured (1: as balanced): the "
-                            "combination's setting, the same in Inspect").format(filter=name))
+                            "combination's setting, the same in Inspect").format(filter=name) + NL +
+                          _("Shift while dragging: ten times finer · arrow keys: one step"))
             words = _("{filter} intensity").format(filter=name)
         pid = lay["pid"]
 

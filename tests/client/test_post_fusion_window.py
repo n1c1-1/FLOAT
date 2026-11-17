@@ -668,3 +668,23 @@ def test_an_intensity_let_go_where_it_was_when_the_panel_was_built_still_changes
     pv.do_undo()
     pv.do_undo()
     assert "tune" not in _master(pv)
+
+
+def test_the_intensities_are_set_to_the_hundredth_and_shift_drags_ten_times_finer(m27, monkeypatch):
+    """The testers' look needed intensities finer than 0.05 near 1: one hundredth a step, in Post, in Inspect's editor
+    and in the block's panel, and Shift while dragging ten times finer, as the hue rails."""
+    from astro_gpu.client.combineedit import FineDrag
+    from astro_gpu.client.post3 import ContSlider
+    w, pv, _before = m27
+    assert ce.INTENSITY_STEP == 0.01
+    lay = _master(pv)
+    pv.sel = None
+    pv.select(lay["id"], "layer")
+    for name in ("S II intensity", "S II hue"):
+        sl = next(x for x in pv.findChildren(ContSlider) if x.name.text() == name and x.isVisibleTo(pv.right))
+        assert sl.s.findChildren(FineDrag), name
+    sl = next(x for x in pv.findChildren(ContSlider) if x.name.text() == "S II intensity" and x.isVisibleTo(pv.right))
+    assert sl.step == 0.01 and sl.s.maximum() == 1000
+    _q, ed = _editor(w, monkeypatch)
+    it = ed._ui["int_SII"]
+    assert it.maximum() == 1000 and it.findChildren(FineDrag)

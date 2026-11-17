@@ -69,5 +69,6 @@
   "The gains measured on the whole image as the run measures them": "Les gains mesurés sur l'image entière comme le calcul les mesure",
   "An estimate on the preview's reduced copy": "Une estimation sur la copie réduite de l'aperçu",
   "HOO": "HOO",
-  "Needs a run: the combination is computed again by Run": "À calculer : la combinaison est recalculée par Exécuter"
+  "Needs a run: the combination is computed again by Run": "À calculer : la combinaison est recalculée par Exécuter",
+  "Shift while dragging: ten times finer · arrow keys: one step": "Maj pendant le glissé : dix fois plus fin · flèches : un cran"
 }
