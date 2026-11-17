@@ -38,7 +38,8 @@ that side): each is applied to its side's image, after that side's filters and b
 the stars (or the background) are absent where it is black. An absent field is no side mask (older projects).
 
 A Combine layers layer over a combination of filters (S-H-O, H-O, the recipes mixed through hues or a matrix) is the
-combination's master layer when its workflow says so (``fusion``, given by the model: client/postfusion.py, never
+combination's master layer when its workflow says so; its hues and its filters' intensities are then its own
+(``tune``, written once changed: client/postfusion.py) (``fusion``, given by the model: client/postfusion.py, never
 saved): its starless image is the mix of the filters, made here, and each filter is a sub-image of its own under it
 (``role_sub``: "f:SII"...), with its eye (``shown``), its mask (``side_masks``) and its filters (``sub``), which act on
 that filter before the mix. The filters are stretched by one factor per pixel, the same for all of them, before the
@@ -1045,6 +1046,8 @@ def snapshot(layers: list[dict]) -> list[dict]:
             d["sliders"] = dict(d["sliders"])
         if "shown" in d:
             d["shown"] = dict(d["shown"])
+        if "tune" in d:
+            d["tune"] = {k: dict(v) for k, v in d["tune"].items()}
         if "params" in d:
             d["params"] = {k: copy.deepcopy(v) if isinstance(v, (dict, list)) else v for k, v in d["params"].items()}
         m = lay.get("mask")
@@ -1127,6 +1130,10 @@ def load_layers(raw, alive: set[int]) -> list[dict]:
                 for k, v in shown.items():                       # a combination's filters' eyes (master layer)
                     if sub_role(k) is not None:
                         lay["shown"][k] = bool(v)
+                tune = d.get("tune") if isinstance(d.get("tune"), dict) else None
+                if tune is not None:                             # a combination's own hues and intensities
+                    lay["tune"] = {k: {str(r): _num(v, 0.0) for r, v in (tune.get(k) or {}).items()}
+                                   for k in ("hues", "weights") if isinstance(tune.get(k), dict)}
                 sides = d.get("side_masks") if isinstance(d.get("side_masks"), dict) else {}
                 sides = {k: m for k in [*SUBS, *(x for x in sides if sub_role(x) is not None)]
                          if (m := _clean_mask(sides.get(k))) is not None}
@@ -1704,7 +1711,7 @@ class Composer:
             if lay.get("role") is not None:
                 a = np.repeat(parts[roles.index(lay["role"])][..., None], 3, -1)
             else:
-                a = self._fusion_mix(lay, dict(zip(roles, parts)), parts[-2], parts[-1], canvas)
+                a = self._fusion_mix(lay, parts[:len(roles)], parts[-2], parts[-1], canvas)
             self._drawn += 1
             if cache:
                 self.images.put(key, a, holder)
@@ -1719,7 +1726,11 @@ class Composer:
         """(n + 2, h, w): a master layer's n filters stretched (each its balanced linear image times its weight, minus
         the black point, times the factor), the factor, the covered pixels (1, 0 elsewhere). The factor is the
         colour-preserving stretch of the filters' mix (render/simple.SimpleRenderEngine.colour_factor), on the mix's
-        statistics: the same on every filter, so the mix of the stretched filters is the stretched mix."""
+        statistics: the same on every filter, so the mix of the stretched filters is the stretched mix. Made with the
+        processor's threads (torch), from the filters kept apart from the hues (``_fusion_lin``)."""
+        # at full resolution not kept: four or five planes of the whole image would push out of the cache the images a
+        # change does not touch (the stars' side), and a hue changes them all anyway
+        cache = cache and level > 0
         key = ("parts",) + self._key(dict(lay, role=None), level, box, canvas)
         hit = self.images.get(key) if cache else None
         if hit is not None:
@@ -1728,26 +1739,48 @@ class Composer:
         import torch
 
         from ..render.simple import SimpleRenderEngine
-        lin, valid = self._fusion_lin(lay, level, box)
-        mat = np.asarray(lay["fusion"]["matrix"], np.float32)
-        x = np.tensordot(mat, lin, 1).astype(np.float32)
+        lin, valid = self._fusion_lin(lay, level, box, canvas, cache)
+        n, h, w = lin.shape
+        L = torch.from_numpy(lin)
+        M = torch.from_numpy(np.asarray(lay["fusion"]["matrix"], np.float32))
+        x = (M @ L.reshape(n, -1)).reshape(3, h, w)
         st = self._fusion_stats(lay, canvas)
-        F, c0 = SimpleRenderEngine.colour_factor(torch.from_numpy(x), st, self.provider.fusion_settings(lay))
-        F = F.numpy().astype(np.float32)
-        kids = F[None] * (lin - np.float32(c0))
-        kids[:, ~valid] = 0
-        hit = np.concatenate([kids, F[None], valid[None].astype(np.float32)]).astype(np.float32)
+        F, c0 = SimpleRenderEngine.colour_factor(x, st, self.provider.fusion_settings(lay))
+        del x
+        out = torch.empty((n + 2, h, w), dtype=torch.float32)
+        vf = torch.from_numpy(valid.astype(np.float32))
+        torch.sub(L, float(c0), out=out[:n])
+        out[:n].mul_((F * vf)[None])
+        out[n] = F
+        out[n + 1] = vf
+        hit = out.numpy()
         if cache:
             self.images.put(key, hit, (lay["id"], (FUSION, "parts"), level))
         return hit
 
-    def _fusion_lin(self, lay, level, box) -> tuple[np.ndarray, np.ndarray]:
+    def _fusion_lin(self, lay, level, box, canvas=None, cache=True) -> tuple[np.ndarray, np.ndarray]:
         """(n, h, w): a master layer's balanced filters times their weights (Intensity), in its recipe's order; and
-        the covered pixels."""
-        planes, valid = self.provider.fusion_planes(lay, level, box)
+        the covered pixels. Kept apart from the hues (a hue changed reads nothing again)."""
+        roles = fusion_roles(lay)
         w = lay["fusion"].get("weights") or {}
-        lin = np.stack([planes[r] * np.float32(w.get(r, 1.0)) for r in fusion_roles(lay)]).astype(np.float32)
-        return lin, np.asarray(valid, bool)
+        sid = (FUSION, lay["pid"])
+        cache = cache and level > 0                       # (at full resolution: as ``_fusion_parts``)
+        key = ("lin", sid, self.provider.version(sid), tuple(roles), tuple(float(w.get(r, 1.0)) for r in roles),
+               lay["fusion"].get("balance"), level, None if canvas is not None and level > 0 else tuple(box),
+               (canvas.W, canvas.H, canvas.origin) if canvas is not None else None)
+        hit = self.images.get(key) if cache and canvas is not None else None
+        if hit is None:
+            planes, valid = self.provider.fusion_planes(lay, level, box)
+            shape = np.asarray(valid).shape
+            hit = np.empty((len(roles) + 1, *shape), np.float32)
+            for i, r in enumerate(roles):
+                np.multiply(planes[r], np.float32(w.get(r, 1.0)), out=hit[i])
+            hit[-1] = np.asarray(valid, np.float32)
+            if cache and canvas is not None:
+                self.images.put(key, hit, (lay["id"], (FUSION, "lin"), level))
+        elif cache:
+            self.images.hold(key, (lay["id"], (FUSION, "lin"), level))
+        return hit[:-1], hit[-1] > 0.5
 
     def _fusion_stats(self, lay, canvas) -> dict:
         """The statistics of a master layer's mix (render/simple.image_stats), measured once on the whole canvas at
@@ -1759,7 +1792,7 @@ class Composer:
         if hit is None:
             from ..render.simple import image_stats
             W, H = canvas.size(at)
-            lin, valid = self._fusion_lin(lay, at, (0, 0, W, H))
+            lin, valid = self._fusion_lin(lay, at, (0, 0, W, H), canvas)
             x = np.tensordot(np.asarray(lay["fusion"]["matrix"], np.float32), lin, 1).astype(np.float32)
             hit = image_stats(x, valid if valid.any() else np.ones_like(valid))
             self._fstats[key] = hit
@@ -1767,22 +1800,29 @@ class Composer:
                 self._fstats.pop(next(iter(self._fstats)))
         return hit
 
-    def _fusion_mix(self, lay, kids: dict, F: np.ndarray, valid: np.ndarray, canvas) -> np.ndarray:
-        """A master layer's filters, stretched (``kids``: {role: (h, w)}, a filter left out at 0), mixed through the
-        combination's matrix: the stretched mix, then the end of the stretch (Contrast, Saturation:
-        render/simple.SimpleRenderEngine.finish); (h, w, 3). A row of the matrix that does not sum to 1 (hues with no
-        grey between them) takes back the black point it was given ``(1 - its sum)`` times."""
+    def _fusion_mix(self, lay, kids, F: np.ndarray, valid: np.ndarray, canvas) -> np.ndarray:
+        """A master layer's filters, stretched (``kids``: (n, h, w) in its recipe's order, or {role: (h, w)}; a filter
+        left out at 0), mixed through the combination's matrix: the stretched mix, then the end of the stretch
+        (Contrast, Saturation: render/simple.SimpleRenderEngine.finish); (h, w, 3). A row of the matrix that does not
+        sum to 1 (hues with no grey between them) takes back the black point it was given ``(1 - its sum)`` times."""
         import torch
 
         from ..render.simple import SimpleRenderEngine, _anchors
         mat = np.asarray(lay["fusion"]["matrix"], np.float32)
-        c0 = np.float32(_anchors(self._fusion_stats(lay, canvas)["lum"])[0])
-        y = np.tensordot(mat, np.stack([kids[r] for r in fusion_roles(lay)]), 1).astype(np.float32)
-        y -= (F * c0)[None] * (1 - mat.sum(1))[:, None, None]
-        y = np.maximum(y, 0)
-        y = SimpleRenderEngine.finish(torch.from_numpy(y), self.provider.fusion_settings(lay)).numpy()
-        y[:, valid < 0.5] = 0
-        return np.ascontiguousarray(np.moveaxis(y, 0, -1), np.float32)
+        c0 = float(_anchors(self._fusion_stats(lay, canvas)["lum"])[0])
+        K = torch.from_numpy(np.stack([kids[r] for r in fusion_roles(lay)]) if isinstance(kids, dict)
+                             else np.ascontiguousarray(kids))
+        n, h, w = K.shape
+        y = (torch.from_numpy(mat) @ K.reshape(n, -1)).reshape(3, h, w)
+        Ft = torch.from_numpy(np.ascontiguousarray(F, np.float32))
+        lost = 1.0 - mat.sum(1)
+        for c in range(3):                                # (a balanced matrix: nothing taken back)
+            if abs(float(lost[c])) > 1e-7:
+                y[c].sub_(Ft * (c0 * float(lost[c])))
+        y.clamp_(min=0)
+        y = SimpleRenderEngine.finish(y, self.provider.fusion_settings(lay))
+        y.mul_(torch.from_numpy(np.asarray(valid >= 0.5, np.float32))[None])
+        return y.permute(1, 2, 0).contiguous().numpy()
 
     @staticmethod
     def _fusion_plain(lay, own) -> bool:
