@@ -79,14 +79,14 @@ def test_the_stars_block_menu_sends_each_image_to_post_and_makes_combine_layers(
     from astro_gpu.client.graphview.menu import menu
     b, stars = _stars_doc(qapp)
     items = {it[0]: it for it in menu(b.doc, stars) if it is not None}
-    for text in ("Starless to Post", "Stars to Post", "Combine layers"):
+    for text in ("Starless image to Post", "Stars to Post", "Combine layers"):
         assert text in items and items[text][3], (text, items.get(text))
-    _t, op, args, _ok, _why = items["Starless to Post"]
+    _t, op, args, _ok, _why = items["Starless image to Post"]
     assert b.act(op, **args).ok
     post = next(k for k, x in b.doc.graph.blocks.items() if x.kind == "post")
     assert any(w.src == [stars, "Starless"] and w.dst[0] == post for w in b.doc.graph.wires)
     items = {it[0]: it for it in menu(b.doc, stars) if it is not None}
-    assert "Starless out of Post" in items                        # and back out of it
+    assert "Starless image out of Post" in items                        # and back out of it
     n = sum(x.kind == "combine_layers" for x in b.doc.graph.blocks.values())
     _t, op, args, _ok, _why = items["Combine layers"]
     assert b.act(op, **args).ok

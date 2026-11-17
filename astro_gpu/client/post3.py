@@ -163,6 +163,9 @@ PART_NOTES = {"starless": "The Stars/background block's starless image, stretche
               "stars": "The Stars/background block's stars alone, on black: in Screen mode above the background.",
               "combined": "The starless image and the stars, recombined. The same settings as its block in the "
                           "graph."}
+#: a workflow layer's name made from its workflow's stored name, shown with the name the graph shows (a combination
+#: whose recipe became H-O, stored "S-H-O": "H-O · Combine layers"): (stored, shown), the model's, never saved
+RETITLE = "retitle"
 #: why a combination's layer stays plain (postfusion.plain_reason, each of its reasons), and the Output layer of a
 #: combination that has a master layer ("output"): its row's tooltip
 PLAIN_TIPS = {"lightness": "A combination composed as lightness and colour: Post shows its Output as it is",
@@ -212,7 +215,13 @@ def _sub_selected(what) -> bool:
 def layer_name(lay: dict) -> str:
     """The name of a layer as shown (``tr_name``)."""
     from . import names                               # default names follow the interface's language
-    return names.shown(tr_name(lay["name"], lay.get("kind") == "image"))
+    out = names.shown(tr_name(lay["name"], lay.get("kind") == "image"))
+    rt = lay.get(RETITLE)                             # its workflow's name as the graph shows its block
+    if rt:
+        stored = names.shown(tr_name(rt[0]))
+        if out == stored or out.startswith(stored + names.SEP):
+            return rt[1] + out[len(stored):]
+    return out
 
 
 def setting_name(lay: dict, field: str, key: str) -> str:
@@ -1873,7 +1882,20 @@ class PostView(QWidget):
         """The combinations' master layers get their description from the model (client/postfusion.py: the block's
         settings, those being moved here on top), the others none; never saved."""
         fusion_of = getattr(self.s, "fusion_of", None)
+        titled = getattr(self.s, "shown_title", None)
         for lay in self.layers if layers is None else layers:
+            if lay.get("kind") == "workflow" and titled is not None:
+                q = self.path(lay.get("pid"))
+                try:
+                    shown = titled(q.pid) if q is not None else ""
+                except Exception:  # noqa: BLE001 - not readable now: its name as stored
+                    shown = ""
+                from .names import neutral
+                from .names import shown as shown_name
+                if shown and q is not None and shown != shown_name(q.name):
+                    lay[RETITLE] = [neutral(q.name), shown]
+                else:
+                    lay.pop(RETITLE, None)
             if lay.get("kind") == "workflow" and lay.get("part") is None and fusion_of is not None:
                 try:                                       # a combination's Output as it is: why, on its row
                     f, why = fusion_of(lay["pid"])

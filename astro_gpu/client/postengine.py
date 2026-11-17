@@ -1255,6 +1255,7 @@ def save_layers(layers: list[dict]) -> list[dict]:
     out = json.loads(json.dumps(snapshot(layers), default=list))
     for d in out:
         d.pop("fusion", None)                           # the model's, given at each load (client/postfusion.py)
+        d.pop("retitle", None)                          # the name the graph shows its workflow by (post3.RETITLE)
         if d.get("kind") == "filter" and d.get("sub") is None:
             d.pop("sub", None)
         if d.get("sky_scale") == 1:                     # the first scale is what a layer that says nothing has: the

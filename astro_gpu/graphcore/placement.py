@@ -153,7 +153,8 @@ def candidates(p, view, kind=None, block=None, d=None):
                 last = r.blocks[-1] if r.blocks else None
                 if last in d.boxes and p.blocks[last].kind in ("stars", "synth") and ops.layers_free(p, ix, last):
                     bx = d.boxes[last]
-                    add("comp", Box(bx.right + GAP, bx.y, BW, BH), "Combine layers: Starless → Background, Stars only → Stars",
+                    add("comp", Box(bx.right + GAP, bx.y, BW, BH),
+                        "Combine layers: its starless image and its stars alone put back together",
                         "add_block",
                         {"kind": kind, "at": {"type": "comp", "after": last}})
     if kind in ("session", "image") and block is None:

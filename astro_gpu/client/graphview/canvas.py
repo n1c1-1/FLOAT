@@ -55,7 +55,7 @@ from .items import (
     WireItem,
 )
 from .menu import menu as block_menu
-from .style import ACCENT, CLIENT_KEY, FALLBACK_WORD, IMAGE_COL, STATE_COL, kind_what, state_word
+from .style import ACCENT, CLIENT_KEY, FALLBACK_WORD, IMAGE_COL, STATE_COL, kind_what, port_title, state_word
 
 MIN_ZOOM, MAX_ZOOM, MIN_AUTO, MAX_AUTO = 0.1, 8.0, 0.5, 1.2       # the zoom the user can choose; the fit's bounds
 MARGIN = 48                 # scene margin around the drawing (also keeps blocks off the zoom buttons)
@@ -384,7 +384,7 @@ class GraphCanvas(QGraphicsView):
             for port, y in self._ports(b, box, "in"):
                 wired = any(tuple(w.dst) == (b, port) for w in wires)
                 col = EMPTY_COL if port in OPTIONAL_PORTS and not wired else PORT_COL.get(port, "#9aa3b2")
-                inputs.append((port, _(port), y, wired, col))
+                inputs.append((port, port_title(port), y, wired, col))
             inputs.sort(key=lambda i: i[2])
         elif kind in SIDE_KINDS:                         # its input: the stars of the block before it (unnamed)
             inputs = [(SIDE_IN, "", y, True, PORT_COL["Stars"]) for _p, y in self._ports(b, box, "in")]
@@ -1943,7 +1943,7 @@ class GraphCanvas(QGraphicsView):
             else:
                 tgt.hot_input = (dport, not why)
             tgt.update()
-            self.tip.set(why or _("Wire to {port}").format(port=_(dport)), tgt.sceneBoundingRect(), bool(why),
+            self.tip.set(why or _("Wire to {port}").format(port=port_title(dport)), tgt.sceneBoundingRect(), bool(why),
                          below=True)
         else:
             self.tip.hide()

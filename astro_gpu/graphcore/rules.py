@@ -307,7 +307,7 @@ def _join(c, b, blk, ev, info, wires):
         elif port in ("Background", "Stars") and t.synth:         # refused on purpose: said what to do instead
             why = SYNTH_ELSEWHERE
         elif port == "Background" and t.stars != "without":
-            why = "the Background port needs a starless image"
+            why = "the Starless image input reads a starless image"
         elif port == "Stars" and t.stars != "only":
             why = "the Stars port needs the stars only"
         elif port == SYNTH_PORT and not t.synth:

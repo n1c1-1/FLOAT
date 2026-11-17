@@ -3897,6 +3897,22 @@ class _ProjectBase(QObject):
         why = postfusion.plain_reason(stage, spec, inputs, self._chains.get(pid) or [])
         return stage, spec, dict(w.params.get(stage) or {}), inputs, why
 
+    def shown_title(self, pid: int) -> str:
+        """A workflow's name as the graph shows its blocks everywhere: a combination's, its block's title (its recipe's
+        title, numbered among the blocks of its type, or the name the user gave: graphcore rules.title; a block whose
+        recipe became H-O is never "S-H-O"); another's, its name. "" for no workflow."""
+        from .names import shown
+        q = self.view(pid)
+        if q is None:
+            return ""
+        if self._combination(pid) is not None:
+            try:
+                from ..graphcore import rules
+                return rules.title(self._g, self._combine_block(q), tr=_)
+            except Exception:  # noqa: BLE001 - no graph here (a stand-in model): its name
+                pass
+        return shown(q.name)
+
     def master_layer(self, pid: int) -> dict | None:
         """The combination's master layer in Post's version shown (client/postfusion.py: its Combine layers layer over
         its Output, when Post can mix its filters), None when it has none."""

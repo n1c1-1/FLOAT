@@ -67,7 +67,7 @@ def stars_items(doc, ix, b):
     from ...graphcore.model import POST_PORT
     g = doc.graph
     out = []
-    for port, on, off in (("Starless", _("Starless to Post"), _("Starless out of Post")),
+    for port, on, off in (("Starless", _("Starless image to Post"), _("Starless image out of Post")),
                           ("Stars only", _("Stars to Post"), _("Stars out of Post"))):
         w = next((w for w in g.wires if w.src == [b, port] and w.dst[0] == ix.post), None)
         out.append(_item(doc, off, "unwire", {"wire": w.id}) if w is not None else

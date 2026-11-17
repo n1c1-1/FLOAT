@@ -758,6 +758,13 @@ class Panel(QWidget):
 
     PART_WORDS = {"starless": "starless image", "stars": "stars alone"}
 
+    def shown_name(self, q) -> str:
+        """A workflow's name as the graph shows it (a combination's: its block's title, model.shown_title)."""
+        try:
+            return self.s.shown_title(q.pid) or q.name
+        except AttributeError:                            # a stand-in model: its name
+            return q.name
+
     def wired_text(self, pid, tip: str, part: str | None = None) -> QLabel:
         """What a wire of the graph chooses, shown read-only (the owner's rule: it is chosen with the wires, never in
         the panel): the workflow it reads (and which of its images), or "not wired" in dim text; the tooltip says
@@ -767,7 +774,7 @@ class Panel(QWidget):
             lb = label(_("not wired"), "dim", wrap=True)
         else:
             words = _(self.PART_WORDS[part]) if part in self.PART_WORDS else ""
-            lb = label(html.escape(" · ".join(x for x in (q.name, words) if x)), None, wrap=True)
+            lb = label(html.escape(" · ".join(x for x in (self.shown_name(q), words) if x)), None, wrap=True)
         lb.setObjectName("wired")
         lb.setToolTip(tip + "\n" + _("Chosen by its wire on the graph, or in the Table view"))
         return lb
@@ -2178,7 +2185,7 @@ class Panel(QWidget):
         x.clicked.connect(self.removeTool.emit)
         top.addWidget(x)
         self.hv.addLayout(top)
-        self.hv.addWidget(label(p.name, "small"))
+        self.hv.addWidget(label(self.shown_name(p), "small"))
         from .graphnode import BY_KEY
         self.bv.addWidget(label(_(BY_KEY["composition"]["what"]), "small", wrap=True))
         if st != "done":
@@ -2191,7 +2198,7 @@ class Panel(QWidget):
         back_pid = lay.get("pid", p.pid) if lay else p.pid
         # its two sides, as their wires on the graph choose them (the owner's rule: chosen with the wires)
         self.bv.addLayout(self.wired_row(
-            _("Starless"), back_pid,
+            _("Starless image"), back_pid,
             _("The workflow whose starless image (or whose Output, for a combination) this block combines"),
             None if is_fusion_view(s.view(back_pid)) else "starless"))
         self.bv.addLayout(self.wired_row(

@@ -49,8 +49,18 @@ KIND_TITLE = {"session": "Session", "image": "Image", "calibration": "Calibratio
 POST_WHAT = "Where the workflows' images become layers: stretched, balanced, blended and exported."
 
 
+#: the Stars/background images as every view names them (Post's rows, the panels): the graph core's port names stay
+#: its own ("Background" is the Combine layers' port of the starless image), shown by these words
+PORT_SHOWN = {"Background": "Starless image", "Starless": "Starless image", "Stars only": "Stars alone"}
+
+
 def kind_title(kind: str) -> str:
     return _(KIND_TITLE.get(kind, kind))
+
+
+def port_title(port: str) -> str:
+    """A block's port as the graph shows it (``PORT_SHOWN``), translated."""
+    return _(PORT_SHOWN.get(port, port))
 
 
 def kind_what(kind: str) -> str:
