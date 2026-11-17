@@ -294,3 +294,78 @@ def test_real_a_block_placed_on_its_own_is_wired_to_post_and_its_panel_says_what
 
 
 # ---------------------------------------------------------------------------------------------- one rule, every place
+
+
+def test_real_the_stars_combination_s_setting_is_in_post_s_stars_section_one_source(qapp, tmp_path):
+    """The stars' combination (Neutral or Palette, set in Inspect) had no place in Post: the master layer's Stars
+    section and its Stars row show it, the block's setting (one source): a change there is the block's, Inspect's
+    editor shows it, Undo takes it back."""
+    from PySide6.QtWidgets import QComboBox
+
+    from astro_gpu.client.combineedit import applied_values, stage_class
+    w = _whole(tmp_path, M27)
+    try:
+        s = w.s
+        w.set_mode(2)
+        pump(1.0)
+        pv = w._post_holder.page.view
+        q, _o = _owner(w, "combine_layers")
+        lay = next(x for x in pv.layers if x.get("id") == s.master_layer(q.pid)["id"])
+        got = pv.stars_combination(lay)
+        assert got is not None
+        sq, stage, spec, _stored = got
+
+        def stored():
+            return applied_values(stage_class(stage), spec, s.combine_stored(sq.pid))["stars"]
+        was = stored()
+        for what in ("layer", "stars"):                             # the layer's Stars section, its Stars row
+            pv.sel = None
+            pv.select(lay["id"], what)
+            pump(0.3)
+            boxes = [x for x in pv.findChildren(QComboBox) if x.objectName() == "stars_fusion" and x.isVisibleTo(pv.right)]
+            assert len(boxes) == 1 and boxes[0].currentData() == was, what
+        other = "palette" if was == "neutral" else "neutral"
+        n = len(s._undo)
+        box = boxes[0]
+        box.activated.emit(box.findData(other))
+        pump(0.5)
+        assert stored() == other and len(s._undo) == n + 1
+        s.undo()
+        pump(0.3)
+        assert stored() == was
+    finally:
+        w.close()
+
+
+# ---------------------------------------------------------------------------------------------- Inspect: one editor kind
+def _open_editor(w, kind):
+    """The block of ``kind`` chosen on the graph, then Inspect: its editor, its first preview made."""
+    from astro_gpu.client.graphview.gestures import Gestures
+    w.set_mode(0)
+    pump(0.3)
+    q, _o = _owner(w, kind)
+    if kind == "combine_layers":
+        w.s.sel_layer = w.s.master_layer(q.pid)["id"]
+    bid = next(k for k, b in w.graph.bridge.graph.blocks.items() if b.kind == kind and
+               (kind != "combine" or w.graph.bridge.row_of(k).name == q.name))
+    Gestures(w.graph).click(bid)
+    pump(0.5)
+    w.set_mode(1)
+    pump(0.5)
+    ed = w.tune.layers_editor if kind == "combine_layers" else w.tune.comb_editor
+    end = time.monotonic() + 240
+    while time.monotonic() < end and (ed.busy or ed._want is not None or ed.result is None):
+        pump(0.02)
+    return q, ed
+
+
+def _stored_setting(w, kind, q, ed):
+    if kind == "combine":
+        return dict(w.s.combine_stored(q.pid).get("weights") or {})
+    return dict(w.s.post_layer(ed.lid).get("sliders") or {})
+
+
+def _draft_change(ed, kind):
+    if kind == "combine":
+        return ed.set_intensity("SII", ed.weight("SII") + 0.5)
+    return ed.set_slider("saturation", 3.0)

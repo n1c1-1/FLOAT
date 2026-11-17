@@ -3694,6 +3694,7 @@ class PostView(QWidget):
                     c.currentIndexChanged.connect(lambda i, c=c: self._set(lay, "blend", c.itemData(i)))
                     r.addWidget(c, 1)
                     self.pbox.addLayout(r)
+                    self._stars_fusion_row(lay)
             self._add_slider(lay, p, sd, part)
 
     def _add_slider(self, lay, p, sd, part):
@@ -3969,6 +3970,85 @@ class PostView(QWidget):
         self.request(final_only=True)
         QTimer.singleShot(0, self.build_props)
 
+    def stars_combination(self, lay):
+        """(the workflow, its stage, its recipe, its stored settings) of the combination of the stars alone a Combine
+        layers layer's Stars side reads (the "· Stars" twin of a combination), None when its stars are another image."""
+        from ..core.workflow import combine_stage
+        from .combineedit import stars_only
+        from .graphnode import combine_spec
+        pid = lay.get("stars_pid", lay.get("pid")) if lay.get("part") == "combined" else None
+        q = self.s.view(pid) if pid is not None and hasattr(self.s, "view") else None
+        if q is None or not stars_only(((getattr(q, "source", None) or {}).get("fusion") or {}).get("inputs") or []):
+            return None
+        try:
+            stage = combine_stage(self.s.p.workflow(q.pid))
+        except (KeyError, AttributeError, ValueError):
+            return None
+        spec = combine_spec(q)
+        if not stage or not (spec or {}).get("narrowband"):
+            return None
+        stored = self.s.combine_stored(q.pid) if hasattr(self.s, "combine_stored") else             dict(self.s.p.workflow(q.pid).params.get(stage) or {})
+        return q, stage, spec, stored
+
+    def _stars_fusion_row(self, lay):
+        """The Stars section of a Combine layers layer whose stars are a combination of the stars alone: how its
+        filters' stars mix (Neutral or Palette), the stars' combination's setting, the same as in its Inspect editor
+        (one source, the block); a change needs a run, said on hover."""
+        from .combineedit import STARS, STARS_LINE, STARS_NAME, applied_values, stage_class
+        got = self.stars_combination(lay)
+        if got is None:
+            return
+        q, stage, spec, stored = got
+        now = applied_values(stage_class(stage), spec, stored).get("stars")
+        if now is None:
+            return
+        r = QHBoxLayout()
+        r.addWidget(label(_("Stars"), "dim"))                # Inspect's word for it (the editor, the panel)
+        c = QComboBox()
+        c.setObjectName("stars_fusion")
+        for k in STARS:
+            c.addItem(_(STARS_NAME[k]), k)
+            c.setItemData(c.count() - 1, _(STARS_LINE[k]), Qt.ToolTipRole)
+        c.setCurrentIndex(max(0, c.findData(now)))
+        c.setToolTip(_("How the stars of the filters mix: the setting of {block}, the same in its Inspect editor")
+                     .format(block=self._title_of(q)) + NL + _("Changing it needs a run: the combination is computed "
+                                                              "again by Run"))
+        c.activated.connect(lambda i, c=c: self.set_stars_fusion(q, c.itemData(i), now))
+        r.addWidget(c, 1)
+        self.pbox.addLayout(r)
+
+    def _title_of(self, q) -> str:
+        try:
+            return self.s.shown_title(q.pid) or q.name
+        except AttributeError:
+            return q.name
+
+    def set_stars_fusion(self, q, key: str, now: str):
+        """The stars' combination's Stars setting changed here: the block's (its run makes the stars), one step of the
+        workflows' Undo listed in Post's, named as every step of the family; a draft of the block in Inspect goes."""
+        from .blockdraft import owned
+        from .combineedit import STARS_NAME
+        if key == now or not hasattr(self.s, "apply_as"):
+            return
+        words = owned(_("Stars"), self._title_of(q), f"{_(STARS_NAME[now])} → {_(STARS_NAME[key])}")
+        try:
+            with self._from_post():
+                self.s.apply_as({"kind": "combine", "values": {"stars": key}, "what": words, "short": words},
+                                "replace", [q])
+                self._name_step(words)
+        except ValueError as e:
+            self.toasted.emit(_(str(e)))
+            return
+        self.undo.append(self._model_mark("_undo"))
+        self.redo.clear()
+        self._undo_buttons()
+        tuned = getattr(self.s, "postTuned", None)
+        if tuned is not None:
+            tuned.emit(q.pid)
+        self.toasted.emit(words + " · " + _("Run to here computes it") + " · Ctrl+Z")
+        self.request(final_only=True)
+        QTimer.singleShot(0, self.build_props)
+
     def _part_props(self, lay, sub):
         """The sliders of one of a Stars and background layer's two images: those of the layer, the same settings
         (issue #73)."""
@@ -3978,6 +4058,8 @@ class PostView(QWidget):
         part = lay.get("part")
         if sub == "starless":
             self._stretch_props(lay)                     # the base stretch is the starless image's
+        else:
+            self._stars_fusion_row(lay)                  # the stars' combination: how its filters' stars mix
         for sd in self.s.slider_infos(p, part):
             if sd.available and (sd.group == STARS_GROUP) == (sub == "stars"):
                 self._add_slider(lay, p, sd, part)
