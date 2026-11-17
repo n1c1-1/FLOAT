@@ -88,7 +88,8 @@ class Register(Stage):
     # 7: a frame matched on fewer than 30 star pairs is aligned by a linear map (it was left out: an untracked
     # telescope's frames of 30 trailed stars, 3 of 15 aligned); the few-stars path accepts on the stars brought within
     # its tolerance, without a limit on the residual; the stars' centres from a window scaled to the frame's stars
-    version = "7"
+    # 8: the stars' centres from the fixed window again (the scaled window of 7 was tuned on two test images)
+    version = "8"
     key_label = "6"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
     def auto(self, ctx: Context) -> dict[str, Auto]:
@@ -859,16 +860,7 @@ def _catalog(idx):
     noise = float(1.4826 * np.median(np.abs(dd - np.median(dd))) / np.sqrt(2)) if dd.size else float("nan")
     if len(o) == 0:
         return idx, np.zeros((0, 4 + len(APERTURES))), 0.0, float(rms), float("nan"), noise
-    # the windowed centres, the window scaled to the frame's stars: the rule given with the windowed centre (Source
-    # Extractor's XWIN / YWIN, sep.winpos: sigma = 2 / 2.35 x the half-light radius, measured within 6 times the major
-    # axis). The radius is the median of the frame's 300 brightest stars (those the FWHM is measured on): its stars
-    # share one shape, and each faint star's own radius is too noisy (a tracked field of 2 500 stars 1.6 px wide: pairs
-    # 0.45 px apart with the frame's radius, as with the fixed window, 0.72 px with each star's). A fixed window of 0.9
-    # (stars about 4 px wide) went to the brightest knot of a trailed star, which moves from frame to frame (stars
-    # trailed over 15 px: pairs 1.5 px apart, 0.7 px so)
-    r50, _ = sep.flux_radius(x, o["x"][:300], o["y"][:300], 6.0 * o["a"][:300], 0.5, subpix=5)
-    r50 = r50[np.isfinite(r50) & (r50 > 0)]
-    xw, yw, _ = sep.winpos(x, o["x"], o["y"], np.full(len(o), 2.0 / 2.35 * np.median(r50) if len(r50) else 0.9))
+    xw, yw, _ = sep.winpos(x, o["x"], o["y"], np.full(len(o), 0.9))
     hfr, _ = sep.flux_radius(x, xw, yw, np.full(len(o), 5.0), 0.5, subpix=5)
     aps = []
     good = (~mask).astype(np.float32)

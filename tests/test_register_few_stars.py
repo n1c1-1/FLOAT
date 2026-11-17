@@ -162,50 +162,6 @@ def test_the_new_lines_reach_the_french_window():
 # ---------------------------------------------------------------------------------------- the stars' centres
 
 
-def _trailed(tmp_path, knot):
-    """One calibrated frame of 30 stars trailed over 15 px (an untracked mount), each with a brighter knot at
-    ``knot`` px from its middle along the trail, half as bright again (the seeing's and the mount's jerks: it moves
-    from frame to frame);
-    (the catalogue, the true middles)."""
-    rng = np.random.default_rng(8)
-    S = 768
-    img = 1000 + rng.normal(0, 8, (S, S))
-    mid = np.c_[rng.uniform(60, S - 60, 30), rng.uniform(60, S - 60, 30)]
-    keep = [k for k in range(30) if all(np.hypot(*(mid[k] - mid[j])) > 50 for j in range(k))]
-    mid = mid[keep]
-    for x, y in mid:
-        x0, y0 = int(x) - 24, int(y) - 24
-        yy, xx = np.mgrid[y0:y0 + 48, x0:x0 + 48]
-        for t in np.linspace(-7.5, 7.5, 31):
-            amp = 400.0 * (1.0 + 0.5 * np.exp(-0.5 * ((t - knot) / 1.5) ** 2))
-            img[y0:y0 + 48, x0:x0 + 48] += amp * np.exp(-0.5 * (((xx - x - t) / 1.8) ** 2 + ((yy - y) / 1.8) ** 2))
-    f = tmp_path / f"lights{knot:+.0f}.f16"
-    mm = np.memmap(f, dtype=np.float16, mode="w+", shape=(1, S, S))
-    mm[0] = img
-    mm.flush()
-    del mm
-    rg._init(str(f), 1, S, S, 8.0, 2500, "MONO")
-    try:
-        cat = rg._catalog(0)[1]
-    finally:
-        rg._G.clear()
-    return cat, mid
-
-
-def test_the_centre_of_a_trailed_star_does_not_follow_its_brightest_knot(tmp_path):
-    """The window of the centre is scaled to the stars of the frame: the same star, its knot at one end of the trail then at the
-    other (10 px apart), is measured under a third of that apart: 2.7 px, where the light's own middle moves by 1.0
-    (a window sized for a round 4 px star followed the knot: 6.5 px)."""
-    a, mid = _trailed(tmp_path, -5.0)
-    b, _ = _trailed(tmp_path, +5.0)
-    da, ja = cKDTree(a[:, :2]).query(mid, distance_upper_bound=8.0)
-    db, jb = cKDTree(b[:, :2]).query(mid, distance_upper_bound=8.0)
-    both = np.isfinite(da) & np.isfinite(db)
-    assert both.sum() >= 0.9 * len(mid)
-    moved = np.hypot(*(a[ja[both], :2] - b[jb[both], :2]).T)
-    assert np.median(moved) < 10.0 / 3
-
-
 def test_the_centre_of_a_round_star_is_where_it_was(tmp_path):
     """Stars about 4 px wide, the size the fixed window was made for: their centres to a twentieth of a pixel."""
     rng = np.random.default_rng(6)
