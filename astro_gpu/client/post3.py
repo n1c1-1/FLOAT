@@ -2186,8 +2186,8 @@ class PostView(QWidget):
             self.before.img1 = res.rgb
             self.before.version += 1
             self.viewer.update()
-        if res.notes:                                           # the engine fell back to the CPU: said until it changes
-            self._notes = sorted(res.notes)
+        if res.kind in ("draft", "half", "refine", "exact"):    # what the picture shown says, as it says it now (a
+            self._notes = sorted(res.notes)                     # search of stars ended: its words go)
         self._hint()
         self.rendered.emit(res)
 

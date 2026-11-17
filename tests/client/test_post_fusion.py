@@ -468,3 +468,35 @@ def test_the_search_s_own_process_finds_what_the_function_finds(tmp_path):
     from astro_gpu.client import starsearch
     L = pe.lum(StarField().stars_image(0, (0, 0, W, H)))
     assert np.array_equal(starsearch.search(L, tmp_path), pe.find_stars(L)) and not list(tmp_path.iterdir())
+
+
+def test_a_failed_search_of_stars_is_never_kept_as_no_stars_and_is_said(monkeypatch, tmp_path):
+    """A failed search was saved as "no stars" (an empty file in cache/stars) and never searched again: a failure is
+    never kept on disk; the picture says it, the mask has no stars, the session does not search again."""
+    import threading
+
+    from astro_gpu.client import starsearch
+    calls, told = [], []
+
+    def fails(L, work):
+        calls.append(1)
+        raise RuntimeError("the search's process ended")
+    monkeypatch.setattr(starsearch, "search", fails)
+    monkeypatch.setattr(pe, "STARS_FOUND_HOOKS", [lambda: told.append(1)])
+
+    class Apart(StarField):
+        search_apart = True
+        stars_dir = tmp_path / "stars"
+
+        def stars_id(self, lay):
+            return f"failing-{id(self)}"
+    cp = Composer(Apart())
+    lay = master(stars_pid=4, mask=_stars_mask(grow=2.0))
+    cp.compose(pe.normalize(copy.deepcopy([lay])), 0, want=[lay["id"]])
+    end = time.monotonic() + 30
+    while not told and time.monotonic() < end:
+        time.sleep(0.01)
+    got = cp.compose(pe.normalize(copy.deepcopy([lay])), 0, want=[lay["id"]])
+    assert pe.STARS_FAILED in got.notes and pe.STARS_SEARCHING not in got.notes
+    assert got.masks[lay["id"]].max() == 0.0 and calls == [1] and threading.active_count() >= 1
+    assert not (tmp_path / "stars").exists() or not list((tmp_path / "stars").iterdir())

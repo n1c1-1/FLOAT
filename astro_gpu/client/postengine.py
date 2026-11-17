@@ -677,6 +677,9 @@ _SEARCHING: dict = {}
 STARS_FOUND_HOOKS: list = []
 #: what the picture says while the stars of a result are searched (the mask is drawn without them meanwhile)
 STARS_SEARCHING = "Finding the stars of the Stars mask (once for this result): the mask shows them when found"
+#: what it says when a search failed (the mask without its stars; searched again in the next session, never kept)
+STARS_FAILED = "The stars of the Stars mask could not be found: the mask shows none (searched again next time)"
+_FAILED: set = set()
 
 
 def _search_stars(key, L, folder, name):
@@ -687,8 +690,18 @@ def _search_stars(key, L, folder, name):
     from .starsearch import search
     try:
         hit = search(L, Path(folder) if folder is not None else Path(tempfile.gettempdir()) / "float_stars")
-    except Exception:  # noqa: BLE001 - the search failed (its process ended): no star, said by an empty mask
-        hit = np.zeros((0, 3), np.float32)
+    except Exception:  # noqa: BLE001 - the search failed (its process ended): never kept as "no stars"
+        with _STARS_LOCK:
+            _FAILED.add(key)                              # said in the picture's line; searched again next session
+            _SEARCHING.pop(key, None)
+        for c in list(_COMPOSERS):
+            c._stars_new = True
+        for fn in list(STARS_FOUND_HOOKS):
+            try:
+                fn()
+            except RuntimeError:
+                pass
+        return
     if folder is not None:
         try:
             Path(folder).mkdir(parents=True, exist_ok=True)
@@ -1764,6 +1777,7 @@ class Composer:
         self._fstats: dict = {}                             # a master layer's mix -> its statistics (``_fusion_stats``)
         self._stars_new = False                             # a search of stars ended since the last composition
         self._stars_wait = False                            # this composition waits for a search (said in its notes)
+        self._stars_failed = False                          # a search of its stars failed (said in its notes)
         _COMPOSERS.add(self)
 
     # ------------------------------------------------------------ geometry
@@ -2026,6 +2040,9 @@ class Composer:
                 return key, hit
             if key in _SEARCHING:                         # being searched: the mask without its stars meanwhile
                 self._stars_wait = True
+                return None
+            if key in _FAILED:                            # failed in this session: none, said
+                self._stars_failed = True
                 return None
         name = hashlib.blake2b(repr(key).encode(), digest_size=12).hexdigest() + ".npy"
         folder = getattr(self.provider, "stars_dir", None) if rid is not None else None
@@ -2487,7 +2504,7 @@ class Composer:
         if self._stars_new:                               # a search ended: what was made without its stars goes
             self._stars_new = False
             self.forget()
-        self._stars_wait = False
+        self._stars_wait = self._stars_failed = False
         canvas = self.canvas_of(layers)
         if canvas is None:
             return None
@@ -2637,7 +2654,8 @@ class Composer:
         cut = (slice(y0 - ay0, y0 - ay0 + (y1 - y0)), slice(x0 - ax0, x0 - ax0 + (x1 - x0)))
         out.rgb = np.clip(comp[cut], 0, 1).astype(np.float32, copy=False)
         # (a picture made of images kept from before the search says it too: a search is running)
-        out.notes = set(self.provider.notes()) | ({STARS_SEARCHING} if self._stars_wait or _SEARCHING else set())
+        out.notes = set(self.provider.notes()) | ({STARS_SEARCHING} if self._stars_wait or _SEARCHING else set()) \
+            | ({STARS_FAILED} if self._stars_failed else set())
         out.drawn = self._drawn
         return out
 

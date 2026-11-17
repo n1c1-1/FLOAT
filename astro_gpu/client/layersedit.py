@@ -395,8 +395,9 @@ class LayersEditor(DraftEditor):
             QTimer.singleShot(0, lambda: self._enter_page(self.p) if self.p is not None else None)
 
     def tag_extra(self) -> str:
-        from .postengine import STARS_SEARCHING
-        return " · " + _(STARS_SEARCHING) if STARS_SEARCHING in getattr(self, "_notes", ()) else ""
+        from .postengine import STARS_FAILED, STARS_SEARCHING
+        notes = getattr(self, "_notes", ())
+        return "".join(" · " + _(n) for n in (STARS_SEARCHING, STARS_FAILED) if n in notes)
 
     def _stars_came(self):
         if self.p is not None and self.page_shown():
