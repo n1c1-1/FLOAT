@@ -3955,12 +3955,14 @@ def test_undo_names_every_setting_as_its_panel_does_in_french():
 
         def check(lay, field, key, shown, value):
             assert shown in cat, shown                    # the panel's own name has its French
+            # (the stars' Strength in its own words: "Force", a filter's intensity being "Intensité" beside it)
+            word = i18n.in_context("stars", shown) if key == "star_strength" else i18n._(shown)
             new = dict(lay, **{field: dict(lay[field], **{key: value})})
             for old, now in ((lay, new), (new, lay)):     # set, and set back to nothing (a slider back at its middle)
                 said = step_words([old], [now])
-                if not said.startswith(i18n._(shown) + " "):
+                if not said.startswith(word + " "):
                     bad.append((lay.get("filter") or lay["kind"], key, said))
-            assert setting_name(lay, field, key) == i18n._(shown)
+            assert setting_name(lay, field, key) == word
 
         for fk, f in FILTERS.items():
             lay = dict(new_filter_layer(fk), name="F")
@@ -3979,6 +3981,6 @@ def test_undo_names_every_setting_as_its_panel_does_in_french():
             check(lay, "sliders", key, name, 3.0)
         assert not bad, bad
         w = new_workflow_layer(1, "W", True, "combined")
-        assert step_words([w], [dict(w, sliders={"star_strength": 3.0})]) == "Intensité de « W »"
+        assert step_words([w], [dict(w, sliders={"star_strength": 3.0})]) == "Force de « W » : 0 → +1,0"
     finally:
         i18n.set_language("en")

@@ -47,7 +47,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from .blockeditor import COMPARE, PANEL_W, DraftEditor  # noqa: F401 - (the family's, kept importable here)
+from .blockeditor import COMPARE, PANEL_W, DoubleClickDefault, DraftEditor  # noqa: F401 - (the family's, kept importable here)
 from .blockeditor import Clickable as _Clickable  # noqa: F401
 from .blockeditor import PressToRelease as _PressToRelease  # noqa: F401
 from .blockeditor import choice_card as _choice_card
@@ -761,6 +761,7 @@ class CombineEditor(DraftEditor):
             sl.setToolTip(_(q.get("help") or "") or _("The colour of the filter on the colour wheel"))
             self._wire_slider(sl, lambda i, r=role, **k: self.set_hue(r, float(i), **k))
             FineDrag(sl)
+            DoubleClickDefault(sl, lambda r=role, d=float(q.get("default", 0.0)): self.set_hue(r, d))   # its recipe's
             sl.setToolTip(sl.toolTip() + "\n" + _("Shift while dragging: ten times finer · arrow keys: one degree"))
             row.addWidget(sl, 1)
             sw = QLabel()
@@ -783,6 +784,7 @@ class CombineEditor(DraftEditor):
                         "balance raised.") + "\n" + _("Shift while dragging: ten times finer · arrow keys: one step"))
         self._wire_slider(it, lambda i, r=role, **k: self.set_intensity(r, i * INTENSITY_STEP, **k))
         FineDrag(it)
+        DoubleClickDefault(it, lambda r=role: self.set_intensity(r, 1.0))      # (1: as balanced)
         row.addWidget(it, 1)
         iv = label("", "small")
         iv.setMinimumWidth(iv.fontMetrics().horizontalAdvance("3.00") + 2)

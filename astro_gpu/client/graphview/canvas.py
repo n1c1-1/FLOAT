@@ -1822,11 +1822,13 @@ class GraphCanvas(QGraphicsView):
     def missed_drop(self, kind: str) -> str:
         """Why a palette card dropped away from its places made nothing: where it goes (its lit places), or why it
         goes nowhere now (the reason of its places, all refused)."""
+        from ...graphcore import combos
         from .style import kind_title
         places = self.bridge.places(kind=kind)
-        block = kind_title(kind)
-        if any(pl.lit for pl in places):
-            return _("{block} not placed: drop it on one of the places lit for it").format(block=block)
+        block = combos.type_title(self.bridge.combo_type) if kind == "combine" else kind_title(kind)
+        if any(pl.lit for pl in places):                  # why, then where
+            return _("{block} not placed: it goes only on a lit place, not here; drop it on one of them").format(
+                block=block)
         why = next((pl.reason_text(self.doc.tr) for pl in places if pl.reason_text(self.doc.tr)), "")
         return _("{block} not placed: {why}").format(block=block, why=why.rstrip(".")) if why else \
             _("{block} not placed: no place takes it in this graph").format(block=block)

@@ -620,19 +620,11 @@ def test_the_graph_panel_s_settings_of_a_combination_are_one_draft(qapp, tmp_pat
         node = s.block_map.node_of(q, "fusion")
         pn.refresh(node)
         assert pn.findChild(QWidget, "adjust") is not None    # Adjust: the editor in Inspect
-        # a value typed, no Enter: the draft once the typing pauses (the reviewer's round 2, point 3)
+        # the panel sums the settings up (Adjust opens them in Inspect): no intensity box of its own (the family's one
+        # layout); a change of an intensity made by the panel's draft is still one draft with the recipe's
         from PySide6.QtWidgets import QDoubleSpinBox
-        pn.show()
-        pn.activateWindow()
-        sp = [x for x in pn.findChildren(QDoubleSpinBox) if x.objectName() == "intensity"][1]
-        sp.setFocus()
-        QApplication.processEvents()
-        assert sp.hasFocus()
-        sp.setValue(0.5)
-        end = time.monotonic() + 3
-        while not s.pending_change and time.monotonic() < end:
-            QApplication.processEvents()
-            time.sleep(0.02)
+        assert not [x for x in pn.findChildren(QDoubleSpinBox) if x.objectName() == "intensity"]
+        pn.propose_weight(q, "OIII", 0.5, 1.0)
         assert s.pending_change and s.stage_key(q, st) == key
         pn.propose_recipe_type(q, "sho", "ho")
         d = s.pending_change

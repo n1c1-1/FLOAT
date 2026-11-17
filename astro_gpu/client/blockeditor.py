@@ -73,6 +73,22 @@ class PressToRelease(QObject):
         return False
 
 
+class DoubleClickDefault(QObject):
+    """A double-click on a slider puts it back to its default (``to_default()``), as every slider of Post and of the
+    panels (post3.ContSlider)."""
+
+    def __init__(self, slider, to_default):
+        super().__init__(slider)
+        self.sl, self.fn = slider, to_default
+        slider.installEventFilter(self)
+
+    def eventFilter(self, obj, e):  # noqa: N802 - Qt's name
+        if obj is self.sl and e.type() == QEvent.MouseButtonDblClick and e.button() == Qt.LeftButton:
+            self.fn()
+            return True
+        return False
+
+
 class Clickable(QFrame):
     """A frame that is a choice: a click on it (a method card, a thumbnail)."""
 

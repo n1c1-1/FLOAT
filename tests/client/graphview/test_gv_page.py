@@ -278,7 +278,8 @@ def test_s02c_files_dropped_where_nothing_takes_them_are_said(B, tmp_path):
 @pytest.mark.parametrize("kind", __import__("astro_gpu.graphcore.model", fromlist=["JOIN_KINDS"]).JOIN_KINDS)
 def test_s02d_a_combination_card_dropped_away_from_its_places_says_where_it_goes(B, kind):
     """The combination blocks' family (a combination, Combine layers, any later one): a card dropped where it does not
-    go made nothing and said nothing; it says where it goes, as a refused wire or files dropped nowhere do."""
+    go made nothing and said nothing; it says why (only a lit place takes it), then where, by the name the card shows
+    (the combination's recipe, never "Combination")."""
     from PySide6.QtCore import QMimeData, QPoint
 
     from astro_gpu.client.graphview.canvas import MIME_KIND
@@ -292,7 +293,9 @@ def test_s02d_a_combination_card_dropped_away_from_its_places_says_where_it_goes
     mime.setData(MIME_KIND, kind.encode())
     B.g._drag_in(mime, QPoint(B.g.vp.width() // 2, 4), QPoint(30, 30))
     assert B.js() == before
-    assert said == [f"{kind_title(kind)} not placed: drop it on one of the places lit for it"], said
+    from astro_gpu.graphcore import combos                            # (a combination by the recipe its card places)
+    name = combos.type_title(B.b.combo_type) if kind == "combine" else kind_title(kind)
+    assert said == [f"{name} not placed: it goes only on a lit place, not here; drop it on one of them"], said
 
 
 def test_s03_drag_session_onto_plus_session(B):

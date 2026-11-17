@@ -400,6 +400,13 @@ class Doc:
         return api.say(message, self.tr)
 
     def title(self, b) -> str:
+        m = self.model
+        blk = self.graph.blocks.get(b)
+        if blk is not None and blk.kind == "combine_layers" and hasattr(m, "layers_title"):
+            bm = getattr(m, "block_map", None)               # Combine layers: its layer of Post's name (one name)
+            n = bm.node(b) if bm is not None else None
+            if n is not None:
+                return m.layers_title(n)
         return shown(api.title(self.graph, b, self.tr))          # a row's default name, in the interface's language
 
     def stack_used(self, b):

@@ -2696,7 +2696,8 @@ class Composer:
                 keep_mask(fl, fm)
             side = (lay.get("side_masks") or {}).get(sub)
             if side is not None:                                          # that side's mask, before the blend
-                m = self.mask({"mask": side}, level, abox, x, canvas, ctx)
+                srcs = self._side_sources(lay, side, x, got, level, abox, canvas, cache) if is_fusion(lay) else None
+                m = self.mask({"mask": side}, level, abox, x, canvas, ctx, srcs)
                 keep_mask(lay, m, (lay["id"], sub))
                 x = x * m[..., None]
             got.append(x)
@@ -2708,6 +2709,25 @@ class Composer:
                 keep_mask(lay, self.mask({"mask": side}, level, abox, np.zeros((*hw, 3), np.float32), canvas, ctx),
                           (lay["id"], sub))
         return self._together(lay, got, (abox[3] - abox[1], abox[2] - abox[0])), _sig(*sigs)
+
+    def _side_sources(self, lay, side, x, got, level, abox, canvas, cache) -> dict:
+        """What a part of a master layer's Stars or Starless image mask that reads an image may read, the same choice
+        as a filter's mask (``_fusion_side``): the image itself first (what it read before the choice), the picture
+        (the filters mixed, without the stars), each filter (stretched)."""
+        out = {"self": x}
+        out["picture"] = got[0] if got else x                 # (the starless image comes first in the group)
+        wanted = {p.get("from") for p in side.get("parts") or []}
+        roles = fusion_roles(lay)
+        if any(role_sub(r) in wanted for r in roles):
+            W, H = canvas.size(level)
+            whole = (0, 0, W, H)
+            parts = self._fusion_parts(sub_layer(lay, "starless"), level, whole if level > 0 else abox, canvas, cache)
+            if level > 0 and abox != whole:
+                x0, y0, x1, y1 = abox
+                parts = parts[:, y0:y1, x0:x1]
+            for i, r in enumerate(roles):
+                out[role_sub(r)] = grey3(parts[i])
+        return out
 
     def _step(self, fl, under, sig, where, want, thumbs, level, abox, canvas, ctx, keep=True):
         """``_apply``, kept: (result, mask, what the result depends on). ``where``: None when it is not to be kept;

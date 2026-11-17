@@ -1146,7 +1146,7 @@
   "results up to date again": "résultats de nouveau à jour",
   "variant": "variante",
   "To compute: {blocks} · {time}": "À calculer : {blocks} · {time}",
-  "{block} added to “{workflow}”": "{block} ajouté à « {workflow} »",
+  "{block} added to “{workflow}”": "{block} ajouté{block:e} à « {workflow} »",
   "history|Undo": "Défaire",
   "history|Redo": "Rétablir",
   "history|Keep": "Garder",

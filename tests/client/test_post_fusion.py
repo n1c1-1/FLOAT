@@ -500,3 +500,34 @@ def test_a_failed_search_of_stars_is_never_kept_as_no_stars_and_is_said(monkeypa
     assert pe.STARS_FAILED in got.notes and pe.STARS_SEARCHING not in got.notes
     assert got.masks[lay["id"]].max() == 0.0 and calls == [1] and threading.active_count() >= 1
     assert not (tmp_path / "stars").exists() or not list((tmp_path / "stars").iterdir())
+
+
+def test_every_child_s_mask_has_the_same_reads_choice():
+    """The mask's Reads choice was offered on a filter's mask, not on the Stars child's: every child of a master layer
+    reads, as its part says, the image itself (the Stars or Starless image's default, as before), the picture, or a
+    filter."""
+    def side_mask(frm=None):
+        m = _lum_part()
+        m["parts"][0].update(lo=50.0, hi=100.0)
+        if frm is not None:
+            m["parts"][0]["from"] = frm
+        return m
+    got = {}
+    for frm in (None, "self", "picture", "f:Ha"):
+        lay = master(stars_pid=4, side_masks={"stars": side_mask(frm)})
+        got[frm] = compose([lay], StarField(), want=[(lay["id"], "stars")]).masks[(lay["id"], "stars")]
+    assert np.array_equal(got[None], got["self"])                 # what it read before the choice
+    assert not np.array_equal(got["self"], got["picture"]) and not np.array_equal(got["picture"], got["f:Ha"])
+
+
+def test_a_filter_moved_between_children_is_named_one_way_both_ways():
+    """A filter moved from S II to Stars was undone as "Layers reordered", back as "“Local contrast” changed": one
+    wording, from where to where."""
+    from astro_gpu.client.post3 import step_words
+    lay = master(stars_pid=4)
+    lay["name"] = "S-H-O · Combine layers"
+    f = pe.new_filter_layer("levels", lay["id"], "f:SII")
+    f["name"] = "Local contrast"
+    moved = dict(f, sub="stars")
+    assert step_words([f, lay], [moved, lay]) == "“Local contrast” moved from S II to Stars"
+    assert step_words([moved, lay], [lay, f]) == "“Local contrast” moved from Stars to S II"

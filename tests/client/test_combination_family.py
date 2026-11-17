@@ -176,6 +176,21 @@ def _post_change(w, kind):
     return name, pv.next_words("undo"), None
 
 
+def _editor_change(w, kind):
+    """One setting of the block changed in its Inspect editor and applied: the window's step and the notice."""
+    said = []
+    q, ed = _open_editor(w, kind)
+    w.tune.toasted.connect(said.append)
+    name = "S II intensity" if kind == "combine" else "Strength"
+    if kind == "combine":
+        ed.set_intensity("SII", ed.weight("SII") + 0.25)
+    else:
+        ed.set_slider("star_strength", float(ed.value("slider.star_strength")) + 0.5)
+    ed.apply()
+    pump(0.5)
+    return name, w.s.next_words("undo"), said[-1] if said else ""
+
+
 def _panel_change(w, kind):
     """One setting of the block changed in its graph panel and applied: the window's step and the notice."""
     from astro_gpu.client.graphview.gestures import Gestures
@@ -213,7 +228,7 @@ def test_real_a_step_of_the_family_names_the_setting_then_its_owner(qapp, tmp_pa
     w = _whole(tmp_path, M27)
     try:
         _q, owner = _owner(w, kind)
-        for change in (_post_change, _panel_change):
+        for change in (_post_change, _editor_change):
             name, words, notice = change(w, kind)
             m = STEP.match(words or "")
             assert m and m["what"] == name and m["owner"] == owner, (change.__name__, words)
@@ -226,8 +241,8 @@ def test_real_a_step_of_the_family_names_the_setting_then_its_owner(qapp, tmp_pa
 def test_real_each_setting_of_a_layer_is_available_by_one_rule_in_post_and_in_its_panel(qapp, tmp_path):
     """Colours was enabled in the Combine layers panel and greyed in Post for the same layer (a combination's master
     layer keeps its colours by its stretch): one rule (post3.layer_slider_state) for every place that shows the
-    layer's settings; each slider is available, or greyed with the same reason, in both."""
-    from astro_gpu.client.graphview.gestures import Gestures
+    layer's settings (Post, Inspect's editor; the graph's panel sums them up); each slider is available, or greyed
+    with the same reason, in both."""
     from astro_gpu.client.post3 import ContSlider
     w = _whole(tmp_path, M27)
     try:
@@ -241,14 +256,9 @@ def test_real_each_setting_of_a_layer_is_available_by_one_rule_in_post_and_in_it
         pump(0.3)
         post = {x.name.text(): (x.s.isEnabled(), x.why.text()) for x in pv.findChildren(ContSlider)
                 if x.isVisibleTo(pv.right)}
-        w.set_mode(0)
-        pump(0.5)
-        bid = next(k for k, b in w.graph.bridge.graph.blocks.items() if b.kind == "combine_layers")
-        Gestures(w.graph).click(bid)
-        pump(0.8)
-        pn = w.graph.panel
-        panel = {x.name.text(): (x.s.isEnabled(), x.why.text()) for x in pn.findChildren(ContSlider)
-                 if x.isVisibleTo(pn)}
+        _q, ed = _open_editor(w, "combine_layers")
+        panel = {x.name.text(): (x.s.isEnabled(), x.why.text()) for x in ed.page.findChildren(ContSlider)
+                 if x.isVisibleTo(ed.page)}
         both = set(post) & set(panel)
         assert {"Colours", "Saturation", "Strength", "Sky"} <= both
         assert {k: post[k] for k in both} == {k: panel[k] for k in both}
@@ -456,5 +466,39 @@ def test_real_try_variant_of_post_s_layers_alone_is_a_new_version_of_post(qapp, 
         s.set_post_version(shown)
         pump(0.3)
         assert _stored_setting(w, kind, q, ed) == before                # the version shown before: untouched
+    finally:
+        w.close()
+
+
+def test_real_one_path_bar_one_link_and_one_name_for_every_block_of_the_family(qapp, tmp_path):
+    """Inspect's path bar had no step for Combine layers (only "S-H-O › Post"), Post's "Open in Inspect" was under the
+    combination's section only, and Combine layers had several names ("Combine layers 2" on the graph and in the
+    outputs, "S-H-O · Combine layers" in Post): a step in the bar for each block, the link under each one's settings in
+    Post, and one shown name everywhere (its layer of Post's)."""
+    from PySide6.QtWidgets import QPushButton
+
+    from astro_gpu.client.post3 import layer_name
+    w = _whole(tmp_path, M27)
+    try:
+        s = w.s
+        q, ed = _open_editor(w, "combine_layers")
+        items = w.tune.strip.items(s, s.block_map)
+        name = s.layers_title(ed.node)
+        assert ("composition", name) in [(k, t) for k, t, _n in items]
+        bid = next(k for k, b in w.graph.bridge.graph.blocks.items() if b.kind == "combine_layers")
+        assert w.graph.bridge.doc.title(bid) == name == ed.heading()
+        w.set_mode(2)
+        pump(1.0)
+        pv = w._post_holder.page.view
+        lay = next(x for x in pv.layers if x.get("id") == s.master_layer(q.pid)["id"])
+        assert layer_name(lay) == name
+        pv.sel = None
+        pv.select(lay["id"], "layer")
+        pump(0.3)
+        links = [b for b in pv.findChildren(QPushButton) if b.text() == "Open in Inspect  →" and b.isVisibleTo(pv.right)]
+        assert len(links) == 2                                    # the combination's, Combine layers'
+        links[-1].click()
+        pump(0.8)
+        assert w.mode == 1 and s.sel_step == "composition" and w.tune.layers_editor.page_shown()
     finally:
         w.close()

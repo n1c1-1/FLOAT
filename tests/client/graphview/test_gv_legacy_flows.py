@@ -300,7 +300,7 @@ def test_branch_names_are_numbered_as_names_not_by_their_blocks_number(world):
 def test_a_combination_panel_shows_its_named_inputs_and_its_settings(world):
     import re
 
-    from PySide6.QtWidgets import QComboBox, QDoubleSpinBox, QLabel
+    from PySide6.QtWidgets import QComboBox, QLabel
     W = world(workflows=(), filters=("Ha", "OIII"))
     W.page.show_templates()
     card = W.page.templates.card("filters_full")
@@ -312,7 +312,7 @@ def test_a_combination_panel_shows_its_named_inputs_and_its_settings(world):
     W.choose(W.block("fusion", ho))
     shown = {re.sub("<[^>]+>", "", x.text()) for x in W.page.panel.findChildren(QLabel)}
     shown |= {x.currentText() for x in W.page.panel.findChildren(QComboBox) if x.objectName() == "recipe"}
-    assert {"Hα", "O III", "H-O", "Intensity", "H-O-O"} <= shown
+    assert {"Hα", "O III", "H-O", "H-O-O"} <= shown and "Intensity" not in shown     # (summed up, set in Inspect)
     # the hues, the balance and the stars are set in the combination's editor (Adjust): the panel sums them up
     tips = {x.toolTip() for x in W.page.panel.findChildren(QLabel) if x.objectName() == "swatch"}
     assert tips == {"Hα hue 0°", "O III hue 180°"} and "Balance: On sky" in shown
@@ -321,7 +321,7 @@ def test_a_combination_panel_shows_its_named_inputs_and_its_settings(world):
     assert W.m.p.workflow(ho.pid).params["combine_ho"]["weights"] == {"OIII": 0.5}
     W.page.refresh()
     W.settle()
-    assert len([s for s in W.page.panel.findChildren(QDoubleSpinBox) if s.maximum() == 10.0]) >= 2   # Intensity: 0-10
+    assert any("O III ×0.50" in re.sub("<[^>]+>", "", x.text()) for x in W.page.panel.findChildren(QLabel))
     # which image of a workflow an input reads is the wire's port: shown, never a list in the panel
     assert not any(c.findData("starless") >= 0 for c in W.page.panel.findChildren(QComboBox))
     W.m.set_fusion_image(W.m.view(ho.pid), "Ha", "stars")                          # a row's stars alone are an image

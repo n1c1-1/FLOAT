@@ -200,6 +200,11 @@ class Strip(QFrame):
                 continue
             node = g.node_of(p, k)
             out.append((k, node_title(s, node) if node is not None and node.paths else block_title(p, k), node))
+        # the Combine layers blocks over this workflow's image: a step of the band, as a combination is its own (one
+        # path bar for the combination family)
+        for n in getattr(g, "nodes", []):
+            if n.key == "composition" and n.paths and n.paths[0].pid == p.pid:
+                out.append(("composition", node_title(s, n), n))
         return out
 
     def build(self, s, g: Graph):

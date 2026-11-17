@@ -288,6 +288,8 @@ def node_title(s, n) -> str:
         return s.session(n.sid).name or _("Session {n}").format(n=n.sid)
     if n.key == "post" and not n.handle:              # issue #47: the block's name; the workflow's under it
         return _("Output")
+    if n.key == "composition" and hasattr(s, "layers_title"):   # its layer of Post's name, its one name everywhere
+        return s.layers_title(n)
     if n.key == "composition" and n.num:              # several Combine layers blocks: all numbered, top to bottom, as
         return f"{block_title(None, 'composition')} {n.num}"     # Gradient 1, Gradient 2 (control round)
     if n.num and n.key in FRAME_KEYS:                 # frame blocks placed in parallel, the same way

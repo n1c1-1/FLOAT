@@ -727,3 +727,28 @@ def test_a_change_in_post_computes_nothing_in_a_hidden_inspect_editor(m27, monke
     pv.do_undo()
     x = np.random.default_rng(0).random((7, 9)).astype(np.float32)
     assert np.array_equal(grey3(x), np.repeat(x[..., None], 3, -1)) and grey3(x).flags["C_CONTIGUOUS"]
+
+
+def test_the_tester_s_details_of_the_family_s_sliders(m27, monkeypatch):
+    """Double-click puts the combination's Intensity and Hue back to their default in Inspect, as every slider; a
+    slider without a step has its default as one of its positions (Saturation's 0 drew as a moved value on its 0-6
+    range); Post's own step of a setting says what it became, as Inspect's Apply does."""
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    from astro_gpu.client.post3 import ContSlider, step_words
+    w, pv, _before = m27
+    q, ed = _editor(w, monkeypatch)
+    ed.set_intensity("SII", 2.0)
+    sl = ed._ui["int_SII"]
+    ev = QMouseEvent(QEvent.MouseButtonDblClick, QPointF(5, 5), QPointF(5, 5), Qt.LeftButton, Qt.LeftButton,
+                     Qt.NoModifier)
+    QApplication.sendEvent(sl, ev)
+    assert ed.weight("SII") == 1.0
+    sat = ContSlider("Saturation", 0, 6, 2.0, 2)
+    assert sat.value() == 2.0 and sat.val.styleSheet() == ""
+    lay = _master(pv)
+    after = copy.deepcopy(lay)
+    after["sliders"] = {**lay.get("sliders", {}), "saturation": 3.0}
+    assert step_words([lay], [after]).endswith(": 0 → +1.0")
+    ed.reset()

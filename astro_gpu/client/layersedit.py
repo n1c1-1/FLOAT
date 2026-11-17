@@ -62,7 +62,7 @@ class LayersEditor(DraftEditor):
 
     def __init__(self, tune):
         super().__init__(tune)
-        from .postengine import STARS_FOUND_HOOKS          # a search of the Stars part's stars ended: shown again
+        from .postengine import STARS_FOUND_HOOKS  # a search of the Stars part's stars ended: shown again
         STARS_FOUND_HOOKS.append(self._starsFound.emit)
         self._starsFound.connect(self._stars_came)
         self.lid = None                        # the layer of Post it tunes
@@ -143,8 +143,8 @@ class LayersEditor(DraftEditor):
         sliders = lay.get("sliders") or {}
         out = {"blend": lay.get("blend") or BLENDS[0], "stretch": layer_stretch(lay)}
         for sd in self.slider_infos():
-            out[SLIDER + sd.key] = round(float(sliders.get(sd.key, 2.0)), 2)
-        out[SLIDER + STRETCH_KEY] = round(float(sliders.get(STRETCH_KEY, 2.0)), 2)
+            out[SLIDER + sd.key] = float(sliders.get(sd.key, 2.0))
+        out[SLIDER + STRETCH_KEY] = float(sliders.get(STRETCH_KEY, 2.0))
         got = self.stars_combination()
         if got is not None:
             from .combineedit import applied_values, stage_class
@@ -155,7 +155,7 @@ class LayersEditor(DraftEditor):
         return out
 
     def norm(self, key: str, value):
-        return round(float(value), 2) if key.startswith(SLIDER) else value
+        return float(value) if key.startswith(SLIDER) else value
 
     def shape(self, p) -> tuple:
         from .i18n import language
@@ -232,7 +232,8 @@ class LayersEditor(DraftEditor):
         k = key[len(SLIDER):]
         if k == STRETCH_KEY:
             return _("Stretch strength")
-        return _(BY_KEY[k].name) if k in BY_KEY else k
+        from .post3 import slider_name
+        return slider_name(k, BY_KEY[k].name) if k in BY_KEY else k
 
     def word_of(self, key: str, v) -> str:
         from .combineedit import STARS_NAME
@@ -294,7 +295,7 @@ class LayersEditor(DraftEditor):
         from ..render.sliders import STRENGTH_STEP, STRETCH_KEY, group_title
         from ..render.sliders import top as slider_top
         from .combineedit import STARS, STARS_LINE, STARS_NAME
-        from .post3 import BLENDS, ContSlider, layer_slider_state
+        from .post3 import BLENDS, ContSlider, layer_slider_state, slider_name
         from .postengine import LAYER_STRETCHES, STRETCH_NAMES
         u = self._ui
         lay = self.layer()
@@ -344,7 +345,7 @@ class LayersEditor(DraftEditor):
                         self._wire_cont(sl, STRETCH_KEY)
                         cv.addWidget(sl)
                         u[SLIDER + STRETCH_KEY] = sl
-            sl = ContSlider(_(sd.name), 0, slider_top(sd.key), 2.0, 2, ends=[_(e) for e in sd.ends],
+            sl = ContSlider(slider_name(sd.key, sd.name), 0, slider_top(sd.key), 2.0, 2, ends=[_(e) for e in sd.ends],
                             show=_texts()(sd.key))
             sl.setObjectName(sd.key)
             ok, why = layer_slider_state(self.s, self.p, lay, sd.key, "combined", stretch_now)   # Post's rule

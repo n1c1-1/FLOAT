@@ -1119,7 +1119,6 @@ class Panel(QWidget):
         """A combination block (issue #43; stages/combine.py): its workflow's name, its type, its named inputs (the
         workflow each reads, its Output or its starless image, its weight), then its settings as any block's; its
         output is a layer of Post."""
-        from .combineedit import INTENSITY_MAX, INTENSITY_STEP
         from .graphnode import combine_kind, combine_spec, combine_title
         from .graphview.palette import recipe_tip
         from ..core.workflow import combine_stage
@@ -1191,7 +1190,6 @@ class Panel(QWidget):
         stored = (s.p.workflow(p.pid).params.get(stage) or {}) if stage else {}
         if stage and hasattr(s, "combine_stored"):       # a master layer's hues and intensities: the layer's own
             stored = s.combine_stored(p.pid)
-        weights = stored.get("weights") or {}
         if stage and spec is not None:
             self.combination_summary(p, stage, spec, stored)
         self.bv.addWidget(self.group_title(_("Inputs")))
@@ -1206,12 +1204,6 @@ class Panel(QWidget):
             from ..graphcore import combos as _combos    # H-O made S-H-O), each wired one as it is
             ins = [{"role": i["role"], "label": i.get("label") or i["role"], "type": i.get("type", "any"),
                     "channel": i.get("channel", "L")} for i in (_combos.recipe(drafted) or {}).get("inputs") or []]
-        head = QHBoxLayout()                             # the column's name over the weights
-        head.addStretch(1)
-        ih = label(_("Intensity"), "dim")
-        ih.setToolTip(_("Each filter's weight after the balance (1: as balanced)"))
-        head.addWidget(ih)
-        self.bv.addLayout(head)
         for spec_in in ins:                              # the recipe's inputs (role, label, type), in its order
             role = spec_in["role"]
             i = by_role.get(role, {"pid": None, "role": role, "channel": spec_in.get("channel", "L")})
@@ -1243,26 +1235,6 @@ class Panel(QWidget):
                                 "green + blue for a dual-band colour image"))
                 ch.activated.connect(lambda k, r=role, b=ch: s.set_fusion_channel(p, r, b.itemData(k)))
                 row.addWidget(ch)
-            sp = DoubleSpinBox()
-            sp.setRange(0.0, INTENSITY_MAX)
-            sp.setSingleStep(INTENSITY_STEP)
-            sp.setDecimals(2)
-            applied_w = float(weights.get(role, 1.0))
-            sp.setValue(float(self.draft_combine(("weight", role), applied_w)))
-            sp.setObjectName("intensity")
-            sp.setAccessibleName(_("Intensity"))
-            sp.setToolTip(_("Intensity: the filter's weight after the balance (1: as balanced). Lower a filter too "
-                            "faint, whose noise the balance raised."))
-            sp.setEnabled(q is not None)
-            sp.editingFinished.connect(lambda r=role, b=sp, a=applied_w: self.propose_weight(p, r, b.value(), a))
-            # a value typed goes to the draft once the typing pauses, without Enter (the reviewer typed 1.50: the
-            # header said Up to date and no draft bar came until the block was clicked again)
-            pause = QTimer(sp)
-            pause.setSingleShot(True)
-            pause.setInterval(TYPED_PAUSE_MS)
-            pause.timeout.connect(lambda r=role, b=sp, a=applied_w: self.propose_weight(p, r, b.value(), a))
-            sp.valueChanged.connect(lambda _v, b=sp, t=pause: t.start() if b.hasFocus() else None)
-            row.addWidget(sp)
             self.bv.addLayout(row)
         self.bv.addSpacing(6)
         # the hues, the balance and the stars are set in the combination's editor (combineedit.py: the summary above
@@ -1300,7 +1272,7 @@ class Panel(QWidget):
         from .graphnode import port_name
         wired = ((p.source or {}).get("fusion") or {}).get("inputs") or []
         vals = applied_values(stage_class(stage), spec, stored)
-        self.bv.addWidget(self.group_title(_("Colours")))
+        self.bv.addWidget(self.group_title(_("Settings")))     # (the family's one summary: Combine layers' too)
         hues = hue_params(spec)
         if spec.get("narrowband") and stars_only(wired) and "stars" in vals:
             self.bv.addWidget(label(_("Stars: {how}").format(how=_(STARS_NAME.get(vals["stars"], vals["stars"]))),
@@ -1320,7 +1292,8 @@ class Panel(QWidget):
                                  "border-radius: 2px;")
                 sw.setToolTip(_("{filter} hue {deg}°").format(filter=port_name(role), deg=f"{vals[name]:.0f}"))
                 row.addWidget(sw)
-                row.addWidget(label(port_name(role), "small"))
+                w = float((vals.get("weights") or {}).get(role, 1.0))
+                row.addWidget(label(port_name(role) + (f" ×{number(w, 2)}" if abs(w - 1) > 1e-6 else ""), "small"))
                 row.addSpacing(4)
             row.addStretch(1)
             self.bv.addLayout(row)
@@ -2192,7 +2165,10 @@ class Panel(QWidget):
             part = {"Starless": "starless", "Stars only": "stars"}.get(str(w.src[1]))
             if w.src[0] != b or part is None or not w.active or w.dst[0] not in g.blocks:
                 continue
-            t = _("Post layer") if g.blocks[w.dst[0]].kind == "post" else title(g, w.dst[0], tr=_)
+            dst = g.blocks[w.dst[0]]
+            t = _("Post layer") if dst.kind == "post" else \
+                s.layers_title(bm.node(w.dst[0])) if dst.kind == "combine_layers" and hasattr(s, "layers_title") \
+                else title(g, w.dst[0], tr=_)
             if t not in out[part]:
                 out[part].append(t)
         return out
@@ -2237,12 +2213,12 @@ class Panel(QWidget):
         stars go back, the stretch, the settings moved from their default; and Adjust, which opens the block in
         Inspect (greyed until its inputs are wired, the reason on hover)."""
         from ..render.sliders import BY_KEY as SLIDERS
-        from .post3 import BLENDS, offset_text
+        from .post3 import BLENDS, offset_text, slider_name
         from .postengine import STRETCH_NAMES, layer_stretch
         self.bv.addWidget(self.group_title(_("Settings")))
         self.bv.addWidget(label(_("Star blend mode: {how}").format(how=_(lay.get("blend") or BLENDS[0])), "small"))
         self.bv.addWidget(label(_("Stretch: {how}").format(how=_(STRETCH_NAMES[layer_stretch(lay)])), "small"))
-        moved = [f"{_(SLIDERS[k].name)} {offset_text(v)}" for k, v in (lay.get("sliders") or {}).items()
+        moved = [f"{slider_name(k, SLIDERS[k].name)} {offset_text(v)}" for k, v in (lay.get("sliders") or {}).items()
                  if k in SLIDERS and abs(float(v) - 2.0) >= 0.02]
         self.bv.addWidget(label(_("Moved: {what}").format(what=", ".join(moved)) if moved else
                                 _("Every setting at its default"), "small", wrap=True))
@@ -2263,10 +2239,7 @@ class Panel(QWidget):
         """A Stars and background block: its layer of Post, recombining the Stars block's two images. How the stars go
         back and the sliders, the same as in Post; Open in Post. A workflow whose Post was never opened gets its layer
         here (the one Post would give it)."""
-        from ..render.sliders import STARS as STARS_GROUP
-        from ..render.sliders import group_title
         from .model import is_fusion_view
-        from .post3 import BLENDS, ContSlider, layer_slider_state, offset_text, strength_text
         s = self.s
         p = node.paths[0] if node.paths else None         # None: placed on its own, its inputs to wire
         def lid():                                        # the layer is made at the first change, not by showing the
@@ -2294,12 +2267,12 @@ class Panel(QWidget):
         if p is None:                                     # as a combination placed on its own: what it waits for, its
             if node.waits:                                # inputs not wired, its settings and Adjust (greyed, why)
                 self.bv.addWidget(label(_("Waiting: {why}").format(why=node.waits.rstrip(".")), "warn", wrap=True))
+            self.layers_summary(None, {})                 # the summary first, then the inputs (a combination's order)
             self.bv.addWidget(self.group_title(_("Inputs")))
             self.bv.addLayout(self.wired_row(_("Starless image"), None, _("The workflow whose starless image (or whose "
                                                                           "Output, for a combination) this block "
                                                                           "combines")))
             self.bv.addLayout(self.wired_row(_("Stars"), None, _("The workflow whose stars this block puts back")))
-            self.layers_summary(None, {})
             self.bv.addStretch(1)
             return
         if st != "done":
@@ -2307,6 +2280,7 @@ class Panel(QWidget):
                                     "warn", wrap=True))
         if node.waits:                                    # a side to wire: the block waits (issue #165)
             self.bv.addWidget(label(_("Waiting: {why}").format(why=node.waits.rstrip(".")), "warn", wrap=True))
+        self.layers_summary(p, lay)                       # the summary first, then the inputs (a combination's order)
         self.bv.addWidget(self.group_title(_("Inputs")))
         stars_pid = lay.get("stars_pid", p.pid) if lay else p.pid
         back_pid = lay.get("pid", p.pid) if lay else p.pid
@@ -2320,94 +2294,6 @@ class Panel(QWidget):
             _("The workflow whose stars this block puts back (its Stars/background block's stars alone, or the Output "
               "of a combination of stars)"),
             None if stars_pid is None or is_fusion_view(s.view(stars_pid)) else "stars"))
-        self.layers_summary(p, lay)
-        sliders = dict(lay.get("sliders") or {})
-        drafted = {}                                      # the block's draft: its values shown at once
-        for c in self._draft_entries():
-            if c["kind"] == "layer" and c["lid"] == node.lid:
-                drafted.update({"blend": c["values"]["blend"]} if "blend" in c["values"] else
-                               {"stretch": c["values"]["stretch"]} if "stretch" in c["values"] else
-                               {("slider", c["values"]["slider"][0]): c["values"]["slider"][1]})
-
-        owner = self.layer_owner(p, lay)                  # the steps' owner (blockdraft.owned): the layer's name
-
-        def commit(key, v, name, text=offset_text):
-            """A slider moved: a change of the block as any block's (a draft when its image is up to date). ``text``:
-            how its value is written."""
-            old = sliders.get(key, 2.0)
-            with s.batch():                               # its layer made real and the value: one undo step (decision 7)
-                self._propose(dict(kind="layer", lid=lid(), values={"slider": [key, v]}),
-                              owned(name, owner, f"{text(old)} → {text(v)}"),
-                              f"{name.lower()} {text(v)}", same=abs(v - old) < 0.02, owned=True)
-
-        def blend(b):
-            old = lay.get("blend") or BLENDS[0]
-            with s.batch():
-                self._propose(dict(kind="layer", lid=lid(), values={"blend": b}),
-                              owned(_("Star blend mode"), owner, f"{_(old)} → {_(b)}"),
-                              _(b).lower(), same=b == old, owned=True)
-        from ..render.sliders import STRENGTH_STEP
-        from ..render.sliders import top as slider_top
-        from .postengine import LAYER_STRETCHES, STRETCH_KEY, STRETCH_NAMES, layer_stretch
-        stretch_now = drafted.get("stretch") or layer_stretch(lay)
-
-        def stretch_row():
-            """The base stretch of the starless image, as in Post: Automatic or Arcsinh, the Arcsinh's Strength under
-            it (shown only for Arcsinh)."""
-            row = QHBoxLayout()
-            row.addWidget(label(_("Stretch"), "dim"))
-            cb = QComboBox()
-            for k in LAYER_STRETCHES:
-                cb.addItem(_(STRETCH_NAMES[k]), k)
-            cb.setToolTip(_("How the linear image is brought to the screen. Automatic: fine for most images. Arcsinh: "
-                            "for an object far brighter than the sky (a planetary nebula, a galaxy core), which "
-                            "Automatic flattens near white; its structure and its colours are kept"))
-            cb.setCurrentIndex(LAYER_STRETCHES.index(stretch_now))
-            row.addWidget(cb, 1)
-            self.bv.addLayout(row)
-            sl = ContSlider(_("Strength"), 0, 4, drafted.get(("slider", STRETCH_KEY), sliders.get(STRETCH_KEY, 2.0)),
-                            2, ends=[_("gentler"), _("stronger")], step=STRENGTH_STEP, show=strength_text)
-            sl.setVisible(stretch_now == "arcsinh")
-            sl.done.connect(lambda v: commit(STRETCH_KEY, v, _("Stretch strength"), strength_text))
-            self.bv.addWidget(sl)
-
-            def chosen(i):
-                kind, old = cb.itemData(i), stretch_now
-                sl.setVisible(kind == "arcsinh")
-                with s.batch():
-                    self._propose(dict(kind="layer", lid=lid(), values={"stretch": kind}),
-                                  owned(_("Stretch"), owner, f"{_(STRETCH_NAMES[old])} → {_(STRETCH_NAMES[kind])}"),
-                                  _(STRETCH_NAMES[kind]).lower(), same=kind == old, owned=True)
-            cb.activated.connect(chosen)
-            self.stretch_box, self.stretch_strength = cb, sl
-        group = None
-        infos = [x for x in s.slider_infos(p, "combined") if x.available]     # the stars first: what the block is for
-        for sd in sorted(infos, key=lambda x: x.group != STARS_GROUP):
-            if sd.group != group:
-                group = sd.group
-                self.bv.addWidget(self.group_title(_(group_title(group, "combined"))))
-                if group == STARS_GROUP:
-                    row = QHBoxLayout()
-                    row.addWidget(label(_("Star blend mode"), "dim"))
-                    cb = QComboBox()
-                    for b in BLENDS:
-                        cb.addItem(_(b), b)
-                    cb.setToolTip(_("How the stars go back on the starless image: Screen (the usual way), Linear "
-                                    "dodge (add) or Lighten"))
-                    cb.setCurrentIndex(max(0, BLENDS.index(drafted.get("blend") or lay.get("blend") or BLENDS[0])))
-                    cb.activated.connect(lambda i, cb=cb: blend(cb.itemData(i)))
-                    row.addWidget(cb, 1)
-                    self.bv.addLayout(row)
-                else:
-                    stretch_row()                         # first of the starless image's tone settings
-            sl = ContSlider(_(sd.name), 0, slider_top(sd.key),
-                            drafted.get(("slider", sd.key), sliders.get(sd.key, 2.0)), 2,
-                            ends=[_(e) for e in sd.ends], show=offset_text)
-            ok, why = layer_slider_state(s, p, lay, sd.key, "combined", stretch_now)   # Post's rule, one source
-            sl.set_available(ok, why)
-            name = _(sd.name)
-            sl.done.connect(lambda v, k=sd.key, nm=name: commit(k, v, nm))
-            self.bv.addWidget(sl)
         self.bv.addSpacing(8)
         b = QPushButton(_("Open Post"))
         b.setObjectName("primary")

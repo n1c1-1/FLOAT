@@ -5,7 +5,7 @@ up to date by the model's cost of a change."""
 from __future__ import annotations
 
 import pytest
-from PySide6.QtWidgets import QDoubleSpinBox
+from PySide6.QtWidgets import QDoubleSpinBox, QPushButton
 
 from astro_gpu.client.blockdraft import DraftBar
 from astro_gpu.client.graphmodel import ChangeCost
@@ -67,10 +67,10 @@ def test_a_recipe_parameter_is_a_draft_then_applied(world, monkeypatch):
     assert bar(W) is not None
     W.page.panel.draft_reset()
     W.settle(2)
-    # its intensity, as every setting of the combination: a draft, then applied in one step
-    it = next(x for x in W.page.panel.findChildren(QDoubleSpinBox) if x.objectName() == "intensity")
-    it.setValue(0.5)
-    it.editingFinished.emit()
+    # its intensity, as every setting of the combination: a draft, then applied in one step (the panel sums the
+    # settings up, the family's one layout: an intensity is proposed as the editor would)
+    assert not [x for x in W.page.panel.findChildren(QDoubleSpinBox) if x.objectName() == "intensity"]
+    W.page.panel.propose_weight(W.page.panel.node.paths[0], "OIII", 0.5, 1.0)
     W.settle(2)
     d = W.m.pending_change
     assert d and [e["ch"]["kind"] for e in d.vals.values()] == ["combine"]
@@ -96,17 +96,9 @@ def test_synthetic_stars_method_and_combine_layers_values_are_drafts(world, monk
     assert W.page.panel.draft_apply()
     W.settle(2)
     assert W.graph.blocks[syn].method != was and not W.m.pending_change
-    # Combine layers: a slider let go is a draft of the block, its layer of Post unchanged until Apply
+    # Combine layers: its panel sums its settings up and opens them in Inspect (Adjust), as a combination's: no
+    # slider of its own (the family's one layout)
     W.choose(W.one("combine_layers"))
-    sl = next(x for x in W.page.panel.findChildren(ContSlider) if x.isVisibleTo(W.page.panel))
-    sl.done.emit(3.0)
-    W.settle(2)
-    d = W.m.pending_change
-    assert d and [e["ch"]["kind"] for e in d.vals.values()] == ["layer"]
-    lid = next(iter(d.vals.values()))["ch"]["lid"]
-    assert not (W.m.post_layer(lid) or {}).get("sliders")
-    assert bar(W) is not None and not bar(W).b_variant.isEnabled()          # a layer of Post: no variant
-    assert W.page.panel.draft_apply()
-    W.settle(2)
-    assert list(W.m.post_layer(lid)["sliders"].values()) == [3.0]
+    assert not [x for x in W.page.panel.findChildren(ContSlider) if x.isVisibleTo(W.page.panel)]
+    assert any(x.objectName() == "adjust" for x in W.page.panel.findChildren(QPushButton))
 

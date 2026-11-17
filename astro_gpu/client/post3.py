@@ -270,6 +270,13 @@ def layer_slider_state(s, p, lay: dict, key: str, part, stretch: str | None = No
     return ok, why
 
 
+def slider_name(key: str, name: str) -> str:
+    """A layer's slider's name as every view shows it: the stars' Strength in its own words (French "Force": a
+    filter's intensity is "Intensité" in the same panel)."""
+    from .i18n import in_context
+    return in_context("stars", name) if key == "star_strength" else _(name)
+
+
 def setting_name(lay: dict, field: str, key: str) -> str:
     """A setting of a layer as its panel names it, in the language of the screen: a filter's setting by its label, a
     slider of a workflow's layer or of an image layer by its slider's name (the Undo / Redo words named it by its key:
@@ -282,7 +289,9 @@ def setting_name(lay: dict, field: str, key: str) -> str:
         label = "Stretch strength"
     else:
         from ..render.sliders import BY_KEY
-        label = BY_KEY[key].name if key in BY_KEY else None
+        if key in BY_KEY:
+            return slider_name(key, BY_KEY[key].name)
+        label = None
     return _(label if label is not None else str(key).replace("_", " ").capitalize())
 
 
@@ -297,6 +306,12 @@ def step_words(old: list[dict], new: list[dict]) -> str:
         if moved:
             lay = next((x for x in moved if x.get("kind") != "filter"), moved[0])
             return _(word).format(kind=kind(lay), name=layer_name(lay))
+    for i, lay in b.items():                         # a filter moved to another child or layer: from where to where
+        was = a.get(i)
+        if was is not None and lay.get("kind") == "filter" and \
+                (was.get("sub"), was.get("target")) != (lay.get("sub"), lay.get("target")):
+            return _("“{name}” moved from {old} to {new}").format(name=layer_name(lay), old=_filter_place(was, a),
+                                                                  new=_filter_place(lay, b))
     if [x["id"] for x in old] != [x["id"] for x in new]:
         return _("Layers reordered")
     for i, lay in b.items():
@@ -329,9 +344,35 @@ def step_words(old: list[dict], new: list[dict]) -> str:
             ka, kb = was.get(field) or {}, lay.get(field) or {}
             for k in list(kb) + [k for k in ka if k not in kb]:        # (a slider back at its middle has no key)
                 if ka.get(k) != kb.get(k):
-                    return _("{what} of “{name}”").format(what=setting_name(lay, field, k), name=name)
+                    from .blockdraft import owned
+                    return owned(setting_name(lay, field, k), name, _setting_change(lay, field, k, ka.get(k), kb.get(k)))
         return _("“{name}” changed").format(name=name)
     return _("Crop changed") if getattr(old, "crop", None) != getattr(new, "crop", None) else ""
+
+
+def _setting_change(lay: dict, field: str, key: str, old, new) -> str:
+    """What a layer's setting became, "old → new", as its panel writes the values: a rendering slider by its offset
+    from the suggestion, the Arcsinh's Strength to its step, another value as it is."""
+    def say(v):
+        if field == "sliders":
+            v = 2.0 if v is None else float(v)
+            return strength_text(v) if key == STRETCH_KEY else offset_text(v)
+        if isinstance(v, float):
+            return number(v, 2)
+        return "" if v is None else _(str(v))
+    a, b = say(old), say(new)
+    return f"{a} → {b}" if a and b else ""
+
+
+def _filter_place(fl: dict, layers: dict) -> str:
+    """Where a filter applies, as its row is placed: one of a Combine layers layer's images (its name: "S II",
+    "Stars"), a layer (its name), or every layer below."""
+    tgt = layers.get(fl.get("target"))
+    if tgt is None:
+        return _("the layers below")
+    if fl.get("sub"):
+        return _(_side_name(tgt, fl["sub"]))
+    return layer_name(tgt)
 
 
 def _side_name(lay: dict, sub: str) -> str:
@@ -355,7 +396,12 @@ def _tune_words(was: dict, lay: dict) -> str:
     for key, word in (("hues", "{filter} hue"), ("weights", "{filter} intensity")):
         for role in sorted(set(a.get(key) or {}) | set(b.get(key) or {})):
             if (a.get(key) or {}).get(role) != (b.get(key) or {}).get(role):
-                return owned(_(word).format(filter=_side_name(lay, ROLE_SUB + role)), owner)
+                old, new = (a.get(key) or {}).get(role), (b.get(key) or {}).get(role)
+                if key == "hues":
+                    change = f"{float(old):.0f}° → {float(new):.0f}°" if old is not None and new is not None else ""
+                else:
+                    change = f"{number(float(1.0 if old is None else old), 2)} → {number(float(1.0 if new is None else new), 2)}"
+                return owned(_(word).format(filter=_side_name(lay, ROLE_SUB + role)), owner, change)
     return _("“{name}” changed").format(name=layer_name(lay))
 
 
@@ -495,7 +541,10 @@ class ContSlider(QWidget):
         row.setSpacing(6)
         self.s = QSlider(Qt.Horizontal)
         # (a step that does not divide the range: the last whole step under ``hi`` is the end)
-        self._n = max(1, math.floor((hi - lo) / step + 1e-6)) if step else self.GLIDE
+        # (without a step: a thousandth of a 0-4 range, the same fineness on a longer one, so that its middle, the
+        # suggestion, is one of its positions: Saturation's 0-6 drew its default as a moved value)
+        self._n = max(1, math.floor((hi - lo) / step + 1e-6)) if step else \
+            max(self.GLIDE, int(round(self.GLIDE * (hi - lo) / 4)))
         self.s.setRange(0, self._n)
         if ends:
             a, b = label(ends[0], "small"), label(ends[1], "small")
@@ -3700,10 +3749,25 @@ class PostView(QWidget):
                     self.pbox.addLayout(r)
                     self._stars_fusion_row(lay)
             self._add_slider(lay, p, sd, part)
+        if part == "combined":
+            self._layers_link(lay)
+
+    def _layers_link(self, lay):
+        """Combine layers' editor in Inspect, under its settings, as a combination's under its own (one way for the
+        family): a draft to compare, Apply, Try variant."""
+        b = QPushButton(_("Open in Inspect  →"))
+        b.setObjectName("link")
+        b.setToolTip(_("Combine layers' editor: a draft to compare, Apply, Try variant"))
+
+        def go():
+            self.s.sel_layer = lay["id"]                 # this layer, among the workflow's Combine layers
+            self.goProcessing.emit(lay["pid"], "composition")
+        b.clicked.connect(go)
+        self.pbox.addWidget(b)
 
     def _add_slider(self, lay, p, sd, part):
         pos = lay["sliders"].get(sd.key, 2.0)
-        sl = ContSlider(_(sd.name), 0, slider_top(sd.key), pos, 2, ends=[_(e) for e in sd.ends] if sd.ends else None,
+        sl = ContSlider(slider_name(sd.key, sd.name), 0, slider_top(sd.key), pos, 2, ends=[_(e) for e in sd.ends] if sd.ends else None,
                         show=offset_text)
         ok, why = layer_slider_state(self.s, p, lay, sd.key, part)
         sl.set_available(ok, why)
@@ -3816,7 +3880,10 @@ class PostView(QWidget):
             if abs(float(x) - now()) <= half + 1e-9:     # let go where it is (its rail's step): no change of the block
                 self.request(final_only=True)
                 return
-            self.set_fusion(lay, make(x), words, rebuild=False)
+            was = now()
+            self.set_fusion(lay, make(x), words, rebuild=False,
+                            change=f"{was:.0f}° → {float(x):.0f}°" if what == "hue" else
+                            f"{number(was, 2)} → {number(float(x), 2)}")
         sl.moved.connect(moved)
         sl.done.connect(done)
         return sl
@@ -4437,20 +4504,23 @@ class PostView(QWidget):
             v.addWidget(label(_("Where the image is redder than green, the hydrogen glow of the workflow at the bottom "
                                 "(its starless image when it has one): nothing at its middle value, all at its "
                                 "brightest 3 %. Feather, Density and Invert act on it."), "small", wrap=True))
-        if src in READS_IMAGE and isinstance(lay, SideLayer) and sub_role(lay.side) is not None and owner is not None:
-            # a filter's mask reads the combination's picture by default, as luminosity masks are taken from the
-            # composite picture in the reference photo editors; or the filter itself, or another filter
+        if src in READS_IMAGE and isinstance(lay, SideLayer) and owner is not None and \
+                (sub_role(lay.side) is not None or lay.side in ("stars", "starless")):
+            # every child of a master layer has the same choice (one rule for the children): a filter's mask reads the
+            # combination's picture by default, as luminosity masks are taken from the composite picture in the
+            # reference photo editors; the Stars or Starless image's, the image itself (as it did); or another filter
+            filt = sub_role(lay.side) is not None
             r = QHBoxLayout()
             r.addWidget(label(_("Reads"), "dim"))
             c = QComboBox()
             c.addItem(_("Picture"), "picture")
             c.setItemData(0, _("The combined picture without its stars: the filters (starless images) mixed, before the stars are put "
                 "back"), Qt.ToolTipRole)
-            c.addItem(_("This filter"), "self")
+            c.addItem(_("This filter") if filt else _("This image"), "self")
             for o in fusion_roles(owner):
                 if role_sub(o) != lay.side:
                     c.addItem(_side_name(owner, role_sub(o)), role_sub(o))
-            c.setCurrentIndex(max(0, c.findData(part.get("from", "picture"))))
+            c.setCurrentIndex(max(0, c.findData(part.get("from", "picture" if filt else "self"))))
             c.setToolTip(_("The image this part reads its brightness or its colour from"))
             c.activated.connect(lambda i, c=c: self._part_set(part, "from", c.itemData(i)))
             r.addWidget(c, 1)

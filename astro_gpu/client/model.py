@@ -3909,6 +3909,24 @@ class _ProjectBase(QObject):
         why = postfusion.plain_reason(stage, spec, inputs, self._chains.get(pid) or [])
         return stage, spec, dict(w.params.get(stage) or {}), inputs, why
 
+    def layers_title(self, node) -> str:
+        """A Combine layers block's one shown name, everywhere (the graph, its panel, Inspect's band and editor, the
+        Stars/background's outputs, the steps): its layer of Post's name as Post's row shows it (post3.layer_name: "H-O
+        · Combine layers"), the one Post would give it before it has one; a block no workflow feeds yet: "Combine
+        layers", numbered among those."""
+        from .post3 import layer_name, retitle
+        from .graphnode import block_title
+        if node is None or not node.paths:
+            n = getattr(node, "num", 0) if node is not None else 0
+            return block_title(None, "composition") + (f" {n}" if n else "")
+        lay = dict(self.post_layer(node.lid) or {}) if node.lid is not None else {}
+        if not lay:
+            from .names import neutral
+            q = node.paths[0]
+            lay = {"kind": "workflow", "pid": q.pid, "name": neutral(q.name) + " · " + POST_PART_NAMES["combined"]}
+        retitle(self, lay)
+        return layer_name(lay)
+
     def shown_title(self, pid: int) -> str:
         """A workflow's name as the graph shows its blocks everywhere: a combination's, its block's title (its recipe's
         title, numbered among the blocks of its type, or the name the user gave: graphcore rules.title; a block whose

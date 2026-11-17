@@ -401,5 +401,11 @@
   "This layer has no stars image: its workflow has no Stars/background block": "Ce calque n'a pas d'image d'étoiles : son workflow n'a pas de bloc Étoiles/fond",
   "How the stars of the filters mix: the setting of {block}, the same in its Inspect editor": "Comment se mélangent les étoiles des filtres : le réglage de {block}, le même dans son éditeur d'Inspection",
   "Finding the stars of the Stars mask (once for this result): the mask shows them when found": "Recherche des étoiles du masque Étoiles (une fois pour ce résultat) : le masque les montre une fois trouvées",
-  "The stars of the Stars mask could not be found: the mask shows none (searched again next time)": "Les étoiles du masque Étoiles n'ont pas pu être trouvées : le masque n'en montre aucune (cherchées de nouveau la prochaine fois)"
+  "The stars of the Stars mask could not be found: the mask shows none (searched again next time)": "Les étoiles du masque Étoiles n'ont pas pu être trouvées : le masque n'en montre aucune (cherchées de nouveau la prochaine fois)",
+  "stars|Strength": "Force",
+  "{block} added": "{block} ajouté{block:e}",
+  "This image": "Cette image",
+  "Combine layers' editor: a draft to compare, Apply, Try variant": "L'éditeur de Combiner calques : un brouillon à comparer, Appliquer, Essayer une variante",
+  "“{name}” moved from {old} to {new}": "« {name} » déplacé de {old} à {new}",
+  "the layers below": "les calques du dessous"
 }
