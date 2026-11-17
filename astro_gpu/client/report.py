@@ -1119,7 +1119,7 @@ class ReportPage(QWidget):
         esc = lambda t: html.escape(t)                    # noqa: E731
         rows = [(esc(_("Method")), esc(texts.choice_label("neural", language()))),
                 (esc(_("Images produced")), esc(_("Starless image") + " · " + _("Stars alone")))]
-        return rows + [metric_row("star_removal", k, m[k]) for k in ("grid_peaks",) if k in m]
+        return rows + [metric_row("star_removal", k, m[k]) for k in ("grid_peaks", "halo_stars") if k in m]
 
     @staticmethod
     def _value(value) -> str:
