@@ -50,5 +50,12 @@
   "{filter} hue {old}° → {new}°": "Teinte {filter} {old}° → {new}°",
   "{filter} intensity {old} → {new}": "Intensité {filter} {old} → {new}",
   "{name} is not computed": "{name} n'est pas calculé",
-  "{n} changes": "{n} changements"
+  "{n} changes": "{n} changements",
+  "≈ ×{gain}, from the preview · {why}": "≈ ×{gain}, d'après l'aperçu · {why}",
+  "An estimate on the preview's reduced copy: the run measures it on the whole image": "Une estimation sur la copie réduite de l'aperçu : le calcul la mesure sur l'image entière",
+  "Signal: the gain that fits this filter's nebula onto the H-alpha's.": "Signal : le gain qui ajuste la nébuleuse de ce filtre sur celle du H-alpha.",
+  "Limited by noise: its signal asked for more, the gain stops where this filter's sky noise equals the H-alpha's, so a weak filter is not raised into its noise.": "Limité par le bruit : son signal demandait plus, le gain s'arrête là où le bruit du ciel de ce filtre égale celui du H-alpha, pour ne pas monter un filtre faible dans son bruit.",
+  "On sky: the gain that brings this filter's sky median and spread to the H-alpha's.": "Sur le ciel : le gain qui amène la médiane et la dispersion du ciel de ce filtre à celles du H-alpha.",
+  "Linear match: the least squares fit of this filter onto the reference.": "Ajustement linéaire : l'ajustement par moindres carrés de ce filtre sur la référence.",
+  "Reference: the other filters are brought to this one's scale.": "Référence : les autres filtres sont ramenés à l'échelle de celui-ci."
 }
