@@ -315,7 +315,7 @@ def test_a_combination_panel_shows_its_named_inputs_and_its_settings(world):
     assert {"Hα", "O III", "H-O", "Intensity", "H-O-O"} <= shown
     # the hues, the balance and the stars are set in the combination's editor (Adjust): the panel sums them up
     tips = {x.toolTip() for x in W.page.panel.findChildren(QLabel) if x.objectName() == "swatch"}
-    assert tips == {"Hα hue 0°", "O III hue 180°"} and "Balance: On signal" in shown
+    assert tips == {"Hα hue 0°", "O III hue 180°"} and "Balance: On sky" in shown
     assert not {"Hα hue", "O III hue"} & shown
     assert W.m.set_fusion_weight(W.m.view(ho.pid), "OIII", 0.5) is True
     assert W.m.p.workflow(ho.pid).params["combine_ho"]["weights"] == {"OIII": 0.5}
@@ -354,7 +354,7 @@ def test_the_stars_setting_is_shown_on_the_combination_of_the_stars_alone(world)
     assert "Stars: Neutral" in labels and "Adjust" in {b.text() for b in W.page.panel.findChildren(QPushButton)}
     assert not any(x.startswith("Balance") for x in labels)   # the stars alone are always balanced on the sky
     labels, lists = panel(W.view("H-O"))
-    assert not any(x.startswith("Stars") for x in labels) and "Balance: On signal" in labels
+    assert not any(x.startswith("Stars") for x in labels) and "Balance: On sky" in labels
 
 
 def test_filters_make_one_workflow_each_and_their_combinations(world):

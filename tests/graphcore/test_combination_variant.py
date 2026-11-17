@@ -53,18 +53,18 @@ def test_a_combine_layers_still_has_no_variant():
 
 
 def test_a_recipe_round_trip_keeps_the_settings_both_recipes_have_and_gives_each_its_own_back():
-    """H-O with Balance On sky, O III hue 240 and O III weight 0.5, then S-H-O, then H-O again: the balance and the
+    """H-O with Balance On signal, O III hue 240 and O III weight 0.5, then S-H-O, then H-O again: the balance and the
     weight go with each change, the H-O's hues come back with it (the reviewer's round trip lost them)."""
     doc = Doc.from_template("filters_minimal")
     j = next(r.blocks[0] for r in doc.project.rows if r.blocks and doc.project.blocks[r.blocks[0]].kind == "combine")
-    ok(doc, "set_param", block=j, stage="combine_ho", name="balance", value="sky")
+    ok(doc, "set_param", block=j, stage="combine_ho", name="balance", value="signal")
     ok(doc, "set_param", block=j, stage="combine_ho", name="hue_oiii", value=240.0)
     ok(doc, "set_input", block=j, port="O III", weight=0.5)
     ok(doc, "set_combination_type", block=j, type="sho")
     sho = doc.project.blocks[j].params["combine_sho"]
-    assert sho["balance"] == "sky" and sho["weights"] == {"OIII": 0.5} and "hue_oiii" not in sho
+    assert sho["balance"] == "signal" and sho["weights"] == {"OIII": 0.5} and "hue_oiii" not in sho
     ok(doc, "set_combination_type", block=j, type="ho")
     ho = doc.project.blocks[j].params["combine_ho"]
-    assert ho["balance"] == "sky" and ho["hue_oiii"] == 240.0 and ho["weights"] == {"OIII": 0.5}
+    assert ho["balance"] == "signal" and ho["hue_oiii"] == 240.0 and ho["weights"] == {"OIII": 0.5}
     assert "combine_sho" not in doc.project.blocks[j].params          # nothing of the other recipe is computed
     engine_ok(doc)

@@ -20,7 +20,7 @@ The editor, from the top: the draft bar; Palette, starting hues in one click (on
 fit); one card per filter, in the recipe's order: its thumbnail (balanced, stretched; a click shows that filter alone
 in the image), Hue (a rail of the colours, a swatch, the degrees), Intensity (the weight after the balance, 1 = as
 balanced), an eye that takes the filter out of the preview's mix (the view only, never applied), and the gain the
-balance measured and why; Balance, On signal or On sky. The combination of the stars alone has only its Stars setting
+balance measured and why; Balance, On sky or On signal. The combination of the stars alone has only its Stars setting
 (Neutral, Palette). The gains of a preview are the reduced copy's: when the draft keeps the balance, the applied run's
 are shown (its drz_meta.json), the copy's said in the tooltip when they differ.
 """
@@ -67,8 +67,8 @@ INTENSITY_MAX, INTENSITY_STEP = 3.0, 0.05
 #: HUBBLE_HUES, the S-H-O recipe's defaults); H-O-O: H-alpha red, O III cyan.
 PALETTES = (("hubble", "Hubble (S-H-O)", ("SII", "Ha", "OIII"), None),
             ("hoo", "H-O-O", ("Ha", "OIII"), {"Ha": 0.0, "OIII": 180.0}))
-BALANCES = ("signal", "sky")
-BALANCE_NAME = {"signal": "On signal", "sky": "On sky"}
+BALANCES = ("sky", "signal")
+BALANCE_NAME = {"sky": "On sky", "signal": "On signal"}
 BALANCE_LINE = {"signal": "Each filter's nebula fitted onto the H-alpha's, never raised into its own noise.",
                 "sky": "Each filter's sky brought to the H-alpha's (its median and its spread), whatever its signal."}
 STARS = ("neutral", "palette")

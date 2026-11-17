@@ -669,7 +669,7 @@
     "own": null,
     "params": {
      "combine_sho": {
-      "balance": "signal",
+      "balance": "sky",
       "hue_ha": 31.4,
       "hue_oiii": 202.2,
       "hue_sii": 15.5,

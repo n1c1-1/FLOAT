@@ -252,8 +252,8 @@ def test_the_block_shows_the_draft_bar_its_palette_cards_and_balance(ed):
     # no run's value yet: the reduced copy's estimate, said so; what the reason means on hover
     assert u["gain_SII"].text().startswith("≈ ×") and "from the preview" in u["gain_SII"].text()
     assert u["gain_Ha"].text() == "reference" and "estimate" in u["gain_SII"].toolTip()
-    assert any(w in u["gain_SII"].toolTip() for w in ("Signal:", "Limited by noise:"))
-    assert "signal" in u["gain_OIII"].text() or "noise" in u["gain_OIII"].text()
+    assert "On sky:" in u["gain_SII"].toolTip()                                  # the default balance
+    assert "on sky" in u["gain_OIII"].text()
     assert "balance_signal" in u and "balance_sky" in u and "stars_neutral" not in u
     assert u["bar"].what.text().find("Applied settings") >= 0
 
@@ -325,11 +325,11 @@ def test_apply_is_one_change_of_the_block(ed):
     m.apply_as = lambda ch, how="replace", paths=None, title="": got.append((ch, how, [q.pid for q in paths]))
     ed.set_hue("SII", 0.0)
     ed.set_intensity("OIII", 1.5)
-    ed.set_draft({"balance": "sky"})
+    ed.set_draft({"balance": "signal"})
     ed.apply()
     (ch, how, pids), = got
     assert how == "replace" and pids == [1] and ch["kind"] == "combine"
-    assert ch["values"] == {"hue_sii": 0.0, "weights": {"OIII": 1.5}, "balance": "sky"}
+    assert ch["values"] == {"hue_sii": 0.0, "weights": {"OIII": 1.5}, "balance": "signal"}
     assert not ed.has_draft() and ed.tv.refreshed
 
 
@@ -457,8 +457,9 @@ def test_a_recipe_s_title_in_a_workflow_name_follows_its_recipe():
 REAL = {"m27": "F:/astro_essais/tutoriels_ref/MONO/m27", "ic443": "F:/astro_essais/tutoriels_ref/MONO/ic443"}
 
 
-def _real_window(tmp_path, name):
-    """A scratch copy of the owner's project (its store read through a junction), opened read only."""
+def _real_window(tmp_path, name, unstore: tuple[str, str] | None = None):
+    """A scratch copy of the owner's project (its store read through a junction), opened read only. ``unstore``:
+    (a stored setting, its value) taken out of the copy's definition first, as if the project had stored nothing."""
     from pathlib import Path
 
     from conftest import scratch_project
@@ -479,7 +480,24 @@ def _real_window(tmp_path, name):
     w = Whole(readonly=True)
     w.resize(1500, 900)
     w.show()
-    w.open_project(scratch_project(tmp_path / name, src))
+    folder = scratch_project(tmp_path / name, src)
+    if unstore:
+        import json
+
+        def drop(x):
+            if isinstance(x, dict):
+                if x.get(unstore[0]) == unstore[1]:
+                    x.pop(unstore[0])
+                for v in x.values():
+                    drop(v)
+            elif isinstance(x, list):
+                for v in x:
+                    drop(v)
+        f = folder / "project.astroproj"
+        d = json.loads(f.read_text(encoding="utf-8"))
+        drop(d)
+        f.write_text(json.dumps(d, indent=1), encoding="utf-8")
+    w.open_project(folder)
     for _i in range(400):
         if w.s.ready:
             break
@@ -582,7 +600,9 @@ def test_the_graph_panel_s_settings_of_a_combination_are_one_draft(qapp, tmp_pat
     from test_inspect import settle
 
     from astro_gpu.client.panel import Panel
-    w = _real_window(tmp_path, "ic443")
+    # the project stores the Balance On signal, the default it was made with: that choice is not computed in its store,
+    # whose combination was computed at that default; taken out, the block has its result, as the test needs
+    w = _real_window(tmp_path, "ic443", unstore=("balance", "signal"))
     try:
         s = w.s
         q, ed = _open_combination(w)
@@ -661,7 +681,7 @@ def test_the_draft_bar_keeps_its_height_whatever_the_draft_holds(ed):
     ed.set_hue("SII", 10.0)
     ed.set_hue("OIII", 205.0)
     ed.set_intensity("Ha", 1.7)
-    ed.set_draft({"balance": "sky"})
+    ed.set_draft({"balance": "signal"})
     QApplication.processEvents()
     assert bar.sizeHint().height() == h0
     assert ed._ui["balance_sky"].mapTo(ed.page, ed._ui["balance_sky"].rect().topLeft()) == y0

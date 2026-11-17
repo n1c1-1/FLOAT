@@ -60,10 +60,10 @@ are those of the bulk of the pixels: the stars, a few percent of the field, do n
 on one scale with or without their stars. The linear match was the narrow-band types' until their version 8; it is
 a least squares fit, which the brightest pixels drive: on images with their stars the stars' ratio set the scale and
 the O III of a supernova remnant was lowered (0.77) where its nebula asked for 3.8; on starless images of a small
-nebula a weak S II was multiplied by 14 and its sky's residue covered the field (the setting Balance, On signal,
-the default since the blocks' version 10, fits the signal with that gain capped by the sky noises' ratio:
-``signal_gain`` and ``Combination.steps``; On sky is the equalisation described here). The equalisation's offset moves the
-sky, which is taken back to 0 after it.
+nebula a weak S II was multiplied by 14 and its sky's residue covered the field. The setting Balance: On sky, the
+default, is the equalisation described here; On signal fits the signal with that gain capped by the sky noises' ratio
+(``signal_gain`` and ``Combination.steps``). The equalisation's offset moves the sky, which is taken back to 0 after
+it.
 
 The S-H-O default hues are measured, not chosen (issue #163): five public SHO composites of the Hubble teams
 (ESA/Hubble heic1501a, opo9544a, heic1007a, heic1520a, heic0707a: the Pillars of Creation 2014 and 1995, Mystic
@@ -193,7 +193,7 @@ MATCH_REFERENCE = "Ha"
 #: what a narrow-band combination makes of the stars alone (module docstring): neutral, or through the palette's hues
 STARS = ("neutral", "palette")
 #: how a combination's ``equalise`` step brings a filter to its reference (module docstring, Balance): on the sky
-#: (the medians and the median absolute deviations), or on the signal (the default)
+#: (the medians and the median absolute deviations, the default), or on the signal
 BALANCES = ("sky", "signal")
 #: the balance on the signal: the reference's pixels fitted are those above its sky by SIGNAL_SIGMA times its sky
 #: noise, up to SIGNAL_HIGH of its full scale
@@ -645,12 +645,12 @@ class NarrowbandParams(CombinationParams):
     stars: str = _stars_setting()
     #: its default is no part of a key (core/store): a project saved before the setting keeps its results, said of an
     #: earlier version
-    balance: str = P(BALANCES[1], label="Balance", choices=list(BALANCES),
-                     help="How each filter is brought to the H-alpha before the hues. On signal: the gain that fits "
-                          "the filter's nebula onto the H-alpha's, where the H-alpha is 3 sigma above its sky, but "
-                          "never more than the gain that makes the filter's sky noise equal to the H-alpha's: a weak "
-                          "filter is not raised into its noise. On sky: the filter's median and spread brought to the "
-                          "H-alpha's, whatever its signal. The stars alone are always balanced on the sky.")
+    balance: str = P(BALANCES[0], label="Balance", choices=list(BALANCES),
+                     help="How each filter is brought to the H-alpha before the hues. On sky: the filter's median "
+                          "and spread brought to the H-alpha's, whatever its signal. On signal: the gain that fits the "
+                          "filter's nebula onto the H-alpha's, where the H-alpha is 3 sigma above its sky, but never "
+                          "more than the gain that makes the filter's sky noise equal to the H-alpha's: a weak filter "
+                          "is not raised into its noise. The stars alone are always balanced on the sky.")
 
     @field_validator("balance")
     @classmethod
@@ -963,7 +963,8 @@ class CombineSHO(NarrowbandCombination):
     # the linear match, the lightness weighted by the noise and the colour's strength of 1.9 (module docstring, 5)
     # 9: the stars alone come out neutral (the setting Stars), no longer through the hues
     # 10: the filters balanced on the signal by default (the setting Balance; On sky: the equalisation as before)
-    version = "10"
+    # 11: On sky the default again (the default On signal of 10 was tuned on two test images); On signal a choice
+    version = "11"
     key_label = "9"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
 
@@ -983,8 +984,8 @@ class CombineHO(NarrowbandCombination):
                    "colour image: the O III equalised to the H-alpha, then each filter a hue (H-alpha red, O III "
                    "green and blue).")
     Params = HOParams
-    # 8, 9, 10: as the S-H-O block's
-    version = "10"
+    # 8, 9, 10, 11: as the S-H-O block's
+    version = "11"
     key_label = "9"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
 
@@ -1031,7 +1032,8 @@ class CombineRecipe(Combination):
     Params = RecipeParams
     # 2: a narrow-band recipe's stars alone come out neutral (the setting Stars), no longer through its hues
     # 3: a recipe's equalisation balances on the signal by default (the setting Balance)
-    version = "3"
+    # 4: on the sky by default again, as the S-H-O block's 11
+    version = "4"
     key_label = "2"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
     def spec(self, p) -> dict:

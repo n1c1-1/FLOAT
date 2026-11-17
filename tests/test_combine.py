@@ -80,7 +80,7 @@ def test_four_blocks_on_one_base_class_each_with_its_named_inputs_parameters_and
         spec = c().spec(None)
         assert [s["op"] for s in spec["steps"]] == ["neutralise_sky", "equalise"] and spec["steps"][1]["reference"] == "Ha"
         assert spec["output"]["lightness"] is None and spec["output"]["strength"] == 1.0
-    assert (C.CombineSHO.version, C.CombineHO.version) == ("10", "10")
+    assert (C.CombineSHO.version, C.CombineHO.version) == ("11", "11")
     ho = C.CombineHO.Params()
     assert (ho.hue_ha, ho.hue_oiii) == (0.0, 180.0) and not hasattr(ho, "hue_sii")
     assert not {"hue_r", "lightness", "smoothing"} & set(C.CombineRGB.Params.model_fields)
@@ -775,13 +775,14 @@ def _inside():
 
 
 def test_the_balance_on_signal_keeps_a_filter_of_the_same_signal_at_its_level_whatever_its_sky(tmp_path):
-    """Balance, On signal by default: a filter with the H-alpha's signal and a sky four times quieter keeps its
-    level (the gain that fits its signal onto the H-alpha's, 1, is under the one that would bring its sky noise to
-    the H-alpha's, 4). On sky, the equalisation of the medians and spreads, raises it by its quiet sky."""
-    assert C.CombineHO.Params().balance == C.CombineSHO.Params().balance == "signal"
+    """Balance, On signal (a choice; On sky is the default): a filter with the H-alpha's signal and a sky four times
+    quieter keeps its level (the gain that fits its signal onto the H-alpha's, 1, is under the one that would bring its
+    sky noise to the H-alpha's, 4). On sky, the equalisation of the medians and spreads, raises it by its quiet sky."""
+    assert C.CombineHO.Params().balance == C.CombineSHO.Params().balance == "sky"
+    assert C.CombineRecipe.Params().balance == "sky"
     assert C.CombineHO.Params.model_fields["balance"].json_schema_extra["choices"] == ["sky", "signal"]
     ins, ch = _nebula_pair(tmp_path, 0.004, 0.001, 1.0)
-    rgb, said = _balanced(tmp_path, ins, "signal")
+    rgb, said = _balanced(tmp_path, ins, "signal", balance="signal")
     inside = _inside()
     assert float(rgb[1][inside].mean()) == pytest.approx(float(rgb[0][inside].mean()), rel=0.06)
     assert any("OIII balanced on the signal of Ha" in str(s) for s in said)
@@ -795,7 +796,7 @@ def test_the_balance_on_signal_does_not_raise_a_weak_filter_beyond_its_sky_noise
     """A filter 14 times weaker than the H-alpha with the same sky noise: the signal asks for 14, which would raise
     its noise 14 times over the H-alpha's; the gain is the one that makes the two sky noises equal (about 1)."""
     ins, ch = _nebula_pair(tmp_path, 0.002, 0.002, 1 / 14)
-    rgb, said = _balanced(tmp_path, ins, "weak")
+    rgb, said = _balanced(tmp_path, ins, "weak", balance="signal")
     want = {r: v.copy() for r, v in ch.items()}
     skies = C.neutralise_sky(want, np.ones(rgb.shape[1:], bool))
     gain = skies["Ha"][1] / skies["OIII"][1]                              # the sky noise measured on the sky
@@ -811,7 +812,7 @@ def test_the_balance_on_signal_falls_back_to_the_sky_noise_and_may_lower_a_filte
     noisier than the H-alpha is lowered). The same when the fit is not positive (a filter the reverse of the
     H-alpha)."""
     ins, ch = _nebula_pair(tmp_path, 0.001, 0.004, 1.0, signal=0.0, uniform=True)
-    rgb, said = _balanced(tmp_path, ins, "empty")
+    rgb, said = _balanced(tmp_path, ins, "empty", balance="signal")
     want = {r: v.copy() for r, v in ch.items()}
     skies = C.neutralise_sky(want, np.ones(rgb.shape[1:], bool))
     gain = skies["Ha"][1] / skies["OIII"][1]
@@ -831,8 +832,8 @@ def test_the_balance_reads_in_french_and_leaves_the_keys_of_a_project_that_store
     assert texts.choice_label("sky", "fr") == "Sur le ciel" and texts.choice_label("signal", "fr") == "Sur le signal"
     h = texts.param_help("combine_recipe", "balance", "fr")
     assert h and h != texts.param_help("combine_recipe", "balance")
-    # a project saved before the setting stores nothing for it: its combination's key is the one it had (the default
-    # is no part of a key), so its result stays, said of an earlier version; On sky is another key
+    # a project saved before the setting stores nothing for it: its combination's key is the one it had (the default,
+    # On sky, is no part of a key, stored or not); On signal is another key
     p, o = _channels(tmp_path, nights, FULL)
     add_align_on(p, o, 1, "stars")
     f = p.add_workflow("H-O", CLASSIC)
@@ -840,11 +841,11 @@ def test_the_balance_reads_in_french_and_leaves_the_keys_of_a_project_that_store
                                                     {"pid": o.id, "role": "OIII", "channel": "L"}]}}
     assert "balance" not in Keys(p).key_params(f.id, "combine_ho")
     before = Keys(p).key(f.id, "combine_ho")
-    f.params["combine_ho"] = {"balance": "signal"}
-    assert Keys(p).key(f.id, "combine_ho") == before
     f.params["combine_ho"] = {"balance": "sky"}
+    assert Keys(p).key(f.id, "combine_ho") == before
+    f.params["combine_ho"] = {"balance": "signal"}
     assert Keys(p).key(f.id, "combine_ho") != before
-    assert (C.CombineHO.version, C.CombineSHO.version, C.CombineRecipe.version) == ("10", "10", "3")
+    assert (C.CombineHO.version, C.CombineSHO.version, C.CombineRecipe.version) == ("11", "11", "4")
     assert (C.CombineHO.key_label, C.CombineSHO.key_label, C.CombineRecipe.key_label) == ("9", "9", "2")
 
 
