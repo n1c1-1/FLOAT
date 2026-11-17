@@ -35,6 +35,15 @@ def word(key: str) -> str:
                                 "stay": "Stay"}[key])
 
 
+def owned(what: str, owner: str, change: str = "") -> str:
+    """A step of a setting, as every block of the combination family names it in Undo, Redo and the notices (Post's
+    own way: 'Strength of "S-H-O · Combine layers"'): the setting, then its owner, then what it became when said:
+    'S II hue of "S-H-O": 16° → 40°'."""
+    if change:
+        return _("{what} of “{name}”: {change}").format(what=what, name=owner, change=change)
+    return _("{what} of “{name}”").format(what=what, name=owner)
+
+
 class Draft:
     """The settings of one block changed and not applied: ``vals`` {name: value} (a setting of the Gradient view, or a
     change of the panel by its identity), each edit one step of its own Undo (``undo`` / ``redo``, the window's stamps in

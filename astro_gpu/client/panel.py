@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (
 from .. import texts
 from ..core import workflow as wfl
 from . import prefs
+from .blockdraft import owned
 from .graphmodel import confirm_on
 from .graphnode import STATE_WORD, block_state, block_title, kbase
 from .i18n import _, all_workflows, hm, language, number, plural
@@ -1392,11 +1393,11 @@ class Panel(QWidget):
         if value == round(float(self.draft_combine(("weight", role), applied)), 3):
             return
         self._typing = False                             # taken: the panel shows what it made (its draft's bar)
-        what = _("{filter} intensity {old} → {new}").format(filter=port_name(role), old=number(applied, 2),
-                                                             new=number(value, 2))
+        what = owned(_("{filter} intensity").format(filter=port_name(role)), self.shown_name(p),
+                     f"{number(applied, 2)} → {number(value, 2)}")
         self._propose(dict(kind="combine", values={"weights": {role: value}}), what,
                       _("{filter} intensity {new}").format(filter=port_name(role), new=number(value, 2)),
-                      same=abs(value - applied) < 1e-6, always=True)
+                      same=abs(value - applied) < 1e-6, always=True, owned=True)
 
     def draft_combine(self, what, default):
         """The combination's recipe (``what`` "type") or a filter's weight (("weight", role)) as the block's draft has
@@ -1722,10 +1723,10 @@ class Panel(QWidget):
         ents = list(d.vals.values())
         if len(ents) == 1:
             e = ents[0]
-            return dict(e["ch"], what=e["what"], short=e["short"])
+            return dict(e["ch"], what=e["what"], short=e["short"], owned=bool(e.get("owned")))
         whats, shorts = [e["what"] for e in ents], [e["short"] for e in ents]
         return dict(kind="many", changes=[dict(e["ch"]) for e in ents], what="; ".join(whats),
-                    short=" · ".join(shorts), whats=whats, shorts=shorts)
+                    short=" · ".join(shorts), whats=whats, shorts=shorts, owned=all(e.get("owned") for e in ents))
 
     def _draft_paths(self, d) -> list:
         return [q for q in self.s.paths if q.pid in d.pids]
@@ -1784,6 +1785,7 @@ class Panel(QWidget):
             return True
         ch, paths = self.draft_change(d), self._draft_paths(d)
         self.s.pending_change = None
+        n = self.s.steps_count() if hasattr(self.s, "steps_count") else None
         try:
             notes = self.s.apply_change(paths, ch)
         except (ValueError, wfl.OptionRefused) as e:
@@ -1792,8 +1794,14 @@ class Panel(QWidget):
             self.changed.emit()
             return False
         names = ", ".join(q.name for q in paths)
-        self.s.log("{what} · applied in {names}", what=ch["what"], names=names)
-        said = _("{what} · applied in {names}").format(what=ch["what"], names=names)
+        if ch.get("owned") and len(paths) == 1:          # its words name their owner (blockdraft.owned)
+            self.s.log("{what}", what=ch["what"])
+            said = ch["what"]
+            if n is not None:                            # the step's words, whatever the graph's own said first
+                self.s.name_steps_since(n, said)
+        else:
+            self.s.log("{what} · applied in {names}", what=ch["what"], names=names)
+            said = _("{what} · applied in {names}").format(what=ch["what"], names=names)
         self.toast.emit(" · ".join([said] + [_(n) for n in notes] + ["Ctrl+Z"]))
         self.changed.emit()
         self.draftChanged.emit()
@@ -1871,13 +1879,26 @@ class Panel(QWidget):
             return paths
         return [q for q in paths if q in node.paths] or list(node.paths)
 
-    def _propose(self, ch, what, short, same=False, always=False):
+    def layer_owner(self, p, lay) -> str:
+        """The name of a Combine layers' layer of Post as its row shows it (the owner its steps name), the one Post
+        would give it when it has none yet."""
+        from .model import POST_PART_NAMES
+        from .names import neutral
+        from .post3 import layer_name, retitle
+        d = dict(lay) if lay else {"kind": "workflow", "pid": p.pid,
+                                   "name": neutral(p.name) + " · " + POST_PART_NAMES["combined"]}
+        retitle(self.s, d)
+        return layer_name(d)
+
+    def _propose(self, ch, what, short, same=False, always=False, owned=False):
         """``always``: a draft whatever the block's results (the combination's settings, all of them the same way as
-        its editor's, combineedit.py); else only on a block with results computed and up to date."""
+        its editor's, combineedit.py); else only on a block with results computed and up to date. ``owned``: ``what``
+        names the setting's owner (blockdraft.owned), the way every block of the combination family names a step: said
+        as it is, without the workflow it was applied in."""
         from .blockdraft import Draft
         from .graphnode import node_title
         s = self.s
-        entry = {self._change_id(ch): dict(ch=ch, what=what, short=short)}
+        entry = {self._change_id(ch): dict(ch=ch, what=what, short=short, owned=owned)}
         d = self._draft()
         if d is not None:                                # the block holds a draft: the edit goes to it
             if d.put(entry, same=lambda _k, _v: bool(same)):
@@ -1901,8 +1922,14 @@ class Panel(QWidget):
                 self.draftChanged.emit()
             else:
                 s.pending_change = None
+                n = s.steps_count() if hasattr(s, "steps_count") else None
                 notes = s.apply_change(paths, ch)
-                s.log("{what} · {names}", what=what, names=", ".join(q.name for q in paths))
+                if owned and len(paths) == 1:
+                    s.log("{what}", what=what)
+                    if n is not None:
+                        s.name_steps_since(n, what)
+                else:
+                    s.log("{what} · {names}", what=what, names=", ".join(q.name for q in paths))
                 if notes:
                     self.toast.emit(" · ".join(_(n) for n in notes))
         except NotInEngine:
@@ -2214,21 +2241,23 @@ class Panel(QWidget):
                                {"stretch": c["values"]["stretch"]} if "stretch" in c["values"] else
                                {("slider", c["values"]["slider"][0]): c["values"]["slider"][1]})
 
+        owner = self.layer_owner(p, lay)                  # the steps' owner (blockdraft.owned): the layer's name
+
         def commit(key, v, name, text=offset_text):
             """A slider moved: a change of the block as any block's (a draft when its image is up to date). ``text``:
             how its value is written."""
             old = sliders.get(key, 2.0)
             with s.batch():                               # its layer made real and the value: one undo step (decision 7)
                 self._propose(dict(kind="layer", lid=lid(), values={"slider": [key, v]}),
-                              _("{label}: {old} → {new}").format(label=name, old=text(old), new=text(v)),
-                              f"{name.lower()} {text(v)}", same=abs(v - old) < 0.02)
+                              owned(name, owner, f"{text(old)} → {text(v)}"),
+                              f"{name.lower()} {text(v)}", same=abs(v - old) < 0.02, owned=True)
 
         def blend(b):
             old = lay.get("blend") or BLENDS[0]
             with s.batch():
                 self._propose(dict(kind="layer", lid=lid(), values={"blend": b}),
-                              _("{label}: {old} → {new}").format(label=_("Star blend mode"), old=_(old), new=_(b)),
-                              _(b).lower(), same=b == old)
+                              owned(_("Star blend mode"), owner, f"{_(old)} → {_(b)}"),
+                              _(b).lower(), same=b == old, owned=True)
         from ..render.sliders import ARCSINH_WHY, STRENGTH_STEP
         from ..render.sliders import top as slider_top
         from .postengine import LAYER_STRETCHES, STRETCH_KEY, STRETCH_NAMES, layer_stretch
@@ -2259,9 +2288,8 @@ class Panel(QWidget):
                 sl.setVisible(kind == "arcsinh")
                 with s.batch():
                     self._propose(dict(kind="layer", lid=lid(), values={"stretch": kind}),
-                                  _("{label}: {old} → {new}").format(label=_("Stretch"), old=_(STRETCH_NAMES[old]),
-                                                                     new=_(STRETCH_NAMES[kind])),
-                                  _(STRETCH_NAMES[kind]).lower(), same=kind == old)
+                                  owned(_("Stretch"), owner, f"{_(STRETCH_NAMES[old])} → {_(STRETCH_NAMES[kind])}"),
+                                  _(STRETCH_NAMES[kind]).lower(), same=kind == old, owned=True)
             cb.activated.connect(chosen)
             self.stretch_box, self.stretch_strength = cb, sl
         group = None

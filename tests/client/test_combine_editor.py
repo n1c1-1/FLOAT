@@ -275,7 +275,7 @@ def test_a_drag_follows_the_slider_and_is_one_step(ed):
     sl = ed._ui["int_OIII"]
     sl.setSliderDown(True)
     ed.begin_drag()
-    for v in (22, 24, 26, 28):
+    for v in (round(x / ce.INTENSITY_STEP) for x in (1.1, 1.2, 1.3, 1.4)):     # (positions of its step)
         sl.setValue(v)
         QApplication.processEvents()
     sl.setSliderDown(False)
@@ -350,7 +350,7 @@ def test_leaving_with_a_draft_asks_and_each_answer_does_what_it_says(ed, monkeyp
     m, p = ed.s, ed.s.path
     ed.set_hue("Ha", 50.0)
     block, lines, _cost = ed.draft_pending()
-    assert block.startswith("S-H-O") and lines and "Hα hue 31° → 50°" in lines[0]
+    assert block.startswith("S-H-O") and lines and lines[0] == "Hα hue of “S-H-O”: 31° → 50°"     # named as every step
     monkeypatch.setenv(DRAFT_ANSWER_ENV, answer)
     assert settle(ed, None) == (answer != "stay")
     if answer == "stay":
@@ -639,7 +639,7 @@ def test_the_graph_panel_s_settings_of_a_combination_are_one_draft(qapp, tmp_pat
         from PySide6.QtWidgets import QLabel
         assert "S II" in {x.text().replace("<b>", "").replace("</b>", "") for x in pn.findChildren(QLabel)}
         what = " ".join(pn.draft_change(d).get("whats") or [])
-        assert "O III intensity 1.00 → 0.50" in what and "Recipe: H-O → S-H-O" in what
+        assert "O III intensity of “H-O”: 1.00 → 0.50" in what and "Recipe: H-O → S-H-O" in what
         n = len(s._undo)
         assert pn.draft_apply()
         settle(w)

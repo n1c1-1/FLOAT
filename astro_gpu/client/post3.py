@@ -225,6 +225,25 @@ def layer_name(lay: dict) -> str:
     return out
 
 
+def retitle(s, lay: dict) -> None:
+    """A workflow layer given the name the graph shows its workflow by (``RETITLE``, the model's ``shown_title``), for
+    ``layer_name``; nothing for another layer, or one whose workflow is shown by its stored name."""
+    titled = getattr(s, "shown_title", None)
+    if lay.get("kind") != "workflow" or titled is None:
+        return
+    from .names import neutral
+    from .names import shown as shown_name
+    q = s.view(lay.get("pid")) if hasattr(s, "view") and lay.get("pid") is not None else None
+    try:
+        shown = titled(q.pid) if q is not None else ""
+    except Exception:  # noqa: BLE001 - not readable now: its name as stored
+        shown = ""
+    if shown and shown != shown_name(q.name):
+        lay[RETITLE] = [neutral(q.name), shown]
+    else:
+        lay.pop(RETITLE, None)
+
+
 def setting_name(lay: dict, field: str, key: str) -> str:
     """A setting of a layer as its panel names it, in the language of the screen: a filter's setting by its label, a
     slider of a workflow's layer or of an image layer by its slider's name (the Undo / Redo words named it by its key:
@@ -302,12 +321,15 @@ def _side_name(lay: dict, sub: str) -> str:
 
 
 def _tune_words(was: dict, lay: dict) -> str:
-    """A combination's hue or intensity changed in its master layer: "O III hue", "Hα intensity"."""
+    """A combination's hue or intensity changed in its master layer, named with its owner, the combination (as every
+    step of the family: blockdraft.owned): 'O III hue of "S-H-O"'."""
+    from .blockdraft import owned
     a, b = was.get("tune") or {}, lay.get("tune") or {}
+    owner = (lay.get("fusion") or {}).get("title") or layer_name(lay)
     for key, word in (("hues", "{filter} hue"), ("weights", "{filter} intensity")):
         for role in sorted(set(a.get(key) or {}) | set(b.get(key) or {})):
             if (a.get(key) or {}).get(role) != (b.get(key) or {}).get(role):
-                return _(word).format(filter=_side_name(lay, ROLE_SUB + role))
+                return owned(_(word).format(filter=_side_name(lay, ROLE_SUB + role)), owner)
     return _("“{name}” changed").format(name=layer_name(lay))
 
 
@@ -1883,20 +1905,8 @@ class PostView(QWidget):
         """The combinations' master layers get their description from the model (client/postfusion.py: the block's
         settings, those being moved here on top), the others none; never saved."""
         fusion_of = getattr(self.s, "fusion_of", None)
-        titled = getattr(self.s, "shown_title", None)
         for lay in self.layers if layers is None else layers:
-            if lay.get("kind") == "workflow" and titled is not None:
-                q = self.path(lay.get("pid"))
-                try:
-                    shown = titled(q.pid) if q is not None else ""
-                except Exception:  # noqa: BLE001 - not readable now: its name as stored
-                    shown = ""
-                from .names import neutral
-                from .names import shown as shown_name
-                if shown and q is not None and shown != shown_name(q.name):
-                    lay[RETITLE] = [neutral(q.name), shown]
-                else:
-                    lay.pop(RETITLE, None)
+            retitle(self.s, lay)
             if lay.get("kind") == "workflow" and lay.get("part") is None and fusion_of is not None:
                 try:                                       # a combination's Output as it is: why, on its row
                     f, why = fusion_of(lay["pid"])
@@ -3806,7 +3816,7 @@ class PostView(QWidget):
             c.setToolTip(_("Starting hues for the filters in one click; then adjust each filter below"))
             c.activated.connect(lambda i, c=c: c.itemData(i) and self.set_fusion(
                 lay, {f["hue_params"][r_]: h for r_, h in palette_hues(c.itemData(i)).items()},
-                _("Palette: {name}").format(name=c.currentText())))
+                _("Palette"), change=c.currentText()))
             r.addWidget(c, 1)
             self.pbox.addLayout(r)
             self.palette_box = (lay["id"], c)            # (said again in place when a hue is let go)
@@ -3824,8 +3834,8 @@ class PostView(QWidget):
             c.setCurrentIndex(max(0, c.findData(f.get("balance"))))
             c.setToolTip(_("How each filter is brought to the H-alpha before the hues: On sky, its sky's median and "
                            "spread; On signal, its nebula fitted onto the H-alpha's"))
-            c.activated.connect(lambda i, c=c: self.set_fusion(lay, {"balance": c.itemData(i)},
-                                                               _("Balance: {name}").format(name=c.currentText())))
+            c.activated.connect(lambda i, c=c: self.set_fusion(lay, {"balance": c.itemData(i)}, _("Balance"),
+                                                               change=c.currentText()))
             r.addWidget(c, 1)
             self.pbox.addLayout(r)
             # the one setting of the combination its run measures (the gains): changing it needs a run, said in its
@@ -3891,12 +3901,15 @@ class PostView(QWidget):
                                     "own: the layer's Stars. Its filters, mask and spot healing act on {filter} before "
                                     "the mix.").format(filter=name), "small", wrap=True))
 
-    def set_fusion(self, lay, values: dict, words: str, rebuild: bool = True):
+    def set_fusion(self, lay, values: dict, what: str, rebuild: bool = True, change: str = ""):
         """A combination's settings changed here. Its hues and intensities are the master layer's own (client/
         postfusion.py): one step of Post's Undo, nothing to compute. The balance is the block's (the gains the run
         measures): one step of the workflows' Undo listed in Post's, the block to run. Either way a draft of the
-        block in Inspect is dropped (``postTuned``)."""
+        block in Inspect is dropped (``postTuned``). The step is named as every step of the family (blockdraft.owned):
+        ``what`` (the setting) of the combination, ``change`` (what it became) when said."""
         from . import postfusion
+        from .blockdraft import owned
+        words = owned(what, self._fusion_title(lay), change)
         c = getattr(self.s, "_combination", lambda pid: None)(lay["pid"])
         part, rest = postfusion.split_change(c[1], values) if c is not None and is_fusion(lay) else ({}, values)
         if part and c is not None:

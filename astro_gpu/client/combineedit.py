@@ -50,7 +50,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import journal
-from .blockdraft import Draft, DraftBar
+from .blockdraft import Draft, DraftBar, owned
 from .gradientedit import PREVIEW_PIXELS
 from .i18n import _, number
 from .icons import set_icon
@@ -698,8 +698,9 @@ class CombineEditor(QObject):
             return self.p
         return self.s.view(pid)
 
-    def changes(self, pid: int | None = None) -> list[tuple[str, str]]:
-        """What the draft changes, one (name, words) per setting (a filter's hue, its intensity, the balance)."""
+    def parts(self, pid: int | None = None) -> list[tuple[str, str, str]]:
+        """What the draft changes, one (name, the setting, its change "old → new") per setting (a filter's hue, its
+        intensity, the balance, the stars)."""
         q = self._view_of(pid)
         d = self.drafts.get(q.pid) if q is not None else None
         if not d:
@@ -709,21 +710,23 @@ class CombineEditor(QObject):
         out = []
         for k, v in d.vals.items():
             if k in names:
-                out.append((k, _("{filter} hue {old}° → {new}°").format(filter=_port(names[k]), old=f"{ap.get(k, 0):.0f}",
-                                                                        new=f"{float(v):.0f}")))
+                out.append((k, _("{filter} hue").format(filter=_port(names[k])),
+                            f"{ap.get(k, 0):.0f}° → {float(v):.0f}°"))
             elif k == "weights":
                 for r in sorted(set(v) | set(ap.get("weights") or {})):
                     a, b = float((ap.get("weights") or {}).get(r, 1.0)), float(v.get(r, 1.0))
                     if abs(a - b) > 1e-6:
-                        out.append((f"weights.{r}", _("{filter} intensity {old} → {new}").format(
-                            filter=_port(r), old=number(a, 2), new=number(b, 2))))
+                        out.append((f"weights.{r}", _("{filter} intensity").format(filter=_port(r)),
+                                    f"{number(a, 2)} → {number(b, 2)}"))
             elif k == "balance":
-                out.append((k, _("Balance: {old} → {new}").format(old=_(BALANCE_NAME.get(ap.get(k), "")),
-                                                                  new=_(BALANCE_NAME.get(v, v)))))
+                out.append((k, _("Balance"), f"{_(BALANCE_NAME.get(ap.get(k), ''))} → {_(BALANCE_NAME.get(v, v))}"))
             elif k == "stars":
-                out.append((k, _("Stars: {old} → {new}").format(old=_(STARS_NAME.get(ap.get(k), "")),
-                                                                new=_(STARS_NAME.get(v, v)))))
+                out.append((k, _("Stars"), f"{_(STARS_NAME.get(ap.get(k), ''))} → {_(STARS_NAME.get(v, v))}"))
         return out
+
+    def changes(self, pid: int | None = None) -> list[tuple[str, str]]:
+        """What the draft changes, one (name, words) per setting, as the draft bar lists them ("Hα hue 31° → 50°")."""
+        return [(k, f"{what} {change}") for k, what, change in self.parts(pid)]
 
     def draft_change(self, pid: int | None = None) -> dict | None:
         """The draft as one change of the model (kind "combine": graphmodel.GraphEditing._combine_steps), with its
@@ -738,10 +741,13 @@ class CombineEditor(QObject):
             w, aw = d.vals["weights"], ap.get("weights") or {}
             vals["weights"] = {r: float(w.get(r, 1.0)) for r in sorted(set(w) | set(aw))
                                if abs(float(w.get(r, 1.0)) - float(aw.get(r, 1.0))) > 1e-6}
-        words = [t for _k, t in self.changes(q.pid)]
+        parts = self.parts(q.pid)
+        words = [f"{what} {change}" for _k, what, change in parts]
         short = ", ".join(words) if len(words) <= 2 else _("{n} changes").format(n=len(words))
-        return {"kind": "combine", "values": vals, "short": short,
-                "what": _("{block} draft: {what}").format(block=self.title(q), what=", ".join(words))}
+        # named as every step of the family (blockdraft.owned): the setting, its owner, its change
+        what = owned(parts[0][1], self.title(q), parts[0][2]) if len(parts) == 1 else \
+            owned(_("{n} settings").format(n=len(parts)), self.title(q), ", ".join(words))
+        return {"kind": "combine", "values": vals, "short": short, "what": what}
 
     def title(self, q=None) -> str:
         """The block's name as the graph shows it (graphcore rules.title: its recipe's title, numbered among the
@@ -782,6 +788,7 @@ class CombineEditor(QObject):
             return
         from ..core import workflow as wfl
         from .model import NotInEngine
+        n = self.s.steps_count() if hasattr(self.s, "steps_count") else None
         try:
             if hasattr(self.s, "apply_as"):
                 self.s.apply_as(ch, "replace", self._paths(q))
@@ -794,15 +801,26 @@ class CombineEditor(QObject):
                 self._changed()
             return
         if hasattr(self.s, "log"):
-            self.s.log("{what} · {names}", what=ch["what"], names=q.name)
+            self.s.log("{what}", what=ch["what"])
+        if n is not None:                               # the step's words, whatever the graph's own said first
+            self.s.name_steps_since(n, ch["what"])
+        run = self._needs_run(q, ch)
         self.drafts.pop(q.pid, None)
         if quiet:
             self._changed()
-        else:
-            self.tv.toasted.emit(_("{block}: draft applied · Run to here computes it · Ctrl+Z").format(
-                block=self.title(q)))
+        else:                                   # what was done, named as every step of the family; Run when it needs one
+            self.tv.toasted.emit(" · ".join([ch["what"]] + ([_("Run to here computes it")] if run else []) +
+                                            ["Ctrl+Z"]))
         self.historyChanged.emit()
         self.tv.request_refresh()
+
+    def _needs_run(self, q, ch) -> bool:
+        """Whether an applied change asks for a run: the block's settings do; a master layer's hues and intensities
+        are the layer's (client/postfusion.py), nothing to compute."""
+        if not self.master(q):
+            return True
+        from .postfusion import split_change
+        return bool(split_change(self._spec(q) or {}, dict(ch["values"]))[1])
 
     def try_variant(self, pid: int | None = None):
         """The draft on a variant of the workflow (what is computed stays as it is); the variant is shown."""

@@ -133,3 +133,91 @@ def test_real_a_combination_is_named_by_its_block_s_title_in_post_and_in_the_pan
         assert any("Starless image" in t for t in texts), texts
     finally:
         w.close()
+
+
+# ---------------------------------------------------------------------------------------------- one way of naming a step
+M27 = "F:/astro_essais/tutoriels_ref/MONO/m27"
+STEP = __import__("re").compile(r"^(?P<what>.+) of “(?P<owner>[^”]+)”(?P<change>: .+)?$")
+
+
+def _owner(w, kind):
+    """The name a step of the block of ``kind`` names it by: a combination by its block's title, Combine layers by
+    its layer's name in Post (its row)."""
+    from astro_gpu.client.graphnode import combine_kind
+    from astro_gpu.client.post3 import layer_name, retitle
+    s = w.s
+    q = next(q for q in s.paths if combine_kind(q) and not all(i.get("image") == "stars"
+                                                                for i in q.source["fusion"]["inputs"]))
+    if kind == "combine":
+        return q, s.shown_title(q.pid)
+    lay = dict(s.master_layer(q.pid))
+    retitle(s, lay)
+    return q, layer_name(lay)
+
+
+def _post_change(w, kind):
+    """One setting of the block changed in Post's master layer: the words of Post's step."""
+    from astro_gpu.client.post3 import ContSlider
+    w.set_mode(2)
+    pump(1.0)
+    pv = w._post_holder.page.view
+    q, _o = _owner(w, kind)
+    lay = next(x for x in pv.layers if x.get("id") == w.s.master_layer(q.pid)["id"])
+    pv.sel = None
+    pv.select(lay["id"], "layer")
+    pump(0.3)
+    name = "S II hue" if kind == "combine" else "Strength"
+    sl = next(x for x in pv.findChildren(ContSlider) if x.name.text() == name and x.isVisibleTo(pv.right))
+    v = sl.value() + (20 if kind == "combine" else 0.5)
+    sl.set_value(v)
+    sl.moved.emit(v)
+    sl.done.emit(v)
+    pump(0.5)
+    return name, pv.next_words("undo"), None
+
+
+def _panel_change(w, kind):
+    """One setting of the block changed in its graph panel and applied: the window's step and the notice."""
+    from astro_gpu.client.graphview.gestures import Gestures
+    from astro_gpu.client.post3 import ContSlider
+    from astro_gpu.client.settings import DoubleSpinBox
+    w.set_mode(0)
+    pump(0.5)
+    q, _o = _owner(w, kind)
+    said = []
+    pn = w.graph.panel
+    pn.toast.connect(said.append)
+    bid = next(k for k, b in w.graph.bridge.graph.blocks.items() if b.kind == kind)
+    Gestures(w.graph).click(bid)
+    pump(0.8)
+    if kind == "combine":
+        name = "S II intensity"
+        sp = next(x for x in pn.findChildren(DoubleSpinBox) if x.objectName() == "intensity")
+        pn.propose_weight(q, "SII", sp.value() + 0.25, sp.value())
+    else:
+        name = "Strength"
+        sl = next(x for x in pn.findChildren(ContSlider) if x.name.text() == name and x.isVisibleTo(pn))
+        sl.done.emit(sl.value() + 0.5)
+    pump(0.3)
+    assert w.s.pending_change is not None                         # a draft: its block has a result
+    assert pn.draft_apply()
+    pump(0.5)
+    return name, w.s.next_words("undo"), said[-1] if said else ""
+
+
+@pytest.mark.parametrize("kind", FAMILY)
+def test_real_a_step_of_the_family_names_the_setting_then_its_owner(qapp, tmp_path, kind):
+    """Undo and the notices said 'Strength of "S-H-O · Combine layers"' in Post but "Hα intensity" for the
+    combination, "Strength: −0.5 → +1.0 · applied in S-H-O" from the graph's panel, "S-H-O draft: …" from Inspect: one
+    way for every block of the family, the setting, then its owner, then what it became when said."""
+    w = _whole(tmp_path, M27)
+    try:
+        _q, owner = _owner(w, kind)
+        for change in (_post_change, _panel_change):
+            name, words, notice = change(w, kind)
+            m = STEP.match(words or "")
+            assert m and m["what"] == name and m["owner"] == owner, (change.__name__, words)
+            if notice is not None:
+                assert notice.startswith(words) and "applied in" not in notice, notice
+    finally:
+        w.close()

@@ -1862,6 +1862,18 @@ class _ProjectBase(QObject):
             self._undo_what[-1] = text.replace(" · Ctrl+Z", "").strip()
             self._naming = False
 
+    def steps_count(self) -> int:
+        """How many steps Undo holds (``name_steps_since``)."""
+        return len(self._undo)
+
+    def name_steps_since(self, n: int, text: str):
+        """The step a gesture pushed since Undo held ``n`` named ``text``, whatever words the operations under it said
+        first (a combination's setting applied: its words name the setting and its owner, blockdraft.owned, not the
+        graph's "S II: weight 1.25"). Nothing when it pushed none (refused)."""
+        if len(self._undo) > n and self._undo_what:
+            self._undo_what[-1] = text.replace(" · Ctrl+Z", "").strip()
+            self._naming = False
+
     @staticmethod
     def _move_what(stack: list, src: list, dst: list) -> str:
         """The words of the step Undo / Redo takes from ``stack`` (moved to the other list), "" when not said."""
@@ -3949,7 +3961,9 @@ class _ProjectBase(QObject):
         if tune is False:
             tune = (self.master_layer(pid) or {}).get(postfusion.TUNE)
         names = {r: port_name(r) for r in recipes.roles(spec)}
-        return postfusion.describe(stage, spec, postfusion.tuned_stored(stage, spec, stored, tune), names, over), ""
+        f = postfusion.describe(stage, spec, postfusion.tuned_stored(stage, spec, stored, tune), names, over)
+        f["title"] = self.shown_title(pid)                # the block's name: the owner its steps name
+        return f, ""
 
     def fusion_gains(self, pid: int) -> dict:
         """{filter: (gain, why, where from)} of the combination as Post and the editor balance it (postfusion.

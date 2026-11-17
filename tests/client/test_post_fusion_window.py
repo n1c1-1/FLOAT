@@ -250,7 +250,7 @@ def test_a_hue_set_in_post_is_the_layer_s_a_step_of_post_and_never_outdates_the_
     assert lay["tune"]["hues"]["OIII"] == 180.0 and lay["fusion"]["hues"]["OIII"] == 180.0
     assert not ed.has_draft() and "Draft dropped: changed in Post" in said
     assert ed.applied()["hue_oiii"] == 180.0                          # Inspect shows the layer's value
-    assert pv.next_words("undo") == "O III hue"
+    assert pv.next_words("undo") == "O III hue of “S-H-O”"                # the setting, then its owner
     pv.do_undo()
     _write(pv)
     assert "tune" not in _master(pv) and ed.applied()["hue_oiii"] == float(blk.get("hue_oiii", 202.2))
