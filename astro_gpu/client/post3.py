@@ -3673,8 +3673,15 @@ class PostView(QWidget):
             self._attach_fusion()
             self.request()
 
+        now = float(f["hues"][role]) if what == "hue" else float(f["weights"].get(role, 1.0))
+        half = (1.0 if what == "hue" else INTENSITY_STEP) / 2
+
         def done(x):
             self._live.pop(pid, None)
+            if abs(float(x) - now) <= half + 1e-9:       # let go where it was (its rail's step): no change of the block
+                self._attach_fusion()
+                self.request(final_only=True)
+                return
             self.set_fusion(lay, make(x), words)
         sl.moved.connect(moved)
         sl.done.connect(done)

@@ -266,3 +266,17 @@ def test_a_hue_drag_in_post_follows_the_slider_and_is_one_step(m27):
     assert (s.p.workflow(lay["pid"]).params.get(st) or {}).get("hue_ha") == 60.0
     s.undo()
     _settle(w)
+
+
+def test_a_slider_let_go_where_it_was_changes_nothing(m27):
+    w, pv, _before = m27
+    s = w.s
+    lay = _master(pv)
+    pv.sel = None
+    pv.select(lay["id"], "layer")
+    from astro_gpu.client.post3 import ContSlider
+    sl = next(x for x in pv.findChildren(ContSlider) if x.name.text() == "S II hue" and x.isVisibleTo(pv.right))
+    n = len(s._undo)
+    sl.done.emit(16.0)                                 # 15.5 shown on a rail of whole degrees: a click on it
+    _settle(w)
+    assert len(s._undo) == n and _master(pv)["fusion"]["hues"]["SII"] == 15.5
