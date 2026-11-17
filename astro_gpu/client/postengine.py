@@ -670,6 +670,47 @@ def find_stars(L: np.ndarray) -> np.ndarray:
 #: Inspect's editor's): {key: (n, 3)}
 _STARS: OrderedDict = OrderedDict()
 _STARS_LOCK = __import__("threading").Lock()
+#: the searches running: {key: True}; each in a process of its own (client/starsearch.py: a search holds the
+#: interpreter for long stretches, so it never runs in the window's process), waited for in a thread
+_SEARCHING: dict = {}
+#: called (from another thread) when a search ends: Post and Inspect's editor render again with the stars found
+STARS_FOUND_HOOKS: list = []
+#: what the picture says while the stars of a result are searched (the mask is drawn without them meanwhile)
+STARS_SEARCHING = "Finding the stars of the Stars mask (once for this result): the mask shows them when found"
+
+
+def _search_stars(key, L, folder, name):
+    """A search of stars, in a thread of the window: the process that finds them (client/starsearch.py), then what
+    it found kept (for the session, on disk) and the composers told to draw again."""
+    import tempfile
+
+    from .starsearch import search
+    try:
+        hit = search(L, Path(folder) if folder is not None else Path(tempfile.gettempdir()) / "float_stars")
+    except Exception:  # noqa: BLE001 - the search failed (its process ended): no star, said by an empty mask
+        hit = np.zeros((0, 3), np.float32)
+    if folder is not None:
+        try:
+            Path(folder).mkdir(parents=True, exist_ok=True)
+            np.save(Path(folder) / name, hit)
+        except OSError:                                   # not kept on disk: searched again in the next session
+            pass
+    with _STARS_LOCK:
+        _STARS[key] = hit
+        _SEARCHING.pop(key, None)
+        while len(_STARS) > 16:
+            _STARS.popitem(last=False)
+    for c in list(_COMPOSERS):
+        c._stars_new = True
+    for fn in list(STARS_FOUND_HOOKS):
+        try:
+            fn()
+        except RuntimeError:                              # a view gone meanwhile
+            pass
+
+
+#: every composer, told when a search ends (its images made without the stars are made again)
+_COMPOSERS = __import__("weakref").WeakSet()
 
 
 def draw_stars(stars: np.ndarray, level: int, abox, grow: float, feather: float) -> np.ndarray:
@@ -1390,6 +1431,9 @@ class Provider:
 
     #: the folder where the stars found in a result are kept (the project's cache), None: not kept on disk
     stars_dir = None
+    #: the Stars part's search made in another process, the mask without its stars meanwhile (the window's results:
+    #: a search of a 16 Mpx result takes a minute and holds the interpreter); False: at once, in the caller's thread
+    search_apart = False
 
     def cover(self, lay: dict, level: int, box) -> np.ndarray | None:
         """What the layer covers of the box, (h, w) in [0, 1] (an image of another shape is fitted inside the canvas,
@@ -1718,6 +1762,9 @@ class Composer:
         self.plan_errors = 0                                # rows whose digest the plan did not foresee (tests: 0)
         self.stats: OrderedDict = OrderedDict()             # (filter input's key, measure) -> its whole-image values
         self._fstats: dict = {}                             # a master layer's mix -> its statistics (``_fusion_stats``)
+        self._stars_new = False                             # a search of stars ended since the last composition
+        self._stars_wait = False                            # this composition waits for a search (said in its notes)
+        _COMPOSERS.add(self)
 
     # ------------------------------------------------------------ geometry
     def canvas_of(self, layers: list[dict]) -> Canvas | None:
@@ -1977,21 +2024,29 @@ class Composer:
             if hit is not None:
                 _STARS.move_to_end(key)
                 return key, hit
+            if key in _SEARCHING:                         # being searched: the mask without its stars meanwhile
+                self._stars_wait = True
+                return None
         name = hashlib.blake2b(repr(key).encode(), digest_size=12).hexdigest() + ".npy"
-        folder = getattr(self.provider, "stars_dir", None)
-        if rid is not None and folder is not None:
+        folder = getattr(self.provider, "stars_dir", None) if rid is not None else None
+        if folder is not None:
             try:
                 hit = np.load(Path(folder) / name)
             except (OSError, ValueError):
                 hit = None
-        if hit is None:
+        if hit is None and not getattr(self.provider, "search_apart", False):   # (a provider of the tests: at once)
             hit = find_stars(lum(self.provider.linear_stars(side, 0, (0, 0, canvas.W, canvas.H))))
-            if rid is not None and folder is not None:
-                try:
-                    Path(folder).mkdir(parents=True, exist_ok=True)
-                    np.save(Path(folder) / name, hit)
-                except OSError:                           # not kept on disk: found again in the next session
-                    pass
+        if hit is None:                                   # searched in another process; the mask without them meanwhile
+            L = lum(self.provider.linear_stars(side, 0, (0, 0, canvas.W, canvas.H)))
+            with _STARS_LOCK:
+                start = key not in _SEARCHING
+                _SEARCHING[key] = True
+            if start:
+                import threading
+                threading.Thread(target=_search_stars, args=(key, L, folder, name), name="stars search",
+                                 daemon=True).start()
+            self._stars_wait = True
+            return None
         with _STARS_LOCK:
             _STARS[key] = hit
             while len(_STARS) > 16:
@@ -2429,6 +2484,10 @@ class Composer:
         Curves editor's and the stretches' graphs). ``track``: this is the composition being edited (Post's own
         renders, not the before image or another version's): where it changed says which row's backdrop to keep.
         None when no pixel layer has a result."""
+        if self._stars_new:                               # a search ended: what was made without its stars goes
+            self._stars_new = False
+            self.forget()
+        self._stars_wait = False
         canvas = self.canvas_of(layers)
         if canvas is None:
             return None
@@ -2577,7 +2636,8 @@ class Composer:
                 self._keep_composite(key, comp, ("last", level))         # never instead of a backdrop
         cut = (slice(y0 - ay0, y0 - ay0 + (y1 - y0)), slice(x0 - ax0, x0 - ax0 + (x1 - x0)))
         out.rgb = np.clip(comp[cut], 0, 1).astype(np.float32, copy=False)
-        out.notes = set(self.provider.notes())
+        # (a picture made of images kept from before the search says it too: a search is running)
+        out.notes = set(self.provider.notes()) | ({STARS_SEARCHING} if self._stars_wait or _SEARCHING else set())
         out.drawn = self._drawn
         return out
 

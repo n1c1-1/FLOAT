@@ -971,6 +971,7 @@ MODEL_STEP = ModelStep()
 
 
 class PostView(QWidget):
+    _starsFound = Signal()                           # (another thread: a search of stars ended)
     is_post_page = True                                   # its changes go to its own Undo, not the graph's (2.1)
     goProcessing = Signal(int, str)
     goResults = Signal(int)
@@ -1513,6 +1514,9 @@ class PostView(QWidget):
         self._draft_t = QTimer(self)
         self._draft_t.setSingleShot(True)
         self._draft_t.timeout.connect(self._send_draft)
+        from .postengine import STARS_FOUND_HOOKS        # a search of the Stars part's stars ended: drawn again
+        STARS_FOUND_HOOKS.append(self._starsFound.emit)
+        self._starsFound.connect(lambda: self.request(force=True))
         self._final_t = QTimer(self)
         self._final_t.setSingleShot(True)
         self._final_t.timeout.connect(self._send_final)

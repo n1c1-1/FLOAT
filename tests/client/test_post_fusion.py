@@ -6,6 +6,7 @@ so the mix of the stretched filters is the stretched mix."""
 from __future__ import annotations
 
 import copy
+import time
 
 import numpy as np
 import pytest
@@ -431,3 +432,39 @@ def test_the_stars_part_is_found_once_in_the_stars_result_whatever_the_star_sett
     half = cp.compose(pe.normalize(copy.deepcopy([lay])), 1, want=[lay["id"]]).masks[lay["id"]]
     assert found == [(H, W)]                                     # once, at full resolution
     assert np.abs(half - m[::2, ::2]).mean() < 0.05              # the same discs, drawn at the level shown
+
+
+def test_a_search_of_stars_never_holds_the_window_the_mask_waits_without_them(monkeypatch):
+    """The first search of a result's stars froze the window a minute (Combine layers' Adjust, the preview empty,
+    nothing said): it runs in a process of its own, waited for in a thread; meanwhile the mask is drawn without the
+    stars and the picture says what is being done; when they are found the views are told and the mask has them."""
+    import threading
+
+    from astro_gpu.client import starsearch
+    gate, told = threading.Event(), []
+    monkeypatch.setattr(starsearch, "search", lambda L, work: gate.wait(30) and pe.find_stars(L))
+    monkeypatch.setattr(pe, "STARS_FOUND_HOOKS", [lambda: told.append(1)])
+
+    class Apart(StarField):
+        search_apart = True
+
+        def stars_id(self, lay):
+            return f"apart-{id(self)}"
+    prov = Apart()
+    cp = Composer(prov)
+    lay = master(stars_pid=4, mask=_stars_mask(grow=2.0))
+    first = cp.compose(pe.normalize(copy.deepcopy([lay])), 0, want=[lay["id"]])
+    assert first.masks[lay["id"]].max() == 0.0 and pe.STARS_SEARCHING in first.notes    # at once, without the stars
+    gate.set()
+    end = time.monotonic() + 30
+    while not told and time.monotonic() < end:
+        time.sleep(0.01)
+    assert told and not pe._SEARCHING
+    then = cp.compose(pe.normalize(copy.deepcopy([lay])), 0, want=[lay["id"]])
+    assert then.masks[lay["id"]][40, 10] == 1.0 and pe.STARS_SEARCHING not in then.notes
+
+
+def test_the_search_s_own_process_finds_what_the_function_finds(tmp_path):
+    from astro_gpu.client import starsearch
+    L = pe.lum(StarField().stars_image(0, (0, 0, W, H)))
+    assert np.array_equal(starsearch.search(L, tmp_path), pe.find_stars(L)) and not list(tmp_path.iterdir())

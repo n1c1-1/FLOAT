@@ -896,7 +896,7 @@ class DraftEditor(QObject):
         pid = self.p.pid
         drafting = self.has_draft() or self._view_only()
         tag = (_("Draft preview · reduced copy") if self.has_draft() else _("Preview · reduced copy")) + \
-            (f" · {self.result_ms:.0f} ms" if self.result_ms is not None else "")
+            (f" · {self.result_ms:.0f} ms" if self.result_ms is not None else "") + self.tag_extra()
         self.preview_tag = tag
         pv = ViewImage(self.result, tag, key=self.result_key,
                        stretched=True, units="norm", white=1.0, camera=False, neutral=False) \
@@ -926,6 +926,10 @@ class DraftEditor(QObject):
                 gv.set_same_stretch(True)
         except RuntimeError:
             pass
+
+    def tag_extra(self) -> str:
+        """What the image's tag says besides what it is (a search under way: " · " and its words)."""
+        return ""
 
     def _view_only(self) -> bool:
         """What the view alone changes (a filter taken out of the mix): the preview shown rather than the applied."""

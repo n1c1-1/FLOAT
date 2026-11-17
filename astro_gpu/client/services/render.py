@@ -568,6 +568,8 @@ class LayerSource(Provider):
         out = np.ascontiguousarray(np.moveaxis(arr, 0, -1), np.float32)
         return out if put is None else self._paste(put, box, out)
 
+    search_apart = True                                  # (postengine.Provider.search_apart)
+
     def stars_id(self, lay: dict) -> str | None:
         """A stars side's result: its folder and its time, and those of the starless combination its stars go onto."""
         out = []

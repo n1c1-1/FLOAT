@@ -399,5 +399,6 @@
   "Softens the edge of the stars' discs; the whole mask's feather adds to it.": "Adoucit le bord des disques des étoiles ; le Progressif du masque entier s'y ajoute.",
   "The stars of the layer's stars image (its Stars/background; a combination's: its Stars side), each as the screen shows it, grown by Grow times its own radius: a brighter star grows more. Subtract it from another part to leave the stars and their wings out.": "Les étoiles de l'image d'étoiles du calque (son Étoiles/fond ; celle d'une combinaison : son côté Étoiles), chacune telle que l'écran la montre, agrandie selon « Agrandir » (multiple de son rayon) : une étoile plus brillante grandit plus. À soustraire d'une autre partie pour laisser de côté les étoiles et leurs ailes.",
   "This layer has no stars image: its workflow has no Stars/background block": "Ce calque n'a pas d'image d'étoiles : son workflow n'a pas de bloc Étoiles/fond",
-  "How the stars of the filters mix: the setting of {block}, the same in its Inspect editor": "Comment se mélangent les étoiles des filtres : le réglage de {block}, le même dans son éditeur d'Inspection"
+  "How the stars of the filters mix: the setting of {block}, the same in its Inspect editor": "Comment se mélangent les étoiles des filtres : le réglage de {block}, le même dans son éditeur d'Inspection",
+  "Finding the stars of the Stars mask (once for this result): the mask shows them when found": "Recherche des étoiles du masque Étoiles (une fois pour ce résultat) : le masque les montre une fois trouvées"
 }

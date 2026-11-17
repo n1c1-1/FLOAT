@@ -58,8 +58,13 @@ class LayersEditor(DraftEditor):
     KEY = "composition"
     SIDE_PREF = "layers_settings_side"
 
+    _starsFound = __import__("PySide6.QtCore", fromlist=["Signal"]).Signal()   # (another thread: a search ended)
+
     def __init__(self, tune):
         super().__init__(tune)
+        from .postengine import STARS_FOUND_HOOKS          # a search of the Stars part's stars ended: shown again
+        STARS_FOUND_HOOKS.append(self._starsFound.emit)
+        self._starsFound.connect(self._stars_came)
         self.lid = None                        # the layer of Post it tunes
         self._renderer = None                  # Post's renderer, made in the preview's thread (module docstring)
         self._renderer_of = None
@@ -372,6 +377,15 @@ class LayersEditor(DraftEditor):
             from PySide6.QtCore import QTimer  # the Arcsinh's Strength comes or goes: the column again
             QTimer.singleShot(0, lambda: self._enter_page(self.p) if self.p is not None else None)
 
+    def tag_extra(self) -> str:
+        from .postengine import STARS_SEARCHING
+        return " · " + _(STARS_SEARCHING) if STARS_SEARCHING in getattr(self, "_notes", ()) else ""
+
+    def _stars_came(self):
+        if self.p is not None and self.page_shown():
+            self.applied_cache = None
+            self._changed()
+
     def _measurements(self, dv):
         """What the layer combines (its two images' workflows) and the reduced copy the preview is made on."""
         self.title_of_group(dv, "Measurements")
@@ -465,6 +479,7 @@ class LayersEditor(DraftEditor):
         res = r.run(Request(kind="half", layers=layers, level=self.level))
         if res.rgb is None:
             raise ValueError(_("The Stars/background block's images are not computed"))
+        self._notes = set(res.notes or ())
         self.size = (int(res.rgb.shape[1]), int(res.rgb.shape[0]))
         return np.ascontiguousarray(np.moveaxis(res.rgb.astype(np.float32) / 255.0, -1, 0))
 
