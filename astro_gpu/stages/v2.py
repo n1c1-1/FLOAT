@@ -44,6 +44,8 @@ RETIRED: dict[str, frozenset[str]] = {
     "combine_ho": frozenset({"percentile", "lightness", "smoothing", "radius"}),
     "combine_rgb": frozenset({"percentile"}),
     "combine_lrgb": frozenset({"percentile"}),
+    # a setting of 2026-11-17 withdrawn (tuned on two test images): definitions saved with it still load
+    "star_removal": frozenset({"halos"}),
 }
 #: removed settings whose last value stays in every key, so that the results computed with it keep their keys:
 #: {stage: {field: value}} (the Moffat star measure and the drizzle coverage rule are now the only behaviour)

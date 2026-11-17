@@ -135,7 +135,6 @@
   "Stars/background and Denoise": "Étoiles/fond et Débruitage",
   "Take this block out of Post (the Stars/background block's images stay computed)": "Retirer ce bloc de Post (les images du bloc Étoiles/fond restent calculées)",
   "No setting here: the network is applied as it was trained. Its two images are adjusted in a Combine layers block, or each as a layer of Post.": "Aucun réglage ici : le réseau s'applique tel qu'il a été entraîné. Ses deux images se règlent dans un bloc Combiner calques, ou chacune comme calque de Post.",
-  "The network is applied as it was trained. Its two images are adjusted in a Combine layers block, or each as a layer of Post.": "Le réseau s'applique tel qu'il a été entraîné. Ses deux images se règlent dans un bloc Combiner calques, ou chacune comme calque de Post.",
   "This image as a layer of Post, as it is (no Combine layers block)": "Cette image comme calque de Post, telle quelle (sans bloc Combiner calques)",
   "To compute: Stars/background": "À calculer : Étoiles/fond",
   "Takes the stars off the image (a network trained on many stacks): the starless image and the stars alone, combined by a Combine layers block or each used as a layer of Post. Seconds on a GPU, a few minutes on a processor.": "Retire les étoiles de l'image (un réseau entraîné sur de nombreux empilements) : l'image sans étoiles et les étoiles seules, combinées par un bloc Combiner calques ou utilisées chacune comme calque de Post. Quelques secondes sur carte graphique, quelques minutes sur processeur.",

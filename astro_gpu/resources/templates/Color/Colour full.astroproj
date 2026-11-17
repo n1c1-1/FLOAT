@@ -59,11 +59,7 @@
     "name": null,
     "off": false,
     "own": null,
-    "params": {
-     "star_removal": {
-      "halos": "remove"
-     }
-    },
+    "params": {},
     "pause": false,
     "settings": {},
     "sid": null,
