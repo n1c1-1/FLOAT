@@ -244,6 +244,32 @@ def retitle(s, lay: dict) -> None:
         lay.pop(RETITLE, None)
 
 
+def is_master(s, lay: dict) -> bool:
+    """A combination's master layer (client/postfusion.py), described (``fusion``) or as the model stores it: the
+    Combine layers layer over a combination's Output that Post mixes from its filters."""
+    if is_fusion(lay):
+        return True
+    if lay.get("kind") != "workflow" or lay.get("part") != "combined" or lay.get("starless") != "output":
+        return False
+    try:
+        return (s.master_layer(lay.get("pid")) or {}).get("id") == lay.get("id")
+    except Exception:  # noqa: BLE001 - a stand-in model: as described
+        return False
+
+
+def layer_slider_state(s, p, lay: dict, key: str, part, stretch: str | None = None) -> tuple[bool, str]:
+    """(available, why not) of a slider of a workflow layer: ONE rule for every place that shows it (Post's panel, the
+    Combine layers block's panel, its Inspect editor). The model's (the layer's kind, the blocks it needs); a setting
+    the Arcsinh stretch does not read; Colours on a combination's master layer, whose stretch keeps the colours of the
+    mix (one factor per pixel on every filter). ``stretch``: the stretch shown (a draft's), else the layer's."""
+    ok, why, _need = s.slider_state(p, key, part)        # the model answers in the language of the screen
+    if ok and (stretch or layer_stretch(lay)) == "arcsinh" and key in ARCSINH_WHY:
+        return False, _(ARCSINH_WHY[key])               # a setting the Arcsinh stretch does not read
+    if ok and key == "colours" and is_master(s, lay):
+        return False, _("The combination keeps its colours: one stretch factor for every filter")
+    return ok, why
+
+
 def setting_name(lay: dict, field: str, key: str) -> str:
     """A setting of a layer as its panel names it, in the language of the screen: a filter's setting by its label, a
     slider of a workflow's layer or of an image layer by its slider's name (the Undo / Redo words named it by its key:
@@ -3674,12 +3700,7 @@ class PostView(QWidget):
         pos = lay["sliders"].get(sd.key, 2.0)
         sl = ContSlider(_(sd.name), 0, slider_top(sd.key), pos, 2, ends=[_(e) for e in sd.ends] if sd.ends else None,
                         show=offset_text)
-        ok, why, _need = self.s.slider_state(p, sd.key, part)   # the model answers in the language of the screen
-        if ok and layer_stretch(lay) == "arcsinh" and sd.key in ARCSINH_WHY:
-            ok, why = False, _(ARCSINH_WHY[sd.key])      # a setting the Arcsinh stretch does not read
-        elif ok and is_fusion(lay) and sd.key == "colours":
-            # its stretch is one factor per pixel on every filter: the colours of the mix are kept by it
-            ok, why = False, _("The combination keeps its colours: one stretch factor for every filter")
+        ok, why = layer_slider_state(self.s, p, lay, sd.key, part)
         sl.set_available(ok, why)
         self._wire(sl, lambda v, k=sd.key: self._slider(lay, k, v))
         self.pbox.addWidget(sl)

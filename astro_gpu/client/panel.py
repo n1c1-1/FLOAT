@@ -2191,9 +2191,9 @@ class Panel(QWidget):
         from ..render.sliders import STARS as STARS_GROUP
         from ..render.sliders import group_title
         from .model import is_fusion_view
-        from .post3 import BLENDS, ContSlider, offset_text, strength_text
+        from .post3 import BLENDS, ContSlider, layer_slider_state, offset_text, strength_text
         s = self.s
-        p = node.paths[0]
+        p = node.paths[0] if node.paths else None         # None: placed on its own, its inputs to wire
         def lid():                                        # the layer is made at the first change, not by showing the
             if node.lid is None:                          # block (GUI exploration 3.6: a click made a layer)
                 node.lid = s.add_post_layer(p.pid, "combined", self, keep_default=False)   # it is the default one
@@ -2258,7 +2258,7 @@ class Panel(QWidget):
                 self._propose(dict(kind="layer", lid=lid(), values={"blend": b}),
                               owned(_("Star blend mode"), owner, f"{_(old)} → {_(b)}"),
                               _(b).lower(), same=b == old, owned=True)
-        from ..render.sliders import ARCSINH_WHY, STRENGTH_STEP
+        from ..render.sliders import STRENGTH_STEP
         from ..render.sliders import top as slider_top
         from .postengine import LAYER_STRETCHES, STRETCH_KEY, STRETCH_NAMES, layer_stretch
         stretch_now = drafted.get("stretch") or layer_stretch(lay)
@@ -2315,9 +2315,7 @@ class Panel(QWidget):
             sl = ContSlider(_(sd.name), 0, slider_top(sd.key),
                             drafted.get(("slider", sd.key), sliders.get(sd.key, 2.0)), 2,
                             ends=[_(e) for e in sd.ends], show=offset_text)
-            ok, why, _need = s.slider_state(p, sd.key, "combined")
-            if ok and stretch_now == "arcsinh" and sd.key in ARCSINH_WHY:
-                ok, why = False, _(ARCSINH_WHY[sd.key])   # a setting the Arcsinh stretch does not read
+            ok, why = layer_slider_state(s, p, lay, sd.key, "combined", stretch_now)   # Post's rule, one source
             sl.set_available(ok, why)
             name = _(sd.name)
             sl.done.connect(lambda v, k=sd.key, nm=name: commit(k, v, nm))

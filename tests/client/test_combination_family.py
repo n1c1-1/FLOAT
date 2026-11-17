@@ -221,3 +221,40 @@ def test_real_a_step_of_the_family_names_the_setting_then_its_owner(qapp, tmp_pa
                 assert notice.startswith(words) and "applied in" not in notice, notice
     finally:
         w.close()
+
+
+def test_real_each_setting_of_a_layer_is_available_by_one_rule_in_post_and_in_its_panel(qapp, tmp_path):
+    """Colours was enabled in the Combine layers panel and greyed in Post for the same layer (a combination's master
+    layer keeps its colours by its stretch): one rule (post3.layer_slider_state) for every place that shows the
+    layer's settings; each slider is available, or greyed with the same reason, in both."""
+    from astro_gpu.client.graphview.gestures import Gestures
+    from astro_gpu.client.post3 import ContSlider
+    w = _whole(tmp_path, M27)
+    try:
+        w.set_mode(2)
+        pump(1.0)
+        pv = w._post_holder.page.view
+        q, _o = _owner(w, "combine_layers")
+        lay = next(x for x in pv.layers if x.get("id") == w.s.master_layer(q.pid)["id"])
+        pv.sel = None
+        pv.select(lay["id"], "layer")
+        pump(0.3)
+        post = {x.name.text(): (x.s.isEnabled(), x.why.text()) for x in pv.findChildren(ContSlider)
+                if x.isVisibleTo(pv.right)}
+        w.set_mode(0)
+        pump(0.5)
+        bid = next(k for k, b in w.graph.bridge.graph.blocks.items() if b.kind == "combine_layers")
+        Gestures(w.graph).click(bid)
+        pump(0.8)
+        pn = w.graph.panel
+        panel = {x.name.text(): (x.s.isEnabled(), x.why.text()) for x in pn.findChildren(ContSlider)
+                 if x.isVisibleTo(pn)}
+        both = set(post) & set(panel)
+        assert {"Colours", "Saturation", "Strength", "Sky"} <= both
+        assert {k: post[k] for k in both} == {k: panel[k] for k in both}
+        assert post["Colours"][0] is False
+    finally:
+        w.close()
+
+
+# ---------------------------------------------------------------------------------------------- one source in Post
