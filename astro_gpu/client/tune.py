@@ -103,7 +103,7 @@ DATA_KEPT = 64
 PREFETCH_DELAY_MS = 400
 PREFETCH_MIN_BUDGET = 6 * 2 ** 30
 #: the kinds of tabs that show one picture of ``Steps.view_image`` (``_image_tab``)
-PREFETCH_KINDS = ("array", "preview", "color", "gradient", "removed", "calibrated")
+PREFETCH_KINDS = ("array", "preview", "color", "gradient", "removed", "calibrated", "input")
 #: the least height of a part with charts in a tab split in two (``TuneView._split``): the handle gives it its room. A
 #: chart alone in a tab asks 300 px; two of them, or a chart and the frames' viewer, asked more than a laptop's window
 #: holds, and the handle, held between two minimums it could not meet, only made the display flicker (issue #118).
@@ -1086,7 +1086,7 @@ class TuneView(QWidget):
         spec = vis[keys.index(want)] if want in keys and not vis[keys.index(want)].spec else vis[0]
         if spec.kind in CHART_KINDS:                      # a chart or a table: the results it is drawn from (#24)
             return ("tab", p.pid, k, spec.key, self._keys(p, *stages_of(self.s, p, k)), self.cmp_pid)
-        if spec.kind not in ("array", "preview", "color", "gradient", "removed", "calibrated", "render"):
+        if spec.kind not in ("array", "preview", "color", "gradient", "removed", "calibrated", "input", "render"):
             return None
         shown = self._background(p, k, spec) if spec.backgrounds else spec
         if shown.kind == "render":                        # the final image: the render it shows (#24, case 3)
@@ -1214,7 +1214,7 @@ class TuneView(QWidget):
             self.center.addLayout(row)
             self._note_row = row
         kind = spec.kind
-        if kind in ("array", "preview", "color", "gradient", "removed", "calibrated"):
+        if kind in ("array", "preview", "color", "gradient", "removed", "calibrated", "input"):
             self._image_tab(p, k, spec)
         elif kind == "render":
             self._render_tab(p, k, spec)
@@ -1452,6 +1452,8 @@ class TuneView(QWidget):
                 vi = self.steps.view_image(p, sp) if sp is not None else None
                 if vi is not None and sp.kind == "preview":      # an engine picture: shown as it is
                     vi.stretched, vi.white, vi.units = True, 255.0, ""
+            if vi is not None and any(vi.identity() == t.identity() for t in out):
+                vi = None                      # the same picture twice (the stack, where nothing stands before the block)
             if vi is not None:
                 if j < len(spec.compare_names) and spec.compare_names[j]:
                     vi.name = _(spec.compare_names[j])

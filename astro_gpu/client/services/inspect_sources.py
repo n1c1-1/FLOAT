@@ -148,13 +148,14 @@ def color_source(p, wid: int, base: tuple[str, str], which: str = "current"):
     return load
 
 
-def _sky_model(p, wid: int, which: str, H: int, W: int) -> tuple[np.ndarray, np.ndarray]:
-    """(the sky variation the Gradient block removes, (3, H, W) in the camera's colours, read back as the stage reads
-    it; the sky level it keeps, (3,))."""
+def _sky_model(p, wid: int, which: str, H: int, W: int, entry: str = "gradient"
+               ) -> tuple[np.ndarray, np.ndarray]:
+    """(the sky variation the Gradient block removes, (3, H, W) in the colours it was modelled in, read back as the
+    stage reads it; the sky level it keeps, (3,)). ``entry``: the block's node in the graph."""
     import json
 
     from ...stages.gradient import INFO_FILE, SKY_FILE, read_grid
-    out = api.stage_outputs(p, wid, "gradient", _w(which, "gradient"))
+    out = api.stage_outputs(p, wid, entry, _w(which, entry))
     if out is None:
         raise _unavailable(not_computed("gradient"))
     info = json.loads((Path(out.dir) / INFO_FILE).read_text(encoding="utf-8"))
@@ -170,13 +171,49 @@ def calibrated_source(p, wid: int, base: tuple[str, str], which: str = "current"
     return load
 
 
-def gradient_source(p, wid: int, stage: str = "gradient", which: str = "current"):
-    """The stack with its sky gradient removed, in the camera's colours, as the later blocks read it: the stack minus
-    the Gradient block's sky variation (the level stays)."""
+def input_ops(p, wid: int, entry: str) -> list[str]:
+    """The image blocks a block reads before its own work, in the graph's order (``stages.gradient.image_ops``: the
+    chain's entries it depends on, of the kinds its rule applies): what stands between the stack and its input."""
+    from ...core.workflow import READ_KINDS, READERS, base
+    try:
+        chain = api.chain(p, wid)
+        mine = set(api.deps(p, wid, entry))
+    except (KeyError, ValueError):
+        return []
+    kinds = READ_KINDS[READERS.get(base(entry), "all")]
+    return [x for x in chain if x in mine and base(x) in kinds]
+
+
+def _image_through(p, wid: int, entries: list[str], which) -> np.ndarray:
+    """The stack with the image blocks ``entries`` applied in order, as ``stages.gradient.image_in`` reads it: a Gradient
+    takes its sky variation off, a Color applies its matrix, a Deconvolution or a Denoise gives its image."""
+    from ...core.workflow import base
+    a = _array(p, wid, _stk(p, wid, which), "drz_full", which).astype(np.float32)
+    for e in entries:
+        b = base(e)
+        if b == "gradient":
+            a -= _sky_model(p, wid, which, *a.shape[1:], entry=e)[0]
+        elif b == "color":
+            a = apply_matrix(_array(p, wid, e, "M", which), a)
+        elif b == "deconv":
+            a = _array(p, wid, e, "deconv_full", which).astype(np.float32)
+        elif b == "denoise":
+            a = _array(p, wid, e, "n2n_full", which).astype(np.float32)
+    return a
+
+
+def input_source(p, wid: int, stage: str = "gradient", which: str = "current"):
+    """What a block reads: the stack with the image blocks before it in the graph applied (``input_ops``)."""
     def load():
-        stack = _array(p, wid, _stk(p, wid, which), "drz_full", which).astype(np.float32)
-        stack -= _sky_model(p, wid, which, *stack.shape[1:])[0]
-        return stack
+        return _image_through(p, wid, input_ops(p, wid, stage), which)
+    return load
+
+
+def gradient_source(p, wid: int, stage: str = "gradient", which: str = "current"):
+    """The stack with its sky gradient removed, as the later blocks read it: what the Gradient block reads (the blocks
+    before it in the graph applied), its sky variation taken off (the level stays)."""
+    def load():
+        return _image_through(p, wid, [*input_ops(p, wid, stage), stage], which)
     return load
 
 
@@ -185,7 +222,7 @@ def removed_source(p, wid: int, stage: str = "gradient", which: str = "current")
     colours."""
     def load():
         stack = _array(p, wid, _stk(p, wid, which), "drz_full", which)
-        var, level = _sky_model(p, wid, which, *stack.shape[1:])
+        var, level = _sky_model(p, wid, which, *stack.shape[1:], entry=stage)
         var += level[:, None, None]
         return var
     return load
@@ -497,7 +534,7 @@ def post_key(vi, wid: int | None) -> str:
             return f"calibrate/{ident[2]}/{ident[3]}"
         if kind == "calframe":
             return "inspect:" + json.dumps({"wid": wid, "kind": "calframe", "path": ident[3]})
-        if kind in ("array", "preview", "color", "gradient", "removed", "calibrated"):
+        if kind in ("array", "preview", "color", "gradient", "removed", "calibrated", "input"):
             return "inspect:" + json.dumps({"wid": wid, "kind": kind, "name": ident[2], "channel": ident[3],
                                             "base": list(ident[4]), "stages": [s for s, _k in ident[5]]})
         return "inspect:" + json.dumps({"wid": wid, "kind": str(kind)})
@@ -572,6 +609,8 @@ def resolve_key(p, key: str):
         return color_source(p, wid, tuple(d.get("base") or ("stack", "drz_full")), which)
     if kind == "gradient":
         return gradient_source(p, wid, stage, which)
+    if kind == "input":
+        return input_source(p, wid, stage, which)
     if kind == "calibrated":
         return calibrated_source(p, wid, tuple(d.get("base") or ("background", "astro")), which)
     if kind == "removed":

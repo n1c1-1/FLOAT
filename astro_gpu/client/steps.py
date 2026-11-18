@@ -18,6 +18,7 @@ from PySide6.QtCore import QObject, QPointF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
 
 from .. import texts
+from ..core.workflow import base
 from . import APP_NAME
 from .graphnode import BY_KEY, STEPS, fmt_int
 from .i18n import _, hours_text, language, number, plain_error
@@ -109,17 +110,18 @@ COVERAGE_DRIZZLE_NOTE = ("With the drizzle, red and blue are one pixel in four o
 COLOR_NOTE = ("Before, left of the divider: the stack output as it is, in the camera's colours. After, right: the "
               "same stack colour-calibrated (the colour matrix measured on the Gaia stars, the sky set grey). Drag the "
               "divider.")
-DECONV_NOTE = "Before (what the block reads) and after (deconvolved), with the same stretch."
-DENOISE_NOTE = ("Before (the stack, its gradient removed: what the block reads) and after (denoised), with the same "
-                "stretch on both. Drag the divider.")
+DECONV_NOTE = ("Before (what the block reads: named on the picture) and after (deconvolved), with the same "
+               "stretch.")
+DENOISE_NOTE = ("Before (what the block reads: the stack with the blocks before it in the graph applied, named on "
+                "the picture) and after (denoised), with the same stretch on both. Drag the divider.")
 ALIGNED_NOTE = ("The image brought onto the grid of its reference: the size and framing of the reference, what overflows is "
               "cut. Compare it with the stack it comes from.")
 STACK_NOTE = ("The stack output in the camera's colours, before colour calibration: a colour cast it shows is the "
               "camera's own, the Color block takes it off.")
 STACK_MONO_NOTE = "The stack of one filter: one plane, in the sensor's own levels, before any colour is given."
 CAMERA_NOTE = "In the camera's colours, before colour calibration."
-GRADIENT_NOTE = ("The stack with its sky gradient removed, in the camera's colours, as every later block reads it (the "
-                 "colour calibration comes next). The sky keeps its level. Compare it with the stack.")
+GRADIENT_NOTE = ("The image with its sky gradient removed, as every later block reads it. The sky keeps its level. "
+                 "Compare it with what the block reads, named on the picture.")
 SKY_MODEL_NOTE = ("What the block removed: the sky model of its method, in the camera's colours. A nebula or a galaxy "
                   "that shows here was taken for sky.")
 #: the line after the note of a model (display "model"): what its colours mean
@@ -262,9 +264,28 @@ class Steps(QObject):
         out = self._visuals(p, k)
         if k in ("calibration", "alignement", "selection", "crop", "empilement", "demi_piles"):
             return out
+        if k in ("fond", "deconv", "debruitage"):
+            out = [self._after_colour(p, v) for v in out]
         return [dataclasses.replace(v, stage=self.read_stage(p, v.stage),
                                     base=(self.read_stage(p, v.base[0]), *v.base[1:]) if v.base else v.base)
                 for v in out]
+
+    def _after_colour(self, p, spec: VisualSpec) -> VisualSpec:
+        """A picture of a block that reads the Color block's output (the graph puts Color before it) is no longer in
+        the camera's colours: it is not offered the camera's Neutral sky box nor the camera note."""
+        if spec.kind not in ("array", "gradient") or not spec.camera:
+            return spec
+        entry = self._instance(p, spec.stage)[0]
+        if any(base(x) == "color" for x in self._ops_before(p, entry)):
+            return dataclasses.replace(spec, camera=False)
+        return spec
+
+    def _ops_before(self, p, entry: str) -> list[str]:
+        """The image blocks ``entry`` reads before its own work (what the blocks before it in the graph made)."""
+        from .services import inspect as si
+        from .services import inspect as si
+        api_p = getattr(self.s, "p", None)
+        return si.input_ops(api_p, p.pid, entry) if api_p is not None else []
 
     def _visuals(self, p, k: str) -> list[VisualSpec]:
         V = VisualSpec
@@ -313,11 +334,11 @@ class Steps(QObject):
                     V("fit", "Star colours", "colorfit", "color")]
         if k == "deconv":
             return [V("deconvolved", "Deconvolved stack", "array", "deconv", "deconv_full", True, True, camera=True,
-                      neutral=True, compare=("result", "stack", "half_a"), open_compare=True, same_stretch=True,
+                      neutral=True, compare=("input:deconv", "stack", "half_a"), open_compare=True, same_stretch=True,
                       note=DECONV_NOTE)]
         if k == "debruitage":
             return [V("denoised", "Denoised stack", "array", "denoise", "n2n_full", True, True, camera=True,
-                      neutral=True, compare=("result", "stack", "half_a"), open_compare=True, same_stretch=True,
+                      neutral=True, compare=("input:denoise", "stack", "half_a"), open_compare=True, same_stretch=True,
                       note=DENOISE_NOTE)]
         if k == "etoiles":
             return [V("starless", "Starless image", "array", "star_removal", "starless", True, True, camera=False,
@@ -328,7 +349,7 @@ class Steps(QObject):
         if k == "fond":
             # the block's own input and output, in the camera's colours: it works before the colour calibration
             return [V("result", "Gradient removed", "gradient", "gradient", "", True, True, camera=True, neutral=True,
-                      compare=("stack",), open_compare=True, same_stretch=True, note=GRADIENT_NOTE),
+                      compare=("input:gradient", "stack"), open_compare=True, same_stretch=True, note=GRADIENT_NOTE),
                     V("removed", "Sky model", "removed", "gradient", "", True, True, camera=True, note=SKY_MODEL_NOTE,
                       display="model")]
         if k == "post":
@@ -356,6 +377,8 @@ class Steps(QObject):
         if key == "stack":
             return V("stack", "Stack" if stk == "stack" else "Aligned image", "array", stk, "drz_full", True, True,
                      camera=True)
+        if key.startswith("input:"):
+            return self._input_picture(p, key[len("input:"):], stk)
         if key in ("half_a", "half_b"):
             return V(key, "Half-stack A" if key == "half_a" else "Half-stack B", "array", stk,
                      "drz_A" if key == "half_a" else "drz_B", True, True, camera=True)
@@ -376,6 +399,24 @@ class Steps(QObject):
             stage = self.render_stage(p)
             return V("output", "Final image", "render", stage, note=output_note(stage, stages), camera=False)
         return None
+
+    #: the words that say what a block applied to the stack: the name of the picture a block reads
+    INPUT_WORDS = {"gradient": "gradient removed", "color": "colour-calibrated", "deconv": "deconvolved",
+                   "denoise": "noise removed"}
+
+    def _input_picture(self, p, stage: str, stk: str) -> VisualSpec | None:
+        """What a block reads, named by what is applied to the stack before it: the stack itself where the graph
+        puts no image block before the block, else the stack with them applied, in the graph's order."""
+        entry = self._instance(p, stage)[0]
+        if entry not in self.s.all_stages(p):
+            return None
+        ops = self._ops_before(p, entry)
+        if not ops:
+            return self.picture(p, "stack")
+        words = [_("Stack") if stk == "stack" else _("Aligned image"), *(_(self.INPUT_WORDS[base(x)]) for x in ops)]
+        caption = _("What the block reads") + " (" + ", ".join(words) + ")"
+        return VisualSpec("input", caption, "input", entry, "", True, True,
+                          camera=not any(base(x) == "color" for x in ops), neutral=True)
 
     def backgrounds(self, p) -> list[VisualSpec]:
         """The pictures the solution of Astrometry can be drawn over, in the order of the workflow: the ones that are
@@ -398,8 +439,12 @@ class Steps(QObject):
             return ["color", spec.base[0]]
         if spec.kind == "calibrated":
             return ["color", spec.base[0]]
-        if spec.kind in ("gradient", "removed"):
-            return ["gradient", self.read_stage(p, "stack")]
+        if spec.kind in ("gradient", "input"):
+            # the stack and the image blocks the block reads before its own work: its key is theirs
+            entry = self._instance(p, spec.stage)[0]
+            return [entry, self.read_stage(p, "stack"), *self._ops_before(p, entry)]
+        if spec.kind == "removed":
+            return [self._instance(p, spec.stage)[0], self.read_stage(p, "stack")]
         return [spec.stage]
 
     def view_image(self, p, spec: VisualSpec, prefix: str = "") -> ViewImage | None:
@@ -419,9 +464,11 @@ class Steps(QObject):
         elif spec.kind == "color":
             src = si.color_source(P, p.pid, spec.base, which)
         elif spec.kind == "gradient":
-            src = si.gradient_source(P, p.pid, spec.stage, which)
+            src = si.gradient_source(P, p.pid, stages[0], which)
+        elif spec.kind == "input":
+            src = si.input_source(P, p.pid, stages[0], which)
         elif spec.kind == "removed":
-            src = si.removed_source(P, p.pid, spec.stage, which)
+            src = si.removed_source(P, p.pid, stages[0], which)
         elif spec.kind == "calibrated":
             src = si.calibrated_source(P, p.pid, spec.base, which)
         else:

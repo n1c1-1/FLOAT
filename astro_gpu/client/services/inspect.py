@@ -47,7 +47,7 @@ from .inspect_frames import (SessionRow, ProjectFrames, _files, _levels, _calib_
                              inventory_headers, calibration_left_out, set_calibration_excluded, frame_stats)
 from .inspect_sources import (diag, block_of, not_yet, _MISSING, missing_text, missing_of, not_computed, _unavailable,
                               _w, _array, array_source, _one_plane, preview_source, apply_matrix, grey_sky,
-                              color_source, _sky_model, calibrated_source, gradient_source, removed_source, MASTERS,
+                              color_source, _sky_model, calibrated_source, gradient_source, input_source, input_ops, removed_source, MASTERS,
                               _masters_lock, _masters, _calib_masters, forget_masters, calibrated_frame,
                               _calibrated_colour, calframe_source, wcs_source, ScaledWcs, _stk, _stack_meta,
                               _stack_zone, SKY_BLOCK, crop_frame, stack_place, reference_frame_place, render_place,
