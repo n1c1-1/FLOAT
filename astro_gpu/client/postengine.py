@@ -782,6 +782,19 @@ def grey3(x: np.ndarray) -> np.ndarray:
     return cv2.merge([x, x, x])
 
 
+# the images kept are read only (``_frozen``); torch reads them without a copy, and no filter writes into its input
+__import__("warnings").filterwarnings("ignore", message="The given NumPy array is not writable", category=UserWarning)
+
+
+def _frozen(a: np.ndarray) -> np.ndarray:
+    """``a`` made read only, kept as it is: the image a step, a backdrop or a layer keeps is handed on without a copy
+    (a 27 Mpx image is 82 MB at the screen's level: a copy each filter took 0.2 s of a release); a filter that would
+    write into its input raises instead of changing what is kept (each filter writes into images of its own)."""
+    if isinstance(a, np.ndarray):
+        a.flags.writeable = False
+    return a
+
+
 def _torch_of(a: np.ndarray):
     import torch
     return torch.from_numpy(a)
@@ -2090,7 +2103,7 @@ class Composer:
             a = self.provider.layer(lay, level, want, draft=draft and level > 0, stop=stop)
             self._drawn += 1
             if cache:
-                self.images.put(key, a, (lay["id"], lay.get("part"), level))
+                self.images.put(key, _frozen(a), (lay["id"], lay.get("part"), level))
         elif cache:
             self.images.hold(key, (lay["id"], lay.get("part"), level))
         if level > 0 and abox != whole:
@@ -2819,7 +2832,7 @@ class Composer:
         if key in self.backdrops.items:
             self.backdrops.hold(key, holder)
         else:
-            self.backdrops.put(key, comp.copy(), holder)
+            self.backdrops.put(key, _frozen(comp), holder)
 
     def compose(self, layers: list[dict], level: int, box=None, *, want=(), thumbs: bool = False, stop=None,
                 cache: bool = True, draft: bool = False, hists=(), track: bool = False) -> Composite | None:
@@ -2901,7 +2914,7 @@ class Composer:
                 self._thumbs.move_to_end(it.tkey)
                 out.mask_thumbs.update(self._thumbs[it.tkey])
         if back is not None:
-            comp = back.copy()                                            # (a filter may work in place on its input)
+            comp = back                                                   # (kept read only: nothing writes into it)
         comp_sig = items[start - 1].sig if start else "empty"
         under = any(it.kind == "pixel" for it in items[:start])           # an image layer drawn below the next one
         edited_at = next((i for i, it in enumerate(items) if it.edit == self._edited), None)
@@ -2925,7 +2938,7 @@ class Composer:
                 ctx._memo.pop("fusion halpha", None)
                 got = self._filtered(it, where, thumbs)
                 if got is not None:                                       # its image after its filters, kept
-                    src, sig = got.copy(), it.src
+                    src, sig = got, it.src
                     if thumbs and it.tkey in self._thumbs:
                         made.update(self._thumbs[it.tkey])
                         out.mask_thumbs.update(made)
@@ -2944,7 +2957,7 @@ class Composer:
                                                   keep_mask, where, want, thumbs)
                         self._keep = True
                         if where is not None and not tops and not self._stars_missing:   # (with filters: the last step)
-                            self.steps.put((sig, where), src.copy(), (lay["id"], "src", level))
+                            self.steps.put((sig, where), _frozen(src), (lay["id"], "src", level))
                     else:
                         src = self.layer_rgb(lay, level, abox, canvas, cache, draft, check)
                         sig = self._img_sig(lay, level, abox, canvas, draft)
@@ -3138,7 +3151,7 @@ class Composer:
         got = self.steps.get(key)
         fl = chain[best[0]]
         self.steps.hold(key, (fl["id"], fl.get("sub"), level))
-        return (best[0] if positions is None else positions[best[0]]), got.copy(), best[1], thumbs_on_way[:best[2]]
+        return (best[0] if positions is None else positions[best[0]]), got, best[1], thumbs_on_way[:best[2]]
 
     def _keep_step_thumb(self, t, sig, where):
         """A filter's mask thumbnail, kept with its step (``_chain_jump`` gives it again when it passes the filter)."""
@@ -3192,14 +3205,14 @@ class Composer:
                 # a step kept on purpose (``keep``), and only where there is room (``ByteLRU``)
                 if level == 0:
                     if keep and self._keep:
-                        self.steps.put(key, out.copy(), holder)
+                        self.steps.put(key, _frozen(out), holder)
                 elif (keep and self._keep) or self.steps.bytes + out.nbytes <= self.steps.cap:
-                    self.steps.put(key, out.copy(), holder)
+                    self.steps.put(key, _frozen(out), holder)
             return out, m, new
         if fl["id"] in ctx.hist_ids:
             ctx.hists[fl["id"]] = pf_curves.histograms(under)
         wanted = fl["mask"] is not None and (fl["id"] in want or thumbs)
-        return got.copy(), self.mask(fl, level, abox, under, canvas, ctx, sigs={None: sig}) if wanted else None, new
+        return got, self.mask(fl, level, abox, under, canvas, ctx, sigs={None: sig}) if wanted else None, new
 
     def _apply(self, fl, under, level, abox, canvas, ctx, sig=None):
         """A filter layer on an image (its own layer's, or everything below): the filtered image, through the layer's

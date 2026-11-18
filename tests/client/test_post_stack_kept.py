@@ -4,6 +4,7 @@ full-resolution images never take the room of the screen's; the pixels are those
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from test_post import ToyProvider  # noqa: F401 - the toy layers
 from test_post_cache import Toy
 
@@ -219,3 +220,22 @@ def test_a_drag_s_drafts_make_the_filter_moved_only_and_show_what_a_draft_from_n
         ref_cp.compose(pe.snapshot(state), 3)                         # (the layer's exact image, as the warm one has)
         ref = ref_cp.compose(pe.snapshot(state), 3, draft=True, cache=False)
         assert np.array_equal(got.rgb, ref.rgb)
+
+
+def test_what_is_kept_is_handed_on_without_a_copy_and_read_only(monkeypatch):
+    """The steps, backdrops and layer images kept are given to the next filter as they are (no copy): read only, so
+    that a filter writing into its input raises instead of changing what is kept; the pixels stay those from nothing."""
+    layers = stack()
+    pr = ToyProvider()
+    cp = Composer(pr, cache_bytes=200_000_000)
+    release(cp, layers)
+    assert cp.steps.items and all(not a.flags.writeable for a in cp.steps.items.values())
+    assert all(not a.flags.writeable for a in cp.images.items.values() if isinstance(a, np.ndarray))
+    top = next(x for x in layers if x["kind"] == "filter")
+
+    def writes(x, p, ctx):
+        x[0, 0, 0] = 1.0                                      # a filter that writes into its input
+        return x
+    monkeypatch.setitem(pe.FILTERS[top["filter"]], "fn", writes)
+    with pytest.raises(ValueError):
+        cp.compose(pe.snapshot(with_param(layers, 0, "strength", 77.0)), 1)
