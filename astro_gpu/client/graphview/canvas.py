@@ -97,6 +97,7 @@ def _fields(message) -> list:
 
 class GraphCanvas(QGraphicsView):
     inspect = Signal(object)             # Enter / double-click / menu "Inspect" on this id
+    open_post = Signal(object)           # menu "Open Post" of a Combine layers block: Post on its layer
     view_action = Signal(str, object)    # a menu action only the window can do: ("mark_reviewed", block),
     #                                      ("recompute", block): Recompute (current version)
     templates_asked = Signal()           # the blank page's link « From template »
@@ -1612,6 +1613,8 @@ class GraphCanvas(QGraphicsView):
     def run_menu(self, ident, op, args):
         if op == "inspect":
             self.inspect.emit(ident)
+        elif op == "open_post":
+            self.open_post.emit(ident)
         elif op == "rename":
             self.rename(ident, (args or {}).get("row"))
         elif op == "recompute":                          # the window plans it and shows what it costs first

@@ -212,10 +212,13 @@ def test_the_zoom_is_kept_with_the_project_never_as_an_undo_step(qapp):
 
 # ======================================================================================================= Combine layers
 def test_combine_layers_opens_post_on_a_graph_in_memory(qapp):
+    """Its menu: Inspect, as every block's, and Open Post; with no project model (nothing to adjust), a double-click
+    opens Post itself."""
     from astro_gpu.client.graphview import menu
     from astro_gpu.client.graphview.gestures import Gestures
     p = _page(_doc("colour_complete"))
-    assert menu.menu(p.bridge.doc, "b14")[0][:2] == ("Open Post", "inspect")
+    items = [e[:2] for e in menu.menu(p.bridge.doc, "b14") if e]
+    assert items[0] == ("Inspect", "inspect") and ("Open Post", "open_post") in items, items
     got = []
     p.openPost.connect(lambda: got.append("post"))
     p.openLayer.connect(lambda lid: got.append(lid))
@@ -346,7 +349,9 @@ def test_a_chosen_wire_to_a_block_leaves_the_panel_empty_and_the_page_whole(mode
     page.close()
 
 
-def test_combine_layers_opens_its_layer_of_post(model):
+def test_combine_layers_opens_its_editor_in_inspect_and_its_menu_opens_its_layer_of_post(model):
+    """A double-click on a Combine layers block opens Inspect on it, its editor (it opened Post: the owner, on main),
+    as every block of the combination family; its menu's Open Post opens Post on its layer."""
     from astro_gpu.client.graphview.gestures import Gestures
     page = _model_page(model)
     cl = _combine_layers(page)
@@ -357,8 +362,10 @@ def test_combine_layers_opens_its_layer_of_post(model):
     page.openPost.connect(lambda: got.append("post"))
     page.openBlock.connect(lambda: got.append("inspect"))
     Gestures(page).click(cl, double=True)
+    assert got == ["inspect"] and model.sel_step == "composition"
+    got.clear()
+    page.canvas.run_menu(cl, "open_post", {"block": cl})
     assert len(got) == 1 and isinstance(got[0], int) and model.post_layer(got[0]) is not None
-    assert model.sel_step == "composition"                     # chosen as today: Inspect opens it in Post
     page.bridge.undo()
     page.close()
 

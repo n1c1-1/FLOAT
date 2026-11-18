@@ -27,8 +27,10 @@ def menu(doc, b):
         return row_items(doc, ix, b)
     blk = g.blocks[b]
     k = blk.kind
-    # a Combine layers block is a layer of Post: its Inspect is Post on that layer (graph.py: "Open Post")
-    items = [(_("Open Post") if k in ("combine_layers", "post") else _("Inspect"), "inspect", {"block": b}, True, "")]
+    # Post's own block opens Post; a Combine layers block has its editor in Inspect, and its layer in Post besides
+    items = [(_("Open Post") if k == "post" else _("Inspect"), "inspect", {"block": b}, True, "")]
+    if k == "combine_layers":
+        items.append((_("Open Post"), "open_post", {"block": b}, True, _("Post, with this block's layer selected")))
     if k != "post":
         text = _("Switch on (D)") if blk.off else _("Switch off (D)")
         why = off_reason(k)

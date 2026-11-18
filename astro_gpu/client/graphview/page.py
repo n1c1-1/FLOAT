@@ -119,6 +119,7 @@ class GraphPage(SidesHost, QWidget):
         self.graph = self.canvas         # today's page's ``graph`` (its GraphView): rebuild(), plus_session_pid
         self.canvas.inspect.connect(self.inspect.emit)
         self.canvas.inspect.connect(self._opened)
+        self.canvas.open_post.connect(self._open_layer_in_post)
         self.canvas.view_action.connect(self.view_action.emit)
         self.canvas.templates_asked.connect(self.show_templates)
         if self.s is not None:
@@ -596,19 +597,31 @@ class GraphPage(SidesHost, QWidget):
 
     # ------------------------------------------------------------------ what the window is told
     def _opened(self, ident):
-        """Enter / double-click on a block: today's signals (Inspect; Post for the Post block; Post on its layer for a
-        Combine layers block, graph.py ``open_layer``)."""
+        """Enter / double-click / the menu's Inspect on a block: Inspect; Post for the Post block. A Combine layers
+        block opens its editor in Inspect, as every block of the combination family (it opened Post on its layer, from
+        before it had one); one no workflow feeds yet has nothing to adjust: Post. Its menu's Open Post: Post on its
+        layer (``_open_layer_in_post``)."""
         blk = self.bridge.block(ident) if ident != PROJECT else None
         if blk is not None and blk.kind == "post":
             self.openPost.emit()
         elif blk is not None and blk.kind == "combine_layers":
-            lid = self.layer_id(ident)
-            if lid is not None:
-                self.openLayer.emit(lid)
-            else:
-                self.openPost.emit()
+            n = self.layer_node(ident)
+            if n is None or not n.paths:
+                self._open_layer_in_post(ident)
+                return
+            if self.s is not None and getattr(self.s, "sel_step", "") != "composition":
+                self._mirror(ident)                      # (chosen: Inspect shows that block, as a click chooses it)
+            self.openBlock.emit()
         else:
             self.openBlock.emit()
+
+    def _open_layer_in_post(self, ident):
+        """Post on the layer of a Combine layers block (Post itself when it has none yet)."""
+        lid = self.layer_id(ident)
+        if lid is not None:
+            self.openLayer.emit(lid)
+        else:
+            self.openPost.emit()
 
     def _acted(self, name, res):
         """A variant made on the page: the window compares it with its original (today's ``variantMade``)."""
