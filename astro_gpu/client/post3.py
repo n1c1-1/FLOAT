@@ -192,7 +192,7 @@ REGION_MAX = 12_000_000                                  # pixels of the region 
 REGION_WAIT_MS = 150                                     # after the view stops moving
 INDENT = 24                                              # a child row's indent (px)
 HOLD_MS = 600                                            # the exact image within this: the half one is not shown
-HEAVY_TIP_S = 1.0                                         # a release longer than this, one filter its main cost: the tip
+HEAVY_TIP_S = 1.0                                         # a release longer than this, the filters its main cost: the tip
 _HEAVY_TIP_SAID = False                                   # (said once a session)
 TOGGLE_W = 16                                            # the ▾ / ▸ of a layer's children
 
@@ -867,7 +867,12 @@ class LayerRow(QFrame):
         never guessed; nothing before it was measured."""
         if self.lay.get("kind") != "filter":
             return
-        said = _("{t} s on screen").format(t=number(seconds, 1)) if seconds is not None else ""
+        if seconds is None:
+            said = ""
+        elif seconds < 0.05:                             # (never "0.0 s": it took something, under a tenth)
+            said = _("< {t} s on screen").format(t=number(0.1, 1))
+        else:
+            said = _("{t} s on screen").format(t=number(seconds, 1))
         self.setToolTip(chr(10).join(x for x in (getattr(self, "_tip", ""), said) if x))
 
     def edit_name(self):
@@ -1111,6 +1116,7 @@ class PostView(QWidget):
     undoChanged = Signal()                                # Post's Undo / Redo lists changed (the window's Edit menu follows)
     toasted = Signal(str)                                 # what a change did beyond Post (the window's status line)
     tipped = Signal(str, str)                             # a tip for the status line, the words of its "never again" link
+    refining = Signal(bool)                               # the full resolution's picture is on its way (the status line)
     layerAsked = Signal(int)                              # Open in Post of a layer (the page lists it when not computed)
     openImages = Signal()                                 # images asked as layers
     runAsked = Signal()                                   # an image's kind changed: it is computed again
@@ -1462,6 +1468,9 @@ class PostView(QWidget):
         self.more_menu.setToolTipsVisible(True)
 
     def eventFilter(self, obj, e):                                   # noqa: N802 - Qt's name
+        if (obj is getattr(self, "_list_holder", None) and e.type() == QEvent.MouseButtonPress
+                and e.button() == Qt.LeftButton):
+            self.deselect_filter()                       # (a row takes its own press: this is the list's empty space)
         # resized, or a widget of the bar asks for another width (the zoom's text, a version's name, the crop's
         # buttons, the compact look's margins): the fit again (#142)
         if obj is getattr(self, "centre", None) and e.type() in (QEvent.Resize, QEvent.LayoutRequest):
@@ -1543,6 +1552,8 @@ class PostView(QWidget):
         self.lbox.setContentsMargins(0, 0, 4, 12)          # (room for a drop line after the last row)
         self.lbox.setSpacing(2)
         self.lsc.setWidget(lh)
+        lh.installEventFilter(self)                      # a click on its empty space: no filter chosen
+        self._list_holder = lh
         lv.addWidget(self.lsc, 1)
         self.drop_line = QFrame(lh)
         self.drop_line.setFixedHeight(3)
@@ -2240,6 +2251,7 @@ class PostView(QWidget):
             if res.tag == self._exact_wait:
                 self._exact_wait = None
                 self.viewer.update()
+                self._tell_refining()
             if res.tag == self._main_seq and res.rgb is not None:     # nothing asked since its release
                 self._done_seq = res.tag
                 self._held = None
@@ -2322,7 +2334,8 @@ class PostView(QWidget):
             if self._exact_wanted(res):
                 self._exact_seq = self.worker.request(Request(kind="exact", layers=snapshot(self.layers),
                                                               level=res.level, tag=res.seq))
-                self._exact_wait = res.seq                     # the picture changes once more: still "Updating…"
+                self._exact_wait = res.seq                     # the picture changes once more: "Refining…" below
+                self._tell_refining()
         elif res.kind == "region":
             self.src.full = (res.box, res.rgb)
             self.src.version += 1
@@ -2369,6 +2382,7 @@ class PostView(QWidget):
         elif kind == "exact":                            # the half resolution stays: no more updating to wait for
             self._exact_wait = None
             self.viewer.update()
+            self._tell_refining()
         if kind in ("draft", "half", "region", "before", "start"):
             first = _("Image not computed: {why}").format(why=plain_error(text))
             if first != self.viewer.banner:                  # said once; the program's error in the Log only
@@ -2533,9 +2547,19 @@ class PostView(QWidget):
             return True
         if self._failed_seq >= self._main_seq:
             return False
-        if self._exact_wait is not None and self._exact_wait == self._main_seq:
-            return True
+        # (the full resolution's picture after it, ``_exact_wanted``, is no wait: the screen's picture is final, the
+        # refine is said in the status line, ``refining``; the banner over it for 15 to 25 s read as still working)
         return self._done_seq < self._main_seq
+
+    def is_refining(self) -> bool:
+        """The full resolution's picture of the last release is on its way (the screen's one is shown)."""
+        return self._exact_wait is not None and self._exact_wait == self._main_seq
+
+    def _tell_refining(self):
+        on = self.is_refining()
+        if on != getattr(self, "_refining_said", False):
+            self._refining_said = on
+            self.refining.emit(on)
 
     def _behind_tag(self, p: QPainter, v: Viewer):
         """As the Gradient view: "Updating…" over the top of the picture while it is behind the settings."""
@@ -2584,26 +2608,32 @@ class PostView(QWidget):
                     pass
         t0, self._release_t0 = self._release_t0, None
         if t0 is not None and time.perf_counter() - t0 > HEAVY_TIP_S:
-            self._heavy_tip(res)
+            self._heavy_tip(res, time.perf_counter() - t0)
 
-    def _heavy_tip(self, res):
-        """Once a session, in the status line, never a pop-up: a release took more than a second and most of it was
-        one filter above the setting changed, made again at every setting: hide it while adjusting."""
+    def _heavy_tip(self, res, took: float = 0.0):
+        """Once a session, in the status line, never a pop-up: a release took more than a second and most of it went
+        to the filters made again above the setting changed: the heaviest one or two named, to hide while adjusting
+        (a single filter was rarely half the cost: the tip never came, on releases of 1 to 5 s)."""
         global _HEAVY_TIP_SAID
         if _HEAVY_TIP_SAID or prefs.get("post_tip_heavy_off"):
             return
-        costs = {k: v for k, v in (res.costs or {}).items() if k in (res.applied or ())}
-        if not costs:
-            return
-        main = max(costs, key=costs.get)
-        if main == self._changed_lid or costs[main] < 0.5 * sum(costs.values()):
-            return
-        fl = self.layer(main)
-        if fl is None:
+        costs = {k: v for k, v in (res.costs or {}).items() if k in (res.applied or ()) and k != self._changed_lid}
+        total = sum(costs.values())
+        if not costs or total < 0.5 * max(took, float(res.ms or 0.0) / 1000.0):
+            return                                       # the filters are not the main cost of the release
+        heavy = sorted(costs, key=costs.get, reverse=True)
+        names = [layer_name(fl) for fl in (self.layer(k) for k in heavy[:2]) if fl is not None]
+        if len(heavy) > 1 and costs[heavy[1]] < 0.25 * costs[heavy[0]]:
+            names = names[:1]                            # (the second one far lighter: the first alone)
+        if not names:
             return
         _HEAVY_TIP_SAID = True
-        self.tipped.emit(_("“{name}” is made again at every setting: hide it (eye) while you adjust")
-                         .format(name=layer_name(fl)), _("Don't show again"))
+        if len(names) == 1:
+            text = _("“{name}” is made again at every setting: hide it (eye) while you adjust").format(name=names[0])
+        else:
+            text = _("“{a}” and “{b}” are made again at every setting: hide them (eye) while you adjust").format(
+                a=names[0], b=names[1])
+        self.tipped.emit(text, _("Don't show again"))
 
     def tip_off(self):
         """The tip's "never again" link: remembered."""
@@ -2990,6 +3020,21 @@ class PostView(QWidget):
             self.part_sel = None
         self.rebuild()
         self.request(final_only=True)
+
+    def deselect_filter(self):
+        """A click on the empty space of the layers list, as in the reference image editors: no filter chosen any more.
+        A filter nested in a layer leaves that layer (or its image) chosen, so that a new filter goes to its family's
+        place in it (``add_filter``); one on everything below leaves nothing chosen. A layer chosen stays chosen."""
+        cur = self.layer(self.sel[0]) if self.sel else None
+        if cur is None or cur["kind"] != "filter":
+            return
+        target = cur.get("target")
+        if target is not None and self.layer(target) is not None:
+            self.select(target, cur.get("sub") or "layer")
+            return
+        self.sel = None
+        self.part_sel = None
+        self.rebuild()
 
     def set_visible(self, lid, v):
         self.push()

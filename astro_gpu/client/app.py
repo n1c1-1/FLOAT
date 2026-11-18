@@ -350,6 +350,8 @@ class Main(QMainWindow):
         self.status.setTextInteractionFlags(Qt.LinksAccessibleByMouse)
         self.status.linkActivated.connect(self._flash_linked)          # a word's link (Undo there)
         self.statusBar().addWidget(self.status, 1)
+        self.refine_note = label("", "small")                       # Post's full resolution on its way: said here,
+        self.statusBar().addPermanentWidget(self.refine_note)       # never over the picture
         self.spec_note = label("", "small")
         self.statusBar().addPermanentWidget(self.spec_note)
         self.b_log = QPushButton(_("Log"))
@@ -1317,6 +1319,7 @@ class Main(QMainWindow):
             b.clicked.connect(self._post_seen)
         page.view.toasted.connect(self.flash)            # what a change of Post did beyond Post (a branch removed)
         page.view.tipped.connect(lambda t, w, v=page.view: self.flash(t, (w, v.tip_off)))   # a tip, its never again
+        page.view.refining.connect(lambda on: self.refine_note.setText(_("Refining…") if on else ""))
         page.view.goProcessing.connect(lambda pid, k: (self.select(index=self.s.index_of(pid), step=k),
                                                        self.set_mode(1)))
         page.view.panelChosen.connect(self._post_panel_chosen)

@@ -9,7 +9,7 @@ import time
 from astro_gpu.client import i18n, post3, prefs
 from astro_gpu.client import postengine as pe
 from astro_gpu.client.services.render import Result
-from tests.client.test_post import post, preps, qapp  # noqa: F401  (fixtures by name)
+from tests.client.test_post import post, preps, qapp, wide  # noqa: F401  (fixtures by name)
 
 
 def _layer(v):
@@ -98,3 +98,97 @@ def test_a_new_filter_goes_above_the_chosen_one_or_at_its_family_s_place(post): 
     saved = pe.save_layers(v.layers)                          # a composition saved keeps its order
     back = pe.load_layers(saved, {p.pid for p in post.model.paths})
     assert [x.get("filter") for x in back if x.get("target") == lay["id"]] == own()
+
+
+def test_under_a_twentieth_of_a_second_the_cost_says_under_a_tenth(post):  # noqa: F811
+    v = post.view
+    lay = _layer(v)
+    v.select(lay["id"], "layer")
+    fl = v.add_filter("levels")
+    row = next(r for r in v.rows if r.lay["id"] == fl["id"])
+    row.set_cost(0.01)
+    assert "< 0.1 s on screen" in row.toolTip() and "0.0 s" not in row.toolTip()
+    row.set_cost(0.31)
+    assert "0.3 s on screen" in row.toolTip() and "<" not in row.toolTip()
+    try:
+        i18n.set_language("fr")
+        assert i18n._("< {t} s on screen").format(t=i18n.number(0.1, 1)) == "< 0,1 s à l'écran"
+    finally:
+        i18n.set_language("en")
+
+
+def test_the_tip_names_the_two_heaviest_when_the_filters_above_are_the_cost(post, monkeypatch):  # noqa: F811
+    """No single filter half the cost (the tester's releases of 1 to 5 s): the filters above the setting together are
+    its main cost, the heaviest two named."""
+    v = post.view
+    lay = _layer(v)
+    v.select(lay["id"], "layer")
+    fls = [v.add_filter(k) for k in ("faint_smooth", "clahe", "levels", "saturation")]
+    said = []
+    v.tipped.connect(lambda t, w: said.append(t))
+    monkeypatch.setattr(post3, "_HEAVY_TIP_SAID", False)
+    monkeypatch.setattr(prefs, "get", lambda k, _g=prefs.get: False if k == "post_tip_heavy_off" else _g(k))
+    res = Result(1, "half", 1, None, None, None)
+    res.costs = dict(zip((f["id"] for f in fls), (0.6, 0.5, 0.3, 0.2)))
+    res.applied = frozenset(res.costs)
+    v._changed_lid = lay["id"]
+    v._release_t0 = time.perf_counter() - 2.0                   # 2 s, 1.6 of them in the filters above
+    v._screen_done(res)
+    assert len(said) == 1
+    assert post3.layer_name(fls[0]) in said[0] and post3.layer_name(fls[1]) in said[0]
+    assert post3.layer_name(fls[2]) not in said[0]
+    monkeypatch.setattr(post3, "_HEAVY_TIP_SAID", False)
+    res.costs = {f["id"]: 0.05 for f in fls}                    # 2 s, the filters 0.2 of them: not their doing
+    v._release_t0 = time.perf_counter() - 2.0
+    v._screen_done(res)
+    assert len(said) == 1
+    try:
+        i18n.set_language("fr")
+        assert i18n._("“{a}” and “{b}” are made again at every setting: hide them (eye) while you adjust").format(
+            a="Lissage des zones faibles", b="CLAHE") == ("« Lissage des zones faibles » et « CLAHE » recalculent à "
+                                                          "chaque réglage : masquez-les (œil) le temps du réglage")
+    finally:
+        i18n.set_language("en")
+
+
+def test_the_banner_ends_with_the_screen_s_picture_the_refine_in_the_status_line(wide):  # noqa: F811
+    """The full resolution's picture after a release took 15 to 25 s on the tester's images with "Rendering: X · Y"
+    over the picture all along: it read as still working. The banner ends with the screen's picture; the refine is
+    said in the status line ("Refining…") until it comes."""
+    post_ = wide
+    v = post_.view
+    said = []
+    v.refining.connect(said.append)
+    seen = []
+    v.rendered.connect(lambda r: seen.append((r.kind, v.behind(), v.is_refining())))
+    sat = v.add_filter("saturation")
+    sat["params"]["strength"] = 80.0
+    v.request(final_only=True)
+    assert post_.settle()
+    half = next(x for x in seen if x[0] == "half")
+    assert half[1] is False and half[2] is True                 # the screen's picture final, the refine on its way
+    assert said[:1] == [True] and said[-1] is False and not v.is_refining()
+    try:
+        i18n.set_language("fr")
+        assert i18n._("Refining…") == "Affinage…"
+    finally:
+        i18n.set_language("en")
+
+
+def test_a_click_on_the_list_s_empty_space_chooses_no_filter(post):  # noqa: F811
+    """As in the reference image editors: a click under the rows leaves no filter chosen, its layer chosen, so that a
+    new filter goes to its family's place; Escape is left as it was."""
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+    v = post.view
+    lay = _layer(v)
+    v.select(lay["id"], "layer")
+    sat = v.add_filter("saturation")
+    v.select(sat["id"], "layer")
+    holder = v._list_holder
+    QTest.mouseClick(holder, Qt.LeftButton, Qt.NoModifier, QPoint(holder.width() // 2, holder.height() - 4))
+    assert v.sel == (lay["id"], "layer")
+    v.add_filter("denoise")                                     # its family's place: under the saturation
+    assert [x.get("filter") for x in v.layers if x.get("target") == lay["id"]][:2] == ["saturation", "denoise"]
+    QTest.mouseClick(holder, Qt.LeftButton, Qt.NoModifier, QPoint(holder.width() // 2, holder.height() - 4))
+    assert v.sel == (lay["id"], "layer")                        # a layer chosen stays chosen

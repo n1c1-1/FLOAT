@@ -1347,10 +1347,10 @@ def test_mask_brushes_are_named_by_their_effect_and_the_red_marks_what_is_hidden
     v.request(final_only=True)
     assert v.behind()                                                 # asked, not shown yet: "Updating…"
     assert post.settle() and not v.behind()
-    v._exact_wait = v._main_seq                                       # the exact view on its way: still updating
-    assert v.behind()
+    v._exact_wait = v._main_seq                                       # the exact view on its way: no banner, the
+    assert not v.behind() and v.is_refining()                         # status line says it
     v._on_failed(v._main_seq + 1, "exact", "x")                       # it failed: the half stays, nothing to wait for
-    assert not v.behind()
+    assert not v.behind() and not v.is_refining()
     said = []
     v.toasted.connect(said.append)
     x = next(b for b in widgets_of(v, QPushButton) if b.toolTip().startswith("Remove Brush from the mask"))

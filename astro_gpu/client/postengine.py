@@ -850,6 +850,48 @@ class _LazySources(Mapping):
         return len(self._makers)
 
 
+#: the detection of a large stars image is made tile by tile: its time grows faster than its size (the owner's M27,
+#: 16 Mpx, 23 700 stars: 48 s at once, the message "Finding the stars…" up for minutes while Post rendered; 2.7 s in
+#: tiles of 512 px)
+STAR_TILE = 512
+STAR_TILE_SLACK = 32
+
+
+def _tiled_extract(sub: np.ndarray, thresh: float, err: float, **kw):
+    """sep's extraction (``core.imgutil.sep_extract``) of ``sub`` tile by tile: each tile extracted over its own box
+    grown to every pixel group above the threshold that reaches into it (and ``STAR_TILE_SLACK`` px more), so that
+    each object is found whole, with its neighbours, as on the whole image; an object belongs to the tile its centre is
+    in. (Two extractions of the whole image do not give the same measures either: sep's deblending varies from one run
+    to the next; the tiles stay within that.)"""
+    from ..core.imgutil import sep_extract
+    H, W = sub.shape
+    if H * W <= 4 * STAR_TILE * STAR_TILE:
+        return sep_extract(sub, thresh, err=err, **kw)
+    over = cv2.dilate((sub > thresh * err).astype(np.uint8), np.ones((5, 5), np.uint8))
+    _n, _lab, st, _c = cv2.connectedComponentsWithStats(over, connectivity=8)
+    left, top, right, bottom = st[1:, 0], st[1:, 1], st[1:, 0] + st[1:, 2], st[1:, 1] + st[1:, 3]
+    out = []
+    m = STAR_TILE_SLACK
+    for y0 in range(0, H, STAR_TILE):
+        y1 = min(H, y0 + STAR_TILE)
+        rows = (top < y1) & (bottom > y0)
+        for x0 in range(0, W, STAR_TILE):
+            x1 = min(W, x0 + STAR_TILE)
+            sel = rows & (left < x1) & (right > x0)
+            ya, yb, xa, xb = y0, y1, x0, x1
+            if sel.any():
+                ya, yb = min(ya, int(top[sel].min())), max(yb, int(bottom[sel].max()))
+                xa, xb = min(xa, int(left[sel].min())), max(xb, int(right[sel].max()))
+            ya, yb, xa, xb = max(0, ya - m), min(H, yb + m), max(0, xa - m), min(W, xb + m)
+            o = sep_extract(np.ascontiguousarray(sub[ya:yb, xa:xb]), thresh, err=err, **kw)
+            x, y = o["x"] + xa, o["y"] + ya
+            o = o[(y >= y0) & (y < y1) & (x >= x0) & (x < x1)]
+            o["x"] += xa
+            o["y"] += ya
+            out.append(o)
+    return np.concatenate(out)
+
+
 def find_stars(L: np.ndarray) -> np.ndarray:
     """(n, 3) float32: the stars of a stars image (``L``: its luminance at full resolution), each (x, y, r): found as
     the combination finds those of its continuum (the comment above: SExtractor's detection, eight sky sigmas), r its
@@ -858,7 +900,6 @@ def find_stars(L: np.ndarray) -> np.ndarray:
     it."""
     import sep
 
-    from ..core.imgutil import sep_extract
     from ..stages.combine import STAR_SIGMA
     none = np.zeros((0, 3), np.float32)
     data = np.ascontiguousarray(L, np.float32)
@@ -871,7 +912,7 @@ def find_stars(L: np.ndarray) -> np.ndarray:
         rms = 1.4826 * float(np.median(np.abs(v - np.median(v))))     # the background's noise
         if rms <= 0:
             rms = DISPLAY_STEP * max(float(np.abs(sub).max()), 1e-12)
-        objs = sep_extract(sub, STAR_SIGMA, err=rms, minarea=4, deblend_cont=0.005)
+        objs = _tiled_extract(sub, STAR_SIGMA, rms, minarea=4, deblend_cont=0.005)
     except Exception:  # noqa: BLE001 - sep refuses the image (too small a box): no star
         return none
     if len(objs) == 0:

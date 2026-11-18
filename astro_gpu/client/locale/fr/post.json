@@ -420,5 +420,8 @@
   "Graph settings": "Réglages du graphe",
   "Copies the settings Inspect gave this block in the graph into this layer: how the stars go back, the stretch, the sliders, and a combination's hues and intensities. The layer keeps its own settings otherwise; Ctrl+Z takes the copy back": "Copie dans ce calque les réglages que l'Inspection a donnés à ce bloc dans le graphe : le retour des étoiles, l'étirement, les curseurs, et les teintes et intensités d'une combinaison. Sinon le calque garde ses propres réglages ; Ctrl+Z annule la copie",
   "“{name}” has the graph's settings already": "« {name} » a déjà les réglages du graphe",
-  "Graph settings on “{name}”": "Réglages du graphe sur « {name} »"
+  "Graph settings on “{name}”": "Réglages du graphe sur « {name} »",
+  "< {t} s on screen": "< {t} s à l'écran",
+  "Refining…": "Affinage…",
+  "“{a}” and “{b}” are made again at every setting: hide them (eye) while you adjust": "« {a} » et « {b} » recalculent à chaque réglage : masquez-les (œil) le temps du réglage"
 }
