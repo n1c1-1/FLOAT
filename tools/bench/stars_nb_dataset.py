@@ -409,7 +409,8 @@ def do_field(key: str, device: str) -> dict:
         raise SystemExit(f"no {kind} combination in the project")
     fw = {i["role"]: p.workflow(i["pid"]) for i in comb.source["fusion"]["inputs"]} if comb else {}
     if comb is None:                                        # a colour project: its one workflow
-        fw = {"image": p.workflow(p.current)}
+        one = next(w for w in p.workflows if not (w.source or {}).get("fusion"))     # the colour image's own workflow
+        fw = {"image": one}
     for w in fw.values():                                   # the Stars block where the template has it
         api.set_option(p, w.id, "stars", "neural")
     if comb is not None:
