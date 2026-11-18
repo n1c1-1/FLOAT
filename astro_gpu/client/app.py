@@ -1390,7 +1390,9 @@ class Main(QMainWindow):
             # the tab clicked is lit by its group at once: the page shown keeps its tab while a block's draft asks
             # (the tester: Post underlined, Inspect on screen with its question), the other one only once it is left
             self.mode_btns[self.mode].setChecked(True)
-        if i != self.mode and not self.settle_drafts(gradient_only=i in (0, 1)):
+        # Inspect's block page left for the Graph asks too: the page is the block's, a setting not applied is asked
+        # when it is left (only the Gradient view's draft is asked going to Inspect: its panel is the same there)
+        if i != self.mode and not self.settle_drafts(gradient_only=i in (0, 1) and not (was == 1 and i == 0)):
             return                                       # a block's draft: Stay
         if s is not None:
             if i == 2:

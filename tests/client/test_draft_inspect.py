@@ -1,6 +1,6 @@
 """Inspect's settings panel is the same panel as the Graph's (panel.Panel): a setting of a computed block changed there
 is the block's draft, shown at once, its bar at the panel's foot, nothing outdated. The beta tester's crash replayed: a
-Calibration setting changed in Inspect, the Graph shown and Inspect again without answering, then Try variant: a valid
+Calibration setting changed in Inspect, the Graph asked for (the question: Stay) and Inspect again, then Try variant: a valid
 variant row (a Calibration held by the stack, not by a block: the variant copies the whole stack), never an exception.
 The same on Registration and Stacking. On a copy of the computed test project (tests/client/test_inspect.py's window)."""
 from __future__ import annotations
@@ -67,7 +67,7 @@ def _change_a_setting(win, stage):
                                          ("empilement", "stack")])
 def test_a_setting_changed_in_inspect_left_to_the_graph_and_back_then_try_variant(dwin, monkeypatch, step, stage):
     win, s = dwin, dwin.s
-    monkeypatch.setenv(DRAFT_ANSWER_ENV, "stay")       # any question asked would keep the draft: none is expected
+    monkeypatch.setenv(DRAFT_ANSWER_ENV, "stay")       # the question asked on the way out is answered Stay
     inspect(win, step, 0)
     assert isinstance(win.tune.panel, Panel)           # the Graph's panel component
     n, states = len(s.paths), _states(s)
@@ -75,8 +75,9 @@ def test_a_setting_changed_in_inspect_left_to_the_graph_and_back_then_try_varian
     assert _states(s) == states and s.pending_change.step == step        # a draft: nothing outdated
     bar = _bar(win.tune.panel)
     assert bar is not None and "→" in bar.what.text() and bar.cost.text().startswith("Computes again")
-    win.set_mode(0)                                    # the Graph, not answered: the panels show the same draft
+    win.set_mode(0)                                    # the Graph: the question is asked, Stay (the page keeps the draft)
     settle(win)
+    assert win.mode == 1
     win.set_mode(1)
     settle(win)
     assert s.pending_change and win.mode == 1 and s.sel_step == step
