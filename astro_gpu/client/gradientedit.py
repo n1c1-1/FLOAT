@@ -1012,12 +1012,14 @@ class GradientEditor(QObject):
         cv = QVBoxLayout(col)
         cv.setContentsMargins(0, 0, 10, 0)
         cv.setSpacing(10)
+        bar = self._actions_part()                     # the draft bar: at the column's top, as every block's page has it
+        cv.addWidget(bar)
         cv.addWidget(self._method_part())
         cv.addWidget(self._tools_part())
         cv.addStretch(1)
-        cv.addWidget(self._actions_part())
         col.ensurePolished()
         col.setFixedWidth(max(240, col.sizeHint().width()))   # once, from what it holds: the image never moves
+        bar.hide()                                     # there with a draft only (the sync shows it)
         hb.addWidget(col)
         box = QWidget()
         bl = QVBoxLayout(box)
@@ -1203,8 +1205,8 @@ class GradientEditor(QObject):
 
     def _actions_part(self) -> QWidget:
         """The draft bar every block's panel has (blockdraft.DraftBar), in the column's width: the draft's state or its
-        changes, what Apply computes again, Reset and Try variant side by side, Apply under them. Always there (greyed
-        without a draft): the image never moves."""
+        changes, what Apply computes again, Reset and Try variant side by side, Apply under them. At the top of the
+        column, there with a draft only, as the Panel's."""
         u = self._ui
         bar = DraftBar(narrow=True)
         bar.what.setMinimumHeight(2 * bar.what.fontMetrics().height() + 4)
@@ -1586,6 +1588,7 @@ class GradientEditor(QObject):
                 ch = self.draft_change() if draft else None
                 u["bar"].show_draft([self._status()] + ([ch["what"]] if ch else []), self.cost_text() if draft else "")
                 u["state"].setStyleSheet(f"color: {WARN};" if draft else "color: #8b95a5;")
+                u["bar"].setVisible(bool(draft))
             if "title" in u:
                 u["title"].setText(_("Gradient") + "  ·  " + self.p.name)
                 u["title"].setToolTip(_("The stack with its sky gradient removed, in the camera's colours, as every "

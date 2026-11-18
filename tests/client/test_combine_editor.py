@@ -242,7 +242,7 @@ def test_the_preview_is_the_stage_result_through_the_output_s_default_render(ed)
 def test_the_block_shows_the_draft_bar_its_palette_cards_and_balance(ed):
     from astro_gpu.client.blockdraft import DraftBar
     u = ed._ui
-    assert isinstance(u["bar"], DraftBar) and u["bar"].isVisibleTo(ed.page)
+    assert isinstance(u["bar"], DraftBar) and not u["bar"].isVisibleTo(ed.page)      # there with a draft only
     assert u["bar"].b_apply.text() == "Apply" and not u["apply"].isEnabled()
     assert [u["palette"].itemText(i) for i in range(u["palette"].count())] == ["Hubble (S-H-O)", "Custom"]
     assert u["palette"].currentData() == "hubble"
@@ -529,7 +529,7 @@ def test_on_m27_the_editor_applies_in_one_step_and_tries_a_variant(qapp, tmp_pat
     try:
         s = w.s
         q, ed = _open_combination(w)
-        assert ed.page_shown() and ed._ui["bar"].isVisible() and not w.tune.panel.isVisible()
+        assert ed.page_shown() and not ed._ui["bar"].isVisible() and not w.tune.panel.isVisible()
         assert ed.result is not None and ed.small["k"] >= 2           # the reduced copy of the inputs
         st = ed._stage()
         key = s.stage_key(q, st)

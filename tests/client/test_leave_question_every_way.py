@@ -140,3 +140,84 @@ def test_real_every_way_out_of_a_combination_block_with_a_draft_asks_first(qapp,
     finally:
         w.s.pending_change = None
         w.close()
+
+
+# ---------------------------------------------------------------- the draft bar is at one place in every block's page
+BAR_TOP_MAX = 260        # px under the top of Inspect's page: the bar is the first thing of the settings column
+
+
+def bar_of(win, step):
+    """The draft bar of the block page shown (the one visible, None when there is none)."""
+    from astro_gpu.client.blockdraft import DraftBar
+    bars = [b for b in win.tune.findChildren(DraftBar) if b.isVisible()]
+    assert len(bars) <= 1, f"{step}: {len(bars)} draft bars"
+    return bars[0] if bars else None
+
+
+def assert_bar_at_the_top(win, step):
+    """The rule of every block's page: no bar without a draft (nothing greyed), with a draft one bar at the top of the
+    settings column, outside any scroll area, with its three buttons."""
+    from PySide6.QtCore import QPoint
+    from PySide6.QtWidgets import QScrollArea
+    bar = bar_of(win, step)
+    assert bar is not None, f"{step}: a draft with no bar"
+    assert not any(isinstance(a, QScrollArea) for a in _parents(bar, win.tune)), f"{step}: the bar scrolls away"
+    top = bar.mapTo(win.tune, QPoint(0, 0)).y() - win.tune.pages.mapTo(win.tune, QPoint(0, 0)).y()
+    assert top <= BAR_TOP_MAX, f"{step}: the bar is at {top} px, not at the top of the column"
+    assert bar.b_apply.isEnabled() and bar.b_reset.isEnabled()
+
+
+def _parents(w, stop):
+    w = w.parentWidget()
+    while w is not None and w is not stop:
+        yield w
+        w = w.parentWidget()
+
+
+@pytest.mark.parametrize("step", BLOCKS)
+def test_the_draft_bar_is_at_the_top_of_every_block_page_with_a_draft_only(lwin, step):
+    win = lwin
+    inspect(win, step, 0)
+    settle(win, 2)
+    assert bar_of(win, step) is None, f"{step}: a bar without a draft"
+    make_draft(win, step)
+    settle(win, 2)
+    try:
+        assert_bar_at_the_top(win, step)
+    finally:
+        if step == "fond":
+            win.tune.grad_editor.reset()                   # Reset, as the bar's button
+        else:
+            win.tune.panel.draft_reset()
+    settle(win, 2)
+    assert bar_of(win, step) is None, f"{step}: the bar stays after the draft went"
+
+
+@pytest.mark.parametrize("step", ("fusion", "composition"))
+def test_real_the_draft_bar_is_at_the_top_of_the_combination_editors_with_a_draft_only(qapp, tmp_path, step):
+    from test_combination_family import M27, _whole, pump
+
+    from astro_gpu.client.graphnode import combine_kind
+    w = _whole(tmp_path, M27)
+    try:
+        s = w.s
+        q = next(q for q in s.paths if combine_kind(q) and
+                 not all(i.get("image") == "stars" for i in q.source["fusion"]["inputs"]))
+        s.select(index=s.index_of(q.pid), step=step)
+        w.set_mode(1)
+        settle(w)
+        pump(3)
+        ed = w.tune.comb_editor if step == "fusion" else w.tune.layers_editor
+        assert ed.page_shown() and bar_of(w, step) is None
+        if step == "fusion":
+            ed.set_intensity("SII", 1.5)
+        else:
+            ed.set_slider("saturation", 3.0)
+        pump(0.3)
+        assert_bar_at_the_top(w, step)
+        ed.reset()
+        pump(0.3)
+        assert bar_of(w, step) is None
+    finally:
+        w.s.pending_change = None
+        w.close()

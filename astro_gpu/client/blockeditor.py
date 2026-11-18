@@ -8,8 +8,8 @@ What every such editor is, from this base:
   change, the graph stays up to date; each edit one step of the window's one Undo order (a slider dragged: one step,
   let go); a setting back to its applied value leaves the draft; a block without a result takes a change at once;
 * the page in Inspect's centre: the title row (the block's name, "Previous settings" when its result is outdated, the
-  comparison Draft / Applied / Split), the editor's column at the left (its settings, then the draft bar pinned at the
-  foot: blockdraft.DraftBar, Apply / Try variant / Reset), the image at the right with what it shows in a tag, a cover
+  comparison Draft / Applied / Split), the editor's column at the left (the draft bar pinned at its
+  top, there with a draft only, as every block's page has it: blockdraft.DraftBar, Apply / Try variant / Reset, then its settings), the image at the right with what it shows in a tag, a cover
   saying why there is nothing to show (an input to wire, not computed yet, with its Run to here), and the settings
   panel at the right of the image (layout.Dock, as the Gradient's: the draft's Undo and Redo, the measurements, the
   display);
@@ -685,9 +685,10 @@ class DraftEditor(QObject):
         lv = QVBoxLayout(left)
         lv.setContentsMargins(0, 0, 0, 0)
         lv.setSpacing(8)
-        lv.addWidget(scroll, 1)
         bar.setFixedWidth(PANEL_W - 8)
-        lv.addWidget(bar)
+        lv.addWidget(bar)                              # the draft bar at the column's top, there with a draft only
+        bar.hide()
+        lv.addWidget(scroll, 1)
         body.addWidget(left)
         box = QWidget()
         bl = QVBoxLayout(box)
@@ -801,6 +802,7 @@ class DraftEditor(QObject):
             u["bar"].show_draft([self._status()] + ([t for _k, t in self.changes()] if ch else []),
                                 self.cost_text() if draft else "")
             u["state"].setStyleSheet(f"color: {WARN};" if draft else "color: #8b95a5;")
+            u["bar"].setVisible(bool(draft))
             why = _("No draft: change a setting first")
             for k in ("reset", "variant", "apply"):
                 u[k].setEnabled(draft)
