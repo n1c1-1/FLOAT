@@ -229,7 +229,7 @@ def plan_to(api, p, wfs: list, block: str, device: str):
                 redo.add(k)
     planner = r2.Planner(keys.project, redo=redo, **kw)
     targets = []
-    for o in p.workflows:
+    for o in (p.workflow(x) for x in wfs):
         try:
             chain = keys.chain(o)
         except ValueError:
@@ -453,8 +453,14 @@ def main(argv=None) -> int:
     sys.path.insert(0, str(ROOT))
     os.environ.setdefault("ASTRO_GPU_HOME", str(WORK / "_home"))
     dev = device_check(a.device)
-    for key in a.fields.split(","):
-        log(f"{key}: {do_field(key, dev)}")
+    keys = a.fields.split(",")
+    if len(keys) > 1:                                       # the overlay is made once per process: one field each
+        import subprocess
+        rc = 0
+        for key in keys:
+            rc |= subprocess.run([sys.executable, __file__, "run", "--fields", key, "--device", a.device]).returncode
+        return rc
+    log(f"{keys[0]}: {do_field(keys[0], dev)}")
     return 0
 
 
