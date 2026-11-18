@@ -2,8 +2,8 @@
 
 On a block with computed results a change of setting is a DRAFT of that block (``Draft``): the panel shows it at once
 (the radio checked, the slider moved), nothing computed is outdated, the graph and its states are unchanged. While the
-draft differs from the block's applied settings, ONE bar (``DraftBar``) is pinned at the foot of the panel (in the
-Gradient view, where its draft buttons are): what changed (old → new), what Apply would compute again and about how
+draft differs from the block's applied settings, ONE bar (``DraftBar``) is pinned at the top of the block's settings
+column, under its header, in every block editor (none without a draft): what changed (old → new), what Apply would compute again and about how
 long, and Apply, Try variant, Reset. Leaving the block while it holds a draft (another block, another page, Home, Close,
 Run, Save) asks the question every way out of a project asks (``ask_leave``, the form of ``Main.ask_save``): Apply, Try
 variant, Discard or Stay; a draft never survives leaving its block.
