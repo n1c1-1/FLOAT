@@ -30,6 +30,11 @@ from astro_gpu.client.postengine import Composer  # noqa: E402
 
 pytestmark = pytest.mark.level3
 
+if os.environ.get("ASTRO_GPU_POST_THREADS"):        # a smaller machine's budget (a laptop's 4 cores): every library's
+    import torch                                    # threads held to it, Post's bands too (client/postengine)
+    torch.set_num_threads(int(os.environ["ASTRO_GPU_POST_THREADS"]))
+    cv2.setNumThreads(int(os.environ["ASTRO_GPU_POST_THREADS"]))
+
 H, W = 4000, 6000                                   # 24 Mpx
 #: the calibration kernel's time on the machine the thresholds were set on (CPU, s): a bigger time, a slower machine
 CALIBRATION_S = 0.10
