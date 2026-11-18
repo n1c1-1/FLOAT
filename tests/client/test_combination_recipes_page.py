@@ -95,7 +95,9 @@ def test_a_newer_recipe_is_said_and_applied_on_the_users_click(win, env, tmp_pat
 
 def test_the_parameters_of_a_recipe_run_on_its_own_stage_are_set_in_the_panel(win, env, tmp_path, monkeypatch):
     """An H-O whose recipe the application changed (it no longer is the frozen H-O: it runs on the recipe stage):
-    updated, its panel shows the recipe's parameters, by their names, and a change is stored in the block."""
+    updated, its panel shows the recipe's parameters, by their names, and a change is stored in the block: a hue of a
+    combination whose filters Post mixes is a graph setting of the block (client/postfusion.py), its stored recipe
+    value as it was."""
     from PySide6.QtWidgets import QDoubleSpinBox
     made_from(win, env, "filters_min")
     b = _place(win, "ho")
@@ -121,9 +123,14 @@ def test_the_parameters_of_a_recipe_run_on_its_own_stage_are_set_in_the_panel(wi
         tips = {x.toolTip() for x in win.graph.panel.findChildren(QLabel) if x.objectName() == "swatch"}
         assert tips == {"Hα hue 0°", "O III hue 180°"}, tips
         q = next(v for v in win.s.paths if (v.source or {}).get("fusion"))
+        was = (win.s.stored.blocks[b].params.get(recipes.RECIPE_STAGE) or {}).get("values", {}).get("hue_oiii")
         win.s.apply_change([q], {"kind": "combine", "values": {"hue_oiii": 190.0}})   # the editor's Apply
         settle(win, 3)
-        assert win.s.stored.blocks[b].params[recipes.RECIPE_STAGE]["values"]["hue_oiii"] == 190.0
+        from astro_gpu.graphcore.rules import GRAPH_SETTINGS
+        assert win.s.graph_tunable(q.pid) and win.s.fusion_graph(q.pid)["hues"]["OIII"] == 190.0
+        assert win.s.stored.blocks[b].settings[GRAPH_SETTINGS]["hues"]["OIII"] == 190.0
+        assert (win.s.stored.blocks[b].params.get(recipes.RECIPE_STAGE) or {}).get("values", {}).get("hue_oiii") == was
+        assert win.s.combine_stored(q.pid)["values"]["hue_oiii"] == 190.0              # what the editor reads
     finally:
         monkeypatch.setattr(combos, "FOLDER", None)
         combos.refresh()

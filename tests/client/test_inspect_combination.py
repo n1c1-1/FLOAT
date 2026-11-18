@@ -29,7 +29,9 @@ def test_inspect_on_a_combination_not_computed_shows_its_plan(win, env):
 
 def test_inspect_on_a_computed_combination_shows_the_combined_image(win, env):
     """A combination computed (H-O, S-H-O of a mono filters workflow) said "No image for this block": the block had
-    no picture of its own. It shows the combined image its stage saves, as the Stacking block shows the stack."""
+    no picture of its own. It shows its combined image: for a combination whose filters Post mixes, its filters mixed
+    at its applied graph settings on the reduced copy (client/postfusion.py: its stored result holds the engine's
+    values, which the graph's settings may have left), "Applied settings · reduced copy"."""
     import numpy as np
 
     from astro_gpu.client.services.inspect import service_of
@@ -70,5 +72,6 @@ def test_inspect_on_a_computed_combination_shows_the_combined_image(win, env):
     texts = [x.text() for x in win.tune.findChildren(QLabel) if x.isVisible()]
     assert "No image for this block." not in texts, texts
     img = win.tune.view.image() if win.tune.view is not None else None
-    assert img is not None and img.name == "Applied result", texts
+    assert s.graph_tunable(q.pid)
+    assert img is not None and img.name == "Applied settings · reduced copy", texts
     assert not env["errors"], env["errors"]
