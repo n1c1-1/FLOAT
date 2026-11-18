@@ -99,7 +99,9 @@ def install_overlay(src: str, dst: str) -> None:
     def find(keys, store, seen=None):                        # the earlier results of the project's own store
         t = smod.Store.__new__(smod.Store)
         t.path, t._usable = src_store, {}
-        return orig_find(keys, t, seen)
+        got = orig_find(keys, t, seen)
+        # a result of the same key made here stands for itself, not the project's earlier one
+        return {(b, k): v for (b, k), v in got.items() if not (dstp / smod.STORE / b / k / "manifest.json").is_file()}
     smod.find_earlier = find
     runner2.find_earlier = find
     from astro_gpu import api
