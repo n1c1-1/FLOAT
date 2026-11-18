@@ -36,7 +36,7 @@ def word(key: str) -> str:
 
 
 #: what a draft of the graph's settings alone costs (client/postfusion.py; the family's bars say it alike)
-GRAPH_ONLY = "Graph settings: nothing is computed again · Post's layers keep their own (Graph settings copies them)"
+GRAPH_ONLY = "Graph settings: nothing is computed again · Post's layers keep theirs"
 
 
 def owned(what: str, owner: str, change: str = "") -> str:

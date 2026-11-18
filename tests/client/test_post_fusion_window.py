@@ -287,8 +287,7 @@ def test_inspect_s_apply_of_a_hue_sets_the_graph_s_settings_and_leaves_post_s_la
     before = copy.deepcopy(s.p.post)
     was = copy.deepcopy(_master(pv))
     ed.set_hue("OIII", 190.0)
-    assert ed.cost_text() == ("Graph settings: nothing is computed again · Post's layers keep their own (Graph "
-                              "settings copies them)")
+    assert ed.cost_text() == "Graph settings: nothing is computed again · Post's layers keep theirs"
     i18n.set_language("fr")                                          # (said in the language shown, never kept from before)
     try:
         assert ed.cost_text().startswith("Réglages du graphe : rien n'est recalculé")

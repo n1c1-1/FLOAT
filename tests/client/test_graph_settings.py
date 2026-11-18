@@ -117,3 +117,30 @@ def test_the_button_says_what_it_copies(full):
     finally:
         pv.shutdown()
         pv.deleteLater()
+
+
+@pytest.mark.parametrize("language", ["en", "fr"])
+def test_the_words_of_the_graph_settings_fit_and_say_the_copy(qapp, language):  # noqa: F811
+    """The judge's three texts: Inspect's draft bar says the graph settings whole in the editor's column (it was cut:
+    "... (Réglages du graph…"); Try variant's reason is one sentence (it had two colons); the Combine layers layer's
+    note in Post says it took a copy, never "the same settings as its block"."""
+    from astro_gpu.client import i18n
+    from astro_gpu.client.blockdraft import GRAPH_ONLY, DraftBar
+    from astro_gpu.client.blockeditor import PANEL_W
+    from astro_gpu.client.layersedit import NO_VARIANT
+    from astro_gpu.client.post3 import PART_NOTES
+    i18n.set_language(language)
+    try:
+        bar = DraftBar(narrow=True)
+        bar.setFixedWidth(PANEL_W - 8)                   # (the editor's column)
+        bar.show()
+        qapp.processEvents()
+        bar.show_draft(["Draft · 1 change", "Saturation 0 → +1.0"], i18n._(GRAPH_ONLY))
+        assert "…" not in bar.cost.text() and bar.cost.text().replace("\n", " · ") == i18n._(GRAPH_ONLY)
+        bar.close()
+        why = i18n._("No variant: {why}").format(why=i18n._(NO_VARIANT))
+        assert why.count(":") == 1, why
+        note = i18n._(PART_NOTES["combined"])
+        assert ("copy" if language == "en" else "copie") in note and i18n._("Graph settings") in note
+    finally:
+        i18n.set_language("en")

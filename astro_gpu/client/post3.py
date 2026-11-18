@@ -171,8 +171,8 @@ COPY = " (copy)"                                         # a piece of the layer 
 #: what the Stars block's images are, under their name in the properties
 PART_NOTES = {"starless": "The Stars/background block's starless image, stretched like the whole image.",
               "stars": "The Stars/background block's stars alone, on black: in Screen mode above the background.",
-              "combined": "The starless image and the stars, recombined. The same settings as its block in the "
-                          "graph."}
+              "combined": "The starless image and the stars, recombined. It took a copy of its block's graph "
+                          "settings when it was made; Graph settings copies them again."}
 #: a workflow layer's name made from its workflow's stored name, shown with the name the graph shows (a combination
 #: whose recipe became H-O, stored "S-H-O": "H-O · Combine layers"): (stored, shown), the model's, never saved
 RETITLE = "retitle"

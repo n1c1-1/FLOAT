@@ -35,7 +35,7 @@ from .widgets import label
 #: the draft's keys of a layer's sliders: "slider.<key>" (render/sliders.py), the Arcsinh's Strength among them
 SLIDER = "slider."
 #: the one-line reason Try variant is greyed
-NO_VARIANT = "Combine layers has no workflow of its own: Try variant takes the stars' setting alone"
+NO_VARIANT = "Combine layers has no workflow of its own, only its stars' setting can be tried as a variant"
 #: the stars' combination's setting changed: what it asks
 STARS_RUN = "Needs a run: the stars' combination is computed again by Run"
 
