@@ -132,3 +132,23 @@ def test_each_filter_at_a_level_between_two_is_as_close_as_at_the_half(key, para
     mean, p999 = gap(shown, exact)
     hmean, hp999 = gap(half, exact)
     assert mean <= hmean + 0.5 and p999 <= hp999 + 3, (mean, p999, hmean, hp999)
+
+
+def test_a_new_screen_size_lets_the_former_one_s_images_go():
+    """The first picture is made before the view knows its size (at the half), the next ones at the size shown: the
+    half's stack must not stay, it took the room of the full resolution's steps (every exact view of the owner's
+    NGC 7000 made its twelve filters again)."""
+    pr = Sky(600, 400)
+    cp = Composer(pr, cache_bytes=400_000_000)
+    layers = pe.snapshot(stack(HEAVY[4:8]))
+    cp.screen_at(1)
+    cp.compose(layers, 1, track=True)
+    held = [lru for lru in (cp.images, cp.steps, cp.backdrops) if any(t == 1 for t, _g in lru._used.values())]
+    assert held
+    cp.screen_at(1.5)
+    cp.compose(layers, 1.5, track=True)
+    for lru in (cp.images, cp.steps, cp.backdrops, cp.parts):
+        assert not any(t == 1 for t, _g in lru._used.values())
+    assert any(t == 1.5 for t, _g in cp.steps._used.values())
+    cp.screen_at(1.5)                                        # the same size again: nothing goes
+    assert any(t == 1.5 for t, _g in cp.steps._used.values())

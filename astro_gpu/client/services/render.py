@@ -859,6 +859,8 @@ class Renderer:
             emit(self.run(first, stop))
             t0 = time.perf_counter()
             self.source.engine_ms = 0.0
+        if req.kind == "half" and req.box is None and req.level > 0:
+            cp.screen_at(req.level)                           # (a new size: the former one's images go)
         comp = cp.compose(layers, req.level, req.box, want=req.want, thumbs=req.thumbs, stop=stop,
                           draft=req.kind == "draft", hists=() if req.kind == "draft" else req.hists,
                           track=req.kind in ("draft", "half", "refine"))

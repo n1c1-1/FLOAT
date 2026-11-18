@@ -7,7 +7,8 @@ Two kinds of checks:
   filter moved and those above it only, at the drag's size; nothing is made at full resolution before the screen's
   picture of a release;
 - the time it takes, the best of five: a light gesture's picture in 0.15 s, a heavy filter's own slider in 0.4 s, the
-  screen's picture of a release in 1 s. Against a calibration kernel: on a machine more than three times slower than
+  screen's picture of a release in 1 s (2 s for a setting of the layer under its twelve filters, which are all made
+  again). Against a calibration kernel: on a machine more than three times slower than
   the one the thresholds were set on, the timed checks are skipped, never passed."""
 from __future__ import annotations
 
@@ -299,4 +300,6 @@ def test_the_times_of_a_layer_setting_under_the_stack_at_the_window_s_size(big, 
     print()
     print(f"gate, a layer's setting: draft {best_draft:.3f} s, release {best_release:.3f} s, machine x{slow_factor:.2f}")
     timed(slow_factor, 0.15, best_draft, "a layer setting's draft under the stack")
-    timed(slow_factor, 1.0, best_release, "the screen's picture of a layer setting under the stack")
+    # 2 s, not 1: a setting of the layer itself makes all twelve filters again, heavy ones among them, at the
+    # screen's size (the owner: 1.6 s is acceptable behind twelve filters); its drafts keep the light gesture's 0.15 s
+    timed(slow_factor, 2.0, best_release, "the screen's picture of a layer setting under the stack")

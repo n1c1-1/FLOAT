@@ -1781,6 +1781,11 @@ class ByteLRU:
         self._holders.setdefault(key, set()).add(holder)
         self._mark(key)
 
+    def drop_level(self, level) -> None:
+        """Every image last used by a composition at ``level`` goes (a screen level the view left)."""
+        for k in [k for k in self.items if self._used.get(k, (None,))[0] == level]:
+            self._drop(k)
+
     def _drop(self, key):
         a = self.items.pop(key, None)
         if a is not None:
@@ -2010,6 +2015,7 @@ class Composer:
         self.progress = None                                # called with each filter a composition applies (the banner)
         self.costs: dict = {}                               # filter id -> seconds it took at a screen level, last time
         self.applied: set = set()                           # the filters the last composition applied
+        self._screen = None                                 # the level of the screen's picture (``screen_at``)
         self._step_thumbs: OrderedDict = OrderedDict()      # a filter's step -> its mask's thumbnail (``_own_jump``)
         self.skipped = 0                                    # rows the last composition did not compute
         self.plan_errors = 0                                # rows whose digest the plan did not foresee (tests: 0)
@@ -2022,6 +2028,17 @@ class Composer:
         _COMPOSERS.add(self)
 
     # ------------------------------------------------------------ geometry
+    def screen_at(self, level) -> None:
+        """The screen's picture is now made at ``level`` (the view's size or zoom changed): what was kept at its former
+        level goes. Kept, the first picture's stack (made at the half before the view knew its size) took the room
+        of the full resolution's steps: every exact view made its twelve filters again (13 s on a 27 Mpx image, not
+        1.2). A level a draft or a region uses is not a screen level and is left to the caches."""
+        old, self._screen = self._screen, level
+        if old is None or old == level or old == 0:
+            return
+        for lru in (self.images, self.steps, self.backdrops, self.parts):
+            lru.drop_level(old)
+
     def canvas_of(self, layers: list[dict]) -> Canvas | None:
         pids = []
         for lay in reversed(layers):
