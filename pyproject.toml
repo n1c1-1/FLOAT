@@ -77,4 +77,5 @@ markers = [
     "network: needs internet access",
     "slow: long-running, real data sets (level 4: tools/t.py 4)",
     "level3: too heavy for the fast suite (set from tests/levels.toml, not in the test files; tools/t.py 3)",
+    "alone: timed against thresholds: never beside other tests (tools/t.py runs them after the parallel part)",
 ]

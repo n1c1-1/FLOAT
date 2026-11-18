@@ -13,6 +13,11 @@ QT_QPA_PLATFORM=offscreen, one BLAS/OpenMP thread per worker so that the workers
 ASTRO_TEST_LEVEL for the time budget printed at the end and ASTRO_TEST_TIMEOUT, the seconds after which a test that
 waits for ever is killed with its traceback (tests/conftest.py). Every pytest-xdist worker has its own
 private ASTRO_GPU_HOME and temporary folder (tests/conftest.py).
+
+The tests marked ``alone`` (Post's speed gate, tests/client/test_post_speed.py: times against thresholds) never run
+beside the parallel workers: a parallel run gives them the processor the workers leave (2.5 s for a 1.6 s release, the
+gate failed). They run after the parallel part, one at a time in one process, with the library threads as a user has
+them, so that the gate is always checked, and checked on a quiet machine.
 """
 from __future__ import annotations
 
@@ -102,13 +107,36 @@ def main(argv: list[str]) -> int:
         for var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
             env.setdefault(var, "1")
 
-    cmd = [sys.executable, "-m", "pytest", "-m", MARKS[level], "-q", "-p", "no:cacheprovider"]
-    cmd += ["-n", str(n), "--dist", DIST] if n > 0 else (["-p", "no:xdist"] if _has_xdist() else [])
-    cmd += rest
-    print(f"level {level}: " + (f"{n} workers" if n > 0 else "one process") + "  |  " + shlex.join(cmd[2:]), flush=True)
     low = os.environ.get("ASTRO_TEST_LOW_PRIORITY") == "1" and sys.platform == "win32"
     # ASTRO_TEST_LOW_PRIORITY=1: below-normal priority, the tests' workers included (a training shares the machine)
-    return subprocess.call(cmd, cwd=ROOT, env=env, creationflags=0x4000 if low else 0)
+    flags = 0x4000 if low else 0
+    if n == 0:
+        cmd = [sys.executable, "-m", "pytest", "-m", MARKS[level], "-q", "-p", "no:cacheprovider"]
+        cmd += (["-p", "no:xdist"] if _has_xdist() else []) + rest
+        print(f"level {level}: one process  |  " + shlex.join(cmd[2:]), flush=True)
+        return subprocess.call(cmd, cwd=ROOT, env=env, creationflags=flags)
+    cmd = [sys.executable, "-m", "pytest", "-m", f"({MARKS[level]}) and not alone", "-q", "-p", "no:cacheprovider",
+           "-n", str(n), "--dist", DIST] + rest
+    print(f"level {level}: {n} workers  |  " + shlex.join(cmd[2:]), flush=True)
+    first = subprocess.call(cmd, cwd=ROOT, env=env, creationflags=flags)
+    # then the tests that time themselves, alone, the machine quiet (the library threads as a user has them)
+    quiet = {k: v for k, v in env.items() if k not in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+                                                       "NUMEXPR_NUM_THREADS") or k in os.environ}
+    cmd = [sys.executable, "-m", "pytest", "-m", f"({MARKS[level]}) and alone", "-q", "-p", "no:cacheprovider"]
+    cmd += (["-p", "no:xdist"] if _has_xdist() else []) + rest
+    print(f"level {level}, the timed tests alone: one process  |  " + shlex.join(cmd[2:]), flush=True)
+    second = subprocess.call(cmd, cwd=ROOT, env=quiet, creationflags=flags)
+    return combined(first, second)
+
+
+def combined(*codes: int) -> int:
+    """pytest's exit codes of the two parts as one: a failure in either; "no test collected" (5) only when neither part
+    had any (a file named that holds no timed test is no failure)."""
+    real = [c for c in codes if c != 5]
+    if not real:
+        return 5
+    bad = [c for c in real if c != 0]
+    return bad[0] if bad else 0
 
 
 def _has_xdist() -> bool:

@@ -17,6 +17,9 @@ BLAS thread per worker and the number of parallel workers.
   whatever its level (`pytest file.py::test_x`); `-k name` also lifts level 3.
 - `t.py -j N` sets the workers (default three quarters of the cores, fewer when memory is short); `-j 0` runs in one
   process. Parallel runs need `pytest-xdist`.
+- The tests marked `alone` (Post's speed gate, `tests/client/test_post_speed.py`) time themselves against thresholds:
+  a parallel run never runs them beside the workers. `t.py` runs them after the parallel part, one at a time in one
+  process, with the library threads as a user has them, so that the gate is always checked on a quiet machine.
 - A test running more than 120 s (level 3: 600 s) is killed with the traceback of its threads (`ASTRO_TEST_TIMEOUT`).
 - At the end of a level 1 / 2 run the tests over 2 s and the total time are listed; lighten a slow test or add it to
   `levels.toml` (a list of files, node ids or fnmatch patterns, each with its reason). By name, with no edit:

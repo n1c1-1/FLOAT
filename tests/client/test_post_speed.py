@@ -29,7 +29,8 @@ from test_post import Setup, stars_prep  # noqa: E402
 from astro_gpu.client import postengine as pe  # noqa: E402
 from astro_gpu.client.postengine import Composer  # noqa: E402
 
-pytestmark = pytest.mark.level3
+#: alone: times against thresholds, never beside other tests (tools/t.py runs it after the parallel part)
+pytestmark = [pytest.mark.level3, pytest.mark.alone]
 
 if os.environ.get("ASTRO_GPU_POST_THREADS"):        # a smaller machine's budget (a laptop's 4 cores): every library's
     import torch                                    # threads held to it, Post's bands too (client/postengine)
