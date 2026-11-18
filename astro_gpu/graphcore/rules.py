@@ -121,7 +121,16 @@ def setting_spec(kind, key):
                 return it
     if kind == "combine" and key == "type":
         return ("type", "choice", combos.DEFAULT, combos.offered(), False)
+    if kind in GRAPH_SETTING_KINDS and key == GRAPH_SETTINGS:
+        return (GRAPH_SETTINGS, "dict", None, None, False)
     return None
+
+
+#: the graph's settings of a block of the combination family, set in Inspect and kept on the block (a combination's hues
+#: and intensities, a Combine layers' blend, stretch and sliders): no engine setting, so no part of any result's key. A
+#: layer of Post takes a copy of them when it is made, and again by its Graph settings command (client/postfusion.py)
+GRAPH_SETTINGS = "graph"
+GRAPH_SETTING_KINDS = ("combine", "combine_layers")
 
 
 def inherited(p, kind):

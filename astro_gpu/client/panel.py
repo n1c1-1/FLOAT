@@ -1726,9 +1726,6 @@ class Panel(QWidget):
                     if hasattr(self.s, "change_cost") else None
             except Exception:  # noqa: BLE001 - the cost is a hint: Apply works without it
                 d.cost = None
-        if self._layer_only(d):                          # Post's layers alone: said as the editors' bars say it
-            from .blockdraft import POST_ONLY
-            return _(POST_ONLY)
         c = d.cost
         if c is None:
             return ""
@@ -1746,8 +1743,6 @@ class Panel(QWidget):
         bar.show_draft(ch.get("whats") or [ch["what"]], self._draft_cost(d))
         q = p if p.pid in d.pids else (self._draft_paths(d) or [p])[0]
         why = self.variant_why()
-        if not why and self._layer_only(d):              # Post's layers alone: a new version of Post (the family's rule)
-            bar.b_variant.setToolTip(_("The draft in a new version of Post: the version shown stays as it is"))
         if why:                                          # never an error: greyed, its reason on hover
             bar.b_variant.setEnabled(False)
             bar.b_variant.setToolTip(_("No variant: {why}").format(why=why))
@@ -1797,16 +1792,10 @@ class Panel(QWidget):
         self.draftChanged.emit()
         return True
 
-    def _layer_only(self, d) -> bool:
-        try:
-            return bool(self.s.layer_only(self.draft_change(d), self._draft_paths(d)))
-        except (AttributeError, KeyError, ValueError):
-            return False
-
     def variant_why(self) -> str:
         """Why the draft has no Try variant ("" when it has one): the bar greys it, the leave question leaves it out."""
         d = getattr(self.s, "pending_change", None)
-        if not d or self._layer_only(d):
+        if not d:
             return ""
         paths = self._draft_paths(d)
         if not paths or not hasattr(self.s, "variant_refusal"):
@@ -1814,8 +1803,8 @@ class Panel(QWidget):
         return self.s.variant_refusal(paths[0], self.draft_change(d))
 
     def draft_variant(self, p=None) -> bool:
-        """Try variant: Post's layers alone into a new version of Post, the version shown untouched; else the draft on
-        a variant of the workflow, what is computed stays as it is (one rule for the combination family)."""
+        """Try variant: the draft on a variant of the workflow, what is computed stays as it is (a combination's graph
+        settings go with the variant's copy of its block)."""
         d = self.s.pending_change
         if not d:
             return True
@@ -1825,23 +1814,6 @@ class Panel(QWidget):
         ch = self.draft_change(d)
         if p is None:
             return False
-        if self._layer_only(d):
-            self.s.pending_change = None
-            n = self.s.steps_count() if hasattr(self.s, "steps_count") else None
-
-            def apply(twin):
-                def moved(c):
-                    return dict(c, lid=twin(c["lid"])) if c.get("lid") is not None else c
-                c2 = dict(ch, changes=[moved(c) for c in ch["changes"]]) if ch["kind"] == "many" else moved(ch)
-                self.s.apply_change(paths, c2)
-            name = self.s.try_in_post_version(apply)
-            words = _("{what} · in a new version of Post, “{name}”").format(what=ch["what"], name=name)
-            if n is not None:
-                self.s.name_steps_since(n, words)
-            self.toast.emit(words + " · Ctrl+Z")
-            self.changed.emit()
-            self.draftChanged.emit()
-            return True
         self.s.pending_change = None
         try:
             q = self.s.add_variant(p, ch, f"{p.name} · {ch['short']}")
@@ -1884,11 +1856,6 @@ class Panel(QWidget):
                                                for k, v in c["values"].items()))
         if c["kind"] == "method":
             return "method", c["key"]
-        if c["kind"] == "layer":                         # one slider, or the blend mode, of a Combine layers
-            v = c["values"]
-            if "stretch" in v:                           # its base stretch (Automatic, Arcsinh)
-                return "layer", c["lid"], "stretch"
-            return ("layer", c["lid"], "slider", v["slider"][0]) if "slider" in v else ("layer", c["lid"], "blend")
         if c["kind"] == "params":
             return ("params",) + tuple((st, nm) for st, nm, _v in c["items"])
         return "opt", c.get("key")
@@ -2212,9 +2179,10 @@ class Panel(QWidget):
             change()
 
     def layers_summary(self, p, lay: dict):
-        """What the Combine layers' editor sets, in one look (as a combination's ``combination_summary``): how the
-        stars go back, the stretch, the settings moved from their default; and Adjust, which opens the block in
-        Inspect (greyed until its inputs are wired, the reason on hover)."""
+        """What the Combine layers' editor sets (the block's graph settings, ``lay``: blend, stretch, sliders), in one
+        look (as a combination's ``combination_summary``): how the stars go back, the stretch, the settings moved from
+        their default; and Adjust, which opens the block in Inspect (greyed until its inputs are wired, the reason on
+        hover)."""
         from ..render.sliders import BY_KEY as SLIDERS
         from .post3 import BLENDS, offset_text, slider_name
         from .postengine import STRETCH_NAMES, layer_stretch
@@ -2283,7 +2251,12 @@ class Panel(QWidget):
                                     "warn", wrap=True))
         if node.waits:                                    # a side to wire: the block waits (issue #165)
             self.bv.addWidget(label(_("Waiting: {why}").format(why=node.waits.rstrip(".")), "warn", wrap=True))
-        self.layers_summary(p, lay)                       # the summary first, then the inputs (a combination's order)
+        # the summary first (the block's graph settings, what its editor sets), then the inputs (a combination's order)
+        try:
+            graph = s.layers_graph(s.block_map.block_of(node)) if hasattr(s, "layers_graph") else lay
+        except Exception:  # noqa: BLE001 - no map of the blocks now: its layer's
+            graph = lay
+        self.layers_summary(p, graph)
         self.bv.addWidget(self.group_title(_("Inputs")))
         stars_pid = lay.get("stars_pid", p.pid) if lay else p.pid
         back_pid = lay.get("pid", p.pid) if lay else p.pid

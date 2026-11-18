@@ -35,8 +35,8 @@ def word(key: str) -> str:
                                 "stay": "Stay"}[key])
 
 
-#: what a draft of Post's layers alone costs, and where Try variant puts it (the family's bars say it alike)
-POST_ONLY = "Post's layer only: nothing is computed again · Try variant: in a new version of Post"
+#: what a draft of the graph's settings alone costs (client/postfusion.py; the family's bars say it alike)
+GRAPH_ONLY = "Graph settings: nothing is computed again · Post's layers keep their own (Graph settings copies them)"
 
 
 def owned(what: str, owner: str, change: str = "") -> str:
@@ -267,8 +267,7 @@ def ask_leave(parent, block: str, lines=(), cost: str = "", variant: bool = True
     b_stay = box.addButton(word("stay"), QMessageBox.RejectRole)
     b_apply.setToolTip(_("The draft becomes the block's settings"))
     if b_var is not None:
-        b_var.setToolTip(_("The draft tried apart (a variant of the workflow, or a new version of Post for Post's "
-                           "layers alone); what is there stays as it is"))
+        b_var.setToolTip(_("The draft tried apart on a variant of the workflow; what is there stays as it is"))
     b_drop.setToolTip(_("The draft goes: the block keeps its applied settings"))
     b_stay.setToolTip(_("Back to the block, its draft as it is"))
     box.setDefaultButton(b_apply)

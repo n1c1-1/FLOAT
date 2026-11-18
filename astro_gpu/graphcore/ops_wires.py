@@ -3,7 +3,7 @@ import copy
 from .model import Index, POST_PORT, Row, SYNTH_PORT, Tap, Wire, in_ports, new_block, new_id, out_ports
 from . import combos
 from .msg import M, join, name_of
-from .rules import LABEL, title_msg
+from .rules import GRAPH_SETTINGS, LABEL, title_msg
 from ..core import workflow as wfl
 from .ops_base import Refusal, Out, _flow_chain, _blk, free_name, _to_post, _copy_flow
 from .ops_after import _is_layers_row, _alloc
@@ -13,12 +13,16 @@ from .ops_settings import owned_stages, check_param, _put
 # ---------------------------------------------------------------------------------------------------- wires
 def op_set_combination_type(q, block, type):
     """A combination of another type: the folder's recipe of that type copied in; the wires into inputs it does not
-    have go, and its settings of its former stage with them (the weights of the inputs kept stay)."""
+    have go, and its settings of its former stage with them (the weights of the inputs kept stay). Its graph settings
+    (rules.GRAPH_SETTINGS) go the same way: the intensities of the inputs kept stay, the hues are kept with the block
+    and come back with their recipe."""
     j = _blk(q, block, ("combine",))
     if type not in combos.offered():
         raise Refusal("unknown type")
     old = combos.stage(j)
     kept = copy.deepcopy(j.settings.get("kept") or {})
+    graph = copy.deepcopy(j.settings.get(GRAPH_SETTINGS) or {})
+    kept_graph = copy.deepcopy(j.settings.get("kept_graph") or {})
     j.settings, j.source = combos.placed(type)
     ports = combos.ports(j)
     new = combos.stage(j)
@@ -43,8 +47,19 @@ def op_set_combination_type(q, block, type):
                 back[k] = mine[k]
         if back:
             j.params[new] = back
+        if graph:
+            kept_graph[old] = graph
+        gback = copy.deepcopy(kept_graph.pop(new, None) or {})
+        gweights = {r: v for r, v in (graph.get("weights") or {}).items() if r in roles}
+        if gweights:
+            gback["weights"] = {**(gback.get("weights") or {}), **gweights}
+        graph = gback
     if kept:
         j.settings["kept"] = kept
+    if graph:
+        j.settings[GRAPH_SETTINGS] = graph
+    if kept_graph:
+        j.settings["kept_graph"] = kept_graph
     gone = [w for w in q.wires if w.dst[0] == block and w.dst[1] not in ports]
     q.wires = [w for w in q.wires if w not in gone]
     toast = M("{t}: {ports}", t=title_msg(q, block), ports=join(ports, ", "))

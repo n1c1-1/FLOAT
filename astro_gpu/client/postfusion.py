@@ -1,6 +1,13 @@
 """A combination's master layer in Post: what the model tells Post of a combination (``describe``), where its settings
-live (the layer's ``tune``), and its filters balanced as the run balances them (``balance_maps``, ``balanced_planes``).
-No Qt here.
+live (the layer's ``tune``), the graph's settings a layer takes a copy of (``layers_graph``, ``put_copy``), and its
+filters balanced as the run balances them (``balance_maps``, ``balanced_planes``). No Qt here.
+
+The graph's settings and Post's layers are two sources, bridged by a copy. Inspect sets the GRAPH's settings of a block
+of the combination family, kept on its block of the graph (graphcore rules.GRAPH_SETTINGS), never in a result's key:
+a combination's hues and intensities (when Post mixes its filters itself, below), a Combine layers' blend, base stretch
+and sliders. A layer of Post takes a copy of them when it is made (model.with_graph_copy), and again when the user asks
+for it (Post's Graph settings command, one step of Post's Undo); between the two, the layer is its own: Inspect never
+changes it, Post never changes the graph. A layer saved before holds its own settings, as it always did.
 
 The Combine layers layer over a combination's Output (``starless`` "output") is the combination's master layer when
 Post can make the combination's picture itself: the recipe mixes its balanced filters through hues or a matrix (no
@@ -8,13 +15,11 @@ lightness of its own: LRGB and the recipes composed as lightness and colour stay
 the stars alone (the stars' combination is the layer's Stars side), and no block follows the combination in its
 workflow (a Color or Denoise block after it changes its picture, which Post cannot make again).
 
-Its hues and its filters' intensities are then settings of the LAYER, as a Combine layers layer's blend and sliders
-are: kept with the layer in Post's version (``tune`` = {"hues": {role: degrees}, "weights": {role: intensity}},
-written only once one was changed: until then the block's stored values, read at each load), shown and changed by
-Post, by the block's panel and by Inspect's editor alike (the model routes a change of them to the layer:
-graphmodel.GraphEditing.apply_change), and they never outdate the block: Post mixes the filters itself. The block's
-own stored values are left as they are (its keys do not move). The balance changes the gains the run measures: it
-stays the block's, a setting that needs a run. For a plain layer every setting stays the block's.
+Its hues and its filters' intensities are then the layer's in Post (``tune`` = {"hues": {role: degrees}, "weights":
+{role: intensity}}; none: the block's stored values) and the graph's settings in Inspect (the same shape, on the
+block), and they never outdate the block: Post mixes the filters itself. The block's own stored values are left as
+they are (its keys do not move). The balance changes the gains the run measures: it stays the block's, a setting that
+needs a run. For a plain layer every setting stays the block's.
 
 While Post shows it the master layer holds the description below as ``fusion`` (never saved, given again at each load:
 postengine.save_layers drops it):
@@ -108,6 +113,42 @@ def new_tune(stage: str, spec: dict, stored: dict, tune: dict | None, part: dict
     hues = {**f["hues"], **(part.get("hues") or {})}
     weights = {**f["weights"], **(part.get("weights") or {})}
     return {"hues": {r: float(v) for r, v in hues.items()}, "weights": {r: float(v) for r, v in weights.items()}}
+
+
+#: the settings of a Combine layers layer the graph holds (its block's graph settings) and a layer copies
+LAYERS_KEYS = ("blend", "stretch", "sliders")
+
+
+def layers_graph(own: dict | None) -> dict:
+    """A Combine layers block's graph settings, whole: its own (``own``) over the defaults a new layer has (Screen,
+    the automatic stretch, every slider at its suggestion)."""
+    from .postengine import BLENDS, LAYER_STRETCHES
+    own = own or {}
+    blend = own.get("blend") if own.get("blend") in BLENDS else BLENDS[0]
+    stretch = own.get("stretch") if own.get("stretch") in LAYER_STRETCHES else LAYER_STRETCHES[0]
+    sliders = {str(k): float(v) for k, v in (own.get("sliders") or {}).items() if abs(float(v) - 2.0) > 1e-9}
+    return {"blend": blend, "stretch": stretch, "sliders": sliders}
+
+
+def put_copy(lay: dict, copied: dict | None) -> bool:
+    """A copy of the graph's settings (model.graph_copy) put on a layer of Post; whether the layer changed."""
+    if not copied:
+        return False
+    import json as _json
+    before = _json.dumps({k: lay.get(k) for k in (*LAYERS_KEYS, TUNE)}, sort_keys=True, default=str)
+    from .postengine import set_layer_stretch
+    if "blend" in copied:
+        lay["blend"] = copied["blend"]
+    if "sliders" in copied:
+        lay["sliders"] = dict(copied["sliders"])
+    if "stretch" in copied:
+        set_layer_stretch(lay, copied["stretch"])
+    if TUNE in copied:
+        if copied[TUNE]:
+            lay[TUNE] = {k: dict(v) for k, v in copied[TUNE].items()}
+        else:
+            lay.pop(TUNE, None)
+    return _json.dumps({k: lay.get(k) for k in (*LAYERS_KEYS, TUNE)}, sort_keys=True, default=str) != before
 
 
 def describe(stage: str, spec: dict, stored: dict, names: dict, over: dict | None = None) -> dict:

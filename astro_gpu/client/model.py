@@ -676,7 +676,6 @@ class _ProjectBase(QObject):
     dirtyChanged = Signal(bool)            # there are edits not saved yet (True), or they were saved (False)
     editMade = Signal()                    # any edit of the definition: the recovery copy is written some time after
     draftChanged = Signal()                # a block's draft (blockdraft.Draft) had a step undone or redone
-    postTuned = Signal(int)                # a combination's settings changed in Post (its workflow): Inspect's draft goes
 
     def __init__(self, project, worker: ApiWorker | None = None, *, readonly: bool = False,
                  history: list | None = None, gpu: bool = True, device: str | None = None):
@@ -1322,14 +1321,15 @@ class _ProjectBase(QObject):
         name = base + ("" if part is None else " · " + POST_PART_NAMES[part])
 
         def change(layers):
-            lay = new_workflow_layer(pid, name, True, part)   # made once the layers are loaded: its id is a fresh one
+            # made once the layers are loaded (its id is a fresh one), with its copy of the graph's settings
+            lay = self.with_graph_copy(new_workflow_layer(pid, name, True, part))
             self._filled(layers, None if keep_default else pid)
             if keep_default and part is not None and any(q.pid == pid for q in self.post_defaults(layers)):
                 # the image Post shows by default for this workflow stays: a Combine layers added is a second one, the
                 # first double-click of its card included (2nd round)
                 d = self.post_default_part(p)
-                layers.insert(0, new_workflow_layer(pid, base + ("" if d is None else " · " + POST_PART_NAMES[d]),
-                                                    True, d))
+                layers.insert(0, self.with_graph_copy(new_workflow_layer(
+                    pid, base + ("" if d is None else " · " + POST_PART_NAMES[d]), True, d)))
             same = [x for x in layers if x.get("kind") == "workflow" and x.get("pid") == pid and x.get("part") == part]
             if part == "combined" and same:               # several Combine layers of one workflow: numbered (2nd round)
                 lay["name"] = f"{name} {len(same) + 1}"
@@ -1370,10 +1370,10 @@ class _ProjectBase(QObject):
             stars = self.post_default_part(q) == "combined"       # (a Synthetic stars sent to Post: its image)
             if q.pid == skip and stars:
                 continue
-            made.append(new_workflow_layer(q.pid, neutral(q.name) + (" · " + POST_PART_NAMES["combined"] if stars
-                                                                     else ""),
-                                           bool(q.end) or self.is_sent_branch(q),     # a block's image sent: shown,
-                                           "combined" if stars else None))           # as the Split's (2nd round)
+            made.append(self.with_graph_copy(new_workflow_layer(
+                q.pid, neutral(q.name) + (" · " + POST_PART_NAMES["combined"] if stars else ""),
+                bool(q.end) or self.is_sent_branch(q),                    # a block's image sent: shown,
+                "combined" if stars else None)))                          # as the Split's (2nd round)
         if made:
             base = next((x for x in made if x["name"].startswith("Full")), made[-1])
             base["visible"] = True
@@ -2172,6 +2172,13 @@ class _ProjectBase(QObject):
                         x["name"] = self._free_layer_name(
                             layers, neutral(new.name) + " · " + POST_PART_NAMES["combined"] + (m.group(1) or ""), lid)
                 x["pid"], x["starless"] = int(pid), ("output" if image == "output" else "starless")
+                # another combination's hues and intensities: the copy of its graph settings (postfusion.py), the
+                # layer's own of the image before meaning nothing here
+                from . import postfusion
+                x.pop(postfusion.TUNE, None)
+                tune = (self.graph_copy(x) or {}).get(postfusion.TUNE)
+                if tune:
+                    x[postfusion.TUNE] = tune
             else:
                 x["stars_pid"] = None if pid is None else int(pid)
                 if pid is not None and image == "output":      # the default ("stars": its Stars/background's) is not written
@@ -3952,21 +3959,50 @@ class _ProjectBase(QObject):
         return next((x for x in self.post_layers() if x.get("kind") == "workflow" and x.get("part") == "combined"
                      and x.get("starless") == "output" and x.get("pid") == pid), None)
 
+    def graph_tunable(self, pid: int) -> bool:
+        """Whether a combination's hues and intensities are graph settings (client/postfusion.py): Post mixes its
+        filters itself (no lightness of its own, not the stars alone, no block after it), so they need no run."""
+        c = self._combination(pid)
+        return c is not None and not c[4]
+
+    def fusion_graph(self, pid: int) -> dict | None:
+        """A combination's graph settings ({"hues", "weights"}, postfusion.tuned_stored's ``tune``), None when it has
+        none of its own (its stored values then) or they are no graph settings. A model without a graph has none."""
+        return None
+
     def combine_stored(self, pid: int) -> dict:
-        """The combination's settings as its editors show them: the block's stored ones, its master layer's hues and
-        intensities in place of the block's (postfusion.tuned_stored)."""
+        """The combination's settings as its editor shows them: the block's stored ones, its graph settings' hues and
+        intensities in their place (postfusion.tuned_stored)."""
         from . import postfusion
         c = self._combination(pid)
         if c is None:
             return {}
-        lay = self.master_layer(pid)
-        return postfusion.tuned_stored(c[0], c[1], c[2], (lay or {}).get(postfusion.TUNE))
+        return postfusion.tuned_stored(c[0], c[1], c[2], self.fusion_graph(pid))
+
+    def layers_graph(self, block) -> dict:
+        """A Combine layers block's graph settings, whole ({"blend", "stretch", "sliders"}): its own, else the
+        defaults a new layer has. A model without a graph: the defaults."""
+        from . import postfusion
+        return postfusion.layers_graph(None)
+
+    def graph_copy(self, lay: dict) -> dict | None:
+        """What a Combine layers layer of Post takes from the graph (postfusion.py: when it is made, and by its Graph
+        settings command): {"blend", "stretch", "sliders"} of its block, and "tune" (None: none, the block's stored
+        values) when it shows a combination by its filters; None when the graph gives it nothing."""
+        return None
+
+    def with_graph_copy(self, lay: dict) -> dict:
+        """A layer just made, with the copy of the graph's settings it takes (``graph_copy``); returned for chaining."""
+        from . import postfusion
+        postfusion.put_copy(lay, self.graph_copy(lay))
+        return lay
 
     def fusion_of(self, pid: int, over: dict | None = None, tune=False) -> tuple[dict | None, str]:
         """(the combination's description for its master layer in Post, client/postfusion.describe; None when its
         Combine layers layer stays a plain one), and why it does (postfusion.plain_reason: "lightness", "after",
         "stars"; "" for a master layer or a workflow that is no combination). ``over``: settings being moved in Post,
-        not yet kept; ``tune``: the layer's own hues and intensities (False: those of its layer in the version shown)."""
+        not yet kept; ``tune``: the layer's own hues and intensities (None: none, the block's stored values; False:
+        the graph's settings, the block alone as Inspect shows it)."""
         from ..stages import recipes
         from . import postfusion
         from .graphnode import port_name
@@ -3977,7 +4013,7 @@ class _ProjectBase(QObject):
         if why:
             return None, why
         if tune is False:
-            tune = (self.master_layer(pid) or {}).get(postfusion.TUNE)
+            tune = self.fusion_graph(pid)
         names = {r: port_name(r) for r in recipes.roles(spec)}
         f = postfusion.describe(stage, spec, postfusion.tuned_stored(stage, spec, stored, tune), names, over)
         f["title"] = self.shown_title(pid)                # the block's name: the owner its steps name

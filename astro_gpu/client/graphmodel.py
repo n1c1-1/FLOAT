@@ -1880,44 +1880,18 @@ class GraphEditing:
                     if said:
                         notes.append(said)
             return notes
-        if ch["kind"] == "combine" and any(self.master_layer(q.pid) is not None for q in paths):
-            # a combination Post shows by its master layer: its hues and intensities are the layer's (never a run),
-            # the rest (the balance) the block's; one step (client/postfusion.py)
-            from . import postfusion
-            with self.batch():
-                for q in paths:
-                    lay = self.master_layer(q.pid)
-                    c = self._combination(q.pid)
-                    if lay is None or c is None:
-                        self.apply_change([q], ch)
-                        continue
-                    part, rest = postfusion.split_change(c[1], ch["values"])
-                    if part:
-                        tune = postfusion.new_tune(c[0], c[1], c[2], lay.get(postfusion.TUNE), part)
-                        self.set_post_layer(lay["id"], None, **{postfusion.TUNE: tune})
-                    if rest:
-                        self.apply_change([q], dict(ch, values=rest, kind="combine_block"))
-            return notes
-        if ch["kind"] in ("recipe", "method", "combine", "combine_block"):
-            steps = self._block_steps(paths, dict(ch, kind="combine") if ch["kind"] == "combine_block" else ch)
+        if ch["kind"] in ("recipe", "method", "combine"):
+            # a combination's hues and intensities, when Post mixes its filters, are its graph settings (no run, never
+            # a layer of Post: client/postfusion.py); the rest (the balance, the stars) its engine's: one step
+            steps = self._block_steps(paths, ch)
             if steps:
                 self._do(steps)
             return notes
-        if ch["kind"] == "layer":                         # a Combine layers' value: its layer of Post, one step
-            vals = ch["values"]
-            with self.batch():
-                if "slider" in vals:                      # one slider: the layer's others kept (2: its neutral place)
-                    key, v = vals["slider"]
-                    sliders = dict((self.post_layer(ch["lid"]) or {}).get("sliders") or {})
-                    if abs(float(v) - 2) < 0.02:
-                        sliders.pop(key, None)
-                    else:
-                        sliders[key] = v
-                    self.set_post_layer(ch["lid"], None, sliders=sliders)
-                elif "stretch" in vals:                   # its base stretch (Automatic leaves no trace in the layer)
-                    self.set_post_layer(ch["lid"], None, stretch=vals["stretch"])
-                else:
-                    self.set_post_layer(ch["lid"], None, blend=vals["blend"])
+        if ch["kind"] == "layers_graph":                  # a Combine layers' graph settings, on its block: one step
+            from ..graphcore.rules import GRAPH_SETTINGS
+            from . import postfusion
+            self._do([("set_setting", {"block": ch["block"], "key": GRAPH_SETTINGS,
+                                       "value": postfusion.layers_graph(ch["values"])})])
             return notes
         steps, seen = [], set()
         for q in paths:
@@ -1939,7 +1913,7 @@ class GraphEditing:
                 bid = self._combine_block(q)
                 if bid is not None and bid not in seen:
                     seen.add(bid)
-                    steps += self._combine_steps(bid, ch["values"]) if ch["kind"] == "combine" else \
+                    steps += self._combine_steps(bid, ch["values"], q.pid) if ch["kind"] == "combine" else \
                         [("set_combination_type", {"block": bid, "type": ch["type"]})]
                 continue
             if ch["kind"] == "recipe":
@@ -1955,14 +1929,23 @@ class GraphEditing:
                 steps.append(op)
         return steps
 
-    def _combine_steps(self, bid, values: dict) -> list:
-        """The graph core's steps of the combination editor's draft on block ``bid`` (client/combineedit.py): a setting
-        of its stage (a hue of the four types, Balance, Stars) by ``set_param``, a parameter of another recipe by
-        ``set_recipe_value``, the inputs' weights ({role: weight}) by ``set_input``."""
+    def _combine_steps(self, bid, values: dict, pid: int | None = None) -> list:
+        """The graph core's steps of the combination editor's draft on block ``bid`` (client/combineedit.py): its hues
+        and intensities, when they are graph settings (``graph_tunable``), by ``set_setting`` (the whole graph settings:
+        postfusion.new_tune); a setting of its stage (a hue of the four types, Balance, Stars) by ``set_param``, a
+        parameter of another recipe by ``set_recipe_value``, the inputs' weights ({role: weight}) by ``set_input``."""
+        from ..graphcore.rules import GRAPH_SETTINGS
         from ..stages import recipes
         blk = self._g.blocks[bid]
         stage = combos.stage(blk)
         out = []
+        c = self._combination(pid) if pid is not None else None
+        if c is not None and not c[4]:
+            from . import postfusion
+            part, values = postfusion.split_change(c[1], values)
+            if part:
+                tune = postfusion.new_tune(c[0], c[1], c[2], (blk.settings or {}).get(GRAPH_SETTINGS), part)
+                out.append(("set_setting", {"block": bid, "key": GRAPH_SETTINGS, "value": tune}))
         for name, v in values.items():
             if name == "weights":
                 for role, w in sorted(v.items()):
@@ -2035,7 +2018,7 @@ class GraphEditing:
     def _variant_steps(self, p, ch, title: str) -> list:
         """The graph core's steps of Try variant for one change of the panel (a setting, settings, a method)."""
         mm = _mm()
-        if ch["kind"] == "layer":                         # a layer of Post: no workflow to copy
+        if ch["kind"] == "layers_graph":                  # a Combine layers' graph settings: no workflow to copy
             raise GraphRefused(_("{lab}: no variant from here").format(lab=_("Combine layers")))
         if ch["kind"] in ("combine", "combine_type"):     # the draft made on the variant's copy of the block
             bid = self._combine_block(p)
@@ -2098,36 +2081,56 @@ class GraphEditing:
             return str(e) or _("No variant from here")
         return "" if res.ok else (say(res.reason, _) or _("No variant from here"))
 
-    def layer_only(self, ch, paths) -> bool:
-        """Whether a change of a block of the combination family changes only Post's layers (a Combine layers' value,
-        a master layer's hues and intensities: client/postfusion.py), no setting the engine computes: Try variant
-        then puts it into a new version of Post, the version shown untouched (one rule for the family)."""
-        if ch["kind"] == "many":
-            return all(self.layer_only(c, paths) for c in ch["changes"])
-        if ch["kind"] == "layer":
-            return True
-        if ch["kind"] == "combine":
-            from . import postfusion
-            for q in paths:
-                c = self._combination(q.pid)
-                if c is None or self.master_layer(q.pid) is None:
-                    return False
-                if postfusion.split_change(c[1], ch["values"])[1]:
-                    return False
-            return True
-        return False
+    # ------------------------------------------------------------------ the graph's settings (client/postfusion.py)
+    def fusion_graph(self, pid: int) -> dict | None:
+        """A combination's graph settings ({"hues", "weights"}) when its hues and intensities are graph settings
+        (``graph_tunable``) and it has its own; else None (its stored values)."""
+        from ..graphcore.rules import GRAPH_SETTINGS
+        q = self.view(pid)
+        if q is None or not self.graph_tunable(pid):
+            return None
+        try:
+            bid = self._combine_block(q)
+        except (ValueError, KeyError):                   # (GraphRefused: a workflow the graph does not draw yet)
+            return None
+        blk = self._g.blocks.get(bid) if bid is not None else None
+        got = (blk.settings or {}).get(GRAPH_SETTINGS) if blk is not None else None
+        return copy.deepcopy(got) if got else None
 
-    def try_in_post_version(self, apply) -> str:
-        """Try variant of a change of Post's layers alone: a new version of Post (a copy of the one shown, made
-        active) and the change made in it (``apply(twin)``, ``twin(lid)`` the copy's layer of a layer of the version
-        shown), one step of Undo; the version shown before stays as it was. Returns the new version's name."""
-        before = [x.get("id") for x in self.post_layers()]
-        with self.batch():
-            self.new_post_version()
-            after = [x.get("id") for x in self.post_layers()]
-            twins = dict(zip(before, after))
-            apply(lambda lid: twins.get(lid, lid))
-        return self.post_version()["name"]
+    def layers_graph(self, block) -> dict:
+        """A Combine layers block's graph settings, whole (postfusion.layers_graph: its own over a new layer's)."""
+        from ..graphcore.rules import GRAPH_SETTINGS
+        from . import postfusion
+        blk = self._g.blocks.get(block) if block is not None else None
+        return postfusion.layers_graph((blk.settings or {}).get(GRAPH_SETTINGS) if blk is not None else None)
+
+    def _layers_block_of(self, lay: dict):
+        """The Combine layers block of the graph a layer of Post stands for: the block drawn for it (its ``lid``), else,
+        for a layer just made, the first one over its workflow that has no layer yet; None."""
+        try:
+            bm = self.block_map
+            nodes = [n for n in bm.nodes if n.key == "composition"]
+        except Exception:  # noqa: BLE001 - no map of the blocks yet: none
+            return None
+        n = next((n for n in nodes if n.lid is not None and n.lid == lay.get("id")), None)
+        if n is None:
+            n = next((n for n in nodes if n.lid is None and n.paths and n.paths[0].pid == lay.get("pid")), None)
+        return bm.block_of(n) if n is not None else None
+
+    def graph_copy(self, lay: dict) -> dict | None:
+        """What a Combine layers layer takes from the graph (model.ProjectModel.graph_copy): its block's blend, stretch
+        and sliders, and the combination's hues and intensities when it shows one by its filters."""
+        from . import postfusion
+        if not lay or lay.get("kind") != "workflow" or lay.get("part") != "combined":
+            return None
+        out: dict = {}
+        bid = self._layers_block_of(lay)
+        if bid is not None:
+            out.update(self.layers_graph(bid))
+        pid = lay.get("pid")
+        if lay.get("starless") == "output" and pid is not None and self.graph_tunable(pid):
+            out[postfusion.TUNE] = self.fusion_graph(pid)
+        return out or None
 
     def keep_variant(self, q):
         self._do([("keep_variant", {"row": self._row(q).id})])
@@ -2198,8 +2201,8 @@ class GraphEditing:
         if all(c["kind"] in ("recipe", "method", "combine", "combine_type") for c in subs):   # made on the graph's block: that gesture's cost
             steps = [s for c in subs for s in self._block_steps(paths, c)]
             return self._steps_cost(steps) if steps else ChangeCost()
-        if all(c["kind"] == "layer" for c in subs):
-            return self._layer_cost(subs, paths)
+        if all(c["kind"] == "layers_graph" for c in subs):      # the graph's settings: nothing computed again
+            return ChangeCost()
         if all(c["kind"] == "opt" and c.get("key") in self._METHOD_KEYS for c in subs):
             steps, seen = [], set()
             for c in subs:
@@ -2233,21 +2236,6 @@ class GraphEditing:
             wids = sorted({w for w, _s in down})
             seconds += api.cost(p2, wids, self.device, self._history_est).seconds - self.cost(wids).seconds
         return ChangeCost(self._lost_blocks(lost + down), lost + down, seconds, after.measured)
-
-    def _layer_cost(self, subs, paths) -> ChangeCost:
-        """A change of a Combine layers' values: its layer of Post is made again from the two images, nothing of the
-        engine; a block whose image is up to date loses it (a draft, as any block's), else nothing is lost."""
-        try:
-            bm = self.block_map
-            lids = {c["lid"] for c in subs}
-            nodes = [n for n in bm.nodes if n.key == "composition" and n.lid in lids]
-            done = [n for n in nodes if bm.state(n) == "done"]
-        except Exception:  # noqa: BLE001 - no map of the blocks: nothing said lost
-            return ChangeCost()
-        if not done:
-            return ChangeCost()
-        pid = paths[0].pid if paths else done[0].paths[0].pid
-        return ChangeCost([_("Combine layers")], [(pid, "composition")], 0.0)
 
     def _what_if_workflows(self, changed):
         """The project with these workflows changed (what-if copies of ``_changed``), apart from the project (the

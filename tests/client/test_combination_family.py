@@ -354,8 +354,6 @@ def _open_editor(w, kind):
     w.set_mode(0)
     pump(0.3)
     q, _o = _owner(w, kind)
-    if kind == "combine_layers":
-        w.s.sel_layer = w.s.master_layer(q.pid)["id"]
     bid = next(k for k, b in w.graph.bridge.graph.blocks.items() if b.kind == kind and
                (kind != "combine" or w.graph.bridge.row_of(k).name == q.name))
     Gestures(w.graph).click(bid)
@@ -372,7 +370,7 @@ def _open_editor(w, kind):
 def _stored_setting(w, kind, q, ed):
     if kind == "combine":
         return dict(w.s.combine_stored(q.pid).get("weights") or {})
-    return dict((w.s.master_layer(q.pid) or {}).get("sliders") or {})          # (the layer of the version shown)
+    return dict(w.s.layers_graph(ed.bid)["sliders"])                          # (the block's graph settings)
 
 
 def _draft_change(ed, kind):
@@ -382,11 +380,12 @@ def _draft_change(ed, kind):
 
 
 @pytest.mark.parametrize("kind", FAMILY)
-def test_real_inspect_tunes_every_block_of_the_family_as_a_draft_with_one_source(qapp, tmp_path, kind):
+def test_real_inspect_tunes_every_block_of_the_family_as_a_draft_of_the_block(qapp, tmp_path, kind):
     """Inspect on Combine layers silently showed the S-H-O's editor: every block of the family has its editor, built
     on one base (blockeditor.DraftEditor, the Gradient editor's pattern): its page and draft bar, a preview on a reduced
     copy, Draft / Applied / Split; a change is a draft the project does not see until Apply, one step of the window's
-    Undo named as every step of the family; its settings are those Post shows (one source)."""
+    Undo named as every step of the family; its settings are the block's (the graph's settings: Post's layer keeps its
+    own)."""
     from astro_gpu.client.blockeditor import DraftEditor
     from astro_gpu.client.gradientedit import PREVIEW_PIXELS
     w = _whole(tmp_path, M27)
@@ -398,6 +397,7 @@ def test_real_inspect_tunes_every_block_of_the_family_as_a_draft_with_one_source
         assert ed._ui["bar"].isVisible() and {"cmp_draft", "cmp_applied", "cmp_split"} <= set(ed._ui)
         assert ed.result is not None and ed.result.shape[1] * ed.result.shape[2] <= PREVIEW_PIXELS
         before = _stored_setting(w, kind, q, ed)
+        layer = s.master_layer(q.pid)
         n = len(s._undo)
         assert _draft_change(ed, kind) and ed.has_draft()
         assert _stored_setting(w, kind, q, ed) == before and len(s._undo) == n      # a draft: the project as it was
@@ -410,6 +410,7 @@ def test_real_inspect_tunes_every_block_of_the_family_as_a_draft_with_one_source
         assert m and m["owner"] == owner, s.next_words("undo")
         after = _stored_setting(w, kind, q, ed)
         assert after != before and ed.applied() == ed.values()                      # the editor reads what it wrote
+        assert s.master_layer(q.pid) == layer                                        # Post's layer: its own
         s.undo()
         pump(0.3)
         assert _stored_setting(w, kind, q, ed) == before
@@ -445,31 +446,34 @@ def test_real_choosing_another_workflow_in_inspect_makes_nothing(qapp, tmp_path,
 
 
 @pytest.mark.parametrize("kind", FAMILY)
-def test_real_try_variant_of_post_s_layers_alone_is_a_new_version_of_post(qapp, tmp_path, kind, monkeypatch):
-    """Try variant was active for the combination and greyed for Combine layers for the same kind of change, and
-    Combine layers' leave question offered Try variant, which applied the change. One rule: a draft of Post's layers
-    alone goes into a new version of Post, the version shown untouched, one step of Undo; the leave question offers
-    exactly what the bar offers."""
+def test_real_try_variant_of_the_graph_s_settings(qapp, tmp_path, kind, monkeypatch):
+    """Try variant of a draft of the graph's settings: a combination's makes a variant of its workflow, the variant's
+    copy of the block holding them, the original and Post's versions untouched; Combine layers has no workflow of its
+    own to copy: greyed, its reason on hover (its stars' setting alone still makes a variant of the stars')."""
     from astro_gpu.client.blockdraft import DRAFT_ANSWER_ENV, settle
     w = _whole(tmp_path, M27)
     try:
         s = w.s
         q, ed = _open_editor(w, kind)
         versions = len(s.p.post["versions"])
-        shown = s.post_version()["id"]
         before = _stored_setting(w, kind, q, ed)
+        paths = {x.pid for x in s.paths}
+        want = ed.weight("SII") + 0.5 if kind == "combine" else None
         assert _draft_change(ed, kind)
         ed._sync()
-        assert ed._ui["variant"].isEnabled() and "new version of Post" in ed._ui["variant"].toolTip()
+        if kind == "combine_layers":
+            assert not ed._ui["variant"].isEnabled() and "no workflow of its own" in ed._ui["variant"].toolTip()
+            ed.reset()
+            return
+        assert ed._ui["variant"].isEnabled() and "variant of the workflow" in ed._ui["variant"].toolTip()
         n = len(s._undo)
         monkeypatch.setenv(DRAFT_ANSWER_ENV, "variant")              # the leave question's Try variant: the bar's
         assert settle(ed, None)
         pump(0.5)
-        assert len(s.p.post["versions"]) == versions + 1 and s.post_version()["id"] != shown and len(s._undo) == n + 1
-        assert _stored_setting(w, kind, q, ed) != before and not ed.has_draft()
-        s.set_post_version(shown)
-        pump(0.3)
-        assert _stored_setting(w, kind, q, ed) == before                # the version shown before: untouched
+        v = next(x for x in s.paths if x.pid not in paths)
+        assert len(s._undo) == n + 1 and len(s.p.post["versions"]) == versions and not ed.has_draft()
+        assert s.fusion_graph(v.pid)["weights"]["SII"] == pytest.approx(want)
+        assert _stored_setting(w, kind, q, ed) == before                # the original untouched
     finally:
         w.close()
 
@@ -534,26 +538,26 @@ def test_real_stay_keeps_the_editor_and_the_list_shows_the_workflow_edited(qapp,
 
 
 @pytest.mark.parametrize("language", ["en", "fr"])
-def test_the_narrow_bar_says_post_s_layer_only_whole_at_the_judge_s_width(qapp, language):
-    """The editors' draft bar (both blocks') in a column where "Post's layer only ... · Try variant: in a new version
-    of Post" does not fit one line but each part does (a 1600 px window's column, about 380 px in the app's font; the
+def test_the_narrow_bar_says_graph_settings_only_whole_at_the_judge_s_width(qapp, language):
+    """The editors' draft bar (both blocks') in a column where "Graph settings: nothing is computed again · Post's
+    layers keep their own ..." does not fit one line but each part does (a 1600 px window's column, about 380 px in the app's font; the
     width is taken from the font the test has): whole, on two lines, nothing cut; its height fixed."""
     from astro_gpu.client import i18n
-    from astro_gpu.client.blockdraft import POST_ONLY, DraftBar
+    from astro_gpu.client.blockdraft import GRAPH_ONLY, DraftBar
     i18n.set_language(language)
     try:
         bar = DraftBar(narrow=True)
         bar.show()
         qapp.processEvents()                          # (its font once shown: a style sheet of the process may change it)
         fm = bar.cost.fontMetrics()
-        widest = max(fm.horizontalAdvance(x) for x in i18n._(POST_ONLY).split(" · "))
-        assert fm.horizontalAdvance(i18n._(POST_ONLY)) > widest + 30                 # (one line would be cut)
+        widest = max(fm.horizontalAdvance(x) for x in i18n._(GRAPH_ONLY).split(" · "))
+        assert fm.horizontalAdvance(i18n._(GRAPH_ONLY)) > widest + 30                 # (one line would be cut)
         bar.resize(widest + 30 + 22, 140)                                           # (its margins: 10 + 10, 2)
         qapp.processEvents()
         h = bar.cost.height()
-        bar.show_draft(["Draft · 1 change", "S II hue 16° → 140°"], i18n._(POST_ONLY))
+        bar.show_draft(["Draft · 1 change", "S II hue 16° → 140°"], i18n._(GRAPH_ONLY))
         text = bar.cost.text()
-        assert "…" not in text and text.replace("\n", " · ") == i18n._(POST_ONLY), text
+        assert "…" not in text and text.replace("\n", " · ") == i18n._(GRAPH_ONLY), text
         assert len(text.split("\n")) == 2
         assert bar.cost.height() == h
         bar.show_draft(["Draft · 1 change"], "Computes again: Denoise")      # short: one line

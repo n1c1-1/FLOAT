@@ -1,20 +1,22 @@
 """Combine layers tuned in Inspect as a draft (``LayersEditor``), the family's editor (blockeditor.DraftEditor) as a
 combination's is (combineedit.py), both on the Gradient editor's pattern (gradientedit.py).
 
-Combine layers is a layer of Post: the stars put back on the starless image (a Stars/background block's two images,
-or a combination's Output and the "· Stars" combination's). Its settings are that LAYER's, one source for Post's
-panel, the block's panel in the graph and this editor: how the stars go back (the blend), the stars' sliders, the
-starless image's stretch and sliders (render/sliders.py); for stars made by a combination of the stars alone, how its
-filters' stars mix (Neutral or Palette), the setting of that block (its run makes the stars).
+Combine layers puts the stars back on the starless image (a Stars/background block's two images, or a combination's
+Output and the "· Stars" combination's). Inspect sets the block's GRAPH settings (client/postfusion.py): how the stars
+go back (the blend), the starless image's base stretch, the sliders (render/sliders.py), kept on the block of the graph,
+outside every result's key: Apply computes nothing. A layer of Post takes a copy of them when it is made, and again by
+its Graph settings command; the editor never reads nor changes a layer of Post. For stars made by a combination of the
+stars alone, how its filters' stars mix (Neutral or Palette) is that block's engine setting (its run makes the stars).
 
-Every adjustment changes a DRAFT of the layer's settings: the project does not change until Apply (one step of the
-window's Undo: the layer's settings, and the stars' combination's when it changed), Reset, or the question asked when
-the block is left with a draft. Try variant is greyed: a layer of Post has no variant of the workflow (its versions are
-Post's). Which settings are available, and why one is greyed, is Post's rule (post3.layer_slider_state).
+Every adjustment changes a DRAFT of the block's settings: the project does not change until Apply (one step of the
+window's Undo: the graph settings, and the stars' combination's when it changed), Reset, or the question asked when the
+block is left with a draft. Try variant is greyed for the graph settings (a Combine layers block is drawn for a layer
+of Post: no workflow of its own to copy); the stars' setting alone makes a variant of the stars' combination. Which
+settings are available, and why one is greyed, is Post's rule (post3.layer_slider_state).
 
-The draft is seen at once on a reduced copy (about gradientedit.PREVIEW_PIXELS): the layer rendered by Post's own
-renderer (services/render.Renderer: the same composition, its masks and its own filters), at the pyramid level that
-copy is, in the editor's thread; Draft, Applied (the layer at its applied settings), Split.
+The preview is the block alone on a reduced copy (about gradientedit.PREVIEW_PIXELS): its two images with its graph
+settings, rendered by Post's own renderer (services/render.Renderer) with no filter, mask or hidden side, at the pyramid
+level that copy is, in the editor's thread; Draft, Applied (the block at its applied settings), Split.
 """
 from __future__ import annotations
 
@@ -33,7 +35,7 @@ from .widgets import label
 #: the draft's keys of a layer's sliders: "slider.<key>" (render/sliders.py), the Arcsinh's Strength among them
 SLIDER = "slider."
 #: the one-line reason Try variant is greyed
-NO_VARIANT = "Try variant takes the layer's settings alone (a new version of Post) or the stars' setting alone"
+NO_VARIANT = "Combine layers has no workflow of its own: Try variant takes the stars' setting alone"
 #: the stars' combination's setting changed: what it asks
 STARS_RUN = "Needs a run: the stars' combination is computed again by Run"
 
@@ -65,7 +67,7 @@ class LayersEditor(DraftEditor):
         from .postengine import STARS_FOUND_HOOKS  # a search of the Stars part's stars ended: shown again
         STARS_FOUND_HOOKS.append(self._starsFound.emit)
         self._starsFound.connect(self._stars_came)
-        self.lid = None                        # the layer of Post it tunes
+        self.bid = None                        # the block of the graph it tunes
         self._renderer = None                  # Post's renderer, made in the preview's thread (module docstring)
         self._renderer_of = None
         self.level = None                      # the pyramid level of the reduced copy
@@ -80,30 +82,58 @@ class LayersEditor(DraftEditor):
             bool(getattr(node, "paths", None)) and on_graph(self.s, node)
 
     def _enter_page(self, p):
-        lid = None
-        for cand in (getattr(self.s, "sel_layer", None), getattr(self.node, "lid", None)):   # the one chosen, else
-            lay = self.s.post_layer(cand) if cand is not None and hasattr(self.s, "post_layer") else None   # the node's
-            if lay and lay.get("part") == "combined" and lay.get("pid") == p.pid:
-                lid = cand
-                break
-        if lid is None and hasattr(self.s, "default_post_layer"):
-            # the layer Post shows by default for the workflow, made a layer of its own (no step: opening is never one)
-            lid = self.s.default_post_layer(p.pid)
-        if lid != self.lid:
-            self.lid = lid
+        try:
+            bid = self.s.block_map.block_of(self.node)
+        except AttributeError:                         # a stand-in model without a map
+            bid = None
+        if bid != self.bid:
+            self.bid = bid
             self.applied_cache = None
             self.result = None
         super()._enter_page(p)
 
-    def layer(self) -> dict:
-        """The layer of Post as the project stores it."""
-        try:
-            return dict(self.s.post_layer(self.lid) or {}) if self.lid is not None else {}
-        except Exception:  # noqa: BLE001 - the model cannot say now: nothing
+    def sides(self) -> tuple:
+        """(Background's workflow, "starless" | "output", Stars' workflow or None, "stars" | "output"): what the
+        block's wires give it (graphnode.Node.sides), else its workflow's own Stars/background."""
+        got = getattr(self.node, "sides", None)
+        if got:
+            return tuple(got)
+        from .model import is_fusion_view
+        q = self.p
+        return (q.pid, "output" if is_fusion_view(q) else "starless", q.pid, "stars") if q is not None else \
+            (None, "starless", None, "stars")
+
+    def block_layer(self, vals: dict | None = None) -> dict:
+        """The block alone as a layer of Post's renderer: its two images, its graph settings (``vals``: the draft's, else
+        the applied ones), every side shown, no mask, no filter, fully opaque; a combination's Output mixed with that
+        combination's graph settings (the block that feeds it, alone too)."""
+        from . import postengine as pe
+        back, bimg, star, simg = self.sides()
+        if back is None:
             return {}
+        vals = self.values() if vals is None else vals
+        lay = pe.new_workflow_layer(back, "", True, "combined")
+        lay["id"] = -1                                 # (no layer of Post: one id of its own, never a layer's)
+        lay["starless"] = bimg
+        lay["stars_pid"] = star
+        if simg == "output" and star is not None:
+            lay["stars_image"] = "output"
+        lay["blend"] = vals.get("blend") or lay["blend"]
+        lay["sliders"] = {k[len(SLIDER):]: float(v) for k, v in vals.items()
+                          if k.startswith(SLIDER) and abs(float(v) - 2.0) > 1e-9}
+        pe.set_layer_stretch(lay, vals.get("stretch") or "auto")
+        fusion_of = getattr(self.s, "fusion_of", None)
+        if fusion_of is not None and bimg == "output":
+            try:
+                f, _why = fusion_of(back)              # (the combination's graph settings: the block alone)
+            except Exception:  # noqa: BLE001 - not readable now: its plain layer
+                f = None
+            if f is not None:
+                lay["fusion"] = f
+        return lay
 
     def slider_infos(self):
-        """Post's sliders of this layer, the stars first (what the block is for), as its panel shows them."""
+        """Post's sliders of this block, the stars first (what the block is for), as Post's panel shows them."""
         from ..render.sliders import STARS as STARS_GROUP
         try:
             infos = [x for x in self.s.slider_infos(self.p, "combined") if x.available]
@@ -112,13 +142,12 @@ class LayersEditor(DraftEditor):
         return sorted(infos, key=lambda x: x.group != STARS_GROUP)
 
     def stars_combination(self):
-        """(the workflow, its stage, its recipe, its stored settings) of the combination of the stars alone the layer's
+        """(the workflow, its stage, its recipe, its stored settings) of the combination of the stars alone the block's
         Stars side reads, None when its stars are another image (post3.PostView.stars_combination's rule)."""
         from ..core.workflow import combine_stage
         from .combineedit import stars_only
         from .graphnode import combine_spec
-        lay = self.layer()
-        pid = lay.get("stars_pid", lay.get("pid")) if lay else None
+        pid = self.sides()[2]
         q = self.s.view(pid) if pid is not None else None
         if q is None or not stars_only(((getattr(q, "source", None) or {}).get("fusion") or {}).get("inputs") or []):
             return None
@@ -133,15 +162,22 @@ class LayersEditor(DraftEditor):
             dict(self.s.p.workflow(q.pid).params.get(stage) or {})
         return q, stage, spec, stored
 
+    def graph(self) -> dict:
+        """The block's graph settings, whole (client/postfusion.layers_graph)."""
+        from . import postfusion
+        try:
+            return dict(self.s.layers_graph(self.bid)) if hasattr(self.s, "layers_graph") else \
+                postfusion.layers_graph(None)
+        except Exception:  # noqa: BLE001 - the model cannot say now: the defaults
+            return postfusion.layers_graph(None)
+
     def applied(self, p=None) -> dict:
-        """The layer's settings: its blend, its stretch, each of its sliders' positions (2: the suggestion), and the
+        """The block's settings: its blend, its stretch, each of its sliders' positions (2: the suggestion), and the
         stars' combination's Stars when its stars are one."""
         from ..render.sliders import STRETCH_KEY
-        from .post3 import BLENDS
-        from .postengine import layer_stretch
-        lay = self.layer()
-        sliders = lay.get("sliders") or {}
-        out = {"blend": lay.get("blend") or BLENDS[0], "stretch": layer_stretch(lay)}
+        g = self.graph()
+        sliders = g.get("sliders") or {}
+        out = {"blend": g["blend"], "stretch": g["stretch"]}
         for sd in self.slider_infos():
             out[SLIDER + sd.key] = float(sliders.get(sd.key, 2.0))
         out[SLIDER + STRETCH_KEY] = float(sliders.get(STRETCH_KEY, 2.0))
@@ -159,7 +195,7 @@ class LayersEditor(DraftEditor):
 
     def shape(self, p) -> tuple:
         from .i18n import language
-        return (self.lid, tuple(sd.key for sd in self.slider_infos()), self.stars_combination() is not None,
+        return (self.bid, tuple(sd.key for sd in self.slider_infos()), self.stars_combination() is not None,
                 self.values().get("stretch"), language())
 
     def state_of(self, p=None) -> str:
@@ -173,34 +209,19 @@ class LayersEditor(DraftEditor):
             return "done"
 
     def title(self, q=None) -> str:
-        """The layer's name as Post's row shows it (post3.layer_name, the name the graph shows its workflow by in it):
-        the owner every step of it names."""
-        from .post3 import layer_name, retitle
-        lay = self.layer()
-        q = q or self.p
-        if not lay and q is not None:
-            from .model import POST_PART_NAMES
-            from .names import neutral
-            lay = {"kind": "workflow", "pid": q.pid, "name": neutral(q.name) + " · " + POST_PART_NAMES["combined"]}
-        if not lay:
-            return _("Combine layers")
-        retitle(self.s, lay)
-        return layer_name(lay)
+        """The block's name as the graph shows it (model.layers_title: its layer's name as Post's row says it)."""
+        if hasattr(self.s, "layers_title") and self.node is not None:
+            try:
+                return self.s.layers_title(self.node)
+            except Exception:  # noqa: BLE001 - not readable now: its type's name
+                pass
+        return _("Combine layers")
 
     def variant_why(self) -> str:
-        """Try variant takes Post's layer alone (a new version of Post) or the stars' combination's setting alone (a
-        variant of that workflow): not both at once."""
+        """Try variant takes the stars' combination's setting alone (a variant of that workflow): the graph settings
+        have no workflow of their own."""
         d = self._draft()
-        return _(NO_VARIANT) if d and "stars" in d.vals and len(d.vals) > 1 else ""
-
-    def layer_only(self, q, ch) -> bool:
-        return ch is not None and "stars" not in ch["values"]
-
-    def _apply_in(self, q, ch, twin):
-        if self.lid is not None:
-            self.lid = twin(self.lid)
-            self.s.sel_layer = self.lid
-        self._apply_change(q, ch)
+        return _(NO_VARIANT) if d and any(k != "stars" for k in d.vals) else ""
 
     def _variant_target(self, q, ch):
         got = self.stars_combination()
@@ -211,8 +232,8 @@ class LayersEditor(DraftEditor):
         d = self._draft(pid)
         if not d:
             return ""
-        from .blockdraft import POST_ONLY
-        return _(STARS_RUN) if "stars" in d.vals else _(POST_ONLY)
+        from .blockdraft import GRAPH_ONLY
+        return _(STARS_RUN) if "stars" in d.vals else _(GRAPH_ONLY)
 
     def _needs_run(self, q, ch) -> bool:
         return "stars" in ch["values"]
@@ -256,7 +277,7 @@ class LayersEditor(DraftEditor):
         return [(k, self.name_of(k), f"{self.word_of(k, ap.get(k, v))} → {self.word_of(k, v)}") for k, v in d.vals.items()]
 
     def draft_change(self, pid: int | None = None) -> dict | None:
-        """The draft as the layer's changes (each of them the model's kind "layer", graphmodel.GraphEditing), the stars'
+        """The draft as the block's change (the model's kind "layers_graph", graphmodel.GraphEditing), the stars'
         combination's Stars a change of that block (kind "combine"), with its words; None without a draft."""
         q = self._view_of(pid)
         d = self.drafts.get(q.pid) if q is not None else None
@@ -265,28 +286,35 @@ class LayersEditor(DraftEditor):
         what, short = self.step_words(q)
         return {"kind": "layers", "values": copy.deepcopy(d.vals), "short": short, "what": what}
 
+    def _graph_of(self, vals: dict) -> dict:
+        """The block's whole graph settings with the draft's ``vals`` over the applied ones."""
+        g = self.graph()
+        sliders = dict(g.get("sliders") or {})
+        out = {"blend": g["blend"], "stretch": g["stretch"]}
+        for k, v in vals.items():
+            if k in ("blend", "stretch"):
+                out[k] = v
+            elif k.startswith(SLIDER):
+                sliders[k[len(SLIDER):]] = float(v)
+        if out["stretch"] != "arcsinh":                    # Automatic keeps no Strength (postengine.set_layer_stretch)
+            from ..render.sliders import STRETCH_KEY
+            sliders.pop(STRETCH_KEY, None)
+        out["sliders"] = {k: v for k, v in sliders.items() if abs(float(v) - 2.0) > 1e-9}
+        return out
+
     def _apply_change(self, q, ch):
-        """One step of the window's Undo: the layer's settings (its layer made real by the first), the stars'
-        combination's Stars."""
+        """One step of the window's Undo: the block's graph settings, the stars' combination's Stars."""
         s = self.s
         vals = dict(ch["values"])
+        stars = vals.pop("stars", None)
         with s.batch():
-            lid = self.lid if self.lid is not None else s.add_post_layer(q.pid, "combined", None, keep_default=False)
-            self.lid = lid
-            for k, v in vals.items():
-                if k == "stars":
-                    got = self.stars_combination()
-                    if got is not None:
-                        s.apply_as({"kind": "combine", "values": {"stars": v}, "what": ch["what"],
-                                    "short": ch["short"]}, "replace", [got[0]])
-                    continue
-                if k == "blend":
-                    one = {"blend": v}
-                elif k == "stretch":
-                    one = {"stretch": v}
-                else:
-                    one = {"slider": [k[len(SLIDER):], float(v)]}
-                s.apply_change([q], {"kind": "layer", "lid": lid, "values": one})
+            if vals:
+                s.apply_change([q], {"kind": "layers_graph", "block": self.bid, "values": self._graph_of(vals)})
+            if stars is not None:
+                got = self.stars_combination()
+                if got is not None:
+                    s.apply_as({"kind": "combine", "values": {"stars": stars}, "what": ch["what"],
+                                "short": ch["short"]}, "replace", [got[0]])
 
     # ------------------------------------------------------------ the page
     def _fill_column(self, cv):
@@ -299,7 +327,7 @@ class LayersEditor(DraftEditor):
         from .post3 import BLENDS, ContSlider, layer_slider_state, slider_name
         from .postengine import LAYER_STRETCHES, STRETCH_NAMES
         u = self._ui
-        lay = self.layer()
+        lay = self.block_layer()
         group = None
         stretch_now = self.values().get("stretch")
         for sd in self.slider_infos():
@@ -407,10 +435,10 @@ class LayersEditor(DraftEditor):
             self._changed()
 
     def _measurements(self, dv):
-        """What the layer combines (its two images' workflows) and the reduced copy the preview is made on."""
+        """What the block combines (its two images' workflows) and the reduced copy the preview is made on."""
         self.title_of_group(dv, "Measurements")
-        lay = self.layer()
-        for words, pid in ((_("Starless image"), lay.get("pid")), (_("Stars"), lay.get("stars_pid", lay.get("pid")))):
+        back, _b, star, _s = self.sides()
+        for words, pid in ((_("Starless image"), back), (_("Stars"), star)):
             q = self.s.view(pid) if pid is not None else None
             name = (self.s.shown_title(q.pid) if hasattr(self.s, "shown_title") else q.name) if q is not None \
                 else _("not wired")
@@ -420,8 +448,7 @@ class LayersEditor(DraftEditor):
                 w=self.size[0], h=self.size[1], f=2 ** int(self.level or 0)), "small"))
 
     def _drawer_sig(self) -> tuple:
-        lay = self.layer()
-        return (lay.get("pid"), lay.get("stars_pid"), self.size, self.level)
+        return (self.sides(), self.size, self.level)
 
     def missing_text(self) -> str:
         if not self.slider_infos():
@@ -431,51 +458,15 @@ class LayersEditor(DraftEditor):
     def applied_label(self) -> str:
         return _("Applied settings · reduced copy")
 
-    # ------------------------------------------------------------ the preview: Post's renderer on this layer
-    def _layers_for(self, vals: dict) -> list[dict]:
-        """The layer (with ``vals``) and its own filters, as Post composes them: what the preview renders."""
-        from . import postengine as pe
-        try:
-            alive = {q.pid for q in self.s.paths}
-            layers = pe.load_layers(self.s.post_layers(), alive)
-        except Exception:  # noqa: BLE001 - not readable now: none
-            return []
-        lay = next((x for x in layers if x.get("id") == self.lid), None)
-        if lay is None:
-            return []
-        own = [x for x in layers if x.get("kind") == "filter" and x.get("target") == self.lid]
-        lay = copy.deepcopy(lay)
-        lay["visible"] = True
-        lay["opacity"] = 100
-        if "blend" in vals:
-            lay["blend"] = vals["blend"]
-        if "stretch" in vals:
-            pe.set_layer_stretch(lay, vals["stretch"])
-        sliders = dict(lay.get("sliders") or {})
-        for k, v in vals.items():
-            if k.startswith(SLIDER):
-                if abs(float(v) - 2.0) < 1e-9:
-                    sliders.pop(k[len(SLIDER):], None)
-                else:
-                    sliders[k[len(SLIDER):]] = float(v)
-        lay["sliders"] = sliders
-        fusion_of = getattr(self.s, "fusion_of", None)
-        if fusion_of is not None and lay.get("starless") == "output":
-            try:
-                f, _why = fusion_of(lay["pid"], None, tune=lay.get("tune"))
-            except Exception:  # noqa: BLE001 - not readable now: its plain layer
-                f = None
-            if f is not None:
-                lay["fusion"] = f
-        return [copy.deepcopy(x) for x in own] + [lay]
-
+    # ------------------------------------------------------------ the preview: the block alone, by Post's renderer
     def _request(self) -> dict:
         vals, ap = self.values(), self.applied()
-        return {"gen": self.gen, "pid": self.p.pid, "project": self.s.p, "layers": self._layers_for(vals),
-                "applied_layers": self._layers_for(ap) if (self.applied_cache is None or
-                                                           self.applied_cache.get("key") != repr(sorted(ap.items()))
-                                                           or self.applied_cache.get("pid") != self.p.pid) else None,
-                "applied_key": repr(sorted(ap.items()))}
+        key = repr(sorted(ap.items()))
+        want = self.applied_cache is None or self.applied_cache.get("key") != key or \
+            self.applied_cache.get("pid") != self.p.pid
+        lay = self.block_layer(vals)
+        return {"gen": self.gen, "pid": self.p.pid, "project": self.s.p, "layers": [lay] if lay else [],
+                "applied_layers": ([self.block_layer(ap)] if lay else []) if want else None, "applied_key": key}
 
     def _render(self, layers, project):
         """(3, h, w) in 0-1: the layers by Post's renderer at the reduced copy's level (made once per project, in this
@@ -506,7 +497,7 @@ class LayersEditor(DraftEditor):
     def _work(self, req: dict) -> dict:
         out = {"req": req}
         if not req["layers"]:
-            out["error"] = _("The layer is not in Post yet")
+            out["error"] = _("Waiting: the Stars/background block's images to read")
             return out
         t0 = time.perf_counter()
         out["result"] = self._render(req["layers"], req["project"])
