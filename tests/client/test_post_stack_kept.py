@@ -4,7 +4,6 @@ full-resolution images never take the room of the screen's; the pixels are those
 from __future__ import annotations
 
 import numpy as np
-
 from test_post import ToyProvider  # noqa: F401 - the toy layers
 from test_post_cache import Toy
 
@@ -115,7 +114,8 @@ def test_full_resolution_never_takes_the_screen_s_room_and_goes_first_for_it():
     assert not lru.put("full", big)                          # no room without a screen image: not kept
     assert all(("screen", k) in lru.items for k in range(3))
     lru.begin(1)
-    lru.items.pop(("screen", 2)); lru.bytes -= small.nbytes  # (room made by hand for a full image)
+    lru.items.pop(("screen", 2))                            # (room made by hand for a full image)
+    lru.bytes -= small.nbytes
     lru.begin(0)
     assert lru.put("full2", np.zeros((10, 20, 3), np.float32))
     lru.begin(2)
@@ -195,3 +195,27 @@ def test_a_release_of_the_top_filter_of_a_side_makes_that_filter_only(monkeypatc
             ref = Composer(pr).compose(pe.snapshot(state), lv, thumbs=lv == 1, cache=False)
             assert np.array_equal(g.rgb, ref.rgb)
             assert all(np.array_equal(g.mask_thumbs[k2], ref.mask_thumbs[k2]) for k2 in ref.mask_thumbs)
+
+
+def test_a_drag_s_drafts_make_the_filter_moved_only_and_show_what_a_draft_from_nothing_shows():
+    """While a slider moves, each draft starts from the steps kept under the filter moved (drafts kept apart from the
+    exact images: a filter may take a quick look in a draft); a draft is the one a composer with only the layer's image
+    gives."""
+    layers = stack()
+    pr = ToyProvider()
+    cp = Composer(pr, cache_bytes=200_000_000)
+    release(cp, layers)
+    top = next(x for x in layers if x["kind"] == "filter")["id"]
+    applied = []
+    real = cp._apply
+    cp._apply = lambda fl, under, level, *a, **k: (applied.append((fl["id"], level)), real(fl, under, level, *a, **k))[1]
+    for k, v in enumerate((22.0, 26.0, 30.0, 34.0)):
+        applied.clear()
+        state = with_param(layers, 0, "strength", v)
+        got = cp.compose(pe.snapshot(state), 3, draft=True, track=True)
+        if k:
+            assert applied == [(top, 3)], applied
+        ref_cp = Composer(pr)
+        ref_cp.compose(pe.snapshot(state), 3)                         # (the layer's exact image, as the warm one has)
+        ref = ref_cp.compose(pe.snapshot(state), 3, draft=True, cache=False)
+        assert np.array_equal(got.rgb, ref.rgb)

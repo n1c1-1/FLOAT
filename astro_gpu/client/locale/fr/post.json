@@ -412,5 +412,9 @@
   "1 spot removed": "1 tache retirée",
   "{n} spots removed": "{n} taches retirées",
   "1 spot moved": "1 tache déplacée",
-  "{n} spots moved": "{n} taches déplacées"
+  "{n} spots moved": "{n} taches déplacées",
+  "Rendering: {what}": "Rendu : {what}",
+  "{t} s on screen": "{t} s à l'écran",
+  "“{name}” is made again at every setting: hide it (eye) while you adjust": "« {name} » recalcule à chaque réglage : masquez-la (œil) le temps du réglage",
+  "Don't show again": "Ne plus afficher"
 }

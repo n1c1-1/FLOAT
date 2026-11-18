@@ -63,6 +63,7 @@ import hashlib
 import itertools
 import json
 import math
+import time
 from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -266,20 +267,58 @@ def f_levels(x, p, ctx):
     return t.numpy()
 
 
+def per_pixel(fn, *arrays, min_rows: int = 256):
+    """``fn`` on bands of rows of ``arrays`` (images of the same height) in the processor's threads, the bands put
+    back together: the same pixels as ``fn`` on the whole, for a function of each pixel alone (numpy and OpenCV give
+    the processor back while they compute)."""
+    rows = arrays[0].shape[0]
+    n = min(_THREADS, max(1, rows // min_rows))
+    if n <= 1:
+        return fn(*arrays)
+    import threading
+    cuts = [rows * i // n for i in range(n + 1)]
+    parts: list = [None] * n
+    errors: list = []
+
+    def band(i):
+        try:
+            parts[i] = fn(*(a[cuts[i]:cuts[i + 1]] for a in arrays))
+        except BaseException as e:  # noqa: BLE001 - raised again in the caller's thread
+            errors.append(e)
+    threads = [threading.Thread(target=band, args=(i,), name="post-pixels", daemon=True) for i in range(1, n)]
+    for t in threads:
+        t.start()
+    band(0)
+    for t in threads:
+        t.join()
+    if errors:
+        raise errors[0]
+    return np.concatenate(parts, 0)
+
+
+_THREADS = max(1, min(16, (__import__("os").cpu_count() or 1)))
+
+
 def f_saturation(x, p, ctx):
     k = p["strength"] / 100
     if k == 0:                                         # the default: no change
         return x
     L = lum(x)
     center = dict(HUES)[p["hues"]]
-    guard = background_guard(L, p.get("protect", 0.0), ctx)
+    guard = background_guard(L, p.get("protect", 0.0), ctx)    # (measured on the whole image)
     if center is None and guard is None:               # every hue alike: L + (x - L) * (1 + k) in one pass
         return _mix(x, 1 + k, _gray3(L), -k)
+    return per_pixel(lambda xa, La, ga: _saturate(xa, La, ga, center, k), x, L,
+                     guard if guard is not None else np.empty((x.shape[0], 0), np.float32))
+
+
+def _saturate(x, L, guard, center, k):
+    """``f_saturation`` on pixels: the weight of each (its hue's, its guard's), then the saturation around ``L``."""
     w = np.ones_like(L)
     if center is not None:
         h, s = hue(x)
         w = hue_weight(h, center, 45) * np.clip(s * 3, 0, 1)
-    if guard is not None:
+    if guard.size:
         w = w * guard
     L = L[..., None]
     return L + (x - L) * (1 + k * w[..., None])
@@ -316,7 +355,7 @@ def mixer_params() -> list[dict]:
 
 
 def f_mixer(x, p, ctx):
-    return pf_mixer.mix(x, p)
+    return pf_mixer.mix(x, p, per_pixel)
 
 
 def f_scnr(x, p, ctx):
@@ -1659,6 +1698,7 @@ class Ctx:
         self.canvas_wh: tuple[int, int] | None = None         # the whole canvas at this level
         self.stats_key: str | None = None                     # the input of the filter being applied, any region
         self.row_edit: str | None = None                      # (the ``edit`` of the image layer being composed)
+        self.input_sig: str | None = None                     # what the input of the filter being applied depends on
 
     def whole_stats(self, name: str, x: np.ndarray, measure):
         """``measure`` of a filter's input taken on the whole image, whatever region is rendered (review 10.1: at
@@ -1671,10 +1711,16 @@ class Ctx:
             return self.comp.stats[key]
         if not whole or self.canvas_wh is None:
             return measure(x)
+        mine = None if self.input_sig is None else ("input", self.input_sig, name)
+        if mine is not None and mine in self.comp.stats:      # the same input as before (a drag of the filter's own
+            v = self.comp.stats[mine]                         # setting): measured once
+            self._keep_stats(key, v)
+            return v
         k = stats_level(*self.canvas_wh)
         v = measure(x if k == 0 else cv2.resize(x, (max(1, x.shape[1] >> k), max(1, x.shape[0] >> k)),
                                                interpolation=cv2.INTER_AREA))
         self._keep_stats(key, v)
+        self._keep_stats(mine, v)
         return v
 
     def _keep_stats(self, key, v) -> None:
@@ -1693,8 +1739,12 @@ class Ctx:
         if whole:                         # measured (and kept) only at the measure level: elsewhere the filter does
             if self.canvas_wh is None or self.stats_key is None or stats_level(*self.canvas_wh):
                 return None, self.level
-            v = measure(x)
+            mine = None if self.input_sig is None else ("input", self.input_sig, name, self.level)
+            v = self.comp.stats.get(mine) if mine is not None else None
+            if v is None:                                     # (the same input as before: measured once)
+                v = measure(x)
             self._keep_stats((self.stats_key, name, self.level), v)
+            self._keep_stats(mine, v)
             return v, self.level
         at = self.level + stats_level(*self.canvas_wh)
         got = None if self.stats_key is None else self.comp.stats.get((self.stats_key, name, at))
@@ -1715,6 +1765,8 @@ class Ctx:
             return None
         if "stars" not in self._memo:
             self._memo["stars"] = self.stars_fn()
+        if self._memo["stars"] is None and self.comp._stars_wait:
+            self.comp._stars_missing = True              # (what is made now without them is not kept: ``compose``)
         return self._memo["stars"]
 
     def halpha(self) -> np.ndarray:
@@ -1825,12 +1877,16 @@ class Composer:
         self._thumbs: OrderedDict = OrderedDict()           # ``tkey`` -> {mask key: thumbnail}
         self._side_thumbs: OrderedDict = OrderedDict()      # a master layer's kept starless image -> its masks' thumbnails
         self._own_seen: dict = {}                           # layer id -> (its own filters as last composed, ``_own_edited``)
+        self.progress = None                                # called with each filter a composition applies (the banner)
+        self.costs: dict = {}                               # filter id -> seconds it took at a screen level, last time
+        self.applied: set = set()                           # the filters the last composition applied
         self._step_thumbs: OrderedDict = OrderedDict()      # a filter's step -> its mask's thumbnail (``_own_jump``)
         self.skipped = 0                                    # rows the last composition did not compute
         self.plan_errors = 0                                # rows whose digest the plan did not foresee (tests: 0)
         self.stats: OrderedDict = OrderedDict()             # (filter input's key, measure) -> its whole-image values
         self._fstats: dict = {}                             # a master layer's mix -> its statistics (``_fusion_stats``)
         self._stars_new = False                             # a search of stars ended since the last composition
+        self._stars_missing = False                         # this composition made something without stars searched
         self._stars_wait = False                            # this composition waits for a search (said in its notes)
         self._stars_failed = False                          # a search of its stars failed (said in its notes)
         _COMPOSERS.add(self)
@@ -2243,7 +2299,7 @@ class Composer:
         holder = (lay["id"], (FUSION, "side"), level)
         # at full resolution kept only where there is room, never instead of another image: the screen's images
         # (the stars side, the stretched filters) are the ones a release needs first
-        if key is not None and (level > 0 or self.images.room(holder) >= held.nbytes):
+        if key is not None and not self._stars_missing and (level > 0 or self.images.room(holder) >= held.nbytes):
             self.images.put(key, held, holder)
             if thumbs:
                 self._side_thumbs[key] = made
@@ -2475,8 +2531,8 @@ class Composer:
                 key = part.get("from") if part.get("from") in sources else next(iter(sources))
                 img = sources[key]
             seen = seens.setdefault(key, {})
-            if sigs is not None and key in sigs and not ctx.draft and "d" not in seen:
-                seen["d"] = ("sig", sigs[key])            # (a draft's image is a quick look: its pixels name it)
+            if sigs is not None and key in sigs and "d" not in seen:
+                seen["d"] = ("sig", sigs[key], bool(ctx.draft))   # (a draft's filters may take a quick look)
             r = self.part_raster(part, level, abox, img, canvas, ctx, seen)
             if out is None:
                 out = np.zeros_like(r) if part["op"] == "add" else np.ones_like(r)
@@ -2531,7 +2587,7 @@ class Composer:
                 if not any(self.provider.readable(x) for _s, x in side_layers(lay)):      # (one side of a Combine layers layer
                     continue                                              # that cannot be read: the other one is composed)
                 own = [fl for fl in stack if fl["kind"] == "filter" and fl.get("target") == lay["id"]]
-                ss, mine = self._src_sig(lay, own, level, abox, canvas), [(_settings_of(f), f["visible"]) for f in own]
+                ss, mine = self._src_sig(lay, own, level, abox, canvas, draft), [(_settings_of(f), f["visible"]) for f in own]
                 sig = _sig(sig, ss, _settings_of(lay))
                 edit = _sig(edit, "pixel", _settings_of(lay), mine, [self.provider.version(x) for x in sids])
                 ids = {lay["id"], *(f["id"] for f in own), *((lay["id"], s) for s in subs_of(lay))}
@@ -2568,7 +2624,15 @@ class Composer:
             before = it.edit
         return out
 
-    def _src_sig(self, lay, own, level, abox, canvas) -> str:
+    def _img_sig(self, lay, level, abox, canvas, draft=False) -> str:
+        """What a layer's image depends on (``layer_rgb``): its key's digest; in a draft, its quick look's when its exact
+        image is not kept (a draft's composition reads the quick look then, and keeps what it makes by that)."""
+        key = self._key(lay, level, abox, canvas)
+        if draft and level > 0 and key not in self.images.items:
+            return _sig(self._key(lay, level, abox, canvas, True))
+        return _sig(key)
+
+    def _src_sig(self, lay, own, level, abox, canvas, draft=False) -> str:
         """What a pixel layer's image after its own filters depends on: the digest ``compose`` and ``group_rgb`` make
         while they compute it, made without computing it."""
         if is_group(lay):
@@ -2580,17 +2644,17 @@ class Composer:
                 elif sub == "starless" and is_fusion(lay):
                     sig = self._fusion_sig(lay, own, level, abox, canvas)
                 else:
-                    sig = _sig(self._key(sub_layer(lay, sub), level, abox, canvas))
+                    sig = self._img_sig(sub_layer(lay, sub), level, abox, canvas, draft)
                 synth = sub_layer(lay, "synth")
                 if sub == "stars" and self.provider.available(source_id(synth)):
-                    sig = _sig(sig, self._key(synth, level, abox, canvas))
+                    sig = _sig(sig, self._img_sig(synth, level, abox, canvas, draft))
                 for fl in own:
                     if fl.get("sub") == sub and fl["visible"]:
                         sig = _sig(sig, _settings_of(fl))
                 sigs.append(sig)
             sig = _sig(*sigs)
         else:
-            sig = _sig(self._key(lay, level, abox, canvas))
+            sig = self._img_sig(lay, level, abox, canvas, draft)
         for fl in own:
             if not fl.get("sub") and fl["visible"]:
                 sig = _sig(sig, _settings_of(fl))
@@ -2660,10 +2724,11 @@ class Composer:
         Curves editor's and the stretches' graphs). ``track``: this is the composition being edited (Post's own
         renders, not the before image or another version's): where it changed says which row's backdrop to keep.
         None when no pixel layer has a result."""
-        if self._stars_new:                               # a search ended: what was made without its stars goes
-            self._stars_new = False
-            self.forget()
-        self._stars_wait = self._stars_failed = False
+        # a search ended: nothing to drop, what was made without its stars was not kept (``_stars_missing``); what
+        # does not read them (the other layers, the steps under a Stars part) stays
+        self._stars_new = False
+        self._stars_wait = self._stars_failed = self._stars_missing = False
+        self.applied = set()
         canvas = self.canvas_of(layers)
         if canvas is None:
             return None
@@ -2682,7 +2747,9 @@ class Composer:
         ctx.hist_ids, ctx.hists = set(hists), out.hists
         ctx.canvas_wh = (W, H)                                            # the whole canvas at this level
         # the image after each step is kept: hiding a filter recomputes only what is above it (a region: not kept)
-        where = (level, (canvas.W, canvas.H, canvas.origin)) if cache and not draft and abox == (0, 0, W, H) else None
+        # (a draft keeps what it makes apart from the exact images: its filters may take a quick look)
+        where = ((level, (canvas.W, canvas.H, canvas.origin)) + (("draft",) if draft else ())
+                 if cache and abox == (0, 0, W, H) else None)
         want = set(want)
         self._drawn = 0
         check = stop or (lambda: False)
@@ -2758,7 +2825,7 @@ class Composer:
                     ctx.row_edit = it.edit                                # (the key of its filters' measures)
                     # the highest of its own filters' steps kept: the layer's image and the filters under it are not
                     # made again (a release of its top filter makes that filter only)
-                    jump = self._own_jump(lay, own, level, abox, canvas, ctx, where, want, thumbs)
+                    jump = self._own_jump(lay, own, level, abox, canvas, ctx, where, want, thumbs, draft)
                     if jump is not None:
                         done, src, sig, replay = jump
                         for fid, t in replay:                             # the masks' thumbnails of the filters passed
@@ -2768,11 +2835,11 @@ class Composer:
                         src, sig = self.group_rgb(lay, own, level, abox, canvas, ctx, cache, draft, check,
                                                   keep_mask, where, want, thumbs)
                         self._keep = True
-                        if where is not None and not tops:                # (with filters: the last one's step)
+                        if where is not None and not tops and not self._stars_missing:   # (with filters: the last step)
                             self.steps.put((sig, where), src.copy(), (lay["id"], "src", level))
                     else:
                         src = self.layer_rgb(lay, level, abox, canvas, cache, draft, check)
-                        sig = _sig(self._key(lay, level, abox, canvas))
+                        sig = self._img_sig(lay, level, abox, canvas, draft)
                     # at full resolution its steps are kept only under the filter being edited, and its last: all of
                     # them (327 MB each on a 27 Mpx image) took the room of the screen's
                     under_edit = self._own_edited(lay, tops)
@@ -2814,6 +2881,8 @@ class Composer:
             if comp_sig != it.sig:                   # the plan missed what this row depends on: keep nothing more
                 self.plan_errors += 1
                 where = None
+            if self._stars_missing:                  # made without the stars being searched: nothing more kept
+                where = None
             if where is None:
                 continue
             if thumbs:
@@ -2853,12 +2922,12 @@ class Composer:
                 sig = self._fusion_sig(lay, own, level, abox, canvas)
             else:
                 x = None                                                  # (made below, unless a step is kept)
-                sig = _sig(self._key(part, level, abox, canvas))
+                sig = self._img_sig(part, level, abox, canvas, draft)
             synth = sub_layer(lay, "synth")
             ctx.synth = None
             if sub == "stars" and self.provider.available(source_id(synth)):
                 ctx.synth = lambda: self.layer_rgb(synth, level, abox, canvas, cache, draft, check)
-                sig = _sig(sig, self._key(synth, level, abox, canvas))
+                sig = _sig(sig, self._img_sig(synth, level, abox, canvas, draft))
             chain = [fl for fl in own if fl.get("sub") == sub]
             # the highest of the side's filters' steps kept: its image and the filters under it are not made again
             jump = self._chain_jump(chain, sig, where, want, thumbs, ctx, level) if x is None else None
@@ -2918,7 +2987,7 @@ class Composer:
                 out[role_sub(r)] = grey3(parts[i])
         return out
 
-    def _own_jump(self, lay, own, level, abox, canvas, ctx, where, want, thumbs):
+    def _own_jump(self, lay, own, level, abox, canvas, ctx, where, want, thumbs, draft=False):
         """(the place in ``own`` of the highest of a layer's own filters whose result is kept, that result (a copy),
         what it depends on), or None: the digests ``_step`` keeps them by, made without computing anything (the
         layer's image's, ``_src_sig`` without its own filters, then each visible filter's settings). None when a mask
@@ -2929,7 +2998,7 @@ class Composer:
                               or any((lay["id"], s) in want for s in subs_of(lay))
                               or any(f.get("sub") and (f["id"] in want or f["id"] in ctx.hist_ids) for f in own)):
             return None
-        sig = self._src_sig(lay, [f for f in own if f.get("sub")], level, abox, canvas)
+        sig = self._src_sig(lay, [f for f in own if f.get("sub")], level, abox, canvas, draft)
         return self._chain_jump([f for f in own if not f.get("sub")], sig, where, want, thumbs, ctx, level,
                                 positions=[k for k, f in enumerate(own) if not f.get("sub")])
 
@@ -2965,7 +3034,7 @@ class Composer:
 
     def _keep_step_thumb(self, t, sig, where):
         """A filter's mask thumbnail, kept with its step (``_chain_jump`` gives it again when it passes the filter)."""
-        if t is None or where is None:
+        if t is None or where is None or self._stars_missing:
             return
         self._step_thumbs[(sig, where)] = t
         self._step_thumbs.move_to_end((sig, where))
@@ -2996,7 +3065,17 @@ class Composer:
         if got is not None:
             self.steps.hold(key, holder)
         if got is None:
-            out, m = self._apply(fl, under, level, abox, canvas, ctx, sig)
+            was = self._stars_missing
+            self._stars_missing = False
+            ctx.input_sig = None if ctx.draft is None else _sig(sig, bool(ctx.draft))   # (its whole-image measures)
+            try:
+                out, m = self._apply(fl, under, level, abox, canvas, ctx, sig)
+            finally:
+                ctx.input_sig = None
+            missing, self._stars_missing = self._stars_missing, was or self._stars_missing
+            if key is not None and missing:                 # its mask's Stars part waits for its stars: not kept
+                self.steps._unhold(holder, key)
+                key = None
             if key is not None:
                 self.steps._unhold(holder, key)                   # the one it held before goes (settings changed)
                 # a filter may work in place on what it is given: a copy is kept. A step of lesser use (``keep``
@@ -3017,6 +3096,12 @@ class Composer:
     def _apply(self, fl, under, level, abox, canvas, ctx, sig=None):
         """A filter layer on an image (its own layer's, or everything below): the filtered image, through the layer's
         mask, opacity and mode. Returns (result, mask)."""
+        if self.progress is not None and not ctx.draft:
+            try:
+                self.progress(fl)
+            except Exception:  # noqa: BLE001 - the banner's word is a courtesy: never a failure
+                pass
+        t0 = time.perf_counter()
         if fl["id"] in ctx.hist_ids:
             ctx.hists[fl["id"]] = pf_curves.histograms(under)
         out = FILTERS[fl["filter"]]["fn"](under, fl["params"], ctx)
@@ -3024,9 +3109,14 @@ class Composer:
         out = self.blend(fl["mode"], under, out)
         a = fl["opacity"] / 100
         if m is None and a >= 0.999:
-            return out, m
-        a = a if m is None else (a * m)[..., None]
-        return under + (out - under) * a, m
+            res = out
+        else:
+            a = a if m is None else (a * m)[..., None]
+            res = under + (out - under) * a
+        self.applied.add(fl["id"])
+        if level > 0 and not ctx.draft:                       # its cost on the screen (the row's hover says it)
+            self.costs[fl["id"]] = time.perf_counter() - t0
+        return res, m
 
     @staticmethod
     def blend(mode, a, b):

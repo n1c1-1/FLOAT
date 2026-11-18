@@ -761,12 +761,16 @@ class Result:
     tag: Any = None
     missing: tuple = ()                                 # image layers' keys whose image was not found
     hists: dict = field(default_factory=dict)           # filter id -> {channel: counts}: the Curves editor's histograms
+    costs: dict = field(default_factory=dict)           # filter id -> seconds it took on the screen, last time
+    applied: frozenset = frozenset()                    # the filters this composition applied
 
 
 _RETIRED: list = []                    # workers asked to stop that were still busy: kept until their thread ends
-LANES = {"draft": "main", "half": "main", "refine": "main", "exact": "main", "region": "region", "before": "before",
+#: the full resolution after a release ("exact") in a lane of its own: in the background, abandoned for any change
+#: (a draft, the next release) and taken up again after a request of another lane (a region, Inspect's)
+LANES = {"draft": "main", "half": "main", "refine": "main", "exact": "full", "region": "region", "before": "before",
          "inspect": "inspect", "thumbs": "thumbs"}
-PRIORITY = ("main", "region", "before", "inspect", "thumbs")
+PRIORITY = ("main", "region", "before", "inspect", "full", "thumbs")
 
 
 def to_u8(a: np.ndarray) -> np.ndarray:
@@ -840,6 +844,7 @@ class Renderer:
                      None, comp.mask_thumbs, {}, set(), 0.0, self.source.engine_ms, comp.drawn, comp.notes,
                      self.device, req.tag)
         res.hists = comp.hists
+        res.costs, res.applied = dict(cp.costs), frozenset(cp.applied)
         if req.overlay and req.want and req.want[0] in comp.masks:
             res.overlay = red_overlay(comp.masks[req.want[0]])
         res.previews = {lay["pid"] for lay in layers if lay["kind"] == "workflow" and
@@ -1169,6 +1174,7 @@ class RenderWorker(QObject):
     refuses them and the thread ends."""
 
     rendered = Signal(object)                    # Result
+    working = Signal(int, object)                # seq, (filter id, its layer's id, its image): the filter being made
     failed = Signal(int, str, str)               # seq, kind, text
     progress = Signal(float, str)                # export
     exported = Signal(object, str)               # the files written (list of paths), or [] and the error text
@@ -1298,6 +1304,7 @@ class RenderWorker(QObject):
         resolver = self._resolver or api_resolver(self.project)
         bases = self._bases or (bases_of(self.project) if self.project is not None else None)
         self.renderer = Renderer(LayerSource(resolver, service, bases), device=dev)
+        self.renderer.composer.progress = self._working        # the banner names the filter being made
         root = getattr(self.project, "root", None)
         self.renderer.source.image_resolver = store_image_resolver(root) if root else None
         self.renderer.source.stars_dir = Path(root) / "cache" / "stars" if root else None   # (the Stars mask part's)
@@ -1326,6 +1333,12 @@ class RenderWorker(QObject):
         except (AttributeError, OSError, ValueError, KeyError):
             return None
         return f if f.is_file() else None
+
+    def _working(self, fl: dict):
+        """The composer applies ``fl``: said to the GUI (the banner: "Rendering: Noise reduction · Starless image"),
+        with the request's number."""
+        run = self._running
+        self.working.emit(run[1] if run else 0, (fl.get("id"), fl.get("target"), fl.get("sub")))
 
     def _pick_device(self) -> str:
         self._last_busy = self._busy_device()
@@ -1442,10 +1455,12 @@ class RenderWorker(QObject):
                     self.stats = (self.stats + [(work.kind, res.ms, res.layer_ms)])[-50:]
                     self.rendered.emit(res)
             except Superseded:
-                if lane in ("region", "before", "inspect", "thumbs"):   # abandoned for a more urgent lane: keep it
-                    with self._cond:
-                        if lane not in self._slots and not self._stopping:
-                            self._slots[lane] = work
+                with self._cond:
+                    # abandoned for a more urgent lane: kept (the full resolution: not for a change, it is stale)
+                    keep = lane in ("region", "before", "inspect", "thumbs") or (lane == "full" and "main" not in
+                                                                                  self._slots)
+                    if keep and lane not in self._slots and not self._stopping:
+                        self._slots[lane] = work
             except Exception as e:  # noqa: BLE001 - every failure goes back to the GUI as text
                 import traceback
                 if lane == "export":

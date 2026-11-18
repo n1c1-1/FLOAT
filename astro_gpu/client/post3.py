@@ -39,6 +39,7 @@ import copy
 import json
 import math
 import re
+import time
 
 import numpy as np
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, QTimer, Signal
@@ -183,6 +184,8 @@ REGION_MAX = 12_000_000                                  # pixels of the region 
 REGION_WAIT_MS = 150                                     # after the view stops moving
 INDENT = 24                                              # a child row's indent (px)
 HOLD_MS = 600                                            # the exact image within this: the half one is not shown
+HEAVY_TIP_S = 1.0                                         # a release longer than this, one filter its main cost: the tip
+_HEAVY_TIP_SAID = False                                   # (said once a session)
 QUARTER_SCALE = 0.26                                     # zoomed out to this, the quarter-resolution image fills the screen
 TOGGLE_W = 16                                            # the ▾ / ▸ of a layer's children
 
@@ -525,6 +528,23 @@ class Step(list):
     words = ""
 
 
+#: a new filter's place among a layer's own filters, by its family: the noise and the corrections of the linear look
+#: first, the tones next, the colour and the detail last. The default order of the modules of the darktable raw editor's
+#: pixel pipe (src/common/iop_order.c, its v3.0 order: denoise and colour correction early, tone mapping and local
+#: contrast in the middle, colour saturation and sharpening late), on Post's filters
+FILTER_STAGES = {
+    "denoise": 0, "ml_denoise": 0, "faint_smooth": 0, "heal": 0, "balance": 0, "scnr": 0, "halpha_red": 0,
+    "ghs": 1, "asinh": 1, "histogram": 1, "stretch": 1, "curves": 1, "levels": 1, "local_contrast": 1, "clahe": 1,
+    "highlights": 1, "dehaze": 1,
+    "saturation": 2, "mixer": 2, "sharpen": 2, "ml_sharpen": 2,
+}
+
+
+def filter_stage(key) -> int:
+    """``FILTER_STAGES``; a filter of no stage (Synthetic stars, one to come) goes last."""
+    return FILTER_STAGES.get(key, 2)
+
+
 class ContSlider(QWidget):
     """A slider that glides: `moved` while dragging (draft render), `done` when let go (full render). Double-click
     on the slider or on its name: back to the default (the reference photo editor's, issue #16).
@@ -534,6 +554,7 @@ class ContSlider(QWidget):
     go on is the one of its last move. Without one it counts in thousandths of its range."""
     moved = Signal(float)
     done = Signal(float)
+    pressed = Signal()                                    # the handle taken (a drag starts)
     GLIDE = 1000                                          # the positions of a slider without a step
 
     def __init__(self, name, lo, hi, value, default, ends=None, unit="", step=None, show=None, parent=None, law=None):
@@ -576,6 +597,7 @@ class ContSlider(QWidget):
         self.set_value(value)
         self.s.valueChanged.connect(self._changed)
         self.s.sliderReleased.connect(lambda: self.done.emit(self.value()))
+        self.s.sliderPressed.connect(self.pressed.emit)
         self.name.mouseDoubleClickEvent = lambda e: self.reset()
         self.s.installEventFilter(self)
 
@@ -831,6 +853,15 @@ class LayerRow(QFrame):
             self.setToolTip(_('Applies to "{name}" only').format(name=layer_name(tgt)) if tgt else "")
         elif lay["kind"] == "filter":
             self.setToolTip(_("On all below"))
+        self._tip = self.toolTip()
+
+    def set_cost(self, seconds):
+        """A filter's row: its hover says what it took on the screen at the last render ("0.3 s on screen"), measured,
+        never guessed; nothing before it was measured."""
+        if self.lay.get("kind") != "filter":
+            return
+        said = _("{t} s on screen").format(t=number(seconds, 1)) if seconds is not None else ""
+        self.setToolTip(chr(10).join(x for x in (getattr(self, "_tip", ""), said) if x))
 
     def edit_name(self):
         """Its name typed in place, in its row, as the reference image editors rename a layer (a window over the work
@@ -1046,6 +1077,7 @@ class PostView(QWidget):
     rendered = Signal(object)                             # a Result was shown (tests, the status line)
     undoChanged = Signal()                                # Post's Undo / Redo lists changed (the window's Edit menu follows)
     toasted = Signal(str)                                 # what a change did beyond Post (the window's status line)
+    tipped = Signal(str, str)                             # a tip for the status line, the words of its "never again" link
     layerAsked = Signal(int)                              # Open in Post of a layer (the page lists it when not computed)
     openImages = Signal()                                 # images asked as layers
     runAsked = Signal()                                   # an image's kind changed: it is computed again
@@ -1594,6 +1626,12 @@ class PostView(QWidget):
         self._main_seq = 0                               # the newest draft or release request (the exact view's, Q1)
         self._failed_seq = 0                             # the newest request that failed (no "Updating…" for it)
         self._exact_wait = None                          # the release whose exact view is on its way (still updating)
+        self._exact_seq = None                           # (the number of that request)
+        self._working = None                             # (filter id, its layer, its image) being made for the screen
+        self._costs: dict = {}                           # filter id -> seconds on the screen, measured (the rows' hover)
+        self._release_t0 = None                          # when the slider was let go (the tip of a long release)
+        self._holding = False                            # a slider's handle is held (its drafts only, no final)
+        self._changed_lid = None                         # the layer whose setting was let go
         self._final_kind = "half"                        # the answer of the newest request that is its picture
         self._done_seq = 0                               # the newest request whose picture is on the screen
         self._region_t = QTimer(self)
@@ -1604,6 +1642,8 @@ class PostView(QWidget):
         self._save_t.timeout.connect(self._save)
         self.worker.rendered.connect(self._on_result)
         self.worker.failed.connect(self._on_failed)
+        if hasattr(self.worker, "working"):
+            self.worker.working.connect(self._on_working)
         self.worker.deviceChanged.connect(self._on_device)
         if self.worker.device:                           # the worker may have said it before we listened
             self._on_device(self.worker.device)
@@ -1972,7 +2012,12 @@ class PostView(QWidget):
         self._draft_dirty = self._draft_dirty or not final_only
         if not final_only:
             self._draft_t.start(0)
-        self._final_t.start(0 if final_only else 220)
+        if final_only:
+            self._holding = False                         # (a change that is not a drag's: no handle held any more)
+        if final_only or not self._holding:
+            # (a handle held: its drafts only, the screen's picture at the release; made 220 ms after a pause, it
+            # abandoned the drafts on their way and the drag showed nothing on a large image)
+            self._final_t.start(0 if final_only else 220)
         self.viewer.update()                              # its "Updating…" at once
 
     def _selected_wants(self):
@@ -2065,7 +2110,6 @@ class PostView(QWidget):
         self._draft_dirty = False
         self._rendered_sig = self._visible_sig()
         want, overlay = self._selected_wants()
-        cpu = (self._device or self.worker.device) == "cpu"
         # the CPU's exact quarter before the half is not the picture yet ("Updating…" until the half)
         self._final_kind = "refine" if self._quarter_enough() else "half"
         if self._quarter_enough():
@@ -2076,10 +2120,11 @@ class PostView(QWidget):
                                                          level=HALF_LEVEL + 1, want=want, thumbs=True, overlay=overlay,
                                                          hists=self._hist_ids()))
         else:
-            # on the CPU the exact quarter comes first, then the half
+            # one exact render at the screen's size, nothing before it (it made the quarter first on the CPU: twice
+            # the work before the picture); the full resolution comes after it, in the background (``_exact_wanted``)
             self._half_due = False
             self._main_seq = self.worker.request(Request(kind="half", layers=snapshot(self.layers), level=HALF_LEVEL,
-                                                         want=want, thumbs=True, overlay=overlay, refine=cpu,
+                                                         want=want, thumbs=True, overlay=overlay, refine=False,
                                                          hists=self._hist_ids()))
         if self.b_cmp.isChecked():
             self._send_before()
@@ -2160,6 +2205,8 @@ class PostView(QWidget):
     def _on_result(self, res):
         if res.kind == "inspect":
             return                                              # Inspect's final image, rendered on the same worker
+        if res.kind == "draft" and res.tag == "prime":
+            return                                              # a drag's first draft, made to keep its steps
         if res.kind == "exact":                                 # the release's image from the full resolution (Q1)
             if res.tag == self._exact_wait:
                 self._exact_wait = None
@@ -2219,10 +2266,9 @@ class PostView(QWidget):
                 if res.kind == "draft":
                     self.draft_ms = (self.draft_ms + [res.ms])[-4:]
                     self._adapt_draft()
-            elif self._exact_wanted(res) and self.src.img1 is not None:  # one change on screen per gesture (#87)
-                self._held = res
-                self._hold_t.start(HOLD_MS)
             else:
+                # the screen's picture at once: the full resolution's comes in the background, long on a large image
+                # (18 s on a 27 Mpx one: holding the screen's for it made every release wait)
                 self.src.img1, self.src.seq1 = res.rgb, res.seq
             if res.seq == self._main_seq and res.kind == self._final_kind and self._held is None:
                 self._done_seq = res.seq
@@ -2241,9 +2287,11 @@ class PostView(QWidget):
                 if self.viewer.scale >= 0.5:
                     self._region_t.start(60)
             self.viewer.refresh()
+            if res.kind in ("half", "refine") and res.seq == self._main_seq:
+                self._screen_done(res)
             if self._exact_wanted(res):
-                self.worker.request(Request(kind="exact", layers=snapshot(self.layers), level=HALF_LEVEL,
-                                            tag=res.seq))
+                self._exact_seq = self.worker.request(Request(kind="exact", layers=snapshot(self.layers),
+                                                              level=HALF_LEVEL, tag=res.seq))
                 self._exact_wait = res.seq                     # the picture changes once more: still "Updating…"
         elif res.kind == "region":
             self.src.full = (res.box, res.rgb)
@@ -2465,8 +2513,71 @@ class PostView(QWidget):
             from .imageview import tag
             corner = v.img_to_w(0, 0) if self.src.canvas is not None else QPointF(0, 0)
             # on the picture's top left corner (not above it when it is letterboxed), inside the view when zoomed in
-            tag(p, QPointF(min(max(corner.x(), 0.0), max(v.width() - 160.0, 0.0)) + 10,
-                           min(max(corner.y(), 0.0), max(v.height() - 40.0, 0.0)) + 10), _("Updating…"))
+            what = self._working_text()
+            text = _("Rendering: {what}").format(what=what) if what else _("Updating…")
+            tag(p, QPointF(min(max(corner.x(), 0.0), max(v.width() - 160.0 - 6 * len(what), 0.0)) + 10,
+                           min(max(corner.y(), 0.0), max(v.height() - 40.0, 0.0)) + 10), text)
+        else:
+            self._working = None
+
+    def _on_working(self, seq, info):
+        """The worker makes a filter for the screen's picture or the release's full resolution: the banner names it
+        (never the picture: it stays the last whole one until the new one is made)."""
+        if seq and seq in (self._main_seq, self._exact_seq):
+            if info != self._working:
+                self._working = info
+                self.viewer.update()
+
+    def _working_text(self) -> str:
+        """"Noise reduction · Starless image": the filter being made and what it is on; "" when none is said."""
+        if not self._working:
+            return ""
+        fid, target, sub = self._working
+        fl = self.layer(fid)
+        if fl is None:
+            return ""
+        on = ""
+        grp = self.layer(target) if target is not None else None
+        if grp is not None:
+            on = _(sub_name(grp, sub)) if sub else layer_name(grp)
+        return " · ".join(x for x in (layer_name(fl), on) if x)
+
+    def _screen_done(self, res):
+        """The screen's picture of a request is shown: the filters' measured costs into their rows' hover, and the
+        tip of a long release (``_heavy_tip``)."""
+        if res.costs:
+            self._costs.update(res.costs)
+            for row in getattr(self, "rows", []):
+                try:
+                    row.set_cost(self._costs.get(row.lay.get("id")))
+                except RuntimeError:                     # (a row gone with a rebuild)
+                    pass
+        t0, self._release_t0 = self._release_t0, None
+        if t0 is not None and time.perf_counter() - t0 > HEAVY_TIP_S:
+            self._heavy_tip(res)
+
+    def _heavy_tip(self, res):
+        """Once a session, in the status line, never a pop-up: a release took more than a second and most of it was
+        one filter above the setting changed, made again at every setting: hide it while adjusting."""
+        global _HEAVY_TIP_SAID
+        if _HEAVY_TIP_SAID or prefs.get("post_tip_heavy_off"):
+            return
+        costs = {k: v for k, v in (res.costs or {}).items() if k in (res.applied or ())}
+        if not costs:
+            return
+        main = max(costs, key=costs.get)
+        if main == self._changed_lid or costs[main] < 0.5 * sum(costs.values()):
+            return
+        fl = self.layer(main)
+        if fl is None:
+            return
+        _HEAVY_TIP_SAID = True
+        self.tipped.emit(_("“{name}” is made again at every setting: hide it (eye) while you adjust")
+                         .format(name=layer_name(fl)), _("Don't show again"))
+
+    def tip_off(self):
+        """The tip's "never again" link: remembered."""
+        prefs.set("post_tip_heavy_off", True)
 
     # ------------------------------------------------------------ the red overlay of the mask being edited
     def _overlay(self, p: QPainter, v: Viewer):
@@ -3370,9 +3481,11 @@ class PostView(QWidget):
         self.part_sel = None
 
     def add_filter(self, key):
-        """A new filter is nested in the chosen pixel layer, on top of its children (or goes where the chosen filter
-        is: in its layer, or above it on everything below). On the real stars of a Stars group: at the group's bottom,
-        under the synthetic stars, so that it acts on the real stars alone (#93)."""
+        """A new filter goes just above the chosen filter (the reference image editor's rule: in its layer, or above it
+        on everything below); with a pixel layer chosen it is nested in it, at its family's place among the layer's
+        own filters (``filter_stage``: the noise first, then the tones, the colour and the detail last), above the
+        filters of its stage and of the earlier ones. On the real stars of a Stars group: at the group's bottom, under
+        the synthetic stars, so that it acts on the real stars alone (#93). A composition saved keeps its order."""
         cur = self.layer(self.sel[0]) if self.sel else None
         real = cur is not None and is_pixel(cur) and self.sel[1] == "real"
         target, sub = self._new_filter_place()
@@ -3381,15 +3494,22 @@ class PostView(QWidget):
         same = sum(1 for lay in self.layers if lay["kind"] == "filter" and lay.get("filter") == key)
         if same:                                        # a second Curves is "Curves · 2" (issue #15: no twin names)
             fl["name"] = f"{fl['name']} · {same + 1}"
-        if target is not None:                          # on top of that layer's own filters (real stars: under them)
-            group = [lay for lay in self.layers if lay.get("target") == target]
-            self.sel = ((group[0] if group and not real else self.layer(target))["id"], "layer")
+        if target is not None and cur is not None and is_pixel(cur):
+            # nested in the chosen layer: at its stage among the filters of the same image (real stars: under them)
+            group = [lay for lay in self.layers if lay.get("target") == target and lay.get("sub") == fl.get("sub")]
+            if real:
+                self.sel = (self.layer(target)["id"], "layer")
+            else:
+                stage = filter_stage(key)
+                below = [lay for lay in group if filter_stage(lay.get("filter")) <= stage]   # (top first)
+                # above the highest of them; under every filter when all are of a later stage: just above the layer
+                self.sel = ((below[0] if below else self.layer(target))["id"], "layer")
         self._insert_above_sel(fl)
         self.rebuild()
         self.request(final_only=True)
         return fl
 
-    def _new_filter_place(self):
+    def _new_filter_place(self):  # noqa: D401 - (the place, then the order: ``add_filter``)
         """Where a new filter goes, as the selection is: (the pixel layer it is nested in, the image of it: "stars",
         "f:SII", ... or None); (None, None) for every layer below."""
         cur = self.layer(self.sel[0]) if self.sel else None
@@ -4351,10 +4471,24 @@ class PostView(QWidget):
             apply(v)
             self.push(state["before"])
             state["before"] = None
+            self._release_t0, self._changed_lid = time.perf_counter(), (self.sel[0] if self.sel else None)
+            self._holding = False
             self.request(final_only=True, settings_only=True)
             QTimer.singleShot(0, self._refresh_rows)
         sl.moved.connect(moved)
         sl.done.connect(done)
+        if hasattr(sl, "pressed"):
+            sl.pressed.connect(self._prime_draft)
+
+    def _prime_draft(self):
+        """A slider's handle taken: a draft of the picture as it is, so that the drag's drafts find the steps under the
+        filter moved kept (a draft keeps its own: its filters may take a quick look) and make that filter only."""
+        self._holding = True
+        if not self.layers or self._final_t.isActive():
+            return
+        self._attach_fusion()
+        # (not shown: the picture stays the exact one until a move changes it)
+        self.worker.request(Request(kind="draft", layers=snapshot(self.layers), level=self.draft_level, tag="prime"))
 
     def _wire_editor(self, ed: CurvesEditor):
         """The Curves panel: a draft while a point moves; on release the exact render and one undo step (the state

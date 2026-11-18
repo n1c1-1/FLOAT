@@ -997,10 +997,17 @@ def test_a_failed_request_comes_back_as_text(preps, qapp):
     w.failed.connect(lambda seq, kind, text: errs.append((kind, text)))
     try:
         lay = [new_workflow_layer(1, "Full", True)]
+        end = time.monotonic() + 30                     # (its engines made first in its thread: else they are made
+        while w.renderer is None and time.monotonic() < end:     # after the resolver below is set, with the first one)
+            time.sleep(0.01)
         w._resolver = lambda pid: Folder(Path("nowhere") / "render_prep")        # a result that is not there
         w.renderer = None
         w.request(Request(kind="draft", layers=snapshot(lay), level=2))
         w.settle(30)
+        end = time.monotonic() + 10                     # (the answer comes through the event loop: run alone, none ran)
+        while not errs and time.monotonic() < end:
+            qapp.processEvents()
+            time.sleep(0.01)
         assert errs and errs[0][0] == "draft" and "FileNotFoundError" in errs[0][1]
     finally:
         w.stop()

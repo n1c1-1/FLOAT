@@ -61,9 +61,11 @@ def _along(what: str, top: float, w: np.ndarray, p: dict) -> np.ndarray | None:
     return None if not any(values) else np.tensordot(np.array(values, np.float32), w, 1)
 
 
-def mix(x: np.ndarray, p: dict) -> np.ndarray:
+def mix(x: np.ndarray, p: dict, pieces=None) -> np.ndarray:
     """``x`` (h, w, 3, sRGB 0..1) through the mixer's settings ``p`` (``keys``); the identity at zero. Only the pixels
-    with a colour are worked on, and the bands' sum is read from a table along the hue circle (12 Mpx: 5 s without)."""
+    with a colour are worked on, and the bands' sum is read from a table along the hue circle (12 Mpx: 5 s without).
+    ``pieces``: a way to run the arithmetic of each pixel in bands of pixels in threads (client/postengine.per_pixel):
+    the same values (the colour conversions and the angles stay one call on the whole)."""
     if is_identity(p):
         return x
     out = np.clip(x, 0, 1).astype(np.float32)
@@ -79,20 +81,24 @@ def mix(x: np.ndarray, p: dict) -> np.ndarray:
     share = np.minimum((C - NEUTRAL_C) / NEUTRAL_C, 1.0)                  # a smooth start
     w = _weights(_HUES)
 
+    run = ((lambda fn, *arr: fn(*arr)) if pieces is None else
+           (lambda fn, *arr: pieces(lambda *band: fn(*band), *arr, min_rows=200_000)))
+
     def read(curve):
-        return share * (curve[i] + t * (curve[i + 1] - curve[i]))
+        return run(lambda sh, ii, tt: sh * (curve[ii] + tt * (curve[ii + 1] - curve[ii])), share, i, t)
 
     dh, ds, dl = _along("hue", HUE_MAX, w, p), _along("sat", SAT_MAX, w, p), _along("lum", LUM_MAX, w, p)
     if ds is not None:
-        scale = np.clip(1.0 + read(ds) / 100.0, 0.0, 3.0)
-        a, b = a * scale, b * scale
+        scale = run(lambda r: np.clip(1.0 + r / 100.0, 0.0, 3.0), read(ds))
+        a, b = run(lambda aa, sc: aa * sc, a, scale), run(lambda bb, sc: bb * sc, b, scale)
     if dh is not None:
         turn = np.radians(read(dh))
-        c, s = np.cos(turn), np.sin(turn)
-        a, b = a * c - b * s, a * s + b * c
+        c, s = np.cos(turn), np.sin(turn)                                  # (one call each: the same values)
+        a, b = run(lambda aa, bb, cc, ss: aa * cc - bb * ss, a, b, c, s), run(lambda aa, bb, cc, ss: aa * ss + bb * cc,
+                                                                                a, b, c, s)
     if dl is not None:
         # the luminance of a colour: up or down by its share of the way to white or black (a colourful pixel only)
-        d = read(dl) / 100.0
-        L = np.where(d >= 0, L + (100.0 - L) * d * 0.5, L * (1.0 + d * 0.5))
+        d = run(lambda r: r / 100.0, read(dl))
+        L = run(lambda dd, LL: np.where(dd >= 0, LL + (100.0 - LL) * dd * 0.5, LL * (1.0 + dd * 0.5)), d, L)
     out[on] = np.clip(from_lab(np.stack([L, a, b], -1)[:, None].astype(np.float32)), 0, 1)[:, 0]
     return out

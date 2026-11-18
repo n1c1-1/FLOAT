@@ -1316,6 +1316,7 @@ class Main(QMainWindow):
         for b in (page.view.b_undo, page.view.b_redo):        # (its own arrows: read after they acted)
             b.clicked.connect(self._post_seen)
         page.view.toasted.connect(self.flash)            # what a change of Post did beyond Post (a branch removed)
+        page.view.tipped.connect(lambda t, w, v=page.view: self.flash(t, (w, v.tip_off)))   # a tip, its never again
         page.view.goProcessing.connect(lambda pid, k: (self.select(index=self.s.index_of(pid), step=k),
                                                        self.set_mode(1)))
         page.view.panelChosen.connect(self._post_panel_chosen)
