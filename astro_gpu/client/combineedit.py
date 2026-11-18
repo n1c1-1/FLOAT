@@ -15,7 +15,7 @@ Split.
 
 When it looks right: **Apply** (the draft becomes the block's settings, one step of the window's Undo), **Try variant**
 (the draft goes on a variant of the workflow, its copy of the block holding it) or **Reset**: the draft bar every block
-has (blockdraft.DraftBar), at the top of the editor. Leaving the block with a draft asks the question every block asks
+has (blockdraft.DraftBar), at the top of the editor's column, with a draft only. Leaving the block with a draft asks the question every block asks
 (Apply, Try variant, Discard, Stay).
 
 When Post mixes the combination's filters itself (client/postfusion.py), its hues and intensities are the GRAPH's

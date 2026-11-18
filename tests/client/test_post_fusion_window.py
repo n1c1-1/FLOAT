@@ -350,9 +350,9 @@ def test_the_editor_balances_as_the_run_draft_and_applied_agree_and_its_page_is_
     wait(ed, 120)
     ap = ed.applied_img
     assert ap is not None and ap.get("img") is not None and np.abs(ap["img"] - ed.result).max() < 1e-6
-    # the page: the draft bar under the settings, the panel at the right with the measurements, the image's tag
+    # the page: the draft bar at the top of the settings (a draft only), the panel at the right with the measurements, the image's tag
     bar, card = ed._ui["bar"], ed._ui["hue_OIII"]
-    assert bar.mapTo(ed.page, bar.rect().topLeft()).y() > card.mapTo(ed.page, card.rect().topLeft()).y()
+    assert bar.mapTo(ed.page, bar.rect().topLeft()).y() < card.mapTo(ed.page, card.rect().topLeft()).y()
     texts = " ".join(x.text() for x in ed.drawer.findChildren(type(ed._ui["title"])))
     assert "Measurements" in texts and "S II" in texts and "×" in texts and "Draft" in texts
     assert ed._ui.get("undo") is not None
