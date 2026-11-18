@@ -310,6 +310,12 @@ def op_set_setting(q, block, key, value):
         return op_set_combination_type(q, block, value)
     if rules.setting_spec(b.kind, key) is None:
         raise Refusal("unknown setting")
+    if key == rules.GRAPH_SETTINGS:                     # the graph's settings (None: none of its own, the defaults)
+        if value is None:
+            b.settings.pop(key, None)
+        else:
+            b.settings[key] = copy.deepcopy(value)
+        return Out(M("{lab}: graph settings", lab=LABEL.get(b.kind, b.kind)), block)
     b.settings[key] = value
     return Out(M("{key}: {value}", key=key, value=value), block)
 

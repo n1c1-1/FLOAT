@@ -4,8 +4,9 @@ newer than them (its keys moved since they were computed), so its layers and its
 results by hand.
 
 The master layer: the project opens with its Combine layers layer as the master layer, its filters as rows, its picture
-made from the filters; its hues and intensities are the layer's own (one source for Post, the block's panel and
-Inspect's editor), never outdate the block nor ask for a run; the balance stays the block's. The editor balances as the
+made from the filters; its hues and intensities are the layer's own in Post and the graph's settings in Inspect and the
+block's panel (two sources, bridged by a copy: client/postfusion.py), never outdate the block nor ask for a run; the
+balance stays the block's. The editor balances as the
 run does (the same gains as Post), shows Draft and Applied alike at the same settings, has the Gradient's layout.
 Also the plain cases' rule (client/postfusion.py)."""
 from __future__ import annotations
@@ -143,8 +144,7 @@ def m27(qapp, tmp_path_factory):
     mp = pytest.MonkeyPatch()
     mp.setattr(ce, "_reduced_for", _reduced)
     mp.setattr(ce, "_result_dir_for", lambda project, pid, stage: str(COMBINATION))
-    mp.setattr(ce, "_applied_for", lambda project, pid, stage, k, settings=None: ce.applied_small(
-        str(COMBINATION), k, settings))
+    mp.setattr(ce, "_applied_for", lambda project, pid, stage, k: ce.applied_small(str(COMBINATION), k))
     w = _open_copy(tmp_path_factory.mktemp("m27"))
     from astro_gpu.client.post3 import PostView
     from astro_gpu.client.services.render import RenderWorker
@@ -238,8 +238,7 @@ def test_a_hue_set_in_post_is_the_layer_s_a_step_of_post_and_never_outdates_the_
     q, ed = _editor(w, monkeypatch)
     ed.set_intensity("SII", 1.5)                                       # a draft in Inspect
     assert ed.has_draft()
-    said = []
-    w.tune.toasted.connect(said.append)
+    applied = ed.applied()
     blk, state, key = _block(w, q.pid, st), s.state(q, st), s.stage_key(q, st)
     n, n_post = len(s._undo), len(pv.undo)
     pv.set_fusion(lay, {"hue_oiii": 180.0}, "O III hue")
@@ -249,12 +248,13 @@ def test_a_hue_set_in_post_is_the_layer_s_a_step_of_post_and_never_outdates_the_
     assert len(s._undo) == n and len(pv.undo) == n_post + 1                                         # a step of Post
     lay = _master(pv)
     assert lay["tune"]["hues"]["OIII"] == 180.0 and lay["fusion"]["hues"]["OIII"] == 180.0
-    assert not ed.has_draft() and "Draft dropped: changed in Post" in said
-    assert ed.applied()["hue_oiii"] == 180.0                          # Inspect shows the layer's value
+    # Inspect's are the graph's settings: untouched, its draft kept (nothing goes from Post to the editor)
+    assert ed.has_draft() and ed.applied() == applied and s.fusion_graph(q.pid) is None
     assert pv.next_words("undo") == "O III hue of “S-H-O”"                # the setting, then its owner
     pv.do_undo()
     _write(pv)
-    assert "tune" not in _master(pv) and ed.applied()["hue_oiii"] == float(blk.get("hue_oiii", 202.2))
+    assert "tune" not in _master(pv) and ed.applied() == applied
+    ed.reset()
 
 
 def test_the_balance_set_in_post_is_the_block_s_and_needs_a_run(m27):
@@ -274,34 +274,52 @@ def test_the_balance_set_in_post_is_the_block_s_and_needs_a_run(m27):
     assert s.stage_key(q, st) == key
 
 
-def test_inspect_s_apply_of_a_hue_writes_the_layer_one_step_of_the_window_and_post_shows_it(m27, monkeypatch):
+def test_inspect_s_apply_of_a_hue_sets_the_graph_s_settings_and_leaves_post_s_layer_as_it_is(m27, monkeypatch):
+    """Inspect's Apply of a hue: the graph's settings of the block (one step of the window's Undo, nothing outdated,
+    nothing to run); Post's layer, made before, keeps its own (an existing project's picture unchanged); a layer made
+    now takes a copy; Post's Graph settings copies them into the layer, one step of Post's Undo."""
+    from astro_gpu.client import i18n
     w, pv, _before = m27
     s = w.s
     q, ed = _editor(w, monkeypatch)
     st = ed._stage()
-    blk, key = _block(w, q.pid, st), s.stage_key(q, st)
-    assert ed._render_settings()["keep_colours"] == 1.0              # the preview stretched as the master layer is
+    blk, key, state = _block(w, q.pid, st), s.stage_key(q, st), s.state(q, st)
+    before = copy.deepcopy(s.p.post)
+    was = copy.deepcopy(_master(pv))
     ed.set_hue("OIII", 190.0)
-    assert ed.cost_text() == "Post's layer only: nothing is computed again · Try variant: in a new version of Post"
-    from astro_gpu.client import i18n
+    assert ed.cost_text() == ("Graph settings: nothing is computed again · Post's layers keep their own (Graph "
+                              "settings copies them)")
     i18n.set_language("fr")                                          # (said in the language shown, never kept from before)
     try:
-        assert ed.cost_text() == ("Calque de Post seulement : rien n'est recalculé · Essayer variante : dans une "
-                                  "nouvelle version de Post")
+        assert ed.cost_text().startswith("Réglages du graphe : rien n'est recalculé")
     finally:
         i18n.set_language("en")
     n = len(s._undo)
     ed.apply()
     _settle(w)
     assert len(s._undo) == n + 1 and _block(w, q.pid, st) == blk and s.stage_key(q, st) == key
-    assert (s.master_layer(q.pid) or {}).get("tune", {}).get("hues", {}).get("OIII") == 190.0
-    assert _master(pv)["fusion"]["hues"]["OIII"] == 190.0
+    assert s.state(q, st) == state
+    assert s.fusion_graph(q.pid)["hues"]["OIII"] == 190.0 and ed.applied()["hue_oiii"] == 190.0
+    lay = _master(pv)
+    assert pe.save_layers([lay]) == pe.save_layers([was]) and lay["fusion"]["hues"] == was["fusion"]["hues"]
+    assert s.p.post == before                                        # the project's Post as it was saved
+    made = pe.new_workflow_layer(q.pid, "S-H-O · Combine layers 2", True, "combined")
+    made["starless"] = "output"
+    s.with_graph_copy(made)                                          # a layer made now: the copy
+    assert made["tune"]["hues"]["OIII"] == 190.0
+    m = len(pv.undo)
+    assert pv.graph_settings(lay["id"])                              # Graph settings: the copy, one step of Post
+    lay = _master(pv)
+    assert lay["tune"]["hues"]["OIII"] == 190.0 and lay["fusion"]["hues"]["OIII"] == 190.0 and len(pv.undo) == m + 1
+    assert pv.next_words("undo") == "Graph settings on “S-H-O · Combine layers”"
+    pv.do_undo()
+    assert pe.save_layers([_master(pv)]) == pe.save_layers([was]) and len(pv.undo) == m
     s.undo()
     _settle(w)
-    assert "tune" not in (s.master_layer(q.pid) or {})
+    assert s.fusion_graph(q.pid) is None and ed.applied()["hue_oiii"] == was["fusion"]["hues"]["OIII"]
 
 
-def test_the_panel_s_route_an_intensity_goes_to_the_layer(m27):
+def test_the_panel_s_route_an_intensity_goes_to_the_graph_s_settings(m27):
     w, pv, _before = m27
     s = w.s
     lay = _master(pv)
@@ -310,7 +328,8 @@ def test_the_panel_s_route_an_intensity_goes_to_the_layer(m27):
     blk = _block(w, q.pid, st)
     s.apply_as({"kind": "combine", "values": {"weights": {"Ha": 0.8}}, "what": "", "short": ""}, "replace", [q])
     _settle(w)
-    assert _block(w, q.pid, st) == blk and s.master_layer(q.pid)["tune"]["weights"]["Ha"] == 0.8
+    assert _block(w, q.pid, st) == blk and s.fusion_graph(q.pid)["weights"]["Ha"] == 0.8
+    assert "tune" not in _master(pv)
     s.undo()
     _settle(w)
 
@@ -721,8 +740,9 @@ def test_the_master_layer_s_saturation_goes_on_to_plus_four(m27):
 
 def test_a_change_in_post_computes_nothing_in_a_hidden_inspect_editor(m27, monkeypatch):
     """A release in Post was followed by a second render beside Post's: the combination's editor, its page built but
-    not shown, made its preview again on every change of the master layer (the same processor). Hidden, it makes it
-    when it shows again; a grey filter's picture is made by the faster merge, the same values."""
+    not shown, made its preview again on every change of the master layer (the same processor). The editor follows
+    nothing of Post now (the graph's settings, the block alone): a change in Post asks nothing of it; a grey filter's
+    picture is made by the faster merge, the same values."""
     import numpy as np
 
     from astro_gpu.client.postengine import grey3
@@ -736,7 +756,7 @@ def test_a_change_in_post_computes_nothing_in_a_hidden_inspect_editor(m27, monke
     pump_until = time.monotonic() + 2
     while time.monotonic() < pump_until:
         QApplication.processEvents()
-    assert ed.computed == n and ed.result is None
+    assert ed.computed == n
     pv.do_undo()
     x = np.random.default_rng(0).random((7, 9)).astype(np.float32)
     assert np.array_equal(grey3(x), np.repeat(x[..., None], 3, -1)) and grey3(x).flags["C_CONTIGUOUS"]
@@ -822,3 +842,44 @@ def test_a_healer_s_spots_are_counted_in_undo_never_their_coordinates():
         assert said([], [one]).endswith("1 tache ajoutée") and said([one, two], []).endswith("2 taches retirées")
     finally:
         i18n.set_language("en")
+
+
+def test_combine_layers_inspect_shows_the_block_alone_and_its_apply_leaves_post_s_layer(m27):
+    """Combine layers' editor shows the block alone (its two images at its graph settings: no filter, mask or hidden
+    side of Post's layer, whatever Post holds) and Apply sets the graph's settings: Post's layer keeps its own."""
+    w, pv, _before = m27
+    s = w.s
+    lay = _master(pv)
+    before = copy.deepcopy(s.p.post)
+    bid = next(k for k, b in s._g.blocks.items() if b.kind == "combine_layers")
+    s.sel_layer = lay["id"]
+    s.select(index=s.index_of(lay["pid"]), step="composition")
+    w.set_mode(1)
+    _settle(w)
+    ed = w.tune.layers_editor
+    assert ed.page_shown() and ed.bid == bid
+    one = ed._request()["layers"]
+    assert len(one) == 1 and one[0]["id"] == -1 and one[0]["mask"] is None and not one[0].get("side_masks")
+    assert all(one[0]["shown"].values()) and one[0]["fusion"]["hues"] == s.fusion_of(lay["pid"])[0]["hues"]
+    # Post's filter on the layer, a mask, a side hidden: the editor's preview as it was
+    f = pe.new_filter_layer("curves", lay["id"], None)
+    pv.layers.insert(pv.layers.index(lay), f)
+    lay["mask"] = pe.new_mask()
+    lay["shown"] = {**lay["shown"], "stars": False}
+    try:
+        assert ed._request()["layers"] == one
+    finally:
+        pv.layers.remove(f)
+        lay["mask"] = None
+        lay["shown"] = {**lay["shown"], "stars": True}
+    saved = pe.save_layers([lay])
+    n = len(s._undo)
+    ed.set_slider("saturation", 3.0)
+    ed.apply()
+    _settle(w)
+    assert len(s._undo) == n + 1 and s.layers_graph(bid)["sliders"] == {"saturation": 3.0}
+    assert pe.save_layers([_master(pv)]) == saved and s.p.post == before
+    assert ed._request()["layers"][0]["sliders"] == {"saturation": 3.0}
+    s.undo()
+    _settle(w)
+    assert s.layers_graph(bid)["sliders"] == {}

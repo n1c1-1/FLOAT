@@ -383,47 +383,16 @@ class DraftEditor(QObject):
         else:
             self.s.apply_change(self._paths(q), ch)
 
-    def layer_only(self, q, ch) -> bool:
-        """The draft changes only Post's layers (graphmodel.layer_only): Try variant puts it into a new version of
-        Post, the version shown untouched; a setting the engine computes makes a variant of the workflow."""
-        try:
-            return bool(self.s.layer_only(ch, [q]))
-        except (AttributeError, KeyError, ValueError):
-            return False
-
-    def _apply_in(self, q, ch, twin):
-        """The draft made in a new version of Post (``twin``: its layer of a layer of the version shown)."""
-        self._apply_change(q, ch)
-
-    def _post_variant(self, q, ch):
-        """Try variant of a draft of Post's layers alone: a new version of Post holds it, one step of Undo."""
-        n = self.s.steps_count() if hasattr(self.s, "steps_count") else None
-        try:
-            name = self.s.try_in_post_version(lambda twin: self._apply_in(q, ch, twin))
-        except ValueError as e:
-            self.tv.toasted.emit(_(str(e)))
-            return
-        words = _("{what} · in a new version of Post, “{name}”").format(what=ch["what"], name=name)
-        if n is not None:
-            self.s.name_steps_since(n, words)
-        self.drafts.pop(q.pid, None)
-        self.tv.toasted.emit(words + " · Ctrl+Z")
-        self.historyChanged.emit()
-        self.tv.request_refresh()
-
     def _variant_target(self, q, ch):
         """(the workflow, the change) a variant of the workflow is made of."""
         return q, ch
 
     def try_variant(self, pid: int | None = None):
-        """The draft tried apart: Post's layers alone into a new version of Post (``_post_variant``), else on a variant
-        of the workflow (what is computed stays as it is), the variant shown."""
+        """The draft tried apart on a variant of the workflow (what is computed stays as it is; a combination's graph
+        settings go with the variant's copy of its block), the variant shown."""
         q = self._view_of(pid)
         ch = self.draft_change(q.pid) if q is not None else None
         if ch is None or self.variant_why():
-            return
-        if self.layer_only(q, ch):
-            self._post_variant(q, ch)
             return
         from ..core import workflow as wfl
         from .model import NotInEngine
@@ -837,11 +806,8 @@ class DraftEditor(QObject):
                 u[k].setEnabled(draft)
             u["apply"].setToolTip((_("The draft becomes the block's settings (Ctrl+Z takes it back)") +
                                    ("\n" + self.cost_text() if self.cost_text() else "")) if draft else why)
-            ch_now = self.draft_change() if draft else None
-            u["variant"].setToolTip((_("The draft in a new version of Post: the version shown stays as it is")
-                                     if self.layer_only(self.p, ch_now) else
-                                     _("The draft on a variant of the workflow: what is computed stays as it is, the "
-                                       "variant is computed by Run")) if draft else why)
+            u["variant"].setToolTip(_("The draft on a variant of the workflow: what is computed stays as it is, the "
+                                      "variant is computed by Run") if draft else why)
             if self.variant_why():                     # no variant of this block: greyed, why on hover
                 u["variant"].setEnabled(False)
                 u["variant"].setToolTip(_("No variant: {why}").format(why=self.variant_why()))

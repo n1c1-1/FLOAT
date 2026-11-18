@@ -14,9 +14,14 @@ is compared with the applied result on the same grid (the block's own image, red
 Split.
 
 When it looks right: **Apply** (the draft becomes the block's settings, one step of the window's Undo), **Try variant**
-(the draft goes on a variant of the workflow) or **Reset**: the draft bar every block has (blockdraft.DraftBar), at the
-top of the editor. Leaving the block with a draft asks the question every block asks (Apply, Try variant, Discard,
-Stay).
+(the draft goes on a variant of the workflow, its copy of the block holding it) or **Reset**: the draft bar every block
+has (blockdraft.DraftBar), at the top of the editor. Leaving the block with a draft asks the question every block asks
+(Apply, Try variant, Discard, Stay).
+
+When Post mixes the combination's filters itself (client/postfusion.py), its hues and intensities are the GRAPH's
+settings: kept on the block, outside its result's key, so Apply computes nothing; a layer of Post takes a copy of them
+when it is made and by its Graph settings command, never live. The editor reads and writes the block alone: it never
+reads Post's layers or versions, and its preview is the block alone.
 
 The editor, from the top: the draft bar; Palette, starting hues in one click (only the palettes the recipe's filters
 fit); one card per filter, in the recipe's order: its thumbnail (balanced, stretched; a click shows that filter alone
@@ -47,7 +52,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from .blockdraft import POST_ONLY
+from .blockdraft import GRAPH_ONLY
 from .blockeditor import COMPARE, PANEL_W, DoubleClickDefault, DraftEditor  # noqa: F401 - (the family's, kept importable here)
 from .blockeditor import Clickable as _Clickable  # noqa: F401
 from .blockeditor import PressToRelease as _PressToRelease  # noqa: F401
@@ -293,31 +298,13 @@ def mixed(small: dict, bal: dict, stage: str, spec: dict, p, off=(), solo=None) 
                               small["valid"])
 
 
-def output_render(rgb: np.ndarray, settings: dict | None = None) -> np.ndarray:
-    """(3, h, w) in 0-1: a combination's image as its Output shows it: render_simple keeps a combination's sky at 0
-    (``sky_neutral``), measures its stretch's statistics on the covered pixels (``image_stats``) and Post renders it
-    with SimpleRenderEngine: with the settings of the workflow's layer of Post (``settings``, ``layer_settings``: its
-    sliders), else the default ones (render_simple's preview)."""
+def output_render(rgb: np.ndarray) -> np.ndarray:
+    """(3, h, w) in 0-1: a combination's image as its Output shows it, the block alone: render_simple keeps a
+    combination's sky at 0 (``sky_neutral``), measures its stretch's statistics on the covered pixels (``image_stats``)
+    and it is rendered with SimpleRenderEngine at its default settings (render_simple's preview); no layer of Post."""
     from ..render.simple import SimpleRenderEngine, SimpleSettings
     eng = SimpleRenderEngine.from_array(rgb, device="cpu", linked=True, sample=1)
-    s = SimpleSettings(**settings) if settings else SimpleSettings()
-    return np.asarray(eng.render(s, 1.0).final.numpy(), np.float32)
-
-
-def layer_settings(layers: list[dict], pid: int) -> dict | None:
-    """The rendering settings Post gives the workflow's own layer (its Output image, else its image recombined with
-    its stars), as Post's render worker computes them (render/sliders.settings_at); None without a layer."""
-    from ..render.sliders import settings_at
-    mine = [x for x in layers or [] if x.get("kind") == "workflow" and x.get("pid") == pid
-            and x.get("part") in (None, "combined", "starless")]
-    if not mine:
-        return None
-    lay = min(mine, key=lambda x: (None, "combined", "starless").index(x.get("part")))
-    try:
-        return settings_at("simple", lay.get("base"), lay.get("sliders"), has_denoise=False, origin="palette",
-                           stretch=lay.get("stretch")).model_dump()
-    except Exception:  # noqa: BLE001 - a layer of an earlier format: the default render
-        return None
+    return np.asarray(eng.render(SimpleSettings(), 1.0).final.numpy(), np.float32)
 
 
 def thumbnail(ch: np.ndarray, valid: np.ndarray, width: int = THUMB_W) -> np.ndarray:
@@ -336,7 +323,7 @@ def thumbnail(ch: np.ndarray, valid: np.ndarray, width: int = THUMB_W) -> np.nda
             ).astype(np.uint8)
 
 
-def applied_small(result_dir: str, k: int, settings: dict | None = None) -> dict | None:
+def applied_small(result_dir: str, k: int) -> dict | None:
     """The block's own result (drz_full) reduced as the inputs were, rendered as its Output shows it, and the gains its
     run measured ({filter: gain}, drz_meta.json's scales); None without a result."""
     import json
@@ -348,7 +335,7 @@ def applied_small(result_dir: str, k: int, settings: dict | None = None) -> dict
         k = max(1, int(math.ceil(math.sqrt(arr.shape[-2] * arr.shape[-1] / PREVIEW_PIXELS))))
     rgb = np.stack([reduce_mean(arr[c], k) for c in range(3)])
     meta = json.loads((d / "drz_meta.json").read_text(encoding="utf-8")) if (d / "drz_meta.json").is_file() else {}
-    return {"img": output_render(rgb, settings), "tops": meta.get("channels") or {}}
+    return {"img": output_render(rgb), "tops": meta.get("channels") or {}}
 
 
 def _port(role: str) -> str:
@@ -431,9 +418,6 @@ class CombineEditor(DraftEditor):
         self.small = None                      # the reduced inputs {"pid", "sig", "chans", "valid", "k", ...}
         self.bal: dict = {}                    # (pid, sig, balance) -> the balanced channels (``balance``)
         self.notes: dict = {}                  # the gains of the balance shown, {filter: (gain, why)}
-        tuned = getattr(self.s, "postTuned", None)
-        if tuned is not None:                  # a setting changed in Post's master layer: the block's draft goes
-            tuned.connect(self._post_tuned)
 
     # ------------------------------------------------------------ the block shown
     def wants(self, node, p) -> bool:
@@ -452,8 +436,8 @@ class CombineEditor(DraftEditor):
         return combine_spec(p or self.p)
 
     def _stored(self, p=None) -> dict:
-        """The combination's settings: the block's, its master layer's hues and intensities in their place when Post
-        shows it by one (client/postfusion.py: one source, the layer)."""
+        """The combination's settings: the block's, its graph settings' hues and intensities in their place
+        (client/postfusion.py)."""
         p = p or self.p
         st = self._stage(p)
         if st and hasattr(self.s, "combine_stored"):
@@ -466,12 +450,12 @@ class CombineEditor(DraftEditor):
         except (KeyError, AttributeError):
             return {}
 
-    def master(self, p=None) -> bool:
-        """Post shows this combination by its master layer: its hues and intensities are that layer's (they never
-        ask for a run), its balance the block's."""
+    def tunable(self, p=None) -> bool:
+        """Its hues and intensities are graph settings (client/postfusion.py: Post mixes its filters itself): they never
+        ask for a run; its balance is the block's engine's."""
         p = p or self.p
         try:
-            return p is not None and hasattr(self.s, "master_layer") and self.s.master_layer(p.pid) is not None
+            return p is not None and hasattr(self.s, "graph_tunable") and bool(self.s.graph_tunable(p.pid))
         except Exception:  # noqa: BLE001 - the model cannot say now: the block's settings
             return False
 
@@ -511,19 +495,6 @@ class CombineEditor(DraftEditor):
     # ------------------------------------------------------------ the draft
     def weight(self, role: str) -> float:
         return float((self.value("weights") or {}).get(role, 1.0))
-
-    def _post_tuned(self, pid: int):
-        """The combination's settings changed in Post (its master layer: one source with this editor): a draft of the
-        block goes, said in the status line, and the page shows the settings as they are now."""
-        if self.drafts.pop(pid, None) is not None:
-            self.tv.toasted.emit(_("Draft dropped: changed in Post"))
-            self.historyChanged.emit()
-        if self.p is not None and self.p.pid == pid and self._page_ok():
-            self.applied_cache = None
-            if self.page_shown():
-                self._changed()
-            else:                              # the page hidden (Post shown): its preview is made when it shows again,
-                self.result = None             # never in the background, beside Post's own render (the same processor)
 
     def set_hue(self, role: str, deg: float, undo: bool = True) -> bool:
         name = hue_params(self._spec()).get(role)
@@ -623,16 +594,16 @@ class CombineEditor(DraftEditor):
         return name if combos.title_stem(name) else f"{title}  ·  {name}"
 
     def _needs_run(self, q, ch) -> bool:
-        """Whether an applied change asks for a run: the block's settings do; a master layer's hues and intensities
-        are the layer's (client/postfusion.py), nothing to compute."""
-        if not self.master(q):
+        """Whether an applied change asks for a run: the block's settings do; its hues and intensities, when they are
+        graph settings (client/postfusion.py), compute nothing."""
+        if not self.tunable(q):
             return True
         from .postfusion import split_change
         return bool(split_change(self._spec(q) or {}, dict(ch["values"]))[1])
 
     def cost_text(self, pid: int | None = None) -> str:
-        """What Apply computes again, as the model says it ("Computes again … about N min"); for a master layer's hues
-        and intensities alone, nothing (they are the layer's)."""
+        """What Apply computes again, as the model says it ("Computes again … about N min"); for graph settings alone
+        (its hues and intensities: client/postfusion.py), nothing."""
         q = self._view_of(pid)
         ch = self.draft_change(q.pid) if q is not None else None
         if ch is None:
@@ -642,10 +613,10 @@ class CombineEditor(DraftEditor):
         if self._cost is not None and self._cost[0] == key:
             return self._cost[1]
         vals = dict(ch["values"])
-        if self.master(q):
+        if self.tunable(q):
             from .postfusion import split_change
-            _layer, vals = split_change(self._spec(q) or {}, vals)
-        text = _(POST_ONLY)
+            _graph, vals = split_change(self._spec(q) or {}, vals)
+        text = _(GRAPH_ONLY)
         if vals:
             try:
                 if hasattr(self.s, "change_cost"):
@@ -837,7 +808,7 @@ class CombineEditor(DraftEditor):
         return bool(self.off) or self.solo is not None
 
     def applied_label(self) -> str:
-        return _("Applied settings · reduced copy") if self.master() else super().applied_label()
+        return _("Applied settings · reduced copy") if self.tunable() else super().applied_label()
 
     # ------------------------------------------------------------ the controls as the draft is
     def gain_text(self, role: str) -> tuple[str, str]:
@@ -943,40 +914,18 @@ class CombineEditor(DraftEditor):
                 "stored": self._stored(), "values": vals, "balance": self._balance_used(),
                 "applied": ap, "applied_balance": Combination.balance_of(
                     type("P", (), {"balance": ap.get("balance", "sky")})(), self._wired()),
-                "master": self.master(), "off": set(self.off), "solo": self.solo, "sig": self._sig(),
-                "project": self.s.p, "render": self._render_settings(), "result": self._result_key(),
+                "tunable": self.tunable(), "off": set(self.off), "solo": self.solo, "sig": self._sig(),
+                "project": self.s.p, "result": self._result_key(),
                 "small": self.small if self.small is not None and self.small.get("sig") == self._sig() else None,
                 "want_applied": None}
-
-    def _render_settings(self) -> dict | None:
-        """The settings of the workflow's layer of Post (``layer_settings``): the preview as Post shows that layer. A
-        combination Post shows by its master layer (client/postfusion.py) is stretched there by one factor per pixel,
-        the colour-preserving stretch (render/simple.SimpleRenderEngine.colour_factor): the same here, Colours at 1,
-        the stretch that factor is."""
-        try:
-            layers = self.s.post_layers() if hasattr(self.s, "post_layers") else []
-            got = layer_settings(layers, self.p.pid) if hasattr(self.s, "post_layers") else None
-        except Exception:  # noqa: BLE001 - Post's layers not readable now: the default render
-            layers, got = [], None
-        fusion_of = getattr(self.s, "fusion_of", None)
-        try:
-            master = fusion_of is not None and any(
-                x.get("part") == "combined" and x.get("starless") == "output" and x.get("pid") == self.p.pid
-                for x in layers or []) and fusion_of(self.p.pid)[0] is not None
-        except Exception:  # noqa: BLE001 - the combination not readable now: as its Output
-            master = False
-        if master:
-            from ..render.simple import SimpleSettings
-            got = dict(got or SimpleSettings().model_dump(), keep_colours=1.0)
-        return got
 
     def _result_key(self):
         st = self._stage()
         info = self.s.state_info(self.p, st) if hasattr(self.s, "state_info") and st else None
         return (self.p.pid, getattr(info, "key", None), getattr(info, "previous_key", None),
-                self.s.state(self.p, st) if st else "", repr(self._render_settings()),
-                repr(sorted(self.applied().items(), key=str)) if self.master() else "",
-                tuple(sorted(self.off)), self.solo if self.master() else None)
+                self.s.state(self.p, st) if st else "",
+                repr(sorted(self.applied().items(), key=str)) if self.tunable() else "",
+                tuple(sorted(self.off)), self.solo if self.tunable() else None)
 
     def _start(self, req: dict):
         req["bal"] = self.bal.get((req["pid"], req["sig"], req["balance"])) if req.get("small") is not None else None
@@ -1004,27 +953,27 @@ class CombineEditor(DraftEditor):
                 out["bal"] = b
             p = params_of(cls, req["spec"], req["stored"], req["values"])
             rgb = mixed(sm, b, req["stage"], req["spec"], p, req["off"], req["solo"])
-            out["result"] = output_render(rgb, req["render"])
+            out["result"] = output_render(rgb)
             out["ms"] = 1000 * (time.perf_counter() - t0)
         except Exception as e:  # noqa: BLE001 - said over the image, the editor goes on
             out["error"] = str(e)
-        if req["want_applied"] and req.get("master") and sm is not None and "result" in out:
-            # a master layer: its applied picture is the layer's, made as the draft's (the run's balance, the
-            # layer's hues and intensities): the same picture at the same settings
+        if req["want_applied"] and req.get("tunable") and sm is not None and "result" in out:
+            # graph settings: the applied picture is made as the draft's (the run's balance, the applied hues and
+            # intensities), the block's own result holding the stored ones: the same picture at the same settings
             try:
                 ab = b if req["balance"] == req["applied_balance"] else run_balance(
                     sm, req["stage"], req["spec"], req["applied_balance"], result_dir)
                 pa = params_of(cls, req["spec"], req["stored"], req["applied"])
                 out["applied"] = {"pid": req["pid"], "key": req["result"], "tops": {},
                                   "img": output_render(mixed(sm, ab, req["stage"], req["spec"], pa, req["off"],
-                                                             req["solo"]), req["render"])}
+                                                             req["solo"]))}
             except Exception:  # noqa: BLE001 - not made: Applied greyed
                 pass
         elif req["want_applied"]:        # the block's own result: shown even when its inputs cannot be read now
             try:
                 out["applied"] = {"pid": req["pid"], "key": req["result"],
                                   **(_applied_for(req["project"], req["pid"], req["stage"],
-                                                  sm["k"] if sm is not None else None, req["render"]) or
+                                                  sm["k"] if sm is not None else None) or
                                      {"img": None, "tops": {}})}
             except Exception:  # noqa: BLE001 - no result to read: Applied greyed
                 pass
@@ -1093,7 +1042,7 @@ def _reduced_for(project, pid: int, stage: str, spec: dict) -> dict:
     raise ValueError(str(err) if err else _("The inputs are not computed: run the workflows the combination reads"))
 
 
-def _applied_for(project, pid: int, stage: str, k: int, settings: dict | None = None) -> dict | None:
+def _applied_for(project, pid: int, stage: str, k: int) -> dict | None:
     from .. import api
     for which in ("current", "previous"):
         try:
@@ -1101,5 +1050,5 @@ def _applied_for(project, pid: int, stage: str, k: int, settings: dict | None = 
         except Exception:  # noqa: BLE001 - no result to read
             out = None
         if out is not None:
-            return applied_small(out.dir, k, settings)
+            return applied_small(out.dir, k)
     return None

@@ -460,6 +460,9 @@ class Node:
     y: float = 0.0
     w: float = 0.0                             # its width in the graph (the column's)
     lid: int | None = None                     # a Stars and background block: its layer in Post
+    sides: tuple | None = None                 # a Combine layers block: what its wires give it, (its Background's
+    #                                            workflow, "starless" | "output", its Stars' workflow or None, "stars" |
+    #                                            "output"): the block alone, whatever its layer of Post
     handle: bool = False                       # the Stars block of a workflow whose Output block it holds (#17)
     sid: int | None = None                     # a Session block, or a session's Calibration block: its session
     cut: bool = False                          # cut by the user in its workflows (issue #43)
@@ -703,8 +706,11 @@ class BlockMap:
             pid = lay.get("pid") if lay is not None else next(iter(sorted(bw)), None)
             q = self._paths.get(pid)
             missing = [w for w, a in (("Starless image", back), ("Stars", star)) if a is None]   # the rows' words
+            spid = lay.get("stars_pid", lay.get("pid")) if lay is not None else next(iter(sorted(sw)), None)
             n = Node("composition", [q] if q is not None else [], lid=lay.get("id") if lay is not None else None,
-                     waits=_("{names} to wire").format(names=", ".join(_(x) for x in missing)) if missing else "")
+                     waits=_("{names} to wire").format(names=", ".join(_(x) for x in missing)) if missing else "",
+                     sides=(pid, "output" if bimg == "output" else "starless", spid,
+                            "output" if simg == "output" else "stars") if pid is not None else None)
             self._nodes[bid] = n
             self._ids[id(n)] = bid
             if q is not None:

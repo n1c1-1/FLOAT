@@ -540,16 +540,30 @@ def test_on_m27_the_editor_applies_in_one_step_and_tries_a_variant(qapp, tmp_pat
         ed.apply()
         settle(w)
         assert len(s._undo) == n + 1 and not ed.has_draft()
-        # Post shows this S-H-O by its master layer: an intensity is the layer's (client/postfusion.py), the block's
-        # key and state as they were, nothing to run
+        # Post mixes this S-H-O's filters itself: an intensity is a graph setting (client/postfusion.py), on the block,
+        # the block's key and state as they were, nothing to run, Post's layer as it was
+        layer = copy.deepcopy(s.master_layer(q.pid))
         assert s.stage_key(q, st) == key and s.state(q, st) == state
-        assert s.master_layer(q.pid)["tune"]["weights"]["SII"] == 1.5
+        assert s.fusion_graph(q.pid)["weights"]["SII"] == 1.5 and s.master_layer(q.pid) == layer
         assert (s.p.workflow(q.pid).params.get(st) or {}).get("weights") is None
         s.undo()
         settle(w)
-        assert s.stage_key(q, st) == key and "tune" not in s.master_layer(q.pid)
+        assert s.stage_key(q, st) == key and s.fusion_graph(q.pid) is None
+        # Try variant of a graph setting (a hue): a workflow variant, its copy of the block holding the hue; the
+        # original's graph settings untouched
+        q, ed = _open_combination(w)
+        before = {x.pid for x in s.paths}
+        ed.set_hue("OIII", 150.0)
+        ed.try_variant()
+        settle(w)
+        v = next(x for x in s.paths if x.pid not in before)
+        assert s.fusion_graph(v.pid)["hues"]["OIII"] == 150.0 and s.fusion_graph(q.pid) is None
+        assert s.stage_key(q, st) == key
+        s.undo()
+        settle(w)
+        assert {x.pid for x in s.paths} == before
         # Try variant of a setting the engine computes (the balance): a second S-H-O of the same filters, its own
-        # workflow, the original untouched (a master layer's hue or intensity goes to a new version of Post instead)
+        # workflow, the original untouched
         q, ed = _open_combination(w)
         ins = [(i["pid"], i["role"], i.get("image")) for i in q.source["fusion"]["inputs"]]
         before = {x.pid for x in s.paths}
@@ -640,10 +654,8 @@ def test_the_graph_panel_s_settings_of_a_combination_are_one_draft(qapp, tmp_pat
         assert len(s._undo) == n + 1
         f = s.p.workflow(q.pid)
         assert f.source["fusion"]["type"] == "sho"
-        # an intensity of a combination Post shows by its master layer is the layer's (client/postfusion.py)
-        lay = s.master_layer(q.pid)
-        assert (lay["tune"]["weights"]["OIII"] if lay is not None else
-                (f.params.get("combine_sho") or {}).get("weights", {}).get("OIII")) == 0.5
+        # an intensity of a combination whose filters Post mixes is a graph setting (client/postfusion.py)
+        assert s.graph_tunable(q.pid) and s.fusion_graph(q.pid)["weights"]["OIII"] == 0.5
         w._update_actions() if hasattr(w, "_update_actions") else None
         assert w.waiting_text() == "1 block waits for an input"      # S II to wire: said, never "all up to date"
         assert w.run_refusal(type("C", (), {"jobs": 0})()) == "1 block waits for an input"
@@ -735,14 +747,16 @@ def test_french_numbers_and_the_whole_hue_rail(qapp, monkeypatch):
         u["hue_SII"].styleSheet()
 
 
-def test_the_preview_renders_as_post_shows_the_workflow_s_layer():
-    """Post's layer of the combination sets the render (its sliders); none: the default."""
-    from astro_gpu.render.simple import SimpleSettings
-    assert ce.layer_settings([], 3) is None
-    first = {"kind": "workflow", "pid": 3, "part": None, "sliders": {}, "base": None}
-    darker = dict(first, sliders={"sky": 0})
-    assert ce.layer_settings([first], 3)["sky"] == pytest.approx(0.25) == SimpleSettings().sky
-    assert ce.layer_settings([darker], 3)["sky"] == pytest.approx(0.15)
-    rgb = np.abs(np.random.default_rng(2).normal(0.1, 0.02, (3, 60, 80))).astype(np.float32)
-    a, b = ce.output_render(rgb, ce.layer_settings([darker], 3)), ce.output_render(rgb)
-    assert float(np.median(a)) < float(np.median(b))
+def test_the_preview_is_the_block_alone_whatever_post_holds(ed):
+    """The preview is the block alone: its Output's default render, no layer of Post asked (its sliders, its
+    version); a model that has Post's layers is never read for it."""
+    import inspect
+    assert list(inspect.signature(ce.output_render).parameters) == ["rgb"]
+    req = ed._request()
+    assert "render" not in req and "master" not in req
+    asked = []
+    ed.s.post_layers = lambda: asked.append(1) or []
+    ed.s.master_layer = lambda pid: asked.append(1)
+    ed.set_hue("OIII", 190.0)
+    wait(ed)
+    assert not asked

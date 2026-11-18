@@ -1729,9 +1729,10 @@ class PostView(QWidget):
                     getattr(self.s, "is_plain_image", lambda q: False)(p)
                 # a variant is made to be looked at: its layer arrives visible
                 sent = sent or getattr(p, "variant_of", None) is not None
-                self.layers.insert(self._place_of(p.pid, paths), new_workflow_layer(
-                    p.pid, p.name + (" · " + POST_PART_NAMES["combined"] if stars else ""), bool(sent),
-                    part="combined" if stars else None))
+                lay = new_workflow_layer(p.pid, p.name + (" · " + POST_PART_NAMES["combined"] if stars else ""),
+                                         bool(sent), part="combined" if stars else None)
+                copied = getattr(self.s, "with_graph_copy", None)      # made: a copy of the graph's settings
+                self.layers.insert(self._place_of(p.pid, paths), copied(lay) if copied is not None else lay)
         self.layers = [lay for lay in self.layers if lay["kind"] != "workflow" or lay["pid"] in alive]
         self.layers = normalize(self._with_synth(normalize(self.layers)))
         wl = [lay for lay in self.layers if lay["kind"] == "workflow"]
@@ -3940,7 +3941,40 @@ class PostView(QWidget):
             self.s.sel_layer = lay["id"]                 # this layer, among the workflow's Combine layers
             self.goProcessing.emit(lay["pid"], "composition")
         b.clicked.connect(go)
-        self.pbox.addWidget(b)
+        if getattr(self.s, "graph_copy", None) is None:
+            self.pbox.addWidget(b)
+            return
+        row = QHBoxLayout()
+        g = QPushButton(_("Graph settings"))
+        g.setObjectName("graph_settings")
+        g.setToolTip(_("Copies the settings Inspect gave this block in the graph into this layer: how the stars go "
+                       "back, the stretch, the sliders, and a combination's hues and intensities. The layer keeps its "
+                       "own settings otherwise; Ctrl+Z takes the copy back"))
+        g.clicked.connect(lambda _c=False, lid=lay["id"]: self.graph_settings(lid))
+        row.addWidget(g)
+        row.addStretch(1)
+        row.addWidget(b)
+        self.pbox.addLayout(row)
+
+    def graph_settings(self, lid) -> bool:
+        """Graph settings: the layer takes a copy of the graph's settings of its block again (client/postfusion.py),
+        one step of Post's Undo; False when it already has them (nothing changes, nothing is a step)."""
+        from . import postfusion
+        lay = self.layer(lid)
+        get = getattr(self.s, "graph_copy", None)
+        if lay is None or get is None:
+            return False
+        before = snapshot(self.layers)
+        if not postfusion.put_copy(lay, get(lay)):
+            self.toasted.emit(_("“{name}” has the graph's settings already").format(name=layer_name(lay)))
+            return False
+        self.push(before, words=_("Graph settings on “{name}”").format(name=layer_name(lay)))
+        self._attach_fusion()
+        self._refresh_rows()
+        self.request(final_only=True)
+        QTimer.singleShot(0, self.build_props)
+        self.toasted.emit(_("Graph settings on “{name}”").format(name=layer_name(lay)) + " · Ctrl+Z")
+        return True
 
     def _add_slider(self, lay, p, sd, part):
         pos = lay["sliders"].get(sd.key, 2.0)
@@ -4173,10 +4207,10 @@ class PostView(QWidget):
 
     def set_fusion(self, lay, values: dict, what: str, rebuild: bool = True, change: str = ""):
         """A combination's settings changed here. Its hues and intensities are the master layer's own (client/
-        postfusion.py): one step of Post's Undo, nothing to compute. The balance is the block's (the gains the run
-        measures): one step of the workflows' Undo listed in Post's, the block to run. Either way a draft of the
-        block in Inspect is dropped (``postTuned``). The step is named as every step of the family (blockdraft.owned):
-        ``what`` (the setting) of the combination, ``change`` (what it became) when said."""
+        postfusion.py): one step of Post's Undo, nothing to compute, the graph's settings untouched. The balance is
+        the block's (the gains the run measures): one step of the workflows' Undo listed in Post's, the block to run.
+        The step is named as every step of the family (blockdraft.owned): ``what`` (the setting) of the combination,
+        ``change`` (what it became) when said."""
         from . import postfusion
         from .blockdraft import owned
         words = owned(what, self._fusion_title(lay), change)
@@ -4186,9 +4220,6 @@ class PostView(QWidget):
             self.push(words=words)
             lay["tune"] = postfusion.new_tune(c[0], c[1], c[2], lay.get("tune"), part)
             self._attach_fusion()
-            tuned = getattr(self.s, "postTuned", None)
-            if tuned is not None:
-                tuned.emit(lay["pid"])
             self._refresh_rows()
             self.request(final_only=True)
             if rebuild:            # (a slider let go: the panel stays as it is, the slider under the pointer)
@@ -4211,9 +4242,6 @@ class PostView(QWidget):
         self.undo.append(self._model_mark("_undo"))
         self.redo.clear()
         self._undo_buttons()
-        tuned = getattr(self.s, "postTuned", None)
-        if tuned is not None:
-            tuned.emit(lay["pid"])
         self._attach_fusion()
         self.request(final_only=True)
         QTimer.singleShot(0, self.build_props)
@@ -4273,7 +4301,7 @@ class PostView(QWidget):
 
     def set_stars_fusion(self, q, key: str, now: str):
         """The stars' combination's Stars setting changed here: the block's (its run makes the stars), one step of the
-        workflows' Undo listed in Post's, named as every step of the family; a draft of the block in Inspect goes."""
+        workflows' Undo listed in Post's, named as every step of the family."""
         from .blockdraft import owned
         from .combineedit import STARS_NAME
         if key == now or not hasattr(self.s, "apply_as"):
@@ -4290,9 +4318,6 @@ class PostView(QWidget):
         self.undo.append(self._model_mark("_undo"))
         self.redo.clear()
         self._undo_buttons()
-        tuned = getattr(self.s, "postTuned", None)
-        if tuned is not None:
-            tuned.emit(q.pid)
         self.toasted.emit(words + " · " + _("Run to here computes it") + " · Ctrl+Z")
         self.request(final_only=True)
         QTimer.singleShot(0, self.build_props)

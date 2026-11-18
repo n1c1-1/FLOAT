@@ -87,5 +87,8 @@
   "The draft in a new version of Post: the version shown stays as it is": "Le brouillon dans une nouvelle version de Post : la version affichée reste telle quelle",
   "Try variant takes the layer's settings alone (a new version of Post) or the stars' setting alone": "Essayer variante prend les réglages du calque seuls (une nouvelle version de Post) ou le réglage des étoiles seul",
   "The draft tried apart (a variant of the workflow, or a new version of Post for Post's layers alone); what is there stays as it is": "Le brouillon essayé à part (une variante du workflow, ou une nouvelle version de Post pour les seuls calques de Post) ; ce qui existe reste tel quel",
-  "Post's layer only: nothing is computed again \u00b7 Try variant: in a new version of Post": "Calque de Post seulement : rien n'est recalculé · Essayer variante : dans une nouvelle version de Post"
+  "Post's layer only: nothing is computed again · Try variant: in a new version of Post": "Calque de Post seulement : rien n'est recalculé · Essayer variante : dans une nouvelle version de Post",
+  "Graph settings: nothing is computed again · Post's layers keep their own (Graph settings copies them)": "Réglages du graphe : rien n'est recalculé · les calques de Post gardent les leurs (Réglages du graphe les copie)",
+  "Combine layers has no workflow of its own: Try variant takes the stars' setting alone": "Combiner calques n'a pas de workflow à lui : Essayer variante ne prend que le réglage des étoiles",
+  "The draft tried apart on a variant of the workflow; what is there stays as it is": "Le brouillon essayé à part sur une variante du workflow ; ce qui existe reste tel quel"
 }
