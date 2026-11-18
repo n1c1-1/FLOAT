@@ -415,7 +415,7 @@ def f_saturation(x, p, ctx):
     if center is None and guard is None:               # every hue alike: L + (x - L) * (1 + k) in one pass
         return _mix(x, 1 + k, _gray3(L), -k)
     return per_pixel(lambda xa, La, ga: _saturate(xa, La, ga, center, k), x, L,
-                     guard if guard is not None else np.empty((x.shape[0], 0), np.float32))
+                     guard if guard is not None else np.empty((x.shape[0], 0), np.float32), min_rows=64)
 
 
 def _saturate(x, L, guard, center, k):
@@ -505,13 +505,16 @@ def _whole_measure(ctx, name, x, measure):
 def f_dehaze(x, p, ctx):
     if p["amount"] <= 0:
         return x
-    m = pf_dehaze.mesh_of(p["scale"] / ctx.f)
-    got, at = _whole_measure(ctx, f"veil {p['scale']}", x, lambda a: (pf_dehaze.background_grid(a, m), m, a.shape[:2]))
-    if (got is None or at == ctx.level) and not float(ctx.level).is_integer() and ctx.canvas_wh is not None:
-        coarse = math.ceil(ctx.level)                 # the screen's picture between two powers of two
+    if not float(getattr(ctx, "level", 0)).is_integer() and getattr(ctx, "canvas_wh", None) is not None:
+        # the screen's picture (or a draft) between two powers of two: always the whole canvas; its meshes measured
+        # on it reduced to the next power of two (a measure kept at this level would serve no region: theirs are at
+        # whole levels; measured here too, it took 120 ms of a 300 ms draft)
+        coarse = math.ceil(ctx.level)
         W, H = ctx.comp_canvas.size(coarse) if getattr(ctx, "comp_canvas", None) is not None else (
             max(1, round(x.shape[1] / 2 ** (coarse - ctx.level))), max(1, round(x.shape[0] / 2 ** (coarse - ctx.level))))
         return pf_dehaze.dehaze_between(x, p["amount"], p["scale"] / ctx.f, 2 ** (coarse - ctx.level), (H, W))
+    m = pf_dehaze.mesh_of(p["scale"] / ctx.f)
+    got, at = _whole_measure(ctx, f"veil {p['scale']}", x, lambda a: (pf_dehaze.background_grid(a, m), m, a.shape[:2]))
     if got is None or at == ctx.level:               # the whole image: its own map, as always
         return pf_dehaze.dehaze(x, p["amount"], p["scale"] / ctx.f)
     g, gm, hw = got                                   # a region: the whole image's map, measured smaller

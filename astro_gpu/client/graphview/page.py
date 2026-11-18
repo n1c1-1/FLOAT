@@ -504,9 +504,21 @@ class GraphPage(SidesHost, QWidget):
         turns."""
         if not self._mirroring:
             self._states_due = True
+        win = self.window()
+        if not self.isVisible() and win is not None and win is not self and win.isVisible():
+            # another page of the window is shown (Post): the graph follows when it is shown again; each of Post's
+            # releases drew the hidden graph's twelve blocks again, 0.4 s of the window's own time
+            self._hidden_due = True
+            return
         if not self._pending:
             self._pending = True
             QTimer.singleShot(0, self, self._requested)
+
+    def showEvent(self, e):                                         # noqa: N802 - Qt's name
+        super().showEvent(e)
+        if getattr(self, "_hidden_due", False):
+            self._hidden_due = False
+            self.request_refresh()
 
     def _drawn(self):
         """The bridge's ``changed``: the canvas drew every block again (after its own rebuild, connected first)."""

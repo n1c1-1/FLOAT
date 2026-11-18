@@ -28,6 +28,21 @@ CLIP_ITER, CLIP_SIGMA, MODE_TOLERANCE = 3, 3.0, 0.3
 AMOUNT_MAX = 0.95
 
 
+def _nanmedian(a: np.ndarray) -> np.ndarray:
+    """``np.nanmedian(a, axis=2, keepdims=True)`` for meshes of under 600 pixels, the same values: numpy takes them
+    through masked arrays there (a draft's meshes of 8 px: 35 ms of its 52 ms); here a sort, NaN last, and the middle
+    one or the mean of the middle two of the values that are not NaN."""
+    if a.shape[2] >= 600:
+        return np.nanmedian(a, axis=2, keepdims=True)
+    s = np.sort(a, axis=2)
+    n = np.count_nonzero(~np.isnan(a), axis=2)[..., None]
+    lo = np.take_along_axis(s, np.maximum((n - 1) // 2, 0), 2)
+    hi = np.take_along_axis(s, np.minimum(n // 2, a.shape[2] - 1), 2)
+    out = (lo + hi) / 2
+    out[n == 0] = np.nan
+    return out
+
+
 def mesh_levels(c: np.ndarray, m: int) -> np.ndarray:
     """The background level of each m x m mesh of one channel (h, w), SExtractor's: (gh, gw)."""
     h, w = c.shape
@@ -35,10 +50,10 @@ def mesh_levels(c: np.ndarray, m: int) -> np.ndarray:
     pad = np.pad(c, ((0, gh * m - h), (0, gw * m - w)), mode="reflect" if min(h, w) > 1 else "edge")
     a = pad.reshape(gh, m, gw, m).transpose(0, 2, 1, 3).reshape(gh, gw, m * m).astype(np.float64)
     for _ in range(CLIP_ITER):
-        med = np.nanmedian(a, axis=2, keepdims=True)
+        med = _nanmedian(a)
         sd = np.nanstd(a, axis=2, keepdims=True)
         a = np.where(np.abs(a - med) <= CLIP_SIGMA * sd + 1e-12, a, np.nan)
-    med, mean, sd = np.nanmedian(a, axis=2), np.nanmean(a, axis=2), np.nanstd(a, axis=2)
+    med, mean, sd = _nanmedian(a)[..., 0], np.nanmean(a, axis=2), np.nanstd(a, axis=2)
     mode = 2.5 * med - 1.5 * mean
     return np.where(np.abs(mean - med) > MODE_TOLERANCE * sd, med, mode)
 

@@ -108,6 +108,8 @@ class StarsRenderEngine(SimpleRenderEngine):
             f, reg, box = self._geometry(scale, region)
             linked = bool(self.prep.get("linked", True))
             a = b = None
+            if stop is not None:
+                stop()                                  # (it raises to abandon: Post's composition superseded)
             if part in ("starless", "combined"):
                 x = self._layer("starless", f, box)
                 if s.halpha:
@@ -117,7 +119,7 @@ class StarsRenderEngine(SimpleRenderEngine):
                     st = self._starless_white(st)
                 a = self.tone(x, st, s, linked)
             if part in ("stars", "combined"):
-                b = self._star_layer(s, f, box, part)
+                b = self._star_layer(s, f, box, part, stop)
             y = a if b is None else b if a is None else blend(a, b, s.blend)
             return self._finish(y, f, reg, box, region, {"stretch": "auto", "linked": linked, "part": part})
 
@@ -147,7 +149,7 @@ class StarsRenderEngine(SimpleRenderEngine):
         return {**st, "lum": {**st["lum"], "p99995": self._white[0]},
                 "channels": [{**ch, "p99995": w} for ch, w in zip(st["channels"], self._white[1:])]}
 
-    def _star_layer(self, s: StarSettings, f: int, box, part: str) -> torch.Tensor:
+    def _star_layer(self, s: StarSettings, f: int, box, part: str, stop=None) -> torch.Tensor:
         """The stretched stars of the grid at this scale and box (``star_tone``), kept from one render to the next while
         the settings that make them are the same: the starless image's sliders, a blend or an export (the same
         image at full size) take them as they are instead of making them again, which is the longest step of a
@@ -161,7 +163,8 @@ class StarsRenderEngine(SimpleRenderEngine):
         if hit is not None and hit[0] == key:
             y = hit[1]
         else:
-            y = self.star_tone(self._layer("stars", f, box), s, f)
+            x = self._layer("stars", f, box)
+            y = self.star_tone(x, s, f) if stop is None else self.star_tone(x, s, f, stop)
             self._star_cache = (key, y)
         return y.clone() if part == "stars" else y
 
@@ -178,9 +181,13 @@ class StarsRenderEngine(SimpleRenderEngine):
             self._alpha = continuum_ratio(np.maximum(self._host["stars"].numpy(), 0))
         return self._alpha
 
-    def star_tone(self, x: torch.Tensor, s: StarSettings, f: int) -> torch.Tensor:
+    def star_tone(self, x: torch.Tensor, s: StarSettings, f: int, stop=None) -> torch.Tensor:
         """The stars alone stretched: black at 0, the white and the midtone of the whole image (its sky at the
-        Sky setting), the midtone divided by ``star_strength``; then their size and their colour."""
+        Sky setting), the midtone divided by ``star_strength``; then their size and their colour. ``stop``: called
+        between those steps (at full resolution each takes a second or more); it raises to abandon."""
+        def check():
+            if stop is not None:
+                stop()
         st = self.prep["stats_full"]["lum"]
         if self.prep["stats_full"].get("stretched"):    # an image already stretched (issue #43): its stars as they are
             y = (x * float(s.star_strength)).clamp(0, 1)
@@ -191,9 +198,12 @@ class StarsRenderEngine(SimpleRenderEngine):
             m = min(max(mtf_midtone(xm, s.sky) / s.star_strength, 1e-6), 0.5)
             y = mtf((x / (hi - c0)).clamp(0, 1), m).clamp(0, 1)
         v = float(s.star_small)
+        check()
         if v > 0:                                  # a gentle start: below SMALL_START they fade, above they go
-            y = fade_small_stars(y, min(1.0, v / SMALL_START), max(v, SMALL_START) * self.star_fwhm() / f)
-        y = resize_stars(y, s.star_size / f)
+            y = fade_small_stars(y, min(1.0, v / SMALL_START), max(v, SMALL_START) * self.star_fwhm() / f, check)
+            check()
+        y = resize_stars(y, s.star_size / f, check)
+        check()
         L = ops.luminance(y)[None]
         return (L + s.star_saturation * (y - L)).clamp(0, 1)
 
@@ -368,7 +378,12 @@ def reconstruct(marker: torch.Tensor, mask: torch.Tensor, steps: int) -> torch.T
 STAR_LEVEL = 0.04
 
 
-def large_stars(y: torch.Tensor, r: float) -> torch.Tensor:
+def _go_on(check) -> None:
+    if check is not None:
+        check()
+
+
+def large_stars(y: torch.Tensor, r: float, check=None) -> torch.Tensor:
     """Where the stars wider than r pixels are, whole (h, w in 0..1): their support (the luminance above STAR_LEVEL)
     opened by reconstruction (L. Vincent 1993): the support eroded by r (round) keeps a seed of each wide star only,
     then the seeds grow back within the support to the whole star; the narrower stars leave no seed. Grown by the
@@ -376,38 +391,43 @@ def large_stars(y: torch.Tensor, r: float) -> torch.Tensor:
     sup = (ops.luminance(y) > STAR_LEVEL).float()[None]
     n = max(1, int(round(r)))
     seeds = _morph(sup, n, False)
+    _go_on(check)
     whole = reconstruct(seeds, sup, int(RECONSTRUCT_STEPS * max(r / 2.0, 1.0)))
+    _go_on(check)
     whole = _morph(whole, n + 1, True)                 # their faint wings, below the support's level, kept too
     return ops.gaussian_blur(whole, 0.7)[0].clamp(0, 1)
 
 
-def fade_small_stars(y: torch.Tensor, k: float, r: float) -> torch.Tensor:
+def fade_small_stars(y: torch.Tensor, k: float, r: float, check=None) -> torch.Tensor:
     """The stars narrower than r pixels taken away by k (0 kept .. 1 gone), the wider ones left exactly as they were
     (``large_stars``): the star reduction of photo editors' tutorials (the stars selected, the small ones removed),
     on the stars alone. What goes is what a grey opening of that radius takes, the small stars themselves: the halo of
     a large star and any light wider than them stay under the small stars and past the edge of ``large_stars``."""
     if k <= 0 or r < 0.5:
         return y
-    keep = large_stars(y, r)[None]
+    keep = large_stars(y, r, check)[None]
     n = max(1, int(round(r)))
+    _go_on(check)
     wide = _morph(_morph(y, n, False), n, True)
     return y + (1 - keep) * k * (wide - y)
 
 
-def resize_stars(y: torch.Tensor, r: float) -> torch.Tensor:
+def resize_stars(y: torch.Tensor, r: float, check=None) -> torch.Tensor:
     """The stars shrunk (r < 0) or grown (r > 0) by |r| pixels: the two whole radii around |r|, mixed by its
     fraction, so that the size moves smoothly with r."""
     if abs(r) < 1e-3:
         return y
     n, t = int(abs(r)), abs(r) - int(abs(r))
     lo = _morph(y, n, r > 0)
+    _go_on(check)
     out = lo if t < 1e-3 else (1 - t) * lo + t * _morph(y, n + 1, r > 0)
     if r > 0:
         return out
+    _go_on(check)
     # shrunk through a star mask, as the published star reductions do (the reference image editor: the Minimum filter through a
     # selection of the stars; the reference processing suite: MorphologicalTransformation through a star mask): an erosion of the faint
     # background between the stars draws a web of filaments on a dense field (issue #18)
-    return y + (out - y) * star_mask(y, n + 1)
+    return y + (out - y) * star_mask(y, n + 1, check)
 
 
 #: a star of the mask stands this many local noise units above its local background (the usual detection threshold)
@@ -421,7 +441,7 @@ MASK_PASSES, MASK_CLIP = 3, 2.0
 MASK_FEATHER = 1.5
 
 
-def star_mask(y: torch.Tensor, r: int) -> torch.Tensor:
+def star_mask(y: torch.Tensor, r: int, check=None) -> torch.Tensor:
     """Where the stars are (1, h, w in 0..1): the luminance above STAR_LEVEL and MASK_SIGMAS noise units above the
     local sky, the sky and its noise measured at MASK_SCALE with the stars clipped out (the iterative clipping of the
     astronomical background estimators, Bertin and Arnouts 1996), so that a star's wings stand above it as its core
@@ -431,6 +451,7 @@ def star_mask(y: torch.Tensor, r: int) -> torch.Tensor:
     bg = ops.gaussian_blur(L, MASK_SCALE)
     noise = 1.2533 * ops.gaussian_blur((L - bg).abs(), MASK_SCALE)          # the mean deviation, as a sigma
     for _ in range(MASK_PASSES):                                            # the stars out of the sky and its noise
+        _go_on(check)
         lo = torch.minimum(L, bg + MASK_CLIP * noise)
         bg = ops.gaussian_blur(lo, MASK_SCALE)
         noise = 1.2533 * ops.gaussian_blur((lo - bg).abs(), MASK_SCALE)

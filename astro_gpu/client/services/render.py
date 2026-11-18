@@ -575,6 +575,11 @@ class LayerSource(Provider):
             if over is None:
                 raise FileNotFoundError("the starless combination this one's stars go onto is not computed")
             kw = {"stats_from": over.path, "blend": lay.get("blend")}
+        if stop is not None:                            # a Stars block's image is long at full resolution: abandoned
+            def abandon():                              # between its steps when the composition is superseded
+                if stop():
+                    raise Superseded()
+            kw["stop"] = abandon
         try:
             if level == 0 and self._partial(sid, put, box, region, whole):
                 li = self.service.render(f.path, base, lay.get("sliders"), 1.0,
