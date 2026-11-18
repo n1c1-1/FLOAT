@@ -1517,11 +1517,13 @@ class ByteLRU:
 
     Scan-resistant: a composition reads its images in the same order every time, and when they do not all fit, a plain
     LRU drops exactly the one the next composition reads first (none is ever found again). ``begin(level)`` opens a
-    composition at a level. To make room it drops, in this order: an image of a coarser level (cheaper to make again),
-    the least recently used first; one of its level not used by the last two compositions there; one the last
-    composition used, the most recently used first (in a scan, the one needed last: Belady's choice). Never one this
-    composition used, nor one of a finer level: the image is then not kept. The images kept stay the same from one
-    composition to the next, and are found again."""
+    composition at a level. To make room it drops, in this order: for a screen level's composition, an image at full
+    resolution (level 0: the exact view's, the export's), then one of a coarser level (cheaper to make again), the
+    least recently used first; one of its level not used by the last two compositions there; one the last composition
+    used, the most recently used first (in a scan, the one needed last: Belady's choice). Never one this composition
+    used, nor one of a finer screen level; a composition at full resolution never drops a screen level's image (a
+    27 Mpx image is 327 MB: kept, it pushed out the screen's steps and every release made the whole stack again). The
+    images kept stay the same from one composition to the next, and are found again."""
 
     def __init__(self, cap: int = 1_500_000_000):
         self.cap = cap
@@ -1549,17 +1551,25 @@ class ByteLRU:
 
     def _victim(self):
         lvl, now = self.level, self.gens.get(self.level, 0)
-        coarser = old = last = None
+        full = coarser = old = last = None
         for k in self.items:                                  # the least recently used first
             t, g = self._used.get(k, (lvl, -1))
-            if t > lvl:
+            if t == 0 and lvl > 0:                            # full resolution: the first to go for the screen's
+                if full is None:
+                    full = k
+            elif t > lvl:
+                if lvl == 0:                                  # (never a screen level's for a full-resolution image)
+                    continue
                 if coarser is None:
                     coarser = k
             elif t == lvl and g != now:
                 if g < now - 1 and old is None:
                     old = k
                 last = k
-        return coarser if coarser is not None else old if old is not None else last
+        for k in (full, coarser, old):
+            if k is not None:
+                return k
+        return last
 
     def put(self, key, a: np.ndarray, holder=None) -> bool:
         """Keep ``a``; False when it was not kept (what is kept serves this composition, or a finer level)."""
@@ -1756,15 +1766,17 @@ def thumb_of(a: np.ndarray) -> np.ndarray:
 
 def default_cache_bytes() -> int:
     """What Post's caches (the layers' images, the image after each filter, the masks' planes) may hold together: 8 % of
-    the machine's memory, 0.3 to 1.5 GB. Measured on a laptop (CPU, 3 Mpx synthetic project, 60 actions), the caches were
-    two LRUs of 1.5 GB each and filled over the first 30 actions: +1.2 GB (the second one alone held 1.4 GB, 39 images
-    of 36 MB), for no gain a user feels: a slider reuses the steps below the filter it moves, a dozen images."""
+    the machine's memory, 0.3 to 6 GB (a 16 GB laptop: 1.3 GB; 64 GB: 5.1 GB). Measured on a laptop (CPU, 3 Mpx
+    synthetic project, 60 actions), the caches were two LRUs of 1.5 GB each and filled over the first 30 actions: +1.2 GB
+    (the second one alone held 1.4 GB, 39 images of 36 MB), for no gain a user feels: a slider reuses the steps below the
+    filter it moves, a dozen images. The top was 1.5 GB until a 27 Mpx image with twelve filters on its layer: the
+    steps of one screen level are 12 x 82 MB, and every release made the whole stack again (the owner's NGC 7000)."""
     try:
         import psutil
         total = psutil.virtual_memory().total
     except Exception:  # noqa: BLE001 - no figure: the smallest cap that keeps Post quick
         return 600_000_000
-    return int(min(1_500_000_000, max(300_000_000, 0.08 * total)))
+    return int(min(6_000_000_000, max(300_000_000, 0.08 * total)))
 
 
 @dataclass
@@ -1812,6 +1824,8 @@ class Composer:
         self._keep = True                                   # (False: the steps being made are not kept)
         self._thumbs: OrderedDict = OrderedDict()           # ``tkey`` -> {mask key: thumbnail}
         self._side_thumbs: OrderedDict = OrderedDict()      # a master layer's kept starless image -> its masks' thumbnails
+        self._own_seen: dict = {}                           # layer id -> (its own filters as last composed, ``_own_edited``)
+        self._step_thumbs: OrderedDict = OrderedDict()      # a filter's step -> its mask's thumbnail (``_own_jump``)
         self.skipped = 0                                    # rows the last composition did not compute
         self.plan_errors = 0                                # rows whose digest the plan did not foresee (tests: 0)
         self.stats: OrderedDict = OrderedDict()             # (filter input's key, measure) -> its whole-image values
@@ -1843,6 +1857,8 @@ class Composer:
         self._brush.clear()
         self._thumbs.clear()
         self._side_thumbs.clear()
+        self._own_seen.clear()
+        self._step_thumbs.clear()
         self._fstats.clear()
         self._edits, self._focus, self._edited = [], None, None
         self._canvas = None
@@ -2740,7 +2756,14 @@ class Composer:
                         out.mask_thumbs.update(made)
                 else:
                     ctx.row_edit = it.edit                                # (the key of its filters' measures)
-                    if is_group(lay):
+                    # the highest of its own filters' steps kept: the layer's image and the filters under it are not
+                    # made again (a release of its top filter makes that filter only)
+                    jump = self._own_jump(lay, own, level, abox, canvas, ctx, where, want, thumbs)
+                    if jump is not None:
+                        done, src, sig, replay = jump
+                        for fid, t in replay:                             # the masks' thumbnails of the filters passed
+                            keep_mask({"id": fid}, None, fid, thumb=t)
+                    elif is_group(lay):
                         self._keep = edited
                         src, sig = self.group_rgb(lay, own, level, abox, canvas, ctx, cache, draft, check,
                                                   keep_mask, where, want, thumbs)
@@ -2750,8 +2773,11 @@ class Composer:
                     else:
                         src = self.layer_rgb(lay, level, abox, canvas, cache, draft, check)
                         sig = _sig(self._key(lay, level, abox, canvas))
-                    for fl in own:                                        # this layer's own filters, bottom first
-                        if fl.get("sub"):
+                    # at full resolution its steps are kept only under the filter being edited, and its last: all of
+                    # them (327 MB each on a 27 Mpx image) took the room of the screen's
+                    under_edit = self._own_edited(lay, tops)
+                    for k, fl in enumerate(own):                          # this layer's own filters, bottom first
+                        if fl.get("sub") or (jump is not None and k <= done):
                             continue
                         checkpoint()
                         if not fl["visible"]:
@@ -2760,8 +2786,9 @@ class Composer:
                             continue
                         ctx.stats_key = _sig(it.edit, fl["id"])
                         src, fm, sig = self._step(fl, src, sig, where, want, thumbs, level, abox, canvas, ctx,
-                                                  keep=edited or fl is tops[-1])
-                        keep_mask(fl, fm)
+                                                  keep=(edited or fl is tops[-1]) if level > 0 else
+                                                  fl["id"] == under_edit or fl is tops[-1])
+                        self._keep_step_thumb(keep_mask(fl, fm), sig, where)
                 comp_sig = _sig(comp_sig, sig, _settings_of(lay))
                 m = self.mask(lay, level, abox, src, canvas, ctx, sigs={None: sig})
                 keep_mask(lay, m)
@@ -2825,23 +2852,36 @@ class Composer:
                                       thumbs)
                 sig = self._fusion_sig(lay, own, level, abox, canvas)
             else:
-                x = self.layer_rgb(part, level, abox, canvas, cache, draft, check)
+                x = None                                                  # (made below, unless a step is kept)
                 sig = _sig(self._key(part, level, abox, canvas))
             synth = sub_layer(lay, "synth")
             ctx.synth = None
             if sub == "stars" and self.provider.available(source_id(synth)):
                 ctx.synth = lambda: self.layer_rgb(synth, level, abox, canvas, cache, draft, check)
                 sig = _sig(sig, self._key(synth, level, abox, canvas))
-            for fl in own:
-                if fl.get("sub") != sub:
+            chain = [fl for fl in own if fl.get("sub") == sub]
+            # the highest of the side's filters' steps kept: its image and the filters under it are not made again
+            jump = self._chain_jump(chain, sig, where, want, thumbs, ctx, level) if x is None else None
+            done = -1
+            if jump is not None:
+                done, x, sig, replay = jump
+                for fid, t in replay:
+                    keep_mask({"id": fid}, None, fid, thumb=t)
+            elif x is None:
+                x = self.layer_rgb(part, level, abox, canvas, cache, draft, check)
+            shown = [fl for fl in chain if fl["visible"]]
+            under_edit = self._own_edited((lay["id"], sub), shown)
+            for k, fl in enumerate(chain):
+                if k <= done:
                     continue
                 if check():
                     raise Superseded()
                 if not fl["visible"]:
                     continue
                 ctx.stats_key = _sig(ctx.row_edit, fl["id"])
-                x, fm, sig = self._step(fl, x, sig, where, want, thumbs, level, abox, canvas, ctx)
-                keep_mask(fl, fm)
+                x, fm, sig = self._step(fl, x, sig, where, want, thumbs, level, abox, canvas, ctx,
+                                        keep=True if level > 0 else fl["id"] == under_edit or fl is shown[-1])
+                self._keep_step_thumb(keep_mask(fl, fm), sig, where)
             side = (lay.get("side_masks") or {}).get(sub)
             if side is not None:                                          # that side's mask, before the blend
                 srcs = self._side_sources(lay, side, x, got, level, abox, canvas, cache) if is_fusion(lay) else None
@@ -2878,6 +2918,73 @@ class Composer:
                 out[role_sub(r)] = grey3(parts[i])
         return out
 
+    def _own_jump(self, lay, own, level, abox, canvas, ctx, where, want, thumbs):
+        """(the place in ``own`` of the highest of a layer's own filters whose result is kept, that result (a copy),
+        what it depends on), or None: the digests ``_step`` keeps them by, made without computing anything (the
+        layer's image's, ``_src_sig`` without its own filters, then each visible filter's settings). None when a mask
+        or a histogram of the layer's sides or of a filter under it is asked for (they are made on the way)."""
+        if where is None or not any(not f.get("sub") and f["visible"] for f in own):
+            return None
+        if is_group(lay) and (thumbs and (lay.get("side_masks") or any(f.get("sub") and f.get("mask") for f in own))
+                              or any((lay["id"], s) in want for s in subs_of(lay))
+                              or any(f.get("sub") and (f["id"] in want or f["id"] in ctx.hist_ids) for f in own)):
+            return None
+        sig = self._src_sig(lay, [f for f in own if f.get("sub")], level, abox, canvas)
+        return self._chain_jump([f for f in own if not f.get("sub")], sig, where, want, thumbs, ctx, level,
+                                positions=[k for k, f in enumerate(own) if not f.get("sub")])
+
+    def _chain_jump(self, chain, sig, where, want, thumbs, ctx, level, positions=None):
+        """A chain of filters (bottom first) on an image whose digest is ``sig``: (the place of the highest whose result
+        is kept, that result (a copy), its digest, the mask thumbnails of the filters passed), or None (``_own_jump``).
+        ``positions``: the places to say, in place of the chain's own."""
+        if where is None:
+            return None
+        best, thumbs_on_way = None, []
+        for k, fl in enumerate(chain):
+            if fl["id"] in want or fl["id"] in ctx.hist_ids:
+                break                                       # (its mask or histogram is made from what is under it)
+            if not fl["visible"]:
+                if thumbs and fl.get("mask") is not None:
+                    break
+                continue
+            sig = _sig(sig, _settings_of(fl))
+            if thumbs and fl.get("mask") is not None:       # its mask's thumbnail, kept with its step, else made
+                t = self._step_thumbs.get((sig, where))
+                if t is None:
+                    break
+                thumbs_on_way.append((fl["id"], t))
+            if (sig, where) in self.steps.items:
+                best = (k, sig, len(thumbs_on_way))
+        if best is None:
+            return None
+        key = (best[1], where)
+        got = self.steps.get(key)
+        fl = chain[best[0]]
+        self.steps.hold(key, (fl["id"], fl.get("sub"), level))
+        return (best[0] if positions is None else positions[best[0]]), got.copy(), best[1], thumbs_on_way[:best[2]]
+
+    def _keep_step_thumb(self, t, sig, where):
+        """A filter's mask thumbnail, kept with its step (``_chain_jump`` gives it again when it passes the filter)."""
+        if t is None or where is None:
+            return
+        self._step_thumbs[(sig, where)] = t
+        self._step_thumbs.move_to_end((sig, where))
+        while len(self._step_thumbs) > THUMB_ITEMS:
+            self._step_thumbs.popitem(last=False)
+
+    def _own_edited(self, lay, tops) -> int | None:
+        """The id of the filter of a layer whose result the filter being edited reads (the one under it, among the
+        layer's own visible filters), None when it reads the layer's image or nothing was edited: the first of them
+        whose settings differ from the composition before; kept until another one changes."""
+        now = [(fl["id"], _settings_of(fl)) for fl in tops]
+        lid = lay["id"] if isinstance(lay, dict) else lay        # (a side of a Combine layers layer: (its id, side))
+        was, under = self._own_seen.get(lid, (None, None))
+        if was is not None and was != now:
+            j = next((i for i, (a, b) in enumerate(zip(now, was)) if a != b), min(len(now), len(was)))
+            under = now[j - 1][0] if 0 < j <= len(now) else None
+        self._own_seen[lid] = (now, under)
+        return under
+
     def _step(self, fl, under, sig, where, want, thumbs, level, abox, canvas, ctx, keep=True):
         """``_apply``, kept: (result, mask, what the result depends on). ``where``: None when it is not to be kept;
         ``keep``: False, the result is kept only where there is room (an image a change upstream may replace each
@@ -2894,8 +3001,12 @@ class Composer:
                 self.steps._unhold(holder, key)                   # the one it held before goes (settings changed)
                 # a filter may work in place on what it is given: a copy is kept. A step of lesser use (``keep``
                 # False: under a layer's last filter, or above the row edited) is kept only where there is room,
-                # never instead of another one: hiding the filter above it still finds it (#87)
-                if (keep and self._keep) or self.steps.bytes + out.nbytes <= self.steps.cap:
+                # never instead of another one: hiding the filter above it still finds it (#87). At full resolution only
+                # a step kept on purpose (``keep``), and only where there is room (``ByteLRU``)
+                if level == 0:
+                    if keep and self._keep:
+                        self.steps.put(key, out.copy(), holder)
+                elif (keep and self._keep) or self.steps.bytes + out.nbytes <= self.steps.cap:
                     self.steps.put(key, out.copy(), holder)
             return out, m, new
         if fl["id"] in ctx.hist_ids:

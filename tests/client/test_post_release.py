@@ -51,6 +51,6 @@ def test_a_request_after_a_release_is_not_undone_by_it(post):
 
 def test_the_caches_together_stay_in_the_default_budget():
     cap = postengine.default_cache_bytes()
-    assert 300_000_000 <= cap <= 1_500_000_000
+    assert 300_000_000 <= cap <= 6_000_000_000
     c = postengine.Composer(None)
     assert c.images.cap + c.steps.cap + c.backdrops.cap + c.parts.cap <= cap
