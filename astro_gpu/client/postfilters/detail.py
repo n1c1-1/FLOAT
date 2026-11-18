@@ -38,6 +38,8 @@ left out and the tiles are smaller, so that the reduced image looks like the ful
 """
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -84,6 +86,24 @@ def _first_layer(level: int) -> int:
     return min(level, LAYERS)
 
 
+def at_level(values, level: float) -> list[float]:
+    """A setting of each full-resolution layer (``values[j]``: the layer of 2^j px) for the layers of an image at a
+    resolution 2^level: its layer k is the full-resolution layer k + level. At a power of two, ``values[level:]``;
+    between two, read between the two layers it falls between (the layer past the last one has none: 0)."""
+    if float(level).is_integer():
+        return list(values[int(level):])
+    vals = [float(v) for v in values] + [0.0]
+    out = []
+    k = 0
+    while k + level < len(values):
+        pos = k + level
+        j = int(math.floor(pos))
+        t = pos - j
+        out.append(vals[j] + t * (vals[j + 1] - vals[j]))
+        k += 1
+    return out
+
+
 def _on(x: np.ndarray, target: str, fn) -> np.ndarray:
     """``fn`` (an image (h, w, c) -> the same) on the lightness, the chrominance or the RGB channels."""
     if target == "RGB":
@@ -107,8 +127,7 @@ def sharpen(x: np.ndarray, biases: list[float], target: str, level: int = 0) -> 
     """Multiscale sharpening: layer j (2^j px at full resolution) times (1 + bias j)."""
     if not any(abs(b) > 1e-9 for b in biases):
         return x
-    first = _first_layer(level)
-    gains = [1 + b for b in biases[first:]]
+    gains = [1 + b for b in (biases[int(_first_layer(level)):] if float(level).is_integer() else at_level(biases, level))]
     if not any(abs(g - 1) > 1e-9 for g in gains):
         return x
 
@@ -145,11 +164,13 @@ def layer_noise_of(x: np.ndarray, target: str, level: int = 0) -> dict[int, list
     full-resolution layer -> each channel's ``layer_sigma`` (None for a layer finer than a pixel there). A layer this
     coarse keeps its coefficients at a reduced resolution (the same structures, fewer pixels), so it serves any level."""
     got: dict = {}
+    # the image's layer k holds the full-resolution layer j when j <= k + level < j + 1 (``at_level``)
+    at = {j: int(math.ceil(j - level - 1e-9)) for j in range(NR_OWN, NR_LAYERS)}
 
     def fn(img):
-        layers, _res = starlet(img, max(NR_LAYERS - level, 0))
+        layers, _res = starlet(img, max(max(at.values()) + 1, 0))
         for j in range(NR_OWN, NR_LAYERS):
-            got[j] = [float(s) for s in layer_sigma(layers[j - level])] if j >= level else None
+            got[j] = [float(s) for s in layer_sigma(layers[at[j]])] if at[j] >= 0 else None
         return img
     _on(x, target, fn)
     return got
@@ -180,7 +201,7 @@ def denoise(x: np.ndarray, thresholds: list[float], amount: float, target: str, 
     if amount <= 0 or not any(t > 0 for t in thresholds):
         return x
     first = min(level, len(thresholds))
-    ks = list(thresholds[first:])
+    ks = list(thresholds[int(first):]) if float(level).is_integer() else at_level(thresholds, level)
     if not any(t > 0 for t in ks):
         return x
 
@@ -192,7 +213,7 @@ def denoise(x: np.ndarray, thresholds: list[float], amount: float, target: str, 
             if k <= 0:
                 out.append(w)
                 continue
-            full = j + first                                   # the layer at full resolution
+            full = int(math.floor(j + first + 1e-9))           # the layer at full resolution (between two: the finer)
             if full >= NR_OWN:                                 # hard: the significant coefficients kept whole
                 s = (own or {}).get(full)
                 t = (k * (layer_sigma(w) if s is None else torch.tensor(s, dtype=torch.float32))).view(-1, 1, 1)

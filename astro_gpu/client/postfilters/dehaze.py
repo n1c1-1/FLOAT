@@ -108,6 +108,37 @@ def cached_background_map(x: np.ndarray, m: int) -> np.ndarray:
     return out
 
 
+def cached_background_grid(x: np.ndarray, m: int) -> np.ndarray:
+    """``background_grid``, kept as ``cached_background_map`` keeps its maps."""
+    x = np.ascontiguousarray(x)
+    key = ("grid", x.shape, m, hashlib.blake2b(x.view(np.uint8), digest_size=16).digest())
+    with _MAPS_LOCK:
+        hit = _MAPS.get(key)
+        if hit is not None:
+            _MAPS.move_to_end(key)
+            return hit
+    out = background_grid(x, m)
+    with _MAPS_LOCK:
+        _MAPS[key] = out
+        while len(_MAPS) > _MAPS_KEPT:
+            _MAPS.popitem(last=False)
+    return out
+
+
+def dehaze_between(x: np.ndarray, amount: float, scale_px: float, f: float, coarse_hw: tuple[int, int]) -> np.ndarray:
+    """``dehaze`` of an image reduced by a factor between two powers of two (the screen's picture at the size it is
+    shown): the meshes are measured on it reduced to the next power of two, ``f`` times smaller (``coarse_hw``), where
+    they are whole pixels of the full resolution's meshes, then the map brought to this image as a region's is
+    (``map_in_region``); meshes of a fraction of a pixel would not fall on the full resolution's."""
+    a = float(np.clip(amount, 0.0, AMOUNT_MAX))
+    if a <= 0:
+        return x
+    h, w = coarse_hw
+    small = cv2.resize(np.ascontiguousarray(x, np.float32), (w, h), interpolation=cv2.INTER_AREA)
+    m = mesh_of(scale_px / f)
+    return take_off(x, a, map_in_region(cached_background_grid(small, m), m, (h, w), f, (0, 0), x.shape))
+
+
 def dehaze(x: np.ndarray, amount: float, scale_px: float) -> np.ndarray:
     """The image (h, w, 3, 0..1) with ``amount`` (0..AMOUNT_MAX) of its veil taken off; meshes of ``scale_px``
     pixels of this image."""

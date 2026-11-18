@@ -1112,8 +1112,11 @@ def full_layer(view):
     return next(lay for lay in view.layers if lay["name"].split(" · ")[0] == "Full")
 
 
-def reference(post, layers=None, level=1, box=None, want=()):
-    """The same request rendered apart, by a renderer of its own: what the page shows must be this."""
+def reference(post, layers=None, level=None, box=None, want=()):
+    """The same request rendered apart, by a renderer of its own: what the page shows must be this. ``level``: the
+    screen picture's by default (the size the view shows the canvas at)."""
+    if level is None:
+        level = post.view.src.level1
     svc = LayerService(DEV)
     src = LayerSource(lambda pid: post.folders.get(pid), svc)
     if post.worker.renderer is not None:                                    # the image layers' sources
@@ -2080,15 +2083,48 @@ def test_a_slider_drag_is_a_draft_then_the_screen_image(post):
     assert post.settle()
     drafts = [i for i, x in enumerate(log) if x[0] == "draft"]
     halves = [i for i, x in enumerate(log) if x[0] == "half"]
-    refines = [i for i, x in enumerate(log) if x[0] == "refine"]
-    # on the CPU: drafts at an eighth while it moves, then the exact quarter, then the screen image (the half)
-    assert v.draft_level == 3 and drafts and ("draft", 3) in log and halves and halves[-1] > drafts[-1]
-    assert refines and ("refine", 2) in log and drafts[-1] < refines[-1] < halves[-1]
+    # on the CPU: drafts at an eighth of the screen picture's size while it moves, then the screen's picture at the
+    # size it is shown (nothing between: the quarter first was twice the work before the picture)
+    lv = v.screen_level()
+    assert v.draft_level == 3 and drafts and ("draft", lv + 2) in log and halves and halves[-1] > drafts[-1]
+    assert ("half", lv) in log and not any(x[0] == "refine" for x in log)
     assert len(v.undo) == n + 1 and full["sliders"] == {"sky": pytest.approx(3.4)}
     assert np.array_equal(shown(v), reference(post).rgb)
-    d = reference(post, level=2).rgb                                                     # the draft is only a draft
+    d = reference(post, level=lv + 1).rgb                                                # the draft is only a draft
     half = cv2.resize(shown(v), (d.shape[1], d.shape[0]), interpolation=cv2.INTER_AREA)
     assert float(np.abs(d.astype(int) - half.astype(int)).mean()) < 8
+
+
+def test_the_screen_picture_is_made_at_the_size_shown(wide):
+    """The owner's NGC 7000: the half of a 27 Mpx image was 6.8 Mpx for a window showing 2.9. The screen's picture is
+    made at the size the view shows (``render.screen_level``, eighths of a halving), never smaller; zoomed in, the
+    picture at the finer size comes; zoomed out again, the finer one stays (it is enough)."""
+    from astro_gpu.client.postengine import Canvas
+    post = wide
+    v = post.view
+    named(v, "Full")["sliders"]["sky"] = 3.0             # (the first picture comes before the view knows its size)
+    v.request(final_only=True)
+    assert post.settle()
+    lv = v.screen_level()
+    W, H = v.src.canvas
+    shown_px = W * v.viewer.scale * v.viewer.devicePixelRatioF()
+    assert v.viewer.scale < 0.5 and lv > 1 and v.src.level1 == lv
+    assert shown(v).shape[:2] == Canvas(W, H).size(lv)[::-1] and shown_px <= shown(v).shape[1] <= 1.1 * shown_px
+
+    def exact():                                          # (zoomed out, the picture is then made again from the full
+        return Renderer(LayerSource(lambda pid: post.folders.get(pid), LayerService(DEV))).run(   # resolution)
+            Request(kind="exact", layers=snapshot(v.layers), level=v.src.level1)).rgb
+    assert np.array_equal(shown(v), exact())
+    assert float(np.abs(shown(v).astype(int) - reference(post).rgb).mean()) < 1          # the screen render: close
+    seen = []
+    v.rendered.connect(lambda r: seen.append((r.kind, r.level)))
+    v.viewer.zoom_to(0.45, W / 2, H / 2)
+    finer = v.screen_level()
+    assert finer < lv and post.settle() and v.src.level1 == finer and ("half", finer) in seen
+    assert np.array_equal(shown(v), exact())
+    seen.clear()
+    v.viewer.fit()
+    assert post.settle() and not seen and v.src.level1 == finer
 
 
 def test_zooming_in_renders_the_visible_region_at_full_resolution(wide, qapp):
@@ -2135,14 +2171,15 @@ def test_the_fitted_view_is_made_again_from_the_full_resolution_after_a_filter(w
     sat["params"]["strength"] = 100.0
     v.request(final_only=True)
     assert post.settle() and seen.index("half") < seen.index("exact")
-    exact = reference(post, level=1)
+    lv = v.src.level1                                       # the screen's picture: the size the view shows
+    exact = reference(post, level=lv)
     full = Renderer(LayerSource(lambda pid: post.folders.get(pid), LayerService(DEV))).run(
-        Request(kind="exact", layers=snapshot(v.layers), level=1))
+        Request(kind="exact", layers=snapshot(v.layers), level=lv))
     assert full.kind == "exact" and full.rgb.shape == exact.rgb.shape
     assert np.array_equal(shown(v), full.rgb)
     small = full.rgb  # what the export writes, reduced: the composition at level 0, clipped, then INTER_AREA
     comp = post.worker.renderer.composer.compose(snapshot(v.layers), 0, cache=False)
-    w, h = comp.rgb.shape[1] // 2 + comp.rgb.shape[1] % 2, comp.rgb.shape[0] // 2 + comp.rgb.shape[0] % 2
+    w, h = exact.canvas.size(lv)
     ref = rsv.to_u8(cv2.resize(np.clip(comp.rgb, 0, 1), (w, h), interpolation=cv2.INTER_AREA))
     assert np.array_equal(small, ref)
     seen.clear()                                             # a gesture after the release: the exact one is not shown
@@ -2151,7 +2188,7 @@ def test_the_fitted_view_is_made_again_from_the_full_resolution_after_a_filter(w
     v.request(final_only=True)
     assert post.settle() and seen.count("exact") <= 1 and np.array_equal(shown(v), Renderer(
         LayerSource(lambda pid: post.folders.get(pid), LayerService(DEV))).run(
-        Request(kind="exact", layers=snapshot(v.layers), level=1)).rgb)
+        Request(kind="exact", layers=snapshot(v.layers), level=v.src.level1)).rgb)
 
 
 def test_before_and_after(post):

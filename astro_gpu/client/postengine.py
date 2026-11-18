@@ -507,6 +507,11 @@ def f_dehaze(x, p, ctx):
         return x
     m = pf_dehaze.mesh_of(p["scale"] / ctx.f)
     got, at = _whole_measure(ctx, f"veil {p['scale']}", x, lambda a: (pf_dehaze.background_grid(a, m), m, a.shape[:2]))
+    if (got is None or at == ctx.level) and not float(ctx.level).is_integer() and ctx.canvas_wh is not None:
+        coarse = math.ceil(ctx.level)                 # the screen's picture between two powers of two
+        W, H = ctx.comp_canvas.size(coarse) if getattr(ctx, "comp_canvas", None) is not None else (
+            max(1, round(x.shape[1] / 2 ** (coarse - ctx.level))), max(1, round(x.shape[0] / 2 ** (coarse - ctx.level))))
+        return pf_dehaze.dehaze_between(x, p["amount"], p["scale"] / ctx.f, 2 ** (coarse - ctx.level), (H, W))
     if got is None or at == ctx.level:               # the whole image: its own map, as always
         return pf_dehaze.dehaze(x, p["amount"], p["scale"] / ctx.f)
     g, gm, hw = got                                   # a region: the whole image's map, measured smaller
@@ -1572,9 +1577,14 @@ class Canvas:
     H: int
     origin: tuple[int, int] = (0, 0)
 
-    def size(self, level: int) -> tuple[int, int]:
-        f = 2 ** level
-        return -(-self.W // f), -(-self.H // f)
+    def size(self, level: float) -> tuple[int, int]:
+        """The canvas at a level: 1 / 2^level of its pixels each way, rounded up. A level between two powers of two
+        (the screen's picture at the size it is shown, ``services.render.screen_level``) is a reduction by any factor."""
+        if float(level).is_integer():
+            f = 2 ** int(level)
+            return -(-self.W // f), -(-self.H // f)
+        f = 2.0 ** level
+        return max(1, math.ceil(self.W / f - 1e-9)), max(1, math.ceil(self.H / f - 1e-9))
 
 
 def crop_within(crop, W: int, H: int) -> tuple[int, int, int, int] | None:
@@ -2866,6 +2876,7 @@ class Composer:
         ctx = Ctx(self, level, abox, draft)
         ctx.hist_ids, ctx.hists = set(hists), out.hists
         ctx.canvas_wh = (W, H)                                            # the whole canvas at this level
+        ctx.comp_canvas = canvas                                          # (a level between two powers of two)
         # the image after each step is kept: hiding a filter recomputes only what is above it (a region: not kept)
         # (a draft keeps what it makes apart from the exact images: its filters may take a quick look)
         where = ((level, (canvas.W, canvas.H, canvas.origin)) + (("draft",) if draft else ())

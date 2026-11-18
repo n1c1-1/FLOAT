@@ -6,6 +6,8 @@ It only asks its source for the pixels of the visible region, at full or half re
 """
 from __future__ import annotations
 
+import math
+
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
@@ -147,18 +149,20 @@ class Viewer(QWidget):
 
     # ------------------------------------------------------------ drawing
     def _pixels(self, src, x0, y0, x1, y1):
+        """The source's pixels around the visible part: its reduced picture (level 1, ``f`` canvas pixels each: 2, or
+        the factor of a picture made at the size shown, ``src.factor``) zoomed out, the canvas's own zoomed in."""
         level = 1 if self.scale < 0.5 else 0
-        f = 2 if level else 1
+        f = (float(src.factor()) if hasattr(src, "factor") else 2.0) if level else 1
         w, h = src.size()
-        key = (id(src), src.version, level)
+        key = (id(src), src.version, level, f)
         c = self._cache.get(key)
         if c and c[0] <= x0 and c[1] <= y0 and c[2] >= x1 and c[3] >= y1:
             return c
         mx, my = (x1 - x0) * 0.5, (y1 - y0) * 0.5
-        ax0, ay0 = max(0, int(x0 - mx) // f * f), max(0, int(y0 - my) // f * f)
-        ax1, ay1 = min(w, int(x1 + mx + f)), min(h, int(y1 + my + f))
-        arr = src.region(level, ax0 // f, ay0 // f, -(-ax1 // f), -(-ay1 // f))
-        c = (ax0, ay0, ax0 + arr.shape[1] * f, ay0 + arr.shape[0] * f, to_qimage(arr), f)
+        px0, py0 = int(max(0, int(x0 - mx)) / f), int(max(0, int(y0 - my)) / f)
+        px1, py1 = int(math.ceil(min(w, int(x1 + mx + f)) / f)), int(math.ceil(min(h, int(y1 + my + f)) / f))
+        arr = src.region(level, px0, py0, px1, py1)
+        c = (px0 * f, py0 * f, (px0 + arr.shape[1]) * f, (py0 + arr.shape[0]) * f, to_qimage(arr), f)
         self._cache = {k: v for k, v in self._cache.items() if k[0] != id(src)}
         self._cache[key] = c
         return c
@@ -175,7 +179,7 @@ class Viewer(QWidget):
         p.save()
         if clip is not None:
             p.setClipRect(clip)
-        p.setRenderHint(QPainter.SmoothPixmapTransform, self.scale * f < 1.0)
+        p.setRenderHint(QPainter.SmoothPixmapTransform, self.scale * f < 1.0 or f > 1)
         p.drawImage(target, qi)
         p.restore()
 
@@ -346,7 +350,8 @@ class Viewer(QWidget):
         c = self._thumb
         if c is not None and c[0] is src and c[1] == src.version and c[3] == ext:
             return c[2]
-        x0, y0, x1, y1 = (int(round(v / 2)) for v in ext)                  # (the half resolution's pixels)
+        f = float(src.factor()) if hasattr(src, "factor") else 2.0
+        x0, y0, x1, y1 = (int(round(v / f)) for v in ext)                  # (the reduced picture's pixels)
         a = np.ascontiguousarray(src.region(1, x0, y0, max(x1, x0 + 1), max(y1, y0 + 1)))
         step = max(1, int(max(a.shape[1], a.shape[0]) / 200))
         qi = to_qimage(a[::step, ::step])

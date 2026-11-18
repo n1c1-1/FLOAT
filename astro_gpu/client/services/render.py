@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import threading
 import time
@@ -60,8 +61,33 @@ OUTPUT_STAGE, STARS_STAGE, SYNTH_STAGE = "render_simple", "star_removal", "synth
 #: the time budgets of a request, in seconds
 BUDGET = {"draft": 0.15, "half": 1.0, "region": 2.0}
 DRAFT_LEVEL, HALF_LEVEL = 2, 1
+#: the screen's picture is rendered at the size it is shown (``screen_level``), on a scale of eighths of a halving:
+#: at most 9 % more pixels each way than the screen shows, and the same level for small changes of the window
+LEVEL_STEPS = 8
 #: the draft's level on the CPU: an eighth of the image (the nebula of a 6000-pixel image in about 0.3 s)
 CPU_DRAFT_LEVEL = 3
+
+
+def screen_level(scale: float) -> float:
+    """The level of the screen's picture for a view showing the canvas at ``scale`` (the screen's pixels per canvas
+    pixel): the finest step of ``LEVEL_STEPS`` whose picture has at least the pixels shown, never finer than the half
+    (zoomed in further, the visible region comes at full resolution). A 27 Mpx image fitted in a 2560 x 1440 window:
+    2.9 Mpx, where the half was 6.8 Mpx."""
+    if scale <= 0 or scale >= 0.5:
+        return HALF_LEVEL
+    lv = math.floor(math.log2(1.0 / scale) * LEVEL_STEPS + 1e-9) / LEVEL_STEPS
+    return max(float(HALF_LEVEL), lv)
+
+
+def _reduction(r: float, level: float) -> int:
+    """The whole-number reduction a stage result is rendered at for a level's reduction ``r`` (then resized to the
+    level's size): the nearest at a power of two (as always); between two, the finer one (the picture is reduced to
+    its size, never enlarged)."""
+    if level <= 0:
+        return 1
+    if float(level).is_integer():
+        return max(1, int(round(r)))
+    return max(1, int(r + 1e-6))
 #: the main arrays of the stage results an image layer's key can name without its file (``store_image_resolver``)
 STAGE_IMAGES = {"stack": "drz_full", "denoise": "n2n_full", "render_simple": "lin", "star_removal": "starless",
                 "color": None}
@@ -458,7 +484,7 @@ class LayerSource(Provider):
         rx, ry = g.W / ref.W, g.H / ref.H
         f = 2 ** level
         x0, y0, x1, y1 = box
-        fi = max(1, int(round(f * rx))) if level > 0 else 1
+        fi = _reduction(f * rx, level)
         ox, oy = cv.origin
         region = ((ox + x0 * f) * rx, (ox + x1 * f) * rx, (oy + y0 * f) * ry, (oy + y1 * f) * ry)
         return fi, region, (x1 - x0, y1 - y0)
@@ -482,7 +508,7 @@ class LayerSource(Provider):
         region = tuple(float(np.clip(v, 0, m)) for v, m in (
             ((ox + sx0 * f - lx0) / sc, g.W), ((ox + sx1 * f - lx0) / sc, g.W),
             ((oy + sy0 * f - ly0) / sc, g.H), ((oy + sy1 * f - ly0) / sc, g.H)))
-        fi = max(1, int(round(f / sc))) if level > 0 else 1
+        fi = _reduction(f / sc, level)
         return (sx0, sy0, sx1, sy1), fi, region, (sx1 - sx0, sy1 - sy0)
 
     def cover(self, lay: dict, level: int, box) -> np.ndarray | None:

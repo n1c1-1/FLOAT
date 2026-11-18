@@ -137,7 +137,15 @@ from .postengine import (
     stars_side,
     with_synth_rows,
 )
-from .services.render import CPU_DRAFT_LEVEL, DRAFT_LEVEL, HALF_LEVEL, RenderWorker, Request, default_device_pref
+from .services.render import (
+    CPU_DRAFT_LEVEL,
+    DRAFT_LEVEL,
+    HALF_LEVEL,
+    RenderWorker,
+    Request,
+    default_device_pref,
+    screen_level,
+)
 from .viewer import Viewer, to_qimage
 from .widgets import ACCENT, WARN, ElidedLabel, clear, label, single_choice, wheel_scrolls
 
@@ -186,7 +194,6 @@ INDENT = 24                                              # a child row's indent 
 HOLD_MS = 600                                            # the exact image within this: the half one is not shown
 HEAVY_TIP_S = 1.0                                         # a release longer than this, one filter its main cost: the tip
 _HEAVY_TIP_SAID = False                                   # (said once a session)
-QUARTER_SCALE = 0.26                                     # zoomed out to this, the quarter-resolution image fills the screen
 TOGGLE_W = 16                                            # the ▾ / ▸ of a layer's children
 
 
@@ -981,8 +988,27 @@ class LayerRow(QFrame):
             self.panel.rename(self.lay)
 
 
-def _upsample(a: np.ndarray, k: int = 2) -> np.ndarray:
-    return np.repeat(np.repeat(a, k, 0), k, 1)
+def _grid(canvas, level: float) -> tuple[int, int]:
+    """(w, h) of a canvas (W, H) at a level (``postengine.Canvas.size``)."""
+    from .postengine import Canvas
+    return Canvas(*canvas).size(level)
+
+
+def _enlarge(a: np.ndarray, f: float, x0: int, y0: int, x1: int, y1: int) -> np.ndarray:
+    """The pixels (x0..x1, y0..y1) of a grid ``f`` times finer than ``a``'s, each the one of ``a`` it falls in (at
+    f = 2: each pixel of ``a`` twice each way)."""
+    ys = np.minimum(((np.arange(y0, y1) + 0.5) / f).astype(np.intp), a.shape[0] - 1)
+    xs = np.minimum(((np.arange(x0, x1) + 0.5) / f).astype(np.intp), a.shape[1] - 1)
+    return a[ys[:, None], xs[None, :]]
+
+
+def _to_grid(a: np.ndarray, level: float, to: float, canvas) -> np.ndarray:
+    """An image of the canvas at ``level`` on the grid of level ``to`` (finer or the same): each pixel the one it falls
+    in."""
+    if a is None or level == to or canvas is None:
+        return a
+    w, h = _grid(canvas, to)
+    return _enlarge(a, 2.0 ** (level - to), 0, 0, w, h)
 
 
 class PostSource:
@@ -993,37 +1019,41 @@ class PostSource:
     def __init__(self, view):
         self.view = view
         self.version = 0
-        self.img1 = None                                  # uint8 (H/2, W/2, 3) and the request it answers
+        self.img1 = None                                  # uint8 (h, w, 3), the screen's picture, and its request
         self.seq1 = 0
-        self.img2 = None                                  # the draft, (H/4, W/4, 3)
+        self.level1 = 1                                   # its level: the size it is shown at (render.screen_level)
+        self.img2 = None                                  # the draft
         self.seq2 = 0
-        self.level2 = 2                                   # its resolution: 2 a quarter, 3 an eighth
+        self.level2 = 2                                   # its level: two halvings under the screen's, three on the CPU
         self.full = None                                  # (box, uint8 array) at full resolution
         self.canvas = None                                # (W, H)
 
     def size(self):
         return self.canvas or (2, 2)
 
+    def factor(self) -> float:
+        """The canvas pixels per pixel of the screen's picture (``region`` at level 1)."""
+        return 2.0 ** self.level1
+
     def _half(self) -> np.ndarray | None:
-        """The image at half resolution to show: the newest of the half render and the (enlarged) draft."""
+        """The screen's picture to show: the newest of the screen's render and the (enlarged) draft."""
         if self.img2 is not None and self.seq2 > self.seq1:
-            return _upsample(self.img2, 2 ** (self.level2 - 1))[:self.canvas[1] // 2, :self.canvas[0] // 2]
+            return _to_grid(self.img2, self.level2, self.level1, self.canvas)
         return self.img1
 
     def region(self, level, x0, y0, x1, y1):
+        """The pixels (x0..x1, y0..y1) of the screen's picture (level 1) or of the canvas (level 0)."""
         v = self.view
         if v.show_mask and v.mask1 is not None:
             m = (np.clip(v.mask1, 0, 1) * 255).astype(np.uint8)
-            if level == 0:
-                m = _upsample(m)
-            return np.repeat(m[y0:y1, x0:x1, None], 3, -1)
+            m = m[y0:y1, x0:x1] if level == 1 else _enlarge(m, self.factor(), x0, y0, x1, y1)
+            return np.repeat(m[..., None], 3, -1)
         a = self._half()
         if a is None:
             return np.zeros((y1 - y0, x1 - x0, 3), np.uint8)
         if level == 1:
             return a[y0:y1, x0:x1]
-        b = _upsample(a[y0 // 2: -(-y1 // 2), x0 // 2: -(-x1 // 2)])
-        out = b[y0 % 2: y0 % 2 + (y1 - y0), x0 % 2: x0 % 2 + (x1 - x0)]
+        out = _enlarge(a, self.factor(), x0, y0, x1, y1)
         if self.full is not None:
             (bx0, by0, bx1, by1), arr = self.full
             ix0, iy0, ix1, iy1 = max(x0, bx0), max(y0, by0), min(x1, bx1), min(y1, by1)
@@ -1041,9 +1071,13 @@ class BeforeSource:
         self.view = view
         self.version = 0
         self.img1 = None
+        self.level1 = 1
 
     def size(self):
         return self.view.src.size()
+
+    def factor(self) -> float:
+        return 2.0 ** self.level1
 
     def region(self, level, x0, y0, x1, y1):
         a = self.img1
@@ -1051,8 +1085,7 @@ class BeforeSource:
             return np.zeros((y1 - y0, x1 - x0, 3), np.uint8)
         if level == 1:
             return a[y0:y1, x0:x1]
-        b = _upsample(a[y0 // 2: -(-y1 // 2), x0 // 2: -(-x1 // 2)])
-        return b[y0 % 2: y0 % 2 + (y1 - y0), x0 % 2: x0 % 2 + (x1 - x0)]
+        return _enlarge(a, self.factor(), x0, y0, x1, y1)
 
 
 # ======================================================================== the view
@@ -1103,7 +1136,7 @@ class PostView(QWidget):
         self.show_tint = True                            # the red over the picture while a mask is edited
         self.crop = None                                 # [x0, y0, x1, y1] of the canvas, or None: a setting of the composition
         self._big = None                                 # the larger thumbnail under the mouse
-        self.mask1 = None                               # the selected layer's mask at half resolution (float)
+        self.mask1 = None                               # the selected layer's mask on the screen picture's grid (float)
         self.undo, self.redo = [], []
         self._stacks: dict = {}                          # the other versions' (undo, redo)
         self._version = None                             # the id of the version shown
@@ -1120,7 +1153,6 @@ class PostView(QWidget):
         self.draft_ms: list[float] = []
         self.draft_level = CPU_DRAFT_LEVEL if cpu else DRAFT_LEVEL
         self._collapsed: set[int] = set()                # the pixel layers whose children are hidden in the panel
-        self._half_due = False                           # (CPU) the exact quarter is shown, the half not rendered
         self._missing_images: set[str] = set()           # image layers' keys whose pixels the worker did not find
         self._drop = None                                # the drop the drag shows (see drop_at)
         self._restoring = False                          # a step of the workflows' Undo being undone/redone here
@@ -2079,14 +2111,25 @@ class PostView(QWidget):
         want, overlay = self._selected_wants()
         self._final_kind = "draft"
         self._main_seq = self.worker.request(Request(kind="draft", layers=snapshot(self.layers),
-                                                     level=self.draft_level, want=want, overlay=overlay))
+                                                     level=self._draft_level(), want=want, overlay=overlay))
+
+    def screen_level(self) -> float:
+        """The level of the screen's picture: the size the view shows the canvas at (``render.screen_level``), in the
+        screen's own pixels."""
+        v = self.viewer
+        return screen_level(v.scale * v.devicePixelRatioF())
+
+    def _draft_level(self) -> float:
+        """A draft's level: as many halvings under the screen's picture as the draft's own level under the half (two,
+        three on the CPU)."""
+        return self.screen_level() + (self.draft_level - HALF_LEVEL)
 
     def _show_held(self):
         """The exact image is long to come: the half one in the meantime."""
         res, self._held = self._held, None
         if res is not None and res.seq == self._main_seq:
             self._done_seq = res.seq
-            self.src.img1, self.src.seq1 = res.rgb, res.seq
+            self.src.img1, self.src.seq1, self.src.level1 = res.rgb, res.seq, res.level
             self.src.version += 1
             self.viewer.refresh()
 
@@ -2097,12 +2140,7 @@ class PostView(QWidget):
         so does the stretch."""
         if res.seq != self._main_seq or self.viewer.scale >= 0.5:
             return False
-        return res.kind == "half" or (res.kind == "refine" and self._half_due)
-
-    def _quarter_enough(self) -> bool:
-        """On the CPU, when the screen shows the image at a quarter or less: the exact quarter is the picture."""
-        cpu = (self._device or self.worker.device) == "cpu"
-        return cpu and self.src.canvas is not None and self.viewer.scale <= QUARTER_SCALE
+        return res.kind == "half"
 
     def _send_final(self):
         self._attach_fusion()
@@ -2110,22 +2148,13 @@ class PostView(QWidget):
         self._draft_dirty = False
         self._rendered_sig = self._visible_sig()
         want, overlay = self._selected_wants()
-        # the CPU's exact quarter before the half is not the picture yet ("Updating…" until the half)
-        self._final_kind = "refine" if self._quarter_enough() else "half"
-        if self._quarter_enough():
-            # the CPU, zoomed out: the exact quarter (about a second) is what the screen shows; the half comes when the
-            # view is zoomed in past a quarter
-            self._half_due = True
-            self._main_seq = self.worker.request(Request(kind="refine", layers=snapshot(self.layers),
-                                                         level=HALF_LEVEL + 1, want=want, thumbs=True, overlay=overlay,
-                                                         hists=self._hist_ids()))
-        else:
-            # one exact render at the screen's size, nothing before it (it made the quarter first on the CPU: twice
-            # the work before the picture); the full resolution comes after it, in the background (``_exact_wanted``)
-            self._half_due = False
-            self._main_seq = self.worker.request(Request(kind="half", layers=snapshot(self.layers), level=HALF_LEVEL,
-                                                         want=want, thumbs=True, overlay=overlay, refine=False,
-                                                         hists=self._hist_ids()))
+        # one exact render at the size the screen shows (``screen_level``: a 27 Mpx image fitted in a 2560 x 1440 window,
+        # 2.9 Mpx where the half was 6.8), nothing before it; zoomed in, a finer one (``_view_changed``); the full
+        # resolution comes after it, in the background (``_exact_wanted``)
+        self._final_kind = "half"
+        self._main_seq = self.worker.request(Request(kind="half", layers=snapshot(self.layers),
+                                                     level=self.screen_level(), want=want, thumbs=True,
+                                                     overlay=overlay, refine=False, hists=self._hist_ids()))
         if self.b_cmp.isChecked():
             self._send_before()
         need = tuple(self._stale_thumbs())
@@ -2135,11 +2164,11 @@ class PostView(QWidget):
     def _send_before(self):
         other = self._compared()
         if other is None:
-            self.worker.request(Request(kind="before", layers=snapshot(self.layers), level=HALF_LEVEL))
+            self.worker.request(Request(kind="before", layers=snapshot(self.layers), level=self.screen_level()))
             return
         layers = load_layers(copy.deepcopy(other.get("layers")), {p.pid for p in self.s.paths})
         self._attach_fusion(layers)
-        self.worker.request(Request(kind="before", layers=snapshot(layers), level=HALF_LEVEL, plain=True))
+        self.worker.request(Request(kind="before", layers=snapshot(layers), level=self.screen_level(), plain=True))
 
     def _stale_thumbs(self):
         for lay in self.layers:
@@ -2155,9 +2184,8 @@ class PostView(QWidget):
 
     def _view_changed(self):
         self.zoom_lab.setText(_("Zoom {p}").format(p=with_unit(f"{self.viewer.scale * 100:.0f}", "%")))
-        if self._half_due and self.viewer.scale > QUARTER_SCALE:     # zoomed in past the quarter: the half now
-            self._half_due = False
-            self._final_t.start(0)
+        if self.src.img1 is not None and self.screen_level() < self.src.level1 - 1e-9 and not self._draft_dirty:
+            self._final_t.start(REGION_WAIT_MS)                # zoomed in: the picture at the finer size shown
         self._region_t.start(REGION_WAIT_MS)
 
     def visible_box(self):
@@ -2215,7 +2243,7 @@ class PostView(QWidget):
                 self._done_seq = res.tag
                 self._held = None
                 self._hold_t.stop()
-                self.src.img1, self.src.seq1 = res.rgb, res.seq
+                self.src.img1, self.src.seq1, self.src.level1 = res.rgb, res.seq, res.level
                 self.src.version += 1
                 self.viewer.refresh()
                 self.rendered.emit(res)
@@ -2269,7 +2297,7 @@ class PostView(QWidget):
             else:
                 # the screen's picture at once: the full resolution's comes in the background, long on a large image
                 # (18 s on a 27 Mpx one: holding the screen's for it made every release wait)
-                self.src.img1, self.src.seq1 = res.rgb, res.seq
+                self.src.img1, self.src.seq1, self.src.level1 = res.rgb, res.seq, res.level
             if res.seq == self._main_seq and res.kind == self._final_kind and self._held is None:
                 self._done_seq = res.seq
             if res.kind == "refine" and res.mask_thumbs:
@@ -2278,7 +2306,8 @@ class PostView(QWidget):
                 self._take_layer_thumbs(res)
             sel = self._mask_key()
             m = res.masks.get(sel) if sel is not None else None
-            self.mask1 = None if m is None else (_upsample(m, 2 ** (res.level - 1)) if res.level > 1 else m)
+            self.mask1 = None if m is None else _to_grid(m, res.level, min(res.level, self.src.level1),
+                                                         self.src.canvas)
             self._set_overlay(res.overlay if self.sel and mask_selection(self.sel[1]) else None)
             self.src.version += 1
             if res.kind == "half":
@@ -2291,14 +2320,14 @@ class PostView(QWidget):
                 self._screen_done(res)
             if self._exact_wanted(res):
                 self._exact_seq = self.worker.request(Request(kind="exact", layers=snapshot(self.layers),
-                                                              level=HALF_LEVEL, tag=res.seq))
+                                                              level=res.level, tag=res.seq))
                 self._exact_wait = res.seq                     # the picture changes once more: still "Updating…"
         elif res.kind == "region":
             self.src.full = (res.box, res.rgb)
             self.src.version += 1
             self.viewer.refresh()
         elif res.kind == "before":
-            self.before.img1 = res.rgb
+            self.before.img1, self.before.level1 = res.rgb, res.level
             self.before.version += 1
             self.viewer.update()
         if res.kind in ("draft", "half", "refine", "exact"):    # the search of stars: said while the picture says it;
@@ -4488,7 +4517,8 @@ class PostView(QWidget):
             return
         self._attach_fusion()
         # (not shown: the picture stays the exact one until a move changes it)
-        self.worker.request(Request(kind="draft", layers=snapshot(self.layers), level=self.draft_level, tag="prime"))
+        self.worker.request(Request(kind="draft", layers=snapshot(self.layers), level=self._draft_level(),
+                                    tag="prime"))
 
     def _wire_editor(self, ed: CurvesEditor):
         """The Curves panel: a draft while a point moves; on release the exact render and one undo step (the state
@@ -4933,15 +4963,17 @@ class PostView(QWidget):
         from itself); beside the spot when the image is not there yet."""
         from .postfilters.heal import find_source
         W, H = self.src.size()
+        f = self.src.factor()                          # (the screen picture's pixels: the canvas's / f)
         R = int(math.ceil(r * 4.8)) + 4
-        x0, y0 = max(0, int(x - R) // 2), max(0, int(y - R) // 2)
-        x1, y1 = min(W // 2, int(x + R) // 2 + 1), min(H // 2, int(y + R) // 2 + 1)
+        gw, gh = _grid((W, H), self.src.level1)
+        x0, y0 = max(0, int((x - R) / f)), max(0, int((y - R) / f))
+        x1, y1 = min(gw, int((x + R) / f) + 1), min(gh, int((y + R) / f) + 1)
         a = self.src.region(1, x0, y0, x1, y1) if x1 > x0 and y1 > y0 else None
         if a is not None and a.size and a.max() > 0:
-            dx, dy = find_source(a.astype(np.float32) / 255.0, x / 2 - x0, y / 2 - y0, r / 2,
-                                 avoid=[(ax / 2 - x0, ay / 2 - y0, ar / 2) for ax, ay, ar in avoid])
+            dx, dy = find_source(a.astype(np.float32) / 255.0, x / f - x0, y / f - y0, r / f,
+                                 avoid=[(ax / f - x0, ay / f - y0, ar / f) for ax, ay, ar in avoid])
             if dx or dy:
-                return 2 * dx, 2 * dy
+                return f * dx, f * dy
         return 2.5 * r, 0.0
 
     def _heal_press(self, x, y, button, alt):
