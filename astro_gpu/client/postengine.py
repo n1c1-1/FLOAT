@@ -296,7 +296,113 @@ def per_pixel(fn, *arrays, min_rows: int = 256):
     return np.concatenate(parts, 0)
 
 
-_THREADS = max(1, min(16, (__import__("os").cpu_count() or 1)))
+_THREADS = max(1, min(16, int(__import__("os").environ.get("ASTRO_GPU_POST_THREADS") or 0) or
+                    (__import__("os").cpu_count() or 1)))
+
+
+def _gauss_margin(sigma: float) -> int | None:
+    """The rows a ``gauss`` of ``sigma`` reads around a pixel (OpenCV's kernel: 4 sigma each side); None for a wide
+    blur, made on a reduced copy whose grid is the whole image's (not a band's)."""
+    if sigma < 0.3:
+        return 0
+    return None if sigma > 12 else int(math.ceil(4 * sigma)) + 2
+
+
+def _starlet_margin(n: int) -> int:
+    """The rows n starlet layers read around a pixel (the B3 kernel's 2 x 2^j each, client/postfilters/detail)."""
+    return 2 * (2 ** (n + 1)) + 8
+
+
+#: the filters whose result on a band of rows, given the rows it reads around it, is the whole image's bit for bit:
+#: (params, level) -> those rows, None when not (a wide blur). Each is checked against the whole image by the tests
+#: (tests/client/test_post_bands.py); a filter not here (a whole-image measure, a grid of the whole image: CLAHE, the
+#: veil map, the noise reduction's noise, the background guard) is made on the whole, and so is a filter computed by
+#: torch (Levels, the multiscale ones): its elementwise functions take another path at the end of each thread's share,
+#: so that its pixels follow how the work is cut.
+BAND_MARGINS = {
+    "balance": lambda p, lv: 0,
+    "curves": lambda p, lv: 0,
+    "scnr": lambda p, lv: 0,
+    "denoise": lambda p, lv: _gauss_margin(4 / 2 ** lv),
+    "sharpen": lambda p, lv: _gauss_margin(max(p["radius"] / 2 ** lv, 0.35)),
+    "local_contrast": lambda p, lv: _gauss_margin(p["scale"] / 2 ** lv),
+    "faint_smooth": lambda p, lv: int(math.ceil(4 * max(p["radius"] / 2 ** lv, 0.5))) + 2,
+    "highlights": lambda p, lv: 3 * max(1, int(round(p["radius"] / 2 ** lv))) + 8,
+}
+#: a band's least rows (under it, the filter is made on the whole: the threads would cost more than they give)
+BAND_ROWS = 128
+
+
+def run_filter(key: str, x: np.ndarray, p: dict, ctx) -> np.ndarray:
+    """A filter on an image: in bands of rows in the processor's threads when it can be (``BAND_MARGINS``: the same
+    pixels as on the whole), else on the whole. Between two bands a composition abandoned stops (``Superseded``):
+    a full-resolution render never holds the next draft for a whole heavy filter."""
+    fn = FILTERS[key]["fn"]
+    margin_of = BAND_MARGINS.get(key)
+    rows = x.shape[0]
+    margin = margin_of(p, getattr(ctx, "level", 0)) if margin_of is not None and x.ndim == 3 else None
+    n = 0 if margin is None else min(4 * _THREADS, rows // max(BAND_ROWS, margin))
+    if n < 2 or _THREADS < 2:
+        return fn(x, p, ctx)
+    check = getattr(ctx, "check", None)
+    cuts = [rows * i // n for i in range(n + 1)]
+    out = np.empty(x.shape, np.float32)
+    import threading
+    nxt = [0]
+    lock = threading.Lock()
+    errors: list = []
+
+    def worker():
+        while True:
+            with lock:
+                if errors or nxt[0] >= n:
+                    return
+                i = nxt[0]
+                nxt[0] += 1
+            try:
+                if check is not None and check():
+                    raise Superseded()
+                a, b = max(0, cuts[i] - margin), min(rows, cuts[i + 1] + margin)
+                y = fn(np.ascontiguousarray(x[a:b]), p, ctx)
+                out[cuts[i]:cuts[i + 1]] = y[cuts[i] - a:cuts[i + 1] - a]
+            except BaseException as e:  # noqa: BLE001 - raised again in the caller's thread
+                with lock:
+                    errors.append(e)
+                return
+    k = min(_THREADS, n)
+    with _one_thread_each():
+        threads = [threading.Thread(target=worker, name="post-bands", daemon=True) for _ in range(k - 1)]
+        for t in threads:
+            t.start()
+        worker()
+        for t in threads:
+            t.join()
+    if errors:
+        raise errors[0]
+    return out
+
+
+class _one_thread_each:
+    """While bands run in threads, the libraries' own threads one each (the processor shared, not each band asking
+    for all of it): torch's and OpenCV's thread counts set back after."""
+    _depth = 0
+
+    def __enter__(self):
+        import torch
+        _one_thread_each._depth += 1
+        if _one_thread_each._depth == 1:
+            self._torch, self._cv = torch.get_num_threads(), cv2.getNumThreads()
+            torch.set_num_threads(1)
+            cv2.setNumThreads(1)
+        return self
+
+    def __exit__(self, *a):
+        import torch
+        _one_thread_each._depth -= 1
+        if _one_thread_each._depth == 0:
+            torch.set_num_threads(self._torch)
+            cv2.setNumThreads(self._cv)
+        return False
 
 
 def f_saturation(x, p, ctx):
@@ -1699,6 +1805,7 @@ class Ctx:
         self.stats_key: str | None = None                     # the input of the filter being applied, any region
         self.row_edit: str | None = None                      # (the ``edit`` of the image layer being composed)
         self.input_sig: str | None = None                     # what the input of the filter being applied depends on
+        self.check = None                                     # True: the composition is abandoned (``Superseded``)
 
     def whole_stats(self, name: str, x: np.ndarray, measure):
         """``measure`` of a filter's input taken on the whole image, whatever region is rendered (review 10.1: at
@@ -2753,6 +2860,7 @@ class Composer:
         want = set(want)
         self._drawn = 0
         check = stop or (lambda: False)
+        ctx.check = check                                                 # (a filter made in bands stops between them)
         for c in (self.images, self.steps, self.backdrops):
             c.begin(level)
 
@@ -3104,7 +3212,7 @@ class Composer:
         t0 = time.perf_counter()
         if fl["id"] in ctx.hist_ids:
             ctx.hists[fl["id"]] = pf_curves.histograms(under)
-        out = FILTERS[fl["filter"]]["fn"](under, fl["params"], ctx)
+        out = run_filter(fl["filter"], under, fl["params"], ctx)
         m = self.mask(fl, level, abox, under, canvas, ctx, sigs=None if sig is None else {None: sig})
         out = self.blend(fl["mode"], under, out)
         a = fl["opacity"] / 100

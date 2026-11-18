@@ -170,7 +170,9 @@ def drag(s, sl, steps=8, every=0.06, work=None, release=False):
                 s.qapp.processEvents()
                 time.sleep(0.002)
         released = None
-        if release:                                     # let go at once after the last move, as a hand does
+        # the handle still held: the drafts asked are shown (a hand waits for the picture before letting go)
+        assert pump_until(s, lambda: not s.worker.busy() and not v._draft_t.isActive(), 300)
+        if release:                                     # let go after the last draft, as a hand does
             t = time.perf_counter()
             sl.s.setSliderDown(False)
 
@@ -271,3 +273,25 @@ def test_a_combination_s_light_gesture_makes_its_top_filter_only(monkeypatch, sl
         best = min(best, time.perf_counter() - t)
     assert {w[0] for w in work.log} == {tops[-1]["id"]}, "a light gesture made other filters"
     timed(slow_factor, 0.15, best, "a combination's light gesture")
+
+
+def test_the_times_of_a_layer_setting_under_the_stack_at_the_window_s_size(big, slow_factor):
+    """The owner's case: a setting of the layer itself (Sky) under its twelve filters, the Post view as large as his
+    window (2560 x 1440): every filter is made again, at the drag's size while it moves and at the screen's after the
+    release; the drafts in the light gesture's time, the screen's picture in a second."""
+    s, v = big, big.view
+    s.page.resize(2560, 1440)
+    assert s.settle(900)
+    lay = next(x for x in v.layers if pe.is_pixel(x))
+    best_draft, best_release = 1e9, 1e9
+    for _ in range(3):
+        sl = slider_of(v, lay, "Sky")
+        assert s.settle(900)
+        times, released = drag(s, sl, steps=6, release=True)
+        best_draft = min(best_draft, min(times))
+        best_release = min(best_release, released)
+        assert s.settle(900)
+    print()
+    print(f"gate, a layer's setting: draft {best_draft:.3f} s, release {best_release:.3f} s, machine x{slow_factor:.2f}")
+    timed(slow_factor, 0.15, best_draft, "a layer setting's draft under the stack")
+    timed(slow_factor, 1.0, best_release, "the screen's picture of a layer setting under the stack")
