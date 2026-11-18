@@ -461,7 +461,7 @@ def mixer_params() -> list[dict]:
 
 
 def f_mixer(x, p, ctx):
-    return pf_mixer.mix(x, p, per_pixel)
+    return pf_mixer.mix(x, p, _THREADS)
 
 
 def f_scnr(x, p, ctx):

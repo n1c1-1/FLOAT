@@ -61,44 +61,93 @@ def _along(what: str, top: float, w: np.ndarray, p: dict) -> np.ndarray | None:
     return None if not any(values) else np.tensordot(np.array(values, np.float32), w, 1)
 
 
-def mix(x: np.ndarray, p: dict, pieces=None) -> np.ndarray:
-    """``x`` (h, w, 3, sRGB 0..1) through the mixer's settings ``p`` (``keys``); the identity at zero. Only the pixels
-    with a colour are worked on, and the bands' sum is read from a table along the hue circle (12 Mpx: 5 s without).
-    ``pieces``: a way to run the arithmetic of each pixel in bands of pixels in threads (client/postengine.per_pixel):
-    the same values (the colour conversions and the angles stay one call on the whole)."""
-    if is_identity(p):
-        return x
-    out = np.clip(x, 0, 1).astype(np.float32)
-    lab = to_lab(out)
-    on = cv2.magnitude(lab[..., 1], lab[..., 2]) > NEUTRAL_C               # nothing on what has no colour
-    if not on.any():
-        return out
-    L, a, b = lab[on].T
-    C = cv2.magnitude(a, b).ravel()
-    t = cv2.phase(a, b, angleInDegrees=True).ravel() * _PER_DEGREE
+#: the colourful pixels are worked on in pieces of this many, small enough for their intermediate values to stay in
+#: the processor's cache (one pass over memory instead of one per operation: 3x faster), cut at a multiple of the
+#: vector width so that each value is the one a single call on the whole gives
+PIECE = 65536
+
+
+def _tables(p: dict) -> dict:
+    """For hue, saturation and luminance: the setting along the hue circle and its step to the next entry, or None."""
+    w = _weights(_HUES)
+    out = {}
+    for what, top in (("hue", HUE_MAX), ("sat", SAT_MAX), ("lum", LUM_MAX)):
+        curve = _along(what, top, w, p)
+        out[what] = None if curve is None else (curve, curve[1:] - curve[:-1])
+    return out
+
+
+def _work(lab: np.ndarray, C: np.ndarray, hue: np.ndarray, res: np.ndarray, tables: dict) -> None:
+    """The colourful pixels ``lab`` (n, 3), of chroma ``C`` and hue ``hue`` (degrees), through the settings'
+    ``tables``, written into ``res`` (n, 3)."""
+    a, b = lab[:, 1], lab[:, 2]
+    t = hue * _PER_DEGREE
     i = t.astype(np.int32)
     t -= i
     share = np.minimum((C - NEUTRAL_C) / NEUTRAL_C, 1.0)                  # a smooth start
-    w = _weights(_HUES)
 
-    run = ((lambda fn, *arr: fn(*arr)) if pieces is None else
-           (lambda fn, *arr: pieces(lambda *band: fn(*band), *arr, min_rows=200_000)))
+    def read(table):
+        curve, step = table
+        return share * (curve[i] + t * step[i])
 
-    def read(curve):
-        return run(lambda sh, ii, tt: sh * (curve[ii] + tt * (curve[ii + 1] - curve[ii])), share, i, t)
-
-    dh, ds, dl = _along("hue", HUE_MAX, w, p), _along("sat", SAT_MAX, w, p), _along("lum", LUM_MAX, w, p)
-    if ds is not None:
-        scale = run(lambda r: np.clip(1.0 + r / 100.0, 0.0, 3.0), read(ds))
-        a, b = run(lambda aa, sc: aa * sc, a, scale), run(lambda bb, sc: bb * sc, b, scale)
-    if dh is not None:
-        turn = np.radians(read(dh))
-        c, s = np.cos(turn), np.sin(turn)                                  # (one call each: the same values)
-        a, b = run(lambda aa, bb, cc, ss: aa * cc - bb * ss, a, b, c, s), run(lambda aa, bb, cc, ss: aa * ss + bb * cc,
-                                                                                a, b, c, s)
-    if dl is not None:
+    L = lab[:, 0]
+    if tables["sat"] is not None:
+        scale = np.clip(1.0 + read(tables["sat"]) / 100.0, 0.0, 3.0)
+        a, b = a * scale, b * scale
+    if tables["hue"] is not None:
+        turn = np.radians(read(tables["hue"]))
+        c, s = np.cos(turn), np.sin(turn)
+        a, b = a * c - b * s, a * s + b * c
+    if tables["lum"] is not None:
         # the luminance of a colour: up or down by its share of the way to white or black (a colourful pixel only)
-        d = run(lambda r: r / 100.0, read(dl))
-        L = run(lambda dd, LL: np.where(dd >= 0, LL + (100.0 - LL) * dd * 0.5, LL * (1.0 + dd * 0.5)), d, L)
-    out[on] = np.clip(from_lab(np.stack([L, a, b], -1)[:, None].astype(np.float32)), 0, 1)[:, 0]
+        d = read(tables["lum"]) / 100.0
+        L = np.where(d >= 0, L + (100.0 - L) * d * 0.5, L * (1.0 + d * 0.5))
+    res[:, 0], res[:, 1], res[:, 2] = L, a, b
+
+
+def _in_threads(n: int, fn) -> None:
+    import threading
+    threads = [threading.Thread(target=fn, args=(k,), name="post-mixer", daemon=True) for k in range(1, n)]
+    for th in threads:
+        th.start()
+    fn(0)
+    for th in threads:
+        th.join()
+
+
+def mix(x: np.ndarray, p: dict, threads: int = 1) -> np.ndarray:
+    """``x`` (h, w, 3, sRGB 0..1) through the mixer's settings ``p`` (``keys``); the identity at zero. Only the pixels
+    with a colour are worked on, and the bands' sum is read from a table along the hue circle (12 Mpx: 5 s without).
+    The colourful pixels are taken out once, worked on in pieces (``PIECE``) in up to ``threads`` threads, and put back:
+    the same values as one pass on the whole (the colour conversions, the chroma and the hue stay one call each:
+    their values follow how they are cut, or the thread)."""
+    if is_identity(p):
+        return x
+    out = np.clip(x, 0, 1).astype(np.float32, copy=False)
+    lab = to_lab(out)
+    on = cv2.magnitude(lab[..., 1], lab[..., 2]) > NEUTRAL_C               # nothing on what has no colour
+    where = np.flatnonzero(on)
+    n = len(where)
+    if not n:
+        return out
+    picked = lab.reshape(-1, 3).take(where, axis=0)
+    # (OpenCV's magnitude gives other values in other threads: chroma and hue are one call each, in this thread)
+    C = cv2.magnitude(picked[:, 1], picked[:, 2]).ravel()
+    hue = cv2.phase(picked[:, 1], picked[:, 2], angleInDegrees=True).ravel()
+    res = np.empty((n, 3), np.float32)
+    tables = _tables(p)
+    pieces = range(0, n, PIECE)
+    k = max(1, min(int(threads), len(pieces), 8))                          # (memory-bound past 8)
+
+    def work(j):
+        for s in pieces[j::k]:
+            _work(picked[s:s + PIECE], C[s:s + PIECE], hue[s:s + PIECE], res[s:s + PIECE], tables)
+    _in_threads(k, work)
+    back = from_lab(res[:, None])[:, 0]
+    flat = out.reshape(-1, 3)
+
+    def put(j):
+        for s in pieces[j::k]:
+            flat[where[s:s + PIECE]] = np.clip(back[s:s + PIECE], 0, 1)
+    _in_threads(k, put)
     return out

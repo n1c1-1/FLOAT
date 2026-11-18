@@ -41,6 +41,23 @@ def test_a_hue_shift_turns_the_red_and_luminance_lightens_it():
     assert lighter[0, 1].mean() > x[0, 1].mean()
 
 
+def test_the_pieces_and_threads_give_the_pixels_of_one_pass(monkeypatch):
+    """The colourful pixels are worked on in pieces in threads: the same values, to the bit, as one piece in one
+    thread, whatever the cut (pieces small here, so that every setting crosses many) and the number of threads."""
+    import astro_gpu.client.postfilters.mixer as mixer
+    rng = np.random.default_rng(5)
+    x = np.clip(rng.random((97, 211, 3), dtype=np.float32) * 0.7, 0, 1)
+    x[:20] *= 0.03                                                                # grey rows, left alone
+    p = {"sat_red": -60.0, "hue_blue": 10.0, "lum_green": -30.0, "lum_red": 40.0, "hue_aqua": -25.0,
+         "sat_magenta": 80.0}
+    monkeypatch.setattr(mixer, "PIECE", 1 << 30)
+    whole = mix(x, p, 1)
+    monkeypatch.setattr(mixer, "PIECE", 1024)
+    for threads in (1, 3, 8):
+        assert np.array_equal(mix(x, p, threads), whole)
+    assert np.array_equal(whole[:20], np.clip(x[:20], 0, 1))
+
+
 def test_the_background_protection_spares_the_sky_and_saturates_the_nebula():
     rng = np.random.default_rng(1)
     sky = np.clip(0.1 + rng.normal(0, 0.01, (64, 64, 3)), 0, 1).astype(np.float32)
