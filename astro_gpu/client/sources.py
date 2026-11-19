@@ -67,6 +67,8 @@ from .widgets import ACCENT, NEW, WARN, ElidedLabel, clear, hline, label, para
 # (key, title, section): plain English, translated where shown
 GROUPS = [("lights", "Lights", "Lights"), ("darks", "Darks", "Calibration"), ("flats", "Flats", "Calibration"),
           ("bias", "Bias", "Calibration"), ("flat_darks", "Dark flats", "Calibration")]
+#: the kinds of the large zones shown while files are dragged (the dark flats keep their row)
+ZONE_KINDS = ("lights", "darks", "flats", "bias")
 COUNT_KEY = {"lights": "lights", "darks": "darks", "flats": "flats", "bias": "bias", "flat_darks": "dark_flats"}
 #: under this exposure (s), lights look like flats: a light of the deep sky lasts seconds, a flat a fraction of one
 FLAT_LIKE_S = 0.1
@@ -167,6 +169,8 @@ class DropZone(QFrame):
     from the files."""
     dropped = Signal(str, list)                        # kind, the files or folders
     clicked = Signal(str)
+    left = Signal()                                    # the drag left it, or ended on it
+    entered = Signal()                                 # a drag came onto it
 
     def __init__(self, key, title, parent=None):
         super().__init__(parent)
@@ -185,10 +189,17 @@ class DropZone(QFrame):
         b = QLabel(_("Drop files here"))
         b.setObjectName("dim")
         b.setStyleSheet("background: transparent;")
-        for x in (a, b):
+        self.count = QLabel("")
+        self.count.setStyleSheet("font-size: 11pt; background: transparent;")
+        for x in (a, self.count, b):
             x.setAttribute(Qt.WA_TransparentForMouseEvents)
         v.addWidget(a, 0, Qt.AlignHCenter)
+        v.addWidget(self.count, 0, Qt.AlignHCenter)
         v.addWidget(b, 0, Qt.AlignHCenter)
+
+    def set_count(self, n: int):
+        """What the kind holds, under its name (the page shown while files are dragged says it for each zone)."""
+        self.count.setText(plural(n, "{n} file", "{n} files") if n else _("No file"))
 
     def mousePressEvent(self, e):                                    # noqa: N802 - Qt's name
         self.clicked.emit(self.key)
@@ -201,6 +212,7 @@ class DropZone(QFrame):
         if e.mimeData().hasUrls():
             e.acceptProposedAction()
             self._hot(True)
+            self.entered.emit()
 
     def dragMoveEvent(self, e):                                      # noqa: N802 - Qt's name
         if e.mimeData().hasUrls():
@@ -208,6 +220,7 @@ class DropZone(QFrame):
 
     def dragLeaveEvent(self, e):                                     # noqa: N802 - Qt's name
         self._hot(False)
+        self.left.emit()
 
     def dropEvent(self, e):                                          # noqa: N802 - Qt's name
         self._hot(False)
@@ -215,6 +228,7 @@ class DropZone(QFrame):
         if paths:
             e.acceptProposedAction()
             self.dropped.emit(self.key, paths)
+        self.left.emit()
 
 
 class FileList(QListWidget):
@@ -438,6 +452,11 @@ class SourcesView(QWidget):
         sv.readFailed.connect(self._read_failed)
         self.setAcceptDrops(True)
         self._said = False
+        self._dragging = False                             # files are dragged over the page: the four zones show
+        self._drag_timer = QTimer(self)                    # a drag that left the page and came back on a zone is one
+        self._drag_timer.setSingleShot(True)
+        self._drag_timer.setInterval(120)
+        self._drag_timer.timeout.connect(lambda: self._drag_show(False))
         self._centre_takes_drags()
         self._fill_sort()
         self.set_mode(1)
@@ -478,11 +497,15 @@ class SourcesView(QWidget):
         v.addSpacing(10)
         grid = QGridLayout()
         grid.setSpacing(12)
-        for i, (key, title, _sec) in enumerate(GROUPS):
+        self.zones = {}
+        for i, (key, title, _sec) in enumerate(g for g in GROUPS if g[0] in ZONE_KINDS):
             z = DropZone(key, _(title))
             z.dropped.connect(self.add_files)
             z.clicked.connect(self.pick_files)
-            grid.addWidget(z, i // 3, i % 3)
+            z.left.connect(self._drag_left)
+            z.entered.connect(lambda: self._drag_show(True))
+            self.zones[key] = z
+            grid.addWidget(z, i // 2, i % 2)
         v.addLayout(grid)
         v.addSpacing(10)
         row = QHBoxLayout()
@@ -502,7 +525,11 @@ class SourcesView(QWidget):
         """An empty kind shows where its files go; the grid, the viewer and the list come back with its first files."""
         self.current_session()                             # taken away meanwhile (Ctrl+Z): another one is shown
         empty = self.sid is not None and not self.held(self.group)
-        self.stack.setCurrentIndex(3 if empty else self.mode)
+        self._dragging = self._dragging and self.sid is not None
+        if empty or self._dragging:
+            for k, z in self.zones.items():
+                z.set_count(self.held(k) if self.sid is not None else 0)
+        self.stack.setCurrentIndex(3 if empty or self._dragging else self.mode)
         for b in self.mode_btns + [self.sort_cb]:
             b.setEnabled(not empty)
         self.info.setVisible(self.mode != 1 and not empty)
@@ -812,6 +839,17 @@ class SourcesView(QWidget):
             r.addWidget(b, 0, Qt.AlignTop)
             self.lv.addLayout(r)
 
+    def _drag_show(self, on: bool):
+        """The central area shows the four zones while files are dragged over the page, and the kind's list again
+        once the drag ends (dropped or left)."""
+        self._drag_timer.stop()
+        if self._dragging != on:
+            self._dragging = on
+            self._show_zone()
+
+    def _drag_left(self):
+        self._drag_timer.start()
+
     def _rows_lit(self, on: bool):
         """The kinds' rows lit as the places to drop, while files are dragged over the rest of the page."""
         for r in self.findChildren(GroupRow):
@@ -824,24 +862,25 @@ class SourcesView(QWidget):
             e.setDropAction(Qt.IgnoreAction)
             e.accept()
             self._rows_lit(True)
-            if not self._said:
-                self._said = True
-                self.toast.emit(_("Drop on a row"))
+            self._drag_show(True)
 
     def dragMoveEvent(self, e):                                      # noqa: N802 - Qt's name
         if e.mimeData().hasUrls() and self.sid is not None:
             e.setDropAction(Qt.IgnoreAction)
             e.accept()
+            self._drag_timer.stop()
 
     def dragLeaveEvent(self, e):                                     # noqa: N802 - Qt's name
         self._rows_lit(False)
         self._said = False
+        self._drag_left()
 
     def dropEvent(self, e):                                          # noqa: N802 - Qt's name
         """Dropped anywhere but on a kind's row (a heading, the crumbs, the frames, a blank area): nothing is added and
         the page says where to drop. The kind of a file is the row it is dropped on, never read from it."""
         self._rows_lit(False)
         self._said = False
+        self._drag_show(False)
         if local_paths(e.mimeData()) and self.sid is not None:
             e.setDropAction(Qt.IgnoreAction)
             e.accept()
