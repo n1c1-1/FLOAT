@@ -718,6 +718,19 @@ def _wait(w, until, ms=6000):
     return until()
 
 
+def _hover_until(w, view, until, ms=8000) -> bool:
+    """The pointer comes from the image onto the layers' strip until ``until`` holds: an Enter that a loaded machine or
+    a cursor left over the strip never delivered is made again, never waited for by time alone."""
+    end = time.monotonic() + ms / 1000
+    while time.monotonic() < end:
+        QTest.mouseMove(view.viewer, view.viewer.rect().center())
+        _wait(w, lambda: False, 100)
+        QTest.mouseMove(view.ldock.strip, QPoint(20, 200))
+        if _wait(w, until, 1500):
+            return True
+    return until()
+
+
 def test_post_has_its_layers_on_the_left_and_its_settings_on_the_right(env):
     """As the usual image editors; on a small window the layers are automatic (the strip opens under the mouse), the
     settings docked."""
@@ -728,10 +741,7 @@ def test_post_has_its_layers_on_the_left_and_its_settings_on_the_right(env):
     assert view.ldock.strip.x() < view.viewer.mapTo(view, QPoint(0, 0)).x() < view.right.mapTo(view, QPoint(0, 0)).x()
     # the mouse resting on the strip opens the layers over the image; leaving them closes them. It comes from the image
     # first: a cursor left over the strip by an earlier test of the same process gave no Enter (the strip stayed closed)
-    QTest.mouseMove(view.viewer, view.viewer.rect().center())
-    _wait(w, lambda: False, 100)
-    QTest.mouseMove(view.ldock.strip, QPoint(20, 200))
-    assert _wait(w, view.ldock.is_open) and view.left.isVisible()
+    assert _hover_until(w, view, view.ldock.is_open) and view.left.isVisible()
     assert view.left.geometry().left() >= view.ldock.strip.geometry().right()
     QTest.mouseMove(view.viewer, view.viewer.rect().center())
     assert _wait(w, lambda: not view.ldock.is_open()) and not view.left.isVisible()
@@ -823,6 +833,12 @@ def _bar_fits(view):
     """The bar's widgets one after the other, none over the next, the last inside the centre; its hint the room."""
     _settle(view.window(), 3)
     bar = view.top_bar
+
+    def laid_out() -> bool:                         # the layout has placed every widget (not mid-pass, on a loaded machine)
+        sh = [x for x in (bar.itemAt(i).widget() for i in range(bar.count())) if x is not None and not x.isHidden()]
+        return (all(a.geometry().right() < b.geometry().left() for a, b in zip(sh, sh[1:]))
+                and sh[-1].geometry().right() < view.centre.width())
+    _wait(view.window(), laid_out)                  # waits on the condition, never on a time
     shown = [bar.itemAt(i).widget() for i in range(bar.count())]
     shown = [x for x in shown if x is not None and not x.isHidden()]
     for a, b in zip(shown, shown[1:]):
