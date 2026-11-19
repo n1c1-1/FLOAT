@@ -60,6 +60,9 @@ from astro_gpu.stages.star_removal import MODEL, NAFNet, apply, fwd, inv  # noqa
 
 DS = Path("F:/astro_essais/stars_dataset_v2")
 REVIEW = Path("F:/astro_essais/stars_dataset/livraison/deja_traites")   # the review TIFFs (the owner's retouches), stretch.json beside
+#: the pairs of the owner's 19 Nov review (stars_nb_pairs.py): same layout, its own fields.json; "held_out" entries (the
+#: judge pair, the plan's held-out fields) are never trained on
+NB = Path("F:/astro_essais/stars_dataset/paires_nb")
 TRAIN = Path("F:/astro_essais/stars_train")
 COMPARE = Path("F:/astro_essais/stars_compare")
 BENCH = Path("F:/astro_essais/bench")
@@ -239,7 +242,7 @@ def synthetic_stars(n: int, fwhm_field, top, gen, dev, size: int = PATCH):
 
 
 # ---------------------------------------------------------------------------------------------- data
-def training_pairs():
+def training_pairs(nb: bool = True):
     from denoise_dataset import HELD_OUT
     fields = json.loads((DS / "fields.json").read_text())
     pairs = []
@@ -256,6 +259,13 @@ def training_pairs():
         ign = d / "ignore.npy"
         pairs.append({"name": m["name"], "field": fld, "input": d / "input.npy", "target": tgt,
                       "ignore": ign if ign.exists() else None, "fwhm": fields[fld]["fwhm_px"], "top": m["top"]})
+    if nb and (NB / "fields.json").exists():
+        for fld, e in sorted(json.loads((NB / "fields.json").read_text()).items()):
+            if e.get("held_out"):
+                continue
+            d = NB / fld
+            pairs.append({"name": fld, "field": fld, "input": d / "input.npy", "target": d / "starless_fixed.npy",
+                          "ignore": d / "ignore.npy", "fwhm": e["fwhm_px"], "top": e["top"]})
     return pairs
 
 
@@ -378,7 +388,7 @@ def bench_case(case: str):
 
 # ---------------------------------------------------------------------------------------------- train
 def train(tag: str, hours: float, device: str, synthetic: float, batch: int, lr: float, recompute: bool,
-          init: str | None = None, deconv: float = 0.0) -> int:
+          init: str | None = None, deconv: float = 0.0, no_nb: bool = False) -> int:
     """``init``: the weights it starts from ("shipped": the Stars block's, or a file), a fine-tuning then: a short
     warm-up, a validation every 1000 steps. ``deconv``: the share of the tiles given to the Deconvolution block's
     network first."""
@@ -387,7 +397,7 @@ def train(tag: str, hours: float, device: str, synthetic: float, batch: int, lr:
     torch.backends.cudnn.benchmark = True
     out = TRAIN / tag
     out.mkdir(parents=True, exist_ok=True)
-    pairs = training_pairs()
+    pairs = training_pairs(nb=not no_nb)
     log(f"{tag}: {len(pairs)} pairs over {len({p['field'] for p in pairs})} fields, synthetic share {synthetic}, "
         f"deconvolved share {deconv}, from {init or 'scratch'}")
     dec = Deconvolved(dev) if deconv > 0 else None
@@ -553,7 +563,7 @@ def main(argv=None) -> int:
         return fixes()
     if a.cmd == "bench":
         return bench(a.tag, a.device)
-    r = train(a.tag, a.hours, a.device, a.synthetic, a.batch, a.lr, a.recompute, a.init, a.deconv)
+    r = train(a.tag, a.hours, a.device, a.synthetic, a.batch, a.lr, a.recompute, a.init, a.deconv, a.no_nb)
     if a.then_bench:
         bench(a.tag, a.device)
         import subprocess

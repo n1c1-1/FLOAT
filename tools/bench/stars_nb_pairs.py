@@ -81,6 +81,22 @@ def unstretch(codes: np.ndarray, s: dict) -> np.ndarray:
     return (s["soft"] * np.sinh(codes.astype(np.float32) / 65535 * stretch_of(s)) - s["offset"]).astype(np.float32)
 
 
+def noise_check(inp: np.ndarray, tgt: np.ndarray):
+    """(high-frequency noise of the input, of the target, smooth sky bias target - input), in noise sigmas, on the
+    quietest 40 % of the image (3x subsampled): the old pairs' inputs, denoised, sit at 0.01-0.14."""
+    from scipy import ndimage
+    sl = (slice(None), slice(0, None, 3), slice(0, None, 3))
+    a, t = np.asarray(inp[sl], np.float32), np.asarray(tgt[sl], np.float32)
+    g = ndimage.uniform_filter(a.mean(0), 9)
+    m = g < np.percentile(g, 40)
+
+    def hf(x):
+        d = (x[:, 1:] - x[:, :-1])[m[:, 1:] & m[:, :-1]]
+        return 1.4826 * np.median(np.abs(d - np.median(d))) / np.sqrt(2)
+    bias = np.median(ndimage.uniform_filter(t.mean(0), 9)[m] - g[m])
+    return float(np.mean([hf(a[c]) for c in range(3)])), float(np.mean([hf(t[c]) for c in range(3)])), float(bias)
+
+
 def save_pair(name: str, inp: np.ndarray, tgt: np.ndarray, top: float, changed_px: int, extra: dict,
               held_out: bool = False, judge: bool = False) -> dict:
     """OUT/<name>/{input.npy (float32: m97's stars reach 2.8e6 sigmas, past float16), starless_fixed.npy (float16 when it
@@ -94,18 +110,21 @@ def save_pair(name: str, inp: np.ndarray, tgt: np.ndarray, top: float, changed_p
     np.save(d / "ignore.npy", np.zeros((H, W), bool))
     fwhm, nfw = st.star_fwhm(inp, tgt, top)
     star_px = int(((inp - tgt).max(0) > 3.0).sum())            # the star layer: 3 noise sigmas above the target
-    extra = {**extra, "star_layer_px": star_px}
+    hf_in, hf_out, bias = noise_check(inp, tgt)
+    extra = {**extra, "star_layer_px": star_px, "input_hf_noise": round(hf_in, 3), "target_hf_noise": round(hf_out, 3),
+             "sky_bias_target_minus_input": round(bias, 3)}
     (d / "meta.json").write_text(json.dumps({"name": name, "field": name, "shape": list(inp.shape), "top": top,
                                              **extra}, indent=1), encoding="utf-8")
     fj = OUT / "fields.json"
     fields = json.loads(fj.read_text()) if fj.exists() else {}
     fields[name] = {"pair": name, "changed_px": int(changed_px), "ignored_px": 0, "fwhm_px": round(fwhm, 2),
-                    "fwhm_stars": nfw, "top": top, "star_layer_px": star_px, **({"held_out": True} if held_out else {}),
+                    "fwhm_stars": nfw, "top": top, "star_layer_px": star_px, "input_hf_noise": round(hf_in, 3),
+                    "target_hf_noise": round(hf_out, 3), "sky_bias": round(bias, 3), **({"held_out": True} if held_out else {}),
                     **({"judge": True} if judge else {})}
     fj.write_text(json.dumps(fields, indent=1), encoding="utf-8")
     log(f"{name}: input {extra.get('input_source')} | target {extra.get('target_source')} | changed {changed_px} px "
         f"({100 * changed_px / (H * W):.2f} %), star layer {100 * star_px / (H * W):.2f} % | touched "
-        f"{extra.get('tif_touched_px')} | FWHM {fwhm:.2f} px ({nfw} stars)")
+        f"{extra.get('tif_touched_px')} | FWHM {fwhm:.2f} px ({nfw} stars) | noise in {hf_in:.2f} out {hf_out:.2f}, sky bias {bias:+.2f}")
     return fields[name]
 
 
@@ -127,10 +146,11 @@ def assembled() -> int:
         code = np.round(stretch(tgt, s)).transpose(1, 2, 0)
         touched = int((np.abs(tif - code).max(2) > 4).sum())
         vs_net = int((np.abs(stretch(tgt, s) - stretch(rs, s)).max(0) > 4).sum())
-        save_pair(n, inp, tgt, float(s["top"]), vs_net,
+        save_pair(n, inp, tgt, float(s["top"]), touched,
                   {"kind": "assembled", "input_source": "original.npy (assembled image with its stars)",
                    "target_source": "cible.npy (per-filter star removal, fused; validated as is)",
-                   "tif_touched_px": touched, "changed_means": "target vs the network's starless, > 4 codes",
+                   "tif_touched_px": touched, "target_vs_network_starless_px": vs_net,
+                   "changed_means": "the owner's retouch of cible.tif (none)",
                    "unit": m["unit"], "background": m["background"], "offset": s["offset"], "soft": s["soft"]})
     return 0
 
@@ -177,15 +197,15 @@ STARTOOL_PY = os.environ.get("STARTOOL_PY")     # a python with onnxruntime; STA
 START = SCRATCH / "_startool_recalcul"
 
 
-def recomputed_start(name: str) -> np.ndarray:
+def recomputed_start(name: str, base: str = "denoise") -> np.ndarray:
     """The star tool's output on the delivery's <name>_denoise.tif (the owner's starting image), (3, H, W) codes,
     recomputed with the delivery's own recipe into START (the owner's files are never written)."""
     import tifffile
-    out = START / f"{name}_denoise_starnet.tif"
+    out = START / (f"{name}_denoise_starnet.tif" if base == "denoise" else f"{name}_starnet.tif")
     if not out.exists():
         START.mkdir(parents=True, exist_ok=True)
         r = subprocess.run([STARTOOL_PY, str(Path(__file__).with_name("stars_nb_startool.py")),
-                            str(LIV / f"a_evaluer/a_retoucher/done/{name}_denoise.tif"), str(out)],
+                            str(LIV / f"a_evaluer/a_retoucher/done/{name}_{base}.tif"), str(out)],
                            env=dict(os.environ, CUDA_VISIBLE_DEVICES="-1"))
         if r.returncode:
             raise SystemExit(f"star tool on {name} failed")
@@ -282,12 +302,15 @@ def retouched(only=None) -> int:
                 REPORT[name] = rep
             else:
                 src = f"{fin} (original, linear)"
-                changed = int((np.abs(stretch(tgt, s) - stretch(inp, s)).max(0) > 4).sum())
+                changed = int((np.abs(tif - recomputed_start(name, "original")).max(0) > 4).sum())
             save_pair(name, inp, tgt, float(s["top"]), changed,
                       {"kind": kind, "input_source": src,
                        "target_source": f"{f} unstretched (16 bit precision){src_start}",
-                       "changed_means": "target vs the star tool's start (recomputed) or vs input, > 4 codes", **conv},
+                       "changed_means": "the owner's retouch: the TIFF vs the star tool's start recomputed, > 4 codes", **conv},
                       held_out=name in HELD, judge=name in HELD)
+        if kind != "denoise_starnet" and json.loads((OUT / name / "meta.json").read_text())["input_hf_noise"] > 0.3:
+            np.save(OUT / name / "input_denoised.npy", denoised_input(name, d, fin))   # the variant, see the report
+            log(f"{name}: input is not denoised (noise > 0.3): input_denoised.npy written beside it")
         if name in REPORT:
             log(f"{name}: recovery {json.dumps(REPORT[name])}")
     return 0
