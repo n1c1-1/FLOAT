@@ -144,3 +144,23 @@ def test_the_words_of_the_graph_settings_fit_and_say_the_copy(qapp, language):  
         assert ("copy" if language == "en" else "copie") in note and i18n._("Graph settings") in note
     finally:
         i18n.set_language("en")
+
+
+def test_closing_post_leaves_no_filter_error(full, capsys):
+    """The view's filter sits on its version list and bar; while the view is destroyed those widgets still get events:
+    the filter says nothing of a list already deleted (a chain of errors printed at the process's end)."""
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtWidgets import QApplication
+
+    from astro_gpu.client.post3 import PostView
+    W = full
+    m = W.m
+    pv = PostView(m, persist=False)
+    pv.show()
+    QApplication.processEvents()
+    mid, cb = pv.centre, pv.cb_version
+    pv.shutdown()
+    pv.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+    QApplication.processEvents()
+    assert "already deleted" not in capsys.readouterr().err

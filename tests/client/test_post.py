@@ -3016,7 +3016,7 @@ def test_the_post_modules_import_only_the_client_libraries():
             if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
                 top = node.module.split(".")[0]
                 assert top in {"__future__", "collections", "dataclasses", "datetime", "json", "math", "os", "pathlib", "re",
-                               "threading", "time", "typing", "PySide6", "numpy", "cv2", "torch", "astropy",
+                               "threading", "time", "typing", "PySide6", "shiboken6", "numpy", "cv2", "torch", "astropy",
                                "astro_gpu"}, (name, node.module)
     # the GUI thread never renders: no engine, no composition in the widgets' module
     for name in ("post3", "curveseditor"):

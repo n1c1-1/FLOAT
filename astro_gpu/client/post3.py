@@ -66,6 +66,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from shiboken6 import isValid
 
 from ..core.project2 import active_version
 from ..render.sliders import ARCSINH_WHY, STRENGTH_STEP
@@ -1543,6 +1544,9 @@ class PostView(QWidget):
             self.top_bar.invalidate()                    # a width the layout kept (a name's): it works it out again, once
 
     def eventFilter(self, obj, e):                                   # noqa: N802 - Qt's name
+        cb = getattr(self, "cb_version", None)
+        if cb is not None and not isValid(cb):           # the view being destroyed: its widgets still get events
+            return False
         if (obj is getattr(self, "_list_holder", None) and e.type() == QEvent.MouseButtonPress
                 and e.button() == Qt.LeftButton):
             self.deselect_filter()                       # (a row takes its own press: this is the list's empty space)
