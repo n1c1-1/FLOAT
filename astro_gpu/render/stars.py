@@ -426,8 +426,10 @@ def resize_stars(y: torch.Tensor, r: float, check=None) -> torch.Tensor:
     _go_on(check)
     # shrunk through a star mask, as the published star reductions do (the reference image editor: the Minimum filter through a
     # selection of the stars; the reference processing suite: MorphologicalTransformation through a star mask): an erosion of the faint
-    # background between the stars draws a web of filaments on a dense field (issue #18)
-    return y + (out - y) * star_mask(y, n + 1, check)
+    # background between the stars draws a web of filaments on a dense field (issue #18). Only the stars wider than the erosion
+    # takes away (``large_stars``, the opening by reconstruction): a star about that wide would lose its core and leave the mask's
+    # softened edge as a ring, and where faint stars touch the minimum along the chain would stay as an arc (issue #169)
+    return y + (out - y) * star_mask(y, n + 1, check) * large_stars(y, abs(r), check)
 
 
 #: a star of the mask stands this many local noise units above its local background (the usual detection threshold)

@@ -188,7 +188,8 @@ def test_blends_and_the_size_change():
     assert torch.equal(blend(a, b, "Screen")[:, 0, 0], a[:, 0, 0])            # black stars change nothing
     y = torch.zeros((3, 9, 9))
     y[:, 4, 4] = 1.0
-    assert resize_stars(y, 1.0).sum() == 15 and resize_stars(y, -1.0).sum() < 0.01  # a cross: round, not a square
+    assert resize_stars(y, 1.0).sum() == 15 and torch.equal(resize_stars(y, -1.0), y)  # a cross: round, not a square;
+    #                                         a star as narrow as the reduction is left alone (#169)
     assert resize_stars(y, 2.0)[0].bool().sum() == 21                                    # then a square: an octagon
     assert 3 < resize_stars(y, 0.5).sum() < 15                                 # half a pixel: half way
 
@@ -286,3 +287,21 @@ def test_the_small_stars_go_and_the_halo_of_a_large_one_keeps_no_edge():
     assert float(z[1, 100, 150]) < 2 * float(halo[100, 150])             # the small star gone, to the level of the halo
     ring = (d > 8) & ((xx - 150) ** 2 + (yy - 100) ** 2 > 8 ** 2)
     assert float((z[1] - y[1])[ring].abs().max()) < 0.01                 # the halo as it was, past the large star's edge
+
+
+def test_the_smallest_size_leaves_faint_stars_and_chains_as_they_are():
+    """Issue #169: the reduction erodes only the stars wider than what it takes away (``large_stars``, the opening by
+    reconstruction): a faint star and a chain of touching faint stars are the same to the pixel at the smallest size
+    (no worm, no arc), a large star is narrower."""
+    yy, xx = torch.meshgrid(torch.arange(120.0), torch.arange(120.0), indexing="ij")
+
+    def star(cy, cx, s, a):
+        return a * torch.exp(-((yy - cy) ** 2 + (xx - cx) ** 2) / (2 * s * s))
+
+    y = 0.03 + star(20, 20, 0.9, 0.5) + sum(star(60, 15 + 2.0 * i, 0.9, 0.4) for i in range(6)) + star(90, 80, 3.5, 0.95)
+    y = y.clamp(0, 1).repeat(3, 1, 1)
+    out = resize_stars(y, -3.0)
+    assert torch.equal(out[:, :40, :], y[:, :40, :])                           # the faint star: the same to the pixel
+    assert torch.equal(out[:, 45:75, :40], y[:, 45:75, :40])                   # the chain: no arc, no line
+    width = lambda im: int((im[0, 90, 40:120] - 0.03 > 0.5 * (im[0, 90, 80] - 0.03)).sum())    # width at half height
+    assert width(out) < width(y) - 1, (width(out), width(y))                   # the large star shrinks
