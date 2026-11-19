@@ -426,12 +426,24 @@ def resize_stars(y: torch.Tensor, r: float, check=None) -> torch.Tensor:
     _go_on(check)
     # shrunk through a star mask, as the published star reductions do (the reference image editor: the Minimum filter through a
     # selection of the stars; the reference processing suite: MorphologicalTransformation through a star mask): an erosion of the faint
-    # background between the stars draws a web of filaments on a dense field (issue #18). Only the stars wider than the erosion
-    # takes away (``large_stars``, the opening by reconstruction): a star about that wide would lose its core and leave the mask's
-    # softened edge as a ring, and where faint stars touch the minimum along the chain would stay as an arc (issue #169).
-    # Wider by two pixels more than it takes: what is left of a star must still be sampled (two pixels across, Nyquist), a
-    # star just wider than the reduction would be left as a one-pixel line, a worm
-    return y + (out - y) * star_mask(y, n + 1, check) * large_stars(y, abs(r) + 1.0, check)
+    # background between the stars draws a web of filaments on a dense field (issue #18). Only where a star is wider than the
+    # erosion takes away (``wide_stars``): a star about that wide would lose its core and leave a ring or a one-pixel line, a
+    # worm, and where faint stars touch the minimum along the chain would stay as an arc (issue #169)
+    return y + (out - y) * star_mask(y, n + 1, check) * wide_stars(y, abs(r), check)
+
+
+def wide_stars(y: torch.Tensor, r: float, check=None) -> torch.Tensor:
+    """How much of each place's star light is wider than a disc of r + 1 pixels (h, w in 0..1): the grey opening of the
+    luminance by that disc (a granulometry, Serra 1982 and Vincent 1994) over the luminance. The opening keeps what
+    contains the disc and removes what does not, place by place: a wide star stays whole, a faint star and the narrow
+    beads of a chain of touching ones, attached to a wider star or not, go (a reconstruction would regrow the whole
+    connected chain from one wide part). The disc is the reduction's pixels plus the two a star needs to stay sampled
+    across (Nyquist-Shannon): what is left of a star is never a one-pixel line."""
+    L = ops.luminance(y)[None]
+    rho = max(1, int(round(r + 1.0)))
+    wide = _morph(_morph(L, rho, False), rho, True)
+    _go_on(check)
+    return (wide / L.clamp_min(1e-6)).clamp(0, 1)[0]
 
 
 #: a star of the mask stands this many local noise units above its local background (the usual detection threshold)
