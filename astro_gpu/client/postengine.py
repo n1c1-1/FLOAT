@@ -73,6 +73,7 @@ import cv2
 import numpy as np
 
 from ..render.sliders import top as slider_top
+from . import postfusion as pf
 from .postfilters import colour as pf_colour
 from .postfilters import curves as pf_curves
 from .postfilters import dehaze as pf_dehaze
@@ -1144,8 +1145,9 @@ def source_id(lay: dict):
     """What the composition asks the provider for: a workflow's id (its Output block's image), ("stars", id) for its
     Stars block's images, or ("image", key). A Combine layers layer asks for its stars side's (``sub_layer``)."""
     if lay["kind"] == "workflow":
-        if lay.get("part") == FUSION:                    # a master layer's filters and their mix (``sub_layer``)
-            return (FUSION, lay["pid"])
+        if lay.get("part") == FUSION:                    # a mix of the layer tree and its filters (``sub_layer``)
+            n = mix_at(lay, pf.root_of(lay.get("node") or "starless"))
+            return (FUSION, n["pid"] if n is not None else lay["pid"])
         if lay.get("part") == "combined" and "stars_pid" in lay:
             return ("stars", lay["stars_pid"]) if lay["stars_pid"] is not None else ("stars", lay["pid"])
         return ("synth" if lay.get("part") == "synth" else "stars", lay["pid"]) if lay.get("part") else lay["pid"]
@@ -1155,11 +1157,11 @@ def source_id(lay: dict):
 def sub_layer(lay: dict, sub: str) -> dict:
     """The layer to render for one image of a Combine layers layer (issue #165, two branches): its stars are its stars
     side's workflow's stars (``stars_pid``); its starless image is its first workflow's Stars/background starless image,
-    or its Output (a combination's: ``starless`` "output"); a master layer's starless image is its filters mixed
-    (``FUSION``, ``role`` None), and each of its filters a sub-image (``role``). A part of any other layer is the
-    layer's own."""
-    if is_fusion(lay) and (sub == "starless" or sub_role(sub) in fusion_roles(lay)):
-        return dict(lay, part=FUSION, role=sub_role(sub))
+    or its Output (a combination's: ``starless`` "output"); a starless image that is a mix of the layer tree is its
+    filters mixed (``FUSION``, ``node`` "starless"), and each node under it an image of its own (``node``: its
+    path, postfusion.child). A part of any other layer is the layer's own."""
+    if sub == "starless" and mix_at(lay, "starless") is not None or sub not in SUBS and sub in nodes_of(lay):
+        return dict(lay, part=FUSION, node=sub)                  # a node of the starless mix, as that mix makes it
     if sub in ("stars", "synth"):
         sp = lay["stars_pid"] if lay.get("stars_pid") is not None else lay["pid"]
         if lay.get("stars_image") == "output" and lay.get("stars_pid") is not None:
@@ -1224,23 +1226,44 @@ def is_group(lay: dict) -> bool:
     return lay.get("kind") == "workflow" and lay.get("part") == "combined"
 
 
-#: the prefix of a combination's filter as a sub-image of its master layer ("f:SII")
-ROLE_SUB = "f:"
-#: the pseudo part of the images Post makes of a combination's filters (``sub_layer``)
+#: the prefix of a combination's filter as a sub-image of its master layer ("f:SII"; postfusion.child)
+ROLE_SUB = pf.ROLE
+#: the pseudo part of the images Post makes of the nodes of a layer's tree (``sub_layer``)
 FUSION = "fusion"
+#: the layer tree of a Combine layers layer (graphcore post.mix_tree, given by the model: client/postfusion.py, never saved)
+NEST = "nest"
+
+
+def nodes_of(lay: dict) -> dict[str, dict]:
+    """{path: node} of the layer tree a layer holds (the model gives it: ``nest``), {} for a layer without one."""
+    nest = lay.get(NEST)
+    return pf.node_paths(nest) if isinstance(nest, dict) else {}
+
+
+def mix_at(lay: dict, path: str) -> dict | None:
+    """The node at ``path`` when it is a combination Post mixes (its filters are the nodes under it), else None."""
+    n = nodes_of(lay).get(path)
+    return n if n is not None and n.get("kind") == "mix" else None
 
 
 def is_fusion(lay: dict) -> bool:
-    """A combination's master layer: a Combine layers layer whose workflow's combination Post mixes again (the
-    model gives it ``fusion``: client/postfusion.describe)."""
-    return is_group(lay) and isinstance(lay.get("fusion"), dict)
+    """A combination's master layer: a Combine layers layer whose starless image is a combination Post mixes again
+    (the layer tree has a mix at "starless": client/postfusion.py)."""
+    return is_group(lay) and mix_at(lay, "starless") is not None
+
+
+def has_mix(lay: dict) -> bool:
+    """A Combine layers layer with a mix on either side."""
+    return is_group(lay) and any(mix_at(lay, s) is not None for s in SUBS)
 
 
 def fusion_roles(lay: dict) -> list[str]:
-    """A master layer's filters (or those of its images, ``sub_layer``), in its recipe's order; [] for any other
-    layer."""
-    ok = is_fusion(lay) or (lay.get("part") == FUSION and isinstance(lay.get("fusion"), dict))
-    return list(lay["fusion"].get("roles") or []) if ok else []
+    """The filters of a layer's starless mix (or of those of its images, ``sub_layer``), in its recipe's order; []
+    for any other layer."""
+    if not (is_group(lay) or lay.get("part") == FUSION):
+        return []
+    n = mix_at(lay, "starless")
+    return list(n["fusion"].get("roles") or []) if n is not None else []
 
 
 def role_sub(role: str) -> str:
@@ -1248,34 +1271,66 @@ def role_sub(role: str) -> str:
 
 
 def sub_role(sub) -> str | None:
-    """The filter a sub-image names ("f:SII" -> "SII"), None for another one."""
-    return sub[len(ROLE_SUB):] if isinstance(sub, str) and sub.startswith(ROLE_SUB) and len(sub) > len(ROLE_SUB) \
-        else None
+    """The filter a sub-image of the starless mix names ("f:SII" -> "SII"), None for another one."""
+    return sub[len(ROLE_SUB):] if isinstance(sub, str) and sub.startswith(ROLE_SUB) and len(sub) > len(ROLE_SUB)         and "/" not in sub else None
 
 
 def is_side(sub) -> bool:
-    """A sub-image of a Combine layers layer: its stars, its starless image, or one of a master layer's filters."""
-    return sub in SUBS or sub_role(sub) is not None
+    """A sub-image of a Combine layers layer: its stars, its starless image, or a node of a combination's tree (a
+    path; whether the layer has that node is the tree's: ``normalize``)."""
+    return sub in SUBS or pf.is_path(sub)
 
 
 def subs_of(lay: dict) -> tuple[str, ...]:
-    """The sub-images of a Combine layers layer: its two, and a master layer's filters."""
-    return SUBS + tuple(role_sub(r) for r in fusion_roles(lay))
+    """The sub-images of a Combine layers layer: its two, and every node of its tree under them."""
+    return SUBS + tuple(p for p in nodes_of(lay) if p not in ("", *SUBS))
 
 
 def sub_name(lay: dict, sub: str) -> str:
-    """The name of a sub-image's row: "Stars", "Starless image", or the filter's ("S II")."""
-    role = sub_role(sub)
-    if role is None:
+    """The name of a sub-image's row: "Stars", "Starless image", or a node's, which is its filter's ("S II")."""
+    if sub in SUB_NAMES:
         return SUB_NAMES[sub]
-    return str(((lay.get("fusion") or {}).get("names") or {}).get(role, role))
+    above = mix_at(lay, pf.parent(sub))
+    role = sub.rpartition("/")[2][len(ROLE_SUB):]
+    if above is not None:
+        return str((above["fusion"].get("names") or {}).get(role, role))
+    return role
 
 
-def fusion_core(lay: dict) -> str:
-    """What a master layer's mix depends on, of its combination's settings: its filters, the matrix, the weights,
-    the balance."""
-    f = lay.get("fusion") or {}
-    return json.dumps({k: f.get(k) for k in ("roles", "matrix", "weights", "balance")}, sort_keys=True)
+def read_paths(lay: dict, sub: str) -> list[str]:
+    """The images a part of the mask of ``sub`` (a side or a node) that reads an image may read besides the node itself and
+    the picture, as their paths: the filters of the starless mix (and of the stars' mix, for the stars' mask) for a
+    side, the other inputs of its mix and its own inputs for a node (the choices of ``Composer.mask``'s ``sources``)."""
+    out: list[str] = []
+    if sub in SUBS:
+        for root in ("starless", "stars"):
+            n = mix_at(lay, root)
+            if n is not None and root in ("starless", sub):
+                out += [pf.child(root, r) for r in n["fusion"]["roles"]]
+        return out
+    above = mix_at(lay, pf.parent(sub))
+    if above is not None:
+        out += [c for c in (pf.child(pf.parent(sub), r) for r in above["fusion"]["roles"]) if c != sub]
+    inner = mix_at(lay, sub)
+    if inner is not None:
+        out += [pf.child(sub, r) for r in inner["fusion"]["roles"]]
+    return out
+
+
+def fusion_core(lay: dict, path: str | None = None) -> str:
+    """What the mix under ``path`` (the side its node is under, by default the starless one) depends on, of its
+    combinations' settings: their filters, matrix, weights and balance, and those of the combinations nested in it."""
+    node = mix_at(lay, pf.root_of(path or "starless"))
+    return nest_core(node) if node is not None else ""
+
+
+def nest_core(node: dict) -> str:
+    """``fusion_core`` of a mix node."""
+    def one(n):
+        f = n["fusion"]
+        return {"pid": n.get("pid"), "f": {k: f.get(k) for k in ("roles", "matrix", "weights", "balance")},
+                "in": {r: one(c) for r, c in pf.mix_kids(n).items()}}
+    return json.dumps(one(node), sort_keys=True)
 
 
 def part_sliders(sliders: dict | None, part: str | None) -> dict:
@@ -1333,7 +1388,9 @@ class SideLayer(dict):
 
 def normalize(layers: list[dict]) -> list[dict]:
     """Each layer's own filters go just above it, in their order; a filter whose layer is gone applies to everything
-    below. The list is top first."""
+    below. A filter on a node its layer's tree no longer has goes to the nearest node of the tree above it (the layer's
+    tree is the graph's: a level the graph lost; the other keys naming it wait for the graph's change, never moved).
+    The list is top first."""
     ids = {lay["id"] for lay in layers if is_pixel(lay)}
     groups = {lay["id"]: lay for lay in layers if is_group(lay)}
     for lay in layers:
@@ -1341,9 +1398,13 @@ def normalize(layers: list[dict]) -> list[dict]:
             lay["target"] = None
         if lay["kind"] == "filter" and (lay.get("target") not in groups or not is_side(lay.get("sub"))):
             lay["sub"] = None
-        elif lay["kind"] == "filter" and sub_role(lay.get("sub")) is not None and is_fusion(groups[lay["target"]]) \
-                and sub_role(lay["sub"]) not in fusion_roles(groups[lay["target"]]):
-            lay["sub"] = "starless"              # a filter its recipe no longer has: on the mix, where it is seen
+        elif lay["kind"] == "filter" and lay.get("sub") not in SUBS:
+            nodes = nodes_of(groups[lay["target"]])
+            if nodes:
+                sub = lay["sub"]
+                while sub not in nodes and sub not in SUBS:
+                    sub = pf.parent(sub)
+                lay["sub"] = sub
     out = []
     for lay in layers:
         if lay["kind"] == "filter" and lay.get("target"):
@@ -1368,8 +1429,9 @@ def tree(layers: list[dict]) -> list[tuple[dict, list[dict]]]:
 def rows(layers: list[dict], collapsed=()) -> list[tuple[dict, int]]:
     """The rows of the panel, top first, with their depth: a pixel layer, then its children indented (unless it is
     collapsed), then the next top-level row. A Stars and background layer's own filters come first, then its two
-    images (``sub_row``), each with its filters one step further in. ``collapsed``: the layer ids whose rows under
-    them are hidden, and (id, image) for one of a Stars and background layer's two images."""
+    images (``sub_row``), each with its filters one step further in, then the nodes of its tree under the side that is a
+    mix (a node: its row, its filters one step further in, then the nodes under it: as a group's rows in a reference
+    editor). ``collapsed``: the layer ids whose rows under them are hidden, and (id, path) for a side or a node."""
     out = []
     for lay, kids in tree(layers):
         out.append((lay, 0))
@@ -1379,16 +1441,26 @@ def rows(layers: list[dict], collapsed=()) -> list[tuple[dict, int]]:
         if is_group(lay):
             for sub in SUBS:
                 out.append((sub_row(lay, sub), 1))
-                if (lay["id"], sub) not in collapsed:
-                    out += [(k, 2) for k in kids if k.get("sub") == sub]
-                    if sub == "stars" and any(map(is_synth, kids)):     # the group's bottom row (#93)
-                        out.append((sub_row(lay, "real"), 2))
-                    if sub == "starless":                               # a master layer's filters, mixed into it
-                        for r in fusion_roles(lay):
-                            rs = role_sub(r)
-                            out.append((sub_row(lay, rs), 2))
-                            if (lay["id"], rs) not in collapsed:
-                                out += [(k, 3) for k in kids if k.get("sub") == rs]
+                if (lay["id"], sub) in collapsed:
+                    continue
+                out += [(k, 2) for k in kids if k.get("sub") == sub]
+                if sub == "stars" and any(map(is_synth, kids)):     # the group's bottom row (#93)
+                    out.append((sub_row(lay, "real"), 2))
+                out += _node_rows(lay, kids, sub, 2, collapsed)
+    return out
+
+
+def _node_rows(lay: dict, kids: list[dict], path: str, depth: int, collapsed) -> list[tuple[dict, int]]:
+    """The rows of the nodes under the mix at ``path`` of a layer's tree, each with its filters and the nodes under it."""
+    node = mix_at(lay, path)
+    out = []
+    for r in (node["fusion"]["roles"] if node is not None else ()):
+        cp = pf.child(path, r)
+        out.append((sub_row(lay, cp), depth))
+        if (lay["id"], cp) in collapsed:
+            continue
+        out += [(k, depth + 1) for k in kids if k.get("sub") == cp]
+        out += _node_rows(lay, kids, cp, depth + 1, collapsed)
     return out
 
 
@@ -1486,8 +1558,8 @@ def _clean_mask(m) -> dict | None:
                 q[k] = p[k] if p[k] in DIRECTIONS else v
             else:
                 q[k] = _num(p[k], v, *ranges.get(k, (None, None)))        # within its slider's range
-        if src in READS_IMAGE and isinstance(p.get("from"), str) and (p["from"] in READS or sub_role(p["from"])):
-            q["from"] = p["from"]                       # (a combination's filter's mask: what the part reads)
+        if src in READS_IMAGE and isinstance(p.get("from"), str) and (p["from"] in READS or pf.is_path(p["from"])):
+            q["from"] = p["from"]                       # (a node's mask: what the part reads: ``READS`` or a node's path)
         out["parts"].append(q)
     return out
 
@@ -1519,8 +1591,8 @@ def load_layers(raw, alive: set[int]) -> list[dict]:
                 lay["shown"] = {k: bool(shown.get(k, True)) for k in SUBS}
                 if "real" in shown:                              # the real stars' eye, in a Stars group (#93)
                     lay["shown"]["real"] = bool(shown["real"])
-                for k, v in shown.items():                       # a combination's filters' eyes (master layer)
-                    if sub_role(k) is not None:
+                for k, v in shown.items():                       # the eyes of the nodes of the layer's tree
+                    if pf.is_path(k) and k not in SUBS:
                         lay["shown"][k] = bool(v)
                 tune = d.get("tune") if isinstance(d.get("tune"), dict) else None
                 if tune is not None:                             # a combination's own hues and intensities
@@ -1532,7 +1604,7 @@ def load_layers(raw, alive: set[int]) -> list[dict]:
                                      for k in ("hues", "weights") if isinstance(t.get(k), dict)})
                                     for p, t in d["tunes"].items()}
                 sides = d.get("side_masks") if isinstance(d.get("side_masks"), dict) else {}
-                sides = {k: m for k in [*SUBS, *(x for x in sides if sub_role(x) is not None)]
+                sides = {k: m for k in [*SUBS, *(x for x in sides if pf.is_path(x) and x not in SUBS)]
                          if (m := _clean_mask(sides.get(k))) is not None}
                 if sides:                                        # written only when there is one (older files)
                     lay["side_masks"] = sides
@@ -1595,6 +1667,7 @@ def save_layers(layers: list[dict]) -> list[dict]:
     out = json.loads(json.dumps(snapshot(layers), default=list))
     for d in out:
         d.pop("fusion", None)                           # the model's, given at each load (client/postfusion.py)
+        d.pop(NEST, None)                               # the layer tree, derived from the graph
         d.pop("retitle", None)                          # the name the graph shows its workflow by (post3.RETITLE)
         if d.get("kind") == "filter" and d.get("sub") is None:
             d.pop("sub", None)
@@ -1713,6 +1786,18 @@ class Provider:
     def fusion_planes(self, lay: dict, level: int, box) -> tuple[dict, np.ndarray]:
         """A master layer's balanced filters ({role: (h, w) float32}, linear, before their weights) over the box of
         the canvas at the level (above level 0 the whole canvas), and where every one has data ((h, w) bool)."""
+        raise NotImplementedError
+
+    def fusion_form(self, lay: dict) -> dict:
+        """How the roles of a combination (``lay``: ``pid`` and ``fusion`` its description) read its inputs, asked for a
+        combination that has another combination among its inputs: {"maps": {role: ({channel read: coefficient},
+        offset)}, "channels": {role: the channel it reads of its input's image}} (postfusion.balance_maps)."""
+        raise NotImplementedError
+
+    def fusion_reads(self, lay: dict, level: int, box) -> dict:
+        """{role: (h, w) float32}: the channels a combination reads of its inputs, linear, before its balance, over the
+        box of the canvas at the level (as ``fusion_planes``): the planes a role that reads another combination takes
+        of its other inputs."""
         raise NotImplementedError
 
     def fusion_settings(self, lay: dict):
@@ -2035,7 +2120,10 @@ class _Item:
 THUMB_ITEMS = 4096                      # the mask thumbnails kept, by the rows that made them (2 KB each at most)
 
 
-class Composer:
+from .postmix import MixRendering  # noqa: E402 - the composer's mixes of the layer tree (it reads this module)
+
+
+class Composer(MixRendering):
     """The composition of the layers. One per render worker: it owns the caches (the workflow layers' images by
     content, the brushes' rasters), so it is used from one thread only. ``cache_bytes``: all the caches together
     (``default_cache_bytes``): 30 % the layers' images, 30 % the steps, 25 % the composites (``backdrops``), 15 % the
@@ -2071,7 +2159,8 @@ class Composer:
         self.skipped = 0                                    # rows the last composition did not compute
         self.plan_errors = 0                                # rows whose digest the plan did not foresee (tests: 0)
         self.stats: OrderedDict = OrderedDict()             # (filter input's key, measure) -> its whole-image values
-        self._fstats: dict = {}                             # a master layer's mix -> its statistics (``_fusion_stats``)
+        self._fstats: dict = {}                             # a mix of the layer tree -> its statistics (``_fusion_stats``)
+        self._forms: dict = {}                              # a combination -> how its roles read its inputs (``_form``)
         self._stars_new = False                             # a search of stars ended since the last composition
         self._stars_missing = False                         # this composition made something without stars searched
         self._stars_wait = False                            # this composition waits for a search (said in its notes)
@@ -2114,6 +2203,7 @@ class Composer:
         self._own_seen.clear()
         self._step_thumbs.clear()
         self._fstats.clear()
+        self._forms.clear()
         self._edits, self._focus, self._edited = [], None, None
         self._canvas = None
 
@@ -2134,7 +2224,7 @@ class Composer:
                 json.dumps(lay.get("base"), sort_keys=True, default=str), lay.get("linked"), self.provider.version(sid),
                 level, None if level > 0 else abox, (canvas.W, canvas.H, canvas.origin))             + (("draft",) if draft else ()) + (("over", over, self.provider.version(over)) if over is not None else ())             + (("stretch", lay["stretch"]) if layer_stretch(lay) != "auto" and over is None and part not in ("stars", "synth")
                else ())                # the base stretch, when it is not the automatic one (the keys before it stay)
-        return key + ((FUSION, fusion_core(lay), lay.get("role")) if part == FUSION else ())
+        return key + ((FUSION, fusion_core(lay, lay.get("node")), lay.get("node")) if part == FUSION else ())
 
     def cached(self, lay: dict, level: int, canvas: Canvas) -> np.ndarray | None:
         """The image of a pixel layer over the whole canvas at a level if it is in the cache (level > 0); a Stars and
@@ -2188,159 +2278,6 @@ class Composer:
             x0, y0, x1, y1 = abox
             a = a[y0:y1, x0:x1]
         return a
-
-    # ------------------------------------------------------------ a combination's master layer
-    def _fusion_rgb(self, lay, level, abox, canvas, cache) -> np.ndarray:
-        """One of a master layer's filters stretched (``role``: its grey image, (h, w, 3)), or their mix (``role``
-        None), over the box at the level; the mix cached as a workflow layer's image is. A filter's grey image is not
-        kept: three times one plane of its stretched filters (kept), it is made again at once, and it took the room of
-        the images that are long to make."""
-        W, H = canvas.size(level)
-        whole = (0, 0, W, H)
-        want = whole if level > 0 else abox
-        cache_parts, cache = cache, cache and lay.get("role") is None
-        key = self._key(lay, level, abox, canvas)
-        holder = (lay["id"], (FUSION, lay.get("role")), level)
-        a = self.images.get(key) if cache else None
-        if a is None:
-            roles = fusion_roles(lay)
-            parts = self._fusion_parts(lay, level, want, canvas, cache_parts)
-            if lay.get("role") is not None:
-                a = grey3(parts[roles.index(lay["role"])])
-            else:
-                a = self._fusion_mix(lay, parts[:len(roles)], parts[-2], parts[-1], canvas)
-            self._drawn += 1
-            if cache:
-                self.images.put(key, a, holder)
-        elif cache:
-            self.images.hold(key, holder)
-        if level > 0 and abox != whole:
-            x0, y0, x1, y1 = abox
-            a = a[y0:y1, x0:x1]
-        return a
-
-    def _parts_key(self, lay, level, box, canvas) -> tuple:
-        """What a master layer's stretched filters (``_fusion_parts``) depend on: the layer as ``_key`` says it, its
-        sliders left out, and in their place what the colour-preserving stretch reads of its settings."""
-        return self._key(dict(lay, role=None, sliders={}), level, box, canvas) + (
-            _stretch_reads(self.provider.fusion_settings(lay)),)
-
-    def _fusion_parts(self, lay, level, box, canvas, cache) -> np.ndarray:
-        """(n + 2, h, w): a master layer's n filters stretched (each its balanced linear image times its weight, minus
-        the black point, times the factor), the factor, the covered pixels (1, 0 elsewhere). The factor is the
-        colour-preserving stretch of the filters' mix (render/simple.SimpleRenderEngine.colour_factor), on the mix's
-        statistics: the same on every filter, so the mix of the stretched filters is the stretched mix. Made with the
-        processor's threads (torch), from the filters kept apart from the hues (``_fusion_lin``)."""
-        # at full resolution not kept: four or five planes of the whole image would push out of the cache the images a
-        # change does not touch (the stars' side), and a hue changes them all anyway
-        cache = cache and level > 0
-        # kept by what the stretch reads of the layer's settings (``_stretch_reads``), not by every slider: Contrast and
-        # Saturation come after it (``_fusion_finish``), a change of them finds the planes again
-        key = ("parts",) + self._parts_key(lay, level, box, canvas)
-        hit = self.images.get(key) if cache else None
-        if hit is not None:
-            self.images.hold(key, (lay["id"], (FUSION, "parts"), level))
-            return hit
-        import torch
-
-        from ..render.simple import SimpleRenderEngine
-        lin, valid = self._fusion_lin(lay, level, box, canvas, cache)
-        n, h, w = lin.shape
-        L = torch.from_numpy(lin)
-        M = torch.from_numpy(np.asarray(lay["fusion"]["matrix"], np.float32))
-        x = (M @ L.reshape(n, -1)).reshape(3, h, w)
-        st = self._fusion_stats(lay, canvas)
-        F, c0 = SimpleRenderEngine.colour_factor(x, st, self.provider.fusion_settings(lay))
-        del x
-        out = torch.empty((n + 2, h, w), dtype=torch.float32)
-        vf = torch.from_numpy(valid.astype(np.float32))
-        torch.sub(L, float(c0), out=out[:n])
-        out[:n].mul_((F * vf)[None])
-        out[n] = F
-        out[n + 1] = vf
-        hit = out.numpy()
-        if cache:
-            self.images.put(key, hit, (lay["id"], (FUSION, "parts"), level))
-        return hit
-
-    def _fusion_lin(self, lay, level, box, canvas=None, cache=True) -> tuple[np.ndarray, np.ndarray]:
-        """(n, h, w): a master layer's balanced filters times their weights (Intensity), in its recipe's order; and
-        the covered pixels. Kept apart from the hues (a hue changed reads nothing again)."""
-        roles = fusion_roles(lay)
-        w = lay["fusion"].get("weights") or {}
-        sid = (FUSION, lay["pid"])
-        cache = cache and level > 0                       # (at full resolution: as ``_fusion_parts``)
-        key = ("lin", sid, self.provider.version(sid), tuple(roles), tuple(float(w.get(r, 1.0)) for r in roles),
-               lay["fusion"].get("balance"), level, None if canvas is not None and level > 0 else tuple(box),
-               (canvas.W, canvas.H, canvas.origin) if canvas is not None else None)
-        hit = self.images.get(key) if cache and canvas is not None else None
-        if hit is None:
-            planes, valid = self.provider.fusion_planes(lay, level, box)
-            shape = np.asarray(valid).shape
-            hit = np.empty((len(roles) + 1, *shape), np.float32)
-            for i, r in enumerate(roles):
-                np.multiply(planes[r], np.float32(w.get(r, 1.0)), out=hit[i])
-            hit[-1] = np.asarray(valid, np.float32)
-            if cache and canvas is not None:
-                self.images.put(key, hit, (lay["id"], (FUSION, "lin"), level))
-        elif cache:
-            self.images.hold(key, (lay["id"], (FUSION, "lin"), level))
-        return hit[:-1], hit[-1] > 0.5
-
-    def _fusion_stats(self, lay, canvas) -> dict:
-        """The statistics of a master layer's mix (render/simple.image_stats), measured once on the whole canvas at
-        the measure level (``stats_level``): the same for every level and region rendered."""
-        at = stats_level(canvas.W, canvas.H)
-        sid = (FUSION, lay["pid"])
-        key = (fusion_core(lay), self.provider.version(sid), canvas.W, canvas.H, canvas.origin, at)
-        hit = self._fstats.get(key)
-        if hit is None:
-            from ..render.simple import image_stats
-            W, H = canvas.size(at)
-            lin, valid = self._fusion_lin(lay, at, (0, 0, W, H), canvas)
-            x = np.tensordot(np.asarray(lay["fusion"]["matrix"], np.float32), lin, 1).astype(np.float32)
-            hit = image_stats(x, valid if valid.any() else np.ones_like(valid))
-            self._fstats[key] = hit
-            while len(self._fstats) > 16:
-                self._fstats.pop(next(iter(self._fstats)))
-        return hit
-
-    def _fusion_mix(self, lay, kids, F: np.ndarray, valid: np.ndarray, canvas) -> np.ndarray:
-        """A master layer's filters, stretched (``kids``: (n, h, w) in its recipe's order, or {role: (h, w)}; a filter
-        left out at 0), mixed through the combination's matrix: the stretched mix, then the end of the stretch
-        (Contrast, Saturation: render/simple.SimpleRenderEngine.finish); (h, w, 3). A row of the matrix that does not
-        sum to 1 (hues with no grey between them) takes back the black point it was given ``(1 - its sum)`` times."""
-        return self._fusion_finish(lay, self._fusion_blend(lay, kids, F, canvas), valid)
-
-    def _fusion_blend(self, lay, kids, F: np.ndarray, canvas):
-        """``_fusion_mix`` up to the end of the stretch: the filters mixed through the matrix, the black point taken
-        back, clipped at 0; a tensor (3, h, w)."""
-        import torch
-
-        from ..render.simple import _anchors
-        mat = np.asarray(lay["fusion"]["matrix"], np.float32)
-        c0 = float(_anchors(self._fusion_stats(lay, canvas)["lum"])[0])
-        K = torch.from_numpy(np.stack([kids[r] for r in fusion_roles(lay)]) if isinstance(kids, dict)
-                             else np.ascontiguousarray(kids))
-        n, h, w = K.shape
-        y = (torch.from_numpy(mat) @ K.reshape(n, -1)).reshape(3, h, w)
-        Ft = torch.from_numpy(np.ascontiguousarray(F, np.float32))
-        lost = 1.0 - mat.sum(1)
-        for c in range(3):                                # (a balanced matrix: nothing taken back)
-            if abs(float(lost[c])) > 1e-7:
-                y[c].sub_(Ft * (c0 * float(lost[c])))
-        y.clamp_(min=0)
-        return y
-
-    def _fusion_finish(self, lay, y, valid: np.ndarray) -> np.ndarray:
-        """The end of the stretch on ``_fusion_blend``'s mix (Contrast, Saturation: render/simple.SimpleRenderEngine.
-        finish, which never changes ``y``), outside the covered pixels black; (h, w, 3)."""
-        import torch
-
-        from ..render.simple import SimpleRenderEngine
-        y = SimpleRenderEngine.finish(y, self.provider.fusion_settings(lay))
-        y.mul_(torch.from_numpy(np.asarray(valid >= 0.5, np.float32))[None])
-        return y.permute(1, 2, 0).contiguous().numpy()
 
     def _stars_of(self, lay, level, abox, canvas, cache, draft, check):
         """The function giving a pixel layer's stars image (its luminance over the box) for the Stars mask part: a
@@ -2408,196 +2345,6 @@ class Composer:
             while len(_STARS) > 16:
                 _STARS.popitem(last=False)
         return key, hit
-
-    def _fusion_halpha_of(self, lay, level, abox, canvas, cache):
-        """The H-alpha map of a combination's master layer that has an H-alpha filter (a function, computed when a
-        mask asks for it), None for any other layer: the filter's balanced image through the rule of the emission map
-        of Post's other layers (render/layers.LayerService._halpha: 0 at its median, 1 at its 97th percentile, both
-        measured on the whole field, smoothly between)."""
-        if not is_fusion(lay) or "Ha" not in fusion_roles(lay):
-            return None
-        part = sub_layer(lay, "starless")
-
-        def fn():
-            import torch
-
-            from ..render.simple import _smoothstep              # the map's curve (render/layers)
-            at = stats_level(canvas.W, canvas.H)
-            W, H = canvas.size(at)
-            i = fusion_roles(lay).index("Ha")
-            w = lay["fusion"]["weights"].get("Ha", 1.0) or 1.0          # (the filter before its intensity)
-            lin_at, valid_at = self._fusion_lin(part, at, (0, 0, W, H), canvas, cache)
-            v = lin_at[i][valid_at] / np.float32(w)
-            q0, q1 = (float(x) for x in np.percentile(v, [50, 97])) if v.size else (0.0, 1.0)
-            Wl, Hl = canvas.size(level)
-            whole = (0, 0, Wl, Hl)
-            lin, _valid = self._fusion_lin(part, level, whole if level > 0 else abox, canvas, cache)
-            e = lin[i]
-            if level > 0 and abox != whole:
-                x0, y0, x1, y1 = abox
-                e = e[y0:y1, x0:x1]
-            return _smoothstep(torch.from_numpy(np.ascontiguousarray(e / np.float32(w))), q0, q1).numpy()
-        return fn
-
-    @staticmethod
-    def _fusion_plain(lay, own) -> bool:
-        """A master layer whose filters are mixed as they are: every one shown, none with a filter or a mask."""
-        subs = {role_sub(r) for r in fusion_roles(lay)}
-        shown, sides = lay.get("shown") or {}, lay.get("side_masks") or {}
-        return all(shown.get(x, True) for x in subs) and not any(x in sides for x in subs) and \
-            not any(fl.get("sub") in subs and fl["visible"] for fl in own)
-
-    def _fusion_sig(self, lay, own, level, abox, canvas) -> str:
-        """What a master layer's starless image depends on (``_fusion_side``), made without computing it."""
-        base = _sig(self._key(sub_layer(lay, "starless"), level, abox, canvas))
-        if self._fusion_plain(lay, own):
-            return base
-        sigs = [base]
-        for r in fusion_roles(lay):
-            rs = role_sub(r)
-            if not (lay.get("shown") or {}).get(rs, True):
-                sigs.append(_sig("off", r))
-                continue
-            sig = _sig(self._key(sub_layer(lay, rs), level, abox, canvas))
-            for fl in own:
-                if fl.get("sub") == rs and fl["visible"]:
-                    sig = _sig(sig, _settings_of(fl))
-            sigs.append(sig)
-        return _sig(*sigs)
-
-    def _fusion_side(self, lay, own, level, abox, canvas, ctx, cache, draft, check, keep_mask, where, want, thumbs):
-        """A master layer's starless image: each filter stretched, through its own filters (bottom first) and its mask,
-        left out when its eye is off, then the filters mixed (``_fusion_mix``)."""
-        if self._fusion_plain(lay, own):
-            return self.layer_rgb(sub_layer(lay, "starless"), level, abox, canvas, cache, draft, check)
-        roles = fusion_roles(lay)
-        subs = [role_sub(r) for r in roles]
-        # kept, by all it depends on (``_side_key``), when none of its masks or histograms is asked for: a change above
-        # it (a filter on the layer, its mask, the stars side) finds it again; kept before the end of the stretch, so
-        # that Contrast and Saturation find it too when no mask reads the picture. Its mask thumbnails with it.
-        mine = {(lay["id"], rs) for rs in subs} | {fl["id"] for fl in own if fl.get("sub") in subs}
-        key = None
-        if cache and not (mine & set(want)) and not (mine & set(ctx.hist_ids)):
-            key = ("fusion side",) + self._side_key(lay, own, level, abox, canvas, draft)
-            hit = self.images.get(key)
-            if hit is not None and (not thumbs or key in self._side_thumbs):
-                self.images.hold(key, (lay["id"], (FUSION, "side"), level))
-                for k, t in self._side_thumbs.get(key, ()) if thumbs else ():
-                    keep_mask(lay, None, k, thumb=t)
-                return self._fusion_finish(lay, _torch_of(hit.y), hit.valid)
-        made = []
-
-        def keep(owner, m, k=None):
-            t = keep_mask(owner, m, k)
-            if t is not None:
-                made.append((owner["id"] if k is None else k, t))
-        y, valid = self._fusion_side_blend(lay, own, roles, level, abox, canvas, ctx, cache, draft, check, keep, where,
-                                           want, thumbs)
-        held = _SideHeld(y.numpy(), np.asarray(valid) >= 0.5) if key is not None else None
-        holder = (lay["id"], (FUSION, "side"), level)
-        # at full resolution kept only where there is room, never instead of another image: the screen's images
-        # (the stars side, the stretched filters) are the ones a release needs first
-        if key is not None and not self._stars_missing and (level > 0 or self.images.room(holder) >= held.nbytes):
-            self.images.put(key, held, holder)
-            if thumbs:
-                self._side_thumbs[key] = made
-                self._side_thumbs.move_to_end(key)
-                while len(self._side_thumbs) > THUMB_ITEMS:
-                    self._side_thumbs.popitem(last=False)
-        return self._fusion_finish(lay, y, valid)
-
-    def _side_key(self, lay, own, level, abox, canvas, draft) -> tuple:
-        """What a master layer's starless image before the end of its stretch depends on (``_fusion_side_blend``): the
-        stretched filters (``_parts_key``), each filter's eye, filters and mask, the level, the box, a draft; and
-        Contrast and Saturation when a filter's mask reads the picture (the filters mixed, the stretch ended)."""
-        W, H = canvas.size(level)
-        whole = (0, 0, W, H)
-        star = sub_layer(lay, "starless")
-        sides = lay.get("side_masks") or {}
-        per = []
-        reads_picture = False
-        for r in fusion_roles(lay):
-            rs = role_sub(r)
-            side = sides.get(rs)
-            reads_picture = reads_picture or any(p.get("src") in READS_IMAGE and p.get("from") == "picture"
-                                                 for p in (side or {}).get("parts") or ())
-            per.append(((lay.get("shown") or {}).get(rs, True),
-                        _settings_of({"side_masks": {rs: side}} if side else {}),
-                        [(_settings_of(fl), fl["visible"]) for fl in own if fl.get("sub") == rs]))
-        fin = _finish_reads(self.provider.fusion_settings(star)) if reads_picture else None
-        return (_sig(self._parts_key(star, level, whole if level > 0 else abox, canvas), per, fin), level,
-                tuple(abox), bool(draft))
-
-    def _fusion_side_blend(self, lay, own, roles, level, abox, canvas, ctx, cache, draft, check, keep_mask, where,
-                           want, thumbs):
-        """``_fusion_side``'s work: (the mix before the end of its stretch, a tensor (3, h, w); the covered pixels)."""
-        hw = (abox[3] - abox[1], abox[2] - abox[0])
-        W, H = canvas.size(level)
-        whole = (0, 0, W, H)
-        star = sub_layer(lay, "starless")
-        parts = self._fusion_parts(star, level, whole if level > 0 else abox, canvas, cache)
-        if level > 0 and abox != whole:
-            x0, y0, x1, y1 = abox
-            parts = parts[:, y0:y1, x0:x1]
-        kids = {}
-        role_sigs = {r: _sig(self._key(sub_layer(lay, role_sub(r)), level, abox, canvas)) for r in roles}
-        pic_sig = _sig(self._key(star, level, abox, canvas))
-        picture = []
-
-        def the_picture():
-            if not picture:
-                if level > 0:
-                    picture.append(self.layer_rgb(star, level, abox, canvas, cache, draft, check))
-                else:
-                    picture.append(self._fusion_mix(lay, parts[:len(roles)], parts[-2], parts[-1], canvas))
-            return picture[0]
-
-        def sources(r, x, sig):
-            """What the parts of a filter's mask that read an image read, each made when a part reads it: the filter
-            itself (the default, as every child's), the picture (the filters mixed as they are), another filter
-            (stretched); and what each depends on (``mask``'s ``sigs``)."""
-            makers = {"self": lambda: x, "picture": the_picture}
-            sigs = {"self": sig, "picture": pic_sig}
-            for i, o in enumerate(roles):
-                if o != r:
-                    makers[role_sub(o)] = lambda i=i: grey3(parts[i])
-                    sigs[role_sub(o)] = role_sigs[o]
-            return _LazySources(makers), sigs
-        for r in roles:
-            rs = role_sub(r)
-            side = (lay.get("side_masks") or {}).get(rs)
-            if not (lay.get("shown") or {}).get(rs, True):
-                kids[r] = np.zeros(hw, np.float32)
-                if side is not None and ((lay["id"], rs) in want or thumbs):     # a hidden filter's mask is shown
-                    z = np.zeros((*hw, 3), np.float32)
-                    src, sigs = sources(r, z, _sig("off", hw))
-                    keep_mask(lay, self.mask({"mask": side}, level, abox, z, canvas, ctx, src, sigs), (lay["id"], rs))
-                continue
-            # (at full resolution from the planes made above: nothing of them is kept there, ``_fusion_parts``)
-            if level > 0:
-                x = self.layer_rgb(sub_layer(lay, rs), level, abox, canvas, cache, draft, check)
-            else:
-                x = grey3(parts[roles.index(r)])
-            sig = role_sigs[r]
-            for fl in own:
-                if fl.get("sub") != rs:
-                    continue
-                if check():
-                    raise Superseded()
-                if not fl["visible"]:
-                    if fl["id"] in want or (thumbs and fl["mask"] is not None):
-                        keep_mask(fl, self.mask(fl, level, abox, x, canvas, ctx, sigs={None: sig}))
-                    continue
-                ctx.stats_key = _sig(ctx.row_edit, fl["id"])
-                x, fm, sig = self._step(fl, x, sig, where, want, thumbs, level, abox, canvas, ctx)
-                keep_mask(fl, fm)
-            if side is not None:
-                src, sigs = sources(r, x, sig)
-                m = self.mask({"mask": side}, level, abox, x, canvas, ctx, src, sigs)
-                keep_mask(lay, m, (lay["id"], rs))
-                x = x * m[..., None]
-            kids[r] = lum(x)                     # a filter is one grey image: a colour a filter gave it, its luminance
-        return self._fusion_blend(lay, kids, parts[-2], canvas), parts[-1]
 
     # ------------------------------------------------------------ masks
     def part_raster(self, part, level, abox, below, canvas: Canvas, ctx: Ctx, seen=None) -> np.ndarray:
@@ -2839,8 +2586,8 @@ class Composer:
                 if sub == "stars" and not (lay.get("shown") or {}).get("real", True) and \
                         any(is_synth(fl) and fl.get("sub") == "stars" for fl in own):
                     sig = _sig("no real stars", (abox[3] - abox[1], abox[2] - abox[0]))
-                elif sub == "starless" and is_fusion(lay):
-                    sig = self._fusion_sig(lay, own, level, abox, canvas)
+                elif mix_at(lay, sub) is not None:
+                    sig = self._mix_sig(lay, own, sub, level, abox, canvas, draft)
                 else:
                     sig = self._img_sig(sub_layer(lay, sub), level, abox, canvas, draft)
                 synth = sub_layer(lay, "synth")
@@ -3119,10 +2866,10 @@ class Composer:
                     any(is_synth(fl) and fl.get("sub") == "stars" for fl in own):
                 hw = (abox[3] - abox[1], abox[2] - abox[0])
                 x, sig = np.zeros((*hw, 3), np.float32), _sig("no real stars", hw)
-            elif sub == "starless" and is_fusion(lay):              # the combination's filters, mixed here
-                x = self._fusion_side(lay, own, level, abox, canvas, ctx, cache, draft, check, keep_mask, where, want,
-                                      thumbs)
-                sig = self._fusion_sig(lay, own, level, abox, canvas)
+            elif mix_at(lay, sub) is not None:                      # the combination's filters, mixed here
+                x = self._mix_side(lay, own, sub, level, abox, canvas, ctx, cache, draft, check, keep_mask, where, want,
+                                   thumbs)
+                sig = self._mix_sig(lay, own, sub, level, abox, canvas, draft)
             else:
                 x = None                                                  # (made below, unless a step is kept)
                 sig = self._img_sig(part, level, abox, canvas, draft)
@@ -3156,7 +2903,7 @@ class Composer:
                 self._keep_step_thumb(keep_mask(fl, fm), sig, where)
             side = (lay.get("side_masks") or {}).get(sub)
             if side is not None:                                          # that side's mask, before the blend
-                srcs = self._side_sources(lay, side, x, got, level, abox, canvas, cache) if is_fusion(lay) else None
+                srcs = self._side_sources(lay, sub, side, x, got, level, abox, canvas, cache) if has_mix(lay) else None
                 m = self.mask({"mask": side}, level, abox, x, canvas, ctx, srcs,
                               {"self": sig} if srcs else {None: sig})     # (the image before this mask)
                 keep_mask(lay, m, (lay["id"], sub))
@@ -3170,25 +2917,6 @@ class Composer:
                 keep_mask(lay, self.mask({"mask": side}, level, abox, np.zeros((*hw, 3), np.float32), canvas, ctx,
                                          sigs={None: _sig("off", hw)}), (lay["id"], sub))
         return self._together(lay, got, (abox[3] - abox[1], abox[2] - abox[0])), _sig(*sigs)
-
-    def _side_sources(self, lay, side, x, got, level, abox, canvas, cache) -> dict:
-        """What a part of a master layer's Stars or Starless image mask that reads an image may read, the same choice
-        as a filter's mask (``_fusion_side``): the image itself first (what it read before the choice), the picture
-        (the filters mixed, without the stars), each filter (stretched)."""
-        out = {"self": x}
-        out["picture"] = got[0] if got else x                 # (the starless image comes first in the group)
-        wanted = {p.get("from") for p in side.get("parts") or []}
-        roles = fusion_roles(lay)
-        if any(role_sub(r) in wanted for r in roles):
-            W, H = canvas.size(level)
-            whole = (0, 0, W, H)
-            parts = self._fusion_parts(sub_layer(lay, "starless"), level, whole if level > 0 else abox, canvas, cache)
-            if level > 0 and abox != whole:
-                x0, y0, x1, y1 = abox
-                parts = parts[:, y0:y1, x0:x1]
-            for i, r in enumerate(roles):
-                out[role_sub(r)] = grey3(parts[i])
-        return out
 
     def _own_jump(self, lay, own, level, abox, canvas, ctx, where, want, thumbs, draft=False):
         """(the place in ``own`` of the highest of a layer's own filters whose result is kept, that result (a copy),
@@ -3379,6 +3107,18 @@ def _light_masks(m, several: bool):
                           for p in m["parts"]])
 
 
+def eyes_open(lay: dict, sub: str) -> bool:
+    """Whether the eye of a Combine layers layer's side or node, and those of the nodes above it, are open: a node
+    whose parent's eye is off is out of the picture (its own eye stays as it was)."""
+    shown = lay.get("shown") or {}
+    while True:
+        if not shown.get(sub, True):
+            return False
+        if sub in SUBS or not pf.is_path(sub):
+            return True
+        sub = pf.parent(sub)
+
+
 def visible_signature(layers: list[dict], want=()) -> str:
     """What the composite depends on in these layers: the rows that are shown, themselves and through their parents (a
     hidden layer, a hidden filter, a filter under a hidden layer or a hidden image of a Stars and background layer
@@ -3391,7 +3131,7 @@ def visible_signature(layers: list[dict], want=()) -> str:
         up = by_id.get(lay.get("target")) if lay["kind"] == "filter" and lay.get("target") else None
         shown = lay["visible"]
         if up is not None:
-            shown = shown and up["visible"] and (not lay.get("sub") or (up.get("shown") or {}).get(lay["sub"], True))
+            shown = shown and up["visible"] and (not lay.get("sub") or eyes_open(up, lay["sub"]))
         out.append((lay["id"], lay.get("target"), bool(shown), _settings_of(lay) if shown or lay["id"] in ids else None))
     return _sig(out)
 

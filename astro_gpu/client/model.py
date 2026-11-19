@@ -3998,20 +3998,7 @@ class _ProjectBase(QObject):
             return None
         spec = combine_spec(v)
         inputs = list(((getattr(v, "source", None) or {}).get("fusion") or {}).get("inputs") or [])
-        why = postfusion.plain_reason(spec) or self._single_master_gate(stage, inputs, pid)
-        return stage, spec, dict(w.params.get(stage) or {}), inputs, why
-
-    def _single_master_gate(self, stage: str, inputs, pid: int) -> str:
-        """Why the engine that mixes one combination per layer (the Combine layers over its Output) still shows a
-        combination as it is: it reads stars alone (its layer is the Stars side of another) or a block follows it. The
-        layer tree (graphcore post.mix_tree, ``post_tree``) says both as nodes; the composition rewrite (#181 step 4)
-        takes this gate away."""
-        from . import postfusion
-        if not stage or (inputs and all(i.get("image") == "stars" for i in inputs)):
-            return "stars"
-        if any(s not in (stage, postfusion.OUTPUT_STAGE) for s in self._chains.get(pid) or ()):
-            return "after"
-        return ""
+        return stage, spec, dict(w.params.get(stage) or {}), inputs, postfusion.plain_reason(spec)
 
     def layers_title(self, node) -> str:
         """A Combine layers block's one shown name, everywhere (the graph, its panel, Inspect's band and editor, the
@@ -4058,7 +4045,8 @@ class _ProjectBase(QObject):
 
     def graph_tunable(self, pid: int) -> bool:
         """Whether a combination's hues and intensities are graph settings (client/postfusion.py): Post mixes its
-        filters itself (no lightness of its own, not the stars alone, no block after it), so they need no run."""
+        filters itself (the layer tree has it as a mix), so they need no run. A model without a graph: any combination
+        with no lightness of its own."""
         c = self._combination(pid)
         return c is not None and not c[4]
 
@@ -4088,9 +4076,10 @@ class _ProjectBase(QObject):
         values) when it shows a combination by its filters; None when the graph gives it nothing."""
         return None
 
-    def post_tree(self, lay: dict) -> dict | None:
+    def post_tree(self, lay: dict, live: dict | None = None) -> dict | None:
         """The layer tree of a layer of Post (graphcore post.mix_tree, with the descriptions Post's mixers need); None
-        for a layer the graph gives none, and for a model without a graph."""
+        for a layer the graph gives none, and for a model without a graph. ``live``: {path: the settings being moved in
+        Post, not yet kept} of the mixes."""
         return None
 
     def node_copies(self, lay: dict, tree: dict | None = None) -> dict | None:

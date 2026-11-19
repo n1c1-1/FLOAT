@@ -37,6 +37,7 @@ changed since the run, or inputs computed again since, are balanced by the same 
 from __future__ import annotations
 
 import json
+import re
 import threading
 from collections import OrderedDict
 from pathlib import Path
@@ -154,6 +155,60 @@ def node_paths(tree: dict) -> dict[str, dict]:
     return out
 
 
+_PATH = re.compile(r"(?:stars|starless|(?:stars/)?f:[^/\s]+(?:/f:[^/\s]+)*)")
+
+
+def is_path(path) -> bool:
+    """Whether ``path`` can name a node of a layer tree: a side ("starless", "stars") or a filter's path (``child``)."""
+    return isinstance(path, str) and _PATH.fullmatch(path) is not None
+
+
+def root_of(path: str) -> str:
+    """The side a node is under: "stars" for the stars side's nodes, "starless" for every other one."""
+    return "stars" if path == "stars" or path.startswith("stars/") else "starless"
+
+
+def depth_of(path: str) -> int:
+    """How many steps below its side a node is (a side: 0)."""
+    if path in SIDES:
+        return 0
+    return len((path[6:] if path.startswith("stars/") else path).split("/"))
+
+
+def mix_kids(node: dict) -> dict:
+    """{role: node} of the nested mixes among a mix's inputs."""
+    return {r: c for r, c in (node.get("roles") or {}).items() if c.get("kind") == "mix"}
+
+
+def derived(node: dict, info: dict) -> dict[str, tuple[dict[str, float], float]]:
+    """{role: (coefficients, offset)} of the roles of a mix that read a nested mix (their balanced plane is made of
+    that mix's picture: ``info["maps"]``); the others are planes of their own."""
+    kids = mix_kids(node)
+    if not kids:
+        return {}
+    return {r: info["maps"][r] for r in node["fusion"]["roles"] if any(k in kids for k in info["maps"][r][0])}
+
+
+def leaf_plan(node: dict, path: str, info_of) -> list[tuple[str, str, str]]:
+    """The planes a mix is made of, [(path of the mix, role, kind)], nested mixes included: "bal", the balanced plane of
+    a role that reads no nested mix; "read", the channel a role that reads one takes of its other inputs (``info_of(node)``:
+    {"maps": {role: ({channel read: coefficient}, offset)}, "channels": {role: channel}}, asked for a mix that has
+    nested ones only)."""
+    out: list[tuple[str, str, str]] = []
+    kids = mix_kids(node)
+    der = derived(node, info_of(node)) if kids else {}
+    reads: list[str] = []
+    for r in node["fusion"]["roles"]:
+        if r in der:
+            reads += [k for k in der[r][0] if k not in kids and k not in reads]
+        else:
+            out.append((path, r, "bal"))
+    out += [(path, k, "read") for k in reads]
+    for r, c in kids.items():
+        out += leaf_plan(c, child(path, r), info_of)
+    return out
+
+
 class Mixer:
     """How Post remakes the image of a block of the combination family (a node of the layer tree): ``keys``, the
     fields of a layer that node's own settings fill when the layer is made (the graph's settings copied: ``put_copy``)."""
@@ -209,6 +264,33 @@ def drop_tunes(lay: dict, paths) -> bool:
     else:
         lay.pop(TUNES, None)
     return True
+
+
+def prune(layers: list[dict], lay: dict, paths) -> bool:
+    """What a layer of a version names that its tree no longer has (``paths``: every node of it), taken out, when the
+    graph change that took the level away is committed (never before: a graph Undo gives the layers back as the step
+    found them): an eye or a mask on a missing path is dropped, a filter on one goes to the nearest node above it. The own
+    settings (``tunes``) are ``drop_tunes``'. Whether the layers changed."""
+    paths = set(paths)
+    changed = False
+
+    def gone(k):
+        return is_path(k) and k not in SIDES and k not in paths
+    for key in ("shown", "side_masks"):
+        got = lay.get(key)
+        if isinstance(got, dict) and any(gone(k) for k in got):
+            lay[key] = {k: v for k, v in got.items() if not gone(k)}
+            if not lay[key] and key == "side_masks":
+                lay.pop(key)
+            changed = True
+    for f in layers:
+        if f.get("kind") == "filter" and f.get("target") == lay.get("id") and gone(f.get("sub")):
+            sub = f["sub"]
+            while gone(sub):
+                sub = parent(sub)
+            f["sub"] = sub
+            changed = True
+    return changed
 
 
 #: the settings of a Combine layers layer the graph holds (its block's graph settings) and a layer copies
@@ -489,3 +571,26 @@ def balanced_planes(result_dir, balance: str) -> tuple[dict[str, np.ndarray], np
     for a in out.values():
         a[~valid] = 0
     return out, valid, got["gains"]
+
+
+def read_planes(result_dir) -> tuple[dict[str, np.ndarray], np.ndarray]:
+    """({role: the channel the combination reads of that input (H, W) float32}, the pixels every input covers) of a
+    combination's result, before its balance: the planes a role that reads another combination takes of its other
+    inputs (``leaf_plan``). OSError when an input is not there."""
+    _stage, spec, inputs = result_inputs(result_dir)
+    raw, valid = read_inputs(inputs, spec)
+    out = {r: np.array(a, np.float32, copy=True) for r, a in raw.items()}
+    for a in out.values():
+        a[~valid] = 0
+    return out, valid
+
+
+def node_form(result_dir, balance: str) -> dict:
+    """{"maps": {role: ({channel read: coefficient}, offset)}, "channels": {role: the channel it reads of its input's
+    image}} of a combination's result: its balance as the run made it (``balance_maps``) and what each input is read
+    as (``role_forms``'s description of a combination)."""
+    from ..stages import recipes
+    stage, spec, inputs = result_inputs(result_dir)
+    got = balance_maps(stage, spec, inputs, balance, result_dir)
+    return {"maps": got["maps"],
+            "channels": {i["role"]: i.get("channel", recipes.default_channel(spec, i["role"])) for i in inputs}}

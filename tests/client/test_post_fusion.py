@@ -58,11 +58,22 @@ class Filters(Provider):
         return out, np.ones(next(iter(out.values())).shape, bool)
 
 
+def mix_nest(fusion, pid=5, kids=None, stars=None):
+    """The layer tree of a Combine layers layer whose starless side is a combination with these filters (each an input
+    of its own, or ``kids``: {role: node}); ``stars``: the stars side's node."""
+    sides = {"starless": {"kind": "mix", "block": None, "pid": pid, "title": "S-H-O", "fusion": fusion,
+                          "roles": {r: (kids or {}).get(r, {"kind": "image"}) for r in fusion["roles"]}}}
+    if stars is not None:
+        sides["stars"] = stars
+    return {"kind": "layers", "block": None, "sides": sides}
+
+
 def master(**kw):
     g = pe.new_workflow_layer(5, "S-H-O · Combine layers", True, part="combined")
     g.update(starless="output", stars_pid=None)
     g["fusion"] = {"roles": list(ROLES), "names": {"SII": "S II", "Ha": "Hα", "OIII": "O III"},
                    "matrix": hue_palette(HUBBLE_HUES), "weights": {r: 1.0 for r in ROLES}, "balance": "sky"}
+    g["nest"] = mix_nest(g["fusion"])
     g.update(kw)
     return g
 
@@ -87,9 +98,9 @@ def test_the_rows_are_the_layer_its_stars_its_starless_image_and_under_it_one_ro
     assert rows[5][0]["sub"] == "f:OIII" and rows[5][0]["kind"] == "sub"
 
 
-def test_a_layer_without_the_combination_s_description_is_the_combine_layers_layer_it_was():
+def test_a_layer_without_a_layer_tree_is_the_combine_layers_layer_it_was():
     g = master()
-    g.pop("fusion")
+    g.pop("nest")
     assert [r.get("name") for r, _d in pe.rows([g])] == ["S-H-O · Combine layers", "Stars", "Starless image"]
     assert pe.sub_layer(g, "starless")["part"] is None                    # its Output, as before
 
@@ -158,12 +169,14 @@ def test_a_filter_s_own_filter_acts_on_it_before_the_mix():
     gg = pe.normalize([g])[0]
     cv = comp.canvas_of([gg])
     whole = (0, 0, W, H)
-    parts = comp._fusion_parts(pe.sub_layer(gg, "starless"), 0, whole, cv, True)
+    parts = comp._mix_parts(gg, "starless", 0, whole, cv, True)
     kids = dict(zip(ROLES, parts))
     ox = np.repeat(kids["OIII"][..., None], 3, -1)
     filtered = pe.FILTERS["levels"]["fn"](ox.copy(), lv["params"], pe.Ctx(comp, 0, whole))
     kids["OIII"] = pe.lum(filtered)
-    want = comp._fusion_mix(gg, kids, parts[-2], parts[-1], cv)
+    y = np.maximum(mix(kids), 0)
+    want = SimpleRenderEngine.finish(torch.from_numpy(y), SimpleSettings()).numpy()
+    want = np.moveaxis(want, 0, -1) * (parts[-1] >= 0.5)[..., None]
     assert np.abs(got - want).max() < 1e-6
     assert np.abs(got - compose([g]).rgb).max() > 0.02
 

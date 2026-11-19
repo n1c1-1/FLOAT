@@ -184,3 +184,30 @@ def test_a_level_coming_back_starts_again_from_the_graph_s_settings(world):
     assert "f:Ha" not in (lay.get(pf.TUNES) or {})
     edit_layer(m, lambda x: m.with_node_copies(x))
     assert layer(m)[pf.TUNES]["f:Ha"] == HUES2                   # not the old HUES: it starts again from the graph
+
+
+def test_what_names_a_level_the_graph_loses_is_pruned_when_committed_and_the_graph_s_undo_gives_it_back(world):
+    """An eye or a mask on a missing node is dropped, a filter on one goes to the nearest node above it; the graph's
+    Undo gives the layer back exactly as the step found it."""
+    from astro_gpu.client import postengine as pe
+    m = world.m
+    lay = layer(m)
+    f = pe.new_filter_layer("levels", lay["id"], "f:Ha/f:OIII")
+    g = pe.new_filter_layer("levels", lay["id"], "f:OIII")
+
+    def edit(layers):
+        x = next(y for y in layers if y["id"] == lay["id"])
+        x["shown"] = dict(x.get("shown") or {}, **{"f:Ha": False, "f:Ha/f:Ha": False})
+        x["side_masks"] = {"f:Ha/f:OIII": pe.new_mask(), "f:OIII": pe.new_mask()}
+        layers[:0] = [f, g]
+    m._post_edit(edit, None, scope="all")
+    was = copy.deepcopy(m.post_layers())
+    _unnest(m, world.ids)
+    now = m.post_layers()
+    x = next(y for y in now if y["id"] == lay["id"])
+    assert "f:Ha/f:Ha" not in x["shown"] and x["shown"]["f:Ha"] is False       # the node left is not named, the one kept is
+    assert list(x["side_masks"]) == ["f:OIII"]
+    subs = {y["id"]: y["sub"] for y in now if y["kind"] == "filter"}
+    assert subs == {f["id"]: "f:Ha", g["id"]: "f:OIII"}                          # the filter goes to the node above it
+    assert m.undo(graph=True)
+    assert m.post_layers() == was                                                # exactly as it was

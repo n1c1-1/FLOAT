@@ -2174,7 +2174,7 @@ class GraphEditing:
             if sp is not None else None
         return gp.layers_tree(g, list(at) if at else None, list(st) if st else None)
 
-    def node_fusion(self, pid: int, tune=None) -> dict | None:
+    def node_fusion(self, pid: int, tune=None, over: dict | None = None) -> dict | None:
         """The description of a combination as a node of the layer tree (postfusion.describe, with its title): from
         ``tune`` (the node's own settings; None: the block's stored values). Whatever the node is: the layer tree says
         whether Post mixes it."""
@@ -2186,11 +2186,12 @@ class GraphEditing:
             return None
         stage, spec, stored, inputs, _why = c
         names = {r: port_name(r) for r in recipes.roles(spec)}
-        f = postfusion.describe(stage, spec, postfusion.tuned_stored(stage, spec, stored, tune), names, inputs=inputs)
+        f = postfusion.describe(stage, spec, postfusion.tuned_stored(stage, spec, stored, tune), names, over,
+                                inputs=inputs)
         f["title"] = self.shown_title(pid)
         return f
 
-    def post_tree(self, lay: dict) -> dict | None:
+    def post_tree(self, lay: dict, live: dict | None = None) -> dict | None:
         """The layer tree of a layer of Post as Post's mixers read it (``post_graph_tree``, each node described):
         {"kind": "layers", "block", "sides": {"starless": node, "stars": node}}; {"kind": "mix", "block", "pid",
         "title", "fusion": postfusion.describe, "roles": {role: node}}; {"kind": "image", "block", "port"}; {"kind":
@@ -2216,7 +2217,7 @@ class GraphEditing:
                 r = ix.row.get(ix.row_of.get(n["block"]))
                 pid = r.wid if r is not None else None
                 return {"kind": "mix", "block": n["block"], "pid": pid, "title": title(n["block"]),
-                        "fusion": self.node_fusion(pid, postfusion.tune_at(lay, path)),
+                        "fusion": self.node_fusion(pid, postfusion.tune_at(lay, path), (live or {}).get(path)),
                         "roles": {role: conv(c, postfusion.child(path, role)) for role, c in n["roles"].items()}}
             if k == "fixed":
                 return {"kind": "fixed", "block": n["block"], "combination": title(n["block"]), "by": title(n["by"]),
@@ -2250,9 +2251,31 @@ class GraphEditing:
                     continue
                 tree = self.post_graph_tree(lay)
                 if tree is not None:
-                    changed |= postfusion.drop_tunes(lay, [p for p, n in postfusion.node_paths(tree).items()
-                                                           if n["kind"] == "mix"])
+                    nodes = postfusion.node_paths(tree)
+                    changed |= postfusion.drop_tunes(lay, [p for p, n in nodes.items() if n["kind"] == "mix"])
+                    changed |= postfusion.prune(v.get("layers") or [], lay, nodes)
         return changed
+
+    def _mixed_blocks(self) -> set:
+        """The combinations of the graph Post mixes: the nodes of kind mix in the tree of each layer of Post."""
+        from . import postfusion
+        out: set = set()
+        for lay in self.post_layers():
+            tree = self.post_graph_tree(lay) if lay.get("part") == "combined" else None
+            out |= {n["block"] for n in postfusion.node_paths(tree).values() if n["kind"] == "mix"} if tree else set()
+        return out
+
+    def graph_tunable(self, pid: int) -> bool:
+        """Whether a combination's hues and intensities are graph settings (client/postfusion.py): Post mixes its
+        filters itself (the layer tree has it as a mix: no lightness of its own, nothing between it and the layer that
+        reads it), so they need no run."""
+        q = self.view(pid)
+        if q is None or self._combination(pid) is None:
+            return False
+        try:
+            return self._combine_block(q) in self._mixed_blocks()
+        except (ValueError, KeyError):                   # (a workflow the graph does not draw yet)
+            return False
 
     def keep_variant(self, q):
         self._do([("keep_variant", {"row": self._row(q).id})])

@@ -429,5 +429,9 @@
   "Compared version (left of the divider)": "Version comparée (à gauche du séparateur)",
   "Drag the divider · V: one side whole · Left: “{name}”": "Glisser le séparateur · V : un côté entier · Gauche : « {name} »",
   "Not while cropping: the crop box is drawn on the whole picture": "Pas pendant le recadrage : le cadre se dessine sur toute l'image",
-  "Not while healing spots: the strokes act on the version shown": "Pas pendant la retouche de taches : les traits agissent sur la version affichée"
+  "Not while healing spots: the strokes act on the version shown": "Pas pendant la retouche de taches : les traits agissent sur la version affichée",
+  "Mix fixed": "Mélange figé",
+  "The {combination} mix is fixed by the {block} block: Post shows its image as that block made it.": "Le mélange de {combination} est figé par le bloc {block} : Post montre son image telle que ce bloc l'a faite.",
+  "The {combination} mix is fixed by the {block} block, which reads it as an image": "Le mélange de {combination} est figé par le bloc {block}, qui le lit comme une image",
+  "Copies the hues and intensities Inspect gave this combination in the graph into this layer; nothing else changes. Ctrl+Z takes the copy back": "Copie dans ce calque les teintes et les intensités que Inspecter a données à cette combinaison dans le graphe ; rien d'autre ne change. Ctrl+Z reprend la copie"
 }
