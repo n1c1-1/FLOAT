@@ -384,33 +384,33 @@ def _go_on(check) -> None:
         check()
 
 
-def large_stars(y: torch.Tensor, r: float, check=None) -> torch.Tensor:
-    """Where the stars wider than r pixels are, whole (h, w in 0..1): their support (the luminance above STAR_LEVEL)
-    opened by reconstruction (L. Vincent 1993): the support eroded by r (round) keeps a seed of each wide star only,
-    then the seeds grow back within the support to the whole star; the narrower stars leave no seed. Grown by the
-    radius again (the wings below the support's level) and its edge softened by a pixel."""
-    sup = (ops.luminance(y) > STAR_LEVEL).float()[None]
-    n = max(1, int(round(r)))
-    seeds = _morph(sup, n, False)
-    _go_on(check)
-    whole = reconstruct(seeds, sup, int(RECONSTRUCT_STEPS * max(r / 2.0, 1.0)))
-    _go_on(check)
-    whole = _morph(whole, n + 1, True)                 # their faint wings, below the support's level, kept too
-    return ops.gaussian_blur(whole, 0.7)[0].clamp(0, 1)
+#: the share of its peak a star keeps through the opening below which it is small (gone) and above which it is large (whole)
+SURVIVE_LO, SURVIVE_HI = 0.1, 0.5
 
 
 def fade_small_stars(y: torch.Tensor, k: float, r: float, check=None) -> torch.Tensor:
-    """The stars narrower than r pixels taken away by k (0 kept .. 1 gone), the wider ones left exactly as they were
-    (``large_stars``): the star reduction of photo editors' tutorials (the stars selected, the small ones removed),
-    on the stars alone. What goes is what a grey opening of that radius takes, the small stars themselves: the halo of
-    a large star and any light wider than them stay under the small stars and past the edge of ``large_stars``."""
+    """The stars narrower than r pixels taken away by k (0 kept .. 1 gone), the wider light left as it was: the star
+    reduction of photo editors' tutorials (the small stars selected and removed), on the stars alone. The stars' light
+    is split place by place into the part wider than a disc of r pixels (the grey opening, ``wide_light``) and the
+    narrower rest (the white top-hat, Meyer 1979, Serra 1982: y = opening + top-hat), the small stars; k of the
+    top-hat is taken away from the stars that are small (a star that keeps most of its peak through the opening is
+    large and left whole). No star is selected by its connection to a level, so a dense field of touching stars is
+    treated as an isolated one (a fixed level joined them all: the "large stars" then covered 94 % of M27's field and
+    the slider did nothing there, cut stars where that zone ended and left a faint disc where a star's core went but
+    its base stayed); a large star's halo, which contains the disc, is the opening and stays."""
     if k <= 0 or r < 0.5:
         return y
-    keep = large_stars(y, r, check)[None]
-    n = max(1, int(round(r)))
+    rho = max(1, int(round(r)))
+    wide = torch.minimum(_morph(_morph(y, rho, False), rho, True), y)
     _go_on(check)
-    wide = _morph(_morph(y, n, False), n, True)
-    return y + (1 - keep) * k * (wide - y)
+    # a star survives the opening by what it holds of its peak; a large one keeps most of it (its top alone is narrow)
+    # and is left whole, a small one keeps none: taking its top-hat away leaves no disc (the opening's plateau) at a
+    # star that is half gone, nor a cut core at a large one. Each star's survival is read at its peak (the dilations
+    # of both by the disc), so that its flanks, where the opening equals the light, do not protect it.
+    peak = ops.luminance(_morph(y, rho, True))
+    kept = ops.luminance(_morph(wide, rho, True))
+    w = ops.gaussian_blur(((kept / peak.clamp(min=1e-6) - SURVIVE_LO) / (SURVIVE_HI - SURVIVE_LO)).clamp(0, 1)[None], 1.0)[0]
+    return y - k * (1 - w) * (y - wide)
 
 
 def resize_stars(y: torch.Tensor, r: float, check=None) -> torch.Tensor:

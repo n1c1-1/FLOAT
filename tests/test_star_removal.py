@@ -315,6 +315,31 @@ def test_the_small_stars_go_and_the_halo_of_a_large_one_keeps_no_edge():
     assert float((z[1] - y[1])[ring].abs().max()) < 0.01                 # the halo as it was, past the large star's edge
 
 
+def test_the_small_stars_fade_on_a_dense_field_and_the_large_one_stays():
+    """M27 (a dense field): touching faint stars all above the stars' level fade as isolated ones do (no connected
+    "large stars" zone covering the field), the large star among them is exactly as it was and leaves no disc."""
+    from astro_gpu.render.stars import fade_small_stars
+    yy, xx = torch.meshgrid(torch.arange(160.0), torch.arange(160.0), indexing="ij")
+
+    def star(cy, cx, s, a):
+        return a * torch.exp(-((yy - cy) ** 2 + (xx - cx) ** 2) / (2 * s * s))
+
+    rng = np.random.default_rng(5)
+    field = sum(star(rng.uniform(5, 155), rng.uniform(5, 155), 0.9, rng.uniform(0.15, 0.5)) for _ in range(900))
+    big = star(80, 80, 5.0, 0.9)
+    y = (field + big).clamp(0, 1).repeat(3, 1, 1)
+    z = fade_small_stars(y, 1.0, 3.0)
+    far = (((yy - 80) ** 2 + (xx - 80) ** 2).sqrt() > 24)
+    assert float(y[0][far].mean()) > 0.05
+    assert float(z[0][far].mean()) < 0.35 * float(y[0][far].mean())              # the faint stars fade, all of them
+    assert float(z[0][far].max()) < 0.5 * float(y[0][far].max())
+    assert (z <= y + 1e-6).all()                                                   # nothing is added (no disc)
+    core = ((yy - 80) ** 2 + (xx - 80) ** 2).sqrt() < 8
+    assert float((z - y)[0][core].abs().max()) < 0.02                              # the large star as it was
+    half = fade_small_stars(y, 0.5, 3.0)
+    assert float(half[0][far].mean()) > float(z[0][far].mean())                    # the slider's share
+
+
 def test_the_smallest_size_leaves_faint_stars_and_chains_as_they_are():
     """Issue #169: the reduction erodes only the stars wider than what it takes away (``wide_light``, the grey
     opening, place by place): a faint star and a chain of touching faint stars are the same to the pixel at the smallest size
