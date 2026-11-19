@@ -116,6 +116,8 @@ DENOISE_NOTE = ("Before (what the block reads: the stack with the blocks before 
                 "the picture) and after (denoised), with the same stretch on both. Drag the divider.")
 ALIGNED_NOTE = ("The image brought onto the grid of its reference: the size and framing of the reference, what overflows is "
               "cut. Compare it with the stack it comes from.")
+SYNTH_NOTE = ("The stars the block drew, stretched on their own: the saturated ones rebuilt with the shape of a star "
+              "of the image or of the instrument.")
 IMAGE_NOTE = ("The image as the blocks after it read it: linear when its stretch was undone, in the display's automatic "
               "stretch.")
 STACK_NOTE = ("The stack output in the camera's colours, before colour calibration: a colour cast it shows is the "
@@ -299,9 +301,6 @@ class Steps(QObject):
         if k == "image":
             # issue #174: the block's output, the image as the blocks after it read it (an undone stretch: the linear
             # image, the only way to check the undo), shown with the usual automatic stretch
-            src = getattr(p, "source", None)
-            if isinstance(src, dict) and src.get("stretched"):
-                return []                         # a stretched image goes to Post as it is: nothing to stretch to show
             return [V("image", "Image", "array", "image", "drz_full", True, True, camera=False, note=IMAGE_NOTE)]
         if k == "calibration":
             out = [V("masters", "Masters", "masters", "calibrate")]
@@ -363,6 +362,13 @@ class Steps(QObject):
                       compare=("input:gradient", "stack"), open_compare=True, same_stretch=True, note=GRADIENT_NOTE),
                     V("removed", "Sky model", "removed", "gradient", "", True, True, camera=True, note=SKY_MODEL_NOTE,
                       display="model")]
+        if k == "synth":
+            # issue #177: the stars the block drew (the stars alone, or after a combination of stars the Output's image
+            # with them redrawn: its "lin"), and the engine's before / after of them
+            name = "stars" if "star_removal" in self.s.all_stages(p) else "lin"
+            return [V("drawn", "Synthetic stars", "array", "synth_stars", name, True, True, camera=False,
+                      same_stretch=True, note=SYNTH_NOTE),
+                    V("before_after", "Before / after", "preview", "synth_stars", "before_after")]
         if k == "post":
             return [dataclasses.replace(self.picture(p, "output"), compare=("result", "color"))]
         if k == "fusion":
