@@ -619,6 +619,105 @@ def do_osc(key: str, device: str) -> dict:
                  {"kind": "one-shot colour", "workflow": one.name, "source": name})
     return {"field": key, "run_s": round(secs, 1), "total_s": round(time.time() - t0, 1)}
 
+# ---------------------------------------------------------------------------------------------- command deconv
+#: today's assembled pairs of the deconvolution check (the five measured), and how many old fields
+DECONV_NEW = ("57_sho", "58_hoo", "58_rgb", "62_ho", "26_rgb")
+
+
+def deconvolve(dec, a: np.ndarray, level: float, dev, tile: int = 512, pad: int = 48) -> np.ndarray:
+    """``Deconvolved`` (stars_train.py, the training's own code path) over a whole image, in tiles with a margin of
+    ``pad`` px (the block's own), the clipped cores kept as the block keeps them; level = where the input clips."""
+    import torch
+    out = np.zeros_like(a)
+    H, W = a.shape[1:]
+    lv = torch.full((1, 1, 1, 1), float(level), device=dev)
+    for y in range(0, H, tile):
+        for x in range(0, W, tile):
+            y0, y1, x0, x1 = max(0, y - pad), min(H, y + tile + pad), max(0, x - pad), min(W, x + tile + pad)
+            t = torch.from_numpy(np.ascontiguousarray(a[None, :, y0:y1, x0:x1])).to(dev)
+            r, _ = dec(t, t, lv)
+            out[:, y:y + tile, x:x + tile] = r[0].cpu().numpy()[:, y - y0:y - y0 + min(tile, H - y),
+                                                                 x - x0:x - x0 + min(tile, W - x)]
+    return out
+
+
+def star_masks(inp: np.ndarray):
+    """(near, ring, n): the pixels within 3 FWHM of a star detected on the input (sep on the mean of the colours, in
+    noise sigmas: threshold 5 sigma, 5 px minimum), and the pixels 3 to 6 px from a star's centre."""
+    import sep
+    from scipy import ndimage
+    m = np.ascontiguousarray(inp.mean(0), dtype=np.float32)
+    m = m.byteswap().view(m.dtype.newbyteorder()) if m.dtype.byteorder == ">" else m
+    obj = sep.extract(m, 5.0, err=float(1 / np.sqrt(3)), minarea=5)
+    H, W = m.shape
+    near = np.zeros((H, W), bool)
+    cen = np.zeros((H, W), bool)
+    for o in obj:
+        fw = 2.355 * float(np.sqrt(max(o["a"] * o["b"], 0.25)))
+        r = int(np.ceil(3 * fw))
+        x, y = int(round(o["x"])), int(round(o["y"]))
+        cen[min(max(y, 0), H - 1), min(max(x, 0), W - 1)] = True
+        y0, y1, x0, x1 = max(0, y - r), min(H, y + r + 1), max(0, x - r), min(W, x + r + 1)
+        if y0 >= y1 or x0 >= x1:
+            continue
+        yy, xx = np.ogrid[y0:y1, x0:x1]
+        near[y0:y1, x0:x1] |= (yy - y) ** 2 + (xx - x) ** 2 <= r * r
+    dist = ndimage.distance_transform_edt(~cen)
+    return near, (dist >= 3) & (dist <= 6), len(obj)
+
+
+def deconv_pairs():
+    """The ten pairs: five old fields (training_pairs() of stars_train.py: the field's own level, starless_fixed
+    target), spread over the sorted list, and today's assembled pairs of DECONV_NEW."""
+    sys.path[:0] = [str(ROOT / "tools" / "bench"), str(ROOT / "tools")]
+    import stars_train as T
+    old = [p for p in T.training_pairs() if p["name"] == p["field"] and p["target"].name == "starless_fixed.npy"
+           and json.loads((p["input"].parent / "meta.json").read_text())["shape"][1] * json.loads(
+               (p["input"].parent / "meta.json").read_text())["shape"][2] <= 25e6]
+    pick = [old[i] for i in np.linspace(0, len(old) - 1, 5).round().astype(int)]
+    pairs = [{"name": p["name"], "input": p["input"], "target": p["target"], "top": p["top"]} for p in pick]
+    for n in DECONV_NEW:
+        d = OUT2 / n
+        pairs.append({"name": n, "input": d / "original.npy", "target": d / "cible.npy",
+                      "top": json.loads((d / "meta.json").read_text())["top"]})
+    return T, pairs
+
+
+def deconv_check(dev: str) -> int:
+    import tifffile
+    import torch
+    T, pairs = deconv_pairs()
+    dev = torch.device(dev)
+    dec = T.Deconvolved(dev)
+    DECONV.mkdir(parents=True, exist_ok=True)
+    rows = []
+    for p in pairs:
+        t0 = time.time()
+        a = np.load(p["input"]).astype(np.float32)
+        t = np.load(p["target"]).astype(np.float32)
+        da, dt = deconvolve(dec, a, p["top"], dev), deconvolve(dec, t, p["top"], dev)
+        near, ring, n = star_masks(a)
+        valid = (np.abs(a).max(0) > 0)
+        outside = valid & ~near
+        ring = ring & valid
+        row = {"name": p["name"], "stars": n, "shape": list(a.shape)}
+        for lab, x, y in (("deconv", da, dt), ("reference", a, t)):
+            d = np.abs(x - y)
+            for zone, msk in (("outside", outside), ("ring", ring)):
+                v = d[:, msk][:, ::max(1, int(msk.sum() // 2_000_000))].ravel()
+                row[f"{lab}_{zone}_median"] = round(float(np.median(v)), 4) if v.size else None
+                row[f"{lab}_{zone}_p99"] = round(float(np.percentile(v, 99)), 4) if v.size else None
+        rows.append(row)
+        st = np.arcsinh((p["top"] + OFFSET) / SOFT)
+        for kind, v in (("original", da), ("cible", dt)):
+            y = np.arcsinh(np.clip(v + OFFSET, 0, None) / SOFT) / st
+            tifffile.imwrite(fresh(DECONV / f"{p['name']}_deconv_{kind}.tif"),
+                             np.round(np.clip(y, 0, 1) * 65535).astype(np.uint16).transpose(1, 2, 0), photometric="rgb")
+        log(f"{row} ({time.time() - t0:.0f} s)")
+    f = fresh(DECONV / "deconv_check.json")
+    f.write_text(json.dumps({"unit": "noise sigmas of the pair", "pairs": rows}, indent=1), encoding="utf-8")
+    return 0
+
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
