@@ -217,7 +217,11 @@ def vet(L: np.ndarray, starless: np.ndarray | None, ys: np.ndarray, xs: np.ndarr
     must stay within SHAPE_SIGMAS robust deviations of the field's stars of its own brightness for its width, its
     elongation (a blend of two touching stars is elongated: it is not drawn as one star) and its sharpness. It must
     also stand above the noise of the place: the sky's, and the structure of the STARLESS image at the scale of the
-    stars (what the network may have left of it in the stars layer), as DETECT_SIGMAS of that noise. No value comes
+    stars (what the network may have left of it in the stars layer), as DETECT_SIGMAS of that noise: that is the
+    block's own detection threshold (the one the candidates already passed against the sky's noise), applied against
+    the noise of the place instead of the sky's, so no second constant exists; where the starless image has no
+    structure beyond its usual pixel noise it changes nothing. The shape is not judged below SHAPE_MIN_STARS
+    candidates, the statistical minimum for the field's stars to define what a star looks like. No value comes
     from an image: the limits are measured on the field's own stars."""
     n = len(ys)
     keep = np.ones(n, bool)
