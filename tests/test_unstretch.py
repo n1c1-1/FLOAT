@@ -29,7 +29,8 @@ def linear_image(mono=False, sigma=0.01, sky=0.05, size=(64, 80)):
 
 
 def write_fits(path, data, history=()):
-    hdu = astropy_fits.PrimaryHDU(np.asarray(data, np.float32))
+    """``data`` (top row first) written as the reference program writes a stack: bottom row first, no ROWORDER."""
+    hdu = astropy_fits.PrimaryHDU(np.ascontiguousarray(np.asarray(data, np.float32)[..., ::-1, :]))
     for line in history:
         hdu.header["HISTORY"] = line
     hdu.writeto(path, overwrite=True)

@@ -263,10 +263,12 @@ def load_image(source) -> np.ndarray:
         return np.load(path)
     if suf in (".fits", ".fit", ".fts"):
         from astropy.io import fits
+
+        from ...io.frames import picture_bottom_up
         with fits.open(path) as h:
             hdu = next(x for x in h if x.data is not None and x.data.ndim >= 2)
             a = np.asarray(hdu.data, np.float32)
-            if str(hdu.header.get("ROWORDER", "")).strip().upper() == "BOTTOM-UP":    # top row first, as everywhere
+            if picture_bottom_up(hdu.header):        # top row first, as everywhere (unless ROWORDER = TOP-DOWN)
                 last = a.ndim == 3 and a.shape[0] not in (1, 3) and a.shape[-1] in (1, 3)
                 a = a[::-1] if last else a[..., ::-1, :]
             return np.ascontiguousarray(a)

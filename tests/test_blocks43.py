@@ -279,27 +279,52 @@ def test_the_image_stage_writes_a_stack(tmp_path):
 
 
 def test_a_fits_stored_bottom_up_is_read_top_row_first_and_only_its_key_moves(tmp_path, nights):
-    # review 4.1: the raw frames honour ROWORDER, the Image block read such a stack upside down (FLOAT's own FITS
-    # export is stored bottom up)
+    # review 4.1: the Image block read a stack stored bottom up upside down (FLOAT's own FITS export is stored bottom
+    # up); issue #174: a FITS without ROWORDER is stored bottom up too (the FITS standard: a stack of the reference
+    # program was shown upside down), only ROWORDER = TOP-DOWN is read as it is stored
     from astropy.io import fits
 
     from astro_gpu.client.services.render import load_image
     from astro_gpu.stages.image import read_image
     top = np.arange(3 * 4 * 5, dtype=np.float32).reshape(3, 4, 5)
-    up, down = tmp_path / "up.fits", tmp_path / "down.fits"
-    h = fits.Header()
-    h["ROWORDER"] = "BOTTOM-UP"
-    fits.PrimaryHDU(top[:, ::-1, :], header=h).writeto(up)
-    fits.PrimaryHDU(top).writeto(down)
-    assert np.array_equal(read_image(up), top) and np.array_equal(read_image(down), top)
-    assert np.array_equal(load_image(str(up)), top)                     # a file layer of Post too
+    up, plain, down = tmp_path / "up.fits", tmp_path / "plain.fits", tmp_path / "down.fits"
+    fits.PrimaryHDU(top[:, ::-1, :], header=fits.Header([("ROWORDER", "BOTTOM-UP")])).writeto(up)
+    fits.PrimaryHDU(top[:, ::-1, :]).writeto(plain)
+    fits.PrimaryHDU(top, header=fits.Header([("ROWORDER", "TOP-DOWN")])).writeto(down)
+    for f in (up, plain, down):
+        assert np.array_equal(read_image(f), top), f.name
+        assert np.array_equal(load_image(str(f)), top), f.name          # a file layer of Post too
     p = project(tmp_path / "p", nights, "per_session")                  # the key says it, of that image only
     xs = []
-    for f in (down, up):
+    for f in (down, up, plain):
         w = p.add_workflow(f.stem, FULL)
         w.source = {"path": str(f), "stretched": False}
         xs.append(Keys(p).key_parts(w.id, "image")["x"])
-    assert "rows-up-1" not in xs[0] and xs[1][-1] == "rows-up-1" and len(xs[1]) == len(xs[0]) + 1
+    assert "rows-up-1" not in xs[0] and len(xs[1]) == len(xs[0]) + 1
+    assert xs[1][-1] == "rows-up-1" and xs[2][-1] == "rows-up-1"
+
+
+def test_float_fits_files_are_read_back_the_right_way_up(tmp_path):
+    # issue #174: Post's FITS export (stored bottom up) and the viewer's FITS (top row first, said by ROWORDER) come
+    # back in the Image block as they were written; a camera frame keeps its read (without ROWORDER: as stored)
+    import types
+
+    from astropy.io import fits
+
+    from astro_gpu.client.imageview import _write_fits
+    from astro_gpu.io.frames import read_colour
+    from astro_gpu.render.layers import export_rgb
+    from astro_gpu.stages.image import read_image
+    rgb = np.random.default_rng(1).random((3, 6, 8), dtype=np.float32)
+    export_rgb(rgb, tmp_path / "x", {"name": "t", "formats": ["fits32f"]})
+    assert np.array_equal(read_image(tmp_path / "x" / "t.fits"), rgb)
+    v = tmp_path / "viewer.fits"
+    vi = types.SimpleNamespace(name="v", units="", header=None)
+    _write_fits(v, rgb, types.SimpleNamespace(wcs=None, cfa=""), (0, 0), False, None, vi)
+    assert fits.getheader(v)["ROWORDER"] == "TOP-DOWN" and np.array_equal(read_image(v), rgb)
+    frame = tmp_path / "frame.fits"
+    fits.PrimaryHDU(rgb * 65535).writeto(frame)
+    assert np.allclose(read_colour(frame), rgb * 65535)
 
 
 def test_the_definition_checks_the_new_fields(tmp_path, nights):

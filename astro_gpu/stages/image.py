@@ -21,7 +21,7 @@ import numpy as np
 
 from ..core.params import P, StageParams
 from ..core.stage import Context, Stage, StageError
-from ..io.frames import _rows_top_down as top_first
+from ..io.frames import picture_bottom_up, picture_top_first
 
 FORMATS = (".fits", ".fit", ".fts", ".tif", ".tiff", ".png", ".jpg", ".jpeg")
 #: the first bytes of each format (GUI exploration 7.3: a text file or a missing one is refused with its reason)
@@ -111,8 +111,8 @@ class ImageParams(StageParams):
 
 
 def bottom_up(path: str | Path) -> bool:
-    """Whether a FITS file's image is stored bottom up (ROWORDER = BOTTOM-UP in the header of its first image), read
-    once per file state (its headers only)."""
+    """Whether a FITS file's image is stored bottom up (io/frames.picture_bottom_up: unless ROWORDER = TOP-DOWN in the
+    header of its first image), read once per file state (its headers only)."""
     p = Path(str(path or "").strip())
     if p.suffix.lower() not in (".fits", ".fit", ".fts"):
         return False
@@ -131,7 +131,7 @@ def _bottom_up(path: str, _mtime: int, _size: int) -> bool:
             hd = next((x.header for x in h if int(x.header.get("NAXIS", 0)) >= 2), None)
     except Exception:  # noqa: BLE001 - a file that cannot be read fails in the run, with its reason
         return False
-    return hd is not None and str(hd.get("ROWORDER", "")).strip().upper() == "BOTTOM-UP"
+    return hd is not None and picture_bottom_up(hd)
 
 
 def read_image(path: str | Path) -> np.ndarray:
@@ -148,7 +148,7 @@ def read_image(path: str | Path) -> np.ndarray:
             hd = hdu.header
         if a.ndim == 3 and a.shape[0] not in (1, 3) and a.shape[-1] in (1, 3):
             a = np.moveaxis(a, -1, 0)
-        a = top_first(a, hd)                    # a FITS stored bottom up (ROWORDER), as the raw frames are read
+        a = picture_top_first(a, hd)            # stored bottom up unless ROWORDER = TOP-DOWN (the FITS standard)
     elif suf in (".tif", ".tiff"):
         import tifffile
         a = np.asarray(tifffile.imread(path), np.float32)
@@ -179,8 +179,9 @@ class ImageSource(Stage):
     description = ("Starts the workflow from an image file (a linear stack): the blocks after it read it as they read "
                    "a stack.")
     Params = ImageParams
-    # a FITS stored bottom up (ROWORDER) is read top row first, as the raw frames are (it was read upside down): its
-    # key says so (core/store.source_part, "rows-up-1"), no other key moves
+    # a FITS stored bottom up is read top row first (it was read upside down): its key says so (core/store.source_part,
+    # "rows-up-1"), no other key moves; since issue #174 a FITS without ROWORDER counts as stored bottom up (the FITS
+    # standard, the reference program's stacks), so its key takes the mark too and it is read again
     version = "1"
     key_label = "1"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 

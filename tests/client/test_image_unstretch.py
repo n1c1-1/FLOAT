@@ -89,8 +89,10 @@ def test_the_estimated_undo_is_asked_for(tmp_path):
 
 
 def test_keys_of_existing_projects_do_not_move(tmp_path):
-    """A linear file, and a stretched file without a header's stretch, keep the key part they had (file id only)."""
-    fits.PrimaryHDU(linear_image(sky=0.02, sigma=0.01)).writeto(tmp_path / "lin.fits")
+    """A linear file, and a stretched file without a header's stretch, keep the key part they had: file id only, and
+    the mark of its rows read bottom up for a FITS without ROWORDER (issue #174, the row order, not the stretch)."""
+    fits.PrimaryHDU(linear_image(sky=0.02, sigma=0.01), header=fits.Header([("ROWORDER", "TOP-DOWN")])) \
+        .writeto(tmp_path / "lin.fits")
     p, w = make(tmp_path, tmp_path / "lin.fits")
     k = Keys(p)
     fid = k.scan.image_id(str(tmp_path / "lin.fits"))
@@ -98,7 +100,7 @@ def test_keys_of_existing_projects_do_not_move(tmp_path):
     assert "unstretch" not in json.dumps(k.key_parts(w.id, "image")["p"])
     _l, f = stretched_file(tmp_path / "nohist.fits", line=None)
     p2, w2 = make(tmp_path / "two", f)
-    assert Keys(p2).key_parts(w2.id, "image")["x"] == Keys(p2).scan.image_id(str(f))
+    assert Keys(p2).key_parts(w2.id, "image")["x"] == Keys(p2).scan.image_id(str(f)) + ["rows-up-1"]
 
 
 def test_source_check_accepts_only_the_estimate_on_a_linear_image():
