@@ -1007,12 +1007,16 @@ def _enlarge(a: np.ndarray, f: float, x0: int, y0: int, x1: int, y1: int) -> np.
     return a[ys[:, None], xs[None, :]]
 
 
-def _to_grid(a: np.ndarray, level: float, to: float, canvas) -> np.ndarray:
+def _to_grid(a: np.ndarray, level: float, to: float, canvas, smooth: bool = False) -> np.ndarray:
     """An image of the canvas at ``level`` on the grid of level ``to`` (finer or the same): each pixel the one it falls
-    in."""
+    in, or ``smooth``: interpolated (a drag's picture, small, shown as one soft picture, not as the blocks of a
+    mosaic: issue #171)."""
     if a is None or level == to or canvas is None:
         return a
     w, h = _grid(canvas, to)
+    if smooth:
+        import cv2
+        return cv2.resize(np.ascontiguousarray(a), (w, h), interpolation=cv2.INTER_LINEAR)
     return _enlarge(a, 2.0 ** (level - to), 0, 0, w, h)
 
 
@@ -1032,6 +1036,7 @@ class PostSource:
         self.level2 = 2                                   # its level: two halvings under the screen's, three on the CPU
         self.full = None                                  # (box, uint8 array) at full resolution
         self.canvas = None                                # (W, H)
+        self._enlarged = (None, None)                     # the draft on the screen's grid, and what it was made from
 
     def size(self):
         return self.canvas or (2, 2)
@@ -1043,7 +1048,10 @@ class PostSource:
     def _half(self) -> np.ndarray | None:
         """The screen's picture to show: the newest of the screen's render and the (enlarged) draft."""
         if self.img2 is not None and self.seq2 > self.seq1:
-            return _to_grid(self.img2, self.level2, self.level1, self.canvas)
+            src, e = (self.img2, self.level2, self.level1, self.canvas), self._enlarged     # (enlarged once per draft,
+            if e[0] is None or e[0][0] is not src[0] or e[0][1:] != src[1:]:                # not at each paint)
+                self._enlarged = (src, _to_grid(*src[:2], src[2], src[3], smooth=True))
+            return self._enlarged[1]
         return self.img1
 
     def region(self, level, x0, y0, x1, y1):
