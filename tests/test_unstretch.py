@@ -42,15 +42,9 @@ def loaded(path):
     return a / U.scale_of(a), U.analyse(path)
 
 
-def back(path, check=True):
-    """The file undone from its header. ``check`` False: the header's parameters are taken as exact (a line that writes
-    its numbers with one digit would not pass the rounding check on a synthetic image with so little noise)."""
+def back(path):
+    """The file undone from its header (its analysis says the undo is exact)."""
     a, an = loaded(path)
-    if not check:
-        lines, ch = U.read_history(path)
-        pl = U.plan_of(lines, ch)
-        assert pl.refusal is None, pl.refusal
-        return U.undo(a, pl.ops, ch == 1)
     assert an.exact, an.refusal
     return U.undo(a, an.ops, an.mono)
 
@@ -146,7 +140,7 @@ def test_roundtrip_asinh(tmp_path, human, colour):
     y = np.clip(p * k, 0, 1).astype(np.float32)
     f = write_fits(tmp_path / "h.fits", y if colour else y[0],
                    [f"Asinh stretch (amount: {beta:.1f}, offset: {off:.1f}, human: {human})"])
-    close_but_clipped(lin, back(f, check=False), y.astype(np.float64), tol=1e-4)
+    close_but_clipped(lin, back(f), y.astype(np.float64), tol=1e-4)
 
 
 def test_roundtrip_black_point_shift_and_chain_of_two(tmp_path):
@@ -163,10 +157,9 @@ def test_roundtrip_black_point_shift_and_chain_of_two(tmp_path):
         "Midtones transfer (0.000, 0.4000, 1.000)",
         "GHS BP shift (new BP: 0.100)",
         "Crop (10, 10, 50, 40)"])
-    lines, ch = U.read_history(f)
-    pl = U.plan_of(lines, ch)
-    assert pl.refusal is None and len(pl.ops) == 3
-    got = U.undo(loaded(f)[0], pl.ops, True)
+    a, an = loaded(f)
+    assert an.exact and len(an.ops) == 3
+    got = U.undo(a, an.ops, True)
     ok = y3 > 0.001
     np.testing.assert_allclose(got[0][ok], lin[0][ok], atol=2e-4)
 
@@ -220,12 +213,16 @@ def test_refusals_unknown_step_after_stretch_colour_ghs_saturation(tmp_path):
     assert not an.exact and "saturation" in an.refusal[0]
 
 
-def test_refusal_a_parameter_rounded_too_coarsely_moves_the_sky(tmp_path):
-    """mid=0.003 written with three digits: half a last digit is 17 % of it, the sky level moves by more than its noise."""
-    lin = linear_image(sky=0.002, sigma=0.0004)
-    y = U.mtf(lin, 0.003, 0.0, 1.0).astype(np.float32)
-    an = U.analyse(write_fits(tmp_path / "r.fits", y, ["Histogram Transf. (mid=0.003, lo=0.000, hi=1.000)"]))
-    assert an.stretched and not an.exact and "too few digits" in an.refusal[0]
+def test_refusal_when_the_stretch_clipped_the_sky_itself(tmp_path):
+    """A black point above the sky: half of the image sits at the stretch's floor, the level of the sky is gone. The
+    parameters as written (here with three digits) are otherwise taken as the program used them."""
+    lin = linear_image(sky=0.02, sigma=0.01)
+    y = U.mtf(lin, 0.25, 0.05, 1.0).astype(np.float32)
+    an = U.analyse(write_fits(tmp_path / "r.fits", y, ["Histogram Transf. (mid=0.250, lo=0.050, hi=1.000)"]))
+    assert an.stretched and not an.exact and "clipped the sky" in an.refusal[0]
+    y = U.mtf(lin, 0.25, 0.002, 1.0).astype(np.float32)
+    ok = U.analyse(write_fits(tmp_path / "q.fits", y, ["Histogram Transf. (mid=0.250, lo=0.002, hi=1.000)"]))
+    assert ok.exact                                          # written with few digits, used as written: exact
 
 
 # ---------------------------------------------------------------------------------------------- the estimate

@@ -396,7 +396,7 @@ def plan_of_file(path: str | Path) -> Plan:
 
 
 def header_exact(path: str | Path) -> bool:
-    """Whether the header lists stretches every one of which can be inverted (before the sky-level rounding check)."""
+    """Whether the header lists stretches every one of which can be inverted (before the check that the stretch did not clip the sky)."""
     pl = plan_of_file(path)
     return pl.stretch and pl.refusal is None
 
@@ -429,7 +429,7 @@ def _undo_op(op: Op, a: np.ndarray, mono: bool, over: dict | None = None) -> np.
 
 def undo(a: np.ndarray, ops, mono: bool = False, over: dict[int, dict] | None = None) -> np.ndarray:
     """The image (C, H, W, values in 0-1) before the stretches ``ops`` (in the order they were applied): each one
-    undone, last first. ``over``: {op index: {param: value}} (the rounding check's perturbations)."""
+    undone, last first. ``over``: {op index: {param: value}} to undo with other values (tests)."""
     a = np.asarray(a, np.float64)
     for i in range(len(ops) - 1, -1, -1):
         a = _undo_op(ops[i], a, mono, (over or {}).get(i))
@@ -442,34 +442,19 @@ def clipped(a: np.ndarray) -> int:
     return int(np.count_nonzero(np.any((a <= 0.0) | (a >= 1.0), axis=0)))
 
 
-def _sky(x: np.ndarray):
-    """(median, 1.4826 MAD) per channel of the finite values."""
-    med, sig = [], []
-    for ch in x:
+def clipped_refusal(y: np.ndarray) -> tuple | None:
+    """Whether the stretch clipped the sky itself: the median of a channel of the stretched image (0-1) sits at the
+    limit of the stretch (0 or 1). A stretch clips the values below its black point to 0 (and above its white point to
+    1); when half of a channel is clipped, the level of its sky, which every later block measures, was not kept by the
+    stretch and no inverse can bring it back, whatever the parameters are. (template, fields), None when the median is
+    free. The parameters themselves are taken as the reference program writes them: it records the values it used (a
+    value it prints with fewer digits than were typed shows up here only when it clips the sky; checked against the real
+    program's files in tests/test_unstretch_real.py)."""
+    for ch in np.asarray(y):
         v = ch[np.isfinite(ch)]
-        m = float(np.median(v)) if v.size else 0.0
-        med.append(m)
-        sig.append(1.4826 * float(np.median(np.abs(v - m))) if v.size else 0.0)
-    return np.array(med), np.array(sig)
-
-
-def rounding_refusal(a: np.ndarray, ops, mono: bool = False) -> tuple | None:
-    """Whether a parameter written with few digits could move the linear sky level by more than its noise: each
-    parameter is moved by half its last printed digit, the stretches undone again, and the sky level (median) of the
-    result compared with its noise (1.4826 MAD). (template, fields) of the first that does, None when none does."""
-    base = undo(a, ops, mono)
-    med0, sig0 = _sky(base)
-    for i, op in enumerate(ops):
-        for name, val, step in op.params:
-            if step <= 0:
-                continue
-            for sign in (-1.0, 1.0):
-                with np.errstate(all="ignore"):
-                    other = undo(a, ops, mono, {i: {name: val + sign * step / 2.0}})
-                med1, _s = _sky(other)
-                if np.any((sig0 > 0) & (np.abs(med1 - med0) > sig0)):
-                    return ("{param} of \"{line}\" is written with too few digits: the sky level of the linear "
-                            "image would move by more than its noise", {"param": name, "line": op.line})
+        if v.size and (np.mean(v <= 0.0) >= 0.5 or np.mean(v >= 1.0) >= 0.5):
+            return ("The stretch clipped the sky itself (half of the image is at its limit): its level cannot be "
+                    "brought back", {})
     return None
 
 
@@ -581,7 +566,7 @@ def _analyse(path: str, _mtime: int, _size: int) -> Analysis:
     if pl.stretch:
         why = ("Its header lists a stretch: {line}", {"line": pl.first})
         if pl.refusal is None:
-            bad = rounding_refusal(sample, pl.ops, mono)
+            bad = clipped_refusal(sample)
             if bad is None:
                 return Analysis(True, why, sky_level(a), True, None, pl.ops, mono, scale)
             return Analysis(True, why, sky_level(a), False, bad, pl.ops, mono, scale)
