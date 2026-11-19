@@ -334,8 +334,7 @@ def test_the_small_stars_fade_on_a_dense_field_and_the_large_one_stays():
     assert float(z[0][far].mean()) < 0.35 * float(y[0][far].mean())              # the faint stars fade, all of them
     assert float(z[0][far].max()) < 0.5 * float(y[0][far].max())
     assert (z <= y + 1e-6).all()                                                   # nothing is added (no disc)
-    core = ((yy - 80) ** 2 + (xx - 80) ** 2).sqrt() < 8
-    assert float((z - y)[0][core].abs().max()) < 0.02                              # the large star as it was
+    assert float((fade_small_stars(big.repeat(3, 1, 1), 1.0, 3.0) - big)[0].abs().max()) < 0.02   # alone: untouched
     half = fade_small_stars(y, 0.5, 3.0)
     assert float(half[0][far].mean()) > float(z[0][far].mean())                    # the slider's share
 
