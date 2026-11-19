@@ -141,6 +141,7 @@
   "Starless image out of Post": "Image sans étoiles hors Post",
   "Stars out of Post": "Étoiles hors Post",
   "Out of Post": "Hors Post",
+  "Already in Post through {name}": "Déjà dans Post par {name}",
   "Take this image out of Post (its layers and their filters)": "Retirer cette image de Post (ses calques et leurs filtres)",
   "{image} of \"{name}\" taken out of Post": "{image} de « {name} » hors Post",
   "Session {n}": "Session {n}",

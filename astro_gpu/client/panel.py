@@ -2105,6 +2105,7 @@ class Panel(QWidget):
         self.bv.addWidget(self.group_title(_("Outputs")))
         names = {"starless": _("Starless image"), "stars": _("Stars alone")}
         wired = self._wired_outputs(node)
+        via = self._wired_outputs(node, combiners=True) or {"starless": [], "stars": []}
         for what, _word in STAR_OUTPUTS:
             if wired is not None:                        # the graph's wires: the one truth of where each image goes
                 to = list(wired[what])
@@ -2127,11 +2128,18 @@ class Panel(QWidget):
                     b = QPushButton(_("Out of Post"))
                     b.setToolTip(_("Take this image out of Post (its layers and their filters)"))
                     b.clicked.connect(lambda _c=False, w=what, pp=p: self._part_out_of_post(pp, w))
+                elif via[what]:                              # already in Post through a combination: never added twice
+                    b = QPushButton(_("To Post"))
+                    b.setEnabled(False)
+                    b.setToolTip(_("Already in Post through {name}").format(name=", ".join(via[what])))
                 else:
                     b = QPushButton(_("To Post"))
                     b.setToolTip(_("This image as a layer of Post, as it is (no Combine layers "
                                    "block)"))
                     b.clicked.connect(lambda _c=False, w=what, pp=p: self._part_to_post(pp, w))
+                b.setObjectName("part_to_post_" + what)
+                fm = b.fontMetrics()                         # one width for both states: no jump when one is clicked
+                b.setFixedWidth(max(fm.horizontalAdvance(_("To Post")), fm.horizontalAdvance(_("Out of Post"))) + 28)
                 row.addWidget(b, 0, Qt.AlignTop)
                 self.bv.addLayout(row)
             else:
@@ -2144,7 +2152,7 @@ class Panel(QWidget):
             self.bv.addWidget(nb, 0, Qt.AlignLeft)
         self.bv.addSpacing(6)
 
-    def _wired_outputs(self, node) -> dict | None:
+    def _wired_outputs(self, node, combiners: bool = False) -> dict | None:
         """Where the graph's wires take a Stars/background block's two images: {"starless": [...], "stars": [...]},
         each the block it goes to by its graph title (a combination's input, a Combine layers, Synthetic stars) or
         "Post layer"; None when the graph is not at hand. The panel said "unused" for an image wired into a
@@ -2170,6 +2178,8 @@ class Panel(QWidget):
             if w.src[0] != b or part is None or not w.active or w.dst[0] not in g.blocks:
                 continue
             dst = g.blocks[w.dst[0]]
+            if combiners and dst.kind != "combine_layers":   # only the Combine layers blocks the image already feeds
+                continue
             t = _("Post layer") if dst.kind == "post" else \
                 s.layers_title(bm.node(w.dst[0])) if dst.kind == "combine_layers" and hasattr(s, "layers_title") \
                 else title(g, w.dst[0], tr=_)
