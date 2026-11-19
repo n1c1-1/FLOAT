@@ -3998,8 +3998,20 @@ class _ProjectBase(QObject):
             return None
         spec = combine_spec(v)
         inputs = list(((getattr(v, "source", None) or {}).get("fusion") or {}).get("inputs") or [])
-        why = postfusion.plain_reason(stage, spec, inputs, self._chains.get(pid) or [])
+        why = postfusion.plain_reason(spec) or self._single_master_gate(stage, inputs, pid)
         return stage, spec, dict(w.params.get(stage) or {}), inputs, why
+
+    def _single_master_gate(self, stage: str, inputs, pid: int) -> str:
+        """Why the engine that mixes one combination per layer (the Combine layers over its Output) still shows a
+        combination as it is: it reads stars alone (its layer is the Stars side of another) or a block follows it. The
+        layer tree (graphcore post.mix_tree, ``post_tree``) says both as nodes; the composition rewrite (#181 step 4)
+        takes this gate away."""
+        from . import postfusion
+        if not stage or (inputs and all(i.get("image") == "stars" for i in inputs)):
+            return "stars"
+        if any(s not in (stage, postfusion.OUTPUT_STAGE) for s in self._chains.get(pid) or ()):
+            return "after"
+        return ""
 
     def layers_title(self, node) -> str:
         """A Combine layers block's one shown name, everywhere (the graph, its panel, Inspect's band and editor, the

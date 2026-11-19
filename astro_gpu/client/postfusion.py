@@ -47,19 +47,19 @@ import numpy as np
 OUTPUT_STAGE = "render_simple"
 #: a master layer's own settings (module docstring)
 TUNE = "tune"
+#: the own settings of the combinations nested in a layer, by the path of their node (``child``): {path: the same shape
+#: as ``tune``}. The layer's own mix (the starless side's, or the combination wired to Post) is ``tune``, as ever.
+TUNES = "tunes"
 
 
-def plain_reason(stage: str, spec: dict | None, inputs, chain) -> str:
-    """Why a combination's layer stays a plain Combine layers layer ("" when it is a master layer): a recipe composed
-    as lightness and colour, the stars alone, a block after the combination."""
-    if not stage or spec is None:
-        return "stars"
+def plain_reason(spec: dict | None) -> str:
+    """Why a combination's image cannot be mixed by Post, from its recipe alone ("" when it can): a recipe composed as
+    lightness and colour (LRGB...). What the graph puts around a combination (a block after it, its depth) is the layer
+    tree's (graphcore/post.mix_tree: a fixed node); the stars' combination is a mix of its own (``describe``)."""
+    if spec is None:
+        return "lightness"
     if (spec.get("output") or {}).get("lightness") is not None:
         return "lightness"
-    if inputs and all(i.get("image") == "stars" for i in inputs):
-        return "stars"
-    if any(s not in (stage, OUTPUT_STAGE) for s in chain or ()):
-        return "after"
     return ""
 
 
@@ -115,8 +115,98 @@ def new_tune(stage: str, spec: dict, stored: dict, tune: dict | None, part: dict
     return {"hues": {r: float(v) for r, v in hues.items()}, "weights": {r: float(v) for r, v in weights.items()}}
 
 
+# ----------------------------------------------------------------------------------------------- the layer tree
+#: the nodes of the layer tree are named by a path in every saved key: the layer itself is "", its sides "starless" and
+#: "stars", a combination's filter ``child(path, role)``: "f:Ha" under the layer's own mix (the key the starless
+#: master's filters have always had), "stars/f:Ha" under the stars side's, "f:R/f:Ha" under the mix of the filter R
+ROLE = "f:"
+SIDES = ("starless", "stars")
+
+
+def child(path: str, role: str) -> str:
+    """The path of the node a combination's input ``role`` is, the combination being at ``path``."""
+    return ("" if path in ("", "starless") else path + "/") + ROLE + role
+
+
+def parent(path: str) -> str:
+    """The path of the node above ``path`` ("" for a side or the layer; a side is its own mix's: "starless"
+    and "stars" stay what they are)."""
+    if path in ("", "starless", "stars"):
+        return ""
+    head, _sep, _last = path.rpartition("/")
+    return head if head else "starless"
+
+
+def node_paths(tree: dict) -> dict[str, dict]:
+    """{path: node} of a layer tree (graphcore/post.mix_tree), every node of it, the layer's own node first. A Combine
+    layers is at "" and its sides at "starless" and "stars"; a combination wired straight to Post is at ""."""
+    out: dict[str, dict] = {}
+
+    def walk(n, path):
+        out[path] = n
+        if n["kind"] == "layers":
+            for side, c in n["sides"].items():
+                walk(c, side)
+        elif n["kind"] == "mix":
+            for r, c in n["roles"].items():
+                walk(c, child(path, r))
+    walk(tree, "")
+    return out
+
+
+class Mixer:
+    """How Post remakes the image of a block of the combination family (a node of the layer tree): ``keys``, the
+    fields of a layer that node's own settings fill when the layer is made (the graph's settings copied: ``put_copy``)."""
+
+    def __init__(self, keys: tuple[str, ...]):
+        self.keys = keys
+
+
+def tune_at(lay: dict, path: str) -> dict | None:
+    """The own settings of the mix at ``path`` of a layer (None: the block's stored values)."""
+    if path in ("", "starless"):
+        return lay.get(TUNE)
+    return (lay.get(TUNES) or {}).get(path)
+
+
+def put_tune(lay: dict, path: str, tune: dict | None) -> None:
+    """The own settings of the mix at ``path`` set (None: taken off, the block's stored values again)."""
+    if path in ("", "starless"):
+        if tune:
+            lay[TUNE] = {k: dict(v) for k, v in tune.items()}
+        else:
+            lay.pop(TUNE, None)
+        return
+    tunes = dict(lay.get(TUNES) or {})
+    if tune:
+        tunes[path] = {k: dict(v) for k, v in tune.items()}
+    else:
+        tunes.pop(path, None)
+    if tunes:
+        lay[TUNES] = tunes
+    else:
+        lay.pop(TUNES, None)
+
+
+def drop_tunes(lay: dict, paths) -> bool:
+    """The own settings of the nested mixes whose node is not in ``paths`` dropped (a level the graph no longer has: it
+    starts again from the graph's settings when it comes back; never moved to another level). Whether the layer changed.
+    The graph's Undo gives them back with the layer (model: dropped when the graph change is committed)."""
+    keep = {k: v for k, v in (lay.get(TUNES) or {}).items() if k in set(paths)}
+    if keep == (lay.get(TUNES) or {}):
+        return False
+    if keep:
+        lay[TUNES] = keep
+    else:
+        lay.pop(TUNES, None)
+    return True
+
+
 #: the settings of a Combine layers layer the graph holds (its block's graph settings) and a layer copies
 LAYERS_KEYS = ("blend", "stretch", "sliders")
+#: the mixer of each kind of the combination family (graphcore rules.GRAPH_SETTING_KINDS; a test ties the two): a kind
+#: that nests has its mixer here, so a new kind cannot exist without its way of being remade
+MIXERS: dict[str, Mixer] = {"combine": Mixer((TUNE, TUNES)), "combine_layers": Mixer(LAYERS_KEYS)}
 
 
 def layers_graph(own: dict | None) -> dict:
@@ -131,11 +221,16 @@ def layers_graph(own: dict | None) -> dict:
 
 
 def put_copy(lay: dict, copied: dict | None) -> bool:
-    """A copy of the graph's settings (model.graph_copy) put on a layer of Post; whether the layer changed."""
+    """A copy of the graph's settings (model.graph_copy) put on a layer of Post, node by node: the layer's own keys
+    (``blend``, ``stretch``, ``sliders``), its mix's ``tune``, and ``tunes``, {path: the settings of that nested mix, None:
+    none of its own}; a nested mix not named is left as it is. Whether the layer changed."""
     if not copied:
         return False
     import json as _json
-    before = _json.dumps({k: lay.get(k) for k in (*LAYERS_KEYS, TUNE)}, sort_keys=True, default=str)
+
+    def mark():
+        return _json.dumps({k: lay.get(k) for k in (*LAYERS_KEYS, TUNE, TUNES)}, sort_keys=True, default=str)
+    before = mark()
     from .postengine import set_layer_stretch
     if "blend" in copied:
         lay["blend"] = copied["blend"]
@@ -144,24 +239,100 @@ def put_copy(lay: dict, copied: dict | None) -> bool:
     if "stretch" in copied:
         set_layer_stretch(lay, copied["stretch"])
     if TUNE in copied:
-        if copied[TUNE]:
-            lay[TUNE] = {k: dict(v) for k, v in copied[TUNE].items()}
-        else:
-            lay.pop(TUNE, None)
-    return _json.dumps({k: lay.get(k) for k in (*LAYERS_KEYS, TUNE)}, sort_keys=True, default=str) != before
+        put_tune(lay, "", copied[TUNE])
+    for path, tune in (copied.get(TUNES) or {}).items():
+        put_tune(lay, path, tune)
+    return mark() != before
 
 
-def describe(stage: str, spec: dict, stored: dict, names: dict, over: dict | None = None) -> dict:
+def channel_row(channel: str) -> np.ndarray:
+    """(3,): the linear row of the channel a combination reads of an image (stages/combine.channel_of: its luminance, a
+    colour, the mean of green and blue), so that the channel read is this row on the image's red, green and blue."""
+    from ..stages.combine import channel_of
+    return channel_of(np.eye(3, dtype=np.float32)[:, :, None], channel)[:, 0].astype(np.float64)
+
+
+#: a leaf plane that is the channel a derived filter reads (not a balanced filter): its path's end
+RAW = "|raw"
+
+
+def _kids(node: dict) -> dict:
+    return node.get("children") or {}
+
+
+def role_forms(node: dict, path: str = "") -> dict[str, tuple[dict[str, float], float]]:
+    """{role: ({leaf path: kappa}, offset)} of a combination: each of its balanced filters as a linear form of leaf
+    planes, nested combinations included. A filter that reads no combination is a leaf itself (its balanced plane, as
+    Post's filters have always been: kappa 1). A filter that reads a combination A (through the channel it names) is
+    derived: ``map's coefficient * the channel's row * A's matrix column * A's weight``, per filter of A (premise of
+    #181, tests/client/test_post_nest_premises.py: a combination's Output is linear in its balanced filters), and any
+    other channel it reads is a plane of its own (the path ``RAW`` ends). ``node``: {"fusion": the combination's
+    ``describe``, "maps": {role: ({channel read: coefficient}, offset)} (``balance_maps``), "channels": {role: the
+    channel it reads of its input's image}, "children": {role: the same description of the combination it reads, absent
+    for a plain input}}."""
+    out = {}
+    for role in node["fusion"]["roles"]:
+        coef, off = node["maps"][role]
+        if not any(k in _kids(node) for k in coef):
+            out[role] = ({child(path, role): 1.0}, 0.0)
+            continue
+        k: dict[str, float] = {}
+        o = float(off)
+        for read, a in coef.items():
+            kid = _kids(node).get(read)
+            if kid is None:
+                leaf = child(path, read) + RAW
+                k[leaf] = k.get(leaf, 0.0) + float(a)
+                continue
+            row = channel_row(node["channels"].get(read, "L"))
+            inner = role_forms(kid, child(path, read))
+            fa = kid["fusion"]
+            mat = np.asarray(fa["matrix"], np.float64)
+            for i, ai in enumerate(fa["roles"]):
+                g = float(a) * float(row @ mat[:, i]) * float(fa["weights"].get(ai, 1.0))
+                for leaf, v in inner[ai][0].items():
+                    k[leaf] = k.get(leaf, 0.0) + g * v
+                o += g * inner[ai][1]
+        out[role] = (k, o)
+    return out
+
+
+def kappas(node: dict, path: str = "") -> tuple[dict[str, np.ndarray], np.ndarray]:
+    """A combination's Output (red, green, blue) as a linear map of the planes of the leaves under it: ``({leaf path:
+    kappa (3,)}, offset (3,))``, Output = sum of kappa * the leaf's plane + offset (``role_forms`` for the leaves and
+    ``node``'s description). Stretching every leaf's plane with one factor and adding them is then the mix stretched."""
+    f = node["fusion"]
+    mat = np.asarray(f["matrix"], np.float64)
+    forms = role_forms(node, path)
+    out_k: dict[str, np.ndarray] = {}
+    off = np.zeros(3)
+    for k, role in enumerate(f["roles"]):
+        m = mat[:, k] * float(f["weights"].get(role, 1.0))
+        leaves, o = forms[role]
+        off += m * o
+        for leaf, v in leaves.items():
+            out_k[leaf] = out_k.get(leaf, np.zeros(3)) + m * v
+    return out_k, off
+
+
+def describe(stage: str, spec: dict, stored: dict, names: dict, over: dict | None = None,
+             inputs=None) -> dict:
     """The master layer's ``fusion`` (module docstring) from the combination's settings ``stored`` (the block's,
     with the layer's own: ``tuned_stored``), ``over`` (settings being moved, not yet kept) on top; ``names``: {role:
-    its shown name}."""
-    from ..stages.combine import output_matrix
-    from .combineedit import applied_values, palette_of, params_of, stage_class
+    its shown name}. ``inputs``: what the combination reads: the stars alone of every filter make it the stars'
+    combination, balanced on the sky and, with the setting Stars at Neutral, mixed as the plain mean (no hue: its
+    description says ``stars`` and ``neutral``)."""
+    from ..stages.combine import STARS, output_matrix
+    from .combineedit import applied_values, palette_of, params_of, stage_class, stars_only
     cls = stage_class(stage)
     values = applied_values(cls, spec, stored)
     for k, v in (over or {}).items():
         values[k] = dict(values.get("weights") or {}, **v) if k == "weights" else v
     roles, mat = output_matrix(params_of(cls, spec, stored, values), spec)
+    only = stars_only(inputs)
+    neutral = only and bool(spec.get("narrowband")) and values.get("stars", STARS[0]) == STARS[0]
+    if neutral:
+        mat = [[1.0 / len(roles)] * len(roles) for _ in range(3)]
     hp = _hue_names(spec)
     fields = cls.Params.model_fields
     w = values.get("weights") or {}
@@ -172,7 +343,8 @@ def describe(stage: str, spec: dict, stored: dict, names: dict, over: dict | Non
             "hues": {r: float(values[hp[r]]) for r in roles if r in hp}, "hue_defaults": defaults,
             "matrix": [[float(v) for v in row] for row in mat],
             "weights": {r: float(w.get(r, 1.0)) for r in roles},
-            "balance": values.get("balance", "sky"), "palette": palette_of(spec, values)}
+            "balance": "sky" if only else values.get("balance", "sky"), "palette": palette_of(spec, values),
+            "stars": only, "neutral": neutral}
 
 
 class _Quiet:
