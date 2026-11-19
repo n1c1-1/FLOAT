@@ -117,17 +117,43 @@ def test_a_small_card_takes_smaller_tiles_on_a_large_image(monkeypatch):
     assert all(s[2] < sr.TILE for s in fake.sizes) and np.allclose(out, 1.0, atol=1e-3)
 
 
-def test_without_half_stacks_the_noise_unit_is_the_spread_of_the_sky():
-    """Issue #55: a linear Image has no half-stack: the unit is read on its own sky, the stars and the nebula above the
-    sky do not widen it, the uncovered pixels do not count; an image without noise keeps a defined unit."""
-    rng = np.random.default_rng(0)
-    lin = 3.0 * rng.standard_normal((3, 200, 200)).astype(np.float32)
-    lin[:, 60:90, 60:90] += 500.0
-    shown = np.ones((200, 200), bool)
-    shown[:20] = False
-    lin[:, :20] = 1000.0 * rng.standard_normal((3, 20, 200)).astype(np.float32)
-    assert sr.sky_unit(lin, shown) == pytest.approx(3.0, rel=0.1)
-    assert sr.sky_unit(np.zeros((3, 50, 50), np.float32), np.ones((50, 50), bool)) == 1.0
+def _field(seed=0, h=256, w=256, noise=5.0):
+    """Two half-stacks of a field (sky, a nebula, stars, independent noise) and their full stack, the mean of both."""
+    rng = np.random.default_rng(seed)
+    yy, xx = np.mgrid[:h, :w].astype(np.float32)
+    sky = 100.0 + 60.0 * np.exp(-((xx - 120) ** 2 + (yy - 130) ** 2) / (2 * 20.0 ** 2))
+    stars = sum(moffat(h, w, x, y, a) for x, y, a in ((60.3, 50.6, 900.0), (190.1, 200.4, 300.0), (150.7, 80.2, 120.0)))
+    clean = np.stack([sky + stars, 0.8 * sky + stars, 0.6 * sky + stars]).astype(np.float32)
+    A, B = (clean + noise * rng.standard_normal(clean.shape).astype(np.float32) for _ in range(2))
+    return clean, A, B, (A + B) / 2
+
+
+def test_a_single_image_is_measured_in_a_stacks_noise_unit():
+    """Issue #174: an image from a file is read as the full stack of a stack: its unit is the one its half-stacks would
+    give (it was the sky spread after Denoise, 2.3 times smaller on M27); a pedestal changes nothing, the unit follows
+    the scale of the values; an image without noise keeps a defined unit."""
+    _clean, A, _B, full = _field()
+    W = np.ones_like(full)
+    M = np.diag([0.7, 1.0, 1.6])
+    half = sr.noise_unit(A, W, M)
+    assert half == pytest.approx(5.0 * np.mean([0.7, 1.0, 1.6]), rel=0.15)      # the nebula widens it a little
+    assert sr.noise_unit(full, W, M, single=True) == pytest.approx(half, rel=0.1)
+    assert sr.noise_unit(full * 37.0 + 900.0, W, M, single=True) == pytest.approx(
+        37.0 * sr.noise_unit(full, W, M, single=True), rel=1e-4)
+    assert sr.noise_unit(np.ones_like(full), W, M, single=True) == 1.0
+
+
+def test_a_pedestal_and_a_value_scale_give_the_same_starless(net):
+    """Issue #174: the same image with a pedestal (a black point undone) and its values scaled (x 65535) gives the same
+    starless image, up to that pedestal and scale: the network sees the same input."""
+    _clean, _A, _B, full = _field(seed=1)
+    W, M, shown = np.ones_like(full), np.eye(3), np.ones(full.shape[1:], bool)
+    k, ped = 65535.0 / 4.0, 983.0
+    one, bk1 = sr.remove_stars(net, full, shown, sr.noise_unit(full, W, M, single=True), DEV)
+    two, bk2 = sr.remove_stars(net, full * k + ped, shown, sr.noise_unit(full * k + ped, W, M, single=True), DEV)
+    assert np.allclose(bk2, bk1 * k + ped, rtol=1e-4)
+    assert np.abs((two - ped) / k - one).max() < 1e-3 * float(np.abs(one).max())
+    assert float((full - one)[:, 51, 60].mean()) > 0.5 * 900.0               # and the star is taken off
 
 
 def _folder(tmp_path, h=64, w=96):
