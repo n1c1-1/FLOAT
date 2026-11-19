@@ -28,7 +28,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SRC = Path("F:/astro_essais/stars_dataset/_sources_pn")
 LCO = SRC / "lco"
-PROJECTS = SRC / "projets"
+PROJECTS = Path(os.environ.get("PN_PROJECTS") or SRC / "projets")   # PN_PROJECTS: another disk when F is full
 OUT = Path("F:/astro_essais/stars_dataset/_revue_pn")
 API = "https://archive-api.lco.global/frames/"
 MAX_PER_FILTER = 40
