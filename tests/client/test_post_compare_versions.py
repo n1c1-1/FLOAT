@@ -170,7 +170,7 @@ def test_crop_and_spot_healing_turn_compare_off_and_grey_it(post):
     v.b_cmp.setChecked(True)
     _key(v, Qt.Key_R)                                                        # R with compare on: compare off
     assert v.b_crop.isChecked() and not v.b_cmp.isChecked() and v.viewer.compare is None
-    assert not v.b_cmp.isEnabled() and "cropping" in v.b_cmp.toolTip()
+    assert not v.b_cmp.isEnabled() and v.b_cmp.toolTip().startswith("Compare (C)") and "cropping" in v.b_cmp.toolTip()
     _key(v, Qt.Key_C)                                                        # greyed: the key does nothing
     assert not v.b_cmp.isChecked()
     v.b_crop.setChecked(False)
@@ -179,7 +179,7 @@ def test_crop_and_spot_healing_turn_compare_off_and_grey_it(post):
     v.b_heal.setChecked(True)
     assert not v.b_cmp.isChecked() and not v.b_cmp.isEnabled() and "healing" in v.b_cmp.toolTip()
     v.b_heal.setChecked(False)
-    assert v.b_cmp.isEnabled() and v.b_cmp.toolTip().startswith("Compare with another version")
+    assert v.b_cmp.isEnabled() and v.b_cmp.toolTip().startswith("Compare (C)") and "Compare with another version" in v.b_cmp.toolTip()
 
 
 def test_compare_is_view_state_only(post):

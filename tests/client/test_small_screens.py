@@ -836,11 +836,12 @@ def _bar_fits(view):
 
 @pytest.mark.parametrize("size, lang", [((1366, 700), "en"), ((1366, 700), "fr"), ((1366, 728), "en"),
                                         ((1280, 720), "fr"), ((1024, 640), "en")])
-def test_posts_tools_go_into_more_rather_than_push_the_sides_out(env, size, lang):
+def test_posts_bar_never_pushes_the_sides_out_and_loses_no_tool(env, size, lang):
     """The night test pass: on a laptop with the layers docked, the bar of tools held the image at 1011 px and pushed
     the layers out of the window, its buttons cut; dragging an edge did the same. #142: at 1366 x 700 New version
     covered the arrow of the version list (the fit was tried before the zoom's text grew): no overlap at any width
-    from the centre's minimum, the crop's Apply and Cancel shown or not."""
+    from the centre's minimum, the crop's Apply and Cancel shown or not. #173: the tools are a column of icons beside
+    the picture, none is ever in a "..." menu, and the centre stops at the least the bar and the column need."""
     appmod.apply_language(lang)
     w = _open(env, size)
     view = _post_view(w)
@@ -850,13 +851,10 @@ def test_posts_tools_go_into_more_rather_than_push_the_sides_out(env, size, lang
     sizes = view.split.sizes()
     assert sum(sizes) <= view.split.width() + 2 * len(sizes) and all(x > 0 for x in sizes)
     assert view.left.geometry().left() >= 0 and view.right.geometry().right() <= view.split.width()
-    assert view.b_more.isVisible() and not view.b_names.isVisible()               # the least used first
+    assert not hasattr(view, "b_more")
+    tools = (view.b_crop, view.b_heal, view.b_cmp, view.b_mask, view.b_grid, view.b_names)
+    assert all(b.isVisible() for b in tools)
     _bar_fits(view)
-    view._fill_more()
-    hidden = [a.text() for a in view.more_menu.actions()]
-    assert view.b_names.text() in hidden and view.b_export.isVisible()
-    a = next(x for x in view.more_menu.actions() if x.text() == view.b_names.text())
-    assert a.isEnabled() == view.b_names.isEnabled()
     for zoom in (0.27, 1.0):                                    # "Zoom 27 %" is wider than "100 %"
         for crop in (True, False):
             view.viewer.zoom_to(zoom)
@@ -865,24 +863,19 @@ def test_posts_tools_go_into_more_rather_than_push_the_sides_out(env, size, lang
     view.b_crop.setChecked(True)                                 # the centre at its narrowest
     view.split.setSizes([post3.LAYERS_MAX, 0, post3.PANEL_MAX])
     _settle(w)
-    assert view.centre.width() == post3.CENTRE_MIN, view.split.sizes()
+    assert view.centre.width() == view.centre.minimumWidth() >= post3.CENTRE_MIN, view.split.sizes()
     _bar_fits(view)
-    view._fill_more()
-    names = [a.text() for a in view.more_menu.actions()]
     assert view.b_crop_ok.isVisible() and view.b_crop_cancel.isVisible() and view.zoom_lab.isVisible()
-    assert all(n for n in names) and (view.b_undo.isVisible() or post3._("Undo") in names)
+    assert all(b.isVisible() for b in tools) and view.b_undo.isVisible() and view.b_redo.isVisible()
     view.b_crop.setChecked(False)
     w.resize(1920, 1080)
     _settle(w)
     view._fit_split()
     _settle(w)
     _bar_fits(view)
-    # a wide window: the layers wider (the laptop's D6), the least used tools (up to three in French) in "…", in order
-    hidden = [b for b in view._overflow() if b.isHidden()]
-    assert len(hidden) <= 3 and hidden == list(view._overflow()[:len(hidden)])
-    # New version keeps its name while no tool is in "…" (it gives it up before a tool goes there, by its icon)
-    assert view.b_crop.isVisible() and view.b_heal.isVisible() and view.b_undo.isVisible()
-    assert bool(view.b_version_new.text()) == (not hidden) and view.b_version_new.toolTip()
+    assert all(b.isVisible() for b in tools)
+    # New version keeps its name while the bar has room (it gives it up, by its icon, before anything else)
+    assert view.b_version_new.toolTip() and (view.b_version_new.text() or view.b_export.text() == "")
 
 
 def test_a_long_version_name_shows_its_start_and_never_pushes_the_bar(env):

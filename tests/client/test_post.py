@@ -2918,7 +2918,7 @@ def test_the_french_switch_translates_every_thing_the_page_and_the_dialog_show(p
     try:
         assert s.settle()
         v = s.view
-        assert v.b_filter.toolTip().startswith("Ajouter") and v.b_cmp.text() == "Comparer" and v.b_maskadd.toolTip().startswith("Ajouter")  # noqa: E501
+        assert v.b_filter.toolTip().startswith("Ajouter") and v.b_cmp.toolTip().startswith("Comparer (C)") and v.b_maskadd.toolTip().startswith("Ajouter")  # noqa: E501
         assert [lb.text() for lb in v.findChildren(QLabel)][:1] != []
         for k in FILTERS:                                                               # every filter's panel
             v.select(full_layer(v)["id"], "layer")
@@ -2939,7 +2939,7 @@ def test_the_french_switch_translates_every_thing_the_page_and_the_dialog_show(p
         v.b_cmp.setChecked(False)
         v.select(full_layer(v)["id"], "mask")
         post_texts = [w.text() for w in widgets_of(v, QPushButton)] + [w.text() for w in widgets_of(v, QLabel)]
-        assert "Voir masque" in [v.b_mask.text()] and any("Ajouter au masque" in t for t in post_texts)
+        assert v.b_mask.toolTip().startswith("Voir masque (M)") and any("Ajouter au masque" in t for t in post_texts)
         for lay in list(v.layers):                                                      # every row, in French
             v.sub_text(lay)
             v.thumb(lay)
@@ -3649,9 +3649,9 @@ def test_every_tool_has_a_named_control(post):
     """#120 to #124: the versions, the crop's confirmation, Spot healing and the filters were found only through a
     "+", a key or the filters' menu; each has a named control now."""
     v = post.view
-    assert v.b_filter.text() == "Filter" and v.b_heal.text() == "Spot healing"
+    assert v.b_filter.text() == "Filter" and v.b_heal.toolTip().startswith("Spot healing")      # (an icon in the tool column)
     # New version: by its name while the bar has room for every tool, else by its icon, its name on hover
-    assert v.b_version_new.text() == "New version" or (v.b_more.isVisible() and v.b_version_new.toolTip().startswith("New version"))
+    assert v.b_version_new.text() == "New version" or v.b_version_new.toolTip().startswith("New version")
     # the crop: Apply and Cancel while it is drawn; Cancel gives back the crop it had
     v.b_crop.setChecked(True)
     assert v.b_crop_ok.isVisibleTo(v) and v.b_crop_cancel.isVisibleTo(v)
@@ -3967,7 +3967,7 @@ def test_the_bar_lets_fit_go_last_and_a_single_choice_list_reads_as_its_text(exp
     """The laptop's D1 and D5: Fit went first on a laptop's window with Before / after on; a list with one choice
     (Before: Suggested, the export's sRGB) opened on that one entry."""
     v = exporting.view
-    assert v._bar_steps()[-1] == ("hide", v.b_fit)
+    assert all(w is not v.b_fit for _kind, w in v._bar_steps())                   # #173: Fit is never taken out of the bar
     assert v.cb_cmp.count() == 1 and v.cb_cmp.property("single") is True
     d = ExportDialog(v)
     try:

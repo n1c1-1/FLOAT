@@ -424,7 +424,7 @@
   "< {t} s on screen": "< {t} s à l'écran",
   "Refining…": "Affinage…",
   "“{a}” and “{b}” are made again at every setting: hide them (eye) while you adjust": "« {a} » et « {b} » recalculent à chaque réglage : masquez-les (œil) le temps du réglage",
-  "Compare with another version: drag the divider; V shows one side whole, then the other (C)": "Comparer avec une autre version : glisser le séparateur ; V montre un côté entier, puis l'autre (C)",
+  "Compare with another version: drag the divider; V shows one side whole, then the other": "Comparer avec une autre version : glisser le séparateur ; V montre un côté entier, puis l'autre",
   "Compared version (left of the divider)": "Version comparée (à gauche du séparateur)",
   "Drag the divider · V: one side whole · Left: “{name}”": "Glisser le séparateur · V : un côté entier · Gauche : « {name} »",
   "Not while cropping: the crop box is drawn on the whole picture": "Pas pendant le recadrage : le cadre se dessine sur toute l'image",

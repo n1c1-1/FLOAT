@@ -79,7 +79,7 @@ from .i18n import _, language, log_detail, maybe, number, plain_error, plural
 from .icons import draw as draw_icon
 from .icons import icon_only, pixmap, set_icon
 from .imageview import ZOOM_PRESETS, ZOOM_STEP
-from .layout import Dock, Sections
+from .layout import STRIP_W, Dock, Sections
 from .model import POST_PART_NAMES
 from .postengine import (
     visible_signature,
@@ -191,7 +191,7 @@ HUE_QSS = (f"QSlider::groove:horizontal {{ height: 8px; border-radius: 4px; back
 REGION_MAX = 12_000_000                                  # pixels of the region rendered at full resolution
 #: the compared item of the Compare list that stands for the suggested settings (the other items are version ids)
 SUGGESTED = "suggested"
-COMPARE_TIP = ("Compare with another version: drag the divider; V shows one side whole, then the other (C)")
+COMPARE_TIP = "Compare with another version: drag the divider; V shows one side whole, then the other"
 _KEEP = object()                                          # (_fill_versions) the compared item as it is
 REGION_WAIT_MS = 150                                     # after the view stops moving
 INDENT = 24                                              # a child row's indent (px)
@@ -693,7 +693,7 @@ def layers_default(window_w: int) -> int:
     on a 1920 px screen cut the names of a Combine layers layer's rows)."""
     return min(LAYERS_MAX, max(LAYERS_W, round(0.18 * window_w)))
 SUB_MAX = 120                                          # a layer row's blend, at most (its name keeps the rest)
-CENTRE_MIN = 480                                       # the image: its tools go into "…" rather than push the sides out
+CENTRE_MIN = 480                                       # the centre's least width, whatever the bar and the tool column need
 VERSION_W = ((120, 200), (95, 120))                    # the version list's least and most width, then narrowed (#146)
 
 
@@ -1065,6 +1065,21 @@ class PostSource:
         return _with_full(_enlarge(a, self.factor(), x0, y0, x1, y1), self.full, x0, y0, x1, y1)
 
 
+CROP_TIP = "Crop the picture: nothing is lost, it can be changed at any time"
+MASK_TIP = "Mask of the selected layer, in gray"
+HEAL_TIP = "Heal spots, dust and satellite trails: click or paint over them (Alt+click: the source by hand)"
+NAMES_TIP = ("The known deep-sky objects of the field (Messier, NGC, IC, Sharpless and their common names), outlined at "
+             "their size. Export… can burn them into the picture.")
+TOOL_BTN = 32                                          # a button of the tool column
+
+
+def tool_tip(name: str, key: str, body: str = "") -> str:
+    """A tool's tip: its name and key, then what it does (the first line is the tool's name, as the image editors'
+    toolbars say it)."""
+    head = _(name) + (f" ({key})" if key else "")
+    return head + NL + _(body) if body else head
+
+
 def _with_full(out: np.ndarray, full, x0: int, y0: int, x1: int, y1: int) -> np.ndarray:
     """``out`` (the canvas pixels x0..x1, y0..y1) with the full-resolution region ``full`` = (box, array) put over it."""
     if full is None:
@@ -1234,32 +1249,19 @@ class PostView(QWidget):
         for z in ZOOM_PRESETS:
             self.zoom_menu.addAction(with_unit(f"{z * 100:g}", "%"), lambda zz=z: self.viewer.zoom_to(zz))
         self.zoom_lab.setMenu(self.zoom_menu)
-        self.b_cmp = QPushButton(_("Compare"))
-        self.b_cmp.setCheckable(True)
-        self.b_cmp.setObjectName("toggle")
-        self.b_cmp.setToolTip(_(COMPARE_TIP))
-        self.b_crop = QPushButton(_("Crop"))
-        self.b_crop.setCheckable(True)
-        self.b_crop.setObjectName("toggle")
-        self.b_crop.setToolTip(_("Crop the picture: nothing is lost, it can be changed at any time (R)"))
-        self.b_mask = QPushButton(_("Show mask"))
-        self.b_mask.setCheckable(True)
-        self.b_mask.setObjectName("toggle")
-        self.b_mask.setToolTip(_("Mask of the selected layer, in gray (M)"))
+        # the tools that act on the picture are a column of icons beside it (_build_tools), as the image editors'
+        # toolbars: their name and key on hover
+        self.b_cmp = self._tool_button("compare", "Compare", "C", COMPARE_TIP)
+        self.b_crop = self._tool_button("crop", "Crop", "R", CROP_TIP)
+        self.b_mask = self._tool_button("mask", "Show mask", "M", MASK_TIP)
         # the annotations of the astrometric solution over the image (and, if wanted, burned into an export)
         self.ann_show = {"grid": False, "objects": False}
         self._ann = None                                 # annotate.Annotations of the canvas shown
         self._ann_key = None
         self._ann_token = None
         self._canvas = None                              # the last result's canvas (size and origin on the grid)
-        self.b_grid = QPushButton(_("Sky grid"))
-        self.b_grid.setToolTip(_("The RA / Dec grid of the astrometric solution"))
-        self.b_names = QPushButton(_("Object names"))
-        self.b_names.setToolTip(_("The known deep-sky objects of the field (Messier, NGC, IC, Sharpless and their "
-                                  "common names), outlined at their size. Export… can burn them into the picture."))
-        for b in (self.b_grid, self.b_names):
-            b.setCheckable(True)
-            b.setObjectName("toggle")
+        self.b_grid = self._tool_button("grid", "Sky grid", "", "The RA / Dec grid of the astrometric solution")
+        self.b_names = self._tool_button("tag", "Object names", "", NAMES_TIP)
         self.b_undo = icon_only(QPushButton(), "undo", _("Undo (Ctrl+Z)"), 16)
         self.b_redo = icon_only(QPushButton(), "redo", _("Redo (Ctrl+Y)"), 16)
         for b in (self.b_undo, self.b_redo):
@@ -1307,12 +1309,6 @@ class PostView(QWidget):
         self.cb_cmp.currentIndexChanged.connect(self._compared_changed)
         bar.addWidget(self.cb_cmp)
         self._fill_versions()
-        # a narrow centre (a laptop, Windows' scale at 125 or 150 %): the tools least used go into "…" one by one,
-        # rather than the bar pushing the sides out of the window (the night test pass)
-        self.b_more = icon_only(QPushButton(), "more", _("More tools"), 16)     # as the bar's other buttons
-        self.more_menu = QMenu(self.b_more)
-        self.b_more.clicked.connect(self._show_more)
-        self.b_more.setVisible(False)
         # the crop is confirmed or given up with named buttons, shown while it is drawn (#121), as the reference
         # editors' options bar; Spot healing is a tool of the bar (#122: it was found only in the filters' menu)
         self.b_crop_ok = set_icon(QPushButton(_("Apply")), "ok", 16, tip=_("Keep this crop (Enter)"))
@@ -1321,13 +1317,8 @@ class PostView(QWidget):
         self.b_crop_cancel.setToolTip(_("Leave the crop as it was (Esc)"))
         for b in (self.b_crop_ok, self.b_crop_cancel):
             b.setVisible(False)
-        self.b_heal = QPushButton(_("Spot healing"))
-        self.b_heal.setCheckable(True)
-        self.b_heal.setObjectName("toggle")
-        self.b_heal.setToolTip(_("Heal spots, dust and satellite trails: click or paint over them (Alt+click: the "
-                                 "source by hand)"))
-        for w in (self.b_crop, self.b_crop_ok, self.b_crop_cancel, self.b_heal, self.b_grid, self.b_names, self.b_cmp,
-                  self.b_mask, self.b_more, self.b_undo, self.b_redo, self.b_export):
+        self.b_heal = self._tool_button("heal", "Spot healing", "", HEAL_TIP)
+        for w in (self.b_crop_ok, self.b_crop_cancel, self.b_undo, self.b_redo, self.b_export):
             bar.addWidget(w)
         mv.addLayout(bar)
         mid.setMinimumWidth(CENTRE_MIN)
@@ -1354,33 +1345,63 @@ class PostView(QWidget):
         sl.addWidget(self.stale_run)
         self.stale.hide()
         mv.addWidget(self.stale)
-        mv.addWidget(self.viewer, 1)
+        row = QHBoxLayout()                              # the picture, the tool column at its right edge
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+        row.addWidget(self.viewer, 1)
+        row.addWidget(self._build_tools())
+        mv.addLayout(row, 1)
         # one line, cut with "…" when the window is narrow and whole on hover (the laptop's D3: cut at 1250 px)
         self.hint = ElidedLabel("", "small", Qt.ElideRight)
         self.hint.setContentsMargins(10, 3, 10, 5)
         mv.addWidget(self.hint)
         return mid
 
-    def _overflow(self) -> tuple:
-        """The tools that go into "…" when the bar has no room, the first to go first."""
-        return (self.b_names, self.b_grid, self.b_mask, self.b_cmp, self.b_heal, self.b_crop, self.b_undo, self.b_redo,
-                self.b_version_del, self.b_version_new)
+    @staticmethod
+    def _tool_button(role: str, name: str, key: str, body: str) -> QPushButton:
+        """An icon-only checkable button of the tool column: its tip says its name, its key and what it does."""
+        b = icon_only(QPushButton(), role, tool_tip(name, key, body), 16)
+        b.setCheckable(True)
+        b.setObjectName("toggle")
+        b.setFixedSize(TOOL_BTN, TOOL_BTN)
+        b.setStyleSheet("QPushButton { padding: 0; }")
+        b.setProperty("toolName", name)
+        return b
+
+    def _build_tools(self) -> QWidget:
+        """The tools that act on the picture, one column of icons at the right edge of the image (as the image editors'
+        toolbars, a name and a key on hover): Crop, Spot healing | Compare | Show mask, Sky grid, Object names. The bar
+        above keeps the view and the options of the tool at work."""
+        col = QFrame()
+        col.setObjectName("toolcol")
+        col.setFixedWidth(STRIP_W)
+        col.setStyleSheet("QFrame#toolcol { background: #1c1f26; border-left: 1px solid #2a2f38; }")
+        v = QVBoxLayout(col)
+        v.setContentsMargins(4, 8, 4, 8)
+        v.setSpacing(4)
+        first = True
+        for group in ((self.b_crop, self.b_heal), (self.b_cmp,), (self.b_mask, self.b_grid, self.b_names)):
+            if not first:
+                line = QFrame()
+                line.setFixedHeight(1)
+                line.setStyleSheet("background: #2a2f38; border: none;")
+                v.addSpacing(2)
+                v.addWidget(line)
+                v.addSpacing(2)
+            first = False
+            for b in group:
+                v.addWidget(b, 0, Qt.AlignHCenter)
+        v.addStretch(1)
+        self.tools = col
+        return col
 
     def _bar_steps(self) -> tuple:
         """The bar narrowed one step at a time when the centre has no room (a laptop, Windows' scale at 125 or 150 %),
-        the least used first. Export and New version give up their text before any tool goes into "…" (their icon
-        alone, their name on hover: in French the bar is about 113 px wider, and Spot healing went into "…" where the
-        English bar still showed it); then the view's aids go into "…", the word "Version", a narrower list, 100 % (the
-        zoom's menu has it); the tools one works with, Spot healing and Crop, only then; the bin and New
-        version into "…", Redo and Undo (the Edit menu has them too), Fit the last (the laptop's D1: the most used, it
-        went first with Before / after on a laptop's window): at the centre's narrowest, the crop's
-        Apply and Cancel shown, the bar still fits (#142). The names stay in the tooltips and in "…"."""
-        return (("icon", self.b_export), ("icon", self.b_version_new),
-                ("hide", self.b_names), ("hide", self.b_grid), ("hide", self.b_mask), ("hide", self.b_cmp),
-                ("hide", self.version_lab), ("narrow", self.cb_version), ("hide", self.b_100),
-                ("hide", self.b_heal), ("hide", self.b_crop),
-                ("hide", self.b_version_del), ("hide", self.b_version_new), ("hide", self.b_redo), ("hide", self.b_undo),
-                ("hide", self.b_fit))
+        losing nothing: Export and New version give up their text for their icon (their name on hover), the word
+        "Version" goes, the list narrows, 100 % goes (the zoom's menu has it). No tool is ever hidden: the tools are
+        in their column, and the centre never gets narrower than the bar needs (``_centre_min``)."""
+        return (("icon", self.b_export), ("icon", self.b_version_new), ("hide", self.version_lab),
+                ("narrow", self.cb_version), ("hide", self.b_100))
 
     def _bar_texts(self) -> dict:
         """The buttons of the bar that go to their icon, and their name."""
@@ -1403,15 +1424,14 @@ class PostView(QWidget):
             probe.hide()
         return self._item_width(probe)
 
-    def _bar_need(self, k: int) -> int:
+    def _bar_need(self, k: int, shown: tuple = ()) -> int:
         """The bar's width with the first ``k`` steps of ``_bar_steps`` taken, as its layout works it out (its widgets'
-        widths, its spacings, its margins), the bar left as it is."""
+        widths, its spacings, its margins), the bar left as it is; ``shown``: widgets counted as shown that are not now."""
         steps = self._bar_steps()
         hidden = [w for kind, w in steps[:k] if kind == "hide"]
         icons = [w for kind, w in steps[:k] if kind == "icon"]
         narrow = [w for kind, w in steps[:k] if kind == "narrow"]
         steered = [w for _kind, w in steps]
-        more = any(b in hidden for b in self._overflow())
         texts = self._bar_texts()
         bar = self.top_bar
         m = bar.contentsMargins()
@@ -1422,7 +1442,7 @@ class PostView(QWidget):
             if w is None:                                # the space after the zoom, the stretch
                 total += item.sizeHint().width()
                 continue
-            if not (w not in hidden if w in steered else more if w is self.b_more else not w.isHidden()):
+            if not (w not in hidden if w in steered else (w in shown or not w.isHidden())):
                 continue
             n += 1
             if w in texts:
@@ -1433,21 +1453,31 @@ class PostView(QWidget):
                 total += self._item_width(w)
         return total + max(bar.spacing(), 0) * max(n - 1, 0)
 
+    def _centre_min(self) -> int:
+        """The centre's least width: the bar at its narrowest, with what only some moments add to it (Compare's list, the
+        crop's Apply and Cancel: never together), and the tool column. The splitter never squeezes the bar below it."""
+        k = len(self._bar_steps())
+        need = max(self._bar_need(k), self._bar_need(k, (self.cb_cmp,)),
+                   self._bar_need(k, (self.b_crop_ok, self.b_crop_cancel)))
+        return max(CENTRE_MIN, need + STRIP_W)
+
     def _fit_bar(self):
-        """As many tools in the bar as the centre has room for, the others in "…": the bar's width worked out for each
-        step, without trying them on the bar, and the first that fits taken (#142: tried on the bar, a width that grew
-        afterwards, the zoom's "Zoom 27 %" or the list's longer name, was not seen: New version covered the list)."""
+        """The bar as wide as the centre allows, losing nothing: its width worked out for each step, without trying
+        them on the bar, and the first that fits taken (#142: tried on the bar, a width that grew afterwards, the zoom's
+        "Zoom 27 %" or the list's longer name, was not seen: New version covered the list)."""
         if not hasattr(self, "centre"):
             return
         steps = self._bar_steps()
+        least = self._centre_min()
+        if self.centre.minimumWidth() != least:
+            self.centre.setMinimumWidth(least)
         room = self.centre.width()
         k = next((k for k in range(len(steps) + 1) if self._bar_need(k) <= room), len(steps))
         hidden = [w for kind, w in steps[:k] if kind == "hide"]
         icons = [w for kind, w in steps[:k] if kind == "icon"]
-        more = any(b in hidden for b in self._overflow())
         # only what changes is set: an unchanged bar asks nothing of the layout (this runs at each of its requests)
-        for w in [w for _kind, w in steps] + [self.b_more]:
-            show = more if w is self.b_more else w not in hidden
+        for w in [w for _kind, w in steps]:
+            show = w not in hidden
             if w.isHidden() == show:
                 w.setVisible(show)
         for b, text in self._bar_texts().items():
@@ -1459,27 +1489,6 @@ class PostView(QWidget):
         if (self.cb_version.minimumWidth(), self.cb_version.maximumWidth()) != (lo, hi):
             self.cb_version.setMinimumWidth(lo)
             self.cb_version.setMaximumWidth(hi)
-
-    def _show_more(self):
-        self._fill_more()
-        self.more_menu.exec(self.b_more.mapToGlobal(self.b_more.rect().bottomLeft()))
-
-    def _fill_more(self):
-        """The "…" menu: the tools the bar has no room for, as their buttons (checked, greyed, their tip)."""
-        self.more_menu.clear()
-        self._undo_tips()
-        names ={self.b_undo: _("Undo"), self.b_redo: _("Redo"), self.b_version_del: _("Delete this version"),
-                 self.b_version_new: _("New version")}                   # (shown by their icons in the bar)
-        for b in reversed(self._overflow()):
-            if not b.isHidden():
-                continue
-            a = self.more_menu.addAction(names.get(b) or b.text())
-            a.setCheckable(b.isCheckable())
-            a.setChecked(b.isChecked())
-            a.setEnabled(b.isEnabled())
-            a.setToolTip(b.toolTip())
-            a.triggered.connect(lambda _c=False, bb=b: bb.click())
-        self.more_menu.setToolTipsVisible(True)
 
     def eventFilter(self, obj, e):                                   # noqa: N802 - Qt's name
         if (obj is getattr(self, "_list_holder", None) and e.type() == QEvent.MouseButtonPress
@@ -2588,7 +2597,7 @@ class PostView(QWidget):
             if why:
                 if not b.property("why"):
                     b.setProperty("tip", b.toolTip())         # its own tip, back once there is a solution
-                b.setToolTip(why)
+                b.setToolTip(tool_tip(b.property("toolName"), "", why))
                 if b.isChecked():
                     self.set_annotations(**{k: False})
             elif b.property("why"):
@@ -2619,8 +2628,7 @@ class PostView(QWidget):
         self._ann = result
         why = getattr(result, "why", "")
         n = len(getattr(result, "objects", None) or [])
-        self.b_names.setToolTip(_("The known deep-sky objects of the field (Messier, NGC, IC, Sharpless and their "
-                                  "common names), outlined at their size. Export… can burn them into the picture.")
+        self.b_names.setToolTip(tool_tip("Object names", "", NAMES_TIP)
                                 + (NL + plural(n, "{n} named object", "{n} named objects") if n else "")
                                 + (NL + _(why) if why else ""))
         self.viewer.update()
@@ -5239,9 +5247,9 @@ class PostView(QWidget):
         if (crop or heal) and self.b_cmp.isChecked():
             self.b_cmp.setChecked(False)
         self.b_cmp.setEnabled(not (crop or heal))
-        self.b_cmp.setToolTip(_("Not while cropping: the crop box is drawn on the whole picture") if crop else
-                              _("Not while healing spots: the strokes act on the version shown") if heal else
-                              _(COMPARE_TIP))
+        self.b_cmp.setToolTip(tool_tip("Compare", "C", "Not while cropping: the crop box is drawn on the whole picture"
+                                       if crop else "Not while healing spots: the strokes act on the version shown"
+                                       if heal else COMPARE_TIP))
 
     def _toggle_compare(self):
         if self.b_cmp.isEnabled():
@@ -5256,8 +5264,7 @@ class PostView(QWidget):
         lay = self.mask_owner()
         has = lay is not None and lay.get("mask") is not None
         self.b_mask.setEnabled(has)
-        self.b_mask.setToolTip(_("Mask of the selected layer, in gray (M)") if has else
-                               _("The selected layer has no mask"))
+        self.b_mask.setToolTip(tool_tip("Show mask", "M", MASK_TIP if has else "The selected layer has no mask"))
         if not has and self.b_mask.isChecked():
             self.b_mask.setChecked(False)
 
