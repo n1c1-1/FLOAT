@@ -221,7 +221,8 @@ _METRIC_ROWS: list[tuple] = [
     ("mosaic_peaks", "Colour mosaic pattern", "", "d",
      "Peaks of the colour mosaic's periodic pattern taken off the output image."),
     ("grid_peaks", "Network grid", "", "d",
-     "Peaks of the star-removal network's own grid taken off the starless image."),
+     "Peaks of the star-removal network's own grid taken off the starless image, counted in each window of the image "
+     "and each colour."),
     ("camera_white_balance", "Camera white balance", "", ".3f",
      "Multipliers of red, green and blue from the camera's daylight white balance, applied to the stack."),
     ("drizzle_excluded_pct", "Drops left out", "%", ".3f",

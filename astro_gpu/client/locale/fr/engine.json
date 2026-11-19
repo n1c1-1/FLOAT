@@ -465,7 +465,7 @@
  "Colour mosaic pattern": "Motif de la mosaïque de couleurs",
  "Peaks of the colour mosaic's periodic pattern taken off the output image.": "Pics du motif périodique de la mosaïque de couleurs retirés de l'image de sortie.",
  "Network grid": "Grille du réseau",
- "Peaks of the star-removal network's own grid taken off the starless image.": "Pics de la grille propre au réseau de retrait des étoiles retirés de l'image sans étoiles.",
+ "Peaks of the star-removal network's own grid taken off the starless image, counted in each window of the image and each colour.": "Pics de la grille propre au réseau de retrait des étoiles retirés de l'image sans étoiles, comptés dans chaque fenêtre de l'image et chaque couleur.",
  "A network trained on our stacks takes the stars off the Output block's image: the starless image and the stars alone, two images that Post combines (the Combine layers block) or takes as they are.": "Un réseau entraîné sur nos empilements retire les étoiles de l'image du bloc Sortie : l'image sans étoiles et les étoiles seules, deux images que Post combine (le bloc Combiner calques) ou prend telles quelles.",
  "Calibration cut": "Calibration désactivée",
  "The frames were taken as they are, without calibration frames.": "Les brutes ont été prises telles quelles, sans images de calibration.",

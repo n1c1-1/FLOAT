@@ -99,8 +99,9 @@ class StarRemoval(Stage):
         #                                  4: a starless fusion's stretch (gone with the fusion's star layer, 2026-11-12)
         #                                  5: star halos taken off (2026-11-17); 6: that removal withdrawn (tuned on
         #                                  two test images), the network's result as in 4 again; 7: an image from a
-        #                                  file measured in a stack's noise unit (#174; a stack's result unchanged)
-        return f"7-{model_id()}"         # with the network's file as it is now (model_id)
+        #                                  file measured in a stack's noise unit (#174; a stack's result unchanged);
+        #                                  8: the network's grid notched window by window (#174)
+        return f"8-{model_id()}"         # with the network's file as it is now (model_id)
 
     def run(self, ctx: Context, p: StarRemovalParams) -> None:
         from .denoise import single_image
@@ -129,13 +130,14 @@ class StarRemoval(Stage):
                                                                                     lin[1, ::97, ::97]):
             starless = np.repeat(starless.mean(0, keepdims=True), 3, axis=0)   # a monochrome image stays grey (#43)
         starless[:, ~valid] = lin[:, ~valid]
-        # the network's own grid (its checkerboard, at the multiples of 1/16 px^-1) notched where it stands out
-        from ..core.periodic import lattice_frequencies, remove_periodic
-        starless, taken = remove_periodic(starless, lattice_frequencies(16), valid)
-        ctx.metric("grid_peaks", len(taken))
+        # the network's own grid (its checkerboard, at the multiples of 1/16 px^-1) notched where it stands out, window
+        # by window: its strength follows the image's (#174: strong on M27's core, none on the sky around it)
+        from ..core.periodic import lattice_frequencies, remove_periodic_local
+        ctx.progress(0.86, "the network's grid")
+        starless, taken = remove_periodic_local(starless, lattice_frequencies(16), valid)
+        ctx.metric("grid_peaks", taken)
         if taken:
-            ctx.log(f"the network's grid: {len(taken)} peaks notched (strongest {max(t[3] for t in taken):.0f} x the "
-                    "spectrum around)")
+            ctx.log(f"the network's grid: {taken} notches placed in the image's windows")
         stars = lin - starless
         ctx.progress(0.9, "statistics")
         ctx.save("starless.npy", starless)

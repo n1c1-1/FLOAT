@@ -98,3 +98,84 @@ def remove_periodic(img: np.ndarray, freqs: list[tuple[float, float]], valid: np
             a[~ok] = img[k][~ok]
         out[k] = a
     return out, taken
+
+
+#: the windows of ``remove_periodic_local``: a side (a multiple of every lattice period it is used for, so that the
+#: lattice's frequencies fall on its bins) and how many of them are transformed at once
+LOCAL_TILE, LOCAL_BATCH = 256, 64
+
+
+def remove_periodic_local(img: np.ndarray, freqs: list[tuple[float, float]], valid: np.ndarray | None = None,
+                          tile: int = LOCAL_TILE) -> tuple[np.ndarray, int]:
+    """``img`` (c, h, w) with its peaks at ``freqs`` notched window by window: for a pattern whose strength follows the
+    image, strong on a bright object and absent from the sky around it (the star-removal network's grid, issue #174).
+    Over the whole image such a pattern is a faint, spread peak, under MIN_RATIO, and a notch there takes it off the
+    sky too, where it is not. Here each window has its own spectrum, its own peaks and its own notches: the windowed
+    Gaussian notch filter for quasi-periodic noise (I. Aizenberg, C. Butakoff, "A windowed Gaussian notch filter for
+    quasi-periodic noise removal", Image and Vision Computing 26 (2008) 1347-1353), in a short-time Fourier transform
+    rebuilt by overlap-add (J. B. Allen, "Short term spectral analysis, synthesis, and modification by discrete Fourier
+    transform", IEEE Trans. ASSP 25 (1977) 235-238): windows of ``tile`` px every half ``tile``, a sine window on the
+    way in and on the way out, whose squares add up to 1: without a notch the image comes back as it was.
+
+    The notch and the spectrum around a peak follow the window's resolution, as NOTCH_WIDTH and RING do the whole
+    image's: a line seen through the sine window spreads over its main lobe, 1.5 bins on each side, which the notch's
+    sigma and the peak's measure cover, and the ring starts past it (3 to 8 bins). A peak is notched when it stands
+    MIN_RATIO times above that ring. Returns the image and the number of notches placed (windows x channels x
+    frequencies)."""
+    from scipy import fft
+    c, h, w = img.shape
+    T, step = tile, tile // 2
+    win = np.sin(np.pi * (np.arange(T) + 0.5) / T).astype(np.float32)
+    W2 = np.outer(win, win)
+    ok = np.ones((h, w), bool) if valid is None else np.asarray(valid, bool)
+    fy = fft.fftfreq(T)[:, None] * T                                  # in bins
+    fx = fft.rfftfreq(T)[None, :] * T
+    lobe, ring = 1.5, (3.0, 8.0)
+    points = []                                                       # (iy, ix, notch) once per point of the half plane
+    seen: set[tuple[int, int]] = set()
+    for gx, gy in freqs:
+        sx, sy = (gx, gy) if gx >= 0 else (-gx, -gy)
+        iy, ix = int(round(sy * T)) % T, int(round(sx * T))
+        if ix > T // 2 or (iy, ix) in seen:
+            continue
+        seen.add((iy, ix))
+        dy = (fy - iy + T / 2) % T - T / 2
+        g = np.exp(-0.5 * (dy ** 2 + (fx - ix) ** 2) / lobe ** 2)
+        rr = np.hypot(dy, fx - ix)
+        points.append((iy, ix, (1.0 - g).astype(np.float32), rr <= lobe, (rr >= ring[0]) & (rr <= ring[1])))
+    ys = list(range(-step, h, step))
+    xs = list(range(-step, w, step))
+    pos = [(y, x) for y in ys for x in xs]
+    pad = ((T, T), (T, T))
+    okp = np.pad(ok, pad, mode="constant", constant_values=False)
+    out = np.zeros((c, h + 2 * T, w + 2 * T), np.float32)
+    count = 0
+    for k in range(c):
+        a = np.pad(img[k].astype(np.float32), pad, mode="reflect")
+        for j in range(0, len(pos), LOCAL_BATCH):
+            part = pos[j:j + LOCAL_BATCH]
+            t = np.stack([a[y + T:y + 2 * T, x + T:x + 2 * T] for y, x in part])
+            m = np.stack([okp[y + T:y + 2 * T, x + T:x + 2 * T] for y, x in part])
+            n = m.sum((1, 2))
+            med = np.array([np.median(ti[mi]) if ni else 0.0 for ti, mi, ni in zip(t, m, n)], np.float32)[:, None, None]
+            hi = np.array([np.percentile(ti[mi], 99) if ni else 0.0 for ti, mi, ni in zip(t, m, n)],
+                          np.float32)[:, None, None]
+            t = np.where(m, t, med) - med                             # the uncovered pixels at the window's median
+            P = np.abs(fft.rfft2(np.minimum(t, hi - med) * W2, workers=-1)) ** 2    # the stars clipped
+            notch = np.ones(P.shape, np.float32)
+            for iy, ix, g, core, around in points:
+                peak = P[:, core].mean(1)
+                ratio = peak / np.maximum(np.median(P[:, around], 1), 1e-30)
+                hit = (ratio >= MIN_RATIO) & (n > 0)
+                notch[hit] *= g
+                count += int(hit.sum())
+            if (notch < 1.0).any():
+                t = fft.irfft2(fft.rfft2(t * W2, workers=-1) * notch, s=(T, T), workers=-1).astype(np.float32)
+            else:
+                t = t * W2
+            t = (t + med * W2) * W2
+            for (y, x), ti in zip(part, t):
+                out[k, y + T:y + 2 * T, x + T:x + 2 * T] += ti
+    res = out[:, T:T + h, T:T + w]
+    res[:, ~ok] = img[:, ~ok]
+    return res, count

@@ -643,16 +643,16 @@ def test_a_star_network_put_in_place_while_the_application_runs_is_in_the_next_p
 
     def planned():
         return [j.key for j in api.plan_workflows(p, [3]).jobs if j.stage == "star_removal"]
-    assert version() == "7-missing"
+    assert version() == "8-missing"
     without = api.stage_key(p, 3, "star_removal")
     assert planned() == [without] and api._keys(p).key_parts(3, "star_removal")["v"] == sr.StarRemoval.key_label
     net.parent.mkdir()
     net.write_bytes(b"a network")                                          # put in place, the application still running
-    assert version() == "7-" + hashlib.sha256(b"a network").hexdigest()[:10]       # what a new process reads
+    assert version() == "8-" + hashlib.sha256(b"a network").hexdigest()[:10]       # what a new process reads
     assert api.stage_key(p, 3, "star_removal") == without and planned() == [without]        # the key does not move
     assert api.stage_key(p, 3, "render_simple") == api.stage_key(p, 2, "render_simple")
     net.write_bytes(b"another network, longer")                            # replaced: read again
-    assert version() == "7-" + hashlib.sha256(b"another network, longer").hexdigest()[:10]
+    assert version() == "8-" + hashlib.sha256(b"another network, longer").hexdigest()[:10]
     what_if = api.with_change(p, 3, {"kind": "param", "stage": "stack", "name": "kappa", "value": 8})
     assert what_if.id == 3 and p.workflow(3).params == {} and api.stage_key(p, what_if, "stack") != \
         api.stage_key(p, 3, "stack")
