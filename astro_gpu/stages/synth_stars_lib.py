@@ -268,8 +268,18 @@ def reaches(shape: np.ndarray, flux: np.ndarray, floor: float) -> np.ndarray:
     return np.clip(last, 4, R)
 
 
+def filled_under(light: np.ndarray, m: np.ndarray, F: np.ndarray, size: float) -> np.ndarray:
+    """``light`` (3, H, W) with what is under the footprints ``F`` (0..1) filled from round them: the normalised Gaussian
+    mean, at the scale of the stars, of the light outside the footprints, only where ``m`` (the object's coverage) is."""
+    W_ = 1 - F
+    k = 3.0 * size
+    den = np.maximum(cv2.GaussianBlur(m * W_, (0, 0), k), 1e-6)
+    fill = np.stack([np.clip(cv2.GaussianBlur(light[c] * W_, (0, 0), k) / den, 0, None) * m for c in range(3)])
+    return light * (1 - F) + fill * F
+
+
 def carried(s: np.ndarray, out: np.ndarray, ys, xs, peaks, star, shape, floor: float, size: float,
-            starless: np.ndarray | None = None) -> tuple[np.ndarray, int, int]:
+            starless: np.ndarray | None = None, real: np.ndarray | None = None) -> tuple[np.ndarray, int, int]:
     """The light of the stars layer that is not a star's, to go on with the starless image unchanged: what is left
     of ``s`` (the stars layer) where ``out`` (the synthetic layer) does not hold it, round the candidates that are not
     stars. A candidate lying inside the footprint of a brighter star (``reaches``: the radius its own shape has at its
@@ -306,6 +316,19 @@ def carried(s: np.ndarray, out: np.ndarray, ys, xs, peaks, star, shape, floor: f
         neb = cv2.GaussianBlur((sm > sky + DETECT_SIGMAS * noise).astype(np.float32), (0, 0), max(1.0, size)).clip(0, 1)
         m = np.maximum(m, neb)
     light = np.clip(s - out, 0, None) * m
+    if starless is not None and st.size:
+        # under each drawn star the residual is cut to nothing (the drawing holds the star's light and a little more): a
+        # hole in the object's light that a star setting taking the star away or shrinking it would show as a dark
+        # disc. The light under the star is filled from round it (a normalised Gaussian mean of what is carried
+        # outside the stars' footprints), where the object has light and the real stars do not hold it.
+        foot = np.zeros((H, W), np.uint8)
+        r3 = int(math.ceil(3.0 * size))
+        for y, x in zip(ys[st].tolist(), xs[st].tolist()):
+            cv2.circle(foot, (x, y), r3, 1, -1)
+        F = cv2.GaussianBlur(foot.astype(np.float32), (0, 0), 1.0).clip(0, 1)
+        if real is not None:
+            F = F * (1 - real)
+        light = filled_under(light, m, F, size)
     return light.astype(np.float32), int(free.size), int(inside.sum())
 
 
@@ -354,11 +377,15 @@ def measured_shape(L: np.ndarray, ys, xs, peaks, R: int = R_MEASURED, centre_sha
 
 
 def flux_of(s: np.ndarray, y: int, x: int, r: int) -> np.ndarray:
-    """The star's light per colour in an aperture of radius ~r, its sky taken on the stamp's edge."""
+    """The star's light per colour in an aperture of radius 0.85 r, its sky the median of the ring round it (standard
+    aperture photometry: a neighbour in the ring does not move a median, as it moved the sky taken on two edges of
+    the stamp, which then cut one colour's light to nothing and gave the star a wrong colour)."""
     st = s[:, y - r:y + r + 1, x - r:x + r + 1]
-    bg = np.median(np.c_[st[:, 0], st[:, -1]], axis=1)[:, None, None]
     yy, xx = np.mgrid[-r:r + 1, -r:r + 1]
-    return np.maximum(((st - bg) * (np.hypot(yy, xx) < r * 0.85)).sum((1, 2)), 0)
+    rho = np.hypot(yy, xx)
+    ring = (rho >= r * 0.85) & (rho <= r)
+    bg = np.median(st[:, ring], axis=1)[:, None, None]
+    return np.maximum(((st - bg) * (rho < r * 0.85)).sum((1, 2)), 0)
 
 
 def saturated_fluxes(ys, xs, sat_mask, fluxes, gaia, reach: float = 4.0) -> tuple[np.ndarray, int]:
@@ -440,7 +467,7 @@ def from_the_image(s: np.ndarray, valid: np.ndarray, starless: np.ndarray | None
     out = drawn * (1 - mask) + s * mask
     light, n_carried, n_with = carried(s, out, np.r_[ys, rys], np.r_[xs, rxs], np.r_[peaks, rpk],
                                        np.r_[np.ones(len(ys), bool), np.zeros(len(rys), bool)], shape, T * 0.05, size,
-                                       None if starless is None else starless.mean(0))
+                                       None if starless is None else starless.mean(0), mask)
     return out, {"stars_drawn": int(k.sum()), "stars_kept": int(real.sum()), "stars_carried": n_carried,
                  "stars_with_their_star": n_with, **why, "carried": light}
 

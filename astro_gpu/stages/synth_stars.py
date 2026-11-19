@@ -64,7 +64,10 @@ class SynthStars(Stage):
     # synthetic layer adds it to the drawn stars unchanged, no star setting acts on it; no grey discs beside bright
     # stars (their beads go with them), no lumps in the stars, no light lost. 3: the candidates are vetted (width,
     # roundness, sharpness against the field's stars; height above the starless image's local noise)
-    version = "5"
+    # 6: the star's sky is the median of the ring round its aperture (a neighbour on two edges of the stamp cut a colour
+    # to nothing: cyan spots) and the carried light is filled under the drawn stars (no dark disc when a star setting
+    # takes the star away)
+    version = "6"
     key_label = "2"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
     def run(self, ctx: Context, p: SynthStarsParams) -> None:

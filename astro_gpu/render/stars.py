@@ -129,17 +129,14 @@ class StarsRenderEngine(SimpleRenderEngine):
             return self._finish(y, f, reg, box, region, {"stretch": "auto", "linked": linked, "part": part})
 
     def _carried(self, s: StarSettings, f: int, box) -> torch.Tensor:
-        """What the light of the stars layer that is not a star's (the Synthetic stars block's ``carried`` image) adds to
-        the drawn stars once stretched: the stretch of the two together less that of the drawn stars alone, both with
-        the suggested star settings, never the user's: that light is not a star, the star sliders leave it as it is
-        (where the real stars hold it, they stretch it with themselves). Black when the block carried none."""
-        x = self._layer("stars", f, box)
+        """The light of the stars layer that is not a star's (the Synthetic stars block's ``carried`` image) stretched on
+        its own, with the suggested star settings and never the user's: that light is not a star, the star sliders
+        (size, small stars, strength, colour) leave it as it is. On its own, not as the difference the stretch of the
+        drawn stars and of both makes: that difference dips under every drawn star, and a slider that shrinks or
+        removes the stars would leave the dips as dark discs. Black when the block carried none."""
         if "carried" not in self._host:
-            return torch.zeros_like(self.star_tone(x, s, f))
-        keep = {k: getattr(s, k) for k in ("sky",)}
-        plain = StarSettings(**keep)
-        both = self.star_tone(x + self._layer("carried", f, box), plain, f)
-        return (both - self.star_tone(x, plain, f)).clamp_min(0)
+            return torch.zeros_like(self._layer("stars", f, box))
+        return self.star_tone(self._layer("carried", f, box), StarSettings(sky=s.sky), f)
 
     @torch.no_grad()
     def linear_stars(self, scale: float = 1.0, region=None) -> Layers:

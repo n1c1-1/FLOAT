@@ -222,3 +222,31 @@ def test_the_light_that_is_not_a_star_goes_on_with_the_starless_image_unchanged(
     assert abs(light[on].mean() / blob[h - 8:h + 9, h - 8:h + 9].mean() - 1) < 0.1   # the blob's light, unchanged
     assert light[:, :60, :60].max() < 5                                # nothing carried round the stars
     assert drawn[on].max() < 5                                         # and none of it drawn as a star
+
+
+def test_the_light_carried_has_no_hole_under_a_drawn_star():
+    """What is carried is filled under a drawn star from round it, so that a star setting that takes the star away or
+    shrinks it does not leave a dark disc in the object's light."""
+    H = W = 120
+    light = np.full((3, H, W), 100.0, np.float32)
+    foot = np.zeros((H, W), np.float32)
+    yy, xx = np.mgrid[:H, :W]
+    foot[np.hypot(yy - 60, xx - 60) < 7] = 1.0                         # under the star the residual was cut to nothing
+    light[:, foot > 0] = 0.0
+    m = np.ones((H, W), np.float32)
+    out = lib.filled_under(light, m, foot, 2.0)
+    assert abs(out[:, 60, 60].mean() / 100 - 1) < 0.05                 # filled from round it
+    assert np.array_equal(out[:, :20, :20], light[:, :20, :20])        # nothing changes away from the star
+    assert lib.filled_under(light, m * 0, foot, 2.0)[:, 60, 60].max() == 0.0   # and none where the object has no light
+
+
+def test_a_neighbour_beside_a_star_does_not_change_the_colour_measured():
+    """The sky of a star's aperture is the median of the ring round it: a neighbour on the stamp's edge rows, which set it
+    too high in one colour and cut that colour's light to nothing, gives the star a wrong colour (cyan spots)."""
+    H = W = 80
+    yy, xx = np.mgrid[:H, :W]
+    g = lambda y, x: np.exp(-((yy - y) ** 2 + (xx - x) ** 2) / (2 * 1.6 ** 2)).astype(np.float32)
+    colour = np.array([1.2, 1.0, 0.8], np.float32)[:, None, None]
+    s = 1000 * g(40, 40) * colour + 3000 * g(40 - 7, 40 + 2) * np.array([1.0, 1.0, 1.0], np.float32)[:, None, None]
+    fl = lib.flux_of(s, 40, 40, 7)
+    assert fl.min() > 0 and abs(fl[0] / fl[1] - 1.2) < 0.2 and abs(fl[2] / fl[1] - 0.8) < 0.2
