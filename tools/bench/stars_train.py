@@ -59,7 +59,7 @@ sys.path.insert(0, str(ROOT / "tools" / "bench"))
 from astro_gpu.stages.star_removal import MODEL, NAFNet, apply, fwd, inv  # noqa: E402
 
 DS = Path("F:/astro_essais/stars_dataset_v2")
-REVIEW = Path("F:/astro_essais/stars_dataset/_revue")
+REVIEW = Path("F:/astro_essais/stars_dataset/livraison/deja_traites")   # the review TIFFs (the owner's retouches), stretch.json beside
 TRAIN = Path("F:/astro_essais/stars_train")
 COMPARE = Path("F:/astro_essais/stars_compare")
 BENCH = Path("F:/astro_essais/bench")
@@ -86,6 +86,40 @@ def field_of(name: str) -> str:
 
 
 # ---------------------------------------------------------------------------------------------- fixes
+def readback(sl: np.ndarray, tif: np.ndarray, s: dict):
+    """(the corrected starless image in sigmas, the changed-pixel mask): ``sl`` the star-removal tool's starless image
+    (3, H, W), ``tif`` the review TIFF read (H, W, 3) uint16, ``s`` its stretch (top, offset, soft). The pixels more than
+    4 codes from ``sl`` stretched take the TIFF's value with the stretch undone, the others keep ``sl``."""
+    top = np.arcsinh((s["top"] + s["offset"]) / s["soft"])
+    ref = np.round(np.clip(np.arcsinh(np.clip(sl + s["offset"], 0, None) / s["soft"]) / top, 0, 1) * 65535)
+    ed = tif.transpose(2, 0, 1).astype(np.float32)
+    changed = np.abs(ed - ref).max(0) > 4
+    del ref
+    v = s["soft"] * np.sinh(ed / 65535 * top) - s["offset"]
+    return np.where(changed[None], v, sl), changed
+
+
+def star_fwhm(inp: np.ndarray, fixed: np.ndarray, top: float):
+    """(median FWHM in px of the field's isolated, unsaturated stars of the star layer (input - starless), their count);
+    3.0 when fewer than 10."""
+    from scipy import ndimage
+    L = (inp - fixed).mean(0)
+    mx = ndimage.maximum_filter(L, 15)
+    pk = (L == mx) & (L > 30) & (L < 0.25 * top)
+    ys, xs = np.nonzero(pk[20:-20, 20:-20])
+    ys, xs = ys + 20, xs + 20
+    order = np.argsort(-L[ys, xs])[:400]
+    fw = []
+    for y, x in zip(ys[order], xs[order]):
+        c = L[y - 15:y + 16, x - 15:x + 16]
+        area = float((c > 0.5 * L[y, x]).sum())
+        if (c > 0.3 * L[y, x]).sum() < 4 * area:                 # nothing else bright around it
+            fw.append(2 * np.sqrt(area / np.pi))
+    fwhm = float(np.median(fw)) if len(fw) >= 10 else 3.0
+    return fwhm, len(fw)
+
+
+
 def fixes() -> int:
     """The review TIFFs back to the data: the retouched pixels (more than 4 codes from the reference star-removal tool's) take the TIFF's value
     with the stretch undone, the others keep the reference star-removal tool's at full precision."""
@@ -99,13 +133,7 @@ def fixes() -> int:
             continue
         d = DS / s["pair"]
         sl = np.load(d / "starless.npy").astype(np.float32)
-        top = np.arcsinh((s["top"] + s["offset"]) / s["soft"])
-        ref = np.round(np.clip(np.arcsinh(np.clip(sl + s["offset"], 0, None) / s["soft"]) / top, 0, 1) * 65535)
-        ed = tifffile.imread(REVIEW / f"{fld}_starless.tif").transpose(2, 0, 1).astype(np.float32)
-        changed = np.abs(ed - ref).max(0) > 4
-        del ref
-        v = s["soft"] * np.sinh(ed / 65535 * top) - s["offset"]
-        fixed = np.where(changed[None], v, sl)
+        fixed, changed = readback(sl, tifffile.imread(REVIEW / f"{fld}_starless.tif"), s)
         np.save(d / "starless_fixed.npy", fixed.astype(np.float16))
         H, W = changed.shape
         ign = np.zeros((H, W), bool)
@@ -116,22 +144,10 @@ def fixes() -> int:
         np.save(d / "ignore.npy", ign)
         # the star FWHM of the field: its isolated, unsaturated stars in the star layer (stack - starless)
         inp = np.load(d / "input.npy").astype(np.float32)
-        L = (inp - fixed).mean(0)
+        fwhm, nfw = star_fwhm(inp, fixed, s["top"])
         del inp, fixed
-        mx = ndimage.maximum_filter(L, 15)
-        pk = (L == mx) & (L > 30) & (L < 0.25 * s["top"])
-        ys, xs = np.nonzero(pk[20:-20, 20:-20])
-        ys, xs = ys + 20, xs + 20
-        order = np.argsort(-L[ys, xs])[:400]
-        fw = []
-        for y, x in zip(ys[order], xs[order]):
-            c = L[y - 15:y + 16, x - 15:x + 16]
-            area = float((c > 0.5 * L[y, x]).sum())
-            if (c > 0.3 * L[y, x]).sum() < 4 * area:                 # nothing else bright around it
-                fw.append(2 * np.sqrt(area / np.pi))
-        fwhm = float(np.median(fw)) if len(fw) >= 10 else 3.0
         fields[fld] = {"pair": s["pair"], "changed_px": int(changed.sum()), "ignored_px": int(ign.sum()),
-                       "fwhm_px": round(fwhm, 2), "fwhm_stars": len(fw), "top": s["top"]}
+                       "fwhm_px": round(fwhm, 2), "fwhm_stars": nfw, "top": s["top"]}
         # the field's other levels: the zones retouched in this one are ignored there (same pixel grid only)
         zone = ndimage.binary_dilation(changed, iterations=8) | ign
         for lv in LEVELS[1:]:
