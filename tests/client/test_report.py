@@ -658,3 +658,27 @@ def test_a_line_with_nothing_to_say_is_not_printed(qapp, monkeypatch):
     assert "Target name" not in t and "Note" not in t and "Focal length" in t
     for word in ("Instrument", "Mount", "Filter", "Location", "Date", "2013"):
         assert word not in t and word not in p.details()
+
+
+def test_the_memory_is_stable_over_twenty_showings_of_the_report(qapp, monkeypatch):
+    """Issue #112: each showing of the report kept its documents and their figures (about 15 MB). The documents have no
+    parent and the PDF buffer goes when it is replaced: after a few showings the program's memory stays where it is."""
+    import gc
+
+    psutil = pytest.importorskip("psutil")
+    from PySide6.QtCore import QCoreApplication, QEvent
+    p = page(monkeypatch)
+
+    def settle() -> float:
+        for _ in range(3):
+            QApplication.processEvents()
+            QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)    # what the event loop does between showings
+            gc.collect()
+        return psutil.Process().memory_info().rss / 1e6
+    for _ in range(5):                                           # the first ones fill the caches that have a bound
+        p.build()
+    before = settle()
+    for _ in range(20):
+        p.build()
+    growth = settle() - before
+    assert growth < 20, f"the report keeps about {growth / 20:.1f} MB per showing"
