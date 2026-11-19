@@ -325,6 +325,7 @@
   "this wire is already taken": "ce fil est déjà pris",
   "{t} taken on {port}": "{t} pris sur {port}",
   "already in Post": "déjà dans Post",
+  "Already in Post through {t}": "Déjà dans Post par {t}",
   "{t} to Post ({n} layer)": "{t} vers Post ({n} calque)",
   "{t} to Post ({n} layers)": "{t} vers Post ({n} calques)",
   "files go on a Session": "les fichiers vont sur une Session",

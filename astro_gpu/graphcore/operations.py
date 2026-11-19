@@ -41,7 +41,7 @@ from .ops_settings import (NO_SELECTION, SELECTION_KEYS, _engine_name, owned_sta
                            op_set_flow_pauses, op_set_flow_options, _stage_names, _stages_of, _holder_of, _store,
                            op_set_flow_param, _store_all, op_store_params)
 from .ops_wires import (op_set_combination_type, op_unwire, op_take_alternative, _flow_ends, _post_tap,
-                        op_send_to_post, op_remove_tap, fusion_legacy, _channel, op_add_combination, op_update_recipe,
+                        op_send_to_post, check_not_in_post_through, op_remove_tap, fusion_legacy, _channel, op_add_combination, op_update_recipe,
                         op_set_recipe_value, _recipe_said, _input, op_set_input, _reimage, op_add_stars_combination)
 from .ops_blocks import (_insert, _add_join, _add_port_row, _port_row, PORT_CHAINS, port_chains, layers_free,
                          own_spot, op_remove_block, op_switch_off, _calibrated_as_one, _add_calibration,
@@ -310,6 +310,7 @@ def op_wire(q, src, src_port, dst, dst_port, channel=None):
     if would_cycle(q, src, dst):
         raise Refusal("this wire would close a loop")
     if d.kind == "post":
+        check_not_in_post_through(q, src, src_port)
         ix = Index(q)
         if src in ix.row_of and not _flow_ends(q, ix, src) and not _is_layers_row(q, ix, ix.row_of[src]):
             return op_send_to_post(q, src)

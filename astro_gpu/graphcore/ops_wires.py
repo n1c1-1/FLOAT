@@ -134,6 +134,14 @@ def _post_tap(q, b, name=None):
     return t
 
 
+def check_not_in_post_through(q, src, port):
+    """The one rule of every path that adds an output to Post (menu, drop on Post, Post's panel buttons): an output that
+    already reaches Post through a Combine layers block is not added again, silently."""
+    for w in q.wires:
+        if w.active and w.src == [src, port] and w.dst[0] in q.blocks and q.blocks[w.dst[0]].kind == "combine_layers":
+            raise Refusal(M("Already in Post through {t}", t=title_msg(q, w.dst[0])))
+
+
 def op_send_to_post(q, block, name=None):
     """A block's image to Post: the end of a workflow wired to Post; a mid-row block's, a workflow of its own (a tap)
     up to it."""
@@ -144,6 +152,7 @@ def op_send_to_post(q, block, name=None):
     post = ix.post
     if any(w.src[0] == block and w.dst[0] == post for w in q.wires):
         raise Refusal("already in Post")
+    check_not_in_post_through(q, block, out_ports(b)[0])
     # (Synthetic stars: a workflow of its own too, its image beside the Combine layers it feeds, a layer of Post)
     synth = b.kind == "synth"
     if block in ix.row_of and (synth or not _flow_ends(q, ix, block)) and not _is_layers_row(q, ix, ix.row_of[block]):

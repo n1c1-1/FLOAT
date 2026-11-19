@@ -110,3 +110,26 @@ def test_a_stars_image_pulled_into_the_band_at_its_right_makes_combine_layers(qa
     c._end_wire(st, QPointF(r.right() + 400, r.bottom() + 300))
     assert sum(x.kind == "combine_layers" for x in b.doc.graph.blocks.values()) == n + 1
     c.close()
+
+
+def test_an_output_already_in_post_through_combine_layers_is_not_added_again(qapp):
+    """The one rule on every path to Post (menu items, the stars block's "To Post", a drop on Post): the same refusal,
+    its reason greyed on the menu entry and given to the refused drop."""
+    from astro_gpu.client.graphview.menu import menu
+    from astro_gpu.graphcore.model import POST_PORT
+    b, stars = _stars_doc(qapp)
+    assert b.act("add_block", kind="combine_layers", at={"type": "comp", "after": stars}).ok
+    g = b.doc.graph
+    cl = next(k for k, x in g.blocks.items() if x.kind == "combine_layers")
+    post = next(k for k, x in g.blocks.items() if x.kind == "post")
+    fed = {str(w.src[1]) for w in g.wires if w.src[0] == stars and w.dst[0] == cl and w.active}
+    assert {"Starless", "Stars only"} <= fed
+    items = {it[0]: it for it in menu(b.doc, stars) if it is not None}
+    for text in ("Starless image to Post", "Stars to Post", "To Post"):
+        assert not items[text][3] and "Already in Post through" in items[text][4], (text, items[text])
+    for port in ("Starless", "Stars only"):                    # a drop of the dot on Post
+        res = b.act("wire", src=stars, src_port=port, dst=post, dst_port=POST_PORT)
+        assert not res.ok and "Already in Post through" in b.doc.say(res.reason), res
+    res = b.act("send_to_post", block=stars)                    # the block's own To Post
+    assert not res.ok and "Already in Post through" in b.doc.say(res.reason), res
+    assert not any(w.src[0] == stars and w.dst[0] == post for w in b.doc.graph.wires)
