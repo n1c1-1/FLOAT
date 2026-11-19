@@ -630,30 +630,33 @@ def deconvolve(dec, a: np.ndarray, level: float, dev, tile: int = 512, pad: int 
     import torch
     out = np.zeros_like(a)
     H, W = a.shape[1:]
+    S = tile + 2 * pad                                      # square windows (the network's reshape), kept inside the image
     lv = torch.full((1, 1, 1, 1), float(level), device=dev)
     for y in range(0, H, tile):
         for x in range(0, W, tile):
-            y0, y1, x0, x1 = max(0, y - pad), min(H, y + tile + pad), max(0, x - pad), min(W, x + tile + pad)
-            t = torch.from_numpy(np.ascontiguousarray(a[None, :, y0:y1, x0:x1])).to(dev)
+            wy, wx = min(max(0, y - pad), H - S), min(max(0, x - pad), W - S)
+            t = torch.from_numpy(np.ascontiguousarray(a[None, :, wy:wy + S, wx:wx + S])).to(dev)
             r, _ = dec(t, t, lv)
-            out[:, y:y + tile, x:x + tile] = r[0].cpu().numpy()[:, y - y0:y - y0 + min(tile, H - y),
-                                                                 x - x0:x - x0 + min(tile, W - x)]
+            h, w = min(tile, H - y), min(tile, W - x)
+            out[:, y:y + h, x:x + w] = r[0].cpu().numpy()[:, y - wy:y - wy + h, x - wx:x - wx + w]
     return out
 
 
 def star_masks(inp: np.ndarray):
-    """(near, ring, n): the pixels within 3 FWHM of a star detected on the input (sep on the mean of the colours, in
-    noise sigmas: threshold 5 sigma, 5 px minimum), and the pixels 3 to 6 px from a star's centre."""
+    """(near, ring, n): the pixels within 3 FWHM of a star detected on the input (sep on the mean of the colours less its
+    background (64 px mesh), threshold 5 sigma of the local noise, 5 px minimum), and the pixels 3 to 6 px from a star's centre."""
     import sep
     from scipy import ndimage
     m = np.ascontiguousarray(inp.mean(0), dtype=np.float32)
-    m = m.byteswap().view(m.dtype.newbyteorder()) if m.dtype.byteorder == ">" else m
-    obj = sep.extract(m, 5.0, err=float(1 / np.sqrt(3)), minarea=5)
+    sep.set_extract_pixstack(20_000_000)
+    bkg = sep.Background(m, bw=64, bh=64)                   # nebulosity is taken off first: stars stand out of it
+    obj = sep.extract(m - bkg.back(), 5.0, err=bkg.rms(), minarea=5)
     H, W = m.shape
     near = np.zeros((H, W), bool)
     cen = np.zeros((H, W), bool)
     for o in obj:
-        fw = 2.355 * float(np.sqrt(max(o["a"] * o["b"], 0.25)))
+        ab = float(o["a"]) * float(o["b"])
+        fw = 2.355 * float(np.sqrt(max(ab, 0.25))) if np.isfinite(ab) else 3.0
         r = int(np.ceil(3 * fw))
         x, y = int(round(o["x"])), int(round(o["y"]))
         cen[min(max(y, 0), H - 1), min(max(x, 0), W - 1)] = True
