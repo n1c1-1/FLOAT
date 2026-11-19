@@ -52,7 +52,8 @@ CARBON = {
     "radio_off": "radio-button", "missing": "circle-dash", "section": "list--boxes", "running": "in-progress",
     "waiting": "pending", "skipped": "subtract", "compute": "chip", "catalogue": "data--base", "display": "screen",
     "measure": "ruler", "samples": "grid", "thresholds": "filter", "palette": "color-palette",
-    "deconvolve": "center--circle", "filter_layer": "function-math",
+    "deconvolve": "center--circle", "filter_layer": "function-math", "crop": "crop", "compare": "compare",
+    "heal": "paint-brush", "grid": "grid", "tag": "tag",
 }
 #: the block icons, drawn for the program: the palette's block -> role
 BLOCK_ROLES = {"session": "block_session", "image": "block_image", "calibration": "block_calibration",

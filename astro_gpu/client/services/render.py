@@ -752,7 +752,8 @@ class LayerSource(Provider):
 @dataclass
 class Request:
     """What the view asks for. ``kind``: draft (quarter, while something moves), half (the screen, on release), region
-    (full resolution, the visible part), before (the bottom layer alone, at its suggestion), thumbs (the layers'
+    (full resolution, the visible part), before (the bottom layer alone, at its suggestion, or another version's layers;
+    before_region: its full resolution, the visible part), thumbs (the layers'
     thumbnails), inspect (a workflow's final image for Inspect: the same rendering as half, on a lane of its own so that
     it never replaces or stops what Post asked for), exact (after the release, the half image made from the full
     resolution: what the export writes, reduced)."""
@@ -766,6 +767,8 @@ class Request:
     need_thumbs: tuple = ()                             # (thumbs kind) the ids of the workflow layers to thumbnail
     refine: bool = False                                # (half) first the exact 1/4, shown at once ("refine")
     plain: bool = False                                 # (before) these layers as they are: another version's
+    canvas: Any = None                                  # (before) the canvas to render on: the composition shown's, so that
+                                                        # both sides of a compare share one grid
     hists: tuple = ()                                   # ids of filters whose input's histograms come back (not drafts)
     seq: int = 0
     tag: Any = None
@@ -800,8 +803,8 @@ _RETIRED: list = []                    # workers asked to stop that were still b
 #: the full resolution after a release ("exact") in a lane of its own: in the background, abandoned for any change
 #: (a draft, the next release) and taken up again after a request of another lane (a region, Inspect's)
 LANES = {"draft": "main", "half": "main", "refine": "main", "exact": "full", "region": "region", "before": "before",
-         "inspect": "inspect", "thumbs": "thumbs"}
-PRIORITY = ("main", "region", "before", "inspect", "full", "thumbs")
+         "before_region": "before_region", "inspect": "inspect", "thumbs": "thumbs"}
+PRIORITY = ("main", "region", "before", "before_region", "inspect", "full", "thumbs")
 
 
 def to_u8(a: np.ndarray) -> np.ndarray:
@@ -856,7 +859,7 @@ class Renderer:
         if req.kind == "exact":
             return self._exact(req, stop, t0)
         layers = req.layers
-        if req.kind == "before" and not req.plain:
+        if req.kind in ("before", "before_region") and not req.plain:
             layers = self._before_layers(layers)
         if req.kind == "half" and req.refine and req.box is None and emit is not None:
             first = Request(kind="refine", layers=layers, level=req.level + 1, want=req.want, overlay=req.overlay,
@@ -866,14 +869,14 @@ class Renderer:
             self.source.engine_ms = 0.0
         if req.kind == "half" and req.box is None and req.level > 0:
             cp.screen_at(req.level)                           # (a new size: the former one's images go)
-        comp = cp.compose(layers, req.level, req.box, want=req.want, thumbs=req.thumbs, stop=stop,
+        comp = cp.compose(layers, req.level, req.box, want=req.want, thumbs=req.thumbs, stop=stop, canvas=req.canvas,
                           draft=req.kind == "draft", hists=() if req.kind == "draft" else req.hists,
                           track=req.kind in ("draft", "half", "refine"))
         if stop is not None and stop():                       # a newer request came meanwhile: this answer is stale
             raise Superseded()
         if comp is None:
             return Result(req.seq, req.kind, req.level, req.box, None, None, device=self.device, tag=req.tag)
-        res = Result(req.seq, req.kind, req.level, comp.box, to_u8(comp.rgb), cp.canvas_of(layers), comp.masks,
+        res = Result(req.seq, req.kind, req.level, comp.box, to_u8(comp.rgb), req.canvas or cp.canvas_of(layers), comp.masks,
                      None, comp.mask_thumbs, {}, set(), 0.0, self.source.engine_ms, comp.drawn, comp.notes,
                      self.device, req.tag)
         res.hists = comp.hists
@@ -1490,7 +1493,7 @@ class RenderWorker(QObject):
             except Superseded:
                 with self._cond:
                     # abandoned for a more urgent lane: kept (the full resolution: not for a change, it is stale)
-                    keep = lane in ("region", "before", "inspect", "thumbs") or (lane == "full" and "main" not in
+                    keep = lane in ("region", "before", "before_region", "inspect", "thumbs") or (lane == "full" and "main" not in
                                                                                   self._slots)
                     if keep and lane not in self._slots and not self._stopping:
                         self._slots[lane] = work

@@ -79,7 +79,7 @@ from .i18n import _, language, log_detail, maybe, number, plain_error, plural
 from .icons import draw as draw_icon
 from .icons import icon_only, pixmap, set_icon
 from .imageview import ZOOM_PRESETS, ZOOM_STEP
-from .layout import Dock, Sections
+from .layout import STRIP_W, Dock, Sections
 from .model import POST_PART_NAMES
 from .postengine import (
     visible_signature,
@@ -189,6 +189,10 @@ HUE_QSS = (f"QSlider::groove:horizontal {{ height: 8px; border-radius: 4px; back
            "QSlider::handle:horizontal { background: #f2f2f2; border: 1px solid #202020; width: 10px; margin: -4px 0; "
            "border-radius: 5px; } QSlider::sub-page:horizontal, QSlider::add-page:horizontal { background: transparent; }")
 REGION_MAX = 12_000_000                                  # pixels of the region rendered at full resolution
+#: the compared item of the Compare list that stands for the suggested settings (the other items are version ids)
+SUGGESTED = "suggested"
+COMPARE_TIP = "Compare with another version: drag the divider; V shows one side whole, then the other"
+_KEEP = object()                                          # (_fill_versions) the compared item as it is
 REGION_WAIT_MS = 150                                     # after the view stops moving
 INDENT = 24                                              # a child row's indent (px)
 HOLD_MS = 600                                            # the exact image within this: the half one is not shown
@@ -689,7 +693,7 @@ def layers_default(window_w: int) -> int:
     on a 1920 px screen cut the names of a Combine layers layer's rows)."""
     return min(LAYERS_MAX, max(LAYERS_W, round(0.18 * window_w)))
 SUB_MAX = 120                                          # a layer row's blend, at most (its name keeps the rest)
-CENTRE_MIN = 480                                       # the image: its tools go into "…" rather than push the sides out
+CENTRE_MIN = 480                                       # the centre's least width, whatever the bar and the tool column need
 VERSION_W = ((120, 200), (95, 120))                    # the version list's least and most width, then narrowed (#146)
 
 
@@ -1066,25 +1070,47 @@ class PostSource:
             return np.zeros((y1 - y0, x1 - x0, 3), np.uint8)
         if level == 1:
             return a[y0:y1, x0:x1]
-        out = _enlarge(a, self.factor(), x0, y0, x1, y1)
-        if self.full is not None:
-            (bx0, by0, bx1, by1), arr = self.full
-            ix0, iy0, ix1, iy1 = max(x0, bx0), max(y0, by0), min(x1, bx1), min(y1, by1)
-            if ix1 > ix0 and iy1 > iy0:
-                out = np.array(out)
-                out[iy0 - y0:iy1 - y0, ix0 - x0:ix1 - x0] = arr[iy0 - by0:iy1 - by0, ix0 - bx0:ix1 - bx0]
+        return _with_full(_enlarge(a, self.factor(), x0, y0, x1, y1), self.full, x0, y0, x1, y1)
+
+
+CROP_TIP = "Crop the picture: nothing is lost, it can be changed at any time"
+MASK_TIP = "Mask of the selected layer, in gray"
+HEAL_TIP = "Heal spots, dust and satellite trails: click or paint over them (Alt+click: the source by hand)"
+NAMES_TIP = ("The known deep-sky objects of the field (Messier, NGC, IC, Sharpless and their common names), outlined at "
+             "their size. Export… can burn them into the picture.")
+TOOL_BTN = 32                                          # a button of the tool column
+
+
+def tool_tip(name: str, key: str, body: str = "") -> str:
+    """A tool's tip: its name and key, then what it does (the first line is the tool's name, as the image editors'
+    toolbars say it)."""
+    head = _(name) + (f" ({key})" if key else "")
+    return head + NL + _(body) if body else head
+
+
+def _with_full(out: np.ndarray, full, x0: int, y0: int, x1: int, y1: int) -> np.ndarray:
+    """``out`` (the canvas pixels x0..x1, y0..y1) with the full-resolution region ``full`` = (box, array) put over it."""
+    if full is None:
         return out
+    (bx0, by0, bx1, by1), arr = full
+    ix0, iy0, ix1, iy1 = max(x0, bx0), max(y0, by0), min(x1, bx1), min(y1, by1)
+    if ix1 > ix0 and iy1 > iy0:
+        out = np.array(out)
+        out[iy0 - y0:iy1 - y0, ix0 - x0:ix1 - x0] = arr[iy0 - by0:iy1 - by0, ix0 - bx0:ix1 - bx0]
+    return out
 
 
 class BeforeSource:
-    """The before of the before/after: the bottom workflow layer, all sliders at the suggestion (rendered by the
-    worker, at half resolution; enlarged when zoomed in)."""
+    """The compared side of Compare: the other version's layers, or the bottom layer at the suggested settings (rendered
+    by the worker on the shown picture's canvas, at the screen's level; enlarged when zoomed in, the visible region at
+    full resolution once it arrives, as ``PostSource`` has it)."""
 
     def __init__(self, view):
         self.view = view
         self.version = 0
         self.img1 = None
         self.level1 = 1
+        self.full = None                                  # (box, uint8 array) at full resolution
 
     def size(self):
         return self.view.src.size()
@@ -1098,7 +1124,7 @@ class BeforeSource:
             return np.zeros((y1 - y0, x1 - x0, 3), np.uint8)
         if level == 1:
             return a[y0:y1, x0:x1]
-        return _enlarge(a, self.factor(), x0, y0, x1, y1)
+        return _with_full(_enlarge(a, self.factor(), x0, y0, x1, y1), self.full, x0, y0, x1, y1)
 
 
 # ======================================================================== the view
@@ -1231,32 +1257,19 @@ class PostView(QWidget):
         for z in ZOOM_PRESETS:
             self.zoom_menu.addAction(with_unit(f"{z * 100:g}", "%"), lambda zz=z: self.viewer.zoom_to(zz))
         self.zoom_lab.setMenu(self.zoom_menu)
-        self.b_cmp = QPushButton(_("Before / after"))
-        self.b_cmp.setCheckable(True)
-        self.b_cmp.setObjectName("toggle")
-        self.b_cmp.setToolTip(_("Before: the bottom layer, suggested settings (C)"))
-        self.b_crop = QPushButton(_("Crop"))
-        self.b_crop.setCheckable(True)
-        self.b_crop.setObjectName("toggle")
-        self.b_crop.setToolTip(_("Crop the picture: nothing is lost, it can be changed at any time (R)"))
-        self.b_mask = QPushButton(_("Show mask"))
-        self.b_mask.setCheckable(True)
-        self.b_mask.setObjectName("toggle")
-        self.b_mask.setToolTip(_("Mask of the selected layer, in gray (M)"))
+        # the tools that act on the picture are a column of icons beside it (_build_tools), as the image editors'
+        # toolbars: their name and key on hover
+        self.b_cmp = self._tool_button("compare", "Compare", "C", COMPARE_TIP)
+        self.b_crop = self._tool_button("crop", "Crop", "R", CROP_TIP)
+        self.b_mask = self._tool_button("mask", "Show mask", "M", MASK_TIP)
         # the annotations of the astrometric solution over the image (and, if wanted, burned into an export)
         self.ann_show = {"grid": False, "objects": False}
         self._ann = None                                 # annotate.Annotations of the canvas shown
         self._ann_key = None
         self._ann_token = None
         self._canvas = None                              # the last result's canvas (size and origin on the grid)
-        self.b_grid = QPushButton(_("Sky grid"))
-        self.b_grid.setToolTip(_("The RA / Dec grid of the astrometric solution"))
-        self.b_names = QPushButton(_("Object names"))
-        self.b_names.setToolTip(_("The known deep-sky objects of the field (Messier, NGC, IC, Sharpless and their "
-                                  "common names), outlined at their size. Export… can burn them into the picture."))
-        for b in (self.b_grid, self.b_names):
-            b.setCheckable(True)
-            b.setObjectName("toggle")
+        self.b_grid = self._tool_button("grid", "Sky grid", "", "The RA / Dec grid of the astrometric solution")
+        self.b_names = self._tool_button("tag", "Object names", "", NAMES_TIP)
         self.b_undo = icon_only(QPushButton(), "undo", _("Undo (Ctrl+Z)"), 16)
         self.b_redo = icon_only(QPushButton(), "redo", _("Redo (Ctrl+Y)"), 16)
         for b in (self.b_undo, self.b_redo):
@@ -1286,6 +1299,9 @@ class PostView(QWidget):
         for w in (self.version_lab, self.cb_version, self.b_version_new, self.b_version_del):
             bar.addWidget(w)
         self._entering = False
+        self._prev_version = None                         # the version left last (the default of Compare)
+        self._before_sig = None                           # what the compared side was rendered from
+        self._before_gen = 0                              # its requests' number: an answer of an older one is dropped
         self._version_click = QTimer(self, singleShot=True)
         self._version_click.timeout.connect(self.cb_version.showPopup)
         self.cb_version.lineEdit().installEventFilter(self)
@@ -1296,17 +1312,11 @@ class PostView(QWidget):
         self.b_version_del.clicked.connect(self._version_delete)
         bar.addStretch(1)
         self.cb_cmp = QComboBox()
-        self.cb_cmp.setToolTip(_("What the picture is compared with; V shows one then the other whole"))
+        self.cb_cmp.setToolTip(_("Compared version (left of the divider)"))
         self.cb_cmp.setVisible(False)
-        self.cb_cmp.currentIndexChanged.connect(lambda *_a: self.b_cmp.isChecked() and self._send_before())
+        self.cb_cmp.currentIndexChanged.connect(self._compared_changed)
         bar.addWidget(self.cb_cmp)
         self._fill_versions()
-        # a narrow centre (a laptop, Windows' scale at 125 or 150 %): the tools least used go into "…" one by one,
-        # rather than the bar pushing the sides out of the window (the night test pass)
-        self.b_more = icon_only(QPushButton(), "more", _("More tools"), 16)     # as the bar's other buttons
-        self.more_menu = QMenu(self.b_more)
-        self.b_more.clicked.connect(self._show_more)
-        self.b_more.setVisible(False)
         # the crop is confirmed or given up with named buttons, shown while it is drawn (#121), as the reference
         # editors' options bar; Spot healing is a tool of the bar (#122: it was found only in the filters' menu)
         self.b_crop_ok = set_icon(QPushButton(_("Apply")), "ok", 16, tip=_("Keep this crop (Enter)"))
@@ -1315,13 +1325,8 @@ class PostView(QWidget):
         self.b_crop_cancel.setToolTip(_("Leave the crop as it was (Esc)"))
         for b in (self.b_crop_ok, self.b_crop_cancel):
             b.setVisible(False)
-        self.b_heal = QPushButton(_("Spot healing"))
-        self.b_heal.setCheckable(True)
-        self.b_heal.setObjectName("toggle")
-        self.b_heal.setToolTip(_("Heal spots, dust and satellite trails: click or paint over them (Alt+click: the "
-                                 "source by hand)"))
-        for w in (self.b_crop, self.b_crop_ok, self.b_crop_cancel, self.b_heal, self.b_grid, self.b_names, self.b_cmp,
-                  self.b_mask, self.b_more, self.b_undo, self.b_redo, self.b_export):
+        self.b_heal = self._tool_button("heal", "Spot healing", "", HEAL_TIP)
+        for w in (self.b_crop_ok, self.b_crop_cancel, self.b_undo, self.b_redo, self.b_export):
             bar.addWidget(w)
         mv.addLayout(bar)
         mid.setMinimumWidth(CENTRE_MIN)
@@ -1348,33 +1353,63 @@ class PostView(QWidget):
         sl.addWidget(self.stale_run)
         self.stale.hide()
         mv.addWidget(self.stale)
-        mv.addWidget(self.viewer, 1)
+        row = QHBoxLayout()                              # the picture, the tool column at its right edge
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+        row.addWidget(self.viewer, 1)
+        row.addWidget(self._build_tools())
+        mv.addLayout(row, 1)
         # one line, cut with "…" when the window is narrow and whole on hover (the laptop's D3: cut at 1250 px)
         self.hint = ElidedLabel("", "small", Qt.ElideRight)
         self.hint.setContentsMargins(10, 3, 10, 5)
         mv.addWidget(self.hint)
         return mid
 
-    def _overflow(self) -> tuple:
-        """The tools that go into "…" when the bar has no room, the first to go first."""
-        return (self.b_names, self.b_grid, self.b_mask, self.b_cmp, self.b_heal, self.b_crop, self.b_undo, self.b_redo,
-                self.b_version_del, self.b_version_new)
+    @staticmethod
+    def _tool_button(role: str, name: str, key: str, body: str) -> QPushButton:
+        """An icon-only checkable button of the tool column: its tip says its name, its key and what it does."""
+        b = icon_only(QPushButton(), role, tool_tip(name, key, body), 16)
+        b.setCheckable(True)
+        b.setObjectName("toggle")
+        b.setFixedSize(TOOL_BTN, TOOL_BTN)
+        b.setStyleSheet("QPushButton { padding: 0; }")
+        b.setProperty("toolName", name)
+        return b
+
+    def _build_tools(self) -> QWidget:
+        """The tools that act on the picture, one column of icons at the right edge of the image (as the image editors'
+        toolbars, a name and a key on hover): Crop, Spot healing | Compare | Show mask, Sky grid, Object names. The bar
+        above keeps the view and the options of the tool at work."""
+        col = QFrame()
+        col.setObjectName("toolcol")
+        col.setFixedWidth(STRIP_W)
+        col.setStyleSheet("QFrame#toolcol { background: #1c1f26; border-left: 1px solid #2a2f38; }")
+        v = QVBoxLayout(col)
+        v.setContentsMargins(4, 8, 4, 8)
+        v.setSpacing(4)
+        first = True
+        for group in ((self.b_crop, self.b_heal), (self.b_cmp,), (self.b_mask, self.b_grid, self.b_names)):
+            if not first:
+                line = QFrame()
+                line.setFixedHeight(1)
+                line.setStyleSheet("background: #2a2f38; border: none;")
+                v.addSpacing(2)
+                v.addWidget(line)
+                v.addSpacing(2)
+            first = False
+            for b in group:
+                v.addWidget(b, 0, Qt.AlignHCenter)
+        v.addStretch(1)
+        self.tools = col
+        return col
 
     def _bar_steps(self) -> tuple:
         """The bar narrowed one step at a time when the centre has no room (a laptop, Windows' scale at 125 or 150 %),
-        the least used first. Export and New version give up their text before any tool goes into "…" (their icon
-        alone, their name on hover: in French the bar is about 113 px wider, and Spot healing went into "…" where the
-        English bar still showed it); then the view's aids go into "…", the word "Version", a narrower list, 100 % (the
-        zoom's menu has it); the tools one works with, Spot healing and Crop, only then; the bin and New
-        version into "…", Redo and Undo (the Edit menu has them too), Fit the last (the laptop's D1: the most used, it
-        went first with Before / after on a laptop's window): at the centre's narrowest, the crop's
-        Apply and Cancel shown, the bar still fits (#142). The names stay in the tooltips and in "…"."""
-        return (("icon", self.b_export), ("icon", self.b_version_new),
-                ("hide", self.b_names), ("hide", self.b_grid), ("hide", self.b_mask), ("hide", self.b_cmp),
-                ("hide", self.version_lab), ("narrow", self.cb_version), ("hide", self.b_100),
-                ("hide", self.b_heal), ("hide", self.b_crop),
-                ("hide", self.b_version_del), ("hide", self.b_version_new), ("hide", self.b_redo), ("hide", self.b_undo),
-                ("hide", self.b_fit))
+        losing nothing: Export and New version give up their text for their icon (their name on hover), the word
+        "Version" goes, the list narrows, 100 % goes (the zoom's menu has it). No tool is ever hidden: the tools are
+        in their column, and the centre never gets narrower than the bar needs (``_centre_min``)."""
+        return (("icon", self.b_export), ("icon", self.b_version_new), ("hide", self.version_lab),
+                ("narrow", self.cb_version), ("hide", self.b_100))
 
     def _bar_texts(self) -> dict:
         """The buttons of the bar that go to their icon, and their name."""
@@ -1397,15 +1432,16 @@ class PostView(QWidget):
             probe.hide()
         return self._item_width(probe)
 
-    def _bar_need(self, k: int) -> int:
+    def _bar_need(self, k: int, shown: tuple | None = None) -> int:
         """The bar's width with the first ``k`` steps of ``_bar_steps`` taken, as its layout works it out (its widgets'
-        widths, its spacings, its margins), the bar left as it is."""
+        widths, its spacings, its margins), the bar left as it is. ``shown``: with it, the bar as it would be with only these
+        of its moments' widgets (Compare's list, the crop's Apply and Cancel) shown, whatever shows now."""
         steps = self._bar_steps()
         hidden = [w for kind, w in steps[:k] if kind == "hide"]
         icons = [w for kind, w in steps[:k] if kind == "icon"]
         narrow = [w for kind, w in steps[:k] if kind == "narrow"]
         steered = [w for _kind, w in steps]
-        more = any(b in hidden for b in self._overflow())
+        moments = (self.cb_cmp, self.b_crop_ok, self.b_crop_cancel)
         texts = self._bar_texts()
         bar = self.top_bar
         m = bar.contentsMargins()
@@ -1416,7 +1452,10 @@ class PostView(QWidget):
             if w is None:                                # the space after the zoom, the stretch
                 total += item.sizeHint().width()
                 continue
-            if not (w not in hidden if w in steered else more if w is self.b_more else not w.isHidden()):
+            if w in steered:
+                if w in hidden:
+                    continue
+            elif (w not in shown) if (shown is not None and w in moments) else w.isHidden():
                 continue
             n += 1
             if w in texts:
@@ -1427,21 +1466,31 @@ class PostView(QWidget):
                 total += self._item_width(w)
         return total + max(bar.spacing(), 0) * max(n - 1, 0)
 
+    def _centre_min(self) -> int:
+        """The centre's least width: the bar at its narrowest, with what only some moments add to it (Compare's list, the
+        crop's Apply and Cancel: never together), and the tool column. The splitter never squeezes the bar below it."""
+        k = len(self._bar_steps())
+        need = max(self._bar_need(k, ()), self._bar_need(k, (self.cb_cmp,)),
+                   self._bar_need(k, (self.b_crop_ok, self.b_crop_cancel)))
+        return max(CENTRE_MIN, need + STRIP_W)
+
     def _fit_bar(self):
-        """As many tools in the bar as the centre has room for, the others in "…": the bar's width worked out for each
-        step, without trying them on the bar, and the first that fits taken (#142: tried on the bar, a width that grew
-        afterwards, the zoom's "Zoom 27 %" or the list's longer name, was not seen: New version covered the list)."""
+        """The bar as wide as the centre allows, losing nothing: its width worked out for each step, without trying
+        them on the bar, and the first that fits taken (#142: tried on the bar, a width that grew afterwards, the zoom's
+        "Zoom 27 %" or the list's longer name, was not seen: New version covered the list)."""
         if not hasattr(self, "centre"):
             return
         steps = self._bar_steps()
+        least = self._centre_min()
+        if self.centre.minimumWidth() != least:
+            self.centre.setMinimumWidth(least)
         room = self.centre.width()
         k = next((k for k in range(len(steps) + 1) if self._bar_need(k) <= room), len(steps))
         hidden = [w for kind, w in steps[:k] if kind == "hide"]
         icons = [w for kind, w in steps[:k] if kind == "icon"]
-        more = any(b in hidden for b in self._overflow())
         # only what changes is set: an unchanged bar asks nothing of the layout (this runs at each of its requests)
-        for w in [w for _kind, w in steps] + [self.b_more]:
-            show = more if w is self.b_more else w not in hidden
+        for w in [w for _kind, w in steps]:
+            show = w not in hidden
             if w.isHidden() == show:
                 w.setVisible(show)
         for b, text in self._bar_texts().items():
@@ -1453,27 +1502,6 @@ class PostView(QWidget):
         if (self.cb_version.minimumWidth(), self.cb_version.maximumWidth()) != (lo, hi):
             self.cb_version.setMinimumWidth(lo)
             self.cb_version.setMaximumWidth(hi)
-
-    def _show_more(self):
-        self._fill_more()
-        self.more_menu.exec(self.b_more.mapToGlobal(self.b_more.rect().bottomLeft()))
-
-    def _fill_more(self):
-        """The "…" menu: the tools the bar has no room for, as their buttons (checked, greyed, their tip)."""
-        self.more_menu.clear()
-        self._undo_tips()
-        names ={self.b_undo: _("Undo"), self.b_redo: _("Redo"), self.b_version_del: _("Delete this version"),
-                 self.b_version_new: _("New version")}                   # (shown by their icons in the bar)
-        for b in reversed(self._overflow()):
-            if not b.isHidden():
-                continue
-            a = self.more_menu.addAction(names.get(b) or b.text())
-            a.setCheckable(b.isCheckable())
-            a.setChecked(b.isChecked())
-            a.setEnabled(b.isEnabled())
-            a.setToolTip(b.toolTip())
-            a.triggered.connect(lambda _c=False, bb=b: bb.click())
-        self.more_menu.setToolTipsVisible(True)
 
     def eventFilter(self, obj, e):                                   # noqa: N802 - Qt's name
         if (obj is getattr(self, "_list_holder", None) and e.type() == QEvent.MouseButtonPress
@@ -1623,6 +1651,8 @@ class PostView(QWidget):
         self.b_fit.clicked.connect(self.viewer.fit)
         self.b_100.clicked.connect(lambda: self.viewer.zoom_to(1.0))
         self.b_cmp.toggled.connect(self._compare)
+        self.b_crop.toggled.connect(lambda _on: self._compare_button())
+        self.b_heal.toggled.connect(lambda _on: self._compare_button())
         self.b_mask.toggled.connect(self._mask_view)
         self.b_crop.toggled.connect(self._crop_tool)
         self.b_crop_ok.clicked.connect(self.crop_apply)
@@ -1784,57 +1814,91 @@ class PostView(QWidget):
         """The layers with the Synthetic stars row of the workflows that have the block (issue #77)."""
         return with_synth_rows(layers, self.s.synth_wanted()) if hasattr(self.s, "synth_wanted") else layers
 
-    def _fill_versions(self):
-        """The Version list and the choices of the comparison, as the project has them."""
+    def _default_compared(self):
+        """What Compare shows left of the divider when it is turned on: the version shown just before this one, else the
+        first other version, else the suggested settings (one version only)."""
+        p = getattr(self.s, "p", None)
+        versions = p.post["versions"] if p is not None and hasattr(p, "post") else []
+        others = [v["id"] for v in versions if v["id"] != self._version]
+        if self._prev_version in others:
+            return self._prev_version
+        return others[0] if others else SUGGESTED
+
+    def _fill_versions(self, compared=_KEEP):
+        """The Version list and the choices of the comparison, as the project has them: the other versions in project
+        order, then Suggested last. ``compared``: the item to choose there (default: the one chosen, else the default
+        item when it is gone)."""
         if not hasattr(self, "cb_version"):
             return
         p = getattr(self.s, "p", None)
         versions = p.post["versions"] if p is not None and hasattr(p, "post") else []
         for cb in (self.cb_version, self.cb_cmp):
             cb.blockSignals(True)
-        kept = self.cb_cmp.currentData()
+        kept = self.cb_cmp.currentData() if compared is _KEEP else compared
         self.cb_version.clear()
         self.cb_cmp.clear()
-        self.cb_cmp.addItem(_("Suggested"), None)
         for v in versions:
             self.cb_version.addItem(v["name"], v["id"])
             if v["id"] != self._version:
                 self.cb_cmp.addItem(v["name"], v["id"])
+        self.cb_cmp.addItem(_("Suggested"), SUGGESTED)
         i = self.cb_version.findData(self._version)
         self.cb_version.setCurrentIndex(max(i, 0))
         self.cb_version.lineEdit().setCursorPosition(0)  # its start, Enter's renaming too (#146)
         tip = _("The version shown: a click opens the list, a double-click renames it")
         self.cb_version.setToolTip(f"{self.cb_version.currentText()}\n{tip}" if self.cb_version.count() else tip)
         j = self.cb_cmp.findData(kept)
-        self.cb_cmp.setCurrentIndex(max(j, 0))
+        chosen = kept if j >= 0 else self._default_compared()
+        self.cb_cmp.setCurrentIndex(max(self.cb_cmp.findData(chosen), 0))
         single_choice(self.cb_cmp)                       # Suggested alone: its text (D5)
         self.b_version_del.setEnabled(len(versions) > 1)
         self.b_version_del.setToolTip(_("Delete this version") if len(versions) > 1 else
                                       _("The only version cannot be deleted"))
         for cb in (self.cb_version, self.cb_cmp):
             cb.blockSignals(False)
+        self._compare_names()
+        if self.b_cmp.isChecked() and chosen != kept:    # the compared one is gone: its fallback is shown
+            self._compared_changed()
+
+    def _compare_names(self):
+        """The two names the divider's tags read: the compared version (or Suggested), and the version shown."""
+        if not hasattr(self, "viewer"):
+            return
+        self.viewer.compare_names = (self.cb_cmp.currentText(), self.cb_version.currentText())
+        self.viewer.update()
+
+    def _compared_changed(self, *_a):
+        """Another item chosen in the Compare list: its picture is asked for (view state: no step of Undo)."""
+        self._compare_names()
+        if self.b_cmp.isChecked():
+            self.before.img1 = self.before.full = None
+            self._send_before()
+            self._hint()
 
     def _switch_version(self, version: dict):
         """Another version in the panel: its layers, its crop and its own Undo, and the layer chosen in it when it was
         left."""
         self._keep_choice()
+        left, kept = self._version, self.cb_cmp.currentData()
         self._stacks[self._version] = (self.undo, self.redo)
         self._heal_hand[self._version] = (self._heal_src, self._heal_off)    # the source set by hand is the version's own
         self._heal_src, self._heal_off = self._heal_hand.get(version.get("id"), (None, None))
         self.undo, self.redo = self._stacks.get(version.get("id"), ([], []))
         self._version = version.get("id")
+        if left is not None and left != self._version:
+            self._prev_version = left
         self.layers = self._with_synth(load_layers(version.get("layers"), {p.pid for p in self.s.paths}))
         self._saved = json.dumps(save_layers(self.layers), sort_keys=True)
         self._show_crop(version.get("crop"))
-        self._fill_versions()
+        self._fill_versions(left if kept == self._version else _KEEP)    # the compared one shown: it swaps with the one left
         if self.sel and not self.layer(self.sel[0]):
             self.sel = self._choice_of(version) or ((self.layers[0]["id"], "layer") if self.layers else None)
         self.sync_paths()
         self.rebuild()
         self._undo_buttons()
         self.request(final_only=True, force=True)
-        if self.b_cmp.isChecked():
-            self._send_before()
+        self._before_sig = None                          # (its layers and canvas are another version's now)
+        self._refresh_before()
 
     def _from_post(self):
         """The changes of the model made inside are Post's steps: the graph's Undo leaves them to Post."""
@@ -2042,6 +2106,7 @@ class PostView(QWidget):
 
     # ------------------------------------------------------------ rendering (in the worker)
     def refresh(self):
+        self._before_sig = None                          # (the results on disk may have changed: the compared side too)
         self.request(final_only=True, force=True)
 
     def _visible_sig(self) -> str:
@@ -2175,20 +2240,57 @@ class PostView(QWidget):
         self._main_seq = self.worker.request(Request(kind="half", layers=snapshot(self.layers),
                                                      level=self.screen_level(), want=want, thumbs=True,
                                                      overlay=overlay, refine=False, hists=self._hist_ids()))
-        if self.b_cmp.isChecked():
-            self._send_before()
+        self._refresh_before()                                  # (only when its own inputs changed: an edit leaves it)
         need = tuple(self._stale_thumbs())
         if need:
             self.worker.request(Request(kind="thumbs", layers=snapshot(self.layers), need_thumbs=need))
 
-    def _send_before(self):
+    def _before_layers_of(self):
+        """(the layers the compared side renders, whether they are rendered as they are): another version's layers, or
+        the shown ones for the suggested settings (the render keeps their bottom layer only)."""
         other = self._compared()
         if other is None:
-            self.worker.request(Request(kind="before", layers=snapshot(self.layers), level=self.screen_level()))
-            return
+            return self.layers, False
         layers = load_layers(copy.deepcopy(other.get("layers")), {p.pid for p in self.s.paths})
         self._attach_fusion(layers)
-        self.worker.request(Request(kind="before", layers=snapshot(layers), level=self.screen_level(), plain=True))
+        return layers, True
+
+    def _before_signature(self):
+        """What the compared side is rendered from: its item, its layers (the suggested settings: the bottom layer's own
+        description, whatever the sliders), the shown picture's canvas, and the size it is rendered at."""
+        other = self._compared()
+        if other is not None:
+            what = json.dumps(other.get("layers"), sort_keys=True, default=str)
+        else:
+            pix = [x for x in self.layers if is_pixel(x)]
+            keep = ("kind", "pid", "key", "part", "base", "linked", "stretch", "fusion", "starless")
+            what = json.dumps([[x["id"]] + [x.get(k) for k in keep] for x in pix[-1:]] + [[x["id"] for x in pix]],
+                              sort_keys=True, default=str)
+        return (self.cb_cmp.currentData(), what, self.src.canvas, self.screen_level())
+
+    def _refresh_before(self):
+        """The compared side again when what it is rendered from changed (a slider of the shown version is not one)."""
+        if self.b_cmp.isChecked() and self._before_signature() != self._before_sig:
+            self._send_before()
+
+    def _send_before(self):
+        self._before_sig = self._before_signature()
+        self._before_gen += 1
+        self.before.full = None
+        layers, plain = self._before_layers_of()
+        self.worker.request(Request(kind="before", layers=snapshot(layers), level=self.screen_level(), plain=plain,
+                                    canvas=self._canvas, tag=self._before_gen))
+        if self.viewer.scale >= 0.5:
+            self._region_t.start(60)                            # zoomed in: its visible region at full resolution
+
+    def _send_before_region(self, box):
+        """The compared side's visible region at full resolution, as the shown one's (``_send_region``)."""
+        f = self.before.full
+        if not self.b_cmp.isChecked() or self.before.img1 is None or                 (f is not None and f[0][0] <= box[0] and f[0][1] <= box[1] and f[0][2] >= box[2] and f[0][3] >= box[3]):
+            return
+        layers, plain = self._before_layers_of()
+        self.worker.request(Request(kind="before_region", layers=snapshot(layers), level=0, box=box, plain=plain,
+                                    canvas=self._canvas, tag=self._before_gen))
 
     def _stale_thumbs(self):
         for lay in self.layers:
@@ -2231,11 +2333,11 @@ class PostView(QWidget):
         if box is None:
             return
         f = self.src.full
-        if f is not None and f[0][0] <= box[0] and f[0][1] <= box[1] and f[0][2] >= box[2] and f[0][3] >= box[3]:
-            return
         if self.src.img1 is None:
             return
-        self.worker.request(Request(kind="region", layers=snapshot(self.layers), level=0, box=box))
+        if not (f is not None and f[0][0] <= box[0] and f[0][1] <= box[1] and f[0][2] >= box[2] and f[0][3] >= box[3]):
+            self.worker.request(Request(kind="region", layers=snapshot(self.layers), level=0, box=box))
+        self._send_before_region(box)
 
     def _empty_banner(self) -> str:
         """Why the canvas is empty: nothing to show of the layers there are (hidden), or no layer at all."""
@@ -2279,6 +2381,7 @@ class PostView(QWidget):
             if self.src.canvas != size:
                 self.src.canvas = size
                 self.viewer.set_source(self.src)
+                self._refresh_before()                          # (the compared side is drawn on this grid)
                 if self.crop and not self.b_crop.isChecked():       # the crop kept, inside the image as it is now
                     self.viewer.crop_box = self._crop_shown()
             if self.ann_show["grid"] or self.ann_show["objects"]:
@@ -2349,9 +2452,15 @@ class PostView(QWidget):
             self.src.version += 1
             self.viewer.refresh()
         elif res.kind == "before":
-            self.before.img1, self.before.level1 = res.rgb, res.level
-            self.before.version += 1
-            self.viewer.update()
+            if res.tag is None or res.tag == self._before_gen:       # (not an older choice's picture)
+                self.before.img1, self.before.level1 = res.rgb, res.level
+                self.before.version += 1
+                self.viewer.update()
+        elif res.kind == "before_region":
+            if res.tag is None or res.tag == self._before_gen:
+                self.before.full = (res.box, res.rgb)
+                self.before.version += 1
+                self.viewer.update()
         if res.kind in ("draft", "half", "refine", "exact"):    # the search of stars: said while the picture says it;
             from .postengine import STARS_FAILED, STARS_SEARCHING       # the engine's notes said until they change
             searching = {STARS_SEARCHING, STARS_FAILED}
@@ -2501,7 +2610,7 @@ class PostView(QWidget):
             if why:
                 if not b.property("why"):
                     b.setProperty("tip", b.toolTip())         # its own tip, back once there is a solution
-                b.setToolTip(why)
+                b.setToolTip(tool_tip(b.property("toolName"), "", why))
                 if b.isChecked():
                     self.set_annotations(**{k: False})
             elif b.property("why"):
@@ -2532,8 +2641,7 @@ class PostView(QWidget):
         self._ann = result
         why = getattr(result, "why", "")
         n = len(getattr(result, "objects", None) or [])
-        self.b_names.setToolTip(_("The known deep-sky objects of the field (Messier, NGC, IC, Sharpless and their "
-                                  "common names), outlined at their size. Export… can burn them into the picture.")
+        self.b_names.setToolTip(tool_tip("Object names", "", NAMES_TIP)
                                 + (NL + plural(n, "{n} named object", "{n} named objects") if n else "")
                                 + (NL + _(why) if why else ""))
         self.viewer.update()
@@ -2931,6 +3039,7 @@ class PostView(QWidget):
         self.b_heal.blockSignals(True)                   # the tool is on while its layer is the one chosen
         self.b_heal.setChecked(self._heal_layer() is not None)
         self.b_heal.blockSignals(False)
+        self._compare_button()
         self.hide_big()
         for r in getattr(self, "rows", []):
             if r.name_edit is not None:                  # a name being typed is kept, as a click elsewhere keeps it
@@ -5128,12 +5237,36 @@ class PostView(QWidget):
 
     # ------------------------------------------------------------ view toggles
     def _compare(self, on):
+        """Compare: the picture split by a divider, another version left of it, the version shown (editable) right. View
+        state only: no step of Undo, the project not marked, nothing saved."""
+        if on:
+            j = self.cb_cmp.findData(self._default_compared())
+            self.cb_cmp.blockSignals(True)
+            self.cb_cmp.setCurrentIndex(max(j, 0))
+            self.cb_cmp.blockSignals(False)
+            self.before.img1 = self.before.full = None
         self.cb_cmp.setVisible(on)
         self.viewer.compare = self.before if on else None
+        self._compare_names()
         if on:
             self._send_before()
         self.viewer.update()
         self._hint()
+
+    def _compare_button(self):
+        """Compare is greyed, its reason on hover, while the crop box is drawn on the whole picture or Spot healing's
+        strokes would land on a half that is not edited; turning those tools on turns it off."""
+        crop, heal = self.b_crop.isChecked(), self.b_heal.isChecked()
+        if (crop or heal) and self.b_cmp.isChecked():
+            self.b_cmp.setChecked(False)
+        self.b_cmp.setEnabled(not (crop or heal))
+        self.b_cmp.setToolTip(tool_tip("Compare", "C", "Not while cropping: the crop box is drawn on the whole picture"
+                                       if crop else "Not while healing spots: the strokes act on the version shown"
+                                       if heal else COMPARE_TIP))
+
+    def _toggle_compare(self):
+        if self.b_cmp.isEnabled():
+            self.b_cmp.toggle()
 
     def _toggle_mask(self):
         if self.b_mask.isEnabled():
@@ -5144,8 +5277,7 @@ class PostView(QWidget):
         lay = self.mask_owner()
         has = lay is not None and lay.get("mask") is not None
         self.b_mask.setEnabled(has)
-        self.b_mask.setToolTip(_("Mask of the selected layer, in gray (M)") if has else
-                               _("The selected layer has no mask"))
+        self.b_mask.setToolTip(tool_tip("Show mask", "M", MASK_TIP if has else "The selected layer has no mask"))
         if not has and self.b_mask.isChecked():
             self.b_mask.setChecked(False)
 
@@ -5170,7 +5302,7 @@ class PostView(QWidget):
         elif self.sel and mask_selection(self.sel[1]):
             t = _("Red: where the layer is hidden · M: mask in gray") if self.show_tint else _("M: mask in gray")
         elif self.b_cmp.isChecked():
-            t = _("Drag the divider · Before: the bottom layer, suggested settings")
+            t = _("Drag the divider · V: one side whole · Left: “{name}”").format(name=self.cb_cmp.currentText())
         else:
             t = ""
         if self._notes:
@@ -5191,7 +5323,7 @@ class PostView(QWidget):
 #: for a key the page handles apart). The one table binds the keys and gives the Help menu's Shortcuts their list.
 POST_KEYS = (
     (("R",), "Crop", lambda p: p.b_crop.toggle()),
-    (("C",), "Compare", lambda p: p.b_cmp.toggle()),
+    (("C",), "Compare", lambda p: p._toggle_compare()),
     (("V",), "Flip compare", lambda p: p._flip_compare()),
     (("M",), "Show mask", lambda p: p._toggle_mask()),
     (("F", "Ctrl+0"), "Fit", lambda p: p.viewer.fit()),
