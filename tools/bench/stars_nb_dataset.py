@@ -654,6 +654,7 @@ def star_masks(inp: np.ndarray):
     H, W = m.shape
     near = np.zeros((H, W), bool)
     cen = np.zeros((H, W), bool)
+    obj = obj[np.isfinite(obj["x"]) & np.isfinite(obj["y"])]
     for o in obj:
         ab = float(o["a"]) * float(o["b"])
         fw = 2.355 * float(np.sqrt(max(ab, 0.25))) if np.isfinite(ab) else 3.0
