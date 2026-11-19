@@ -428,8 +428,10 @@ def resize_stars(y: torch.Tensor, r: float, check=None) -> torch.Tensor:
     # selection of the stars; the reference processing suite: MorphologicalTransformation through a star mask): an erosion of the faint
     # background between the stars draws a web of filaments on a dense field (issue #18). Only the stars wider than the erosion
     # takes away (``large_stars``, the opening by reconstruction): a star about that wide would lose its core and leave the mask's
-    # softened edge as a ring, and where faint stars touch the minimum along the chain would stay as an arc (issue #169)
-    return y + (out - y) * star_mask(y, n + 1, check) * large_stars(y, abs(r), check)
+    # softened edge as a ring, and where faint stars touch the minimum along the chain would stay as an arc (issue #169).
+    # Wider by two pixels more than it takes: what is left of a star must still be sampled (two pixels across, Nyquist), a
+    # star just wider than the reduction would be left as a one-pixel line, a worm
+    return y + (out - y) * star_mask(y, n + 1, check) * large_stars(y, abs(r) + 1.0, check)
 
 
 #: a star of the mask stands this many local noise units above its local background (the usual detection threshold)
