@@ -2352,7 +2352,8 @@ class PostView(QWidget):
     def _stale_thumbs(self):
         for lay in self.layers:
             if is_pixel(lay) and (self._lthumbs.get(lay["id"], (None,))[0] != self._thumb_sig(lay) or
-                                  (is_group(lay) and any((lay["id"], s) not in self._lthumbs for s in subs_of(lay)))):
+                                  (is_group(lay) and any((lay["id"], s) not in self._lthumbs
+                                                         for s in subs_of(lay) + (("synth",) if has_synth(self.layers, lay["id"]) else ())))):
                 yield lay["id"]
 
     @staticmethod
