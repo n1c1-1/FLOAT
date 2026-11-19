@@ -3037,6 +3037,10 @@ def _autos(p: Project2, keys: Keys, w: Workflow, stage: str) -> tuple[dict[str, 
     ck = (stage, keys.key(w, stage))
     if ck in c.autos:
         return c.autos[ck], True
+    kept = _kept_autos(p, ck)
+    if kept is not None:                              # the same stage with the same key, worked out at an earlier opening
+        c.autos[ck] = kept
+        return kept, True
     from .core.stage import Context
     try:
         with tempfile.TemporaryDirectory(prefix="astro_auto_", ignore_cleanup_errors=True) as tmp:
@@ -3045,7 +3049,53 @@ def _autos(p: Project2, keys: Keys, w: Workflow, stage: str) -> tuple[dict[str, 
     except Exception:  # noqa: BLE001 - the upstream files are not readable: no suggestion
         return {}, False
     c.autos[ck] = auto
+    _keep_autos(p, ck, auto)
     return auto, True
+
+
+#: the automatic values worked out for a stage, kept in the program's state folder, a file per project (issue #170:
+#: nothing is written in the project, and a test's private state folder keeps them apart; opening a project computed again,
+#: each time, the suggestions the first screen quotes, the drizzle one reading every frame's alignment). Their key is
+#: the stage's key: its settings, its inputs and its version, so a value found there is the one the stage would give.
+AUTOS_KEPT = 120
+
+
+def _autos_path(p: Project2) -> Path:
+    from .core.project import STATE
+    return STATE / "autos" / (hashlib.sha1(str(p.root).encode("utf-8")).hexdigest()[:20] + ".json")
+
+
+def _kept_autos(p: Project2, ck: tuple) -> dict[str, Any] | None:
+    from .core.params import Auto
+    try:
+        rows = json.loads(_autos_path(p).read_text(encoding="utf-8")).get(f"{ck[0]}|{ck[1]}")
+        return None if rows is None else {n: Auto(r["value"], r["template"], r["args"]) for n, r in rows.items()}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+
+
+def _keep_autos(p: Project2, ck: tuple, auto: dict[str, Any]) -> None:
+    """Writes the values of the stage in the project's file of the state folder (atomically; the oldest go past ``AUTOS_KEPT``). A
+    value that does not come back from the file as it went in (a tuple, an array) keeps nothing: it is computed again."""
+    from .core.params import Auto
+    try:
+        rows = {n: {"value": a.value, "template": a.template, "args": a.args} for n, a in auto.items()}
+        if not all(isinstance(a, Auto) for a in auto.values()) or json.loads(json.dumps(rows)) != rows:
+            return
+        path = _autos_path(p)
+        try:
+            kept = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            kept = {}
+        kept.pop(f"{ck[0]}|{ck[1]}", None)
+        kept[f"{ck[0]}|{ck[1]}"] = rows
+        kept = dict(list(kept.items())[-AUTOS_KEPT:])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(kept), encoding="utf-8")
+        os.replace(tmp, path)
+    except (OSError, TypeError, ValueError):
+        return
 
 
 def _resolve(p: Project2, wf: int | Workflow, stage: str) -> _Resolved:

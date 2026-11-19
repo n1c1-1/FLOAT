@@ -883,6 +883,9 @@ class _ProjectBase(QObject):
                 self.readyChanged.emit()
                 self.sourcesChanged.emit()
                 self.pathsChanged.emit()
+                self.worker.submit(f"model.extras:{id(self)}", self._prefetch_extras)   # what the first screen does not quote
+        elif channel == "model.extras" + me:
+            self.costChanged.emit()
         elif channel == "model.wanted" + me:                 # durations a view was waiting for have arrived
             self._est_wanted = False
             self.costChanged.emit()
@@ -1596,10 +1599,18 @@ class _ProjectBase(QObject):
     def _prefetch_estimates(self, first: bool) -> bool:
         """Worker thread: the durations the views quote (each stage of each workflow, the method cards, the toolbar
         cards, the New workflow dialog), into the estimates cache. Returns ``first``."""
-        from .graphnode import TOOLBOX
         for v in list(self.paths):
             for stage in list(self._chains.get(v.pid, [])):
                 self.seconds(stage, v)
+        if not first:                                       # the first opening quotes the stages' durations only: the
+            self._prefetch_extras()                         # cards and dialogs' follow it (``model.extras``, issue #170)
+        return first
+
+    def _prefetch_extras(self) -> bool:
+        """Worker thread: the durations the first screen does not quote: the method cards, the toolbar cards, the New
+        workflow dialog (read when their pages are shown, the views asking the worker for what is missing)."""
+        from .graphnode import TOOLBOX
+        for v in list(self.paths):
             # Deconvolution and Synthetic stars too (the night test pass: their cards said "…" for good)
             for block in ("debruitage", "etoiles", "fond", "deconv", "synth"):
                 try:
@@ -1620,7 +1631,7 @@ class _ProjectBase(QObject):
             self.opts_seconds(v.opts, v.params)             # a copy of it
         for opts in TEMPLATES.values():
             self.opts_seconds(opts)
-        return first
+        return True
 
     @contextmanager
     def _edit(self):
