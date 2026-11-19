@@ -2462,6 +2462,8 @@ class GraphEditing:
         from ..stages.image import stretched_by_nature
         src = dict(self.p.workflow(p.pid).source or {})
         before = stretched_by_nature(src.get("path") or "")
+        old_path = str(src.get("path") or "")
+        reset = bool(src.get("unstretch"))
         if path is not None:
             src["path"] = Path(path).as_posix() if path else ""
         if stretched is not None:
@@ -2479,7 +2481,27 @@ class GraphEditing:
         args = {"block": head, "path": src.get("path", ""), "stretched": src.get("stretched")}
         if unstretch is not None:
             args["unstretch"] = unstretch
-        self._do([("set_image_file", args)])
+        changed = path is not None and bool(path) and Path(path).as_posix() != old_path
+        with self._edit():
+            self._do([("set_image_file", args)])
+            if changed:
+                self._follow_image_name(p, old_path, str(path))
+                if reset and unstretch is None:                 # said in the log, never by a pop-up (#174)
+                    self.log("Undo stretch reset on “{name}”: a new image is read as it is",
+                             name=self.p.workflow(p.pid).name)
+
+    def _follow_image_name(self, p, old_path: str, new_path: str):
+        """The workflow of an Image takes its file's name when it still bears the name its first file gave it (the
+        file's name, numbered or not): a name typed by the user stays. The palette's "for ..." and the group title read
+        it."""
+        import re
+        name = self.p.workflow(p.pid).name
+        old = Path(old_path).stem if old_path else ""
+        if not old or not (name == old or re.fullmatch(re.escape(old) + r" \d+", name)):
+            return
+        new = self.unique_name(Path(new_path).stem)
+        if new != name:
+            self._rename(p.pid, new)
 
     # ------------------------------------------------------------------ combinations
     def _source_port(self, pid, image):

@@ -2364,6 +2364,9 @@ class _ProjectBase(QObject):
             return out
         parts = [say(an.why)]
         if an.refusal:
+            # the header line is said once: the refusal names it as the reason's own sentence does
+            if an.refusal[1].get("line") and an.refusal[1].get("line") == an.why[1].get("line"):
+                parts = []
             parts.append(say(an.refusal))
         if est:
             parts.append(_("The stretch is undone by estimate: the levels are linear up to an offset and a scale."))
