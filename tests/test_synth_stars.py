@@ -128,3 +128,71 @@ def test_the_layer_of_post_opens_open_with_both_methods():
     assert [p["op"] for p in open_["mask"]["parts"]] == ["sub"] and open_["mask"]["parts"][0]["strokes"] == []
     assert [x for x in pe.with_synth_rows(layers, {}) if x.get("filter") == "synth"] == []
     assert pe.source_id(dict(group, part="synth")) == ("synth", 1) and pe.part_sliders({"star_size": 1, "noise": 2}, "synth") == {"star_size": 1}
+
+
+def field_of_stars(n=240, size=640, seed=3, sigma=1.4):
+    """A stars-alone luminance with ``n`` round stars of every brightness, on a grid kept clear of the centre."""
+    rng = np.random.default_rng(seed)
+    L = rng.normal(0, 0.5, (size, size)).astype(np.float32)
+    yy, xx = np.mgrid[-12:13, -12:13]
+    stamp = np.exp(-(yy ** 2 + xx ** 2) / (2 * sigma ** 2)).astype(np.float32)
+    pts = []
+    for y in range(40, size - 40, 40):
+        for x in range(40, size - 40, 40):
+            if abs(y - size // 2) < 80 and abs(x - size // 2) < 80:
+                continue
+            pts.append((y, x))
+    pts = pts[:n]
+    for (y, x), a in zip(pts, rng.uniform(150, 600, len(pts))):
+        L[y - 12:y + 13, x - 12:x + 13] += a * stamp
+    return L, np.array(pts), stamp
+
+
+def test_an_extended_blob_is_not_taken_for_a_star():
+    L, pts, _ = field_of_stars()
+    h = L.shape[0] // 2
+    yy, xx = np.mgrid[:L.shape[0], :L.shape[1]]
+    L += 300 * np.exp(-((yy - h) ** 2 + (xx - h) ** 2) / (2 * 7.0 ** 2)).astype(np.float32)   # the nebula's texture
+    ys, xs, _p, _T, size = lib.detect(L, np.ones(L.shape, bool))
+    keep, why = lib.vet(L, None, ys, xs, size)
+    on_blob = np.hypot(ys - h, xs - h) < 15
+    assert on_blob.any() and not keep[on_blob].any()                   # nothing drawn on the blob
+    assert keep[~on_blob].mean() > 0.9                                 # the field's stars stay
+    assert why["stars_not_stellar"] >= on_blob.sum()
+
+
+def test_a_bump_on_the_structure_of_the_starless_image_is_texture_and_a_bright_star_is_not():
+    L, pts, stamp = field_of_stars()
+    rng = np.random.default_rng(5)
+    import cv2
+    tex = cv2.GaussianBlur(rng.normal(0, 1, L.shape).astype(np.float32), (0, 0), 2.0) * 800   # a textured nebula, in the middle only
+    gy, gx = np.mgrid[:L.shape[0], :L.shape[1]]
+    tex *= np.exp(-((gy - 321) ** 2 + (gx - 345) ** 2) / (2 * 50.0 ** 2)).astype(np.float32)
+    y, x = 321, 330
+    L[y - 12:y + 13, x - 12:x + 13] += 300 * stamp                    # a star-like bump, small against the texture
+    y2, x2 = 321, 360
+    L[y2 - 12:y2 + 13, x2 - 12:x2 + 13] += 20000 * stamp              # a real, bright star
+    ys, xs, _p, _T, size = lib.detect(L, np.ones(L.shape, bool))
+    keep, _why = lib.vet(L, tex, ys, xs, size)
+    at = lambda yy_, xx_: np.nonzero((abs(ys - yy_) < 3) & (abs(xs - xx_) < 3))[0]
+    assert len(at(y, x)) == 1 and not keep[at(y, x)[0]]
+    assert len(at(y2, x2)) == 1 and keep[at(y2, x2)[0]]
+    plain, _ = lib.vet(L, None, ys, xs, size)                         # without the starless image the bump passes
+    assert plain[at(y, x)[0]]
+
+
+def test_two_touching_stars_are_two_stars_or_none_never_one_elongated():
+    L, pts, stamp = field_of_stars()
+    h = L.shape[0] // 2
+    for dx in (-2, 2):                                                # 4 px apart: one maximum, an elongated blob
+        L[h - 12:h + 13, h + dx - 12:h + dx + 13] += 150 * stamp
+    ys, xs, _p, _T, size = lib.detect(L, np.ones(L.shape, bool))
+    keep, _why = lib.vet(L, None, ys, xs, size)
+    near = np.hypot(ys - h, xs - h) < 8
+    assert near.any()
+    assert keep[near].sum() in (0, 2)                                 # two drawn stars or none, not one elongated one
+
+
+def test_the_block_is_at_a_new_version_after_vetting():
+    from astro_gpu.stages.synth_stars import SynthStars
+    assert int(SynthStars.version) >= 3
