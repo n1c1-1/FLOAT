@@ -132,15 +132,21 @@ class Denoise(Stage):
 
     def run_single(self, ctx: Context, p: DenoiseParams, dev) -> None:
         """Denoise a single image (issue #174): the pretrained network, with the noise measured on the image itself (the
-        median and the 1.4826 MAD of its channels, ``norm_params``) and no half-stack: the noise map is flat and the image
-        is not a mean of two (no division of it by the square root of 2). The dither check, which reads the noise between
-        the two half-stacks, is skipped. The network is the colour one (the number of frames of a mono image is unknown)."""
+        median and the 1.4826 MAD of its channels, ``norm_params``) and no half-stack: the noise map is flat, and the image
+        is taken for the full stack of a stack (below). The dither check, which reads the noise between the two
+        half-stacks, is skipped. The network is the colour one (the number of frames of a mono image is unknown)."""
         from ..core.stage import StageError
         if p.method == "adapted":
             raise StageError(WHY_NO_ADAPTED)
         Wt = ctx.load("stack", "drz_weight.npy").astype(np.float32)
         full = image_in(ctx).img
         bk, sg, nm = norm_params(full, np.ones_like(Wt))
+        # the image is read as the full stack of a stack, the mean of two half-stacks: their noise is the image's times
+        # the square root of 2. The network is told the half-stack's noise (sg) and that the image's own is 1/sqrt(2) of
+        # it (the noise map), as ``run`` does for the full stack of a workflow: the same network input for the same
+        # image (measured against the half-stack path on a real stack's crop, #174)
+        sg = (sg * np.sqrt(2)).astype(np.float32)
+        nm = (nm / np.sqrt(2)).astype(np.float32)
         mono = is_grey(full)
         net = pretrained(dev, mono=False)
         ctx.log("a single image: the noise is measured on the image, the dither check is skipped (it reads two half-stacks)")

@@ -90,3 +90,50 @@ def test_a_stack_of_frames_keeps_its_denoise_untouched():
         def load_json(self, st, name):
             return {"scale": 2.0, "source": "frames"}
     assert not dn.single_image(Ctx())
+
+
+def test_a_single_image_is_denoised_as_the_full_stack_of_its_halves(tmp_path):
+    """The image of a stack, through the Image block, ends with the noise the half-stack path leaves its full stack (within
+    10 %): the same network input for the same image. (On a crop of a real 1344-frame stack: 5.05 against 4.77 times
+    less noise, 6 % apart; this is the same check on a synthetic stack.)"""
+    rng = np.random.default_rng(9)
+    sig = noisy_image(sigma=0.0)
+    A = sig + 0.006 * rng.standard_normal(sig.shape).astype(np.float32)
+    B = sig + 0.006 * rng.standard_normal(sig.shape).astype(np.float32)
+    full = ((A + B) / 2).astype(np.float32)
+
+    def toy(folder):
+        class Pr:
+            root, logs, scratch = folder, folder / "logs", folder / "scratch"
+
+            def stage_dir(self, s):
+                return folder / s
+        Pr.logs.mkdir(parents=True, exist_ok=True)
+        return Pr()
+    one = tmp_path / "halves"
+    (one / "stack").mkdir(parents=True)
+    for k, v in (("A", A), ("B", B), ("full", full), ("weight", np.ones_like(full))):
+        np.save(one / "stack" / f"drz_{k}.npy", v)
+    (one / "stack" / "drz_meta.json").write_text(json.dumps({"scale": 1.0, "source": "frames"}))
+    pr = toy(one)
+    den = dn.Denoise()
+    ctx = Context(pr, den, Journal(pr.logs), "cpu")
+    den.run(ctx, dn.DenoiseParams())
+    halves = dn._noise(np.load(one / "denoise" / "n2n_full.npy")[1])
+    # the image path
+    two = tmp_path / "image"
+    two.mkdir()
+    fits.PrimaryHDU(full).writeto(tmp_path / "full.fits")
+
+    class Pr2:
+        root, logs, scratch = two, two / "logs", two / "scratch"
+
+        def stage_dir(self, s):
+            return two / ("image" if s == "stack" else s)
+    Pr2.logs.mkdir()
+    img = ImageSource()
+    img.run(Context(Pr2(), img, Journal(Pr2.logs), "cpu"), ImageSource.Params(path=str(tmp_path / "full.fits")))
+    ctx2 = Context(Pr2(), den, Journal(Pr2.logs), "cpu")
+    den.run(ctx2, dn.DenoiseParams())
+    single = dn._noise(np.load(two / "denoise" / "n2n_full.npy")[1]) / 65535.0
+    assert abs(single / halves - 1.0) < 0.10, (single, halves)
