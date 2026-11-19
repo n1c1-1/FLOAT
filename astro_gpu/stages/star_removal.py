@@ -9,8 +9,8 @@ stars off, the background unchanged (docs/POINT_MATINEE_2026-11-05.md).
 
 It works on what it was trained on: the Output block's linear image (render_simple: the stack with its sky gradient
 removed, denoised, white balanced, its sky taken off), each channel minus its background, over one noise unit (the
-noise of the half-stacks before denoising, through the colour matrix, averaged over the three colours; a linear Image
-has no half-stacks: the spread of its own sky). The network sees a fixed asinh stretch of it, undone exactly on the
+noise of the half-stacks before denoising, through the colour matrix, averaged over the three colours; an image from a
+file has no half-stacks: its own noise before denoising, times the square root of 2, ``noise_unit``). The network sees a fixed asinh stretch of it, undone exactly on the
 way out.
 
 Outputs, in the units of the Output block's lin.npy (so that starless + stars is that image, to the pixel):
@@ -98,11 +98,12 @@ class StarRemoval(Stage):
     def version(self) -> str:            # 2: the network's grid notched (core/periodic.py, issue #28); 3: big tiles (#45);
         #                                  4: a starless fusion's stretch (gone with the fusion's star layer, 2026-11-12)
         #                                  5: star halos taken off (2026-11-17); 6: that removal withdrawn (tuned on
-        #                                  two test images), the network's result as in 4 again
-        return f"6-{model_id()}"         # with the network's file as it is now (model_id)
+        #                                  two test images), the network's result as in 4 again; 7: an image from a
+        #                                  file measured in a stack's noise unit (#174; a stack's result unchanged)
+        return f"7-{model_id()}"         # with the network's file as it is now (model_id)
 
     def run(self, ctx: Context, p: StarRemovalParams) -> None:
-        from .denoise import norm_params
+        from .denoise import single_image
         from .gradient import stack_image
         ctx.progress(0.02, "loading the image")
         prep = ctx.load_json("render_simple", "prep_simple.json")
@@ -113,17 +114,16 @@ class StarRemoval(Stage):
         shown = np.zeros_like(valid)
         shown[y0:y1, x0:x1] = True
         shown &= valid
-        if (ctx.project.stage_dir("stack") / "drz_A.npy").is_file():
-            _bk, sg, _nm = norm_params(stack_image(ctx, "drz_A.npy"), ctx.load("stack", "drz_weight.npy", mmap=True))
-            unit = float(np.mean(np.sqrt((M ** 2) @ (np.asarray(sg, np.float64) ** 2))))
-        else:                                            # a linear Image (issue #55): no half-stack to read it on
-            unit = sky_unit(lin, shown)
-        bk = np.array([np.median(lin[c][shown][::7]) for c in range(3)], np.float32)[:, None, None]
-        ctx.log(f"noise unit {unit:.4g}, background {', '.join(f'{v:.3g}' for v in bk.ravel())}")
+        Wt = ctx.load("stack", "drz_weight.npy", mmap=True)
+        if single_image(ctx) or not (ctx.project.stage_dir("stack") / "drz_A.npy").is_file():
+            unit = noise_unit(stack_image(ctx, "drz_full.npy"), Wt, M, single=True)   # one image from a file (#174)
+        else:
+            unit = noise_unit(stack_image(ctx, "drz_A.npy"), Wt, M)
         dev = ctx.device
         net = network(dev)
         t0 = time.time()
-        starless = apply(net, (lin - bk) / unit, dev, ctx) * unit + bk
+        starless, bk = remove_stars(net, lin, shown, unit, dev, ctx)
+        ctx.log(f"noise unit {unit:.4g}, background {', '.join(f'{v:.3g}' for v in bk.ravel())}")
         ctx.log(f"stars taken off in {time.time() - t0:.1f} s on {dev}")
         if np.array_equal(lin[0, ::97, ::97], lin[1, ::97, ::97]) and np.array_equal(lin[2, ::97, ::97],
                                                                                     lin[1, ::97, ::97]):
@@ -257,11 +257,27 @@ class NAFNet(nn.Module):
         return (self.ending(x) + x0)[:, :, :H, :W]
 
 
-def sky_unit(lin: np.ndarray, shown: np.ndarray) -> float:
-    """The noise unit of an image without half-stacks: the spread of its sky over the shown pixels, in the colours of
-    ``lin`` (its colour matrix is applied already), averaged over the three colours; 1 for an image without noise."""
-    from .render_simple import sky_spread
-    return float(np.mean([sky_spread(lin[c][shown][::7]) for c in range(3)])) or 1.0
+def noise_unit(img: np.ndarray, weight: np.ndarray, M: np.ndarray, single: bool = False) -> float:
+    """The network's noise unit, as in its training (tools/bench/stars_train.py): the noise of a half-stack before
+    denoising (the 1.4826 MAD of each channel, ``denoise.norm_params``), through the colour matrix ``M``, averaged over
+    the three colours. ``single``: ``img`` is one image from a file, read as the full stack of a stack (the mean of two
+    half-stacks), as the Denoise block reads it: a half-stack's noise is its own times the square root of 2.
+
+    Issue #174: a single image's unit was the spread of the sky of the Output block's image, measured after Denoise,
+    without the square root of 2: on M27 2.3 times smaller than a stack's for the same noise, so the network saw the
+    nebula and its noise 2.3 times brighter than a stack's, and took most of the nebula off with the stars. Both units are measured on the image before denoising, by the same estimator: a
+    pedestal and the scale of the values leave the network's input as it is (the unit follows the scale)."""
+    from .denoise import norm_params
+    _bk, sg, _nm = norm_params(img, weight)
+    sg = np.asarray(sg, np.float64) * (np.sqrt(2) if single else 1.0)
+    return float(np.mean(np.sqrt((np.asarray(M, np.float64) ** 2) @ sg ** 2))) or 1.0
+
+
+def remove_stars(net, lin: np.ndarray, shown: np.ndarray, unit: float, dev, ctx: Context | None = None):
+    """The starless image of the Output block's ``lin`` in its own units, and the background taken off each colour (the
+    median of the shown pixels): the network sees each colour minus its background, over ``unit``."""
+    bk = np.array([np.median(lin[c][shown][::7]) for c in range(3)], np.float32)[:, None, None]
+    return apply(net, (lin - bk) / unit, dev, ctx) * unit + bk, bk
 
 
 def fwd(v):
