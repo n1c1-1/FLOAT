@@ -214,10 +214,68 @@ def test_blends_and_the_size_change():
     assert torch.equal(blend(a, b, "Screen")[:, 0, 0], a[:, 0, 0])            # black stars change nothing
     y = torch.zeros((3, 9, 9))
     y[:, 4, 4] = 1.0
-    assert resize_stars(y, 1.0).sum() == 15 and torch.equal(resize_stars(y, -1.0), y)  # a cross: round, not a square;
-    #                                         a star as narrow as the reduction is left alone (#169)
-    assert resize_stars(y, 2.0)[0].bool().sum() == 21                                    # then a square: an octagon
-    assert 3 < resize_stars(y, 0.5).sum() < 15                                 # half a pixel: half way
+    assert torch.equal(resize_stars(y, -1.0, 3.0), y)                      # a star as narrow as the reduction is left alone (#169)
+
+
+def _moments(a):
+    """The centroid-relative second moments (xx, yy, xy) of a plane."""
+    yy, xx = torch.meshgrid(torch.arange(a.shape[0], dtype=torch.float64), torch.arange(a.shape[1], dtype=torch.float64),
+                            indexing="ij")
+    a = a.double()
+    t = a.sum()
+    cy, cx = (a * yy).sum() / t, (a * xx).sum() / t
+    return (float((a * (xx - cx) ** 2).sum() / t), float((a * (yy - cy) ** 2).sum() / t),
+            float((a * (xx - cx) * (yy - cy)).sum() / t))
+
+
+def test_a_grown_star_stays_round_with_a_rounded_profile():
+    """A flat dilation (a cross, an octagon) leaves a plateau and a polygonal outline on a small star: bokeh discs and
+    diamonds. The grown star is the dilation by a rotationally symmetric, non-flat function: round (isotropic second
+    moments, also along the diagonals), its peak kept, wider, with no plateau (strictly decreasing from the peak)."""
+    yy, xx = torch.meshgrid(torch.arange(41.0), torch.arange(41.0), indexing="ij")
+    y = (0.8 * torch.exp(-((yy - 20) ** 2 + (xx - 20) ** 2) / (2 * 1.2 ** 2))).repeat(3, 1, 1)
+    assert torch.equal(resize_stars(y, 0.0, 3.0), y)
+    for r in (0.5, 1.0, 2.0):
+        out = resize_stars(y, r, 3.0)[0]
+        assert float(out.max()) == pytest.approx(0.8, abs=1e-6) and out[20, 20] == out.max()    # the peak is kept
+        assert (out >= y[0] - 1e-7).all() and out.sum() > y[0].sum()                           # wider, nothing lost
+        mxx, myy, mxy = _moments(out)
+        assert abs(mxx - myy) < 0.01 * mxx and abs(mxy) < 0.01 * mxx                           # round
+        assert mxx > _moments(y[0])[0] * (1 + 0.1 * r)
+        diag = torch.stack([out[20 + d, 20 + d] for d in range(0, 8)])                       # no plateau, on the axes or
+        axis = torch.stack([out[20, 20 + d] for d in range(0, 8)])                           # the diagonals
+        assert (axis[1:] < axis[:-1]).all() and (diag[1:] < diag[:-1]).all()
+        assert abs(float(out[20, 20 + 4]) - float(out[24, 20])) < 1e-6                       # the same all round
+    # the size is the growth of the typical star's half-width by r pixels (the slider's meaning)
+    fwhm = 3.0
+    sg = fwhm / 2.355
+    yy2, xx2 = torch.meshgrid(torch.arange(81.0), torch.arange(81.0), indexing="ij")
+    star = torch.exp(-((yy2 - 40) ** 2 + (xx2 - 40) ** 2) / (2 * sg * sg)).repeat(3, 1, 1)
+    for r in (0.5, 1.0, 2.0):
+        row = resize_stars(star, r, fwhm)[0, 40, 40:]
+        half = float(torch.nonzero(row < 0.5)[0]) - 1 + float((row[int(torch.nonzero(row < 0.5)[0]) - 1] - 0.5)
+                                                             / (row[int(torch.nonzero(row < 0.5)[0]) - 1] - row[int(torch.nonzero(row < 0.5)[0])]))
+        assert half == pytest.approx(fwhm / 2 + r, abs=0.2), (r, half)   # the max over whole-pixel offsets
+    flat = torch.zeros(3, 41, 41)
+    flat[:, 20, 20] = 1.0                                           # a one-pixel star: no polygon either
+    one = resize_stars(flat, 2.0, 3.0)[0]
+    assert abs(float(one[20, 20 + 3]) - float(one[20 + 3, 20])) < 1e-6 and float(one[20, 23]) > float(one[20, 26])
+
+
+def test_a_small_star_taken_away_leaves_no_ring():
+    """The wings of a real star reach past twice its half-peak radius: the opening by twice that radius left them as a
+    plateau, and a ring where the place of the star ended. A star with heavy wings (a Moffat profile) taken away leaves
+    nothing above STAR_LEVEL at its place: no plateau, no ring of its wings."""
+    from astro_gpu.render.stars import STAR_LEVEL, fade_small_stars
+    yy, xx = torch.meshgrid(torch.arange(120.0), torch.arange(120.0), indexing="ij")
+    d2 = (yy - 60) ** 2 + (xx - 60) ** 2
+    small = 0.8 * (1 + d2 / (1.6 ** 2 * 2.0)) ** -2.0                                       # heavy wings (Moffat)
+    big = 0.9 * torch.exp(-((yy - 30) ** 2 + (xx - 95) ** 2) / (2 * 5.0 ** 2))              # a large star: kept
+    y = (small + big).clamp(0, 1).repeat(3, 1, 1)
+    z = fade_small_stars(y, 0.5, 3.0)[0]
+    assert float(z[30, 95]) > 0.8 * float(y[0, 30, 95])                                      # the large star stays
+    assert float(z[60, 60]) < 0.15 * float(y[0, 60, 60])
+    assert float(z[54:67, 54:67].max()) < STAR_LEVEL
 
 
 def test_smaller_stars_leave_the_grain_of_a_dense_field_as_it_is():
@@ -229,7 +287,7 @@ def test_smaller_stars_leave_the_grain_of_a_dense_field_as_it_is():
     yy, xx = torch.meshgrid(torch.arange(96.0), torch.arange(96.0), indexing="ij")
     star = 0.9 * torch.exp(-((yy - 48) ** 2 + (xx - 48) ** 2) / (2 * 2.0 ** 2))
     y = (y + star).clamp(0, 1)
-    out = resize_stars(y, -1.0)
+    out = resize_stars(y, -1.0, 3.0)
     far = ((yy - 48) ** 2 + (xx - 48) ** 2) > 12 ** 2
     moved = (out - y).abs()[:, far].mean() / (_morph(y, 1, False) - y).abs()[:, far].mean()
     assert moved < 0.1, moved                                                  # the grain as it was: under a tenth of
@@ -243,7 +301,7 @@ def test_a_wider_star_shrinks_whole_without_a_ring():
     yy, xx = torch.meshgrid(torch.arange(80.0), torch.arange(80.0), indexing="ij")
     r2 = (yy - 40) ** 2 + (xx - 40) ** 2
     y = (0.03 + 0.95 * torch.exp(-r2 / (2 * 3.0 ** 2))).clamp(0, 1).repeat(3, 1, 1)       # FWHM 7 px
-    out = resize_stars(y, -2.0)[0]
+    out = resize_stars(y, -2.0, 3.0)[0]
     rr = r2.sqrt().round().long()
     prof = torch.stack([out[rr == k].mean() for k in range(0, 20)])
     assert torch.all(prof[1:] <= prof[:-1] + 1e-3), prof                       # falls outward: no ring
@@ -359,7 +417,7 @@ def test_the_smallest_size_leaves_faint_stars_and_chains_as_they_are():
     y = star(20, 20, 0.9, 0.5) + sum(star(60, 15 + 2.0 * i, 0.9, 0.4) for i in range(6)) + star(90, 80, 3.5, 0.95) \
         + sum(star(90, 40 + 2.0 * i, 0.9, 0.4) for i in range(14))
     y = y.clamp(0, 1).repeat(3, 1, 1)
-    out = resize_stars(y, -3.0)
+    out = resize_stars(y, -3.0, 3.0)
     assert (out[:, :40, :] - y[:, :40, :]).abs().max() < 1e-3                    # the faint star: the same to the pixel
     assert (out[:, 45:75, :40] - y[:, 45:75, :40]).abs().max() < 1e-3          # the chain: no arc, no line
     assert (out[:, 80:100, 36:66] - y[:, 80:100, 36:66]).abs().max() < 1e-3      # a chain joined to the wide star: its
@@ -381,7 +439,7 @@ def test_the_smallest_size_leaves_a_faint_star_on_a_wide_one_as_it_was():
 
     wide = star(40, 40, 8.0, 0.5)
     faint = star(40, 50, 1.0, 0.15) + star(41.5, 51.5, 1.0, 0.12)            # a faint pair of bumps on its wing
-    own = (resize_stars((wide + faint).repeat(3, 1, 1), -1.0) - resize_stars(wide.repeat(3, 1, 1), -1.0))[0]
+    own = (resize_stars((wide + faint).repeat(3, 1, 1), -1.0, 3.0) - resize_stars(wide.repeat(3, 1, 1), -1.0, 3.0))[0]
     win = (slice(34, 48), slice(44, 58))
     assert float(own[win].sum() / faint[win].sum()) > 0.97                   # its light kept (the old weight: 0.80)
-    assert torch.equal(resize_stars(wide.repeat(3, 1, 1), 0.0), wide.repeat(3, 1, 1))
+    assert torch.equal(resize_stars(wide.repeat(3, 1, 1), 0.0, 3.0), wide.repeat(3, 1, 1))
