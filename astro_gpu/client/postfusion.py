@@ -188,6 +188,15 @@ def put_tune(lay: dict, path: str, tune: dict | None) -> None:
         lay.pop(TUNES, None)
 
 
+def put_nested(lay: dict, path: str, tune: dict | None) -> None:
+    """The copy of a nested mix's graph settings made: its entry of ``tunes`` is the settings, or None when the graph
+    gave it none of its own (the block's stored values). The entry is what says the copy was made: the node is not
+    copied again, so the graph's settings changed after it never reach the layer."""
+    tunes = dict(lay.get(TUNES) or {})
+    tunes[path] = {k: dict(v) for k, v in tune.items()} if tune else None
+    lay[TUNES] = tunes
+
+
 def drop_tunes(lay: dict, paths) -> bool:
     """The own settings of the nested mixes whose node is not in ``paths`` dropped (a level the graph no longer has: it
     starts again from the graph's settings when it comes back; never moved to another level). Whether the layer changed.
@@ -241,7 +250,7 @@ def put_copy(lay: dict, copied: dict | None) -> bool:
     if TUNE in copied:
         put_tune(lay, "", copied[TUNE])
     for path, tune in (copied.get(TUNES) or {}).items():
-        put_tune(lay, path, tune)
+        put_nested(lay, path, tune)
     return mark() != before
 
 

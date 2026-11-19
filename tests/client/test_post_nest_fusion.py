@@ -79,7 +79,8 @@ def test_the_graph_s_copy_is_put_node_by_node_and_what_it_does_not_name_is_left(
     assert changed and lay["blend"] == "Lighten" and lay["tune"]["hues"]["Ha"] == 5.0
     assert set(lay["tunes"]) == {"f:Ha", "stars"}               # f:Ha was not named: left as it is
     assert not pf.put_copy(lay, {"tunes": {"stars": {"hues": {"Ha": 7.0}, "weights": {}}}})     # nothing new
-    assert pf.put_copy(lay, {"tunes": {"f:Ha": None}}) and set(lay["tunes"]) == {"stars"}
+    assert pf.put_copy(lay, {"tunes": {"f:Ha": None}}) and lay["tunes"]["f:Ha"] is None   # copied, none of its own
+    assert not pf.put_copy(lay, {"tunes": {"f:Ha": None}})
     assert not pf.put_copy(lay, None)
 
 

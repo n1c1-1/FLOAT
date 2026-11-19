@@ -4088,6 +4088,22 @@ class _ProjectBase(QObject):
         values) when it shows a combination by its filters; None when the graph gives it nothing."""
         return None
 
+    def post_tree(self, lay: dict) -> dict | None:
+        """The layer tree of a layer of Post (graphcore post.mix_tree, with the descriptions Post's mixers need); None
+        for a layer the graph gives none, and for a model without a graph."""
+        return None
+
+    def node_copies(self, lay: dict, tree: dict | None = None) -> dict | None:
+        """The graph's settings the nested mixes of a layer have not copied yet ({"tunes": {path: settings | None}},
+        ``postfusion.put_copy``'s shape); None when there is nothing to copy."""
+        return None
+
+    def with_node_copies(self, lay: dict) -> bool:
+        """The nested mixes of a layer that have no copy of their graph settings yet take it (once: the entry of
+        ``tunes`` says it was made); whether the layer changed."""
+        from . import postfusion
+        return postfusion.put_copy(lay, self.node_copies(lay))
+
     def with_graph_copy(self, lay: dict) -> dict:
         """A layer just made, with the copy of the graph's settings it takes (``graph_copy``); returned for chaining."""
         from . import postfusion

@@ -346,6 +346,18 @@ def _after(g, ix, b):
     return chain[0], (between[0] if between else None)
 
 
+def layers_tree(g, background, stars, level=1, block=None, ix=None):
+    """The tree of a Combine layers layer from the images its two sides read (each a [block, out port] or None: a side
+    not wired is not there): the layer's own, drawn or not (a layer of a version Post does not show has no block;
+    ``block``: the Combine layers block when there is one)."""
+    ix = ix or Index(g)
+    sides = {}
+    for side, src in (("starless", background), ("stars", stars)):
+        if src is not None:
+            sides[side] = mix_tree(g, src[0], src[1], level + 1, block, ix)
+    return {"kind": "layers", "block": block, "sides": sides}
+
+
 def mix_tree(g, block, port="image", level=1, reader=None, ix=None):
     """The layer tree of what Post shows for the image at the out port ``port`` of ``block`` (pure, on block ids, derived
     and never saved; #181). Nodes:
@@ -377,11 +389,7 @@ def mix_tree(g, block, port="image", level=1, reader=None, ix=None):
         return {"kind": "image", "block": block, "port": port}
     if blk.kind == "combine_layers":
         ins = _inputs(g, block)
-        sides = {}
-        for side, name in (("starless", "Background"), ("stars", "Stars")):
-            if name in ins:
-                sides[side] = mix_tree(g, ins[name][0], ins[name][1], level + 1, block, ix)
-        return {"kind": "layers", "block": block, "sides": sides}
+        return layers_tree(g, ins.get("Background"), ins.get("Stars"), level, block, ix)
     spec = combos.spec(blk)
     if ((spec or {}).get("output") or {}).get("lightness") is not None:
         return {"kind": "fixed", "block": block, "by": None, "why": "lightness"}

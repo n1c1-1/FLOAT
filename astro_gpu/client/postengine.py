@@ -1435,6 +1435,8 @@ def snapshot(layers: list[dict]) -> list[dict]:
             d["shown"] = dict(d["shown"])
         if "tune" in d:
             d["tune"] = {k: dict(v) for k, v in d["tune"].items()}
+        if "tunes" in d:                                    # the own settings of the nested mixes (None: none of its own)
+            d["tunes"] = {p: ({k: dict(v) for k, v in t.items()} if t else None) for p, t in d["tunes"].items()}
         if "params" in d:
             d["params"] = {k: copy.deepcopy(v) if isinstance(v, (dict, list)) else v for k, v in d["params"].items()}
         m = lay.get("mask")
@@ -1524,6 +1526,11 @@ def load_layers(raw, alive: set[int]) -> list[dict]:
                 if tune is not None:                             # a combination's own hues and intensities
                     lay["tune"] = {k: {str(r): _num(v, 0.0) for r, v in (tune.get(k) or {}).items()}
                                    for k in ("hues", "weights") if isinstance(tune.get(k), dict)}
+                if isinstance(d.get("tunes"), dict):             # the nested mixes' own (the syntax only: the layer tree
+                    lay["tunes"] = {str(p): (None if not isinstance(t, dict) else    # is attached later)
+                                    {k: {str(r): _num(v, 0.0) for r, v in (t.get(k) or {}).items()}
+                                     for k in ("hues", "weights") if isinstance(t.get(k), dict)})
+                                    for p, t in d["tunes"].items()}
                 sides = d.get("side_masks") if isinstance(d.get("side_masks"), dict) else {}
                 sides = {k: m for k in [*SUBS, *(x for x in sides if sub_role(x) is not None)]
                          if (m := _clean_mask(sides.get(k))) is not None}

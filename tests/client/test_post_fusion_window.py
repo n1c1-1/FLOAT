@@ -54,14 +54,13 @@ def qapp():
 
 
 # ---------------------------------------------------------------------------------------------- the rule
-def test_a_lightness_recipe_the_stars_and_a_block_after_the_combination_stay_plain():
-    sho, lrgb = recipes.legacy_spec("sho"), recipes.legacy_spec("lrgb")
-    ins = [{"role": r, "image": "starless"} for r in ("SII", "Ha", "OIII")]
-    assert postfusion.plain_reason("combine_sho", sho, ins, ["combine_sho", "render_simple"]) == ""
-    assert postfusion.plain_reason("combine_lrgb", lrgb, [], ["combine_lrgb", "render_simple"]) == "lightness"
-    assert postfusion.plain_reason("combine_sho", sho, [dict(i, image="stars") for i in ins], []) == "stars"
-    assert postfusion.plain_reason("combine_sho", sho, ins, ["combine_sho", "color", "render_simple"]) == "after"
-    assert postfusion.plain_reason("combine_rgb", recipes.legacy_spec("rgb"), [], ["combine_rgb", "render_simple"]) == ""
+def test_a_lightness_recipe_stays_plain_by_its_recipe_and_the_graph_says_the_rest():
+    """The recipe's own reason is postfusion's; what the graph puts around a combination (a block after it, the stars
+    alone) is the layer tree's (tests/graphcore/test_mix_tree.py) and, until the composition follows it, the model's
+    gate (model._single_master_gate)."""
+    assert postfusion.plain_reason(recipes.legacy_spec("sho")) == ""
+    assert postfusion.plain_reason(recipes.legacy_spec("lrgb")) == "lightness"
+    assert postfusion.plain_reason(recipes.legacy_spec("rgb")) == ""
 
 
 def test_every_reason_a_layer_stays_plain_has_its_tooltip_in_both_languages():
@@ -70,7 +69,9 @@ def test_every_reason_a_layer_stays_plain_has_its_tooltip_in_both_languages():
 
     from astro_gpu.client import i18n
     from astro_gpu.client.post3 import PLAIN_TIPS
-    said = set(re.findall(r'return "(\w+)"', inspect.getsource(postfusion.plain_reason)))
+    from astro_gpu.client.model import _ProjectBase
+    said = set(re.findall(r'return "(\w+)"', inspect.getsource(postfusion.plain_reason)
+                          + inspect.getsource(_ProjectBase._single_master_gate)))
     assert said == {"stars", "lightness", "after"} and said <= set(PLAIN_TIPS)
     try:
         i18n.set_language("fr")
