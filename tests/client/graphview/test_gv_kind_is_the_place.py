@@ -178,7 +178,7 @@ def test_an_empty_kind_shows_one_drop_zone_per_kind_and_each_takes_its_own(qapp,
         QApplication.processEvents()
         assert view.stack.currentIndex() == 3
         zones = {z.key: z for z in view.stack.currentWidget().findChildren(DropZone)}
-        assert list(zones) == ["lights", "darks", "flats", "bias"]           # the four kinds
+        assert list(zones) == [k for k, _t, _s in GROUPS]               # one per kind, flat darks too
         assert not m.p.session(1).flats
         files = labelled(tmp_path / "f", 2, "OIII", "Dark Frame", "dark")      # what the files say is not read
         mime = QMimeData()

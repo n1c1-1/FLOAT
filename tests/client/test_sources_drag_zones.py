@@ -1,4 +1,4 @@
-"""Session files page (#168): while files are dragged over it the centre shows four large zones with their counts; a
+"""Session files page (#168): while files are dragged over it the centre shows five large zones with their counts; a
 drop in a zone is files of that kind; they go away after the drop or when the drag leaves; an empty kind keeps them and
 a click opens the file dialog for that kind."""
 from __future__ import annotations
@@ -40,8 +40,10 @@ def test_drag_shows_four_zones_drop_on_darks_adds_darks_only_and_leave_hides(qap
                                                                      Qt.NoModifier))
         QApplication.processEvents()
         zones = view.stack.currentWidget().findChildren(DropZone)
-        assert view.stack.currentIndex() == 3 and [z.key for z in zones] == ["lights", "darks", "flats", "bias"]
+        assert view.stack.currentIndex() == 3 and [z.key for z in zones] == ["lights", "darks", "flats", "bias", "flat_darks"]
         assert zones[0].count.text() == f"{view.held('lights')} files" and zones[1].count.text() == "No file"
+        z0, area = zones[0], view.stack
+        assert z0.height() > area.height() // 3 and z0.width() > area.width() // 4      # large: they fill the area
         lights = list(m.p.session(1).lights)
         target = view.zones["darks"]
         QApplication.sendEvent(target, QDragEnterEvent(at, Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier))
@@ -69,7 +71,7 @@ def test_empty_session_keeps_the_zones_and_a_click_opens_the_dialog_for_its_kind
     try:
         view.show_session(1, "flats")
         QApplication.processEvents()
-        assert view.stack.currentIndex() == 3 and set(view.zones) == {"lights", "darks", "flats", "bias"}
+        assert view.stack.currentIndex() == 3 and set(view.zones) == {"lights", "darks", "flats", "bias", "flat_darks"}
         files = labelled(tmp_path / "b", 2, "Ha", "Light Frame", "b")
         asked = []
         monkeypatch.setattr(sources.QFileDialog, "getOpenFileNames",

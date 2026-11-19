@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMenu,
     QPushButton,
+    QSizePolicy,
     QScrollArea,
     QStackedWidget,
     QTableWidget,
@@ -67,8 +68,8 @@ from .widgets import ACCENT, NEW, WARN, ElidedLabel, clear, hline, label, para
 # (key, title, section): plain English, translated where shown
 GROUPS = [("lights", "Lights", "Lights"), ("darks", "Darks", "Calibration"), ("flats", "Flats", "Calibration"),
           ("bias", "Bias", "Calibration"), ("flat_darks", "Dark flats", "Calibration")]
-#: the kinds of the large zones shown while files are dragged (the dark flats keep their row)
-ZONE_KINDS = ("lights", "darks", "flats", "bias")
+#: the kinds of the large zones shown while files are dragged: every kind the left bar has
+ZONE_KINDS = tuple(g[0] for g in GROUPS)
 COUNT_KEY = {"lights": "lights", "darks": "darks", "flats": "flats", "bias": "bias", "flat_darks": "dark_flats"}
 #: under this exposure (s), lights look like flats: a light of the deep sky lasts seconds, a flat a fraction of one
 FLAT_LIKE_S = 0.1
@@ -179,6 +180,7 @@ class DropZone(QFrame):
         self.setCursor(Qt.PointingHandCursor)
         self.setAcceptDrops(True)
         self.setMinimumSize(150, 110)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setToolTip(_("Drop the files of this kind here, or click to choose them"))
         self._style = "QFrame#dropzone { background: #1c1f26; border: 1px dashed #4a5262; border-radius: 8px; }"
         self.setStyleSheet(self._style)
@@ -491,10 +493,8 @@ class SourcesView(QWidget):
         take drops too); a zone takes the files through the same path as its row."""
         w = QWidget()
         v = QVBoxLayout(w)
-        v.setContentsMargins(24, 24, 24, 24)
-        v.setAlignment(Qt.AlignCenter)
+        v.setContentsMargins(16, 12, 16, 12)
         v.addWidget(para(_("Drop your files on their zone, or use Add files.")), 0, Qt.AlignHCenter)
-        v.addSpacing(10)
         grid = QGridLayout()
         grid.setSpacing(12)
         self.zones = {}
@@ -505,9 +505,12 @@ class SourcesView(QWidget):
             z.left.connect(self._drag_left)
             z.entered.connect(lambda: self._drag_show(True))
             self.zones[key] = z
-            grid.addWidget(z, i // 2, i % 2)
-        v.addLayout(grid)
-        v.addSpacing(10)
+            grid.addWidget(z, i // 3, i % 3)
+        for k in range(3):
+            grid.setColumnStretch(k, 1)
+        for k in range(2):
+            grid.setRowStretch(k, 1)
+        v.addLayout(grid, 1)
         row = QHBoxLayout()
         row.addStretch(1)
         a = QPushButton(_("Add files…"))
