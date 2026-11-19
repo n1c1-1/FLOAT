@@ -189,6 +189,10 @@ HUE_QSS = (f"QSlider::groove:horizontal {{ height: 8px; border-radius: 4px; back
            "QSlider::handle:horizontal { background: #f2f2f2; border: 1px solid #202020; width: 10px; margin: -4px 0; "
            "border-radius: 5px; } QSlider::sub-page:horizontal, QSlider::add-page:horizontal { background: transparent; }")
 REGION_MAX = 12_000_000                                  # pixels of the region rendered at full resolution
+#: the compared item of the Compare list that stands for the suggested settings (the other items are version ids)
+SUGGESTED = "suggested"
+COMPARE_TIP = ("Compare with another version: drag the divider; V shows one side whole, then the other (C)")
+_KEEP = object()                                          # (_fill_versions) the compared item as it is
 REGION_WAIT_MS = 150                                     # after the view stops moving
 INDENT = 24                                              # a child row's indent (px)
 HOLD_MS = 600                                            # the exact image within this: the half one is not shown
@@ -1058,25 +1062,32 @@ class PostSource:
             return np.zeros((y1 - y0, x1 - x0, 3), np.uint8)
         if level == 1:
             return a[y0:y1, x0:x1]
-        out = _enlarge(a, self.factor(), x0, y0, x1, y1)
-        if self.full is not None:
-            (bx0, by0, bx1, by1), arr = self.full
-            ix0, iy0, ix1, iy1 = max(x0, bx0), max(y0, by0), min(x1, bx1), min(y1, by1)
-            if ix1 > ix0 and iy1 > iy0:
-                out = np.array(out)
-                out[iy0 - y0:iy1 - y0, ix0 - x0:ix1 - x0] = arr[iy0 - by0:iy1 - by0, ix0 - bx0:ix1 - bx0]
+        return _with_full(_enlarge(a, self.factor(), x0, y0, x1, y1), self.full, x0, y0, x1, y1)
+
+
+def _with_full(out: np.ndarray, full, x0: int, y0: int, x1: int, y1: int) -> np.ndarray:
+    """``out`` (the canvas pixels x0..x1, y0..y1) with the full-resolution region ``full`` = (box, array) put over it."""
+    if full is None:
         return out
+    (bx0, by0, bx1, by1), arr = full
+    ix0, iy0, ix1, iy1 = max(x0, bx0), max(y0, by0), min(x1, bx1), min(y1, by1)
+    if ix1 > ix0 and iy1 > iy0:
+        out = np.array(out)
+        out[iy0 - y0:iy1 - y0, ix0 - x0:ix1 - x0] = arr[iy0 - by0:iy1 - by0, ix0 - bx0:ix1 - bx0]
+    return out
 
 
 class BeforeSource:
-    """The before of the before/after: the bottom workflow layer, all sliders at the suggestion (rendered by the
-    worker, at half resolution; enlarged when zoomed in)."""
+    """The compared side of Compare: the other version's layers, or the bottom layer at the suggested settings (rendered
+    by the worker on the shown picture's canvas, at the screen's level; enlarged when zoomed in, the visible region at
+    full resolution once it arrives, as ``PostSource`` has it)."""
 
     def __init__(self, view):
         self.view = view
         self.version = 0
         self.img1 = None
         self.level1 = 1
+        self.full = None                                  # (box, uint8 array) at full resolution
 
     def size(self):
         return self.view.src.size()
@@ -1090,7 +1101,7 @@ class BeforeSource:
             return np.zeros((y1 - y0, x1 - x0, 3), np.uint8)
         if level == 1:
             return a[y0:y1, x0:x1]
-        return _enlarge(a, self.factor(), x0, y0, x1, y1)
+        return _with_full(_enlarge(a, self.factor(), x0, y0, x1, y1), self.full, x0, y0, x1, y1)
 
 
 # ======================================================================== the view
@@ -1223,10 +1234,10 @@ class PostView(QWidget):
         for z in ZOOM_PRESETS:
             self.zoom_menu.addAction(with_unit(f"{z * 100:g}", "%"), lambda zz=z: self.viewer.zoom_to(zz))
         self.zoom_lab.setMenu(self.zoom_menu)
-        self.b_cmp = QPushButton(_("Before / after"))
+        self.b_cmp = QPushButton(_("Compare"))
         self.b_cmp.setCheckable(True)
         self.b_cmp.setObjectName("toggle")
-        self.b_cmp.setToolTip(_("Before: the bottom layer, suggested settings (C)"))
+        self.b_cmp.setToolTip(_(COMPARE_TIP))
         self.b_crop = QPushButton(_("Crop"))
         self.b_crop.setCheckable(True)
         self.b_crop.setObjectName("toggle")
@@ -1278,6 +1289,9 @@ class PostView(QWidget):
         for w in (self.version_lab, self.cb_version, self.b_version_new, self.b_version_del):
             bar.addWidget(w)
         self._entering = False
+        self._prev_version = None                         # the version left last (the default of Compare)
+        self._before_sig = None                           # what the compared side was rendered from
+        self._before_gen = 0                              # its requests' number: an answer of an older one is dropped
         self._version_click = QTimer(self, singleShot=True)
         self._version_click.timeout.connect(self.cb_version.showPopup)
         self.cb_version.lineEdit().installEventFilter(self)
@@ -1288,9 +1302,9 @@ class PostView(QWidget):
         self.b_version_del.clicked.connect(self._version_delete)
         bar.addStretch(1)
         self.cb_cmp = QComboBox()
-        self.cb_cmp.setToolTip(_("What the picture is compared with; V shows one then the other whole"))
+        self.cb_cmp.setToolTip(_("Compared version (left of the divider)"))
         self.cb_cmp.setVisible(False)
-        self.cb_cmp.currentIndexChanged.connect(lambda *_a: self.b_cmp.isChecked() and self._send_before())
+        self.cb_cmp.currentIndexChanged.connect(self._compared_changed)
         bar.addWidget(self.cb_cmp)
         self._fill_versions()
         # a narrow centre (a laptop, Windows' scale at 125 or 150 %): the tools least used go into "…" one by one,
@@ -1615,6 +1629,8 @@ class PostView(QWidget):
         self.b_fit.clicked.connect(self.viewer.fit)
         self.b_100.clicked.connect(lambda: self.viewer.zoom_to(1.0))
         self.b_cmp.toggled.connect(self._compare)
+        self.b_crop.toggled.connect(lambda _on: self._compare_button())
+        self.b_heal.toggled.connect(lambda _on: self._compare_button())
         self.b_mask.toggled.connect(self._mask_view)
         self.b_crop.toggled.connect(self._crop_tool)
         self.b_crop_ok.clicked.connect(self.crop_apply)
@@ -1776,57 +1792,91 @@ class PostView(QWidget):
         """The layers with the Synthetic stars row of the workflows that have the block (issue #77)."""
         return with_synth_rows(layers, self.s.synth_wanted()) if hasattr(self.s, "synth_wanted") else layers
 
-    def _fill_versions(self):
-        """The Version list and the choices of the comparison, as the project has them."""
+    def _default_compared(self):
+        """What Compare shows left of the divider when it is turned on: the version shown just before this one, else the
+        first other version, else the suggested settings (one version only)."""
+        p = getattr(self.s, "p", None)
+        versions = p.post["versions"] if p is not None and hasattr(p, "post") else []
+        others = [v["id"] for v in versions if v["id"] != self._version]
+        if self._prev_version in others:
+            return self._prev_version
+        return others[0] if others else SUGGESTED
+
+    def _fill_versions(self, compared=_KEEP):
+        """The Version list and the choices of the comparison, as the project has them: the other versions in project
+        order, then Suggested last. ``compared``: the item to choose there (default: the one chosen, else the default
+        item when it is gone)."""
         if not hasattr(self, "cb_version"):
             return
         p = getattr(self.s, "p", None)
         versions = p.post["versions"] if p is not None and hasattr(p, "post") else []
         for cb in (self.cb_version, self.cb_cmp):
             cb.blockSignals(True)
-        kept = self.cb_cmp.currentData()
+        kept = self.cb_cmp.currentData() if compared is _KEEP else compared
         self.cb_version.clear()
         self.cb_cmp.clear()
-        self.cb_cmp.addItem(_("Suggested"), None)
         for v in versions:
             self.cb_version.addItem(v["name"], v["id"])
             if v["id"] != self._version:
                 self.cb_cmp.addItem(v["name"], v["id"])
+        self.cb_cmp.addItem(_("Suggested"), SUGGESTED)
         i = self.cb_version.findData(self._version)
         self.cb_version.setCurrentIndex(max(i, 0))
         self.cb_version.lineEdit().setCursorPosition(0)  # its start, Enter's renaming too (#146)
         tip = _("The version shown: a click opens the list, a double-click renames it")
         self.cb_version.setToolTip(f"{self.cb_version.currentText()}\n{tip}" if self.cb_version.count() else tip)
         j = self.cb_cmp.findData(kept)
-        self.cb_cmp.setCurrentIndex(max(j, 0))
+        chosen = kept if j >= 0 else self._default_compared()
+        self.cb_cmp.setCurrentIndex(max(self.cb_cmp.findData(chosen), 0))
         single_choice(self.cb_cmp)                       # Suggested alone: its text (D5)
         self.b_version_del.setEnabled(len(versions) > 1)
         self.b_version_del.setToolTip(_("Delete this version") if len(versions) > 1 else
                                       _("The only version cannot be deleted"))
         for cb in (self.cb_version, self.cb_cmp):
             cb.blockSignals(False)
+        self._compare_names()
+        if self.b_cmp.isChecked() and chosen != kept:    # the compared one is gone: its fallback is shown
+            self._compared_changed()
+
+    def _compare_names(self):
+        """The two names the divider's tags read: the compared version (or Suggested), and the version shown."""
+        if not hasattr(self, "viewer"):
+            return
+        self.viewer.compare_names = (self.cb_cmp.currentText(), self.cb_version.currentText())
+        self.viewer.update()
+
+    def _compared_changed(self, *_a):
+        """Another item chosen in the Compare list: its picture is asked for (view state: no step of Undo)."""
+        self._compare_names()
+        if self.b_cmp.isChecked():
+            self.before.img1 = self.before.full = None
+            self._send_before()
+            self._hint()
 
     def _switch_version(self, version: dict):
         """Another version in the panel: its layers, its crop and its own Undo, and the layer chosen in it when it was
         left."""
         self._keep_choice()
+        left, kept = self._version, self.cb_cmp.currentData()
         self._stacks[self._version] = (self.undo, self.redo)
         self._heal_hand[self._version] = (self._heal_src, self._heal_off)    # the source set by hand is the version's own
         self._heal_src, self._heal_off = self._heal_hand.get(version.get("id"), (None, None))
         self.undo, self.redo = self._stacks.get(version.get("id"), ([], []))
         self._version = version.get("id")
+        if left is not None and left != self._version:
+            self._prev_version = left
         self.layers = self._with_synth(load_layers(version.get("layers"), {p.pid for p in self.s.paths}))
         self._saved = json.dumps(save_layers(self.layers), sort_keys=True)
         self._show_crop(version.get("crop"))
-        self._fill_versions()
+        self._fill_versions(left if kept == self._version else _KEEP)    # the compared one shown: it swaps with the one left
         if self.sel and not self.layer(self.sel[0]):
             self.sel = self._choice_of(version) or ((self.layers[0]["id"], "layer") if self.layers else None)
         self.sync_paths()
         self.rebuild()
         self._undo_buttons()
         self.request(final_only=True, force=True)
-        if self.b_cmp.isChecked():
-            self._send_before()
+        self._before_sig = None                          # (its layers and canvas are another version's now)
+        self._refresh_before()
 
     def _from_post(self):
         """The changes of the model made inside are Post's steps: the graph's Undo leaves them to Post."""
@@ -2034,6 +2084,7 @@ class PostView(QWidget):
 
     # ------------------------------------------------------------ rendering (in the worker)
     def refresh(self):
+        self._before_sig = None                          # (the results on disk may have changed: the compared side too)
         self.request(final_only=True, force=True)
 
     def _visible_sig(self) -> str:
@@ -2167,20 +2218,57 @@ class PostView(QWidget):
         self._main_seq = self.worker.request(Request(kind="half", layers=snapshot(self.layers),
                                                      level=self.screen_level(), want=want, thumbs=True,
                                                      overlay=overlay, refine=False, hists=self._hist_ids()))
-        if self.b_cmp.isChecked():
-            self._send_before()
+        self._refresh_before()                                  # (only when its own inputs changed: an edit leaves it)
         need = tuple(self._stale_thumbs())
         if need:
             self.worker.request(Request(kind="thumbs", layers=snapshot(self.layers), need_thumbs=need))
 
-    def _send_before(self):
+    def _before_layers_of(self):
+        """(the layers the compared side renders, whether they are rendered as they are): another version's layers, or
+        the shown ones for the suggested settings (the render keeps their bottom layer only)."""
         other = self._compared()
         if other is None:
-            self.worker.request(Request(kind="before", layers=snapshot(self.layers), level=self.screen_level()))
-            return
+            return self.layers, False
         layers = load_layers(copy.deepcopy(other.get("layers")), {p.pid for p in self.s.paths})
         self._attach_fusion(layers)
-        self.worker.request(Request(kind="before", layers=snapshot(layers), level=self.screen_level(), plain=True))
+        return layers, True
+
+    def _before_signature(self):
+        """What the compared side is rendered from: its item, its layers (the suggested settings: the bottom layer's own
+        description, whatever the sliders), the shown picture's canvas, and the size it is rendered at."""
+        other = self._compared()
+        if other is not None:
+            what = json.dumps(other.get("layers"), sort_keys=True, default=str)
+        else:
+            pix = [x for x in self.layers if is_pixel(x)]
+            keep = ("kind", "pid", "key", "part", "base", "linked", "stretch", "fusion", "starless")
+            what = json.dumps([[x["id"]] + [x.get(k) for k in keep] for x in pix[-1:]] + [[x["id"] for x in pix]],
+                              sort_keys=True, default=str)
+        return (self.cb_cmp.currentData(), what, self.src.canvas, self.screen_level())
+
+    def _refresh_before(self):
+        """The compared side again when what it is rendered from changed (a slider of the shown version is not one)."""
+        if self.b_cmp.isChecked() and self._before_signature() != self._before_sig:
+            self._send_before()
+
+    def _send_before(self):
+        self._before_sig = self._before_signature()
+        self._before_gen += 1
+        self.before.full = None
+        layers, plain = self._before_layers_of()
+        self.worker.request(Request(kind="before", layers=snapshot(layers), level=self.screen_level(), plain=plain,
+                                    canvas=self._canvas, tag=self._before_gen))
+        if self.viewer.scale >= 0.5:
+            self._region_t.start(60)                            # zoomed in: its visible region at full resolution
+
+    def _send_before_region(self, box):
+        """The compared side's visible region at full resolution, as the shown one's (``_send_region``)."""
+        f = self.before.full
+        if not self.b_cmp.isChecked() or self.before.img1 is None or                 (f is not None and f[0][0] <= box[0] and f[0][1] <= box[1] and f[0][2] >= box[2] and f[0][3] >= box[3]):
+            return
+        layers, plain = self._before_layers_of()
+        self.worker.request(Request(kind="before_region", layers=snapshot(layers), level=0, box=box, plain=plain,
+                                    canvas=self._canvas, tag=self._before_gen))
 
     def _stale_thumbs(self):
         for lay in self.layers:
@@ -2223,11 +2311,11 @@ class PostView(QWidget):
         if box is None:
             return
         f = self.src.full
-        if f is not None and f[0][0] <= box[0] and f[0][1] <= box[1] and f[0][2] >= box[2] and f[0][3] >= box[3]:
-            return
         if self.src.img1 is None:
             return
-        self.worker.request(Request(kind="region", layers=snapshot(self.layers), level=0, box=box))
+        if not (f is not None and f[0][0] <= box[0] and f[0][1] <= box[1] and f[0][2] >= box[2] and f[0][3] >= box[3]):
+            self.worker.request(Request(kind="region", layers=snapshot(self.layers), level=0, box=box))
+        self._send_before_region(box)
 
     def _empty_banner(self) -> str:
         """Why the canvas is empty: nothing to show of the layers there are (hidden), or no layer at all."""
@@ -2271,6 +2359,7 @@ class PostView(QWidget):
             if self.src.canvas != size:
                 self.src.canvas = size
                 self.viewer.set_source(self.src)
+                self._refresh_before()                          # (the compared side is drawn on this grid)
                 if self.crop and not self.b_crop.isChecked():       # the crop kept, inside the image as it is now
                     self.viewer.crop_box = self._crop_shown()
             if self.ann_show["grid"] or self.ann_show["objects"]:
@@ -2341,9 +2430,15 @@ class PostView(QWidget):
             self.src.version += 1
             self.viewer.refresh()
         elif res.kind == "before":
-            self.before.img1, self.before.level1 = res.rgb, res.level
-            self.before.version += 1
-            self.viewer.update()
+            if res.tag is None or res.tag == self._before_gen:       # (not an older choice's picture)
+                self.before.img1, self.before.level1 = res.rgb, res.level
+                self.before.version += 1
+                self.viewer.update()
+        elif res.kind == "before_region":
+            if res.tag is None or res.tag == self._before_gen:
+                self.before.full = (res.box, res.rgb)
+                self.before.version += 1
+                self.viewer.update()
         if res.kind in ("draft", "half", "refine", "exact"):    # the search of stars: said while the picture says it;
             from .postengine import STARS_FAILED, STARS_SEARCHING       # the engine's notes said until they change
             searching = {STARS_SEARCHING, STARS_FAILED}
@@ -2923,6 +3018,7 @@ class PostView(QWidget):
         self.b_heal.blockSignals(True)                   # the tool is on while its layer is the one chosen
         self.b_heal.setChecked(self._heal_layer() is not None)
         self.b_heal.blockSignals(False)
+        self._compare_button()
         self.hide_big()
         for r in getattr(self, "rows", []):
             if r.name_edit is not None:                  # a name being typed is kept, as a click elsewhere keeps it
@@ -5120,12 +5216,36 @@ class PostView(QWidget):
 
     # ------------------------------------------------------------ view toggles
     def _compare(self, on):
+        """Compare: the picture split by a divider, another version left of it, the version shown (editable) right. View
+        state only: no step of Undo, the project not marked, nothing saved."""
+        if on:
+            j = self.cb_cmp.findData(self._default_compared())
+            self.cb_cmp.blockSignals(True)
+            self.cb_cmp.setCurrentIndex(max(j, 0))
+            self.cb_cmp.blockSignals(False)
+            self.before.img1 = self.before.full = None
         self.cb_cmp.setVisible(on)
         self.viewer.compare = self.before if on else None
+        self._compare_names()
         if on:
             self._send_before()
         self.viewer.update()
         self._hint()
+
+    def _compare_button(self):
+        """Compare is greyed, its reason on hover, while the crop box is drawn on the whole picture or Spot healing's
+        strokes would land on a half that is not edited; turning those tools on turns it off."""
+        crop, heal = self.b_crop.isChecked(), self.b_heal.isChecked()
+        if (crop or heal) and self.b_cmp.isChecked():
+            self.b_cmp.setChecked(False)
+        self.b_cmp.setEnabled(not (crop or heal))
+        self.b_cmp.setToolTip(_("Not while cropping: the crop box is drawn on the whole picture") if crop else
+                              _("Not while healing spots: the strokes act on the version shown") if heal else
+                              _(COMPARE_TIP))
+
+    def _toggle_compare(self):
+        if self.b_cmp.isEnabled():
+            self.b_cmp.toggle()
 
     def _toggle_mask(self):
         if self.b_mask.isEnabled():
@@ -5162,7 +5282,7 @@ class PostView(QWidget):
         elif self.sel and mask_selection(self.sel[1]):
             t = _("Red: where the layer is hidden · M: mask in gray") if self.show_tint else _("M: mask in gray")
         elif self.b_cmp.isChecked():
-            t = _("Drag the divider · Before: the bottom layer, suggested settings")
+            t = _("Drag the divider · V: one side whole · Left: “{name}”").format(name=self.cb_cmp.currentText())
         else:
             t = ""
         if self._notes:
@@ -5183,7 +5303,7 @@ class PostView(QWidget):
 #: for a key the page handles apart). The one table binds the keys and gives the Help menu's Shortcuts their list.
 POST_KEYS = (
     (("R",), "Crop", lambda p: p.b_crop.toggle()),
-    (("C",), "Compare", lambda p: p.b_cmp.toggle()),
+    (("C",), "Compare", lambda p: p._toggle_compare()),
     (("V",), "Flip compare", lambda p: p._flip_compare()),
     (("M",), "Show mask", lambda p: p._toggle_mask()),
     (("F", "Ctrl+0"), "Fit", lambda p: p.viewer.fit()),

@@ -13,7 +13,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
-from .i18n import _
+from .imageview_canvas import draw_split
 from .layout import pinch_factor, wheel_gesture
 
 
@@ -59,8 +59,9 @@ class Viewer(QWidget):
         self.setMouseTracking(True)
         self.setMinimumSize(200, 150)
         self.source = None
-        self.compare = None                               # before image for the curtain
-        self.curtain = 0.5
+        self.compare = None                               # the compared version's picture, left of the divider
+        self.compare_names = ("", "")                     # the names the divider's tags read: left, right
+        self.curtain = 0.5                                # the divider, as a fraction of the width
         self.scale = 1.0
         self.cx = self.cy = 0.0
         self.mode = "pan"                                 # pan | rect | brush | heal | crop
@@ -216,12 +217,7 @@ class Viewer(QWidget):
             ov(p, self)
         if self.compare is not None:
             xs = self.width() * self.curtain
-            p.setPen(QPen(QColor("#ffffff"), 2))
-            p.drawLine(QPointF(xs, 0), QPointF(xs, self.height()))
-            p.setBrush(QColor("#ffffff"))
-            p.drawEllipse(QPointF(xs, self.height() / 2), 7, 7)
-            self._tag(p, QPointF(xs - 12, 14), _("Before"), right=True)
-            self._tag(p, QPointF(xs + 12, 14), _("After"))
+            draw_split(p, xs, self.height(), *self.compare_names)      # the block editors' Split, drawn by the same code
         if self._rect:
             a, b = self._rect
             p.setPen(QPen(QColor("#e6a23c"), 1.5, Qt.DashLine))
@@ -391,16 +387,6 @@ class Viewer(QWidget):
         from PySide6.QtGui import QRegion
         return QRegion(self.rect()).subtracted(QRegion(r.toRect()))
 
-    def _tag(self, p, pt: QPointF, text, right=False):
-        m = p.fontMetrics()
-        w = m.horizontalAdvance(text) + 12
-        r = QRectF(pt.x() - w if right else pt.x(), pt.y() - 2, w, m.height() + 4)
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor(0, 0, 0, 170))
-        p.drawRoundedRect(r, 3, 3)
-        p.setPen(QColor("#ffffff"))
-        p.drawText(r, Qt.AlignCenter, text)
-
     # ------------------------------------------------------------ interaction
     def wheelEvent(self, e):
         if not self.source:
@@ -435,7 +421,7 @@ class Viewer(QWidget):
         super().keyReleaseEvent(e)
 
     def _near_curtain(self, x):
-        return self.compare is not None and abs(x - self.width() * self.curtain) < 10
+        return self.compare is not None and abs(x - self.width() * self.curtain) < 12
 
     def mousePressEvent(self, e):
         pos = e.position()

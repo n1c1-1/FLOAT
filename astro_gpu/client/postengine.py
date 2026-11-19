@@ -2906,7 +2906,8 @@ class Composer:
             self.backdrops.put(key, _frozen(comp), holder)
 
     def compose(self, layers: list[dict], level: int, box=None, *, want=(), thumbs: bool = False, stop=None,
-                cache: bool = True, draft: bool = False, hists=(), track: bool = False) -> Composite | None:
+                cache: bool = True, draft: bool = False, hists=(), track: bool = False,
+                canvas: Canvas | None = None) -> Composite | None:
         """The composite (float 0..1) at a resolution, for a box of the canvas at that level (default: all of it).
         ``want``: ids of layers whose mask is returned (also those hidden). ``thumbs``: also a thumbnail of every mask
         computed. ``stop``: called between the steps (and by the engine between its stages), True abandons the work
@@ -2914,15 +2915,17 @@ class Composer:
         that have one (the curves' tables). ``hists``: ids of filters whose input's histograms are returned (the
         Curves editor's and the stretches' graphs). ``track``: this is the composition being edited (Post's own
         renders, not the before image or another version's): where it changed says which row's backdrop to keep.
-        None when no pixel layer has a result."""
+        ``canvas``: the canvas to compose on, instead of the layers' own (the other side of a compare: the picture shown's
+        grid). None when no pixel layer has a result."""
         # a search ended: nothing to drop, what was made without its stars was not kept (``_stars_missing``); what
         # does not read them (the other layers, the steps under a Stars part) stays
         self._stars_new = False
         self._stars_wait = self._stars_failed = self._stars_missing = False
         self.applied = set()
-        canvas = self.canvas_of(layers)
-        if canvas is None:
+        own = self.canvas_of(layers)
+        if own is None:
             return None
+        canvas = canvas or own
         W, H = canvas.size(level)
         if box is None:
             box = (0, 0, W, H)
@@ -2976,7 +2979,7 @@ class Composer:
         if abox != (0, 0, W, H) and any(key not in self.stats for key in self._stats_keys(items, at)):
             # a region: the measures of the whole image its filters need, made on the whole canvas at the measure
             # level first (Ctx.whole_stats; review 10.1)
-            self.compose(layers, at, stop=stop, cache=cache, draft=draft)
+            self.compose(layers, at, stop=stop, cache=cache, draft=draft, canvas=canvas)
         if track:
             self._follow(items)
         start, back = self._start(items, where, thumbs)

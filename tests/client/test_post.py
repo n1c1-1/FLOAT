@@ -2918,7 +2918,7 @@ def test_the_french_switch_translates_every_thing_the_page_and_the_dialog_show(p
     try:
         assert s.settle()
         v = s.view
-        assert v.b_filter.toolTip().startswith("Ajouter") and v.b_cmp.text() == "Avant / après" and v.b_maskadd.toolTip().startswith("Ajouter")  # noqa: E501
+        assert v.b_filter.toolTip().startswith("Ajouter") and v.b_cmp.text() == "Comparer" and v.b_maskadd.toolTip().startswith("Ajouter")  # noqa: E501
         assert [lb.text() for lb in v.findChildren(QLabel)][:1] != []
         for k in FILTERS:                                                               # every filter's panel
             v.select(full_layer(v)["id"], "layer")
@@ -3612,7 +3612,7 @@ def test_a_version_of_post_has_its_layers_its_crop_and_its_undo(post):
     v._send_before()
     assert sent[-1].kind == "before" and sent[-1].plain
     assert [lay["id"] for lay in sent[-1].layers] == [lay["id"] for lay in second["layers"]]
-    v.cb_cmp.setCurrentIndex(0)
+    v.cb_cmp.setCurrentIndex(v.cb_cmp.findData(post3.SUGGESTED))
     v._send_before()
     assert sent[-1].kind == "before" and not sent[-1].plain
     v.worker.request = real

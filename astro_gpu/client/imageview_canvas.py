@@ -16,6 +16,30 @@ from .imageview_images import CANVAS_BG, ZOOM_STEP, Prepared
 from .imageview_loading import Display, to_qimage, tag
 
 
+def draw_split(p: QPainter, xs: float, height: float, left_name: str = "", right_name: str = ""):
+    """The divider of a version compare, shared by the block editors' Split and Post's Compare: a shadowed line at ``xs``,
+    its handle with two chevrons, and the two names as tags."""
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(QPen(QColor(0, 0, 0, 120), 4))
+    p.drawLine(QPointF(xs, 0), QPointF(xs, height))
+    p.setPen(QPen(QColor("#ffffff"), 1.5))
+    p.drawLine(QPointF(xs, 0), QPointF(xs, height))
+    c = QPointF(xs, height / 2)
+    p.setBrush(QColor("#ffffff"))
+    p.setPen(QPen(QColor(0, 0, 0, 140), 1))
+    p.drawEllipse(c, 11, 11)
+    p.setPen(QPen(QColor("#15171c"), 1.6))
+    for sgn in (-1, 1):
+        tri = QPolygonF([QPointF(xs + sgn * 3, c.y() - 4), QPointF(xs + sgn * 7, c.y()),
+                         QPointF(xs + sgn * 3, c.y() + 4)])
+        p.drawPolyline(tri)
+    if left_name:
+        tag(p, QPointF(xs - 10, 10), left_name, right=True, role="chevron_left")
+    if right_name:
+        tag(p, QPointF(xs + 10, 10), right_name, role="chevron_right")
+    p.setRenderHint(QPainter.Antialiasing, False)
+
+
 # ---------------------------------------------------------------------------------------------- the canvas
 class ImageCanvas(QWidget):
     """The drawing surface: one image (and, in split mode, the image it is compared with), zoom and pan, the minimap,
@@ -265,27 +289,7 @@ class ImageCanvas(QWidget):
             p.drawLine(QPointF(self.img_to_w(x0, 0).x(), py), QPointF(self.img_to_w(x1, 0).x(), py))
 
     def _split_line(self, p: QPainter):
-        xs = self.width() * self.split
-        p.setRenderHint(QPainter.Antialiasing)
-        p.setPen(QPen(QColor(0, 0, 0, 120), 4))
-        p.drawLine(QPointF(xs, 0), QPointF(xs, self.height()))
-        p.setPen(QPen(QColor("#ffffff"), 1.5))
-        p.drawLine(QPointF(xs, 0), QPointF(xs, self.height()))
-        c = QPointF(xs, self.height() / 2)
-        p.setBrush(QColor("#ffffff"))
-        p.setPen(QPen(QColor(0, 0, 0, 140), 1))
-        p.drawEllipse(c, 11, 11)
-        p.setPen(QPen(QColor("#15171c"), 1.6))
-        for sgn in (-1, 1):
-            tri = QPolygonF([QPointF(xs + sgn * 3, c.y() - 4), QPointF(xs + sgn * 7, c.y()),
-                             QPointF(xs + sgn * 3, c.y() + 4)])
-            p.drawPolyline(tri)
-        left, right = self.split_names
-        if left:
-            tag(p, QPointF(xs - 10, 10), left, right=True, role="chevron_left")
-        if right:
-            tag(p, QPointF(xs + 10, 10), right, role="chevron_right")
-        p.setRenderHint(QPainter.Antialiasing, False)
+        draw_split(p, self.width() * self.split, self.height(), *self.split_names)
 
     def minimap_rect(self) -> QRectF:
         w, h = self.display.size()
