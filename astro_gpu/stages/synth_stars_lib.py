@@ -252,6 +252,63 @@ def vet(L: np.ndarray, starless: np.ndarray | None, ys: np.ndarray, xs: np.ndarr
     return keep, why
 
 
+def reaches(shape: np.ndarray, flux: np.ndarray, floor: float) -> np.ndarray:
+    """The footprint radius of each star: where the drawn shape, at its flux, falls under ``floor`` at every angle
+    (``_reach``, for many stars at once; the radius the shape measured on the field has, spikes of the real star
+    excepted: they are its own, too)."""
+    three = shape if shape.ndim == 3 else shape[None]
+    env_img = three.max(0)
+    R = env_img.shape[-1] // 2
+    yy, xx = np.mgrid[-R:R + 1, -R:R + 1]
+    rings = np.rint(np.hypot(yy, xx)).astype(int).ravel()
+    env = np.zeros(R + 2, np.float32)
+    np.maximum.at(env, np.minimum(rings, R + 1), env_img.ravel())
+    over = env[:R + 1, None] * np.asarray(flux, np.float32)[None, :] > floor
+    last = np.where(over.any(0), R - np.argmax(over[::-1], 0), 2)
+    return np.clip(last, 4, R)
+
+
+def carried(s: np.ndarray, out: np.ndarray, ys, xs, peaks, star, shape, floor: float, size: float,
+            starless: np.ndarray | None = None) -> tuple[np.ndarray, int, int]:
+    """The light of the stars layer that is not a star's, to go on with the starless image unchanged: what is left
+    of ``s`` (the stars layer) where ``out`` (the synthetic layer) does not hold it, round the candidates that are not
+    stars. A candidate lying inside the footprint of a brighter star (``reaches``: the radius its own shape has at its
+    flux, measured on the field) is a bead of that star's halo or spikes: it goes with the star, which the drawing
+    replaces. Where the starless image itself has light (an extended object: its mean at the scale of the
+    stars above its sky by DETECT_SIGMAS of that mean's own noise, the detection's threshold) the light the stars layer
+    holds there is carried too (what is left of it once the drawn stars are taken off): it is the object's, left in the stars layer by
+    the star network. Returns (light (3, H, W), candidates carried, candidates left with their star)."""
+    from scipy.spatial import cKDTree
+    H, W = s.shape[1:]
+    rej = np.nonzero(~star)[0]
+    st = np.nonzero(star)[0]
+    flux = peaks[st] / max(float(np.max(shape)), 1e-9)
+    rad = reaches(shape, flux, floor)
+    tree = cKDTree(np.c_[ys[st], xs[st]])
+    inside = np.zeros(len(rej), bool)
+    near = tree.query_ball_point(np.c_[ys[rej], xs[rej]], float(rad.max()) if rad.size else 0.0) if rej.size else []
+    for k, js in enumerate(near):
+        for j in js:
+            if peaks[st[j]] > peaks[rej[k]] and np.hypot(ys[st[j]] - ys[rej[k]], xs[st[j]] - xs[rej[k]]) <= rad[j]:
+                inside[k] = True
+                break
+    free = rej[~inside]
+    m = np.zeros((H, W), np.uint8)
+    r = int(math.ceil(3.0 * size))
+    for y, x in zip(ys[free].tolist(), xs[free].tolist()):
+        cv2.circle(m, (x, y), r, 1, -1)
+    m = cv2.GaussianBlur(m.astype(np.float32), (0, 0), max(1.0, size)).clip(0, 1)
+    if starless is not None:
+        sm = cv2.GaussianBlur(starless, (0, 0), 4.0 * size)
+        sub = sm[::8, ::8]
+        sky = float(np.median(sub))
+        noise = max(_noise(sub), 1e-9)
+        neb = cv2.GaussianBlur((sm > sky + DETECT_SIGMAS * noise).astype(np.float32), (0, 0), max(1.0, size)).clip(0, 1)
+        m = np.maximum(m, neb)
+    light = np.clip(s - out, 0, None) * m
+    return light.astype(np.float32), int(free.size), int(inside.sum())
+
+
 def _centre(p: np.ndarray, rad: float) -> tuple[float, float]:
     n = p.shape[0] // 2
     yy, xx = np.mgrid[-n:n + 1, -n:n + 1]
@@ -369,7 +426,7 @@ def from_the_image(s: np.ndarray, valid: np.ndarray, starless: np.ndarray | None
     shape = measured_shape(L, ys[is_star], xs[is_star], peaks[is_star]) if is_star.any() else None
     if shape is None:
         return None, {"stars_drawn": 0}
-    rys, rxs = ys[~is_star], xs[~is_star]
+    rys, rxs, rpk = ys[~is_star], xs[~is_star], peaks[~is_star]
     ys, xs, peaks = ys[is_star], xs[is_star], peaks[is_star]
     real = (peaks >= np.quantile(peaks, 0.998)) | (peaks > SATURATED * float(L.max()))
     _n, lab = cv2.connectedComponents((L > T * 0.35).astype(np.uint8), connectivity=8)
@@ -380,8 +437,12 @@ def from_the_image(s: np.ndarray, valid: np.ndarray, starless: np.ndarray | None
     k = ~real
     fl = _apertures(s, ys[k], xs[k], peaks[k], T, size)
     drawn = draw(*L.shape, ys[k], xs[k], _centres(L, ys[k], xs[k], size), fl, shape, T * 0.05)
-    return drawn * (1 - mask) + s * mask, {"stars_drawn": int(k.sum()), "stars_kept": int(real.sum()),
-                                           "stars_dropped": int(len(rys)), **why}
+    out = drawn * (1 - mask) + s * mask
+    light, n_carried, n_with = carried(s, out, np.r_[ys, rys], np.r_[xs, rxs], np.r_[peaks, rpk],
+                                       np.r_[np.ones(len(ys), bool), np.zeros(len(rys), bool)], shape, T * 0.05, size,
+                                       None if starless is None else starless.mean(0))
+    return out, {"stars_drawn": int(k.sum()), "stars_kept": int(real.sum()), "stars_carried": n_carried,
+                 "stars_with_their_star": n_with, **why, "carried": light}
 
 
 def from_the_instrument(s: np.ndarray, valid: np.ndarray, ins: Instrument, gaia: dict | None,
@@ -392,7 +453,7 @@ def from_the_instrument(s: np.ndarray, valid: np.ndarray, ins: Instrument, gaia:
     if not len(ys):
         return None, {"stars_drawn": 0}
     is_star, why = vet(L, None if starless is None else starless.mean(0), ys, xs, size)
-    rys, rxs = ys[~is_star], xs[~is_star]
+    rys, rxs, rpk = ys[~is_star], xs[~is_star], peaks[~is_star]
     ys, xs, peaks = ys[is_star], xs[is_star], peaks[is_star]
     if not len(ys):
         return None, {"stars_drawn": 0}
@@ -401,9 +462,13 @@ def from_the_instrument(s: np.ndarray, valid: np.ndarray, ins: Instrument, gaia:
     n = 0
     if gaia is not None:
         fl, n = saturated_fluxes(ys, xs, sat, fl, gaia, max(4.0, 2.5 * size))
-    drawn = draw(*L.shape, ys, xs, _centres(L, ys, xs, size), fl, theoretical_shape(ins), T * 0.05)
-    return drawn, {"stars_drawn": len(ys), "stars_saturated": int(sat.sum()),
-                                           "stars_from_catalogue": n, "stars_dropped": int(len(rys)), **why}
+    shape = theoretical_shape(ins)
+    drawn = draw(*L.shape, ys, xs, _centres(L, ys, xs, size), fl, shape, T * 0.05)
+    light, n_carried, n_with = carried(s, drawn, np.r_[ys, rys], np.r_[xs, rxs], np.r_[peaks, rpk],
+                                       np.r_[np.ones(len(ys), bool), np.zeros(len(rys), bool)], shape, T * 0.05, size,
+                                       None if starless is None else starless.mean(0))
+    return drawn, {"stars_drawn": len(ys), "stars_saturated": int(sat.sum()), "stars_from_catalogue": n,
+                   "stars_carried": n_carried, "stars_with_their_star": n_with, **why, "carried": light}
 
 
 def draw(H: int, W: int, ys, xs, centres, fluxes, shapes, floor: float) -> np.ndarray:

@@ -58,6 +58,7 @@ from ..postengine import (
 #: the stage of a workflow's layer: its Output block's image, and its Stars block's images (``postengine.source_id``:
 #: the workflow's id, or ("stars", id))
 OUTPUT_STAGE, STARS_STAGE, SYNTH_STAGE = "render_simple", "star_removal", "synth_stars"
+SYNTH = "synth"                              # the source id of a workflow's Synthetic stars block: ("synth", its id)
 #: the time budgets of a request, in seconds
 BUDGET = {"draft": 0.15, "half": 1.0, "region": 2.0}
 DRAFT_LEVEL, HALF_LEVEL = 2, 1
@@ -340,6 +341,15 @@ class LayerSource(Provider):
             self._folders[sid] = self.resolver(sid)
         return self._folders[sid]
 
+    def synth_light(self, sid, lay: dict) -> Folder | None:
+        """The folder a starless image is read in when the workflow's Synthetic stars block wrote one (stages/
+        synth_stars: the starless image with the light of the stars layer that is not a star's, which goes on with it
+        unchanged); None for any other image."""
+        if lay.get("part") != "starless" or not (isinstance(sid, tuple) and len(sid) == 2 and sid[0] == "stars"):
+            return None
+        g = self.folder((SYNTH, sid[1]))
+        return g if g is not None and (Path(g.path) / "starless.npy").is_file() else None
+
     def refresh(self) -> set:
         """The results may have changed: look again. The source ids whose result changed (a new folder, or the same
         folder written again) lose their engine and their cached images."""
@@ -559,7 +569,7 @@ class LayerSource(Provider):
         if lay["kind"] == "image":
             return self._image_layer(lay, level, box)
         sid = source_id(lay)
-        f = self.folder(sid)
+        f = self.synth_light(sid, lay) or self.folder(sid)
         cv = self._cv
         whole = cv.size(level)
         put = self._placed(sid, level, box)

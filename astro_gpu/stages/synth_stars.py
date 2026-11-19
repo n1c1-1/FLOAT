@@ -60,10 +60,11 @@ class SynthStars(Stage):
     Params = SynthStarsParams
     # 2: the sub-pixel centring had its sign inverted (review 13.4): the measured shape was the median of stamps
     # twice their offset from the centre (spread), every star drawn twice its offset away from its place
-    # 4: what the vetting rejects is no longer carried over as light: no grey discs beside bright stars, no lumps of
-    # the nebula in the stars. 3: the candidates are vetted (width, roundness, sharpness against the field's stars; height above the starless
+    # 5: the light of the stars layer that is not a star's (the nebula's texture) is written with the starless image
+    # (starless.npy), unchanged, not drawn: no grey discs beside bright stars (their beads go with them), no lumps
+    # in the stars, no light lost. 3: the candidates are vetted (width, roundness, sharpness against the field's stars; height above the starless
     # image's local noise): the nebula's texture and the blends of touching stars are no longer drawn as stars
-    version = "4"
+    version = "5"
     key_label = "2"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
     def run(self, ctx: Context, p: SynthStarsParams) -> None:
@@ -84,10 +85,11 @@ class SynthStars(Stage):
         if drawn is None:
             ctx.log("no star to measure: the stars are left as they are", "warning")
             drawn = s
+        carried = info.pop("carried", None)
         ctx.metric("stars_drawn", info.get("stars_drawn", 0))
         if "stars_kept" in info:
             ctx.metric("stars_kept", info["stars_kept"])
-        for k in ("stars_dropped", "stars_not_stellar", "stars_on_texture"):
+        for k in ("stars_carried", "stars_with_their_star", "stars_not_stellar", "stars_on_texture"):
             if k in info:
                 ctx.metric(k, info[k])
         if "stars_saturated" in info:
@@ -100,6 +102,8 @@ class SynthStars(Stage):
             ctx.preview("before_after", before_after(s, drawn))
             return
         ctx.save("stars.npy", np.asarray(drawn, np.float32))
+        if carried is not None:        # what is not a star goes on with the starless image, unchanged (Post reads it there)
+            ctx.save("starless.npy", (starless + carried).astype(np.float32))
         ctx.save("valid.npy", v)
         (ctx.out("prep_stars.json")).write_text(json.dumps(ctx.load_json("star_removal", "prep_stars.json")), encoding="utf-8")
         ctx.preview("before_after", before_after(s, drawn))

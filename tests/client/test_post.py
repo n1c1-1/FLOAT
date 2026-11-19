@@ -906,6 +906,29 @@ def test_the_release_render_is_the_engines_bit_for_bit(preps):
     assert st.max() > 0.2 and st.min() >= 0
 
 
+def test_the_starless_image_is_read_where_the_synthetic_stars_block_wrote_one(preps, tmp_path):
+    """The Synthetic stars block writes the starless image with the light of the stars layer that is not a star's: the
+    starless image of the workflow's layers is that one, and the Stars block's when the block wrote none."""
+    import shutil
+    from astro_gpu.render.stars import StarSettings, StarsRenderEngine
+    d = tmp_path / "synth"
+    shutil.copytree(preps["full_stars"], d)
+    np.save(d / "starless.npy", np.load(d / "starless.npy") * 2 + 5)
+    svc = LayerService(DEV)
+    base = {1: Folder(preps["full"]), ("stars", 1): Folder(preps["full_stars"])}
+    plain = LayerSource(base.get, svc)
+    with_light = LayerSource({**base, ("synth", 1): Folder(d)}.get, svc)
+    cv = with_light.canvas([1])
+    ox, oy = cv.origin
+    w, h = cv.size(1)
+    lay = new_workflow_layer(1, "Full", True, part="starless")
+    got = with_light.layer(lay, 1, (0, 0, w, h))
+    ref = StarsRenderEngine(d, device=DEV).render(StarSettings(), 0.5, part="starless").final.numpy()
+    assert np.array_equal(got, np.moveaxis(ref[:, oy // 2: oy // 2 + h, ox // 2: ox // 2 + w], 0, -1))
+    plain.canvas([1])
+    assert not np.array_equal(plain.layer(lay, 1, (0, 0, w, h)), got)
+
+
 def test_a_region_at_full_resolution_is_the_engines_region(preps):
     svc = LayerService(DEV)
     src = LayerSource(lambda pid: {1: Folder(preps["full"])}.get(pid), svc)
