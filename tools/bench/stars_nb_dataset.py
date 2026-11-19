@@ -686,13 +686,16 @@ def deconv_pairs():
     return T, pairs
 
 
-def deconv_check(dev: str) -> int:
+def deconv_check(dev: str, only=None, outdir: Path = DECONV) -> int:
+    """``only``: the names of the pairs to do (a run stopped by a full disk goes on); ``outdir``: where they go."""
     import tifffile
     import torch
     T, pairs = deconv_pairs()
+    if only:
+        pairs = [p for p in pairs if p["name"] in only]
     dev = torch.device(dev)
     dec = T.Deconvolved(dev)
-    DECONV.mkdir(parents=True, exist_ok=True)
+    outdir.mkdir(parents=True, exist_ok=True)
     rows = []
     for p in pairs:
         t0 = time.time()
@@ -714,10 +717,10 @@ def deconv_check(dev: str) -> int:
         st = np.arcsinh((p["top"] + OFFSET) / SOFT)
         for kind, v in (("original", da), ("cible", dt)):
             y = np.arcsinh(np.clip(v + OFFSET, 0, None) / SOFT) / st
-            tifffile.imwrite(fresh(DECONV / f"{p['name']}_deconv_{kind}.tif"),
+            tifffile.imwrite(fresh(outdir / f"{p['name']}_deconv_{kind}.tif"),
                              np.round(np.clip(y, 0, 1) * 65535).astype(np.uint16).transpose(1, 2, 0), photometric="rgb")
         log(f"{row} ({time.time() - t0:.0f} s)")
-    f = fresh(DECONV / "deconv_check.json")
+    f = fresh(outdir / "deconv_check.json")
     f.write_text(json.dumps({"unit": "noise sigmas of the pair", "pairs": rows}, indent=1), encoding="utf-8")
     return 0
 
@@ -727,6 +730,8 @@ def main(argv=None) -> int:
     ap.add_argument("cmd", choices=("run", "combi", "osc", "deconv"))
     ap.add_argument("--fields", default="62")
     ap.add_argument("--device", default="cpu", choices=("cpu", "cuda"))
+    ap.add_argument("--pairs", default=None, help="deconv: only these pairs (comma-separated names)")
+    ap.add_argument("--outdir", default=None, help="deconv: where the files go")
     a = ap.parse_args(argv)
     sys.path.insert(0, str(ROOT))
     os.environ.setdefault("ASTRO_GPU_HOME", str(WORK / "_home"))
@@ -739,7 +744,7 @@ def main(argv=None) -> int:
             rc |= subprocess.run([sys.executable, __file__, a.cmd, "--fields", key, "--device", a.device]).returncode
         return rc
     if a.cmd == "deconv":
-        return deconv_check(dev)
+        return deconv_check(dev, a.pairs.split(",") if a.pairs else None, Path(a.outdir) if a.outdir else DECONV)
     one = {"run": do_field, "combi": do_combi, "osc": do_osc}[a.cmd]
     log(f"{keys[0]}: {one(keys[0], dev)}")
     return 0
