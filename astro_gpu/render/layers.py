@@ -9,7 +9,8 @@ the composed image.
   byte budget is reached). A GPU out-of-memory error renders again on the CPU, with a note.
 * ``masks(folder, scale, region)``: the H-alpha map of Post's mask parts.
 * ``export_rgb(rgb, out_dir, options, wcs, origin, history)``: TIFF 16 / 32f, PNG 16, JPEG, FITS 32f with the WCS and
-  the history in its header (ROWORDER TOP-DOWN: The reference program shows it the right way up), in sRGB, at full size or reduced, in
+  the history in its header (rows stored bottom up, ROWORDER BOTTOM-UP: the reference program shows it the right way
+  up, and FLOAT reads it back so), in sRGB, at full size or reduced, in
   a quarter turn or a mirror (never resampled), with a history file.
 """
 from __future__ import annotations

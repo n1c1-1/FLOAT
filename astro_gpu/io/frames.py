@@ -181,8 +181,23 @@ def fits_level(v: float, hd) -> float:
 
 
 def _rows_top_down(a: np.ndarray, hd) -> np.ndarray:
-    """An image (..., H, W) with its top row first, as a FITS header's ROWORDER says."""
+    """A camera frame (..., H, W) with its top row first, as a FITS header's ROWORDER says (without it: as stored).
+    Not the rule of an image file (``picture_bottom_up``): the frames of the projects already computed were read so,
+    and their calibration, registration and stack would change (issue #174)."""
     return a[..., ::-1, :] if str(hd.get("ROWORDER", "TOP-DOWN")).upper() == "BOTTOM-UP" else a
+
+
+def picture_bottom_up(hd) -> bool:
+    """Whether the picture of a FITS image file (a stack, an export) is stored bottom row first: by the FITS standard
+    the first row is the bottom of the picture, and the reference program writes and shows its files so, with or
+    without a ROWORDER keyword; only ROWORDER = TOP-DOWN says the first row is the top (issue #174: a stack written
+    without the keyword was shown upside down)."""
+    return str(hd.get("ROWORDER", "BOTTOM-UP")).strip().upper() != "TOP-DOWN"
+
+
+def picture_top_first(a: np.ndarray, hd) -> np.ndarray:
+    """A FITS image file's picture (..., H, W) with its top row first (``picture_bottom_up``)."""
+    return a[..., ::-1, :] if picture_bottom_up(hd) else a
 
 
 def is_colour_frame(path: str | Path) -> bool:

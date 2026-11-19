@@ -33,7 +33,8 @@ def stack(mono: bool, n=160):
 
 def stretch(tmp: Path, name: str, lin: np.ndarray, command: str) -> Path:
     src = tmp / f"{name}_lin.fits"
-    fits.PrimaryHDU(lin if lin.shape[0] == 3 else lin[0]).writeto(src, overwrite=True)
+    # stored as a FITS stack is, bottom row first and no ROWORDER (issue #174): the program keeps the row order
+    fits.PrimaryHDU(np.ascontiguousarray((lin if lin.shape[0] == 3 else lin[0])[..., ::-1, :])).writeto(src, overwrite=True)
     (tmp / f"{name}.ssf").write_text(f"requires 1.2.0\nload {src.stem}.fits\n{command}\nsave {name}_st\n")
     r = subprocess.run([EXE, "-d", str(tmp), "-s", f"{name}.ssf"], capture_output=True, text=True, timeout=300)
     assert r.returncode == 0, r.stdout[-600:]

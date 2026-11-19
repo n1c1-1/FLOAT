@@ -1468,6 +1468,9 @@ def _write_fits(path: Path, img: np.ndarray, prep: Prepared, origin, with_wcs: b
         hdr["XORIGIN"] = (int(origin[0]), "x of the first column in the full image")
         hdr["YORIGIN"] = (int(origin[1]), "y of the first row in the full image")
     hdr["CREATOR"] = APP_NAME
+    # written top row first, as the viewer holds it: said, since a FITS without the keyword is read bottom up
+    # (io/frames.picture_bottom_up, issue #174)
+    hdr["ROWORDER"] = ("TOP-DOWN", "first row is the top of the image")
     hdr["DATE"] = (dt.datetime.now().isoformat(timespec="seconds"), "file written")
     for k, v in {**(vi.header or {}), **(extra or {})}.items():
         key = str(k).upper()[:8]
