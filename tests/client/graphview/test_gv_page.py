@@ -529,3 +529,16 @@ def test_s18_ctrl_d_duplicates_the_stack_below(B):
     first = copy.nights[0][0] if copy.nights else copy.blocks[0]
     assert d.boxes[first].y > d.boxes[ha.nights[0][0]].y
     B.exact(before)
+
+
+def test_ctrl_d_says_the_copy_with_an_undo_link(B):
+    """Issue #171: a copy made by Ctrl+D says so with an Undo link, as the table's does; the link takes it back."""
+    B.tpl("sho_rgb")
+    ha = B.row("Ha")
+    B.g.select(ha.nights[0][0])
+    got = []
+    B.b.rich_toast.connect(lambda text, links: got.append((text() if callable(text) else text, [k for _t, k in links])))
+    rows = len(B.b.graph.rows)
+    B.key("Ctrl+D")
+    assert len(B.b.graph.rows) == rows + 1
+    assert got and got[-1][1] == ["undo"] and "copy" in got[-1][0].lower(), got

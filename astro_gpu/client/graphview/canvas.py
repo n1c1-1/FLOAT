@@ -1361,7 +1361,7 @@ class GraphCanvas(QGraphicsView):
             m.addSeparator()
         for r in rows:
             m.addAction(_("Copy of “{name}”").format(name=shown(r.name)),
-                        lambda _c=False, rid=r.id: bridge.act("duplicate_row", row=rid))
+                        lambda _c=False, rid=r.id: bridge.act("duplicate_row", undo=True, row=rid))
         m.exec(global_pos)
 
     # ================================================================== keys
@@ -1394,7 +1394,7 @@ class GraphCanvas(QGraphicsView):
         if k == Qt.Key_D and mods & Qt.ControlModifier:
             r = self.bridge.row(sel) or self.bridge.row_of(sel) if sel else None
             if r is not None:
-                self.bridge.act("duplicate_row", row=r.id)
+                self.bridge.act("duplicate_row", undo=True, row=r.id)
             return
         if k == Qt.Key_F2 and sel in self.blocks:
             self.rename(sel)

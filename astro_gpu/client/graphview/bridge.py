@@ -133,12 +133,13 @@ class Bridge(QObject):
         if sel and sel != PROJECT and sel not in self.doc.graph.blocks and self.row(sel) is None:
             self.doc.view["selected"] = None
 
-    def act(self, name, /, quiet=False, **kw):
+    def act(self, name, /, quiet=False, undo=False, **kw):
         """One operation, then the signals. quiet: True = no toast at all; "refusal" = no toast for a refusal.
+        undo: its toast carries an Undo link (a copy made by a key: the table's has one).
         The operation's name is positional only: an operation's own ``name=`` (rename_row, rename_night) goes into
         ``kw``. -> the Result."""
         before = self.doc.graph
-        res = self.after(self.doc.apply(name, **kw), quiet, kw.get("kind"), before=before)
+        res = self.after(self.doc.apply(name, **kw), quiet, kw.get("kind"), before=before, undo=undo)
         if res.ok:
             self.acted.emit(name, res)
         return res
@@ -191,7 +192,7 @@ class Bridge(QObject):
             self._invalidate()
             return False
 
-    def after(self, res, quiet=False, kind=None, before=None):
+    def after(self, res, quiet=False, kind=None, before=None, undo=False):
         if res.ok and not self._drawable(self.doc.undo if before is not None and self.doc.graph is not before else None):
             res = Result(False, reason=FAILED)
             quiet = False
@@ -225,6 +226,8 @@ class Bridge(QObject):
                         self.rich_toast.emit(said + " · " + note, [(_("Undo"), "undo")])
                     else:                         # the action at once, what it computes again once the states are read
                         self._toast_completed(said, coming)
+                elif undo:
+                    self.rich_toast.emit(said, [(_("Undo"), "undo")])
                 else:
                     self.toast.emit(said + " · Ctrl+Z")
         elif res.reason and not quiet:
