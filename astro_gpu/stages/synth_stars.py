@@ -60,7 +60,9 @@ class SynthStars(Stage):
     Params = SynthStarsParams
     # 2: the sub-pixel centring had its sign inverted (review 13.4): the measured shape was the median of stamps
     # twice their offset from the centre (spread), every star drawn twice its offset away from its place
-    version = "2"
+    # 3: the candidates are vetted (width, roundness, sharpness against the field's stars; height above the starless
+    # image's local noise): the nebula's texture and the blends of touching stars are no longer drawn as stars
+    version = "3"
     key_label = "2"     # the keys' label, frozen (core/stage.Stage.key_label): never change it
 
     def run(self, ctx: Context, p: SynthStarsParams) -> None:
@@ -72,17 +74,21 @@ class SynthStars(Stage):
         s = ctx.load(src, name).astype(np.float32)
         v = ctx.load(src, "valid.npy")
         valid = (v if v.ndim == 2 else v.min(0)) > 0
+        starless = None if out_only else ctx.load("star_removal", "starless.npy").astype(np.float32)
         ctx.progress(0.1, "drawing the stars")
         if p.method == "instrument":
-            drawn, info = lib.from_the_instrument(s, valid, self.instrument(ctx, p), self.catalogue(ctx))
+            drawn, info = lib.from_the_instrument(s, valid, self.instrument(ctx, p), self.catalogue(ctx), starless)
         else:
-            drawn, info = lib.from_the_image(s, valid)
+            drawn, info = lib.from_the_image(s, valid, starless)
         if drawn is None:
             ctx.log("no star to measure: the stars are left as they are", "warning")
             drawn = s
         ctx.metric("stars_drawn", info.get("stars_drawn", 0))
         if "stars_kept" in info:
             ctx.metric("stars_kept", info["stars_kept"])
+        for k in ("stars_left", "stars_not_stellar", "stars_on_texture"):
+            if k in info:
+                ctx.metric(k, info[k])
         if "stars_saturated" in info:
             ctx.metric("stars_saturated", info["stars_saturated"])
             ctx.metric("stars_from_catalogue", info["stars_from_catalogue"])

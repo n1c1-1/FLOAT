@@ -24,6 +24,14 @@ R_MEASURED = 32
 SATURATED = 0.6
 #: a star is detected this many noise units above the sky of the stars-alone image
 DETECT_SIGMAS = 8.0
+#: a candidate's width, roundness and sharpness may differ from the field's stars of the same brightness by this many
+#: robust standard deviations (the 3 sigma limit of the star finders' acceptance ranges)
+SHAPE_SIGMAS = 3.0
+#: the brightness classes (quantiles of the candidates' peak) in which the field's stars are measured, at most
+SHAPE_CLASSES = 10
+#: candidates a brightness class needs for the field's stars to say what a star looks like; below this one class's
+#: worth of candidates the shape is not judged at all
+SHAPE_MIN_STARS = 100
 
 
 @dataclass
@@ -140,6 +148,115 @@ def detect(L: np.ndarray, valid: np.ndarray, margin: int = 34):
     return ys[k], xs[k], L[ys[k], xs[k]], T, size
 
 
+def _stamps(L: np.ndarray, ys: np.ndarray, xs: np.ndarray, R: int) -> np.ndarray:
+    off = np.arange(-R, R + 1)
+    return L[ys[:, None, None] + off[None, :, None], xs[:, None, None] + off[None, None, :]]
+
+
+def measure(L: np.ndarray, ys: np.ndarray, xs: np.ndarray, size: float) -> dict[str, np.ndarray]:
+    """What each candidate is made of, from its stamp minus the local sky (the median of its outer ring): ``sigma``
+    the width (the Gaussian-windowed second moments, as the extractors' windowed centroid does), ``ell`` the
+    elongation 1 - b/a of the same moments (the roundness limit of the star finders), ``sharp`` the share of the light
+    in the centre (DAOFIND's sharpness: a star is peaked, a texture of the nebula is flat), ``peak`` the height above
+    the sky and ``sky`` its noise. Candidates too near the edge have all of them at zero."""
+    H, W = L.shape
+    R = max(5, int(math.ceil(3 * size)))
+    n = len(ys)
+    out = {k: np.zeros(n, np.float32) for k in ("sigma", "ell", "sharp", "peak", "noise")}
+    ok = (ys > R) & (ys < H - R - 1) & (xs > R) & (xs < W - R - 1)
+    yy, xx = np.mgrid[-R:R + 1, -R:R + 1].astype(np.float32)
+    rr = np.hypot(yy, xx)
+    ring = (rr > R - 1.5) & (rr <= R)
+    win = np.exp(-0.5 * (rr / size) ** 2)
+    core = rr <= 0.5 * R + 0.5
+    idx = np.nonzero(ok)[0]
+    for a in range(0, len(idx), 20000):
+        i = idx[a:a + 20000]
+        P = _stamps(L, ys[i], xs[i], R)
+        sky = np.median(P[:, ring], 1)
+        out["noise"][i] = 1.4826 * np.median(np.abs(P[:, ring] - sky[:, None]), 1)
+        Q = P - sky[:, None, None]
+        m = np.clip(Q, 0, None) * win
+        t = np.maximum(m.sum((1, 2)), 1e-9)
+        cy = (m * yy).sum((1, 2)) / t
+        cx = (m * xx).sum((1, 2)) / t
+        syy = (m * yy ** 2).sum((1, 2)) / t - cy ** 2
+        sxx = (m * xx ** 2).sum((1, 2)) / t - cx ** 2
+        sxy = (m * yy * xx).sum((1, 2)) / t - cy * cx
+        tr, d = sxx + syy, np.sqrt(np.maximum((sxx - syy) ** 2 + 4 * sxy ** 2, 0))
+        a_ax = np.sqrt(np.maximum((tr + d) / 2, 1e-9))
+        b_ax = np.sqrt(np.maximum((tr - d) / 2, 1e-9))
+        out["sigma"][i] = np.sqrt(np.maximum(tr / 2, 0))
+        out["ell"][i] = 1 - b_ax / a_ax
+        out["peak"][i] = Q[:, R, R]
+        out["sharp"][i] = Q[:, R, R] / np.maximum(np.clip(Q, 0, None)[:, core].sum(1), 1e-9)
+    return out
+
+
+def _outliers(v: np.ndarray, cls: np.ndarray, both: bool) -> np.ndarray:
+    """True where ``v`` stands out from the candidates of its own brightness class, by more than SHAPE_SIGMAS of the
+    class's robust deviation (1.4826 MAD): the field's own stars say what a star of that brightness looks like."""
+    bad = np.zeros(len(v), bool)
+    for c in np.unique(cls):
+        m = cls == c
+        med = float(np.median(v[m]))
+        s = max(1.4826 * float(np.median(np.abs(v[m] - med))), 1e-6)
+        bad[m] = (v[m] - med) > SHAPE_SIGMAS * s
+        if both:
+            bad[m] |= (med - v[m]) > SHAPE_SIGMAS * s
+    return bad
+
+
+def vet(L: np.ndarray, starless: np.ndarray | None, ys: np.ndarray, xs: np.ndarray, size: float) -> tuple[np.ndarray, dict]:
+    """Which of the detected maxima are stars (a boolean per candidate) and how many fell for each reason.
+
+    The detection takes any bump of the stars-alone image for a star, and the star network leaves some of the
+    nebula's texture in it. What is kept follows the star finders' acceptance (DAOFIND's roundness and sharpness
+    limits, the FWHM and roundness ranges of a point-source finder around the field's median, SExtractor's
+    extendedness: a point source has the width of the field's stars): each candidate is measured (``measure``) and
+    must stay within SHAPE_SIGMAS robust deviations of the field's stars of its own brightness for its width, its
+    elongation (a blend of two touching stars is elongated: it is not drawn as one star) and its sharpness. It must
+    also stand above the noise of the place: the sky's, and the structure of the STARLESS image at the scale of the
+    stars (what the network may have left of it in the stars layer), as DETECT_SIGMAS of that noise. No value comes
+    from an image: the limits are measured on the field's own stars."""
+    n = len(ys)
+    keep = np.ones(n, bool)
+    why = {"stars_not_stellar": 0, "stars_on_texture": 0}
+    if not n:
+        return keep, why
+    ms = measure(L, ys, xs, size)
+    edge = ms["peak"] <= 0
+    n_ok = int((~edge).sum())
+    odd = np.zeros(n, bool)
+    if n_ok >= SHAPE_MIN_STARS:
+        classes = int(min(SHAPE_CLASSES, n_ok // SHAPE_MIN_STARS))
+        cls = np.digitize(ms["peak"], np.quantile(ms["peak"][~edge], np.linspace(0, 1, classes + 1)[1:-1]))
+        odd = _outliers(ms["sigma"], cls, True) | _outliers(ms["ell"], cls, False) | _outliers(ms["sharp"], cls, True)
+        odd &= ~edge
+    keep &= ~odd
+    why["stars_not_stellar"] = int(odd.sum())
+    if starless is not None:
+        hp = starless - cv2.GaussianBlur(starless, (0, 0), 3.0 * size)
+        rms = np.sqrt(cv2.GaussianBlur(hp * hp, (0, 0), 4.5 * size))
+        # the starless image's own pixel noise, the field's usual value of that structure, is not texture
+        local = np.sqrt(np.maximum(rms[ys, xs] ** 2 - float(np.median(rms[::8, ::8])) ** 2, 0.0))
+        sky = float(np.median(ms["noise"][~edge])) if (~edge).any() else 0.0
+        tex = ms["peak"] < DETECT_SIGMAS * np.sqrt(sky ** 2 + local ** 2)
+        tex &= ~edge
+        why["stars_on_texture"] = int((tex & keep).sum())
+        keep &= ~tex
+    return keep, why
+
+
+def _left_real(shape: tuple[int, int], ys, xs, size: float) -> np.ndarray:
+    """A soft mask (1 on the candidates that are not stars, 0 elsewhere): the light there is left as it is."""
+    m = np.zeros(shape, np.uint8)
+    r = int(math.ceil(2.5 * size))
+    for y, x in zip(ys.tolist(), xs.tolist()):
+        cv2.circle(m, (x, y), r, 1, -1)
+    return cv2.GaussianBlur(m.astype(np.float32), (0, 0), 1.0 + 0.4 * size).clip(0, 1)
+
+
 def _centre(p: np.ndarray, rad: float) -> tuple[float, float]:
     n = p.shape[0] // 2
     yy, xx = np.mgrid[-n:n + 1, -n:n + 1]
@@ -245,14 +362,20 @@ def _apertures(s, ys, xs, peaks, T, size):
     return out
 
 
-def from_the_image(s: np.ndarray, valid: np.ndarray) -> tuple[np.ndarray | None, dict]:
+def from_the_image(s: np.ndarray, valid: np.ndarray, starless: np.ndarray | None = None) -> tuple[np.ndarray | None, dict]:
     """The stars redrawn with the shape measured at the centre of the field; the brightest and the saturated stay
     real, with all their light above the threshold and a very soft edge (their spikes are not in the shape's reach)."""
     L = s.mean(0)
     ys, xs, peaks, T, size = detect(L, valid)
-    shape = measured_shape(L, ys, xs, peaks) if len(ys) else None
+    if len(ys):
+        is_star, why = vet(L, None if starless is None else starless.mean(0), ys, xs, size)
+    else:
+        is_star, why = np.zeros(0, bool), {}
+    shape = measured_shape(L, ys[is_star], xs[is_star], peaks[is_star]) if is_star.any() else None
     if shape is None:
         return None, {"stars_drawn": 0}
+    rys, rxs = ys[~is_star], xs[~is_star]
+    ys, xs, peaks = ys[is_star], xs[is_star], peaks[is_star]
     real = (peaks >= np.quantile(peaks, 0.998)) | (peaks > SATURATED * float(L.max()))
     _n, lab = cv2.connectedComponents((L > T * 0.35).astype(np.uint8), connectivity=8)
     ids = np.unique(lab[ys[real], xs[real]])
@@ -262,13 +385,21 @@ def from_the_image(s: np.ndarray, valid: np.ndarray) -> tuple[np.ndarray | None,
     k = ~real
     fl = _apertures(s, ys[k], xs[k], peaks[k], T, size)
     drawn = draw(*L.shape, ys[k], xs[k], _centres(L, ys[k], xs[k], size), fl, shape, T * 0.05)
-    return drawn * (1 - mask) + s * mask, {"stars_drawn": int(k.sum()), "stars_kept": int(real.sum())}
+    mask = np.maximum(mask, _left_real(L.shape, rys, rxs, size))
+    return drawn * (1 - mask) + s * mask, {"stars_drawn": int(k.sum()), "stars_kept": int(real.sum()),
+                                           "stars_left": int(len(rys)), **why}
 
 
-def from_the_instrument(s: np.ndarray, valid: np.ndarray, ins: Instrument, gaia: dict | None) -> tuple[np.ndarray | None, dict]:
+def from_the_instrument(s: np.ndarray, valid: np.ndarray, ins: Instrument, gaia: dict | None,
+                        starless: np.ndarray | None = None) -> tuple[np.ndarray | None, dict]:
     """Every detected star redrawn with the instrument's theoretical shape, the saturated ones from the catalogue."""
     L = s.mean(0)
     ys, xs, peaks, T, size = detect(L, valid)
+    if not len(ys):
+        return None, {"stars_drawn": 0}
+    is_star, why = vet(L, None if starless is None else starless.mean(0), ys, xs, size)
+    rys, rxs = ys[~is_star], xs[~is_star]
+    ys, xs, peaks = ys[is_star], xs[is_star], peaks[is_star]
     if not len(ys):
         return None, {"stars_drawn": 0}
     fl = _apertures(s, ys, xs, peaks, T, size)
@@ -277,7 +408,9 @@ def from_the_instrument(s: np.ndarray, valid: np.ndarray, ins: Instrument, gaia:
     if gaia is not None:
         fl, n = saturated_fluxes(ys, xs, sat, fl, gaia, max(4.0, 2.5 * size))
     drawn = draw(*L.shape, ys, xs, _centres(L, ys, xs, size), fl, theoretical_shape(ins), T * 0.05)
-    return drawn, {"stars_drawn": len(ys), "stars_saturated": int(sat.sum()), "stars_from_catalogue": n}
+    mask = _left_real(L.shape, rys, rxs, size)
+    return drawn * (1 - mask) + s * mask, {"stars_drawn": len(ys), "stars_saturated": int(sat.sum()),
+                                           "stars_from_catalogue": n, "stars_left": int(len(rys)), **why}
 
 
 def draw(H: int, W: int, ys, xs, centres, fluxes, shapes, floor: float) -> np.ndarray:
