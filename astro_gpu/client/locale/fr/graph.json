@@ -604,6 +604,8 @@
   "nothing computed yet: place blocks, or wire the inputs": "rien de calculé encore : placez des blocs, ou reliez les entrées",
   "{names}: no block yet": "{names} : pas encore de bloc",
   "Computed with an earlier version ({versions})": "Calculé avec une version antérieure ({versions})",
+  "Earlier version": "Version antérieure",
+  "Computed with an earlier version of its method: {action} to bring it up to date": "Calculé avec une version antérieure de sa méthode : « {action} » pour le mettre à jour",
   "{version}, new network file": "{version}, nouveau fichier du réseau",
   "Recompute (current version)": "Recalculer (version actuelle)",
   "Computes this block again with the current version of its method, then the blocks after it. Its result of the earlier version stays valid until then: nothing is recomputed unless you ask.": "Calcule de nouveau ce bloc avec la version actuelle de sa méthode, puis les blocs qui le suivent. Son résultat de la version antérieure reste valable d'ici là : rien n'est recalculé sans votre demande.",

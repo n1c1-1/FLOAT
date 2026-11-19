@@ -57,7 +57,7 @@ def test_the_block_says_it_discreetly_and_stays_up_to_date(qapp, boxes):
     gr, st = by["gradient"], by["stacking"]
     assert gr.d["earlier"] == [("5", "6")] and gr.d["state"] == "done"
     tip = gr.toolTip().split("\n")
-    assert EN in tip and "Up to date" in tip                    # a fact of its result, not a state
+    assert EN in tip and "Earlier version" in tip and "Up to date" not in tip   # one truth: not up to date
     assert not st.d["earlier"] and "earlier version" not in st.toolTip()
     gr.update()                                                 # painted with its mark (no exception)
     p.canvas.viewport().repaint()
@@ -186,6 +186,7 @@ def test_real_panel_line_and_command_plan_the_recompute_and_post_still_renders(q
         settle(w, pg, 3)
         words = f"Computed with an earlier version ({Gradient.key_label} -> {Gradient.key_label}-next)"
         assert words in texts_of(pg.panel)
+        assert "Earlier version" in texts_of(pg.panel) and "Up to date" not in texts_of(pg.panel)   # one truth
         asked = []
         pg.view_action.connect(lambda op, ident: asked.append(op))
         button(pg.panel, CMD_EN).click()

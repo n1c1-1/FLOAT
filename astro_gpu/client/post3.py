@@ -694,7 +694,7 @@ def layers_default(window_w: int) -> int:
     return min(LAYERS_MAX, max(LAYERS_W, round(0.18 * window_w)))
 SUB_MAX = 120                                          # a layer row's blend, at most (its name keeps the rest)
 CENTRE_MIN = 480                                       # the centre's least width, whatever the bar and the tool column need
-VERSION_W = ((120, 200), (95, 120))                    # the version list's least and most width, then narrowed (#146)
+VERSION_W = ((120, 320), (95, 120))                    # the version list's least and most width, then narrowed (#146)
 
 
 class EyeBox(QCheckBox):
@@ -1289,8 +1289,7 @@ class PostView(QWidget):
         self.cb_version.setToolTip(_("The version shown: a click opens the list, a double-click renames it"))
         # one width whatever its names, today's (about "Version 1"), within bounds: a long name never pushes the bar, it
         # is cut (#146; as wide as its names, the list resized itself after the bar's layout and covered New version)
-        self.cb_version.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
-        self.cb_version.setMinimumContentsLength(9)
+        self.cb_version.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         self.cb_version.setMinimumWidth(VERSION_W[0][0])
         self.cb_version.setMaximumWidth(VERSION_W[0][1])
         self.b_version_new = set_icon(QPushButton(_("New version")), "add", 16)
@@ -1311,11 +1310,11 @@ class PostView(QWidget):
         self.b_version_new.clicked.connect(self._version_new)
         self.b_version_del.clicked.connect(self._version_delete)
         bar.addStretch(1)
-        self.cb_cmp = QComboBox()
-        self.cb_cmp.setToolTip(_("Compared version (left of the divider)"))
+        # the compared version is chosen from its caption on the picture (a click on it opens the list of versions); this
+        # list only keeps the choice and its items, it is not in the bar: the bar is the same with Compare on or off
+        self.cb_cmp = QComboBox(mid)
         self.cb_cmp.setVisible(False)
         self.cb_cmp.currentIndexChanged.connect(self._compared_changed)
-        bar.addWidget(self.cb_cmp)
         self._fill_versions()
         # the crop is confirmed or given up with named buttons, shown while it is drawn (#121), as the reference
         # editors' options bar; Spot healing is a tool of the bar (#122: it was found only in the filters' menu)
@@ -1334,6 +1333,7 @@ class PostView(QWidget):
         self.src = PostSource(self)
         self.before = BeforeSource(self)
         self.viewer = Viewer()
+        self.viewer.captionClicked.connect(self._pick_compared)
         self.viewer.overlays.append(self._overlay)
         self.viewer.overlays.append(self._ann_overlay)
         self.viewer.overlays.append(self._heal_overlay)
@@ -1441,7 +1441,7 @@ class PostView(QWidget):
         icons = [w for kind, w in steps[:k] if kind == "icon"]
         narrow = [w for kind, w in steps[:k] if kind == "narrow"]
         steered = [w for _kind, w in steps]
-        moments = (self.cb_cmp, self.b_crop_ok, self.b_crop_cancel)
+        moments = (self.b_crop_ok, self.b_crop_cancel)
         texts = self._bar_texts()
         bar = self.top_bar
         m = bar.contentsMargins()
@@ -1470,7 +1470,7 @@ class PostView(QWidget):
         """The centre's least width: the bar at its narrowest, with what only some moments add to it (Compare's list, the
         crop's Apply and Cancel: never together), and the tool column. The splitter never squeezes the bar below it."""
         k = len(self._bar_steps())
-        need = max(self._bar_need(k, ()), self._bar_need(k, (self.cb_cmp,)),
+        need = max(self._bar_need(k, ()),
                    self._bar_need(k, (self.b_crop_ok, self.b_crop_cancel)))
         return max(CENTRE_MIN, need + STRIP_W)
 
@@ -1859,6 +1859,19 @@ class PostView(QWidget):
         self._compare_names()
         if self.b_cmp.isChecked() and chosen != kept:    # the compared one is gone: its fallback is shown
             self._compared_changed()
+
+    def _pick_compared(self, pos):
+        """A click on the compared version's caption: the list of versions (and Suggested) opens under it, as the
+        reference editors name each side of their split; the one chosen is shown left of the divider."""
+        m = QMenu(self.viewer)
+        for i in range(self.cb_cmp.count()):
+            a = m.addAction(self.cb_cmp.itemText(i))
+            a.setCheckable(True)
+            a.setChecked(i == self.cb_cmp.currentIndex())
+            a.triggered.connect(lambda _c=False, i=i: self.cb_cmp.setCurrentIndex(i))
+        self._caption_menu = m
+        if not getattr(self, "_test_no_exec", False):
+            m.popup(self.viewer.mapToGlobal(pos))
 
     def _compare_names(self):
         """The two names the divider's tags read: the compared version (or Suggested), and the version shown."""
@@ -5245,7 +5258,6 @@ class PostView(QWidget):
             self.cb_cmp.setCurrentIndex(max(j, 0))
             self.cb_cmp.blockSignals(False)
             self.before.img1 = self.before.full = None
-        self.cb_cmp.setVisible(on)
         self.viewer.compare = self.before if on else None
         self._compare_names()
         if on:

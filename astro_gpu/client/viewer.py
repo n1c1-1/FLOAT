@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
@@ -52,6 +52,7 @@ class Viewer(QWidget):
     toolRelease = Signal()
     viewChanged = Signal()
     hovered = Signal(float, float)
+    captionClicked = Signal(QPoint)                      # a click on the compared side's caption (viewer coordinates)
     cropChanged = Signal()                               # the crop box was drawn or moved (let go)
 
     def __init__(self, parent=None):
@@ -60,6 +61,7 @@ class Viewer(QWidget):
         self.setMinimumSize(200, 150)
         self.source = None
         self.compare = None                               # the compared version's picture, left of the divider
+        self._caption = None                              # the compared side's caption (where it was drawn)
         self.compare_names = ("", "")                     # the names the divider's tags read: left, right
         self.curtain = 0.5                                # the divider, as a fraction of the width
         self.scale = 1.0
@@ -217,7 +219,7 @@ class Viewer(QWidget):
             ov(p, self)
         if self.compare is not None:
             xs = self.width() * self.curtain
-            draw_split(p, xs, self.height(), *self.compare_names)      # the block editors' Split, drawn by the same code
+            self._caption = draw_split(p, xs, self.height(), *self.compare_names, chevrons=False)      # the block editors' Split, drawn by the same code
         if self._rect:
             a, b = self._rect
             p.setPen(QPen(QColor("#e6a23c"), 1.5, Qt.DashLine))
@@ -431,6 +433,8 @@ class Viewer(QWidget):
             self._minimap_goto(pos)
         elif e.button() == Qt.LeftButton and self._space:
             self._drag = ("pan", pos, self.cx, self.cy)
+        elif e.button() == Qt.LeftButton and self.compare is not None and self._caption is not None                 and self._caption.contains(pos):
+            self.captionClicked.emit(QPoint(int(self._caption.left()), int(self._caption.bottom())))
         elif e.button() == Qt.LeftButton and self._near_curtain(pos.x()):
             self._drag = ("curtain",)
         elif e.button() == Qt.LeftButton and self.mode == "crop" and self.source:

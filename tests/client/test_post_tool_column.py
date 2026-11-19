@@ -59,7 +59,7 @@ def test_the_tools_and_the_bar_all_fit_at_every_laptop_size(env, size, lang):  #
     least, centre = view.centre.minimumWidth(), view.centre.width()
     view.b_cmp.setChecked(True)                                         # Compare's list in the bar
     _everything_fits(w, view, ("compare", size, lang))
-    assert view.cb_cmp.isVisible()
+    assert not view.cb_cmp.isVisible()                                  # it is chosen from its caption on the picture
     view.b_cmp.setChecked(False)
     view.b_crop.setChecked(True)                                        # the crop's Apply and Cancel in the bar
     _everything_fits(w, view, ("cropping", size, lang))
@@ -86,7 +86,7 @@ def test_the_properties_panel_dragged_widest_leaves_the_bar_whole(env, size):  #
         if size[0] < 1500:
             assert view.centre.width() == view.centre.minimumWidth(), view.split.sizes()
         _everything_fits(w, view, ("widest", size, compare))
-    assert view.centre.minimumWidth() >= view._bar_need(len(view._bar_steps()), (view.cb_cmp,)) + post3.STRIP_W
+    assert view.centre.minimumWidth() >= view._bar_need(len(view._bar_steps()), ()) + post3.STRIP_W
 
 
 def test_each_tool_button_names_itself_with_its_key_and_the_keys_and_clicks_toggle_it(post):

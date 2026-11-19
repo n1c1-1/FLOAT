@@ -30,6 +30,7 @@ class Bridge(QObject):
     selection = Signal(object)    # the selected id (block, row) or None
     replaced = Signal()           # another document was installed
     rich_toast = Signal(object, object)       # (text or function, links or function): a toast with links (file drops)
+    toast_close = Signal()                    # an Undo or a Redo was made: the toast that offered the Undo goes
     rich_toast_refresh = Signal()             # the text of a function toast changed (a background listing moved on)
     files_chosen = Signal()                   # a FILE cell of the table was selected: the panel shows what it holds
     appeared = Signal(object)     # the block a gesture made (the one of the kind dropped): shown on screen
@@ -272,11 +273,13 @@ class Bridge(QObject):
     history = None
 
     def undo(self):
+        self.toast_close.emit()
         if self.history is not None:
             return self.history[0]()
         return self.undo_graph()
 
     def redo(self):
+        self.toast_close.emit()
         if self.history is not None:
             return self.history[1]()
         return self.redo_graph()

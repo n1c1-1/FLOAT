@@ -2356,7 +2356,13 @@ class Panel(QWidget):
                 then = ""
         chip = QLabel(word)
         chip.setStyleSheet(f"color: {STATE_COLOR[st]}; font-size: 9pt;")
-        if st == "stale":
+        if st == "done" and self._earlier_found(node):   # one truth: a result of an earlier version is not up to date
+            from .graphnode import RECOMPUTE
+            chip.setText(_("Earlier version"))
+            chip.setStyleSheet(f"color: {WARN}; font-size: 9pt;")
+            chip.setToolTip(_("Computed with an earlier version of its method: {action} to bring it up to date")
+                            .format(action=_(RECOMPUTE)))
+        elif st == "stale":
             try:
                 why = self.s.block_map.why(self._same_node(node))
             except (KeyError, ValueError, AttributeError, IndexError):
@@ -2365,6 +2371,20 @@ class Panel(QWidget):
         elif st == "interrupted":
             chip.setToolTip(then)
         return chip
+
+    def _earlier_found(self, node) -> list:
+        """The (from, to) versions of the stages of this block computed with an earlier version of their method."""
+        from .graphnode import block_earlier
+        if getattr(node, "cut", False) or self.tune:
+            return []
+        found: list = []
+        try:
+            for q in node.paths:
+                own = self.s.block_map.session_stages(q, node.sid) if node.key == "calibration" and                     node.sid is not None else None
+                found += [v for v in block_earlier(self.s, q, node.ref, own) if v not in found]
+        except (KeyError, ValueError, AttributeError, IndexError, TypeError):
+            return []
+        return found
 
     def earlier_row(self, node, st) -> None:
         """A block whose result was computed with an earlier version of its method: one line saying so and the command

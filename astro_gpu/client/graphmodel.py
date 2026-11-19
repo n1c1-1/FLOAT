@@ -2353,7 +2353,8 @@ class GraphEditing:
             return
         order = {(w, s): i for w, c in getattr(self, "_chains", {}).items() for i, s in enumerate(c)}
         stages = sorted(lost or added, key=lambda k: (k[0], order.get(k, 0)))
-        c = self.cost()
+        self._cache.pop(("cost", None, self.device), None)   # the time after it is worked out now: a total kept from before
+        c = self.cost()                                      # the gesture gave the toast "≤ 1 min" over a run of hours
         self.last_stale = ChangeCost(self._lost_blocks(stages), stages, c.seconds - sec, c.measured, again=bool(lost))
 
     # ------------------------------------------------------------------ workflows: names, copies, deletion

@@ -408,7 +408,7 @@ TAG_BG = QColor(0, 0, 0, 170)
 
 
 def tag(p: QPainter, pt: QPointF, text: str, right: bool = False, color: str = "#ffffff", bg: QColor = TAG_BG,
-        role: str | None = None):
+        role: str | None = None, icon_end: bool = False):
     """A small label on the image (rounded, dark); ``role``: an icon on the side it points at."""
     m = p.fontMetrics()
     w = m.horizontalAdvance(text) + 14 + (18 if role else 0)
@@ -417,7 +417,10 @@ def tag(p: QPainter, pt: QPointF, text: str, right: bool = False, color: str = "
     p.setBrush(bg)
     p.drawRoundedRect(r, 4, 4)
     p.setPen(QColor(color))
-    if role:
+    if role and icon_end:                                # the icon after the text (a drop-down mark)
+        draw(p, QRectF(r.right() - 20, r.center().y() - 8, 16, 16), role)
+        p.drawText(r.adjusted(0, 0, -20, 0), Qt.AlignCenter, text)
+    elif role:
         ix = r.left() + 4 if right else r.right() - 20
         draw(p, QRectF(ix, r.center().y() - 8, 16, 16), role)
         p.drawText(r.adjusted(20, 0, 0, 0) if right else r.adjusted(0, 0, -20, 0), Qt.AlignCenter, text)
