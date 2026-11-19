@@ -2086,7 +2086,8 @@ def test_a_slider_drag_is_a_draft_then_the_screen_image(post):
     # on the CPU: drafts at an eighth of the screen picture's size while it moves, then the screen's picture at the
     # size it is shown (nothing between: the quarter first was twice the work before the picture)
     lv = v.screen_level()
-    assert v.draft_level == 3 and drafts and ("draft", lv + 2) in log and halves and halves[-1] > drafts[-1]
+    assert v.draft_level == 3 and drafts and halves and halves[-1] > drafts[-1]
+    assert all(lvl <= lv + 2 + 1e-9 for k, lvl in log if k == "draft")      # (zoomed in, the part shown, finer: #171)
     assert ("half", lv) in log and not any(x[0] == "refine" for x in log)
     assert len(v.undo) == n + 1 and full["sliders"] == {"sky": pytest.approx(3.4)}
     assert np.array_equal(shown(v), reference(post).rgb)
