@@ -391,9 +391,9 @@ def read_history(path: str | Path) -> tuple[tuple, int]:
 
 #: the lines (HISTORY) the reference program writes when it calibrates the colours, from its source: "Photometric CC"
 #: (releases 1.2, and 1.4 with " (algorithm: PCC|SPCC)"), "Photometric Color Calibration" and "Spectrophotometric Color
-#: Calibration" (the current development version, ``photometric_cc_log_hook``), "Color Calibration" (the colour
-#: calibration of the whole image) and "Background neutralization" (the sky taken to a neutral level)
-COLOUR_LINES = re.compile(r"photometric\s+(?:cc\b|colou?r\s+calibration)|^colou?r\s+calibration|background\s+neutrali[sz]ation",
+#: Calibration" (the current development version, ``photometric_cc_log_hook``), and "Color Calibration" (the colour
+#: calibration of the whole image). "Background neutralization" does not count: it does not use the stars' colours
+COLOUR_LINES = re.compile(r"photometric\s+(?:cc\b|colou?r\s+calibration)|^colou?r\s+calibration",
                           re.I)
 
 

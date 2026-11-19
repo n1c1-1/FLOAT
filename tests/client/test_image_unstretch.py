@@ -191,7 +191,7 @@ def test_denoise_adapted_is_greyed_on_an_image_with_its_reason(model, tmp_path):
 # ------------------------------------------------------------------------------------------------ colours calibrated (#174)
 
 CALIBRATED = ("Photometric CC", "Photometric CC (algorithm: SPCC)", "Photometric Color Calibration",
-              "Spectrophotometric Color Calibration", "Color Calibration", "Background neutralization")
+              "Spectrophotometric Color Calibration", "Color Calibration")
 
 
 @pytest.mark.parametrize("line", CALIBRATED)
@@ -207,7 +207,8 @@ def test_every_wording_of_a_colour_calibration_is_found_and_changes_the_key(tmp_
 
 
 def test_without_such_a_line_nothing_changes(tmp_path):
-    hdr = write_fits(tmp_path / "n.fits", linear_image(sky=0.02, sigma=0.01), ["Background extraction (Correction: Subtraction)"])
+    hdr = write_fits(tmp_path / "n.fits", linear_image(sky=0.02, sigma=0.01),
+                     ["Background neutralization", "Background extraction (Correction: Subtraction)"])
     assert U.colour_line(hdr) == ""
     p, w = make(tmp_path, hdr)
     assert Keys(p).key_parts(w.id, "image")["x"] == Keys(p).scan.image_id(str(hdr))
