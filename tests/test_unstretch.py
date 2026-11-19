@@ -14,11 +14,10 @@ from astro_gpu.stages.image import read_image
 
 astropy_fits = pytest.importorskip("astropy.io.fits")
 
-rng = np.random.default_rng(174)
-
-
-def linear_image(mono=False, sigma=0.01, sky=0.05, size=(64, 80)):
-    """A synthetic linear stack: a sky with noise and a few bright blobs (values 0-1)."""
+def linear_image(mono=False, sigma=0.01, sky=0.05, size=(64, 80), seed=174):
+    """A synthetic linear stack: a sky with noise and a few bright blobs (values 0-1). Its own seeded generator: the
+    same image whatever tests ran before in the process (a shared one made a test pass alone and fail in a worker)."""
+    rng = np.random.default_rng(seed)
     h, w = size
     a = sky + sigma * rng.standard_normal((1 if mono else 3, h, w))
     yy, xx = np.mgrid[:h, :w]
