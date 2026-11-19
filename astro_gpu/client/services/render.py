@@ -582,20 +582,27 @@ class LayerSource(Provider):
                 if stop():
                     raise Superseded()
             kw["stop"] = abandon
-        try:
+        def one(part):
+            kw["part"] = part
             if level == 0 and self._partial(sid, put, box, region, whole):
                 li = self.service.render(f.path, base, lay.get("sliders"), 1.0,
                                          region=tuple(int(round(v)) for v in region), **kw)
-                arr = self._cut(li.rgb, 1, region, size, False)
+                got = self._cut(li.rgb, 1, region, size, False)
             else:                                               # the whole grid at 1/fi, cut to the canvas
                 li = self.service.render(f.path, base, lay.get("sliders"), 1.0 / fi, **kw)
-                arr = self._cut(li.rgb, fi, region, size, True)
+                got = self._cut(li.rgb, fi, region, size, True)
+            if li.info.get("note"):
+                self._notes.add(li.info["note"])
+            self.engine_ms += float(li.info.get("render_ms") or 0.0)
+            return got
+        try:
+            arr = one(kw.get("part"))
+            if lay.get("part") == "synth" and lay.get("stars_over") is None and (Path(f.path) / "carried.npy").is_file():
+                # the light the block carried that is not a star's: added unchanged, the star settings do not act on it
+                arr = arr + one("carried")
         except (KeyError, OSError) as e:                        # a file of the result is not there (the folder is)
             self.mark_gone(sid)
             raise Unreadable(sid) from e
-        if li.info.get("note"):
-            self._notes.add(li.info["note"])
-        self.engine_ms += float(li.info.get("render_ms") or 0.0)
         out = np.ascontiguousarray(np.moveaxis(arr, 0, -1), np.float32)
         return out if put is None else self._paste(put, box, out)
 

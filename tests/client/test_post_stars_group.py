@@ -117,6 +117,21 @@ def test_the_group_gives_the_pixels_of_today_bit_for_bit():
     assert np.array_equal(compose([dict(row, mask=None), g], parts).rgb, today(parts, None))
 
 
+def test_a_row_half_open_shows_half_of_each_never_both():
+    """The synthetic stars carry the light of the stars layer that is not a star's (the block's carried image), so they
+    REPLACE the real stars, light included: at half the row's opacity the pixel is the middle of the two images, not their sum
+    (no doubling of that light where the real stars are brought back), and with the row off it is the real stars'."""
+    parts = images()
+    g = group()
+    row = pe.new_synth_layer(g["id"])
+    row["opacity"] = 50.0                                              # (half the row: the mask itself stays open)
+    got = compose([row, g], parts, want=[row["id"]])
+    mid = (parts["stars"] + parts["synth"]) / 2
+    assert np.abs(got.rgb - np.clip(screen(parts["starless"], mid), 0, 1)).max() < 1e-3
+    off = compose([dict(row, visible=False), g], parts).rgb
+    assert np.array_equal(off, np.clip(screen(parts["starless"], parts["stars"]), 0, 1))
+
+
 def test_the_rows_of_the_group_act_on_what_is_under_them_in_it():
     """A filter above the synthetic stars acts on all the stars of the group; one under them (above the real stars) on
     the real stars alone, which the synthetic ones cover where their mask is open."""

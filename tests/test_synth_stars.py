@@ -196,3 +196,29 @@ def test_two_touching_stars_are_two_stars_or_none_never_one_elongated():
 def test_the_block_is_at_a_new_version_after_vetting():
     from astro_gpu.stages.synth_stars import SynthStars
     assert int(SynthStars.version) >= 3
+
+
+def test_what_is_not_a_star_is_not_carried_into_the_synthetic_layer():
+    L, pts, _ = field_of_stars()
+    h = L.shape[0] // 2
+    yy, xx = np.mgrid[:L.shape[0], :L.shape[1]]
+    L += 300 * np.exp(-((yy - h) ** 2 + (xx - h) ** 2) / (2 * 7.0 ** 2)).astype(np.float32)
+    s = np.stack([L, L, L]).astype(np.float32)
+    drawn, info = lib.from_the_image(s, np.ones(L.shape, bool), None)
+    assert info["stars_carried"] + info["stars_with_their_star"] >= 1
+    assert drawn[:, h - 20:h + 21, h - 20:h + 21].max() < 5            # no ghost disc, no lump where the blob was
+
+
+def test_the_light_that_is_not_a_star_goes_on_with_the_starless_image_unchanged():
+    L, pts, _ = field_of_stars()
+    h = L.shape[0] // 2
+    yy, xx = np.mgrid[:L.shape[0], :L.shape[1]]
+    blob = (300 * np.exp(-((yy - h) ** 2 + (xx - h) ** 2) / (2 * 7.0 ** 2))).astype(np.float32)
+    s = np.stack([L + blob] * 3).astype(np.float32)
+    starless = np.stack([blob * 5] * 3).astype(np.float32)            # the object, in the starless image as well
+    drawn, info = lib.from_the_image(s, np.ones(L.shape, bool), starless)
+    light = info["carried"]
+    on = (slice(None), slice(h - 8, h + 9), slice(h - 8, h + 9))
+    assert abs(light[on].mean() / blob[h - 8:h + 9, h - 8:h + 9].mean() - 1) < 0.1   # the blob's light, unchanged
+    assert light[:, :60, :60].max() < 5                                # nothing carried round the stars
+    assert drawn[on].max() < 5                                         # and none of it drawn as a star

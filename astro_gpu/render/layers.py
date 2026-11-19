@@ -210,10 +210,11 @@ class LayerService:
         of a Stars block's image; it raises to abandon the rendering (Post's composition superseded)."""
         if stats_from is not None:
             return self._render_combined_stars(folder, stats_from, base, sliders, scale, region, blend)
-        kind = layer_kind(folder, part)
+        sp = "stars" if part == "carried" else part      # the light a Synthetic stars block carries: set as its stars
+        kind = layer_kind(folder, sp)
         if (part is None) == is_stars_folder(folder):
             raise ValueError("the Stars block's images come from its folder, the others from the Output block's")
-        s = self.settings(folder, base, sliders, part, blend, stretch)
+        s = self.settings(folder, base, sliders, sp, blend, stretch)
         t0 = time.perf_counter()
         kw = {"part": part} if part is not None else {}
         if stop is not None and is_stars_folder(folder):
