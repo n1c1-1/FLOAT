@@ -432,7 +432,9 @@ def _test_project():
 
 
 PAGE_CONTROLS = ("before", "method", "points", "brush", "ellipse", "eraser", "generate", "pitch", "objects", "nebula",
-                 "clearall", "size", "marks", "reset", "variant", "apply")
+                 "clearall", "size", "marks")
+#: the draft bar's buttons: the bar is shown only while there is a draft
+DRAFT_CONTROLS = ("reset", "variant", "apply")
 
 
 def _controls(w, ed) -> list[str]:
@@ -466,8 +468,19 @@ def test_every_tool_is_in_the_window_on_a_laptop(qapp, tmp_path, size):
             r = b.rect().translated(b.mapTo(w, b.rect().topLeft()))
             assert r.left() >= 0 and r.top() >= 0 and r.right() <= w.width() and r.bottom() <= w.height(), (k, r)
             assert b.width() >= b.sizeHint().width() - 1, k                       # never squeezed: its name whole
+        assert not ed._ui["bar"].isVisible()                                      # no draft: no bar
         # at most 16 outside the settings panel: Before / After, Method, the four tools and their size, the four
         # actions on the samples and the grid's pitch, Marks, Reset, Try variant, Apply (one more fails)
+        assert len(_controls(w, ed)) <= 16, _controls(w, ed)
+        ed.set_draft({"degree": 3})                                               # a draft: the bar and its three buttons
+        settle(w)
+        assert ed._ui["bar"].isVisible()
+        for k in DRAFT_CONTROLS:
+            b = ed._ui[k]
+            assert b.isVisible(), k
+            r = b.rect().translated(b.mapTo(w, b.rect().topLeft()))
+            assert r.left() >= 0 and r.top() >= 0 and r.right() <= w.width() and r.bottom() <= w.height(), (k, r)
+            assert b.width() >= b.sizeHint().width() - 1, k
         assert len(_controls(w, ed)) <= 16, _controls(w, ed)
     finally:
         w.close()
@@ -897,7 +910,7 @@ def test_the_gradient_view_s_aids_never_reach_another_view(qapp, tmp_path):
         def denoise_split():
             go("debruitage")
             v = t.view
-            i = next(k for k, x in enumerate(v._targets) if x.name == "Gradient removed")
+            i = next(k for k, x in enumerate(v._targets) if x.name.startswith("What the block reads"))   # "(Stack, gradient removed)"
             v.set_compare_mode("split")
             v.set_compare(i)
             assert v.wait(60)

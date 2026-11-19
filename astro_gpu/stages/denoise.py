@@ -30,6 +30,7 @@ from ..core import devices
 from ..core.imgutil import asinh_preview
 from ..core.params import ADVANCED, Auto, P, StageParams, check_choice
 from ..core.stage import Context, Stage
+from ..texts import WHY_NO_ADAPTED  # noqa: F401 - the text lives in the catalogue (served in French)
 from .gradient import image_in
 
 METHODS = ("pretrained", "adapted")
@@ -238,9 +239,6 @@ def single_image(ctx: Context) -> bool:
         return False
 
 
-#: why the Adapted method is not offered on a single image (settings' greyed reason, the run's refusal)
-WHY_NO_ADAPTED = ("Adapted learns the noise from two half-stacks: a single image has none. Pretrained measures the "
-                  "noise on the image itself.")
 
 
 def keep_level(done: np.ndarray, src: np.ndarray, weight: np.ndarray, step: int = 7, rounds: int = 5,

@@ -195,6 +195,7 @@
   "In the camera's colours, before colour calibration.": "Dans les couleurs de l'appareil, avant la calibration des couleurs.",
   "Before, left of the divider: the stack output as it is, in the camera's colours. After, right: the same stack colour-calibrated (the colour matrix measured on the Gaia stars, the sky set grey). Drag the divider.": "Avant, à gauche du séparateur : la sortie de l'empilement telle quelle, dans les couleurs de l'appareil. Après, à droite : le même empilement calibré en couleur (la matrice de couleur mesurée sur les étoiles Gaia, le ciel rendu gris). Faites glisser le séparateur.",
   "After: colour-calibrated": "Après : calibré en couleur",
+  "Before / after": "Avant / après",
   "Before: stack output, camera colours": "Avant : sortie de l'empilement, couleurs de l'appareil",
   "The known deep-sky objects of the field (Messier, NGC, IC, Sharpless and their common names), outlined at their size. Export… can burn them into a picture.": "Les objets du ciel profond connus du champ (Messier, NGC, IC, Sharpless et leurs noms usuels), entourés à leur taille. Exporter… peut les incruster dans une image.",
   "{n} named object": "{n} objet nommé",

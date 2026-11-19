@@ -184,6 +184,7 @@ _METRIC_ROWS: list[tuple] = [
     ("sessions", "Sessions", "", "d", "Number of sessions, each calibrated with its own frames, stacked together."),
     # an image source (issue #43)
     ("factor", "Value factor", "", "g", "Factor the image's values were multiplied by (65535 for values in 0-1)."),
+    ("unstretch", "Stretch undone", "", "", "How an already stretched image was brought back to linear (issue #174)."),
     # the combinations of filters (issue #43, stages/combine.py)
     ("channels", "Channels", "", "", "The filters combined.", ", "),
     # the Align on block (issue #165)
@@ -329,6 +330,8 @@ VALUE_TEXTS: dict[str, str] = {
     "one factor per colour": "one factor per colour",
     "aperture": "wide apertures",
     "fitted": "fitted",
+    "estimated": "estimated",
+    "header": "from the header",
     "none": "none",
     "nsns": "NSNS",
     "finkbeiner": "Finkbeiner",
@@ -344,7 +347,10 @@ WIRING_TEXTS = ("reference to wire", "{names} to wire", "{names} is not on the g
                 "Stacking", "{names} are not on the grid of {first}: place Align on after their Stacking",
                 "the stack has no plate solution yet (Astrometry comes after)", "the reference brings no plate solution",
                 "the combination's inputs bring no plate solution")
-UI_TEXTS = ("Yes", "No", "{n} values", SPECTRA_CUT_TIP, *WIRING_TEXTS)
+#: why the Adapted denoising is not offered on a single image (issue #174): the settings' greyed reason, the run's refusal
+WHY_NO_ADAPTED = ("Adapted learns the noise from two half-stacks: a single image has none. Pretrained measures the "
+                  "noise on the image itself.")
+UI_TEXTS = ("Yes", "No", "{n} values", SPECTRA_CUT_TIP, WHY_NO_ADAPTED, *WIRING_TEXTS)
 #: values with a number in them: (regular expression, English template, names of the numeric groups)
 VALUE_PATTERNS: list[tuple[re.Pattern, str, tuple[str, ...]]] = [
     (re.compile(r"^camera profile \((?P<project>.*)\)$"), "camera profile ({project})", ()),

@@ -1521,6 +1521,8 @@ class PostView(QWidget):
         if (self.cb_version.minimumWidth(), self.cb_version.maximumWidth()) != (lo, hi):
             self.cb_version.setMinimumWidth(lo)
             self.cb_version.setMaximumWidth(hi)
+        if self.top_bar.sizeHint().width() != self._bar_need(k):
+            self.top_bar.invalidate()                    # a width the layout kept (a name's): it works it out again, once
 
     def eventFilter(self, obj, e):                                   # noqa: N802 - Qt's name
         if (obj is getattr(self, "_list_holder", None) and e.type() == QEvent.MouseButtonPress
@@ -1876,6 +1878,7 @@ class PostView(QWidget):
                                       _("The only version cannot be deleted"))
         for cb in (self.cb_version, self.cb_cmp):
             cb.blockSignals(False)
+            cb.updateGeometry()                          # the names changed its width: the bar's layout asks it again
         self._compare_names()
         if self.b_cmp.isChecked() and chosen != kept:    # the compared one is gone: its fallback is shown
             self._compared_changed()
@@ -2679,7 +2682,7 @@ class PostView(QWidget):
             if why:
                 if not b.property("why"):
                     b.setProperty("tip", b.toolTip())         # its own tip, back once there is a solution
-                b.setToolTip(tool_tip(b.property("toolName"), "", why))
+                b.setToolTip(tool_tip(b.property("toolName"), "") + NL + why)   # why is already in the language
                 if b.isChecked():
                     self.set_annotations(**{k: False})
             elif b.property("why"):

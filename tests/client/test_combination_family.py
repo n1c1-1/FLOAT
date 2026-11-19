@@ -394,12 +394,14 @@ def test_real_inspect_tunes_every_block_of_the_family_as_a_draft_of_the_block(qa
         q, ed = _open_editor(w, kind)
         others = [x for x in w.tune.family_editors() if x is not ed]
         assert isinstance(ed, DraftEditor) and ed.page_shown() and not any(x.page_shown() for x in others)
-        assert ed._ui["bar"].isVisible() and {"cmp_draft", "cmp_applied", "cmp_split"} <= set(ed._ui)
+        assert {"cmp_draft", "cmp_applied", "cmp_split"} <= set(ed._ui)
+        assert not ed._ui["bar"].isVisible()                                         # the draft bar shows only while there is a draft
         assert ed.result is not None and ed.result.shape[1] * ed.result.shape[2] <= PREVIEW_PIXELS
         before = _stored_setting(w, kind, q, ed)
         layer = s.master_layer(q.pid)
         n = len(s._undo)
         assert _draft_change(ed, kind) and ed.has_draft()
+        assert ed._ui["bar"].isVisible()
         assert _stored_setting(w, kind, q, ed) == before and len(s._undo) == n      # a draft: the project as it was
         assert ed.draft_pending() is not None                                        # leaving asks
         _q, owner = _owner(w, kind)

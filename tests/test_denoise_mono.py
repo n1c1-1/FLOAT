@@ -154,6 +154,9 @@ class Ctx:
     def load(self, stage, name, mmap=False):
         return np.ones_like(self.img) if name == "drz_weight.npy" else self.img.copy()
 
+    def load_json(self, stage, name):
+        raise FileNotFoundError(name)  # no drz_meta.json: a stack, not a single image (#174)
+
     def metric(self, k, v):
         self.metrics[k] = v
 

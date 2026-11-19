@@ -77,15 +77,16 @@ def test_s24_palette_greys_a_card_and_says_why_on_hover(B):
     assert len(B.graph.rows) == 3 and len(B.post_wires()) == 3
     pal = B.page.palette
     pal.finish()
-    card = pal.cards["denoise"]
+    assert pal.cards["denoise"].enabled                    # a single image has Denoise since #174 (Pretrained only)
+    card = pal.cards["deconv"]
     assert not card.enabled and "half-stacks" in card.reason
     QApplication.sendEvent(card, QHelpEvent(QEvent.ToolTip, QPoint(10, 10), card.mapToGlobal(QPoint(10, 10))))
     assert QToolTip.isVisible() and "Needs half-stacks" in QToolTip.text()     # the pointer resting on it
     QToolTip.hideText()
     assert pal.cards["gradient"].enabled and "half-stacks" not in pal.cards["gradient"].toolTip()
-    assert any("half-stacks" in p["reason"] for p in B.g.visible_places("denoise") if not p["lit"])
+    assert any("half-stacks" in p["reason"] for p in B.g.visible_places("deconv") if not p["lit"])
     n = B.steps()
-    B.g.double_click_palette("denoise")                               # a greyed card double-clicked: its reason
+    B.g.double_click_palette("deconv")                               # a greyed card double-clicked: its reason
     assert B.steps() == n and "half-stacks" in B.toast()
 
 

@@ -487,7 +487,8 @@ class Steps(QObject):
         if spec.grid and pst in self.s.all_stages(p) and self.key_of(p, pst, self.which_for(p, pst)):
             place = si.stack_place(P, p.pid, self.which_for(p, pst), pst)
         ident = ("inspect", spec.kind, spec.name, spec.channel, spec.base, tuple(zip(stages, keys)))
-        name = (prefix + "  ·  " if prefix else "") + _(spec.shown or spec.caption)
+        text = spec.caption if spec.kind == "input" else _(spec.shown or spec.caption)   # an input's caption is composed in the language
+        name = (prefix + "  ·  " if prefix else "") + text
         # an array in the camera's colours is shown as it is (its green cast and all): Neutral sky is a display
         # option the user ticks (on by default, the stack would look colour-calibrated); the blocks that work on the
         # sky before the colour calibration (Gradient, Denoise) open with it on, their effect hidden by the cast
