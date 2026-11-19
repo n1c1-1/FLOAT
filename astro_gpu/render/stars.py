@@ -43,6 +43,8 @@ from .simple import Layers, SimpleRenderEngine, SimpleSettings, continuum_ratio,
 BLENDS = ("Screen", "Linear dodge (add)", "Lighten")
 #: what a rendering shows: the starless image, the stars alone, the two recombined
 PARTS = ("starless", "stars", "combined")
+#: the light a Synthetic stars block carries that is not a star's, stretched on its own (render ``part``)
+CARRIED = "carried"
 
 
 class StarSettings(SimpleSettings):
@@ -89,7 +91,7 @@ class StarsRenderEngine(SimpleRenderEngine):
         self.M = np.array(self.prep["M"], np.float64)
         self.SC = float(self.prep.get("drizzle_scale", 1.0))
         self.crop = self.prep["crop"]
-        self._host = {k: torch.from_numpy(np.load(self.dir / f"{k}.npy")) for k in ("starless", "stars")
+        self._host = {k: torch.from_numpy(np.load(self.dir / f"{k}.npy")) for k in ("starless", "stars", "carried")
                       if (self.dir / f"{k}.npy").exists()}      # a Synthetic stars block: its stars alone
         self.H, self.W = self._host["stars"].shape[-2:]
         self.valid_host = torch.from_numpy(np.load(self.dir / "valid.npy"))
@@ -101,13 +103,16 @@ class StarsRenderEngine(SimpleRenderEngine):
     def render(self, s: StarSettings, scale: float = 1.0, region=None, fit: dict | None = None, *,
                draft: bool = False, stop=None, part: str = "combined") -> Layers:
         from ..core.determinism import deterministic
-        if part not in PARTS:
+        if part not in PARTS and part != CARRIED:
             raise ValueError(f"unknown part {part!r} (allowed: {PARTS})")
         if not isinstance(s, StarSettings):
             s = StarSettings(**s.model_dump())
         with deterministic():
             f, reg, box = self._geometry(scale, region)
             linked = bool(self.prep.get("linked", True))
+            if part == CARRIED:
+                return self._finish(self._carried(s, f, box), f, reg, box, region,
+                                    {"stretch": "auto", "linked": linked, "part": part})
             a = b = None
             if stop is not None:
                 stop()                                  # (it raises to abandon: Post's composition superseded)
@@ -123,6 +128,19 @@ class StarsRenderEngine(SimpleRenderEngine):
                 b = self._star_layer(s, f, box, part, stop)
             y = a if b is None else b if a is None else blend(a, b, s.blend)
             return self._finish(y, f, reg, box, region, {"stretch": "auto", "linked": linked, "part": part})
+
+    def _carried(self, s: StarSettings, f: int, box) -> torch.Tensor:
+        """What the light of the stars layer that is not a star's (the Synthetic stars block's ``carried`` image) adds to
+        the drawn stars once stretched: the stretch of the two together less that of the drawn stars alone, both with
+        the suggested star settings, never the user's: that light is not a star, the star sliders leave it as it is
+        (where the real stars hold it, they stretch it with themselves). Black when the block carried none."""
+        x = self._layer("stars", f, box)
+        if "carried" not in self._host:
+            return torch.zeros_like(self.star_tone(x, s, f))
+        keep = {k: getattr(s, k) for k in ("sky",)}
+        plain = StarSettings(**keep)
+        both = self.star_tone(x + self._layer("carried", f, box), plain, f)
+        return (both - self.star_tone(x, plain, f)).clamp_min(0)
 
     @torch.no_grad()
     def linear_stars(self, scale: float = 1.0, region=None) -> Layers:

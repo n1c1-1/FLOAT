@@ -58,7 +58,6 @@ from ..postengine import (
 #: the stage of a workflow's layer: its Output block's image, and its Stars block's images (``postengine.source_id``:
 #: the workflow's id, or ("stars", id))
 OUTPUT_STAGE, STARS_STAGE, SYNTH_STAGE = "render_simple", "star_removal", "synth_stars"
-SYNTH = "synth"                              # the source id of a workflow's Synthetic stars block: ("synth", its id)
 #: the time budgets of a request, in seconds
 BUDGET = {"draft": 0.15, "half": 1.0, "region": 2.0}
 DRAFT_LEVEL, HALF_LEVEL = 2, 1
@@ -341,15 +340,6 @@ class LayerSource(Provider):
             self._folders[sid] = self.resolver(sid)
         return self._folders[sid]
 
-    def synth_light(self, sid, lay: dict) -> Folder | None:
-        """The folder a starless image is read in when the workflow's Synthetic stars block wrote one (stages/
-        synth_stars: the starless image with the light of the stars layer that is not a star's, which goes on with it
-        unchanged); None for any other image."""
-        if lay.get("part") != "starless" or not (isinstance(sid, tuple) and len(sid) == 2 and sid[0] == "stars"):
-            return None
-        g = self.folder((SYNTH, sid[1]))
-        return g if g is not None and (Path(g.path) / "starless.npy").is_file() else None
-
     def refresh(self) -> set:
         """The results may have changed: look again. The source ids whose result changed (a new folder, or the same
         folder written again) lose their engine and their cached images."""
@@ -569,7 +559,7 @@ class LayerSource(Provider):
         if lay["kind"] == "image":
             return self._image_layer(lay, level, box)
         sid = source_id(lay)
-        f = self.synth_light(sid, lay) or self.folder(sid)
+        f = self.folder(sid)
         cv = self._cv
         whole = cv.size(level)
         put = self._placed(sid, level, box)
@@ -592,20 +582,27 @@ class LayerSource(Provider):
                 if stop():
                     raise Superseded()
             kw["stop"] = abandon
-        try:
+        def one(part):
+            kw["part"] = part
             if level == 0 and self._partial(sid, put, box, region, whole):
                 li = self.service.render(f.path, base, lay.get("sliders"), 1.0,
                                          region=tuple(int(round(v)) for v in region), **kw)
-                arr = self._cut(li.rgb, 1, region, size, False)
+                got = self._cut(li.rgb, 1, region, size, False)
             else:                                               # the whole grid at 1/fi, cut to the canvas
                 li = self.service.render(f.path, base, lay.get("sliders"), 1.0 / fi, **kw)
-                arr = self._cut(li.rgb, fi, region, size, True)
+                got = self._cut(li.rgb, fi, region, size, True)
+            if li.info.get("note"):
+                self._notes.add(li.info["note"])
+            self.engine_ms += float(li.info.get("render_ms") or 0.0)
+            return got
+        try:
+            arr = one(kw.get("part"))
+            if lay.get("part") == "synth" and lay.get("stars_over") is None and (Path(f.path) / "carried.npy").is_file():
+                # the light the block carried that is not a star's: added unchanged, the star settings do not act on it
+                arr = arr + one("carried")
         except (KeyError, OSError) as e:                        # a file of the result is not there (the folder is)
             self.mark_gone(sid)
             raise Unreadable(sid) from e
-        if li.info.get("note"):
-            self._notes.add(li.info["note"])
-        self.engine_ms += float(li.info.get("render_ms") or 0.0)
         out = np.ascontiguousarray(np.moveaxis(arr, 0, -1), np.float32)
         return out if put is None else self._paste(put, box, out)
 

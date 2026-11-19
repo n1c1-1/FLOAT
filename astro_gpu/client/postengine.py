@@ -2127,8 +2127,6 @@ class Composer:
                 json.dumps(lay.get("base"), sort_keys=True, default=str), lay.get("linked"), self.provider.version(sid),
                 level, None if level > 0 else abox, (canvas.W, canvas.H, canvas.origin))             + (("draft",) if draft else ()) + (("over", over, self.provider.version(over)) if over is not None else ())             + (("stretch", lay["stretch"]) if layer_stretch(lay) != "auto" and over is None and part not in ("stars", "synth")
                else ())                # the base stretch, when it is not the automatic one (the keys before it stay)
-        if part == "starless" and isinstance(sid, tuple) and len(sid) == 2 and sid[0] == "stars":
-            key += ("synth light", self.provider.version(("synth", sid[1])))     # read in the Synthetic stars' folder
         return key + ((FUSION, fusion_core(lay), lay.get("role")) if part == FUSION else ())
 
     def cached(self, lay: dict, level: int, canvas: Canvas) -> np.ndarray | None:

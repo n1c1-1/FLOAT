@@ -906,27 +906,37 @@ def test_the_release_render_is_the_engines_bit_for_bit(preps):
     assert st.max() > 0.2 and st.min() >= 0
 
 
-def test_the_starless_image_is_read_where_the_synthetic_stars_block_wrote_one(preps, tmp_path):
-    """The Synthetic stars block writes the starless image with the light of the stars layer that is not a star's: the
-    starless image of the workflow's layers is that one, and the Stars block's when the block wrote none."""
+def test_the_synthetic_stars_add_the_light_they_carry_without_the_star_settings(preps, tmp_path):
+    """A Synthetic stars block's folder with a ``carried`` image (the light of the stars layer that is not a star's):
+    the synthetic layer is the drawn stars' rendering (with the star sliders) plus that light stretched with the
+    suggested settings, whatever the star sliders say; without the image it is the drawn stars' alone."""
     import shutil
     from astro_gpu.render.stars import StarSettings, StarsRenderEngine
     d = tmp_path / "synth"
     shutil.copytree(preps["full_stars"], d)
-    np.save(d / "starless.npy", np.load(d / "starless.npy") * 2 + 5)
+    (d / "starless.npy").unlink()
+    st = np.load(d / "stars.npy")
+    np.save(d / "carried.npy", (st.max() * 0.002 * np.ones_like(st)).astype(np.float32))
     svc = LayerService(DEV)
-    base = {1: Folder(preps["full"]), ("stars", 1): Folder(preps["full_stars"])}
-    plain = LayerSource(base.get, svc)
-    with_light = LayerSource({**base, ("synth", 1): Folder(d)}.get, svc)
-    cv = with_light.canvas([1])
+    src = LayerSource({1: Folder(preps["full"]), ("synth", 1): Folder(d)}.get, svc)
+    cv = src.canvas([1])
     ox, oy = cv.origin
     w, h = cv.size(1)
-    lay = new_workflow_layer(1, "Full", True, part="starless")
-    got = with_light.layer(lay, 1, (0, 0, w, h))
-    ref = StarsRenderEngine(d, device=DEV).render(StarSettings(), 0.5, part="starless").final.numpy()
-    assert np.array_equal(got, np.moveaxis(ref[:, oy // 2: oy // 2 + h, ox // 2: ox // 2 + w], 0, -1))
-    plain.canvas([1])
-    assert not np.array_equal(plain.layer(lay, 1, (0, 0, w, h)), got)
+    lay = dict(new_workflow_layer(1, "Full", True, part="stars"), part="synth")
+    eng = StarsRenderEngine(d, device=DEV)
+    cut = lambda li: np.moveaxis(li.final.numpy()[:, oy // 2: oy // 2 + h, ox // 2: ox // 2 + w], 0, -1)
+    extra = cut(eng.render(StarSettings(), 0.5, part="carried"))
+    assert extra.max() > 0
+    for sliders in ({}, {"star_strength": 4}):
+        lay["sliders"] = sliders
+        got = src.layer(lay, 1, (0, 0, w, h))
+        s = svc.settings(d, None, sliders, "stars")
+        want = cut(eng.render(s, 0.5, part="stars")) + extra
+        assert np.allclose(got, want, atol=1e-5), sliders
+    assert np.array_equal(cut(eng.render(StarSettings(star_strength=3.0), 0.5, part="carried")), extra)
+    (d / "carried.npy").unlink()
+    eng2 = StarsRenderEngine(d, device=DEV)
+    assert float(eng2.render(StarSettings(), 0.5, part="carried").final.abs().max()) == 0.0
 
 
 def test_a_region_at_full_resolution_is_the_engines_region(preps):
