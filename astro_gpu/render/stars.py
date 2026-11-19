@@ -11,10 +11,10 @@ stretching them less is the star reduction: no reduction is needed on the recomb
   own, without the stars' grain, would stretch it much harder: recombined, the image would not look like the Output
   block's), moved by the Sky, Contrast and Saturation sliders;
 * the stars: black at 0 (their background is the starless image's), white and midtone those of the whole image, the
-  midtone moved by ``star_strength``; the small stars faded out (``star_small``: the star reduction of photo editors'
-  tutorials, the stars selected and the small ones removed, then Minimum; here the stars' support opened by
-  reconstruction, L. Vincent 1993, so that the wider stars stay exactly as they were; on the stars alone, so the
-  nebula's texture is never touched); their size by a round grey erosion (smaller) or dilation (larger), as the reference image editor's
+  midtone moved by ``star_strength``; the smallest stars taken away (``star_small``: the share of the stars removed, the smallest first, the
+  star reduction of photo editors' tutorials; each star measured by the grey opening that takes half of its peak, the
+  removal an opening by twice that radius, so that the wider light stays; on the stars alone, so the nebula's
+  texture is never touched); their size by a round grey erosion (smaller) or dilation (larger), as the reference image editor's
   Minimum and Maximum filters with Preserve roundness (an octagon: a cross and a square in turn, the usual
   approximation of a disc), never a square; smaller on their light wider than the erosion only (the faint stars and
   the narrow light added back as they were: a faint star keeps its shape) and through a star mask (``star_mask``: the stars standing above
@@ -58,10 +58,9 @@ class StarSettings(SimpleSettings):
                          help="Below 0 the stars are shrunk by this radius (a grey erosion: each pixel takes the "
                               "darkest of its neighbours), above 0 grown (a grey dilation: the brightest).")
     star_small: float = P(0.0, label="Small stars", ge=0.0, le=2.0, step=0.05,
-                          help="The small stars taken away: those narrower than this many times the image's typical "
-                               "star (its median width at half height); 0 = all kept (the star reduction of photo "
-                               "editors' tutorials: the stars selected, the small ones removed). A crowded field "
-                               "clears; the larger stars stay exactly as they are.")
+                          help="Share of the stars removed, the smallest first: 0 = none, half-way the smaller half, "
+                               "the right end all of them. The size of a star is measured on the stars alone: how wide "
+                               "a disc must be to take half of its peak away.")
     star_saturation: float = P(1.2, label="Star color", ge=0.0, le=3.0, step=0.05,
                                help="Colour saturation of the stars around their luminance, after their stretch.")
     blend: str = P("Screen", label="Blend", choices=list(BLENDS),
@@ -200,8 +199,8 @@ class StarsRenderEngine(SimpleRenderEngine):
             y = mtf((x / (hi - c0)).clamp(0, 1), m).clamp(0, 1)
         v = float(s.star_small)
         check()
-        if v > 0:                                  # a gentle start: below SMALL_START they fade, above they go
-            y = fade_small_stars(y, min(1.0, v / SMALL_START), max(v, SMALL_START) * self.star_fwhm() / f, check)
+        if v > 0:                                  # the share of the stars removed, the smallest first (the range's end: all)
+            y = fade_small_stars(y, min(1.0, v / 2.0), self.star_fwhm() / f, check)
             check()
         y = resize_stars(y, s.star_size / f, check)
         check()
@@ -251,8 +250,6 @@ class CombinedStarsEngine(StarsRenderEngine):
         return image_stats(lin, valid)
 
 
-#: Small stars: below this setting the small stars fade (by its share), above it they go and the size grows
-SMALL_START = 0.4
 #: a typical star width when the stars cannot be measured (full-resolution pixels)
 DEFAULT_FWHM = 3.0
 #: the second moment per axis of a Gaussian kept above half its peak, in units of its sigma squared
@@ -384,33 +381,81 @@ def _go_on(check) -> None:
         check()
 
 
-def large_stars(y: torch.Tensor, r: float, check=None) -> torch.Tensor:
-    """Where the stars wider than r pixels are, whole (h, w in 0..1): their support (the luminance above STAR_LEVEL)
-    opened by reconstruction (L. Vincent 1993): the support eroded by r (round) keeps a seed of each wide star only,
-    then the seeds grow back within the support to the whole star; the narrower stars leave no seed. Grown by the
-    radius again (the wings below the support's level) and its edge softened by a pixel."""
-    sup = (ops.luminance(y) > STAR_LEVEL).float()[None]
-    n = max(1, int(round(r)))
-    seeds = _morph(sup, n, False)
-    _go_on(check)
-    whole = reconstruct(seeds, sup, int(RECONSTRUCT_STEPS * max(r / 2.0, 1.0)))
-    _go_on(check)
-    whole = _morph(whole, n + 1, True)                 # their faint wings, below the support's level, kept too
-    return ops.gaussian_blur(whole, 0.7)[0].clamp(0, 1)
+#: a Gaussian star's size (the radius of the opening that takes half of its peak) in units of its sigma: sqrt(2 ln 2)
+SIZE_PER_SIGMA = math.sqrt(2 * math.log(2))
 
 
-def fade_small_stars(y: torch.Tensor, k: float, r: float, check=None) -> torch.Tensor:
-    """The stars narrower than r pixels taken away by k (0 kept .. 1 gone), the wider ones left exactly as they were
-    (``large_stars``): the star reduction of photo editors' tutorials (the stars selected, the small ones removed),
-    on the stars alone. What goes is what a grey opening of that radius takes, the small stars themselves: the halo of
-    a large star and any light wider than them stay under the small stars and past the edge of ``large_stars``."""
-    if k <= 0 or r < 0.5:
+def star_sizes(y: torch.Tensor, fwhm: float, check=None):
+    """The stars of a stars-alone image (3, h, w) and their sizes: the local maxima (7 x 7) of the luminance above
+    STAR_LEVEL, and for each the radius of the grey opening that takes half of its peak away, from the openings by
+    discs of 1 .. n pixels read at the peak (linearly between two radii). For a Gaussian star of width FWHM that is
+    FWHM / 2 (exp(-r^2 / 2 sigma^2) = 1/2 at r = 1.18 sigma), so it is the star's own width, in pixels, and a star
+    that no disc up to n takes half of (one wider than 2 n FWHM-wise: n is twice the typical star's FWHM, a star more
+    than four times as wide as the field's) is given the size n + 1: the last. Returns (ys, xs, size), the sizes
+    in pixels."""
+    L = ops.luminance(y)
+    pk = (L == F.max_pool2d(L[None, None], 7, 1, 3)[0, 0]) & (L > STAR_LEVEL)
+    ys, xs = torch.nonzero(pk, as_tuple=True)
+    n = max(2, int(math.ceil(2.0 * fwhm)))
+    if ys.numel() == 0:
+        return ys, xs, torch.zeros(0)
+    peak = L[ys, xs]
+    size = torch.full((ys.numel(),), float(n + 1))
+    prev = torch.ones_like(peak)                       # the survival at radius 0
+    done = torch.zeros(ys.numel(), dtype=torch.bool)
+    eroded = L[None]
+    for rho in range(1, n + 1):
+        eroded = _step(eroded, False, cross=((rho - 1) % 2 == 0))
+        opened = _morph(eroded, rho, True)[0]
+        cur = opened[ys, xs] / peak
+        cross = (~done) & (cur < 0.5)
+        frac = ((prev - 0.5) / (prev - cur).clamp(min=1e-9)).clamp(0, 1)
+        size = torch.where(cross, rho - 1 + frac, size)
+        done |= cross
+        prev = cur
+        _go_on(check)
+        if bool(done.all()):
+            break
+    return ys, xs, size
+
+
+def fade_small_stars(y: torch.Tensor, f: float, fwhm: float, check=None) -> torch.Tensor:
+    """The share f (0 none .. 1 all) of the field's stars removed, the smallest first, the biggest last, on the stars
+    alone. The stars are those of ``star_sizes`` and are ranked by their size, the f of them that are the smallest are
+    taken away; the same share of a dense field and of a sparse one.
+
+    The removal of a star of size s, by the grey openings (Meyer 1979, Serra 1982), none of them tied to a connected
+    zone (a fixed level joins all the stars of a dense field): the opening by a disc of the largest size taken away, r,
+    takes the peaks of those stars, and leaves a plateau of about r where each was (a disc, brown on a coloured field:
+    the artefact of a flat structuring element, which a paraboloid, the rolling ball of Sternberg 1983, does not cure:
+    its cap stays as a wider dim star); a plateau of radius r cannot hold a disc of 2 r, so the opening by 2 r replaces
+    them and keeps what is wider than the stars taken away: a large star's halo. The places of the removed stars are
+    spread by 2 r (a Gaussian star of size r is down to 1/16 of its peak there: exp(-2.77), twice its half-width) and
+    softened by the sigma of such a star (r / SIZE_PER_SIGMA); a star that is kept has no place in it. All of them
+    (f = 1): nothing is left. The constants, all by definition: 7 x 7 (the stars' local maxima, as ``measure_fwhm``
+    takes them), STAR_LEVEL (the stars' level, as everywhere here), 1/2 (the peak a size is measured at: the half),
+    2 r (a plateau of r cannot hold a disc of 2 r), n = twice the field's FWHM (a bound of the sizes measured, for the
+    time: a star more than four times as wide as the typical one is given the last rank, the biggest), and the setting's
+    range end 2 = all. Nothing is fitted on an image."""
+    if f <= 0:
         return y
-    keep = large_stars(y, r, check)[None]
-    n = max(1, int(round(r)))
+    if f >= 1:
+        return torch.zeros_like(y)
+    ys, xs, size = star_sizes(y, fwhm, check)
+    if ys.numel() == 0:
+        return y
+    gone = torch.argsort(size)[:int(round(f * ys.numel()))]
+    if gone.numel() == 0:
+        return y
+    rho = max(1, int(math.ceil(float(size[gone].max()))))
+    mark = torch.zeros(1, *y.shape[-2:])
+    mark[0, ys[gone], xs[gone]] = 1.0
+    first = torch.minimum(_morph(_morph(y, rho, False), rho, True), y)
     _go_on(check)
-    wide = _morph(_morph(y, n, False), n, True)
-    return y + (1 - keep) * k * (wide - y)
+    base = torch.minimum(_morph(_morph(y, 2 * rho, False), 2 * rho, True), first)      # the opening by 2 r
+    _go_on(check)
+    w = ops.gaussian_blur(_morph(mark, 2 * rho, True), rho / SIZE_PER_SIGMA)[0].clamp(0, 1)
+    return y - w * (y - base)
 
 
 def resize_stars(y: torch.Tensor, r: float, check=None) -> torch.Tensor:

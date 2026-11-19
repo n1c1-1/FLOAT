@@ -20,7 +20,7 @@ POSITIONS = [i / 4 for i in range(17)]
 
 def test_the_eleven_sliders_of_post():
     assert S.KEYS == ("sky", "contrast", "faint", "saturation", "colours", "halpha", "noise", "star_strength",
-                      "star_small", "star_size", "star_color")
+                      "star_share", "star_size", "star_color")
     # position 2 of every table is the suggested rendering (the defaults)
     s = StarSettings()
     for sl in S.SLIDERS:
@@ -96,7 +96,7 @@ def test_steps_and_ratios():
 
 
 def test_greyed_sliders_give_their_reasons():
-    stars = ("star_strength", "star_small", "star_size", "star_color")
+    stars = ("star_strength", "star_share", "star_size", "star_color")
     simple = S.availability("simple", False)
     assert simple["sky"] == simple["contrast"] == simple["saturation"] == ""
     assert simple["noise"] == S.WHY_DENOISE and all(simple[k] == S.WHY_STARS for k in stars)
@@ -155,3 +155,11 @@ def test_the_halpha_slider_is_for_colour_cameras_only():
     p = SimpleNamespace(is_mono=lambda w: w is mono)
     assert api._origin(p, sho) == "palette" and api._origin(p, rgb) == ""
     assert api._origin(p, mono) == "mono" and api._origin(p, SimpleNamespace(source=None)) == ""
+
+
+def test_small_stars_is_a_one_sided_share_slider():
+    sl = S.BY_KEY["star_share"]
+    assert sl.ends == ("None", "All") and S.slider_lo("star_share") == 2.0 and S.slider_lo("sky") == 0.0
+    assert S.settings_at("combined", None, {"star_share": 2.0}).star_small == 0.0            # left end: none
+    assert S.settings_at("combined", None, {"star_share": 3.0}).star_small == pytest.approx(1.0)   # half of the stars
+    assert S.settings_at("combined", None, {"star_share": 4.0}).star_small == pytest.approx(2.0)   # all (the range's end)

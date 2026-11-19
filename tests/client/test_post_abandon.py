@@ -19,7 +19,7 @@ class Asked(Exception):
 def test_a_stars_image_is_abandoned_between_its_steps_and_unchanged_otherwise(tmp_path):
     _out, st = stars_prep(tmp_path / "w", 300, 420)
     svc = LayerService(DEV)
-    sliders = {"star_strength": 1.3, "star_size": -1.0, "star_small": 2.0}
+    sliders = {"star_strength": 1.3, "star_size": -1.0, "star_share": 3.2}
     plain = svc.render(st, None, sliders, 1.0, part="stars").rgb
     calls = []
     again = svc.render(st, None, dict(sliders, star_strength=1.31), 1.0, part="stars",

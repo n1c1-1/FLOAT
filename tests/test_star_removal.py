@@ -252,7 +252,7 @@ def test_a_wider_star_shrinks_whole_without_a_ring():
 
 def test_the_sliders_of_each_kind():
     ok = S.availability("combined", True)
-    assert not any(ok[k] for k in ("sky", "contrast", "saturation", "star_strength", "star_small", "star_size",
+    assert not any(ok[k] for k in ("sky", "contrast", "saturation", "star_strength", "star_share", "star_size",
                                    "star_color"))
     assert ok["noise"] == S.WHY_WHOLE
     stars = S.availability("stars", True)
@@ -281,18 +281,63 @@ def test_the_stars_block_comes_after_the_output_and_reads_the_old_options():
     assert [b for b, _ in c.blocks_in(wfl.chain(full))][-2:] == ["stars", "output"]   # drawn before the Output
 
 
-def test_the_small_stars_go_and_the_large_ones_stay_exactly():
-    from astro_gpu.render.stars import fade_small_stars, measure_fwhm
-    y = torch.zeros(3, 60, 60)
-    y[:, 10, 10] = 0.9                                                   # a small star (one pixel)
+def _graded_field(n=60, seed=3):
+    """n round stars of widths from 1.0 to 4.0 px (sigma), peaks 0.4 .. 0.9, on a 40-pixel grid of cells (touching
+    neighbours' wings): their positions and sigmas."""
+    yy, xx = torch.meshgrid(torch.arange(240.0), torch.arange(240.0), indexing="ij")
+    rng = np.random.default_rng(seed)
+    cells = [(cy, cx) for cy in range(15, 240, 30) for cx in range(15, 240, 30)][:n]
+    sig = np.linspace(1.0, 4.0, len(cells))
+    rng.shuffle(sig)
+    y = torch.zeros(240, 240)
+    for (cy, cx), s_ in zip(cells, sig):
+        y += rng.uniform(0.4, 0.9) * torch.exp(-((yy - cy) ** 2 + (xx - cx) ** 2) / (2 * s_ * s_))
+    return y.clamp(0, 1).repeat(3, 1, 1), cells, sig
+
+
+def test_small_stars_is_the_share_of_the_stars_removed_the_smallest_first():
+    """The setting is a share of the field's stars: at f about f of them are gone (a star is gone when its peak lost
+    half), the smallest first and the biggest last; 0 changes nothing, 1 leaves nothing."""
+    from astro_gpu.render.stars import fade_small_stars
+    y, cells, sig = _graded_field()
+    assert torch.equal(fade_small_stars(y, 0.0, 3.0), y)
+    assert float(fade_small_stars(y, 1.0, 3.0).abs().max()) == 0.0
+    order = np.argsort(sig)
+    for f in (0.25, 0.5, 0.75):
+        z = fade_small_stars(y, f, 3.0)
+        gone = np.array([float(z[0, cy, cx]) < 0.5 * float(y[0, cy, cx]) for cy, cx in cells])
+        assert abs(gone.mean() - f) < 0.1, (f, gone.mean())
+    z = fade_small_stars(y, 0.5, 3.0)
+    small = order[:len(cells) // 4]
+    big = order[-len(cells) // 4:]
+    assert all(float(z[0, cells[i][0], cells[i][1]]) < 0.5 * float(y[0, cells[i][0], cells[i][1]]) for i in small)
+    assert all(float(z[0, cells[i][0], cells[i][1]]) > 0.7 * float(y[0, cells[i][0], cells[i][1]]) for i in big)
+    assert (z <= y + 1e-6).all()                                                    # nothing is added: no disc
+
+
+def test_small_stars_share_is_the_same_on_a_dense_field():
+    """M27 (a dense field): touching faint stars, all above the stars' level, are ranked as the sparse ones are: the
+    share removed is the setting, the large star among them stays."""
+    from astro_gpu.render.stars import fade_small_stars, star_sizes
+    yy, xx = torch.meshgrid(torch.arange(160.0), torch.arange(160.0), indexing="ij")
+    rng = np.random.default_rng(5)
+    y = sum(rng.uniform(0.2, 0.6) * torch.exp(-((yy - rng.uniform(5, 155)) ** 2 + (xx - rng.uniform(5, 155)) ** 2)
+                                                / (2 * rng.uniform(0.9, 1.4) ** 2)) for _ in range(500))
+    y = y + 0.9 * torch.exp(-((yy - 80) ** 2 + (xx - 80) ** 2) / (2 * 6.0 ** 2))
+    y = y.clamp(0, 1).repeat(3, 1, 1)
+    ys, xs, size = star_sizes(y, 3.0)
+    z = fade_small_stars(y, 0.5, 3.0)
+    gone = (z[0][ys, xs] < 0.5 * y[0][ys, xs]).float().mean()
+    assert abs(float(gone) - 0.5) < 0.1
+    assert float(z[0, 80, 80]) > 0.8 * float(y[0, 80, 80])                           # the large star stays
+
+
+def test_a_star_size_is_half_its_width():
+    from astro_gpu.render.stars import measure_fwhm, star_sizes
     yy, xx = torch.meshgrid(torch.arange(60.0), torch.arange(60.0), indexing="ij")
-    y += 0.95 * torch.exp(-((xx - 40) ** 2 + (yy - 40) ** 2) / (2 * 3.0 ** 2))[None]      # a large one
-    z = fade_small_stars(y, 1.0, 2.0)
-    assert float(z[0, 10, 10]) < 0.01                                    # the small star gone
-    assert float((z - y)[:, 34:47, 34:47].abs().max()) < 0.01           # the large one as it was
-    half = fade_small_stars(y, 0.5, 2.0)
-    assert abs(float(half[0, 10, 10]) - 0.45) < 0.01                    # half way
-    assert torch.equal(fade_small_stars(y, 0.0, 2.0), y)
+    y = (0.9 * torch.exp(-((xx - 30) ** 2 + (yy - 30) ** 2) / (2 * 2.0 ** 2))).repeat(3, 1, 1)
+    _, _, size = star_sizes(y, 4.7)
+    assert abs(float(size[0]) - 1.18 * 2.0) < 0.4                                   # FWHM / 2 = 1.18 sigma
     rng = np.random.default_rng(2)
     img = np.zeros((300, 300), np.float32)
     gy, gx = np.mgrid[0:300, 0:300]
@@ -300,19 +345,6 @@ def test_the_small_stars_go_and_the_large_ones_stay_exactly():
         cy, cx, a = rng.uniform(10, 290), rng.uniform(10, 290), rng.uniform(0.1, 1)
         img += a * np.exp(-((gx - cx) ** 2 + (gy - cy) ** 2) / (2 * 2.0 ** 2))
     assert abs(measure_fwhm(torch.from_numpy(np.stack([img] * 3))) - 2.355 * 2.0) < 0.35   # the width at half height
-
-
-def test_the_small_stars_go_and_the_halo_of_a_large_one_keeps_no_edge():
-    from astro_gpu.render.stars import STAR_LEVEL, fade_small_stars
-    yy, xx = torch.meshgrid(torch.arange(200.0), torch.arange(200.0), indexing="ij")
-    d = ((xx - 100) ** 2 + (yy - 100) ** 2).sqrt()
-    halo = 3 * STAR_LEVEL / (1 + (d / 14) ** 2)                          # falls below the stars' level, far from the core
-    y = (halo + 0.95 * torch.exp(-d ** 2 / (2 * 3.0 ** 2))).repeat(3, 1, 1)
-    small = 0.5 * torch.exp(-((xx - 150) ** 2 + (yy - 100) ** 2) / (2 * 0.7 ** 2))
-    z = fade_small_stars((y + small[None]).clamp(0, 1), 1.0, 2.0)
-    assert float(z[1, 100, 150]) < 2 * float(halo[100, 150])             # the small star gone, to the level of the halo
-    ring = (d > 8) & ((xx - 150) ** 2 + (yy - 100) ** 2 > 8 ** 2)
-    assert float((z[1] - y[1])[ring].abs().max()) < 0.01                 # the halo as it was, past the large star's edge
 
 
 def test_the_smallest_size_leaves_faint_stars_and_chains_as_they_are():
