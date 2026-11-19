@@ -305,6 +305,28 @@ def test_the_viewer_reads_a_camera_frame_in_adu_and_any_other_fits_as_it_is(tmp_
     assert float(np.median(read_file(tmp_path / "dark.fit")[0])) < 0.01                 # a result, an export: as it is
 
 
+def test_the_viewer_shows_a_frame_the_way_up_the_engine_reads_it(tmp_path):
+    """Issue #174: a master stored bottom up (ROWORDER) was shown upside down in the frames' viewer; it now shows every
+    frame as the engine's reader has it (TOP-DOWN, BOTTOM-UP, no keyword), its solution following the rows."""
+    from astro_gpu.client.imageview import read_file
+    from astro_gpu.io.frames import read_colour
+    a = np.arange(6 * 8, dtype=np.uint16).reshape(6, 8) * 7
+    rgb = np.stack([a, a + 1, a + 2])
+    sky = dict(CTYPE1="RA---TAN", CTYPE2="DEC--TAN", CRPIX1=4.0, CRPIX2=2.0, CRVAL1=10.0, CRVAL2=20.0,
+               CD1_1=-1e-4, CD1_2=0.0, CD2_1=0.0, CD2_2=1e-4)
+    for order in ("TOP-DOWN", "BOTTOM-UP", None):
+        rows = {} if order is None else {"ROWORDER": order}
+        _write(tmp_path / "m.fit", a, BAYERPAT="RGGB", **rows, **sky)
+        got, _cfa, wcs = read_file(tmp_path / "m.fit", frame=True)
+        assert np.array_equal(got, read_cfa(tmp_path / "m.fit")), order
+        engine = fits.getheader(tmp_path / "m.fit")                 # the stored first row's centre on the sky
+        stored0 = (0, 0) if order != "BOTTOM-UP" else (0, a.shape[0] - 1)
+        from astropy.wcs import WCS
+        assert np.allclose(wcs.pixel_to_world_values(*stored0), WCS(engine).pixel_to_world_values(0, 0)), order
+        _write(tmp_path / "c.fit", rgb, **rows)
+        assert np.array_equal(read_file(tmp_path / "c.fit", frame=True)[0], read_colour(tmp_path / "c.fit")), order
+
+
 def test_an_8_bit_fits_frame_saturates_at_255(tmp_path):
     """A monochrome or mosaic 8-bit FITS frame whose header gives no DATAMAX had a white level of 1: every pixel counted
     as saturated. Its white level is its depth's, as for the other integer depths; a header level is still obeyed, and

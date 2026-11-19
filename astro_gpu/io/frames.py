@@ -183,8 +183,13 @@ def fits_level(v: float, hd) -> float:
 def _rows_top_down(a: np.ndarray, hd) -> np.ndarray:
     """A camera frame (..., H, W) with its top row first, as a FITS header's ROWORDER says (without it: as stored).
     Not the rule of an image file (``picture_bottom_up``): the frames of the projects already computed were read so,
-    and their calibration, registration and stack would change (issue #174)."""
-    return a[..., ::-1, :] if str(hd.get("ROWORDER", "TOP-DOWN")).upper() == "BOTTOM-UP" else a
+    and their calibration, registration and stack would change (issue #174). The viewer shows a frame by it too."""
+    return a[..., ::-1, :] if frame_bottom_up(hd) else a
+
+
+def frame_bottom_up(hd) -> bool:
+    """Whether a camera frame's rows are stored bottom up (``_rows_top_down``): ROWORDER = BOTTOM-UP only."""
+    return str(hd.get("ROWORDER", "TOP-DOWN")).upper() == "BOTTOM-UP"
 
 
 def picture_bottom_up(hd) -> bool:
@@ -621,7 +626,7 @@ def _fits_info(path: Path) -> FrameInfo:
         xo, yo = int(hd.get("XBAYROFF", 0)) % 2, int(hd.get("YBAYROFF", 0)) % 2
         if area is not None:                          # the image now starts at the area's first pixel, top row first
             xo += area[0]
-            yo += h - area[1] - area[3] if str(hd.get("ROWORDER", "")).upper() == "BOTTOM-UP" else area[1]
+            yo += h - area[1] - area[3] if frame_bottom_up(hd) else area[1]
         grid = [[pat[0], pat[1]], [pat[2], pat[3]]]
         pat = "".join(grid[(i + yo) % 2][(j + xo) % 2] for i in range(2) for j in range(2))
     if area is not None:
