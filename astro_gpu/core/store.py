@@ -541,7 +541,9 @@ class Keys:
                 return fid + ["stretched"]
             # issue #174: a stretch the header lists exactly is undone by the run (the key says so: the result is not the
             # file's values as they are); an estimated undo is asked for; no other key moves
-            from ..stages.unstretch import header_exact
+            from ..stages.unstretch import colour_line, header_exact
+            # the header says the colours were calibrated: the Output does not balance them again (the key says so)
+            fid = fid + ["colour-calibrated"] if path and colour_line(path) else fid
             if src.get("unstretch") == "estimated":
                 return fid + ["unstretch-estimated"]
             return fid + ["unstretch-header"] if path and header_exact(path) else fid

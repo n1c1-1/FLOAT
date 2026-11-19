@@ -169,6 +169,7 @@ class RenderSimple(Stage):
         valid = coverage(ctx)
         meta = ctx.load_json("stack", "drz_meta.json")
         fused = meta.get("source") == "fusion"
+        calibrated = bool(meta.get("colour_calibrated"))          # an Image whose header says so (stages/image)
         # nothing is cropped, a fusion or a combination no more than a single stack: the whole frame is shown and the
         # user crops (the parts one channel does not cover show what happened)
         y0, y1, x0, x1 = 0, H, 0, W
@@ -218,7 +219,8 @@ class RenderSimple(Stage):
         if not color_like:
             # the camera's channels have different sensitivities: scaled to the same spread of the sky, the stretch
             # shows a neutral background (the spread below the median: the objects of the field are above it)
-            gains = spread[1] / np.maximum(spread, 1e-12)
+            # (an image whose header says its colours were calibrated keeps them: no gains, issue #174)
+            gains = np.ones(3) if calibrated else spread[1] / np.maximum(spread, 1e-12)
             lin *= gains.astype(np.float32)[:, None, None]
             if sky.ndim == 3 and sky.shape[1] > 1:
                 # the brightness of the sky kept, grey: its variations (light pollution, the Moon, vignetting) stay
@@ -226,8 +228,11 @@ class RenderSimple(Stage):
                 grey = np.tensordot((LUM * gains).astype(np.float32), sky, 1)
                 lin += (grey - np.median(grey[shown]))[None]
                 del grey
-            ctx.log("no colour calibration: camera colours, each channel's sky made grey and scaled to the same "
-                    f"spread (gains {', '.join(f'{g:.3f}' for g in gains)})")
+            if calibrated:
+                ctx.log("colours calibrated by the image's header: kept as they are, each channel's sky made grey")
+            else:
+                ctx.log("no colour calibration: camera colours, each channel's sky made grey and scaled to the same "
+                        f"spread (gains {', '.join(f'{g:.3f}' for g in gains)})")
         lin[:, ~valid] = 0
         ctx.progress(0.4, "the colour mosaic's pattern")
         S = float(ctx.load_json("stack", "drz_meta.json").get("scale", 1.0))
@@ -257,7 +262,7 @@ class RenderSimple(Stage):
         ctx.save_json("prep_simple.json", prep)
         ctx.metric("crop", [int(x0), int(x1), int(y0), int(y1)])
         ctx.metric("sky_source", prep["sky"])
-        ctx.metric("colour_calibrated", colour_calibrated(ctx, r.ops))
+        ctx.metric("colour_calibrated", calibrated or colour_calibrated(ctx, r.ops))
         ctx.metric("denoised", denoised)
         ctx.log(f"simple output {W} x {H} from {name}, useful frame x {x0}-{x1}, y {y0}-{y1}; sky: {prep['sky']}")
         ctx.progress(0.85, "preview")
